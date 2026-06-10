@@ -2419,7 +2419,10 @@ def main(argv: list[str] | None = None) -> int:
         "capture-economics",
         help="Audit realized payoff ratio vs breakeven from trader-attributed ledger outcomes.",
     )
-    p_capture.add_argument("--execution-ledger-db", type=Path, default=Path("data/execution_ledger.db"))
+    # ROOT-anchored like the artifact it writes; a cwd-relative default could
+    # silently read a missing DB from another cwd and overwrite the ROOT
+    # artifact with trades=0 (2026-06-10 audit finding).
+    p_capture.add_argument("--execution-ledger-db", type=Path, default=DEFAULT_EXECUTION_LEDGER_DB)
     p_capture.add_argument("--output", type=Path, default=None)
     p_capture.add_argument("--report", type=Path, default=None)
 

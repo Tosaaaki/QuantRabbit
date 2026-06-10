@@ -470,19 +470,19 @@ class ComputeTPAdjustmentTest(unittest.TestCase):
         self.assertIn("contract_profitable_stale_harvest", adj.rationale)
         self.assertIn("profit 6.3pip", adj.rationale)
 
-    def test_profitable_stale_tp_already_past_reanchor_holds_instead_of_market_snap(self) -> None:
-        """When profit has already consumed the re-anchored target (within the
-        market-safety margin), the sidecar HOLDs the existing TP rather than
-        snapping it to market; profit capture belongs to the structural
-        forecast_harvest / partial-close paths in that state."""
+    def test_deep_profit_under_pressure_keeps_near_market_harvest(self) -> None:
+        """A runner ≥1 operating ATR in profit whose stale trigger fired via
+        ≥2 technical exhaustion-pressure readings keeps the ORIGINAL
+        near-market harvest: banking an ATR-scale win under exhaustion
+        pressure is MFE capture, not winner-clipping. Only shallow profits
+        (< 1 operating ATR) get the re-anchored reward target."""
         self._kill_switch_off()
         adj = compute_tp_adjustment(
             trade_id="471329", pair="EUR_USD", side="SHORT",
             entry_price=1.16272, current_tp=1.14355,
-            # 26 pips in profit with 2+ technical pressure readings → the old
-            # code snapped TP to market+5.1; reanchor at 9.4 pips (1.0 rr ×
-            # operating ATR... using rr=1.0 → max(lock_in 8, 9.4)=9.4) is
-            # already consumed, so the new code returns None.
+            # 26 pips in profit (≥ operating ATR 6.6) with 3 technical
+            # pressure readings (lower-extreme percentile, TF disagreement,
+            # 24h exhaustion) → TP snaps to current − 5.1 pips.
             current_price=1.16012,
             atr_pips=22.7, reward_risk=1.0,
             is_reversal_firing=False,
@@ -500,7 +500,10 @@ class ComputeTPAdjustmentTest(unittest.TestCase):
             },
         )
 
-        self.assertIsNone(adj)
+        self.assertIsNotNone(adj)
+        self.assertEqual(adj.new_tp, 1.15961)
+        self.assertLess(adj.distance_pips_new, adj.distance_pips_old)
+        self.assertIn("contract_profitable_stale_harvest", adj.rationale)
 
     def test_keeps_reachable_profitable_harvest_tp_instead_of_expanding_again(self) -> None:
         """A near structural harvest TP must not be expanded back into a runner

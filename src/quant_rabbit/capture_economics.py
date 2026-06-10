@@ -57,13 +57,29 @@ entries AS (
     GROUP BY e.trade_id
     HAVING COALESCE(NULLIF(MAX(e.lane_id), ''), MAX(g.lane_id)) IS NOT NULL
 )
-SELECT e.ts_utc, e.pair, e.exit_reason, e.realized_pl_jpy
+-- One row per TRADE outcome, not per close event: a position reduced three
+-- times and then closed is one trade whose realized P/L is the SUM of its
+-- partial closes. Counting each partial as a separate "win" inflated n and
+-- biased the win rate upward (2026-06-10 audit finding). exit_reason and
+-- ts_utc come from the FINAL close event of the trade.
+SELECT
+    MAX(e.ts_utc) AS ts_utc,
+    e.pair,
+    (
+        SELECT e2.exit_reason FROM execution_events e2
+        WHERE e2.trade_id = e.trade_id
+          AND e2.event_type IN ('TRADE_CLOSED', 'TRADE_REDUCED')
+          AND e2.realized_pl_jpy IS NOT NULL
+        ORDER BY e2.ts_utc DESC LIMIT 1
+    ) AS exit_reason,
+    SUM(e.realized_pl_jpy) AS realized_pl_jpy
 FROM execution_events e
 INNER JOIN entries ON entries.trade_id = e.trade_id
 WHERE e.event_type IN ('TRADE_CLOSED', 'TRADE_REDUCED')
   AND e.realized_pl_jpy IS NOT NULL
-  AND e.realized_pl_jpy != 0
-ORDER BY e.ts_utc ASC
+GROUP BY e.trade_id, e.pair
+HAVING SUM(e.realized_pl_jpy) != 0
+ORDER BY MAX(e.ts_utc) ASC
 """
 
 
@@ -143,9 +159,14 @@ def build_capture_economics(
     trades = int(overall.get("trades") or 0)
     payoff = overall.get("payoff_ratio")
     breakeven = overall.get("breakeven_payoff_at_win_rate")
+    expectancy = overall.get("expectancy_jpy_per_trade")
     if trades < MIN_SAMPLE_FOR_VERDICT:
         status = "LOW_SAMPLE"
     elif payoff is not None and breakeven is not None and payoff >= breakeven:
+        status = "POSITIVE_EXPECTANCY"
+    elif payoff is None and expectancy is not None and expectancy > 0:
+        # Zero losses in the sample: payoff is undefined (division by the
+        # empty loss side) but the expectancy is unambiguously positive.
         status = "POSITIVE_EXPECTANCY"
     else:
         status = "NEGATIVE_EXPECTANCY"

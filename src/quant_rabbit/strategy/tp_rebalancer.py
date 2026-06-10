@@ -718,26 +718,42 @@ def compute_tp_adjustment(
             # 0.43). Entry geometry promises H4-ATR-scale targets, so almost
             # every position eventually trips the >10× operating-ATR stale
             # test, and the profitable ones were harvested at noise distance.
-            # Re-anchor the contraction to a REACHABLE but real target on the
-            # operating timeframe: regime-derived reward_risk × operating ATR
-            # from ENTRY, capped at the same MAX_TP_DISTANCE_ATR_MULT
-            # reachability ceiling that triggered this branch, floored at the
-            # adverse-mode lock-in distance. Downstream market-safety still
-            # clamps to ≥ MIN_TP_TO_MARKET_PIPS from current price, so a
-            # position already near the re-anchored target keeps roughly the
-            # old harvest behavior instead of expanding.
+            #
+            # The repair is split by how far the position has already run
+            # (2026-06-10 second-pass audit):
+            # - SHALLOW profit (< 1 operating ATR): re-anchor the contraction
+            #   to a REACHABLE but real target on the operating timeframe —
+            #   regime-derived reward_risk × operating ATR from ENTRY, capped
+            #   at the MAX_TP_DISTANCE_ATR_MULT reachability ceiling that
+            #   triggered this branch, floored at the adverse-mode lock-in
+            #   distance. This is the winner-clipping fix.
+            # - DEEP profit (≥ 1 operating ATR, reachable only with ≥2
+            #   technical exhaustion-pressure readings per the stale trigger):
+            #   keep the original near-market harvest. The position has
+            #   already paid an ATR-scale move and multiple technical reads
+            #   say MFE capture is at risk; holding a >10×-ATR TP here would
+            #   let an SL-free runner give the whole move back. Banking a
+            #   large win under exhaustion pressure is MFE capture, not
+            #   winner-clipping.
             stale_operating_atr = float(operating_atr or atr_pips)
-            reanchor_pips = max(
-                max(MIN_LOCK_IN_PIPS, stale_operating_atr * LOCK_IN_ATR_MULT),
-                min(
-                    reward_risk * stale_operating_atr,
-                    MAX_TP_DISTANCE_ATR_MULT * stale_operating_atr,
-                ),
-            )
-            if side_up == "LONG":
-                candidate_tp = entry_price + reanchor_pips * pip_size
+            if profit_pips >= stale_operating_atr:
+                near_market_pips = MIN_TP_TO_MARKET_PIPS + 0.1
+                if side_up == "LONG":
+                    candidate_tp = current_price + near_market_pips * pip_size
+                else:
+                    candidate_tp = current_price - near_market_pips * pip_size
             else:
-                candidate_tp = entry_price - reanchor_pips * pip_size
+                reanchor_pips = max(
+                    max(MIN_LOCK_IN_PIPS, stale_operating_atr * LOCK_IN_ATR_MULT),
+                    min(
+                        reward_risk * stale_operating_atr,
+                        MAX_TP_DISTANCE_ATR_MULT * stale_operating_atr,
+                    ),
+                )
+                if side_up == "LONG":
+                    candidate_tp = entry_price + reanchor_pips * pip_size
+                else:
+                    candidate_tp = entry_price - reanchor_pips * pip_size
         else:
             mode = "contract_stale_harvest"
             lock_in_pips = max(MIN_LOCK_IN_PIPS, (operating_atr or atr_pips) * LOCK_IN_ATR_MULT)

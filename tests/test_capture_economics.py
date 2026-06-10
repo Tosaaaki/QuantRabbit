@@ -36,7 +36,7 @@ def _make_db(path: Path, closes: list[dict]) -> None:
                  c["pair"], "LONG", 1000, None, None)
             )
         rows.append(
-            (f"c{i}", c["ts_utc"], "TRADE_CLOSED", None, f"x{i}", trade_id,
+            (f"c{i}", c["ts_utc"], c.get("event_type", "TRADE_CLOSED"), None, f"x{i}", trade_id,
              c["pair"], "SHORT", 1000, c["pl"], c.get("exit_reason", "TAKE_PROFIT_ORDER"))
         )
     conn.executemany(
@@ -83,6 +83,55 @@ class CaptureEconomicsTest(unittest.TestCase):
             self.assertAlmostEqual(summary.breakeven_payoff or 0, 0.4286, places=3)
             payload = json.loads((root / "out.json").read_text())
             self.assertIn("MARKET_ORDER_TRADE_CLOSE", payload["by_exit_reason"])
+
+    def test_partial_closes_aggregate_to_one_trade_outcome(self) -> None:
+        """TRADE_REDUCED milestones + final TRADE_CLOSED on the same trade_id
+        are ONE trade whose realized P/L is the sum — two +300 partials and a
+        -900 final close is a single -300 LOSS, not two wins and a loss
+        (2026-06-10 audit finding: per-event counting inflated win rate)."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            closes = [
+                {"ts_utc": "2026-06-02T10:00:00Z", "pair": "EUR_USD", "pl": 300.0,
+                 "trade_id": "t1", "event_type": "TRADE_REDUCED"},
+                {"ts_utc": "2026-06-02T11:00:00Z", "pair": "EUR_USD", "pl": 300.0,
+                 "trade_id": "t1", "event_type": "TRADE_REDUCED"},
+                {"ts_utc": "2026-06-02T12:00:00Z", "pair": "EUR_USD", "pl": -900.0,
+                 "trade_id": "t1", "exit_reason": "MARKET_ORDER_TRADE_CLOSE"},
+                # An unrelated clean win on its own trade.
+                {"ts_utc": "2026-06-02T13:00:00Z", "pair": "GBP_USD", "pl": 500.0, "trade_id": "t2"},
+            ]
+            db = root / "ledger.db"
+            _make_db(db, closes)
+            summary = build_capture_economics(
+                ledger_path=db, output_path=root / "out.json", report_path=root / "report.md"
+            )
+            self.assertEqual(summary.trades, 2)
+            payload = json.loads((root / "out.json").read_text())
+            self.assertEqual(payload["overall"]["wins"], 1)
+            self.assertEqual(payload["overall"]["losses"], 1)
+            self.assertAlmostEqual(payload["overall"]["net_jpy"], 200.0)
+            # The aggregated trade's exit reason is its FINAL close event.
+            self.assertIn("MARKET_ORDER_TRADE_CLOSE", payload["by_exit_reason"])
+            self.assertEqual(payload["by_exit_reason"]["MARKET_ORDER_TRADE_CLOSE"]["losses"], 1)
+
+    def test_all_wins_sample_reports_positive_expectancy(self) -> None:
+        """Zero losses leaves payoff undefined; the verdict must still be
+        POSITIVE_EXPECTANCY, not a fall-through NEGATIVE (audit finding)."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            closes = [
+                {"ts_utc": f"2026-06-02T10:{i:02d}:00Z", "pair": "EUR_USD", "pl": 400.0}
+                for i in range(21)
+            ]
+            db = root / "ledger.db"
+            _make_db(db, closes)
+            summary = build_capture_economics(
+                ledger_path=db, output_path=root / "out.json", report_path=root / "report.md"
+            )
+            self.assertEqual(summary.trades, 21)
+            self.assertIsNone(summary.payoff_ratio)
+            self.assertEqual(summary.status, "POSITIVE_EXPECTANCY")
 
     def test_positive_expectancy_and_manual_exclusion(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
