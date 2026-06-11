@@ -1587,6 +1587,11 @@ def _cycle_sidecar_steps() -> list[dict[str, Any]]:
         {"argv": ["position-thesis-check"], "required": False},
         {"argv": ["thesis-evolution-check"], "required": False},
         {"argv": ["forecast-persistence-check"], "required": False},
+        # Keep the open-position management sidecar tied to the post-gateway
+        # broker snapshot consumed by self-improvement-audit. Without this pass
+        # the audit correctly leaves POSITION_MANAGEMENT_STALE as a persistent
+        # P0 even after the protection sidecar phase completes.
+        {"argv": ["position-management"], "required": False},
         {"argv": ["memory-health"], "required": False},
         {"argv": ["self-improvement-audit"], "required": False, "ok_rcs": [0, 2]},
     ]

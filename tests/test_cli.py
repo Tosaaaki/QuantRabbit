@@ -1918,6 +1918,8 @@ class ConsolidatedCycleCommandTest(unittest.TestCase):
             sidecars = [" ".join(s["argv"]) for s in _cycle_sidecar_steps()]
         self.assertIn("profit-partial-close", sidecars)
         self.assertNotIn("profit-partial-close --send --confirm-live", sidecars)
+        self.assertLess(sidecars.index("forecast-persistence-check"), sidecars.index("position-management"))
+        self.assertLess(sidecars.index("position-management"), sidecars.index("memory-health"))
         self.assertLess(sidecars.index("memory-health"), sidecars.index("self-improvement-audit"))
         self.assertEqual(sidecars[-1], "self-improvement-audit")
 

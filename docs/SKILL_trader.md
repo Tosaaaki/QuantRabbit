@@ -245,8 +245,8 @@ QR_LIVE_ENABLED=1 ./scripts/run-autotrade-live.sh \
 # `cycle-sidecars` runs (canonical list: `cli._cycle_sidecar_steps`):
 #   broker-snapshot → tp-rebalance → execution-ledger-sync → broker-snapshot
 #   → profit-partial-close → verify-projections → position-thesis-check
-#   → thesis-evolution-check → forecast-persistence-check → memory-health
-#   → self-improvement-audit
+#   → thesis-evolution-check → forecast-persistence-check
+#   → position-management → memory-health → self-improvement-audit
 # and prints one compact digest.
 #
 # Semantics preserved from the per-step skeleton:
@@ -268,6 +268,9 @@ QR_LIVE_ENABLED=1 ./scripts/run-autotrade-live.sh \
 #   verdicts. A fresh BROKEN / RECOMMEND_CLOSE from thesis evolution is hard
 #   Gate A standing loss-cut authorization; score-only or
 #   adverse-entry-buffer-only reviews still need explicit env/token Gate B.
+# - position-management is regenerated against the post-gateway broker
+#   snapshot before self-improvement-audit so the next route does not inherit a
+#   stale open-position sidecar P0.
 # - memory-health BLOCK does not grant/deny a trade by itself;
 #   trader-prompt-route reads it for the next cycle's routing.
 # - self-improvement-audit is recalculated after the post-gateway snapshot and
