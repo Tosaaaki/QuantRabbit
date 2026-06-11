@@ -32,6 +32,23 @@
 - `WAIT`
 - `REQUEST_EVIDENCE`
 
+## Operator Precedent (docs/manual_trading_2025_evidence.md, first-party ledger)
+
+The 5%/10% daily target reproduces the operator's own 2025 manual record on
+this account (200k → 1.23M peak in ~6 weeks, USD_JPY only, 384 trades). The
+shape of that edge, as advisory evidence for lane selection — never a
+substitute for current risk geometry or contract gates:
+
+- Fewer, larger, faster: ~9 trades/day at meaningful size, payoff 1.41,
+  median hold 19 minutes — not 30 micro-trades across 8 pairs.
+- Trend side: LONG-with-trend made +336k while counter-trend SHORT lost 79k.
+  Ride the prevailing direction; fading paid poorly.
+- Session: LONDON_AM/NY_OVERLAP (15–24 JST) carried the edge (payoff 2.46 in
+  London); Tokyo rotation was net negative for this style.
+- The operator's own blowup mode was holding decayed positions past ~12h
+  (margin closeouts −217k) — the thesis-horizon expiry and disaster stop
+  exist to bound exactly that; do not fight them.
+
 ## WAIT Discipline
 
 - WAIT is valid only when a named contract or packet gate fires.
