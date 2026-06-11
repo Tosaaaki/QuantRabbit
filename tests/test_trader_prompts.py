@@ -112,7 +112,7 @@ class TraderPromptRouteTest(unittest.TestCase):
         self.assertTrue(any("PROJECTION_LEDGER_EXPIRED_PENDING blocks entry routing" in reason for reason in route.reasons))
         self.assertTrue(any("count=33" in reason for reason in route.reasons))
 
-    def test_persistent_stale_gpt_decision_p0_routes_to_learning_repair(self) -> None:
+    def test_persistent_stale_gpt_decision_p0_routes_to_fresh_decision(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             files = _fixtures(root)
@@ -138,9 +138,55 @@ class TraderPromptRouteTest(unittest.TestCase):
 
             route = route_trader_prompts(**_route_paths(files), decision_response_path=None)
 
-        self.assertEqual(route.branch, BRANCH_LEARNING)
+        self.assertEqual(route.branch, BRANCH_ENTRY)
+        read_paths = _read_paths(route)
+        self.assertTrue(any(path.endswith("30_entry_decision.md") for path in read_paths))
+        self.assertTrue(any(path.endswith("90_decision_receipt_schema.md") for path in read_paths))
         self.assertTrue(any("decision-history P0 persists" in reason for reason in route.reasons))
         self.assertTrue(any("streak=13" in reason for reason in route.reasons))
+
+    def test_persistent_stale_gpt_decision_p0_with_pending_entry_routes_to_cancel_review(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root)
+            snapshot = json.loads(files["snapshot"].read_text())
+            snapshot["orders"] = [
+                {
+                    "order_id": "472124",
+                    "pair": "EUR_GBP",
+                    "order_type": "STOP",
+                    "state": "PENDING",
+                    "units": -1000,
+                    "owner": "trader",
+                    "trade_id": None,
+                }
+            ]
+            files["snapshot"].write_text(json.dumps(snapshot))
+            files["self_improvement_audit"].write_text(
+                json.dumps(
+                    {
+                        "status": "SELF_IMPROVEMENT_BLOCKED",
+                        "findings": [
+                            {
+                                "priority": "P0",
+                                "layer": "decision_history",
+                                "code": "LATEST_GPT_DECISION_STALE",
+                                "message": "latest GPT decision receipt predates the current broker snapshot",
+                                "evidence": {
+                                    "current_streak": 13,
+                                    "snapshot_fetched_at_utc": "2026-06-11T09:45:47+00:00",
+                                },
+                            }
+                        ],
+                    }
+                )
+            )
+
+            route = route_trader_prompts(**_route_paths(files), decision_response_path=None)
+
+        self.assertEqual(route.branch, BRANCH_POSITION)
+        self.assertTrue(any("pending entry order" in reason for reason in route.reasons))
+        self.assertTrue(any("rewrite" in reason for reason in route.reasons))
 
     def test_single_stale_gpt_decision_p0_still_allows_fresh_entry_decision(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

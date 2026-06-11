@@ -313,9 +313,35 @@ def route_trader_prompts(
             include_content=include_content,
         )
 
+    self_improvement_decision_refresh_reasons = _self_improvement_decision_refresh_reasons(
+        self_improvement_audit_path=self_improvement_audit_path,
+    )
     self_improvement_repair_reasons = _self_improvement_repair_reasons(
         self_improvement_audit_path=self_improvement_audit_path,
     )
+    if _target_open(target_state) and self_improvement_decision_refresh_reasons:
+        if pending_entry_reasons:
+            return _build_route(
+                BRANCH_POSITION,
+                (
+                    *carry_reasons,
+                    *advisory_close_review_reasons,
+                    *pending_entry_reasons,
+                    "self-improvement stale-decision P0 blocks fresh risk while trader-owned pending entry risk remains fillable; "
+                    "write CANCEL_PENDING or explicitly justify keeping the current pending order before rewriting the decision receipt",
+                    *self_improvement_decision_refresh_reasons,
+                ),
+                include_content=include_content,
+            )
+        return _build_route(
+            BRANCH_ENTRY,
+            (
+                *carry_reasons,
+                *advisory_close_review_reasons,
+                *self_improvement_decision_refresh_reasons,
+            ),
+            include_content=include_content,
+        )
     if _target_open(target_state) and self_improvement_repair_reasons:
         if pending_entry_reasons:
             return _build_route(
@@ -1511,17 +1537,6 @@ def _self_improvement_repair_reasons(*, self_improvement_audit_path: Path | None
             )
             continue
         if code == "LATEST_GPT_DECISION_STALE":
-            streak = _optional_int(evidence.get("current_streak"))
-            if streak is None or streak < SELF_IMPROVEMENT_STALE_DECISION_REPAIR_STREAK:
-                continue
-            snapshot_ts = evidence.get("snapshot_fetched_at_utc")
-            details = [f"streak={streak}"]
-            if snapshot_ts:
-                details.append(f"snapshot={snapshot_ts}")
-            reasons.append(
-                "self-improvement decision-history P0 persists; rewrite or re-verify the GPT decision "
-                f"against current broker truth before new risk ({', '.join(details)})"
-            )
             continue
         details = []
         if layer:
@@ -1536,6 +1551,36 @@ def _self_improvement_repair_reasons(*, self_improvement_audit_path: Path | None
         reasons.append(
             f"self-improvement {code or 'P0'} blocks entry routing; repair before new risk"
             f"{suffix}: {message}"
+        )
+    return tuple(reasons)
+
+
+def _self_improvement_decision_refresh_reasons(*, self_improvement_audit_path: Path | None) -> tuple[str, ...]:
+    if self_improvement_audit_path is None or not self_improvement_audit_path.exists():
+        return ()
+    try:
+        payload = _load_json(self_improvement_audit_path)
+    except (OSError, ValueError, json.JSONDecodeError):
+        return ()
+    reasons: list[str] = []
+    for item in payload.get("findings", []) or []:
+        if not isinstance(item, dict):
+            continue
+        if str(item.get("priority") or "").upper() != "P0":
+            continue
+        if str(item.get("code") or "") != "LATEST_GPT_DECISION_STALE":
+            continue
+        evidence = item.get("evidence") if isinstance(item.get("evidence"), dict) else {}
+        streak = _optional_int(evidence.get("current_streak"))
+        if streak is None or streak < SELF_IMPROVEMENT_STALE_DECISION_REPAIR_STREAK:
+            continue
+        snapshot_ts = evidence.get("snapshot_fetched_at_utc")
+        details = [f"streak={streak}"]
+        if snapshot_ts:
+            details.append(f"snapshot={snapshot_ts}")
+        reasons.append(
+            "self-improvement decision-history P0 persists; rewrite or re-verify the GPT decision "
+            f"against current broker truth before new risk ({', '.join(details)})"
         )
     return tuple(reasons)
 
