@@ -92,6 +92,7 @@ class LiveOrderGateway:
         risk_equity_jpy: float | None = None,
         portfolio_loss_cap_jpy: float | None = None,
         self_improvement_audit: Path | None = None,
+        verified_decision_path: Path | None = None,
     ) -> None:
         self.client = client
         self.strategy_profile = strategy_profile
@@ -103,6 +104,11 @@ class LiveOrderGateway:
         self.risk_equity_jpy = risk_equity_jpy
         self.portfolio_loss_cap_jpy = portfolio_loss_cap_jpy
         self.self_improvement_audit = self_improvement_audit
+        # When the automation cycle stages a receipt that gpt-trader-decision
+        # just verified, this points at the ACCEPTED verification artifact so
+        # the LATEST_GPT_DECISION_STALE audit finding can be recognized as
+        # already repaired. Manual stage-live-order paths leave it None.
+        self.verified_decision_path = verified_decision_path
 
     def run(
         self,
@@ -181,7 +187,10 @@ class LiveOrderGateway:
             intents_path=intents_path,
             validation_time_utc=datetime.now(timezone.utc),
         )
-        self_improvement_issues = _self_improvement_gateway_issues(self.self_improvement_audit)
+        self_improvement_issues = _self_improvement_gateway_issues(
+            self.self_improvement_audit,
+            verified_decision_path=self.verified_decision_path,
+        )
         send_issues = _send_guard_issues(send=send, confirm_live=confirm_live, lane_id=lane_id)
         all_blocked = (
             any(issue["severity"] == "BLOCK" for issue in risk_issues)
@@ -561,7 +570,10 @@ class LiveOrderGateway:
             intents_path=intents_path,
             validation_time_utc=datetime.now(timezone.utc),
         )
-        self_improvement_issues = _self_improvement_gateway_issues(self.self_improvement_audit)
+        self_improvement_issues = _self_improvement_gateway_issues(
+            self.self_improvement_audit,
+            verified_decision_path=self.verified_decision_path,
+        )
         send_issues = _send_guard_issues(send=send, confirm_live=confirm_live, lane_id=lane_id_arg)
         all_blocked = (
             any(issue["severity"] == "BLOCK" for issue in risk_issues)
@@ -1310,7 +1322,11 @@ def _projection_expiry_status_issues(
     ]
 
 
-def _self_improvement_gateway_issues(path: Path | None) -> list[dict[str, str]]:
+def _self_improvement_gateway_issues(
+    path: Path | None,
+    *,
+    verified_decision_path: Path | None = None,
+) -> list[dict[str, str]]:
     """Block fresh entry staging when self-improvement has an active P0 gate."""
     if path is None or not path.exists():
         return []
@@ -1323,6 +1339,10 @@ def _self_improvement_gateway_issues(path: Path | None) -> list[dict[str, str]]:
                 f"self-improvement audit is unreadable before live order staging: {path}: {exc}",
             ).__dict__
         ]
+    verification_postdates_audit = _accepted_verification_postdates(
+        verified_decision_path,
+        audit_generated_at=payload.get("generated_at_utc"),
+    )
     blockers: list[str] = []
     for item in payload.get("findings", []) or []:
         if not isinstance(item, dict):
@@ -1330,6 +1350,15 @@ def _self_improvement_gateway_issues(path: Path | None) -> list[dict[str, str]]:
         if str(item.get("priority") or "").upper() != "P0":
             continue
         code = str(item.get("code") or "SELF_IMPROVEMENT_P0")
+        if code == "LATEST_GPT_DECISION_STALE" and verification_postdates_audit:
+            # The decision being staged was verified ACCEPTED after this audit
+            # ran, so the audit's stale-decision verdict is about an older
+            # receipt (mirrors gpt_trader._self_improvement_trade_blockers).
+            # With a 20-minute audit cadence and a slower decision cadence the
+            # streak otherwise re-blocks the first staging attempt of every
+            # fresh receipt. Manual stage-live-order paths do not pass
+            # verified_decision_path and keep the strict streak gate.
+            continue
         if _self_improvement_gateway_non_blocker(code, item):
             continue
         message = str(item.get("message") or code)
@@ -1342,6 +1371,41 @@ def _self_improvement_gateway_issues(path: Path | None) -> list[dict[str, str]]:
             "self-improvement P0 blocks new live entry risk: " + "; ".join(blockers[:3]),
         ).__dict__
     ]
+
+
+def _accepted_verification_postdates(
+    verified_decision_path: Path | None,
+    *,
+    audit_generated_at: Any,
+) -> bool:
+    if verified_decision_path is None or not verified_decision_path.exists():
+        return False
+    audit_ts = _parse_utc_timestamp(audit_generated_at)
+    if audit_ts is None:
+        return False
+    try:
+        payload = json.loads(verified_decision_path.read_text())
+    except (OSError, json.JSONDecodeError, ValueError):
+        return False
+    if str(payload.get("status") or "").upper() != "ACCEPTED":
+        return False
+    generated = payload.get("generated_at_utc")
+    if generated is None and isinstance(payload.get("decision"), dict):
+        generated = payload["decision"].get("generated_at_utc")
+    decision_ts = _parse_utc_timestamp(generated)
+    return decision_ts is not None and decision_ts > audit_ts
+
+
+def _parse_utc_timestamp(value: Any) -> datetime | None:
+    if not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed
 
 
 def _self_improvement_gateway_non_blocker(code: str, finding: dict[str, Any]) -> bool:

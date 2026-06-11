@@ -305,6 +305,103 @@ class LiveOrderGatewayTest(unittest.TestCase):
             codes = {issue["code"] for issue in payload["risk_issues"]}
             self.assertIn("SELF_IMPROVEMENT_P0_BLOCKS_LIVE_ORDER", codes)
 
+    def test_persistent_stale_decision_p0_exempted_when_verified_receipt_postdates_audit(self) -> None:
+        # Mirrors gpt_trader._self_improvement_trade_blockers: an ACCEPTED
+        # verification produced AFTER the audit ran proves the stale-decision
+        # finding is already repaired. Without this, the 20-minute audit
+        # cadence re-blocks the first staging attempt of every fresh receipt
+        # whenever the decision cadence is slower than two audit runs.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            now = datetime.now(timezone.utc)
+            audit = root / "self_improvement.json"
+            audit.write_text(
+                json.dumps(
+                    {
+                        "generated_at_utc": (now - timedelta(minutes=10)).isoformat(),
+                        "findings": [
+                            {
+                                "priority": "P0",
+                                "code": "LATEST_GPT_DECISION_STALE",
+                                "message": "latest GPT decision receipt predates the current broker snapshot",
+                                "evidence": {"current_streak": 21},
+                            }
+                        ],
+                    }
+                )
+            )
+            verified = root / "gpt_decision.json"
+            verified.write_text(
+                json.dumps(
+                    {
+                        "generated_at_utc": now.isoformat(),
+                        "status": "ACCEPTED",
+                        "decision": {"action": "TRADE"},
+                        "verification_issues": [],
+                    }
+                )
+            )
+            client = FakeExecutionClient()
+            summary = LiveOrderGateway(
+                client=client,
+                strategy_profile=_profile(root),
+                output_path=root / "request.json",
+                report_path=root / "report.md",
+                self_improvement_audit=audit,
+                verified_decision_path=verified,
+            ).run(intents_path=_intents(root), lane_id="lane:EUR_USD:LONG")
+
+            self.assertEqual(summary.status, "STAGED")
+            payload = json.loads((root / "request.json").read_text())
+            codes = {issue["code"] for issue in payload["risk_issues"]}
+            self.assertNotIn("SELF_IMPROVEMENT_P0_BLOCKS_LIVE_ORDER", codes)
+
+    def test_persistent_stale_decision_p0_still_blocks_when_verification_predates_audit(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            now = datetime.now(timezone.utc)
+            audit = root / "self_improvement.json"
+            audit.write_text(
+                json.dumps(
+                    {
+                        "generated_at_utc": now.isoformat(),
+                        "findings": [
+                            {
+                                "priority": "P0",
+                                "code": "LATEST_GPT_DECISION_STALE",
+                                "message": "latest GPT decision receipt predates the current broker snapshot",
+                                "evidence": {"current_streak": 21},
+                            }
+                        ],
+                    }
+                )
+            )
+            verified = root / "gpt_decision.json"
+            verified.write_text(
+                json.dumps(
+                    {
+                        "generated_at_utc": (now - timedelta(minutes=10)).isoformat(),
+                        "status": "ACCEPTED",
+                        "decision": {"action": "TRADE"},
+                        "verification_issues": [],
+                    }
+                )
+            )
+            client = FakeExecutionClient()
+            summary = LiveOrderGateway(
+                client=client,
+                strategy_profile=_profile(root),
+                output_path=root / "request.json",
+                report_path=root / "report.md",
+                self_improvement_audit=audit,
+                verified_decision_path=verified,
+            ).run(intents_path=_intents(root), lane_id="lane:EUR_USD:LONG")
+
+            self.assertEqual(summary.status, "BLOCKED")
+            payload = json.loads((root / "request.json").read_text())
+            codes = {issue["code"] for issue in payload["risk_issues"]}
+            self.assertIn("SELF_IMPROVEMENT_P0_BLOCKS_LIVE_ORDER", codes)
+
     def test_send_posts_only_after_live_validation_passes(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

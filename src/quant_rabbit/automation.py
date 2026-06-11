@@ -1261,6 +1261,7 @@ class AutoTradeCycle:
                         max_loss_jpy=resolved_max_loss_jpy,
                         portfolio_loss_cap_jpy=self._portfolio_loss_cap_jpy_from_target_state(),
                         self_improvement_audit=self.gateway_self_improvement_audit_path,
+                        verified_decision_path=self.gpt_decision_path if self.use_gpt_trader else None,
                     ).run_batch(
                         intents_path=self.intents_path,
                         lane_ids=basket_lane_ids,
@@ -1802,6 +1803,7 @@ class AutoTradeCycle:
             max_loss_jpy=resolved_max_loss_jpy,
             portfolio_loss_cap_jpy=self._portfolio_loss_cap_jpy_from_target_state(),
             self_improvement_audit=self.gateway_self_improvement_audit_path,
+            verified_decision_path=self.gpt_decision_path if self.use_gpt_trader else None,
         )
         if len(basket_lane_ids) > 1:
             order_summary = order_gateway.run_batch(
