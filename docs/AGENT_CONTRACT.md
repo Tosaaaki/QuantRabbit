@@ -28,7 +28,7 @@ If you are an automation reading this for runtime, also read `docs/SKILL_trader.
 | Claude scheduled task | `~/.claude/scheduled-tasks/trader/` |
 | Weekend task switcher | `scripts/qr_weekend_task_switch.py` / `quant_rabbit.weekend_task_switch` |
 | Weekend task state | `~/.codex/quant_rabbit_weekend_task_state.json` |
-| Trader heartbeat watchdog (notify-only launchd agent) | `scripts/qr_trader_heartbeat_watch.sh` / `scripts/install-trader-heartbeat-watch.sh` |
+| Trader heartbeat watchdog (launchd agent; local notify + Codex.app relaunch self-heal + opt-in Slack page, never trades) | `scripts/qr_trader_heartbeat_watch.sh` / `scripts/install-trader-heartbeat-watch.sh` |
 | Legacy archive root | `/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z` |
 | Archive manifest | `…/ARCHIVE_MANIFEST_20260430T151527Z.md` |
 | Archive log pointer | `ARCHIVE_POINTER.md` |

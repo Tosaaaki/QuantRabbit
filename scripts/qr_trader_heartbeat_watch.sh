@@ -9,7 +9,19 @@
 # raises a local notification when the trader has been silent for longer than
 # three scheduled cycles during an open FX market window.
 #
-# It is notify-only: it never trades, never touches OANDA, never edits state.
+# It never trades, never touches OANDA, never edits trading state. Escalation
+# tiers when the trader is silent past the threshold (2026-06-11, after the
+# 55.6h silent stop 06-09 02:22 JST -> 06-11 10:00 JST went unnoticed through
+# 19 hours of local-notification-only alerts):
+#   1. local macOS notification + append-only alert log (always)
+#   2. relaunch Codex.app when its process is gone (QR_HEARTBEAT_OPEN_CODEX=0
+#      to disable) — recovers the app-crash/app-quit cause; a credits-exhausted
+#      scheduler keeps its process alive, so the relaunch is a no-op there
+#   3. Slack push via the repo .env.local bot token (opt-in:
+#      QR_HEARTBEAT_SLACK_ENABLE=1) — disabled by default to honor the
+#      2026-05-30 operator directive that the live trader must not post
+#      routine cycle traffic to Slack; a dead-trader page is the operator's
+#      call to re-enable
 # Install via scripts/install-trader-heartbeat-watch.sh (launchd, 10-min tick).
 
 set -u
@@ -78,5 +90,40 @@ echo "$now_epoch" > "$STAMP_FILE"
 msg="QuantRabbit trader silent for ${silence} during open market. Check Codex credits / scheduler."
 echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) $msg" >> "$ALERT_LOG"
 /usr/bin/osascript -e "display notification \"$msg\" with title \"QR trader heartbeat\" sound name \"Basso\"" 2>/dev/null
+
+# --- 5. Self-heal: relaunch Codex.app when its process is gone. The 20-min
+#        scheduler lives inside the app, so an app crash/quit IS a dead
+#        trader; relaunching restores the already-enabled automation without
+#        touching task state. When the process is alive (e.g. the 2026-06-09
+#        credits exhaustion) this is a no-op.
+if [ "${QR_HEARTBEAT_OPEN_CODEX:-1}" = "1" ]; then
+  if ! /usr/bin/pgrep -xq Codex; then
+    /usr/bin/open -a Codex 2>/dev/null \
+      && echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) self-heal: relaunched Codex.app" >> "$ALERT_LOG" \
+      || echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) self-heal: failed to relaunch Codex.app" >> "$ALERT_LOG"
+  fi
+fi
+
+# --- 6. Slack escalation (opt-in). Reads the untracked repo .env.local
+#        (QR_SLACK_BOT_TOKEN + QR_SLACK_CHANNEL_COMMANDS / QR_SLACK_CHANNEL_ID);
+#        never store the token in this script. Honors the 2026-05-30
+#        no-routine-Slack directive by staying off unless the operator
+#        explicitly enables dead-trader paging.
+if [ "${QR_HEARTBEAT_SLACK_ENABLE:-0}" = "1" ] && [ -f "$LIVE_ROOT/.env.local" ]; then
+  slack_token=$(/usr/bin/awk -F= '$1=="QR_SLACK_BOT_TOKEN"{print $2}' "$LIVE_ROOT/.env.local" | tr -d '"' | tr -d "'")
+  slack_channel=$(/usr/bin/awk -F= '$1=="QR_SLACK_CHANNEL_COMMANDS"{print $2}' "$LIVE_ROOT/.env.local" | tr -d '"' | tr -d "'")
+  if [ -z "$slack_channel" ]; then
+    slack_channel=$(/usr/bin/awk -F= '$1=="QR_SLACK_CHANNEL_ID"{print $2}' "$LIVE_ROOT/.env.local" | tr -d '"' | tr -d "'")
+  fi
+  if [ -n "$slack_token" ] && [ -n "$slack_channel" ]; then
+    /usr/bin/curl -sf -m 15 -X POST "https://slack.com/api/chat.postMessage" \
+      -H "Authorization: Bearer ${slack_token}" \
+      -H "Content-Type: application/json; charset=utf-8" \
+      -d "{\"channel\":\"${slack_channel}\",\"text\":\":rotating_light: ${msg}\"}" \
+      > /dev/null 2>&1 \
+      && echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) escalation: Slack alert posted" >> "$ALERT_LOG" \
+      || echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) escalation: Slack alert failed" >> "$ALERT_LOG"
+  fi
+fi
 
 exit 0
