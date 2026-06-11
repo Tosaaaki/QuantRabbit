@@ -9,9 +9,12 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from quant_rabbit.strategy.entry_thesis_ledger import (
+    THESIS_EVOLUTION_HISTORY_FILENAME,
+    THESIS_HORIZON_FORECAST_MULT,
     EntryThesis,
     REQUIRE_THESIS_REPAIR_VERDICT,
     UNVERIFIABLE_STATUS,
+    _thesis_horizon_hours_from_forecast,
     evaluate_all_open_positions,
     evaluate_thesis_evolution,
     load_entry_thesis,
@@ -623,6 +626,162 @@ class EntryThesisLedgerTest(unittest.TestCase):
             assert ev is not None
             self.assertEqual(ev.status, "WEAKENED")
             self.assertEqual(ev.verdict, "HOLD")
+
+    def _seed_horizon_thesis(self, root: Path, *, horizon_hours: float | None = 6.0) -> None:
+        record_entry_thesis(
+            EntryThesis(
+                timestamp_utc="2026-06-12T00:00:00Z",
+                trade_id="H1",
+                pair="EUR_JPY",
+                side="LONG",
+                entry_price=163.0,
+                forecast_direction="UP",
+                forecast_confidence=0.7,
+                regime="TREND",
+                invalidation_price=162.0,
+                target_price=164.5,
+                key_drivers=[],
+                horizon_hours=horizon_hours,
+            ),
+            root,
+        )
+
+    @staticmethod
+    def _write_history(root: Path, *, status: str, generated_at_utc: str) -> None:
+        (root / THESIS_EVOLUTION_HISTORY_FILENAME).write_text(
+            json.dumps(
+                {"trade_id": "H1", "status": status, "generated_at_utc": generated_at_utc}
+            )
+            + "\n"
+        )
+
+    def test_evolution_thesis_expired_escalates_after_consecutive_weakened(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            self._seed_horizon_thesis(root)
+            self._write_history(root, status="WEAKENED", generated_at_utc="2026-06-12T06:40:00Z")
+            ev = evaluate_thesis_evolution(
+                trade_id="H1", pair="EUR_JPY", side="LONG",
+                open_time_utc="2026-06-12T00:00:00Z",
+                current_forecast=_Forecast("RANGE", 0.4),
+                current_regime="RANGE",
+                data_root=root,
+                now=datetime(2026, 6, 12, 7, 0, tzinfo=timezone.utc),
+            )
+            assert ev is not None
+            self.assertEqual(ev.status, "BROKEN")
+            self.assertEqual(ev.verdict, "RECOMMEND_CLOSE")
+            self.assertIn("THESIS_EXPIRED", ev.rationale)
+
+    def test_evolution_thesis_expiry_requires_prior_cycle_weakened(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            self._seed_horizon_thesis(root)
+            # No archived history at all: stays WEAKENED.
+            ev = evaluate_thesis_evolution(
+                trade_id="H1", pair="EUR_JPY", side="LONG",
+                open_time_utc="2026-06-12T00:00:00Z",
+                current_forecast=_Forecast("RANGE", 0.4),
+                current_regime="RANGE",
+                data_root=root,
+                now=datetime(2026, 6, 12, 7, 0, tzinfo=timezone.utc),
+            )
+            assert ev is not None
+            self.assertEqual(ev.status, "WEAKENED")
+
+            # Same-cycle archived row (younger than the dedup floor): no escalation.
+            self._write_history(root, status="WEAKENED", generated_at_utc="2026-06-12T06:55:00Z")
+            ev = evaluate_thesis_evolution(
+                trade_id="H1", pair="EUR_JPY", side="LONG",
+                open_time_utc="2026-06-12T00:00:00Z",
+                current_forecast=_Forecast("RANGE", 0.4),
+                current_regime="RANGE",
+                data_root=root,
+                now=datetime(2026, 6, 12, 7, 0, tzinfo=timezone.utc),
+            )
+            assert ev is not None
+            self.assertEqual(ev.status, "WEAKENED")
+
+    def test_evolution_no_expiry_without_horizon_or_within_horizon(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            # Legacy thesis without horizon: never expires on the clock.
+            self._seed_horizon_thesis(root, horizon_hours=None)
+            self._write_history(root, status="WEAKENED", generated_at_utc="2026-06-12T06:40:00Z")
+            ev = evaluate_thesis_evolution(
+                trade_id="H1", pair="EUR_JPY", side="LONG",
+                open_time_utc="2026-06-12T00:00:00Z",
+                current_forecast=_Forecast("RANGE", 0.4),
+                current_regime="RANGE",
+                data_root=root,
+                now=datetime(2026, 6, 12, 7, 0, tzinfo=timezone.utc),
+            )
+            assert ev is not None
+            self.assertEqual(ev.status, "WEAKENED")
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            # Inside horizon: stays WEAKENED even with prior WEAKENED archived.
+            self._seed_horizon_thesis(root, horizon_hours=24.0)
+            self._write_history(root, status="WEAKENED", generated_at_utc="2026-06-12T06:40:00Z")
+            ev = evaluate_thesis_evolution(
+                trade_id="H1", pair="EUR_JPY", side="LONG",
+                open_time_utc="2026-06-12T00:00:00Z",
+                current_forecast=_Forecast("RANGE", 0.4),
+                current_regime="RANGE",
+                data_root=root,
+                now=datetime(2026, 6, 12, 7, 0, tzinfo=timezone.utc),
+            )
+            assert ev is not None
+            self.assertEqual(ev.status, "WEAKENED")
+
+    def test_evolution_still_valid_never_expires_on_clock_alone(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            self._seed_horizon_thesis(root)
+            self._write_history(root, status="WEAKENED", generated_at_utc="2026-06-12T06:40:00Z")
+            ev = evaluate_thesis_evolution(
+                trade_id="H1", pair="EUR_JPY", side="LONG",
+                open_time_utc="2026-06-12T00:00:00Z",
+                current_forecast=_Forecast("UP", 0.75),
+                current_regime="TREND",
+                data_root=root,
+                now=datetime(2026, 6, 12, 7, 0, tzinfo=timezone.utc),
+            )
+            assert ev is not None
+            self.assertEqual(ev.status, "STILL_VALID")
+
+    def test_thesis_horizon_derived_from_forecast_horizon_min(self) -> None:
+        self.assertEqual(
+            _thesis_horizon_hours_from_forecast({"horizon_min": 120}),
+            120 / 60.0 * THESIS_HORIZON_FORECAST_MULT,
+        )
+        self.assertIsNone(_thesis_horizon_hours_from_forecast({}))
+        self.assertIsNone(_thesis_horizon_hours_from_forecast({"horizon_min": 0}))
+        self.assertIsNone(_thesis_horizon_hours_from_forecast({"horizon_min": "bad"}))
+
+    def test_evolution_report_appends_durable_history(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            self._seed_horizon_thesis(root)
+            ev = evaluate_thesis_evolution(
+                trade_id="H1", pair="EUR_JPY", side="LONG",
+                open_time_utc="2026-06-12T00:00:00Z",
+                current_forecast=_Forecast("RANGE", 0.4),
+                current_regime="RANGE",
+                data_root=root,
+                now=datetime(2026, 6, 12, 1, 0, tzinfo=timezone.utc),
+            )
+            assert ev is not None
+            write_thesis_evolution_report([ev], data_root=root)
+            write_thesis_evolution_report([ev], data_root=root)
+            lines = (
+                (root / THESIS_EVOLUTION_HISTORY_FILENAME).read_text().strip().splitlines()
+            )
+            self.assertEqual(len(lines), 2)
+            row = json.loads(lines[0])
+            self.assertEqual(row["trade_id"], "H1")
+            self.assertEqual(row["status"], "WEAKENED")
+            self.assertIn("generated_at_utc", row)
 
     def test_evolution_returns_none_for_missing_thesis(self) -> None:
         with tempfile.TemporaryDirectory() as td:

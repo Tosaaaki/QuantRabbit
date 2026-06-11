@@ -176,12 +176,27 @@ field is advisory audit text only and is not accepted as authorization.
   this.
 - Position underwater for less than 30 minutes — give the structure time to play out.
 
-### When in doubt, choose WAIT
+### When in doubt, WAIT — but doubt has a structural deadline
 
 `feedback_no_tight_sl_thin_market.md`「SLいらない」 / `feedback_offense_sizing.md`
 「損失出さないで稼ぎまくる」 / `feedback_market_over_risk_budget.md`「市況>リスク」.
 Holding through noise is the SL-free design's whole point — premature CLOSE locks in
-the noise loss AND forfeits the TP that's still reachable.
+the noise loss AND forfeits the TP that's still reachable. But that defense only holds
+while the entry thesis is alive: `STILL_VALID`, or `WEAKENED` inside its declared
+horizon. "The TP is still reachable" must be re-proven from current structure each
+cycle, not presumed from the entry.
+
+- `WEAKENED` is a working state, not a resting state: on the first WEAKENED cycle,
+  re-derive TP from current structure and cite the structure path to target
+  (`position:evolution:<trade_id>`). Do not extend TP while WEAKENED.
+- A `WEAKENED` thesis past its forecast-derived horizon is escalated by
+  `thesis_evolution` to `BROKEN` with a `THESIS_EXPIRED` rationale — hard Gate A,
+  standing loss-cut authorization (AGENT_CONTRACT §10). The entry thesis no longer
+  exists, so continuing to hold is an unpriced new position, not patience.
+- Ledger truth (2026-06-11): every market close held past 12h was a loss (22/22,
+  avg -2,310 JPY); every market-close winner exited inside 12h, while TP exits were
+  profitable in every hold bucket. Late capitulation is pure salvage — the decision
+  window that matters is the horizon, not day three.
 
 ## Pending Orders
 

@@ -63,6 +63,57 @@ from typing import Any, Dict, List, Optional
 
 from quant_rabbit.strategy.directional_forecaster import ENTRY_CONFIDENCE_MIN
 
+# A thesis inherits its time scope from the forecast that justified the entry:
+# the pair forecast's own declared `horizon_min`. The multiplier mirrors
+# forecast_persistence_tracker.FLIP_PERSISTENCE_CYCLES (= 3): an entry thesis
+# that has reached neither target nor invalidation after three of its own
+# forecast horizons has exhausted the predictive scope it was built on. This
+# is a thesis-declared structural bound, not a tuned market literal (§3.5).
+THESIS_HORIZON_FORECAST_MULT = float(os.environ.get("QR_THESIS_HORIZON_FORECAST_MULT", "3.0"))
+
+# Durable per-cycle archive of thesis evolution states. The per-cycle report
+# (thesis_evolution_report.json) is overwritten every cycle, which made the
+# WEAKENED -> BROKEN -> close latency unmeasurable for any trade older than
+# the current cycle (2026-06-11 exit-leak audit).
+THESIS_EVOLUTION_HISTORY_FILENAME = "thesis_evolution_history.jsonl"
+
+# Same-cycle dedup floor for the consecutive-WEAKENED check: an archived row
+# younger than half the 20-minute scheduler cadence is the current cycle's own
+# write (multiple evaluations can run inside one cycle), not a prior check.
+THESIS_EXPIRY_PRIOR_CHECK_MIN_AGE_SECONDS = 600.0
+
+
+def _thesis_horizon_hours_from_forecast(forecast: Dict[str, Any]) -> Optional[float]:
+    """Derive the thesis horizon from the entry forecast's declared horizon."""
+    try:
+        horizon_min = float(forecast.get("horizon_min") or 0)
+    except (TypeError, ValueError):
+        return None
+    if horizon_min <= 0:
+        return None
+    return horizon_min / 60.0 * THESIS_HORIZON_FORECAST_MULT
+
+
+def _last_archived_evolution_row(trade_id: str, data_root: Path) -> Optional[dict]:
+    path = data_root / THESIS_EVOLUTION_HISTORY_FILENAME
+    if not path.exists():
+        return None
+    last: Optional[dict] = None
+    try:
+        for line in path.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                d = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if str(d.get("trade_id", "")) == trade_id:
+                last = d
+    except OSError:
+        return None
+    return last
+
 
 LEDGER_FILENAME = "entry_thesis_ledger.jsonl"
 PENDING_LEDGER_FILENAME = "pending_entry_thesis_ledger.jsonl"
@@ -307,6 +358,9 @@ class EntryThesis:
     target_price: Optional[float]
     key_drivers: List[str] = field(default_factory=list)
     context_evidence: Dict[str, Any] = field(default_factory=dict)
+    # Structural time scope inherited from the entry forecast's horizon_min.
+    # None for legacy rows recorded before 2026-06-12; those never expire.
+    horizon_hours: Optional[float] = None
 
     def to_dict(self) -> dict:
         return {
@@ -322,6 +376,7 @@ class EntryThesis:
             "target_price": self.target_price,
             "key_drivers": self.key_drivers,
             "context_evidence": self.context_evidence,
+            "horizon_hours": self.horizon_hours,
         }
 
     @classmethod
@@ -339,7 +394,16 @@ class EntryThesis:
             target_price=d.get("target_price"),
             key_drivers=list(d.get("key_drivers", [])),
             context_evidence=dict(d.get("context_evidence") or {}) if isinstance(d.get("context_evidence"), dict) else {},
+            horizon_hours=_optional_positive_float(d.get("horizon_hours")),
         )
+
+
+def _optional_positive_float(value: Any) -> Optional[float]:
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        return None
+    return parsed if parsed > 0 else None
 
 
 @dataclass
@@ -357,6 +421,7 @@ class PendingEntryThesis:
     key_drivers: List[str] = field(default_factory=list)
     lane_id: Optional[str] = None
     context_evidence: Dict[str, Any] = field(default_factory=dict)
+    horizon_hours: Optional[float] = None
 
     def to_dict(self) -> dict:
         return {
@@ -373,6 +438,7 @@ class PendingEntryThesis:
             "key_drivers": self.key_drivers,
             "lane_id": self.lane_id,
             "context_evidence": self.context_evidence,
+            "horizon_hours": self.horizon_hours,
         }
 
     @classmethod
@@ -391,6 +457,7 @@ class PendingEntryThesis:
             key_drivers=list(d.get("key_drivers", [])),
             lane_id=d.get("lane_id"),
             context_evidence=dict(d.get("context_evidence") or {}) if isinstance(d.get("context_evidence"), dict) else {},
+            horizon_hours=_optional_positive_float(d.get("horizon_hours")),
         )
 
 
@@ -907,6 +974,7 @@ def record_entry_thesis_from_response_result(
                 entry_price=float(getattr(intent, "entry", 0) or 0),
                 forecast_direction=str(forecast.get("direction") or "UNCLEAR"),
                 forecast_confidence=float(forecast.get("confidence") or 0.0),
+                horizon_hours=_thesis_horizon_hours_from_forecast(forecast),
                 regime=str(forecast.get("regime") or metadata.get("regime_state") or "") or None,
                 invalidation_price=forecast.get("invalidation_price") or getattr(intent, "sl", None),
                 target_price=forecast.get("target_price") or getattr(intent, "tp", None),
@@ -966,6 +1034,7 @@ def record_entry_thesis_from_response_result(
             entry_price=float(fill_price),
             forecast_direction=str(forecast.get("direction") or "UNCLEAR"),
             forecast_confidence=float(forecast.get("confidence") or 0.0),
+            horizon_hours=_thesis_horizon_hours_from_forecast(forecast),
             regime=str(regime) if regime else None,
             invalidation_price=forecast.get("invalidation_price"),
             target_price=forecast.get("target_price"),
@@ -1047,6 +1116,7 @@ def record_entry_thesis_from_order_fill(
             entry_price=float(price),
             forecast_direction=pending.forecast_direction,
             forecast_confidence=pending.forecast_confidence,
+            horizon_hours=pending.horizon_hours,
             regime=pending.regime,
             invalidation_price=pending.invalidation_price,
             target_price=pending.target_price,
@@ -1189,6 +1259,40 @@ def evaluate_thesis_evolution(
         )
         if status == "STILL_VALID":
             status = "WEAKENED"
+
+    # THESIS_EXPIRED escalation (2026-06-12, AGENT_CONTRACT §10): a WEAKENED
+    # thesis that has outlived its declared horizon without reaching target or
+    # invalidation is no longer the entry thesis — holding it is an unpriced
+    # new position. Requires the PREVIOUS archived check (older than the
+    # same-cycle dedup floor) to also be WEAKENED or worse — the same
+    # smallest-repetition defense as the §8 loss-streak gate — so a single
+    # transient RANGE/UNCLEAR forecast cycle cannot flush a position.
+    # Ledger evidence 2026-06-11: market closes held past 12h were 22/22
+    # losses averaging -2,310 JPY while TP exits stayed profitable in every
+    # hold bucket; the leak is specifically decayed theses held past scope.
+    # STILL_VALID positions never expire on the clock alone.
+    if (
+        status == "WEAKENED"
+        and thesis.horizon_hours is not None
+        and thesis.horizon_hours > 0
+        and age_hours > thesis.horizon_hours
+    ):
+        prior = _last_archived_evolution_row(trade_id, data_root)
+        prior_status = str((prior or {}).get("status") or "")
+        prior_at = _parse_utc_timestamp((prior or {}).get("generated_at_utc"))
+        prior_is_previous_cycle = (
+            prior_at is not None
+            and (now - prior_at).total_seconds() >= THESIS_EXPIRY_PRIOR_CHECK_MIN_AGE_SECONDS
+        )
+        if prior_status in ("WEAKENED", "BROKEN") and prior_is_previous_cycle:
+            status = "BROKEN"
+            verdict = "RECOMMEND_CLOSE"
+            reasons.append(
+                f"THESIS_EXPIRED: age {age_hours:.1f}h exceeds declared horizon "
+                f"{thesis.horizon_hours:.1f}h with neither target nor invalidation reached, "
+                "and the thesis has been WEAKENED across consecutive checks; the entry "
+                "thesis no longer exists — close or re-justify via a fresh receipt"
+            )
 
     return ThesisEvolution(
         trade_id=trade_id, pair=pair, side=side_up,
@@ -1372,4 +1476,17 @@ def write_thesis_evolution_report(
         json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
         encoding="utf-8",
     )
+    # Durable append-only history: the report above is overwritten each cycle,
+    # so per-trade WEAKENED/BROKEN latency was unmeasurable beyond the current
+    # cycle and the THESIS_EXPIRED consecutive-check needs the prior state.
+    # Best-effort: history is an audit trail, not a gate.
+    history_path = data_root / THESIS_EVOLUTION_HISTORY_FILENAME
+    try:
+        with history_path.open("a", encoding="utf-8") as fh:
+            for e in evolutions:
+                row = e.to_dict()
+                row["generated_at_utc"] = payload["generated_at_utc"]
+                fh.write(json.dumps(row, ensure_ascii=False, sort_keys=True) + "\n")
+    except OSError:
+        pass
     return report_path
