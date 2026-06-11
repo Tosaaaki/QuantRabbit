@@ -167,6 +167,33 @@ class SelfImprovementAuditorTest(unittest.TestCase):
             self.assertEqual(run_count, 1)
             self.assertEqual(finding_count, summary.findings)
 
+    def test_stale_memory_health_routes_to_refresh_before_old_blocker_repair(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root, active_position=False, live_ready_market_rr=1.4, closed_pls=(100.0, 80.0, -50.0))
+            files["memory"].write_text(
+                json.dumps(
+                    {
+                        "generated_at_utc": (_NOW - timedelta(minutes=5)).isoformat(),
+                        "status": "MEMORY_HEALTH_BLOCKED",
+                        "issues": [{"code": "SHORT_FORECAST_PAIR_STALE", "severity": "BLOCK"}],
+                        "blockers": ["old forecast row predates old broker snapshot"],
+                        "warnings": [],
+                    }
+                )
+            )
+
+            summary = _run(files)
+            payload = json.loads(files["output"].read_text())
+
+        codes = {item["code"]: item for item in payload["findings"]}
+        self.assertEqual(summary.status, STATUS_BLOCKED)
+        self.assertIn("MEMORY_HEALTH_STALE", codes)
+        self.assertNotIn("MEMORY_HEALTH_BLOCKED", codes)
+        evidence = codes["MEMORY_HEALTH_STALE"]["evidence"]
+        self.assertEqual(evidence["memory_health_generated_at_utc"], (_NOW - timedelta(minutes=5)).isoformat())
+        self.assertEqual(evidence["stale_against"][0]["label"], "broker_snapshot")
+
     def test_missing_entry_thesis_ledger_without_open_trades_is_not_a_finding(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -1719,7 +1746,15 @@ def _fixtures(
     files["intents"].write_text(json.dumps({"results": results}))
     if write_memory:
         files["memory"].write_text(
-            json.dumps({"status": "MEMORY_HEALTH_PASS", "issues": [], "blockers": [], "warnings": []})
+            json.dumps(
+                {
+                    "generated_at_utc": _NOW.isoformat(),
+                    "status": "MEMORY_HEALTH_PASS",
+                    "issues": [],
+                    "blockers": [],
+                    "warnings": [],
+                }
+            )
         )
     files["learning"].write_text(
         json.dumps(

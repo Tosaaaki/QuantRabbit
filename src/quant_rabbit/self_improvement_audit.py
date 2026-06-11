@@ -212,6 +212,8 @@ class SelfImprovementAuditor:
                 loaded=memory_loaded,
                 path=memory_health_path,
                 target_open=target_open,
+                snapshot=snapshot,
+                intents=intents,
             )
         )
         findings.extend(_learning_findings(run_id=run_id, loaded=learning_loaded, path=learning_audit_path))
@@ -888,6 +890,8 @@ def _memory_findings(
     loaded: _LoadedJson,
     path: Path,
     target_open: bool,
+    snapshot: dict[str, Any],
+    intents: dict[str, Any],
 ) -> list[dict[str, Any]]:
     if loaded.error is not None:
         return [
@@ -901,6 +905,44 @@ def _memory_findings(
             )
         ]
     payload = loaded.payload or {}
+    if target_open:
+        generated_at = _parse_utc(payload.get("generated_at_utc"))
+        if generated_at is None:
+            return [
+                _finding(
+                    run_id=run_id,
+                    priority="P0",
+                    layer="memory",
+                    code="MEMORY_HEALTH_STALE",
+                    message=f"memory_health lacks generated_at_utc while target is open: {path}",
+                    next_action="Regenerate memory-health before repairing its internal blockers or trusting entry/verify routing.",
+                    evidence={"path": str(path), "reason": "missing_generated_at_utc"},
+                )
+            ]
+        stale_refs = _memory_health_stale_refs(generated_at=generated_at, snapshot=snapshot, intents=intents)
+        if stale_refs:
+            return [
+                _finding(
+                    run_id=run_id,
+                    priority="P0",
+                    layer="memory",
+                    code="MEMORY_HEALTH_STALE",
+                    message=(
+                        "memory_health predates current routed evidence while target is open: "
+                        + "; ".join(
+                            f"{item['label']}={item['timestamp_utc']}" for item in stale_refs
+                        )
+                    ),
+                    next_action=(
+                        "Run memory-health against the current broker snapshot/order intents before "
+                        "repairing old artifact blockers or trusting entry/verify routing."
+                    ),
+                    evidence={
+                        "memory_health_generated_at_utc": generated_at.isoformat(),
+                        "stale_against": stale_refs,
+                    },
+                )
+            ]
     status = str(payload.get("status") or "")
     issues = payload.get("issues") if isinstance(payload.get("issues"), list) else []
     blockers = payload.get("blockers") if isinstance(payload.get("blockers"), list) else []
@@ -929,6 +971,30 @@ def _memory_findings(
             )
         ]
     return []
+
+
+def _memory_health_stale_refs(
+    *,
+    generated_at: datetime,
+    snapshot: dict[str, Any],
+    intents: dict[str, Any],
+) -> list[dict[str, str]]:
+    """Match trader routing freshness so audit fixes current holes, not old ones."""
+
+    refs: list[tuple[str, datetime]] = []
+    account = snapshot.get("account") if isinstance(snapshot.get("account"), dict) else {}
+    snapshot_ts = _parse_utc(snapshot.get("fetched_at_utc") or account.get("fetched_at_utc"))
+    intents_ts = _parse_utc(intents.get("generated_at_utc"))
+    if snapshot_ts is not None:
+        refs.append(("broker_snapshot", snapshot_ts))
+    if intents_ts is not None:
+        refs.append(("order_intents", intents_ts))
+
+    stale: list[dict[str, str]] = []
+    for label, ref_ts in refs:
+        if generated_at < ref_ts:
+            stale.append({"label": label, "timestamp_utc": ref_ts.isoformat()})
+    return stale
 
 
 def _learning_findings(*, run_id: str, loaded: _LoadedJson, path: Path) -> list[dict[str, Any]]:
