@@ -42,12 +42,15 @@ def _env_nonnegative_float(name: str, default: float) -> float:
         return default
 
 
-# Match the live-entry telemetry gate's cycle-preflight tolerance. Market
-# refresh can take a few minutes after projection verification; inside this
-# window the projection is not yet a stale-state defect.
+# Match the live-entry telemetry gate's cycle-preflight tolerance
+# (intent_generator.PROJECTION_PENDING_EXPIRY_GRACE_SECONDS): one full
+# 20-minute scheduler cadence. The consolidated cycle's refresh-to-gateway
+# latency was measured at ~10 minutes live (2026-06-11), so rows that cross
+# their resolution boundary inside one cadence are next-preflight work, not a
+# stale-state defect.
 PROJECTION_PENDING_EXPIRY_GRACE_SECONDS = _env_nonnegative_float(
     "QR_PROJECTION_PENDING_EXPIRY_GRACE_SECONDS",
-    300.0,
+    1200.0,
 )
 
 # Scheduled runners and wrappers can retry the same audit after a blocked exit

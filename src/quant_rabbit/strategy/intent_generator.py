@@ -351,9 +351,18 @@ RECOVERY_HEDGE_CONTINUATION_MAX_SCALE = 0.35
 # a global live-entry blocker seconds later in the same cycle. The grace is an
 # execution tolerance, not a forecast-validity extension: projections older
 # than the grace remain BLOCKing until verify-projections resolves them.
+# Grace = the worst-case same-cycle latency between the cycle's projection
+# preflight (which resolves every already-expired PENDING row) and gateway
+# staging. The consolidated trader cycle includes model reasoning between
+# refresh and gateway, measured at ~10 minutes live (2026-06-11: preflight
+# 11:17:12Z resolved all expired rows, staging 11:27:16Z re-blocked 3 of 4
+# basket lanes on rows that crossed expiry in between). One full 20-minute
+# scheduler cadence is the natural bound: by then the next preflight has run,
+# so anything older is a genuine verification-pipeline defect, not boundary
+# latency.
 PROJECTION_PENDING_EXPIRY_GRACE_SECONDS = _env_float(
     "QR_PROJECTION_PENDING_EXPIRY_GRACE_SECONDS",
-    300.0,
+    1200.0,
     minimum=0.0,
 )
 FORECAST_CONFIDENCE_TELEMETRY_TOLERANCE = _env_float(

@@ -11,6 +11,7 @@ from pathlib import Path
 
 from quant_rabbit.cli import main
 from quant_rabbit.self_improvement_audit import (
+    PROJECTION_PENDING_EXPIRY_GRACE_SECONDS,
     STATUS_ACTION_REQUIRED,
     STATUS_BLOCKED,
     SelfImprovementAuditor,
@@ -25,13 +26,18 @@ from quant_rabbit.self_improvement_audit import (
 
 class SelfImprovementAuditorTest(unittest.TestCase):
     def test_projection_expiry_uses_live_telemetry_grace(self) -> None:
+        grace = timedelta(seconds=PROJECTION_PENDING_EXPIRY_GRACE_SECONDS)
         row = {
-            "timestamp_emitted_utc": (_NOW - timedelta(minutes=32)).isoformat(),
+            "timestamp_emitted_utc": (
+                _NOW - timedelta(minutes=30) - grace + timedelta(seconds=1)
+            ).isoformat(),
             "resolution_window_min": 30.0,
         }
         self.assertFalse(_projection_expired(row, now=_NOW))
 
-        row["timestamp_emitted_utc"] = (_NOW - timedelta(minutes=36)).isoformat()
+        row["timestamp_emitted_utc"] = (
+            _NOW - timedelta(minutes=30) - grace - timedelta(seconds=1)
+        ).isoformat()
         self.assertTrue(_projection_expired(row, now=_NOW))
 
     def test_top_intent_blockers_ignore_dry_run_strategy_warnings(self) -> None:
