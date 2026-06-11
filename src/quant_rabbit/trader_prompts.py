@@ -57,6 +57,7 @@ from quant_rabbit.paths import (
     DEFAULT_PAIR_CHARTS,
     DEFAULT_POSITION_MANAGEMENT,
     DEFAULT_POSITION_EXECUTION,
+    DEFAULT_SELF_IMPROVEMENT_AUDIT,
     DEFAULT_STRATEGY_PROFILE,
     DEFAULT_TRADER_OVERRIDES,
     DEFAULT_TRADER_PROMPTS_DIR,
@@ -157,6 +158,7 @@ def route_trader_prompts(
     learning_audit_path: Path = DEFAULT_LEARNING_AUDIT,
     campaign_plan_path: Path | None = DEFAULT_CAMPAIGN_PLAN,
     memory_health_path: Path | None = DEFAULT_MEMORY_HEALTH,
+    self_improvement_audit_path: Path | None = DEFAULT_SELF_IMPROVEMENT_AUDIT,
     strategy_profile_path: Path | None = DEFAULT_STRATEGY_PROFILE,
     trader_overrides_path: Path | None = DEFAULT_TRADER_OVERRIDES,
     decision_response_path: Path | None = DEFAULT_CODEX_TRADER_DECISION_RESPONSE,
@@ -308,6 +310,16 @@ def route_trader_prompts(
         return _build_route(
             BRANCH_REFRESH,
             (*carry_reasons, *evidence_refresh_reasons),
+            include_content=include_content,
+        )
+
+    self_improvement_repair_reasons = _self_improvement_repair_reasons(
+        self_improvement_audit_path=self_improvement_audit_path,
+    )
+    if _target_open(target_state) and self_improvement_repair_reasons:
+        return _build_route(
+            BRANCH_LEARNING,
+            (*carry_reasons, *advisory_close_review_reasons, *pending_entry_reasons, *self_improvement_repair_reasons),
             include_content=include_content,
         )
 
@@ -1440,6 +1452,51 @@ def _memory_health_staleness_reasons(
                 f"memory_health generated at {generated_at.isoformat()} predates "
                 f"{label} {ref_ts.isoformat()}; run memory-health before entry/verify routing"
             )
+    return tuple(reasons)
+
+
+def _self_improvement_repair_reasons(*, self_improvement_audit_path: Path | None) -> tuple[str, ...]:
+    if self_improvement_audit_path is None or not self_improvement_audit_path.exists():
+        return ()
+    try:
+        payload = _load_json(self_improvement_audit_path)
+    except (OSError, ValueError, json.JSONDecodeError):
+        return ()
+    reasons: list[str] = []
+    for item in payload.get("findings", []) or []:
+        if not isinstance(item, dict):
+            continue
+        if str(item.get("priority") or "").upper() != "P0":
+            continue
+        code = str(item.get("code") or "")
+        layer = str(item.get("layer") or "")
+        if layer != "profitability" or code != "PERSISTENT_PROFITABILITY_DISCIPLINE_BLOCKED":
+            continue
+        evidence = item.get("evidence") if isinstance(item.get("evidence"), dict) else {}
+        system = (
+            evidence.get("system_defect_evidence")
+            if isinstance(evidence.get("system_defect_evidence"), dict)
+            else {}
+        )
+        details: list[str] = []
+        streak = evidence.get("current_streak")
+        if streak is not None:
+            details.append(f"streak={streak}")
+        pf = system.get("profit_factor")
+        expectancy = system.get("expectancy_jpy")
+        avg_loss = system.get("avg_loss_jpy_abs")
+        avg_win = system.get("avg_win_jpy")
+        if pf is not None:
+            details.append(f"PF={pf}")
+        if expectancy is not None:
+            details.append(f"expectancy={expectancy}")
+        if avg_loss is not None and avg_win is not None:
+            details.append(f"avg_loss={avg_loss} vs avg_win={avg_win}")
+        suffix = f" ({', '.join(details)})" if details else ""
+        reasons.append(
+            "self-improvement profitability P0 blocks entry routing; use learning/gap repair before new risk"
+            f"{suffix}"
+        )
     return tuple(reasons)
 
 

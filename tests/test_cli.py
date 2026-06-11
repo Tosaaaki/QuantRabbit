@@ -1630,6 +1630,9 @@ class LiveRuntimeBootstrapTest(unittest.TestCase):
                     # entry/verify routing and must use the same SL-free
                     # defaults when classifying broker snapshot state.
                     "memory-health",
+                    # self-improvement-audit is consumed by the verifier and
+                    # gateway as the live-facing repair gate.
+                    "self-improvement-audit",
                 }
             ),
         )
@@ -1883,6 +1886,21 @@ class ConsolidatedCycleCommandTest(unittest.TestCase):
         self.assertFalse(aborted)
         self.assertEqual([r["status"] for r in results], ["FAILED", "FAILED"])
 
+    def test_run_cycle_steps_accepts_declared_detection_exit_codes(self) -> None:
+        from quant_rabbit.cli import _run_cycle_steps
+
+        steps = [
+            {"argv": ["definitely-not-a-command"], "required": False, "ok_rcs": [0, 2]},
+            {"argv": ["another-bad-command"], "required": False},
+        ]
+        results, aborted = _run_cycle_steps(steps)
+
+        self.assertFalse(aborted)
+        self.assertEqual(results[0]["status"], "OK")
+        self.assertEqual(results[0]["rc"], 2)
+        self.assertNotIn("tail", results[0])
+        self.assertEqual(results[1]["status"], "FAILED")
+
     def test_cycle_refresh_steps_mirror_skill_skeleton(self) -> None:
         from quant_rabbit.cli import _cycle_refresh_steps, _cycle_sidecar_steps
 
@@ -1893,7 +1911,8 @@ class ConsolidatedCycleCommandTest(unittest.TestCase):
         self.assertLess(refresh.index("verify-projections"), refresh.index("generate-intents --snapshot data/broker_snapshot.json"))
         self.assertLess(refresh.index("tp-rebalance"), refresh.index("generate-intents --snapshot data/broker_snapshot.json"))
         self.assertIn("news-health --strict", refresh)
-        self.assertEqual(refresh[-1], "memory-health")
+        self.assertLess(refresh.index("memory-health"), refresh.index("self-improvement-audit"))
+        self.assertEqual(refresh[-1], "self-improvement-audit")
 
         with mock.patch.dict(os.environ, {"QR_LIVE_ENABLED": ""}, clear=False):
             sidecars = [" ".join(s["argv"]) for s in _cycle_sidecar_steps()]

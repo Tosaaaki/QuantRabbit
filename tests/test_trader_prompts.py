@@ -14,6 +14,7 @@ from unittest.mock import patch
 from quant_rabbit.cli import main
 from quant_rabbit.trader_prompts import (
     BRANCH_ENTRY,
+    BRANCH_LEARNING,
     BRANCH_POSITION,
     BRANCH_REFRESH,
     BRANCH_VERIFY,
@@ -48,6 +49,41 @@ class TraderPromptRouteTest(unittest.TestCase):
         read_paths = _read_paths(route)
         self.assertTrue(any(path.endswith("30_entry_decision.md") for path in read_paths))
         self.assertTrue(any(path.endswith("90_decision_receipt_schema.md") for path in read_paths))
+
+    def test_persistent_profitability_p0_routes_to_learning_repair_before_entry(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root)
+            files["self_improvement_audit"].write_text(
+                json.dumps(
+                    {
+                        "status": "SELF_IMPROVEMENT_BLOCKED",
+                        "findings": [
+                            {
+                                "priority": "P0",
+                                "layer": "profitability",
+                                "code": "PERSISTENT_PROFITABILITY_DISCIPLINE_BLOCKED",
+                                "message": "profitability discipline has failed for 27 consecutive audit run(s)",
+                                "evidence": {
+                                    "current_streak": 27,
+                                    "system_defect_evidence": {
+                                        "profit_factor": 0.258,
+                                        "expectancy_jpy": -534.167,
+                                        "avg_win_jpy": 442.207,
+                                        "avg_loss_jpy_abs": 1244.257,
+                                    },
+                                },
+                            }
+                        ],
+                    }
+                )
+            )
+
+            route = route_trader_prompts(**_route_paths(files), decision_response_path=None)
+
+        self.assertEqual(route.branch, BRANCH_LEARNING)
+        self.assertTrue(any("self-improvement profitability P0 blocks entry routing" in reason for reason in route.reasons))
+        self.assertTrue(any("streak=27" in reason for reason in route.reasons))
 
     def test_entry_branch_names_pending_entry_gateway_blocker(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -1736,6 +1772,7 @@ def _route_paths(files: dict[str, Path]) -> dict[str, Path]:
         "learning_audit_path": files["learning_audit"],
         "campaign_plan_path": files["campaign_plan"],
         "memory_health_path": files["memory_health"],
+        "self_improvement_audit_path": files["self_improvement_audit"],
         "strategy_profile_path": files["strategy_profile"],
         "trader_overrides_path": files["trader_overrides"],
         "gpt_decision_path": files["gpt_decision"],
@@ -1767,6 +1804,7 @@ def _fixtures(root: Path, *, positions: list[dict] | None = None) -> dict[str, P
         "learning_audit": root / "learning_audit.json",
         "campaign_plan": root / "daily_campaign_plan.json",
         "memory_health": root / "memory_health.json",
+        "self_improvement_audit": root / "self_improvement_audit.json",
         "strategy_profile": root / "strategy_profile.json",
         "history_db": root / "legacy_history.db",
         "trader_overrides": root / "trader_overrides.json",
@@ -1859,6 +1897,18 @@ def _fixtures(root: Path, *, positions: list[dict] | None = None) -> dict[str, P
                 "issues": [],
                 "blockers": [],
                 "warnings": [],
+            }
+        )
+    )
+    files["self_improvement_audit"].write_text(
+        json.dumps(
+            {
+                "generated_at_utc": now,
+                "status": "SELF_IMPROVEMENT_OK",
+                "p0_findings": 0,
+                "p1_findings": 0,
+                "p2_findings": 0,
+                "findings": [],
             }
         )
     )

@@ -1050,6 +1050,11 @@ _LIVE_RUNTIME_COMMANDS: frozenset[str] = frozenset(
         # prompt branch can move into entry/verify. It does not send orders,
         # but it must classify SL-free live state under the same defaults.
         "memory-health",
+        # self-improvement-audit is the live-facing repair gate consumed by
+        # gpt-trader-decision and LiveOrderGateway. It reads broker/runtime
+        # state only, but stale SL-free classification would hide or invent P0
+        # blockers before new-risk verification.
+        "self-improvement-audit",
         # Consolidated cycle commands run the same refresh/sidecar steps the
         # wrapper-era skeleton ran one-by-one; they must see identical SL-free
         # defaults so nested generate-intents / position-management /
@@ -1561,6 +1566,7 @@ def _cycle_refresh_steps(daily_risk_pct: str) -> list[dict[str, Any]]:
         {"argv": ["forecast-persistence-check"], "required": False},
         {"argv": ["position-management"], "required": False},
         {"argv": ["memory-health"], "required": False},
+        {"argv": ["self-improvement-audit"], "required": False, "ok_rcs": [0, 2]},
     ]
 
 
@@ -1617,8 +1623,9 @@ def _run_cycle_steps(steps: list[dict[str, Any]]) -> tuple[list[dict[str, Any]],
             rc = 1
             buf.write(f"\n{type(exc).__name__}: {exc}")
         elapsed = round(_time.monotonic() - started, 1)
-        entry: dict[str, Any] = {"step": name, "status": "OK" if rc == 0 else "FAILED", "rc": rc, "seconds": elapsed}
-        if rc != 0:
+        ok_rcs = {int(item) for item in spec.get("ok_rcs", [0])}
+        entry: dict[str, Any] = {"step": name, "status": "OK" if rc in ok_rcs else "FAILED", "rc": rc, "seconds": elapsed}
+        if rc not in ok_rcs:
             tail = buf.getvalue().strip()
             entry["tail"] = tail[-1500:]
             if spec.get("required"):
@@ -1716,6 +1723,21 @@ def _cycle_digest(*, kind: str, step_results: list[dict[str, Any]], aborted: boo
         digest["memory_health"] = {
             "status": memory_health.get("status"),
             "blockers": memory_health.get("blockers") or memory_health.get("issues"),
+        }
+
+    self_improvement = _read_json_quiet(DEFAULT_SELF_IMPROVEMENT_AUDIT)
+    if isinstance(self_improvement, dict):
+        digest["self_improvement_audit"] = {
+            "generated_at_utc": self_improvement.get("generated_at_utc"),
+            "status": self_improvement.get("status"),
+            "p0_findings": self_improvement.get("p0_findings"),
+            "p1_findings": self_improvement.get("p1_findings"),
+            "p2_findings": self_improvement.get("p2_findings"),
+            "p0_codes": [
+                item.get("code")
+                for item in self_improvement.get("findings", []) or []
+                if isinstance(item, dict) and str(item.get("priority") or "").upper() == "P0"
+            ][:8],
         }
 
     news_health = _read_json_quiet(DEFAULT_NEWS_HEALTH)
