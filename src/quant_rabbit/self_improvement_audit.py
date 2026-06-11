@@ -2951,6 +2951,13 @@ def _decision_artifact_findings(
         stale_close_for_closed_trades = bool(blocking) and (
             action == "CLOSE" and bool(close_ids) and close_ids.isdisjoint(active_trade_ids)
         )
+        request_evidence_no_risk = (
+            status == "ACCEPTED"
+            and action == "REQUEST_EVIDENCE"
+            and not active_trade_ids
+            and live_ready_lanes <= 0
+            and pending_entry_orders <= 0
+        )
         if (
             snapshot_ts is not None
             and generated_at is not None
@@ -2960,7 +2967,13 @@ def _decision_artifact_findings(
         ):
             priority = (
                 "P0"
-                if active_trade_ids or (target_open and live_ready_lanes <= 0 and pending_entry_orders <= 0)
+                if active_trade_ids
+                or (
+                    target_open
+                    and live_ready_lanes <= 0
+                    and pending_entry_orders <= 0
+                    and not request_evidence_no_risk
+                )
                 else "P1"
             )
             out.append(

@@ -1657,6 +1657,35 @@ class SelfImprovementAuditorTest(unittest.TestCase):
         )
         self.assertEqual(codes["LATEST_GPT_DECISION_STALE"]["evidence"]["current_streak"], 1)
 
+    def test_accepted_request_evidence_predating_snapshot_without_risk_is_p1(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(
+                root,
+                active_position=False,
+                closed_pls=(100.0, 80.0, -50.0),
+            )
+            files["gpt"].write_text(
+                json.dumps(
+                    {
+                        "status": "ACCEPTED",
+                        "generated_at_utc": (_NOW - timedelta(minutes=1)).isoformat(),
+                        "decision": {"action": "REQUEST_EVIDENCE"},
+                        "verification_issues": [],
+                    }
+                )
+            )
+
+            summary = _run(files)
+            payload = json.loads(files["output"].read_text())
+
+        codes = {item["code"]: item for item in payload["findings"]}
+        self.assertEqual(summary.status, STATUS_BLOCKED)
+        self.assertIn("LATEST_GPT_DECISION_STALE", codes)
+        self.assertEqual(codes["LATEST_GPT_DECISION_STALE"]["priority"], "P1")
+        self.assertEqual(codes["LATEST_GPT_DECISION_STALE"]["evidence"]["live_ready_lanes"], 0)
+        self.assertEqual(codes["LATEST_GPT_DECISION_STALE"]["evidence"]["pending_entry_orders"], 0)
+
     def test_stale_gpt_decision_finding_records_history_streak(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
