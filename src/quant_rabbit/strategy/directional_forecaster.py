@@ -1211,9 +1211,24 @@ def _contested_range_raw_confidence(
         return None
     if range_score <= 0 or winner_score <= 0 or runner_up_score <= 0:
         return None
-    if range_score < margin:
-        return None
     directional_uncertainty = 1.0 - min(1.0, margin / max(winner_score, 1.0))
+    if range_score < margin:
+        # The aggregate range-prior echo lost to directional signal noise,
+        # but the phase detector's DIRECT box measurement can still qualify.
+        # 2026-06-11 live funnel: 19/28 pairs sat in IN_RANGE/RANGE_FORMING
+        # boxes (phase confidence 0.66-1.00) while the production signal
+        # book inflated up/down scores enough that margin exceeded the
+        # small range_score echo — so 60+ rotation lanes per cycle died as
+        # "UNCLEAR conf=0.1" despite a measured, tradeable box. The bar is
+        # phase confidence >= 0.5, which by the detector's own formula
+        # (confidence = evidence / (2 x FORECAST_RANGE_PHASE_MIN_EVIDENCE))
+        # means its evidence reached the module's documented minimum-evidence
+        # constant — not a new tuned threshold. BREAKOUT_PENDING is already
+        # excluded above, so squeeze boxes still refuse rotation.
+        phase_confidence = max(0.0, min(1.0, float(phase.confidence or 0.0)))
+        if phase_confidence < 0.5:
+            return None
+        return min(1.0, max(0.0, (directional_uncertainty + phase_confidence) / 2.0))
     range_materiality = min(1.0, range_score / max(runner_up_score, 1.0))
     return min(1.0, max(0.0, (directional_uncertainty + range_materiality) / 2.0))
 

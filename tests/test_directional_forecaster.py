@@ -871,3 +871,53 @@ class ForecastGeometryTest(unittest.TestCase):
         self.assertEqual(forecast.direction, "UP")
         self.assertEqual(forecast.horizon_min, FORECAST_EXECUTION_HORIZON_MIN)
         self.assertNotIn("anchor horizon", forecast.rationale_summary)
+
+
+class ContestedRangePhaseEvidenceTest(unittest.TestCase):
+    """_contested_range_raw_confidence phase-evidence path (2026-06-11).
+
+    Live funnel regression: 19/28 pairs sat in measured boxes while the
+    production signal book inflated directional scores enough that
+    range_score < margin, so 60+ rotation lanes per cycle died as UNCLEAR.
+    The phase detector's own confidence (>= 0.5 == its documented
+    minimum-evidence bar) now qualifies RANGE resolution directly.
+    """
+
+    @staticmethod
+    def _compute(phase: str, phase_conf: float, *, range_score: float, margin_pair=(100.0, 92.0)):
+        from quant_rabbit.strategy.directional_forecaster import (
+            _RangePhase,
+            _contested_range_raw_confidence,
+        )
+
+        winner, runner_up = margin_pair
+        return _contested_range_raw_confidence(
+            phase=_RangePhase(
+                phase=phase, confidence=phase_conf, direction=None,
+                rationale="test", evidence=("e1",),
+            ),
+            winner_score=winner,
+            runner_up_score=runner_up,
+            range_score=range_score,
+            margin=winner - runner_up,
+        )
+
+    def test_confident_box_qualifies_even_when_range_echo_lost_to_noise(self) -> None:
+        # margin 8 > range_score 5, but the box itself measured 0.66.
+        conf = self._compute("IN_RANGE", 0.66, range_score=5.0)
+        self.assertIsNotNone(conf)
+        # (directional_uncertainty 0.92 + phase 0.66) / 2 = 0.79
+        self.assertAlmostEqual(conf, 0.79, places=2)
+
+    def test_weak_box_below_min_evidence_stays_unclear(self) -> None:
+        self.assertIsNone(self._compute("RANGE_FORMING", 0.49, range_score=5.0))
+
+    def test_breakout_pending_box_never_qualifies(self) -> None:
+        self.assertIsNone(self._compute("BREAKOUT_PENDING", 1.0, range_score=5.0))
+
+    def test_strong_range_echo_path_unchanged(self) -> None:
+        # range_score 20 >= margin 8 → original blend, phase conf irrelevant.
+        conf = self._compute("IN_RANGE", 0.0, range_score=20.0)
+        self.assertIsNotNone(conf)
+        # (0.92 + min(1, 20/92)) / 2 ≈ 0.5687
+        self.assertAlmostEqual(conf, (0.92 + 20.0 / 92.0) / 2.0, places=3)
