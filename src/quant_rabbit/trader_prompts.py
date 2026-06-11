@@ -1483,34 +1483,73 @@ def _self_improvement_repair_reasons(*, self_improvement_audit_path: Path | None
             continue
         code = str(item.get("code") or "")
         layer = str(item.get("layer") or "")
-        if layer != "profitability" or code != "PERSISTENT_PROFITABILITY_DISCIPLINE_BLOCKED":
-            continue
         evidence = item.get("evidence") if isinstance(item.get("evidence"), dict) else {}
-        system = (
-            evidence.get("system_defect_evidence")
-            if isinstance(evidence.get("system_defect_evidence"), dict)
-            else {}
-        )
-        details: list[str] = []
-        streak = evidence.get("current_streak")
-        if streak is not None:
-            details.append(f"streak={streak}")
-        pf = system.get("profit_factor")
-        expectancy = system.get("expectancy_jpy")
-        avg_loss = system.get("avg_loss_jpy_abs")
-        avg_win = system.get("avg_win_jpy")
-        if pf is not None:
-            details.append(f"PF={pf}")
-        if expectancy is not None:
-            details.append(f"expectancy={expectancy}")
-        if avg_loss is not None and avg_win is not None:
-            details.append(f"avg_loss={avg_loss} vs avg_win={avg_win}")
+        if layer == "profitability" and code == "PERSISTENT_PROFITABILITY_DISCIPLINE_BLOCKED":
+            system = (
+                evidence.get("system_defect_evidence")
+                if isinstance(evidence.get("system_defect_evidence"), dict)
+                else {}
+            )
+            details: list[str] = []
+            streak = evidence.get("current_streak")
+            if streak is not None:
+                details.append(f"streak={streak}")
+            pf = system.get("profit_factor")
+            expectancy = system.get("expectancy_jpy")
+            avg_loss = system.get("avg_loss_jpy_abs")
+            avg_win = system.get("avg_win_jpy")
+            if pf is not None:
+                details.append(f"PF={pf}")
+            if expectancy is not None:
+                details.append(f"expectancy={expectancy}")
+            if avg_loss is not None and avg_win is not None:
+                details.append(f"avg_loss={avg_loss} vs avg_win={avg_win}")
+            suffix = f" ({', '.join(details)})" if details else ""
+            reasons.append(
+                "self-improvement profitability P0 blocks entry routing; use learning/gap repair before new risk"
+                f"{suffix}"
+            )
+            continue
+        if code == "LATEST_GPT_DECISION_STALE":
+            streak = _optional_int(evidence.get("current_streak"))
+            if streak is None or streak < SELF_IMPROVEMENT_STALE_DECISION_REPAIR_STREAK:
+                continue
+            snapshot_ts = evidence.get("snapshot_fetched_at_utc")
+            details = [f"streak={streak}"]
+            if snapshot_ts:
+                details.append(f"snapshot={snapshot_ts}")
+            reasons.append(
+                "self-improvement decision-history P0 persists; rewrite or re-verify the GPT decision "
+                f"against current broker truth before new risk ({', '.join(details)})"
+            )
+            continue
+        details = []
+        if layer:
+            details.append(f"layer={layer}")
+        count = evidence.get("count")
+        if count is None:
+            count = evidence.get("expired_pending")
+        if count is not None:
+            details.append(f"count={count}")
+        message = str(item.get("message") or code).strip()
         suffix = f" ({', '.join(details)})" if details else ""
         reasons.append(
-            "self-improvement profitability P0 blocks entry routing; use learning/gap repair before new risk"
-            f"{suffix}"
+            f"self-improvement {code or 'P0'} blocks entry routing; repair before new risk"
+            f"{suffix}: {message}"
         )
     return tuple(reasons)
+
+
+def _optional_int(value: Any) -> int | None:
+    if value is None or value == "":
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+SELF_IMPROVEMENT_STALE_DECISION_REPAIR_STREAK = 2
 
 
 def _memory_health_blocker_codes(payload: dict[str, Any]) -> tuple[str, ...]:

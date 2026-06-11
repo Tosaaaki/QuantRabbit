@@ -85,6 +85,88 @@ class TraderPromptRouteTest(unittest.TestCase):
         self.assertTrue(any("self-improvement profitability P0 blocks entry routing" in reason for reason in route.reasons))
         self.assertTrue(any("streak=27" in reason for reason in route.reasons))
 
+    def test_projection_p0_routes_to_learning_repair_before_entry(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root)
+            files["self_improvement_audit"].write_text(
+                json.dumps(
+                    {
+                        "status": "SELF_IMPROVEMENT_BLOCKED",
+                        "findings": [
+                            {
+                                "priority": "P0",
+                                "layer": "forecast",
+                                "code": "PROJECTION_LEDGER_EXPIRED_PENDING",
+                                "message": "projection ledger has 33 expired PENDING projection(s)",
+                                "evidence": {"expired_pending": 33},
+                            }
+                        ],
+                    }
+                )
+            )
+
+            route = route_trader_prompts(**_route_paths(files), decision_response_path=None)
+
+        self.assertEqual(route.branch, BRANCH_LEARNING)
+        self.assertTrue(any("PROJECTION_LEDGER_EXPIRED_PENDING blocks entry routing" in reason for reason in route.reasons))
+        self.assertTrue(any("count=33" in reason for reason in route.reasons))
+
+    def test_persistent_stale_gpt_decision_p0_routes_to_learning_repair(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root)
+            files["self_improvement_audit"].write_text(
+                json.dumps(
+                    {
+                        "status": "SELF_IMPROVEMENT_BLOCKED",
+                        "findings": [
+                            {
+                                "priority": "P0",
+                                "layer": "decision_history",
+                                "code": "LATEST_GPT_DECISION_STALE",
+                                "message": "latest GPT decision receipt predates the current broker snapshot",
+                                "evidence": {
+                                    "current_streak": 13,
+                                    "snapshot_fetched_at_utc": "2026-06-11T09:45:47+00:00",
+                                },
+                            }
+                        ],
+                    }
+                )
+            )
+
+            route = route_trader_prompts(**_route_paths(files), decision_response_path=None)
+
+        self.assertEqual(route.branch, BRANCH_LEARNING)
+        self.assertTrue(any("decision-history P0 persists" in reason for reason in route.reasons))
+        self.assertTrue(any("streak=13" in reason for reason in route.reasons))
+
+    def test_single_stale_gpt_decision_p0_still_allows_fresh_entry_decision(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root)
+            files["self_improvement_audit"].write_text(
+                json.dumps(
+                    {
+                        "status": "SELF_IMPROVEMENT_BLOCKED",
+                        "findings": [
+                            {
+                                "priority": "P0",
+                                "layer": "decision_history",
+                                "code": "LATEST_GPT_DECISION_STALE",
+                                "message": "latest GPT decision receipt predates the current broker snapshot",
+                                "evidence": {"current_streak": 1},
+                            }
+                        ],
+                    }
+                )
+            )
+
+            route = route_trader_prompts(**_route_paths(files), decision_response_path=None)
+
+        self.assertEqual(route.branch, BRANCH_ENTRY)
+
     def test_profitability_p0_with_pending_entry_routes_to_position_cancel_review(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
