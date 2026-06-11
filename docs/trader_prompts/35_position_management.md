@@ -188,6 +188,10 @@ the noise loss AND forfeits the TP that's still reachable.
 - Pending entries are inherited across scheduler handoff.
 - Do not cancel another cycle's pending order without an explicit reason in the next decision receipt.
 - `CANCEL_PENDING` must list current trader-owned OANDA pending entry ids in `cancel_order_ids`; verified ids are canceled by the gateway cycle, and no fresh entry is sent in that same cycle.
+- If a self-improvement P0 blocks fresh risk, trader-owned pending entry orders
+  are still fillable new-risk exposure. Either write `CANCEL_PENDING` for the
+  current pending ids or explicitly justify why the existing order should remain;
+  do not route to learning/gap work while leaving that risk unreviewed.
 - If the daily target is already reached, trader-owned pending entry ids are canceled instead of left fillable.
 - Manual/tagless pending orders are observed only.
 

@@ -317,6 +317,19 @@ def route_trader_prompts(
         self_improvement_audit_path=self_improvement_audit_path,
     )
     if _target_open(target_state) and self_improvement_repair_reasons:
+        if pending_entry_reasons:
+            return _build_route(
+                BRANCH_POSITION,
+                (
+                    *carry_reasons,
+                    *advisory_close_review_reasons,
+                    *pending_entry_reasons,
+                    "self-improvement P0 blocks fresh risk while trader-owned pending entry risk remains fillable; "
+                    "write CANCEL_PENDING or explicitly justify keeping the current pending order before learning/gap work",
+                    *self_improvement_repair_reasons,
+                ),
+                include_content=include_content,
+            )
         return _build_route(
             BRANCH_LEARNING,
             (*carry_reasons, *advisory_close_review_reasons, *pending_entry_reasons, *self_improvement_repair_reasons),

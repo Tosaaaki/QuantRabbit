@@ -85,6 +85,49 @@ class TraderPromptRouteTest(unittest.TestCase):
         self.assertTrue(any("self-improvement profitability P0 blocks entry routing" in reason for reason in route.reasons))
         self.assertTrue(any("streak=27" in reason for reason in route.reasons))
 
+    def test_profitability_p0_with_pending_entry_routes_to_position_cancel_review(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root)
+            snapshot = json.loads(files["snapshot"].read_text())
+            snapshot["orders"] = [
+                {
+                    "order_id": "472155",
+                    "pair": "EUR_CHF",
+                    "order_type": "STOP",
+                    "state": "PENDING",
+                    "units": 5700,
+                    "owner": "trader",
+                    "trade_id": None,
+                }
+            ]
+            files["snapshot"].write_text(json.dumps(snapshot))
+            files["self_improvement_audit"].write_text(
+                json.dumps(
+                    {
+                        "status": "SELF_IMPROVEMENT_BLOCKED",
+                        "findings": [
+                            {
+                                "priority": "P0",
+                                "layer": "profitability",
+                                "code": "PERSISTENT_PROFITABILITY_DISCIPLINE_BLOCKED",
+                                "message": "profitability discipline has failed for 27 consecutive audit run(s)",
+                                "evidence": {
+                                    "current_streak": 27,
+                                    "system_defect_evidence": {"profit_factor": 0.258},
+                                },
+                            }
+                        ],
+                    }
+                )
+            )
+
+            route = route_trader_prompts(**_route_paths(files), decision_response_path=None)
+
+        self.assertEqual(route.branch, BRANCH_POSITION)
+        self.assertTrue(any("trader pending entry order(s) occupy the gateway entry slot" in reason for reason in route.reasons))
+        self.assertTrue(any("write CANCEL_PENDING" in reason for reason in route.reasons))
+
     def test_entry_branch_names_pending_entry_gateway_blocker(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
