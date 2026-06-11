@@ -198,6 +198,17 @@ cycle, not presumed from the entry.
   profitable in every hold bucket. Late capitulation is pure salvage — the decision
   window that matters is the horizon, not day three.
 
+### Exit economics feedback (capture_economics, advisory)
+
+`data/capture_economics.json` (in the cycle digest) is the realized scoreboard of
+your own exit behavior: per-exit-reason win rate, payoff, and expectancy. Before a
+HOLD-vs-CLOSE-vs-TP-rebalance decision on a WEAKENED position, check which exit
+class has been paying: while status is `NEGATIVE_EXPECTANCY`, exit-quality repair
+(banking TP-reachable winners, expiring decayed theses on time) outranks squeezing
+one more cycle of hope out of a losing hold. Cite `capture:economics` in the
+receipt when it shaped the decision. Advisory per §8 — it never blocks lanes or
+resizes intents.
+
 ## Pending Orders
 
 - Pending entries are inherited across scheduler handoff.
