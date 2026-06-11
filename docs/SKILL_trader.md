@@ -246,6 +246,7 @@ QR_LIVE_ENABLED=1 ./scripts/run-autotrade-live.sh \
 #   broker-snapshot → tp-rebalance → execution-ledger-sync → broker-snapshot
 #   → profit-partial-close → verify-projections → position-thesis-check
 #   → thesis-evolution-check → forecast-persistence-check → memory-health
+#   → self-improvement-audit
 # and prints one compact digest.
 #
 # Semantics preserved from the per-step skeleton:
@@ -269,6 +270,9 @@ QR_LIVE_ENABLED=1 ./scripts/run-autotrade-live.sh \
 #   adverse-entry-buffer-only reviews still need explicit env/token Gate B.
 # - memory-health BLOCK does not grant/deny a trade by itself;
 #   trader-prompt-route reads it for the next cycle's routing.
+# - self-improvement-audit is recalculated after the post-gateway snapshot and
+#   memory-health pass so the next route sees current P0/P1/P2 gates instead
+#   of the pre-gateway refresh audit.
 QR_LIVE_ENABLED=1 PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli cycle-sidecars
 
 # 4c. adverse-partial-close is DISABLED 2026-05-14:

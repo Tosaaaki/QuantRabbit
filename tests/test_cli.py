@@ -1918,6 +1918,8 @@ class ConsolidatedCycleCommandTest(unittest.TestCase):
             sidecars = [" ".join(s["argv"]) for s in _cycle_sidecar_steps()]
         self.assertIn("profit-partial-close", sidecars)
         self.assertNotIn("profit-partial-close --send --confirm-live", sidecars)
+        self.assertLess(sidecars.index("memory-health"), sidecars.index("self-improvement-audit"))
+        self.assertEqual(sidecars[-1], "self-improvement-audit")
 
         with mock.patch.dict(os.environ, {"QR_LIVE_ENABLED": "1"}, clear=False):
             sidecars_live = [" ".join(s["argv"]) for s in _cycle_sidecar_steps()]

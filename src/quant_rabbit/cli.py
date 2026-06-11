@@ -1588,6 +1588,7 @@ def _cycle_sidecar_steps() -> list[dict[str, Any]]:
         {"argv": ["thesis-evolution-check"], "required": False},
         {"argv": ["forecast-persistence-check"], "required": False},
         {"argv": ["memory-health"], "required": False},
+        {"argv": ["self-improvement-audit"], "required": False, "ok_rcs": [0, 2]},
     ]
 
 
