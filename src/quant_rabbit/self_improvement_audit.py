@@ -2034,6 +2034,7 @@ def _profitability_findings(
         and not direct_close_repair
         and current_discipline_streak >= max(1, PERSISTENT_PROFITABILITY_STREAK_MIN)
     ):
+        recovery_observation = _gateway_close_recovery_observation(effect_24h)
         system_defect_evidence = {
             "profit_factor": pf,
             "expectancy_jpy": expectancy,
@@ -2046,31 +2047,61 @@ def _profitability_findings(
         }
         if close_gate_loss_evidence:
             system_defect_evidence["ai_backtest_close_gate_loss_evidence"] = close_gate_loss_evidence
-        out.append(
-            _finding(
-                run_id=run_id,
-                priority="P0",
-                layer="profitability",
-                code="PERSISTENT_PROFITABILITY_DISCIPLINE_BLOCKED",
-                message=(
-                    f"profitability discipline has failed for {current_discipline_streak} consecutive audit run(s): "
-                    f"PF={_fmt_optional(pf)}, expectancy={_fmt_optional(expectancy)}, "
-                    f"avg_loss={_fmt_optional(avg_loss)} JPY vs avg_win={_fmt_optional(avg_win)} JPY"
-                ),
-                next_action=(
-                    "Block new-risk confidence until execution_ledger.db worst segments prove repaired "
-                    "close discipline or the trader route explicitly justifies the exception."
-                ),
-                evidence={
-                    "current_streak": current_discipline_streak,
-                    "previous_streak": previous_discipline_streak,
-                    "streak_min": PERSISTENT_PROFITABILITY_STREAK_MIN,
-                    "effect_metrics": effect,
-                    "last_24h_effect_metrics": effect_24h,
-                    "system_defect_evidence": system_defect_evidence,
-                },
+        if recovery_observation is not None:
+            out.append(
+                _finding(
+                    run_id=run_id,
+                    priority="P1",
+                    layer="profitability",
+                    code="PERSISTENT_PROFITABILITY_DISCIPLINE_RECOVERY",
+                    message=(
+                        f"trailing profitability discipline is still failed after {current_discipline_streak} "
+                        f"consecutive audit run(s) (PF={_fmt_optional(pf)}, expectancy={_fmt_optional(expectancy)}), "
+                        "but the last-24h gateway-attributable close window proves repaired discipline: "
+                        f"net={recovery_observation['gateway_net_jpy']:.2f} JPY over "
+                        f"{recovery_observation['gateway_trades']} close(s) without loss asymmetry"
+                    ),
+                    next_action=(
+                        "Resume risk-validated entries at the normal per-trade budget; this re-escalates to P0 "
+                        "on the next 24h gateway close window that turns negative or asymmetric."
+                    ),
+                    evidence={
+                        "current_streak": current_discipline_streak,
+                        "previous_streak": previous_discipline_streak,
+                        "streak_min": PERSISTENT_PROFITABILITY_STREAK_MIN,
+                        "effect_metrics": effect,
+                        "last_24h_effect_metrics": effect_24h,
+                        "system_defect_evidence": system_defect_evidence,
+                        "recovery_observation": recovery_observation,
+                    },
+                )
             )
-        )
+        else:
+            out.append(
+                _finding(
+                    run_id=run_id,
+                    priority="P0",
+                    layer="profitability",
+                    code="PERSISTENT_PROFITABILITY_DISCIPLINE_BLOCKED",
+                    message=(
+                        f"profitability discipline has failed for {current_discipline_streak} consecutive audit run(s): "
+                        f"PF={_fmt_optional(pf)}, expectancy={_fmt_optional(expectancy)}, "
+                        f"avg_loss={_fmt_optional(avg_loss)} JPY vs avg_win={_fmt_optional(avg_win)} JPY"
+                    ),
+                    next_action=(
+                        "Block new-risk confidence until execution_ledger.db worst segments prove repaired "
+                        "close discipline or the trader route explicitly justifies the exception."
+                    ),
+                    evidence={
+                        "current_streak": current_discipline_streak,
+                        "previous_streak": previous_discipline_streak,
+                        "streak_min": PERSISTENT_PROFITABILITY_STREAK_MIN,
+                        "effect_metrics": effect,
+                        "last_24h_effect_metrics": effect_24h,
+                        "system_defect_evidence": system_defect_evidence,
+                    },
+                )
+            )
     account = snapshot.get("account") if isinstance(snapshot.get("account"), dict) else {}
     unrealized = _maybe_float(account.get("unrealized_pl_jpy"))
     gross_profit_24h = float(effect_24h.get("gross_profit_jpy") or 0.0)
@@ -2154,6 +2185,78 @@ def _direct_or_manual_close_repair_evidence(
         "last_24h_non_gateway_market_close_loss_trades": int(
             recent_direct_market_close_loss.get("loss_trades") or 0
         ),
+    }
+
+
+# Close provenances that can neither prove nor disprove the trader's own
+# gateway close discipline: operator manual/tagless closes (§9 manual-exposure
+# separation — operator-owned outcomes must neither keep the trader blocked
+# nor unblock it) and rows whose provenance could not be established.
+# Extends NON_GATEWAY_CLOSE_DRAG_PROVENANCES with the same intent.
+RECOVERY_EXCLUDED_CLOSE_PROVENANCES = NON_GATEWAY_CLOSE_DRAG_PROVENANCES + (
+    "NON_TRADER_CLIENT_EXTENSION",
+    "UNKNOWN_CLOSE_PROVENANCE",
+)
+
+
+def _gateway_close_recovery_observation(effect_24h: dict[str, Any]) -> dict[str, Any] | None:
+    """Prove repaired close discipline from the last-24h gateway-attributable window.
+
+    The persistent profitability P0 blocks fresh entries "until
+    execution_ledger.db worst segments prove repaired close discipline". The
+    trailing audit window cannot supply that proof while entries are blocked —
+    it only changes as old losers age out — so the P0 deadlocks against its own
+    repair demand (observed 2026-06-11: 65 consecutive blocked runs while the
+    last-24h gateway window was already positive). 24h is the audit's
+    documented operational recovery window, the same boundary
+    `_direct_or_manual_close_repair_evidence` uses.
+
+    Recovery requires positive evidence, not absence of evidence: at least one
+    gateway-attributable winning close, a non-negative gateway-attributable
+    net, and no small-win/large-loss asymmetry (same 2x boundary as
+    SMALL_WIN_LARGE_LOSS_ASYMMETRY) inside the window. TP fills and gateway
+    closes of held positions keep generating this evidence even while fresh
+    entries are blocked, so the gate can clear without bypassing risk
+    validation; a truly flat blocked book stays blocked until the trailing
+    window rolls the old losers out.
+    """
+    if effect_24h.get("error"):
+        return None
+    metrics = effect_24h.get("close_provenance_metrics")
+    if not isinstance(metrics, dict) or not metrics:
+        return None
+    net = 0.0
+    gross_profit = 0.0
+    gross_loss = 0.0
+    trades = 0
+    win_trades = 0
+    loss_trades = 0
+    for provenance, values in metrics.items():
+        if provenance in RECOVERY_EXCLUDED_CLOSE_PROVENANCES:
+            continue
+        if not isinstance(values, dict):
+            continue
+        net += float(values.get("net_jpy") or 0.0)
+        gross_profit += float(values.get("gross_profit_jpy") or 0.0)
+        gross_loss += float(values.get("gross_loss_jpy") or 0.0)
+        trades += int(values.get("trades") or 0)
+        win_trades += int(values.get("win_trades") or 0)
+        loss_trades += int(values.get("loss_trades") or 0)
+    if win_trades < 1 or net < 0.0:
+        return None
+    avg_win = gross_profit / win_trades
+    avg_loss = (gross_loss / loss_trades) if loss_trades else None
+    if avg_loss is not None and avg_loss > avg_win * 2:
+        return None
+    return {
+        "window_hours": 24.0,
+        "gateway_net_jpy": net,
+        "gateway_trades": trades,
+        "gateway_win_trades": win_trades,
+        "gateway_loss_trades": loss_trades,
+        "gateway_avg_win_jpy": avg_win,
+        "gateway_avg_loss_jpy_abs": avg_loss,
+        "excluded_provenances": list(RECOVERY_EXCLUDED_CLOSE_PROVENANCES),
     }
 
 

@@ -923,7 +923,10 @@ class DecisionVerifier:
         exposure_blockers = _trade_exposure_blockers(self.packet)
         entry_thesis_blockers = _entry_thesis_sidecar_reasons(self.packet)
         position_close_reasons = _position_close_sidecar_reasons(self.packet)
-        self_improvement_trade_blockers = _self_improvement_trade_blockers(self.packet)
+        self_improvement_trade_blockers = _self_improvement_trade_blockers(
+            self.packet,
+            decision_generated_at_utc=decision.generated_at_utc,
+        )
 
         if decision.action == "TRADE":
             if not selected_lane_ids:
@@ -3025,16 +3028,36 @@ def _learning_audit_trade_issues(
     return issues
 
 
-def _self_improvement_trade_blockers(packet: dict[str, Any]) -> list[str]:
+def _self_improvement_trade_blockers(
+    packet: dict[str, Any],
+    *,
+    decision_generated_at_utc: str | None = None,
+) -> list[str]:
     audit = packet.get("self_improvement_audit")
     if not isinstance(audit, dict):
         return []
+    audit_generated_at = _parse_utc(audit.get("generated_at_utc"))
+    receipt_generated_at = (
+        _parse_utc(decision_generated_at_utc) if decision_generated_at_utc else None
+    )
     out: list[str] = []
     blockers = audit.get("p0_blockers", []) or audit.get("profitability_blockers", []) or []
     for blocker in blockers:
         if not isinstance(blocker, dict):
             continue
         code = str(blocker.get("code") or "SELF_IMPROVEMENT_P0")
+        if (
+            code == "LATEST_GPT_DECISION_STALE"
+            and receipt_generated_at is not None
+            and audit_generated_at is not None
+            and receipt_generated_at > audit_generated_at
+        ):
+            # The audit predates the receipt under verification, so its
+            # stale-decision verdict is about an older receipt. Writing one
+            # current receipt is exactly the repair that finding demands;
+            # rejecting the repair receipt with its own staleness streak
+            # would re-create the deadlock the streak exemption documents.
+            continue
         if _self_improvement_non_trade_blocker(code, blocker):
             continue
         layer = str(blocker.get("layer") or "").strip()

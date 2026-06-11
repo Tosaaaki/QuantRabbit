@@ -639,6 +639,7 @@ class AutoTradeCycle:
         self._projection_preflight_summary: dict[str, Any] | None = None
         self._ai_test_bot_backtest_refreshed = False
         self._suppress_gateway_receipt_recording = False
+        self._stale_gpt_handoff_reason: str | None = None
 
     def run(self, *, send: bool = False) -> AutoTradeCycleSummary:
         lock_dir = _acquire_autotrade_lock(send=send)
@@ -868,12 +869,26 @@ class AutoTradeCycle:
 
     def _run(self, *, send: bool = False, _close_reentry_depth: int = 0) -> AutoTradeCycleSummary:
         generated_at = datetime.now(timezone.utc).isoformat()
+        self._stale_gpt_handoff_reason = None
         stale_gpt_reason = self._external_gpt_decision_refresh_reason()
         if stale_gpt_reason is not None:
-            self._suppress_gateway_receipt_recording = True
-            summary = self._stale_gpt_decision_summary(generated_at, stale_gpt_reason)
-            self._write_report(summary, generated_at)
-            return summary
+            source_path = getattr(self.gpt_provider, "source_path", None)
+            receipt_exists = source_path is not None and Path(source_path).exists()
+            if not receipt_exists:
+                # No external receipt was ever produced: the playbook handoff
+                # contract is broken, so fail loud (§3.5) instead of guessing.
+                self._suppress_gateway_receipt_recording = True
+                summary = self._stale_gpt_decision_summary(generated_at, stale_gpt_reason)
+                self._write_report(summary, generated_at)
+                return summary
+            # §2/§8: a receipt that was already consumed, already verified as
+            # non-TRADE, or predates the current market artifacts is NOT a
+            # cycle-stop condition. Continue the cycle deterministically —
+            # position management, pending-entry handling, and the campaign
+            # exposure occupancy recovery all still run. The stale receipt
+            # itself must never reach the gateway: _run_gpt_handoff
+            # short-circuits on this reason instead of re-verifying it.
+            self._stale_gpt_handoff_reason = stale_gpt_reason
         self._clear_stale_live_order_artifact(generated_at=generated_at, cycle_send_requested=send)
         pairs = DEFAULT_TRADER_PAIRS
         if self.reuse_market_artifacts:
@@ -2605,6 +2620,20 @@ class AutoTradeCycle:
         return tuple(lane_ids), size_multiples
 
     def _run_gpt_handoff(self) -> GptHandoffSummary:
+        if self._stale_gpt_handoff_reason:
+            # The external receipt was consumed, already verified as
+            # non-TRADE, or predates the current market artifacts. It must not
+            # be re-verified or handed to the gateway (double-send risk); the
+            # cycle continues deterministically and the report's gpt_error
+            # tells the scheduled trader to write one current receipt.
+            return GptHandoffSummary(
+                status="STALE_DECISION",
+                action=None,
+                selected_lane_id=None,
+                allowed=False,
+                issues=1,
+                error=self._stale_gpt_handoff_reason,
+            )
         reusable = self._load_reusable_verified_gpt_handoff()
         if reusable is not None:
             return reusable

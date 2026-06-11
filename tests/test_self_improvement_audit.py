@@ -15,6 +15,8 @@ from quant_rabbit.self_improvement_audit import (
     STATUS_BLOCKED,
     SelfImprovementAuditor,
     _effect_metrics,
+    _gateway_close_recovery_observation,
+    _profitability_findings,
     _projection_expired,
     _top_intent_blockers,
     _top_intent_live_readiness_blockers,
@@ -954,6 +956,147 @@ class SelfImprovementAuditorTest(unittest.TestCase):
         self.assertEqual(repair["non_gateway_close_drag_metric"]["net_jpy"], -700.0)
         self.assertEqual(repair["net_without_non_gateway_close_drag_jpy"], 150.0)
         self.assertEqual(repair["last_24h_non_gateway_market_close_loss_trades"], 0)
+
+    @staticmethod
+    def _failed_trailing_effect() -> dict:
+        return {
+            "closed_trades": 20,
+            "net_jpy": -5000.0,
+            "profit_factor": 0.4,
+            "expectancy_jpy": -250.0,
+            "avg_win_jpy": 300.0,
+            "avg_loss_jpy_abs": 1200.0,
+            "worst_segments": [],
+            "close_provenance_metrics": {},
+            "market_order_trade_close_loss_provenance_metrics": {},
+        }
+
+    @staticmethod
+    def _positive_24h_gateway_effect() -> dict:
+        # Mirrors the live 2026-06-11 deadlock evidence: trailing window still
+        # negative, but the last-24h gateway-attributable closes are net
+        # positive without loss asymmetry.
+        return {
+            "closed_trades": 4,
+            "net_jpy": 366.1,
+            "gross_profit_jpy": 788.5,
+            "gross_loss_jpy": 422.4,
+            "profit_factor": 1.87,
+            "expectancy_jpy": 91.5,
+            "close_provenance_metrics": {
+                "GATEWAY_TRADE_CLOSE_SENT": {
+                    "trades": 3,
+                    "net_jpy": -282.7,
+                    "gross_profit_jpy": 139.7,
+                    "gross_loss_jpy": 422.4,
+                    "win_trades": 1,
+                    "loss_trades": 2,
+                },
+                "TAKE_PROFIT_ORDER": {
+                    "trades": 1,
+                    "net_jpy": 648.8,
+                    "gross_profit_jpy": 648.8,
+                    "gross_loss_jpy": 0.0,
+                    "win_trades": 1,
+                    "loss_trades": 0,
+                },
+            },
+            "market_order_trade_close_loss_provenance_metrics": {},
+        }
+
+    @staticmethod
+    def _bleeding_24h_gateway_effect() -> dict:
+        return {
+            "closed_trades": 3,
+            "net_jpy": -7157.0,
+            "gross_profit_jpy": 0.0,
+            "gross_loss_jpy": 7157.0,
+            "profit_factor": 0.0,
+            "expectancy_jpy": -2385.7,
+            "close_provenance_metrics": {
+                "GATEWAY_TRADE_CLOSE_SENT": {
+                    "trades": 3,
+                    "net_jpy": -7157.0,
+                    "gross_profit_jpy": 0.0,
+                    "gross_loss_jpy": 7157.0,
+                    "win_trades": 0,
+                    "loss_trades": 3,
+                },
+            },
+            "market_order_trade_close_loss_provenance_metrics": {},
+        }
+
+    def test_gateway_close_recovery_observation_conditions(self) -> None:
+        observation = _gateway_close_recovery_observation(self._positive_24h_gateway_effect())
+        self.assertIsNotNone(observation)
+        self.assertEqual(observation["gateway_win_trades"], 2)
+        self.assertEqual(observation["gateway_loss_trades"], 2)
+        self.assertAlmostEqual(observation["gateway_net_jpy"], 366.1, places=1)
+
+        self.assertIsNone(_gateway_close_recovery_observation(self._bleeding_24h_gateway_effect()))
+        self.assertIsNone(_gateway_close_recovery_observation({"error": "missing"}))
+        self.assertIsNone(_gateway_close_recovery_observation({"close_provenance_metrics": {}}))
+
+        manual_only = {
+            "close_provenance_metrics": {
+                "NON_TRADER_CLIENT_EXTENSION": {
+                    "trades": 1,
+                    "net_jpy": 22000.0,
+                    "gross_profit_jpy": 22000.0,
+                    "gross_loss_jpy": 0.0,
+                    "win_trades": 1,
+                    "loss_trades": 0,
+                },
+            },
+        }
+        self.assertIsNone(_gateway_close_recovery_observation(manual_only))
+
+        asymmetric_but_positive = {
+            "close_provenance_metrics": {
+                "GATEWAY_TRADE_CLOSE_SENT": {
+                    "trades": 4,
+                    "net_jpy": 100.0,
+                    "gross_profit_jpy": 1500.0,
+                    "gross_loss_jpy": 1400.0,
+                    "win_trades": 3,
+                    "loss_trades": 1,
+                },
+            },
+        }
+        self.assertIsNone(_gateway_close_recovery_observation(asymmetric_but_positive))
+
+    def test_persistent_profitability_downgrades_to_recovery_on_clean_24h_gateway_window(self) -> None:
+        findings = _profitability_findings(
+            run_id="run-recovery",
+            effect=self._failed_trailing_effect(),
+            effect_24h=self._positive_24h_gateway_effect(),
+            snapshot={},
+            min_sample=3,
+            close_gate_loss_evidence=None,
+            previous_discipline_streak=5,
+        )
+        codes = {item["code"]: item for item in findings}
+        self.assertNotIn("PERSISTENT_PROFITABILITY_DISCIPLINE_BLOCKED", codes)
+        self.assertIn("PERSISTENT_PROFITABILITY_DISCIPLINE_RECOVERY", codes)
+        recovery = codes["PERSISTENT_PROFITABILITY_DISCIPLINE_RECOVERY"]
+        self.assertEqual(recovery["priority"], "P1")
+        self.assertEqual(recovery["evidence"]["current_streak"], 6)
+        self.assertEqual(recovery["evidence"]["recovery_observation"]["gateway_win_trades"], 2)
+
+    def test_persistent_profitability_stays_p0_when_24h_gateway_window_bleeds(self) -> None:
+        findings = _profitability_findings(
+            run_id="run-bleeding",
+            effect=self._failed_trailing_effect(),
+            effect_24h=self._bleeding_24h_gateway_effect(),
+            snapshot={},
+            min_sample=3,
+            close_gate_loss_evidence=None,
+            previous_discipline_streak=5,
+        )
+        codes = {item["code"]: item for item in findings}
+        self.assertIn("PERSISTENT_PROFITABILITY_DISCIPLINE_BLOCKED", codes)
+        self.assertNotIn("PERSISTENT_PROFITABILITY_DISCIPLINE_RECOVERY", codes)
+        self.assertEqual(codes["PERSISTENT_PROFITABILITY_DISCIPLINE_BLOCKED"]["priority"], "P0")
 
     def test_effect_metrics_attributes_closed_pl_to_opening_lane_method(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

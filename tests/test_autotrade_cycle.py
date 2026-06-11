@@ -3335,19 +3335,92 @@ class AutoTradeCycleTest(unittest.TestCase):
                 ).run(send=True)
 
                 projection_row = json.loads((root / "projection_ledger.jsonl").read_text())
-                self.assertEqual(summary.status, "STALE_GPT_DECISION_REFRESH_REQUIRED")
+                # §2/§8: a consumed/already-verified receipt degrades the cycle
+                # to deterministic continuation instead of stopping it. The
+                # stale receipt itself must never reach the gateway.
+                self.assertEqual(summary.status, "GPT_REJECTED")
                 self.assertEqual(summary.gpt_status, "STALE_DECISION")
                 self.assertEqual(projection_row["resolution_status"], "HIT")
                 self.assertFalse((root / "live_order.json").exists())
                 self.assertIn("already verified as ACCEPTED WAIT", summary.gpt_error or "")
                 report_text = (root / "report.md").read_text()
-                self.assertIn("STALE_GPT_DECISION_REFRESH_REQUIRED", report_text)
-                self.assertIn("Projection preflight: status=`OK`", report_text)
+                self.assertIn("GPT_REJECTED", report_text)
             finally:
                 if prior_telemetry is None:
                     os.environ.pop("QR_REQUIRE_TELEMETRY_FOR_LIVE", None)
                 else:
                     os.environ["QR_REQUIRE_TELEMETRY_FOR_LIVE"] = prior_telemetry
+
+    def test_stale_gpt_receipt_degrades_to_deterministic_position_cycle(self) -> None:
+        # Regression for the 2026-06-11 cycle-poisoning bug: 13 of 25 live
+        # cycles ended as full-stop STALE_GPT_DECISION_REFRESH_REQUIRED no-ops
+        # because an already-verified ACCEPTED WAIT receipt blocked the whole
+        # run before position management. A stale receipt must degrade the
+        # cycle to deterministic continuation (position management still
+        # runs) without ever handing the stale receipt to the gateway.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            now = datetime.now(timezone.utc)
+            client = FakeCycleClient(
+                BrokerSnapshot(
+                    fetched_at_utc=now,
+                    orders=(
+                        BrokerOrder(
+                            order_id="1",
+                            pair="AUD_JPY",
+                            order_type="STOP",
+                            price=112.576,
+                            state="PENDING",
+                            units=1000,
+                            owner=Owner.TRADER,
+                        ),
+                    ),
+                    quotes={"AUD_JPY": Quote("AUD_JPY", 112.49, 112.50, timestamp_utc=now)},
+                )
+            )
+            response_path = root / "codex_trader_decision_response.json"
+            wait_decision = _gpt_wait_decision()
+            response_path.write_text(json.dumps(wait_decision) + "\n")
+            gpt_decision_path = root / "gpt_decision.json"
+            gpt_decision_path.write_text(
+                json.dumps(
+                    {
+                        "generated_at_utc": now.isoformat(),
+                        "status": "ACCEPTED",
+                        "decision": {"action": "WAIT"},
+                        "verification_issues": [],
+                    }
+                )
+                + "\n"
+            )
+            os.utime(response_path, (100.0, 100.0))
+            os.utime(gpt_decision_path, (101.0, 101.0))
+
+            summary = AutoTradeCycle(
+                client=client,
+                snapshot_path=root / "snapshot.json",
+                intents_path=root / "intents.json",
+                intent_report_path=root / "intents.md",
+                decision_path=root / "decision.json",
+                decision_report_path=root / "decision.md",
+                gpt_decision_path=gpt_decision_path,
+                gpt_decision_report_path=root / "gpt_decision.md",
+                position_management_path=root / "pm.json",
+                position_management_report_path=root / "pm.md",
+                position_execution_path=root / "pe.json",
+                position_execution_report_path=root / "pe.md",
+                live_order_output_path=root / "live_order.json",
+                live_order_report_path=root / "live_order.md",
+                report_path=root / "report.md",
+                use_gpt_trader=True,
+                gpt_provider=StaticTraderProvider(wait_decision, source_path=response_path),
+                live_enabled=True,
+            ).run(send=False)
+
+            self.assertEqual(summary.status, "MONITOR_ONLY_EXPOSURE_OPEN")
+            self.assertTrue((root / "pm.json").exists())
+            self.assertEqual(client.orders_sent, [])
+            self.assertFalse((root / "live_order.json").exists())
 
     def test_reused_verified_gpt_close_reaches_position_gateway(self) -> None:
         # The verifier-to-gateway bridge must cover accepted CLOSE receipts,
@@ -3543,7 +3616,11 @@ class AutoTradeCycleTest(unittest.TestCase):
                 live_enabled=True,
             ).run(send=True)
 
-            self.assertEqual(summary.status, "STALE_GPT_DECISION_REFRESH_REQUIRED")
+            # §2/§8: a receipt that predates current market artifacts degrades
+            # the cycle to deterministic continuation; it never reaches the
+            # gateway, but the cycle itself is not a no-op anymore.
+            self.assertEqual(summary.status, "GPT_REJECTED")
+            self.assertEqual(summary.gpt_status, "STALE_DECISION")
             self.assertFalse((root / "live_order.json").exists())
             self.assertIn("predates broker snapshot", summary.gpt_error or "")
 

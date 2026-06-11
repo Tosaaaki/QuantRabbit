@@ -441,7 +441,12 @@ class GPTTraderBrainTest(unittest.TestCase):
             files["self_improvement_audit"].write_text(
                 json.dumps(
                     {
-                        "generated_at_utc": datetime.now(timezone.utc).isoformat(),
+                        # The audit postdates the receipt under verification, so
+                        # its persistent stale-decision verdict still applies to
+                        # that receipt.
+                        "generated_at_utc": (
+                            datetime.now(timezone.utc) + timedelta(minutes=10)
+                        ).isoformat(),
                         "status": "SELF_IMPROVEMENT_BLOCKED",
                         "findings": [
                             {
@@ -471,6 +476,52 @@ class GPTTraderBrainTest(unittest.TestCase):
             payload = json.loads((root / "gpt_decision.json").read_text())
             codes = {issue["code"] for issue in payload["verification_issues"]}
             self.assertIn("SELF_IMPROVEMENT_P0_BLOCKS_TRADE", codes)
+
+    def test_allows_trade_when_receipt_postdates_stale_decision_audit(self) -> None:
+        # The persistent LATEST_GPT_DECISION_STALE streak is repaired by
+        # writing one current receipt. When the receipt under verification was
+        # generated AFTER the audit ran, the audit's stale verdict is about an
+        # older receipt and must not reject the repair receipt itself — the
+        # verifier's own STALE_DECISION_RECEIPT freshness gate still rejects
+        # receipts that predate broker snapshot or order intents.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root)
+            files["self_improvement_audit"].write_text(
+                json.dumps(
+                    {
+                        "generated_at_utc": (
+                            datetime.now(timezone.utc) - timedelta(minutes=10)
+                        ).isoformat(),
+                        "status": "SELF_IMPROVEMENT_BLOCKED",
+                        "findings": [
+                            {
+                                "priority": "P0",
+                                "layer": "decision_history",
+                                "code": "LATEST_GPT_DECISION_STALE",
+                                "message": "latest GPT decision receipt predates the current broker snapshot",
+                                "evidence": {"current_streak": 17},
+                            }
+                        ],
+                    }
+                )
+            )
+            decision = _trade_decision()
+            decision["evidence_refs"].extend(
+                [
+                    "self_improvement:audit",
+                    "self_improvement:decision_history",
+                    "self_improvement:finding:LATEST_GPT_DECISION_STALE",
+                ]
+            )
+            brain = _brain(root, files, decision)
+
+            summary = brain.run(snapshot_path=files["snapshot"])
+
+            self.assertEqual(summary.status, "ACCEPTED")
+            payload = json.loads((root / "gpt_decision.json").read_text())
+            codes = {issue["code"] for issue in payload["verification_issues"]}
+            self.assertNotIn("SELF_IMPROVEMENT_P0_BLOCKS_TRADE", codes)
 
     def test_report_contract_does_not_treat_receipt_close_flag_as_gate_b(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
