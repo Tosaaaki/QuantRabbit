@@ -1333,5 +1333,63 @@ def _intents(
     return path
 
 
+class DisasterStopOrderRequestTest(unittest.TestCase):
+    """§3.5-K disaster stop attach in _oanda_order_request (2026-06-11)."""
+
+    SL_KEYS = ("QR_NEW_ENTRY_INITIAL_SL", "QR_TRADER_DISABLE_SL_REPAIR")
+
+    def setUp(self) -> None:
+        self._prior = {k: os.environ.get(k) for k in self.SL_KEYS}
+
+    def tearDown(self) -> None:
+        for k, v in self._prior.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+
+    @staticmethod
+    def _intent(metadata: dict | None = None):
+        from quant_rabbit.models import OrderIntent, OrderType, Side
+
+        return OrderIntent(
+            pair="EUR_USD",
+            side=Side.LONG,
+            order_type=OrderType.MARKET,
+            units=5000,
+            tp=1.1620,
+            sl=1.1470,
+            thesis="test",
+            entry=1.1500,
+            metadata=metadata or {},
+        )
+
+    def test_sl_free_mode_attaches_disaster_stop_from_metadata(self) -> None:
+        os.environ["QR_TRADER_DISABLE_SL_REPAIR"] = "1"
+        os.environ.pop("QR_NEW_ENTRY_INITIAL_SL", None)
+        order = execution_module._oanda_order_request(
+            self._intent({"disaster_sl": 1.1380, "disaster_sl_pips": 120.0})
+        )
+        self.assertEqual(order["stopLossOnFill"]["price"], "1.13800")
+
+    def test_sl_free_mode_without_metadata_stays_sl_free(self) -> None:
+        os.environ["QR_TRADER_DISABLE_SL_REPAIR"] = "1"
+        os.environ.pop("QR_NEW_ENTRY_INITIAL_SL", None)
+        order = execution_module._oanda_order_request(self._intent({"disaster_sl_missing": "H4_ATR_MISSING"}))
+        self.assertNotIn("stopLossOnFill", order)
+
+    def test_initial_sl_mode_keeps_intent_sl_over_disaster(self) -> None:
+        os.environ["QR_TRADER_DISABLE_SL_REPAIR"] = "1"
+        os.environ["QR_NEW_ENTRY_INITIAL_SL"] = "1"
+        order = execution_module._oanda_order_request(self._intent({"disaster_sl": 1.1380}))
+        self.assertEqual(order["stopLossOnFill"]["price"], "1.14700")
+
+    def test_normal_sl_mode_unchanged(self) -> None:
+        os.environ.pop("QR_TRADER_DISABLE_SL_REPAIR", None)
+        os.environ.pop("QR_NEW_ENTRY_INITIAL_SL", None)
+        order = execution_module._oanda_order_request(self._intent({"disaster_sl": 1.1380}))
+        self.assertEqual(order["stopLossOnFill"]["price"], "1.14700")
+
+
 if __name__ == "__main__":
     unittest.main()

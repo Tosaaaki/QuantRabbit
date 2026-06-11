@@ -194,6 +194,20 @@ _SL_FREE_RUNTIME_DEFAULTS: dict[str, str] = {
     # not silently re-introduce noise-band stops.
     "QR_NEW_ENTRY_INITIAL_SL": "0",
     "QR_DISABLE_TRAILING_SL": "1",
+    # Disaster stop (2026-06-11, operator-approved: 「SLの件もやっていい」).
+    # A broker-side CATASTROPHE bound on every NEW entry, fundamentally
+    # different from the noise-band stops the 「SLいらない」 directive
+    # banned: the distance is H4 ATR × QR_DISASTER_SL_H4_ATR_MULT (2.5)
+    # × session widening — 60-120+ pips on majors, far outside any wick
+    # band that hunted the 2026-05-13 stops (4-42 pips). It is computed
+    # SEPARATELY from intent.sl so sizing, reward/risk, and risk
+    # validation are untouched (sizing against a disaster distance would
+    # recreate the micro-lot spiral). It never trails (trailing stays
+    # disabled). Its only job: cap the tail (give-up closes averaged
+    # -1,437 JPY, margin closeouts -5,641 JPY on 2026-05-14) and make a
+    # flash move / intervention during the 20-minute blind window unable
+    # to destroy the account.
+    "QR_DISASTER_SL": "1",
     # Live fresh entries must carry a current executable pair forecast. This
     # prevents campaign/range coverage lanes from becoming broker-fillable when
     # the prediction layer is stale, missing, or too weak to justify a side.

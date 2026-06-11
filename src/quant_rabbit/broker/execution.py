@@ -1430,6 +1430,22 @@ def _oanda_order_request(intent: OrderIntent) -> dict[str, Any]:
     }
     if initial_sl_on or not _trader_sl_repair_disabled():
         order["stopLossOnFill"] = {"price": _price(intent.pair, intent.sl)}
+    else:
+        # Disaster stop (2026-06-11, operator-approved 「SLの件もやっていい」):
+        # in SL-free runtime a NEW entry still carries a broker-side
+        # CATASTROPHE stop when intent metadata provides one (H4 ATR ×
+        # QR_DISASTER_SL_H4_ATR_MULT × session widening, computed by
+        # intent_generator strictly beyond the expected intent.sl). It is
+        # not a trading stop: it never trails, it does not enter sizing or
+        # reward/risk math, and existing positions are never retro-fitted.
+        # Its only job is bounding the tail when the market dislocates
+        # inside the 20-minute blind window between cycles.
+        disaster_sl = (intent.metadata or {}).get("disaster_sl")
+        if disaster_sl is not None:
+            try:
+                order["stopLossOnFill"] = {"price": _price(intent.pair, float(disaster_sl))}
+            except (TypeError, ValueError):
+                pass
     if intent.order_type == OrderType.MARKET:
         order["timeInForce"] = "FOK"
     else:

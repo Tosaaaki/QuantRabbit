@@ -143,6 +143,93 @@ def _new_entry_initial_sl_active() -> bool:
     }
 
 
+# Disaster stop (2026-06-11, operator-approved reversal of strict SL-free:
+# 「SLの件もやっていい」). A broker-side CATASTROPHE bound on every new entry,
+# deliberately decoupled from intent.sl:
+#
+# - intent.sl stays the EXPECTED invalidation (sizing, reward/risk, and risk
+#   validation all keep using it) — sizing against the disaster distance
+#   would recreate the 2026-06-11 micro-lot spiral.
+# - the disaster stop is only attached to the broker order
+#   (`stopLossOnFill`) so a flash move / JPY intervention / weekend gap
+#   during the 20-minute blind window between cycles cannot destroy the
+#   account, and the give-up-close tail (avg -1,437 JPY, margin closeouts
+#   -5,641 JPY on 2026-05-14) gets a hard ceiling.
+# - it never trails (QR_DISABLE_TRAILING_SL=1 stays on) and existing
+#   positions are never retro-fitted (existing-position invariant).
+#
+# Per AGENT_CONTRACT §3.5:
+# (a) market reality: H4 ATR is one typical multi-hour swing; 2.5× that,
+#     further widened in thin sessions, sits far outside every wick band
+#     that harvested the 2026-05-13 noise stops (those were 4-42 pips;
+#     this is 60-120+ pips on majors). A hit means the thesis is not
+#     merely wrong but catastrophically wrong.
+# (b) constants: the multiplier is operator risk policy (catastrophe
+#     tolerance), the base (H4 ATR × session liquidity) is market-derived.
+# (c) replace via: tune QR_DISASTER_SL_H4_ATR_MULT if live disaster-stop
+#     hits ever cluster at the band edge instead of true dislocations.
+DISASTER_SL_H4_ATR_MULT = _env_float("QR_DISASTER_SL_H4_ATR_MULT", 2.5, minimum=1.0)
+# Strict-ordering buffer: the broker disaster stop must always sit beyond
+# the expected (synthetic) stop, or the catastrophe bound would fire before
+# the discretionary structure exit it is meant to backstop. 1.25 is a
+# documented ordering margin, not a market estimate.
+DISASTER_SL_MIN_EXPECTED_MULT = 1.25
+
+
+def _disaster_sl_active() -> bool:
+    return os.environ.get("QR_DISASTER_SL", "").strip() in {
+        "1", "true", "TRUE", "yes", "YES",
+    }
+
+
+def _disaster_sl_metadata(
+    pair: str,
+    side: Side,
+    *,
+    entry: float,
+    expected_sl: float,
+    chart_context: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """Compute the broker-side catastrophe stop for a NEW entry.
+
+    Returns metadata keys consumed by `_oanda_order_request`:
+    `disaster_sl` (price), `disaster_sl_pips`, `disaster_sl_basis` — or
+    `disaster_sl_missing` when H4 ATR evidence is unavailable (the entry
+    still proceeds exactly as the pre-disaster-stop SL-free runtime did;
+    the missing bound is surfaced, never silently substituted, per §3.5).
+    """
+    if not _disaster_sl_active():
+        return {}
+    h4_atr_pips = None
+    session_tag = None
+    if isinstance(chart_context, dict):
+        h4_atr_pips = _optional_float(chart_context.get("h4_atr_pips"))
+        session_tag = _text_or_none(
+            chart_context.get("session_current_tag") or chart_context.get("session_bucket")
+        )
+    if h4_atr_pips is None or h4_atr_pips <= 0:
+        return {"disaster_sl_missing": "H4_ATR_MISSING"}
+    pip_factor = PIP_FACTORS[pair]
+    session_mult = _session_widening_mult(session_tag)
+    distance_pips = h4_atr_pips * DISASTER_SL_H4_ATR_MULT * session_mult
+    expected_pips = abs(entry - expected_sl) * pip_factor
+    if expected_pips > 0:
+        distance_pips = max(distance_pips, expected_pips * DISASTER_SL_MIN_EXPECTED_MULT)
+    pip = 1.0 / pip_factor
+    if side == Side.LONG:
+        price = entry - distance_pips * pip
+    else:
+        price = entry + distance_pips * pip
+    return {
+        "disaster_sl": _round_price(pair, price),
+        "disaster_sl_pips": round(distance_pips, 1),
+        "disaster_sl_basis": (
+            f"H4_ATR {h4_atr_pips:.1f}p x {DISASTER_SL_H4_ATR_MULT:g} "
+            f"x session {session_mult:g}"
+        ),
+    }
+
+
 # I — Session-aware spread tolerance multipliers (2026-05-13).
 #
 # AGENT_CONTRACT §3.5 mandates spread tolerance be liquidity-derived,
@@ -4147,6 +4234,18 @@ def _intent_from_lane(
         atr_pips=atr_pips,
     )
     geometry_metadata.update(tp_execution_metadata)
+    # Disaster stop: broker-side catastrophe bound computed AFTER geometry so
+    # the expected intent.sl (sizing / reward-risk anchor) is final, and the
+    # strict-ordering buffer can guarantee the broker stop sits beyond it.
+    geometry_metadata.update(
+        _disaster_sl_metadata(
+            pair,
+            side,
+            entry=entry,
+            expected_sl=sl,
+            chart_context=chart_context,
+        )
+    )
     position_intent = str(position_metadata.get("position_intent") or "")
     units = _risk_budgeted_units(
         pair,

@@ -6384,6 +6384,71 @@ class TimingEvidenceBreakoutStopTest(unittest.TestCase):
         self.assertTrue(self._allows(metadata, order_type=OrderType.MARKET))
 
 
+class DisasterSlMetadataTest(unittest.TestCase):
+    """_disaster_sl_metadata — §3.5-K catastrophe bound (2026-06-11)."""
+
+    def setUp(self) -> None:
+        self._prior = {k: os.environ.get(k) for k in ("QR_DISASTER_SL",)}
+        os.environ["QR_DISASTER_SL"] = "1"
+
+    def tearDown(self) -> None:
+        for k, v in self._prior.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+
+    @staticmethod
+    def _compute(side: Side, *, chart_context: dict | None, entry=1.1500, expected_sl=None):
+        from quant_rabbit.strategy.intent_generator import _disaster_sl_metadata
+
+        if expected_sl is None:
+            expected_sl = 1.1470 if side == Side.LONG else 1.1530
+        return _disaster_sl_metadata(
+            "EUR_USD", side, entry=entry, expected_sl=expected_sl, chart_context=chart_context
+        )
+
+    def test_long_disaster_below_entry_at_h4_atr_multiple(self) -> None:
+        meta = self._compute(
+            Side.LONG,
+            chart_context={"h4_atr_pips": 30.0, "session_current_tag": "LONDON"},
+        )
+        # 30 × 2.5 × 1.0 = 75 pips below entry 1.1500 → 1.14250
+        self.assertAlmostEqual(meta["disaster_sl_pips"], 75.0)
+        self.assertAlmostEqual(meta["disaster_sl"], 1.1425)
+
+    def test_short_disaster_above_entry_with_thin_session_widening(self) -> None:
+        meta = self._compute(
+            Side.SHORT,
+            chart_context={"h4_atr_pips": 30.0, "session_current_tag": "TOKYO"},
+        )
+        # 30 × 2.5 × 1.3 = 97.5 pips above entry → 1.15975
+        self.assertAlmostEqual(meta["disaster_sl_pips"], 97.5)
+        self.assertAlmostEqual(meta["disaster_sl"], 1.15975)
+
+    def test_missing_h4_atr_fails_loud_not_silent(self) -> None:
+        meta = self._compute(Side.LONG, chart_context={})
+        self.assertEqual(meta, {"disaster_sl_missing": "H4_ATR_MISSING"})
+
+    def test_disaster_always_beyond_expected_stop(self) -> None:
+        # Tiny H4 ATR (5 pips → 12.5p disaster) vs a 30-pip expected stop:
+        # the strict-ordering buffer lifts the disaster to 30 × 1.25 = 37.5p.
+        meta = self._compute(
+            Side.LONG,
+            chart_context={"h4_atr_pips": 5.0, "session_current_tag": "LONDON"},
+        )
+        self.assertAlmostEqual(meta["disaster_sl_pips"], 37.5)
+        self.assertLess(meta["disaster_sl"], 1.1470)
+
+    def test_env_off_returns_empty(self) -> None:
+        os.environ["QR_DISASTER_SL"] = "0"
+        meta = self._compute(
+            Side.LONG,
+            chart_context={"h4_atr_pips": 30.0, "session_current_tag": "LONDON"},
+        )
+        self.assertEqual(meta, {})
+
+
 class SameDayLossStreakIssueTest(unittest.TestCase):
     """_same_day_loss_streak_issues — §8 re-entry discipline (2026-06-10)."""
 

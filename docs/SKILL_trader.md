@@ -76,6 +76,16 @@ export QR_DISABLE_AUTO_CLOSE="${QR_DISABLE_AUTO_CLOSE:-1}"
 # thin-session noise on 2026-05-13.
 export QR_NEW_ENTRY_INITIAL_SL="${QR_NEW_ENTRY_INITIAL_SL:-0}"
 export QR_DISABLE_TRAILING_SL="${QR_DISABLE_TRAILING_SL:-1}"
+# Disaster stop (2026-06-11, operator-approved 「SLの件もやっていい」).
+# Every NEW entry carries a broker-side CATASTROPHE stop at
+# H4 ATR × QR_DISASTER_SL_H4_ATR_MULT (2.5) × session widening —
+# 60-120+ pips on majors, far beyond the noise band that hunted the
+# 2026-05-13 stops. It is decoupled from intent.sl: sizing, reward/risk,
+# and risk validation are unchanged; it never trails; existing positions
+# are never retro-fitted. Its job is to cap the give-up-close tail and
+# survive a flash move / intervention inside the 20-minute blind window.
+export QR_DISASTER_SL="${QR_DISASTER_SL:-1}"
+export QR_DISASTER_SL_H4_ATR_MULT="${QR_DISASTER_SL_H4_ATR_MULT:-2.5}"
 # Fresh entries need both executable forecast context and auditable telemetry.
 # If forecast_history, projection_ledger, or execution_ledger sync is missing,
 # generate-intents may diagnose the lane but must not emit LIVE_READY.
