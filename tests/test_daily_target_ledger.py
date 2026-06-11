@@ -493,9 +493,12 @@ class DailyTargetLedgerTest(unittest.TestCase):
             ).run(start_balance_jpy=200_000, daily_risk_budget_jpy=4000)
 
             self.assertEqual(summary.target_trades_per_day, RiskPolicy().target_trades_per_day)
+            # The 1.0% min_per_trade_risk_pct floor (2026-06-11) lifts the
+            # 4000/10=400 pace slice to 200_000 x 1.0% = 2_000 because this
+            # pace is policy-derived, not operator-explicit CLI.
             self.assertAlmostEqual(
                 summary.per_trade_risk_budget_jpy,
-                4000.0 / RiskPolicy().target_trades_per_day,
+                200_000 * (RiskPolicy().min_per_trade_risk_pct / 100.0),
             )
 
     def test_target_trades_per_day_persists_across_runs(self) -> None:
@@ -613,9 +616,9 @@ class DailyTargetLedgerTest(unittest.TestCase):
             payload = json.loads((root / "target.json").read_text())
 
             self.assertEqual(summary.target_trades_per_day, 25)
-            self.assertEqual(summary.target_trades_per_day_source, "ai_test_bot_required_trades")
-            self.assertAlmostEqual(summary.per_trade_risk_budget_jpy, 4000.0 / 25, places=4)
-            self.assertEqual(payload["target_trades_per_day_source"], "ai_test_bot_required_trades")
+            self.assertEqual(summary.target_trades_per_day_source, "ai_test_bot_required_trades_floored_by_min_per_trade_pct")
+            self.assertAlmostEqual(summary.per_trade_risk_budget_jpy, 2000.0, places=4)  # 1.0% equity floor > 4000/25
+            self.assertEqual(payload["target_trades_per_day_source"], "ai_test_bot_required_trades_floored_by_min_per_trade_pct")
 
     def test_target_band_pace_targets_next_attainable_band_before_10pct_firepower(self) -> None:
         """5-10% adjustment must flow into execution pace, not only reports.
@@ -674,10 +677,10 @@ class DailyTargetLedgerTest(unittest.TestCase):
             self.assertEqual(summary.target_trades_per_day, 23)
             self.assertEqual(
                 summary.target_trades_per_day_source,
-                "ai_test_bot_target_band_6pct_required_trades",
+                "ai_test_bot_target_band_6pct_required_trades_floored_by_min_per_trade_pct",
             )
             self.assertEqual(summary.target_trades_per_day_basis_return_pct, 6.0)
-            self.assertAlmostEqual(summary.per_trade_risk_budget_jpy, 4000.0 / 23, places=4)
+            self.assertAlmostEqual(summary.per_trade_risk_budget_jpy, 2000.0, places=4)  # 1.0% equity floor > 4000/23
             self.assertEqual(payload["target_trades_per_day_basis_return_pct"], 6.0)
             self.assertIn("Target trade pace basis: `6.0%`", report)
 
@@ -746,10 +749,10 @@ class DailyTargetLedgerTest(unittest.TestCase):
             self.assertEqual(summary.target_trades_per_day, 28)
             self.assertEqual(
                 summary.target_trades_per_day_source,
-                "ai_test_bot_target_sizing_5pct_near_miss",
+                "ai_test_bot_target_sizing_5pct_near_miss_floored_by_min_per_trade_pct",
             )
             self.assertEqual(summary.target_trades_per_day_basis_return_pct, 5.0)
-            self.assertAlmostEqual(summary.per_trade_risk_budget_jpy, 4000.0 / 28, places=4)
+            self.assertAlmostEqual(summary.per_trade_risk_budget_jpy, 2000.0, places=4)  # 1.0% equity floor > 4000/28
             self.assertEqual(payload["target_trades_per_day_basis_return_pct"], 5.0)
 
     def test_target_sizing_moderate_floor_candidate_updates_live_pace(self) -> None:
@@ -822,10 +825,10 @@ class DailyTargetLedgerTest(unittest.TestCase):
             self.assertEqual(summary.target_trades_per_day, 25)
             self.assertEqual(
                 summary.target_trades_per_day_source,
-                "ai_test_bot_target_sizing_5pct_moderate",
+                "ai_test_bot_target_sizing_5pct_moderate_floored_by_min_per_trade_pct",
             )
             self.assertEqual(summary.target_trades_per_day_basis_return_pct, 5.0)
-            self.assertAlmostEqual(summary.per_trade_risk_budget_jpy, 22278.1 / 25, places=4)
+            self.assertAlmostEqual(summary.per_trade_risk_budget_jpy, 2227.81, places=4)  # 1.0% equity floor > 22278.1/25
             self.assertEqual(payload["target_trades_per_day_basis_return_pct"], 5.0)
 
     def test_target_sizing_moderate_rejects_daily_risk_breach(self) -> None:
@@ -886,7 +889,7 @@ class DailyTargetLedgerTest(unittest.TestCase):
             self.assertEqual(summary.target_trades_per_day, 30)
             self.assertEqual(
                 summary.target_trades_per_day_source,
-                "ai_test_bot_target_band_5pct_required_trades_capped",
+                "ai_test_bot_target_band_5pct_required_trades_capped_floored_by_min_per_trade_pct",
             )
 
     def test_previous_cli_pace_yields_to_fresh_target_band_backtest(self) -> None:
@@ -951,7 +954,7 @@ class DailyTargetLedgerTest(unittest.TestCase):
             self.assertEqual(summary.target_trades_per_day, 23)
             self.assertEqual(
                 summary.target_trades_per_day_source,
-                "ai_test_bot_target_band_6pct_required_trades",
+                "ai_test_bot_target_band_6pct_required_trades_floored_by_min_per_trade_pct",
             )
             self.assertEqual(summary.target_trades_per_day_basis_return_pct, 6.0)
 
@@ -997,16 +1000,17 @@ class DailyTargetLedgerTest(unittest.TestCase):
             self.assertEqual(summary.target_trades_per_day, cap)
             self.assertEqual(
                 summary.target_trades_per_day_source,
-                "ai_test_bot_required_trades_capped",
+                "ai_test_bot_required_trades_capped_floored_by_min_per_trade_pct",
             )
             self.assertAlmostEqual(
+                # floored: 200_000 x min_per_trade_risk_pct (1.0%) > 4000/cap
                 summary.per_trade_risk_budget_jpy,
-                4000.0 / cap,
+                2000.0,
                 places=4,
             )
             self.assertEqual(
                 payload["target_trades_per_day_source"],
-                "ai_test_bot_required_trades_capped",
+                "ai_test_bot_required_trades_capped_floored_by_min_per_trade_pct",
             )
 
     def test_explicit_cli_pace_is_not_capped(self) -> None:

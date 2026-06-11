@@ -479,20 +479,28 @@ class RiskPolicy:
     #     pace falls naturally below the cap.
     max_target_trades_per_day: int | None = 30
     # Floor on per_trade_risk_budget as a fraction of starting equity.
-    # (a) market reality: even with a tight daily_risk_pct and a high
-    #     target_trades_per_day count, the per-trade slice must still
-    #     justify a tradable lane size at OANDA's minimum unit (1k base
-    #     currency). At ~0.05% of typical retail FX equity (~JPY 200k) this
-    #     keeps per_trade ≈ 100 JPY which is the boundary where 1000-unit
-    #     lots remain sized within reasonable SL distances.
+    # (a) market reality: the per-trade slice must fund a position whose
+    #     ATR-derived TP meaningfully exceeds round-trip spread, or every
+    #     "win" is noise-scale. The old 0.05% floor (~100 JPY at 200k NAV)
+    #     was decorative: 2026-06-11 live showed the stale-backtest pace
+    #     (30 trades/day, derived from the pre-TP-fix clipped-win era)
+    #     slicing a 10% daily budget into 585 JPY shots, which the SL-free
+    #     sizing min() then used to cut NAV%-sized entries (~5,000u) down
+    #     to 1,000u micro-lots — the exact "single-lane × micro-size"
+    #     death spiral of feedback_basket_and_pace_cap.md (2026-05-06),
+    #     where micro wins re-teach the backtest that 30+ micro trades are
+    #     "required". At 1.0% of equity the floor funds a MIN-lot-multiple
+    #     position with ATR-scale geometry, and the whole-day protection
+    #     stays intact because remaining_risk_budget_jpy still decrements
+    #     per shot (≈10 full-loss trades exhaust a 10% day).
     # (b) constant rather than derived: this is operator policy preventing
     #     "math break" cycles where pace × budget drives per-trade into
     #     units the broker cannot honor — see
-    #     feedback_high_conviction_execution.md and
-    #     feedback_basket_and_pace_cap.md.
+    #     feedback_high_conviction_execution.md, feedback_attack_mode_sizing.md,
+    #     and feedback_basket_and_pace_cap.md.
     # (c) replace via: improve strategy expectancy so backtest firepower
     #     pace falls naturally, or raise daily_risk_pct intentionally.
-    min_per_trade_risk_pct: float | None = 0.05
+    min_per_trade_risk_pct: float | None = 1.0
     # Default reward/risk floor for non-range entries.
     # (a) market reality: trend / breakout-failure setups need their TP to clear
     #     spread + slippage by a margin that compensates for losing trades; 1.2R

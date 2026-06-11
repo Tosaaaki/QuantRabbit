@@ -35,6 +35,14 @@ drill into `data/order_intents.json`, `data/pair_charts.json`,
 `data/market_context_matrix.json` etc. with targeted `jq` / `python -c`
 queries only where the digest flags something.
 
+**Wait long, poll never (2026-06-11).** `cycle-refresh`, the live gateway
+wrapper, and `cycle-sidecars` run for minutes. Invoke each with ONE long
+shell wait (yield/timeout ≥ 300000 ms, generous max_output_tokens) so the
+call returns once when done. Re-polling a yielded command every ~10s
+re-sends the entire conversation context per poll — telemetry on
+2026-06-11 measured ~25 such empty turns per cycle, which kept the cycle
+at ~3.9M tokens despite the consolidated commands.
+
 Digest semantics:
 
 - `steps_failed` lists failed steps with stderr tails. A failed REQUIRED

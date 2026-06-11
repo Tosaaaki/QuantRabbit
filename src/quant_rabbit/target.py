@@ -363,10 +363,14 @@ class DailyTargetLedger:
         # state / policy default). Operator-explicit CLI pace is treated as
         # a deliberate override; do not silently mutate it.
         per_trade_floor_applied = False
+        # "cli" and "previous_cli" are both operator-explicit pace: the
+        # operator's arithmetic persists across automation cycles by design
+        # (test_target_trades_per_day_persists_across_runs), so the floor
+        # must not silently mutate it on the second cycle either.
         if (
             policy.min_per_trade_risk_pct is not None
             and policy.min_per_trade_risk_pct > 0
-            and pace_source != "cli"
+            and "cli" not in str(pace_source or "")
         ):
             equity_floor = round(start_balance * (policy.min_per_trade_risk_pct / 100.0), 4)
             if equity_floor > per_trade_risk_budget:

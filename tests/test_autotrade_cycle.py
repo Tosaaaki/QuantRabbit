@@ -115,7 +115,9 @@ class AutoTradeCycleTest(unittest.TestCase):
                 self.assertEqual(payload["target_trades_per_day"], 23)
                 self.assertEqual(
                     payload["target_trades_per_day_source"],
-                    "ai_test_bot_target_band_6pct_required_trades",
+                    # 1.0% min_per_trade_risk_pct floor (2026-06-11) lifts the
+                    # backtest pace slice and annotates the source.
+                    "ai_test_bot_target_band_6pct_required_trades_floored_by_min_per_trade_pct",
                 )
                 self.assertEqual(payload["target_trades_per_day_basis_return_pct"], 6.0)
         finally:

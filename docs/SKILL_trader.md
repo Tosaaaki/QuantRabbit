@@ -106,6 +106,13 @@ PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli trader-prompt-route
 # TARGETED queries (jq / python -c) only where the digest flags something.
 # Never cat a multi-megabyte artifact into the conversation.
 #
+# Long-running commands (2026-06-11): `cycle-refresh`, the live wrapper, and
+# `cycle-sidecars` take minutes. Invoke them with ONE long wait (shell-tool
+# yield/timeout ≥ 300000 ms) instead of the default ~10s yield — 2026-06-11
+# telemetry showed ~25 empty polling turns per cycle, each re-sending the
+# whole conversation context, keeping the cycle at ~3.9M tokens despite the
+# consolidation. One long wait removes that entire class of spend.
+#
 # `--daily-risk-pct 10` is forwarded to every daily-target-state step: the
 # day's risk budget is % of starting NAV so the per-trade cap auto-scales
 # with equity (feedback_use_nav_percent.md), and 10% matches the campaign
