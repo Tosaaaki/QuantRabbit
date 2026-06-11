@@ -349,6 +349,10 @@ class SelfImprovementAuditor:
             "generated_at_utc": run_id,
             "status": status,
             "window_hours": window_hours,
+            "findings_count": len(findings),
+            "p0_findings": p0,
+            "p1_findings": p1,
+            "p2_findings": p2,
             "artifact_paths": {
                 "execution_ledger_db": str(self.db_path),
                 "audit_history_db": str(self.history_db_path),
@@ -821,12 +825,20 @@ def _history_normalized_message(code: str, message: str) -> str:
 
 
 def _history_normalized_evidence(code: str, evidence: Any) -> Any:
-    if code != "PERSISTENT_PROFITABILITY_DISCIPLINE_BLOCKED" or not isinstance(evidence, dict):
+    if code not in HISTORY_VOLATILE_STREAK_CODES or not isinstance(evidence, dict):
         return evidence
     normalized = dict(evidence)
     normalized.pop("current_streak", None)
     normalized.pop("previous_streak", None)
     return normalized
+
+
+HISTORY_VOLATILE_STREAK_CODES = frozenset(
+    {
+        "PERSISTENT_PROFITABILITY_DISCIPLINE_BLOCKED",
+        "LATEST_GPT_DECISION_STALE",
+    }
+)
 
 
 def _history_evidence_from_json(raw: str) -> Any:

@@ -166,6 +166,10 @@ class SelfImprovementAuditorTest(unittest.TestCase):
             codes = {item["code"] for item in payload["findings"]}
             self.assertEqual(summary.status, STATUS_BLOCKED)
             self.assertGreaterEqual(summary.p0_findings, 3)
+            self.assertEqual(payload["findings_count"], summary.findings)
+            self.assertEqual(payload["p0_findings"], summary.p0_findings)
+            self.assertEqual(payload["p1_findings"], summary.p1_findings)
+            self.assertEqual(payload["p2_findings"], summary.p2_findings)
             self.assertIn("MEMORY_HEALTH_UNREADABLE", codes)
             self.assertIn("PROJECTION_LEDGER_EXPIRED_PENDING", codes)
             self.assertIn("ENTRY_THESIS_MISSING_FOR_OPEN_TRADES", codes)
@@ -235,6 +239,46 @@ class SelfImprovementAuditorTest(unittest.TestCase):
                 finding_count = conn.execute("SELECT COUNT(*) FROM self_improvement_findings").fetchone()[0]
             self.assertEqual(run_count, 1)
             self.assertEqual(finding_count, first.findings)
+
+    def test_history_dedupes_stale_gpt_retry_ignoring_streak_fields(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(
+                root,
+                active_position=False,
+                closed_pls=(100.0, 80.0, -50.0),
+            )
+            files["gpt"].write_text(
+                json.dumps(
+                    {
+                        "status": "ACCEPTED",
+                        "generated_at_utc": (_NOW - timedelta(minutes=1)).isoformat(),
+                        "decision": {"action": "WAIT"},
+                        "verification_issues": [],
+                    }
+                )
+            )
+
+            first = _run(files, now=_NOW)
+            _run(files, now=_NOW + timedelta(seconds=30))
+
+            self.assertEqual(first.status, STATUS_BLOCKED)
+            with sqlite3.connect(files["history_db"]) as conn:
+                run_count = conn.execute("SELECT COUNT(*) FROM self_improvement_audit_runs").fetchone()[0]
+                finding_count = conn.execute("SELECT COUNT(*) FROM self_improvement_findings").fetchone()[0]
+                stale_streaks = [
+                    json.loads(row[0]).get("current_streak")
+                    for row in conn.execute(
+                        """
+                        SELECT evidence_json
+                        FROM self_improvement_findings
+                        WHERE code = 'LATEST_GPT_DECISION_STALE'
+                        """
+                    )
+                ]
+            self.assertEqual(run_count, 1)
+            self.assertEqual(finding_count, first.findings)
+            self.assertEqual(stale_streaks, [1])
 
     def test_action_required_for_hidden_open_loss_and_low_market_rr(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
