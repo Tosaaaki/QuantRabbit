@@ -1836,6 +1836,66 @@ class TraderPromptRouteTest(unittest.TestCase):
         self.assertEqual(route.branch, BRANCH_VERIFY)
         self.assertIn("accepted CLOSE decision has no newer gateway receipt", route.reasons[0])
 
+    def test_consumed_position_action_names_gateway_blocker(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(
+                root,
+                positions=[
+                    {
+                        "trade_id": "9001",
+                        "pair": "USD_CAD",
+                        "side": "LONG",
+                        "owner": "trader",
+                        "entry_price": 1.3979,
+                        "take_profit": 1.4001,
+                        "stop_loss": 1.3920,
+                        "unrealized_pl_jpy": 100.0,
+                    }
+                ],
+            )
+            decision_response = root / "codex_trader_decision_response.json"
+            decision_response.write_text(json.dumps({"action": "CLOSE", "close_trade_ids": ["9001"]}))
+            files["gpt_decision"].write_text(
+                json.dumps(
+                    {
+                        "status": "ACCEPTED",
+                        "decision": {"action": "CLOSE", "close_trade_ids": ["9001"]},
+                    }
+                )
+            )
+            files["position_execution"].write_text(
+                json.dumps(
+                    {
+                        "status": "BLOCKED",
+                        "sent": False,
+                        "actions": [
+                            {
+                                "trade_id": "9001",
+                                "pair": "USD_CAD",
+                                "issues": [
+                                    {
+                                        "severity": "BLOCK",
+                                        "code": "POSITION_CLOSE_SPREAD_TOO_WIDE",
+                                        "message": "USD_CAD market CLOSE spread 1.9pip exceeds cap",
+                                    }
+                                ],
+                            }
+                        ],
+                    }
+                )
+            )
+            _set_mtime(decision_response, 100.0)
+            _set_mtime(files["snapshot"], 99.0)
+            _set_mtime(files["intents"], 99.0)
+            _set_mtime(files["gpt_decision"], 101.0)
+            _set_mtime(files["position_execution"], 102.0)
+
+            route = route_trader_prompts(**_route_paths(files), decision_response_path=decision_response)
+
+        self.assertTrue(any("accepted CLOSE decision already consumed" in reason for reason in route.reasons))
+        self.assertTrue(any("POSITION_CLOSE_SPREAD_TOO_WIDE" in reason for reason in route.reasons))
+
     def test_routes_decision_older_than_refreshed_broker_truth_back_to_entry_branch(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -1850,6 +1910,43 @@ class TraderPromptRouteTest(unittest.TestCase):
 
         self.assertEqual(route.branch, BRANCH_ENTRY)
         self.assertIn("predates refreshed broker snapshot", route.reasons[0])
+
+    def test_stale_position_action_names_previous_gateway_blocker(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root)
+            decision_response = root / "codex_trader_decision_response.json"
+            decision_response.write_text(json.dumps({"action": "CLOSE", "close_trade_ids": ["9001"]}))
+            files["position_execution"].write_text(
+                json.dumps(
+                    {
+                        "status": "BLOCKED",
+                        "sent": False,
+                        "actions": [
+                            {
+                                "trade_id": "9001",
+                                "pair": "USD_CAD",
+                                "issues": [
+                                    {
+                                        "severity": "BLOCK",
+                                        "code": "POSITION_CLOSE_SPREAD_TOO_WIDE",
+                                        "message": "USD_CAD market CLOSE spread 1.9pip exceeds cap",
+                                    }
+                                ],
+                            }
+                        ],
+                    }
+                )
+            )
+            _set_mtime(decision_response, 100.0)
+            _set_mtime(files["position_execution"], 102.0)
+            _set_mtime(files["snapshot"], 103.0)
+            _set_mtime(files["intents"], 99.0)
+
+            route = route_trader_prompts(**_route_paths(files), decision_response_path=decision_response)
+
+        self.assertIn("predates refreshed broker snapshot", route.reasons[0])
+        self.assertTrue(any("POSITION_CLOSE_SPREAD_TOO_WIDE" in reason for reason in route.reasons))
 
     def test_routes_same_timestamp_decision_response_to_verify_branch(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

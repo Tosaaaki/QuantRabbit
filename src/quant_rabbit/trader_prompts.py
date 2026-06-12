@@ -454,9 +454,11 @@ def _decision_receipt_state(
         (intents_path, "repriced order intents"),
     ):
         if _artifact_newer(path, decision_mtime_ns):
+            reasons = [f"decision response predates {label}; refresh decision from broker truth: {path}"]
+            reasons.extend(_position_gateway_blocker_reasons(position_execution_path, newer_than_ns=decision_mtime_ns))
             return DecisionReceiptState(
                 pending=False,
-                reasons=(f"decision response predates {label}; refresh decision from broker truth: {path}",),
+                reasons=tuple(reasons),
             )
 
     gpt_pending = _accepted_gpt_action_pending_gateway(
@@ -519,9 +521,12 @@ def _accepted_gpt_action_pending_gateway(
         (autotrade_report_path, "autotrade cycle report"),
     ):
         if path is not None and path.exists() and path.stat().st_mtime_ns > gpt_mtime_ns:
+            reasons = [f"accepted {action} decision already consumed by {label}: {path}"]
+            if path == position_execution_path:
+                reasons.extend(_position_gateway_blocker_reasons(position_execution_path, newer_than_ns=gpt_mtime_ns))
             return DecisionReceiptState(
                 pending=False,
-                reasons=(f"accepted {action} decision already consumed by {label}: {path}",),
+                reasons=tuple(reasons),
             )
 
     return DecisionReceiptState(
@@ -554,6 +559,32 @@ def _gpt_decision_terminal_state(path: Path | None, decision_mtime_ns: int) -> s
     if action:
         return f"decision response already verified as non-executable {action}: {path}"
     return None
+
+
+def _position_gateway_blocker_reasons(path: Path | None, *, newer_than_ns: int) -> list[str]:
+    if path is None or not path.exists() or path.stat().st_mtime_ns <= newer_than_ns:
+        return []
+    try:
+        payload = _load_json(path)
+    except (OSError, ValueError, json.JSONDecodeError):
+        return []
+    if str(payload.get("status") or "").upper() != "BLOCKED":
+        return []
+    reasons: list[str] = []
+    for action in payload.get("actions") or []:
+        if not isinstance(action, dict):
+            continue
+        trade_id = str(action.get("trade_id") or "?")
+        pair = str(action.get("pair") or "?")
+        for issue in action.get("issues") or []:
+            if not isinstance(issue, dict):
+                continue
+            if str(issue.get("severity") or "").upper() != "BLOCK":
+                continue
+            code = str(issue.get("code") or "POSITION_GATEWAY_BLOCK")
+            message = str(issue.get("message") or "position gateway blocked the action")
+            reasons.append(f"position gateway blocked trade {trade_id} {pair}: {code}: {message}")
+    return reasons
 
 
 def _position_management_reasons(snapshot: dict[str, Any]) -> tuple[str, ...]:
