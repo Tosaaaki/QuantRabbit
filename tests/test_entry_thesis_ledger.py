@@ -185,6 +185,85 @@ class EntryThesisLedgerTest(unittest.TestCase):
             loaded = load_entry_thesis("999999", root)
             self.assertIsNotNone(loaded)
 
+    def test_immediate_fill_records_intent_protections_when_forecast_has_no_geometry(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            (root / "forecast_history.jsonl").write_text(json.dumps({
+                "pair": "NZD_CAD",
+                "direction": "RANGE",
+                "confidence": 0.73,
+                "regime": "RANGE",
+                "horizon_min": 120,
+            }) + "\n")
+
+            class FakeIntent:
+                pair = "NZD_CAD"
+                side = _SideEnum("SHORT")
+                thesis = "NZD_CAD SHORT range rotation"
+                entry = 0.81335
+                tp = 0.81087
+                sl = 0.81916
+                metadata = {
+                    "desk": "range_trader",
+                    "regime_state": "RANGE",
+                    "parent_lane_id": "range_trader:NZD_CAD:SHORT:RANGE_ROTATION",
+                }
+
+            response = {
+                "orderFillTransaction": {
+                    "tradeOpened": {"tradeID": "472312"},
+                    "price": "0.81335",
+                }
+            }
+
+            written = record_entry_thesis_from_response(
+                response=response,
+                intent=FakeIntent(),
+                data_root=root,
+                now=datetime(2026, 6, 12, 7, 55, 28, tzinfo=timezone.utc),
+            )
+
+            self.assertIsNotNone(written)
+            assert written is not None
+            self.assertEqual(written.trade_id, "472312")
+            self.assertAlmostEqual(written.target_price or 0.0, 0.81087)
+            self.assertAlmostEqual(written.invalidation_price or 0.0, 0.81916)
+
+    def test_immediate_fill_records_broker_protection_prices_before_intent_fallback(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            (root / "forecast_history.jsonl").write_text(json.dumps({
+                "pair": "EUR_USD", "direction": "UP", "confidence": 0.7,
+            }) + "\n")
+
+            class FakeIntent:
+                pair = "EUR_USD"
+                side = _SideEnum("LONG")
+                thesis = "EUR_USD LONG"
+                entry = 1.1
+                tp = 1.104
+                sl = 1.091
+                metadata: dict = {}
+
+            response = {
+                "orderCreateTransaction": {
+                    "takeProfitOnFill": {"price": "1.10500"},
+                    "stopLossOnFill": {"price": "1.09200"},
+                },
+                "orderFillTransaction": {
+                    "tradeOpened": {"tradeID": "broker-protection"},
+                    "price": "1.10000",
+                },
+            }
+
+            written = record_entry_thesis_from_response(
+                response=response, intent=FakeIntent(), data_root=root,
+            )
+
+            assert written is not None
+            self.assertAlmostEqual(written.target_price or 0.0, 1.105)
+            self.assertAlmostEqual(written.invalidation_price or 0.0, 1.092)
+
     def test_record_from_send_response_persists_market_context_evidence(self) -> None:
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
@@ -344,6 +423,8 @@ class EntryThesisLedgerTest(unittest.TestCase):
             self.assertEqual(promoted.side, "SHORT")
             self.assertEqual(promoted.forecast_direction, "DOWN")
             self.assertAlmostEqual(promoted.entry_price, 1.16013)
+            self.assertAlmostEqual(promoted.target_price or 0.0, 1.1583)
+            self.assertAlmostEqual(promoted.invalidation_price or 0.0, 1.1641)
             self.assertEqual(promoted.context_evidence["market_context_matrix_ref"], "matrix:EUR_USD:SHORT")
             loaded = load_entry_thesis("471492", root)
             self.assertIsNotNone(loaded)
@@ -647,10 +728,10 @@ class EntryThesisLedgerTest(unittest.TestCase):
         )
 
     @staticmethod
-    def _write_history(root: Path, *, status: str, generated_at_utc: str) -> None:
+    def _write_history(root: Path, *, status: str, generated_at_utc: str, trade_id: str = "H1") -> None:
         (root / THESIS_EVOLUTION_HISTORY_FILENAME).write_text(
             json.dumps(
-                {"trade_id": "H1", "status": status, "generated_at_utc": generated_at_utc}
+                {"trade_id": trade_id, "status": status, "generated_at_utc": generated_at_utc}
             )
             + "\n"
         )
@@ -672,6 +753,90 @@ class EntryThesisLedgerTest(unittest.TestCase):
             self.assertEqual(ev.status, "BROKEN")
             self.assertEqual(ev.verdict, "RECOMMEND_CLOSE")
             self.assertIn("THESIS_EXPIRED", ev.rationale)
+
+    def test_range_rotation_adverse_move_escalates_after_consecutive_weakened(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            record_entry_thesis(
+                EntryThesis(
+                    timestamp_utc="2026-06-12T07:55:28Z",
+                    trade_id="472312",
+                    pair="NZD_CAD",
+                    side="SHORT",
+                    entry_price=0.81335,
+                    forecast_direction="RANGE",
+                    forecast_confidence=0.73,
+                    regime="RANGE",
+                    invalidation_price=0.81916,
+                    target_price=0.81087,
+                    key_drivers=["lane_id=range_trader:NZD_CAD:SHORT:RANGE_ROTATION"],
+                    horizon_hours=6.0,
+                ),
+                root,
+            )
+            self._write_history(
+                root,
+                status="WEAKENED",
+                generated_at_utc="2026-06-12T07:56:00Z",
+                trade_id="472312",
+            )
+
+            ev = evaluate_thesis_evolution(
+                trade_id="472312",
+                pair="NZD_CAD",
+                side="SHORT",
+                open_time_utc="2026-06-12T07:55:28Z",
+                current_forecast=_Forecast("RANGE", 0.33),
+                current_regime="RANGE",
+                data_root=root,
+                current_price=0.81430,
+                current_price_label="ask",
+                now=datetime(2026, 6, 12, 8, 11, 0, tzinfo=timezone.utc),
+            )
+
+            assert ev is not None
+            self.assertEqual(ev.status, "BROKEN")
+            self.assertEqual(ev.verdict, "RECOMMEND_CLOSE")
+            self.assertIn("RANGE_ROTATION_FAILED", ev.rationale)
+
+    def test_range_rotation_adverse_move_requires_prior_weakened_cycle(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            record_entry_thesis(
+                EntryThesis(
+                    timestamp_utc="2026-06-12T07:55:28Z",
+                    trade_id="472312",
+                    pair="NZD_CAD",
+                    side="SHORT",
+                    entry_price=0.81335,
+                    forecast_direction="RANGE",
+                    forecast_confidence=0.73,
+                    regime="RANGE",
+                    invalidation_price=0.81916,
+                    target_price=0.81087,
+                    key_drivers=["lane_id=range_trader:NZD_CAD:SHORT:RANGE_ROTATION"],
+                    horizon_hours=6.0,
+                ),
+                root,
+            )
+
+            ev = evaluate_thesis_evolution(
+                trade_id="472312",
+                pair="NZD_CAD",
+                side="SHORT",
+                open_time_utc="2026-06-12T07:55:28Z",
+                current_forecast=_Forecast("RANGE", 0.33),
+                current_regime="RANGE",
+                data_root=root,
+                current_price=0.81430,
+                current_price_label="ask",
+                now=datetime(2026, 6, 12, 8, 11, 0, tzinfo=timezone.utc),
+            )
+
+            assert ev is not None
+            self.assertEqual(ev.status, "WEAKENED")
+            self.assertEqual(ev.verdict, "HOLD")
+            self.assertIn("waiting for consecutive WEAKENED", ev.rationale)
 
     def test_evolution_thesis_expiry_requires_prior_cycle_weakened(self) -> None:
         with tempfile.TemporaryDirectory() as td:

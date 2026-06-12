@@ -16,8 +16,8 @@ This module:
    - directional_forecast at entry: direction + confidence
    - regime at entry
    - key drivers (top-3 detector signals supporting the entry)
-   - invalidation_price (from forecast)
-   - target_price (from forecast)
+   - invalidation_price (from forecast, or actual broker/intent SL)
+   - target_price (from forecast, or actual broker/intent TP)
    Writes to `data/entry_thesis_ledger.jsonl` (append-only).
 
 2. **Every cycle**, for each open trader-owned position:
@@ -81,6 +81,7 @@ THESIS_EVOLUTION_HISTORY_FILENAME = "thesis_evolution_history.jsonl"
 # younger than half the 20-minute scheduler cadence is the current cycle's own
 # write (multiple evaluations can run inside one cycle), not a prior check.
 THESIS_EXPIRY_PRIOR_CHECK_MIN_AGE_SECONDS = 600.0
+RANGE_ROTATION_FAIL_TARGET_FRACTION = float(os.environ.get("QR_RANGE_ROTATION_FAIL_TARGET_FRACTION", "0.35"))
 
 
 def _thesis_horizon_hours_from_forecast(forecast: Dict[str, Any]) -> Optional[float]:
@@ -113,6 +114,17 @@ def _last_archived_evolution_row(trade_id: str, data_root: Path) -> Optional[dic
     except OSError:
         return None
     return last
+
+
+def _has_prior_weakened_or_broken_cycle(*, trade_id: str, data_root: Path, now: datetime) -> bool:
+    prior = _last_archived_evolution_row(trade_id, data_root)
+    prior_status = str((prior or {}).get("status") or "")
+    prior_at = _parse_utc_timestamp((prior or {}).get("generated_at_utc"))
+    prior_is_previous_cycle = (
+        prior_at is not None
+        and (now - prior_at).total_seconds() >= THESIS_EXPIRY_PRIOR_CHECK_MIN_AGE_SECONDS
+    )
+    return prior_status in ("WEAKENED", "BROKEN") and prior_is_previous_cycle
 
 
 LEDGER_FILENAME = "entry_thesis_ledger.jsonl"
@@ -342,6 +354,84 @@ def thesis_invalidation_hit_reason(
         price_label=price_label,
         buffer_pips=buffer_pips,
     )
+
+
+def _is_range_rotation_thesis(thesis: "EntryThesis") -> bool:
+    entry_dir = str(thesis.forecast_direction or "").upper()
+    regime = str(thesis.regime or "").upper()
+    evidence = thesis.context_evidence or {}
+    method = str(evidence.get("market_context_method") or "").upper()
+    drivers = " ".join(str(driver).upper() for driver in thesis.key_drivers)
+    return (
+        entry_dir == "RANGE"
+        and (
+            "RANGE" in regime
+            or "RANGE_ROTATION" in method
+            or "RANGE_ROTATION" in drivers
+        )
+    )
+
+
+def _range_rotation_adverse_reason(
+    thesis: "EntryThesis",
+    *,
+    side: str,
+    current_price: Optional[float],
+    price_label: Optional[str],
+    buffer_pips: Optional[float] = None,
+) -> Optional[str]:
+    """Detect a range-rotation entry drifting against its entry before disaster SL.
+
+    Range entries do not carry a directional forecast ("RANGE"), so waiting only
+    for a forecast flip or a wide broker SL can turn a failed rotation into an
+    unmanaged loss. This check uses the declared target distance as the trade's
+    local geometry and requires the caller to confirm consecutive WEAKENED
+    cycles before promoting it to BROKEN.
+    """
+
+    if not _is_range_rotation_thesis(thesis):
+        return None
+    try:
+        price = float(current_price) if current_price is not None else 0.0
+        entry = float(thesis.entry_price)
+    except (TypeError, ValueError):
+        return None
+    if price <= 0.0 or entry <= 0.0:
+        return None
+
+    side_up = str(side or thesis.side or "").upper()
+    target = _safe_float(thesis.target_price)
+    target_distance = 0.0
+    if target is not None:
+        if side_up == "LONG" and target > entry:
+            target_distance = target - entry
+        elif side_up == "SHORT" and target < entry:
+            target_distance = entry - target
+    buffer_pips_value = thesis_invalidation_buffer_pips(buffer_pips)
+    min_distance = invalidation_buffer_price(thesis.pair, buffer_pips_value)
+    fail_distance = max(min_distance, target_distance * max(0.0, RANGE_ROTATION_FAIL_TARGET_FRACTION))
+    if fail_distance <= 0.0:
+        return None
+
+    label = (price_label or ("bid" if side_up == "LONG" else "ask")).strip()
+    fail_pips = fail_distance / invalidation_pip_size(thesis.pair)
+    if side_up == "LONG":
+        trigger = entry - fail_distance
+        if price <= trigger:
+            return (
+                f"RANGE_ROTATION_FAILED: current {label} {price:.5f} <= adverse entry trigger "
+                f"{trigger:.5f} (entry {entry:.5f}, fail_distance {fail_pips:.1f}p, "
+                f"target_fraction {RANGE_ROTATION_FAIL_TARGET_FRACTION:.2f})"
+            )
+    elif side_up == "SHORT":
+        trigger = entry + fail_distance
+        if price >= trigger:
+            return (
+                f"RANGE_ROTATION_FAILED: current {label} {price:.5f} >= adverse entry trigger "
+                f"{trigger:.5f} (entry {entry:.5f}, fail_distance {fail_pips:.1f}p, "
+                f"target_fraction {RANGE_ROTATION_FAIL_TARGET_FRACTION:.2f})"
+            )
+    return None
 
 
 @dataclass
@@ -908,6 +998,55 @@ def _safe_float(value: Any) -> Optional[float]:
         return None
 
 
+def _first_price(*values: Any) -> Optional[float]:
+    for value in values:
+        parsed = _safe_float(value)
+        if parsed is not None and parsed > 0.0:
+            return parsed
+    return None
+
+
+def _nested_price(payload: Any, key: str) -> Optional[float]:
+    if not isinstance(payload, dict):
+        return None
+    nested = payload.get(key)
+    if isinstance(nested, dict):
+        return _first_price(nested.get("price"))
+    return None
+
+
+def _response_protection_price(response: Optional[Dict[str, Any]], kind: str) -> Optional[float]:
+    if not isinstance(response, dict):
+        return None
+    if kind == "tp":
+        nested_key = "takeProfitOnFill"
+        transaction_keys = ("takeProfitOrderTransaction",)
+    elif kind == "sl":
+        nested_key = "stopLossOnFill"
+        transaction_keys = ("stopLossOrderTransaction",)
+    else:
+        return None
+
+    candidates: list[Any] = []
+    for key in ("orderCreateTransaction", "orderFillTransaction"):
+        payload = response.get(key)
+        candidates.append(_nested_price(payload, nested_key))
+    for key in transaction_keys:
+        payload = response.get(key)
+        if isinstance(payload, dict):
+            candidates.append(payload.get("price"))
+    candidates.append(_nested_price(response, nested_key))
+    return _first_price(*candidates)
+
+
+def _transaction_protection_price(transaction: Dict[str, Any], kind: str) -> Optional[float]:
+    if kind == "tp":
+        return _nested_price(transaction, "takeProfitOnFill")
+    if kind == "sl":
+        return _nested_price(transaction, "stopLossOnFill")
+    return None
+
+
 def _safe_int(value: Any) -> Optional[int]:
     if value in (None, ""):
         return None
@@ -976,8 +1115,16 @@ def record_entry_thesis_from_response_result(
                 forecast_confidence=float(forecast.get("confidence") or 0.0),
                 horizon_hours=_thesis_horizon_hours_from_forecast(forecast),
                 regime=str(forecast.get("regime") or metadata.get("regime_state") or "") or None,
-                invalidation_price=forecast.get("invalidation_price") or getattr(intent, "sl", None),
-                target_price=forecast.get("target_price") or getattr(intent, "tp", None),
+                invalidation_price=_first_price(
+                    forecast.get("invalidation_price"),
+                    _response_protection_price(response, "sl"),
+                    getattr(intent, "sl", None),
+                ),
+                target_price=_first_price(
+                    forecast.get("target_price"),
+                    _response_protection_price(response, "tp"),
+                    getattr(intent, "tp", None),
+                ),
                 key_drivers=_build_key_drivers(
                     forecast=forecast,
                     metadata=metadata,
@@ -1036,8 +1183,16 @@ def record_entry_thesis_from_response_result(
             forecast_confidence=float(forecast.get("confidence") or 0.0),
             horizon_hours=_thesis_horizon_hours_from_forecast(forecast),
             regime=str(regime) if regime else None,
-            invalidation_price=forecast.get("invalidation_price"),
-            target_price=forecast.get("target_price"),
+            invalidation_price=_first_price(
+                forecast.get("invalidation_price"),
+                _response_protection_price(response, "sl"),
+                getattr(intent, "sl", None),
+            ),
+            target_price=_first_price(
+                forecast.get("target_price"),
+                _response_protection_price(response, "tp"),
+                getattr(intent, "tp", None),
+            ),
             key_drivers=_build_key_drivers(
                 forecast=forecast,
                 metadata=metadata,
@@ -1118,8 +1273,14 @@ def record_entry_thesis_from_order_fill(
             forecast_confidence=pending.forecast_confidence,
             horizon_hours=pending.horizon_hours,
             regime=pending.regime,
-            invalidation_price=pending.invalidation_price,
-            target_price=pending.target_price,
+            invalidation_price=_first_price(
+                pending.invalidation_price,
+                _transaction_protection_price(transaction, "sl"),
+            ),
+            target_price=_first_price(
+                pending.target_price,
+                _transaction_protection_price(transaction, "tp"),
+            ),
             key_drivers=list(pending.key_drivers),
             context_evidence=dict(pending.context_evidence),
         )
@@ -1260,6 +1421,31 @@ def evaluate_thesis_evolution(
         if status == "STILL_VALID":
             status = "WEAKENED"
 
+    # RANGE_ROTATION fail-fast: a RANGE entry has no directional thesis to
+    # recover back to. If it is repeatedly WEAKENED and has already moved
+    # against entry by a meaningful fraction of its own TP geometry, do not
+    # wait for the wider disaster SL or full forecast-horizon expiry.
+    range_adverse_reason = _range_rotation_adverse_reason(
+        thesis,
+        side=side_up,
+        current_price=current_price,
+        price_label=current_price_label,
+        buffer_pips=invalidation_buffer_pips,
+    )
+    strong_current_support = current_dir == aligned_dir and current_conf >= ENTRY_CONFIDENCE_MIN
+    if status == "WEAKENED" and range_adverse_reason and not strong_current_support:
+        if _has_prior_weakened_or_broken_cycle(trade_id=trade_id, data_root=data_root, now=now):
+            status = "BROKEN"
+            verdict = "RECOMMEND_CLOSE"
+            reasons.append(
+                f"{range_adverse_reason}; thesis was WEAKENED across consecutive checks "
+                "without strong current directional support"
+            )
+        else:
+            reasons.append(
+                f"{range_adverse_reason}; waiting for consecutive WEAKENED check before Gate A"
+            )
+
     # THESIS_EXPIRED escalation (2026-06-12, AGENT_CONTRACT §10): a WEAKENED
     # thesis that has outlived its declared horizon without reaching target or
     # invalidation is no longer the entry thesis — holding it is an unpriced
@@ -1277,14 +1463,7 @@ def evaluate_thesis_evolution(
         and thesis.horizon_hours > 0
         and age_hours > thesis.horizon_hours
     ):
-        prior = _last_archived_evolution_row(trade_id, data_root)
-        prior_status = str((prior or {}).get("status") or "")
-        prior_at = _parse_utc_timestamp((prior or {}).get("generated_at_utc"))
-        prior_is_previous_cycle = (
-            prior_at is not None
-            and (now - prior_at).total_seconds() >= THESIS_EXPIRY_PRIOR_CHECK_MIN_AGE_SECONDS
-        )
-        if prior_status in ("WEAKENED", "BROKEN") and prior_is_previous_cycle:
+        if _has_prior_weakened_or_broken_cycle(trade_id=trade_id, data_root=data_root, now=now):
             status = "BROKEN"
             verdict = "RECOMMEND_CLOSE"
             reasons.append(
