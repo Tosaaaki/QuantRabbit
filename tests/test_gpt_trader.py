@@ -1267,6 +1267,58 @@ class GPTTraderBrainTest(unittest.TestCase):
             self.assertEqual(market_context["broker_tradeability"]["context_assets_not_tradeable"], ["XAU_USD"])
             self.assertIn("context_asset:XAU_USD", payload["input_packet"]["allowed_evidence_refs"])
             self.assertIn("broker:instruments", payload["input_packet"]["allowed_evidence_refs"])
+            self.assertIn("cross:WTICO_USD", payload["input_packet"]["allowed_evidence_refs"])
+
+    def test_accepts_capture_economics_and_named_cross_asset_refs(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root)
+            files["capture_economics"].write_text(
+                json.dumps(
+                    {
+                        "generated_at_utc": datetime.now(timezone.utc).isoformat(),
+                        "status": "NEGATIVE_EXPECTANCY",
+                        "overall": {
+                            "trades": 193,
+                            "win_rate": 0.5803,
+                            "payoff_ratio": 0.398,
+                            "breakeven_payoff_at_win_rate": 0.723,
+                            "expectancy_jpy_per_trade": -197.8,
+                            "net_jpy": -38183.1,
+                        },
+                        "by_exit_reason": {
+                            "MARKET_ORDER_TRADE_CLOSE": {
+                                "trades": 72,
+                                "win_rate": 0.0972,
+                                "payoff_ratio": 0.11,
+                                "expectancy_jpy_per_trade": -1005.6,
+                                "net_jpy": -72400.0,
+                            }
+                        },
+                    }
+                )
+            )
+            decision = _trade_decision()
+            decision["evidence_refs"].extend(["capture:economics", "cross:WTICO_USD"])
+            brain = _brain(root, files, decision)
+
+            summary = brain.run(snapshot_path=files["snapshot"])
+
+            self.assertEqual(summary.status, "ACCEPTED")
+            payload = json.loads((root / "gpt_decision.json").read_text())
+            refs = payload["input_packet"]["allowed_evidence_refs"]
+            self.assertIn("capture:economics", refs)
+            self.assertIn("capture:exit_reason:MARKET_ORDER_TRADE_CLOSE", refs)
+            self.assertIn("cross:WTICO_USD", refs)
+            capture = payload["input_packet"]["capture_economics"]
+            self.assertEqual(capture["evidence_ref"], "capture:economics")
+            self.assertEqual(capture["status"], "NEGATIVE_EXPECTANCY")
+            self.assertEqual(
+                capture["by_exit_reason"]["MARKET_ORDER_TRADE_CLOSE"]["net_jpy"],
+                -72400.0,
+            )
+            codes = {issue["code"] for issue in payload["verification_issues"]}
+            self.assertNotIn("UNKNOWN_EVIDENCE_REF", codes)
 
     def test_packet_includes_coverage_gap_profitable_bucket_context(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -2255,6 +2307,7 @@ def _brain(root: Path, files: dict[str, Path], decision: dict, *, max_lanes: int
         cot_path=files["cot"],
         option_skew_path=files["option_skew"],
         attack_advice_path=files["attack_advice"],
+        capture_economics_path=files["capture_economics"],
         coverage_optimization_path=files["coverage_optimization"],
         learning_audit_path=files["learning_audit"],
         verification_ledger_path=files["verification_ledger"],
@@ -2311,6 +2364,7 @@ def _fixtures(root: Path, *, positions: list[dict] | None = None, orders: list[d
         "cot": root / "cot.json",
         "option_skew": root / "option_skew.json",
         "attack_advice": root / "attack_advice.json",
+        "capture_economics": root / "capture_economics.json",
         "coverage_optimization": root / "coverage_optimization.json",
         "learning_audit": root / "learning_audit.json",
         "verification_ledger": root / "verification_ledger.json",
@@ -2615,6 +2669,7 @@ def _fixtures(root: Path, *, positions: list[dict] | None = None, orders: list[d
         )
     )
     files["attack_advice"].write_text(json.dumps({}))
+    files["capture_economics"].write_text(json.dumps({}))
     files["coverage_optimization"].write_text(json.dumps({"status": "OK"}))
     files["learning_audit"].write_text(json.dumps({}))
     files["self_improvement_audit"].write_text(json.dumps({}))

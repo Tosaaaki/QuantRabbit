@@ -481,6 +481,7 @@ from quant_rabbit.paths import (
     DEFAULT_BROKER_INSTRUMENTS,
     DEFAULT_CAMPAIGN_PLAN,
     DEFAULT_CALENDAR_SNAPSHOT,
+    DEFAULT_CAPTURE_ECONOMICS,
     DEFAULT_CONTEXT_ASSET_CHARTS,
     DEFAULT_COVERAGE_OPTIMIZATION,
     DEFAULT_COT_SNAPSHOT,
@@ -680,6 +681,7 @@ class GPTTraderBrain:
         cot_path: Path = DEFAULT_COT_SNAPSHOT,
         option_skew_path: Path = DEFAULT_OPTION_SKEW,
         attack_advice_path: Path = DEFAULT_AI_ATTACK_ADVICE,
+        capture_economics_path: Path = DEFAULT_CAPTURE_ECONOMICS,
         coverage_optimization_path: Path = DEFAULT_COVERAGE_OPTIMIZATION,
         learning_audit_path: Path = DEFAULT_LEARNING_AUDIT,
         verification_ledger_path: Path = DEFAULT_VERIFICATION_LEDGER,
@@ -710,6 +712,7 @@ class GPTTraderBrain:
         self.cot_path = cot_path
         self.option_skew_path = option_skew_path
         self.attack_advice_path = attack_advice_path
+        self.capture_economics_path = capture_economics_path
         self.coverage_optimization_path = coverage_optimization_path
         self.learning_audit_path = learning_audit_path
         self.verification_ledger_path = verification_ledger_path
@@ -762,6 +765,7 @@ class GPTTraderBrain:
         target = _load_json(self.target_state_path) if self.target_state_path.exists() else {}
         lanes = _lane_packet(intents, campaign, strategy, story, max_lanes=self.max_lanes)
         attack_advice = _load_optional_json(self.attack_advice_path)
+        capture_economics = _load_optional_json(self.capture_economics_path)
         coverage_optimization = _load_optional_json(self.coverage_optimization_path)
         learning_audit = _load_optional_json(self.learning_audit_path)
         verification_ledger = _load_optional_json(self.verification_ledger_path)
@@ -778,6 +782,7 @@ class GPTTraderBrain:
             target=target,
             lanes=lanes,
             attack_advice=attack_advice,
+            capture_economics=capture_economics,
             coverage_optimization=coverage_optimization,
             learning_audit=learning_audit,
             verification_ledger=verification_ledger,
@@ -833,6 +838,7 @@ class GPTTraderBrain:
             "daily_target": _target_packet(target),
             "lanes": lanes,
             "ai_attack_advice": _attack_advice_packet(attack_advice),
+            "capture_economics": _capture_economics_packet(capture_economics),
             "coverage_optimization": _coverage_optimization_packet(coverage_optimization),
             "learning_audit": _learning_audit_packet(learning_audit),
             "verification_ledger": _verification_ledger_packet(verification_ledger),
@@ -2083,6 +2089,7 @@ def _allowed_refs(
     target: dict[str, Any],
     lanes: list[dict[str, Any]],
     attack_advice: dict[str, Any] | None,
+    capture_economics: dict[str, Any] | None,
     coverage_optimization: dict[str, Any] | None,
     learning_audit: dict[str, Any] | None,
     verification_ledger: dict[str, Any] | None,
@@ -2102,12 +2109,24 @@ def _allowed_refs(
     # UNKNOWN_EVIDENCE_REF and the cycle never reaches the gateway.
     timeframes = DEFAULT_PAIR_CHART_TIMEFRAMES
     structure_keys = ("structure",)
-    cross_assets = ("dxy", "USB10Y_USD", "USB02Y_USD", "spx", "gold", "oil", "btc")
+    cross_assets = (
+        "dxy",
+        "USB10Y_USD",
+        "USB02Y_USD",
+        "SPX500_USD",
+        "XAU_USD",
+        "WTICO_USD",
+        "BTC_USD",
+        "spx",
+        "gold",
+        "oil",
+        "btc",
+    )
     refs = ["broker:snapshot", "target:daily", "verification:ledger"]
     if isinstance(market_status, dict):
         refs.append(str(market_status.get("evidence_ref") or "market:status"))
-    pairs: set[str] = set()
-    currencies: set[str] = set()
+        pairs: set[str] = set()
+        currencies: set[str] = set()
     for position in snapshot.get("positions", []) or []:
         if not isinstance(position, dict) or str(position.get("owner") or "") != "trader":
             continue
@@ -2186,6 +2205,14 @@ def _allowed_refs(
             refs.append(f"attack:lane:{lane_id}")
         for lane_id in attack_advice.get("watchlist_lane_ids", []) or []:
             refs.append(f"attack:lane:{lane_id}")
+    if capture_economics:
+        refs.append("capture:economics")
+        by_exit = capture_economics.get("by_exit_reason")
+        if isinstance(by_exit, dict):
+            for reason in by_exit:
+                reason_key = str(reason or "").strip()
+                if reason_key:
+                    refs.append(f"capture:exit_reason:{reason_key}")
     if coverage_optimization:
         refs.append("coverage:optimization")
         diagnostics = (
@@ -2306,6 +2333,61 @@ def _attack_advice_packet(payload: dict[str, Any] | None) -> dict[str, Any]:
         "recommended_lane_learning": lane_summaries[:20],
         "learning_influenced_lane_ids": learning_influenced_lane_ids[:20],
         "settings_advice": payload.get("settings_advice") if isinstance(payload.get("settings_advice"), dict) else {},
+    }
+
+
+def _capture_economics_packet(payload: dict[str, Any] | None) -> dict[str, Any]:
+    if not payload:
+        return {
+            "evidence_ref": "capture:economics",
+            "status": "missing",
+            "overall": {},
+            "by_exit_reason": {},
+        }
+    by_exit: dict[str, Any] = {}
+    raw_by_exit = payload.get("by_exit_reason")
+    if isinstance(raw_by_exit, dict):
+        for reason, metrics in raw_by_exit.items():
+            if not isinstance(metrics, dict):
+                continue
+            by_exit[str(reason)] = {
+                "evidence_ref": f"capture:exit_reason:{reason}",
+                **_small_dict(
+                    metrics,
+                    (
+                        "trades",
+                        "wins",
+                        "losses",
+                        "win_rate",
+                        "payoff_ratio",
+                        "breakeven_payoff_at_win_rate",
+                        "expectancy_jpy_per_trade",
+                        "net_jpy",
+                        "avg_win_jpy",
+                        "avg_loss_jpy",
+                    ),
+                ),
+            }
+    return {
+        "evidence_ref": "capture:economics",
+        "generated_at_utc": payload.get("generated_at_utc"),
+        "status": payload.get("status"),
+        "overall": _small_dict(
+            payload.get("overall"),
+            (
+                "trades",
+                "wins",
+                "losses",
+                "win_rate",
+                "payoff_ratio",
+                "breakeven_payoff_at_win_rate",
+                "expectancy_jpy_per_trade",
+                "net_jpy",
+                "avg_win_jpy",
+                "avg_loss_jpy",
+            ),
+        ),
+        "by_exit_reason": by_exit,
     }
 
 
