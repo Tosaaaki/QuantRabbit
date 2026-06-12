@@ -68,11 +68,12 @@ acquire_lock() {
 }
 
 open_trader_pairs() {
-  "$QR_PYTHON" - <<'PY'
+  "$QR_PYTHON" - "$1" <<'PY'
 import json
+import sys
 from pathlib import Path
 
-path = Path("data/broker_snapshot.json")
+path = Path(sys.argv[1])
 try:
     payload = json.loads(path.read_text())
 except Exception:
@@ -120,8 +121,14 @@ export QR_DISABLE_AUTO_CLOSE="${QR_DISABLE_AUTO_CLOSE:-1}"
 export QR_REQUIRE_FORECAST_FOR_LIVE="${QR_REQUIRE_FORECAST_FOR_LIVE:-1}"
 export QR_REQUIRE_TELEMETRY_FOR_LIVE="${QR_REQUIRE_TELEMETRY_FOR_LIVE:-1}"
 
-"$QR_PYTHON" -m quant_rabbit.cli broker-snapshot --output data/broker_snapshot.json
-pairs="$(open_trader_pairs)"
+guardian_snapshot="${QR_POSITION_GUARDIAN_SNAPSHOT:-data/position_guardian_broker_snapshot.json}"
+guardian_management="${QR_POSITION_GUARDIAN_MANAGEMENT:-data/position_guardian_management.json}"
+guardian_management_report="${QR_POSITION_GUARDIAN_MANAGEMENT_REPORT:-docs/position_guardian_management_report.md}"
+guardian_execution="${QR_POSITION_GUARDIAN_EXECUTION:-data/position_guardian_execution.json}"
+guardian_execution_report="${QR_POSITION_GUARDIAN_EXECUTION_REPORT:-docs/position_guardian_execution_report.md}"
+
+"$QR_PYTHON" -m quant_rabbit.cli broker-snapshot --output "$guardian_snapshot"
+pairs="$(open_trader_pairs "$guardian_snapshot")"
 if [[ -z "$pairs" ]]; then
   write_no_position_artifact
   echo "[run-position-guardian-live] no trader-owned open positions; skipped." >&2
@@ -140,17 +147,17 @@ guardian_count="${QR_POSITION_GUARDIAN_CANDLE_COUNT:-120}"
   --report "$guardian_report"
 
 "$QR_PYTHON" -m quant_rabbit.cli position-management \
-  --snapshot data/broker_snapshot.json \
+  --snapshot "$guardian_snapshot" \
   --pair-charts "$guardian_charts" \
-  --output data/position_management.json \
-  --report docs/position_management_report.md
+  --output "$guardian_management" \
+  --report "$guardian_management_report"
 
 pexec_args=(
   position-execution
-  --snapshot data/broker_snapshot.json
-  --position-management data/position_management.json
-  --output data/position_execution.json
-  --report docs/position_execution_report.md
+  --snapshot "$guardian_snapshot"
+  --position-management "$guardian_management"
+  --output "$guardian_execution"
+  --report "$guardian_execution_report"
 )
 if [[ "$QR_LIVE_ENABLED" == "1" ]]; then
   pexec_args+=(--send --confirm-live)
