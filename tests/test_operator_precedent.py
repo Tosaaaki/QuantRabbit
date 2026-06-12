@@ -127,6 +127,57 @@ def _live_ready_intents(
     }
 
 
+def _blocked_manual_style_intents(
+    *,
+    status: str = "DRY_RUN_BLOCKED",
+    pair: str = "USD_JPY",
+    side: str = "LONG",
+    h1_regime: str = "TREND_DOWN",
+    m5_regime: str = "TREND_DOWN",
+    percentile_key: str = "entry_price_percentile_24h",
+    percentile_value: float = 0.12,
+    session: str = "LONDON",
+) -> dict:
+    return {
+        "results": [
+            {
+                "lane_id": f"trend_trader:{pair}:{side}:TREND_CONTINUATION",
+                "status": status,
+                "live_blockers": ["forecast confidence below ENTRY_CONFIDENCE_MIN"],
+                "risk_issues": [
+                    {
+                        "code": "FORECAST_CONFIDENCE_TOO_LOW",
+                        "message": "forecast confidence below live floor",
+                        "severity": "BLOCK",
+                    }
+                ],
+                "strategy_issues": [
+                    {
+                        "code": "STRATEGY_PROFILE_MISSING",
+                        "message": f"{pair} {side} absent from profile",
+                        "severity": "WARN",
+                    }
+                ],
+                "live_strategy_issues": [],
+                "intent": {
+                    "pair": pair,
+                    "side": side,
+                    "order_type": "STOP-ENTRY",
+                    "market_context": {
+                        "method": "TREND_CONTINUATION",
+                        "session": session,
+                    },
+                    "metadata": {
+                        "h1_regime": h1_regime,
+                        "m5_regime": m5_regime,
+                        percentile_key: percentile_value,
+                    },
+                },
+            }
+        ]
+    }
+
+
 class OperatorPrecedentAuditTest(unittest.TestCase):
     def test_verifies_manual_precedent_and_current_aligned_lane(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -312,6 +363,88 @@ class OperatorPrecedentAuditTest(unittest.TestCase):
             self.assertIn(
                 "by_session_jst:LONDON_AM",
                 alignment["compatible_lanes"][0]["supporting_buckets"],
+            )
+
+    def test_surfaces_manual_context_near_miss_when_no_live_ready_lane_exists(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            manual = root / "manual.json"
+            manual.write_text(json.dumps(_manual_history_payload()))
+            manual_context = root / "manual_context.json"
+            manual_context.write_text(json.dumps(_manual_context_payload()))
+            intents = root / "intents.json"
+            intents.write_text(json.dumps(_blocked_manual_style_intents()))
+            target = root / "target.json"
+            target.write_text(json.dumps({"target_trades_per_day": 10}))
+
+            summary = build_operator_precedent_audit(
+                manual_history_path=manual,
+                manual_context_path=manual_context,
+                order_intents_path=intents,
+                target_state_path=target,
+                output_path=root / "audit.json",
+                report_path=root / "audit.md",
+            )
+
+            self.assertEqual(summary.status, "OPERATOR_PRECEDENT_WARN")
+            self.assertEqual(summary.live_ready_lanes, 0)
+            payload = json.loads((root / "audit.json").read_text())
+            alignment = payload["runtime_alignment"]["manual_context_alignment"]
+            self.assertEqual(alignment["near_miss_count"], 1)
+            self.assertEqual(alignment["exact_precedent_near_miss_count"], 1)
+            self.assertEqual(alignment["manual_style_near_miss_count"], 1)
+            near = alignment["near_miss_lanes"][0]
+            self.assertEqual(near["lane_id"], "trend_trader:USD_JPY:LONG:TREND_CONTINUATION")
+            self.assertEqual(near["status"], "DRY_RUN_BLOCKED")
+            self.assertTrue(near["exact_precedent_aligned"])
+            self.assertTrue(near["manual_style_supported"])
+            self.assertIn("FORECAST_CONFIDENCE_TOO_LOW", near["risk_issue_codes"])
+            self.assertIn("STRATEGY_PROFILE_MISSING", near["strategy_issue_codes"])
+            self.assertIn("forecast confidence below ENTRY_CONFIDENCE_MIN", near["live_blockers"])
+            self.assertIn(
+                "by_side_entry_location_24h:LONG_LOWER_THIRD_24H",
+                near["supporting_buckets"],
+            )
+            report = (root / "audit.md").read_text()
+            self.assertIn("near-miss `1`", report)
+
+    def test_near_miss_uses_current_price_percentile_when_entry_percentile_is_absent(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            manual = root / "manual.json"
+            manual.write_text(json.dumps(_manual_history_payload()))
+            manual_context = root / "manual_context.json"
+            manual_context.write_text(json.dumps(_manual_context_payload()))
+            intents = root / "intents.json"
+            intents.write_text(
+                json.dumps(
+                    _blocked_manual_style_intents(
+                        pair="EUR_USD",
+                        percentile_key="price_percentile_24h",
+                        percentile_value=0.12,
+                    )
+                )
+            )
+            target = root / "target.json"
+            target.write_text(json.dumps({"target_trades_per_day": 10}))
+
+            build_operator_precedent_audit(
+                manual_history_path=manual,
+                manual_context_path=manual_context,
+                order_intents_path=intents,
+                target_state_path=target,
+                output_path=root / "audit.json",
+                report_path=root / "audit.md",
+            )
+
+            payload = json.loads((root / "audit.json").read_text())
+            near = payload["runtime_alignment"]["manual_context_alignment"]["near_miss_lanes"][0]
+            self.assertFalse(near["exact_precedent_aligned"])
+            self.assertTrue(near["manual_style_supported"])
+            self.assertEqual(near["side_entry_location_24h"], "LONG_LOWER_THIRD_24H")
+            self.assertIn(
+                "by_side_entry_location_24h:LONG_LOWER_THIRD_24H",
+                near["supporting_buckets"],
             )
 
     def test_uses_trade_close_window_with_oanda_nanosecond_timestamps(self) -> None:

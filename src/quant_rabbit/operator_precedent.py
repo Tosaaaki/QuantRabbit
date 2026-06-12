@@ -34,6 +34,12 @@ OPERATOR_CLAIM_30D_RETURN_PCT = 200.0
 # does not dilute the London/NY operating pattern. This is not a risk limit.
 PRIMARY_PRECEDENT_SESSION_COUNT = 2
 
+# Near-miss diagnostics inspect lanes that already failed live readiness. This
+# is an audit surface only: it explains which current candidates resemble the
+# manual replay shape and which existing blockers stopped them.
+NEAR_MISS_STATUSES = {"DRY_RUN_PASSED", "DRY_RUN_BLOCKED"}
+MANUAL_CONTEXT_NEAR_MISS_LIMIT = 10
+
 
 @dataclass(frozen=True)
 class OperatorPrecedentSummary:
@@ -123,13 +129,27 @@ def build_operator_precedent_audit(
         precedent=precedent,
         manual_context=manual_context_payload,
     )
+    manual_alignment = runtime.get("manual_context_alignment")
+    near_miss_count = (
+        int(manual_alignment.get("near_miss_count") or 0)
+        if isinstance(manual_alignment, dict)
+        else 0
+    )
     if runtime["live_ready_lanes"] == 0:
         checks.append(
             _check(
                 "current_live_ready_alignment",
                 "WARN",
-                "no LIVE_READY lanes are present, so the manual precedent cannot be expressed in the current basket",
-                {"live_ready_lanes": 0},
+                (
+                    "no LIVE_READY lanes are present, so the manual precedent cannot be expressed in the "
+                    f"current basket; {near_miss_count} manual-context near-miss lane(s) show existing blockers"
+                    if near_miss_count
+                    else "no LIVE_READY lanes are present, so the manual precedent cannot be expressed in the current basket"
+                ),
+                {
+                    "live_ready_lanes": 0,
+                    "manual_context_near_miss_count": near_miss_count,
+                },
                 severity="WARN",
             )
         )
@@ -155,7 +175,6 @@ def build_operator_precedent_audit(
                 {"aligned_live_ready_lanes": runtime["aligned_live_ready_lanes"]},
             )
         )
-    manual_alignment = runtime.get("manual_context_alignment")
     if isinstance(manual_alignment, dict) and int(manual_alignment.get("conflicting_aligned_lanes") or 0) > 0:
         checks.append(
             _check(
@@ -373,33 +392,22 @@ def _runtime_alignment(
     positive_sessions = {str(item).upper() for item in match_sessions}
     live_ready: list[dict[str, Any]] = []
     aligned: list[dict[str, Any]] = []
+    near_miss_candidates: list[dict[str, Any]] = []
     for row in intents_payload.get("results") or []:
-        if not isinstance(row, dict) or row.get("status") != "LIVE_READY":
+        lane = _runtime_lane_from_result(row)
+        if lane is None:
             continue
-        intent = row.get("intent") if isinstance(row.get("intent"), dict) else {}
-        context = intent.get("market_context") if isinstance(intent.get("market_context"), dict) else {}
-        metadata = intent.get("metadata") if isinstance(intent.get("metadata"), dict) else {}
-        lane = {
-            "lane_id": row.get("lane_id"),
-            "pair": intent.get("pair"),
-            "side": intent.get("side"),
-            "method": context.get("method"),
-            "order_type": intent.get("order_type"),
-            "session": context.get("session") or metadata.get("session_current_tag") or metadata.get("session_bucket"),
-            "h1_regime": metadata.get("h1_regime") or context.get("h1_regime"),
-            "m5_regime": metadata.get("m5_regime") or context.get("m5_regime"),
-            "entry_price_percentile_24h": metadata.get("entry_price_percentile_24h")
-            or context.get("entry_price_percentile_24h"),
-        }
-        live_ready.append(lane)
-        session_text = str(lane.get("session") or "").upper()
-        session_matches = not positive_sessions or _session_matches(session_text, positive_sessions)
-        if (
-            str(lane.get("pair") or "").upper() == primary_pair.upper()
-            and str(lane.get("side") or "").upper() == primary_direction
-            and session_matches
-        ):
-            aligned.append(lane)
+        if lane["status"] == "LIVE_READY":
+            live_ready.append(lane)
+            if _lane_matches_precedent(
+                lane,
+                primary_pair=primary_pair,
+                primary_direction=primary_direction,
+                positive_sessions=positive_sessions,
+            ):
+                aligned.append(lane)
+        elif lane["status"] in NEAR_MISS_STATUSES:
+            near_miss_candidates.append(lane)
     exact_aligned_ids = {str(item.get("lane_id") or "") for item in aligned}
 
     target_trades = _maybe_float(target_payload.get("target_trades_per_day"))
@@ -409,6 +417,10 @@ def _runtime_alignment(
         live_ready,
         exact_aligned_lane_ids=exact_aligned_ids,
         manual_context=manual_context,
+        near_miss_candidates=near_miss_candidates,
+        primary_pair=primary_pair,
+        primary_direction=primary_direction,
+        positive_sessions=positive_sessions,
     )
     return {
         "live_ready_lanes": len(live_ready),
@@ -426,17 +438,77 @@ def _runtime_alignment(
     }
 
 
+def _runtime_lane_from_result(row: object) -> dict[str, Any] | None:
+    if not isinstance(row, dict):
+        return None
+    intent = row.get("intent") if isinstance(row.get("intent"), dict) else {}
+    if not intent:
+        return None
+    context = intent.get("market_context") if isinstance(intent.get("market_context"), dict) else {}
+    metadata = intent.get("metadata") if isinstance(intent.get("metadata"), dict) else {}
+    lane_id = str(row.get("lane_id") or "")
+    pair = intent.get("pair")
+    side = intent.get("side")
+    if not lane_id or not pair or not side:
+        return None
+    return {
+        "lane_id": lane_id,
+        "status": str(row.get("status") or ""),
+        "pair": pair,
+        "side": side,
+        "method": context.get("method") or metadata.get("method"),
+        "order_type": intent.get("order_type"),
+        "session": context.get("session") or metadata.get("session_current_tag") or metadata.get("session_bucket"),
+        "h1_regime": metadata.get("h1_regime") or context.get("h1_regime"),
+        "m5_regime": metadata.get("m5_regime") or context.get("m5_regime"),
+        "entry_price_percentile_24h": (
+            metadata.get("entry_price_percentile_24h")
+            or context.get("entry_price_percentile_24h")
+            or metadata.get("price_percentile_24h")
+            or context.get("price_percentile_24h")
+        ),
+        "live_blockers": _string_list(row.get("live_blockers")),
+        "risk_issue_codes": _issue_codes(row.get("risk_issues")),
+        "strategy_issue_codes": _issue_codes(row.get("strategy_issues")),
+        "live_strategy_issue_codes": _issue_codes(row.get("live_strategy_issues")),
+    }
+
+
+def _lane_matches_precedent(
+    lane: dict[str, Any],
+    *,
+    primary_pair: str,
+    primary_direction: str,
+    positive_sessions: set[str],
+) -> bool:
+    session_text = str(lane.get("session") or "").upper()
+    session_matches = not positive_sessions or _session_matches(session_text, positive_sessions)
+    return (
+        str(lane.get("pair") or "").upper() == primary_pair.upper()
+        and str(lane.get("side") or "").upper() == primary_direction
+        and session_matches
+    )
+
+
 def _manual_context_alignment(
     live_ready: list[dict[str, Any]],
     *,
     exact_aligned_lane_ids: set[str],
     manual_context: dict[str, Any] | None,
+    near_miss_candidates: list[dict[str, Any]] | None = None,
+    primary_pair: str = "",
+    primary_direction: str = "",
+    positive_sessions: set[str] | None = None,
 ) -> dict[str, Any]:
     if not isinstance(manual_context, dict):
         return {
             "status": "missing",
             "compatible_lanes": [],
             "conflicting_lanes": [],
+            "near_miss_lanes": [],
+            "near_miss_count": 0,
+            "exact_precedent_near_miss_count": 0,
+            "manual_style_near_miss_count": 0,
             "conflicting_aligned_lanes": 0,
             "comparison_contract": _manual_context_alignment_contract(),
         }
@@ -446,6 +518,10 @@ def _manual_context_alignment(
             "status": "missing_bounded_replay_profile",
             "compatible_lanes": [],
             "conflicting_lanes": [],
+            "near_miss_lanes": [],
+            "near_miss_count": 0,
+            "exact_precedent_near_miss_count": 0,
+            "manual_style_near_miss_count": 0,
             "conflicting_aligned_lanes": 0,
             "comparison_contract": _manual_context_alignment_contract(),
         }
@@ -464,15 +540,28 @@ def _manual_context_alignment(
             conflicting.append(row)
         elif row["supporting_buckets"]:
             compatible.append(row)
+    near_misses = _manual_context_near_miss_lanes(
+        near_miss_candidates or [],
+        positive=positive,
+        negative=negative,
+        primary_pair=primary_pair,
+        primary_direction=primary_direction,
+        positive_sessions=positive_sessions or set(),
+    )
     return {
         "status": "MANUAL_CONTEXT_ALIGNMENT_READY",
         "basis": (
             "bounded_replay_profile bucket sign; compatible/conflicting lists include exact "
-            "pair/direction/session precedent-aligned lanes only"
+            "pair/direction/session precedent-aligned LIVE_READY lanes only; near_miss_lanes are "
+            "blocked diagnostics and never live permission"
         ),
         "lanes": lanes[:10],
         "compatible_lanes": compatible[:10],
         "conflicting_lanes": conflicting[:10],
+        "near_miss_lanes": near_misses[:MANUAL_CONTEXT_NEAR_MISS_LIMIT],
+        "near_miss_count": len(near_misses),
+        "exact_precedent_near_miss_count": sum(1 for item in near_misses if item.get("exact_precedent_aligned")),
+        "manual_style_near_miss_count": sum(1 for item in near_misses if item.get("manual_style_supported")),
         "conflicting_aligned_lanes": len(conflicting),
         "comparison_contract": _manual_context_alignment_contract(),
     }
@@ -485,6 +574,46 @@ def _manual_context_alignment_contract() -> dict[str, bool]:
         "does_not_grant_live_permission": True,
         "does_not_block_current_deterministic_edge": True,
     }
+
+
+def _manual_context_near_miss_lanes(
+    candidates: list[dict[str, Any]],
+    *,
+    positive: dict[str, set[str]],
+    negative: dict[str, set[str]],
+    primary_pair: str,
+    primary_direction: str,
+    positive_sessions: set[str],
+) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for lane in candidates:
+        row = _manual_context_lane_row(lane, positive=positive, negative=negative)
+        exact = _lane_matches_precedent(
+            lane,
+            primary_pair=primary_pair,
+            primary_direction=primary_direction,
+            positive_sessions=positive_sessions,
+        )
+        manual_style = bool(row["supporting_buckets"])
+        row["status"] = lane.get("status")
+        row["exact_precedent_aligned"] = exact
+        row["manual_style_supported"] = manual_style
+        row["live_blockers"] = list(lane.get("live_blockers") or [])[:5]
+        row["risk_issue_codes"] = list(lane.get("risk_issue_codes") or [])[:8]
+        row["strategy_issue_codes"] = list(lane.get("strategy_issue_codes") or [])[:8]
+        row["live_strategy_issue_codes"] = list(lane.get("live_strategy_issue_codes") or [])[:8]
+        if exact or manual_style:
+            rows.append(row)
+    return sorted(
+        rows,
+        key=lambda item: (
+            not bool(item.get("exact_precedent_aligned")),
+            not bool(item.get("manual_style_supported")),
+            bool(item.get("conflicting_buckets")),
+            -len(item.get("supporting_buckets") or []),
+            str(item.get("lane_id") or ""),
+        ),
+    )
 
 
 def _manual_context_lane_row(
@@ -521,6 +650,7 @@ def _manual_context_lane_row(
     )
     return {
         "lane_id": str(lane.get("lane_id") or ""),
+        "status": lane.get("status"),
         "pair": lane.get("pair"),
         "side": lane.get("side"),
         "method": lane.get("method"),
@@ -535,6 +665,25 @@ def _manual_context_lane_row(
         "supporting_buckets": supporting,
         "conflicting_buckets": conflicting,
     }
+
+
+def _string_list(value: object) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    return [str(item) for item in value if item is not None]
+
+
+def _issue_codes(value: object) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    codes: list[str] = []
+    for item in value:
+        if not isinstance(item, dict):
+            continue
+        code = str(item.get("code") or "").strip()
+        if code:
+            codes.append(code)
+    return codes
 
 
 def _positive_manual_buckets(profile: dict[str, Any]) -> dict[str, set[str]]:
@@ -733,7 +882,7 @@ def _write_report(path: Path, payload: dict[str, Any]) -> None:
         f"- Winning shape: `{winning.get('primary_pair')} {winning.get('primary_direction')}`; primary sessions `{', '.join(winning.get('primary_sessions') or [])}`; median hold `{winning.get('median_hold_hours')}`h",
         f"- Failure shape: margin closeout `{failure.get('trades')}` exits, net `{failure.get('net_jpy')}` JPY, median hold `{failure.get('median_hold_hours')}`h",
         f"- Current LIVE_READY lanes: `{runtime['live_ready_lanes']}`; precedent-aligned: `{runtime['aligned_live_ready_lanes']}`",
-        f"- Manual context alignment: `{manual_alignment.get('status')}`; compatible `{len(manual_alignment.get('compatible_lanes') or [])}`; conflicting aligned `{manual_alignment.get('conflicting_aligned_lanes')}`",
+        f"- Manual context alignment: `{manual_alignment.get('status')}`; compatible `{len(manual_alignment.get('compatible_lanes') or [])}`; conflicting aligned `{manual_alignment.get('conflicting_aligned_lanes')}`; near-miss `{manual_alignment.get('near_miss_count', 0)}`",
         "",
         "## Checks",
         "",
