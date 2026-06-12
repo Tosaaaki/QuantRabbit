@@ -661,6 +661,7 @@ def _pair_forecast(
     pair: str,
     pair_chart: dict[str, Any] | None,
     full_pair_charts: dict[str, dict[str, Any]] | None,
+    correlation_map: dict[tuple[str, str], float] | None,
     snapshot: BrokerSnapshot | None,
     forecast_cache: dict[str, DirectionalForecast | None] | None,
     forecast_cycle_id: str | None,
@@ -729,7 +730,11 @@ def _pair_forecast(
         projection_signals = []
     try:
         if full_pair_charts and pair in full_pair_charts:
-            correlation_signals = detect_correlation_lag(pair, full_pair_charts)
+            correlation_signals = detect_correlation_lag(
+                pair,
+                full_pair_charts,
+                correlation_map=correlation_map,
+            )
     except Exception:
         correlation_signals = []
     try:
@@ -1095,6 +1100,10 @@ class TraderBrain:
         pending_entries = _pending_entry_order_count(snapshot)
         portfolio_add_allowed = _portfolio_add_allowed(snapshot)
         exposure_blockers = () if portfolio_add_allowed else _exposure_blockers(snapshot)
+        try:
+            correlation_map = build_correlation_map(full_pair_charts) if full_pair_charts else {}
+        except Exception:
+            correlation_map = {}
         forecast_cache: dict[str, DirectionalForecast | None] = {}
         scores = tuple(
             sorted(
@@ -1108,6 +1117,7 @@ class TraderBrain:
                         trader_settings,
                         loss_cap_jpy=loss_cap_jpy,
                         full_pair_charts=full_pair_charts,
+                        correlation_map=correlation_map,
                         snapshot=snapshot,
                         attack_ranks=attack_ranks,
                         lane_history=lane_history,
@@ -1212,6 +1222,7 @@ class TraderBrain:
         *,
         loss_cap_jpy: float | None,
         full_pair_charts: dict[str, dict[str, Any]] | None = None,
+        correlation_map: dict[tuple[str, str], float] | None = None,
         snapshot: BrokerSnapshot | None = None,
         attack_ranks: dict[str, int] | None = None,
         lane_history: dict[tuple[str, ...], LaneHistorySnapshot] | None = None,
@@ -1767,7 +1778,11 @@ class TraderBrain:
         # leaders). Skipped silently when full_pair_charts is sparse.
         if full_pair_charts and pair in full_pair_charts:
             try:
-                _corr_signals = detect_correlation_lag(pair, full_pair_charts)
+                _corr_signals = detect_correlation_lag(
+                    pair,
+                    full_pair_charts,
+                    correlation_map=correlation_map,
+                )
                 if _corr_signals:
                     _corr_delta, _corr_rat = aggregate_correlation_lag_score(_corr_signals, direction)
                     if _corr_delta != 0.0:
@@ -1821,6 +1836,7 @@ class TraderBrain:
                     pair=pair,
                     pair_chart=pair_chart_for_reversal,
                     full_pair_charts=full_pair_charts,
+                    correlation_map=correlation_map,
                     snapshot=snapshot,
                     forecast_cache=forecast_cache,
                     forecast_cycle_id=forecast_cycle_id,

@@ -6,6 +6,7 @@ import tempfile
 import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from unittest import mock
 
 from quant_rabbit.models import BrokerOrder, BrokerPosition, BrokerSnapshot, Owner, Quote, Side, TradeMethod
 from quant_rabbit.risk import RiskPolicy
@@ -123,6 +124,72 @@ class TraderBrainTest(unittest.TestCase):
             self.assertEqual(lane.action, ACTION_SEND_ENTRY)
             self.assertFalse(any("wide spread for fresh edge" in item for item in lane.blockers))
             self.assertTrue(any("wide spread=2.4pip is advisory" in item for item in lane.rationale))
+
+    def test_correlation_map_is_built_once_per_run(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            pair_charts_path = root / "pair_charts.json"
+            pair_charts_path.write_text(
+                json.dumps(
+                    {
+                        "charts": [
+                            {
+                                "pair": "AUD_JPY",
+                                "views": [
+                                    {
+                                        "granularity": "M15",
+                                        "recent_candles": [{"c": 112.0 + idx * 0.01} for idx in range(12)],
+                                    }
+                                ],
+                            },
+                            {
+                                "pair": "EUR_USD",
+                                "views": [
+                                    {
+                                        "granularity": "M15",
+                                        "recent_candles": [{"c": 1.1700 + idx * 0.0001} for idx in range(12)],
+                                    }
+                                ],
+                            },
+                        ]
+                    }
+                )
+            )
+            built_map = {("AUD_JPY", "EUR_USD"): 0.8, ("EUR_USD", "AUD_JPY"): 0.8}
+            seen_maps: list[dict[tuple[str, str], float] | None] = []
+
+            def observed_detect(pair, charts, *, correlation_map=None):
+                seen_maps.append(correlation_map)
+                return []
+
+            brain = TraderBrain(
+                intents_path=_intents(root),
+                campaign_plan_path=_campaign(root),
+                strategy_profile_path=_strategy(root),
+                market_story_profile_path=_stories(root),
+                target_state_path=root / "missing_target.json",
+                trader_settings_path=root / "settings.json",
+                attack_advice_path=root / "missing_attack_advice.json",
+                pair_charts_path=pair_charts_path,
+                output_path=root / "decision.json",
+                report_path=root / "decision.md",
+            )
+
+            with (
+                mock.patch(
+                    "quant_rabbit.strategy.trader_brain.build_correlation_map",
+                    return_value=built_map,
+                ) as build_mock,
+                mock.patch(
+                    "quant_rabbit.strategy.trader_brain.detect_correlation_lag",
+                    side_effect=observed_detect,
+                ),
+            ):
+                brain.run(_snapshot())
+
+            self.assertEqual(build_mock.call_count, 1)
+            self.assertGreaterEqual(len(seen_maps), 2)
+            self.assertTrue(all(correlation_map is built_map for correlation_map in seen_maps))
 
     def test_existing_pending_order_forces_monitor_only(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
