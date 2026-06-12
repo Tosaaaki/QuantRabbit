@@ -266,6 +266,90 @@ def _trader_position_lookup(packet: dict[str, Any]) -> dict[str, dict[str, Any]]
     return out
 
 
+def _position_close_spread_override_enabled() -> bool:
+    return os.environ.get("QR_POSITION_CLOSE_SPREAD_OVERRIDE", "").strip() in {
+        "1", "true", "TRUE", "yes", "YES",
+    }
+
+
+def _close_spread_issues(
+    packet: dict[str, Any],
+    pair: str,
+    *,
+    trade_id: str,
+) -> tuple["VerificationIssue", ...]:
+    if _position_close_spread_override_enabled():
+        return ()
+
+    normal_spread = NORMAL_SPREAD_PIPS.get(pair)
+    if normal_spread is None:
+        return (
+            VerificationIssue(
+                "POSITION_CLOSE_SPREAD_BASELINE_MISSING",
+                f"CLOSE rejected for trade {trade_id} {pair}: missing normal spread baseline",
+            ),
+        )
+
+    max_spread_multiple = RiskPolicy().max_spread_multiple
+    spread_cap = normal_spread * max_spread_multiple
+    issues: list[VerificationIssue] = []
+
+    snapshot = packet.get("broker_snapshot") or {}
+    quote = (snapshot.get("quotes") or {}).get(pair)
+    if not isinstance(quote, dict):
+        issues.append(
+            VerificationIssue(
+                "POSITION_CLOSE_QUOTE_MISSING",
+                f"CLOSE rejected for trade {trade_id} {pair}: missing broker quote",
+            )
+        )
+    else:
+        bid = _optional_float(quote.get("bid"))
+        ask = _optional_float(quote.get("ask"))
+        if bid is None or ask is None:
+            issues.append(
+                VerificationIssue(
+                    "POSITION_CLOSE_QUOTE_MISSING",
+                    f"CLOSE rejected for trade {trade_id} {pair}: broker quote lacks bid/ask",
+                )
+            )
+        else:
+            spread_pips = abs(ask - bid) * instrument_pip_factor(pair)
+            if spread_pips > spread_cap:
+                issues.append(
+                    VerificationIssue(
+                        "POSITION_CLOSE_SPREAD_TOO_WIDE",
+                        "CLOSE rejected for trade "
+                        f"{trade_id} {pair}: broker quote spread {spread_pips:.2f} pips "
+                        f"exceeds close cap {spread_cap:.2f} pips "
+                        f"({max_spread_multiple:.1f}x normal {normal_spread:.1f}pip)",
+                    )
+                )
+
+    market_pairs = (packet.get("market_context") or {}).get("pairs") or {}
+    pair_context = market_pairs.get(pair, {})
+    flow_spread = (
+        ((pair_context.get("flow") or {}).get("spread") or {})
+        if isinstance(pair_context, dict)
+        else {}
+    )
+    if isinstance(flow_spread, dict):
+        flow_current = _optional_float(flow_spread.get("current_pips"))
+        if flow_current is not None and flow_current > spread_cap:
+            stress_flag = str(flow_spread.get("stress_flag") or "UNKNOWN")
+            issues.append(
+                VerificationIssue(
+                    "POSITION_CLOSE_FLOW_SPREAD_TOO_WIDE",
+                    "CLOSE rejected for trade "
+                    f"{trade_id} {pair}: flow spread {flow_current:.2f} pips "
+                    f"({stress_flag}) exceeds close cap {spread_cap:.2f} pips "
+                    f"({max_spread_multiple:.1f}x normal {normal_spread:.1f}pip)",
+                )
+            )
+
+    return tuple(issues)
+
+
 def _close_thesis_invalidated(
     packet: dict[str, Any],
     pair: str,
@@ -506,7 +590,12 @@ from quant_rabbit.paths import (
     DEFAULT_STRATEGY_PROFILE,
     DEFAULT_VERIFICATION_LEDGER,
 )
-from quant_rabbit.instruments import DEFAULT_CONTEXT_ASSETS
+from quant_rabbit.instruments import (
+    DEFAULT_CONTEXT_ASSETS,
+    NORMAL_SPREAD_PIPS,
+    instrument_pip_factor,
+)
+from quant_rabbit.risk import RiskPolicy
 from quant_rabbit.strategy.entry_thesis_ledger import (
     invalidation_price_hit_reason,
     technical_invalidation_confirmation_reason,
@@ -1500,6 +1589,7 @@ class DecisionVerifier:
                 continue
             pair = str(pos.get("pair") or "")
             side = str(pos.get("side") or "")
+            issues.extend(_close_spread_issues(self.packet, pair, trade_id=str(tid)))
             invalidated, _reason, standing_authorized = _close_thesis_invalidation(
                 self.packet,
                 pair,

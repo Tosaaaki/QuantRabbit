@@ -210,6 +210,9 @@ PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli cycle-refresh --daily-risk-pct 1
 # spread baselines, or spread wider than `NORMAL_SPREAD_PIPS ×
 # RiskPolicy.max_spread_multiple` block market CLOSE unless the operator
 # explicitly exports `QR_POSITION_CLOSE_SPREAD_OVERRIDE=1`.
+# The verifier also rejects CLOSE when the decision packet's flow snapshot
+# already shows the close pair above that cap; citing stressed flow is not
+# permission to pay it.
 # Hard sidecar Gate A or explicit Gate B close evidence is priority work: do
 # not choose TRADE, WAIT, REQUEST_EVIDENCE, PROTECT, or TIGHTEN_SL to sidestep
 # it. If only soft Gate A exists and explicit Gate B is missing, the sidecar is

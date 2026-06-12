@@ -3711,12 +3711,17 @@ class CloseDisciplineTest(unittest.TestCase):
 
     def setUp(self) -> None:
         self._prior_override = _os.environ.pop("QR_OPERATOR_CLOSE_OVERRIDE", None)
+        self._prior_spread_override = _os.environ.pop("QR_POSITION_CLOSE_SPREAD_OVERRIDE", None)
 
     def tearDown(self) -> None:
         if self._prior_override is None:
             _os.environ.pop("QR_OPERATOR_CLOSE_OVERRIDE", None)
         else:
             _os.environ["QR_OPERATOR_CLOSE_OVERRIDE"] = self._prior_override
+        if self._prior_spread_override is None:
+            _os.environ.pop("QR_POSITION_CLOSE_SPREAD_OVERRIDE", None)
+        else:
+            _os.environ["QR_POSITION_CLOSE_SPREAD_OVERRIDE"] = self._prior_spread_override
 
     def test_close_rejected_when_thesis_still_valid_even_with_operator_auth(self) -> None:
         # SHORT position + chart_story shows BOS_UP on M15/H4? No — both
@@ -3845,6 +3850,59 @@ class CloseDisciplineTest(unittest.TestCase):
             self.assertTrue(summary.allowed)
             payload = json.loads((root / "gpt_decision.json").read_text())
             self.assertEqual(payload["verification_issues"], [])
+
+    def test_close_rejected_when_flow_spread_exceeds_close_cap(self) -> None:
+        # Hard Gate A still cannot authorize paying a stressed spread. This
+        # reproduces the 2026-06-11 GBP_CHF GPT_CLOSE path where the receipt
+        # cited flow stress, then paid the same stressed market close.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _close_fixtures(root, position_side="SHORT", m15_dir="UP", h4_dir="UP")
+            flow = json.loads(files["flow"].read_text())
+            flow["spreads"][0].update(
+                {
+                    "current_pips": 30.0,
+                    "median_pips": 2.65,
+                    "p90_pips": 2.8,
+                    "stress_flag": "STRESSED",
+                }
+            )
+            files["flow"].write_text(json.dumps(flow))
+            decision = _close_decision(trade_ids=["555"], operator_close_authorized=False)
+            brain = _brain(root, files, decision)
+
+            summary = brain.run(snapshot_path=files["snapshot"])
+
+            self.assertEqual(summary.status, "REJECTED")
+            self.assertFalse(summary.allowed)
+            payload = json.loads((root / "gpt_decision.json").read_text())
+            codes = {issue["code"] for issue in payload["verification_issues"]}
+            self.assertIn("POSITION_CLOSE_FLOW_SPREAD_TOO_WIDE", codes)
+            self.assertNotIn("CLOSE_OPERATOR_AUTH_REQUIRED", codes)
+            self.assertNotIn("CLOSE_THESIS_STILL_VALID", codes)
+
+    def test_close_spread_override_allows_flow_stressed_close(self) -> None:
+        _os.environ["QR_POSITION_CLOSE_SPREAD_OVERRIDE"] = "1"
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _close_fixtures(root, position_side="SHORT", m15_dir="UP", h4_dir="UP")
+            flow = json.loads(files["flow"].read_text())
+            flow["spreads"][0].update(
+                {
+                    "current_pips": 30.0,
+                    "median_pips": 2.65,
+                    "p90_pips": 2.8,
+                    "stress_flag": "STRESSED",
+                }
+            )
+            files["flow"].write_text(json.dumps(flow))
+            decision = _close_decision(trade_ids=["555"], operator_close_authorized=False)
+            brain = _brain(root, files, decision)
+
+            summary = brain.run(snapshot_path=files["snapshot"])
+
+            self.assertEqual(summary.status, "ACCEPTED")
+            self.assertTrue(summary.allowed)
 
     def test_close_accepted_when_qr_operator_close_override_env_set(self) -> None:
         # Emergency override path: env QR_OPERATOR_CLOSE_OVERRIDE=1
