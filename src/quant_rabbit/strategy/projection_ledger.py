@@ -67,6 +67,10 @@ CONFIDENCE_MAX_MULTIPLIER = float(os.environ.get("QR_PROJECTION_CONFIDENCE_MAX_M
 # Multiplier when a detector has 0% hit-rate
 CONFIDENCE_MIN_MULTIPLIER = float(os.environ.get("QR_PROJECTION_CONFIDENCE_MIN_MULT", "0.2"))
 _PROJECTION_KEY_CACHE: dict[tuple[str, str, str], tuple[tuple[int, int], set[tuple]]] = {}
+_HIT_RATE_CACHE: dict[
+    tuple[str, int],
+    tuple[tuple[int, int], Dict[str, Dict[str, Dict[str, float]]]],
+] = {}
 # (a) Immediate news/event follow-through signals fire after a catalyst is
 #     already in the tape, so their lead time is correctly 0 minutes.
 # (b) They still need a real observation window for calibration; one H1 bar is
@@ -519,6 +523,7 @@ def _write_ledger_to_handle(entries: List[LedgerEntry], handle: IO[str]) -> None
     for e in entries:
         handle.write(json.dumps(e.to_dict(), ensure_ascii=False) + "\n")
     handle.flush()
+    _HIT_RATE_CACHE.clear()
 
 
 def verify_pending(
@@ -1027,6 +1032,23 @@ def compute_hit_rates(
     pushed out by high-volume pairs, which makes bad local history fall back
     to broad all-pair calibration and overstate confidence.
     """
+    path = _ledger_path(data_root)
+    cache_id = (_projection_file_cache_id(path), int(lookback))
+    stat_token = _projection_file_cache_stat(path)
+    cached = _HIT_RATE_CACHE.get(cache_id)
+    if cached is not None and cached[0] == stat_token:
+        return _copy_hit_rates(cached[1])
+
+    out = _compute_hit_rates_uncached(data_root, lookback=lookback)
+    _HIT_RATE_CACHE[cache_id] = (stat_token, _copy_hit_rates(out))
+    return out
+
+
+def _compute_hit_rates_uncached(
+    data_root: Path,
+    *,
+    lookback: int,
+) -> Dict[str, Dict[str, Dict[str, float]]]:
     entries = load_ledger(data_root)
     resolved = _deduped_calibration_entries([
         e for e in entries
@@ -1053,6 +1075,30 @@ def compute_hit_rates(
             hr = sum(1 for r in recent if r) / float(n)
             out[sig][key] = {"hit_rate": round(hr, 3), "samples": n}
     return out
+
+
+def _copy_hit_rates(
+    hit_rates: Dict[str, Dict[str, Dict[str, float]]],
+) -> Dict[str, Dict[str, Dict[str, float]]]:
+    return {
+        signal_name: {
+            bucket: dict(metrics)
+            for bucket, metrics in by_bucket.items()
+        }
+        for signal_name, by_bucket in hit_rates.items()
+    }
+
+
+def _projection_file_cache_id(path: Path) -> str:
+    return os.path.realpath(os.fspath(path))
+
+
+def _projection_file_cache_stat(path: Path) -> tuple[int, int]:
+    try:
+        stat = path.stat()
+    except OSError:
+        return (0, 0)
+    return (int(stat.st_size), int(stat.st_mtime_ns))
 
 
 def _deduped_calibration_entries(entries: list[LedgerEntry]) -> list[LedgerEntry]:

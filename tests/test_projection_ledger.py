@@ -926,6 +926,50 @@ class HitRatesTest(unittest.TestCase):
             self.assertIn("EUR_USD:_all_regimes", hr["bb_squeeze"])
             self.assertIn("_all_pairs:_all_regimes", hr["bb_squeeze"])
 
+    def test_compute_hit_rates_caches_until_ledger_stat_changes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            from quant_rabbit.strategy import projection_ledger as ledger_mod
+            from quant_rabbit.strategy.projection_ledger import write_ledger
+
+            def entry(status: str, cycle_id: str) -> LedgerEntry:
+                return LedgerEntry(
+                    timestamp_emitted_utc="2026-05-14T00:00:00Z",
+                    pair="EUR_USD",
+                    signal_name="bb_squeeze",
+                    direction="EITHER",
+                    lead_time_min=10,
+                    confidence=0.7,
+                    entry_price=1.0,
+                    predicted_target_price=None,
+                    resolution_window_min=20,
+                    resolution_status=status,
+                    regime_at_emission="TREND",
+                    cycle_id=cycle_id,
+                )
+
+            write_ledger([entry("HIT", "cycle-1")], root)
+            ledger_mod._HIT_RATE_CACHE.clear()
+            original_load = ledger_mod.load_ledger
+            load_calls = 0
+
+            def observed_load(*args: object, **kwargs: object) -> list[LedgerEntry]:
+                nonlocal load_calls
+                load_calls += 1
+                return original_load(*args, **kwargs)
+
+            with mock.patch.object(ledger_mod, "load_ledger", side_effect=observed_load):
+                first = compute_hit_rates(root)
+                first["bb_squeeze"]["EUR_USD:TREND"]["samples"] = 99
+                second = compute_hit_rates(root)
+                write_ledger([entry("HIT", "cycle-1"), entry("MISS", "cycle-2")], root)
+                third = compute_hit_rates(root)
+
+            self.assertEqual(load_calls, 2)
+            self.assertEqual(second["bb_squeeze"]["EUR_USD:TREND"]["samples"], 1)
+            self.assertEqual(third["bb_squeeze"]["EUR_USD:TREND"]["samples"], 2)
+            self.assertAlmostEqual(third["bb_squeeze"]["EUR_USD:TREND"]["hit_rate"], 0.5)
+
     def test_compute_hit_rates_dedupes_historical_cycle_duplicates(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
