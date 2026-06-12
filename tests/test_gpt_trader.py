@@ -1599,6 +1599,60 @@ class GPTTraderBrainTest(unittest.TestCase):
             packet = payload["input_packet"]["self_improvement_audit"]
             self.assertEqual(packet["p0_blockers"][0]["code"], "PROJECTION_LEDGER_EXPIRED_PENDING")
 
+    def test_wait_rejects_attack_advice_when_stale_decision_p0_is_only_blocker(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root, positions=[_position()])
+            files["attack_advice"].write_text(
+                json.dumps(
+                    {
+                        "status": "ATTACK_PARTIAL",
+                        "read_only": True,
+                        "live_permission": False,
+                        "recommended_now_lane_ids": [LANE_ID],
+                    }
+                )
+            )
+            files["self_improvement_audit"].write_text(
+                json.dumps(
+                    {
+                        "generated_at_utc": (
+                            datetime.now(timezone.utc) + timedelta(minutes=1)
+                        ).isoformat(),
+                        "status": "SELF_IMPROVEMENT_BLOCKED",
+                        "p0_findings": 1,
+                        "findings": [
+                            {
+                                "priority": "P0",
+                                "layer": "decision_history",
+                                "code": "LATEST_GPT_DECISION_STALE",
+                                "message": "latest GPT decision receipt predates the current broker snapshot",
+                                "evidence": {"current_streak": 7},
+                            }
+                        ],
+                    }
+                )
+            )
+            decision = _wait_decision()
+            decision["evidence_refs"].extend(
+                [
+                    "attack:advice",
+                    f"attack:lane:{LANE_ID}",
+                    "self_improvement:audit",
+                    "self_improvement:decision_history",
+                    "self_improvement:finding:LATEST_GPT_DECISION_STALE",
+                ]
+            )
+            brain = _brain(root, files, decision)
+
+            summary = brain.run(snapshot_path=files["snapshot"])
+
+            self.assertEqual(summary.status, "REJECTED")
+            payload = json.loads((root / "gpt_decision.json").read_text())
+            codes = {issue["code"] for issue in payload["verification_issues"]}
+            self.assertIn("ATTACK_ADVICE_REQUIRES_TRADE", codes)
+            self.assertNotIn("CAMPAIGN_EXPOSURE_REQUIRED", codes)
+
     def test_wait_with_soft_close_sidecar_still_must_trade_attack_advice(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

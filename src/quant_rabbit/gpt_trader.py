@@ -954,6 +954,11 @@ class DecisionVerifier:
             self.packet,
             decision_generated_at_utc=decision.generated_at_utc,
         )
+        self_improvement_entry_blockers = _self_improvement_trade_blockers(
+            self.packet,
+            decision_generated_at_utc=decision.generated_at_utc,
+            include_decision_history_stale=False,
+        )
 
         if decision.action == "TRADE":
             if not selected_lane_ids:
@@ -1149,7 +1154,7 @@ class DecisionVerifier:
                 not position_close_reasons
                 and _target_requires_entry(self.packet)
                 and not exposure_blockers
-                and not self_improvement_trade_blockers
+                and not self_improvement_entry_blockers
                 and attack_lane_ids
             ):
                 issues.append(
@@ -1164,7 +1169,7 @@ class DecisionVerifier:
                 not position_close_reasons
                 and _target_requires_entry(self.packet)
                 and not exposure_blockers
-                and not self_improvement_trade_blockers
+                and not self_improvement_entry_blockers
                 and tradeable_lanes
             ):
                 if not _trader_exposure_present(self.packet):
@@ -3416,6 +3421,7 @@ def _self_improvement_trade_blockers(
     packet: dict[str, Any],
     *,
     decision_generated_at_utc: str | None = None,
+    include_decision_history_stale: bool = True,
 ) -> list[str]:
     audit = packet.get("self_improvement_audit")
     if not isinstance(audit, dict):
@@ -3430,6 +3436,8 @@ def _self_improvement_trade_blockers(
         if not isinstance(blocker, dict):
             continue
         code = str(blocker.get("code") or "SELF_IMPROVEMENT_P0")
+        if code == "LATEST_GPT_DECISION_STALE" and not include_decision_history_stale:
+            continue
         if (
             code == "LATEST_GPT_DECISION_STALE"
             and receipt_generated_at is not None
