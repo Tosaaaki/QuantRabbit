@@ -3703,6 +3703,36 @@ def _write_fresh_position_thesis_close_recommendation(
     )
 
 
+def _write_entry_thesis(
+    root: Path,
+    *,
+    trade_id: str = "555",
+    pair: str = "EUR_USD",
+    side: str = "SHORT",
+    invalidation_price: float | None = None,
+) -> None:
+    (root / "entry_thesis_ledger.jsonl").write_text(
+        json.dumps(
+            {
+                "timestamp_utc": datetime.now(timezone.utc).isoformat(),
+                "trade_id": trade_id,
+                "pair": pair,
+                "side": side,
+                "entry_price": 1.17500,
+                "forecast_direction": "RANGE",
+                "forecast_confidence": 0.72,
+                "regime": "RANGE",
+                "invalidation_price": invalidation_price,
+                "target_price": None,
+                "key_drivers": ["test-entry-thesis"],
+                "context_evidence": {},
+                "horizon_hours": 6.0,
+            }
+        )
+        + "\n"
+    )
+
+
 def _write_same_direction_context_asset_matrix_support(
     files: dict[str, Path],
     *,
@@ -4379,6 +4409,53 @@ class CloseDisciplineTest(unittest.TestCase):
             recs = payload["input_packet"]["protection_sidecars"]["position_close_recommendations"]
             self.assertEqual(recs[0]["source"], "position_thesis")
             self.assertFalse(recs[0]["gate_b_standing_authorized"])
+
+    def test_receipt_invalidation_price_cannot_harden_soft_sidecar_when_entry_thesis_lacks_recorded_invalidation(self) -> None:
+        # The live NZD_CAD 472312 close had an entry_thesis row, but that row
+        # recorded invalidation_price=null. The sidecar reason that reached the
+        # verifier was score/technical text, so text-only detection missed the
+        # unrecorded-invalidation condition and the receipt's M5 invalidation
+        # became an unattended hard loss-cut.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _close_fixtures(
+                root,
+                position_side="SHORT",
+                m15_dir="DOWN",
+                h4_dir="DOWN",
+                quote_bid=1.17600,
+                quote_ask=1.17610,
+            )
+            _write_entry_thesis(root, invalidation_price=None)
+            _write_fresh_position_thesis_close_recommendation(
+                root,
+                files,
+                rationale_lines=[
+                    "pattern score +2.2 is outweighed by forward-projection +8.2 UP against the SHORT",
+                    "chart-tech -29.8 against SHORT",
+                ],
+                context_notes=[
+                    "technical invalidation confirmed against SHORT: H1 RSI=65.3; H1 ST+; H1 cloud+; M15 MACD+; M30 ST+; M5 TREND_UP",
+                ],
+            )
+            decision = _close_decision(
+                trade_ids=["555"],
+                invalidation_price=1.17500,
+                invalidation_tf="M5",
+            )
+            decision["evidence_refs"].append("position:thesis:555")
+            brain = _brain(root, files, decision)
+
+            summary = brain.run(snapshot_path=files["snapshot"])
+
+            self.assertEqual(summary.status, "REJECTED", msg=summary)
+            payload = json.loads((root / "gpt_decision.json").read_text())
+            codes = {issue["code"] for issue in payload["verification_issues"]}
+            self.assertIn("CLOSE_OPERATOR_AUTH_REQUIRED", codes)
+            self.assertNotIn("CLOSE_THESIS_STILL_VALID", codes)
+            ctx = payload["input_packet"]["protection_sidecars"]["entry_thesis_close_context"][0]
+            self.assertTrue(ctx["recorded"])
+            self.assertFalse(ctx["has_recorded_invalidation_price"])
 
     def test_m15_structure_cannot_harden_entry_buffer_position_thesis_close(self) -> None:
         # Same incident, second hardening path: the historical packet also had

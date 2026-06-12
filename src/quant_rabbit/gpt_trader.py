@@ -740,6 +740,19 @@ def _soft_sidecar_blocks_hard_close_authorization(
         return None
     if any(_sidecar_close_standing_authorized(rec) for rec in matched):
         return None
+    thesis_context = _matching_entry_thesis_close_context(
+        packet,
+        trade_id=trade_id,
+        pair=pair,
+        side=side,
+    )
+    if thesis_context is not None and not bool(thesis_context.get("has_recorded_invalidation_price")):
+        recorded = "recorded" if bool(thesis_context.get("recorded")) else "missing"
+        return (
+            "matching soft close sidecar has "
+            f"{recorded} entry_thesis without a recorded invalidation_price; "
+            "receipt-level invalidation_price cannot convert it into standing hard Gate A"
+        )
     for rec in matched:
         source = str(rec.get("source") or "").strip()
         reason = str(rec.get("reason") or "").lower()
@@ -750,6 +763,30 @@ def _soft_sidecar_blocks_hard_close_authorization(
                 "matching soft close sidecar is entry-buffer / unrecorded-invalidation evidence; "
                 "M15/receipt evidence cannot convert it into standing hard Gate A"
             )
+    return None
+
+
+def _matching_entry_thesis_close_context(
+    packet: dict[str, Any],
+    *,
+    trade_id: str | None,
+    pair: str,
+    side: str,
+) -> dict[str, Any] | None:
+    sidecars = packet.get("protection_sidecars")
+    context_rows = sidecars.get("entry_thesis_close_context") if isinstance(sidecars, dict) else None
+    if not isinstance(context_rows, list):
+        return None
+    for row in context_rows:
+        if not isinstance(row, dict):
+            continue
+        if trade_id is not None and str(row.get("trade_id") or "") != str(trade_id):
+            continue
+        if pair and str(row.get("pair") or "") not in {"", pair}:
+            continue
+        if side and str(row.get("side") or "").upper() not in {"", str(side).upper()}:
+            continue
+        return row
     return None
 
 
@@ -2413,6 +2450,10 @@ def _protection_sidecars_packet(
     entry_thesis_blockers = list(
         _fresh_entry_thesis_blockers(snapshot, data_root=snapshot_path.parent)
     )
+    entry_thesis_close_context = _entry_thesis_close_context(
+        snapshot,
+        data_root=snapshot_path.parent,
+    )
     if not pair_charts_path.exists():
         return {
             "tp_rebalance": {
@@ -2423,6 +2464,7 @@ def _protection_sidecars_packet(
             "position_close_recommendations": position_close_recommendations,
             "position_hold_support": position_hold_support,
             "entry_thesis_blockers": entry_thesis_blockers,
+            "entry_thesis_close_context": entry_thesis_close_context,
         }
     pair_charts = _load_json(pair_charts_path)
 
@@ -2439,7 +2481,35 @@ def _protection_sidecars_packet(
         "position_close_recommendations": position_close_recommendations,
         "position_hold_support": position_hold_support,
         "entry_thesis_blockers": entry_thesis_blockers,
+        "entry_thesis_close_context": entry_thesis_close_context,
     }
+
+
+def _entry_thesis_close_context(snapshot: dict[str, Any], *, data_root: Path) -> list[dict[str, Any]]:
+    from quant_rabbit.strategy.entry_thesis_ledger import load_entry_thesis
+
+    rows: list[dict[str, Any]] = []
+    for position in snapshot.get("positions", []) or []:
+        if not isinstance(position, dict) or str(position.get("owner") or "") != "trader":
+            continue
+        trade_id = str(position.get("trade_id") or "")
+        pair = str(position.get("pair") or "")
+        side = str(position.get("side") or "").upper()
+        if not trade_id:
+            continue
+        thesis = load_entry_thesis(trade_id, data_root)
+        invalidation = getattr(thesis, "invalidation_price", None) if thesis is not None else None
+        rows.append(
+            {
+                "trade_id": trade_id,
+                "pair": pair,
+                "side": side,
+                "recorded": thesis is not None,
+                "has_recorded_invalidation_price": invalidation is not None,
+                "recorded_invalidation_price": invalidation,
+            }
+        )
+    return rows
 
 
 def _allowed_refs(
