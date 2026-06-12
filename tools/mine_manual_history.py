@@ -21,7 +21,7 @@ import argparse
 import json
 import statistics
 from collections import defaultdict
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from quant_rabbit.broker.oanda import OandaReadOnlyClient
@@ -58,7 +58,7 @@ def fetch_transactions(client: OandaReadOnlyClient, *, time_from: str, time_to: 
 
 
 def reconstruct_trades(transactions: list[dict]) -> list[dict]:
-    """Pair trade opens with their closes via tradeID linkage."""
+    """Pair trade opens with their close/reduction exits via tradeID linkage."""
     opens: dict[str, dict] = {}
     trades: list[dict] = []
     for tx in transactions:
@@ -74,7 +74,12 @@ def reconstruct_trades(transactions: list[dict]) -> list[dict]:
                 "units": float(opened.get("units") or 0),
                 "open_reason": tx.get("reason"),
             }
-        for closed in tx.get("tradesClosed") or []:
+        reduced = tx.get("tradeReduced")
+        reduced_items = [reduced] if isinstance(reduced, dict) else []
+        closed_items = list(tx.get("tradesClosed") or [])
+        for exit_kind, closed in [("REDUCED", item) for item in reduced_items] + [
+            ("CLOSED", item) for item in closed_items
+        ]:
             trade_id = str(closed.get("tradeID") or "")
             base = opens.get(trade_id, {})
             open_at = _parse_time(str(base.get("open_time") or ""))
@@ -87,8 +92,10 @@ def reconstruct_trades(transactions: list[dict]) -> list[dict]:
             trades.append(
                 {
                     "trade_id": trade_id,
+                    "exit_kind": exit_kind,
                     "pair": base.get("pair") or tx.get("instrument"),
                     "units": base.get("units"),
+                    "exit_units": float(closed.get("units") or 0),
                     "open_time": base.get("open_time"),
                     "close_time": tx.get("time"),
                     "hold_hours": round(hold_hours, 3) if hold_hours is not None else None,
@@ -121,6 +128,178 @@ def _bucket_stats(rows: list[dict]) -> dict:
         ),
         "median_hold_hours": round(statistics.median(holds), 2) if holds else None,
         "expectancy": round(statistics.mean(pls), 1) if pls else None,
+    }
+
+
+def _transfer_adjusted_cash_flows(transactions: list[dict], balance_curve: list[dict]) -> dict:
+    """Separate account funding from trading P/L.
+
+    Raw account balance is the broker truth for equity, but it is not the same
+    as strategy performance when the operator adds or withdraws cash during
+    the window. The 2025 manual month had both, so the mining report must keep
+    raw-balance and transfer-adjusted returns side by side.
+    """
+    transfers: list[dict] = []
+    for tx in transactions:
+        if tx.get("type") != "TRANSFER_FUNDS":
+            continue
+        try:
+            amount = float(tx.get("amount") or 0.0)
+        except (TypeError, ValueError):
+            amount = 0.0
+        transfers.append(
+            {
+                "time": tx.get("time"),
+                "amount": amount,
+                "balance": float(tx.get("accountBalance") or 0.0)
+                if tx.get("accountBalance") is not None
+                else None,
+            }
+        )
+
+    if not balance_curve:
+        return {
+            "transfers": transfers,
+            "net_additional_transfers": 0.0,
+        }
+
+    start = balance_curve[0]
+    end = balance_curve[-1]
+    peak = max(balance_curve, key=lambda r: r["balance"])
+    start_at = _parse_time(str(start.get("time") or ""))
+    peak_at = _parse_time(str(peak.get("time") or ""))
+    start_balance = float(start["balance"])
+
+    def _after_start(row: dict) -> bool:
+        ts = _parse_time(str(row.get("time") or ""))
+        return bool(ts and start_at and ts > start_at)
+
+    def _before_or_at_peak(row: dict) -> bool:
+        ts = _parse_time(str(row.get("time") or ""))
+        return bool(ts and peak_at and ts <= peak_at)
+
+    additional = [row for row in transfers if _after_start(row)]
+    additional_to_peak = [row for row in additional if _before_or_at_peak(row)]
+    net_additional = sum(float(row["amount"]) for row in additional)
+    net_additional_to_peak = sum(float(row["amount"]) for row in additional_to_peak)
+
+    adjusted_peak_balance = float(peak["balance"]) - net_additional_to_peak
+    adjusted_end_balance = float(end["balance"]) - net_additional
+    adjusted_peak_profit = adjusted_peak_balance - start_balance
+    adjusted_end_profit = adjusted_end_balance - start_balance
+
+    # The 30-day window is the audit lens for the operator's specific
+    # "1 month / 200%+" recollection. It is reporting metadata, not a risk
+    # setting or trading threshold.
+    best_30d = _best_funding_adjusted_window(
+        balance_curve=balance_curve,
+        transfers=transfers,
+        window_days=30,
+    )
+
+    return {
+        "transfers": transfers,
+        "initial_balance": round(start_balance, 4),
+        "raw_balance_peak": peak,
+        "raw_balance_end": end,
+        "net_additional_transfers": round(net_additional, 4),
+        "net_additional_transfers_to_peak": round(net_additional_to_peak, 4),
+        "transfer_adjusted_peak_balance": round(adjusted_peak_balance, 4),
+        "transfer_adjusted_peak_profit": round(adjusted_peak_profit, 4),
+        "transfer_adjusted_peak_return_pct": (
+            round(adjusted_peak_profit / start_balance * 100.0, 2)
+            if start_balance
+            else None
+        ),
+        "transfer_adjusted_end_balance": round(adjusted_end_balance, 4),
+        "transfer_adjusted_end_profit": round(adjusted_end_profit, 4),
+        "transfer_adjusted_end_return_pct": (
+            round(adjusted_end_profit / start_balance * 100.0, 2)
+            if start_balance
+            else None
+        ),
+        "best_30d_funding_adjusted": best_30d,
+    }
+
+
+def _best_funding_adjusted_window(
+    *,
+    balance_curve: list[dict],
+    transfers: list[dict],
+    window_days: int,
+) -> dict | None:
+    """Return the best transfer-adjusted balance return inside a calendar window."""
+    if not balance_curve:
+        return None
+    points: list[tuple[datetime, float]] = []
+    for row in balance_curve:
+        ts = _parse_time(str(row.get("time") or ""))
+        if not ts:
+            continue
+        points.append((ts, float(row["balance"])))
+    if not points:
+        return None
+    transfer_points: list[tuple[datetime, float]] = []
+    for row in transfers:
+        ts = _parse_time(str(row.get("time") or ""))
+        if not ts:
+            continue
+        transfer_points.append((ts, float(row.get("amount") or 0.0)))
+
+    def _net_transfers_between(start_at: datetime, end_at: datetime) -> float:
+        return sum(amount for ts, amount in transfer_points if start_at < ts <= end_at)
+
+    best: dict | None = None
+    for index, (start_at, start_balance) in enumerate(points):
+        if start_balance <= 0:
+            continue
+        limit = start_at + timedelta(days=window_days)
+        for end_at, end_balance in points[index:]:
+            if end_at > limit:
+                break
+            net_transfers = _net_transfers_between(start_at, end_at)
+            profit = end_balance - start_balance - net_transfers
+            return_pct = profit / start_balance * 100.0
+            if best is None or return_pct > float(best["return_pct"]):
+                best = {
+                    "window_days": window_days,
+                    "start_time": start_at.isoformat(),
+                    "end_time": end_at.isoformat(),
+                    "start_balance": round(start_balance, 4),
+                    "end_balance": round(end_balance, 4),
+                    "net_transfers": round(net_transfers, 4),
+                    "profit": round(profit, 4),
+                    "return_pct": round(return_pct, 2),
+                }
+    return best
+
+
+def _realized_pl_components(transactions: list[dict]) -> dict:
+    """Summarize where broker-realized P/L appeared in OANDA transactions."""
+    components: dict[str, dict[str, float | int]] = defaultdict(lambda: {"count": 0, "net": 0.0})
+    for tx in transactions:
+        if tx.get("type") == "DAILY_FINANCING":
+            try:
+                components["daily_financing"]["net"] += float(tx.get("financing") or 0.0)
+                components["daily_financing"]["count"] += 1
+            except (TypeError, ValueError):
+                pass
+            continue
+        if tx.get("type") != "ORDER_FILL":
+            continue
+        for key in ("tradeReduced",):
+            item = tx.get(key)
+            if isinstance(item, dict) and item.get("realizedPL") is not None:
+                components[key]["net"] += float(item.get("realizedPL") or 0.0)
+                components[key]["count"] += 1
+        for key in ("tradesClosed",):
+            for item in tx.get(key) or []:
+                if isinstance(item, dict) and item.get("realizedPL") is not None:
+                    components[key]["net"] += float(item.get("realizedPL") or 0.0)
+                    components[key]["count"] += 1
+    return {
+        key: {"count": int(value["count"]), "net": round(float(value["net"]), 4)}
+        for key, value in sorted(components.items())
     }
 
 
@@ -166,6 +345,8 @@ def analyze(trades: list[dict], transactions: list[dict]) -> dict:
         "by_session_jst": {k: _bucket_stats(v) for k, v in sorted(by_session.items())},
         "by_side": {k: _bucket_stats(v) for k, v in sorted(by_side.items())},
         "by_close_reason": {k: _bucket_stats(v) for k, v in sorted(by_close_reason.items())},
+        "realized_pl_components": _realized_pl_components(transactions),
+        "cash_flows": _transfer_adjusted_cash_flows(transactions, balance_curve),
         "daily_pl": dict(sorted_days),
         "daily_win_rate": round(len(win_days) / len(sorted_days), 3) if sorted_days else None,
         "best_day": max(sorted_days, key=lambda kv: kv[1]) if sorted_days else None,
@@ -190,7 +371,9 @@ def main() -> None:
         "generated_at_utc": datetime.now(timezone.utc).isoformat(),
         "window": {"from": args.time_from, "to": args.time_to},
         "transaction_count": len(transactions),
-        "closed_trades": len(trades),
+        "exit_events": len(trades),
+        "closed_trades": sum(1 for trade in trades if trade.get("exit_kind") == "CLOSED"),
+        "reduced_trades": sum(1 for trade in trades if trade.get("exit_kind") == "REDUCED"),
         "analysis": analyze(trades, transactions),
         "trades": trades,
     }
@@ -198,7 +381,11 @@ def main() -> None:
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(json.dumps(result, ensure_ascii=False, indent=1) + "\n", encoding="utf-8")
     summary = result["analysis"]["overall"]
-    print(f"transactions={len(transactions)} closed_trades={len(trades)}")
+    print(
+        "transactions="
+        f"{len(transactions)} exit_events={result['exit_events']} "
+        f"closed_trades={result['closed_trades']} reduced_trades={result['reduced_trades']}"
+    )
     print(f"overall: {json.dumps(summary)}")
     print(f"wrote {out_path}")
 

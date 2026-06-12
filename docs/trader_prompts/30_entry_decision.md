@@ -35,16 +35,20 @@
 ## Operator Precedent (docs/manual_trading_2025_evidence.md, first-party ledger)
 
 The 5%/10% daily target reproduces the operator's own 2025 manual record on
-this account (200k → 1.23M peak in ~6 weeks, USD_JPY only, 384 trades). The
-shape of that edge, as advisory evidence for lane selection — never a
-substitute for current risk geometry or contract gates:
+this account. Raw balance moved 200k → 1.23M peak in ~6 weeks, but that
+includes 634k of additional funding; funding-adjusted trading equity still
+peaked at 600.6k (**+400.6k / +200.28%**) and ended at 469.2k (**+269.2k /
++134.60%**). The best funding-adjusted 30d window was **+457.5k / +319.72%**,
+after subtracting 634k of net transfers inside that window. USD_JPY only, 411
+exit events. The shape of that edge, as advisory evidence for lane selection
+— never a substitute for current risk geometry or contract gates:
 
-- Fewer, larger, faster: ~9 trades/day at meaningful size, payoff 1.41,
-  median hold 19 minutes — not 30 micro-trades across 8 pairs.
-- Trend side: LONG-with-trend made +336k while counter-trend SHORT lost 79k.
+- Fewer, larger, faster: ~10 exit events/day at meaningful size, payoff 1.30,
+  median hold 29 minutes — not 30 micro-trades across 8 pairs.
+- Trend side: LONG-with-trend made +351k while counter-trend SHORT lost 85k.
   Ride the prevailing direction; fading paid poorly.
-- Session: LONDON_AM/NY_OVERLAP (15–24 JST) carried the edge (payoff 2.46 in
-  London); Tokyo rotation was net negative for this style.
+- Session: LONDON_AM/NY_OVERLAP (15–24 JST) carried the edge (London +185.8k,
+  NY +88.4k); Tokyo rotation was net negative for this style.
 - The operator's own blowup mode was holding decayed positions past ~12h
   (margin closeouts −217k) — the thesis-horizon expiry and disaster stop
   exist to bound exactly that; do not fight them.
