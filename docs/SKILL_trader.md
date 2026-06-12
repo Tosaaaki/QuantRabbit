@@ -185,13 +185,16 @@ PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli cycle-refresh --daily-risk-pct 1
 #     the same trade REVIEW_CLOSE / RECOMMEND_CLOSE, OR a bounded carry-forward
 #     `position_management.json` REVIEW_EXIT for the same still-open trade.
 #   - Gate B: hard loss-cut standing authorization OR explicit operator
-#     authorization. Hard Gate A is M15/H4 close-confirmed BOS/CHOCH against
-#     side, buffered invalidation_price hit with technical confirmation,
-#     fresh thesis_evolution BROKEN / RECOMMEND_CLOSE, structural
-#     position_management REVIEW_EXIT, or position_thesis invalidation-hit /
-#     structural-break evidence with multi-TF confirmation. Softer sidecars
-#     (adverse-entry-buffer-only or score-only position_thesis REVIEW_CLOSE,
-#     non-structural position_management REVIEW_EXIT, or forecast_persistence RECOMMEND_CLOSE)
+#     authorization. Hard standing authorization is H4 close-confirmed
+#     BOS/CHOCH against side, buffered invalidation_price hit with technical
+#     confirmation, fresh thesis_evolution BROKEN / RECOMMEND_CLOSE,
+#     structural position_management REVIEW_EXIT, or position_thesis
+#     invalidation-hit / structural-break evidence with multi-TF confirmation.
+#     M15 close-confirmed BOS/CHOCH is Gate A evidence, but it is not unattended
+#     hard Gate B unless H4 structure, recorded invalidation, or a hard sidecar
+#     also confirms. Softer sidecars (adverse-entry-buffer-only or score-only
+#     position_thesis REVIEW_CLOSE, non-structural position_management
+#     REVIEW_EXIT, forecast_persistence RECOMMEND_CLOSE, or M15-only structure)
 #     require `QR_OPERATOR_CLOSE_OVERRIDE=1` in the operator shell, OR a fresh
 #     `data/.operator_close_token` file. The receipt field
 #     `operator_close_authorized: true` is advisory audit text only.

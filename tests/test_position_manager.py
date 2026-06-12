@@ -1307,6 +1307,44 @@ class PositionManagerTest(unittest.TestCase):
             self.assertIn("forecast UP confidence 0.45 below runner threshold", report)
             self.assertIn("latest M1 close moved away from the local extreme", report)
 
+    def test_profitable_long_delayed_m1_top_uses_full_context_window_for_harvest(self) -> None:
+        # Live 2026-06-12 USD_CHF had six current rollover signals, but the top
+        # candle had slipped just outside the short evidence window. The
+        # extreme context should use the full bounded M1 packet while reversal
+        # evidence remains current.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            decision = _decision(root, long_score=180, short_score=80)
+            pair_charts = _delayed_local_swing_top_pair_charts(root)
+            snapshot = _snapshot(
+                BrokerPosition(
+                    trade_id="delayed-swing-top",
+                    pair="EUR_USD",
+                    side=Side.LONG,
+                    units=5000,
+                    entry_price=1.19980,
+                    unrealized_pl_jpy=650,
+                    take_profit=1.20320,
+                    stop_loss=1.19800,
+                ),
+                bid=1.20058,
+                ask=1.20076,
+            )
+
+            result = PositionManager(
+                trader_decision_path=decision,
+                pair_charts_path=pair_charts,
+                output_path=root / "data" / "pm.json",
+                report_path=root / "pm.md",
+                data_root=root,
+            ).run(snapshot)
+
+            self.assertEqual(result.action, ACTION_TAKE_PROFIT_MARKET)
+            report = (root / "pm.md").read_text()
+            self.assertIn("temporary top profit-take", report)
+            self.assertIn("M1 local swing top", report)
+            self.assertIn("M1 rollover", report)
+
     def test_operator_manual_position_without_tp_preserves_no_broker_tp_by_default(self) -> None:
         prior = os.environ.pop("QR_ENABLE_MISSING_TP_REPAIR", None)
         try:
@@ -1923,6 +1961,86 @@ def _three_signal_local_top_pair_charts(root: Path) -> Path:
                                     "atr_pips": 3.8,
                                     "supertrend_dir": 1,
                                     "psar_dir": 1,
+                                },
+                            },
+                            {"granularity": "H1", "regime": "TREND_UP", "indicators": {"atr_pips": 8.0}},
+                            {"granularity": "H4", "regime": "TREND_UP", "indicators": {"atr_pips": 18.0}},
+                        ],
+                    }
+                ],
+            }
+        )
+    )
+    return path
+
+
+def _delayed_local_swing_top_pair_charts(root: Path) -> Path:
+    path = root / "pair_charts_delayed_local_swing_top.json"
+    now = datetime.now(timezone.utc)
+    recent = [
+        {"t": (now - timedelta(minutes=15)).isoformat(), "o": 1.20034, "h": 1.20048, "l": 1.20032, "c": 1.20044, "complete": True},
+        {"t": (now - timedelta(minutes=14)).isoformat(), "o": 1.20044, "h": 1.20070, "l": 1.20042, "c": 1.20066, "complete": True},
+        {"t": (now - timedelta(minutes=13)).isoformat(), "o": 1.20066, "h": 1.20090, "l": 1.20062, "c": 1.20084, "complete": True},
+        {"t": (now - timedelta(minutes=12)).isoformat(), "o": 1.20084, "h": 1.20086, "l": 1.20070, "c": 1.20076, "complete": True},
+        {"t": (now - timedelta(minutes=11)).isoformat(), "o": 1.20076, "h": 1.20078, "l": 1.20067, "c": 1.20070, "complete": True},
+        {"t": (now - timedelta(minutes=10)).isoformat(), "o": 1.20070, "h": 1.20074, "l": 1.20062, "c": 1.20068, "complete": True},
+        {"t": (now - timedelta(minutes=9)).isoformat(), "o": 1.20068, "h": 1.20072, "l": 1.20060, "c": 1.20066, "complete": True},
+        {"t": (now - timedelta(minutes=8)).isoformat(), "o": 1.20066, "h": 1.20068, "l": 1.20056, "c": 1.20064, "complete": True},
+        {"t": (now - timedelta(minutes=7)).isoformat(), "o": 1.20064, "h": 1.20066, "l": 1.20054, "c": 1.20062, "complete": True},
+        {"t": (now - timedelta(minutes=6)).isoformat(), "o": 1.20062, "h": 1.20064, "l": 1.20052, "c": 1.20060, "complete": True},
+        {"t": (now - timedelta(minutes=5)).isoformat(), "o": 1.20060, "h": 1.20062, "l": 1.20050, "c": 1.20058, "complete": True},
+        {"t": (now - timedelta(minutes=4)).isoformat(), "o": 1.20058, "h": 1.20061, "l": 1.20049, "c": 1.20057, "complete": True},
+        {"t": (now - timedelta(minutes=3)).isoformat(), "o": 1.20057, "h": 1.20060, "l": 1.20048, "c": 1.20059, "complete": True},
+        {"t": (now - timedelta(minutes=2)).isoformat(), "o": 1.20059, "h": 1.20060, "l": 1.20047, "c": 1.20055, "complete": True},
+        {"t": (now - timedelta(minutes=1)).isoformat(), "o": 1.20055, "h": 1.20058, "l": 1.20045, "c": 1.20052, "complete": True},
+    ]
+    path.write_text(
+        json.dumps(
+            {
+                "generated_at_utc": now.isoformat(),
+                "charts": [
+                    {
+                        "pair": "EUR_USD",
+                        "chart_story": (
+                            "M1(IMPULSE_DOWN,ADX=24,ST=-,struct=CHOCH_DOWN@1.2006) "
+                            "M5(TREND_UP,ADX=28,ST=+,struct=BOS_UP@1.2005) "
+                            "H1(TREND_UP,ADX=24,ST=+) "
+                            "H4(TREND_UP,ADX=26,ST=+) "
+                            "D(TREND_UP,ADX=31,ST=+)"
+                        ),
+                        "confluence": {
+                            "price_percentile_24h": 0.52,
+                            "price_percentile_7d": 0.55,
+                            "range_24h_sigma_multiple": 0.9,
+                            "score_balance": "LONG_LEAN",
+                            "score_gap": 0.61,
+                            "tf_agreement_score": 0.67,
+                        },
+                        "session": {"current_tag": "NY_AM_KILLZONE"},
+                        "views": [
+                            {
+                                "granularity": "M1",
+                                "regime": "IMPULSE_DOWN",
+                                "long_bias": 0.22,
+                                "short_bias": 0.78,
+                                "recent_candles": recent,
+                                "indicators": {
+                                    "atr_pips": 1.2,
+                                    "supertrend_dir": -1,
+                                    "psar_dir": -1,
+                                    "donchian_high": 1.20090,
+                                    "bb_upper": 1.20150,
+                                },
+                            },
+                            {
+                                "granularity": "M5",
+                                "regime": "TREND_UP",
+                                "long_bias": 0.55,
+                                "short_bias": 0.45,
+                                "indicators": {
+                                    "atr_pips": 3.8,
+                                    "supertrend_dir": 1,
+                                    "psar_dir": -1,
                                 },
                             },
                             {"granularity": "H1", "regime": "TREND_UP", "indicators": {"atr_pips": 8.0}},

@@ -1100,12 +1100,18 @@ def _temporary_extreme_profit_take_signal(
 
     candles = _closed_recent_candles(m1)
     lookback = max(4, TEMPORARY_EXTREME_LOOKBACK_BARS)
-    recent = candles[-lookback:]
-    if len(recent) < 4:
+    evidence_recent = candles[-lookback:]
+    if len(evidence_recent) < 4:
         return False, ["temporary extreme profit-take skipped: insufficient M1 closed candles"]
 
-    highs = [_candle_float(candle, "h", "high") for candle in recent]
-    lows = [_candle_float(candle, "l", "low") for candle in recent]
+    # Use the full bounded M1 sample from chart_reader for the local extreme
+    # context, while keeping reversal evidence on the shorter live-execution
+    # window. A 20-minute scheduler can otherwise drop the actual top/bottom
+    # just outside the last 12 M1 candles and then miss the rollover that is
+    # happening right now.
+    context_recent = candles
+    highs = [_candle_float(candle, "h", "high") for candle in context_recent]
+    lows = [_candle_float(candle, "l", "low") for candle in context_recent]
     if any(value is None for value in highs + lows):
         return False, ["temporary extreme profit-take skipped: malformed M1 candle prices"]
 
@@ -1124,7 +1130,7 @@ def _temporary_extreme_profit_take_signal(
         pair_chart=pair_chart,
         m1=m1,
         m5=m5,
-        recent=recent,
+        recent=context_recent,
         extreme=extreme,
         pip_factor=pip_factor,
         atr_pips=m1_atr,
@@ -1136,7 +1142,7 @@ def _temporary_extreme_profit_take_signal(
         side_up=side_up,
         m1=m1,
         m5=m5,
-        recent=recent,
+        recent=evidence_recent,
         extreme=extreme,
         latest_forecast=latest_forecast,
     )
