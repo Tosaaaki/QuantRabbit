@@ -754,6 +754,33 @@ class EntryThesisLedgerTest(unittest.TestCase):
             self.assertEqual(ev.verdict, "RECOMMEND_CLOSE")
             self.assertIn("THESIS_EXPIRED", ev.rationale)
 
+    def test_evolution_thesis_expiry_stays_weakened_when_chart_still_supports_side(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            self._seed_horizon_thesis(root)
+            self._write_history(root, status="WEAKENED", generated_at_utc="2026-06-12T06:40:00Z")
+            ev = evaluate_thesis_evolution(
+                trade_id="H1", pair="EUR_JPY", side="LONG",
+                open_time_utc="2026-06-12T00:00:00Z",
+                current_forecast=_Forecast("RANGE", 0.4),
+                current_regime="FAILURE_RISK",
+                data_root=root,
+                pair_chart={
+                    "confluence": {
+                        "score_balance": "LONG_LEAN",
+                        "score_gap": 0.78,
+                        "dominant_regime": "FAILURE_RISK",
+                        "higher_tf_alignment": "NEUTRAL",
+                    }
+                },
+                now=datetime(2026, 6, 12, 7, 0, tzinfo=timezone.utc),
+            )
+            assert ev is not None
+            self.assertEqual(ev.status, "WEAKENED")
+            self.assertEqual(ev.verdict, "HOLD")
+            self.assertIn("THESIS_EXPIRED_SOFT", ev.rationale)
+            self.assertIn("still supports LONG", ev.rationale)
+
     def test_range_rotation_adverse_move_escalates_after_consecutive_weakened(self) -> None:
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)

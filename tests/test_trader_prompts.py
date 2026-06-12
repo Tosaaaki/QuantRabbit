@@ -807,6 +807,146 @@ class TraderPromptRouteTest(unittest.TestCase):
         self.assertTrue(any("soft close review advisory" in reason for reason in route.reasons))
         self.assertTrue(any("forecast_persistence RECOMMEND_CLOSE" in reason for reason in route.reasons))
 
+    def test_thesis_expired_without_hold_support_routes_to_position_close(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(
+                root,
+                positions=[
+                    {
+                        "trade_id": "555",
+                        "pair": "EUR_USD",
+                        "side": "LONG",
+                        "take_profit": 1.18,
+                        "stop_loss": None,
+                        "owner": "trader",
+                        "unrealized_pl_jpy": -1200.0,
+                    }
+                ],
+            )
+            snapshot = json.loads(files["snapshot"].read_text())
+            generated_at = (
+                datetime.fromisoformat(snapshot["fetched_at_utc"]) + timedelta(seconds=1)
+            ).isoformat()
+            (root / "thesis_evolution_report.json").write_text(
+                json.dumps(
+                    {
+                        "generated_at_utc": generated_at,
+                        "evolutions": [
+                            {
+                                "trade_id": "555",
+                                "pair": "EUR_USD",
+                                "side": "LONG",
+                                "status": "BROKEN",
+                                "verdict": "RECOMMEND_CLOSE",
+                                "rationale": "THESIS_EXPIRED: age 7.0h exceeds declared horizon 6.0h",
+                            }
+                        ],
+                    }
+                )
+            )
+
+            prior = os.environ.get("QR_TRADER_DISABLE_SL_REPAIR")
+            os.environ["QR_TRADER_DISABLE_SL_REPAIR"] = "1"
+            try:
+                route = route_trader_prompts(**_route_paths(files), decision_response_path=None)
+            finally:
+                if prior is None:
+                    os.environ.pop("QR_TRADER_DISABLE_SL_REPAIR", None)
+                else:
+                    os.environ["QR_TRADER_DISABLE_SL_REPAIR"] = prior
+
+        self.assertEqual(route.branch, BRANCH_POSITION)
+        self.assertTrue(any("loss-cut review required" in reason for reason in route.reasons))
+        self.assertTrue(any("thesis_evolution RECOMMEND_CLOSE" in reason for reason in route.reasons))
+
+    def test_thesis_expired_with_hold_support_routes_to_entry_as_soft_review(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(
+                root,
+                positions=[
+                    {
+                        "trade_id": "555",
+                        "pair": "EUR_USD",
+                        "side": "LONG",
+                        "take_profit": 1.18,
+                        "stop_loss": None,
+                        "owner": "trader",
+                        "unrealized_pl_jpy": -1200.0,
+                    }
+                ],
+            )
+            snapshot = json.loads(files["snapshot"].read_text())
+            generated_at = (
+                datetime.fromisoformat(snapshot["fetched_at_utc"]) + timedelta(seconds=1)
+            ).isoformat()
+            (root / "thesis_evolution_report.json").write_text(
+                json.dumps(
+                    {
+                        "generated_at_utc": generated_at,
+                        "evolutions": [
+                            {
+                                "trade_id": "555",
+                                "pair": "EUR_USD",
+                                "side": "LONG",
+                                "status": "BROKEN",
+                                "verdict": "RECOMMEND_CLOSE",
+                                "rationale": "THESIS_EXPIRED: age 3.1h exceeds declared horizon 3.0h",
+                            }
+                        ],
+                    }
+                )
+            )
+            (root / "position_thesis_report.json").write_text(
+                json.dumps(
+                    {
+                        "generated_at_utc": generated_at,
+                        "assessments": [
+                            {
+                                "trade_id": "555",
+                                "pair": "EUR_USD",
+                                "side": "LONG",
+                                "verdict": "EXTEND",
+                                "aggregate_score": 62.43,
+                                "rationale_lines": ["position thesis still supports LONG carry"],
+                                "context_notes": [],
+                            }
+                        ],
+                    }
+                )
+            )
+            (root / "forecast_persistence_report.json").write_text(
+                json.dumps(
+                    {
+                        "generated_at_utc": generated_at,
+                        "verdicts": [
+                            {
+                                "trade_id": "555",
+                                "pair": "EUR_USD",
+                                "side": "LONG",
+                                "verdict": "EXTEND",
+                                "reason": "recent forecasts still support the open LONG",
+                            }
+                        ],
+                    }
+                )
+            )
+
+            prior = os.environ.get("QR_TRADER_DISABLE_SL_REPAIR")
+            os.environ["QR_TRADER_DISABLE_SL_REPAIR"] = "1"
+            try:
+                route = route_trader_prompts(**_route_paths(files), decision_response_path=None)
+            finally:
+                if prior is None:
+                    os.environ.pop("QR_TRADER_DISABLE_SL_REPAIR", None)
+                else:
+                    os.environ["QR_TRADER_DISABLE_SL_REPAIR"] = prior
+
+        self.assertEqual(route.branch, BRANCH_ENTRY)
+        self.assertTrue(any("soft close review advisory" in reason for reason in route.reasons))
+        self.assertTrue(any("thesis_evolution RECOMMEND_CLOSE" in reason for reason in route.reasons))
+
     def test_soft_close_review_suppresses_tp_rebalance_probe_blocker(self) -> None:
         """Router TP probe must match tp-rebalance CLI close-review guard.
 

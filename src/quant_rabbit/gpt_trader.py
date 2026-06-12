@@ -621,10 +621,44 @@ def _position_sidecar_close_recommended(
     verdict = str(rec.get("verdict") or "RECOMMEND_CLOSE")
     reason = str(rec.get("reason") or "prediction no longer supports recovery")
     rec_trade = str(rec.get("trade_id") or "")
+    standing_authorized = _sidecar_close_standing_authorized(rec)
+    expiry_hold_conflict = _thesis_expiry_hold_support_conflict(packet, rec)
+    if standing_authorized and expiry_hold_conflict:
+        standing_authorized = False
+        reason = f"{reason}; {expiry_hold_conflict}"
     return (
         True,
         f"{source} {verdict} for trade {rec_trade}: {reason}",
-        _sidecar_close_standing_authorized(rec),
+        standing_authorized,
+    )
+
+
+def _thesis_expiry_hold_support_conflict(
+    packet: dict[str, Any],
+    rec: dict[str, Any],
+) -> str | None:
+    """Downgrade clock-expiry close evidence when current position stack supports hold.
+
+    `THESIS_EXPIRED` is meant to stop decayed, unsupported theses. If separate
+    fresh position sidecars still support the open side, the problem is
+    position geometry/repricing, not a hard unattended loss-cut.
+    """
+
+    source = str(rec.get("source") or "").strip()
+    reason = str(rec.get("reason") or "")
+    if source != "thesis_evolution" or "THESIS_EXPIRED" not in reason.upper():
+        return None
+    supported, support_reason = _close_same_direction_sidecar_support(
+        packet,
+        trade_id=str(rec.get("trade_id") or "") or None,
+        pair=str(rec.get("pair") or ""),
+        side=str(rec.get("side") or ""),
+    )
+    if not supported:
+        return None
+    return (
+        f"THESIS_EXPIRED is downgraded to soft Gate A because {support_reason}; "
+        "use HOLD/reprice/TP rebalance unless explicit Gate B authorizes the close"
     )
 
 
@@ -3543,6 +3577,8 @@ def _position_close_recommendation_blocks_non_close_action(
     fresh all-horizon entries while authorization is absent.
     """
     if bool(rec.get("gate_b_standing_authorized")):
+        if _thesis_expiry_hold_support_conflict(packet, rec):
+            return _operator_close_gate_authorized()
         return True
     trade_id = str(rec.get("trade_id") or "")
     if trade_id:

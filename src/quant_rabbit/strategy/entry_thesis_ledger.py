@@ -336,6 +336,43 @@ def technical_invalidation_confirmation_reason(
     return f"technical invalidation confirmed against {side_up}: {details}"
 
 
+def same_direction_chart_support_reason(
+    pair_chart: Optional[Dict[str, Any]],
+    *,
+    side: str,
+) -> Optional[str]:
+    """Detect categorical chart support that keeps an aged thesis from hard-closing.
+
+    This deliberately reuses chart_reader's published confluence label instead
+    of adding a new numeric threshold. A timed-out thesis with current same-side
+    confluence is a geometry/reprice problem, not unattended loss-cut evidence.
+    """
+
+    if not isinstance(pair_chart, dict):
+        return None
+    side_up = str(side or "").upper()
+    if side_up not in {"LONG", "SHORT"}:
+        return None
+    confluence = pair_chart.get("confluence")
+    if not isinstance(confluence, dict):
+        return None
+    score_balance = str(confluence.get("score_balance") or "").upper()
+    expected = "LONG_LEAN" if side_up == "LONG" else "SHORT_LEAN"
+    if score_balance != expected:
+        return None
+    score_gap = confluence.get("score_gap")
+    regime = confluence.get("dominant_regime")
+    higher_alignment = confluence.get("higher_tf_alignment")
+    details = [f"chart confluence {score_balance}"]
+    if score_gap is not None:
+        details.append(f"score_gap={score_gap}")
+    if regime:
+        details.append(f"dominant_regime={regime}")
+    if higher_alignment:
+        details.append(f"higher_tf_alignment={higher_alignment}")
+    return f"current {' '.join(details)} still supports {side_up}"
+
+
 def thesis_invalidation_hit_reason(
     thesis: "EntryThesis",
     *,
@@ -1464,14 +1501,24 @@ def evaluate_thesis_evolution(
         and age_hours > thesis.horizon_hours
     ):
         if _has_prior_weakened_or_broken_cycle(trade_id=trade_id, data_root=data_root, now=now):
-            status = "BROKEN"
-            verdict = "RECOMMEND_CLOSE"
-            reasons.append(
-                f"THESIS_EXPIRED: age {age_hours:.1f}h exceeds declared horizon "
-                f"{thesis.horizon_hours:.1f}h with neither target nor invalidation reached, "
-                "and the thesis has been WEAKENED across consecutive checks; the entry "
-                "thesis no longer exists — close or re-justify via a fresh receipt"
-            )
+            chart_support_reason = same_direction_chart_support_reason(pair_chart, side=side_up)
+            if chart_support_reason:
+                reasons.append(
+                    f"THESIS_EXPIRED_SOFT: age {age_hours:.1f}h exceeds declared horizon "
+                    f"{thesis.horizon_hours:.1f}h across consecutive WEAKENED checks, "
+                    f"but {chart_support_reason}; treat as HOLD/reprice/TP rebalance instead "
+                    "of unattended loss-side CLOSE"
+                )
+            else:
+                status = "BROKEN"
+                verdict = "RECOMMEND_CLOSE"
+                reasons.append(
+                    f"THESIS_EXPIRED: age {age_hours:.1f}h exceeds declared horizon "
+                    f"{thesis.horizon_hours:.1f}h with neither target nor invalidation reached, "
+                    "and the thesis has been WEAKENED across consecutive checks without "
+                    "current same-direction chart support; the entry thesis no longer exists "
+                    "— close or re-justify via a fresh receipt"
+                )
 
     return ThesisEvolution(
         trade_id=trade_id, pair=pair, side=side_up,

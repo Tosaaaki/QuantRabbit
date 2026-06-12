@@ -687,10 +687,12 @@ def _position_close_recommendation_reasons(
     data_root = snapshot_path.parent
     reasons: list[str] = []
     close_gate_b_authorized = _operator_close_gate_b_authorized(data_root)
+    hold_support = _fresh_position_hold_support(snapshot, data_root=data_root)
     for rec in _fresh_close_recommendations(snapshot, data_root=data_root):
         blocks_entry = _close_recommendation_blocks_entry(
             rec,
             close_gate_b_authorized=close_gate_b_authorized,
+            hold_support=hold_support,
         )
         if blocking_only and not blocks_entry:
             continue
@@ -710,10 +712,45 @@ def _close_recommendation_blocks_entry(
     rec: dict[str, Any],
     *,
     close_gate_b_authorized: bool,
+    hold_support: tuple[dict[str, Any], ...] = (),
 ) -> bool:
     if bool(rec.get("gate_b_standing_authorized")):
+        if _thesis_expiry_has_same_direction_hold_support(rec, hold_support):
+            return close_gate_b_authorized
         return True
     return close_gate_b_authorized
+
+
+def _thesis_expiry_has_same_direction_hold_support(
+    rec: dict[str, Any],
+    hold_support: tuple[dict[str, Any], ...],
+) -> bool:
+    source = str(rec.get("source") or "").strip()
+    reason = str(rec.get("reason") or "")
+    if source != "thesis_evolution" or "THESIS_EXPIRED" not in reason.upper():
+        return False
+    trade_id = str(rec.get("trade_id") or "")
+    pair = str(rec.get("pair") or "")
+    side = str(rec.get("side") or "").upper()
+    matched: list[dict[str, Any]] = []
+    for support in hold_support:
+        if not isinstance(support, dict):
+            continue
+        if trade_id and str(support.get("trade_id") or "") != trade_id:
+            continue
+        support_pair = str(support.get("pair") or "")
+        if pair and support_pair not in {"", pair}:
+            continue
+        support_side = str(support.get("side") or "").upper()
+        if side and support_side not in {"", side}:
+            continue
+        matched.append(support)
+    sources = {
+        str(support.get("source") or "")
+        for support in matched
+        if str(support.get("source") or "")
+    }
+    return len(sources) >= 2
 
 
 def _operator_close_gate_b_authorized(data_root: Path) -> bool:

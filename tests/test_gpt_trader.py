@@ -3744,6 +3744,7 @@ def _write_fresh_thesis_evolution_close_recommendation(
     trade_id: str = "555",
     pair: str = "EUR_USD",
     side: str = "SHORT",
+    rationale: str = "invalidation hit and technical invalidation confirmed against the entry thesis",
 ) -> None:
     snapshot = json.loads(files["snapshot"].read_text())
     generated_at = (
@@ -3760,7 +3761,7 @@ def _write_fresh_thesis_evolution_close_recommendation(
                         "side": side,
                         "status": "BROKEN",
                         "verdict": "RECOMMEND_CLOSE",
-                        "rationale": "invalidation hit and technical invalidation confirmed against the entry thesis",
+                        "rationale": rationale,
                     }
                 ],
             }
@@ -4559,6 +4560,97 @@ class CloseDisciplineTest(unittest.TestCase):
             sidecar = payload["input_packet"]["protection_sidecars"]["position_close_recommendations"][0]
             self.assertEqual(sidecar["source"], "thesis_evolution")
             self.assertTrue(sidecar["gate_b_standing_authorized"])
+
+    def test_thesis_expired_without_hold_support_remains_standing_close_authorized(self) -> None:
+        # Expiry is still a hard unattended close when no fresh position stack
+        # says the open side remains alive.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _close_fixtures(root, position_side="LONG", m15_dir="UP", h4_dir="UP")
+            _write_fresh_thesis_evolution_close_recommendation(
+                root,
+                files,
+                side="LONG",
+                rationale=(
+                    "THESIS_EXPIRED: age 7.0h exceeds declared horizon 6.0h "
+                    "with neither target nor invalidation reached"
+                ),
+            )
+            decision = _close_decision(trade_ids=["555"])
+            decision["evidence_refs"].append("position:evolution:555")
+            brain = _brain(root, files, decision)
+
+            summary = brain.run(snapshot_path=files["snapshot"])
+
+            self.assertEqual(summary.status, "ACCEPTED", msg=summary)
+            self.assertTrue(summary.allowed)
+
+    def test_thesis_expired_with_hold_sidecars_rejects_loss_close(self) -> None:
+        # Regression for 2026-06-12 USD_CAD 472336 shape: a thesis can be past
+        # its forecast horizon while position_thesis / forecast_persistence
+        # still support HOLD/EXTEND. That is reprice/TP work, not a hard
+        # unattended loss-side CLOSE.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _close_fixtures(root, position_side="LONG", m15_dir="UP", h4_dir="UP")
+            snapshot = json.loads(files["snapshot"].read_text())
+            generated_at = (
+                datetime.fromisoformat(snapshot["fetched_at_utc"]) + timedelta(seconds=1)
+            ).isoformat()
+            _write_fresh_thesis_evolution_close_recommendation(
+                root,
+                files,
+                side="LONG",
+                rationale=(
+                    "THESIS_EXPIRED: age 3.1h exceeds declared horizon 3.0h "
+                    "with neither target nor invalidation reached"
+                ),
+            )
+            (root / "position_thesis_report.json").write_text(
+                json.dumps(
+                    {
+                        "generated_at_utc": generated_at,
+                        "assessments": [
+                            {
+                                "trade_id": "555",
+                                "pair": "EUR_USD",
+                                "side": "LONG",
+                                "verdict": "EXTEND",
+                                "aggregate_score": 62.43,
+                                "rationale_lines": ["position thesis still supports LONG carry"],
+                                "context_notes": [],
+                            }
+                        ],
+                    }
+                )
+            )
+            (root / "forecast_persistence_report.json").write_text(
+                json.dumps(
+                    {
+                        "generated_at_utc": generated_at,
+                        "verdicts": [
+                            {
+                                "trade_id": "555",
+                                "pair": "EUR_USD",
+                                "side": "LONG",
+                                "verdict": "EXTEND",
+                                "reason": "recent forecasts still support the open LONG",
+                            }
+                        ],
+                    }
+                )
+            )
+            decision = _close_decision(trade_ids=["555"])
+            decision["evidence_refs"].append("position:evolution:555")
+            brain = _brain(root, files, decision)
+
+            summary = brain.run(snapshot_path=files["snapshot"])
+
+            self.assertEqual(summary.status, "REJECTED", msg=summary)
+            payload = json.loads((root / "gpt_decision.json").read_text())
+            codes = {issue["code"] for issue in payload["verification_issues"]}
+            self.assertIn("CLOSE_SAME_DIRECTION_MARKET_SUPPORT", codes)
+            self.assertNotIn("CLOSE_THESIS_STILL_VALID", codes)
 
     def test_hard_sidecar_takes_precedence_over_soft_sidecar_for_same_trade(self) -> None:
         # Live packets can contain position_thesis REVIEW_CLOSE before
