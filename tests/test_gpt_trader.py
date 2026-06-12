@@ -1082,6 +1082,45 @@ class GPTTraderBrainTest(unittest.TestCase):
             payload = json.loads((root / "gpt_decision.json").read_text())
             self.assertEqual(payload["verification_issues"], [])
 
+    def test_rejects_wait_justified_only_by_session_timing(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root, positions=[{**_position(), "take_profit": 1.185}])
+            decision = _wait_decision()
+            decision["thesis"] = "Asia is a quiet session, so wait for London/NY liquidity."
+            decision["narrative"] = "Stay flat because the session is quiet."
+            decision["chart_story"] = "No chart blocker is named."
+            decision["invalidation"] = "Reconsider when London starts."
+            decision["rejected_alternatives"] = [f"{LANE_ID} rejected only because this is the Asian session."]
+            decision["risk_notes"] = ["No concrete risk gate is cited."]
+            decision["operator_summary"] = "Wait for London/NY."
+            brain = _brain(root, files, decision)
+
+            summary = brain.run(snapshot_path=files["snapshot"])
+
+            self.assertEqual(summary.status, "REJECTED")
+            payload = json.loads((root / "gpt_decision.json").read_text())
+            codes = {issue["code"] for issue in payload["verification_issues"]}
+            self.assertIn("SESSION_ONLY_WAIT_REJECTED", codes)
+
+    def test_allows_wait_that_mentions_session_with_concrete_gate(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root, positions=[{**_position(), "take_profit": 1.185}])
+            decision = _wait_decision()
+            decision["thesis"] = "Off-hours conditions are acceptable to monitor, but the spread gate is too wide."
+            decision["narrative"] = "Wait only because spread exceeds the current receipt cap, not because of clock time."
+            decision["rejected_alternatives"] = [f"{LANE_ID} rejected this cycle by SPREAD_TOO_WIDE."]
+            decision["risk_notes"] = ["SPREAD_TOO_WIDE blocks the lane until the next broker refresh."]
+            brain = _brain(root, files, decision)
+
+            summary = brain.run(snapshot_path=files["snapshot"])
+
+            self.assertEqual(summary.status, "ACCEPTED")
+            payload = json.loads((root / "gpt_decision.json").read_text())
+            codes = {issue["code"] for issue in payload["verification_issues"]}
+            self.assertNotIn("SESSION_ONLY_WAIT_REJECTED", codes)
+
     def test_rejects_wait_when_tp_rebalance_sidecar_is_required(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

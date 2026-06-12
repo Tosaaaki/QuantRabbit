@@ -336,6 +336,7 @@ class SelfImprovementAuditor:
                 active_trade_ids=active_trade_ids,
                 live_ready_lanes=len(live_ready),
                 pending_entry_orders=len(pending_entry_orders),
+                pending_entry_order_details=pending_entry_orders,
                 snapshot_ts=snapshot_ts,
                 latest_gpt_stale_streak_before=latest_gpt_stale_streak_before,
             )
@@ -2898,6 +2899,7 @@ def _decision_artifact_findings(
     live_ready_lanes: int,
     pending_entry_orders: int,
     snapshot_ts: datetime | None,
+    pending_entry_order_details: list[dict[str, Any]] | None = None,
     latest_gpt_stale_streak_before: int = 0,
 ) -> list[dict[str, Any]]:
     out: list[dict[str, Any]] = []
@@ -2959,12 +2961,19 @@ def _decision_artifact_findings(
             and live_ready_lanes <= 0
             and pending_entry_orders <= 0
         )
+        accepted_trade_consumed_by_pending_entry = (
+            status == "ACCEPTED"
+            and action == "TRADE"
+            and not blocking
+            and _accepted_trade_has_current_pending_entry(decision, pending_entry_order_details or [])
+        )
         if (
             snapshot_ts is not None
             and generated_at is not None
             and generated_at < snapshot_ts
             and not rejected_inert_receipt
             and not stale_close_for_closed_trades
+            and not accepted_trade_consumed_by_pending_entry
         ):
             priority = (
                 "P0"
@@ -3428,6 +3437,45 @@ def _method_from_lane_id(lane_id: str | None) -> str | None:
     if len(parts) >= 4:
         return parts[3].upper()
     return None
+
+
+def _lane_pair_side_from_id(lane_id: str | None) -> tuple[str, str] | None:
+    parts = [part.strip().upper() for part in str(lane_id or "").split(":") if part.strip()]
+    if len(parts) < 3:
+        return None
+    side = parts[2]
+    if side not in {"LONG", "SHORT"}:
+        return None
+    return parts[1], side
+
+
+def _accepted_trade_has_current_pending_entry(
+    decision: dict[str, Any],
+    pending_entry_orders: list[dict[str, Any]],
+) -> bool:
+    wanted: set[tuple[str, str]] = set()
+    for key in ("selected_lane_id", "lane_id"):
+        parsed = _lane_pair_side_from_id(decision.get(key))
+        if parsed is not None:
+            wanted.add(parsed)
+    raw_lane_ids = decision.get("selected_lane_ids")
+    if isinstance(raw_lane_ids, list):
+        for lane_id in raw_lane_ids:
+            parsed = _lane_pair_side_from_id(str(lane_id))
+            if parsed is not None:
+                wanted.add(parsed)
+    if not wanted:
+        return False
+
+    for order in pending_entry_orders:
+        pair = str(order.get("pair") or "").upper()
+        units = _maybe_float(order.get("units"))
+        if not pair or units is None or units == 0:
+            continue
+        side = "LONG" if units > 0 else "SHORT"
+        if (pair, side) in wanted:
+            return True
+    return False
 
 
 def _table_columns(conn: sqlite3.Connection, table_name: str) -> set[str]:

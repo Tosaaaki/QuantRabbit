@@ -1665,6 +1665,36 @@ class SelfImprovementAuditorTest(unittest.TestCase):
         )
         self.assertEqual(codes["LATEST_GPT_DECISION_STALE"]["evidence"]["current_streak"], 1)
 
+    def test_accepted_trade_consumed_by_current_pending_entry_is_not_stale(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(
+                root,
+                active_position=True,
+                pending_entry=True,
+                closed_pls=(100.0, 80.0, -50.0),
+            )
+            files["gpt"].write_text(
+                json.dumps(
+                    {
+                        "status": "ACCEPTED",
+                        "generated_at_utc": (_NOW - timedelta(minutes=1)).isoformat(),
+                        "decision": {
+                            "action": "TRADE",
+                            "selected_lane_id": "trend_trader:EUR_USD:LONG:TREND_CONTINUATION",
+                            "selected_lane_ids": ["trend_trader:EUR_USD:LONG:TREND_CONTINUATION"],
+                        },
+                        "verification_issues": [],
+                    }
+                )
+            )
+
+            _run(files)
+            payload = json.loads(files["output"].read_text())
+
+        codes = {item["code"] for item in payload["findings"]}
+        self.assertNotIn("LATEST_GPT_DECISION_STALE", codes)
+
     def test_accepted_request_evidence_predating_snapshot_without_risk_is_p1(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

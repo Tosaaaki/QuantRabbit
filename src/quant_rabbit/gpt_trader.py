@@ -665,6 +665,26 @@ TWENTY_MINUTE_PLAN_TEXT_FIELDS = (
     "counterargument",
     "next_cycle_check",
 )
+SESSION_ONLY_WAIT_PATTERN = re.compile(
+    r"(WAIT|PATIENCE|STAY\s+FLAT|HOLD).{0,100}"
+    r"(LONDON|NEW\s+YORK|\bNY\b|ASIA|ASIAN|TOKYO|OFF[\s_-]*HOURS|SESSION|KILLZONE)"
+    r"|"
+    r"(QUIET|THIN|LOW[\s_-]*LIQUIDITY).{0,60}"
+    r"(SESSION|ASIA|ASIAN|TOKYO|OFF[\s_-]*HOURS|KILLZONE)"
+    r"|"
+    r"(SESSION|ASIA|ASIAN|TOKYO|OFF[\s_-]*HOURS|KILLZONE).{0,60}"
+    r"(QUIET|THIN|LOW[\s_-]*LIQUIDITY|WAIT|PATIENCE|STAY\s+FLAT)",
+    re.IGNORECASE,
+)
+CONCRETE_WAIT_GATE_PATTERN = re.compile(
+    r"\b("
+    r"SPREAD|FORECAST|NEWS|EVENT|CPI|FOMC|NFP|RATE|CONFLICT|INVALIDATION|"
+    r"MARGIN|REWARD|RR|LIVE_READY|LIVE\s+READY|BOS|CHOCH|ATR|"
+    r"VOLATILITY|STRUCTURE|SHELF|BREAK|BROKEN|SUPPORT|RESISTANCE|RETEST|"
+    r"PENDING|CAPACITY|TP|SL"
+    r")\b",
+    re.IGNORECASE,
+)
 
 
 @dataclass(frozen=True)
@@ -1221,6 +1241,14 @@ class DecisionVerifier:
         elif decision.action in {"WAIT", "REQUEST_EVIDENCE"}:
             if decision.selected_lane_id is not None:
                 issues.append(VerificationIssue("WAIT_SELECTED_LANE", f"{decision.action} must not select a lane"))
+            if decision.action == "WAIT" and _wait_is_session_only(decision):
+                issues.append(
+                    VerificationIssue(
+                        "SESSION_ONLY_WAIT_REJECTED",
+                        "WAIT cannot be justified by time-of-day, quiet-session, or London/NY timing alone; "
+                        "cite a current spread, forecast, structure, event, broker-truth, close, or risk gate.",
+                    )
+                )
             if decision.action == "WAIT" and entry_thesis_blockers:
                 issues.append(
                     VerificationIssue(
@@ -3767,6 +3795,25 @@ def _forecast_confidence_min() -> float:
 def _cited_live_ready_lanes(decision: GPTTraderDecision, lane_ids: list[str]) -> list[str]:
     refs = set(decision.evidence_refs)
     return [lane_id for lane_id in lane_ids if f"intent:{lane_id}" in refs]
+
+
+def _wait_is_session_only(decision: GPTTraderDecision) -> bool:
+    text = " ".join(
+        part
+        for part in (
+            decision.thesis,
+            decision.narrative,
+            decision.chart_story,
+            decision.invalidation,
+            decision.operator_summary,
+            " ".join(decision.rejected_alternatives),
+            " ".join(decision.risk_notes),
+        )
+        if part
+    )
+    if not SESSION_ONLY_WAIT_PATTERN.search(text):
+        return False
+    return CONCRETE_WAIT_GATE_PATTERN.search(text) is None
 
 
 def _pair_from_lane_id(lane_id: str) -> str:
