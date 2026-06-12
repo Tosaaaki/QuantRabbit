@@ -18,12 +18,16 @@
 8. If an advised lane has `learning_influences`, require `data/learning_audit.json`
    to be non-blocked and to cover that lane before treating the advice as
    executable. Cite `learning:audit` and `learning:lane:<lane_id>` in the receipt.
-9. If the target is open and the first advised lane is tradeable, include it in the selected basket unless a named deterministic gate now blocks it.
-10. If advice spans multiple distinct pairs, include one lane per advised pair up to portfolio capacity when practical; otherwise the verifier records a warning and the gateway cycle expands the accepted trade to the deterministic prefilter basket so margin, cumulative risk, duplicate geometry, and position-count gates decide what fits.
-11. Prefer a `MARKET` variant for immediate participation when it is current `LIVE_READY`; pending entries are basket-counted by the gateway and are not blanket no-trade reasons. Exception: `BREAKOUT_FAILURE` must be at the retest/rejection side of the M5/M15 box. For SHORT, do not market-sell the lower half/support and do not arm a lower-half sell-stop; wait for upper-half resistance rejection/LIMIT or require a separate true trend-continuation breakout lane. For LONG, do not market-buy the upper half/resistance and do not arm an upper-half buy-stop; wait for lower-half support rejection/LIMIT or require a separate true trend-continuation breakout lane.
-12. If current trader-owned pending entries already consume portfolio capacity, explicitly decide whether to keep that pending basket or replace it. A `TRADE` that needs capacity for current `MARKET` lanes may include `cancel_order_ids` for current trader-owned pending entry ids that should be cleared before gateway validation; never name manual/unknown orders.
-13. Fill `twenty_minute_plan` before choosing the final action. The trader runs roughly one decision every 20 minutes, so a receipt that only says "trend looks good" or "timing unclear" is too shallow. State the next-cycle primary path, the failure path, the exact entry/hold trigger, the invalidation/cancel trigger, the strongest counterargument, and what must be checked on the next cycle.
-14. Write exactly one `data/codex_trader_decision_response.json`.
+9. Read `data/operator_precedent_audit.json` if present. Use it only as
+   advisory ranking/context among already-current `LIVE_READY` lanes; absence
+   of alignment is not a blocker, and alignment cannot override current risk,
+   forecast, spread, event, broker-truth, or close Gate A/B checks.
+10. If the target is open and the first advised lane is tradeable, include it in the selected basket unless a named deterministic gate now blocks it.
+11. If advice spans multiple distinct pairs, include one lane per advised pair up to portfolio capacity when practical; otherwise the verifier records a warning and the gateway cycle expands the accepted trade to the deterministic prefilter basket so margin, cumulative risk, duplicate geometry, and position-count gates decide what fits.
+12. Prefer a `MARKET` variant for immediate participation when it is current `LIVE_READY`; pending entries are basket-counted by the gateway and are not blanket no-trade reasons. Exception: `BREAKOUT_FAILURE` must be at the retest/rejection side of the M5/M15 box. For SHORT, do not market-sell the lower half/support and do not arm a lower-half sell-stop; wait for upper-half resistance rejection/LIMIT or require a separate true trend-continuation breakout lane. For LONG, do not market-buy the upper half/resistance and do not arm an upper-half buy-stop; wait for lower-half support rejection/LIMIT or require a separate true trend-continuation breakout lane.
+13. If current trader-owned pending entries already consume portfolio capacity, explicitly decide whether to keep that pending basket or replace it. A `TRADE` that needs capacity for current `MARKET` lanes may include `cancel_order_ids` for current trader-owned pending entry ids that should be cleared before gateway validation; never name manual/unknown orders.
+14. Fill `twenty_minute_plan` before choosing the final action. The trader runs roughly one decision every 20 minutes, so a receipt that only says "trend looks good" or "timing unclear" is too shallow. State the next-cycle primary path, the failure path, the exact entry/hold trigger, the invalidation/cancel trigger, the strongest counterargument, and what must be checked on the next cycle.
+15. Write exactly one `data/codex_trader_decision_response.json`.
 
 ## Valid Actions
 
@@ -32,7 +36,7 @@
 - `WAIT`
 - `REQUEST_EVIDENCE`
 
-## Operator Precedent (docs/manual_trading_2025_evidence.md, first-party ledger)
+## Operator Precedent (`data/operator_precedent_audit.json`, `docs/manual_trading_2025_evidence.md`)
 
 The 5%/10% daily target reproduces the operator's own 2025 manual record on
 this account. Raw balance moved 200k → 1.23M peak in ~6 weeks, but that

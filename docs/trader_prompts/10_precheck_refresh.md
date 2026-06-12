@@ -21,8 +21,9 @@ PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli cycle-refresh --daily-risk-pct 1
 snapshot, daily target state, ledger sync, strategy mining, pair charts,
 all market-context layers, market-story mining, `news-health --strict`,
 daily-review, tp-rebalance, projection verification, intent generation,
-coverage/attack/learning/capture/verification audits, predictive limits,
-position sidecars, memory health — in the same order and with the same
+coverage/attack/learning/capture/operator-precedent/verification audits,
+predictive limits, position sidecars, memory health — in the same order and
+with the same
 arguments the per-step skeleton used (`cli._cycle_refresh_steps` is the
 canonical list), then prints one compact digest that already includes the
 re-routed prompt branch (`route`).
@@ -54,6 +55,7 @@ Digest semantics:
   receipt becomes WAIT — existing broker TPs are position protection and
   must not wait for a fresh entry to be managed.
 - `target`, `intents`, `attack_advice`, `capture_economics`,
+  `operator_precedent`,
   `memory_health`, `news_health`, `thesis_evolution`,
   `forecast_persistence`, `position_thesis` summarize the artifacts the
   decision receipt must cite.

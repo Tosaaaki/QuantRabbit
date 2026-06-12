@@ -1911,6 +1911,8 @@ class ConsolidatedCycleCommandTest(unittest.TestCase):
         self.assertLess(refresh.index("verify-projections"), refresh.index("generate-intents --snapshot data/broker_snapshot.json"))
         self.assertLess(refresh.index("tp-rebalance"), refresh.index("generate-intents --snapshot data/broker_snapshot.json"))
         self.assertIn("news-health --strict", refresh)
+        self.assertLess(refresh.index("capture-economics"), refresh.index("operator-precedent-audit"))
+        self.assertLess(refresh.index("operator-precedent-audit"), refresh.index("verification-ledger-audit"))
         self.assertLess(refresh.index("memory-health"), refresh.index("self-improvement-audit"))
         self.assertEqual(refresh[-1], "self-improvement-audit")
 
@@ -1944,6 +1946,48 @@ class ConsolidatedCycleCommandTest(unittest.TestCase):
         self.assertEqual(digest["steps_ok"], ["broker-snapshot"])
         self.assertEqual(len(digest["steps_failed"]), 1)
         self.assertEqual(digest["steps_failed"][0]["step"], "news-health --strict")
+
+    def test_cycle_digest_summarizes_operator_precedent(self) -> None:
+        from quant_rabbit.cli import _cycle_digest
+
+        with tempfile.TemporaryDirectory() as tmp:
+            audit_path = Path(tmp) / "operator_precedent_audit.json"
+            audit_path.write_text(
+                json.dumps(
+                    {
+                        "status": "OPERATOR_PRECEDENT_WARN",
+                        "operator_claim": {"verified": True},
+                        "precedent": {
+                            "funding_adjusted_performance": {
+                                "best_30d": {"return_pct": 319.72}
+                            },
+                            "winning_shape": {
+                                "primary_pair": "USD_JPY",
+                                "primary_direction": "LONG",
+                                "primary_sessions": ["LONDON_AM", "NY_OVERLAP"],
+                                "positive_sessions": ["LONDON_AM", "NY_OVERLAP"],
+                            },
+                        },
+                        "runtime_alignment": {
+                            "live_ready_lanes": 1,
+                            "aligned_live_ready_lanes": 0,
+                        },
+                        "warnings": ["not aligned"],
+                        "blockers": [],
+                    }
+                )
+            )
+
+            with mock.patch("quant_rabbit.cli.DEFAULT_OPERATOR_PRECEDENT_AUDIT", audit_path):
+                digest = _cycle_digest(kind="cycle_refresh_digest", step_results=[], aborted=False)
+
+        precedent = digest["operator_precedent"]
+        self.assertEqual(precedent["status"], "OPERATOR_PRECEDENT_WARN")
+        self.assertTrue(precedent["claim_verified"])
+        self.assertEqual(precedent["best_30d_return_pct"], 319.72)
+        self.assertEqual(precedent["primary_pair"], "USD_JPY")
+        self.assertEqual(precedent["primary_sessions"], ["LONDON_AM", "NY_OVERLAP"])
+        self.assertEqual(precedent["aligned_live_ready_lanes"], 0)
 
 
 if __name__ == "__main__":

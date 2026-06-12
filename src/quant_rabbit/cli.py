@@ -107,6 +107,9 @@ from quant_rabbit.paths import (
     DEFAULT_LEVELS_REPORT,
     DEFAULT_MARKET_CONTEXT_MATRIX,
     DEFAULT_MARKET_CONTEXT_MATRIX_REPORT,
+    DEFAULT_MANUAL_HISTORY_2025,
+    DEFAULT_OPERATOR_PRECEDENT_AUDIT,
+    DEFAULT_OPERATOR_PRECEDENT_AUDIT_REPORT,
     DEFAULT_LEARNING_AUDIT,
     DEFAULT_LEARNING_AUDIT_REPORT,
     DEFAULT_FORECAST_HISTORY,
@@ -1560,6 +1563,7 @@ def _cycle_refresh_steps(daily_risk_pct: str) -> list[dict[str, Any]]:
         {"argv": ["ai-attack-advice"], "required": False},
         {"argv": ["learning-audit"], "required": False},
         {"argv": ["capture-economics"], "required": False},
+        {"argv": ["operator-precedent-audit"], "required": False},
         {"argv": ["verification-ledger-audit"], "required": False},
         {"argv": ["generate-predictive-limits"], "required": False},
         {"argv": ["position-thesis-check"], "required": False},
@@ -1761,6 +1765,27 @@ def _cycle_digest(*, kind: str, step_results: list[dict[str, Any]], aborted: boo
             "payoff_ratio": overall.get("payoff_ratio"),
             "breakeven_payoff_at_win_rate": overall.get("breakeven_payoff_at_win_rate"),
             "expectancy_jpy_per_trade": overall.get("expectancy_jpy_per_trade"),
+        }
+
+    operator_precedent = _read_json_quiet(DEFAULT_OPERATOR_PRECEDENT_AUDIT)
+    if isinstance(operator_precedent, dict):
+        precedent = operator_precedent.get("precedent") or {}
+        performance = precedent.get("funding_adjusted_performance") or {}
+        best_30d = performance.get("best_30d") or {}
+        winning = precedent.get("winning_shape") or {}
+        runtime = operator_precedent.get("runtime_alignment") or {}
+        digest["operator_precedent"] = {
+            "status": operator_precedent.get("status"),
+            "claim_verified": (operator_precedent.get("operator_claim") or {}).get("verified"),
+            "best_30d_return_pct": best_30d.get("return_pct"),
+            "primary_pair": winning.get("primary_pair"),
+            "primary_direction": winning.get("primary_direction"),
+            "primary_sessions": winning.get("primary_sessions"),
+            "positive_sessions": winning.get("positive_sessions"),
+            "live_ready_lanes": runtime.get("live_ready_lanes"),
+            "aligned_live_ready_lanes": runtime.get("aligned_live_ready_lanes"),
+            "warnings": operator_precedent.get("warnings") or [],
+            "blockers": operator_precedent.get("blockers") or [],
         }
 
     thesis_evolution = _read_json_quiet(ROOT / "data" / "thesis_evolution_report.json")
@@ -2469,6 +2494,16 @@ def main(argv: list[str] | None = None) -> int:
     p_capture.add_argument("--output", type=Path, default=None)
     p_capture.add_argument("--report", type=Path, default=None)
 
+    p_precedent = sub.add_parser(
+        "operator-precedent-audit",
+        help="Audit the 2025 manual success precedent against current live-ready lanes.",
+    )
+    p_precedent.add_argument("--manual-history", type=Path, default=DEFAULT_MANUAL_HISTORY_2025)
+    p_precedent.add_argument("--order-intents", type=Path, default=DEFAULT_ORDER_INTENTS)
+    p_precedent.add_argument("--target-state", type=Path, default=DEFAULT_DAILY_TARGET_STATE)
+    p_precedent.add_argument("--output", type=Path, default=DEFAULT_OPERATOR_PRECEDENT_AUDIT)
+    p_precedent.add_argument("--report", type=Path, default=DEFAULT_OPERATOR_PRECEDENT_AUDIT_REPORT)
+
     p_cycle_refresh = sub.add_parser(
         "cycle-refresh",
         help="Run the full SKILL_trader.md evidence-refresh step list in one process and print a compact digest.",
@@ -2546,6 +2581,36 @@ def main(argv: list[str] | None = None) -> int:
                     "payoff_ratio": summary.payoff_ratio,
                     "breakeven_payoff": summary.breakeven_payoff,
                     "expectancy_jpy": summary.expectancy_jpy,
+                },
+                ensure_ascii=False,
+                indent=2,
+                sort_keys=True,
+            )
+        )
+        return 0
+
+    if args.command == "operator-precedent-audit":
+        from quant_rabbit.operator_precedent import build_operator_precedent_audit
+
+        summary = build_operator_precedent_audit(
+            manual_history_path=args.manual_history,
+            order_intents_path=args.order_intents,
+            target_state_path=args.target_state,
+            output_path=args.output,
+            report_path=args.report,
+        )
+        print(
+            json.dumps(
+                {
+                    "output_path": str(summary.output_path),
+                    "report_path": str(summary.report_path),
+                    "status": summary.status,
+                    "checks": summary.checks,
+                    "blockers": summary.blockers,
+                    "warnings": summary.warnings,
+                    "best_30d_return_pct": summary.best_30d_return_pct,
+                    "live_ready_lanes": summary.live_ready_lanes,
+                    "aligned_live_ready_lanes": summary.aligned_live_ready_lanes,
                 },
                 ensure_ascii=False,
                 indent=2,
