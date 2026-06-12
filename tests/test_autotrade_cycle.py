@@ -482,9 +482,80 @@ class AutoTradeCycleTest(unittest.TestCase):
             else:
                 os.environ["QR_REQUIRE_TELEMETRY_FOR_LIVE"] = prior
 
-        self.assertEqual(summary.status, "CANCELED_CONTAMINATED_PENDING")
+        self.assertEqual(summary.status, "CANCELED_GPT_PENDING")
+        self.assertEqual(summary.gpt_action, "CANCEL_PENDING")
         self.assertEqual(row["resolution_status"], "HIT")
         self.assertIn("Projection preflight: status=`OK`", report)
+
+    def test_gpt_cancel_pending_runs_when_no_live_ready_basket_exists(self) -> None:
+        # Regression for 2026-06-12 AUD_CAD 472367: verifier accepted a
+        # CANCEL_PENDING receipt, but the pending-entry branch skipped
+        # _run_gpt_handoff whenever the current basket prefilter was empty.
+        # The stale GTC order survived with live_ready=0.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            now = datetime(2026, 6, 12, 14, 32, tzinfo=timezone.utc)
+            pending = BrokerOrder(
+                order_id="pending-1",
+                pair="AUD_CAD",
+                order_type="LIMIT",
+                price=0.98494,
+                state="PENDING",
+                units=-8000,
+                owner=Owner.TRADER,
+            )
+            snapshot = BrokerSnapshot(
+                fetched_at_utc=now,
+                orders=(pending,),
+                quotes={
+                    "AUD_CAD": Quote("AUD_CAD", 0.98520, 0.98535, timestamp_utc=now),
+                    "USD_JPY": Quote("USD_JPY", 157.0, 157.01, timestamp_utc=now),
+                },
+            )
+            snapshot_path = root / "snapshot.json"
+            snapshot_path.write_text(_snapshot_to_json(snapshot) + "\n")
+            intents_path = root / "intents.json"
+            _write_no_live_ready_intents(intents_path)
+            target_state = _open_target_state(root)
+            client = FakeCycleClient(snapshot)
+
+            summary = AutoTradeCycle(
+                client=client,
+                snapshot_path=snapshot_path,
+                intents_path=intents_path,
+                intent_report_path=root / "intents.md",
+                decision_path=root / "decision.json",
+                decision_report_path=root / "decision.md",
+                gpt_decision_path=root / "gpt_decision.json",
+                gpt_decision_report_path=root / "gpt_decision.md",
+                gpt_attack_advice_path=root / "attack_missing.json",
+                position_management_path=root / "pm.json",
+                position_management_report_path=root / "pm.md",
+                position_execution_path=root / "pe.json",
+                position_execution_report_path=root / "pe.md",
+                live_order_output_path=root / "live_order.json",
+                live_order_report_path=root / "live_order.md",
+                report_path=root / "report.md",
+                campaign_plan_path=_campaign(root),
+                strategy_profile_path=_candidate_profile(root),
+                market_story_profile_path=_stories(root),
+                receipt_promotion_report_path=root / "promotion.md",
+                target_state_path=target_state,
+                target_report_path=root / "target.md",
+                gpt_target_state_path=target_state,
+                use_gpt_trader=True,
+                gpt_provider=StaticTraderProvider(_gpt_cancel_pending_decision(["pending-1"])),
+                reuse_market_artifacts=True,
+                refresh_market_story=False,
+                live_enabled=True,
+                max_loss_jpy=1_500,
+            ).run(send=True)
+
+        self.assertEqual(summary.status, "CANCELED_GPT_PENDING")
+        self.assertEqual(summary.gpt_action, "CANCEL_PENDING")
+        self.assertEqual(summary.canceled_orders, ("pending-1",))
+        self.assertEqual(client.orders_canceled, ["pending-1"])
+        self.assertEqual(client.orders_sent, [])
 
     def test_rejected_gpt_close_ids_do_not_call_broker(self) -> None:
         class Client:
@@ -1175,8 +1246,8 @@ class AutoTradeCycleTest(unittest.TestCase):
                 max_loss_jpy=1_500,
             ).run(send=True)
 
-            self.assertEqual(summary.status, "CANCELED_CONTAMINATED_PENDING")
-            self.assertIsNone(summary.gpt_action)
+            self.assertEqual(summary.status, "CANCELED_GPT_PENDING")
+            self.assertEqual(summary.gpt_action, "CANCEL_PENDING")
             self.assertEqual(summary.canceled_orders, ("pending-1",))
             self.assertEqual(client.orders_canceled, ["pending-1"])
             self.assertEqual(client.orders_sent, [])

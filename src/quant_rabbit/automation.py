@@ -1080,6 +1080,49 @@ class AutoTradeCycle:
                     allow_existing_pending=True,
                     margin_room_jpy=_basket_margin_room_jpy(snapshot),
                 )
+                if not basket_lane_ids and self.use_gpt_trader:
+                    gpt_summary = self._run_gpt_handoff()
+                    if (
+                        gpt_summary.status == "ACCEPTED"
+                        and gpt_summary.allowed
+                        and gpt_summary.action == "CANCEL_PENDING"
+                    ):
+                        canceled_orders.extend(
+                            self._cancel_gpt_pending_orders(
+                                gpt_summary,
+                                send=send,
+                                already_canceled=tuple(canceled_orders),
+                            )
+                        )
+                        summary = AutoTradeCycleSummary(
+                            status="CANCELED_GPT_PENDING" if canceled_orders else "GPT_CANCEL_PENDING",
+                            report_path=self.report_path,
+                            snapshot_path=self.snapshot_path,
+                            intents_path=self.intents_path,
+                            selected_lane_id=None,
+                            deterministic_lane_id=None,
+                            sent=False,
+                            positions=positions,
+                            orders=orders,
+                            live_ready=intent_summary.live_ready,
+                            selected_lane_ids=(),
+                            canceled_orders=tuple(canceled_orders),
+                            receipt_promotions=0,
+                            decision_source="gpt_trader",
+                            position_management_action=position_decision.action,
+                            position_execution_status=position_execution.status,
+                            position_execution_sent=position_execution.sent,
+                            target_status=target_summary.status if target_summary else None,
+                            target_remaining_jpy=target_summary.remaining_target_jpy if target_summary else None,
+                            target_progress_pct=target_summary.progress_pct if target_summary else None,
+                            gpt_status=gpt_summary.status,
+                            gpt_action=gpt_summary.action,
+                            gpt_allowed=gpt_summary.allowed,
+                            gpt_issues=gpt_summary.issues,
+                            gpt_error=gpt_summary.error,
+                        )
+                        self._write_report(summary, generated_at)
+                        return summary
                 if basket_lane_ids:
                     if send and self.live_enabled and not self.use_gpt_trader:
                         return self._fresh_entry_gpt_required_summary(
