@@ -58,6 +58,14 @@ exit events. The shape of that edge, as advisory evidence for lane selection
 - Technical shape: USD_JPY extreme rotation, not blind trend chase.
   `LONG_LOWER_THIRD_24H` and `SHORT_UPPER_THIRD_24H` were the strongest
   replayable buckets; `SHORT_WITH_H1_TREND` and middle-third shorts were bad.
+- Position building: the operator did use nanpin-like averaging into adverse
+  same-side USD_JPY exposure, but the replayable part was bounded. In the
+  >=12h/margin-closeout-excluded profile, averaging-into-adverse clusters were
+  net positive and small (median 3 entries, max 4, average adverse add about
+  7 pips), while bounded pyramiding-with-the-move was negative. This is
+  evidence for selective, risk-budgeted retest/add logic only; it is not
+  permission for unbounded martingale, weak forecasts, or same-pair additions
+  outside current basket risk and `LIVE_READY` validation.
 - H1 context: bounded `AGAINST_H1_TREND` paid far better than
   `WITH_H1_TREND`. A lane using the 2025 precedent as an aggression reason must
   explain whether current H1/M5 and 24h-location context is comparable.

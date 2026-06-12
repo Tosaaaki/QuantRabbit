@@ -1996,6 +1996,17 @@ class ConsolidatedCycleCommandTest(unittest.TestCase):
                                 "h1_alignment": "AGAINST_H1_TREND",
                             },
                         },
+                        "position_building_profile": {
+                            "bounded_lt_12h_excluding_margin_closeout": {
+                                "multi_entry_clusters": 10,
+                                "net_jpy": 108343.7,
+                            },
+                            "adverse_adds": {
+                                "clusters": 8,
+                                "net_jpy": 102564.0,
+                                "avg_adverse_add_pips": 6.45,
+                            },
+                        },
                         "warnings": [],
                         "blockers": [],
                     }
@@ -2019,6 +2030,9 @@ class ConsolidatedCycleCommandTest(unittest.TestCase):
         self.assertEqual(manual_context["status"], "MANUAL_MARKET_CONTEXT_PASS")
         self.assertEqual(manual_context["prefer_h1_alignment"], "WITH_H1_TREND")
         self.assertEqual(manual_context["conflict_h1_alignment"], "AGAINST_H1_TREND")
+        self.assertEqual(manual_context["position_building"]["adverse_add_clusters"], 8)
+        self.assertEqual(manual_context["position_building"]["adverse_add_net_jpy"], 102564.0)
+        self.assertFalse(manual_context["position_building"]["nanpin_is_live_permission"])
 
 
 if __name__ == "__main__":

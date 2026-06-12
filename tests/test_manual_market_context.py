@@ -177,6 +177,196 @@ class ManualMarketContextAuditTest(unittest.TestCase):
             self.assertGreater(len(payload["blockers"]), 0)
             self.assertIn("technical context could not be computed", payload["blockers"][-1])
 
+    def test_reconstructs_manual_averaging_into_adverse_clusters(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            start = datetime(2025, 6, 1, tzinfo=timezone.utc)
+
+            def ts(hours: float) -> str:
+                return (start + timedelta(hours=hours)).isoformat().replace("+00:00", "Z")
+
+            manual = root / "manual.json"
+            manual.write_text(
+                json.dumps(
+                    {
+                        "transaction_count": 7,
+                        "exit_events": 4,
+                        "closed_trades": 2,
+                        "reduced_trades": 2,
+                        "trades": [
+                            {
+                                "trade_id": "base-long",
+                                "exit_kind": "CLOSED",
+                                "pair": "USD_JPY",
+                                "units": 10000,
+                                "exit_units": -10000,
+                                "open_time": ts(40),
+                                "close_time": ts(43),
+                                "hold_hours": 3.0,
+                                "open_price": 151.0,
+                                "close_price": 151.2,
+                                "realized_pl": 2000.0,
+                                "financing": 0.0,
+                                "close_reason": "MARKET_ORDER_TRADE_CLOSE",
+                            },
+                            {
+                                "trade_id": "add-long",
+                                "exit_kind": "REDUCED",
+                                "pair": "USD_JPY",
+                                "units": 10000,
+                                "exit_units": -5000,
+                                "open_time": ts(41),
+                                "close_time": ts(42),
+                                "hold_hours": 1.0,
+                                "open_price": 150.8,
+                                "close_price": 151.15,
+                                "realized_pl": 1750.0,
+                                "financing": 0.0,
+                                "close_reason": "MARKET_ORDER_TRADE_CLOSE",
+                            },
+                            {
+                                "trade_id": "add-long",
+                                "exit_kind": "REDUCED",
+                                "pair": "USD_JPY",
+                                "units": 10000,
+                                "exit_units": -5000,
+                                "open_time": ts(41),
+                                "close_time": ts(42.1),
+                                "hold_hours": 1.1,
+                                "open_price": 150.8,
+                                "close_price": 151.18,
+                                "realized_pl": 1900.0,
+                                "financing": 0.0,
+                                "close_reason": "MARKET_ORDER_TRADE_CLOSE",
+                            },
+                            {
+                                "trade_id": "single-short",
+                                "exit_kind": "CLOSED",
+                                "pair": "USD_JPY",
+                                "units": -10000,
+                                "exit_units": 10000,
+                                "open_time": ts(50),
+                                "close_time": ts(50.5),
+                                "hold_hours": 0.5,
+                                "open_price": 151.4,
+                                "close_price": 151.45,
+                                "realized_pl": -500.0,
+                                "financing": 0.0,
+                                "close_reason": "STOP_LOSS_ORDER",
+                            },
+                        ],
+                    }
+                )
+            )
+            candles = {
+                "H1": _series(start, minutes=60, n=90, first=150.0, step=0.03),
+                "M5": _series(start, minutes=5, n=900, first=150.0, step=0.0025),
+            }
+
+            summary = build_manual_market_context_audit(
+                manual_history_path=manual,
+                output_path=root / "audit.json",
+                report_path=root / "audit.md",
+                candles_by_tf=candles,
+            )
+
+            payload = json.loads((root / "audit.json").read_text())
+            building = payload["position_building_profile"]
+            by_type = {row["bucket"]: row for row in building["bounded_by_build_type"]}
+            report_text = (root / "audit.md").read_text()
+
+        self.assertEqual(summary.status, "MANUAL_MARKET_CONTEXT_PASS")
+        self.assertEqual(building["overall"]["clusters"], 2)
+        self.assertEqual(building["overall"]["multi_entry_clusters"], 1)
+        self.assertEqual(by_type["AVERAGE_INTO_ADVERSE"]["clusters"], 1)
+        self.assertEqual(by_type["AVERAGE_INTO_ADVERSE"]["entries"], 2)
+        self.assertEqual(by_type["AVERAGE_INTO_ADVERSE"]["adverse_adds"], 1)
+        self.assertAlmostEqual(by_type["AVERAGE_INTO_ADVERSE"]["net_jpy"], 5650.0)
+        self.assertEqual(building["adverse_adds"]["clusters"], 1)
+        self.assertEqual(building["examples"]["largest_adverse_add_winners"][0]["trade_ids"], ["base-long", "add-long"])
+        self.assertIn("Position Building", report_text)
+
+    def test_position_building_uses_only_active_exposure_for_add_classification(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            start = datetime(2025, 6, 1, tzinfo=timezone.utc)
+
+            def ts(hours: float) -> str:
+                return (start + timedelta(hours=hours)).isoformat().replace("+00:00", "Z")
+
+            manual = root / "manual.json"
+            manual.write_text(
+                json.dumps(
+                    {
+                        "transaction_count": 3,
+                        "exit_events": 3,
+                        "closed_trades": 3,
+                        "reduced_trades": 0,
+                        "trades": [
+                            {
+                                "trade_id": "a-long",
+                                "pair": "USD_JPY",
+                                "units": 10000,
+                                "open_time": ts(40),
+                                "close_time": ts(41),
+                                "hold_hours": 1.0,
+                                "open_price": 150.0,
+                                "realized_pl": 100.0,
+                                "financing": 0.0,
+                                "close_reason": "MARKET_ORDER_TRADE_CLOSE",
+                            },
+                            {
+                                "trade_id": "b-long",
+                                "pair": "USD_JPY",
+                                "units": 10000,
+                                "open_time": ts(40.5),
+                                "close_time": ts(43),
+                                "hold_hours": 2.5,
+                                "open_price": 150.5,
+                                "realized_pl": 200.0,
+                                "financing": 0.0,
+                                "close_reason": "MARKET_ORDER_TRADE_CLOSE",
+                            },
+                            {
+                                "trade_id": "c-long",
+                                "pair": "USD_JPY",
+                                "units": 10000,
+                                "open_time": ts(42),
+                                "close_time": ts(42.5),
+                                "hold_hours": 0.5,
+                                "open_price": 150.3,
+                                "realized_pl": 300.0,
+                                "financing": 0.0,
+                                "close_reason": "MARKET_ORDER_TRADE_CLOSE",
+                            },
+                        ],
+                    }
+                )
+            )
+            candles = {
+                "H1": _series(start, minutes=60, n=90, first=150.0, step=0.03),
+                "M5": _series(start, minutes=5, n=900, first=150.0, step=0.0025),
+            }
+
+            build_manual_market_context_audit(
+                manual_history_path=manual,
+                output_path=root / "audit.json",
+                report_path=root / "audit.md",
+                candles_by_tf=candles,
+            )
+
+            payload = json.loads((root / "audit.json").read_text())
+            building = payload["position_building_profile"]
+            by_type = {row["bucket"]: row for row in building["bounded_by_build_type"]}
+            example = building["examples"]["largest_multi_entry_winners"][0]
+
+        self.assertEqual(by_type["MIXED_POSITION_BUILD"]["clusters"], 1)
+        self.assertEqual(by_type["MIXED_POSITION_BUILD"]["adverse_adds"], 1)
+        self.assertEqual(by_type["MIXED_POSITION_BUILD"]["pyramid_adds"], 1)
+        self.assertAlmostEqual(by_type["MIXED_POSITION_BUILD"]["avg_adverse_add_pips"], 20.0)
+        self.assertEqual(example["build_type"], "MIXED_POSITION_BUILD")
+        self.assertAlmostEqual(example["final_weighted_avg"], 150.4)
+
 
 if __name__ == "__main__":
     unittest.main()

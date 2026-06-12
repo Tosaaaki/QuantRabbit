@@ -211,6 +211,10 @@ class GPTTraderBrainTest(unittest.TestCase):
                 ],
                 "AGAINST_H1_TREND",
             )
+            building = payload["input_packet"]["manual_market_context"]["position_building"]
+            self.assertEqual(building["adverse_adds"]["clusters"], 8)
+            self.assertEqual(building["adverse_adds"]["net_jpy"], 102564.0)
+            self.assertTrue(building["contract"]["nanpin_is_not_live_permission"])
 
     def test_rejects_trade_citing_operator_precedent_without_manual_context_ref(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -2643,6 +2647,84 @@ def _manual_market_context_audit() -> dict:
                 }
             ],
             "by_close_reason": [],
+        },
+        "position_building_profile": {
+            "basis": "same-pair same-side overlapping open/close windows reconstructed from manual OANDA exit rows",
+            "overall": {
+                "clusters": 264,
+                "multi_entry_clusters": 18,
+                "entries": 384,
+                "net_jpy": 266815.9,
+                "win_rate": 0.428,
+                "expectancy_jpy": 1010.7,
+                "max_entries": 55,
+                "adverse_adds": 71,
+                "pyramid_adds": 49,
+                "avg_adverse_add_pips": 50.7,
+            },
+            "bounded_lt_12h_excluding_margin_closeout": {
+                "clusters": 255,
+                "multi_entry_clusters": 10,
+                "entries": 279,
+                "net_jpy": 108343.7,
+                "win_rate": 0.431,
+                "expectancy_jpy": 424.9,
+                "max_entries": 8,
+                "adverse_adds": 14,
+                "pyramid_adds": 10,
+                "avg_adverse_add_pips": 6.45,
+            },
+            "adverse_adds": {
+                "clusters": 8,
+                "entries": 24,
+                "net_jpy": 102564.0,
+                "win_rate": 0.875,
+                "expectancy_jpy": 12820.5,
+                "max_entries": 4,
+                "adverse_adds": 14,
+                "avg_adverse_add_pips": 6.45,
+            },
+            "bounded_by_build_type": [
+                {
+                    "bucket": "AVERAGE_INTO_ADVERSE",
+                    "clusters": 7,
+                    "multi_entry_clusters": 7,
+                    "entries": 20,
+                    "net_jpy": 38234.0,
+                    "win_rate": 0.857,
+                    "expectancy_jpy": 5462.0,
+                    "median_entries": 3,
+                    "max_entries": 4,
+                    "adverse_adds": 13,
+                    "pyramid_adds": 0,
+                    "avg_adverse_add_pips": 6.89,
+                }
+            ],
+            "examples": {
+                "largest_adverse_add_winners": [
+                    {
+                        "cluster_id": "USD_JPY:SHORT:2025-06-16T10:25:00.820230+00:00",
+                        "side": "SHORT",
+                        "build_type": "AVERAGE_INTO_ADVERSE",
+                        "entries": 3,
+                        "trade_ids": ["1863", "1866", "1868"],
+                        "session_jst": "LONDON_AM",
+                        "hold_hours": 2.972,
+                        "realized_pl": 11346.0,
+                        "initial_price": 144.125,
+                        "final_weighted_avg": 144.12972,
+                        "adverse_add_count": 2,
+                        "pyramid_add_count": 0,
+                        "close_reasons": ["MARKET_ORDER_TRADE_CLOSE", "TAKE_PROFIT_ORDER"],
+                    }
+                ]
+            },
+            "contract": {
+                "advisory_only": True,
+                "nanpin_is_not_live_permission": True,
+                "requires_current_basket_risk_validation": True,
+                "forbidden_to_use_for_unbounded_martingale": True,
+            },
         },
         "contract": {
             "advisory_only": True,

@@ -2739,11 +2739,13 @@ def _manual_market_context_packet(payload: dict[str, Any] | None) -> dict[str, A
             "guidance": {},
             "bounded_replay_profile": {},
             "excluded_tail_profile": {},
+            "position_building": {},
             "warnings": [],
             "blockers": [],
         }
     bounded = payload.get("bounded_replay_profile") if isinstance(payload.get("bounded_replay_profile"), dict) else {}
     excluded = payload.get("excluded_tail_profile") if isinstance(payload.get("excluded_tail_profile"), dict) else {}
+    building = payload.get("position_building_profile") if isinstance(payload.get("position_building_profile"), dict) else {}
     return {
         "evidence_ref": MANUAL_MARKET_CONTEXT_EVIDENCE_REF,
         "generated_at_utc": payload.get("generated_at_utc"),
@@ -2764,6 +2766,67 @@ def _manual_market_context_packet(payload: dict[str, Any] | None) -> dict[str, A
             "by_hold_bucket": _profile_rows(excluded.get("by_hold_bucket")),
             "by_close_reason": _profile_rows(excluded.get("by_close_reason")),
         },
+        "position_building": {
+            "basis": building.get("basis"),
+            "overall": _small_dict(
+                building.get("overall"),
+                (
+                    "clusters",
+                    "multi_entry_clusters",
+                    "entries",
+                    "net_jpy",
+                    "win_rate",
+                    "expectancy_jpy",
+                    "max_entries",
+                    "adverse_adds",
+                    "pyramid_adds",
+                    "avg_adverse_add_pips",
+                ),
+            ),
+            "bounded_lt_12h_excluding_margin_closeout": _small_dict(
+                building.get("bounded_lt_12h_excluding_margin_closeout"),
+                (
+                    "clusters",
+                    "multi_entry_clusters",
+                    "entries",
+                    "net_jpy",
+                    "win_rate",
+                    "expectancy_jpy",
+                    "max_entries",
+                    "adverse_adds",
+                    "pyramid_adds",
+                    "avg_adverse_add_pips",
+                ),
+            ),
+            "adverse_adds": _small_dict(
+                building.get("adverse_adds"),
+                (
+                    "clusters",
+                    "entries",
+                    "net_jpy",
+                    "win_rate",
+                    "expectancy_jpy",
+                    "max_entries",
+                    "adverse_adds",
+                    "avg_adverse_add_pips",
+                ),
+            ),
+            "bounded_by_build_type": _position_building_rows(building.get("bounded_by_build_type")),
+            "largest_adverse_add_winners": _position_building_examples(
+                ((building.get("examples") or {}).get("largest_adverse_add_winners"))
+                if isinstance(building.get("examples"), dict)
+                else None
+            ),
+            "contract": _small_dict(
+                building.get("contract"),
+                (
+                    "advisory_only",
+                    "nanpin_is_not_live_permission",
+                    "requires_current_basket_risk_validation",
+                    "forbidden_to_use_for_unbounded_martingale",
+                ),
+            ),
+        },
         "contract": _small_dict(
             payload.get("contract"),
             (
@@ -2776,6 +2839,65 @@ def _manual_market_context_packet(payload: dict[str, Any] | None) -> dict[str, A
         "warnings": list(payload.get("warnings") or [])[:5],
         "blockers": list(payload.get("blockers") or [])[:5],
     }
+
+
+def _position_building_rows(rows: object, *, limit: int = 8) -> list[dict[str, Any]]:
+    if not isinstance(rows, list):
+        return []
+    out: list[dict[str, Any]] = []
+    for item in rows[:limit]:
+        if not isinstance(item, dict):
+            continue
+        out.append(
+            _small_dict(
+                item,
+                (
+                    "bucket",
+                    "clusters",
+                    "multi_entry_clusters",
+                    "entries",
+                    "net_jpy",
+                    "win_rate",
+                    "expectancy_jpy",
+                    "median_entries",
+                    "max_entries",
+                    "adverse_adds",
+                    "pyramid_adds",
+                    "avg_adverse_add_pips",
+                ),
+            )
+        )
+    return out
+
+
+def _position_building_examples(rows: object, *, limit: int = 5) -> list[dict[str, Any]]:
+    if not isinstance(rows, list):
+        return []
+    out: list[dict[str, Any]] = []
+    for item in rows[:limit]:
+        if not isinstance(item, dict):
+            continue
+        out.append(
+            _small_dict(
+                item,
+                (
+                    "cluster_id",
+                    "side",
+                    "build_type",
+                    "entries",
+                    "trade_ids",
+                    "session_jst",
+                    "hold_hours",
+                    "realized_pl",
+                    "initial_price",
+                    "final_weighted_avg",
+                    "adverse_add_count",
+                    "pyramid_add_count",
+                    "close_reasons",
+                ),
+            )
+        )
+    return out
 
 
 def _profile_rows(rows: object, *, limit: int = 8) -> list[dict[str, Any]]:

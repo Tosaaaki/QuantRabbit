@@ -1,6 +1,6 @@
 # Manual Market Context Audit
 
-- Generated at UTC: `2026-06-12T04:44:52.117777+00:00`
+- Generated at UTC: `2026-06-12T05:23:34.094792+00:00`
 - Status: `MANUAL_MARKET_CONTEXT_PASS`
 - Pair: `USD_JPY`
 - Analyzed trades: `411` / `411` (`100.0`%)
@@ -8,6 +8,8 @@
 - Best H1 alignment bucket: `AGAINST_H1_TREND`
 - Best session bucket: `LONDON_AM`
 - Conflict bucket requiring extra current reason: `WITH_H1_TREND`
+- Position-building clusters: `18` multi-entry / `264` total
+- Averaging-into-adverse clusters: `8` net `102564.0` JPY
 
 ## Bounded H1 Alignment
 
@@ -53,6 +55,27 @@ Bounded replay excludes >=12h holds and margin-closeout exits, because those are
 | `TOKYO` | `82` | `57901.5` | `0.451` | `706.1` | `0.25` | `30.5` |
 | `LONDON_AM` | `56` | `23016.3` | `0.625` | `411.0` | `0.63` | `28.2` |
 | `NY_OVERLAP` | `158` | `-33381.6` | `0.437` | `-211.3` | `0.09` | `25.3` |
+
+## Position Building
+
+Position-building clusters reconstruct overlapping same-pair, same-side manual exposure from OANDA exit rows. Duplicate partial-exit trade ids count once as an entry layer, while realized P/L is summed.
+
+| bucket | clusters | multi | entries | net JPY | win rate | expectancy | median entries | max entries | adverse adds | pyramid adds | avg adverse add pips |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| `MIXED_POSITION_BUILD` | `1` | `1` | `4` | `64330.0` | `1.0` | `64330.0` | `4` | `4` | `1` | `2` | `0.63` |
+| `AVERAGE_INTO_ADVERSE` | `7` | `7` | `20` | `38234.0` | `0.857` | `5462.0` | `3` | `4` | `13` | `0` | `6.89` |
+| `SINGLE_ENTRY` | `245` | `0` | `245` | `30974.7` | `0.416` | `126.4` | `1` | `1` | `0` | `0` | `None` |
+| `PYRAMID_WITH_MOVE` | `2` | `2` | `10` | `-25195.0` | `0.5` | `-12597.5` | `5.0` | `8` | `0` | `8` | `None` |
+
+## Averaging Into Adverse Examples
+
+| side | entries | P/L JPY | hold h | initial | final avg | adverse adds | trade ids |
+|---|---:|---:|---:|---:|---:|---:|---|
+| `LONG` | `4` | `64330.0` | `4.251` | `145.83` | `145.85794` | `1` | `2249, 2251, 2253, 2255` |
+| `SHORT` | `3` | `18110.0` | `1.022` | `147.442` | `147.45519` | `2` | `2298, 2300, 2302` |
+| `SHORT` | `3` | `11346.0` | `2.972` | `144.125` | `144.12972` | `2` | `1863, 1866, 1868` |
+| `SHORT` | `3` | `3117.0` | `0.932` | `144.121` | `144.12364` | `2` | `1748, 1751, 1753` |
+| `SHORT` | `3` | `2825.0` | `1.379` | `144.152` | `144.15826` | `2` | `1726, 1728, 1730` |
 
 ## Excluded Tail
 

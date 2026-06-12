@@ -1795,6 +1795,9 @@ def _cycle_digest(*, kind: str, step_results: list[dict[str, Any]], aborted: boo
         guidance = manual_market_context.get("guidance") or {}
         prefer = guidance.get("prefer_when_citing_precedent") or {}
         conflict = guidance.get("require_extra_current_reason_when_conflicting") or {}
+        position_building = manual_market_context.get("position_building_profile") or {}
+        bounded_building = position_building.get("bounded_lt_12h_excluding_margin_closeout") or {}
+        adverse_adds = position_building.get("adverse_adds") or {}
         digest["manual_market_context"] = {
             "status": manual_market_context.get("status"),
             "pair": (manual_market_context.get("sample") or {}).get("pair"),
@@ -1803,6 +1806,14 @@ def _cycle_digest(*, kind: str, step_results: list[dict[str, Any]], aborted: boo
             "prefer_h1_alignment": prefer.get("h1_alignment"),
             "prefer_session_jst": prefer.get("session_jst"),
             "conflict_h1_alignment": conflict.get("h1_alignment"),
+            "position_building": {
+                "bounded_multi_entry_clusters": bounded_building.get("multi_entry_clusters"),
+                "bounded_net_jpy": bounded_building.get("net_jpy"),
+                "adverse_add_clusters": adverse_adds.get("clusters"),
+                "adverse_add_net_jpy": adverse_adds.get("net_jpy"),
+                "adverse_add_avg_pips": adverse_adds.get("avg_adverse_add_pips"),
+                "nanpin_is_live_permission": False,
+            },
             "warnings": manual_market_context.get("warnings") or [],
             "blockers": manual_market_context.get("blockers") or [],
         }

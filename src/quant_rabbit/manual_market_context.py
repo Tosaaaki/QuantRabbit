@@ -132,6 +132,7 @@ def build_manual_market_context_audit(
     bounded_rows = [row for row in analyzed if not _is_unbounded_tail(row)]
     bounded_profile = _technical_profile(bounded_rows)
     excluded_tail_profile = _technical_profile([row for row in analyzed if _is_unbounded_tail(row)])
+    position_building_profile = _position_building_profile(trades)
     best_h1 = _best_bucket(bounded_profile["by_h1_alignment"])
     worst_h1 = _worst_bucket(bounded_profile["by_h1_alignment"])
     if best_h1 and worst_h1:
@@ -152,6 +153,43 @@ def build_manual_market_context_audit(
                 "raw H1 alignment net is dominated by unbounded long-hold/margin-tail rows; use bounded replay profile for precedent aggression",
                 {"raw_best": raw_best_h1, "bounded_best": best_h1},
                 severity="WARN",
+            )
+        )
+    multi_entry_clusters = int(
+        (position_building_profile.get("overall") or {}).get("multi_entry_clusters") or 0
+    )
+    adverse_add_clusters = int(
+        (position_building_profile.get("adverse_adds") or {}).get("clusters") or 0
+    )
+    checks.append(
+        _check(
+            "manual_position_building_reconstructed",
+            "PASS",
+            (
+                f"manual history reconstructs {multi_entry_clusters} overlapping same-side position-building cluster(s)"
+                if multi_entry_clusters
+                else "manual history has no overlapping same-side position-building clusters"
+            ),
+            {
+                "multi_entry_clusters": multi_entry_clusters,
+                "adverse_add_clusters": adverse_add_clusters,
+            },
+            severity="INFO",
+        )
+    )
+    if adverse_add_clusters:
+        adverse_net = _maybe_float((position_building_profile.get("adverse_adds") or {}).get("net_jpy"))
+        checks.append(
+            _check(
+                "manual_nanpin_outcome",
+                "PASS" if adverse_net is not None and adverse_net > 0 else "WARN",
+                (
+                    f"manual averaging-into-adverse clusters net {adverse_net:.1f} JPY"
+                    if adverse_net is not None
+                    else "manual averaging-into-adverse clusters detected but net outcome is unknown"
+                ),
+                position_building_profile.get("adverse_adds") or {},
+                severity="INFO" if adverse_net is not None and adverse_net > 0 else "WARN",
             )
         )
 
@@ -177,6 +215,7 @@ def build_manual_market_context_audit(
         "technical_profile": profile,
         "bounded_replay_profile": bounded_profile,
         "excluded_tail_profile": excluded_tail_profile,
+        "position_building_profile": position_building_profile,
         "guidance": _guidance(bounded_profile if bounded_rows else profile),
         "trade_examples": {
             "largest_winners": _trade_examples(analyzed, reverse=True),
@@ -381,6 +420,302 @@ def _technical_profile(rows: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
+def _position_building_profile(trades: list[dict[str, Any]]) -> dict[str, Any]:
+    positions = _unique_manual_positions(trades)
+    clusters = _position_building_clusters(positions)
+    bounded = [row for row in clusters if not row.get("unbounded_tail")]
+    adverse = [row for row in bounded if int(row.get("adverse_add_count") or 0) > 0]
+    return {
+        "basis": (
+            "same-pair same-side overlapping open/close windows reconstructed from manual "
+            "OANDA exit rows; duplicate partial-exit trade_ids are counted once for entry "
+            "layering and summed for realized P/L"
+        ),
+        "overall": _cluster_stats(clusters),
+        "bounded_lt_12h_excluding_margin_closeout": _cluster_stats(bounded),
+        "adverse_adds": _cluster_stats(adverse),
+        "by_build_type": _cluster_bucket_stats(clusters, "build_type"),
+        "bounded_by_build_type": _cluster_bucket_stats(bounded, "build_type"),
+        "examples": {
+            "largest_adverse_add_winners": _cluster_examples(adverse, reverse=True),
+            "largest_adverse_add_losers": _cluster_examples(adverse, reverse=False),
+            "largest_multi_entry_winners": _cluster_examples(
+                [row for row in bounded if int(row.get("entries") or 0) > 1],
+                reverse=True,
+            ),
+            "largest_multi_entry_losers": _cluster_examples(
+                [row for row in bounded if int(row.get("entries") or 0) > 1],
+                reverse=False,
+            ),
+        },
+        "contract": {
+            "advisory_only": True,
+            "nanpin_is_not_live_permission": True,
+            "requires_current_basket_risk_validation": True,
+            "forbidden_to_use_for_unbounded_martingale": True,
+        },
+    }
+
+
+def _unique_manual_positions(trades: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    by_trade: dict[str, dict[str, Any]] = {}
+    for trade in trades:
+        trade_id = str(trade.get("trade_id") or "")
+        open_time = trade.get("_open_time")
+        close_time = trade.get("_close_time")
+        if not trade_id or not isinstance(open_time, datetime) or not isinstance(close_time, datetime):
+            continue
+        units = _maybe_float(trade.get("units"))
+        open_price = _maybe_float(trade.get("open_price"))
+        if units is None or units == 0 or open_price is None:
+            continue
+        side = "LONG" if units > 0 else "SHORT"
+        existing = by_trade.get(trade_id)
+        if existing is None:
+            existing = {
+                "trade_id": trade_id,
+                "pair": str(trade.get("pair") or ""),
+                "side": side,
+                "units_abs": abs(units),
+                "open_time": open_time,
+                "close_time": close_time,
+                "open_price": open_price,
+                "realized_pl": 0.0,
+                "financing": 0.0,
+                "exit_events": 0,
+                "exit_kinds": set(),
+                "close_reasons": set(),
+            }
+            by_trade[trade_id] = existing
+        existing["close_time"] = max(existing["close_time"], close_time)
+        existing["realized_pl"] = float(existing["realized_pl"]) + float(trade.get("realized_pl") or 0.0)
+        existing["financing"] = float(existing["financing"]) + float(trade.get("financing") or 0.0)
+        existing["exit_events"] = int(existing["exit_events"]) + 1
+        existing["exit_kinds"].add(str(trade.get("exit_kind") or "UNKNOWN"))
+        existing["close_reasons"].add(str(trade.get("close_reason") or "UNKNOWN"))
+
+    out: list[dict[str, Any]] = []
+    for item in by_trade.values():
+        item["exit_kinds"] = sorted(item["exit_kinds"])
+        item["close_reasons"] = sorted(item["close_reasons"])
+        out.append(item)
+    return sorted(out, key=lambda item: (item["pair"], item["side"], item["open_time"], item["trade_id"]))
+
+
+def _position_building_clusters(positions: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    clusters: list[dict[str, Any]] = []
+    for _, side_positions in _positions_by_pair_side(positions).items():
+        current: list[dict[str, Any]] = []
+        current_end: datetime | None = None
+        for position in side_positions:
+            open_time = position["open_time"]
+            close_time = position["close_time"]
+            if not current or current_end is None or open_time > current_end:
+                if current:
+                    clusters.append(_summarize_position_cluster(current))
+                current = [position]
+                current_end = close_time
+                continue
+            current.append(position)
+            current_end = max(current_end, close_time)
+        if current:
+            clusters.append(_summarize_position_cluster(current))
+    return sorted(clusters, key=lambda item: item["start_time"])
+
+
+def _positions_by_pair_side(positions: list[dict[str, Any]]) -> dict[tuple[str, str], list[dict[str, Any]]]:
+    grouped: dict[tuple[str, str], list[dict[str, Any]]] = {}
+    for position in positions:
+        key = (str(position.get("pair") or ""), str(position.get("side") or ""))
+        grouped.setdefault(key, []).append(position)
+    return {
+        key: sorted(items, key=lambda item: (item["open_time"], item["trade_id"]))
+        for key, items in grouped.items()
+    }
+
+
+def _summarize_position_cluster(positions: list[dict[str, Any]]) -> dict[str, Any]:
+    ordered = sorted(positions, key=lambda item: (item["open_time"], item["trade_id"]))
+    first = ordered[0]
+    side = str(first.get("side") or "")
+    pip_factor = 100 if str(first.get("pair") or "").endswith("_JPY") else 10000
+    final_weighted_avg = float(first.get("open_price") or 0.0)
+    add_rows: list[dict[str, Any]] = []
+    adverse_count = 0
+    pyramid_count = 0
+    flat_count = 0
+    for idx, position in enumerate(ordered[1:], start=1):
+        active_before = _active_positions_at(ordered[:idx], position["open_time"])
+        weighted_units, weighted_avg = _weighted_open_price(active_before)
+        if weighted_units <= 0:
+            weighted_units = float(ordered[idx - 1].get("units_abs") or 0.0)
+            weighted_avg = float(ordered[idx - 1].get("open_price") or 0.0)
+        units = float(position.get("units_abs") or 0.0)
+        price = float(position.get("open_price") or 0.0)
+        adverse_move_pips = _adverse_add_pips(side, weighted_avg, price, pip_factor)
+        if adverse_move_pips > 0:
+            relation = "AVERAGE_INTO_ADVERSE"
+            adverse_count += 1
+        elif adverse_move_pips < 0:
+            relation = "PYRAMID_WITH_MOVE"
+            pyramid_count += 1
+        else:
+            relation = "FLAT_ADD"
+            flat_count += 1
+        next_units = weighted_units + units
+        next_avg = ((weighted_avg * weighted_units) + (price * units)) / next_units if next_units else weighted_avg
+        final_weighted_avg = next_avg
+        add_rows.append(
+            {
+                "trade_id": position.get("trade_id"),
+                "open_time": position["open_time"].isoformat(),
+                "open_price": price,
+                "units": units,
+                "relation": relation,
+                "adverse_move_pips": round(adverse_move_pips, 2),
+                "avg_before": round(weighted_avg, 5),
+                "avg_after": round(next_avg, 5),
+            }
+        )
+
+    build_type = _cluster_build_type(adverse_count, pyramid_count, flat_count, len(ordered))
+    start_time = min(item["open_time"] for item in ordered)
+    end_time = max(item["close_time"] for item in ordered)
+    hold_hours = (end_time - start_time).total_seconds() / 3600.0
+    close_reasons = sorted({reason for item in ordered for reason in item.get("close_reasons", [])})
+    return {
+        "cluster_id": f"{first.get('pair')}:{side}:{start_time.isoformat()}",
+        "pair": first.get("pair"),
+        "side": side,
+        "build_type": build_type,
+        "entries": len(ordered),
+        "trade_ids": [item.get("trade_id") for item in ordered],
+        "start_time": start_time.isoformat(),
+        "end_time": end_time.isoformat(),
+        "session_jst": _session_jst(start_time),
+        "hold_hours": round(hold_hours, 3),
+        "hold_bucket": _hold_bucket(hold_hours),
+        "realized_pl": round(sum(float(item.get("realized_pl") or 0.0) for item in ordered), 1),
+        "financing": round(sum(float(item.get("financing") or 0.0) for item in ordered), 1),
+        "initial_units": float(first.get("units_abs") or 0.0),
+        "max_units_abs": round(_max_active_units_abs(ordered), 2),
+        "initial_price": first.get("open_price"),
+        "final_weighted_avg": round(final_weighted_avg, 5),
+        "adverse_add_count": adverse_count,
+        "pyramid_add_count": pyramid_count,
+        "flat_add_count": flat_count,
+        "adds": add_rows,
+        "close_reasons": close_reasons,
+        "unbounded_tail": hold_hours >= HOLD_BUCKET_HOURS[2] or "MARKET_ORDER_MARGIN_CLOSEOUT" in close_reasons,
+    }
+
+
+def _active_positions_at(positions: list[dict[str, Any]], at: datetime) -> list[dict[str, Any]]:
+    return [item for item in positions if item["open_time"] <= at <= item["close_time"]]
+
+
+def _weighted_open_price(positions: list[dict[str, Any]]) -> tuple[float, float]:
+    units = sum(float(item.get("units_abs") or 0.0) for item in positions)
+    if units <= 0:
+        return 0.0, 0.0
+    weighted = sum(float(item.get("open_price") or 0.0) * float(item.get("units_abs") or 0.0) for item in positions)
+    return units, weighted / units
+
+
+def _max_active_units_abs(positions: list[dict[str, Any]]) -> float:
+    max_units = 0.0
+    for at in sorted({item["open_time"] for item in positions}):
+        units, _ = _weighted_open_price(_active_positions_at(positions, at))
+        max_units = max(max_units, units)
+    return max_units
+
+
+def _adverse_add_pips(side: str, current_avg: float, add_price: float, pip_factor: int) -> float:
+    if side == "LONG":
+        return (current_avg - add_price) * pip_factor
+    if side == "SHORT":
+        return (add_price - current_avg) * pip_factor
+    return 0.0
+
+
+def _cluster_build_type(adverse_count: int, pyramid_count: int, flat_count: int, entries: int) -> str:
+    if entries <= 1:
+        return "SINGLE_ENTRY"
+    if adverse_count and not pyramid_count:
+        return "AVERAGE_INTO_ADVERSE"
+    if pyramid_count and not adverse_count:
+        return "PYRAMID_WITH_MOVE"
+    if adverse_count and pyramid_count:
+        return "MIXED_POSITION_BUILD"
+    if flat_count:
+        return "FLAT_MULTI_ENTRY"
+    return "MULTI_ENTRY_UNKNOWN"
+
+
+def _cluster_bucket_stats(rows: list[dict[str, Any]], key: str) -> list[dict[str, Any]]:
+    grouped: dict[str, list[dict[str, Any]]] = {}
+    for row in rows:
+        grouped.setdefault(str(row.get(key) or "UNKNOWN"), []).append(row)
+    out = []
+    for bucket, items in grouped.items():
+        item = _cluster_stats(items)
+        item["bucket"] = bucket
+        out.append(item)
+    return sorted(out, key=lambda item: float(item["net_jpy"]), reverse=True)
+
+
+def _cluster_stats(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    pls = [float(row.get("realized_pl") or 0.0) for row in rows]
+    wins = [value for value in pls if value > 0]
+    losses = [value for value in pls if value < 0]
+    entries = [int(row.get("entries") or 0) for row in rows]
+    holds = [float(row.get("hold_hours") or 0.0) for row in rows]
+    adverse_moves = [
+        float(add.get("adverse_move_pips") or 0.0)
+        for row in rows
+        for add in row.get("adds", [])
+        if str(add.get("relation") or "") == "AVERAGE_INTO_ADVERSE"
+    ]
+    return {
+        "clusters": len(rows),
+        "multi_entry_clusters": sum(1 for value in entries if value > 1),
+        "entries": sum(entries),
+        "net_jpy": round(sum(pls), 1),
+        "win_rate": round(len(wins) / len(pls), 3) if pls else None,
+        "avg_win": round(statistics.mean(wins), 1) if wins else None,
+        "avg_loss": round(statistics.mean(losses), 1) if losses else None,
+        "payoff": round(abs(statistics.mean(wins) / statistics.mean(losses)), 2) if wins and losses else None,
+        "expectancy_jpy": round(statistics.mean(pls), 1) if pls else None,
+        "median_entries": round(statistics.median(entries), 2) if entries else None,
+        "max_entries": max(entries) if entries else 0,
+        "median_hold_hours": round(statistics.median(holds), 2) if holds else None,
+        "adverse_adds": sum(int(row.get("adverse_add_count") or 0) for row in rows),
+        "pyramid_adds": sum(int(row.get("pyramid_add_count") or 0) for row in rows),
+        "avg_adverse_add_pips": round(statistics.mean(adverse_moves), 2) if adverse_moves else None,
+    }
+
+
+def _cluster_examples(rows: list[dict[str, Any]], *, reverse: bool) -> list[dict[str, Any]]:
+    selected = sorted(rows, key=lambda item: float(item.get("realized_pl") or 0.0), reverse=reverse)[:5]
+    keys = (
+        "cluster_id",
+        "side",
+        "build_type",
+        "entries",
+        "trade_ids",
+        "start_time",
+        "session_jst",
+        "hold_hours",
+        "realized_pl",
+        "initial_price",
+        "final_weighted_avg",
+        "adverse_add_count",
+        "pyramid_add_count",
+        "close_reasons",
+    )
+    return [{key: item.get(key) for key in keys if key in item} for item in selected]
+
+
 def _is_unbounded_tail(row: dict[str, Any]) -> bool:
     hold = _maybe_float(row.get("hold_hours"))
     if hold is not None and hold >= HOLD_BUCKET_HOURS[2]:
@@ -563,7 +898,10 @@ def _write_report(path: Path, payload: dict[str, Any]) -> None:
     raw_profile = payload["technical_profile"]
     bounded_profile = payload["bounded_replay_profile"]
     excluded_tail = payload["excluded_tail_profile"]
+    position_building = payload["position_building_profile"]
     guidance = payload["guidance"]
+    building_overall = position_building.get("overall") or {}
+    adverse_adds = position_building.get("adverse_adds") or {}
     lines = [
         "# Manual Market Context Audit",
         "",
@@ -575,6 +913,8 @@ def _write_report(path: Path, payload: dict[str, Any]) -> None:
         f"- Best H1 alignment bucket: `{guidance['prefer_when_citing_precedent'].get('h1_alignment')}`",
         f"- Best session bucket: `{guidance['prefer_when_citing_precedent'].get('session_jst')}`",
         f"- Conflict bucket requiring extra current reason: `{guidance['require_extra_current_reason_when_conflicting'].get('h1_alignment')}`",
+        f"- Position-building clusters: `{building_overall.get('multi_entry_clusters')}` multi-entry / `{building_overall.get('clusters')}` total",
+        f"- Averaging-into-adverse clusters: `{adverse_adds.get('clusters')}` net `{adverse_adds.get('net_jpy')}` JPY",
         "",
         "## Bounded H1 Alignment",
         "",
@@ -623,6 +963,26 @@ def _write_report(path: Path, payload: dict[str, Any]) -> None:
         lines.append(_bucket_line(row))
     lines += [
         "",
+        "## Position Building",
+        "",
+        "Position-building clusters reconstruct overlapping same-pair, same-side manual exposure from OANDA exit rows. Duplicate partial-exit trade ids count once as an entry layer, while realized P/L is summed.",
+        "",
+        "| bucket | clusters | multi | entries | net JPY | win rate | expectancy | median entries | max entries | adverse adds | pyramid adds | avg adverse add pips |",
+        "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
+    ]
+    for row in position_building["bounded_by_build_type"]:
+        lines.append(_cluster_bucket_line(row))
+    lines += [
+        "",
+        "## Averaging Into Adverse Examples",
+        "",
+        "| side | entries | P/L JPY | hold h | initial | final avg | adverse adds | trade ids |",
+        "|---|---:|---:|---:|---:|---:|---:|---|",
+    ]
+    for row in (position_building.get("examples") or {}).get("largest_adverse_add_winners", [])[:5]:
+        lines.append(_cluster_example_line(row))
+    lines += [
+        "",
         "## Excluded Tail",
         "",
         "| bucket | trades | net JPY | win rate | expectancy | median hold h | avg H1 ADX |",
@@ -646,6 +1006,23 @@ def _bucket_line(row: dict[str, Any]) -> str:
         f"| `{row.get('bucket')}` | `{row.get('trades')}` | `{row.get('net_jpy')}` | "
         f"`{row.get('win_rate')}` | `{row.get('expectancy_jpy')}` | "
         f"`{row.get('median_hold_hours')}` | `{row.get('avg_h1_adx')}` |"
+    )
+
+
+def _cluster_bucket_line(row: dict[str, Any]) -> str:
+    return (
+        f"| `{row.get('bucket')}` | `{row.get('clusters')}` | `{row.get('multi_entry_clusters')}` | "
+        f"`{row.get('entries')}` | `{row.get('net_jpy')}` | `{row.get('win_rate')}` | "
+        f"`{row.get('expectancy_jpy')}` | `{row.get('median_entries')}` | `{row.get('max_entries')}` | "
+        f"`{row.get('adverse_adds')}` | `{row.get('pyramid_adds')}` | `{row.get('avg_adverse_add_pips')}` |"
+    )
+
+
+def _cluster_example_line(row: dict[str, Any]) -> str:
+    return (
+        f"| `{row.get('side')}` | `{row.get('entries')}` | `{row.get('realized_pl')}` | "
+        f"`{row.get('hold_hours')}` | `{row.get('initial_price')}` | `{row.get('final_weighted_avg')}` | "
+        f"`{row.get('adverse_add_count')}` | `{', '.join(str(item) for item in row.get('trade_ids') or [])}` |"
     )
 
 
