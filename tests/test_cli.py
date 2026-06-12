@@ -1979,6 +1979,12 @@ class ConsolidatedCycleCommandTest(unittest.TestCase):
                         "runtime_alignment": {
                             "live_ready_lanes": 1,
                             "aligned_live_ready_lanes": 0,
+                            "manual_context_alignment": {
+                                "status": "MANUAL_CONTEXT_ALIGNMENT_READY",
+                                "compatible_lanes": [{"lane_id": "a"}],
+                                "conflicting_lanes": [{"lane_id": "b"}],
+                                "conflicting_aligned_lanes": 0,
+                            },
                         },
                         "warnings": ["not aligned"],
                         "blockers": [],
@@ -2033,6 +2039,10 @@ class ConsolidatedCycleCommandTest(unittest.TestCase):
         self.assertEqual(precedent["primary_pair"], "USD_JPY")
         self.assertEqual(precedent["primary_sessions"], ["LONDON_AM", "NY_OVERLAP"])
         self.assertEqual(precedent["aligned_live_ready_lanes"], 0)
+        self.assertEqual(precedent["manual_context_alignment_status"], "MANUAL_CONTEXT_ALIGNMENT_READY")
+        self.assertEqual(precedent["manual_context_compatible_lanes"], 1)
+        self.assertEqual(precedent["manual_context_conflicting_lanes"], 1)
+        self.assertEqual(precedent["manual_context_conflicting_aligned_lanes"], 0)
         manual_context = digest["manual_market_context"]
         self.assertEqual(manual_context["status"], "MANUAL_MARKET_CONTEXT_PASS")
         self.assertEqual(manual_context["prefer_h1_alignment"], "WITH_H1_TREND")

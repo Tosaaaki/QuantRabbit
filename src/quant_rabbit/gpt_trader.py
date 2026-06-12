@@ -909,7 +909,7 @@ class GPTTraderBrain:
                 "- A deterministic `tp-rebalance` sidecar requirement makes WAIT / REQUEST_EVIDENCE invalid until the sidecar is run.",
                 "- A deterministic entry-thesis blocker makes TRADE / WAIT invalid until the unverifiable active position is repaired or reviewed.",
                 "- Any self-improvement P0 blocks new `TRADE` receipts until the named blocker is repaired or the trader route explicitly justifies the exception.",
-                "- The 2025 operator precedent is advisory only. A `TRADE` that cites `operator:precedent` must also cite `manual:market_context` and at least one selected lane must match the current operator-precedent aligned lane set; otherwise the receipt must use current deterministic edge instead of precedent-based aggression.",
+                "- The 2025 operator precedent is advisory only. A `TRADE` that cites `operator:precedent` must also cite `manual:market_context`, at least one selected lane must match the current operator-precedent aligned lane set, and that selected lane must not conflict with the bounded manual technical replay buckets; otherwise the receipt must use current deterministic edge instead of precedent-based aggression.",
                 "- Evidence refs must come from the input packet; invented refs reject the decision.",
                 "- `CLOSE` requires Gate A plus the applicable Gate B. Hard Gate A (M15/H4 close-confirmed BOS/CHOCH against side, buffered invalidation_price hit with technical confirmation, fresh thesis_evolution BROKEN/RECOMMEND_CLOSE, structural position_management REVIEW_EXIT, or position_thesis invalidation-hit/structural-break evidence with multi-TF confirmation) carries standing loss-cut authorization. Softer Gate A still needs `QR_OPERATOR_CLOSE_OVERRIDE=1` or a fresh `data/.operator_close_token` when the trader chooses CLOSE, but soft-only close evidence does not block TP-managed positions from taking separate current LIVE_READY entries. If the same-direction market stack still supports the open position, treat it as TP rebalance / HOLD / profit-side partial / ADD geometry, not loss-side CLOSE plus same-direction re-entry. `TRADE` must not include `close_trade_ids`; automation ends the close cycle, then the next scheduled cycle must refresh broker truth, reprice intents, and require a separate verified `TRADE` receipt. The receipt's `operator_close_authorized` field is advisory only. See AGENT_CONTRACT §10.",
             ]
@@ -2725,6 +2725,7 @@ def _operator_precedent_packet(payload: dict[str, Any] | None) -> dict[str, Any]
                 "live_ready_lanes",
                 "aligned_live_ready_lanes",
                 "aligned_lanes",
+                "manual_context_alignment",
                 "manual_exit_events_per_calendar_day",
                 "target_trades_per_day",
                 "alignment_contract",
@@ -3412,6 +3413,33 @@ def _manual_precedent_trade_issues(
                 "manual precedent shape: "
                 f"selected={', '.join(selected_lane_ids)} aligned={', '.join(sorted(aligned_lane_ids))}. "
                 "Use current forecast/risk/matrix evidence for this trade instead.",
+            )
+        )
+        return issues
+    manual_alignment = (
+        runtime.get("manual_context_alignment")
+        if isinstance(runtime.get("manual_context_alignment"), dict)
+        else {}
+    )
+    conflicting_rows = [
+        row
+        for row in (manual_alignment.get("conflicting_lanes") or [])
+        if isinstance(row, dict) and str(row.get("lane_id") or "").strip()
+    ]
+    conflicting_lane_ids = {str(row.get("lane_id") or "") for row in conflicting_rows}
+    selected_conflicting = [lane_id for lane_id in selected_aligned if lane_id in conflicting_lane_ids]
+    if selected_conflicting:
+        conflict_details = [
+            f"{row.get('lane_id')}:{','.join(str(bucket) for bucket in (row.get('conflicting_buckets') or []))}"
+            for row in conflicting_rows
+            if str(row.get("lane_id") or "") in selected_conflicting
+        ]
+        issues.append(
+            VerificationIssue(
+                "OPERATOR_PRECEDENT_TECHNICAL_CONTEXT_CONFLICT",
+                "TRADE cites the 2025 operator precedent, but the selected lane conflicts with the bounded manual "
+                "technical replay context. Cite current deterministic edge instead, or choose a lane whose H1/M5/"
+                f"24h-location context matches the manual precedent: {'; '.join(conflict_details)}",
             )
         )
     return issues

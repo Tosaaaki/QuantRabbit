@@ -1779,6 +1779,11 @@ def _cycle_digest(*, kind: str, step_results: list[dict[str, Any]], aborted: boo
         best_30d = performance.get("best_30d") or {}
         winning = precedent.get("winning_shape") or {}
         runtime = operator_precedent.get("runtime_alignment") or {}
+        manual_alignment = (
+            runtime.get("manual_context_alignment")
+            if isinstance(runtime.get("manual_context_alignment"), dict)
+            else {}
+        )
         digest["operator_precedent"] = {
             "status": operator_precedent.get("status"),
             "claim_verified": (operator_precedent.get("operator_claim") or {}).get("verified"),
@@ -1789,6 +1794,10 @@ def _cycle_digest(*, kind: str, step_results: list[dict[str, Any]], aborted: boo
             "positive_sessions": winning.get("positive_sessions"),
             "live_ready_lanes": runtime.get("live_ready_lanes"),
             "aligned_live_ready_lanes": runtime.get("aligned_live_ready_lanes"),
+            "manual_context_alignment_status": manual_alignment.get("status"),
+            "manual_context_compatible_lanes": len(manual_alignment.get("compatible_lanes") or []),
+            "manual_context_conflicting_lanes": len(manual_alignment.get("conflicting_lanes") or []),
+            "manual_context_conflicting_aligned_lanes": manual_alignment.get("conflicting_aligned_lanes"),
             "warnings": operator_precedent.get("warnings") or [],
             "blockers": operator_precedent.get("blockers") or [],
         }
@@ -2532,6 +2541,7 @@ def main(argv: list[str] | None = None) -> int:
         help="Audit the 2025 manual success precedent against current live-ready lanes.",
     )
     p_precedent.add_argument("--manual-history", type=Path, default=DEFAULT_MANUAL_HISTORY_2025)
+    p_precedent.add_argument("--manual-context", type=Path, default=DEFAULT_MANUAL_MARKET_CONTEXT_AUDIT)
     p_precedent.add_argument("--order-intents", type=Path, default=DEFAULT_ORDER_INTENTS)
     p_precedent.add_argument("--target-state", type=Path, default=DEFAULT_DAILY_TARGET_STATE)
     p_precedent.add_argument("--output", type=Path, default=DEFAULT_OPERATOR_PRECEDENT_AUDIT)
@@ -2637,6 +2647,7 @@ def main(argv: list[str] | None = None) -> int:
 
         summary = build_operator_precedent_audit(
             manual_history_path=args.manual_history,
+            manual_context_path=args.manual_context,
             order_intents_path=args.order_intents,
             target_state_path=args.target_state,
             output_path=args.output,

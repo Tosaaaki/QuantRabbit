@@ -252,6 +252,38 @@ class GPTTraderBrainTest(unittest.TestCase):
             codes = {issue["code"] for issue in payload["verification_issues"]}
             self.assertIn("OPERATOR_PRECEDENT_SELECTED_LANE_NOT_ALIGNED", codes)
 
+    def test_rejects_trade_citing_operator_precedent_when_manual_technical_context_conflicts(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root)
+            precedent = _operator_precedent_audit([LANE_ID])
+            precedent["runtime_alignment"]["manual_context_alignment"] = {
+                "status": "MANUAL_CONTEXT_ALIGNMENT_READY",
+                "compatible_lanes": [],
+                "conflicting_lanes": [
+                    {
+                        "lane_id": LANE_ID,
+                        "conflicting_buckets": [
+                            "by_h1_alignment:WITH_H1_TREND",
+                            "by_side_entry_location_24h:LONG_UPPER_THIRD_24H",
+                        ],
+                    }
+                ],
+                "conflicting_aligned_lanes": 1,
+            }
+            files["operator_precedent"].write_text(json.dumps(precedent))
+            files["manual_market_context"].write_text(json.dumps(_manual_market_context_audit()))
+            decision = _trade_decision()
+            decision["evidence_refs"].extend(["operator:precedent", "manual:market_context"])
+            brain = _brain(root, files, decision)
+
+            summary = brain.run(snapshot_path=files["snapshot"])
+
+            self.assertEqual(summary.status, "REJECTED")
+            payload = json.loads((root / "gpt_decision.json").read_text())
+            codes = {issue["code"] for issue in payload["verification_issues"]}
+            self.assertIn("OPERATOR_PRECEDENT_TECHNICAL_CONTEXT_CONFLICT", codes)
+
     def test_input_packet_includes_strategy_seat_pnl_evidence(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -2634,6 +2666,12 @@ def _operator_precedent_audit(aligned_lane_ids: list[str]) -> dict:
                 }
                 for lane_id in aligned_lane_ids
             ],
+            "manual_context_alignment": {
+                "status": "MANUAL_CONTEXT_ALIGNMENT_READY",
+                "compatible_lanes": [],
+                "conflicting_lanes": [],
+                "conflicting_aligned_lanes": 0,
+            },
             "manual_exit_events_per_calendar_day": 9.24,
             "target_trades_per_day": 30.0,
             "alignment_contract": {

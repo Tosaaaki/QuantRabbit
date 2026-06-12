@@ -80,8 +80,9 @@ manual entries. It may gate only the *use of the precedent as an aggression
 reason*: a lane that conflicts with the mined H1/M5/session context needs its
 own current deterministic edge. It is not a no-trade gate by itself. If a
 `TRADE` receipt cites `operator:precedent`, the verifier now also requires
-`manual:market_context` and at least one selected lane aligned by the current
-operator-precedent audit.
+`manual:market_context`, at least one selected lane aligned by the current
+operator-precedent audit, and no bounded manual H1/M5/session/24h-location
+conflict on that selected precedent-aligned lane.
 
 ## WAIT Discipline
 

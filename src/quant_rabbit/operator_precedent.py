@@ -51,6 +51,7 @@ class OperatorPrecedentSummary:
 def build_operator_precedent_audit(
     *,
     manual_history_path: Path = DEFAULT_MANUAL_HISTORY_2025,
+    manual_context_path: Path | None = None,
     order_intents_path: Path = DEFAULT_ORDER_INTENTS,
     target_state_path: Path = DEFAULT_DAILY_TARGET_STATE,
     output_path: Path = DEFAULT_OPERATOR_PRECEDENT_AUDIT,
@@ -61,6 +62,23 @@ def build_operator_precedent_audit(
     generated_at = clock.isoformat()
     checks: list[dict[str, Any]] = []
     manual_payload, manual_error = _read_json(manual_history_path)
+    manual_context_payload: dict[str, Any] | None = None
+    if manual_context_path is not None:
+        manual_context_payload, manual_context_error = _read_json(manual_context_path)
+        checks.append(
+            _check(
+                "manual_market_context_readable",
+                "PASS" if manual_context_payload is not None else "WARN",
+                f"manual market-context audit readable: {manual_context_path}"
+                if manual_context_payload is not None
+                else (
+                    "manual market-context audit missing/unreadable; "
+                    f"technical precedent alignment unknown: {manual_context_error or manual_context_path}"
+                ),
+                {"path": str(manual_context_path), "error": manual_context_error},
+                severity="INFO" if manual_context_payload is not None else "WARN",
+            )
+        )
     intents_payload, intents_error = _read_json(order_intents_path)
     target_payload, target_error = _read_json(target_state_path)
 
@@ -103,6 +121,7 @@ def build_operator_precedent_audit(
         intents_payload or {},
         target_payload or {},
         precedent=precedent,
+        manual_context=manual_context_payload,
     )
     if runtime["live_ready_lanes"] == 0:
         checks.append(
@@ -136,6 +155,20 @@ def build_operator_precedent_audit(
                 {"aligned_live_ready_lanes": runtime["aligned_live_ready_lanes"]},
             )
         )
+    manual_alignment = runtime.get("manual_context_alignment")
+    if isinstance(manual_alignment, dict) and int(manual_alignment.get("conflicting_aligned_lanes") or 0) > 0:
+        checks.append(
+            _check(
+                "manual_context_alignment_conflict",
+                "WARN",
+                "some precedent-aligned LIVE_READY lane(s) conflict with the bounded manual technical replay shape",
+                {
+                    "conflicting_aligned_lanes": manual_alignment.get("conflicting_aligned_lanes"),
+                    "conflicting_lanes": manual_alignment.get("conflicting_lanes"),
+                },
+                severity="WARN",
+            )
+        )
 
     blockers = [item for item in checks if item["severity"] == "BLOCK" or item["status"] == "BLOCK"]
     warnings = [item for item in checks if item["severity"] == "WARN" or item["status"] == "WARN"]
@@ -148,6 +181,7 @@ def build_operator_precedent_audit(
         "status": status,
         "artifact_paths": {
             "manual_history": str(manual_history_path),
+            "manual_market_context": str(manual_context_path) if manual_context_path is not None else None,
             "order_intents": str(order_intents_path),
             "target_state": str(target_state_path),
         },
@@ -330,6 +364,7 @@ def _runtime_alignment(
     target_payload: dict[str, Any],
     *,
     precedent: dict[str, Any],
+    manual_context: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     winning = precedent.get("winning_shape") or {}
     primary_pair = str(winning.get("primary_pair") or "")
@@ -351,6 +386,10 @@ def _runtime_alignment(
             "method": context.get("method"),
             "order_type": intent.get("order_type"),
             "session": context.get("session") or metadata.get("session_current_tag") or metadata.get("session_bucket"),
+            "h1_regime": metadata.get("h1_regime") or context.get("h1_regime"),
+            "m5_regime": metadata.get("m5_regime") or context.get("m5_regime"),
+            "entry_price_percentile_24h": metadata.get("entry_price_percentile_24h")
+            or context.get("entry_price_percentile_24h"),
         }
         live_ready.append(lane)
         session_text = str(lane.get("session") or "").upper()
@@ -361,15 +400,22 @@ def _runtime_alignment(
             and session_matches
         ):
             aligned.append(lane)
+    exact_aligned_ids = {str(item.get("lane_id") or "") for item in aligned}
 
     target_trades = _maybe_float(target_payload.get("target_trades_per_day"))
     active_window = (precedent.get("sample") or {}).get("active_window") or {}
     manual_cadence = _maybe_float(active_window.get("exit_events_per_calendar_day"))
+    manual_context_alignment = _manual_context_alignment(
+        live_ready,
+        exact_aligned_lane_ids=exact_aligned_ids,
+        manual_context=manual_context,
+    )
     return {
         "live_ready_lanes": len(live_ready),
         "aligned_live_ready_lanes": len(aligned),
         "aligned_lanes": aligned[:10],
         "live_ready_sample": live_ready[:10],
+        "manual_context_alignment": manual_context_alignment,
         "target_trades_per_day": target_trades,
         "manual_exit_events_per_calendar_day": manual_cadence,
         "alignment_contract": {
@@ -378,6 +424,203 @@ def _runtime_alignment(
             "current_risk_geometry_remains_authority": True,
         },
     }
+
+
+def _manual_context_alignment(
+    live_ready: list[dict[str, Any]],
+    *,
+    exact_aligned_lane_ids: set[str],
+    manual_context: dict[str, Any] | None,
+) -> dict[str, Any]:
+    if not isinstance(manual_context, dict):
+        return {
+            "status": "missing",
+            "compatible_lanes": [],
+            "conflicting_lanes": [],
+            "conflicting_aligned_lanes": 0,
+            "comparison_contract": _manual_context_alignment_contract(),
+        }
+    bounded = manual_context.get("bounded_replay_profile")
+    if not isinstance(bounded, dict):
+        return {
+            "status": "missing_bounded_replay_profile",
+            "compatible_lanes": [],
+            "conflicting_lanes": [],
+            "conflicting_aligned_lanes": 0,
+            "comparison_contract": _manual_context_alignment_contract(),
+        }
+    positive = _positive_manual_buckets(bounded)
+    negative = _negative_manual_buckets(bounded)
+    lanes: list[dict[str, Any]] = []
+    compatible: list[dict[str, Any]] = []
+    conflicting: list[dict[str, Any]] = []
+    for lane in live_ready:
+        row = _manual_context_lane_row(lane, positive=positive, negative=negative)
+        row["exact_precedent_aligned"] = row["lane_id"] in exact_aligned_lane_ids
+        lanes.append(row)
+        if not row["exact_precedent_aligned"]:
+            continue
+        if row["conflicting_buckets"]:
+            conflicting.append(row)
+        elif row["supporting_buckets"]:
+            compatible.append(row)
+    return {
+        "status": "MANUAL_CONTEXT_ALIGNMENT_READY",
+        "basis": (
+            "bounded_replay_profile bucket sign; compatible/conflicting lists include exact "
+            "pair/direction/session precedent-aligned lanes only"
+        ),
+        "lanes": lanes[:10],
+        "compatible_lanes": compatible[:10],
+        "conflicting_lanes": conflicting[:10],
+        "conflicting_aligned_lanes": len(conflicting),
+        "comparison_contract": _manual_context_alignment_contract(),
+    }
+
+
+def _manual_context_alignment_contract() -> dict[str, bool]:
+    return {
+        "advisory_only": True,
+        "gates_operator_precedent_citation_only": True,
+        "does_not_grant_live_permission": True,
+        "does_not_block_current_deterministic_edge": True,
+    }
+
+
+def _manual_context_lane_row(
+    lane: dict[str, Any],
+    *,
+    positive: dict[str, set[str]],
+    negative: dict[str, set[str]],
+) -> dict[str, Any]:
+    side = str(lane.get("side") or "").upper()
+    h1_alignment = _trend_alignment(side, lane.get("h1_regime"), "H1")
+    m5_alignment = _trend_alignment(side, lane.get("m5_regime"), "M5")
+    entry_location = _entry_location_bucket(lane.get("entry_price_percentile_24h"))
+    side_h1_alignment = f"{side}_{h1_alignment}" if side and h1_alignment else None
+    side_m5_alignment = f"{side}_{m5_alignment}" if side and m5_alignment else None
+    side_entry_location = f"{side}_{entry_location}" if side and entry_location else None
+    session_bucket = _manual_session_bucket(lane.get("session"))
+    buckets = {
+        "by_h1_alignment": h1_alignment,
+        "by_m5_alignment": m5_alignment,
+        "by_side_h1_alignment": side_h1_alignment,
+        "by_side_m5_alignment": side_m5_alignment,
+        "by_side_entry_location_24h": side_entry_location,
+        "by_session_jst": session_bucket,
+    }
+    supporting = sorted(
+        f"{group}:{bucket}"
+        for group, bucket in buckets.items()
+        if bucket and bucket in positive.get(group, set())
+    )
+    conflicting = sorted(
+        f"{group}:{bucket}"
+        for group, bucket in buckets.items()
+        if bucket and bucket in negative.get(group, set())
+    )
+    return {
+        "lane_id": str(lane.get("lane_id") or ""),
+        "pair": lane.get("pair"),
+        "side": lane.get("side"),
+        "method": lane.get("method"),
+        "order_type": lane.get("order_type"),
+        "session": lane.get("session"),
+        "h1_alignment": h1_alignment,
+        "m5_alignment": m5_alignment,
+        "side_h1_alignment": side_h1_alignment,
+        "side_m5_alignment": side_m5_alignment,
+        "side_entry_location_24h": side_entry_location,
+        "session_jst": session_bucket,
+        "supporting_buckets": supporting,
+        "conflicting_buckets": conflicting,
+    }
+
+
+def _positive_manual_buckets(profile: dict[str, Any]) -> dict[str, set[str]]:
+    return _manual_buckets_by_sign(profile, positive=True)
+
+
+def _negative_manual_buckets(profile: dict[str, Any]) -> dict[str, set[str]]:
+    return _manual_buckets_by_sign(profile, positive=False)
+
+
+def _manual_buckets_by_sign(profile: dict[str, Any], *, positive: bool) -> dict[str, set[str]]:
+    out: dict[str, set[str]] = {}
+    for group in (
+        "by_h1_alignment",
+        "by_m5_alignment",
+        "by_side_h1_alignment",
+        "by_side_m5_alignment",
+        "by_side_entry_location_24h",
+        "by_session_jst",
+    ):
+        rows = profile.get(group)
+        if isinstance(rows, dict):
+            iterable = [
+                {"bucket": key, **(value if isinstance(value, dict) else {})}
+                for key, value in rows.items()
+            ]
+        elif isinstance(rows, list):
+            iterable = [row for row in rows if isinstance(row, dict)]
+        else:
+            iterable = []
+        for row in iterable:
+            bucket = str(row.get("bucket") or "").strip()
+            net = _maybe_float(row.get("net_jpy") if "net_jpy" in row else row.get("net"))
+            if not bucket or net is None:
+                continue
+            if (positive and net > 0) or ((not positive) and net < 0):
+                out.setdefault(group, set()).add(bucket)
+    return out
+
+
+def _trend_alignment(side: str, regime: object, tf: str) -> str | None:
+    direction = _trend_direction(regime)
+    if direction is None or side not in {"LONG", "SHORT"}:
+        return None
+    side_direction = "UP" if side == "LONG" else "DOWN"
+    relation = "WITH" if side_direction == direction else "AGAINST"
+    return f"{relation}_{tf}_TREND"
+
+
+def _trend_direction(regime: object) -> str | None:
+    text = str(regime or "").upper()
+    if "UP" in text:
+        return "UP"
+    if "DOWN" in text:
+        return "DOWN"
+    return None
+
+
+def _entry_location_bucket(value: object) -> str | None:
+    percentile = _maybe_float(value)
+    if percentile is None:
+        return None
+    # These are the tercile buckets emitted by manual_market_context's
+    # technical replay, not a new trading threshold.
+    if percentile < (1.0 / 3.0):
+        return "LOWER_THIRD_24H"
+    if percentile > (2.0 / 3.0):
+        return "UPPER_THIRD_24H"
+    return "MIDDLE_THIRD_24H"
+
+
+def _manual_session_bucket(value: object) -> str | None:
+    text = str(value or "").upper().replace("-", "_")
+    if not text:
+        return None
+    if "NY_OVERLAP" in text or "NEW_YORK_OVERLAP" in text:
+        return "NY_OVERLAP"
+    if "LONDON_AM" in text:
+        return "LONDON_AM"
+    if text == "LONDON":
+        return "LONDON_AM"
+    if "TOKYO" in text:
+        return "TOKYO"
+    if "OFF_HOURS" in text:
+        return "OFF_HOURS"
+    return text
 
 
 def _session_matches(session_text: str, positive_sessions: set[str]) -> bool:
@@ -475,6 +718,11 @@ def _write_report(path: Path, payload: dict[str, Any]) -> None:
     winning = precedent["winning_shape"]
     failure = precedent["failure_shape"]["margin_closeout"]
     runtime = payload["runtime_alignment"]
+    manual_alignment = (
+        runtime.get("manual_context_alignment")
+        if isinstance(runtime.get("manual_context_alignment"), dict)
+        else {}
+    )
     lines = [
         "# Operator Precedent Audit",
         "",
@@ -485,6 +733,7 @@ def _write_report(path: Path, payload: dict[str, Any]) -> None:
         f"- Winning shape: `{winning.get('primary_pair')} {winning.get('primary_direction')}`; primary sessions `{', '.join(winning.get('primary_sessions') or [])}`; median hold `{winning.get('median_hold_hours')}`h",
         f"- Failure shape: margin closeout `{failure.get('trades')}` exits, net `{failure.get('net_jpy')}` JPY, median hold `{failure.get('median_hold_hours')}`h",
         f"- Current LIVE_READY lanes: `{runtime['live_ready_lanes']}`; precedent-aligned: `{runtime['aligned_live_ready_lanes']}`",
+        f"- Manual context alignment: `{manual_alignment.get('status')}`; compatible `{len(manual_alignment.get('compatible_lanes') or [])}`; conflicting aligned `{manual_alignment.get('conflicting_aligned_lanes')}`",
         "",
         "## Checks",
         "",
