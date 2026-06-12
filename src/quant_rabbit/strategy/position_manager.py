@@ -155,7 +155,13 @@ MFI_OVERSOLD = 20.0
 TEMPORARY_EXTREME_LOOKBACK_BARS = int(os.environ.get("QR_TEMPORARY_EXTREME_LOOKBACK_BARS", "12"))
 TEMPORARY_EXTREME_PULLBACK_ATR_MULT = float(os.environ.get("QR_TEMPORARY_EXTREME_PULLBACK_ATR_MULT", "1.0"))
 TEMPORARY_EXTREME_MIN_PROFIT_NOISE_MULT = float(os.environ.get("QR_TEMPORARY_EXTREME_MIN_PROFIT_NOISE_MULT", "1.0"))
-TEMPORARY_EXTREME_MIN_EVIDENCE = int(os.environ.get("QR_TEMPORARY_EXTREME_MIN_EVIDENCE", "4"))
+# The temporary-extreme detector already requires a market-location context
+# (distribution edge, rail touch, or local M1 swing extreme). Once that context
+# exists, three independent reversal readings are the smallest majority that
+# can catch the first confirmed rollover before the MFE has already been given
+# back. Requiring four waited for a fuller micro trend flip and missed the
+# 2026-06-12 USD_CHF local-top harvest while the trade was still +6 pips.
+TEMPORARY_EXTREME_MIN_EVIDENCE = int(os.environ.get("QR_TEMPORARY_EXTREME_MIN_EVIDENCE", "3"))
 TEMPORARY_EXTREME_DISTRIBUTION_PCT = float(os.environ.get("QR_TEMPORARY_EXTREME_DISTRIBUTION_PCT", "0.80"))
 
 
