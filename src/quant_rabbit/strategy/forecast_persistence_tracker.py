@@ -33,7 +33,8 @@ from __future__ import annotations
 import json
 import os
 import fcntl
-from dataclasses import dataclass, field
+import threading
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, IO, List, Optional
@@ -45,6 +46,16 @@ HISTORY_FILENAME = "forecast_history.jsonl"
 FLIP_PERSISTENCE_CYCLES = int(os.environ.get("QR_FORECAST_FLIP_PERSISTENCE", "3"))
 RANGE_PERSISTENCE_CYCLES = int(os.environ.get("QR_FORECAST_RANGE_PERSISTENCE", "5"))
 HISTORY_LOOKBACK_CYCLES = int(os.environ.get("QR_FORECAST_HISTORY_LOOKBACK", "10"))
+
+
+@dataclass(frozen=True)
+class _HistoryKeyCacheEntry:
+    stat_key: tuple[int, int, int, int]
+    cycle_pairs: frozenset[tuple[str, str]]
+
+
+_FORECAST_HISTORY_PROCESS_LOCK = threading.RLock()
+_FORECAST_HISTORY_KEY_CACHE: dict[str, _HistoryKeyCacheEntry] = {}
 
 
 @dataclass(frozen=True)
@@ -113,27 +124,84 @@ def record_forecast(
         "drivers_against": list(getattr(forecast, "drivers_against", ()) or ()),
         "rationale_summary": getattr(forecast, "rationale_summary", ""),
     }
-    with path.open("a+", encoding="utf-8") as f:
-        fcntl.flock(f.fileno(), fcntl.LOCK_EX)
-        f.seek(0)
-        compacted_lines, removed_duplicates, existing_cycle_pairs = _compact_history_lines(
-            f.read().splitlines()
-        )
-        cycle_pair_key = (str(cycle_id), str(pair)) if cycle_id and pair else None
-        if cycle_pair_key and cycle_pair_key in existing_cycle_pairs:
-            if removed_duplicates:
-                _rewrite_history_handle(f, compacted_lines)
-            fcntl.flock(f.fileno(), fcntl.LOCK_UN)
-            return False
-        line = json.dumps(entry, ensure_ascii=False)
-        if removed_duplicates:
-            _rewrite_history_handle(f, [*compacted_lines, line])
-        else:
-            f.seek(0, os.SEEK_END)
-            f.write(line + "\n")
-        f.flush()
-        fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+    with _FORECAST_HISTORY_PROCESS_LOCK:
+        with path.open("a+", encoding="utf-8") as f:
+            fcntl.flock(f.fileno(), fcntl.LOCK_EX)
+            try:
+                (
+                    existing_cycle_pairs,
+                    removed_duplicates,
+                    compacted_lines,
+                ) = _history_cycle_pair_index_from_handle(path, f)
+                cycle_pair_key = (str(cycle_id), str(pair)) if cycle_id and pair else None
+                if cycle_pair_key and cycle_pair_key in existing_cycle_pairs:
+                    if removed_duplicates and compacted_lines is not None:
+                        _rewrite_history_handle(f, compacted_lines)
+                        f.flush()
+                    _cache_forecast_history_cycle_pairs(path, f, existing_cycle_pairs)
+                    return False
+                line = json.dumps(entry, ensure_ascii=False)
+                if removed_duplicates and compacted_lines is not None:
+                    _rewrite_history_handle(f, [*compacted_lines, line])
+                else:
+                    f.seek(0, os.SEEK_END)
+                    f.write(line + "\n")
+                if cycle_pair_key:
+                    existing_cycle_pairs.add(cycle_pair_key)
+                f.flush()
+                _cache_forecast_history_cycle_pairs(path, f, existing_cycle_pairs)
+            finally:
+                fcntl.flock(f.fileno(), fcntl.LOCK_UN)
     return True
+
+
+def _history_cycle_pair_index_from_handle(
+    path: Path,
+    handle: IO[str],
+) -> tuple[set[tuple[str, str]], int, list[str] | None]:
+    cache_id = _forecast_history_cache_id(path)
+    stat_key = _forecast_history_stat_key(handle)
+    cached = _FORECAST_HISTORY_KEY_CACHE.get(cache_id)
+    if cached is not None and cached.stat_key == stat_key:
+        return set(cached.cycle_pairs), 0, None
+    handle.seek(0)
+    compacted_lines, removed_duplicates, existing_cycle_pairs = _compact_history_lines(
+        handle.read().splitlines()
+    )
+    return set(existing_cycle_pairs), removed_duplicates, compacted_lines
+
+
+def _cache_forecast_history_cycle_pairs(
+    path: Path,
+    handle: IO[str],
+    cycle_pairs: set[tuple[str, str]],
+) -> None:
+    _FORECAST_HISTORY_KEY_CACHE[_forecast_history_cache_id(path)] = _HistoryKeyCacheEntry(
+        stat_key=_forecast_history_stat_key(handle),
+        cycle_pairs=frozenset(cycle_pairs),
+    )
+
+
+def _forecast_history_cache_id(path: Path) -> str:
+    try:
+        return str(path.resolve())
+    except OSError:
+        return str(path)
+
+
+def _forecast_history_stat_key(handle: IO[str]) -> tuple[int, int, int, int]:
+    stat = os.fstat(handle.fileno())
+    return (
+        int(stat.st_dev),
+        int(stat.st_ino),
+        int(stat.st_size),
+        int(getattr(stat, "st_mtime_ns", int(stat.st_mtime * 1_000_000_000))),
+    )
+
+
+def _clear_forecast_history_key_cache() -> None:
+    with _FORECAST_HISTORY_PROCESS_LOCK:
+        _FORECAST_HISTORY_KEY_CACHE.clear()
 
 
 def _compact_history_lines(lines: list[str]) -> tuple[list[str], int, set[tuple[str, str]]]:

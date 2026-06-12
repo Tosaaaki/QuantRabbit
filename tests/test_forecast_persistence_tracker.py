@@ -9,6 +9,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
 
+from quant_rabbit.strategy import forecast_persistence_tracker as tracker
 from quant_rabbit.strategy.forecast_persistence_tracker import (
     assess_position,
     record_forecast,
@@ -27,6 +28,9 @@ def _forecast(pair: str, direction: str, confidence: float = 0.8) -> SimpleNames
 
 
 class ForecastPersistenceTrackerTest(unittest.TestCase):
+    def setUp(self) -> None:
+        tracker._clear_forecast_history_key_cache()
+
     def test_record_forecast_compacts_historical_cycle_pair_duplicates(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -75,6 +79,111 @@ class ForecastPersistenceTrackerTest(unittest.TestCase):
             self.assertEqual(len(old_rows), 1)
             self.assertEqual(old_rows[0]["direction"], "UP")
             self.assertEqual(rows[-1]["pair"], "GBP_USD")
+
+    def test_record_forecast_reuses_cycle_pair_index_when_file_unchanged(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            path = root / "forecast_history.jsonl"
+            path.write_text(
+                json.dumps(
+                    {
+                        "timestamp_utc": "2026-06-01T00:00:00Z",
+                        "cycle_id": "cycle-0",
+                        "pair": "EUR_USD",
+                        "direction": "DOWN",
+                        "confidence": 0.4,
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            with mock.patch(
+                "quant_rabbit.strategy.forecast_persistence_tracker._compact_history_lines",
+                wraps=tracker._compact_history_lines,
+            ) as compact:
+                self.assertTrue(
+                    record_forecast(
+                        _forecast("GBP_USD", "UP"),
+                        data_root=root,
+                        cycle_id="cycle-1",
+                    )
+                )
+                self.assertTrue(
+                    record_forecast(
+                        _forecast("AUD_USD", "DOWN"),
+                        data_root=root,
+                        cycle_id="cycle-2",
+                    )
+                )
+                self.assertFalse(
+                    record_forecast(
+                        _forecast("GBP_USD", "DOWN"),
+                        data_root=root,
+                        cycle_id="cycle-1",
+                    )
+                )
+
+            rows = [
+                json.loads(line)
+                for line in path.read_text(encoding="utf-8").splitlines()
+                if line.strip()
+            ]
+            self.assertEqual(compact.call_count, 1)
+            self.assertEqual(len(rows), 3)
+            self.assertEqual(rows[-1]["pair"], "AUD_USD")
+
+    def test_record_forecast_invalidates_cycle_pair_index_after_external_write(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            path = root / "forecast_history.jsonl"
+            self.assertTrue(
+                record_forecast(
+                    _forecast("EUR_USD", "UP"),
+                    data_root=root,
+                    cycle_id="cycle-1",
+                )
+            )
+            with path.open("a", encoding="utf-8") as f:
+                f.write(
+                    json.dumps(
+                        {
+                            "timestamp_utc": "2026-06-01T00:01:00Z",
+                            "cycle_id": "cycle-external",
+                            "pair": "GBP_USD",
+                            "direction": "DOWN",
+                            "confidence": 0.8,
+                        }
+                    )
+                    + "\n"
+                )
+
+            with mock.patch(
+                "quant_rabbit.strategy.forecast_persistence_tracker._compact_history_lines",
+                wraps=tracker._compact_history_lines,
+            ) as compact:
+                self.assertFalse(
+                    record_forecast(
+                        _forecast("GBP_USD", "UP"),
+                        data_root=root,
+                        cycle_id="cycle-external",
+                    )
+                )
+
+            rows = [
+                json.loads(line)
+                for line in path.read_text(encoding="utf-8").splitlines()
+                if line.strip()
+            ]
+            external_rows = [
+                row
+                for row in rows
+                if row.get("cycle_id") == "cycle-external"
+                and row.get("pair") == "GBP_USD"
+            ]
+            self.assertEqual(compact.call_count, 1)
+            self.assertEqual(len(external_rows), 1)
+            self.assertEqual(external_rows[0]["direction"], "DOWN")
 
     def test_record_forecast_compacts_existing_key_before_skip(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
