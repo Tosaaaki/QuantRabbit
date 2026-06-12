@@ -585,6 +585,53 @@ class PositionManagerTest(unittest.TestCase):
             else:
                 os.environ["QR_TRADER_DISABLE_SL_REPAIR"] = prior
 
+    def test_disaster_stop_protected_winner_still_gets_adaptive_harvest_tp(self) -> None:
+        # Disaster SLs bound tail risk but should not disable the SL-free
+        # profit-harvest TP path. 2026-06-12 USD_CHF had both TP and a
+        # catastrophe stop, so the old branch skipped adaptive HARVEST_TP and
+        # waited for a later market-close signal after most MFE was gone.
+        prior = os.environ.get("QR_TRADER_DISABLE_SL_REPAIR")
+        os.environ["QR_TRADER_DISABLE_SL_REPAIR"] = "1"
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                decision = _decision(root, long_score=160, short_score=120)
+                pair_charts = _adaptive_harvest_pair_charts(root, atr_pips=2.9, harvest_price=1.16535)
+                _write_latest_forecast(root, direction="UP", confidence=0.36)
+                snapshot = _snapshot(
+                    BrokerPosition(
+                        trade_id="long-disaster-stop-winner",
+                        pair="EUR_USD",
+                        side=Side.LONG,
+                        units=3600,
+                        entry_price=1.16492,
+                        unrealized_pl_jpy=100,
+                        take_profit=1.16679,
+                        stop_loss=1.15800,
+                    ),
+                    bid=1.16525,
+                    ask=1.16527,
+                )
+
+                result = PositionManager(
+                    trader_decision_path=decision,
+                    pair_charts_path=pair_charts,
+                    output_path=root / "pm.json",
+                    report_path=root / "pm.md",
+                ).run(snapshot)
+
+                self.assertEqual(result.action, ACTION_HARVEST_TP)
+                self.assertEqual(result.positions[0].action, ACTION_HARVEST_TP)
+                self.assertEqual(result.positions[0].recommended_take_profit, 1.16535)
+                report = (root / "pm.md").read_text()
+                self.assertIn("under market-read MFE risk", report)
+                self.assertIn("harvest TP", report)
+        finally:
+            if prior is None:
+                os.environ.pop("QR_TRADER_DISABLE_SL_REPAIR", None)
+            else:
+                os.environ["QR_TRADER_DISABLE_SL_REPAIR"] = prior
+
     def test_usd_quote_position_risk_uses_snapshot_conversion_not_static_proxy(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

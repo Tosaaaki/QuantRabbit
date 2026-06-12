@@ -413,15 +413,21 @@ class PositionManager:
                 if recommended_take_profit is not None:
                     reasons.append(f"repair TP candidate {recommended_take_profit:.5f}")
         else:
-            temporary_profit_take, temporary_profit_reasons = _temporary_extreme_profit_take_signal(
-                position=position,
-                quote=quote,
-                full_pair_charts=full_pair_charts,
-                latest_forecast=latest_forecast,
-            )
-            reasons.extend(temporary_profit_reasons)
-            if temporary_profit_take:
+            adaptive_action = ACTION_HOLD_PROTECTED
+            adaptive_tp: float | None = None
+            if position.unrealized_pl_jpy > 0 and position.take_profit is not None:
+                adaptive_action, adaptive_tp, adaptive_reasons = _adaptive_tp_action(
+                    position, quote, pair_charts, full_pair_charts, latest_forecast
+                )
+                reasons.extend(adaptive_reasons)
+
+            if adaptive_action == ACTION_TAKE_PROFIT_MARKET:
                 action = ACTION_TAKE_PROFIT_MARKET
+            elif adaptive_action in {ACTION_HARVEST_TP, ACTION_NARROW_TP, ACTION_EXTEND_TP} and adaptive_tp is not None:
+                recommended_take_profit = adaptive_tp
+                action = adaptive_action
+            elif adaptive_action == ACTION_REVIEW_EXIT and not sl_free_owned:
+                action = ACTION_REVIEW_EXIT
             else:
                 profit_protection_needed, profit_reasons = _profit_protection_needed(
                     position,
@@ -2061,6 +2067,14 @@ def _adaptive_tp_contraction_allowed(
     )
     if not mfe_reasons:
         return False, f"{label} skipped: reachable TP contraction needs market-read MFE risk; {mfe_note}{atr_note}"
+
+    if atr_pips is not None and atr_pips > 0 and profit_pips > atr_pips:
+        return (
+            True,
+            f"{label} allowed: executable profit {profit_pips:.1f}pip > "
+            f"{GEOMETRY_ATR_TIMEFRAME} ATR {atr_pips:.1f}pip under market-read MFE risk; "
+            f"{mfe_note}{atr_note}",
+        )
 
     gate = tp_pips * ADAPTIVE_TP_CONTRACTION_MIN_PROGRESS
     if profit_pips < gate:
