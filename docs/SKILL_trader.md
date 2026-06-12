@@ -167,6 +167,9 @@ PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli cycle-refresh --daily-risk-pct 1
 # If current trader-owned pending entries consume portfolio capacity, either keep
 # that pending basket explicitly or name verified trader pending ids in
 # cancel_order_ids when replacing them with current MARKET participation.
+# If an accepted TRADE receipt later fails the deterministic prefilter match,
+# the gateway still cancels verified cancel_order_ids before returning
+# GPT_DECISION_NOT_PREFILTERED; it must not send a fresh entry on that receipt.
 # If the action is CANCEL_PENDING, list only current trader-owned pending entry
 # ids in cancel_order_ids; the gateway cycle cancels verified ids and sends no
 # fresh entry in that same cycle.

@@ -1500,6 +1500,145 @@ class AutoTradeCycleTest(unittest.TestCase):
             self.assertEqual(client.orders_canceled, [order.order_id for order in pending_orders])
             self.assertEqual(len(client.orders_sent), 1)
 
+    def test_gpt_trade_not_prefiltered_still_cancels_named_pending_orders(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            now = datetime.now(timezone.utc)
+            pending = BrokerOrder(
+                order_id="stale-gpt-pending",
+                pair="GBP_CHF",
+                order_type="STOP",
+                price=1.06824,
+                state="PENDING",
+                units=3600,
+                owner=Owner.TRADER,
+            )
+            snapshot = BrokerSnapshot(
+                fetched_at_utc=now,
+                orders=(pending,),
+                quotes={
+                    "EUR_USD": Quote("EUR_USD", 1.17298, 1.17306, timestamp_utc=now),
+                    "USD_JPY": Quote("USD_JPY", 157.0, 157.01, timestamp_utc=now),
+                },
+            )
+            snapshot_path = root / "snapshot.json"
+            snapshot_path.write_text(_snapshot_to_json(snapshot) + "\n")
+            intents_path = root / "intents.json"
+            _write_two_live_ready_intents(intents_path)
+            payload = json.loads(intents_path.read_text())
+            gpt_lane = "range_trader:NZD_CAD:SHORT:RANGE_ROTATION:MARKET"
+            gpt_intent = json.loads(json.dumps(payload["results"][0]))
+            gpt_intent["lane_id"] = gpt_lane
+            gpt_intent["intent"]["pair"] = "NZD_CAD"
+            gpt_intent["intent"]["side"] = "SHORT"
+            gpt_intent["intent"]["order_type"] = "MARKET"
+            gpt_intent["intent"]["units"] = 10_000
+            gpt_intent["intent"]["entry"] = 0.81346
+            gpt_intent["intent"]["tp"] = 0.81166
+            gpt_intent["intent"]["sl"] = 0.81426
+            gpt_intent["intent"]["thesis"] = "NZD_CAD range rotation is live-ready but outside the deterministic prefilter."
+            gpt_intent["intent"]["market_context"]["regime"] = "RANGE_ROTATION"
+            gpt_intent["intent"]["market_context"]["narrative"] = "NZD_CAD range rejection can rotate lower."
+            gpt_intent["intent"]["market_context"]["chart_story"] = "M5 rejection at the range cap."
+            gpt_intent["intent"]["market_context"]["method"] = "RANGE_ROTATION"
+            gpt_intent["intent"]["market_context"]["invalidation"] = "range cap breaks higher"
+            gpt_intent["risk_metrics"] = {
+                "risk_jpy": 1_020.0,
+                "reward_jpy": 2_142.0,
+                "reward_risk": 2.1,
+                "spread_pips": 0.9,
+            }
+            payload["results"].append(gpt_intent)
+            intents_path.write_text(json.dumps(payload) + "\n")
+            target_state = _open_target_state(root)
+            deterministic_lane = "trend_trader:EUR_USD:LONG:TREND_CONTINUATION"
+            decision = TraderDecision(
+                action=ACTION_SEND_ENTRY,
+                selected_lane_id=deterministic_lane,
+                selected_lane_score=90.0,
+                selected_lane_size_multiple=1.0,
+                generated_at_utc=now.isoformat(),
+                reason="deterministic prefilter chose the stop-entry lane",
+                scores=(
+                    LaneScore(
+                        lane_id=deterministic_lane,
+                        pair="EUR_USD",
+                        direction="LONG",
+                        method="TREND_CONTINUATION",
+                        order_type="STOP-ENTRY",
+                        entry=1.1735,
+                        tp=1.1750,
+                        sl=1.1728,
+                        status="LIVE_READY",
+                        score=90.0,
+                        action=ACTION_SEND_ENTRY,
+                        blockers=(),
+                        rationale=(),
+                        size_multiple=1.0,
+                        estimated_margin_jpy=5000.0,
+                    ),
+                ),
+                positions=0,
+                orders=1,
+            )
+
+            class StaticBrain:
+                def run(self, snapshot):
+                    return decision
+
+            class PrefilterMismatchCycle(AutoTradeCycle):
+                def _brain(self):
+                    return StaticBrain()
+
+            gpt_decision = _gpt_trade_decision(
+                lane_id=gpt_lane,
+                pair="NZD_CAD",
+                method="RANGE_ROTATION",
+                direction="SHORT",
+            )
+            gpt_decision["selected_lane_ids"] = [gpt_lane]
+            gpt_decision["cancel_order_ids"] = [pending.order_id]
+            client = FakeCycleClient(snapshot)
+
+            summary = PrefilterMismatchCycle(
+                client=client,
+                snapshot_path=snapshot_path,
+                intents_path=intents_path,
+                intent_report_path=root / "intents.md",
+                decision_path=root / "decision.json",
+                decision_report_path=root / "decision.md",
+                gpt_decision_path=root / "gpt_decision.json",
+                gpt_decision_report_path=root / "gpt_decision.md",
+                gpt_attack_advice_path=root / "attack_missing.json",
+                position_management_path=root / "pm.json",
+                position_management_report_path=root / "pm.md",
+                position_execution_path=root / "pe.json",
+                position_execution_report_path=root / "pe.md",
+                live_order_output_path=root / "live_order.json",
+                live_order_report_path=root / "live_order.md",
+                report_path=root / "report.md",
+                campaign_plan_path=_campaign(root),
+                strategy_profile_path=_candidate_profile(root),
+                market_story_profile_path=_stories(root),
+                receipt_promotion_report_path=root / "promotion.md",
+                target_state_path=target_state,
+                target_report_path=root / "target.md",
+                gpt_target_state_path=target_state,
+                use_gpt_trader=True,
+                gpt_provider=StaticTraderProvider(gpt_decision),
+                reuse_market_artifacts=True,
+                refresh_market_story=False,
+                live_enabled=True,
+                max_loss_jpy=1_500,
+            ).run(send=True)
+
+            self.assertEqual(summary.status, "GPT_DECISION_NOT_PREFILTERED")
+            self.assertFalse(summary.sent)
+            self.assertEqual(summary.sent_count, 0)
+            self.assertEqual(summary.canceled_orders, (pending.order_id,))
+            self.assertEqual(client.orders_canceled, [pending.order_id])
+            self.assertEqual(client.orders_sent, [])
+
     def test_protected_position_with_pending_can_replace_pending_before_capacity_send(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

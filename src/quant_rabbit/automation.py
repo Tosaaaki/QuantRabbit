@@ -1208,6 +1208,13 @@ class AutoTradeCycle:
                             prefiltered_lane_ids=set(basket_lane_ids),
                         )
                         if not gpt_lanes_allowed:
+                            canceled_orders.extend(
+                                self._cancel_gpt_pending_orders(
+                                    gpt_summary,
+                                    send=send,
+                                    already_canceled=tuple(canceled_orders),
+                                )
+                            )
                             summary = AutoTradeCycleSummary(
                                 status="GPT_DECISION_NOT_PREFILTERED",
                                 report_path=self.report_path,
@@ -1668,6 +1675,13 @@ class AutoTradeCycle:
                         if campaign_exposure_required:
                             gpt_recovery_source = "CAMPAIGN_EXPOSURE_RECOVERY_GPT_NOT_PREFILTERED"
                         else:
+                            canceled_orders.extend(
+                                self._cancel_gpt_pending_orders(
+                                    gpt_summary,
+                                    send=send,
+                                    already_canceled=tuple(canceled_orders),
+                                )
+                            )
                             summary = AutoTradeCycleSummary(
                                 status="GPT_DECISION_NOT_PREFILTERED",
                                 report_path=self.report_path,
