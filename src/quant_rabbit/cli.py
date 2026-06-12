@@ -855,7 +855,10 @@ def _pre_entry_projection_verification_if_required(
     if snapshot_path is None or not snapshot_path.exists():
         return None
     try:
-        from quant_rabbit.analysis.candles import fetch_candles_via_client
+        from quant_rabbit.projection_truth import (
+            load_projection_candle_truth,
+            projection_candle_truth_summary,
+        )
         from quant_rabbit.strategy.projection_ledger import (
             load_ledger,
             retryable_truth_timeout_pairs,
@@ -922,38 +925,29 @@ def _pre_entry_projection_verification_if_required(
                         atr_pips_by_pair[pair] = atr
                         break
 
+        candle_truth_summary: dict[str, Any] = {
+            "candle_counts": {},
+            "candle_granularity_counts": {},
+            "candle_errors": {},
+            "candle_truth_deadline_exceeded": False,
+        }
         candles_by_pair: dict[str, dict[str, list[Any]]] | None = None
-        candle_counts: dict[str, int] = {}
-        candle_granularity_counts: dict[str, dict[str, int]] = {}
-        candle_errors: dict[str, str] = {}
         m1_count = int(os.environ.get("QR_PROJECTION_VERIFY_M1_COUNT", "1500"))
         m5_count = int(os.environ.get("QR_PROJECTION_VERIFY_M5_COUNT", "1500"))
         if verification_pairs and (m1_count > 0 or m5_count > 0):
-            candles_by_pair = {}
             try:
                 client = OandaReadOnlyClient()
             except Exception as exc:
-                candle_errors["_client"] = f"{type(exc).__name__}: {str(exc)[:160]}"
-                candles_by_pair = None
+                candle_truth_summary["candle_errors"] = {"_client": f"{type(exc).__name__}: {str(exc)[:160]}"}
             else:
-                for pair in sorted(verification_pairs):
-                    pair_candles: dict[str, list[Any]] = {}
-                    per_granularity: dict[str, int] = {}
-                    for granularity, count in (("M1", m1_count), ("M5", m5_count)):
-                        if count <= 0:
-                            continue
-                        try:
-                            candles = list(fetch_candles_via_client(client, pair, granularity, count=count))
-                        except Exception as exc:
-                            candle_errors[f"{pair}:{granularity}"] = f"{type(exc).__name__}: {str(exc)[:160]}"
-                            continue
-                        pair_candles[granularity] = candles
-                        per_granularity[granularity] = len(candles)
-                    if not pair_candles:
-                        continue
-                    candles_by_pair[pair] = pair_candles
-                    candle_counts[pair] = sum(per_granularity.values())
-                    candle_granularity_counts[pair] = per_granularity
+                candle_truth = load_projection_candle_truth(
+                    client,
+                    verification_pairs,
+                    m1_count=m1_count,
+                    m5_count=m5_count,
+                )
+                candles_by_pair = candle_truth.candles_by_pair
+                candle_truth_summary = projection_candle_truth_summary(candle_truth)
 
         counts = verify_pending(
             ROOT / "data",
@@ -969,9 +963,7 @@ def _pre_entry_projection_verification_if_required(
         "pending_pairs": len(pending_pairs),
         "retryable_timeout_pairs": len(retry_timeout_pairs),
         "resolution_counts": counts,
-        "candle_counts": candle_counts,
-        "candle_granularity_counts": candle_granularity_counts,
-        "candle_errors": candle_errors,
+        **candle_truth_summary,
     }
 
 
@@ -4661,7 +4653,10 @@ def main(argv: list[str] | None = None) -> int:
             retryable_truth_timeout_pairs,
             verify_pending,
         )
-        from quant_rabbit.analysis.candles import fetch_candles_via_client
+        from quant_rabbit.projection_truth import (
+            load_projection_candle_truth,
+            projection_candle_truth_summary,
+        )
         from pathlib import Path as _P
         data_root = _P("data")
         snapshot_payload = json.loads(args.snapshot.read_text()) if args.snapshot.exists() else {}
@@ -4691,35 +4686,26 @@ def main(argv: list[str] | None = None) -> int:
         retry_timeout_pairs = sorted(retryable_truth_timeout_pairs(ledger_entries))
         verification_pairs = sorted(set(pending_pairs) | set(retry_timeout_pairs))
         candles_by_pair = None
-        candle_counts: dict[str, int] = {}
-        candle_granularity_counts: dict[str, dict[str, int]] = {}
-        candle_errors: dict[str, str] = {}
+        candle_truth_summary: dict[str, Any] = {
+            "candle_counts": {},
+            "candle_granularity_counts": {},
+            "candle_errors": {},
+            "candle_truth_deadline_exceeded": False,
+        }
         if verification_pairs and (args.m1_count > 0 or args.m5_count > 0):
-            candles_by_pair = {}
             try:
                 client = OandaReadOnlyClient()
             except Exception as exc:
-                candle_errors["_client"] = f"{type(exc).__name__}: {str(exc)[:160]}"
-                candles_by_pair = None
+                candle_truth_summary["candle_errors"] = {"_client": f"{type(exc).__name__}: {str(exc)[:160]}"}
             else:
-                for pair in verification_pairs:
-                    pair_candles: dict[str, list[Any]] = {}
-                    per_granularity: dict[str, int] = {}
-                    for granularity, count in (("M1", int(args.m1_count)), ("M5", int(args.m5_count))):
-                        if count <= 0:
-                            continue
-                        try:
-                            candles = list(fetch_candles_via_client(client, pair, granularity, count=count))
-                        except Exception as exc:
-                            candle_errors[f"{pair}:{granularity}"] = f"{type(exc).__name__}: {str(exc)[:160]}"
-                            continue
-                        pair_candles[granularity] = candles
-                        per_granularity[granularity] = len(candles)
-                    if not pair_candles:
-                        continue
-                    candles_by_pair[pair] = pair_candles
-                    candle_counts[pair] = sum(per_granularity.values())
-                    candle_granularity_counts[pair] = per_granularity
+                candle_truth = load_projection_candle_truth(
+                    client,
+                    verification_pairs,
+                    m1_count=int(args.m1_count),
+                    m5_count=int(args.m5_count),
+                )
+                candles_by_pair = candle_truth.candles_by_pair
+                candle_truth_summary = projection_candle_truth_summary(candle_truth)
         counts = verify_pending(
             data_root,
             quotes_by_pair=quotes_by_pair,
@@ -4735,17 +4721,22 @@ def main(argv: list[str] | None = None) -> int:
                 "retryable_timeout_pairs": retry_timeout_pairs,
                 "m1_count_requested": int(args.m1_count),
                 "m5_count_requested": int(args.m5_count),
-                "candle_counts": candle_counts,
-                "candle_granularity_counts": candle_granularity_counts,
+                "candle_counts": candle_truth_summary["candle_counts"],
+                "candle_granularity_counts": candle_truth_summary["candle_granularity_counts"],
                 "m1_candles_loaded": {
-                    pair: counts.get("M1", 0) for pair, counts in candle_granularity_counts.items()
+                    pair: counts.get("M1", 0) for pair, counts in candle_truth_summary["candle_granularity_counts"].items()
                 },
                 "m5_candles_loaded": {
-                    pair: counts.get("M5", 0) for pair, counts in candle_granularity_counts.items()
+                    pair: counts.get("M5", 0) for pair, counts in candle_truth_summary["candle_granularity_counts"].items()
                 },
-                "candle_errors": candle_errors,
+                "candle_errors": candle_truth_summary["candle_errors"],
+                "candle_truth_deadline_exceeded": candle_truth_summary["candle_truth_deadline_exceeded"],
+                "candle_truth_budget_seconds": candle_truth_summary.get("candle_truth_budget_seconds"),
+                "candle_truth_elapsed_seconds": candle_truth_summary.get("candle_truth_elapsed_seconds"),
                 "m1_errors": {
-                    key: value for key, value in candle_errors.items() if key.endswith(":M1") or key == "_client"
+                    key: value
+                    for key, value in candle_truth_summary["candle_errors"].items()
+                    if key.endswith(":M1") or key == "_client"
                 },
             },
             "hit_rates_by_signal": {

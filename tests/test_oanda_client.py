@@ -8,7 +8,7 @@ from contextlib import redirect_stdout
 from pathlib import Path
 from unittest.mock import patch
 
-from quant_rabbit.broker.oanda import OandaReadOnlyClient
+from quant_rabbit.broker.oanda import DEFAULT_OANDA_HTTP_TIMEOUT_SECONDS, OandaReadOnlyClient
 from quant_rabbit.cli import main
 
 
@@ -41,6 +41,33 @@ class OandaClientTest(unittest.TestCase):
         self.assertEqual(client.token, "qr-token")
         self.assertEqual(client.account_id, "qr-account")
         self.assertEqual(client.base_url, "https://example.invalid")
+
+    def test_get_json_uses_named_http_timeout(self) -> None:
+        class FakeResponse:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, _exc_type, _exc, _tb) -> None:
+                return None
+
+            def read(self) -> bytes:
+                return b"{}"
+
+        with patch.dict(
+            "os.environ",
+            {
+                "QR_OANDA_TOKEN": "qr-token",
+                "QR_OANDA_ACCOUNT_ID": "qr-account",
+                "QR_OANDA_BASE_URL": "https://example.invalid/",
+            },
+            clear=True,
+        ):
+            client = OandaReadOnlyClient()
+
+        with patch("quant_rabbit.broker.oanda.urllib.request.urlopen", return_value=FakeResponse()) as urlopen:
+            client.get_json("/v3/test")
+
+        self.assertEqual(urlopen.call_args.kwargs["timeout"], DEFAULT_OANDA_HTTP_TIMEOUT_SECONDS)
 
     def test_falls_back_to_project_env_local_credentials(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

@@ -2259,38 +2259,31 @@ class AutoTradeCycle:
                 continue
         atr_pips_by_pair = _projection_atr_pips_by_pair(self.pair_charts_path)
         candles_by_pair = None
-        candle_counts: dict[str, int] = {}
-        candle_granularity_counts: dict[str, dict[str, int]] = {}
-        candle_errors: dict[str, str] = {}
+        candle_truth_summary: dict[str, Any] = {
+            "candle_counts": {},
+            "candle_granularity_counts": {},
+            "candle_errors": {},
+            "candle_truth_deadline_exceeded": False,
+        }
         if hasattr(self.client, "get_json"):
             try:
-                from quant_rabbit.analysis.candles import fetch_candles_via_client
+                from quant_rabbit.projection_truth import (
+                    load_projection_candle_truth,
+                    projection_candle_truth_summary,
+                )
 
                 m1_count = int(os.environ.get("QR_PROJECTION_VERIFY_M1_COUNT", "1500"))
                 m5_count = int(os.environ.get("QR_PROJECTION_VERIFY_M5_COUNT", "1500"))
-                candles_by_pair = {}
-                for pair in verification_pairs_sorted:
-                    pair_candles: dict[str, list[Any]] = {}
-                    per_granularity: dict[str, int] = {}
-                    for granularity, count in (("M1", m1_count), ("M5", m5_count)):
-                        if count <= 0:
-                            continue
-                        try:
-                            candles = list(fetch_candles_via_client(self.client, pair, granularity, count=count))
-                        except Exception as exc:
-                            candle_errors[f"{pair}:{granularity}"] = f"{type(exc).__name__}: {str(exc)[:160]}"
-                            continue
-                        pair_candles[granularity] = candles
-                        per_granularity[granularity] = len(candles)
-                    if not pair_candles:
-                        continue
-                    candles_by_pair[pair] = pair_candles
-                    candle_counts[pair] = sum(per_granularity.values())
-                    candle_granularity_counts[pair] = per_granularity
-                if not candles_by_pair:
-                    candles_by_pair = None
+                candle_truth = load_projection_candle_truth(
+                    self.client,
+                    verification_pairs_sorted,
+                    m1_count=m1_count,
+                    m5_count=m5_count,
+                )
+                candles_by_pair = candle_truth.candles_by_pair
+                candle_truth_summary = projection_candle_truth_summary(candle_truth)
             except Exception as exc:
-                candle_errors["_loader"] = f"{type(exc).__name__}: {str(exc)[:160]}"
+                candle_truth_summary["candle_errors"] = {"_loader": f"{type(exc).__name__}: {str(exc)[:160]}"}
                 candles_by_pair = None
         try:
             counts = verify_pending(
@@ -2306,9 +2299,7 @@ class AutoTradeCycle:
                 "expired_pending_pairs": len(expired_pairs_sorted),
                 "pending_pairs": len(pending_pairs_sorted),
                 "error": f"{type(exc).__name__}: {str(exc)[:160]}",
-                "candle_counts": candle_counts,
-                "candle_granularity_counts": candle_granularity_counts,
-                "candle_errors": candle_errors,
+                **candle_truth_summary,
             }
             return self._projection_preflight_summary
         self._projection_preflight_summary = {
@@ -2317,9 +2308,7 @@ class AutoTradeCycle:
             "pending_pairs": len(pending_pairs_sorted),
             "retryable_timeout_pairs": len(retry_timeout_pairs),
             "resolution_counts": counts,
-            "candle_counts": candle_counts,
-            "candle_granularity_counts": candle_granularity_counts,
-            "candle_errors": candle_errors,
+            **candle_truth_summary,
         }
         return self._projection_preflight_summary
 

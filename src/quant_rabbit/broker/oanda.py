@@ -13,6 +13,27 @@ from quant_rabbit.models import AccountSummary, BrokerOrder, BrokerPosition, Bro
 from quant_rabbit.paths import DEFAULT_ENV_LOCAL
 
 
+# OANDA REST calls are bounded by infrastructure wall-clock behavior, not by
+# market geometry. Fifteen seconds allows normal broker/API jitter while keeping
+# one stalled HTTP read from consuming a material share of the 20-minute live
+# cycle. Replace this with an observed endpoint SLO if OANDA latency telemetry
+# becomes available.
+DEFAULT_OANDA_HTTP_TIMEOUT_SECONDS = 15.0
+
+
+def _oanda_http_timeout_seconds() -> float:
+    raw = os.environ.get("QR_OANDA_HTTP_TIMEOUT_SECONDS")
+    if raw is None or not raw.strip():
+        return DEFAULT_OANDA_HTTP_TIMEOUT_SECONDS
+    try:
+        seconds = float(raw)
+    except ValueError as exc:
+        raise RuntimeError("QR_OANDA_HTTP_TIMEOUT_SECONDS must be a positive number of seconds") from exc
+    if seconds <= 0:
+        raise RuntimeError("QR_OANDA_HTTP_TIMEOUT_SECONDS must be a positive number of seconds")
+    return seconds
+
+
 class OandaReadOnlyClient:
     """Read-only OANDA client.
 
@@ -39,13 +60,14 @@ class OandaReadOnlyClient:
         ).rstrip("/")
         if not self.token or not self.account_id:
             raise RuntimeError("OANDA read requires QR_OANDA_TOKEN and QR_OANDA_ACCOUNT_ID")
+        self.http_timeout_seconds = _oanda_http_timeout_seconds()
 
     def get_json(self, path: str, query: dict[str, str] | None = None) -> dict:
         url = f"{self.base_url}{path}"
         if query:
             url = f"{url}?{urllib.parse.urlencode(query)}"
         req = urllib.request.Request(url, headers={"Authorization": f"Bearer {self.token}"})
-        with urllib.request.urlopen(req, timeout=15) as resp:
+        with urllib.request.urlopen(req, timeout=self.http_timeout_seconds) as resp:
             return json.loads(resp.read())
 
     def snapshot(self, pairs: Iterable[str]) -> BrokerSnapshot:
@@ -356,7 +378,7 @@ class OandaExecutionClient(OandaReadOnlyClient):
                 "Content-Type": "application/json",
             },
         )
-        with urllib.request.urlopen(req, timeout=15) as resp:
+        with urllib.request.urlopen(req, timeout=self.http_timeout_seconds) as resp:
             return json.loads(resp.read())
 
     def cancel_order(self, order_id: str) -> dict:
@@ -367,7 +389,7 @@ class OandaExecutionClient(OandaReadOnlyClient):
             method="PUT",
             headers={"Authorization": f"Bearer {self.token}"},
         )
-        with urllib.request.urlopen(req, timeout=15) as resp:
+        with urllib.request.urlopen(req, timeout=self.http_timeout_seconds) as resp:
             return json.loads(resp.read())
 
     def replace_trade_dependent_orders(self, trade_id: str, order_request: dict) -> dict:
@@ -382,7 +404,7 @@ class OandaExecutionClient(OandaReadOnlyClient):
                 "Content-Type": "application/json",
             },
         )
-        with urllib.request.urlopen(req, timeout=15) as resp:
+        with urllib.request.urlopen(req, timeout=self.http_timeout_seconds) as resp:
             return json.loads(resp.read())
 
     def close_trade(self, trade_id: str, units: str = "ALL") -> dict:
@@ -397,5 +419,5 @@ class OandaExecutionClient(OandaReadOnlyClient):
                 "Content-Type": "application/json",
             },
         )
-        with urllib.request.urlopen(req, timeout=15) as resp:
+        with urllib.request.urlopen(req, timeout=self.http_timeout_seconds) as resp:
             return json.loads(resp.read())

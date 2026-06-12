@@ -1764,7 +1764,7 @@ class LiveRuntimeBootstrapTest(unittest.TestCase):
                     with mock.patch("quant_rabbit.strategy.projection_ledger.load_ledger", return_value=[expired]):
                         with mock.patch("quant_rabbit.cli.OandaReadOnlyClient", return_value=object()) as client_cls:
                             with mock.patch(
-                                "quant_rabbit.analysis.candles.fetch_candles_via_client",
+                                "quant_rabbit.projection_truth.fetch_candles_via_client",
                                 return_value=(candle,),
                             ) as fetch_candles:
                                 with mock.patch(
@@ -1825,7 +1825,7 @@ class LiveRuntimeBootstrapTest(unittest.TestCase):
                     with mock.patch("quant_rabbit.strategy.projection_ledger.load_ledger", return_value=[timeout]):
                         with mock.patch("quant_rabbit.cli.OandaReadOnlyClient", return_value=object()) as client_cls:
                             with mock.patch(
-                                "quant_rabbit.analysis.candles.fetch_candles_via_client",
+                                "quant_rabbit.projection_truth.fetch_candles_via_client",
                                 return_value=(candle,),
                             ) as fetch_candles:
                                 with mock.patch(
