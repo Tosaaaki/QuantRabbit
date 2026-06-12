@@ -150,6 +150,72 @@ class PositionProtectionGatewayTest(unittest.TestCase):
             self.assertEqual(summary.status, "SENT")
             self.assertEqual(client.closed, [("1", "ALL")])
 
+    def test_blocks_gpt_verified_review_exit_when_close_spread_too_wide(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp, patch.dict(
+            "os.environ",
+            {
+                "QR_DISABLE_AUTO_CLOSE": "1",
+                "QR_POSITION_CLOSE_SPREAD_OVERRIDE": "",
+            },
+            clear=False,
+        ):
+            root = Path(tmp)
+            client = FakePositionClient()
+            summary = PositionProtectionGateway(
+                client=client,
+                output_path=root / "exec.json",
+                report_path=root / "exec.md",
+                live_enabled=True,
+            ).run(
+                decision=_decision(
+                    ACTION_REVIEW_EXIT,
+                    stop=None,
+                    reasons=(
+                        "gpt-close: accepted gpt_trader CLOSE receipt passed Gate A/B; "
+                        "execute only through PositionProtectionGateway",
+                    ),
+                ),
+                snapshot=_snapshot(unrealized_pl_jpy=-90.0, quote_bid=1.1700, quote_ask=1.1720),
+                send=True,
+            )
+
+            self.assertEqual(summary.status, "BLOCKED")
+            self.assertFalse(summary.sent)
+            self.assertEqual(client.closed, [])
+            self.assertIn("POSITION_CLOSE_SPREAD_TOO_WIDE", (root / "exec.md").read_text())
+
+    def test_allows_wide_spread_close_with_explicit_operator_override(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp, patch.dict(
+            "os.environ",
+            {
+                "QR_DISABLE_AUTO_CLOSE": "1",
+                "QR_POSITION_CLOSE_SPREAD_OVERRIDE": "1",
+            },
+            clear=False,
+        ):
+            root = Path(tmp)
+            client = FakePositionClient()
+            summary = PositionProtectionGateway(
+                client=client,
+                output_path=root / "exec.json",
+                report_path=root / "exec.md",
+                live_enabled=True,
+            ).run(
+                decision=_decision(
+                    ACTION_REVIEW_EXIT,
+                    stop=None,
+                    reasons=(
+                        "gpt-close: accepted gpt_trader CLOSE receipt passed Gate A/B; "
+                        "execute only through PositionProtectionGateway",
+                    ),
+                ),
+                snapshot=_snapshot(unrealized_pl_jpy=-90.0, quote_bid=1.1700, quote_ask=1.1720),
+                send=True,
+            )
+
+            self.assertEqual(summary.status, "SENT")
+            self.assertEqual(client.closed, [("1", "ALL")])
+
     def test_blocks_structural_review_exit_without_explicit_opt_in_when_auto_close_disabled(self) -> None:
         with tempfile.TemporaryDirectory() as tmp, patch.dict(
             "os.environ",
@@ -459,6 +525,8 @@ def _snapshot(
     take_profit: float | None = 1.1741,
     stop_loss: float | None = 1.1721,
     unrealized_pl_jpy: float = 90.0,
+    quote_bid: float = 1.1738,
+    quote_ask: float = 1.1739,
 ) -> BrokerSnapshot:
     now = datetime.now(timezone.utc)
     return BrokerSnapshot(
@@ -476,7 +544,7 @@ def _snapshot(
                 owner=owner,
             ),
         ),
-        quotes={"EUR_USD": Quote("EUR_USD", bid=1.1738, ask=1.1739, timestamp_utc=now)},
+        quotes={"EUR_USD": Quote("EUR_USD", bid=quote_bid, ask=quote_ask, timestamp_utc=now)},
     )
 
 

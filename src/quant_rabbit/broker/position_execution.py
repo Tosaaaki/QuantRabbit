@@ -7,8 +7,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Protocol
 
+from quant_rabbit.instruments import NORMAL_SPREAD_PIPS, instrument_pip_factor
 from quant_rabbit.models import BrokerPosition, BrokerSnapshot, Owner, Quote, Side
 from quant_rabbit.paths import DEFAULT_POSITION_EXECUTION, DEFAULT_POSITION_EXECUTION_REPORT
+from quant_rabbit.risk import RiskPolicy
 from quant_rabbit.strategy.position_manager import (
     ACTION_BREAK_EVEN_STOP,
     ACTION_EXTEND_TP,
@@ -190,6 +192,10 @@ class PositionProtectionGateway:
                     }
                 )
                 return action
+            spread_issue = _market_close_spread_issue(position, snapshot)
+            if spread_issue:
+                action["issues"].append(spread_issue)
+                return action
             action["request"] = {"type": "CLOSE", "trade_id": position.trade_id, "units": "ALL"}
             return action
         if managed.action == ACTION_REVIEW_EXIT:
@@ -205,6 +211,10 @@ class PositionProtectionGateway:
             review_exit_issue = _review_exit_gate_issue(managed)
             if review_exit_issue:
                 action["issues"].append(review_exit_issue)
+                return action
+            spread_issue = _market_close_spread_issue(position, snapshot)
+            if spread_issue:
+                action["issues"].append(spread_issue)
                 return action
             action["request"] = {"type": "CLOSE", "trade_id": position.trade_id, "units": "ALL"}
             return action
@@ -380,6 +390,49 @@ def _structural_review_exit_reason(reasons: tuple[str, ...]) -> bool:
         if "structural ob broken" in lowered:
             return True
     return False
+
+
+def _position_close_spread_override_enabled() -> bool:
+    return os.environ.get("QR_POSITION_CLOSE_SPREAD_OVERRIDE", "").strip().lower() in {"1", "true", "yes"}
+
+
+def _market_close_spread_issue(position: BrokerPosition, snapshot: BrokerSnapshot) -> dict[str, str] | None:
+    if _position_close_spread_override_enabled():
+        return None
+    quote = snapshot.quotes.get(position.pair)
+    if quote is None:
+        return {
+            "severity": "BLOCK",
+            "code": "POSITION_CLOSE_QUOTE_MISSING",
+            "message": (
+                f"{position.pair} quote missing from latest broker snapshot; market CLOSE spread cost cannot be "
+                "bounded. Refresh broker-snapshot or set QR_POSITION_CLOSE_SPREAD_OVERRIDE=1 for explicit operator override."
+            ),
+        }
+    normal_spread = NORMAL_SPREAD_PIPS.get(position.pair)
+    if normal_spread is None:
+        return {
+            "severity": "BLOCK",
+            "code": "POSITION_CLOSE_SPREAD_BASELINE_MISSING",
+            "message": (
+                f"{position.pair} normal spread baseline is missing; market CLOSE spread cost cannot be bounded. "
+                "Add the broker-spec baseline or set QR_POSITION_CLOSE_SPREAD_OVERRIDE=1 for explicit operator override."
+            ),
+        }
+    spread_pips = abs(quote.ask - quote.bid) * instrument_pip_factor(position.pair)
+    max_spread_multiple = RiskPolicy().max_spread_multiple
+    spread_cap = normal_spread * max_spread_multiple
+    if spread_pips > spread_cap:
+        return {
+            "severity": "BLOCK",
+            "code": "POSITION_CLOSE_SPREAD_TOO_WIDE",
+            "message": (
+                f"{position.pair} market CLOSE spread {spread_pips:.1f}pip exceeds "
+                f"{max_spread_multiple:.1f}x normal {normal_spread:.1f}pip; defer to TP/SL/protection "
+                "until liquidity normalizes or set QR_POSITION_CLOSE_SPREAD_OVERRIDE=1 for explicit operator override."
+            ),
+        }
+    return None
 
 
 def _stop_update_issue(position: BrokerPosition, new_stop: float, quote: Quote | None) -> dict[str, str] | None:

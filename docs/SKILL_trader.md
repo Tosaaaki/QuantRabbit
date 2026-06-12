@@ -202,6 +202,11 @@ PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli cycle-refresh --daily-risk-pct 1
 # not a CLOSE+re-entry case. Treat it as geometry management: TP rebalance,
 # HOLD, profit-side partial, or a separately risk-bounded ADD lane. Loss-side
 # CLOSE is for broken thesis evidence, not for refreshing a valid ticket.
+# After an accepted CLOSE receipt, the gateway still re-checks the latest
+# broker-snapshot quote before sending. Missing close quotes, missing normal
+# spread baselines, or spread wider than `NORMAL_SPREAD_PIPS ×
+# RiskPolicy.max_spread_multiple` block market CLOSE unless the operator
+# explicitly exports `QR_POSITION_CLOSE_SPREAD_OVERRIDE=1`.
 # Hard sidecar Gate A or explicit Gate B close evidence is priority work: do
 # not choose TRADE, WAIT, REQUEST_EVIDENCE, PROTECT, or TIGHTEN_SL to sidestep
 # it. If only soft Gate A exists and explicit Gate B is missing, the sidecar is
