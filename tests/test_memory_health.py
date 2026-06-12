@@ -444,6 +444,46 @@ class MemoryHealthAuditorTest(unittest.TestCase):
         self.assertGreater(payload["metrics"]["order_intents"]["advisory_memory_blockers"], 0)
         self.assertFalse(any(issue["code"] == "SHORT_ORDER_INTENTS_MEMORY_BLOCKERS" for issue in payload["issues"]))
 
+    def test_warn_telemetry_duplicate_live_blocker_stays_advisory(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root)
+            message = (
+                "EUR_AUD SHORT newer forecast_history confidence 0.3983 does not match "
+                "intent forecast confidence 0.4252; refresh before live entry."
+            )
+            files["intents"].write_text(
+                json.dumps(
+                    {
+                        "results": [
+                            {
+                                "lane_id": "range_trader:EUR_AUD:SHORT:RANGE_ROTATION",
+                                "status": "DRY_RUN_BLOCKED",
+                                "intent": {"pair": "EUR_AUD"},
+                                "risk_issues": [
+                                    {
+                                        "code": "TELEMETRY_FORECAST_HISTORY_MISMATCH_FOR_LIVE",
+                                        "message": message,
+                                        "severity": "WARN",
+                                    }
+                                ],
+                                "strategy_issues": [],
+                                "live_blockers": [message],
+                            }
+                        ]
+                    }
+                )
+            )
+
+            summary = _run(files)
+            payload = json.loads(files["output"].read_text())
+
+        self.assertEqual(summary.status, STATUS_PASS)
+        self.assertEqual(summary.layers["short_term"], "PASS")
+        self.assertEqual(payload["metrics"]["order_intents"]["memory_blockers"], 0)
+        self.assertGreater(payload["metrics"]["order_intents"]["advisory_memory_blockers"], 0)
+        self.assertFalse(any(issue["code"] == "SHORT_ORDER_INTENTS_MEMORY_BLOCKERS" for issue in payload["issues"]))
+
 
 _NOW = datetime(2026, 6, 5, 0, 0, tzinfo=timezone.utc)
 

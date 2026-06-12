@@ -917,29 +917,35 @@ def _audit_intent_memory_blockers(
             continue
         result_memory_blockers: list[str] = []
         structured_blockers: set[str] = set()
+        structured_advisory: set[str] = set()
         for container_name in ("risk_issues", "strategy_issues", "live_strategy_issues"):
             for item in result.get(container_name) or []:
                 text = _issue_text(item).upper()
                 if not any(token in text for token in _MEMORY_BLOCKER_TOKENS):
                     continue
-                if _is_quote_freshness_blocker(item):
-                    advisory_memory_blockers += 1
-                    continue
-                if isinstance(item, dict) and str(item.get("severity") or "").upper() != "BLOCK":
-                    advisory_memory_blockers += 1
-                    continue
                 issue_text = _issue_text(item)
-                structured_blockers.add(issue_text)
+                issue_variants = {issue_text}
                 if isinstance(item, dict):
                     message = str(item.get("message") or "")
                     if message:
-                        structured_blockers.add(message)
+                        issue_variants.add(message)
+                if _is_quote_freshness_blocker(item):
+                    structured_advisory.update(issue_variants)
+                    advisory_memory_blockers += 1
+                    continue
+                if isinstance(item, dict) and str(item.get("severity") or "").upper() != "BLOCK":
+                    structured_advisory.update(issue_variants)
+                    advisory_memory_blockers += 1
+                    continue
+                structured_blockers.update(issue_variants)
                 result_memory_blockers.append(issue_text)
         for item in result.get("live_blockers") or []:
             issue_text = _issue_text(item)
             text = issue_text.upper()
             if any(token in text for token in _MEMORY_BLOCKER_TOKENS):
                 if issue_text in structured_blockers:
+                    continue
+                if issue_text in structured_advisory:
                     continue
                 if _is_quote_freshness_blocker(item):
                     advisory_memory_blockers += 1
