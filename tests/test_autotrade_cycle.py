@@ -2441,7 +2441,7 @@ class AutoTradeCycleTest(unittest.TestCase):
                     stale_snapshot,
                     fetched_at_utc=now,
                     positions=(replace(stale_snapshot.positions[0], unrealized_pl_jpy=-2981.9),),
-                    quotes={"EUR_USD": Quote("EUR_USD", 1.34392, 1.34405, timestamp_utc=now)},
+                    quotes={"EUR_USD": Quote("EUR_USD", 1.34392, 1.34404, timestamp_utc=now)},
                 )
                 snapshot_path = root / "broker_snapshot.json"
                 snapshot_path.write_text(_snapshot_to_json(stale_snapshot) + "\n")
@@ -2559,7 +2559,7 @@ class AutoTradeCycleTest(unittest.TestCase):
                     stale_snapshot,
                     fetched_at_utc=now,
                     positions=(replace(stale_snapshot.positions[0], unrealized_pl_jpy=-2981.9),),
-                    quotes={"EUR_USD": Quote("EUR_USD", 1.34392, 1.34405, timestamp_utc=now)},
+                    quotes={"EUR_USD": Quote("EUR_USD", 1.34392, 1.34404, timestamp_utc=now)},
                 )
                 snapshot_path = root / "broker_snapshot.json"
                 snapshot_path.write_text(_snapshot_to_json(stale_snapshot) + "\n")
