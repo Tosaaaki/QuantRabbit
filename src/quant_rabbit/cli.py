@@ -116,6 +116,7 @@ from quant_rabbit.paths import (
     DEFAULT_MEMORY_HEALTH_REPORT,
     DEFAULT_SELF_IMPROVEMENT_AUDIT,
     DEFAULT_SELF_IMPROVEMENT_AUDIT_REPORT,
+    DEFAULT_SELF_IMPROVEMENT_HISTORY_DB,
     DEFAULT_CALENDAR_SNAPSHOT,
     DEFAULT_CALENDAR_REPORT,
     DEFAULT_COT_SNAPSHOT,
@@ -2126,8 +2127,8 @@ def main(argv: list[str] | None = None) -> int:
     p_self_audit.add_argument(
         "--history-db",
         type=Path,
-        default=None,
-        help="Optional DB for audit run history. Defaults to --db.",
+        default=DEFAULT_SELF_IMPROVEMENT_HISTORY_DB,
+        help="Optional DB for audit run history. Defaults to data/self_improvement_history.db.",
     )
     p_self_audit.add_argument("--output", type=Path, default=DEFAULT_SELF_IMPROVEMENT_AUDIT)
     p_self_audit.add_argument("--report", type=Path, default=DEFAULT_SELF_IMPROVEMENT_AUDIT_REPORT)

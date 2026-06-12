@@ -22,9 +22,17 @@ from quant_rabbit.self_improvement_audit import (
     _top_intent_blockers,
     _top_intent_live_readiness_blockers,
 )
+from quant_rabbit.paths import DEFAULT_EXECUTION_LEDGER_DB, DEFAULT_SELF_IMPROVEMENT_HISTORY_DB
 
 
 class SelfImprovementAuditorTest(unittest.TestCase):
+    def test_default_history_db_is_separate_from_execution_ledger(self) -> None:
+        auditor = SelfImprovementAuditor()
+
+        self.assertEqual(auditor.db_path, DEFAULT_EXECUTION_LEDGER_DB)
+        self.assertEqual(auditor.history_db_path, DEFAULT_SELF_IMPROVEMENT_HISTORY_DB)
+        self.assertNotEqual(auditor.history_db_path, auditor.db_path)
+
     def test_projection_expiry_uses_live_telemetry_grace(self) -> None:
         grace = timedelta(seconds=PROJECTION_PENDING_EXPIRY_GRACE_SECONDS)
         row = {

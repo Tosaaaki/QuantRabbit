@@ -25,6 +25,7 @@ from quant_rabbit.paths import (
     DEFAULT_PROJECTION_LEDGER,
     DEFAULT_SELF_IMPROVEMENT_AUDIT,
     DEFAULT_SELF_IMPROVEMENT_AUDIT_REPORT,
+    DEFAULT_SELF_IMPROVEMENT_HISTORY_DB,
     DEFAULT_TRADER_DECISION,
     DEFAULT_VERIFICATION_LEDGER,
 )
@@ -121,12 +122,12 @@ class SelfImprovementAuditor:
         self,
         *,
         db_path: Path = DEFAULT_EXECUTION_LEDGER_DB,
-        history_db_path: Path | None = None,
+        history_db_path: Path | None = DEFAULT_SELF_IMPROVEMENT_HISTORY_DB,
         output_path: Path = DEFAULT_SELF_IMPROVEMENT_AUDIT,
         report_path: Path = DEFAULT_SELF_IMPROVEMENT_AUDIT_REPORT,
     ) -> None:
         self.db_path = db_path
-        self.history_db_path = history_db_path or db_path
+        self.history_db_path = history_db_path or DEFAULT_SELF_IMPROVEMENT_HISTORY_DB
         self.output_path = output_path
         self.report_path = report_path
 
