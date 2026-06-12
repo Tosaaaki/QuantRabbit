@@ -2627,9 +2627,19 @@ class AutoTradeCycle:
         for lane_id in gpt_lane_ids:
             # GPT receipts can go stale between decision writing and gateway
             # execution. Do not force a now-DRY_RUN_BLOCKED / non-prefiltered
-            # lane into LiveOrderGateway; recover through the current
-            # deterministic LIVE_READY basket below.
+            # lane into LiveOrderGateway.
             add(lane_id, require_current_prefilter=True)
+        if lane_ids:
+            # The external receipt is the discretionary execution contract.
+            # When at least one explicitly selected lane remains current,
+            # never append lower-priority deterministic lanes that GPT did
+            # not select; otherwise the report can say "only lane X" while
+            # the gateway sends lane Y as well.
+            return tuple(lane_ids), size_multiples
+
+        # If every GPT-selected lane has gone stale, recover through the
+        # current deterministic LIVE_READY basket instead of dead-ending the
+        # cycle on an obsolete receipt.
         for score in decision.scores:
             if _passes_basket_prefilter(score, allow_existing_pending=allow_existing_pending):
                 add(score.lane_id, score.size_multiple)

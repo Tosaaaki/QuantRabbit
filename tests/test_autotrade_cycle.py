@@ -5328,6 +5328,25 @@ class MarginAwareBasketTest(unittest.TestCase):
         # though raw marginAvailable would have admitted both.
         self.assertEqual(lane_ids, (scores[0].lane_id,))
 
+    def test_expanded_gpt_basket_does_not_append_unselected_prefilter_lanes(self) -> None:
+        from quant_rabbit.automation import AutoTradeCycle
+        scores = [
+            self._score("a:EUR_USD:LONG:TREND_CONTINUATION", pair="EUR_USD",
+                        direction="LONG", score=200, margin_jpy=7400),
+            self._score("b:GBP_USD:SHORT:TREND_CONTINUATION", pair="GBP_USD",
+                        direction="SHORT", score=190, margin_jpy=8500),
+        ]
+        decision = self._decision(scores)
+
+        lane_ids, size_multiples = AutoTradeCycle._expanded_gpt_basket_plan(
+            decision=decision,
+            gpt_lane_ids=(scores[0].lane_id,),
+            margin_available_jpy=40000.0,
+        )
+
+        self.assertEqual(lane_ids, (scores[0].lane_id,))
+        self.assertEqual(size_multiples, {scores[0].lane_id: 1.0})
+
     def test_basket_unchanged_when_margin_available_not_passed(self) -> None:
         # Backwards-compat: callers that don't supply margin_available_jpy
         # get the legacy "fit everything" behavior. Protects existing
