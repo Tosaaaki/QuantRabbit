@@ -4307,6 +4307,97 @@ class CloseDisciplineTest(unittest.TestCase):
             self.assertEqual(recs[0]["source"], "position_thesis")
             self.assertFalse(recs[0]["gate_b_standing_authorized"])
 
+    def test_receipt_invalidation_price_cannot_harden_entry_buffer_position_thesis_close(self) -> None:
+        # Regression for 2026-06-12 NZD_CAD 472312 (-1495 JPY): the sidecar
+        # correctly marked "entry thesis lacks invalidation_price / entry-buffer"
+        # as soft, but the GPT receipt then copied that buffer into
+        # invalidation_price=M5 and bypassed Gate B as a hard loss-cut.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _close_fixtures(
+                root,
+                position_side="SHORT",
+                m15_dir="DOWN",
+                h4_dir="DOWN",
+                quote_bid=1.17600,
+                quote_ask=1.17610,
+            )
+            _write_fresh_position_thesis_close_recommendation(
+                root,
+                files,
+                rationale_lines=[
+                    "patterns +2.2",
+                    "forward-proj +8.2 UP against SHORT",
+                    "chart-tech -29.8 against SHORT",
+                ],
+                context_notes=[
+                    (
+                        "adverse technical loss: entry thesis lacks invalidation_price; "
+                        "current ask 1.17610 >= entry-buffer 1.17520 "
+                        "(entry 1.17500, buffer 2.0p, upl -1250.1 JPY)"
+                    ),
+                    (
+                        "technical invalidation confirmed against SHORT: "
+                        "H1 RSI=65.3; M15 MACD+; M30 ST+; M5 TREND_UP"
+                    ),
+                ],
+            )
+            decision = _close_decision(
+                trade_ids=["555"],
+                invalidation_price=1.17500,
+                invalidation_tf="M5",
+            )
+            decision["evidence_refs"].append("position:thesis:555")
+            brain = _brain(root, files, decision)
+
+            summary = brain.run(snapshot_path=files["snapshot"])
+
+            self.assertEqual(summary.status, "REJECTED", msg=summary)
+            payload = json.loads((root / "gpt_decision.json").read_text())
+            codes = {issue["code"] for issue in payload["verification_issues"]}
+            self.assertIn("CLOSE_OPERATOR_AUTH_REQUIRED", codes)
+            self.assertNotIn("CLOSE_THESIS_STILL_VALID", codes)
+            recs = payload["input_packet"]["protection_sidecars"]["position_close_recommendations"]
+            self.assertEqual(recs[0]["source"], "position_thesis")
+            self.assertFalse(recs[0]["gate_b_standing_authorized"])
+
+    def test_m15_structure_cannot_harden_entry_buffer_position_thesis_close(self) -> None:
+        # Same incident, second hardening path: the historical packet also had
+        # an M15 close-confirmed CHOCH against the position. When the only
+        # matching close sidecar says "entry thesis lacks invalidation_price /
+        # entry-buffer", M15 structure is still too local to become unattended
+        # standing loss-cut authorization. H4 structural breaks stay hard.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _close_fixtures(
+                root,
+                position_side="SHORT",
+                m15_dir="UP",
+                h4_dir="DOWN",
+            )
+            _write_fresh_position_thesis_close_recommendation(
+                root,
+                files,
+                context_notes=[
+                    (
+                        "adverse technical loss: entry thesis lacks invalidation_price; "
+                        "current ask 1.17610 >= entry-buffer 1.17520"
+                    ),
+                    "technical invalidation confirmed against SHORT: M5 TREND_UP; M15 MACD+; H1 RSI=65.3",
+                ],
+            )
+            decision = _close_decision(trade_ids=["555"])
+            decision["evidence_refs"].append("position:thesis:555")
+            brain = _brain(root, files, decision)
+
+            summary = brain.run(snapshot_path=files["snapshot"])
+
+            self.assertEqual(summary.status, "REJECTED", msg=summary)
+            payload = json.loads((root / "gpt_decision.json").read_text())
+            codes = {issue["code"] for issue in payload["verification_issues"]}
+            self.assertIn("CLOSE_OPERATOR_AUTH_REQUIRED", codes)
+            self.assertNotIn("CLOSE_THESIS_STILL_VALID", codes)
+
     def test_close_accepted_without_operator_token_when_position_thesis_invalidation_hit(self) -> None:
         # Position-thesis can still hard-authorize no-ledger loss-cut when the
         # sidecar records a machine-checkable invalidation hit plus multi-TF
