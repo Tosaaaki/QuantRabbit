@@ -584,6 +584,192 @@ class RiskEngineTest(unittest.TestCase):
         self.assertFalse(decision.allowed)
         self.assertIn("PAIR_CONCENTRATION_LIMIT", {issue.code for issue in decision.issues})
 
+    def test_adverse_same_pair_add_requires_position_building_classification(self) -> None:
+        existing_long = BrokerPosition(
+            trade_id="1",
+            pair="EUR_USD",
+            side=Side.LONG,
+            units=3000,
+            entry_price=1.1740,
+            take_profit=1.1760,
+            stop_loss=1.1720,
+            owner=Owner.TRADER,
+        )
+        intent = OrderIntent(
+            pair="EUR_USD",
+            side=Side.LONG,
+            order_type=OrderType.MARKET,
+            units=1000,
+            tp=1.17554,
+            sl=1.17234,
+            thesis="adverse_same_pair_add_must_be_explicitly_classified",
+            market_context=MarketContext(
+                regime="RANGE_ROTATION bounded retest",
+                narrative="candidate is a same-side retest add",
+                chart_story="lower-half rejection with current spread contained",
+                method=TradeMethod.RANGE_ROTATION,
+                invalidation="SL trades",
+            ),
+            metadata={"position_intent": "PYRAMID", "position_fill": "OPEN_ONLY"},
+        )
+
+        from quant_rabbit.risk import RiskPolicy
+
+        decision = RiskEngine(
+            policy=RiskPolicy(
+                allow_protected_trader_position_adds=True,
+                max_same_pair_trader_positions=None,
+                max_same_pair_margin_utilization_pct=None,
+                max_portfolio_loss_jpy=50_000.0,
+            )
+        ).validate(intent, snapshot(positions=(existing_long,)))
+
+        self.assertFalse(decision.allowed)
+        self.assertIn("ADVERSE_ADD_CLASSIFICATION_MISSING", {issue.code for issue in decision.issues})
+
+    def test_adverse_same_pair_add_requires_current_atr_metadata(self) -> None:
+        existing_long = BrokerPosition(
+            trade_id="1",
+            pair="EUR_USD",
+            side=Side.LONG,
+            units=3000,
+            entry_price=1.1740,
+            take_profit=1.1760,
+            stop_loss=1.1720,
+            owner=Owner.TRADER,
+        )
+        intent = OrderIntent(
+            pair="EUR_USD",
+            side=Side.LONG,
+            order_type=OrderType.MARKET,
+            units=1000,
+            tp=1.17554,
+            sl=1.17234,
+            thesis="adverse_same_pair_add_needs_market_volatility_bound",
+            market_context=MarketContext(
+                regime="RANGE_ROTATION bounded retest",
+                narrative="candidate is a same-side retest add",
+                chart_story="lower-half rejection with current spread contained",
+                method=TradeMethod.RANGE_ROTATION,
+                invalidation="SL trades",
+            ),
+            metadata={
+                "position_intent": "PYRAMID",
+                "position_fill": "OPEN_ONLY",
+                "same_pair_add_type": "AVERAGE_INTO_ADVERSE",
+            },
+        )
+
+        from quant_rabbit.risk import RiskPolicy
+
+        decision = RiskEngine(
+            policy=RiskPolicy(
+                allow_protected_trader_position_adds=True,
+                max_same_pair_trader_positions=None,
+                max_same_pair_margin_utilization_pct=None,
+                max_portfolio_loss_jpy=50_000.0,
+            )
+        ).validate(intent, snapshot(positions=(existing_long,)))
+
+        self.assertFalse(decision.allowed)
+        self.assertIn("ADVERSE_ADD_ATR_MISSING", {issue.code for issue in decision.issues})
+
+    def test_adverse_same_pair_add_blocks_when_distance_exceeds_current_atr_cap(self) -> None:
+        existing_long = BrokerPosition(
+            trade_id="1",
+            pair="EUR_USD",
+            side=Side.LONG,
+            units=3000,
+            entry_price=1.1740,
+            take_profit=1.1760,
+            stop_loss=1.1720,
+            owner=Owner.TRADER,
+        )
+        intent = OrderIntent(
+            pair="EUR_USD",
+            side=Side.LONG,
+            order_type=OrderType.MARKET,
+            units=1000,
+            tp=1.17554,
+            sl=1.17234,
+            thesis="adverse_same_pair_add_must_stay_inside_current_atr_cap",
+            market_context=MarketContext(
+                regime="RANGE_ROTATION bounded retest",
+                narrative="candidate is a same-side retest add",
+                chart_story="lower-half rejection with current spread contained",
+                method=TradeMethod.RANGE_ROTATION,
+                invalidation="SL trades",
+            ),
+            metadata={
+                "position_intent": "PYRAMID",
+                "position_fill": "OPEN_ONLY",
+                "same_pair_add_type": "AVERAGE_INTO_ADVERSE",
+                "tp_atr_pips": 3.0,
+            },
+        )
+
+        from quant_rabbit.risk import RiskPolicy
+
+        decision = RiskEngine(
+            policy=RiskPolicy(
+                allow_protected_trader_position_adds=True,
+                max_same_pair_trader_positions=None,
+                max_same_pair_margin_utilization_pct=None,
+                max_portfolio_loss_jpy=50_000.0,
+            )
+        ).validate(intent, snapshot(positions=(existing_long,)))
+
+        self.assertFalse(decision.allowed)
+        self.assertIn("ADVERSE_ADD_DISTANCE_TOO_WIDE", {issue.code for issue in decision.issues})
+
+    def test_adverse_same_pair_add_allows_market_derived_bounded_retest(self) -> None:
+        existing_long = BrokerPosition(
+            trade_id="1",
+            pair="EUR_USD",
+            side=Side.LONG,
+            units=3000,
+            entry_price=1.1740,
+            take_profit=1.1760,
+            stop_loss=1.1720,
+            owner=Owner.TRADER,
+        )
+        intent = OrderIntent(
+            pair="EUR_USD",
+            side=Side.LONG,
+            order_type=OrderType.MARKET,
+            units=1000,
+            tp=1.17554,
+            sl=1.17234,
+            thesis="adverse_same_pair_add_is_current_atr_bounded",
+            market_context=MarketContext(
+                regime="RANGE_ROTATION bounded retest",
+                narrative="candidate is a same-side retest add",
+                chart_story="lower-half rejection with current spread contained",
+                method=TradeMethod.RANGE_ROTATION,
+                invalidation="SL trades",
+            ),
+            metadata={
+                "position_intent": "PYRAMID",
+                "position_fill": "OPEN_ONLY",
+                "same_pair_add_type": "AVERAGE_INTO_ADVERSE",
+                "tp_atr_pips": 4.0,
+            },
+        )
+
+        from quant_rabbit.risk import RiskPolicy
+
+        decision = RiskEngine(
+            policy=RiskPolicy(
+                allow_protected_trader_position_adds=True,
+                max_same_pair_trader_positions=None,
+                max_same_pair_margin_utilization_pct=None,
+                max_portfolio_loss_jpy=50_000.0,
+            )
+        ).validate(intent, snapshot(positions=(existing_long,)))
+
+        self.assertTrue(decision.allowed, decision.block_reasons)
+        self.assertNotIn("ADVERSE_ADD_DISTANCE_TOO_WIDE", {issue.code for issue in decision.issues})
+
     def test_same_pair_position_cap_does_not_block_explicit_hedge(self) -> None:
         first = BrokerPosition(
             trade_id="1",
@@ -1284,8 +1470,8 @@ class RiskEngineTest(unittest.TestCase):
             pair="EUR_USD",
             side=Side.SHORT,
             units=8_400,
-            entry_price=1.16013,
-            unrealized_pl_jpy=-200.0,
+            entry_price=1.17413,
+            unrealized_pl_jpy=200.0,
             take_profit=1.15830,
             stop_loss=None,
             owner=Owner.TRADER,
@@ -1306,7 +1492,11 @@ class RiskEngineTest(unittest.TestCase):
                 method=TradeMethod.BREAKOUT_FAILURE,
                 invalidation="SL trades",
             ),
-            metadata={"position_intent": "PYRAMID", "position_fill": "OPEN_ONLY"},
+            metadata={
+                "position_intent": "PYRAMID",
+                "position_fill": "OPEN_ONLY",
+                "same_pair_add_type": "PYRAMID_WITH_MOVE",
+            },
         )
 
         try:

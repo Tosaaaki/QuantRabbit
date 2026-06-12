@@ -65,7 +65,8 @@ exit events. The shape of that edge, as advisory evidence for lane selection
   7 pips), while bounded pyramiding-with-the-move was negative. This is
   evidence for selective, risk-budgeted retest/add logic only; it is not
   permission for unbounded martingale, weak forecasts, or same-pair additions
-  outside current basket risk and `LIVE_READY` validation.
+  outside current basket risk, current ATR-bounded adverse-add validation, and
+  `LIVE_READY` validation.
 - When an intent is a same-pair same-side add, read its
   `position_building.same_pair_add_type`. Do not describe a
   `PYRAMID_WITH_MOVE` add as nanpin; manual precedent supports only bounded
@@ -73,8 +74,10 @@ exit events. The shape of that edge, as advisory evidence for lane selection
 - H1 context: bounded `AGAINST_H1_TREND` paid far better than
   `WITH_H1_TREND`. A lane using the 2025 precedent as an aggression reason must
   explain whether current H1/M5 and 24h-location context is comparable.
-- Session: use `LONDON_AM` as the reliable bounded sample. `NY_OVERLAP` was
-  positive in raw history but negative after removing the long-hold tail.
+- Session: historical session buckets are descriptive/ranking evidence only,
+  not a hard time-of-day no-trade gate. The AI trader is expected to run across
+  all hours and let current spread, ATR, forecast, flow, broker truth, and risk
+  geometry decide whether a lane is executable.
 - The operator's own blowup mode was holding decayed positions past ~12h
   (margin closeouts −217k) — the thesis-horizon expiry and disaster stop
   exist to bound exactly that; do not fight them.

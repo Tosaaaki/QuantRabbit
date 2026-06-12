@@ -584,6 +584,20 @@ class RiskPolicy:
     max_same_pair_margin_utilization_pct: float | None = field(
         default_factory=lambda: _env_optional_float("QR_MAX_SAME_PAIR_MARGIN_UTILIZATION_PCT", 45.0)
     )
+    # Bound same-pair same-side averaging into adverse movement by current
+    # operating volatility, not by clock/session.
+    # (a) market reality: the operator's replayable 2025 "nanpin" clusters
+    #     were small adverse retests, not unlimited martingale adds; an add
+    #     several current ATRs away is a new trapped leg, even if the time of
+    #     day is normally liquid.
+    # (b) constant rather than derived: 2x current operating ATR is the
+    #     execution-policy ceiling that separates local retest/absorption from
+    #     stale-loss averaging. The ATR itself is market-derived per intent.
+    # (c) replace via: QR_MAX_ADVERSE_ADD_ATR_MULTIPLE, or a future
+    #     expectancy-derived add allocator trained on post-trade clusters.
+    max_adverse_add_atr_multiple: float | None = field(
+        default_factory=lambda: _env_optional_float("QR_MAX_ADVERSE_ADD_ATR_MULTIPLE", 2.0)
+    )
     max_portfolio_loss_jpy: float | None = None
 
 
@@ -785,6 +799,7 @@ class RiskEngine:
 
         issues.extend(self._entry_contract_issues(intent, quote, spec, spread_pips, for_live_send=for_live_send))
         entry_price = self._entry_price(intent, quote)
+        issues.extend(self._same_pair_adverse_add_issues(intent, snapshot, entry_price, spec))
         issues.extend(self._conversion_quote_issues(intent.pair, snapshot))
         quote_to_jpy = self._quote_to_jpy(intent.pair, snapshot)
         if quote_to_jpy is None:
@@ -956,6 +971,83 @@ class RiskEngine:
                 f"{intent.pair} trader margin after candidate would be {estimated_pair_margin:.0f} JPY "
                 f"({estimated_pair_margin / account.nav_jpy * 100.0:.1f}% NAV), above same-pair cap "
                 f"{cap_pct:.1f}% ({cap_jpy:.0f} JPY); wait for that pair to harvest or route an explicit HEDGE",
+            )
+        ]
+
+    def _same_pair_adverse_add_issues(
+        self,
+        intent: OrderIntent,
+        snapshot: BrokerSnapshot,
+        entry_price: float,
+        spec: InstrumentSpec,
+    ) -> list[RiskIssue]:
+        cap_mult = self.policy.max_adverse_add_atr_multiple
+        if cap_mult is None or _intent_declares_hedge(intent):
+            return []
+        if cap_mult <= 0:
+            return [
+                RiskIssue(
+                    "INVALID_ADVERSE_ADD_POLICY",
+                    f"max_adverse_add_atr_multiple must be positive or None, got {cap_mult}",
+                )
+            ]
+
+        same_side_positions = tuple(
+            position
+            for position in snapshot.positions
+            if (
+                position.owner == Owner.TRADER
+                and position.pair == intent.pair
+                and position.side == intent.side
+            )
+        )
+        if not same_side_positions:
+            return []
+
+        total_units = sum(abs(int(position.units)) for position in same_side_positions)
+        if total_units <= 0:
+            return []
+        avg_entry = (
+            sum(float(position.entry_price) * abs(int(position.units)) for position in same_side_positions)
+            / total_units
+        )
+        raw_distance_pips = (float(entry_price) - avg_entry) * spec.pip_factor
+        adverse_pips = max(0.0, -raw_distance_pips) if intent.side == Side.LONG else max(0.0, raw_distance_pips)
+        if adverse_pips <= 0.0:
+            return []
+
+        metadata = intent.metadata or {}
+        add_type = str(metadata.get("same_pair_add_type") or "").upper().strip()
+        if add_type != "AVERAGE_INTO_ADVERSE":
+            return [
+                RiskIssue(
+                    "ADVERSE_ADD_CLASSIFICATION_MISSING",
+                    f"{intent.pair} {intent.side.value} adds {adverse_pips:.1f}pip into adverse "
+                    "same-pair exposure, but intent metadata does not classify it as "
+                    "same_pair_add_type=AVERAGE_INTO_ADVERSE; refuse unclassified averaging.",
+                )
+            ]
+
+        atr_pips = _to_float(metadata.get("tp_atr_pips"))
+        if atr_pips is None or atr_pips <= 0:
+            return [
+                RiskIssue(
+                    "ADVERSE_ADD_ATR_MISSING",
+                    f"{intent.pair} {intent.side.value} adverse same-pair add needs current "
+                    "tp_atr_pips metadata so the add is bounded by market volatility, not by time/session.",
+                )
+            ]
+
+        cap_pips = atr_pips * cap_mult
+        if adverse_pips <= cap_pips:
+            return []
+        return [
+            RiskIssue(
+                "ADVERSE_ADD_DISTANCE_TOO_WIDE",
+                f"{intent.pair} {intent.side.value} adverse same-pair add is {adverse_pips:.1f}pip "
+                f"from trader avg entry, above {cap_mult:.1f}x current ATR cap "
+                f"({cap_pips:.1f}pip from tp_atr_pips={atr_pips:.1f}); this is stale-loss averaging, "
+                "not bounded retest/nanpin.",
             )
         ]
 
