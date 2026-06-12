@@ -584,6 +584,119 @@ class RiskEngineTest(unittest.TestCase):
         self.assertFalse(decision.allowed)
         self.assertIn("PAIR_CONCENTRATION_LIMIT", {issue.code for issue in decision.issues})
 
+    def test_bounded_adverse_add_can_use_manual_replay_third_slot(self) -> None:
+        first = BrokerPosition(
+            trade_id="1",
+            pair="EUR_USD",
+            side=Side.LONG,
+            units=3000,
+            entry_price=1.1740,
+            take_profit=1.1760,
+            stop_loss=1.1720,
+            owner=Owner.TRADER,
+        )
+        second = BrokerPosition(
+            trade_id="2",
+            pair="EUR_USD",
+            side=Side.LONG,
+            units=3000,
+            entry_price=1.1740,
+            take_profit=1.1760,
+            stop_loss=1.1720,
+            owner=Owner.TRADER,
+        )
+        intent = OrderIntent(
+            pair="EUR_USD",
+            side=Side.LONG,
+            order_type=OrderType.STOP_ENTRY,
+            units=1000,
+            entry=1.1735,
+            tp=1.1750,
+            sl=1.1725,
+            thesis="manual_replay_bounded_nanpin_third_slot",
+            market_context=MarketContext(
+                regime="RANGE_ROTATION bounded retest",
+                narrative="candidate averages a small adverse retest inside current ATR",
+                chart_story="lower-third rejection after pullback",
+                method=TradeMethod.RANGE_ROTATION,
+                invalidation="SL trades",
+            ),
+            metadata={
+                "position_intent": "PYRAMID",
+                "position_fill": "OPEN_ONLY",
+                "same_pair_add_type": "AVERAGE_INTO_ADVERSE",
+                "tp_atr_pips": 4.0,
+            },
+        )
+
+        from quant_rabbit.risk import RiskPolicy
+
+        decision = RiskEngine(
+            policy=RiskPolicy(
+                allow_protected_trader_position_adds=True,
+                max_portfolio_loss_jpy=50_000.0,
+            )
+        ).validate(intent, snapshot(positions=(first, second)))
+
+        self.assertTrue(decision.allowed, decision.block_reasons)
+        self.assertNotIn("PAIR_CONCENTRATION_LIMIT", {issue.code for issue in decision.issues})
+        self.assertNotIn("ADVERSE_ADD_DISTANCE_TOO_WIDE", {issue.code for issue in decision.issues})
+
+    def test_bounded_adverse_add_blocks_past_manual_replay_entry_cap(self) -> None:
+        positions = tuple(
+            BrokerPosition(
+                trade_id=str(idx),
+                pair="EUR_USD",
+                side=Side.LONG,
+                units=1000,
+                entry_price=1.1740,
+                take_profit=1.1760,
+                stop_loss=1.1720,
+                owner=Owner.TRADER,
+            )
+            for idx in range(1, 5)
+        )
+        intent = OrderIntent(
+            pair="EUR_USD",
+            side=Side.LONG,
+            order_type=OrderType.STOP_ENTRY,
+            units=1000,
+            entry=1.1735,
+            tp=1.1750,
+            sl=1.1725,
+            thesis="manual_replay_bounded_nanpin_fifth_slot_must_wait",
+            market_context=MarketContext(
+                regime="RANGE_ROTATION bounded retest",
+                narrative="candidate would exceed the replayable manual averaging entry count",
+                chart_story="lower-third rejection after pullback",
+                method=TradeMethod.RANGE_ROTATION,
+                invalidation="SL trades",
+            ),
+            metadata={
+                "position_intent": "PYRAMID",
+                "position_fill": "OPEN_ONLY",
+                "same_pair_add_type": "AVERAGE_INTO_ADVERSE",
+                "tp_atr_pips": 4.0,
+            },
+        )
+
+        from quant_rabbit.risk import RiskPolicy
+
+        decision = RiskEngine(
+            policy=RiskPolicy(
+                allow_protected_trader_position_adds=True,
+                max_portfolio_positions=10,
+                max_portfolio_loss_jpy=50_000.0,
+            )
+        ).validate(intent, snapshot(positions=positions))
+
+        self.assertFalse(decision.allowed)
+        self.assertIn("PAIR_CONCENTRATION_LIMIT", {issue.code for issue in decision.issues})
+        self.assertTrue(
+            any("bounded adverse-add cap 4" in issue.message for issue in decision.issues),
+            decision.block_reasons,
+        )
+
     def test_adverse_same_pair_add_requires_position_building_classification(self) -> None:
         existing_long = BrokerPosition(
             trade_id="1",

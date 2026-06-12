@@ -572,13 +572,27 @@ class RiskPolicy:
     #     high-confidence GBP_USD/EUR_GBP candidates blocked by margin.
     # (b) constant rather than derived: this is an operator portfolio-shape
     #     policy. Two same-pair trader positions allow one thesis plus one
-    #     controlled follow-on, but stop a single pair from monopolizing the
-    #     default 4-position basket or the live 10-position attack-mode basket.
+    #     controlled follow-on for ordinary adds, while the bounded adverse-add
+    #     exception below covers the operator's replayable 2025 averaging shape.
     # (c) replace via: QR_MAX_SAME_PAIR_TRADER_POSITIONS, or a future
     #     expectancy-derived allocator that budgets slots by pair correlation
     #     and realized turnover.
     max_same_pair_trader_positions: int | None = field(
         default_factory=lambda: _env_optional_int("QR_MAX_SAME_PAIR_TRADER_POSITIONS", 2)
+    )
+    # Bounded same-side averaging slot cap.
+    # (a) market reality: the 2025 manual-history replay that the campaign is
+    #     trying to reproduce had profitable averaging-into-adverse clusters only
+    #     after excluding >=12h / margin-closeout tails; that bounded profile had
+    #     median 3 entries and max 4 entries, while unbounded and with-move
+    #     stacking created the blow-up tail.
+    # (b) constant rather than derived: this is an empirical replay boundary for
+    #     the operator precedent, not a market threshold. Current ATR still gates
+    #     the add distance separately.
+    # (c) replace via: QR_MAX_BOUNDED_ADVERSE_ADD_POSITIONS, or a future
+    #     post-trade cluster allocator that derives the cap per pair/regime.
+    max_bounded_adverse_add_positions: int | None = field(
+        default_factory=lambda: _env_optional_int("QR_MAX_BOUNDED_ADVERSE_ADD_POSITIONS", 4)
     )
     # Per-pair margin concentration cap for fresh, non-hedge adds.
     # (a) market reality: margin utilization is the binding opportunity cost;
@@ -719,7 +733,6 @@ class RiskEngine:
                             "intent.metadata['position_intent']='HEDGE'",
                         )
                     )
-            issues.extend(self._same_pair_position_concentration_issues(intent, entry_relevant_positions))
 
         if self.policy.block_new_entries_with_external_risk:
             for position in entry_relevant_positions:
@@ -809,6 +822,7 @@ class RiskEngine:
 
         issues.extend(self._entry_contract_issues(intent, quote, spec, spread_pips, for_live_send=for_live_send))
         entry_price = self._entry_price(intent, quote)
+        issues.extend(self._same_pair_position_concentration_issues(intent, entry_relevant_positions, entry_price, spec))
         issues.extend(self._same_pair_adverse_add_issues(intent, snapshot, entry_price, spec))
         issues.extend(self._conversion_quote_issues(intent.pair, snapshot))
         quote_to_jpy = self._quote_to_jpy(intent.pair, snapshot)
@@ -909,6 +923,8 @@ class RiskEngine:
         self,
         intent: OrderIntent,
         entry_relevant_positions: tuple[BrokerPosition, ...],
+        entry_price: float,
+        spec: InstrumentSpec,
     ) -> list[RiskIssue]:
         cap = self.policy.max_same_pair_trader_positions
         if cap is None or _intent_declares_hedge(intent):
@@ -920,13 +936,50 @@ class RiskEngine:
                     f"max_same_pair_trader_positions must be positive or None, got {cap}",
                 )
             ]
-        same_pair_count = sum(
-            1
+        same_pair_positions = tuple(
+            position
             for position in entry_relevant_positions
             if position.owner == Owner.TRADER and position.pair == intent.pair
         )
+        same_pair_count = len(same_pair_positions)
         if same_pair_count < cap:
             return []
+
+        bounded_cap = self.policy.max_bounded_adverse_add_positions
+        if bounded_cap is not None and bounded_cap <= 0:
+            return [
+                RiskIssue(
+                    "INVALID_BOUNDED_ADVERSE_ADD_POLICY",
+                    f"max_bounded_adverse_add_positions must be positive or None, got {bounded_cap}",
+                )
+            ]
+        same_side_positions = tuple(position for position in same_pair_positions if position.side == intent.side)
+        all_same_side = len(same_side_positions) == same_pair_count
+        if (
+            bounded_cap is not None
+            and bounded_cap > cap
+            and same_pair_count < bounded_cap
+            and all_same_side
+        ):
+            adverse_pips = _same_pair_adverse_add_pips(intent.side, same_side_positions, entry_price, spec)
+            if adverse_pips is not None and adverse_pips > 0.0:
+                # Let the dedicated adverse-add gate below enforce explicit
+                # classification and current-ATR distance. This exception only
+                # keeps the ordinary two-position cap from blocking the manual
+                # replay's bounded 3rd/4th averaging entries.
+                return []
+
+        if bounded_cap is not None and all_same_side:
+            adverse_pips = _same_pair_adverse_add_pips(intent.side, same_side_positions, entry_price, spec)
+            if adverse_pips is not None and adverse_pips > 0.0 and same_pair_count >= bounded_cap:
+                return [
+                    RiskIssue(
+                        "PAIR_CONCENTRATION_LIMIT",
+                        f"open trader {intent.pair} positions {same_pair_count} reached bounded adverse-add "
+                        f"cap {bounded_cap}; 2025 manual replay supports small averaging only up to that "
+                        "entry count, so wait for TP/position-management before adding same-pair risk",
+                    )
+                ]
         return [
             RiskIssue(
                 "PAIR_CONCENTRATION_LIMIT",
@@ -1014,15 +1067,9 @@ class RiskEngine:
         if not same_side_positions:
             return []
 
-        total_units = sum(abs(int(position.units)) for position in same_side_positions)
-        if total_units <= 0:
+        adverse_pips = _same_pair_adverse_add_pips(intent.side, same_side_positions, entry_price, spec)
+        if adverse_pips is None:
             return []
-        avg_entry = (
-            sum(float(position.entry_price) * abs(int(position.units)) for position in same_side_positions)
-            / total_units
-        )
-        raw_distance_pips = (float(entry_price) - avg_entry) * spec.pip_factor
-        adverse_pips = max(0.0, -raw_distance_pips) if intent.side == Side.LONG else max(0.0, raw_distance_pips)
         if adverse_pips <= 0.0:
             return []
 
@@ -1467,6 +1514,25 @@ class RiskEngine:
 
 def _contains_any(text: str, needles: tuple[str, ...]) -> bool:
     return any(needle in text for needle in needles)
+
+
+def _same_pair_adverse_add_pips(
+    side: Side,
+    same_side_positions: tuple[BrokerPosition, ...],
+    entry_price: float,
+    spec: InstrumentSpec,
+) -> float | None:
+    total_units = sum(abs(int(position.units)) for position in same_side_positions)
+    if total_units <= 0:
+        return None
+    avg_entry = (
+        sum(float(position.entry_price) * abs(int(position.units)) for position in same_side_positions)
+        / total_units
+    )
+    raw_distance_pips = (float(entry_price) - avg_entry) * spec.pip_factor
+    if side == Side.LONG:
+        return max(0.0, -raw_distance_pips)
+    return max(0.0, raw_distance_pips)
 
 
 def _same_pair_position_units(snapshot: BrokerSnapshot, pair: str, *, owner: Owner | None = None) -> tuple[int, int]:
