@@ -1188,6 +1188,44 @@ class PositionManagerTest(unittest.TestCase):
             else:
                 os.environ["QR_TRADER_DISABLE_SL_REPAIR"] = prior_sl
 
+    def test_protected_profitable_long_temporary_top_uses_profit_market_take(self) -> None:
+        # Regression from 2026-06-12 USD_CAD screenshot: the long swing thesis
+        # can still be broadly valid, but a local M1 top followed by lower
+        # closes should bank the current MFE and wait for a pullback/retest
+        # re-entry instead of HOLD_PROTECTED until the full TP.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            decision = _decision(root, long_score=180, short_score=80)
+            pair_charts = _temporary_top_pair_charts(root)
+            _write_latest_forecast(root, direction="UP", confidence=0.39)
+            snapshot = _snapshot(
+                BrokerPosition(
+                    trade_id="temporary-top",
+                    pair="EUR_USD",
+                    side=Side.LONG,
+                    units=5000,
+                    entry_price=1.19980,
+                    unrealized_pl_jpy=450,
+                    take_profit=1.20320,
+                    stop_loss=1.19800,
+                ),
+                bid=1.20040,
+                ask=1.20060,
+            )
+
+            result = PositionManager(
+                trader_decision_path=decision,
+                pair_charts_path=pair_charts,
+                output_path=root / "data" / "pm.json",
+                report_path=root / "pm.md",
+            ).run(snapshot)
+
+            self.assertEqual(result.action, ACTION_TAKE_PROFIT_MARKET)
+            self.assertEqual(result.positions[0].action, ACTION_TAKE_PROFIT_MARKET)
+            report = (root / "pm.md").read_text()
+            self.assertIn("temporary top profit-take", report)
+            self.assertIn("fresh LIVE_READY pullback/retest lane", report)
+
     def test_operator_manual_position_without_tp_preserves_no_broker_tp_by_default(self) -> None:
         prior = os.environ.pop("QR_ENABLE_MISSING_TP_REPAIR", None)
         try:
@@ -1581,6 +1619,97 @@ def _structural_reversal_pair_charts(root: Path) -> Path:
                         ],
                     }
                 ]
+            }
+        )
+    )
+    return path
+
+
+def _temporary_top_pair_charts(root: Path) -> Path:
+    path = root / "pair_charts_temporary_top.json"
+    now = datetime.now(timezone.utc)
+    recent = [
+        {"t": (now - timedelta(minutes=11)).isoformat(), "o": 1.20020, "h": 1.20042, "l": 1.20010, "c": 1.20036, "complete": True},
+        {"t": (now - timedelta(minutes=10)).isoformat(), "o": 1.20036, "h": 1.20068, "l": 1.20030, "c": 1.20062, "complete": True},
+        {"t": (now - timedelta(minutes=9)).isoformat(), "o": 1.20062, "h": 1.20118, "l": 1.20058, "c": 1.20105, "complete": True},
+        {"t": (now - timedelta(minutes=8)).isoformat(), "o": 1.20105, "h": 1.20122, "l": 1.20094, "c": 1.20102, "complete": True},
+        {"t": (now - timedelta(minutes=7)).isoformat(), "o": 1.20102, "h": 1.20108, "l": 1.20082, "c": 1.20084, "complete": True},
+        {"t": (now - timedelta(minutes=6)).isoformat(), "o": 1.20084, "h": 1.20088, "l": 1.20066, "c": 1.20068, "complete": True},
+        {"t": (now - timedelta(minutes=5)).isoformat(), "o": 1.20068, "h": 1.20070, "l": 1.20050, "c": 1.20055, "complete": True},
+        {"t": (now - timedelta(minutes=4)).isoformat(), "o": 1.20055, "h": 1.20060, "l": 1.20036, "c": 1.20042, "complete": True},
+    ]
+    path.write_text(
+        json.dumps(
+            {
+                "generated_at_utc": now.isoformat(),
+                "charts": [
+                    {
+                        "pair": "EUR_USD",
+                        "chart_story": (
+                            "M1(TREND_DOWN,ADX=27,ST=-,struct=BOS_UP@1.2010) "
+                            "M5(RANGE,ADX=16,ST=-,struct=CHOCH_UP@1.2008:wick) "
+                            "H1(TREND_UP,ADX=25,ST=+) "
+                            "H4(TREND_UP,ADX=28,ST=+) "
+                            "D(TREND_UP,ADX=33,ST=+)"
+                        ),
+                        "confluence": {
+                            "price_percentile_24h": 0.57,
+                            "price_percentile_7d": 0.82,
+                            "range_24h_sigma_multiple": 3.0,
+                            "score_balance": "LONG_LEAN",
+                            "score_gap": 0.84,
+                            "tf_agreement_score": 0.67,
+                        },
+                        "session": {"current_tag": "NY_AM_KILLZONE"},
+                        "views": [
+                            {
+                                "granularity": "M1",
+                                "regime": "TREND_DOWN",
+                                "long_bias": 0.29,
+                                "short_bias": 0.71,
+                                "recent_candles": recent,
+                                "indicators": {
+                                    "atr_pips": 1.4,
+                                    "bb_upper": 1.20115,
+                                    "bb_lower": 1.20030,
+                                    "donchian_high": 1.20122,
+                                    "donchian_low": 1.20030,
+                                    "supertrend_dir": -1,
+                                    "psar_dir": -1,
+                                },
+                                "structure": {
+                                    "fair_value_gaps": [
+                                        {"direction": "DOWN", "filled": False},
+                                    ]
+                                },
+                            },
+                            {
+                                "granularity": "M5",
+                                "regime": "RANGE",
+                                "long_bias": 0.62,
+                                "short_bias": 0.20,
+                                "indicators": {
+                                    "atr_pips": 3.8,
+                                    "bb_upper": 1.20110,
+                                    "bb_lower": 1.19980,
+                                    "donchian_high": 1.20122,
+                                    "donchian_low": 1.19980,
+                                    "supertrend_dir": -1,
+                                },
+                            },
+                            {
+                                "granularity": "H1",
+                                "regime": "TREND_UP",
+                                "indicators": {"atr_pips": 8.0},
+                            },
+                            {
+                                "granularity": "H4",
+                                "regime": "TREND_UP",
+                                "indicators": {"atr_pips": 18.0},
+                            },
+                        ],
+                    }
+                ],
             }
         )
     )

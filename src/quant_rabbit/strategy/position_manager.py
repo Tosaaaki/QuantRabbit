@@ -152,6 +152,11 @@ WILLIAMS_OVERBOUGHT = -20.0
 WILLIAMS_OVERSOLD = -80.0
 MFI_OVERBOUGHT = 80.0
 MFI_OVERSOLD = 20.0
+TEMPORARY_EXTREME_LOOKBACK_BARS = int(os.environ.get("QR_TEMPORARY_EXTREME_LOOKBACK_BARS", "12"))
+TEMPORARY_EXTREME_PULLBACK_ATR_MULT = float(os.environ.get("QR_TEMPORARY_EXTREME_PULLBACK_ATR_MULT", "1.0"))
+TEMPORARY_EXTREME_MIN_PROFIT_NOISE_MULT = float(os.environ.get("QR_TEMPORARY_EXTREME_MIN_PROFIT_NOISE_MULT", "1.0"))
+TEMPORARY_EXTREME_MIN_EVIDENCE = int(os.environ.get("QR_TEMPORARY_EXTREME_MIN_EVIDENCE", "4"))
+TEMPORARY_EXTREME_DISTRIBUTION_PCT = float(os.environ.get("QR_TEMPORARY_EXTREME_DISTRIBUTION_PCT", "0.80"))
 
 
 @dataclass(frozen=True)
@@ -402,46 +407,56 @@ class PositionManager:
                 if recommended_take_profit is not None:
                     reasons.append(f"repair TP candidate {recommended_take_profit:.5f}")
         else:
-            profit_protection_needed, profit_reasons = _profit_protection_needed(
-                position,
-                remaining_risk,
-                quote,
-                snapshot.quotes,
-                snapshot.home_conversions,
-                pair_charts,
+            temporary_profit_take, temporary_profit_reasons = _temporary_extreme_profit_take_signal(
+                position=position,
+                quote=quote,
+                full_pair_charts=full_pair_charts,
+                latest_forecast=latest_forecast,
             )
-            reasons.extend(profit_reasons)
-            sl_free_global = (
-                position.owner == Owner.TRADER and _trader_sl_repair_disabled()
-            )
-            if profit_protection_needed and sl_free_global:
-                # SL-free directive: do not auto-tighten SL even on profit.
-                # The operator decides when to harvest. TP stays as the auto
-                # exit; auto-added BE-stop is exactly the noise-hunt vector
-                # the user told us to stop generating ("意図的じゃないSLは
-                # 生成するな" 2026-05-07).
-                reasons.append("profit-protect skipped (QR_TRADER_DISABLE_SL_REPAIR=1); operator-managed harvest")
-                action = ACTION_HOLD_SL_FREE
-            elif profit_protection_needed:
-                reasons.append("profit clears remaining risk plus current session noise")
-                recommended_stop_loss = _break_even_stop(position, quote)
-                if recommended_stop_loss is None:
-                    reasons.append("break-even SL is not market-valid yet")
-                else:
-                    reasons.append(f"break-even SL candidate {recommended_stop_loss:.5f}")
-                action = ACTION_PROFIT_PROTECT
-            elif (
-                not sl_free_owned
-                and opposite_score is not None
-                and same_score is not None
-                and opposite_score >= same_score + 20
-                and position.unrealized_pl_jpy < 0
-            ):
-                reasons.append(f"opposite thesis score {opposite_score:.1f} materially exceeds same-direction {same_score:.1f}")
-                action = ACTION_REVIEW_EXIT
+            reasons.extend(temporary_profit_reasons)
+            if temporary_profit_take:
+                action = ACTION_TAKE_PROFIT_MARKET
             else:
-                reasons.append("TP/SL present and current thesis is not contradicted enough to force exit")
-                action = ACTION_HOLD_PROTECTED
+                profit_protection_needed, profit_reasons = _profit_protection_needed(
+                    position,
+                    remaining_risk,
+                    quote,
+                    snapshot.quotes,
+                    snapshot.home_conversions,
+                    pair_charts,
+                )
+                reasons.extend(profit_reasons)
+                sl_free_global = (
+                    position.owner == Owner.TRADER and _trader_sl_repair_disabled()
+                )
+                if profit_protection_needed and sl_free_global:
+                    # SL-free directive: do not auto-tighten SL even on profit.
+                    # The operator decides when to harvest. TP stays as the auto
+                    # exit; auto-added BE-stop is exactly the noise-hunt vector
+                    # the user told us to stop generating ("意図的じゃないSLは
+                    # 生成するな" 2026-05-07).
+                    reasons.append("profit-protect skipped (QR_TRADER_DISABLE_SL_REPAIR=1); operator-managed harvest")
+                    action = ACTION_HOLD_SL_FREE
+                elif profit_protection_needed:
+                    reasons.append("profit clears remaining risk plus current session noise")
+                    recommended_stop_loss = _break_even_stop(position, quote)
+                    if recommended_stop_loss is None:
+                        reasons.append("break-even SL is not market-valid yet")
+                    else:
+                        reasons.append(f"break-even SL candidate {recommended_stop_loss:.5f}")
+                    action = ACTION_PROFIT_PROTECT
+                elif (
+                    not sl_free_owned
+                    and opposite_score is not None
+                    and same_score is not None
+                    and opposite_score >= same_score + 20
+                    and position.unrealized_pl_jpy < 0
+                ):
+                    reasons.append(f"opposite thesis score {opposite_score:.1f} materially exceeds same-direction {same_score:.1f}")
+                    action = ACTION_REVIEW_EXIT
+                else:
+                    reasons.append("TP/SL present and current thesis is not contradicted enough to force exit")
+                    action = ACTION_HOLD_PROTECTED
 
         if remaining_risk is not None:
             reasons.append(f"remaining risk about {remaining_risk:.0f} JPY")
@@ -870,6 +885,16 @@ def _adaptive_tp_action(
         )
         return ACTION_HOLD_PROTECTED, None, reasons
 
+    temporary_profit_take, temporary_profit_reasons = _temporary_extreme_profit_take_signal(
+        position=position,
+        quote=quote,
+        full_pair_charts=full_pair_charts,
+        latest_forecast=latest_forecast,
+    )
+    reasons.extend(temporary_profit_reasons)
+    if temporary_profit_take:
+        return ACTION_TAKE_PROFIT_MARKET, None, reasons
+
     # Decision matrix (rows = macro, cols = micro). Profitable positions only.
     # WEAKENING+DEAD demoted from REVIEW_EXIT to HARVEST_TP: MARKET close pays
     # full spread, but a narrow TP fills at the broker's TP price (no spread).
@@ -1011,6 +1036,344 @@ def _adaptive_tp_action(
         reasons.append("HOLD (mixed signal)")
 
     return action, new_tp, reasons
+
+
+def _temporary_extreme_profit_take_signal(
+    *,
+    position: BrokerPosition,
+    quote,
+    full_pair_charts: dict[str, dict[str, Any]] | None,
+    latest_forecast: dict[str, Any] | None = None,
+) -> tuple[bool, list[str]]:
+    """Detect a local top/bottom where banking profit beats waiting for TP.
+
+    This is intentionally profit-side only. It does not authorize loss-side
+    closes, and it does not create a re-entry in the same pass. The re-entry
+    discipline is: close the local MFE when microstructure rolls over, refresh
+    broker truth, then let the next fresh-entry cycle decide whether the
+    pullback has rebuilt a LIVE_READY lane.
+    """
+
+    reasons: list[str] = []
+    if position.unrealized_pl_jpy <= 0:
+        return False, reasons
+    if quote is None:
+        return False, ["temporary extreme profit-take skipped: quote missing"]
+    pair_chart = (full_pair_charts or {}).get(position.pair)
+    if not isinstance(pair_chart, dict):
+        return False, ["temporary extreme profit-take skipped: pair chart missing"]
+
+    m1 = _view_by_timeframe(pair_chart, "M1")
+    m5 = _view_by_timeframe(pair_chart, "M5")
+    if not isinstance(m1, dict):
+        return False, ["temporary extreme profit-take skipped: M1 chart missing"]
+
+    side = position.side.value
+    side_up = side.upper()
+    if side_up not in {"LONG", "SHORT"}:
+        return False, reasons
+    long_side = side_up == "LONG"
+    pip_factor = _pip_factor(position.pair)
+    exit_price = quote.bid if long_side else quote.ask
+    profit_pips = _executable_profit_pips(position, quote)
+    spread_pips = _spread_pips(position.pair, quote)
+    m1_atr = _indicator_float(m1, "atr_pips")
+    if profit_pips is None or profit_pips <= 0:
+        return False, ["temporary extreme profit-take skipped: executable profit is not positive"]
+    if spread_pips is None or spread_pips <= 0:
+        return False, ["temporary extreme profit-take skipped: spread missing"]
+    if m1_atr is None or m1_atr <= 0:
+        return False, ["temporary extreme profit-take skipped: M1 ATR missing"]
+
+    min_profit_pips = max(spread_pips * TEMPORARY_EXTREME_MIN_PROFIT_NOISE_MULT, m1_atr)
+    if profit_pips < min_profit_pips:
+        return False, [
+            f"temporary extreme profit-take skipped: profit {profit_pips:.1f}pip < "
+            f"market noise floor {min_profit_pips:.1f}pip"
+        ]
+
+    candles = _closed_recent_candles(m1)
+    lookback = max(4, TEMPORARY_EXTREME_LOOKBACK_BARS)
+    recent = candles[-lookback:]
+    if len(recent) < 4:
+        return False, ["temporary extreme profit-take skipped: insufficient M1 closed candles"]
+
+    highs = [_candle_float(candle, "h", "high") for candle in recent]
+    lows = [_candle_float(candle, "l", "low") for candle in recent]
+    if any(value is None for value in highs + lows):
+        return False, ["temporary extreme profit-take skipped: malformed M1 candle prices"]
+
+    typed_highs = [float(value) for value in highs if value is not None]
+    typed_lows = [float(value) for value in lows if value is not None]
+    if long_side:
+        extreme = max(typed_highs)
+        pullback_pips = (extreme - exit_price) * pip_factor
+        pullback_label = "top pullback"
+    else:
+        extreme = min(typed_lows)
+        pullback_pips = (exit_price - extreme) * pip_factor
+        pullback_label = "bottom bounce"
+    pullback_floor = max(spread_pips, m1_atr * TEMPORARY_EXTREME_PULLBACK_ATR_MULT)
+    if pullback_pips < pullback_floor:
+        return False, [
+            f"temporary extreme profit-take skipped: {pullback_label} {pullback_pips:.1f}pip < "
+            f"floor {pullback_floor:.1f}pip"
+        ]
+
+    context_reasons = _temporary_extreme_context_reasons(
+        side_up=side_up,
+        pair_chart=pair_chart,
+        m1=m1,
+        m5=m5,
+        extreme=extreme,
+        pip_factor=pip_factor,
+        atr_pips=m1_atr,
+    )
+    if not context_reasons:
+        return False, ["temporary extreme profit-take skipped: no upper/lower rail or distribution extreme"]
+
+    evidence = _temporary_extreme_reversal_evidence(
+        side_up=side_up,
+        m1=m1,
+        m5=m5,
+        recent=recent,
+        extreme=extreme,
+        latest_forecast=latest_forecast,
+    )
+    if len(evidence) < TEMPORARY_EXTREME_MIN_EVIDENCE:
+        return False, [
+            "temporary extreme profit-take skipped: reversal evidence "
+            f"{len(evidence)}/{TEMPORARY_EXTREME_MIN_EVIDENCE}: " + "; ".join(evidence[:4])
+        ]
+
+    label = "temporary top" if long_side else "temporary bottom"
+    reasons.append(
+        f"{label} profit-take: profit {profit_pips:.1f}pip, "
+        f"{pullback_label} {pullback_pips:.1f}pip >= floor {pullback_floor:.1f}pip; "
+        + "; ".join((context_reasons + evidence)[:7])
+    )
+    reasons.append(
+        "post-close re-entry discipline: refresh broker truth and require a fresh LIVE_READY pullback/retest lane before re-entering"
+    )
+    return True, reasons
+
+
+def _view_by_timeframe(pair_chart: dict[str, Any], timeframe: str) -> dict[str, Any] | None:
+    for view in pair_chart.get("views") or []:
+        if not isinstance(view, dict):
+            continue
+        if str(view.get("granularity") or view.get("timeframe") or "").upper() == timeframe:
+            return view
+    return None
+
+
+def _indicator_float(view: dict[str, Any] | None, key: str) -> float | None:
+    if not isinstance(view, dict):
+        return None
+    indicators = view.get("indicators") if isinstance(view.get("indicators"), dict) else {}
+    value = indicators.get(key)
+    if value is None:
+        value = view.get(key)
+    return _to_float(value)
+
+
+def _closed_recent_candles(view: dict[str, Any]) -> list[dict[str, Any]]:
+    raw = view.get("recent_candles")
+    if not isinstance(raw, list):
+        return []
+    out: list[dict[str, Any]] = []
+    for candle in raw:
+        if not isinstance(candle, dict):
+            continue
+        if candle.get("complete") is False:
+            continue
+        out.append(candle)
+    return out
+
+
+def _candle_float(candle: dict[str, Any], short_key: str, long_key: str) -> float | None:
+    return _to_float(candle.get(short_key) if candle.get(short_key) is not None else candle.get(long_key))
+
+
+def _temporary_extreme_context_reasons(
+    *,
+    side_up: str,
+    pair_chart: dict[str, Any],
+    m1: dict[str, Any],
+    m5: dict[str, Any] | None,
+    extreme: float,
+    pip_factor: int,
+    atr_pips: float,
+) -> list[str]:
+    reasons: list[str] = []
+    confluence = pair_chart.get("confluence") if isinstance(pair_chart.get("confluence"), dict) else {}
+    pct_24h = _to_float(confluence.get("price_percentile_24h"))
+    pct_7d = _to_float(confluence.get("price_percentile_7d"))
+    if side_up == "LONG":
+        if pct_24h is not None and pct_24h >= TEMPORARY_EXTREME_DISTRIBUTION_PCT:
+            reasons.append(f"24h upper distribution pct={pct_24h:.2f}")
+        if pct_7d is not None and pct_7d >= TEMPORARY_EXTREME_DISTRIBUTION_PCT:
+            reasons.append(f"7d upper distribution pct={pct_7d:.2f}")
+        rail_note = _upper_rail_touch_reason(m1, m5, extreme, pip_factor, atr_pips)
+    else:
+        if pct_24h is not None and pct_24h <= 1.0 - TEMPORARY_EXTREME_DISTRIBUTION_PCT:
+            reasons.append(f"24h lower distribution pct={pct_24h:.2f}")
+        if pct_7d is not None and pct_7d <= 1.0 - TEMPORARY_EXTREME_DISTRIBUTION_PCT:
+            reasons.append(f"7d lower distribution pct={pct_7d:.2f}")
+        rail_note = _lower_rail_touch_reason(m1, m5, extreme, pip_factor, atr_pips)
+    if rail_note:
+        reasons.append(rail_note)
+    return reasons
+
+
+def _upper_rail_touch_reason(
+    m1: dict[str, Any],
+    m5: dict[str, Any] | None,
+    high: float,
+    pip_factor: int,
+    atr_pips: float,
+) -> str | None:
+    tolerance = max(atr_pips * 0.25, 0.0) / pip_factor
+    for tf, view in (("M1", m1), ("M5", m5)):
+        if not isinstance(view, dict):
+            continue
+        bb_upper = _indicator_float(view, "bb_upper")
+        donchian_high = _indicator_float(view, "donchian_high")
+        if bb_upper is not None and high >= bb_upper - tolerance:
+            return f"{tf} upper rail touched high={high:.5f} bb_upper={bb_upper:.5f}"
+        if donchian_high is not None and high >= donchian_high - tolerance:
+            return f"{tf} Donchian high touched high={high:.5f} donchian={donchian_high:.5f}"
+    return None
+
+
+def _lower_rail_touch_reason(
+    m1: dict[str, Any],
+    m5: dict[str, Any] | None,
+    low: float,
+    pip_factor: int,
+    atr_pips: float,
+) -> str | None:
+    tolerance = max(atr_pips * 0.25, 0.0) / pip_factor
+    for tf, view in (("M1", m1), ("M5", m5)):
+        if not isinstance(view, dict):
+            continue
+        bb_lower = _indicator_float(view, "bb_lower")
+        donchian_low = _indicator_float(view, "donchian_low")
+        if bb_lower is not None and low <= bb_lower + tolerance:
+            return f"{tf} lower rail touched low={low:.5f} bb_lower={bb_lower:.5f}"
+        if donchian_low is not None and low <= donchian_low + tolerance:
+            return f"{tf} Donchian low touched low={low:.5f} donchian={donchian_low:.5f}"
+    return None
+
+
+def _temporary_extreme_reversal_evidence(
+    *,
+    side_up: str,
+    m1: dict[str, Any],
+    m5: dict[str, Any] | None,
+    recent: list[dict[str, Any]],
+    extreme: float,
+    latest_forecast: dict[str, Any] | None,
+) -> list[str]:
+    evidence: list[str] = []
+    long_side = side_up == "LONG"
+    candle_note = _recent_candle_rollover_note(side_up, recent)
+    if candle_note:
+        evidence.append(candle_note)
+    micro_note = _micro_opposes_note("M1", m1, side_up)
+    if micro_note:
+        evidence.append(micro_note)
+    m5_note = _micro_opposes_note("M5", m5, side_up)
+    if m5_note:
+        evidence.append(m5_note)
+    fvg_note = _fresh_unfilled_fvg_note(m1, "DOWN" if long_side else "UP")
+    if fvg_note:
+        evidence.append(fvg_note)
+    forecast_drag = _forecast_runner_drag_reasons(side=side_up, latest_forecast=latest_forecast)
+    if forecast_drag:
+        evidence.append(forecast_drag[0])
+    if _last_close_moved_away_from_extreme(side_up, recent, extreme):
+        evidence.append("latest M1 close moved away from the local extreme")
+    return evidence
+
+
+def _recent_candle_rollover_note(side_up: str, recent: list[dict[str, Any]]) -> str | None:
+    last = recent[-4:]
+    closes = [_candle_float(candle, "c", "close") for candle in last]
+    opens = [_candle_float(candle, "o", "open") for candle in last]
+    if any(value is None for value in closes + opens):
+        return None
+    typed_closes = [float(value) for value in closes if value is not None]
+    typed_opens = [float(value) for value in opens if value is not None]
+    if side_up == "LONG":
+        body_count = sum(1 for open_, close in zip(typed_opens, typed_closes) if close < open_)
+        step_count = sum(1 for prev, cur in zip(typed_closes, typed_closes[1:]) if cur < prev)
+        if body_count >= 2 and step_count >= 2:
+            return f"M1 rollover: {body_count}/4 bearish bodies and {step_count}/3 lower closes"
+    else:
+        body_count = sum(1 for open_, close in zip(typed_opens, typed_closes) if close > open_)
+        step_count = sum(1 for prev, cur in zip(typed_closes, typed_closes[1:]) if cur > prev)
+        if body_count >= 2 and step_count >= 2:
+            return f"M1 rebound: {body_count}/4 bullish bodies and {step_count}/3 higher closes"
+    return None
+
+
+def _micro_opposes_note(tf: str, view: dict[str, Any] | None, side_up: str) -> str | None:
+    if not isinstance(view, dict):
+        return None
+    long_side = side_up == "LONG"
+    indicators = view.get("indicators") if isinstance(view.get("indicators"), dict) else {}
+    pieces: list[str] = []
+    regime = str(view.get("regime") or indicators.get("regime") or "").upper()
+    if long_side and regime in _PM_REGIME_DOWN:
+        pieces.append(f"regime={regime}")
+    elif not long_side and regime in _PM_REGIME_UP:
+        pieces.append(f"regime={regime}")
+    supertrend = _to_float(indicators.get("supertrend_dir"))
+    if supertrend is not None:
+        if long_side and supertrend < 0:
+            pieces.append("SuperTrend=-")
+        elif not long_side and supertrend > 0:
+            pieces.append("SuperTrend=+")
+    psar = _to_float(indicators.get("psar_dir"))
+    if psar is not None:
+        if long_side and psar < 0:
+            pieces.append("PSAR=-")
+        elif not long_side and psar > 0:
+            pieces.append("PSAR=+")
+    long_bias = _to_float(view.get("long_bias"))
+    short_bias = _to_float(view.get("short_bias"))
+    if long_bias is not None and short_bias is not None:
+        if long_side and short_bias > long_bias:
+            pieces.append(f"short_bias>{long_bias:.2f}")
+        elif not long_side and long_bias > short_bias:
+            pieces.append(f"long_bias>{short_bias:.2f}")
+    if pieces:
+        return f"{tf} opposes {side_up}: " + "/".join(pieces[:3])
+    return None
+
+
+def _fresh_unfilled_fvg_note(view: dict[str, Any], direction: str) -> str | None:
+    structure = view.get("structure") if isinstance(view.get("structure"), dict) else {}
+    gaps = structure.get("fair_value_gaps") if isinstance(structure.get("fair_value_gaps"), list) else []
+    for gap in reversed(gaps[-6:]):
+        if not isinstance(gap, dict):
+            continue
+        if str(gap.get("direction") or "").upper() != direction:
+            continue
+        if bool(gap.get("filled")):
+            continue
+        return f"M1 unfilled {direction} FVG after extreme"
+    return None
+
+
+def _last_close_moved_away_from_extreme(side_up: str, recent: list[dict[str, Any]], extreme: float) -> bool:
+    last_close = _candle_float(recent[-1], "c", "close") if recent else None
+    if last_close is None:
+        return False
+    if side_up == "LONG":
+        return float(last_close) < extreme
+    return float(last_close) > extreme
 
 
 def _next_generation_structural_auto_close_allowed(m: ManagedPosition, data_root: Path) -> bool:
