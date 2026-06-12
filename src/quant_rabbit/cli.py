@@ -1529,7 +1529,10 @@ def _cycle_refresh_steps(daily_risk_pct: str) -> list[dict[str, Any]]:
     later steps would read a missing/stale artifact and the digest would lie.
     Optional steps record FAILED and continue: the route/verifier layers treat
     their artifacts as missing-evidence blockers, which is the same outcome
-    the per-step skeleton produced.
+    the per-step skeleton produced. Existing-position and memory-health
+    freshness sidecars are required because stale versions are P0 blockers
+    before target-open entry routing; swallowing their execution failures keeps
+    the old broker packet alive.
     """
     target_args = ["daily-target-state", "--snapshot", "data/broker_snapshot.json", "--daily-risk-pct", daily_risk_pct]
     snapshot_args = ["broker-snapshot", "--output", "data/broker_snapshot.json"]
@@ -1571,8 +1574,8 @@ def _cycle_refresh_steps(daily_risk_pct: str) -> list[dict[str, Any]]:
         {"argv": ["position-thesis-check"], "required": False},
         {"argv": ["thesis-evolution-check"], "required": False},
         {"argv": ["forecast-persistence-check"], "required": False},
-        {"argv": ["position-management"], "required": False},
-        {"argv": ["memory-health"], "required": False},
+        {"argv": ["position-management"], "required": True},
+        {"argv": ["memory-health"], "required": True},
         {"argv": ["self-improvement-audit"], "required": False, "ok_rcs": [0, 2]},
     ]
 
@@ -1598,8 +1601,8 @@ def _cycle_sidecar_steps() -> list[dict[str, Any]]:
         # broker snapshot consumed by self-improvement-audit. Without this pass
         # the audit correctly leaves POSITION_MANAGEMENT_STALE as a persistent
         # P0 even after the protection sidecar phase completes.
-        {"argv": ["position-management"], "required": False},
-        {"argv": ["memory-health"], "required": False},
+        {"argv": ["position-management"], "required": True},
+        {"argv": ["memory-health"], "required": True},
         {"argv": ["self-improvement-audit"], "required": False, "ok_rcs": [0, 2]},
     ]
 

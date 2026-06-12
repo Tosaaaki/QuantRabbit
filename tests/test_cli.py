@@ -1915,15 +1915,22 @@ class ConsolidatedCycleCommandTest(unittest.TestCase):
         self.assertLess(refresh.index("operator-precedent-audit"), refresh.index("verification-ledger-audit"))
         self.assertLess(refresh.index("memory-health"), refresh.index("self-improvement-audit"))
         self.assertEqual(refresh[-1], "self-improvement-audit")
+        refresh_by_step = {" ".join(s["argv"]): s for s in _cycle_refresh_steps("10")}
+        self.assertTrue(refresh_by_step["position-management"]["required"])
+        self.assertTrue(refresh_by_step["memory-health"]["required"])
 
         with mock.patch.dict(os.environ, {"QR_LIVE_ENABLED": ""}, clear=False):
-            sidecars = [" ".join(s["argv"]) for s in _cycle_sidecar_steps()]
+            sidecar_specs = _cycle_sidecar_steps()
+            sidecars = [" ".join(s["argv"]) for s in sidecar_specs]
         self.assertIn("profit-partial-close", sidecars)
         self.assertNotIn("profit-partial-close --send --confirm-live", sidecars)
         self.assertLess(sidecars.index("forecast-persistence-check"), sidecars.index("position-management"))
         self.assertLess(sidecars.index("position-management"), sidecars.index("memory-health"))
         self.assertLess(sidecars.index("memory-health"), sidecars.index("self-improvement-audit"))
         self.assertEqual(sidecars[-1], "self-improvement-audit")
+        sidecars_by_step = {" ".join(s["argv"]): s for s in sidecar_specs}
+        self.assertTrue(sidecars_by_step["position-management"]["required"])
+        self.assertTrue(sidecars_by_step["memory-health"]["required"])
 
         with mock.patch.dict(os.environ, {"QR_LIVE_ENABLED": "1"}, clear=False):
             sidecars_live = [" ".join(s["argv"]) for s in _cycle_sidecar_steps()]
