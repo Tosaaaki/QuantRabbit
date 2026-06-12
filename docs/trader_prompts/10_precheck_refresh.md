@@ -55,7 +55,7 @@ Digest semantics:
   receipt becomes WAIT — existing broker TPs are position protection and
   must not wait for a fresh entry to be managed.
 - `target`, `intents`, `attack_advice`, `capture_economics`,
-  `operator_precedent`,
+  `operator_precedent`, `manual_market_context`,
   `memory_health`, `news_health`, `thesis_evolution`,
   `forecast_persistence`, `position_thesis` summarize the artifacts the
   decision receipt must cite.

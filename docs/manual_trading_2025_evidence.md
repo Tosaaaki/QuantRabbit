@@ -18,6 +18,7 @@ read-only by
 
 ```
 PYTHONPATH=src python3 tools/mine_manual_history.py --out data/manual_history_2025_mining.json
+PYTHONPATH=src python3 -m quant_rabbit.cli manual-market-context-audit
 ```
 
 ## Aggregate (411 exit events: 384 full closes + 27 partial reductions)

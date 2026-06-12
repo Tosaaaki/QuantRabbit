@@ -23,6 +23,7 @@ If you are an automation reading this for runtime, also read `docs/SKILL_trader.
 | Verification ledger latest report | `docs/verification_ledger_report.md` |
 | Operator 2025 manual-history mining artifact | `data/manual_history_2025_mining.json` |
 | Operator precedent audit JSON/report | `data/operator_precedent_audit.json` / `docs/operator_precedent_audit_report.md` |
+| Operator manual market-context audit JSON/report | `data/manual_market_context_audit.json` / `docs/manual_market_context_audit_report.md` |
 | Self-improvement audit JSON | `data/self_improvement_audit.json` |
 | Self-improvement audit latest report | `docs/self_improvement_audit_report.md` |
 | News health audit JSON/report | `data/news_health.json` / `data/news_health_report.md` |
@@ -181,7 +182,7 @@ This rule is enforceable: any reviewer (Codex or Claude) seeing a JPY literal, a
 
 - `autotrade-cycle --send` is the live automation entrypoint.
 - `autotrade-cycle` syncs the execution ledger before and after the broker gateway phase; do not bypass it with direct OANDA writes or out-of-band receipt edits.
-- **Consolidated cycle steps (2026-06-10).** The scheduled trader refreshes evidence with `cycle-refresh` and runs post-gateway protection with `cycle-sidecars`. Both execute the exact per-step lists from `docs/SKILL_trader.md` in one process and print one compact digest, because per-step shell turns burned ~3M tokens per cycle and exhausted the scheduler's credits on 2026-06-09 (≈36h silent live stop). The model must read the digest and make targeted queries into large artifacts; it must not re-run the steps individually or cat multi-megabyte JSON into the conversation. The refresh digest includes `operator-precedent-audit` so the 2025 manual success shape is visible as advisory lane context; the refresh and sidecar digests include the current `self-improvement-audit` summary so persistent P0 repair gates reach the verifier/gateway before new-risk routing. The step lists in `cli._cycle_refresh_steps` / `cli._cycle_sidecar_steps` are canonical and change only together with `docs/SKILL_trader.md`.
+- **Consolidated cycle steps (2026-06-10).** The scheduled trader refreshes evidence with `cycle-refresh` and runs post-gateway protection with `cycle-sidecars`. Both execute the exact per-step lists from `docs/SKILL_trader.md` in one process and print one compact digest, because per-step shell turns burned ~3M tokens per cycle and exhausted the scheduler's credits on 2026-06-09 (≈36h silent live stop). The model must read the digest and make targeted queries into large artifacts; it must not re-run the steps individually or cat multi-megabyte JSON into the conversation. The refresh digest includes `operator-precedent-audit` so the 2025 manual success shape is visible as advisory lane context, and reads `manual-market-context-audit` when the static historical artifact exists so precedent-based aggression must also cite comparable technical context. The refresh and sidecar digests include the current `self-improvement-audit` summary so persistent P0 repair gates reach the verifier/gateway before new-risk routing. The step lists in `cli._cycle_refresh_steps` / `cli._cycle_sidecar_steps` are canonical and change only together with `docs/SKILL_trader.md`.
 - Flat-account entry loop: `BrokerSnapshot` → `IntentGenerator` → `TraderBrain` → `LiveOrderGateway`.
 - Exposure-management loop: `BrokerSnapshot` → `TraderBrain` → `PositionManager` → `PositionProtectionGateway`.
 - `gpt-trader-decision` verifies the operator's decision receipt by default.
@@ -411,6 +412,7 @@ PYTHONPATH=src python3 -m quant_rabbit.cli ai-attack-advice
 PYTHONPATH=src python3 -m quant_rabbit.cli learning-audit
 PYTHONPATH=src python3 -m quant_rabbit.cli capture-economics   # payoff ratio vs breakeven from trader-attributed realized outcomes
 PYTHONPATH=src python3 -m quant_rabbit.cli operator-precedent-audit   # advisory 2025 manual-success precedent vs current LIVE_READY lanes
+PYTHONPATH=src python3 -m quant_rabbit.cli manual-market-context-audit   # static OANDA-candle technical context around 2025 manual trades
 PYTHONPATH=src python3 -m quant_rabbit.cli verification-ledger-audit
 PYTHONPATH=src python3 -m quant_rabbit.cli memory-health
 PYTHONPATH=src python3 -m quant_rabbit.cli self-improvement-audit

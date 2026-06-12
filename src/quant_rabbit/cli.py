@@ -108,6 +108,8 @@ from quant_rabbit.paths import (
     DEFAULT_MARKET_CONTEXT_MATRIX,
     DEFAULT_MARKET_CONTEXT_MATRIX_REPORT,
     DEFAULT_MANUAL_HISTORY_2025,
+    DEFAULT_MANUAL_MARKET_CONTEXT_AUDIT,
+    DEFAULT_MANUAL_MARKET_CONTEXT_AUDIT_REPORT,
     DEFAULT_OPERATOR_PRECEDENT_AUDIT,
     DEFAULT_OPERATOR_PRECEDENT_AUDIT_REPORT,
     DEFAULT_LEARNING_AUDIT,
@@ -1788,6 +1790,23 @@ def _cycle_digest(*, kind: str, step_results: list[dict[str, Any]], aborted: boo
             "blockers": operator_precedent.get("blockers") or [],
         }
 
+    manual_market_context = _read_json_quiet(DEFAULT_MANUAL_MARKET_CONTEXT_AUDIT)
+    if isinstance(manual_market_context, dict):
+        guidance = manual_market_context.get("guidance") or {}
+        prefer = guidance.get("prefer_when_citing_precedent") or {}
+        conflict = guidance.get("require_extra_current_reason_when_conflicting") or {}
+        digest["manual_market_context"] = {
+            "status": manual_market_context.get("status"),
+            "pair": (manual_market_context.get("sample") or {}).get("pair"),
+            "analyzed_trades": (manual_market_context.get("sample") or {}).get("analyzed_trades"),
+            "coverage_pct": (manual_market_context.get("sample") or {}).get("coverage_pct"),
+            "prefer_h1_alignment": prefer.get("h1_alignment"),
+            "prefer_session_jst": prefer.get("session_jst"),
+            "conflict_h1_alignment": conflict.get("h1_alignment"),
+            "warnings": manual_market_context.get("warnings") or [],
+            "blockers": manual_market_context.get("blockers") or [],
+        }
+
     thesis_evolution = _read_json_quiet(ROOT / "data" / "thesis_evolution_report.json")
     if isinstance(thesis_evolution, dict):
         digest["thesis_evolution"] = {
@@ -2504,6 +2523,16 @@ def main(argv: list[str] | None = None) -> int:
     p_precedent.add_argument("--output", type=Path, default=DEFAULT_OPERATOR_PRECEDENT_AUDIT)
     p_precedent.add_argument("--report", type=Path, default=DEFAULT_OPERATOR_PRECEDENT_AUDIT_REPORT)
 
+    p_manual_context = sub.add_parser(
+        "manual-market-context-audit",
+        help="Audit the technical market context around the 2025 manual success trades.",
+    )
+    p_manual_context.add_argument("--manual-history", type=Path, default=DEFAULT_MANUAL_HISTORY_2025)
+    p_manual_context.add_argument("--pair", default="USD_JPY")
+    p_manual_context.add_argument("--output", type=Path, default=DEFAULT_MANUAL_MARKET_CONTEXT_AUDIT)
+    p_manual_context.add_argument("--report", type=Path, default=DEFAULT_MANUAL_MARKET_CONTEXT_AUDIT_REPORT)
+    p_manual_context.add_argument("--max-trades", type=int, default=None)
+
     p_cycle_refresh = sub.add_parser(
         "cycle-refresh",
         help="Run the full SKILL_trader.md evidence-refresh step list in one process and print a compact digest.",
@@ -2611,6 +2640,35 @@ def main(argv: list[str] | None = None) -> int:
                     "best_30d_return_pct": summary.best_30d_return_pct,
                     "live_ready_lanes": summary.live_ready_lanes,
                     "aligned_live_ready_lanes": summary.aligned_live_ready_lanes,
+                },
+                ensure_ascii=False,
+                indent=2,
+                sort_keys=True,
+            )
+        )
+        return 0
+
+    if args.command == "manual-market-context-audit":
+        from quant_rabbit.manual_market_context import build_manual_market_context_audit
+
+        summary = build_manual_market_context_audit(
+            manual_history_path=args.manual_history,
+            pair=args.pair,
+            output_path=args.output,
+            report_path=args.report,
+            max_trades=args.max_trades,
+        )
+        print(
+            json.dumps(
+                {
+                    "output_path": str(summary.output_path),
+                    "report_path": str(summary.report_path),
+                    "status": summary.status,
+                    "analyzed_trades": summary.analyzed_trades,
+                    "blockers": summary.blockers,
+                    "warnings": summary.warnings,
+                    "best_h1_alignment": summary.best_h1_alignment,
+                    "worst_h1_alignment": summary.worst_h1_alignment,
                 },
                 ensure_ascii=False,
                 indent=2,

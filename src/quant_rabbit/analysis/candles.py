@@ -52,6 +52,38 @@ def fetch_candles(
     return _candles_from_payload(payload)
 
 
+def fetch_candles_between(
+    pair: str,
+    granularity: str,
+    *,
+    time_from: datetime,
+    time_to: datetime,
+    price: str = "M",
+    client: OandaReadOnlyClient | None = None,
+) -> tuple[Candle, ...]:
+    """Fetch complete candles inside an explicit UTC time window.
+
+    This is read-only historical evidence plumbing. Callers that need long
+    windows are responsible for chunking the request; OANDA caps candle result
+    sizes, and hiding pagination here would make long evidence jobs opaque.
+    """
+
+    if granularity not in SUPPORTED_GRANULARITIES:
+        raise ValueError(f"unsupported granularity {granularity!r}; expected one of {sorted(SUPPORTED_GRANULARITIES)}")
+    client = client or OandaReadOnlyClient()
+    payload = client.get_json(
+        f"/v3/instruments/{pair}/candles",
+        {
+            "granularity": granularity,
+            "from": _format_oanda_time(time_from),
+            "to": _format_oanda_time(time_to),
+            "price": price,
+            "includeFirst": "true",
+        },
+    )
+    return _candles_from_payload(payload)
+
+
 def fetch_candles_via_client(
     client: OandaReadOnlyClient,
     pair: str,
@@ -108,6 +140,12 @@ def _parse_oanda_time(value: object) -> datetime | None:
         return datetime.fromisoformat(text).astimezone(timezone.utc)
     except ValueError:
         return None
+
+
+def _format_oanda_time(value: datetime) -> str:
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
 def closes(candles: Sequence[Candle]) -> tuple[float, ...]:

@@ -1952,6 +1952,7 @@ class ConsolidatedCycleCommandTest(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as tmp:
             audit_path = Path(tmp) / "operator_precedent_audit.json"
+            manual_context_path = Path(tmp) / "manual_market_context_audit.json"
             audit_path.write_text(
                 json.dumps(
                     {
@@ -1977,8 +1978,34 @@ class ConsolidatedCycleCommandTest(unittest.TestCase):
                     }
                 )
             )
+            manual_context_path.write_text(
+                json.dumps(
+                    {
+                        "status": "MANUAL_MARKET_CONTEXT_PASS",
+                        "sample": {
+                            "pair": "USD_JPY",
+                            "analyzed_trades": 411,
+                            "coverage_pct": 100.0,
+                        },
+                        "guidance": {
+                            "prefer_when_citing_precedent": {
+                                "h1_alignment": "WITH_H1_TREND",
+                                "session_jst": "LONDON_AM",
+                            },
+                            "require_extra_current_reason_when_conflicting": {
+                                "h1_alignment": "AGAINST_H1_TREND",
+                            },
+                        },
+                        "warnings": [],
+                        "blockers": [],
+                    }
+                )
+            )
 
-            with mock.patch("quant_rabbit.cli.DEFAULT_OPERATOR_PRECEDENT_AUDIT", audit_path):
+            with mock.patch("quant_rabbit.cli.DEFAULT_OPERATOR_PRECEDENT_AUDIT", audit_path), mock.patch(
+                "quant_rabbit.cli.DEFAULT_MANUAL_MARKET_CONTEXT_AUDIT",
+                manual_context_path,
+            ):
                 digest = _cycle_digest(kind="cycle_refresh_digest", step_results=[], aborted=False)
 
         precedent = digest["operator_precedent"]
@@ -1988,6 +2015,10 @@ class ConsolidatedCycleCommandTest(unittest.TestCase):
         self.assertEqual(precedent["primary_pair"], "USD_JPY")
         self.assertEqual(precedent["primary_sessions"], ["LONDON_AM", "NY_OVERLAP"])
         self.assertEqual(precedent["aligned_live_ready_lanes"], 0)
+        manual_context = digest["manual_market_context"]
+        self.assertEqual(manual_context["status"], "MANUAL_MARKET_CONTEXT_PASS")
+        self.assertEqual(manual_context["prefer_h1_alignment"], "WITH_H1_TREND")
+        self.assertEqual(manual_context["conflict_h1_alignment"], "AGAINST_H1_TREND")
 
 
 if __name__ == "__main__":
