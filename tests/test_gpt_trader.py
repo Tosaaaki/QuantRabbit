@@ -284,6 +284,35 @@ class GPTTraderBrainTest(unittest.TestCase):
             codes = {issue["code"] for issue in payload["verification_issues"]}
             self.assertIn("OPERATOR_PRECEDENT_TECHNICAL_CONTEXT_CONFLICT", codes)
 
+    def test_rejects_trade_citing_operator_precedent_for_with_move_same_pair_add(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root)
+            files["operator_precedent"].write_text(json.dumps(_operator_precedent_audit([LANE_ID])))
+            files["manual_market_context"].write_text(json.dumps(_manual_market_context_audit()))
+            result = _result()
+            result["intent"]["metadata"] = {
+                "position_intent": "PYRAMID",
+                "position_fill": "OPEN_ONLY",
+                "same_pair_add_type": "PYRAMID_WITH_MOVE",
+                "same_pair_existing_entries": 1,
+                "same_pair_existing_units": 10_000,
+                "same_pair_existing_avg_entry": 1.1000,
+                "same_pair_add_entry": 1.1008,
+                "same_pair_with_move_add_pips": 8.0,
+            }
+            files["intents"].write_text(json.dumps({"results": [result]}))
+            decision = _trade_decision()
+            decision["evidence_refs"].extend(["operator:precedent", "manual:market_context"])
+            brain = _brain(root, files, decision)
+
+            summary = brain.run(snapshot_path=files["snapshot"])
+
+            self.assertEqual(summary.status, "REJECTED")
+            payload = json.loads((root / "gpt_decision.json").read_text())
+            codes = {issue["code"] for issue in payload["verification_issues"]}
+            self.assertIn("OPERATOR_PRECEDENT_POSITION_BUILDING_CONFLICT", codes)
+
     def test_input_packet_includes_strategy_seat_pnl_evidence(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -702,6 +731,34 @@ class GPTTraderBrainTest(unittest.TestCase):
                 payload["input_packet"]["lanes"][0]["forecast"]["forecast_direction"],
                 "DOWN",
             )
+
+    def test_input_packet_includes_same_pair_position_building_shape(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root)
+            result = _result()
+            result["intent"]["metadata"] = {
+                "position_intent": "PYRAMID",
+                "position_fill": "OPEN_ONLY",
+                "same_pair_add_type": "AVERAGE_INTO_ADVERSE",
+                "same_pair_existing_entries": 2,
+                "same_pair_existing_units": 12_000,
+                "same_pair_existing_avg_entry": 1.1003,
+                "same_pair_add_entry": 1.0996,
+                "same_pair_add_distance_from_avg_pips": -7.0,
+                "same_pair_adverse_add_pips": 7.0,
+                "same_pair_with_move_add_pips": 0.0,
+            }
+            files["intents"].write_text(json.dumps({"results": [result]}))
+            brain = _brain(root, files, _trade_decision())
+
+            brain.run(snapshot_path=files["snapshot"])
+
+            payload = json.loads((root / "gpt_decision.json").read_text())
+            position_building = payload["input_packet"]["lanes"][0]["position_building"]
+            self.assertEqual(position_building["same_pair_add_type"], "AVERAGE_INTO_ADVERSE")
+            self.assertEqual(position_building["same_pair_adverse_add_pips"], 7.0)
+            self.assertEqual(position_building["same_pair_with_move_add_pips"], 0.0)
 
     def test_rejects_batch_trade_when_selected_lane_is_not_cited(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

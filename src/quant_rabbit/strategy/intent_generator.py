@@ -4195,7 +4195,7 @@ def _intent_from_lane(
         stop_widen_mult=stop_widen_mult,
         chart_context=chart_context,
     )
-    position_metadata = _position_intent_metadata(pair, side, snapshot)
+    position_metadata = _position_intent_metadata(pair, side, snapshot, entry=entry)
     if str(position_metadata.get("position_intent") or "").upper() == "HEDGE":
         position_metadata.update(_hedge_timing_metadata(side, position_metadata, chart_context, lane))
     recovery_target_units: int | None = None
@@ -6605,7 +6605,63 @@ def _minimum_range_target_pips(stop_pips: float, spread_pips: float) -> float:
     )
 
 
-def _position_intent_metadata(pair: str, side: Side, snapshot: BrokerSnapshot) -> dict[str, Any]:
+def _same_side_add_metadata(
+    pair: str,
+    side: Side,
+    positions: list[BrokerPosition],
+    *,
+    entry: float | None,
+) -> dict[str, Any]:
+    units_by_position = [abs(int(position.units)) for position in positions]
+    total_units = sum(units_by_position)
+    metadata: dict[str, Any] = {
+        "position_intent": "PYRAMID",
+        "position_fill": "OPEN_ONLY",
+        "same_pair_existing_entries": len(positions),
+        "same_pair_existing_units": total_units,
+    }
+    if total_units <= 0:
+        metadata["same_pair_add_type"] = "UNKNOWN_SAME_SIDE_ADD"
+        return metadata
+    avg_entry = (
+        sum(
+            float(position.entry_price) * units
+            for position, units in zip(positions, units_by_position)
+        )
+        / total_units
+    )
+    metadata["same_pair_existing_avg_entry"] = _round_price(pair, avg_entry)
+    if entry is None:
+        metadata["same_pair_add_type"] = "UNKNOWN_SAME_SIDE_ADD"
+        return metadata
+    pip_factor = PIP_FACTORS[pair]
+    raw_distance_pips = (float(entry) - avg_entry) * pip_factor
+    metadata["same_pair_add_entry"] = _round_price(pair, float(entry))
+    metadata["same_pair_add_distance_from_avg_pips"] = round(raw_distance_pips, 3)
+    if side == Side.LONG:
+        adverse_add_pips = max(0.0, -raw_distance_pips)
+        with_move_add_pips = max(0.0, raw_distance_pips)
+    else:
+        adverse_add_pips = max(0.0, raw_distance_pips)
+        with_move_add_pips = max(0.0, -raw_distance_pips)
+    metadata["same_pair_adverse_add_pips"] = round(adverse_add_pips, 3)
+    metadata["same_pair_with_move_add_pips"] = round(with_move_add_pips, 3)
+    if adverse_add_pips > 0.0:
+        metadata["same_pair_add_type"] = "AVERAGE_INTO_ADVERSE"
+    elif with_move_add_pips > 0.0:
+        metadata["same_pair_add_type"] = "PYRAMID_WITH_MOVE"
+    else:
+        metadata["same_pair_add_type"] = "FLAT_RETEST_ADD"
+    return metadata
+
+
+def _position_intent_metadata(
+    pair: str,
+    side: Side,
+    snapshot: BrokerSnapshot,
+    *,
+    entry: float | None = None,
+) -> dict[str, Any]:
     pair_positions = [position for position in snapshot.positions if position.pair == pair]
     same_pair = [position for position in pair_positions if position.owner == Owner.TRADER]
     if not same_pair:
@@ -6636,19 +6692,24 @@ def _position_intent_metadata(pair: str, side: Side, snapshot: BrokerSnapshot) -
         reference_units = max(0, gross_reference_units - same_side_units)
         existing_pl = sum(float(position.unrealized_pl_jpy or 0.0) for position in opposing_positions)
         if reference_units <= 0:
-            return {
-                "position_intent": "PYRAMID",
-                "position_fill": "OPEN_ONLY",
-                "hedge_reference_units": 0,
-                "hedge_gross_opposing_units": gross_reference_units,
-                "hedge_existing_same_side_units": same_side_units,
-                "hedge_covered_reference_units": gross_reference_units,
-                "hedge_suppressed_reason": "opposite_exposure_already_covered",
-                "hedge_reference_scope": "trader_owned_only",
-                "hedge_non_trader_same_side_units_ignored": ignored_same_side_units,
-                "hedge_non_trader_opposing_units_ignored": ignored_opposing_units,
-                "hedge_non_trader_opposing_unrealized_pl_jpy_ignored": round(ignored_opposing_pl, 4),
-            }
+            metadata = _same_side_add_metadata(pair, side, same_side_positions, entry=entry)
+            metadata.update(
+                {
+                    "hedge_reference_units": 0,
+                    "hedge_gross_opposing_units": gross_reference_units,
+                    "hedge_existing_same_side_units": same_side_units,
+                    "hedge_covered_reference_units": gross_reference_units,
+                    "hedge_suppressed_reason": "opposite_exposure_already_covered",
+                    "hedge_reference_scope": "trader_owned_only",
+                    "hedge_non_trader_same_side_units_ignored": ignored_same_side_units,
+                    "hedge_non_trader_opposing_units_ignored": ignored_opposing_units,
+                    "hedge_non_trader_opposing_unrealized_pl_jpy_ignored": round(
+                        ignored_opposing_pl,
+                        4,
+                    ),
+                }
+            )
+            return metadata
         metadata.update(
             {
                 "hedge_reference_units": reference_units,
@@ -6679,7 +6740,7 @@ def _position_intent_metadata(pair: str, side: Side, snapshot: BrokerSnapshot) -
                 }
             )
         return metadata
-    return {"position_intent": "PYRAMID", "position_fill": "OPEN_ONLY"}
+    return _same_side_add_metadata(pair, side, same_pair, entry=entry)
 
 
 def _is_hedge_recovery_metadata(metadata: dict[str, Any]) -> bool:

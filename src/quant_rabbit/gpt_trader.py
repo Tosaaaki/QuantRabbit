@@ -1883,6 +1883,22 @@ def _lane_packet(
                 ),
                 "story": _small_dict(story_index.get(pair), ("methods", "themes", "examples")),
                 "forecast": _lane_forecast_packet(intent.get("metadata")),
+                "position_building": _small_dict(
+                    metadata,
+                    (
+                        "position_intent",
+                        "position_fill",
+                        "same_pair_add_type",
+                        "same_pair_existing_entries",
+                        "same_pair_existing_units",
+                        "same_pair_existing_avg_entry",
+                        "same_pair_add_entry",
+                        "same_pair_add_distance_from_avg_pips",
+                        "same_pair_adverse_add_pips",
+                        "same_pair_with_move_add_pips",
+                        "hedge_suppressed_reason",
+                    ),
+                ),
                 "market_context_matrix": _small_dict(
                     metadata,
                     (
@@ -3498,6 +3514,27 @@ def _manual_precedent_trade_issues(
             )
         )
         return issues
+    lane_by_id = {
+        str(lane.get("lane_id") or ""): lane
+        for lane in packet.get("lanes", []) or []
+        if isinstance(lane, dict) and str(lane.get("lane_id") or "").strip()
+    }
+    selected_with_move_adds = []
+    for lane_id in selected_aligned:
+        lane = lane_by_id.get(lane_id) or {}
+        building = lane.get("position_building") if isinstance(lane.get("position_building"), dict) else {}
+        if str(building.get("same_pair_add_type") or "").upper() == "PYRAMID_WITH_MOVE":
+            selected_with_move_adds.append(lane_id)
+    if selected_with_move_adds:
+        issues.append(
+            VerificationIssue(
+                "OPERATOR_PRECEDENT_POSITION_BUILDING_CONFLICT",
+                "TRADE cites the 2025 operator precedent, but the selected same-pair add is "
+                "PYRAMID_WITH_MOVE. The bounded manual replay supports only selective adverse "
+                "retest/add behavior as precedent; cite current deterministic edge instead: "
+                f"{', '.join(selected_with_move_adds)}",
+            )
+        )
     manual_alignment = (
         runtime.get("manual_context_alignment")
         if isinstance(runtime.get("manual_context_alignment"), dict)

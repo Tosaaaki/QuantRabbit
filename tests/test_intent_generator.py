@@ -5642,6 +5642,90 @@ class MinLotFloorIntentTest(unittest.TestCase):
         self.assertEqual(metadata["hedge_existing_same_side_units"], 22_000)
         self.assertEqual(metadata["hedge_suppressed_reason"], "opposite_exposure_already_covered")
 
+    def test_position_intent_metadata_labels_long_adverse_add(self) -> None:
+        from quant_rabbit.models import BrokerPosition, Owner, Side
+        from quant_rabbit.strategy.intent_generator import _position_intent_metadata
+
+        existing_long = BrokerPosition(
+            trade_id="101",
+            pair="EUR_USD",
+            side=Side.LONG,
+            units=10_000,
+            entry_price=1.10000,
+            owner=Owner.TRADER,
+        )
+
+        metadata = _position_intent_metadata(
+            "EUR_USD",
+            Side.LONG,
+            self._stub_snapshot(positions=(existing_long,)),
+            entry=1.09930,
+        )
+
+        self.assertEqual(metadata["position_intent"], "PYRAMID")
+        self.assertEqual(metadata["same_pair_add_type"], "AVERAGE_INTO_ADVERSE")
+        self.assertEqual(metadata["same_pair_existing_entries"], 1)
+        self.assertEqual(metadata["same_pair_existing_units"], 10_000)
+        self.assertEqual(metadata["same_pair_existing_avg_entry"], 1.1)
+        self.assertEqual(metadata["same_pair_add_distance_from_avg_pips"], -7.0)
+        self.assertEqual(metadata["same_pair_adverse_add_pips"], 7.0)
+        self.assertEqual(metadata["same_pair_with_move_add_pips"], 0.0)
+
+    def test_position_intent_metadata_labels_long_with_move_add(self) -> None:
+        from quant_rabbit.models import BrokerPosition, Owner, Side
+        from quant_rabbit.strategy.intent_generator import _position_intent_metadata
+
+        existing_long = BrokerPosition(
+            trade_id="101",
+            pair="EUR_USD",
+            side=Side.LONG,
+            units=10_000,
+            entry_price=1.10000,
+            owner=Owner.TRADER,
+        )
+
+        metadata = _position_intent_metadata(
+            "EUR_USD",
+            Side.LONG,
+            self._stub_snapshot(positions=(existing_long,)),
+            entry=1.10080,
+        )
+
+        self.assertEqual(metadata["same_pair_add_type"], "PYRAMID_WITH_MOVE")
+        self.assertEqual(metadata["same_pair_adverse_add_pips"], 0.0)
+        self.assertEqual(metadata["same_pair_with_move_add_pips"], 8.0)
+
+    def test_position_intent_metadata_labels_short_adverse_and_with_move_adds(self) -> None:
+        from quant_rabbit.models import BrokerPosition, Owner, Side
+        from quant_rabbit.strategy.intent_generator import _position_intent_metadata
+
+        existing_short = BrokerPosition(
+            trade_id="101",
+            pair="EUR_USD",
+            side=Side.SHORT,
+            units=10_000,
+            entry_price=1.10000,
+            owner=Owner.TRADER,
+        )
+
+        adverse = _position_intent_metadata(
+            "EUR_USD",
+            Side.SHORT,
+            self._stub_snapshot(positions=(existing_short,)),
+            entry=1.10070,
+        )
+        with_move = _position_intent_metadata(
+            "EUR_USD",
+            Side.SHORT,
+            self._stub_snapshot(positions=(existing_short,)),
+            entry=1.09920,
+        )
+
+        self.assertEqual(adverse["same_pair_add_type"], "AVERAGE_INTO_ADVERSE")
+        self.assertEqual(adverse["same_pair_adverse_add_pips"], 7.0)
+        self.assertEqual(with_move["same_pair_add_type"], "PYRAMID_WITH_MOVE")
+        self.assertEqual(with_move["same_pair_with_move_add_pips"], 8.0)
+
     def test_risk_budgeted_units_returns_1000_when_just_at_floor(self) -> None:
         # max_loss_jpy ~315 JPY → loss_budget ≈ 1003 units → rounds to 1000.
         from quant_rabbit.strategy.intent_generator import _risk_budgeted_units

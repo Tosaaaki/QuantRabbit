@@ -66,6 +66,10 @@ exit events. The shape of that edge, as advisory evidence for lane selection
   evidence for selective, risk-budgeted retest/add logic only; it is not
   permission for unbounded martingale, weak forecasts, or same-pair additions
   outside current basket risk and `LIVE_READY` validation.
+- When an intent is a same-pair same-side add, read its
+  `position_building.same_pair_add_type`. Do not describe a
+  `PYRAMID_WITH_MOVE` add as nanpin; manual precedent supports only bounded
+  adverse retest/add behavior after current gates pass.
 - H1 context: bounded `AGAINST_H1_TREND` paid far better than
   `WITH_H1_TREND`. A lane using the 2025 precedent as an aggression reason must
   explain whether current H1/M5 and 24h-location context is comparable.
