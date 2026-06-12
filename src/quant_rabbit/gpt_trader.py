@@ -241,6 +241,55 @@ def _close_same_direction_matrix_support(
     )
 
 
+def _close_same_direction_sidecar_support(
+    packet: dict[str, Any],
+    *,
+    trade_id: str | None,
+    pair: str,
+    side: str,
+) -> tuple[bool, str]:
+    """Whether fresh position sidecars still support carrying this position.
+
+    The support floor is a categorical majority across the three independent
+    position-review sidecars: position_thesis, thesis_evolution, and
+    forecast_persistence. This is not a market threshold; it prevents one M15
+    internal structure flip from forcing out an H1/H4 swing while most of the
+    current position stack still says the thesis is alive.
+    """
+
+    sidecars = packet.get("protection_sidecars")
+    if not isinstance(sidecars, dict):
+        return False, ""
+    support = sidecars.get("position_hold_support")
+    if not isinstance(support, list):
+        return False, ""
+
+    matched: list[dict[str, Any]] = []
+    for rec in support:
+        if not isinstance(rec, dict):
+            continue
+        rec_trade = str(rec.get("trade_id") or "")
+        if trade_id is not None and rec_trade != str(trade_id):
+            continue
+        rec_pair = str(rec.get("pair") or "")
+        if pair and rec_pair not in {"", pair}:
+            continue
+        rec_side = str(rec.get("side") or "").upper()
+        if side and rec_side not in {"", str(side).upper()}:
+            continue
+        matched.append(rec)
+
+    sources = sorted({str(rec.get("source") or "") for rec in matched if str(rec.get("source") or "")})
+    if len(sources) < 2:
+        return False, ""
+    summary = ", ".join(
+        f"{rec.get('source')}:{rec.get('verdict') or rec.get('status')}"
+        for rec in matched
+        if rec.get("source")
+    )
+    return True, f"fresh same-direction position sidecars support HOLD/EXTEND ({summary})"
+
+
 def _directional_matrix_observations(rows: Any) -> list[dict[str, Any]]:
     out: list[dict[str, Any]] = []
     for item in rows or []:
@@ -444,6 +493,7 @@ def _close_thesis_invalidation(
     chart_story = _pair_chart_story(packet, pair)
     structs = _parse_struct_events(chart_story)
     counter_direction = "DOWN" if side_upper == "LONG" else "UP"
+    m15_supported_pullback_reason: str | None = None
     for tf in CLOSE_DISCIPLINE_TIMEFRAMES:
         event = structs.get(tf)
         if event and event[1] == counter_direction:
@@ -455,10 +505,26 @@ def _close_thesis_invalidation(
                 # own. The structural high/low was tagged but the move
                 # was rejected.
                 continue
+            if tf == "M15":
+                supported, support_reason = _close_same_direction_sidecar_support(
+                    packet,
+                    trade_id=trade_id,
+                    pair=pair,
+                    side=side_upper,
+                )
+                if supported:
+                    m15_supported_pullback_reason = (
+                        f"M15 {event_type}_{direction}@{price:g} prints against "
+                        f"{side_upper}, but {support_reason}"
+                    )
+                    continue
             return True, (
                 f"{tf} {event_type}_{direction}@{price:g} prints against "
                 f"{side_upper} thesis (close-confirmed)"
             ), True
+
+    if m15_supported_pullback_reason:
+        return False, m15_supported_pullback_reason, False
 
     if decision is not None and decision.invalidation_price is not None:
         snapshot = packet.get("broker_snapshot") or {}
@@ -2208,11 +2274,15 @@ def _protection_sidecars_packet(
     from quant_rabbit.trader_prompts import (
         _fresh_close_recommendations,
         _fresh_entry_thesis_blockers,
+        _fresh_position_hold_support,
         _tp_rebalance_reasons,
     )
 
     position_close_recommendations = list(
         _fresh_close_recommendations(snapshot, data_root=snapshot_path.parent)
+    )
+    position_hold_support = list(
+        _fresh_position_hold_support(snapshot, data_root=snapshot_path.parent)
     )
     entry_thesis_blockers = list(
         _fresh_entry_thesis_blockers(snapshot, data_root=snapshot_path.parent)
@@ -2225,6 +2295,7 @@ def _protection_sidecars_packet(
                 "issue": f"missing pair_charts: {pair_charts_path}",
             },
             "position_close_recommendations": position_close_recommendations,
+            "position_hold_support": position_hold_support,
             "entry_thesis_blockers": entry_thesis_blockers,
         }
     pair_charts = _load_json(pair_charts_path)
@@ -2240,6 +2311,7 @@ def _protection_sidecars_packet(
             "reasons": list(reasons),
         },
         "position_close_recommendations": position_close_recommendations,
+        "position_hold_support": position_hold_support,
         "entry_thesis_blockers": entry_thesis_blockers,
     }
 

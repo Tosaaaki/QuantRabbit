@@ -3603,6 +3603,71 @@ def _write_fresh_forecast_close_recommendation(
     )
 
 
+def _write_fresh_position_hold_support(
+    root: Path,
+    files: dict[str, Path],
+    *,
+    trade_id: str = "555",
+    pair: str = "EUR_USD",
+    side: str = "SHORT",
+) -> None:
+    snapshot = json.loads(files["snapshot"].read_text())
+    generated_at = (
+        datetime.fromisoformat(snapshot["fetched_at_utc"]) + timedelta(seconds=1)
+    ).isoformat()
+    (root / "position_thesis_report.json").write_text(
+        json.dumps(
+            {
+                "generated_at_utc": generated_at,
+                "assessments": [
+                    {
+                        "trade_id": trade_id,
+                        "pair": pair,
+                        "side": side,
+                        "verdict": "EXTEND",
+                        "aggregate_score": 20.55,
+                        "rationale_lines": ["position thesis still supports same-side carry"],
+                        "context_notes": [],
+                    }
+                ],
+            }
+        )
+    )
+    (root / "thesis_evolution_report.json").write_text(
+        json.dumps(
+            {
+                "generated_at_utc": generated_at,
+                "evolutions": [
+                    {
+                        "trade_id": trade_id,
+                        "pair": pair,
+                        "side": side,
+                        "status": "STILL_VALID",
+                        "verdict": "HOLD",
+                        "rationale": "entry forecast remains aligned with current forecast",
+                    }
+                ],
+            }
+        )
+    )
+    (root / "forecast_persistence_report.json").write_text(
+        json.dumps(
+            {
+                "generated_at_utc": generated_at,
+                "verdicts": [
+                    {
+                        "trade_id": trade_id,
+                        "pair": pair,
+                        "side": side,
+                        "verdict": "EXTEND",
+                        "reason": "last forecasts aligned with the open position",
+                    }
+                ],
+            }
+        )
+    )
+
+
 def _write_fresh_position_thesis_close_recommendation(
     root: Path,
     files: dict[str, Path],
@@ -3792,6 +3857,44 @@ class CloseDisciplineTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             files = _close_fixtures(root, position_side="SHORT", m15_dir="UP", h4_dir="DOWN")
+            decision = _close_decision(trade_ids=["555"])
+            brain = _brain(root, files, decision)
+
+            summary = brain.run(snapshot_path=files["snapshot"])
+
+            self.assertEqual(summary.status, "ACCEPTED", msg=summary)
+            self.assertTrue(summary.allowed)
+
+    def test_close_rejected_when_m15_break_conflicts_with_hold_sidecars(self) -> None:
+        # Regression for 2026-06-12 USD_CHF: M15 can flip during an internal
+        # pullback while the position thesis, thesis evolution, and forecast
+        # persistence still support the swing. That must not become another
+        # low-quality loss-side market close.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _close_fixtures(root, position_side="LONG", m15_dir="DOWN", h4_dir="UP")
+            _write_fresh_position_hold_support(root, files, side="LONG")
+            decision = _close_decision(trade_ids=["555"])
+            brain = _brain(root, files, decision)
+
+            summary = brain.run(snapshot_path=files["snapshot"])
+
+            self.assertEqual(summary.status, "REJECTED", msg=summary)
+            payload = json.loads((root / "gpt_decision.json").read_text())
+            codes = {issue["code"] for issue in payload["verification_issues"]}
+            self.assertIn("CLOSE_THESIS_STILL_VALID", codes)
+            self.assertEqual(
+                len(payload["input_packet"]["protection_sidecars"]["position_hold_support"]),
+                3,
+            )
+
+    def test_h4_break_still_closes_even_when_m15_has_hold_sidecars(self) -> None:
+        # The support veto is intentionally scoped to M15 internal pullbacks.
+        # H4 close-confirmed structure against the side remains a hard close.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _close_fixtures(root, position_side="LONG", m15_dir="DOWN", h4_dir="DOWN")
+            _write_fresh_position_hold_support(root, files, side="LONG")
             decision = _close_decision(trade_ids=["555"])
             brain = _brain(root, files, decision)
 

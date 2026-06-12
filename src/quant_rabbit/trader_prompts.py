@@ -779,6 +779,38 @@ def _fresh_close_recommendations(snapshot: dict[str, Any], *, data_root: Path) -
     return tuple(out)
 
 
+def _fresh_position_hold_support(snapshot: dict[str, Any], *, data_root: Path) -> tuple[dict[str, Any], ...]:
+    """Fresh sidecar evidence that the existing position thesis still lives.
+
+    This does not grant trade permission. The CLOSE verifier uses it only to
+    keep an M15 internal pullback from overriding the broader swing-position
+    review stack when most position sidecars still support holding.
+    """
+
+    fetched_at = _parse_utc(snapshot.get("fetched_at_utc"))
+    if fetched_at is None:
+        return ()
+    active_positions = _active_trader_positions_by_trade_id(snapshot)
+    recs: list[dict[str, Any]] = []
+    recs.extend(_position_thesis_hold_support(data_root / "position_thesis_report.json", fetched_at))
+    recs.extend(_thesis_evolution_hold_support(data_root / "thesis_evolution_report.json", fetched_at))
+    recs.extend(_forecast_persistence_hold_support(data_root / "forecast_persistence_report.json", fetched_at))
+    out: list[dict[str, Any]] = []
+    for rec in recs:
+        trade_id = str(rec.get("trade_id") or "")
+        active = active_positions.get(trade_id)
+        if not active:
+            continue
+        rec_pair = str(rec.get("pair") or active["pair"])
+        rec_side = str(rec.get("side") or active["side"]).upper()
+        if active["pair"] and rec_pair and rec_pair != active["pair"]:
+            continue
+        if active["side"] and rec_side and rec_side != active["side"]:
+            continue
+        out.append({**rec, "pair": rec_pair or active["pair"], "side": rec_side or active["side"]})
+    return tuple(out)
+
+
 def _fresh_entry_thesis_blockers(snapshot: dict[str, Any], *, data_root: Path) -> tuple[dict[str, Any], ...]:
     fetched_at = _parse_utc(snapshot.get("fetched_at_utc"))
     if fetched_at is None:
@@ -867,6 +899,33 @@ def _position_thesis_recommendations(path: Path, fetched_at: datetime) -> list[d
     return out
 
 
+def _position_thesis_hold_support(path: Path, fetched_at: datetime) -> list[dict[str, Any]]:
+    payload = _fresh_report_payload(path, fetched_at)
+    if not payload:
+        return []
+    out: list[dict[str, Any]] = []
+    for item in payload.get("assessments", []) or []:
+        if not isinstance(item, dict):
+            continue
+        verdict = str(item.get("verdict") or "").upper()
+        if verdict not in {"EXTEND", "HOLD"}:
+            continue
+        trade_id = str(item.get("trade_id") or "")
+        out.append(
+            {
+                "source": "position_thesis",
+                "evidence_ref": f"position:thesis:{trade_id}",
+                "trade_id": trade_id,
+                "pair": item.get("pair"),
+                "side": item.get("side"),
+                "verdict": verdict,
+                "reason": "; ".join(str(x) for x in (item.get("rationale_lines") or [])[:2] if str(x))
+                or f"aggregate_score={item.get('aggregate_score')}",
+            }
+        )
+    return out
+
+
 def _position_thesis_standing_authorized(item: dict[str, Any], reason_parts: list[str]) -> bool:
     """Hard no-ledger loss-cut evidence from position_thesis.
 
@@ -944,6 +1003,34 @@ def _thesis_evolution_recommendations(path: Path, fetched_at: datetime) -> list[
                 "side": item.get("side"),
                 "verdict": verdict or status,
                 "gate_b_standing_authorized": True,
+                "reason": item.get("rationale") or f"status={status}",
+            }
+        )
+    return out
+
+
+def _thesis_evolution_hold_support(path: Path, fetched_at: datetime) -> list[dict[str, Any]]:
+    payload = _fresh_report_payload(path, fetched_at)
+    if not payload:
+        return []
+    out: list[dict[str, Any]] = []
+    for item in payload.get("evolutions", []) or []:
+        if not isinstance(item, dict):
+            continue
+        status = str(item.get("status") or "").upper()
+        verdict = str(item.get("verdict") or "").upper()
+        if status != "STILL_VALID" and verdict not in {"EXTEND", "HOLD"}:
+            continue
+        trade_id = str(item.get("trade_id") or "")
+        out.append(
+            {
+                "source": "thesis_evolution",
+                "evidence_ref": f"position:evolution:{trade_id}",
+                "trade_id": trade_id,
+                "pair": item.get("pair"),
+                "side": item.get("side"),
+                "verdict": verdict or status,
+                "status": status,
                 "reason": item.get("rationale") or f"status={status}",
             }
         )
@@ -1044,6 +1131,32 @@ def _forecast_persistence_recommendations(path: Path, fetched_at: datetime) -> l
                 "verdict": "RECOMMEND_CLOSE",
                 "gate_b_standing_authorized": False,
                 "reason": item.get("reason") or "persistent forecast no longer supports the position",
+            }
+        )
+    return out
+
+
+def _forecast_persistence_hold_support(path: Path, fetched_at: datetime) -> list[dict[str, Any]]:
+    payload = _fresh_report_payload(path, fetched_at)
+    if not payload:
+        return []
+    out: list[dict[str, Any]] = []
+    for item in payload.get("verdicts", []) or []:
+        if not isinstance(item, dict):
+            continue
+        verdict = str(item.get("verdict") or "").upper()
+        if verdict != "EXTEND":
+            continue
+        trade_id = str(item.get("trade_id") or "")
+        out.append(
+            {
+                "source": "forecast_persistence",
+                "evidence_ref": f"position:persistence:{trade_id}",
+                "trade_id": trade_id,
+                "pair": item.get("pair"),
+                "side": item.get("side"),
+                "verdict": verdict,
+                "reason": item.get("reason") or "forecast persistence still supports the position",
             }
         )
     return out
