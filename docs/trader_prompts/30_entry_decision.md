@@ -53,10 +53,16 @@ exit events. The shape of that edge, as advisory evidence for lane selection
 
 - Fewer, larger, faster: ~10 exit events/day at meaningful size, payoff 1.30,
   median hold 29 minutes — not 30 micro-trades across 8 pairs.
-- Trend side: LONG-with-trend made +351k while counter-trend SHORT lost 85k.
-  Ride the prevailing direction; fading paid poorly.
-- Session: LONDON_AM/NY_OVERLAP (15–24 JST) carried the edge (London +185.8k,
-  NY +88.4k); Tokyo rotation was net negative for this style.
+- Bounded replay is the usable precedent, not the raw long-hold tail. Exclude
+  >=12h holds and margin closeouts before copying the shape.
+- Technical shape: USD_JPY extreme rotation, not blind trend chase.
+  `LONG_LOWER_THIRD_24H` and `SHORT_UPPER_THIRD_24H` were the strongest
+  replayable buckets; `SHORT_WITH_H1_TREND` and middle-third shorts were bad.
+- H1 context: bounded `AGAINST_H1_TREND` paid far better than
+  `WITH_H1_TREND`. A lane using the 2025 precedent as an aggression reason must
+  explain whether current H1/M5 and 24h-location context is comparable.
+- Session: use `LONDON_AM` as the reliable bounded sample. `NY_OVERLAP` was
+  positive in raw history but negative after removing the long-hold tail.
 - The operator's own blowup mode was holding decayed positions past ~12h
   (margin closeouts −217k) — the thesis-horizon expiry and disaster stop
   exist to bound exactly that; do not fight them.
@@ -64,7 +70,10 @@ exit events. The shape of that edge, as advisory evidence for lane selection
 `manual_market_context_audit` adds the technical replay layer around those
 manual entries. It may gate only the *use of the precedent as an aggression
 reason*: a lane that conflicts with the mined H1/M5/session context needs its
-own current deterministic edge. It is not a no-trade gate by itself.
+own current deterministic edge. It is not a no-trade gate by itself. If a
+`TRADE` receipt cites `operator:precedent`, the verifier now also requires
+`manual:market_context` and at least one selected lane aligned by the current
+operator-precedent audit.
 
 ## WAIT Discipline
 

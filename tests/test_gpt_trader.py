@@ -184,6 +184,70 @@ class GPTTraderBrainTest(unittest.TestCase):
             self.assertTrue(payload["input_packet"]["market_status"]["is_fx_open"])
             self.assertIn("market:status", payload["input_packet"]["allowed_evidence_refs"])
 
+    def test_input_packet_includes_manual_precedent_context_evidence(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root)
+            files["operator_precedent"].write_text(json.dumps(_operator_precedent_audit([LANE_ID])))
+            files["manual_market_context"].write_text(json.dumps(_manual_market_context_audit()))
+            decision = _trade_decision()
+            decision["evidence_refs"].extend(["operator:precedent", "manual:market_context"])
+            brain = _brain(root, files, decision)
+
+            summary = brain.run(snapshot_path=files["snapshot"])
+
+            self.assertEqual(summary.status, "ACCEPTED")
+            payload = json.loads((root / "gpt_decision.json").read_text())
+            self.assertEqual(payload["input_packet"]["operator_precedent"]["evidence_ref"], "operator:precedent")
+            self.assertEqual(
+                payload["input_packet"]["manual_market_context"]["evidence_ref"],
+                "manual:market_context",
+            )
+            self.assertIn("operator:precedent", payload["input_packet"]["allowed_evidence_refs"])
+            self.assertIn("manual:market_context", payload["input_packet"]["allowed_evidence_refs"])
+            self.assertEqual(
+                payload["input_packet"]["manual_market_context"]["guidance"]["prefer_when_citing_precedent"][
+                    "h1_alignment"
+                ],
+                "AGAINST_H1_TREND",
+            )
+
+    def test_rejects_trade_citing_operator_precedent_without_manual_context_ref(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root)
+            files["operator_precedent"].write_text(json.dumps(_operator_precedent_audit([LANE_ID])))
+            files["manual_market_context"].write_text(json.dumps(_manual_market_context_audit()))
+            decision = _trade_decision()
+            decision["evidence_refs"].append("operator:precedent")
+            brain = _brain(root, files, decision)
+
+            summary = brain.run(snapshot_path=files["snapshot"])
+
+            self.assertEqual(summary.status, "REJECTED")
+            payload = json.loads((root / "gpt_decision.json").read_text())
+            codes = {issue["code"] for issue in payload["verification_issues"]}
+            self.assertIn("MANUAL_CONTEXT_EVIDENCE_MISSING", codes)
+
+    def test_rejects_trade_citing_operator_precedent_for_unaligned_lane(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root)
+            files["operator_precedent"].write_text(
+                json.dumps(_operator_precedent_audit(["trend_trader:USD_JPY:LONG:TREND_CONTINUATION"]))
+            )
+            files["manual_market_context"].write_text(json.dumps(_manual_market_context_audit()))
+            decision = _trade_decision()
+            decision["evidence_refs"].extend(["operator:precedent", "manual:market_context"])
+            brain = _brain(root, files, decision)
+
+            summary = brain.run(snapshot_path=files["snapshot"])
+
+            self.assertEqual(summary.status, "REJECTED")
+            payload = json.loads((root / "gpt_decision.json").read_text())
+            codes = {issue["code"] for issue in payload["verification_issues"]}
+            self.assertIn("OPERATOR_PRECEDENT_SELECTED_LANE_NOT_ALIGNED", codes)
+
     def test_input_packet_includes_strategy_seat_pnl_evidence(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -2105,6 +2169,8 @@ def _brain(root: Path, files: dict[str, Path], decision: dict, *, max_lanes: int
         learning_audit_path=files["learning_audit"],
         verification_ledger_path=files["verification_ledger"],
         self_improvement_audit_path=files["self_improvement_audit"],
+        operator_precedent_path=files["operator_precedent"],
+        manual_market_context_path=files["manual_market_context"],
         predictive_limits_path=files["predictive_limits"],
         **({"max_lanes": max_lanes} if max_lanes is not None else {}),
     )
@@ -2159,6 +2225,8 @@ def _fixtures(root: Path, *, positions: list[dict] | None = None, orders: list[d
         "learning_audit": root / "learning_audit.json",
         "verification_ledger": root / "verification_ledger.json",
         "self_improvement_audit": root / "self_improvement_audit.json",
+        "operator_precedent": root / "operator_precedent.json",
+        "manual_market_context": root / "manual_market_context.json",
         "predictive_limits": root / "predictive_limits.json",
     }
     now = datetime.now(timezone.utc).isoformat()
@@ -2460,8 +2528,131 @@ def _fixtures(root: Path, *, positions: list[dict] | None = None, orders: list[d
     files["coverage_optimization"].write_text(json.dumps({"status": "OK"}))
     files["learning_audit"].write_text(json.dumps({}))
     files["self_improvement_audit"].write_text(json.dumps({}))
+    files["operator_precedent"].write_text(json.dumps({}))
+    files["manual_market_context"].write_text(json.dumps({}))
     files["predictive_limits"].write_text(json.dumps({"dry_run": True, "orders": []}))
     return files
+
+
+def _operator_precedent_audit(aligned_lane_ids: list[str]) -> dict:
+    return {
+        "generated_at_utc": datetime.now(timezone.utc).isoformat(),
+        "status": "OPERATOR_PRECEDENT_PASS",
+        "operator_claim": {
+            "claim": "funding-adjusted 30-calendar-day return exceeded 200%",
+            "required_return_pct": 200.0,
+            "verified": True,
+        },
+        "precedent": {
+            "winning_shape": {
+                "primary_pair": "USD_JPY",
+                "primary_direction": "LONG",
+                "primary_sessions": ["LONDON_AM", "NY_OVERLAP"],
+                "positive_sessions": ["LONDON_AM", "NY_OVERLAP"],
+                "expectancy_jpy_per_exit": 649.2,
+                "median_hold_hours": 0.48,
+                "payoff": 1.3,
+            },
+            "failure_shape": {
+                "margin_closeout": {
+                    "trades": 24,
+                    "net_jpy": -217327.8,
+                    "win_rate": 0.042,
+                    "median_hold_hours": 12.38,
+                }
+            },
+        },
+        "runtime_alignment": {
+            "live_ready_lanes": len(aligned_lane_ids),
+            "aligned_live_ready_lanes": len(aligned_lane_ids),
+            "aligned_lanes": [
+                {
+                    "lane_id": lane_id,
+                    "pair": "USD_JPY",
+                    "side": "LONG",
+                    "method": "TREND_CONTINUATION",
+                    "order_type": "STOP-ENTRY",
+                    "session": "LONDON_AM",
+                }
+                for lane_id in aligned_lane_ids
+            ],
+            "manual_exit_events_per_calendar_day": 9.24,
+            "target_trades_per_day": 30.0,
+            "alignment_contract": {
+                "aligned_precedent_is_advisory": True,
+                "absence_of_alignment_is_not_a_trade_blocker": True,
+                "current_risk_geometry_remains_authority": True,
+            },
+        },
+        "warnings": [],
+        "blockers": [],
+    }
+
+
+def _manual_market_context_audit() -> dict:
+    return {
+        "generated_at_utc": datetime.now(timezone.utc).isoformat(),
+        "status": "MANUAL_MARKET_CONTEXT_PASS",
+        "sample": {
+            "pair": "USD_JPY",
+            "manual_trades": 411,
+            "analyzed_trades": 411,
+            "coverage_pct": 100.0,
+        },
+        "guidance": {
+            "basis": "bounded_replay_lt_12h_excluding_margin_closeout",
+            "prefer_when_citing_precedent": {
+                "h1_alignment": "AGAINST_H1_TREND",
+                "session_jst": "LONDON_AM",
+            },
+            "require_extra_current_reason_when_conflicting": {
+                "h1_alignment": "WITH_H1_TREND",
+                "hold_bucket": "2H_12H",
+            },
+            "operator_precedent_usage_gate": (
+                "Current lanes may cite the 2025 manual precedent only when comparable."
+            ),
+        },
+        "bounded_replay_profile": {
+            "overall": {"trades": 323, "net_jpy": 105621.2},
+            "by_h1_alignment": [
+                {
+                    "bucket": "AGAINST_H1_TREND",
+                    "trades": 131,
+                    "net_jpy": 96729.5,
+                    "win_rate": 0.466,
+                    "expectancy_jpy": 738.4,
+                    "median_hold_hours": 0.23,
+                    "avg_h1_adx": 27.5,
+                }
+            ],
+            "by_side_h1_alignment": [],
+            "by_side_entry_location_24h": [],
+            "by_session_jst": [],
+        },
+        "excluded_tail_profile": {
+            "by_hold_bucket": [
+                {
+                    "bucket": "GE_12H",
+                    "trades": 76,
+                    "net_jpy": 186253.7,
+                    "win_rate": 0.75,
+                    "expectancy_jpy": 2450.7,
+                    "median_hold_hours": 121.38,
+                    "avg_h1_adx": 29.7,
+                }
+            ],
+            "by_close_reason": [],
+        },
+        "contract": {
+            "advisory_only": True,
+            "may_gate_use_of_operator_precedent_as_aggression_reason": True,
+            "does_not_override_current_risk_geometry": True,
+            "does_not_grant_live_permission": True,
+        },
+        "warnings": [],
+        "blockers": [],
+    }
 
 
 def _self_improvement_profitability_p0() -> dict:

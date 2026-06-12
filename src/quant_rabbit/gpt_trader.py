@@ -492,10 +492,12 @@ from quant_rabbit.paths import (
     DEFAULT_GPT_TRADER_DECISION_REPORT,
     DEFAULT_LEVELS_SNAPSHOT,
     DEFAULT_LEARNING_AUDIT,
+    DEFAULT_MANUAL_MARKET_CONTEXT_AUDIT,
     DEFAULT_MARKET_CONTEXT_MATRIX,
     DEFAULT_MARKET_STATUS,
     DEFAULT_MARKET_STORY_PROFILE,
     DEFAULT_OPTION_SKEW,
+    DEFAULT_OPERATOR_PRECEDENT_AUDIT,
     DEFAULT_ORDER_INTENTS,
     DEFAULT_PAIR_CHARTS,
     DEFAULT_PREDICTIVE_LIMIT_ORDERS,
@@ -514,6 +516,8 @@ ALLOWED_ACTIONS = ("TRADE", "WAIT", "CANCEL_PENDING", "PROTECT", "TIGHTEN_SL", "
 ALLOWED_CONFIDENCE = ("LOW", "MEDIUM", "HIGH")
 ALLOWED_METHODS = ("TREND_CONTINUATION", "RANGE_ROTATION", "BREAKOUT_FAILURE", "EVENT_RISK", "POSITION_MANAGEMENT")
 ALLOWED_SPECIALIST_ROLES = ("macro_news", "indicator", "flow_levels", "risk_audit", "strategy", "portfolio_context")
+OPERATOR_PRECEDENT_EVIDENCE_REF = "operator:precedent"
+MANUAL_MARKET_CONTEXT_EVIDENCE_REF = "manual:market_context"
 FORBIDDEN_SPECIALIST_AUTHORITY_FIELDS = (
     "action",
     "selected_lane_id",
@@ -680,6 +684,8 @@ class GPTTraderBrain:
         learning_audit_path: Path = DEFAULT_LEARNING_AUDIT,
         verification_ledger_path: Path = DEFAULT_VERIFICATION_LEDGER,
         self_improvement_audit_path: Path = DEFAULT_SELF_IMPROVEMENT_AUDIT,
+        operator_precedent_path: Path = DEFAULT_OPERATOR_PRECEDENT_AUDIT,
+        manual_market_context_path: Path = DEFAULT_MANUAL_MARKET_CONTEXT_AUDIT,
         predictive_limits_path: Path = DEFAULT_PREDICTIVE_LIMIT_ORDERS,
         output_path: Path = DEFAULT_GPT_TRADER_DECISION,
         report_path: Path = DEFAULT_GPT_TRADER_DECISION_REPORT,
@@ -708,6 +714,8 @@ class GPTTraderBrain:
         self.learning_audit_path = learning_audit_path
         self.verification_ledger_path = verification_ledger_path
         self.self_improvement_audit_path = self_improvement_audit_path
+        self.operator_precedent_path = operator_precedent_path
+        self.manual_market_context_path = manual_market_context_path
         self.predictive_limits_path = predictive_limits_path
         self.output_path = output_path
         self.report_path = report_path
@@ -758,6 +766,8 @@ class GPTTraderBrain:
         learning_audit = _load_optional_json(self.learning_audit_path)
         verification_ledger = _load_optional_json(self.verification_ledger_path)
         self_improvement_audit = _load_optional_json(self.self_improvement_audit_path)
+        operator_precedent = _load_optional_json(self.operator_precedent_path)
+        manual_market_context = _load_optional_json(self.manual_market_context_path)
         predictive_limits = _load_optional_json(self.predictive_limits_path)
         market_context_matrix = _load_optional_json(self.market_context_matrix_path)
         option_skew = _load_optional_json(self.option_skew_path)
@@ -772,6 +782,8 @@ class GPTTraderBrain:
             learning_audit=learning_audit,
             verification_ledger=verification_ledger,
             self_improvement_audit=self_improvement_audit,
+            operator_precedent=operator_precedent,
+            manual_market_context=manual_market_context,
             predictive_limits=predictive_limits,
             market_status=market_status,
             market_context_matrix=market_context_matrix,
@@ -796,12 +808,24 @@ class GPTTraderBrain:
                 "self_improvement_p0_blocks_trade": True,
                 "market_status_is_authoritative_calendar_evidence": True,
                 "coverage_optimization_is_read_only_gap_evidence": True,
+                "operator_precedent_is_advisory_only": True,
+                "manual_market_context_gates_only_precedent_usage": True,
             },
             "artifact_timestamps": {
                 "order_intents_generated_at_utc": intents.get("generated_at_utc"),
                 "market_context_matrix_generated_at_utc": (
                     market_context_matrix.get("generated_at_utc")
                     if isinstance(market_context_matrix, dict)
+                    else None
+                ),
+                "operator_precedent_generated_at_utc": (
+                    operator_precedent.get("generated_at_utc")
+                    if isinstance(operator_precedent, dict)
+                    else None
+                ),
+                "manual_market_context_generated_at_utc": (
+                    manual_market_context.get("generated_at_utc")
+                    if isinstance(manual_market_context, dict)
                     else None
                 ),
             },
@@ -813,6 +837,8 @@ class GPTTraderBrain:
             "learning_audit": _learning_audit_packet(learning_audit),
             "verification_ledger": _verification_ledger_packet(verification_ledger),
             "self_improvement_audit": _self_improvement_audit_packet(self_improvement_audit),
+            "operator_precedent": _operator_precedent_packet(operator_precedent),
+            "manual_market_context": _manual_market_context_packet(manual_market_context),
             "predictive_limits": _predictive_limits_packet(predictive_limits, pairs=pairs),
             "market_status": _market_status_packet(market_status),
             "protection_sidecars": _protection_sidecars_packet(
@@ -883,6 +909,7 @@ class GPTTraderBrain:
                 "- A deterministic `tp-rebalance` sidecar requirement makes WAIT / REQUEST_EVIDENCE invalid until the sidecar is run.",
                 "- A deterministic entry-thesis blocker makes TRADE / WAIT invalid until the unverifiable active position is repaired or reviewed.",
                 "- Any self-improvement P0 blocks new `TRADE` receipts until the named blocker is repaired or the trader route explicitly justifies the exception.",
+                "- The 2025 operator precedent is advisory only. A `TRADE` that cites `operator:precedent` must also cite `manual:market_context` and at least one selected lane must match the current operator-precedent aligned lane set; otherwise the receipt must use current deterministic edge instead of precedent-based aggression.",
                 "- Evidence refs must come from the input packet; invented refs reject the decision.",
                 "- `CLOSE` requires Gate A plus the applicable Gate B. Hard Gate A (M15/H4 close-confirmed BOS/CHOCH against side, buffered invalidation_price hit with technical confirmation, fresh thesis_evolution BROKEN/RECOMMEND_CLOSE, structural position_management REVIEW_EXIT, or position_thesis invalidation-hit/structural-break evidence with multi-TF confirmation) carries standing loss-cut authorization. Softer Gate A still needs `QR_OPERATOR_CLOSE_OVERRIDE=1` or a fresh `data/.operator_close_token` when the trader chooses CLOSE, but soft-only close evidence does not block TP-managed positions from taking separate current LIVE_READY entries. If the same-direction market stack still supports the open position, treat it as TP rebalance / HOLD / profit-side partial / ADD geometry, not loss-side CLOSE plus same-direction re-entry. `TRADE` must not include `close_trade_ids`; automation ends the close cycle, then the next scheduled cycle must refresh broker truth, reprice intents, and require a separate verified `TRADE` receipt. The receipt's `operator_close_authorized` field is advisory only. See AGENT_CONTRACT §10.",
             ]
@@ -966,6 +993,7 @@ class DecisionVerifier:
                     )
                 )
             issues.extend(_learning_audit_trade_issues(self.packet, selected_lane_ids, decision.evidence_refs))
+            issues.extend(_manual_precedent_trade_issues(self.packet, selected_lane_ids, decision.evidence_refs))
             if _target_requires_entry(self.packet) and attack_lane_ids and not exposure_blockers:
                 selected_attack_lanes = [lane_id for lane_id in selected_lane_ids if lane_id in attack_lane_ids]
                 if not selected_attack_lanes:
@@ -1856,6 +1884,25 @@ def _lane_packet(
                         "strongest_matrix_reject",
                     ),
                 ),
+                "technical_context": _small_dict(
+                    metadata,
+                    (
+                        "session_bucket",
+                        "session_current_tag",
+                        "entry_price_percentile_24h",
+                        "entry_price_percentile_7d",
+                        "price_percentile_24h",
+                        "price_percentile_7d",
+                        "range_24h_sigma_multiple",
+                        "tf_agreement_score",
+                        "chart_direction_bias",
+                        "h1_regime",
+                        "h1_adx",
+                        "m5_regime",
+                        "m5_regime_quantile",
+                        "current_price_mid",
+                    ),
+                ),
             }
         )
     if max_lanes <= 0 or len(lanes) <= max_lanes:
@@ -2035,6 +2082,8 @@ def _allowed_refs(
     learning_audit: dict[str, Any] | None,
     verification_ledger: dict[str, Any] | None,
     self_improvement_audit: dict[str, Any] | None,
+    operator_precedent: dict[str, Any] | None,
+    manual_market_context: dict[str, Any] | None,
     predictive_limits: dict[str, Any] | None,
     market_status: dict[str, Any] | None,
     market_context_matrix: dict[str, Any] | None,
@@ -2194,6 +2243,10 @@ def _allowed_refs(
             code = str(finding.get("code") or "").strip()
             if code:
                 refs.append(f"self_improvement:finding:{code}")
+    if operator_precedent:
+        refs.append(OPERATOR_PRECEDENT_EVIDENCE_REF)
+    if manual_market_context:
+        refs.append(MANUAL_MARKET_CONTEXT_EVIDENCE_REF)
     if predictive_limits:
         refs.append("predictive:limits")
         for item in predictive_limits.get("orders", []) or []:
@@ -2624,6 +2677,132 @@ def _self_improvement_audit_packet(payload: dict[str, Any] | None) -> dict[str, 
     }
 
 
+def _operator_precedent_packet(payload: dict[str, Any] | None) -> dict[str, Any]:
+    if not payload:
+        return {
+            "evidence_ref": OPERATOR_PRECEDENT_EVIDENCE_REF,
+            "status": "missing",
+            "operator_claim": {},
+            "winning_shape": {},
+            "runtime_alignment": {},
+            "warnings": [],
+            "blockers": [],
+        }
+    precedent = payload.get("precedent") if isinstance(payload.get("precedent"), dict) else {}
+    return {
+        "evidence_ref": OPERATOR_PRECEDENT_EVIDENCE_REF,
+        "generated_at_utc": payload.get("generated_at_utc"),
+        "status": payload.get("status"),
+        "operator_claim": _small_dict(
+            payload.get("operator_claim"),
+            ("claim", "required_return_pct", "verified"),
+        ),
+        "winning_shape": _small_dict(
+            precedent.get("winning_shape"),
+            (
+                "primary_pair",
+                "primary_direction",
+                "primary_sessions",
+                "positive_sessions",
+                "negative_sessions",
+                "expectancy_jpy_per_exit",
+                "median_hold_hours",
+                "payoff",
+            ),
+        ),
+        "failure_shape": _small_dict(
+            (precedent.get("failure_shape") or {}).get("margin_closeout"),
+            ("trades", "net_jpy", "win_rate", "median_hold_hours"),
+        ),
+        "runtime_alignment": _small_dict(
+            payload.get("runtime_alignment"),
+            (
+                "live_ready_lanes",
+                "aligned_live_ready_lanes",
+                "aligned_lanes",
+                "manual_exit_events_per_calendar_day",
+                "target_trades_per_day",
+                "alignment_contract",
+            ),
+        ),
+        "warnings": list(payload.get("warnings") or [])[:5],
+        "blockers": list(payload.get("blockers") or [])[:5],
+    }
+
+
+def _manual_market_context_packet(payload: dict[str, Any] | None) -> dict[str, Any]:
+    if not payload:
+        return {
+            "evidence_ref": MANUAL_MARKET_CONTEXT_EVIDENCE_REF,
+            "status": "missing",
+            "sample": {},
+            "guidance": {},
+            "bounded_replay_profile": {},
+            "excluded_tail_profile": {},
+            "warnings": [],
+            "blockers": [],
+        }
+    bounded = payload.get("bounded_replay_profile") if isinstance(payload.get("bounded_replay_profile"), dict) else {}
+    excluded = payload.get("excluded_tail_profile") if isinstance(payload.get("excluded_tail_profile"), dict) else {}
+    return {
+        "evidence_ref": MANUAL_MARKET_CONTEXT_EVIDENCE_REF,
+        "generated_at_utc": payload.get("generated_at_utc"),
+        "status": payload.get("status"),
+        "sample": _small_dict(
+            payload.get("sample"),
+            ("pair", "manual_trades", "analyzed_trades", "coverage_pct"),
+        ),
+        "guidance": payload.get("guidance") if isinstance(payload.get("guidance"), dict) else {},
+        "bounded_replay_profile": {
+            "overall": bounded.get("overall") if isinstance(bounded.get("overall"), dict) else {},
+            "by_h1_alignment": _profile_rows(bounded.get("by_h1_alignment")),
+            "by_side_h1_alignment": _profile_rows(bounded.get("by_side_h1_alignment")),
+            "by_side_entry_location_24h": _profile_rows(bounded.get("by_side_entry_location_24h")),
+            "by_session_jst": _profile_rows(bounded.get("by_session_jst")),
+        },
+        "excluded_tail_profile": {
+            "by_hold_bucket": _profile_rows(excluded.get("by_hold_bucket")),
+            "by_close_reason": _profile_rows(excluded.get("by_close_reason")),
+        },
+        "contract": _small_dict(
+            payload.get("contract"),
+            (
+                "advisory_only",
+                "may_gate_use_of_operator_precedent_as_aggression_reason",
+                "does_not_override_current_risk_geometry",
+                "does_not_grant_live_permission",
+            ),
+        ),
+        "warnings": list(payload.get("warnings") or [])[:5],
+        "blockers": list(payload.get("blockers") or [])[:5],
+    }
+
+
+def _profile_rows(rows: object, *, limit: int = 8) -> list[dict[str, Any]]:
+    if not isinstance(rows, list):
+        return []
+    out: list[dict[str, Any]] = []
+    for item in rows[:limit]:
+        if not isinstance(item, dict):
+            continue
+        out.append(
+            _small_dict(
+                item,
+                (
+                    "bucket",
+                    "trades",
+                    "net_jpy",
+                    "win_rate",
+                    "expectancy_jpy",
+                    "median_hold_hours",
+                    "avg_h1_adx",
+                    "median_entry_price_percentile_24h",
+                ),
+            )
+        )
+    return out
+
+
 def _predictive_limits_packet(payload: dict[str, Any] | None, *, pairs: set[str]) -> dict[str, Any]:
     if not payload:
         return {"evidence_ref": "predictive:limits", "status": "missing", "orders_count": 0}
@@ -3025,6 +3204,89 @@ def _learning_audit_trade_issues(
                     f"TRADE selecting learning-influenced lane {lane_id} must cite {lane_ref}",
                 )
             )
+    return issues
+
+
+def _manual_precedent_trade_issues(
+    packet: dict[str, Any],
+    selected_lane_ids: tuple[str, ...],
+    evidence_refs: tuple[str, ...],
+) -> list[VerificationIssue]:
+    refs = set(evidence_refs)
+    if OPERATOR_PRECEDENT_EVIDENCE_REF not in refs:
+        return []
+    issues: list[VerificationIssue] = []
+    if MANUAL_MARKET_CONTEXT_EVIDENCE_REF not in refs:
+        issues.append(
+            VerificationIssue(
+                "MANUAL_CONTEXT_EVIDENCE_MISSING",
+                "TRADE citing the 2025 operator precedent must also cite "
+                f"{MANUAL_MARKET_CONTEXT_EVIDENCE_REF} so the manual technical context is checked.",
+            )
+        )
+    precedent = packet.get("operator_precedent")
+    if not isinstance(precedent, dict) or precedent.get("status") == "missing":
+        issues.append(
+            VerificationIssue(
+                "OPERATOR_PRECEDENT_PACKET_MISSING",
+                "TRADE cites operator precedent but the decision packet has no readable operator precedent audit.",
+            )
+        )
+        return issues
+    claim = precedent.get("operator_claim") if isinstance(precedent.get("operator_claim"), dict) else {}
+    if claim.get("verified") is not True:
+        issues.append(
+            VerificationIssue(
+                "OPERATOR_PRECEDENT_UNVERIFIED",
+                "TRADE cites operator precedent but the manual-history claim is not verified in the audit packet.",
+            )
+        )
+    manual_context = packet.get("manual_market_context")
+    if not isinstance(manual_context, dict) or manual_context.get("status") == "missing":
+        issues.append(
+            VerificationIssue(
+                "MANUAL_CONTEXT_PACKET_MISSING",
+                "TRADE cites operator precedent but the decision packet has no readable manual market-context audit.",
+            )
+        )
+    elif str(manual_context.get("status") or "") != "MANUAL_MARKET_CONTEXT_PASS":
+        issues.append(
+            VerificationIssue(
+                "MANUAL_CONTEXT_NOT_PASSING",
+                "TRADE cites operator precedent but manual-market-context audit is not passing: "
+                f"{manual_context.get('status')}",
+            )
+        )
+
+    runtime = precedent.get("runtime_alignment") if isinstance(precedent.get("runtime_alignment"), dict) else {}
+    aligned_lane_ids = {
+        str(item.get("lane_id") or "")
+        for item in (runtime.get("aligned_lanes") or [])
+        if isinstance(item, dict) and str(item.get("lane_id") or "").strip()
+    }
+    if not selected_lane_ids:
+        return issues
+    if not aligned_lane_ids:
+        issues.append(
+            VerificationIssue(
+                "OPERATOR_PRECEDENT_NO_CURRENT_ALIGNMENT",
+                "TRADE cites the 2025 operator precedent, but the current operator-precedent audit has no "
+                "LIVE_READY lane aligned to the manual pair/direction/session shape. Cite current deterministic "
+                "edge instead of using the manual precedent as an aggression reason.",
+            )
+        )
+        return issues
+    selected_aligned = [lane_id for lane_id in selected_lane_ids if lane_id in aligned_lane_ids]
+    if not selected_aligned:
+        issues.append(
+            VerificationIssue(
+                "OPERATOR_PRECEDENT_SELECTED_LANE_NOT_ALIGNED",
+                "TRADE cites the 2025 operator precedent, but none of the selected lane(s) are aligned to the "
+                "manual precedent shape: "
+                f"selected={', '.join(selected_lane_ids)} aligned={', '.join(sorted(aligned_lane_ids))}. "
+                "Use current forecast/risk/matrix evidence for this trade instead.",
+            )
+        )
     return issues
 
 
