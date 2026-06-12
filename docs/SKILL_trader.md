@@ -236,11 +236,13 @@ QR_LIVE_ENABLED=1 ./scripts/run-autotrade-live.sh \
   --gpt-decision-response data/codex_trader_decision_response.json \
   --send
 
-# 6. Protection sidecars — ONE consolidated command. Run after the single
-# gateway cycle above has either sent, blocked, or recorded no action. It
-# must not delay the handoff from verifier acceptance to LiveOrderGateway /
-# PositionProtectionGateway, but it is part of every completed cycle with
-# open positions.
+# 6. Protection sidecars — automatically run by `run-autotrade-live.sh` after
+# a successful gateway cycle while the live lock is still held. This closes
+# the stale-state window where `autotrade-cycle` refreshes broker truth after
+# verifier acceptance but position sidecars / memory-health / self-improvement
+# still point at the pre-gateway snapshot. Do not run a second routine
+# `cycle-sidecars` after the wrapper unless the wrapper was intentionally
+# called with `QR_RUN_POST_GATEWAY_SIDECARS=0` for diagnostics.
 #
 # `cycle-sidecars` runs (canonical list: `cli._cycle_sidecar_steps`):
 #   broker-snapshot → tp-rebalance → execution-ledger-sync → broker-snapshot
@@ -276,7 +278,9 @@ QR_LIVE_ENABLED=1 ./scripts/run-autotrade-live.sh \
 # - self-improvement-audit is recalculated after the post-gateway snapshot and
 #   memory-health pass so the next route sees current P0/P1/P2 gates instead
 #   of the pre-gateway refresh audit.
-QR_LIVE_ENABLED=1 PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli cycle-sidecars
+# Manual recovery only:
+# QR_RUN_POST_GATEWAY_SIDECARS=0 QR_LIVE_ENABLED=1 ./scripts/run-autotrade-live.sh ...
+# QR_LIVE_ENABLED=1 PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli cycle-sidecars
 
 # 4c. adverse-partial-close is DISABLED 2026-05-14:
 # The module closed 50% of 471020 AUD/JPY SHORT for -2,516 JPY based

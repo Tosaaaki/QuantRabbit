@@ -256,6 +256,11 @@ fi
 cycle_exit="$?"
 set -e
 
+if [[ "$cycle_exit" -eq 0 && "${QR_RUN_POST_GATEWAY_SIDECARS:-1}" == "1" ]]; then
+  echo "[run-autotrade-live] refreshing post-gateway sidecars under live lock." >&2
+  "$QR_PYTHON" -m quant_rabbit.cli cycle-sidecars
+fi
+
 # Slack notifications are opt-in. User directive 2026-05-30:
 # 「Slackに送らないで」. Each notifier is still idempotent if explicitly
 # enabled, but the live trader must not post to Slack by default.

@@ -37,6 +37,7 @@ class LiveWrapperTest(unittest.TestCase):
             self.assertIn("<--send>", payload)
             self.assertIn("<--use-gpt-trader>", payload)
             self.assertIn("<--reuse-market-artifacts>", payload)
+            self.assertIn("<-m><quant_rabbit.cli><cycle-sidecars>", payload)
             self.assertEqual((root / "sync.args").read_text(), "--live-only --skip-tests\n")
 
     def test_env_file_live_enabled_allows_live_send_handoff(self) -> None:
@@ -88,6 +89,7 @@ class LiveWrapperTest(unittest.TestCase):
             self.assertIn("QR_LIVE_ENABLED=1\n", payload)
             self.assertIn("<--gpt-decision-response><data/codex_trader_decision_response.json>", payload)
             self.assertIn("<--send>", payload)
+            self.assertIn("<-m><quant_rabbit.cli><cycle-sidecars>", payload)
             self.assertIn("adding --send to avoid a stage-only live trader cycle", result.stderr)
 
     def test_stage_only_live_gpt_handoff_requires_explicit_escape_hatch(self) -> None:
@@ -116,7 +118,49 @@ class LiveWrapperTest(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stderr)
             payload = capture.read_text()
             self.assertNotIn("<--send>", payload)
+            self.assertIn("<-m><quant_rabbit.cli><cycle-sidecars>", payload)
             self.assertIn("QR_ALLOW_LIVE_STAGE_ONLY=1; keeping GPT handoff stage-only", result.stderr)
+
+    def test_successful_cycle_refreshes_post_gateway_sidecars_under_lock(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            capture = root / "capture.json"
+            env = _wrapper_env(root, capture, live_enabled="1")
+
+            result = subprocess.run(
+                ["bash", str(WRAPPER), "--send"],
+                env=env,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=False,
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            payload = capture.read_text()
+            self.assertIn("<-m><quant_rabbit.cli><autotrade-cycle>", payload)
+            self.assertIn("<-m><quant_rabbit.cli><cycle-sidecars>", payload)
+            self.assertIn("refreshing post-gateway sidecars under live lock", result.stderr)
+
+    def test_failed_cycle_does_not_run_post_gateway_sidecars(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            capture = root / "capture.json"
+            env = _wrapper_env(root, capture, live_enabled="1", python_exit=37)
+
+            result = subprocess.run(
+                ["bash", str(WRAPPER), "--send"],
+                env=env,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=False,
+            )
+
+            self.assertEqual(result.returncode, 37)
+            payload = capture.read_text()
+            self.assertIn("<-m><quant_rabbit.cli><autotrade-cycle>", payload)
+            self.assertNotIn("<-m><quant_rabbit.cli><cycle-sidecars>", payload)
 
     def test_sync_failure_continues_when_runtime_is_current_with_report_drift(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -222,6 +266,7 @@ def _wrapper_env(
     *,
     live_enabled: str | None = None,
     sync_exit: int = 0,
+    python_exit: int = 0,
 ) -> dict[str, str]:
     env_file = root / "oanda.env"
     lines = [
@@ -265,7 +310,8 @@ def _wrapper_env(
                 "  printf 'ARGV='",
                 "  for arg in \"$@\"; do printf '<%s>' \"$arg\"; done",
                 "  printf '\\n'",
-                "} > \"$QR_CAPTURE_PATH\"",
+                "} >> \"$QR_CAPTURE_PATH\"",
+                f"exit {python_exit}",
             ]
         )
         + "\n"
