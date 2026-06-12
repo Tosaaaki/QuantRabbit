@@ -272,6 +272,26 @@ def _position_close_spread_override_enabled() -> bool:
     }
 
 
+def _close_spread_session_tag(packet: dict[str, Any], pair: str) -> str | None:
+    market_pairs = (packet.get("market_context") or {}).get("pairs") or {}
+    pair_context = market_pairs.get(pair, {})
+    if not isinstance(pair_context, dict):
+        return None
+    chart = pair_context.get("chart")
+    if isinstance(chart, dict):
+        session = chart.get("session")
+        if isinstance(session, dict):
+            tag = session.get("current_tag") or session.get("session_current_tag") or session.get("session_bucket")
+            if tag:
+                return str(tag)
+    technical = pair_context.get("technical_context")
+    if isinstance(technical, dict):
+        tag = technical.get("session_current_tag") or technical.get("session_bucket")
+        if tag:
+            return str(tag)
+    return None
+
+
 def _close_spread_issues(
     packet: dict[str, Any],
     pair: str,
@@ -291,7 +311,10 @@ def _close_spread_issues(
         )
 
     max_spread_multiple = RiskPolicy().max_spread_multiple
-    spread_cap = normal_spread * max_spread_multiple
+    session_tag = _close_spread_session_tag(packet, pair)
+    session_mult = _spread_session_multiplier_from_tag(session_tag)
+    effective_spread_cap_mult = max_spread_multiple * session_mult
+    spread_cap = normal_spread * effective_spread_cap_mult
     issues: list[VerificationIssue] = []
 
     snapshot = packet.get("broker_snapshot") or {}
@@ -322,7 +345,9 @@ def _close_spread_issues(
                         "CLOSE rejected for trade "
                         f"{trade_id} {pair}: broker quote spread {spread_pips:.2f} pips "
                         f"exceeds close cap {spread_cap:.2f} pips "
-                        f"({max_spread_multiple:.1f}x normal {normal_spread:.1f}pip)",
+                        f"({effective_spread_cap_mult:.2f}x normal {normal_spread:.1f}pip; "
+                        f"policy={max_spread_multiple:.1f}x, session={session_tag or 'UNKNOWN'}, "
+                        f"session_mult={session_mult:.2f})",
                     )
                 )
 
@@ -343,7 +368,9 @@ def _close_spread_issues(
                     "CLOSE rejected for trade "
                     f"{trade_id} {pair}: flow spread {flow_current:.2f} pips "
                     f"({stress_flag}) exceeds close cap {spread_cap:.2f} pips "
-                    f"({max_spread_multiple:.1f}x normal {normal_spread:.1f}pip)",
+                    f"({effective_spread_cap_mult:.2f}x normal {normal_spread:.1f}pip; "
+                    f"policy={max_spread_multiple:.1f}x, session={session_tag or 'UNKNOWN'}, "
+                    f"session_mult={session_mult:.2f})",
                 )
             )
 
@@ -595,7 +622,7 @@ from quant_rabbit.instruments import (
     NORMAL_SPREAD_PIPS,
     instrument_pip_factor,
 )
-from quant_rabbit.risk import RiskPolicy
+from quant_rabbit.risk import RiskPolicy, _spread_session_multiplier_from_tag
 from quant_rabbit.strategy.entry_thesis_ledger import (
     invalidation_price_hit_reason,
     technical_invalidation_confirmation_reason,

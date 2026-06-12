@@ -3890,6 +3890,31 @@ class CloseDisciplineTest(unittest.TestCase):
             payload = json.loads((root / "gpt_decision.json").read_text())
             self.assertEqual(payload["verification_issues"], [])
 
+    def test_close_spread_cap_uses_pair_chart_session_tag(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _close_fixtures(
+                root,
+                position_side="SHORT",
+                m15_dir="UP",
+                h4_dir="UP",
+                quote_bid=1.17600,
+                quote_ask=1.17617,
+            )
+            charts = json.loads(files["pair_charts"].read_text())
+            charts["charts"][0]["session"]["current_tag"] = "OFF_HOURS"
+            files["pair_charts"].write_text(json.dumps(charts))
+            decision = _close_decision(trade_ids=["555"], operator_close_authorized=False)
+            brain = _brain(root, files, decision)
+
+            summary = brain.run(snapshot_path=files["snapshot"])
+
+            self.assertEqual(summary.status, "ACCEPTED")
+            self.assertTrue(summary.allowed)
+            payload = json.loads((root / "gpt_decision.json").read_text())
+            codes = {issue["code"] for issue in payload["verification_issues"]}
+            self.assertNotIn("POSITION_CLOSE_SPREAD_TOO_WIDE", codes)
+
     def test_close_rejected_when_flow_spread_exceeds_close_cap(self) -> None:
         # Hard Gate A still cannot authorize paying a stressed spread. This
         # reproduces the 2026-06-11 GBP_CHF GPT_CLOSE path where the receipt

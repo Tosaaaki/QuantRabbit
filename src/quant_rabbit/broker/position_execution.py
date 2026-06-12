@@ -7,10 +7,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Protocol
 
+from quant_rabbit.analysis.sessions import tag_bar
 from quant_rabbit.instruments import NORMAL_SPREAD_PIPS, instrument_pip_factor
 from quant_rabbit.models import BrokerPosition, BrokerSnapshot, Owner, Quote, Side
 from quant_rabbit.paths import DEFAULT_POSITION_EXECUTION, DEFAULT_POSITION_EXECUTION_REPORT
-from quant_rabbit.risk import RiskPolicy
+from quant_rabbit.risk import RiskPolicy, _spread_session_multiplier_from_tag
 from quant_rabbit.strategy.position_manager import (
     ACTION_BREAK_EVEN_STOP,
     ACTION_EXTEND_TP,
@@ -396,6 +397,15 @@ def _position_close_spread_override_enabled() -> bool:
     return os.environ.get("QR_POSITION_CLOSE_SPREAD_OVERRIDE", "").strip().lower() in {"1", "true", "yes"}
 
 
+def _snapshot_session_tag(snapshot: BrokerSnapshot) -> str | None:
+    fetched_at = getattr(snapshot, "fetched_at_utc", None)
+    if fetched_at is None:
+        return None
+    marker = tag_bar(fetched_at)
+    tag = marker.tag.value if hasattr(marker.tag, "value") else str(marker.tag)
+    return tag or None
+
+
 def _market_close_spread_issue(position: BrokerPosition, snapshot: BrokerSnapshot) -> dict[str, str] | None:
     if _position_close_spread_override_enabled():
         return None
@@ -421,14 +431,19 @@ def _market_close_spread_issue(position: BrokerPosition, snapshot: BrokerSnapsho
         }
     spread_pips = abs(quote.ask - quote.bid) * instrument_pip_factor(position.pair)
     max_spread_multiple = RiskPolicy().max_spread_multiple
-    spread_cap = normal_spread * max_spread_multiple
+    session_tag = _snapshot_session_tag(snapshot)
+    session_mult = _spread_session_multiplier_from_tag(session_tag)
+    effective_spread_cap_mult = max_spread_multiple * session_mult
+    spread_cap = normal_spread * effective_spread_cap_mult
     if spread_pips > spread_cap:
         return {
             "severity": "BLOCK",
             "code": "POSITION_CLOSE_SPREAD_TOO_WIDE",
             "message": (
                 f"{position.pair} market CLOSE spread {spread_pips:.1f}pip exceeds "
-                f"{max_spread_multiple:.1f}x normal {normal_spread:.1f}pip; defer to TP/SL/protection "
+                f"{effective_spread_cap_mult:.2f}x normal {normal_spread:.1f}pip "
+                f"(policy={max_spread_multiple:.1f}x, session={session_tag or 'UNKNOWN'}, "
+                f"session_mult={session_mult:.2f}); defer to TP/SL/protection "
                 "until liquidity normalizes or set QR_POSITION_CLOSE_SPREAD_OVERRIDE=1 for explicit operator override."
             ),
         }

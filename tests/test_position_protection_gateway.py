@@ -184,6 +184,43 @@ class PositionProtectionGatewayTest(unittest.TestCase):
             self.assertEqual(client.closed, [])
             self.assertIn("POSITION_CLOSE_SPREAD_TOO_WIDE", (root / "exec.md").read_text())
 
+    def test_allows_gpt_verified_review_exit_when_session_cap_covers_spread(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp, patch.dict(
+            "os.environ",
+            {
+                "QR_DISABLE_AUTO_CLOSE": "1",
+                "QR_POSITION_CLOSE_SPREAD_OVERRIDE": "",
+            },
+            clear=False,
+        ):
+            root = Path(tmp)
+            client = FakePositionClient()
+            summary = PositionProtectionGateway(
+                client=client,
+                output_path=root / "exec.json",
+                report_path=root / "exec.md",
+                live_enabled=True,
+            ).run(
+                decision=_decision(
+                    ACTION_REVIEW_EXIT,
+                    stop=None,
+                    reasons=(
+                        "gpt-close: accepted gpt_trader CLOSE receipt passed Gate A/B; "
+                        "execute only through PositionProtectionGateway",
+                    ),
+                ),
+                snapshot=_snapshot(
+                    unrealized_pl_jpy=-90.0,
+                    quote_bid=1.17000,
+                    quote_ask=1.17017,
+                    fetched_at_utc=datetime(2026, 6, 12, 16, 0, tzinfo=timezone.utc),
+                ),
+                send=True,
+            )
+
+            self.assertEqual(summary.status, "SENT")
+            self.assertEqual(client.closed, [("1", "ALL")])
+
     def test_allows_wide_spread_close_with_explicit_operator_override(self) -> None:
         with tempfile.TemporaryDirectory() as tmp, patch.dict(
             "os.environ",
@@ -527,8 +564,9 @@ def _snapshot(
     unrealized_pl_jpy: float = 90.0,
     quote_bid: float = 1.1738,
     quote_ask: float = 1.1739,
+    fetched_at_utc: datetime | None = None,
 ) -> BrokerSnapshot:
-    now = datetime.now(timezone.utc)
+    now = fetched_at_utc or datetime.now(timezone.utc)
     return BrokerSnapshot(
         fetched_at_utc=now,
         positions=(

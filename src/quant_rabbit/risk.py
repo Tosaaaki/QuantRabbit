@@ -201,6 +201,19 @@ _SPREAD_SESSION_MULTS: dict[str, float] = {
 }
 
 
+def _spread_session_multiplier_from_tag(tag_raw: object) -> float:
+    """Return the spread-cap multiplier for a chart/session liquidity tag.
+
+    The multipliers are the documented session-liquidity tiers from §3.5.
+    Missing tags fall back to 1.0 so broker-spec spread limits still apply
+    when an older artifact lacks session context.
+    """
+    if not tag_raw:
+        return 1.0
+    tag = str(tag_raw).upper().strip()
+    return _SPREAD_SESSION_MULTS.get(tag, 1.0)
+
+
 def _spread_session_multiplier(intent: OrderIntent) -> float:
     """Return the session-aware multiplier on top of
     `RiskPolicy.max_spread_multiple`. Reads from intent.metadata
@@ -209,10 +222,7 @@ def _spread_session_multiplier(intent: OrderIntent) -> float:
     """
     metadata = intent.metadata or {}
     tag_raw = metadata.get("session_current_tag") or metadata.get("session_bucket")
-    if not tag_raw:
-        return 1.0
-    tag = str(tag_raw).upper().strip()
-    return _SPREAD_SESSION_MULTS.get(tag, 1.0)
+    return _spread_session_multiplier_from_tag(tag_raw)
 
 
 def _uses_range_reward_floor(intent: OrderIntent, regime_state: str) -> bool:
