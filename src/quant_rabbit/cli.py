@@ -82,6 +82,7 @@ from quant_rabbit.paths import (
     DEFAULT_ORDER_INTENT_REPORT,
     DEFAULT_ORDER_INTENTS,
     DEFAULT_POSITION_EXECUTION,
+    DEFAULT_POSITION_EXECUTION_REPORT,
     DEFAULT_POSITION_MANAGEMENT,
     DEFAULT_POSITION_MANAGEMENT_REPORT,
     DEFAULT_PROFIT_PARTIAL_CLOSE,
@@ -2307,6 +2308,19 @@ def main(argv: list[str] | None = None) -> int:
     )
     p_pmanage.add_argument("--output", type=Path, default=DEFAULT_POSITION_MANAGEMENT)
     p_pmanage.add_argument("--report", type=Path, default=DEFAULT_POSITION_MANAGEMENT_REPORT)
+
+    p_pexec = sub.add_parser(
+        "position-execution",
+        help="Execute a persisted PositionManager sidecar through the risk-reducing position gateway.",
+    )
+    p_pexec.add_argument("--snapshot", type=Path, default=DEFAULT_BROKER_SNAPSHOT)
+    p_pexec.add_argument("--position-management", type=Path, default=DEFAULT_POSITION_MANAGEMENT)
+    p_pexec.add_argument("--output", type=Path, default=DEFAULT_POSITION_EXECUTION)
+    p_pexec.add_argument("--report", type=Path, default=DEFAULT_POSITION_EXECUTION_REPORT)
+    p_pexec.add_argument("--execution-ledger-db", type=Path, default=DEFAULT_EXECUTION_LEDGER_DB)
+    p_pexec.add_argument("--execution-ledger-report", type=Path, default=DEFAULT_EXECUTION_LEDGER_REPORT)
+    p_pexec.add_argument("--send", action="store_true")
+    p_pexec.add_argument("--confirm-live", action="store_true")
 
     p_plim = sub.add_parser(
         "generate-predictive-limits",
@@ -4645,6 +4659,118 @@ def main(argv: list[str] | None = None) -> int:
             "output_path": str(args.output),
             "report_path": str(args.report),
         }, indent=2, ensure_ascii=False))
+        return 0
+    if args.command == "position-execution":
+        from quant_rabbit.broker.position_execution import PositionProtectionGateway
+        from quant_rabbit.strategy.position_manager import ManagedPosition, PositionManagementDecision
+
+        if args.send and not args.confirm_live:
+            print(json.dumps({
+                "error": "position-execution --send requires --confirm-live",
+            }, indent=2, ensure_ascii=False))
+            return 2
+        live_enabled = os.environ.get("QR_LIVE_ENABLED") == "1"
+        if args.send and not live_enabled:
+            print(json.dumps({
+                "error": "position-execution --send requires QR_LIVE_ENABLED=1",
+            }, indent=2, ensure_ascii=False))
+            return 2
+
+        snapshot_payload = json.loads(args.snapshot.read_text()) if args.snapshot.exists() else {}
+        snapshot = _snapshot_from_json(snapshot_payload)
+        try:
+            management_payload = json.loads(args.position_management.read_text())
+        except (OSError, json.JSONDecodeError, ValueError) as exc:
+            print(json.dumps({
+                "error": f"position-management sidecar is unreadable: {args.position_management}: {exc}",
+            }, indent=2, ensure_ascii=False))
+            return 2
+
+        managed_positions = []
+        for item in management_payload.get("positions", []) or []:
+            if not isinstance(item, dict):
+                continue
+            managed_positions.append(
+                ManagedPosition(
+                    trade_id=str(item.get("trade_id") or ""),
+                    pair=str(item.get("pair") or ""),
+                    side=str(item.get("side") or ""),
+                    units=int(item.get("units") or 0),
+                    action=str(item.get("action") or ""),
+                    unrealized_pl_jpy=float(item.get("unrealized_pl_jpy") or 0.0),
+                    remaining_risk_jpy=_optional_float(item.get("remaining_risk_jpy")),
+                    remaining_reward_jpy=_optional_float(item.get("remaining_reward_jpy")),
+                    same_direction_score=_optional_float(item.get("same_direction_score")),
+                    opposite_direction_score=_optional_float(item.get("opposite_direction_score")),
+                    recommended_stop_loss=_optional_float(item.get("recommended_stop_loss")),
+                    recommended_take_profit=_optional_float(item.get("recommended_take_profit")),
+                    reasons=tuple(str(reason) for reason in (item.get("reasons") or [])),
+                    owner=str(item.get("owner") or Owner.TRADER.value),
+                )
+            )
+        decision = PositionManagementDecision(
+            generated_at_utc=str(management_payload.get("generated_at_utc") or ""),
+            snapshot_fetched_at_utc=management_payload.get("snapshot_fetched_at_utc"),
+            action=str(management_payload.get("action") or ""),
+            positions=tuple(managed_positions),
+        )
+
+        class _DryRunPositionClient:
+            def replace_trade_dependent_orders(self, trade_id: str, order_request: dict[str, Any]) -> dict[str, Any]:
+                raise RuntimeError(f"dry-run position-execution cannot replace orders for {trade_id}")
+
+            def close_trade(self, trade_id: str, units: str = "ALL") -> dict[str, Any]:
+                raise RuntimeError(f"dry-run position-execution cannot close trade {trade_id}")
+
+        client = OandaExecutionClient() if args.send else _DryRunPositionClient()
+        ledger_pre_sync = (
+            _sync_execution_ledger_if_available(
+                client,
+                ledger_db_path=args.execution_ledger_db,
+                ledger_report_path=args.execution_ledger_report,
+            )
+            if args.send
+            else {"status": "SKIPPED", "reason": "dry run"}
+        )
+        summary = PositionProtectionGateway(
+            client=client,
+            output_path=args.output,
+            report_path=args.report,
+            live_enabled=live_enabled,
+        ).run(
+            decision=decision,
+            snapshot=snapshot,
+            send=args.send,
+        )
+        ledger_record = _record_position_execution_receipt(
+            output_path=args.output,
+            ledger_db_path=args.execution_ledger_db,
+            ledger_report_path=args.execution_ledger_report,
+        )
+        ledger_post_sync = (
+            _sync_execution_ledger_if_available(
+                client,
+                ledger_db_path=args.execution_ledger_db,
+                ledger_report_path=args.execution_ledger_report,
+            )
+            if summary.sent
+            else {"status": "SKIPPED", "reason": "no position action sent"}
+        )
+        payload = json.loads(args.output.read_text()) if args.output.exists() else {}
+        payload["execution_ledger_pre_sync"] = ledger_pre_sync
+        payload["execution_ledger"] = ledger_record
+        payload["execution_ledger_post_sync"] = ledger_post_sync
+        args.output.write_text(json.dumps(payload, indent=2, ensure_ascii=False, sort_keys=True) + "\n")
+        print(json.dumps({
+            "status": summary.status,
+            "sent": summary.sent,
+            "actions": summary.actions,
+            "blocked": summary.blocked,
+            "output_path": str(summary.output_path),
+            "report_path": str(summary.report_path),
+            "execution_ledger": ledger_record,
+            "execution_ledger_post_sync": ledger_post_sync,
+        }, indent=2, ensure_ascii=False, sort_keys=True))
         return 0
     if args.command == "verify-projections":
         from quant_rabbit.strategy.projection_ledger import (

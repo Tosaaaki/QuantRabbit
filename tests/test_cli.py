@@ -196,6 +196,244 @@ class CliHelpTest(unittest.TestCase):
             saved = json.loads(output.read_text())
             self.assertEqual(saved["positions"][0]["trade_id"], "t-position")
 
+    def test_position_execution_command_stages_position_management_action(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            snapshot = root / "snapshot.json"
+            management = root / "position_management.json"
+            output = root / "position_execution.json"
+            report = root / "position_execution.md"
+            ledger = root / "execution_ledger.db"
+            ledger_report = root / "execution_ledger.md"
+            fetched_at = datetime(2026, 6, 12, 13, 45, tzinfo=timezone.utc)
+            snapshot.write_text(json.dumps({
+                "fetched_at_utc": fetched_at.isoformat(),
+                "positions": [
+                    {
+                        "trade_id": "t-profit",
+                        "pair": "EUR_USD",
+                        "side": "LONG",
+                        "units": 1000,
+                        "entry_price": 1.1000,
+                        "take_profit": 1.1030,
+                        "stop_loss": 1.0950,
+                        "unrealized_pl_jpy": 600.0,
+                        "owner": "trader",
+                    }
+                ],
+                "orders": [],
+                "quotes": {
+                    "EUR_USD": {
+                        "bid": 1.1010,
+                        "ask": 1.1011,
+                        "timestamp_utc": fetched_at.isoformat(),
+                    }
+                },
+                "home_conversions": {"USD": 160.0, "JPY": 1.0},
+            }))
+            management.write_text(json.dumps({
+                "generated_at_utc": "2026-06-12T13:45:00+00:00",
+                "snapshot_fetched_at_utc": fetched_at.isoformat(),
+                "action": "TAKE_PROFIT_MARKET",
+                "positions": [
+                    {
+                        "trade_id": "t-profit",
+                        "pair": "EUR_USD",
+                        "side": "LONG",
+                        "units": 1000,
+                        "action": "TAKE_PROFIT_MARKET",
+                        "unrealized_pl_jpy": 600.0,
+                        "remaining_risk_jpy": 800.0,
+                        "remaining_reward_jpy": 1200.0,
+                        "same_direction_score": 100.0,
+                        "opposite_direction_score": 80.0,
+                        "recommended_stop_loss": None,
+                        "recommended_take_profit": None,
+                        "reasons": ["temporary top profit-take"],
+                        "owner": "trader",
+                    }
+                ],
+            }))
+            stdout = io.StringIO()
+
+            with redirect_stdout(stdout):
+                code = main([
+                    "position-execution",
+                    "--snapshot",
+                    str(snapshot),
+                    "--position-management",
+                    str(management),
+                    "--output",
+                    str(output),
+                    "--report",
+                    str(report),
+                    "--execution-ledger-db",
+                    str(ledger),
+                    "--execution-ledger-report",
+                    str(ledger_report),
+                ])
+
+            self.assertEqual(code, 0)
+            payload = json.loads(stdout.getvalue())
+            self.assertEqual(payload["status"], "STAGED")
+            self.assertFalse(payload["sent"])
+            saved = json.loads(output.read_text())
+            self.assertEqual(saved["actions"][0]["request"]["type"], "CLOSE")
+            self.assertEqual(saved["execution_ledger"]["status"], "RECORDED")
+            with sqlite3.connect(ledger) as conn:
+                event = conn.execute(
+                    "SELECT event_type, exit_reason, trade_id FROM execution_events"
+                ).fetchone()
+            self.assertEqual(event, ("GATEWAY_POSITION_ACTION_STAGED", "TAKE_PROFIT_MARKET", "t-profit"))
+
+    def test_position_execution_send_requires_confirm_live_and_live_enabled(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            snapshot = root / "snapshot.json"
+            management = root / "position_management.json"
+            snapshot.write_text(json.dumps({"positions": [], "orders": [], "quotes": {}}))
+            management.write_text(json.dumps({"generated_at_utc": "now", "positions": []}))
+            stdout = io.StringIO()
+
+            with redirect_stdout(stdout):
+                code = main([
+                    "position-execution",
+                    "--snapshot",
+                    str(snapshot),
+                    "--position-management",
+                    str(management),
+                    "--send",
+                ])
+
+            self.assertEqual(code, 2)
+            self.assertIn("--confirm-live", json.loads(stdout.getvalue())["error"])
+
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.dict(os.environ, {"QR_LIVE_ENABLED": ""}, clear=False):
+            root = Path(tmp)
+            snapshot = root / "snapshot.json"
+            management = root / "position_management.json"
+            snapshot.write_text(json.dumps({"positions": [], "orders": [], "quotes": {}}))
+            management.write_text(json.dumps({"generated_at_utc": "now", "positions": []}))
+            stdout = io.StringIO()
+
+            with redirect_stdout(stdout):
+                code = main([
+                    "position-execution",
+                    "--snapshot",
+                    str(snapshot),
+                    "--position-management",
+                    str(management),
+                    "--send",
+                    "--confirm-live",
+                ])
+
+            self.assertEqual(code, 2)
+            self.assertIn("QR_LIVE_ENABLED=1", json.loads(stdout.getvalue())["error"])
+
+    def test_position_execution_live_send_closes_through_gateway(self) -> None:
+        class CloseClient:
+            def __init__(self) -> None:
+                self.closed: list[tuple[str, str]] = []
+
+            def close_trade(self, trade_id: str, units: str = "ALL") -> dict:
+                self.closed.append((trade_id, units))
+                return {
+                    "orderCreateTransaction": {
+                        "id": "101",
+                        "reason": "TRADE_CLOSE",
+                        "tradeClose": {"tradeID": trade_id, "units": units},
+                    },
+                    "relatedTransactionIDs": ["101"],
+                }
+
+            def replace_trade_dependent_orders(self, trade_id: str, order_request: dict) -> dict:
+                raise AssertionError("not expected")
+
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.dict(os.environ, {"QR_LIVE_ENABLED": "1"}, clear=False):
+            root = Path(tmp)
+            snapshot = root / "snapshot.json"
+            management = root / "position_management.json"
+            output = root / "position_execution.json"
+            fetched_at = datetime(2026, 6, 12, 13, 45, tzinfo=timezone.utc)
+            snapshot.write_text(json.dumps({
+                "fetched_at_utc": fetched_at.isoformat(),
+                "positions": [
+                    {
+                        "trade_id": "t-profit",
+                        "pair": "EUR_USD",
+                        "side": "LONG",
+                        "units": 1000,
+                        "entry_price": 1.1000,
+                        "take_profit": 1.1030,
+                        "stop_loss": 1.0950,
+                        "unrealized_pl_jpy": 600.0,
+                        "owner": "trader",
+                    }
+                ],
+                "orders": [],
+                "quotes": {
+                    "EUR_USD": {
+                        "bid": 1.1010,
+                        "ask": 1.1011,
+                        "timestamp_utc": fetched_at.isoformat(),
+                    }
+                },
+                "home_conversions": {"USD": 160.0, "JPY": 1.0},
+            }))
+            management.write_text(json.dumps({
+                "generated_at_utc": "2026-06-12T13:45:00+00:00",
+                "snapshot_fetched_at_utc": fetched_at.isoformat(),
+                "action": "TAKE_PROFIT_MARKET",
+                "positions": [
+                    {
+                        "trade_id": "t-profit",
+                        "pair": "EUR_USD",
+                        "side": "LONG",
+                        "units": 1000,
+                        "action": "TAKE_PROFIT_MARKET",
+                        "unrealized_pl_jpy": 600.0,
+                        "remaining_risk_jpy": 800.0,
+                        "remaining_reward_jpy": 1200.0,
+                        "same_direction_score": 100.0,
+                        "opposite_direction_score": 80.0,
+                        "recommended_stop_loss": None,
+                        "recommended_take_profit": None,
+                        "reasons": ["temporary top profit-take"],
+                        "owner": "trader",
+                    }
+                ],
+            }))
+            client = CloseClient()
+            stdout = io.StringIO()
+
+            with mock.patch("quant_rabbit.cli.OandaExecutionClient", return_value=client), redirect_stdout(stdout):
+                code = main([
+                    "position-execution",
+                    "--snapshot",
+                    str(snapshot),
+                    "--position-management",
+                    str(management),
+                    "--output",
+                    str(output),
+                    "--report",
+                    str(root / "position_execution.md"),
+                    "--execution-ledger-db",
+                    str(root / "execution_ledger.db"),
+                    "--execution-ledger-report",
+                    str(root / "execution_ledger.md"),
+                    "--send",
+                    "--confirm-live",
+                ])
+
+            self.assertEqual(code, 0)
+            self.assertEqual(client.closed, [("t-profit", "ALL")])
+            payload = json.loads(stdout.getvalue())
+            self.assertEqual(payload["status"], "SENT")
+            self.assertTrue(payload["sent"])
+            saved = json.loads(output.read_text())
+            self.assertTrue(saved["sent"])
+            self.assertEqual(saved["actions"][0]["response"]["orderCreateTransaction"]["id"], "101")
+
     def test_gpt_trader_requires_codex_decision_response(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
