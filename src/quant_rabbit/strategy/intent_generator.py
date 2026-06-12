@@ -626,6 +626,12 @@ FORECAST_WATCH_MIN_CHART_SCORE = _env_float(
     0.65,
     minimum=0.50,
 )
+# Post-harvest re-entry is a candidate-surface memory, not a risk gate. Keep it
+# inside the same operating window as predictive LIMIT orders: a local M1/M5
+# top/bottom close is relevant for the immediate retest, not as a day-long
+# directional bias.
+POST_HARVEST_REENTRY_LOOKBACK_MIN = _env_float("QR_POST_HARVEST_REENTRY_LOOKBACK_MIN", 90.0, minimum=5.0)
+POST_HARVEST_REENTRY_MAX_SEEDS = _env_int("QR_POST_HARVEST_REENTRY_MAX_SEEDS", 8, minimum=0)
 # Matrix-supported repair seeding is a candidate-surface repair, not live
 # permission. A pair/side must have support from at least three independent
 # market-context layers so a repair lane cannot be born from a single spread
@@ -1781,6 +1787,196 @@ def _append_current_range_phase_lanes(
             out.append(synthetic)
             seen.add(key)
     return out
+
+
+def _append_post_harvest_reentry_lanes(
+    lanes: list[dict[str, Any]],
+    charts: dict[str, dict[str, Any]] | None,
+    snapshot: BrokerSnapshot | None,
+    *,
+    data_root: Path,
+) -> list[dict[str, Any]]:
+    if snapshot is None or charts is None or POST_HARVEST_REENTRY_MAX_SEEDS <= 0:
+        return lanes
+    seeds = _recent_post_harvest_reentry_seeds(data_root, snapshot=snapshot)
+    if not seeds:
+        return lanes
+    out = list(lanes)
+    existing = {
+        (lane.get("desk"), lane.get("pair"), lane.get("direction"), lane.get("method"))
+        for lane in out
+    }
+    added = 0
+    for seed in seeds:
+        pair = str(seed.get("pair") or "")
+        side = str(seed.get("side") or "").upper()
+        if side not in {Side.LONG.value, Side.SHORT.value}:
+            continue
+        if pair not in snapshot.quotes:
+            continue
+        if _snapshot_has_trader_pair_exposure(snapshot, pair):
+            continue
+        if not _pair_has_current_range_rotation_edge(pair, charts):
+            continue
+        key = ("post_harvest_trader", pair, side, TradeMethod.RANGE_ROTATION.value)
+        if key in existing:
+            continue
+        out.append(_post_harvest_reentry_lane(seed))
+        existing.add(key)
+        added += 1
+        if added >= POST_HARVEST_REENTRY_MAX_SEEDS:
+            break
+    return out
+
+
+def _recent_post_harvest_reentry_seeds(data_root: Path, *, snapshot: BrokerSnapshot) -> list[dict[str, Any]]:
+    ledger = data_root / "execution_ledger.db"
+    if not ledger.exists():
+        return []
+    now = _ensure_utc(snapshot.fetched_at_utc) or datetime.now(timezone.utc)
+    cutoff_seconds = POST_HARVEST_REENTRY_LOOKBACK_MIN * 60.0
+    rows: list[dict[str, Any]] = []
+    try:
+        with sqlite3.connect(f"file:{ledger}?mode=ro", uri=True) as conn:
+            conn.row_factory = sqlite3.Row
+            records = conn.execute(
+                """
+                SELECT ts_utc, pair, side, trade_id, order_id, exit_reason, raw_json
+                FROM execution_events
+                WHERE event_type = 'GATEWAY_TRADE_CLOSE_SENT'
+                  AND exit_reason = 'TAKE_PROFIT_MARKET'
+                ORDER BY ts_utc DESC
+                LIMIT 50
+                """
+            ).fetchall()
+    except sqlite3.Error:
+        return []
+    seen_pairs: set[tuple[str, str]] = set()
+    for record in records:
+        close_time = _parse_telemetry_time(record["ts_utc"])
+        if close_time is None:
+            continue
+        if close_time > now:
+            age_seconds = 0.0
+        else:
+            age_seconds = (now - close_time).total_seconds()
+        if age_seconds > cutoff_seconds:
+            continue
+        raw = _json_dict(record["raw_json"])
+        if not bool(raw.get("sent")):
+            continue
+        if str(raw.get("management_action") or "") != "TAKE_PROFIT_MARKET":
+            continue
+        if str(raw.get("owner") or "") != Owner.TRADER.value:
+            continue
+        reasons = [str(item) for item in raw.get("reasons") or [] if str(item)]
+        reason_blob = " | ".join(reasons)
+        if "temporary top profit-take" not in reason_blob and "temporary bottom profit-take" not in reason_blob:
+            continue
+        pair = str(record["pair"] or raw.get("pair") or "")
+        side = _closed_position_side(record["side"], raw)
+        if pair not in DEFAULT_TRADER_PAIRS or side not in {Side.LONG.value, Side.SHORT.value}:
+            continue
+        key = (pair, side)
+        if key in seen_pairs:
+            continue
+        seen_pairs.add(key)
+        rows.append(
+            {
+                "pair": pair,
+                "side": side,
+                "trade_id": str(record["trade_id"] or raw.get("trade_id") or ""),
+                "order_id": str(record["order_id"] or ""),
+                "closed_at_utc": close_time.isoformat().replace("+00:00", "Z"),
+                "age_minutes": round(age_seconds / 60.0, 2),
+                "reasons": reasons[:4],
+            }
+        )
+    return rows
+
+
+def _post_harvest_reentry_lane(seed: dict[str, Any]) -> dict[str, Any]:
+    pair = str(seed.get("pair") or "")
+    side = str(seed.get("side") or "").upper()
+    trade_id = str(seed.get("trade_id") or "unknown")
+    closed_at = str(seed.get("closed_at_utc") or "unknown")
+    reason = (
+        f"post-harvest re-entry seed: trader-owned {pair} {side} trade {trade_id} "
+        f"was profit-harvested at a temporary local extreme at {closed_at}; "
+        "wait for the market to pull back to the range support/resistance rail before re-entering"
+    )
+    return {
+        "desk": "post_harvest_trader",
+        "pair": pair,
+        "direction": side,
+        "method": TradeMethod.RANGE_ROTATION.value,
+        "adoption": "TRIGGER_RECEIPT_REQUIRED",
+        "campaign_role": "POST_HARVEST_PULLBACK_REENTRY",
+        "reason": reason,
+        "required_receipt": (
+            "Post-harvest re-entry lane: LIMIT only at the fresh range rail / pullback retest; "
+            "no market chase and no same-pass re-entry. Forecast, telemetry, strategy profile, "
+            "spread, range-location, and broker-truth gates must still pass before live use."
+        ),
+        "target_reward_risk": RANGE_AUTOLANE_TARGET_RR_CAP,
+        "blockers": [],
+        "story_examples": list(seed.get("reasons") or [])[:2],
+        "post_harvest_reentry_seed": True,
+        "post_harvest_trade_id": trade_id,
+        "post_harvest_closed_at_utc": closed_at,
+        "post_harvest_age_minutes": seed.get("age_minutes"),
+    }
+
+
+def _snapshot_has_trader_pair_exposure(snapshot: BrokerSnapshot, pair: str) -> bool:
+    for position in snapshot.positions:
+        if position.pair == pair and position.owner == Owner.TRADER:
+            return True
+    for order in snapshot.orders:
+        if order.pair == pair and order.owner == Owner.TRADER:
+            return True
+    return False
+
+
+def _closed_position_side(side_value: object, raw: dict[str, Any]) -> str | None:
+    side = str(side_value or "").upper()
+    if side in {Side.LONG.value, Side.SHORT.value}:
+        return side
+    units = _close_order_units(raw)
+    if units is None:
+        return None
+    # OANDA close order units are opposite the position being reduced:
+    # negative units reduce a LONG, positive units reduce a SHORT.
+    if units < 0:
+        return Side.LONG.value
+    if units > 0:
+        return Side.SHORT.value
+    return None
+
+
+def _close_order_units(raw: dict[str, Any]) -> int | None:
+    candidates = [
+        ((raw.get("response") or {}).get("orderCreateTransaction") or {}).get("units"),
+        ((raw.get("response") or {}).get("orderFillTransaction") or {}).get("units"),
+    ]
+    for value in candidates:
+        try:
+            return int(float(str(value)))
+        except (TypeError, ValueError):
+            continue
+    return None
+
+
+def _json_dict(value: object) -> dict[str, Any]:
+    if isinstance(value, dict):
+        return value
+    if not isinstance(value, str) or not value.strip():
+        return {}
+    try:
+        parsed = json.loads(value)
+    except json.JSONDecodeError:
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
 
 
 def _append_matrix_supported_repair_lanes(
@@ -3524,6 +3720,15 @@ class IntentGenerator:
             lanes = _append_matrix_supported_repair_lanes(lanes, market_context_matrix, strategy_profile, pair_charts)
             if len(lanes) > matrix_seed_count:
                 max_candidates = max(max_candidates, len(lanes))
+            post_harvest_seed_count = len(lanes)
+            lanes = _append_post_harvest_reentry_lanes(
+                lanes,
+                pair_charts,
+                snapshot,
+                data_root=self.data_root,
+            )
+            if len(lanes) > post_harvest_seed_count:
+                max_candidates = max(max_candidates, len(lanes))
             forecast_seed_count = len(lanes)
             forecast_cycle_id = _pre_entry_forecast_cycle_id(
                 snapshot,
@@ -3550,7 +3755,7 @@ class IntentGenerator:
             seen_keys = {(l.get("desk"), l.get("pair"), l.get("direction"), l.get("method")) for l in lanes}
             mirrors: list[dict[str, Any]] = []
             for lane in lanes:
-                if lane.get("forecast_seed") or lane.get("matrix_repair_seed"):
+                if lane.get("forecast_seed") or lane.get("matrix_repair_seed") or lane.get("post_harvest_reentry_seed"):
                     continue
                 m = _mirror_lane(lane)
                 key = (m.get("desk"), m.get("pair"), m.get("direction"), m.get("method"))
@@ -4365,6 +4570,10 @@ def _intent_from_lane(
             "forecast_watch_only": bool(lane.get("forecast_watch_only")),
             "matrix_repair_seed": bool(lane.get("matrix_repair_seed")),
             "matrix_repair_profile_status": lane.get("matrix_repair_profile_status"),
+            "post_harvest_reentry_seed": bool(lane.get("post_harvest_reentry_seed")),
+            "post_harvest_trade_id": lane.get("post_harvest_trade_id"),
+            "post_harvest_closed_at_utc": lane.get("post_harvest_closed_at_utc"),
+            "post_harvest_age_minutes": lane.get("post_harvest_age_minutes"),
             "forecast_cycle_id": lane.get("forecast_cycle_id"),
             "forecast_direction": lane.get("forecast_direction"),
             "forecast_confidence": lane.get("forecast_confidence"),

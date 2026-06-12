@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import sqlite3
 import tempfile
 import unittest
 from datetime import datetime, timedelta, timezone
@@ -407,6 +408,116 @@ class IntentGeneratorTest(unittest.TestCase):
             self.assertEqual(metadata["base_target_reward_risk"], 2.4)
             self.assertGreaterEqual(metadata["target_reward_risk"], 2.4)
             self.assertTrue(any("BLOCK_UNTIL_NEW_EVIDENCE" in blocker for row in usd_rows for blocker in row["live_blockers"]))
+
+    def test_post_harvest_profit_take_seeds_pullback_limit_reentry_lane(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            data_root = root / "data"
+            data_root.mkdir()
+            close_ts = datetime.now(timezone.utc) - timedelta(minutes=12)
+            _write_post_harvest_close(
+                data_root,
+                ts_utc=close_ts.isoformat().replace("+00:00", "Z"),
+                pair="EUR_USD",
+                closed_units=-5000,
+            )
+            forecast = SimpleNamespace(
+                pair="EUR_USD",
+                direction="UP",
+                confidence=0.84,
+                current_price=1.17326,
+                target_price=1.1762,
+                invalidation_price=1.1718,
+                horizon_min=60,
+                rationale_summary="UP forecast after post-harvest pullback",
+                drivers_for=("fresh pullback retest",),
+                drivers_against=("wait for rail fill",),
+            )
+            output = root / "intents.json"
+
+            with patch(
+                "quant_rabbit.strategy.intent_generator._forecast_seed_for_pair",
+                return_value=forecast,
+            ):
+                IntentGenerator(
+                    campaign_plan=_campaign(root),
+                    strategy_profile=_strategy(root, status="CANDIDATE"),
+                    pair_charts_path=_pair_charts_with_direction(
+                        root,
+                        long_score=0.58,
+                        short_score=0.42,
+                        dominant_regime="RANGE",
+                        m5_regime="RANGE",
+                        m5_long_bias=0.54,
+                        m5_short_bias=0.30,
+                        adx=12.0,
+                        choppiness=68.0,
+                        close=1.1733,
+                    ),
+                    output_path=output,
+                    report_path=root / "intents.md",
+                    data_root=data_root,
+                    max_loss_jpy=500.0,
+                ).run(snapshot_path=_snapshot(root))
+
+            payload = json.loads(output.read_text())
+            reentry_rows = [
+                item
+                for item in payload["results"]
+                if ((item.get("intent") or {}).get("metadata") or {}).get("post_harvest_reentry_seed")
+            ]
+
+            self.assertEqual(len(reentry_rows), 1)
+            row = reentry_rows[0]
+            self.assertEqual(row["lane_id"], "post_harvest_trader:EUR_USD:LONG:RANGE_ROTATION")
+            self.assertEqual(row["intent"]["order_type"], "LIMIT")
+            self.assertEqual(row["intent"]["metadata"]["forecast_direction"], "UP")
+            self.assertEqual(row["intent"]["metadata"]["post_harvest_trade_id"], "harvest-1")
+            self.assertIn("Post-harvest re-entry lane", row["intent"]["metadata"]["required_receipt"])
+            post_harvest_lane_ids = [
+                item["lane_id"]
+                for item in payload["results"]
+                if ((item.get("intent") or {}).get("metadata") or {}).get("post_harvest_reentry_seed")
+            ]
+            self.assertFalse(any(lane_id.endswith(":MARKET") for lane_id in post_harvest_lane_ids))
+
+    def test_post_harvest_reentry_seed_skips_when_same_pair_position_still_open(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            data_root = root / "data"
+            data_root.mkdir()
+            _write_post_harvest_close(
+                data_root,
+                ts_utc=datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+                pair="EUR_USD",
+                closed_units=-5000,
+            )
+
+            IntentGenerator(
+                campaign_plan=_campaign(root),
+                strategy_profile=_strategy(root, status="CANDIDATE"),
+                pair_charts_path=_pair_charts_with_direction(
+                    root,
+                    long_score=0.58,
+                    short_score=0.42,
+                    dominant_regime="RANGE",
+                    m5_regime="RANGE",
+                    adx=12.0,
+                    choppiness=68.0,
+                ),
+                output_path=root / "intents.json",
+                report_path=root / "intents.md",
+                data_root=data_root,
+                max_loss_jpy=500.0,
+            ).run(snapshot_path=_snapshot_with_position(root))
+
+            payload = json.loads((root / "intents.json").read_text())
+            self.assertFalse(
+                any(
+                    ((item.get("intent") or {}).get("metadata") or {}).get("post_harvest_reentry_seed")
+                    for item in payload["results"]
+                )
+            )
 
     def test_live_entry_requires_fresh_forecast_when_live_default_active(self) -> None:
         prior = os.environ.get("QR_REQUIRE_FORECAST_FOR_LIVE")
@@ -4468,6 +4579,67 @@ def _strategy(root: Path, *, status: str = "RISK_REPAIR_CANDIDATE", direction: s
         )
     )
     return path
+
+
+def _write_post_harvest_close(
+    data_root: Path,
+    *,
+    ts_utc: str,
+    pair: str,
+    closed_units: int,
+) -> None:
+    db = data_root / "execution_ledger.db"
+    with sqlite3.connect(db) as conn:
+        conn.execute(
+            """
+            CREATE TABLE execution_events (
+              ts_utc TEXT,
+              event_type TEXT,
+              pair TEXT,
+              side TEXT,
+              units INTEGER,
+              order_id TEXT,
+              trade_id TEXT,
+              exit_reason TEXT,
+              raw_json TEXT
+            )
+            """
+        )
+        conn.execute(
+            """
+            INSERT INTO execution_events (
+              ts_utc, event_type, pair, side, units, order_id, trade_id, exit_reason, raw_json
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                ts_utc,
+                "GATEWAY_TRADE_CLOSE_SENT",
+                pair,
+                "",
+                None,
+                "close-order-1",
+                "harvest-1",
+                "TAKE_PROFIT_MARKET",
+                json.dumps(
+                    {
+                        "sent": True,
+                        "management_action": "TAKE_PROFIT_MARKET",
+                        "owner": "trader",
+                        "pair": pair,
+                        "trade_id": "harvest-1",
+                        "reasons": [
+                            "temporary top profit-take: profit 5.5pip, top pullback confirmed",
+                            "post-close re-entry discipline: refresh broker truth and require a fresh LIVE_READY pullback/retest lane before re-entering",
+                        ],
+                        "response": {
+                            "orderCreateTransaction": {
+                                "units": str(closed_units),
+                            }
+                        },
+                    }
+                ),
+            ),
+        )
 
 
 def _pair_charts(root: Path) -> Path:
