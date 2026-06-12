@@ -1113,18 +1113,12 @@ def _temporary_extreme_profit_take_signal(
         extreme = min(typed_lows)
         pullback_pips = (exit_price - extreme) * pip_factor
         pullback_label = "bottom bounce"
-    pullback_floor = max(spread_pips, m1_atr * TEMPORARY_EXTREME_PULLBACK_ATR_MULT)
-    if pullback_pips < pullback_floor:
-        return False, [
-            f"temporary extreme profit-take skipped: {pullback_label} {pullback_pips:.1f}pip < "
-            f"floor {pullback_floor:.1f}pip"
-        ]
-
     context_reasons = _temporary_extreme_context_reasons(
         side_up=side_up,
         pair_chart=pair_chart,
         m1=m1,
         m5=m5,
+        recent=recent,
         extreme=extreme,
         pip_factor=pip_factor,
         atr_pips=m1_atr,
@@ -1146,10 +1140,24 @@ def _temporary_extreme_profit_take_signal(
             f"{len(evidence)}/{TEMPORARY_EXTREME_MIN_EVIDENCE}: " + "; ".join(evidence[:4])
         ]
 
+    pullback_floor = max(spread_pips, m1_atr * TEMPORARY_EXTREME_PULLBACK_ATR_MULT)
+    strong_early_rollover = _strong_temporary_extreme_rollover(side_up, evidence)
+    if pullback_pips < pullback_floor and not strong_early_rollover:
+        return False, [
+            f"temporary extreme profit-take skipped: {pullback_label} {pullback_pips:.1f}pip < "
+            f"floor {pullback_floor:.1f}pip"
+        ]
+
     label = "temporary top" if long_side else "temporary bottom"
+    floor_note = (
+        f"{pullback_label} {pullback_pips:.1f}pip < floor {pullback_floor:.1f}pip "
+        "but close-confirmed M1 rollover stack is already complete"
+        if pullback_pips < pullback_floor
+        else f"{pullback_label} {pullback_pips:.1f}pip >= floor {pullback_floor:.1f}pip"
+    )
     reasons.append(
         f"{label} profit-take: profit {profit_pips:.1f}pip, "
-        f"{pullback_label} {pullback_pips:.1f}pip >= floor {pullback_floor:.1f}pip; "
+        f"{floor_note}; "
         + "; ".join((context_reasons + evidence)[:7])
     )
     reasons.append(
@@ -1201,6 +1209,7 @@ def _temporary_extreme_context_reasons(
     pair_chart: dict[str, Any],
     m1: dict[str, Any],
     m5: dict[str, Any] | None,
+    recent: list[dict[str, Any]],
     extreme: float,
     pip_factor: int,
     atr_pips: float,
@@ -1223,7 +1232,56 @@ def _temporary_extreme_context_reasons(
         rail_note = _lower_rail_touch_reason(m1, m5, extreme, pip_factor, atr_pips)
     if rail_note:
         reasons.append(rail_note)
+    local_swing = _local_swing_extreme_reason(
+        side_up=side_up,
+        recent=recent,
+        extreme=extreme,
+        pip_factor=pip_factor,
+        atr_pips=atr_pips,
+    )
+    if local_swing:
+        reasons.append(local_swing)
     return reasons
+
+
+def _local_swing_extreme_reason(
+    *,
+    side_up: str,
+    recent: list[dict[str, Any]],
+    extreme: float,
+    pip_factor: int,
+    atr_pips: float,
+) -> str | None:
+    """Identify a local M1 swing extreme without requiring a Bollinger rail.
+
+    The required swing size is one current M1 ATR: this is the market's own
+    one-minute noise unit, so the detector can catch a temporary top/bottom
+    like the operator's USD/CAD screenshot even when the broader 24h/7d
+    distribution is not at an edge.
+    """
+    if atr_pips <= 0 or len(recent) < 4:
+        return None
+    highs = [_candle_float(candle, "h", "high") for candle in recent]
+    lows = [_candle_float(candle, "l", "low") for candle in recent]
+    if any(value is None for value in highs + lows):
+        return None
+    typed_highs = [float(value) for value in highs if value is not None]
+    typed_lows = [float(value) for value in lows if value is not None]
+    if side_up == "LONG":
+        extreme_index = max(range(len(typed_highs)), key=lambda idx: typed_highs[idx])
+        if extreme_index >= len(typed_highs) - 1:
+            return None
+        runup_pips = (extreme - min(typed_lows[: extreme_index + 1])) * pip_factor
+        if runup_pips >= atr_pips:
+            return f"M1 local swing top run-up {runup_pips:.1f}pip >= M1 ATR {atr_pips:.1f}pip"
+    else:
+        extreme_index = min(range(len(typed_lows)), key=lambda idx: typed_lows[idx])
+        if extreme_index >= len(typed_lows) - 1:
+            return None
+        rundown_pips = (max(typed_highs[: extreme_index + 1]) - extreme) * pip_factor
+        if rundown_pips >= atr_pips:
+            return f"M1 local swing bottom run-down {rundown_pips:.1f}pip >= M1 ATR {atr_pips:.1f}pip"
+    return None
 
 
 def _upper_rail_touch_reason(
@@ -1289,12 +1347,55 @@ def _temporary_extreme_reversal_evidence(
     fvg_note = _fresh_unfilled_fvg_note(m1, "DOWN" if long_side else "UP")
     if fvg_note:
         evidence.append(fvg_note)
+    break_note = _post_extreme_candle_break_note(side_up, recent, extreme)
+    if break_note:
+        evidence.append(break_note)
     forecast_drag = _forecast_runner_drag_reasons(side=side_up, latest_forecast=latest_forecast)
     if forecast_drag:
         evidence.append(forecast_drag[0])
     if _last_close_moved_away_from_extreme(side_up, recent, extreme):
         evidence.append("latest M1 close moved away from the local extreme")
     return evidence
+
+
+def _post_extreme_candle_break_note(side_up: str, recent: list[dict[str, Any]], extreme: float) -> str | None:
+    if len(recent) < 2:
+        return None
+    if side_up == "LONG":
+        highs = [_candle_float(candle, "h", "high") for candle in recent]
+        if any(value is None for value in highs):
+            return None
+        extreme_index = max(range(len(highs)), key=lambda idx: float(highs[idx]))
+        if extreme_index >= len(recent) - 1:
+            return None
+        extreme_low = _candle_float(recent[extreme_index], "l", "low")
+        last_close = _candle_float(recent[-1], "c", "close")
+        if extreme_low is not None and last_close is not None and float(last_close) < float(extreme_low):
+            return "latest M1 close broke below the extreme candle low"
+    else:
+        lows = [_candle_float(candle, "l", "low") for candle in recent]
+        if any(value is None for value in lows):
+            return None
+        extreme_index = min(range(len(lows)), key=lambda idx: float(lows[idx]))
+        if extreme_index >= len(recent) - 1:
+            return None
+        extreme_high = _candle_float(recent[extreme_index], "h", "high")
+        last_close = _candle_float(recent[-1], "c", "close")
+        if extreme_high is not None and last_close is not None and float(last_close) > float(extreme_high):
+            return "latest M1 close broke above the extreme candle high"
+    return None
+
+
+def _strong_temporary_extreme_rollover(side_up: str, evidence: list[str]) -> bool:
+    if side_up == "LONG":
+        candle_turn = any(item.startswith("M1 rollover:") for item in evidence)
+        candle_break = any("broke below the extreme candle low" in item for item in evidence)
+    else:
+        candle_turn = any(item.startswith("M1 rebound:") for item in evidence)
+        candle_break = any("broke above the extreme candle high" in item for item in evidence)
+    micro_flip = any(item.startswith("M1 opposes") for item in evidence)
+    close_away = any("latest M1 close moved away from the local extreme" in item for item in evidence)
+    return candle_turn and micro_flip and (candle_break or close_away)
 
 
 def _recent_candle_rollover_note(side_up: str, recent: list[dict[str, Any]]) -> str | None:

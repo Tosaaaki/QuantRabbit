@@ -1226,6 +1226,45 @@ class PositionManagerTest(unittest.TestCase):
             self.assertIn("temporary top profit-take", report)
             self.assertIn("fresh LIVE_READY pullback/retest lane", report)
 
+    def test_profitable_long_local_swing_top_does_not_wait_for_full_spread_pullback(self) -> None:
+        # The live 2026-06-12 USD_CAD sidecar saw the local top logic but
+        # skipped because pullback was still smaller than the spread/ATR floor.
+        # A confirmed M1 rollover stack should bank profit while still close to
+        # the top; waiting for a full floor gives back the very MFE the operator
+        # asked the trader to capture.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            decision = _decision(root, long_score=180, short_score=80)
+            pair_charts = _local_swing_top_without_rail_pair_charts(root)
+            snapshot = _snapshot(
+                BrokerPosition(
+                    trade_id="local-swing-top",
+                    pair="EUR_USD",
+                    side=Side.LONG,
+                    units=5000,
+                    entry_price=1.19980,
+                    unrealized_pl_jpy=650,
+                    take_profit=1.20320,
+                    stop_loss=1.19800,
+                ),
+                bid=1.20064,
+                ask=1.20082,
+            )
+
+            result = PositionManager(
+                trader_decision_path=decision,
+                pair_charts_path=pair_charts,
+                output_path=root / "data" / "pm.json",
+                report_path=root / "pm.md",
+            ).run(snapshot)
+
+            self.assertEqual(result.action, ACTION_TAKE_PROFIT_MARKET)
+            self.assertEqual(result.positions[0].action, ACTION_TAKE_PROFIT_MARKET)
+            report = (root / "pm.md").read_text()
+            self.assertIn("M1 local swing top", report)
+            self.assertIn("close-confirmed M1 rollover stack is already complete", report)
+            self.assertIn("temporary top profit-take", report)
+
     def test_operator_manual_position_without_tp_preserves_no_broker_tp_by_default(self) -> None:
         prior = os.environ.pop("QR_ENABLE_MISSING_TP_REPAIR", None)
         try:
@@ -1707,6 +1746,76 @@ def _temporary_top_pair_charts(root: Path) -> Path:
                                 "regime": "TREND_UP",
                                 "indicators": {"atr_pips": 18.0},
                             },
+                        ],
+                    }
+                ],
+            }
+        )
+    )
+    return path
+
+
+def _local_swing_top_without_rail_pair_charts(root: Path) -> Path:
+    path = root / "pair_charts_local_swing_top.json"
+    now = datetime.now(timezone.utc)
+    recent = [
+        {"t": (now - timedelta(minutes=9)).isoformat(), "o": 1.19992, "h": 1.20010, "l": 1.19988, "c": 1.20005, "complete": True},
+        {"t": (now - timedelta(minutes=8)).isoformat(), "o": 1.20005, "h": 1.20036, "l": 1.20002, "c": 1.20030, "complete": True},
+        {"t": (now - timedelta(minutes=7)).isoformat(), "o": 1.20030, "h": 1.20072, "l": 1.20028, "c": 1.20068, "complete": True},
+        {"t": (now - timedelta(minutes=6)).isoformat(), "o": 1.20068, "h": 1.20070, "l": 1.20058, "c": 1.20066, "complete": True},
+        {"t": (now - timedelta(minutes=5)).isoformat(), "o": 1.20066, "h": 1.20067, "l": 1.20056, "c": 1.20064, "complete": True},
+        {"t": (now - timedelta(minutes=4)).isoformat(), "o": 1.20064, "h": 1.20065, "l": 1.20054, "c": 1.20063, "complete": True},
+        {"t": (now - timedelta(minutes=3)).isoformat(), "o": 1.20063, "h": 1.20064, "l": 1.20052, "c": 1.20062, "complete": True},
+    ]
+    path.write_text(
+        json.dumps(
+            {
+                "generated_at_utc": now.isoformat(),
+                "charts": [
+                    {
+                        "pair": "EUR_USD",
+                        "chart_story": (
+                            "M1(TREND_DOWN,ADX=25,ST=-,struct=CHOCH_DOWN@1.2006) "
+                            "M5(TREND_DOWN,ADX=23,ST=-,struct=CHOCH_DOWN@1.2006) "
+                            "H1(TREND_UP,ADX=25,ST=+) "
+                            "H4(TREND_UP,ADX=28,ST=+) "
+                            "D(TREND_UP,ADX=33,ST=+)"
+                        ),
+                        "confluence": {
+                            "price_percentile_24h": 0.51,
+                            "price_percentile_7d": 0.54,
+                            "range_24h_sigma_multiple": 0.9,
+                            "score_balance": "LONG_LEAN",
+                            "score_gap": 0.74,
+                            "tf_agreement_score": 0.67,
+                        },
+                        "session": {"current_tag": "NY_AM_KILLZONE"},
+                        "views": [
+                            {
+                                "granularity": "M1",
+                                "regime": "TREND_DOWN",
+                                "long_bias": 0.31,
+                                "short_bias": 0.69,
+                                "recent_candles": recent,
+                                "indicators": {
+                                    "atr_pips": 1.2,
+                                    "supertrend_dir": -1,
+                                    "psar_dir": -1,
+                                },
+                            },
+                            {
+                                "granularity": "M5",
+                                "regime": "TREND_DOWN",
+                                "long_bias": 0.35,
+                                "short_bias": 0.65,
+                                "indicators": {
+                                    "atr_pips": 3.8,
+                                    "supertrend_dir": -1,
+                                    "psar_dir": -1,
+                                },
+                            },
+                            {"granularity": "H1", "regime": "TREND_UP", "indicators": {"atr_pips": 8.0}},
+                            {"granularity": "H4", "regime": "TREND_UP", "indicators": {"atr_pips": 18.0}},
                         ],
                     }
                 ],
