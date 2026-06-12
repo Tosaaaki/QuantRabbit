@@ -119,6 +119,43 @@ class RecordTest(unittest.TestCase):
             self.assertEqual(len(entries), 1)
             self.assertEqual(entries[0].cycle_id, "2026-05-15T00:00:00Z")
 
+    def test_record_projections_caches_same_cycle_pair_key_scan(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            sig = _Sig("liquidity_sweep_low", "UP", 15, 0.9, 12.0, "M5 equal-lows at 1.16800 (4.0pip down)")
+
+            from quant_rabbit.strategy import projection_ledger as ledger_mod
+
+            ledger_mod._PROJECTION_KEY_CACHE.clear()
+            original_scan = ledger_mod._scan_existing_projection_keys_from_handle
+            scan_calls = 0
+
+            def observed_scan(*args: object, **kwargs: object) -> set[tuple]:
+                nonlocal scan_calls
+                scan_calls += 1
+                return original_scan(*args, **kwargs)
+
+            with mock.patch.object(ledger_mod, "_scan_existing_projection_keys_from_handle", side_effect=observed_scan):
+                first = record_projections(
+                    [sig],
+                    pair="EUR_USD",
+                    current_price=1.16840,
+                    data_root=root,
+                    cycle_id="cycle-cache",
+                )
+                second = record_projections(
+                    [sig],
+                    pair="EUR_USD",
+                    current_price=1.16840,
+                    data_root=root,
+                    cycle_id="cycle-cache",
+                )
+
+            self.assertEqual(first, 1)
+            self.assertEqual(second, 0)
+            self.assertEqual(scan_calls, 1)
+            self.assertEqual(len(load_ledger(root)), 1)
+
     def test_record_projections_dedupes_same_cycle_pair_signal_race(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

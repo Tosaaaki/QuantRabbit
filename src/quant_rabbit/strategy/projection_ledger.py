@@ -66,6 +66,7 @@ CONFIDENCE_DAMPING = float(os.environ.get("QR_PROJECTION_CONFIDENCE_DAMPING", "0
 CONFIDENCE_MAX_MULTIPLIER = float(os.environ.get("QR_PROJECTION_CONFIDENCE_MAX_MULT", "1.5"))
 # Multiplier when a detector has 0% hit-rate
 CONFIDENCE_MIN_MULTIPLIER = float(os.environ.get("QR_PROJECTION_CONFIDENCE_MIN_MULT", "0.2"))
+_PROJECTION_KEY_CACHE: dict[tuple[str, str, str], tuple[tuple[int, int], set[tuple]]] = {}
 # (a) Immediate news/event follow-through signals fire after a catalyst is
 #     already in the tape, so their lead time is correctly 0 minutes.
 # (b) They still need a real observation window for calibration; one H1 bar is
@@ -213,6 +214,7 @@ def record_projections(
             seen_keys.add(key)
             written += 1
         f.flush()
+        _cache_projection_keys_for_handle(f, cycle_id=cycle_id, pair=pair, keys=seen_keys)
         fcntl.flock(f.fileno(), fcntl.LOCK_UN)
     return written
 
@@ -299,12 +301,15 @@ def record_directional_forecast(
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("a+", encoding="utf-8") as f:
         fcntl.flock(f.fileno(), fcntl.LOCK_EX)
-        if cycle_id and key in _existing_projection_keys_from_handle(f, cycle_id=cycle_id, pair=pair):
+        seen_keys = _existing_projection_keys_from_handle(f, cycle_id=cycle_id, pair=pair) if cycle_id else set()
+        if cycle_id and key in seen_keys:
             fcntl.flock(f.fileno(), fcntl.LOCK_UN)
             return 0
         f.seek(0, os.SEEK_END)
         f.write(json.dumps(entry.to_dict(), ensure_ascii=False) + "\n")
+        seen_keys.add(key)
         f.flush()
+        _cache_projection_keys_for_handle(f, cycle_id=cycle_id, pair=pair, keys=seen_keys)
         fcntl.flock(f.fileno(), fcntl.LOCK_UN)
     return 1
 
@@ -365,6 +370,24 @@ def _existing_projection_keys_from_handle(
 ) -> set[tuple]:
     if not cycle_id:
         return set()
+    cache_id = _projection_key_cache_id(handle, cycle_id=cycle_id, pair=pair)
+    stat_token = _projection_key_cache_stat(handle)
+    cached = _PROJECTION_KEY_CACHE.get(cache_id)
+    if cached is not None and cached[0] == stat_token:
+        return set(cached[1])
+    keys = _scan_existing_projection_keys_from_handle(handle, cycle_id=cycle_id, pair=pair)
+    _PROJECTION_KEY_CACHE[cache_id] = (stat_token, set(keys))
+    return keys
+
+
+def _scan_existing_projection_keys_from_handle(
+    handle: IO[str],
+    *,
+    cycle_id: Optional[str],
+    pair: str,
+) -> set[tuple]:
+    if not cycle_id:
+        return set()
     keys: set[tuple] = set()
     handle.seek(0)
     for line in handle:
@@ -387,6 +410,35 @@ def _existing_projection_keys_from_handle(
             )
         )
     return keys
+
+
+def _cache_projection_keys_for_handle(
+    handle: IO[str],
+    *,
+    cycle_id: Optional[str],
+    pair: str,
+    keys: set[tuple],
+) -> None:
+    if not cycle_id:
+        return
+    _PROJECTION_KEY_CACHE[_projection_key_cache_id(handle, cycle_id=cycle_id, pair=pair)] = (
+        _projection_key_cache_stat(handle),
+        set(keys),
+    )
+
+
+def _projection_key_cache_id(handle: IO[str], *, cycle_id: str, pair: str) -> tuple[str, str, str]:
+    name = getattr(handle, "name", "")
+    try:
+        path = os.path.realpath(os.fspath(name))
+    except (TypeError, ValueError):
+        path = f"fd:{handle.fileno()}"
+    return (path, cycle_id, pair)
+
+
+def _projection_key_cache_stat(handle: IO[str]) -> tuple[int, int]:
+    stat = os.fstat(handle.fileno())
+    return (int(stat.st_size), int(stat.st_mtime_ns))
 
 
 def _extract_target_price_from_rationale(rationale: str) -> Optional[float]:
