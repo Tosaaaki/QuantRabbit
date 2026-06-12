@@ -3849,10 +3849,9 @@ class CloseDisciplineTest(unittest.TestCase):
             self.assertIn("CLOSE_THESIS_STILL_VALID", codes)
 
     def test_close_accepted_when_m15_bos_against_side_and_operator_authorized(self) -> None:
-        # SHORT position + M15 prints BOS_UP (against SHORT) → gate A
-        # passes via structural lens. Gate B via env override (J hardening
-        # 2026-05-13: receipt's operator_close_authorized field is
-        # advisory-only and no longer satisfies Gate B by itself).
+        # SHORT position + M15 prints BOS_UP (against SHORT) → soft Gate A.
+        # Explicit env Gate B is required because M15-only structure is too
+        # local to be unattended standing loss-cut authorization.
         _os.environ["QR_OPERATOR_CLOSE_OVERRIDE"] = "1"
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -3864,6 +3863,25 @@ class CloseDisciplineTest(unittest.TestCase):
 
             self.assertEqual(summary.status, "ACCEPTED", msg=summary)
             self.assertTrue(summary.allowed)
+
+    def test_m15_bos_against_side_requires_explicit_gate_b(self) -> None:
+        # Repeated live loss closes showed M15-only BOS/CHOCH is often an
+        # internal pullback. It is Gate A evidence, but not a no-token hard
+        # authorization unless H4 / recorded invalidation / hard sidecar also
+        # confirms.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _close_fixtures(root, position_side="SHORT", m15_dir="UP", h4_dir="DOWN")
+            decision = _close_decision(trade_ids=["555"])
+            brain = _brain(root, files, decision)
+
+            summary = brain.run(snapshot_path=files["snapshot"])
+
+            self.assertEqual(summary.status, "REJECTED", msg=summary)
+            payload = json.loads((root / "gpt_decision.json").read_text())
+            codes = {issue["code"] for issue in payload["verification_issues"]}
+            self.assertIn("CLOSE_OPERATOR_AUTH_REQUIRED", codes)
+            self.assertNotIn("CLOSE_THESIS_STILL_VALID", codes)
 
     def test_close_rejected_when_m15_break_conflicts_with_hold_sidecars(self) -> None:
         # Regression for 2026-06-12 USD_CHF: M15 can flip during an internal
