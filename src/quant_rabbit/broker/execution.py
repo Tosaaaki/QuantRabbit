@@ -1191,12 +1191,27 @@ def _intent_geometry_key(intent: OrderIntent) -> tuple[object, ...]:
         intent.order_type.value,
         _price_key(intent.pair, intent.entry),
         _price_key(intent.pair, intent.tp if _attach_take_profit_on_fill(intent) else None),
-        _price_key(intent.pair, intent.sl),
+        _price_key(intent.pair, _attached_stop_loss_price(intent)),
     )
 
 
 def _intent_declares_hedge(intent: OrderIntent) -> bool:
     return str((intent.metadata or {}).get("position_intent") or "").upper() == "HEDGE"
+
+
+def _attached_stop_loss_price(intent: OrderIntent) -> float | None:
+    initial_sl_on = os.environ.get("QR_NEW_ENTRY_INITIAL_SL", "").strip() in {
+        "1", "true", "TRUE", "yes", "YES",
+    }
+    if initial_sl_on or not _trader_sl_repair_disabled():
+        return intent.sl
+    disaster_sl = (intent.metadata or {}).get("disaster_sl")
+    if disaster_sl is None:
+        return None
+    try:
+        return float(disaster_sl)
+    except (TypeError, ValueError):
+        return None
 
 
 def _attach_take_profit_on_fill(intent: OrderIntent) -> bool:

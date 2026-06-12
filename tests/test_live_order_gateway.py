@@ -1247,6 +1247,77 @@ class LiveOrderGatewayTest(unittest.TestCase):
             else:
                 os.environ["QR_NEW_ENTRY_INITIAL_SL"] = prior_initial_sl
 
+    def test_batch_blocks_existing_pending_geometry_with_disaster_stop(self) -> None:
+        prior_sl_free = os.environ.get("QR_TRADER_DISABLE_SL_REPAIR")
+        prior_initial_sl = os.environ.get("QR_NEW_ENTRY_INITIAL_SL")
+        os.environ["QR_TRADER_DISABLE_SL_REPAIR"] = "1"
+        os.environ.pop("QR_NEW_ENTRY_INITIAL_SL", None)
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                client = FakeExecutionClient()
+                client.snapshot_value = BrokerSnapshot(
+                    fetched_at_utc=client.snapshot_value.fetched_at_utc,
+                    positions=(),
+                    orders=(
+                        BrokerOrder(
+                            order_id="471249",
+                            pair="EUR_USD",
+                            order_type="LIMIT",
+                            price=1.17330,
+                            units=1000,
+                            owner=Owner.TRADER,
+                            raw={
+                                "id": "471249",
+                                "instrument": "EUR_USD",
+                                "type": "LIMIT_ORDER",
+                                "price": "1.17330",
+                                "units": "1000",
+                                "takeProfitOnFill": {"price": "1.17450"},
+                                "stopLossOnFill": {"price": "1.17000"},
+                            },
+                        ),
+                    ),
+                    quotes=client.snapshot_value.quotes,
+                    account=client.snapshot_value.account,
+                )
+
+                summary = LiveOrderGateway(
+                    client=client,
+                    strategy_profile=_profile(root),
+                    output_path=root / "request.json",
+                    report_path=root / "report.md",
+                    live_enabled=True,
+                ).run_batch(
+                    intents_path=_intents(
+                        root,
+                        order_type="LIMIT",
+                        metadata={
+                            "desk": "trend_trader",
+                            "campaign_role": "NOW",
+                            "disaster_sl": 1.17000,
+                        },
+                    ),
+                    lane_ids=("lane:EUR_USD:LONG",),
+                    send=True,
+                    confirm_live=True,
+                )
+
+                self.assertEqual(summary.status, "BLOCKED")
+                self.assertEqual(summary.sent_count, 0)
+                self.assertEqual(client.orders, [])
+                payload = json.loads((root / "request.json").read_text())
+                self.assertIn("BASKET_DUPLICATE_GEOMETRY", {issue["code"] for issue in payload["risk_issues"]})
+        finally:
+            if prior_sl_free is None:
+                os.environ.pop("QR_TRADER_DISABLE_SL_REPAIR", None)
+            else:
+                os.environ["QR_TRADER_DISABLE_SL_REPAIR"] = prior_sl_free
+            if prior_initial_sl is None:
+                os.environ.pop("QR_NEW_ENTRY_INITIAL_SL", None)
+            else:
+                os.environ["QR_NEW_ENTRY_INITIAL_SL"] = prior_initial_sl
+
 
 class FakeExecutionClient:
     def __init__(self) -> None:
