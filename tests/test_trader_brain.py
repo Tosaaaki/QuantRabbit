@@ -125,7 +125,7 @@ class TraderBrainTest(unittest.TestCase):
             self.assertFalse(any("wide spread for fresh edge" in item for item in lane.blockers))
             self.assertTrue(any("wide spread=2.4pip is advisory" in item for item in lane.rationale))
 
-    def test_correlation_map_is_built_once_per_run(self) -> None:
+    def test_cycle_level_projection_and_correlation_context_is_built_once_per_run(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             pair_charts_path = root / "pair_charts.json"
@@ -184,10 +184,15 @@ class TraderBrainTest(unittest.TestCase):
                     "quant_rabbit.strategy.trader_brain.detect_correlation_lag",
                     side_effect=observed_detect,
                 ),
+                mock.patch(
+                    "quant_rabbit.strategy.projection_ledger.compute_hit_rates",
+                    return_value={},
+                ) as hit_rates_mock,
             ):
                 brain.run(_snapshot())
 
             self.assertEqual(build_mock.call_count, 1)
+            self.assertEqual(hit_rates_mock.call_count, 1)
             self.assertGreaterEqual(len(seen_maps), 2)
             self.assertTrue(all(correlation_map is built_map for correlation_map in seen_maps))
 

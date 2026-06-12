@@ -662,6 +662,7 @@ def _pair_forecast(
     pair_chart: dict[str, Any] | None,
     full_pair_charts: dict[str, dict[str, Any]] | None,
     correlation_map: dict[tuple[str, str], float] | None,
+    projection_hit_rates: dict[str, dict[str, dict[str, float]]] | None,
     snapshot: BrokerSnapshot | None,
     forecast_cache: dict[str, DirectionalForecast | None] | None,
     forecast_cycle_id: str | None,
@@ -703,7 +704,7 @@ def _pair_forecast(
     projection_signals = []
     correlation_signals = []
     paths = []
-    hit_rates = None
+    hit_rates = projection_hit_rates
     regime_label = _forecast_regime_label(pair_chart)
     try:
         pattern_signals = detect_pattern_signals(
@@ -714,9 +715,10 @@ def _pair_forecast(
     except Exception:
         pattern_signals = []
     try:
-        from quant_rabbit.strategy.projection_ledger import compute_hit_rates as _compute_hit_rates
+        if hit_rates is None:
+            from quant_rabbit.strategy.projection_ledger import compute_hit_rates as _compute_hit_rates
 
-        hit_rates = _compute_hit_rates(effective_data_root)
+            hit_rates = _compute_hit_rates(effective_data_root)
         projection_signals = detect_forward_projections(
             pair_chart,
             pair=pair,
@@ -1104,6 +1106,12 @@ class TraderBrain:
             correlation_map = build_correlation_map(full_pair_charts) if full_pair_charts else {}
         except Exception:
             correlation_map = {}
+        try:
+            from quant_rabbit.strategy.projection_ledger import compute_hit_rates as _compute_hit_rates
+
+            projection_hit_rates = _compute_hit_rates(data_root) if full_pair_charts else {}
+        except Exception:
+            projection_hit_rates = {}
         forecast_cache: dict[str, DirectionalForecast | None] = {}
         scores = tuple(
             sorted(
@@ -1118,6 +1126,7 @@ class TraderBrain:
                         loss_cap_jpy=loss_cap_jpy,
                         full_pair_charts=full_pair_charts,
                         correlation_map=correlation_map,
+                        projection_hit_rates=projection_hit_rates,
                         snapshot=snapshot,
                         attack_ranks=attack_ranks,
                         lane_history=lane_history,
@@ -1223,6 +1232,7 @@ class TraderBrain:
         loss_cap_jpy: float | None,
         full_pair_charts: dict[str, dict[str, Any]] | None = None,
         correlation_map: dict[tuple[str, str], float] | None = None,
+        projection_hit_rates: dict[str, dict[str, dict[str, float]]] | None = None,
         snapshot: BrokerSnapshot | None = None,
         attack_ranks: dict[str, int] | None = None,
         lane_history: dict[tuple[str, ...], LaneHistorySnapshot] | None = None,
@@ -1706,10 +1716,7 @@ class TraderBrain:
         # are CALIBRATED from the rolling hit-rate of past predictions.
         # Detectors that don't pan out get dampened; strong ones get
         # boosted. User directive:「予測の精度を最大限高める」.
-        from quant_rabbit.strategy.projection_ledger import (
-            compute_hit_rates as _compute_hit_rates,
-            record_projections as _record_projections,
-        )
+        from quant_rabbit.strategy.projection_ledger import record_projections as _record_projections
         effective_data_root = data_root or DEFAULT_TRADER_SETTINGS.parent
         if pair_chart_for_reversal is not None and snapshot is not None:
             cur_price_for_proj = _current_price_for(pair, snapshot, direction) if snapshot else None
@@ -1726,7 +1733,11 @@ class TraderBrain:
                 # Load rolling hit rates for calibration. Empty when
                 # ledger hasn't accumulated samples yet — calibration
                 # multiplier defaults to 1.0 in that case.
-                _hit_rates = _compute_hit_rates(effective_data_root)
+                _hit_rates = projection_hit_rates
+                if _hit_rates is None:
+                    from quant_rabbit.strategy.projection_ledger import compute_hit_rates as _compute_hit_rates
+
+                    _hit_rates = _compute_hit_rates(effective_data_root)
                 # Regime label (for hit_rate bucketing)
                 _proj_regime = None
                 if pair_chart_for_reversal:
@@ -1837,6 +1848,7 @@ class TraderBrain:
                     pair_chart=pair_chart_for_reversal,
                     full_pair_charts=full_pair_charts,
                     correlation_map=correlation_map,
+                    projection_hit_rates=projection_hit_rates,
                     snapshot=snapshot,
                     forecast_cache=forecast_cache,
                     forecast_cycle_id=forecast_cycle_id,
