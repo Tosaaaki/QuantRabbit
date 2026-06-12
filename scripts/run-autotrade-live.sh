@@ -256,9 +256,25 @@ fi
 cycle_exit="$?"
 set -e
 
-if [[ "$cycle_exit" -eq 0 && "${QR_RUN_POST_GATEWAY_SIDECARS:-1}" == "1" ]]; then
-  echo "[run-autotrade-live] refreshing post-gateway sidecars under live lock." >&2
-  "$QR_PYTHON" -m quant_rabbit.cli cycle-sidecars
+if [[ "${QR_RUN_POST_GATEWAY_SIDECARS:-1}" == "1" ]]; then
+  if [[ "$cycle_exit" -eq 0 ]]; then
+    echo "[run-autotrade-live] refreshing post-gateway sidecars under live lock." >&2
+    "$QR_PYTHON" -m quant_rabbit.cli cycle-sidecars
+  else
+    echo "[run-autotrade-live] autotrade-cycle exited status=${cycle_exit}; refreshing read-only audit sidecars under live lock." >&2
+    set +e
+    "$QR_PYTHON" -m quant_rabbit.cli position-management
+    post_audit_pm_exit="$?"
+    "$QR_PYTHON" -m quant_rabbit.cli memory-health
+    post_audit_memory_exit="$?"
+    "$QR_PYTHON" -m quant_rabbit.cli self-improvement-audit
+    post_audit_self_exit="$?"
+    set -e
+    if [[ "$post_audit_pm_exit" -ne 0 || "$post_audit_memory_exit" -ne 0 ]] \
+      || [[ "$post_audit_self_exit" -ne 0 && "$post_audit_self_exit" -ne 2 ]]; then
+      echo "[run-autotrade-live] read-only audit sidecar refresh incomplete: position-management=${post_audit_pm_exit} memory-health=${post_audit_memory_exit} self-improvement-audit=${post_audit_self_exit}" >&2
+    fi
+  fi
 fi
 
 # Slack notifications are opt-in. User directive 2026-05-30:

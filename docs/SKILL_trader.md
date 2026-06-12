@@ -241,9 +241,14 @@ QR_LIVE_ENABLED=1 ./scripts/run-autotrade-live.sh \
 # a successful gateway cycle while the live lock is still held. This closes
 # the stale-state window where `autotrade-cycle` refreshes broker truth after
 # verifier acceptance but position sidecars / memory-health / self-improvement
-# still point at the pre-gateway snapshot. Do not run a second routine
-# `cycle-sidecars` after the wrapper unless the wrapper was intentionally
-# called with `QR_RUN_POST_GATEWAY_SIDECARS=0` for diagnostics.
+# still point at the pre-gateway snapshot. When `autotrade-cycle` exits
+# non-zero after refreshing broker truth, the wrapper does NOT run the full
+# broker/order sidecar list; it runs only the read-only audit subset
+# `position-management` → `memory-health` → `self-improvement-audit`, preserves
+# the original exit code, and avoids carrying a stale P0 into the next route.
+# Do not run a second routine `cycle-sidecars` after the wrapper unless the
+# wrapper was intentionally called with `QR_RUN_POST_GATEWAY_SIDECARS=0` for
+# diagnostics.
 #
 # `cycle-sidecars` runs (canonical list: `cli._cycle_sidecar_steps`):
 #   broker-snapshot → tp-rebalance → execution-ledger-sync → broker-snapshot

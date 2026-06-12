@@ -142,7 +142,7 @@ class LiveWrapperTest(unittest.TestCase):
             self.assertIn("<-m><quant_rabbit.cli><cycle-sidecars>", payload)
             self.assertIn("refreshing post-gateway sidecars under live lock", result.stderr)
 
-    def test_failed_cycle_does_not_run_post_gateway_sidecars(self) -> None:
+    def test_failed_cycle_runs_read_only_audit_sidecars(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             capture = root / "capture.json"
@@ -161,6 +161,10 @@ class LiveWrapperTest(unittest.TestCase):
             payload = capture.read_text()
             self.assertIn("<-m><quant_rabbit.cli><autotrade-cycle>", payload)
             self.assertNotIn("<-m><quant_rabbit.cli><cycle-sidecars>", payload)
+            self.assertIn("<-m><quant_rabbit.cli><position-management>", payload)
+            self.assertIn("<-m><quant_rabbit.cli><memory-health>", payload)
+            self.assertIn("<-m><quant_rabbit.cli><self-improvement-audit>", payload)
+            self.assertIn("refreshing read-only audit sidecars under live lock", result.stderr)
 
     def test_sync_failure_continues_when_runtime_is_current_with_report_drift(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -311,7 +315,12 @@ def _wrapper_env(
                 "  for arg in \"$@\"; do printf '<%s>' \"$arg\"; done",
                 "  printf '\\n'",
                 "} >> \"$QR_CAPTURE_PATH\"",
-                f"exit {python_exit}",
+                "for arg in \"$@\"; do",
+                "  if [[ \"$arg\" == \"autotrade-cycle\" ]]; then",
+                f"    exit {python_exit}",
+                "  fi",
+                "done",
+                "exit 0",
             ]
         )
         + "\n"
