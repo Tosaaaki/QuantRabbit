@@ -805,6 +805,41 @@ def _daily_risk_budget_from_state(state_path: Path = DEFAULT_DAILY_TARGET_STATE)
     return _state_field(state_path, "daily_risk_budget_jpy")
 
 
+def _daily_entry_budget_block_issue(state_path: Path = DEFAULT_DAILY_TARGET_STATE) -> dict[str, str] | None:
+    """Return a BLOCK issue when the daily ledger says no fresh-entry risk remains.
+
+    `per_trade_risk_budget_jpy` is intentionally a per-shot sizing cap and can
+    stay positive after open risk has consumed the remaining day budget. The
+    separate `remaining_risk_budget_jpy` / `RISK_BUDGET_EXHAUSTED` state is the
+    market-day circuit breaker for additional entries.
+    """
+    if not state_path.exists():
+        return None
+    try:
+        payload = json.loads(state_path.read_text())
+    except (OSError, json.JSONDecodeError):
+        return None
+    status = str(payload.get("status") or "")
+    remaining_raw = payload.get("remaining_risk_budget_jpy")
+    remaining: float | None
+    try:
+        remaining = float(remaining_raw) if remaining_raw is not None else None
+    except (TypeError, ValueError):
+        remaining = None
+    if status != "RISK_BUDGET_EXHAUSTED" and not (remaining is not None and remaining <= 0):
+        return None
+    remaining_text = "unknown" if remaining is None else f"{remaining:.4f}"
+    return {
+        "code": "DAILY_RISK_BUDGET_EXHAUSTED",
+        "message": (
+            "daily target remaining_risk_budget_jpy is "
+            f"{remaining_text} (status={status or 'UNKNOWN'}); block fresh entries until "
+            "broker truth and the daily target ledger reopen risk budget"
+        ),
+        "severity": "BLOCK",
+    }
+
+
 def _state_field(state_path: Path, key: str) -> float | None:
     if not state_path.exists():
         return None
@@ -3708,6 +3743,14 @@ class IntentGenerator:
         )
         live_blockers = tuple(issue["message"] for issue in live_strategy_issues if issue.get("severity") == "BLOCK")
         risk_issues = list(issue.__dict__ for issue in risk.issues)
+        risk_allowed = risk.allowed
+        daily_entry_budget_issue = _daily_entry_budget_block_issue(
+            (data_root or self.data_root) / "daily_target_state.json"
+        )
+        if daily_entry_budget_issue is not None and str(intent.metadata.get("position_intent") or "") != "HEDGE":
+            risk_issues.append(daily_entry_budget_issue)
+            live_blockers = (*live_blockers, daily_entry_budget_issue["message"])
+            risk_allowed = False
         # Per AGENT_CONTRACT §3.5: surface MISSING_ATR_DATA as a BLOCK issue so
         # the operator sees that geometry was built without market context.
         # No silent fallback — the lane is blocked from going LIVE_READY until
@@ -3725,8 +3768,6 @@ class IntentGenerator:
             )
             # Force DRY_RUN_BLOCKED downstream.
             risk_allowed = False
-        else:
-            risk_allowed = risk.allowed
         # Fix B (2026-05-12): _risk_budgeted_units returns 0 when the
         # current margin headroom can only support a sub-1000u lot. Surface
         # that as a BLOCK so the intent becomes DRY_RUN_BLOCKED — never

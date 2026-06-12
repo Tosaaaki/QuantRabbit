@@ -3949,6 +3949,49 @@ class IntentGeneratorTest(unittest.TestCase):
             # because no ledger exists, so the portfolio gate is a no-op.
             self.assertNotIn("PORTFOLIO_LOSS_CAP_EXCEEDED", issue_codes)
 
+    def test_remaining_daily_risk_budget_exhaustion_blocks_fresh_live_ready_entries(self) -> None:
+        # Regression from 2026-06-12 live run: after a USD_CHF entry filled,
+        # daily_target_state moved to RISK_BUDGET_EXHAUSTED, but
+        # generate-intents still emitted fresh LIVE_READY lanes because it
+        # sized from per_trade_risk_budget_jpy and ignored the remaining-day
+        # circuit breaker.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            data_root = root / "data"
+            data_root.mkdir()
+            (data_root / "daily_target_state.json").write_text(
+                json.dumps(
+                    {
+                        "status": "RISK_BUDGET_EXHAUSTED",
+                        "daily_risk_budget_jpy": 10_000.0,
+                        "per_trade_risk_budget_jpy": 1_000.0,
+                        "remaining_risk_budget_jpy": 0.0,
+                    }
+                )
+            )
+            output = root / "intents.json"
+
+            summary = IntentGenerator(
+                campaign_plan=_campaign(root),
+                strategy_profile=_strategy(root),
+                output_path=output,
+                report_path=root / "intents.md",
+                pair_charts_path=_pair_charts(root),
+                data_root=data_root,
+            ).run(snapshot_path=_snapshot(root))
+
+            payload = json.loads(output.read_text())
+            issue_codes = {
+                issue["code"]
+                for item in payload["results"]
+                for issue in item["risk_issues"]
+            }
+
+            self.assertEqual(summary.live_ready, 0)
+            self.assertTrue(payload["results"])
+            self.assertTrue(all(item["status"] == "DRY_RUN_BLOCKED" for item in payload["results"]))
+            self.assertIn("DAILY_RISK_BUDGET_EXHAUSTED", issue_codes)
+
     def test_sizes_units_with_percentage_risk_cap(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
