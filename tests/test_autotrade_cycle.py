@@ -3457,7 +3457,7 @@ class AutoTradeCycleTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             try:
                 root = Path(tmp)
-                now = datetime.now(timezone.utc)
+                now = datetime(2026, 6, 8, 12, 0, tzinfo=timezone.utc)
                 target_state = _open_target_state(root)
                 snapshot = BrokerSnapshot(
                     fetched_at_utc=now,
