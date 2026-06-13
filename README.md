@@ -16,6 +16,22 @@ See `docs/COMPLETION_DESIGN.md` for the completion architecture, GPT trader requ
 
 Use `scripts/sync-live-runtime.sh` to promote committed code: source branch -> `main` -> `codex/live-trader-runtime`, fast-forward only. The live worktree does not create its own commits; it mirrors `main` and clears runtime `docs/*_report.md` drift during live-only sync. The live runner also calls `scripts/sync-live-runtime.sh --live-only --skip-tests` before each cycle, and `scripts/install-live-runtime-hooks.sh` installs a post-commit hook so development commits are automatically tested and promoted.
 
+## DecaBot Bridge
+
+DecaBot is a QuantRabbit-derived experiment, but it runs from `/Users/tossaki/App/DecaBot` with a separate OANDA account, data store, and launchd agents. Use the QR bridge when you want to inspect or operate it from this repo:
+
+```bash
+./scripts/qr-decabot.sh status
+./scripts/qr-decabot.sh logs ai
+./scripts/qr-decabot.sh cycle
+./scripts/qr-decabot.sh start
+./scripts/qr-decabot.sh stop
+./scripts/qr-decabot.sh shell
+```
+
+See `docs/DECABOT_BRIDGE.md` for the boundary. `cycle` can trade live when DecaBot `dry_run=false`; it does not use the QuantRabbit live gateway or main account.
+The weekend guard stops DecaBot `ai` / `monitor` / `review` launchd agents from Saturday 06:00 JST through Monday 07:00 JST and restores only the labels that were running before the pause.
+
 ## Local Credentials
 
 OANDA credentials are stored in `.env.local` at the repository root as `QR_OANDA_ACCOUNT_ID`, `QR_OANDA_TOKEN`, and `QR_OANDA_BASE_URL`. The client loads this file automatically when process environment variables are absent. Do not print the secret values; use `QR_OANDA_ENV_FILE=/path/to/file` to override the lookup in tests or alternate environments.

@@ -116,6 +116,29 @@ class WeekendTaskSwitchTest(unittest.TestCase):
             self.assertEqual(_codex_status(codex_root, "qr-trader"), "PAUSED")
             self.assertFalse(_claude_enabled(claude_root, "trader"))
 
+    def test_decabot_launchd_agents_are_paused_and_restored_from_snapshot(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            env, _codex_root, _claude_root, state_file = _env(root)
+            _install_fake_launchctl(root, env, {"com.decabot.ai", "com.decabot.monitor"})
+            launch_agent_root = Path(env["QR_WEEKEND_DECABOT_LAUNCH_AGENT_ROOT"])
+            for label in ("com.decabot.ai", "com.decabot.monitor", "com.decabot.review"):
+                _launch_agent_plist(launch_agent_root, label)
+
+            result = _run_switch("pause", env)
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(_fake_launchd_loaded(env), set())
+            state = json.loads(state_file.read_text())
+            self.assertTrue(state["tasks"]["decabot:com.decabot.ai"]["loaded"])
+            self.assertTrue(state["tasks"]["decabot:com.decabot.monitor"]["loaded"])
+            self.assertFalse(state["tasks"]["decabot:com.decabot.review"]["loaded"])
+
+            result = _run_switch("restore", env)
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(_fake_launchd_loaded(env), {"com.decabot.ai", "com.decabot.monitor"})
+
 
 def _env(root: Path) -> tuple[dict[str, str], Path, Path, Path]:
     codex_root = root / "codex" / "automations"
@@ -127,6 +150,8 @@ def _env(root: Path) -> tuple[dict[str, str], Path, Path, Path]:
             "PYTHONPATH": str(ROOT / "src"),
             "QR_WEEKEND_CODEX_AUTOMATION_ROOT": str(codex_root),
             "QR_WEEKEND_CLAUDE_TASK_ROOT": str(claude_root),
+            "QR_WEEKEND_DECABOT_LAUNCH_AGENT_ROOT": str(root / "LaunchAgents"),
+            "QR_WEEKEND_LAUNCHD_DOMAIN": "gui/501",
             "QR_WEEKEND_TASK_STATE_FILE": str(state_file),
         }
     )
@@ -198,6 +223,68 @@ def _codex_status(root: Path, task_id: str) -> str:
 
 def _claude_enabled(root: Path, task_id: str) -> bool:
     return bool(json.loads((root / task_id / "schedule.json").read_text())["enabled"])
+
+
+def _launch_agent_plist(root: Path, label: str) -> None:
+    root.mkdir(parents=True, exist_ok=True)
+    (root / f"{label}.plist").write_text("<plist></plist>\n")
+
+
+def _install_fake_launchctl(root: Path, env: dict[str, str], loaded: set[str]) -> None:
+    bin_dir = root / "bin"
+    bin_dir.mkdir()
+    state_file = root / "fake_launchctl_state.json"
+    state_file.write_text(json.dumps(sorted(loaded)) + "\n")
+    script = bin_dir / "launchctl"
+    script.write_text(
+        """#!/usr/bin/env python3
+import json
+import os
+import sys
+from pathlib import Path
+
+state_path = Path(os.environ["FAKE_LAUNCHCTL_STATE"])
+
+def read_state():
+    return set(json.loads(state_path.read_text()))
+
+def write_state(state):
+    state_path.write_text(json.dumps(sorted(state)) + "\\n")
+
+def label_from_plist(path):
+    name = Path(path).name
+    return name[:-6] if name.endswith(".plist") else name
+
+cmd = sys.argv[1]
+state = read_state()
+if cmd == "print":
+    label = sys.argv[2].rsplit("/", 1)[-1]
+    if label in state:
+        print(f"service = {label}")
+        raise SystemExit(0)
+    print(f'Could not find service "{label}" in domain for user gui: 501', file=sys.stderr)
+    raise SystemExit(113)
+if cmd == "bootout":
+    state.discard(label_from_plist(sys.argv[3]))
+    write_state(state)
+    raise SystemExit(0)
+if cmd == "bootstrap":
+    state.add(label_from_plist(sys.argv[3]))
+    write_state(state)
+    raise SystemExit(0)
+if cmd == "enable":
+    raise SystemExit(0)
+print(f"unsupported launchctl command: {cmd}", file=sys.stderr)
+raise SystemExit(64)
+"""
+    )
+    script.chmod(0o755)
+    env["PATH"] = f"{bin_dir}{os.pathsep}{env.get('PATH', '')}"
+    env["FAKE_LAUNCHCTL_STATE"] = str(state_file)
+
+
+def _fake_launchd_loaded(env: dict[str, str]) -> set[str]:
+    return set(json.loads(Path(env["FAKE_LAUNCHCTL_STATE"]).read_text()))
 
 
 if __name__ == "__main__":

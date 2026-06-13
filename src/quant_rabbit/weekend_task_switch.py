@@ -12,6 +12,7 @@ import argparse
 import json
 import os
 import re
+import subprocess
 import sys
 import tempfile
 from dataclasses import dataclass
@@ -29,6 +30,7 @@ CODEX_ACTIVE = "ACTIVE"
 CODEX_PAUSED = "PAUSED"
 DEFAULT_CODEX_TASK_IDS = ("qr-trader", "qr-news-digest", "qr-hole-audit", "qr-self-improvement-watch")
 DEFAULT_CLAUDE_TASK_IDS = ("trader", "trader_v2")
+DEFAULT_DECABOT_LAUNCHD_LABELS = ("com.decabot.ai", "com.decabot.monitor", "com.decabot.review")
 CODEX_TASK_EXCLUDED_PREFIXES = ("qr-weekend-",)
 WEEKDAY_CODES = frozenset({"MO", "TU", "WE", "TH", "FR"})
 QUANT_RABBIT_PROJECT_BASENAMES = frozenset({"QuantRabbit", "QuantRabbit-live"})
@@ -191,6 +193,7 @@ def _task_specs() -> list[TaskSpec]:
                 path=claude_root / task_id / "schedule.json",
             )
         )
+    specs.extend(_decabot_launchd_specs())
     return specs
 
 
@@ -208,6 +211,24 @@ def _claude_task_ids(root: Path) -> tuple[str, ...]:
         return configured
     discovered = _discover_claude_weekday_task_ids(root)
     return discovered or DEFAULT_CLAUDE_TASK_IDS
+
+
+def _decabot_launchd_specs() -> list[TaskSpec]:
+    if os.environ.get("QR_WEEKEND_DECABOT_ENABLED", "1").strip().lower() in {"0", "false", "no"}:
+        return []
+    labels = _env_list("QR_WEEKEND_DECABOT_LABELS", DEFAULT_DECABOT_LAUNCHD_LABELS)
+    root = Path(os.environ.get("QR_WEEKEND_DECABOT_LAUNCH_AGENT_ROOT", "~/Library/LaunchAgents")).expanduser()
+    specs: list[TaskSpec] = []
+    for label in labels:
+        specs.append(
+            TaskSpec(
+                key=f"decabot:{label}",
+                kind="decabot_launchd",
+                task_id=label,
+                path=root / f"{label}.plist",
+            )
+        )
+    return specs
 
 
 def _discover_codex_weekday_task_ids(root: Path) -> tuple[str, ...]:
@@ -349,6 +370,9 @@ def _read_task(spec: TaskSpec) -> dict[str, Any]:
         base["status"] = _read_codex_status(spec.path)
     elif spec.kind == "claude":
         base["enabled"] = _read_claude_enabled(spec.path)
+    elif spec.kind == "decabot_launchd":
+        base["loaded"] = _read_launchd_loaded(spec.task_id)
+        base["domain"] = _launchd_domain()
     else:  # pragma: no cover - defensive guard for future task kinds.
         raise TaskSwitchError(f"unsupported task kind: {spec.kind}")
     return base
@@ -360,6 +384,8 @@ def _paused_task_state(spec: TaskSpec, current: dict[str, Any]) -> dict[str, Any
         desired["status"] = CODEX_PAUSED
     elif spec.kind == "claude":
         desired["enabled"] = False
+    elif spec.kind == "decabot_launchd":
+        desired["loaded"] = False
     return desired
 
 
@@ -409,6 +435,22 @@ def _apply_states(
                     field="enabled",
                     before=before_enabled,
                     after=after_enabled,
+                    changed=changed,
+                )
+            )
+        elif spec.kind == "decabot_launchd":
+            after_loaded = bool(desired.get("loaded", False))
+            before_loaded = bool(before.get("loaded", False))
+            changed = before_loaded != after_loaded
+            if changed and not dry_run:
+                _write_launchd_loaded(spec, after_loaded)
+            changes.append(
+                Change(
+                    key=key,
+                    path=str(spec.path),
+                    field="loaded",
+                    before=before_loaded,
+                    after=after_loaded,
                     changed=changed,
                 )
             )
@@ -462,6 +504,55 @@ def _write_claude_enabled(path: Path, enabled: bool) -> None:
         raise TaskSwitchError(f"missing Claude schedule enabled boolean: {path}")
     payload["enabled"] = enabled
     path.write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n")
+
+
+def _launchd_domain() -> str:
+    return os.environ.get("QR_WEEKEND_LAUNCHD_DOMAIN", f"gui/{os.getuid()}")
+
+
+def _run_launchctl(*args: str) -> subprocess.CompletedProcess[str]:
+    try:
+        return subprocess.run(
+            ["launchctl", *args],
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=False,
+        )
+    except FileNotFoundError as exc:
+        raise TaskSwitchError("launchctl is required for DecaBot weekend launchd management") from exc
+
+
+def _read_launchd_loaded(label: str) -> bool:
+    proc = _run_launchctl("print", f"{_launchd_domain()}/{label}")
+    if proc.returncode == 0:
+        return True
+    stderr = proc.stderr or ""
+    if "Could not find service" in stderr or "No such process" in stderr:
+        return False
+    raise TaskSwitchError(f"failed to inspect launchd service {label}: {stderr.strip() or proc.stdout.strip()}")
+
+
+def _write_launchd_loaded(spec: TaskSpec, loaded: bool) -> None:
+    domain = _launchd_domain()
+    if loaded:
+        _checked_launchctl("bootstrap", domain, str(spec.path), label=spec.task_id)
+        _checked_launchctl("enable", f"{domain}/{spec.task_id}", label=spec.task_id)
+    else:
+        proc = _run_launchctl("bootout", domain, str(spec.path))
+        if proc.returncode == 0:
+            return
+        stderr = proc.stderr or ""
+        if "Could not find service" in stderr or "No such process" in stderr:
+            return
+        raise TaskSwitchError(f"failed to stop launchd service {spec.task_id}: {stderr.strip() or proc.stdout.strip()}")
+
+
+def _checked_launchctl(*args: str, label: str) -> None:
+    proc = _run_launchctl(*args)
+    if proc.returncode != 0:
+        message = proc.stderr.strip() or proc.stdout.strip()
+        raise TaskSwitchError(f"failed to update launchd service {label}: {message}")
 
 
 def _load_state_if_present(path: Path) -> dict[str, Any]:
