@@ -373,6 +373,34 @@ def same_direction_chart_support_reason(
     return f"current {' '.join(details)} still supports {side_up}"
 
 
+def same_direction_forecast_support_reason(
+    *,
+    current_direction: str,
+    current_confidence: float,
+    side: str,
+) -> Optional[str]:
+    """Return same-side forecast support for HOLD/reprice decisions.
+
+    This is intentionally softer than ENTRY_CONFIDENCE_MIN: a sub-entry
+    confidence forecast cannot open new risk, but when it points with an
+    existing position it is evidence that a RANGE thesis should be repriced or
+    TP-managed instead of converted into unattended hard loss-close evidence.
+    """
+
+    side_up = str(side or "").upper()
+    if side_up not in {"LONG", "SHORT"}:
+        return None
+    direction = str(current_direction or "").upper()
+    aligned = "UP" if side_up == "LONG" else "DOWN"
+    if direction != aligned:
+        return None
+    try:
+        confidence = float(current_confidence)
+    except (TypeError, ValueError):
+        confidence = 0.0
+    return f"current forecast {direction} conf={confidence:.2f} supports {side_up}"
+
+
 def thesis_invalidation_hit_reason(
     thesis: "EntryThesis",
     *,
@@ -1365,6 +1393,11 @@ def evaluate_thesis_evolution(
     entry_dir = thesis.forecast_direction
     side_up = side.upper()
     aligned_dir = "UP" if side_up == "LONG" else "DOWN"
+    forecast_support_reason = same_direction_forecast_support_reason(
+        current_direction=current_dir,
+        current_confidence=current_conf,
+        side=side_up,
+    )
 
     reasons: List[str] = []
     invalidation_reason = thesis_invalidation_hit_reason(
@@ -1445,6 +1478,14 @@ def evaluate_thesis_evolution(
                     f"(position {side_up})"
                 ),
             )
+    elif forecast_support_reason:
+        status = "WEAKENED"
+        verdict = "HOLD"
+        reasons.append(
+            f"{forecast_support_reason}, but entry thesis was {entry_dir}; "
+            "treat the position as HOLD/reprice/TP rebalance until hard invalidation "
+            "or an opposing high-confidence forecast appears"
+        )
     else:
         status = "WEAKENED"
         verdict = "HOLD"
@@ -1469,9 +1510,13 @@ def evaluate_thesis_evolution(
         price_label=current_price_label,
         buffer_pips=invalidation_buffer_pips,
     )
-    strong_current_support = current_dir == aligned_dir and current_conf >= ENTRY_CONFIDENCE_MIN
-    if status == "WEAKENED" and range_adverse_reason and not strong_current_support:
-        if _has_prior_weakened_or_broken_cycle(trade_id=trade_id, data_root=data_root, now=now):
+    if status == "WEAKENED" and range_adverse_reason:
+        if forecast_support_reason:
+            reasons.append(
+                f"{range_adverse_reason}; {forecast_support_reason}, so adverse range drift "
+                "is a HOLD/reprice/TP-rebalance problem, not hard Gate A close evidence"
+            )
+        elif _has_prior_weakened_or_broken_cycle(trade_id=trade_id, data_root=data_root, now=now):
             status = "BROKEN"
             verdict = "RECOMMEND_CLOSE"
             reasons.append(
@@ -1502,11 +1547,12 @@ def evaluate_thesis_evolution(
     ):
         if _has_prior_weakened_or_broken_cycle(trade_id=trade_id, data_root=data_root, now=now):
             chart_support_reason = same_direction_chart_support_reason(pair_chart, side=side_up)
-            if chart_support_reason:
+            if chart_support_reason or forecast_support_reason:
+                support_reason = chart_support_reason or forecast_support_reason
                 reasons.append(
                     f"THESIS_EXPIRED_SOFT: age {age_hours:.1f}h exceeds declared horizon "
                     f"{thesis.horizon_hours:.1f}h across consecutive WEAKENED checks, "
-                    f"but {chart_support_reason}; treat as HOLD/reprice/TP rebalance instead "
+                    f"but {support_reason}; treat as HOLD/reprice/TP rebalance instead "
                     "of unattended loss-side CLOSE"
                 )
             else:

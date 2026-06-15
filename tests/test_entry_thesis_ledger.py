@@ -826,6 +826,54 @@ class EntryThesisLedgerTest(unittest.TestCase):
             self.assertEqual(ev.verdict, "RECOMMEND_CLOSE")
             self.assertIn("RANGE_ROTATION_FAILED", ev.rationale)
 
+    def test_range_rotation_adverse_move_stays_hold_when_current_forecast_supports_side(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            record_entry_thesis(
+                EntryThesis(
+                    timestamp_utc="2026-06-12T17:53:49Z",
+                    trade_id="472380",
+                    pair="NZD_CAD",
+                    side="SHORT",
+                    entry_price=0.81516,
+                    forecast_direction="RANGE",
+                    forecast_confidence=0.572,
+                    regime="RANGE",
+                    invalidation_price=0.82086,
+                    target_price=0.81357,
+                    key_drivers=["lane_id=range_trader:NZD_CAD:SHORT:RANGE_ROTATION"],
+                    horizon_hours=12.0,
+                ),
+                root,
+            )
+            self._write_history(
+                root,
+                status="WEAKENED",
+                generated_at_utc="2026-06-15T00:39:44Z",
+                trade_id="472380",
+            )
+
+            ev = evaluate_thesis_evolution(
+                trade_id="472380",
+                pair="NZD_CAD",
+                side="SHORT",
+                open_time_utc="2026-06-12T17:53:49Z",
+                current_forecast=_Forecast("DOWN", 0.395),
+                current_regime="RANGE",
+                data_root=root,
+                current_price=0.81720,
+                current_price_label="ask",
+                now=datetime(2026, 6, 15, 0, 51, 25, tzinfo=timezone.utc),
+            )
+
+            assert ev is not None
+            self.assertEqual(ev.status, "WEAKENED")
+            self.assertEqual(ev.verdict, "HOLD")
+            self.assertIn("current forecast DOWN", ev.rationale)
+            self.assertIn("supports SHORT", ev.rationale)
+            self.assertIn("RANGE_ROTATION_FAILED", ev.rationale)
+            self.assertNotIn("without strong current directional support", ev.rationale)
+
     def test_range_rotation_adverse_move_requires_prior_weakened_cycle(self) -> None:
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
