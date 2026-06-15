@@ -1150,6 +1150,7 @@ def _auto_refresh_market_evidence_if_required(
     *,
     label: str,
     reuse_market_artifacts: bool = False,
+    validate_order_intents_freshness: bool = True,
     market_context_matrix_path: Path = DEFAULT_MARKET_CONTEXT_MATRIX,
     context_asset_charts_path: Path = DEFAULT_CONTEXT_ASSET_CHARTS,
     broker_instruments_path: Path = DEFAULT_BROKER_INSTRUMENTS,
@@ -1169,6 +1170,7 @@ def _auto_refresh_market_evidence_if_required(
             context_asset_charts_path=context_asset_charts_path,
             broker_instruments_path=broker_instruments_path,
             order_intents_path=order_intents_path,
+            validate_order_intents_freshness=validate_order_intents_freshness,
         )
         return {"status": "SKIPPED", "reason": "reuse_market_artifacts"}
     if os.environ.get("QR_DISABLE_MARKET_EVIDENCE_AUTO_REFRESH", "").strip() in {
@@ -1343,6 +1345,7 @@ def _validate_reusable_market_evidence(
     context_asset_charts_path: Path,
     broker_instruments_path: Path,
     order_intents_path: Path,
+    validate_order_intents_freshness: bool = True,
 ) -> None:
     """Refuse reused live artifacts when candidate discovery lacks matrix context."""
 
@@ -1366,7 +1369,7 @@ def _validate_reusable_market_evidence(
             "live candidate discovery"
         )
     matrix_generated_at = _parse_utc_datetime(payload.get("generated_at_utc"))
-    if order_intents_path.exists() and matrix_generated_at is not None:
+    if validate_order_intents_freshness and order_intents_path.exists() and matrix_generated_at is not None:
         try:
             intents_payload = json.loads(order_intents_path.read_text())
         except (OSError, json.JSONDecodeError, ValueError) as exc:
@@ -1556,7 +1559,10 @@ def _cycle_refresh_steps(daily_risk_pct: str) -> list[dict[str, Any]]:
         {"argv": snapshot_args, "required": True},
         {"argv": target_args, "required": True},
         {"argv": ["verify-projections"], "required": False},
-        {"argv": ["generate-intents", "--snapshot", "data/broker_snapshot.json"], "required": True},
+        {
+            "argv": ["generate-intents", "--snapshot", "data/broker_snapshot.json", "--reuse-market-artifacts"],
+            "required": True,
+        },
         {"argv": ["optimize-coverage"], "required": False},
         {"argv": ["ai-attack-advice"], "required": False},
         {"argv": ["learning-audit"], "required": False},
@@ -2462,6 +2468,14 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="Skip automatic market-story refresh from logs/news_digest.md before intent generation.",
     )
+    p_intents.add_argument(
+        "--reuse-market-artifacts",
+        action="store_true",
+        help=(
+            "Validate and reuse the existing market-context artifacts instead of fetching charts/context again. "
+            "Use after the explicit market evidence refresh steps in cycle-refresh."
+        ),
+    )
 
     p_promote = sub.add_parser("promote-receipts", help="Promote strategy profiles from dry-run order receipts.")
     p_promote.add_argument("--profile", type=Path, default=DEFAULT_STRATEGY_PROFILE)
@@ -2750,11 +2764,18 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 0
     if args.command == "generate-intents":
-        market_evidence_refresh = _auto_refresh_market_evidence_if_required(
-            label="generate-intents",
-            reuse_market_artifacts=False,
-            market_context_matrix_path=args.market_context_matrix,
-        )
+        market_evidence_kwargs: dict[str, Any] = {
+            "label": "generate-intents",
+            "reuse_market_artifacts": bool(args.reuse_market_artifacts),
+            "market_context_matrix_path": args.market_context_matrix,
+        }
+        if args.reuse_market_artifacts:
+            # This command is about to replace order_intents.json, so a stale
+            # previous intent file must not block reuse of freshly generated
+            # market-context artifacts. autotrade-cycle keeps the freshness
+            # check because it consumes the existing intent packet.
+            market_evidence_kwargs["validate_order_intents_freshness"] = False
+        market_evidence_refresh = _auto_refresh_market_evidence_if_required(**market_evidence_kwargs)
         snapshot_refresh = _refresh_snapshot_after_market_evidence_if_required(
             market_evidence_refresh=market_evidence_refresh,
             snapshot_path=args.snapshot,

@@ -996,6 +996,57 @@ class CliHelpTest(unittest.TestCase):
         self.assertEqual(code, 0)
         generator_cls.return_value.run.assert_called_once_with(snapshot_path=snapshot, max_candidates=56)
 
+    def test_generate_intents_can_reuse_market_artifacts_before_replacing_intents(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            summary = SimpleNamespace(
+                output_path=root / "data" / "order_intents.json",
+                report_path=root / "docs" / "order_intents_report.md",
+                candidates_seen=0,
+                generated=0,
+                needs_snapshot=False,
+                dry_run_passed=0,
+                live_ready=0,
+            )
+            stdout = io.StringIO()
+
+            with mock.patch(
+                "quant_rabbit.cli._auto_refresh_market_evidence_if_required",
+                return_value={"status": "SKIPPED", "reason": "reuse_market_artifacts"},
+            ) as market_refresh, mock.patch("quant_rabbit.cli.IntentGenerator") as generator_cls, redirect_stdout(stdout):
+                generator_cls.return_value.run.return_value = summary
+                code = main(
+                    [
+                        "generate-intents",
+                        "--campaign-plan",
+                        str(root / "data" / "daily_campaign_plan.json"),
+                        "--strategy-profile",
+                        str(root / "data" / "strategy_profile.json"),
+                        "--snapshot",
+                        str(root / "data" / "broker_snapshot.json"),
+                        "--output",
+                        str(summary.output_path),
+                        "--report",
+                        str(summary.report_path),
+                        "--market-context-matrix",
+                        str(root / "data" / "market_context_matrix.json"),
+                        "--reuse-market-artifacts",
+                        "--no-refresh-market-story",
+                    ]
+                )
+
+        self.assertEqual(code, 0)
+        market_refresh.assert_called_once_with(
+            label="generate-intents",
+            reuse_market_artifacts=True,
+            market_context_matrix_path=root / "data" / "market_context_matrix.json",
+            validate_order_intents_freshness=False,
+        )
+        generator_cls.return_value.run.assert_called_once_with(
+            snapshot_path=root / "data" / "broker_snapshot.json",
+            max_candidates=56,
+        )
+
     def test_generate_intents_returns_json_error_for_stale_campaign_plan(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -1737,6 +1788,39 @@ class CliHelpTest(unittest.TestCase):
                     order_intents_path=order_intents,
                 )
 
+    def test_reuse_market_artifacts_can_skip_existing_intent_freshness_for_generation(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            matrix = root / "market_context_matrix.json"
+            context_assets = root / "context_asset_charts.json"
+            broker_instruments = root / "broker_instruments.json"
+            order_intents = root / "order_intents.json"
+            matrix.write_text(
+                json.dumps(
+                    {
+                        "generated_at_utc": "2026-06-08T08:10:00+00:00",
+                        "pairs": {"EUR_USD": {"LONG": {"evidence_ref": "matrix:EUR_USD:LONG"}}},
+                    }
+                )
+            )
+            context_assets.write_text(json.dumps({"charts": [{"pair": "XAU_USD", "views": []}]}))
+            broker_instruments.write_text(json.dumps({"tradeable_instruments": ["EUR_USD"]}))
+            order_intents.write_text(
+                json.dumps({"generated_at_utc": "2026-06-08T08:00:00+00:00", "results": []})
+            )
+
+            result = _auto_refresh_market_evidence_if_required(
+                label="generate-intents",
+                reuse_market_artifacts=True,
+                validate_order_intents_freshness=False,
+                market_context_matrix_path=matrix,
+                context_asset_charts_path=context_assets,
+                broker_instruments_path=broker_instruments,
+                order_intents_path=order_intents,
+            )
+
+        self.assertEqual(result, {"status": "SKIPPED", "reason": "reuse_market_artifacts"})
+
     def test_context_asset_charts_cli_writes_non_fx_technical_packet(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -2145,9 +2229,10 @@ class ConsolidatedCycleCommandTest(unittest.TestCase):
         refresh = [" ".join(s["argv"]) for s in _cycle_refresh_steps("10")]
         # Order-sensitive anchors from docs/SKILL_trader.md section 2.
         self.assertEqual(refresh[0], "broker-snapshot --output data/broker_snapshot.json")
-        self.assertIn("generate-intents --snapshot data/broker_snapshot.json", refresh)
-        self.assertLess(refresh.index("verify-projections"), refresh.index("generate-intents --snapshot data/broker_snapshot.json"))
-        self.assertLess(refresh.index("tp-rebalance"), refresh.index("generate-intents --snapshot data/broker_snapshot.json"))
+        intent_step = "generate-intents --snapshot data/broker_snapshot.json --reuse-market-artifacts"
+        self.assertIn(intent_step, refresh)
+        self.assertLess(refresh.index("verify-projections"), refresh.index(intent_step))
+        self.assertLess(refresh.index("tp-rebalance"), refresh.index(intent_step))
         self.assertIn("news-health --strict", refresh)
         self.assertLess(refresh.index("capture-economics"), refresh.index("operator-precedent-audit"))
         self.assertLess(refresh.index("operator-precedent-audit"), refresh.index("verification-ledger-audit"))
