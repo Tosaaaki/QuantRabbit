@@ -6733,7 +6733,8 @@ class TimingEvidenceBreakoutStopTest(unittest.TestCase):
     def _metadata(
         *,
         direction: str = "UP",
-        confidence: float = 0.41,
+        confidence: float = 0.47,
+        raw_confidence: float | None = None,
         bias: str = "LONG",
         timing_count: int = 1,
         hit_rate: float = 0.85,
@@ -6743,7 +6744,7 @@ class TimingEvidenceBreakoutStopTest(unittest.TestCase):
         return {
             "forecast_direction": direction,
             "forecast_confidence": confidence,
-            "forecast_raw_confidence": confidence,
+            "forecast_raw_confidence": confidence if raw_confidence is None else raw_confidence,
             "chart_direction_bias": bias,
             "forecast_market_support": {
                 "ok": support_ok,
@@ -6764,6 +6765,22 @@ class TimingEvidenceBreakoutStopTest(unittest.TestCase):
 
     def test_stop_entry_with_timing_evidence_and_lean_bypasses_floor(self) -> None:
         self.assertTrue(self._allows(self._metadata()))
+
+    def test_deep_weak_timing_stop_remains_watch_only(self) -> None:
+        # Regression for a live CAD_JPY shape: a strong EITHER/timing signal
+        # predicts expansion, but not direction. Deeply weak calibrated direction
+        # must stay watch-only instead of becoming LIVE_READY.
+        self.assertFalse(
+            self._allows(
+                self._metadata(
+                    confidence=0.38,
+                    raw_confidence=0.57,
+                    timing_count=2,
+                    hit_rate=0.92,
+                    samples=100,
+                )
+            )
+        )
 
     def test_market_order_keeps_confidence_floor(self) -> None:
         self.assertFalse(self._allows(self._metadata(), order_type=OrderType.MARKET))

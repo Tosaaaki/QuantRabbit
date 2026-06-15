@@ -5430,6 +5430,7 @@ def _forecast_market_support_allows_side(
     aligned_count = _optional_int(support.get("aligned_projection_count")) or 0
     timing_count = _optional_int(support.get("timing_projection_count")) or 0
     hit_rate = _optional_float(support.get("best_hit_rate")) or 0.0
+    support_floor = max(0.0, min_confidence - FORECAST_MARKET_SUPPORT_MAX_CONFIDENCE_SHORTFALL)
     # Timing-evidence breakout stop (AGENT_CONTRACT §8, 2026-06-10).
     # Projection-ledger truth (87k scored rows): volatility-timing detectors
     # are the system's strongest predictions (bb_squeeze_expansion 82-88%
@@ -5448,7 +5449,11 @@ def _forecast_market_support_allows_side(
     #     FORECAST_MARKET_SUPPORT_MIN_TIMING_HIT_RATE + sample floors
     #     (timing_count is only populated from signals that cleared both).
     # Spread, RR, exhaustion, telemetry, strategy-profile, and gateway checks
-    # all still run after this; it only lifts the forecast-confidence veto.
+    # all still run after this; it only lifts a near-miss forecast-confidence
+    # veto. It must not turn a genuinely weak directional forecast into
+    # LIVE_READY from a timing-only EITHER signal; timing predicts movement, not
+    # side, and those entries are the exact reverse-first failure mode this gate
+    # is meant to avoid.
     breakout_proof = (
         order_type == OrderType.STOP_ENTRY
         and bool(chart_direction_bias)
@@ -5459,9 +5464,8 @@ def _forecast_market_support_allows_side(
         and samples >= FORECAST_MARKET_SUPPORT_MIN_SAMPLES
         and hit_rate >= FORECAST_MARKET_SUPPORT_MIN_TIMING_HIT_RATE
     )
-    if breakout_proof and timing_evidence:
+    if breakout_proof and timing_evidence and confidence >= support_floor:
         return True
-    support_floor = max(0.0, min_confidence - FORECAST_MARKET_SUPPORT_MAX_CONFIDENCE_SHORTFALL)
     if confidence < support_floor:
         return False
     if not bool(support.get("ok")):
