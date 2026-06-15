@@ -1481,10 +1481,10 @@ def _opportunity_mode(result: dict[str, Any], reward_risk: float) -> str:
     method = str(market_context.get("method") or "").upper()
     if any(token in target_intent for token in ("RUNNER", "TRAIL", "EXTEND", "SWING", "HOLD", "ADD")):
         return "RUNNER"
-    if reward_risk >= RUNNER_REWARD_RISK_MIN:
-        return "RUNNER"
     if any(token in target_intent for token in ("HARVEST", "SCALP", "QUICK")):
         return "HARVEST"
+    if reward_risk >= RUNNER_REWARD_RISK_MIN:
+        return "RUNNER"
     if 0.0 < reward_risk <= HARVEST_REWARD_RISK_MAX:
         return "HARVEST"
     if method == "TREND_CONTINUATION":
@@ -1594,6 +1594,14 @@ def _opportunity_mode_repair_item(opportunity_modes: dict[str, Any]) -> str | No
     if len(labels) >= 2:
         return "repair both harvest and runner opportunity paths instead of treating coverage as one pool: " + "; ".join(labels)
     if labels:
+        present_mode = labels[0].split(" lanes=", 1)[0]
+        missing_mode = "RUNNER" if present_mode == "HARVEST" else "HARVEST"
+        missing_item = opportunity_modes.get(missing_mode) if isinstance(opportunity_modes.get(missing_mode), dict) else {}
+        if int(missing_item.get("lanes") or 0) <= 0:
+            return (
+                "repair the visible opportunity path before broad exploration and add missing "
+                f"{missing_mode} lane generation to avoid horizon opportunity loss: {labels[0]}"
+            )
         return "repair the visible opportunity path before broad exploration: " + labels[0]
     return None
 
