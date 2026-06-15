@@ -59,6 +59,47 @@ class IntentGeneratorTest(unittest.TestCase):
             self.assertEqual(summary.needs_snapshot, 1)
             self.assertIn("NEEDS_BROKER_SNAPSHOT", report.read_text())
 
+    def test_dedupes_duplicate_lane_keys_before_order_variant_expansion(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            campaign = root / "campaign.json"
+            duplicate_lane = {
+                "desk": "trend_trader",
+                "pair": "EUR_USD",
+                "direction": "LONG",
+                "method": "TREND_CONTINUATION",
+                "adoption": "RISK_REPAIR_DRY_RUN",
+                "campaign_role": "NOW_IF_REPAIRED",
+                "reason": "duplicate trend pressure",
+                "required_receipt": "dry-run under loss cap",
+                "blockers": [],
+                "story_examples": ["same setup surfaced twice"],
+            }
+            campaign.write_text(json.dumps({"lanes": [duplicate_lane, dict(duplicate_lane)]}))
+            output = root / "intents.json"
+
+            summary = IntentGenerator(
+                campaign_plan=campaign,
+                strategy_profile=_strategy(root, status="CANDIDATE"),
+                output_path=output,
+                report_path=root / "intents.md",
+                pair_charts_path=_pair_charts(root),
+                max_loss_jpy=500.0,
+            ).run(snapshot_path=_snapshot(root))
+
+            payload = json.loads(output.read_text())
+            lane_ids = [item["lane_id"] for item in payload["results"]]
+
+            self.assertEqual(summary.generated, 2)
+            self.assertEqual(len(lane_ids), len(set(lane_ids)))
+            self.assertEqual(
+                set(lane_ids),
+                {
+                    "trend_trader:EUR_USD:LONG:TREND_CONTINUATION",
+                    "trend_trader:EUR_USD:LONG:TREND_CONTINUATION:MARKET",
+                },
+            )
+
     def test_refuses_stale_campaign_plan_when_target_state_is_newer(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

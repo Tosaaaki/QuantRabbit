@@ -3970,6 +3970,7 @@ class IntentGenerator:
                 seen_keys.add(key)
             lanes = lanes + mirrors
             max_candidates = max(max_candidates, max_candidates * 2)
+        lanes = _dedupe_lanes_for_generation(lanes)
         # Pull equity-derived per-trade cap from daily_target_state.json when
         # neither explicit JPY nor pct arguments were supplied. This is the
         # day's risk budget already divided by the target trade pace, so each
@@ -4470,6 +4471,39 @@ def _mirror_lane(lane: dict[str, Any]) -> dict[str, Any]:
     # `_lane_id` reads the new direction.
     mirror["mirror_of"] = lane.get("direction")
     return mirror
+
+
+def _dedupe_lanes_for_generation(lanes: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Keep one source lane per executable desk/pair/side/method key.
+
+    Seed helpers are intentionally prepended in priority order. Keeping the
+    first lane preserves that priority while preventing one market idea from
+    expanding into duplicate LIMIT/STOP/MARKET variants and later duplicate
+    live receipts.
+    """
+
+    out: list[dict[str, Any]] = []
+    seen: set[tuple[str, str, str, str]] = set()
+    for lane in lanes:
+        key = _lane_generation_key(lane)
+        if key is None:
+            out.append(lane)
+            continue
+        if key in seen:
+            continue
+        out.append(lane)
+        seen.add(key)
+    return out
+
+
+def _lane_generation_key(lane: dict[str, Any]) -> tuple[str, str, str, str] | None:
+    desk = str(lane.get("desk") or "").strip().lower()
+    pair = str(lane.get("pair") or "").strip().upper()
+    direction = str(lane.get("direction") or "").strip().upper()
+    method = str(lane.get("method") or "").strip().upper()
+    if not (desk and pair and direction and method):
+        return None
+    return desk, pair, direction, method
 
 
 def _sl_free_active() -> bool:
