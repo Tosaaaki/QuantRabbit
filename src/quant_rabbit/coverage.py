@@ -30,6 +30,7 @@ DISCOVERY_EVIDENCE_SOURCE_TABLES = frozenset({"pretrade_outcomes", "seat_outcome
 HARVEST_REWARD_RISK_MAX = 1.35
 RUNNER_REWARD_RISK_MIN = 2.0
 QUOTE_STALE_ISSUE_CODES = frozenset({"STALE_QUOTE", "TELEMETRY_FORECAST_QUOTE_STALE_FOR_LIVE"})
+PENDING_ENTRY_ORDER_TYPES = frozenset({"LIMIT", "STOP-ENTRY"})
 
 
 @dataclass(frozen=True)
@@ -434,6 +435,7 @@ def _coverage_lane(result: dict[str, Any]) -> CoverageLane:
             status == "DRY_RUN_PASSED"
             and not _has_risk_block(result)
             and not _has_non_promotable_risk(result)
+            and _has_promotable_strategy_repair(result)
         ),
         blockers=blockers,
     )
@@ -453,6 +455,52 @@ def _result_blockers(result: dict[str, Any]) -> list[str]:
             blockers.append(str(issue.get("message") or issue.get("code") or "strategy block"))
     blockers.extend(str(item) for item in result.get("live_blockers", []) or [])
     return blockers
+
+
+def _has_promotable_strategy_repair(result: dict[str, Any]) -> bool:
+    """Match coverage potential to what `promote-receipts` can actually repair.
+
+    A dry-run receipt with a completely missing pair/side strategy profile is
+    useful evidence, but receipt promotion cannot create that profile from
+    nothing. Counting it as potential coverage sends the operator into a
+    no-op promotion step, so only statuses that the promoter is allowed to
+    advance are counted here.
+    """
+
+    intent = result.get("intent") if isinstance(result.get("intent"), dict) else {}
+    order_type = str(intent.get("order_type") or "").upper()
+    for issue in _strategy_issues(result):
+        code = str(issue.get("code") or "").upper()
+        evidence = issue.get("strategy_profile_evidence")
+        evidence = evidence if isinstance(evidence, dict) else {}
+        profile_status = str(evidence.get("profile_status") or "").upper()
+        if code == "STRATEGY_RISK_REPAIR_REQUIRED" and profile_status == "RISK_REPAIR_CANDIDATE":
+            return True
+        if (
+            code == "STRATEGY_TRIGGER_RECEIPT_REQUIRED"
+            and profile_status == "MINE_MISSED_EDGE"
+            and order_type in PENDING_ENTRY_ORDER_TYPES
+        ):
+            return True
+        if code != "STRATEGY_METHOD_PROFILE_MISSING":
+            continue
+        fallback = evidence.get("fallback_pair_side_profile")
+        fallback = fallback if isinstance(fallback, dict) else {}
+        fallback_status = str(fallback.get("profile_status") or "").upper()
+        if fallback_status == "RISK_REPAIR_CANDIDATE":
+            return True
+        if fallback_status == "MINE_MISSED_EDGE" and order_type in PENDING_ENTRY_ORDER_TYPES:
+            return True
+    return False
+
+
+def _strategy_issues(result: dict[str, Any]) -> list[dict[str, Any]]:
+    issues: list[dict[str, Any]] = []
+    for key in ("live_strategy_issues", "strategy_issues"):
+        for issue in result.get(key) or []:
+            if isinstance(issue, dict):
+                issues.append(issue)
+    return issues
 
 
 def _result_issue_codes(result: dict[str, Any]) -> list[str]:

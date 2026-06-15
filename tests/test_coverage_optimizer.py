@@ -49,7 +49,32 @@ class CoverageOptimizerTest(unittest.TestCase):
             root = Path(tmp)
             intents = root / "intents.json"
             target = root / "target.json"
-            intents.write_text(json.dumps({"results": [_result("DRY_RUN_PASSED", live_blocker="needs profile promotion")]}))
+            repair_issue = {
+                "code": "STRATEGY_RISK_REPAIR_REQUIRED",
+                "message": "risk-repair profile can be promoted by this receipt",
+                "severity": "BLOCK",
+                "strategy_profile_evidence": {
+                    "profile_match": "pair_side",
+                    "profile_pair": "EUR_USD",
+                    "profile_direction": "LONG",
+                    "profile_status": "RISK_REPAIR_CANDIDATE",
+                    "requested_method": "TREND_CONTINUATION",
+                    "required_fix": "old sizing broke the loss cap",
+                },
+            }
+            intents.write_text(
+                json.dumps(
+                    {
+                        "results": [
+                            _result(
+                                "DRY_RUN_PASSED",
+                                live_blocker="needs profile promotion",
+                                live_strategy_issues=[repair_issue],
+                            )
+                        ]
+                    }
+                )
+            )
             target.write_text(
                 json.dumps(
                     {
@@ -74,6 +99,62 @@ class CoverageOptimizerTest(unittest.TestCase):
             payload = json.loads((root / "coverage.json").read_text())
             self.assertTrue(any("live-ready reward misses" in item for item in payload["blockers"]))
             self.assertTrue(any("promote 1 dry-run receipts" in item for item in payload["action_items"]))
+
+    def test_missing_strategy_profile_is_not_receipt_promotion_coverage(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            intents = root / "intents.json"
+            target = root / "target.json"
+            missing_issue = {
+                "code": "STRATEGY_PROFILE_MISSING",
+                "message": "CAD_JPY SHORT is absent from the mined strategy profile",
+                "severity": "BLOCK",
+                "strategy_profile_evidence": {
+                    "profile_match": "missing",
+                    "profile_pair": "CAD_JPY",
+                    "profile_direction": "SHORT",
+                    "requested_method": "TREND_CONTINUATION",
+                },
+            }
+            intents.write_text(
+                json.dumps(
+                    {
+                        "results": [
+                            _result(
+                                "DRY_RUN_PASSED",
+                                lane_id="trend_trader:CAD_JPY:SHORT:TREND_CONTINUATION",
+                                pair="CAD_JPY",
+                                side="SHORT",
+                                live_blocker="CAD_JPY SHORT is absent from the mined strategy profile",
+                                live_strategy_issues=[missing_issue],
+                            )
+                        ]
+                    }
+                )
+            )
+            target.write_text(
+                json.dumps(
+                    {
+                        "status": "PURSUE_TARGET",
+                        "remaining_target_jpy": 500.0,
+                        "remaining_risk_budget_jpy": 500.0,
+                    }
+                )
+            )
+
+            summary = CoverageOptimizer(
+                intents_path=intents,
+                target_state_path=target,
+                replay_path=root / "missing_replay.json",
+                market_context_matrix_path=_matrix(root),
+                output_path=root / "coverage.json",
+                report_path=root / "coverage.md",
+            ).run()
+
+            self.assertEqual(summary.promotion_candidate_lanes, 0)
+            payload = json.loads((root / "coverage.json").read_text())
+            self.assertFalse(payload["lanes"][0]["counts_after_promotion"])
+            self.assertFalse(any("promote 1 dry-run receipts" in item for item in payload["action_items"]))
 
     def test_forecast_watch_only_dry_run_is_not_promotion_coverage(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -1022,6 +1103,7 @@ def _result(
     live_blocker: str | None = None,
     risk_issues: list[dict] | None = None,
     strategy_issues: list[dict] | None = None,
+    live_strategy_issues: list[dict] | None = None,
     risk_metrics: dict | None = None,
     include_risk_metrics: bool = True,
 ) -> dict:
@@ -1031,6 +1113,7 @@ def _result(
         "risk_allowed": True,
         "risk_issues": risk_issues or [],
         "strategy_issues": strategy_issues or [],
+        "live_strategy_issues": live_strategy_issues or [],
         "live_blockers": [live_blocker] if live_blocker else [],
         "intent": {
             "pair": pair,
