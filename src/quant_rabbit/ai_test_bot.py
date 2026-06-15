@@ -2048,13 +2048,29 @@ def _broker_trade_close_accept_provenance(
             select_fields.append(column)
         else:
             select_fields.append(f"NULL AS {column}")
-    rows = conn.execute(
-        f"""
-        SELECT {', '.join(select_fields)}
-        FROM execution_events
-        WHERE event_type = 'ORDER_ACCEPTED'
-        """
-    ).fetchall()
+    rows = [
+        dict(row)
+        for row in conn.execute(
+            f"""
+            SELECT {', '.join(select_fields)}
+            FROM execution_events
+            WHERE event_type = 'ORDER_ACCEPTED'
+            """
+        ).fetchall()
+    ]
+    entry_sources = _entry_close_source_rows(conn, columns)
+    for row in rows:
+        raw = _raw_payload(row.get("raw_json"))
+        trade_close = raw.get("tradeClose") if isinstance(raw.get("tradeClose"), dict) else {}
+        normalized_trade_id = str(row.get("trade_id") or "").strip() or _broker_trade_close_trade_id(trade_close)
+        if not normalized_trade_id:
+            continue
+        row["trade_id"] = normalized_trade_id
+        entry_source = entry_sources.get(normalized_trade_id)
+        if not entry_source:
+            continue
+        row["entry_lane_id"] = entry_source.get("lane_id")
+        row["entry_raw_json"] = entry_source.get("raw_json")
     trade_ids: set[str] = set()
     order_ids: set[str] = set()
     sources_by_trade_id: dict[str, set[str]] = {}
@@ -2062,14 +2078,14 @@ def _broker_trade_close_accept_provenance(
     source_counts: dict[str, int] = {}
     events = 0
     for row in rows:
-        raw = _raw_payload(row["raw_json"])
+        raw = _raw_payload(row.get("raw_json"))
         trade_close = raw.get("tradeClose") if isinstance(raw.get("tradeClose"), dict) else {}
-        reason = _norm(row["exit_reason"]) or _norm(raw.get("reason"))
+        reason = _norm(row.get("exit_reason")) or _norm(raw.get("reason"))
         if reason != "TRADE_CLOSE" and not trade_close:
             continue
         events += 1
-        order_id = str(row["order_id"] or "").strip()
-        row_trade_id = str(row["trade_id"] or "").strip()
+        order_id = str(row.get("order_id") or "").strip()
+        row_trade_id = str(row.get("trade_id") or "").strip()
         close_trade_id = _broker_trade_close_trade_id(trade_close)
         source = _broker_trade_close_accept_source(row, raw)
         source_counts[source] = source_counts.get(source, 0) + 1
@@ -2090,6 +2106,40 @@ def _broker_trade_close_accept_provenance(
         "sources_by_trade_id": sources_by_trade_id,
         "sources_by_order_id": sources_by_order_id,
     }
+
+
+def _entry_close_source_rows(conn: sqlite3.Connection, columns: set[str]) -> dict[str, dict[str, object]]:
+    if "trade_id" not in columns:
+        return {}
+    select_fields = ["trade_id"]
+    for column in ("lane_id", "raw_json"):
+        if column in columns:
+            select_fields.append(column)
+        else:
+            select_fields.append(f"NULL AS {column}")
+    rows = conn.execute(
+        f"""
+        SELECT {', '.join(select_fields)}
+        FROM execution_events
+        WHERE event_type = 'ORDER_FILLED'
+          AND trade_id IS NOT NULL
+          AND trade_id != ''
+        ORDER BY ts_utc ASC
+        """
+    ).fetchall()
+    out: dict[str, dict[str, object]] = {}
+    for row in rows:
+        trade_id = str(row["trade_id"] or "").strip()
+        if not trade_id:
+            continue
+        current = out.setdefault(trade_id, {"lane_id": None, "raw_json": None})
+        lane_id = str(row["lane_id"] or "").strip()
+        raw_json = row["raw_json"]
+        if lane_id and not current.get("lane_id"):
+            current["lane_id"] = lane_id
+        if raw_json and not current.get("raw_json"):
+            current["raw_json"] = raw_json
+    return out
 
 
 def _broker_trade_close_sources_for_close(
@@ -2134,6 +2184,10 @@ def _broker_trade_close_evidence_for_close(
         evidence.add("NO_CLIENT_EXTENSION")
     if "TRADER_CLIENT_EXTENSION" in sources:
         evidence.add("TRADER_CLIENT_EXTENSION")
+    if "TRADER_ENTRY_LANE_ID" in sources:
+        evidence.add("TRADER_ENTRY_LANE_ID")
+    if "TRADER_ENTRY_CLIENT_EXTENSION" in sources:
+        evidence.add("TRADER_ENTRY_CLIENT_EXTENSION")
     if "NON_TRADER_CLIENT_EXTENSION" in sources:
         evidence.add("NON_TRADER_CLIENT_EXTENSION")
     if "LOCAL_LEDGER_LANE_ID" in sources:
@@ -2143,10 +2197,13 @@ def _broker_trade_close_evidence_for_close(
     return evidence
 
 
-def _broker_trade_close_accept_source(row: sqlite3.Row, raw: dict[str, object]) -> str:
-    lane_id = str(row["lane_id"] or "").strip() if "lane_id" in row.keys() else ""
+def _broker_trade_close_accept_source(row: dict[str, object], raw: dict[str, object]) -> str:
+    lane_id = str(row.get("lane_id") or "").strip()
     if lane_id:
         return "LOCAL_LEDGER_LANE_ID"
+    entry_lane_id = str(row.get("entry_lane_id") or "").strip()
+    if entry_lane_id:
+        return "TRADER_ENTRY_LANE_ID"
     client_sources = []
     for key in ("clientExtensions", "tradeClientExtensions"):
         value = raw.get(key)
@@ -2155,6 +2212,11 @@ def _broker_trade_close_accept_source(row: sqlite3.Row, raw: dict[str, object]) 
     haystack = json.dumps(client_sources, ensure_ascii=False, sort_keys=True).lower()
     if "qrv1" in haystack or "qr-vnext" in haystack or '"tag": "trader"' in haystack:
         return "TRADER_CLIENT_EXTENSION"
+    entry_raw = _raw_payload(row.get("entry_raw_json"))
+    if entry_raw:
+        entry_haystack = json.dumps(entry_raw, ensure_ascii=False, sort_keys=True).lower()
+        if "qrv1" in entry_haystack or "qr-vnext" in entry_haystack or '"tag": "trader"' in entry_haystack:
+            return "TRADER_ENTRY_CLIENT_EXTENSION"
     if client_sources:
         return "NON_TRADER_CLIENT_EXTENSION"
     return "DIRECT_OR_MANUAL_BROKER_TRADE_CLOSE"

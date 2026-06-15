@@ -1482,26 +1482,77 @@ def _market_close_attribution_findings(
     return findings
 
 
-def _broker_trade_close_accept_rows(conn: sqlite3.Connection, columns: set[str]) -> list[sqlite3.Row]:
+def _broker_trade_close_accept_rows(conn: sqlite3.Connection, columns: set[str]) -> list[dict[str, Any]]:
     select_fields = []
     for column in ("trade_id", "order_id", "lane_id", "exit_reason", "raw_json"):
         if column in columns:
             select_fields.append(column)
         else:
             select_fields.append(f"NULL AS {column}")
-    return list(
-        conn.execute(
+    rows = [
+        dict(row)
+        for row in conn.execute(
             f"""
             SELECT {', '.join(select_fields)}
             FROM execution_events
             WHERE event_type = 'ORDER_ACCEPTED'
             """
         ).fetchall()
+    ]
+    if "trade_id" not in columns:
+        return rows
+    entry_sources = _entry_close_source_rows(conn, columns)
+    for row in rows:
+        raw = _json_payload(row.get("raw_json"))
+        trade_close = raw.get("tradeClose") if isinstance(raw.get("tradeClose"), dict) else {}
+        normalized_trade_id = str(row.get("trade_id") or "").strip() or _trade_close_trade_id(trade_close)
+        if not normalized_trade_id:
+            continue
+        row["trade_id"] = normalized_trade_id
+        entry_source = entry_sources.get(normalized_trade_id)
+        if not entry_source:
+            continue
+        row["entry_lane_id"] = entry_source.get("lane_id")
+        row["entry_raw_json"] = entry_source.get("raw_json")
+    return rows
+
+
+def _entry_close_source_rows(conn: sqlite3.Connection, columns: set[str]) -> dict[str, dict[str, Any]]:
+    select_fields = ["trade_id"]
+    for column in ("lane_id", "raw_json"):
+        if column in columns:
+            select_fields.append(column)
+        else:
+            select_fields.append(f"NULL AS {column}")
+    rows = list(
+        conn.execute(
+            f"""
+            SELECT {', '.join(select_fields)}
+            FROM execution_events
+            WHERE event_type = 'ORDER_FILLED'
+              AND trade_id IS NOT NULL
+              AND trade_id != ''
+            ORDER BY ts_utc ASC
+            """
+        ).fetchall()
     )
+    out: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        trade_id = str(row["trade_id"] or "").strip()
+        if not trade_id:
+            continue
+        current = out.setdefault(trade_id, {"lane_id": None, "raw_json": None})
+        lane_id = str(row["lane_id"] or "").strip()
+        raw_json = row["raw_json"]
+        if lane_id and not current.get("lane_id"):
+            current["lane_id"] = lane_id
+        if raw_json and not current.get("raw_json"):
+            current["raw_json"] = raw_json
+    return out
 
 
 def _broker_trade_close_accept_sources(
-    rows: list[sqlite3.Row],
+    rows: list[dict[str, Any]],
     *,
     trade_id: str,
     order_id: str,
@@ -1526,13 +1577,13 @@ def _broker_trade_close_accept_sources(
     return sources
 
 
-def _broker_trade_close_accept_source(row: sqlite3.Row, raw: dict[str, Any]) -> str:
-    try:
-        lane_id = str(row["lane_id"] or "").strip()
-    except (KeyError, IndexError):
-        lane_id = ""
+def _broker_trade_close_accept_source(row: dict[str, Any], raw: dict[str, Any]) -> str:
+    lane_id = str(row.get("lane_id") or "").strip()
     if lane_id:
         return "LOCAL_LEDGER_LANE_ID"
+    entry_lane_id = str(row.get("entry_lane_id") or "").strip()
+    if entry_lane_id:
+        return "TRADER_ENTRY_LANE_ID"
     client_sources = []
     for key in ("clientExtensions", "tradeClientExtensions"):
         value = raw.get(key)
@@ -1541,6 +1592,11 @@ def _broker_trade_close_accept_source(row: sqlite3.Row, raw: dict[str, Any]) -> 
     haystack = json.dumps(client_sources, ensure_ascii=False, sort_keys=True).lower()
     if "qrv1" in haystack or "qr-vnext" in haystack or '"tag": "trader"' in haystack:
         return "TRADER_CLIENT_EXTENSION"
+    entry_raw = _json_payload(row.get("entry_raw_json"))
+    if entry_raw:
+        entry_haystack = json.dumps(entry_raw, ensure_ascii=False, sort_keys=True).lower()
+        if "qrv1" in entry_haystack or "qr-vnext" in entry_haystack or '"tag": "trader"' in entry_haystack:
+            return "TRADER_ENTRY_CLIENT_EXTENSION"
     if client_sources:
         return "NON_TRADER_CLIENT_EXTENSION"
     return "DIRECT_OR_MANUAL_BROKER_TRADE_CLOSE"
@@ -2618,7 +2674,25 @@ def _mechanism_ablation_findings(
     ):
         return []
     if broker_without_gateway:
-        if broker_without_gateway_sources.get("DIRECT_OR_MANUAL_BROKER_TRADE_CLOSE"):
+        trader_entry_without_gateway = sum(
+            int(_maybe_float(broker_without_gateway_sources.get(label)) or 0)
+            for label in ("TRADER_ENTRY_LANE_ID", "TRADER_ENTRY_CLIENT_EXTENSION")
+        )
+        direct_without_gateway = int(
+            _maybe_float(broker_without_gateway_sources.get("DIRECT_OR_MANUAL_BROKER_TRADE_CLOSE")) or 0
+        )
+        if trader_entry_without_gateway:
+            next_action = (
+                "Broker accepted TRADE_CLOSE loss events are tied to trader-owned entries but lack local "
+                "GATEWAY_TRADE_CLOSE_SENT receipts. Repair close receipt persistence/source tags before "
+                "ablation; keep direct/manual broker closes separate from Gate A/B evidence."
+            )
+            if direct_without_gateway:
+                next_action += (
+                    f" {direct_without_gateway} residual direct/manual close(s) still need external-source "
+                    "separation."
+                )
+        elif direct_without_gateway:
             next_action = (
                 "Broker accepted TRADE_CLOSE loss events look direct/manual: no local gateway receipt or trader "
                 "client extension identified. Treat them as external/direct exit drag, persist explicit close "
@@ -3388,6 +3462,8 @@ def _close_provenance_for_effect_row(
     for label in (
         "LOCAL_LEDGER_LANE_ID",
         "TRADER_CLIENT_EXTENSION",
+        "TRADER_ENTRY_LANE_ID",
+        "TRADER_ENTRY_CLIENT_EXTENSION",
         "NON_TRADER_CLIENT_EXTENSION",
         "DIRECT_OR_MANUAL_BROKER_TRADE_CLOSE",
     ):

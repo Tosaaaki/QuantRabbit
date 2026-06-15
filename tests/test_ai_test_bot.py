@@ -1231,6 +1231,65 @@ class AITestBotBacktesterTest(unittest.TestCase):
             self.assertIn("NO_LOCAL_GATEWAY_CLOSE_RECEIPT", report)
             self.assertIn("Close source segments", report)
 
+    def test_close_gate_diagnostic_uses_entry_lane_for_broker_accepted_close_source(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            db = root / "legacy.db"
+            ledger = root / "execution_ledger.db"
+            _seed_db(
+                db,
+                [
+                    ("trades", "2026-06-01", "EUR_USD", "LONG", 100.0),
+                    ("trades", "2026-06-02", "EUR_USD", "LONG", -200.0),
+                ],
+            )
+            _seed_broker_accepted_close_ledger(ledger)
+            with sqlite3.connect(ledger) as conn:
+                conn.execute(
+                    """
+                    UPDATE execution_events
+                    SET lane_id = ?
+                    WHERE event_uid = 'fill-entry'
+                    """,
+                    ("trend_trader:EUR_USD:LONG:TREND_CONTINUATION",),
+                )
+
+            AITestBotBacktester(
+                db_path=db,
+                execution_ledger_db_path=ledger,
+                output_path=root / "ai_backtest.json",
+                report_path=root / "ai_backtest.md",
+                max_loss_jpy=100.0,
+                training_days=1,
+                min_train_trades=1,
+                max_active_buckets=1,
+                source_tables=("trades",),
+            ).run(start_balance_jpy=1000.0)
+
+            payload = json.loads((root / "ai_backtest.json").read_text())
+            close_gate = payload["mechanism_ablation"]["close_gate_ab"]
+            self.assertEqual(
+                close_gate["broker_trade_close_accept_source_counts"],
+                {"TRADER_ENTRY_LANE_ID": 1},
+            )
+            self.assertEqual(
+                close_gate["broker_accepted_without_gateway_loss_side_market_close_source_counts"],
+                {"TRADER_ENTRY_LANE_ID": 1},
+            )
+            self.assertEqual(
+                close_gate["broker_accepted_without_gateway_loss_side_market_close_evidence_counts"],
+                {"NO_LOCAL_GATEWAY_CLOSE_RECEIPT": 1, "TRADER_ENTRY_LANE_ID": 1},
+            )
+            example = close_gate["loss_side_market_close_examples"][0]
+            self.assertEqual(example["broker_trade_close_sources"], ["TRADER_ENTRY_LANE_ID"])
+            self.assertEqual(
+                example["broker_trade_close_evidence"],
+                ["NO_LOCAL_GATEWAY_CLOSE_RECEIPT", "TRADER_ENTRY_LANE_ID"],
+            )
+            source_segments = {item["source"]: item for item in close_gate["close_source_segments"]}
+            self.assertIn("BROKER_ACCEPT:TRADER_ENTRY_LANE_ID", source_segments)
+            self.assertNotIn("BROKER_ACCEPT:DIRECT_OR_MANUAL_BROKER_TRADE_CLOSE", source_segments)
+
     def test_close_gate_diagnostic_classifies_gpt_accepted_close_without_position_receipt(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

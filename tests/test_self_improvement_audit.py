@@ -694,6 +694,53 @@ class SelfImprovementAuditorTest(unittest.TestCase):
             {"NO_LOCAL_GATEWAY_CLOSE_RECEIPT": 2, "NO_CLIENT_EXTENSION": 2},
         )
 
+    def test_close_gate_ablation_with_trader_entry_source_requests_receipt_persistence(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(
+                root,
+                active_position=False,
+                live_ready_market_rr=1.4,
+                closed_pls=(100.0, 80.0, -50.0),
+            )
+            files["ai_backtest"].write_text(
+                json.dumps(
+                    {
+                        "mechanism_ablation": {
+                            "close_gate_ab": {
+                                "status": "MEASURED",
+                                "close_events": 8,
+                                "bot_attributed_close_events": 8,
+                                "gateway_close_sent_events": 0,
+                                "loss_side_market_close_count": 5,
+                                "loss_side_market_close_net_jpy": -1200.0,
+                                "broker_accepted_without_gateway_loss_side_market_close_count": 3,
+                                "broker_accepted_without_gateway_loss_side_market_close_source_counts": {
+                                    "TRADER_ENTRY_LANE_ID": 2,
+                                    "DIRECT_OR_MANUAL_BROKER_TRADE_CLOSE": 1,
+                                },
+                                "broker_accepted_without_gateway_loss_side_market_close_evidence_counts": {
+                                    "NO_LOCAL_GATEWAY_CLOSE_RECEIPT": 3,
+                                    "TRADER_ENTRY_LANE_ID": 2,
+                                    "NO_CLIENT_EXTENSION": 1,
+                                },
+                                "unattributed_loss_side_market_close_count": 0,
+                            }
+                        }
+                    }
+                )
+            )
+
+            summary = _run(files)
+            payload = json.loads(files["output"].read_text())
+
+        codes = {item["code"]: item for item in payload["findings"]}
+        self.assertEqual(summary.p0_findings, 0)
+        finding = codes["CLOSE_GATE_ABLATION_NOT_ATTRIBUTABLE"]
+        self.assertIn("trader-owned entries", finding["next_action"])
+        self.assertIn("GATEWAY_TRADE_CLOSE_SENT", finding["next_action"])
+        self.assertIn("1 residual direct/manual close", finding["next_action"])
+
     def test_legacy_review_exit_close_ablation_remains_p1_assumption_hole(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -1421,6 +1468,41 @@ class SelfImprovementAuditorTest(unittest.TestCase):
             finding["evidence"]["examples"][0]["broker_trade_close_accept_sources"],
             ["DIRECT_OR_MANUAL_BROKER_TRADE_CLOSE"],
         )
+
+    def test_broker_trade_close_accept_uses_entry_lane_source_when_close_has_no_extension(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root, active_position=False, live_ready_market_rr=1.4)
+            _write_market_close_attribution_ledger(files["execution_db"], include_gateway_close=False)
+            with sqlite3.connect(files["execution_db"]) as conn:
+                _add_raw_json_column(conn)
+                conn.execute(
+                    """
+                    UPDATE execution_events
+                    SET lane_id = ?
+                    WHERE event_uid = 'fill'
+                    """,
+                    ("trend_trader:EUR_USD:LONG:TREND_CONTINUATION:MARKET",),
+                )
+                _insert_broker_trade_close_accept(conn)
+
+            summary = _run(files)
+            payload = json.loads(files["output"].read_text())
+
+        codes = {item["code"]: item for item in payload["findings"]}
+        self.assertEqual(summary.p0_findings, 0)
+        finding = codes["UNATTRIBUTED_MARKET_ORDER_CLOSES"]
+        self.assertEqual(
+            finding["evidence"]["broker_trade_close_accept_source_counts"],
+            {"TRADER_ENTRY_LANE_ID": 1},
+        )
+        self.assertEqual(
+            finding["evidence"]["examples"][0]["broker_trade_close_accept_sources"],
+            ["TRADER_ENTRY_LANE_ID"],
+        )
+        market_loss = payload["effect_metrics"]["window"]["market_order_trade_close_loss_provenance_metrics"]
+        self.assertEqual(market_loss["TRADER_ENTRY_LANE_ID"]["trades"], 1)
+        self.assertNotIn("DIRECT_OR_MANUAL_BROKER_TRADE_CLOSE", market_loss)
 
     def test_gateway_close_receipt_satisfies_market_order_close_attribution(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
