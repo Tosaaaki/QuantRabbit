@@ -1262,7 +1262,7 @@ class SelfImprovementAuditorTest(unittest.TestCase):
         self.assertEqual(trend["trades"], 1)
         self.assertAlmostEqual(trend["net_jpy"], 120.0)
 
-    def test_effect_metrics_classifies_direct_market_order_loss_close_provenance(self) -> None:
+    def test_effect_metrics_classifies_trader_entry_market_order_loss_close_provenance(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             db_path = Path(tmp) / "execution_ledger.db"
             _write_market_close_attribution_ledger(db_path, include_gateway_close=False)
@@ -1301,16 +1301,16 @@ class SelfImprovementAuditorTest(unittest.TestCase):
             effect = _effect_metrics(db_path, window_hours=168.0, now=_NOW)
 
         market_loss = effect["market_order_trade_close_loss_provenance_metrics"]
-        self.assertEqual(market_loss["DIRECT_OR_MANUAL_BROKER_TRADE_CLOSE"]["trades"], 1)
-        self.assertAlmostEqual(market_loss["DIRECT_OR_MANUAL_BROKER_TRADE_CLOSE"]["net_jpy"], -500.0)
+        self.assertEqual(market_loss["TRADER_ENTRY_LANE_ID"]["trades"], 1)
+        self.assertAlmostEqual(market_loss["TRADER_ENTRY_LANE_ID"]["net_jpy"], -500.0)
         segment = effect["worst_segments"][0]
         self.assertEqual(
             segment["close_provenance_counts"],
-            {"DIRECT_OR_MANUAL_BROKER_TRADE_CLOSE": 1},
+            {"TRADER_ENTRY_LANE_ID": 1},
         )
         self.assertEqual(
             segment["close_provenance_net_jpy"],
-            {"DIRECT_OR_MANUAL_BROKER_TRADE_CLOSE": -500.0},
+            {"TRADER_ENTRY_LANE_ID": -500.0},
         )
 
     def test_effect_metrics_classifies_stale_gpt_close_satisfied_provenance(self) -> None:
@@ -1462,11 +1462,11 @@ class SelfImprovementAuditorTest(unittest.TestCase):
         self.assertEqual(finding["evidence"]["broker_trade_close_accept_count"], 1)
         self.assertEqual(
             finding["evidence"]["broker_trade_close_accept_source_counts"],
-            {"DIRECT_OR_MANUAL_BROKER_TRADE_CLOSE": 1},
+            {"TRADER_ENTRY_LANE_ID": 1},
         )
         self.assertEqual(
             finding["evidence"]["examples"][0]["broker_trade_close_accept_sources"],
-            ["DIRECT_OR_MANUAL_BROKER_TRADE_CLOSE"],
+            ["TRADER_ENTRY_LANE_ID"],
         )
 
     def test_broker_trade_close_accept_uses_entry_lane_source_when_close_has_no_extension(self) -> None:
@@ -1499,6 +1499,29 @@ class SelfImprovementAuditorTest(unittest.TestCase):
         self.assertEqual(
             finding["evidence"]["examples"][0]["broker_trade_close_accept_sources"],
             ["TRADER_ENTRY_LANE_ID"],
+        )
+        market_loss = payload["effect_metrics"]["window"]["market_order_trade_close_loss_provenance_metrics"]
+        self.assertEqual(market_loss["TRADER_ENTRY_LANE_ID"]["trades"], 1)
+        self.assertNotIn("DIRECT_OR_MANUAL_BROKER_TRADE_CLOSE", market_loss)
+
+    def test_broker_trade_close_accept_uses_gateway_entry_receipt_source_when_fill_lane_missing(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root, active_position=False, live_ready_market_rr=1.4)
+            _write_market_close_attribution_ledger(files["execution_db"], include_gateway_close=False)
+            with sqlite3.connect(files["execution_db"]) as conn:
+                _add_raw_json_column(conn)
+                _insert_broker_trade_close_accept(conn)
+
+            summary = _run(files)
+            payload = json.loads(files["output"].read_text())
+
+        codes = {item["code"]: item for item in payload["findings"]}
+        self.assertEqual(summary.p0_findings, 0)
+        finding = codes["UNATTRIBUTED_MARKET_ORDER_CLOSES"]
+        self.assertEqual(
+            finding["evidence"]["broker_trade_close_accept_source_counts"],
+            {"TRADER_ENTRY_LANE_ID": 1},
         )
         market_loss = payload["effect_metrics"]["window"]["market_order_trade_close_loss_provenance_metrics"]
         self.assertEqual(market_loss["TRADER_ENTRY_LANE_ID"]["trades"], 1)

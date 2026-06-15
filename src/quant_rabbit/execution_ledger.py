@@ -76,7 +76,7 @@ class ExecutionLedger:
                 baseline = account.last_transaction_id
                 if baseline:
                     _set_state(conn, "last_oanda_transaction_id", baseline, now)
-                reconciled_events = _reconcile_gateway_gpt_close_broker_accepts(conn, now=now)
+                reconciled_events = _reconcile_gateway_trade_close_broker_accepts(conn, now=now)
                 summary = ExecutionLedgerSummary(
                     db_path=self.db_path,
                     report_path=self.report_path,
@@ -101,7 +101,7 @@ class ExecutionLedger:
                 _record_entry_thesis_for_fill(transaction, data_root=self.db_path.parent)
             last_transaction_id = str(payload.get("lastTransactionID") or start_id)
             _set_state(conn, "last_oanda_transaction_id", last_transaction_id, now)
-            reconciled_events = _reconcile_gateway_gpt_close_broker_accepts(conn, now=now)
+            reconciled_events = _reconcile_gateway_trade_close_broker_accepts(conn, now=now)
 
         summary = ExecutionLedgerSummary(
             db_path=self.db_path,
@@ -134,7 +134,7 @@ class ExecutionLedger:
             for event in _events_from_gateway_receipt(kind=kind, payload=payload, now=now):
                 if _insert_event(conn, event):
                     inserted_events += 1
-            reconciled_events = _reconcile_gateway_gpt_close_broker_accepts(conn, now=now)
+            reconciled_events = _reconcile_gateway_trade_close_broker_accepts(conn, now=now)
         summary = ExecutionLedgerSummary(
             db_path=self.db_path,
             report_path=self.report_path,
@@ -638,6 +638,13 @@ def _insert_event(conn: sqlite3.Connection, event: dict[str, Any]) -> bool:
     return cur.rowcount > 0
 
 
+def _reconcile_gateway_trade_close_broker_accepts(conn: sqlite3.Connection, *, now: str) -> int:
+    return _reconcile_gateway_gpt_close_broker_accepts(conn, now=now) + _reconcile_trader_entry_broker_close_accepts(
+        conn,
+        now=now,
+    )
+
+
 def _reconcile_gateway_gpt_close_broker_accepts(conn: sqlite3.Connection, *, now: str) -> int:
     rows = conn.execute(
         f"""
@@ -744,6 +751,167 @@ def _reconcile_gateway_gpt_close_broker_accepts(conn: sqlite3.Connection, *, now
             "realized_pl_jpy": None,
             "financing_jpy": None,
             "exit_reason": "GPT_CLOSE_RECONCILED",
+            "oanda_transaction_id": _text(row["accepted_oanda_transaction_id"]),
+            "related_transaction_ids_json": json.dumps(related_ids, sort_keys=True),
+            "raw_json": _json(raw),
+            "inserted_at_utc": now,
+        }
+        if _insert_event(conn, event):
+            inserted += 1
+    return inserted
+
+
+def _reconcile_trader_entry_broker_close_accepts(conn: sqlite3.Connection, *, now: str) -> int:
+    rows = conn.execute(
+        f"""
+        WITH gateway_entries AS (
+            SELECT trade_id, order_id, lane_id
+            FROM execution_events
+            WHERE event_type = 'GATEWAY_ORDER_SENT'
+              AND COALESCE(lane_id, '') != ''
+        ),
+        entries AS (
+            SELECT
+                e.trade_id,
+                COALESCE(NULLIF(MAX(e.lane_id), ''), MAX(g.lane_id)) AS gateway_lane_id,
+                MAX(e.client_order_id) AS client_order_id,
+                MAX(e.pair) AS entry_pair,
+                CASE
+                    WHEN MAX(e.units) > 0 THEN 'LONG'
+                    WHEN MIN(e.units) < 0 THEN 'SHORT'
+                    ELSE NULL
+                END AS entry_side
+            FROM execution_events e
+            LEFT JOIN gateway_entries g
+              ON (
+                COALESCE(g.trade_id, '') != ''
+                AND g.trade_id = e.trade_id
+              )
+              OR (
+                COALESCE(g.order_id, '') != ''
+                AND g.order_id = e.order_id
+              )
+            WHERE e.event_type = 'ORDER_FILLED'
+              AND COALESCE(e.trade_id, '') != ''
+            GROUP BY e.trade_id
+            HAVING COALESCE(gateway_lane_id, '') != ''
+        )
+        SELECT
+            entries.gateway_lane_id,
+            entries.client_order_id,
+            entries.entry_pair,
+            entries.entry_side,
+            a.event_uid AS accepted_event_uid,
+            a.ts_utc AS accepted_ts_utc,
+            a.order_id AS accepted_order_id,
+            a.trade_id AS trade_id,
+            a.pair AS accepted_pair,
+            a.oanda_transaction_id AS accepted_oanda_transaction_id,
+            c.event_uid AS close_event_uid,
+            c.ts_utc AS close_ts_utc,
+            c.pair AS close_pair,
+            c.side AS close_side,
+            c.realized_pl_jpy AS close_realized_pl_jpy,
+            c.exit_reason AS close_exit_reason,
+            c.oanda_transaction_id AS close_oanda_transaction_id
+        FROM entries
+        INNER JOIN execution_events a
+          ON a.event_type = 'ORDER_ACCEPTED'
+         AND a.exit_reason = 'TRADE_CLOSE'
+         AND a.trade_id = entries.trade_id
+        INNER JOIN execution_events c
+          ON c.event_type IN ('TRADE_CLOSED', 'TRADE_REDUCED')
+         AND c.trade_id = entries.trade_id
+         AND (
+             COALESCE(a.order_id, '') = ''
+             OR COALESCE(c.order_id, '') = ''
+             OR c.order_id = a.order_id
+         )
+        WHERE NOT EXISTS (
+              SELECT 1
+              FROM execution_events sent
+              WHERE sent.event_type = 'GATEWAY_TRADE_CLOSE_SENT'
+                AND sent.trade_id = entries.trade_id
+          )
+          AND NOT EXISTS (
+              SELECT 1
+              FROM execution_events reconciled
+              WHERE reconciled.event_type = '{GATEWAY_TRADE_CLOSE_RECONCILED}'
+                AND reconciled.trade_id = entries.trade_id
+          )
+          AND NOT EXISTS (
+              SELECT 1
+              FROM execution_events gpt
+              WHERE gpt.event_type = 'GATEWAY_GPT_CLOSE_ACCEPTED'
+                AND gpt.trade_id = entries.trade_id
+          )
+        ORDER BY a.ts_utc ASC, c.ts_utc ASC
+        """
+    ).fetchall()
+    inserted = 0
+    seen_trade_ids: set[str] = set()
+    for row in rows:
+        trade_id = _text(row["trade_id"])
+        if not trade_id or trade_id in seen_trade_ids:
+            continue
+        accepted_ts = _parse_utc(row["accepted_ts_utc"])
+        close_ts = _parse_utc(row["close_ts_utc"])
+        if accepted_ts is None:
+            continue
+        if close_ts is not None:
+            close_delay = (close_ts - accepted_ts).total_seconds()
+            if close_delay < -GPT_CLOSE_RECONCILE_CLOCK_SKEW_SECONDS:
+                continue
+            if close_delay > GPT_CLOSE_RECONCILE_MAX_ACCEPT_DELAY_SECONDS:
+                continue
+        seen_trade_ids.add(trade_id)
+        order_id = _text(row["accepted_order_id"])
+        related_ids: list[str] = []
+        for item in (
+            _text(row["accepted_oanda_transaction_id"]),
+            _text(row["close_oanda_transaction_id"]),
+            order_id,
+        ):
+            if item and item not in related_ids:
+                related_ids.append(item)
+        raw = {
+            "reconciled_from": [
+                "TRADER_ENTRY_LANE_ID",
+                "ORDER_ACCEPTED:TRADE_CLOSE",
+                str(row["close_exit_reason"] or "TRADE_CLOSED"),
+            ],
+            "reconcile_reason": "NO_LOCAL_POSITION_EXECUTION_RECEIPT",
+            "order_accept_event_uid": row["accepted_event_uid"],
+            "close_event_uid": row["close_event_uid"],
+            "trade_id": trade_id,
+            "order_id": order_id,
+            "gateway_lane_id": _text(row["gateway_lane_id"]),
+            "client_order_id": _text(row["client_order_id"]),
+            "accepted_ts_utc": row["accepted_ts_utc"],
+            "close_ts_utc": row["close_ts_utc"],
+            "realized_pl_jpy": row["close_realized_pl_jpy"],
+        }
+        event = {
+            "event_uid": (
+                f"ledger_reconcile:trader_entry_broker_close:{trade_id}:{order_id or ''}:"
+                f"{GATEWAY_TRADE_CLOSE_RECONCILED}"
+            ),
+            "ts_utc": str(row["close_ts_utc"] or row["accepted_ts_utc"] or now),
+            "source": "ledger_reconcile",
+            "event_type": GATEWAY_TRADE_CLOSE_RECONCILED,
+            "lane_id": _text(row["gateway_lane_id"]),
+            "order_id": order_id,
+            "trade_id": trade_id,
+            "client_order_id": _text(row["client_order_id"]),
+            "pair": _text(row["close_pair"]) or _text(row["accepted_pair"]) or _text(row["entry_pair"]),
+            "side": _text(row["entry_side"]),
+            "units": None,
+            "price": None,
+            "tp": None,
+            "sl": None,
+            "realized_pl_jpy": None,
+            "financing_jpy": None,
+            "exit_reason": "BROKER_TRADE_CLOSE_TRADER_ENTRY_RECONCILED",
             "oanda_transaction_id": _text(row["accepted_oanda_transaction_id"]),
             "related_transaction_ids_json": json.dumps(related_ids, sort_keys=True),
             "raw_json": _json(raw),

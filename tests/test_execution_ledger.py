@@ -305,6 +305,63 @@ class ExecutionLedgerTest(unittest.TestCase):
             self.assertEqual(json.loads(row[6]), ["501", "502"])
             self.assertEqual(json.loads(row[7])["reconciled_from"][0], "GATEWAY_GPT_CLOSE_ACCEPTED")
 
+    def test_sync_reconciles_trader_entry_broker_close_without_local_receipt(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            ledger = ExecutionLedger(db_path=root / "ledger.db", report_path=root / "ledger.md")
+
+            summary = ledger.sync_oanda_transactions(
+                FakeTraderEntryBrokerCloseClient(),
+                since_transaction_id="600",
+            )
+            duplicate = ledger.sync_oanda_transactions(
+                FakeTraderEntryBrokerCloseClient(),
+                since_transaction_id="600",
+            )
+
+            self.assertEqual(summary.reconciled_gateway_events_inserted, 1)
+            self.assertEqual(duplicate.reconciled_gateway_events_inserted, 0)
+            with sqlite3.connect(root / "ledger.db") as conn:
+                row = conn.execute(
+                    """
+                    SELECT event_type, source, lane_id, order_id, trade_id, pair, side,
+                           exit_reason, related_transaction_ids_json, raw_json
+                    FROM execution_events
+                    WHERE event_type='GATEWAY_TRADE_CLOSE_RECONCILED'
+                    """
+                ).fetchone()
+            raw = json.loads(row[9])
+            self.assertEqual(row[0:8], (
+                "GATEWAY_TRADE_CLOSE_RECONCILED",
+                "ledger_reconcile",
+                "range_trader:NZD_CAD:SHORT:RANGE_ROTATION",
+                "603",
+                "T601",
+                "NZD_CAD",
+                "SHORT",
+                "BROKER_TRADE_CLOSE_TRADER_ENTRY_RECONCILED",
+            ))
+            self.assertEqual(json.loads(row[8]), ["603", "604"])
+            self.assertEqual(raw["reconciled_from"][0], "TRADER_ENTRY_LANE_ID")
+            self.assertEqual(raw["reconcile_reason"], "NO_LOCAL_POSITION_EXECUTION_RECEIPT")
+
+    def test_sync_does_not_reconcile_manual_broker_close_without_entry_lane(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            ledger = ExecutionLedger(db_path=root / "ledger.db", report_path=root / "ledger.md")
+
+            summary = ledger.sync_oanda_transactions(
+                FakeManualBrokerCloseClient(),
+                since_transaction_id="700",
+            )
+
+            self.assertEqual(summary.reconciled_gateway_events_inserted, 0)
+            with sqlite3.connect(root / "ledger.db") as conn:
+                count = conn.execute(
+                    "SELECT COUNT(*) FROM execution_events WHERE event_type='GATEWAY_TRADE_CLOSE_RECONCILED'"
+                ).fetchone()[0]
+            self.assertEqual(count, 0)
+
     def test_init_backfills_gateway_position_order_id_from_response(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -780,6 +837,153 @@ class FakeTradeCloseAcceptClient:
                     "reason": "TRADE_CLOSE",
                     "positionFill": "REDUCE_ONLY",
                     "tradeClose": {"tradeID": "T501", "units": "ALL"},
+                },
+            ],
+        }
+
+
+class FakeTraderEntryBrokerCloseClient:
+    def account_summary(self, *, now_utc: datetime | None = None) -> AccountSummary:
+        return AccountSummary(
+            nav_jpy=200_000.0,
+            balance_jpy=200_000.0,
+            last_transaction_id="600",
+            fetched_at_utc=now_utc or datetime.now(timezone.utc),
+        )
+
+    def transactions_since_id(self, transaction_id: str) -> dict:
+        return {
+            "lastTransactionID": "604",
+            "transactions": [
+                {
+                    "id": "601",
+                    "time": "2026-06-12T17:53:49.672953223Z",
+                    "type": "MARKET_ORDER",
+                    "instrument": "NZD_CAD",
+                    "units": "-2700",
+                    "clientExtensions": {
+                        "id": "qrv1-NZDCAD-S-test",
+                        "tag": "trader",
+                        "comment": "qr-vnext lane=range_trader:NZD_CAD:SHORT:RANGE_ROTATION",
+                    },
+                    "tradeClientExtensions": {
+                        "id": "qrv1-NZDCAD-S-test",
+                        "tag": "trader",
+                        "comment": "qr-vnext lane=range_trader:NZD_CAD:SHORT:RANGE_ROTATION",
+                    },
+                },
+                {
+                    "id": "602",
+                    "time": "2026-06-12T17:53:49.672953223Z",
+                    "type": "ORDER_FILL",
+                    "orderID": "601",
+                    "instrument": "NZD_CAD",
+                    "units": "-2700",
+                    "price": "0.81540",
+                    "reason": "MARKET_ORDER",
+                    "tradeOpened": {
+                        "tradeID": "T601",
+                        "units": "-2700",
+                        "price": "0.81540",
+                        "clientExtensions": {
+                            "id": "qrv1-NZDCAD-S-test",
+                            "tag": "trader",
+                            "comment": "qr-vnext lane=range_trader:NZD_CAD:SHORT:RANGE_ROTATION",
+                        },
+                    },
+                },
+                {
+                    "id": "603",
+                    "time": "2026-06-12T18:54:26.862705160Z",
+                    "type": "MARKET_ORDER",
+                    "instrument": "NZD_CAD",
+                    "units": "2700",
+                    "reason": "TRADE_CLOSE",
+                    "positionFill": "REDUCE_ONLY",
+                    "tradeClose": {"tradeID": "T601", "units": "ALL"},
+                },
+                {
+                    "id": "604",
+                    "time": "2026-06-12T18:54:26.862705160Z",
+                    "type": "ORDER_FILL",
+                    "orderID": "603",
+                    "instrument": "NZD_CAD",
+                    "units": "2700",
+                    "price": "0.81702",
+                    "reason": "MARKET_ORDER_TRADE_CLOSE",
+                    "pl": "-548.9",
+                    "tradesClosed": [
+                        {
+                            "tradeID": "T601",
+                            "units": "2700",
+                            "price": "0.81702",
+                            "realizedPL": "-548.9",
+                        }
+                    ],
+                },
+            ],
+        }
+
+
+class FakeManualBrokerCloseClient:
+    def account_summary(self, *, now_utc: datetime | None = None) -> AccountSummary:
+        return AccountSummary(
+            nav_jpy=200_000.0,
+            balance_jpy=200_000.0,
+            last_transaction_id="700",
+            fetched_at_utc=now_utc or datetime.now(timezone.utc),
+        )
+
+    def transactions_since_id(self, transaction_id: str) -> dict:
+        return {
+            "lastTransactionID": "704",
+            "transactions": [
+                {
+                    "id": "701",
+                    "time": "2026-06-12T17:53:49.672953223Z",
+                    "type": "MARKET_ORDER",
+                    "instrument": "NZD_CAD",
+                    "units": "-2700",
+                },
+                {
+                    "id": "702",
+                    "time": "2026-06-12T17:53:49.672953223Z",
+                    "type": "ORDER_FILL",
+                    "orderID": "701",
+                    "instrument": "NZD_CAD",
+                    "units": "-2700",
+                    "price": "0.81540",
+                    "reason": "MARKET_ORDER",
+                    "tradeOpened": {"tradeID": "T701", "units": "-2700", "price": "0.81540"},
+                },
+                {
+                    "id": "703",
+                    "time": "2026-06-12T18:54:26.862705160Z",
+                    "type": "MARKET_ORDER",
+                    "instrument": "NZD_CAD",
+                    "units": "2700",
+                    "reason": "TRADE_CLOSE",
+                    "positionFill": "REDUCE_ONLY",
+                    "tradeClose": {"tradeID": "T701", "units": "ALL"},
+                },
+                {
+                    "id": "704",
+                    "time": "2026-06-12T18:54:26.862705160Z",
+                    "type": "ORDER_FILL",
+                    "orderID": "703",
+                    "instrument": "NZD_CAD",
+                    "units": "2700",
+                    "price": "0.81702",
+                    "reason": "MARKET_ORDER_TRADE_CLOSE",
+                    "pl": "-548.9",
+                    "tradesClosed": [
+                        {
+                            "tradeID": "T701",
+                            "units": "2700",
+                            "price": "0.81702",
+                            "realizedPL": "-548.9",
+                        }
+                    ],
                 },
             ],
         }

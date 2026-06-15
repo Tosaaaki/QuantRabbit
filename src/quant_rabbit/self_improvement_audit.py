@@ -1518,21 +1518,40 @@ def _broker_trade_close_accept_rows(conn: sqlite3.Connection, columns: set[str])
 
 
 def _entry_close_source_rows(conn: sqlite3.Connection, columns: set[str]) -> dict[str, dict[str, Any]]:
-    select_fields = ["trade_id"]
-    for column in ("lane_id", "raw_json"):
-        if column in columns:
-            select_fields.append(column)
-        else:
-            select_fields.append(f"NULL AS {column}")
+    select_fields = [
+        "e.trade_id AS trade_id",
+        "COALESCE(NULLIF(MAX(e.lane_id), ''), MAX(g.lane_id)) AS lane_id",
+    ]
+    raw_select = "MAX(e.raw_json) AS raw_json" if "raw_json" in columns else "NULL AS raw_json"
+    select_fields.append(raw_select)
+    gateway_lane_select = "lane_id" if "lane_id" in columns else "NULL AS lane_id"
+    gateway_order_select = "order_id" if "order_id" in columns else "NULL AS order_id"
+    gateway_trade_select = "trade_id" if "trade_id" in columns else "NULL AS trade_id"
+    fill_order_select = "e.order_id" if "order_id" in columns else "NULL"
     rows = list(
         conn.execute(
             f"""
+            WITH gateway_entries AS (
+                SELECT {gateway_trade_select}, {gateway_order_select}, {gateway_lane_select}
+                FROM execution_events
+                WHERE event_type = 'GATEWAY_ORDER_SENT'
+                  AND COALESCE(lane_id, '') != ''
+            )
             SELECT {', '.join(select_fields)}
-            FROM execution_events
-            WHERE event_type = 'ORDER_FILLED'
-              AND trade_id IS NOT NULL
-              AND trade_id != ''
-            ORDER BY ts_utc ASC
+            FROM execution_events e
+            LEFT JOIN gateway_entries g
+              ON (
+                COALESCE(g.trade_id, '') != ''
+                AND g.trade_id = e.trade_id
+              )
+              OR (
+                COALESCE(g.order_id, '') != ''
+                AND g.order_id = {fill_order_select}
+              )
+            WHERE e.event_type = 'ORDER_FILLED'
+              AND COALESCE(e.trade_id, '') != ''
+            GROUP BY e.trade_id
+            ORDER BY MIN(e.ts_utc) ASC
             """
         ).fetchall()
     )
@@ -1541,15 +1560,11 @@ def _entry_close_source_rows(conn: sqlite3.Connection, columns: set[str]) -> dic
         trade_id = str(row["trade_id"] or "").strip()
         if not trade_id:
             continue
-        current = out.setdefault(trade_id, {"lane_id": None, "raw_json": None})
-        lane_id = str(row["lane_id"] or "").strip()
-        raw_json = row["raw_json"]
-        if lane_id and not current.get("lane_id"):
-            current["lane_id"] = lane_id
-        if raw_json and not current.get("raw_json"):
-            current["raw_json"] = raw_json
+        out[trade_id] = {
+            "lane_id": str(row["lane_id"] or "").strip() or None,
+            "raw_json": row["raw_json"],
+        }
     return out
-
 
 def _broker_trade_close_accept_sources(
     rows: list[dict[str, Any]],
