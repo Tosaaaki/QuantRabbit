@@ -347,7 +347,7 @@ def _synthetic_missing_profile_severity(
     if _is_reversal_recovery_hedge(metadata):
         return "WARN"
     if metadata.get("forecast_seed"):
-        return "WARN"
+        return _forecast_seed_missing_profile_severity(intent)
     mirror_of = str(metadata.get("mirror_of") or "").strip().upper()
     if mirror_of not in {"LONG", "SHORT"}:
         return None
@@ -359,6 +359,52 @@ def _synthetic_missing_profile_severity(
     if source.status in {"CANDIDATE", "RISK_REPAIR_CANDIDATE", "MINE_MISSED_EDGE"}:
         return "WARN"
     return None
+
+
+def _forecast_seed_missing_profile_severity(intent: OrderIntent) -> str | None:
+    """Return advisory severity for the narrow missing-profile forecast exception.
+
+    A mined profile gap means the pair/side/method has not yet proved itself in
+    strategy memory. Under SL-free live trading we still allow a high-confidence
+    forecast-seed *trigger* to collect that evidence, but not a market chase and
+    not a low calibrated forecast rescued only by projection support. That
+    low-confidence/no-profile combination is the reverse-first failure mode the
+    user flagged on 2026-06-15.
+    """
+
+    if intent.order_type == OrderType.MARKET:
+        return None
+    confidence = _optional_float((intent.metadata or {}).get("forecast_confidence"))
+    if confidence is None:
+        return None
+    if confidence >= _forecast_seed_missing_profile_min_confidence():
+        return "WARN"
+    return None
+
+
+def _forecast_seed_missing_profile_min_confidence() -> float:
+    """Live confidence floor for forecast-seed lanes with no mined profile.
+
+    This mirrors the directional live-entry floor used by intent generation
+    (`QR_FORECAST_DIRECTIONAL_LIVE_MIN_CONFIDENCE`, default 0.65). It is kept
+    local instead of importing intent_generator to avoid a circular dependency;
+    the env indirection keeps the two thresholds synchronized in production.
+    """
+
+    raw = (
+        os.environ.get("QR_FORECAST_SEED_MISSING_PROFILE_MIN_CONFIDENCE")
+        or os.environ.get("QR_FORECAST_DIRECTIONAL_LIVE_MIN_CONFIDENCE")
+        or "0.65"
+    )
+    try:
+        value = float(raw)
+    except (TypeError, ValueError) as exc:
+        raise RuntimeError(
+            "QR_FORECAST_SEED_MISSING_PROFILE_MIN_CONFIDENCE must be a positive confidence value"
+        ) from exc
+    if value <= 0:
+        raise RuntimeError("QR_FORECAST_SEED_MISSING_PROFILE_MIN_CONFIDENCE must be positive")
+    return value
 
 
 def _is_reversal_recovery_hedge(metadata: dict[str, Any]) -> bool:
