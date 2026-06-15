@@ -390,13 +390,26 @@ def route_trader_prompts(
             include_content=include_content,
         )
     if _target_open(target_state):
+        no_live_ready_reason = "daily target open but no current LIVE_READY lane is available"
+        if advisory_close_review_reasons:
+            return _build_route(
+                BRANCH_POSITION,
+                (
+                    *carry_reasons,
+                    *advisory_close_review_reasons,
+                    *pending_entry_reasons,
+                    no_live_ready_reason,
+                    "no live entry can offset the active close/hold ambiguity; refresh the position decision before learning-gap work",
+                ),
+                include_content=include_content,
+            )
         return _build_route(
             BRANCH_LEARNING,
             (
                 *carry_reasons,
                 *advisory_close_review_reasons,
                 *pending_entry_reasons,
-                "daily target open but no current LIVE_READY lane is available",
+                no_live_ready_reason,
             ),
             include_content=include_content,
         )

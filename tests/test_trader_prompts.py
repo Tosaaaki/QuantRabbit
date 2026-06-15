@@ -1108,6 +1108,107 @@ class TraderPromptRouteTest(unittest.TestCase):
         self.assertTrue(any("position_thesis REVIEW_CLOSE" in reason for reason in route.reasons))
         self.assertFalse(any("loss-cut review required" in reason for reason in route.reasons))
 
+    def test_soft_position_thesis_review_routes_to_position_when_no_live_ready_lane(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(
+                root,
+                positions=[
+                    {
+                        "trade_id": "472445",
+                        "pair": "EUR_USD",
+                        "side": "LONG",
+                        "take_profit": 1.18,
+                        "stop_loss": None,
+                        "owner": "trader",
+                        "unrealized_pl_jpy": -1200.0,
+                    }
+                ],
+            )
+            intents = json.loads(files["intents"].read_text())
+            intents["results"] = [
+                {
+                    "lane_id": "trend_trader:EUR_USD:LONG:TREND_CONTINUATION",
+                    "status": "DRY_RUN_PASSED",
+                    "live_blockers": ["EUR_USD LONG forecast UP confidence 0.44 < 0.65"],
+                }
+            ]
+            files["intents"].write_text(json.dumps(intents))
+            snapshot = json.loads(files["snapshot"].read_text())
+            generated_at = (
+                datetime.fromisoformat(snapshot["fetched_at_utc"]) + timedelta(seconds=1)
+            ).isoformat()
+            (root / "position_thesis_report.json").write_text(
+                json.dumps(
+                    {
+                        "generated_at_utc": generated_at,
+                        "assessments": [
+                            {
+                                "trade_id": "472445",
+                                "pair": "EUR_USD",
+                                "side": "LONG",
+                                "verdict": "REVIEW_CLOSE",
+                                "aggregate_score": 12.82,
+                                "rationale_lines": ["chart-tech -17.2"],
+                                "context_notes": [
+                                    "invalidation hit: current bid 1.16900 <= buffered invalidation 1.16930",
+                                    "technical invalidation confirmed against LONG: H1 MACD-; M15 ST-",
+                                ],
+                            }
+                        ],
+                    }
+                )
+            )
+            (root / "thesis_evolution_report.json").write_text(
+                json.dumps(
+                    {
+                        "generated_at_utc": generated_at,
+                        "evolutions": [
+                            {
+                                "trade_id": "472445",
+                                "pair": "EUR_USD",
+                                "side": "LONG",
+                                "status": "STILL_VALID",
+                                "verdict": "HOLD",
+                                "rationale": "current forecast UP still supports LONG",
+                            }
+                        ],
+                    }
+                )
+            )
+            (root / "forecast_persistence_report.json").write_text(
+                json.dumps(
+                    {
+                        "generated_at_utc": generated_at,
+                        "verdicts": [
+                            {
+                                "trade_id": "472445",
+                                "pair": "EUR_USD",
+                                "side": "LONG",
+                                "verdict": "EXTEND",
+                                "reason": "recent forecasts still support the open LONG",
+                            }
+                        ],
+                    }
+                )
+            )
+
+            prior = os.environ.get("QR_TRADER_DISABLE_SL_REPAIR")
+            os.environ["QR_TRADER_DISABLE_SL_REPAIR"] = "1"
+            try:
+                route = route_trader_prompts(**_route_paths(files), decision_response_path=None)
+            finally:
+                if prior is None:
+                    os.environ.pop("QR_TRADER_DISABLE_SL_REPAIR", None)
+                else:
+                    os.environ["QR_TRADER_DISABLE_SL_REPAIR"] = prior
+
+        self.assertEqual(route.branch, BRANCH_POSITION)
+        self.assertTrue(any("soft close review advisory" in reason for reason in route.reasons))
+        self.assertTrue(any("position_thesis REVIEW_CLOSE" in reason for reason in route.reasons))
+        self.assertTrue(any("no current LIVE_READY lane" in reason for reason in route.reasons))
+        self.assertTrue(any("active close/hold ambiguity" in reason for reason in route.reasons))
+
     def test_position_thesis_h4_structural_break_still_blocks_with_hold_support(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
