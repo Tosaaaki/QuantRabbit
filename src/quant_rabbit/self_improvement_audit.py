@@ -4334,14 +4334,7 @@ def _nearest_live_ready_candidate(
     market_context = intent.get("market_context") if isinstance(intent.get("market_context"), dict) else {}
     risk_metrics = result.get("risk_metrics") if isinstance(result.get("risk_metrics"), dict) else {}
     families = sorted({str(issue.get("family") or "other") for issue in issues})
-    blockers = [
-        {
-            "family": str(issue.get("family") or "other"),
-            "message": str(issue.get("message") or ""),
-            "source": str(issue.get("source") or ""),
-        }
-        for issue in issues[:6]
-    ]
+    blockers = [_nearest_live_ready_blocker(issue) for issue in issues[:6]]
     return {
         "lane_id": str(result.get("lane_id") or ""),
         "status": str(result.get("status") or ""),
@@ -4357,6 +4350,18 @@ def _nearest_live_ready_candidate(
         "blocker_count": len(issues),
         "blockers": blockers,
     }
+
+
+def _nearest_live_ready_blocker(issue: dict[str, Any]) -> dict[str, Any]:
+    blocker = {
+        "family": str(issue.get("family") or "other"),
+        "message": str(issue.get("message") or ""),
+        "source": str(issue.get("source") or ""),
+    }
+    evidence = issue.get("strategy_profile_evidence")
+    if isinstance(evidence, dict):
+        blocker["strategy_profile_evidence"] = evidence
+    return blocker
 
 
 def _nearest_live_ready_candidate_sort_key(item: dict[str, Any]) -> tuple[Any, ...]:
@@ -4433,13 +4438,24 @@ def _append_live_readiness_issue(
         return False
     seen.add(key)
     issues.append(
-        {
-            "message": text,
-            "family": _live_readiness_issue_family(raw, source=source),
-            "source": source,
-        }
+        _live_readiness_issue_payload(
+            raw,
+            source=source,
+            message=text,
+        )
     )
     return True
+
+
+def _live_readiness_issue_payload(raw: Any, *, source: str, message: str) -> dict[str, Any]:
+    payload = {
+        "message": message,
+        "family": _live_readiness_issue_family(raw, source=source),
+        "source": source,
+    }
+    if isinstance(raw, dict) and isinstance(raw.get("strategy_profile_evidence"), dict):
+        payload["strategy_profile_evidence"] = raw["strategy_profile_evidence"]
+    return payload
 
 
 def _live_readiness_issue_family(raw: Any, *, source: str) -> str:

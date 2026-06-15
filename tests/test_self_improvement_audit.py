@@ -127,6 +127,12 @@ class SelfImprovementAuditorTest(unittest.TestCase):
                                 "code": "STRATEGY_NOT_ELIGIBLE",
                                 "message": "strategy profile is not live eligible",
                                 "severity": "WARN",
+                                "strategy_profile_evidence": {
+                                    "profile_status": "BLOCK_UNTIL_NEW_EVIDENCE",
+                                    "required_fix": "both live and pretrade feedback are negative",
+                                    "live_net_jpy": -1501.57,
+                                    "pretrade_net_jpy": -837.76,
+                                },
                             }
                         ],
                         "live_blockers": [],
@@ -196,6 +202,12 @@ class SelfImprovementAuditorTest(unittest.TestCase):
                                 "code": "STRATEGY_NOT_ELIGIBLE",
                                 "message": "strategy profile is not live eligible",
                                 "severity": "WARN",
+                                "strategy_profile_evidence": {
+                                    "profile_status": "BLOCK_UNTIL_NEW_EVIDENCE",
+                                    "required_fix": "both live and pretrade feedback are negative",
+                                    "live_net_jpy": -1501.57,
+                                    "pretrade_net_jpy": -837.76,
+                                },
                             }
                         ],
                         "live_blockers": [],
@@ -217,6 +229,12 @@ class SelfImprovementAuditorTest(unittest.TestCase):
                                 "code": "STRATEGY_NOT_ELIGIBLE",
                                 "message": "strategy profile is not live eligible",
                                 "severity": "WARN",
+                                "strategy_profile_evidence": {
+                                    "profile_status": "BLOCK_UNTIL_NEW_EVIDENCE",
+                                    "required_fix": "both live and pretrade feedback are negative",
+                                    "live_net_jpy": -1501.57,
+                                    "pretrade_net_jpy": -837.76,
+                                },
                             }
                         ],
                         "live_blockers": [],
@@ -297,6 +315,11 @@ class SelfImprovementAuditorTest(unittest.TestCase):
             ["strategy_profile"],
         )
         self.assertEqual(breakdown["nearest_live_ready_candidates"][0]["reward_risk"], 2.85)
+        blocker_evidence = breakdown["nearest_live_ready_candidates"][0]["blockers"][0][
+            "strategy_profile_evidence"
+        ]
+        self.assertEqual(blocker_evidence["profile_status"], "BLOCK_UNTIL_NEW_EVIDENCE")
+        self.assertEqual(blocker_evidence["live_net_jpy"], -1501.57)
         candidate_lane_ids = [item["lane_id"] for item in breakdown["nearest_live_ready_candidates"]]
         self.assertEqual(len(candidate_lane_ids), len(set(candidate_lane_ids)))
 

@@ -23,6 +23,14 @@ class StrategyProfileTest(unittest.TestCase):
                                 "direction": "LONG",
                                 "status": "BLOCK_UNTIL_NEW_EVIDENCE",
                                 "required_fix": "bad history",
+                                "live_net_jpy": -1200.5,
+                                "live_n": 4,
+                                "pretrade_net_jpy": -300.25,
+                                "pretrade_n": 3,
+                                "seat_net_jpy": -2200.0,
+                                "seat_win_rate_pct": 25.0,
+                                "seat_pl_n": 8,
+                                "top_block_reasons": ["live tape negative", "pretrade negative"],
                             },
                             {
                                 "pair": "EUR_USD",
@@ -45,6 +53,13 @@ class StrategyProfileTest(unittest.TestCase):
 
             self.assertEqual(blocked[0].code, "STRATEGY_NOT_ELIGIBLE")
             self.assertEqual(blocked[0].severity, "BLOCK")
+            evidence = profile.issue_evidence(_intent("USD_JPY"))
+            self.assertEqual(evidence["profile_status"], "BLOCK_UNTIL_NEW_EVIDENCE")
+            self.assertEqual(evidence["required_fix"], "bad history")
+            self.assertEqual(evidence["live_net_jpy"], -1200.5)
+            self.assertEqual(evidence["pretrade_net_jpy"], -300.25)
+            self.assertEqual(evidence["seat_win_rate_pct"], 25.0)
+            self.assertEqual(evidence["top_block_reasons"], ["live tape negative", "pretrade negative"])
             self.assertEqual(repair_dry[0].code, "STRATEGY_RISK_REPAIR_REQUIRED")
             self.assertEqual(repair_dry[0].severity, "WARN")
             self.assertEqual(repair_live[0].severity, "BLOCK")

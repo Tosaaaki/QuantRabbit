@@ -1148,6 +1148,19 @@ class IntentGeneratorTest(unittest.TestCase):
                 for issue in live_strategy_issues
             )
         )
+        strategy_block = next(
+            issue
+            for issue in live_strategy_issues
+            if issue["code"] == "STRATEGY_NOT_ELIGIBLE" and issue["severity"] == "BLOCK"
+        )
+        self.assertEqual(
+            strategy_block["strategy_profile_evidence"]["profile_status"],
+            "WATCH_ONLY",
+        )
+        self.assertEqual(
+            strategy_block["strategy_profile_evidence"]["required_fix"],
+            "edge exists but old sizing broke the loss cap",
+        )
 
     def test_forecast_seed_pending_trigger_can_repair_watch_only_profile_under_sl_free(self) -> None:
         prior = os.environ.get("QR_TRADER_DISABLE_SL_REPAIR")

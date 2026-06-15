@@ -43,7 +43,7 @@ from quant_rabbit.strategy.lane_history_ledger import (
     compute_same_day_loss_streaks,
 )
 from quant_rabbit.strategy.price_action import structural_tp_target
-from quant_rabbit.strategy.profile import StrategyProfile
+from quant_rabbit.strategy.profile import StrategyProfile, issues_to_dicts
 
 
 # Geometry tuning constants. Per AGENT_CONTRACT §3.5, every constant on the
@@ -3940,11 +3940,22 @@ class IntentGenerator:
             snapshot,
             for_live_send=False,
         )
+        strategy_profile_evidence = strategy_profile.issue_evidence(intent) if strategy_profile else None
         strategy_issues = tuple(
-            issue.__dict__ for issue in (strategy_profile.validate(intent, for_live_send=False) if strategy_profile else ())
+            issues_to_dicts(
+                strategy_profile.validate(intent, for_live_send=False),
+                strategy_profile_evidence=strategy_profile_evidence,
+            )
+            if strategy_profile
+            else ()
         )
         live_strategy_issues = tuple(
-            issue.__dict__ for issue in (strategy_profile.validate(intent, for_live_send=True) if strategy_profile else ())
+            issues_to_dicts(
+                strategy_profile.validate(intent, for_live_send=True),
+                strategy_profile_evidence=strategy_profile_evidence,
+            )
+            if strategy_profile
+            else ()
         )
         live_blockers = tuple(issue["message"] for issue in live_strategy_issues if issue.get("severity") == "BLOCK")
         risk_issues = list(issue.__dict__ for issue in risk.issues)

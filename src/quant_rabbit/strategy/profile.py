@@ -39,6 +39,16 @@ class StrategyProfileEntry:
     positive_best_jpy: float | None = None
     positive_tail_jpy: float | None = None
     positive_evidence_n: int | None = None
+    live_net_jpy: float | None = None
+    live_avg_jpy: float | None = None
+    live_n: int | None = None
+    pretrade_net_jpy: float | None = None
+    pretrade_avg_jpy: float | None = None
+    pretrade_n: int | None = None
+    seat_net_jpy: float | None = None
+    seat_win_rate_pct: float | None = None
+    seat_pl_n: int | None = None
+    top_block_reasons: tuple[str, ...] = ()
 
 
 class StrategyProfile:
@@ -67,8 +77,60 @@ class StrategyProfile:
                 positive_best_jpy=_optional_float(item.get("positive_best_jpy")),
                 positive_tail_jpy=_optional_float(item.get("positive_tail_jpy")),
                 positive_evidence_n=_optional_int(item.get("positive_evidence_n")),
+                live_net_jpy=_optional_float(item.get("live_net_jpy")),
+                live_avg_jpy=_optional_float(item.get("live_avg_jpy")),
+                live_n=_optional_int(item.get("live_n")),
+                pretrade_net_jpy=_optional_float(item.get("pretrade_net_jpy")),
+                pretrade_avg_jpy=_optional_float(item.get("pretrade_avg_jpy")),
+                pretrade_n=_optional_int(item.get("pretrade_n")),
+                seat_net_jpy=_optional_float(item.get("seat_net_jpy")),
+                seat_win_rate_pct=_optional_float(item.get("seat_win_rate_pct")),
+                seat_pl_n=_optional_int(item.get("seat_pl_n")),
+                top_block_reasons=_string_tuple(item.get("top_block_reasons")),
             )
         return cls(entries)
+
+    def issue_evidence(self, intent: OrderIntent) -> dict[str, Any]:
+        method = _intent_method(intent)
+        exact = self.entries.get((intent.pair, intent.side.value, method))
+        if exact is not None:
+            return _entry_evidence(
+                exact,
+                profile_match="method_specific" if method is not None else "pair_side",
+                requested_method=method,
+            )
+
+        fallback = self.entries.get((intent.pair, intent.side.value, None))
+        method_entries = _method_specific_entries(self.entries, intent.pair, intent.side.value)
+        if method is not None and method_entries:
+            evidence: dict[str, Any] = {
+                "profile_match": "method_specific_missing",
+                "profile_pair": intent.pair,
+                "profile_direction": intent.side.value,
+                "requested_method": method,
+                "available_methods": sorted(entry.method for entry in method_entries if entry.method),
+            }
+            if fallback is not None:
+                evidence["fallback_pair_side_profile"] = _entry_evidence(
+                    fallback,
+                    profile_match="pair_side_fallback_not_used",
+                    requested_method=method,
+                )
+            return evidence
+
+        if fallback is not None:
+            return _entry_evidence(
+                fallback,
+                profile_match="pair_side_fallback",
+                requested_method=method,
+            )
+
+        return {
+            "profile_match": "missing",
+            "profile_pair": intent.pair,
+            "profile_direction": intent.side.value,
+            "requested_method": method,
+        }
 
     def validate(self, intent: OrderIntent, *, for_live_send: bool = False) -> tuple[RiskIssue, ...]:
         # Under SL-free the AI trader is the discretionary direction picker;
@@ -170,8 +232,18 @@ class StrategyProfile:
         )
 
 
-def issues_to_dicts(issues: tuple[RiskIssue, ...] | list[RiskIssue]) -> list[dict[str, Any]]:
-    return [issue.__dict__ for issue in issues]
+def issues_to_dicts(
+    issues: tuple[RiskIssue, ...] | list[RiskIssue],
+    *,
+    strategy_profile_evidence: dict[str, Any] | None = None,
+) -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
+    for issue in issues:
+        payload = dict(issue.__dict__)
+        if strategy_profile_evidence:
+            payload["strategy_profile_evidence"] = strategy_profile_evidence
+        out.append(payload)
+    return out
 
 
 def _optional_float(value: object) -> float | None:
@@ -186,6 +258,50 @@ def _optional_int(value: object) -> int | None:
         return int(value) if value is not None else None
     except (TypeError, ValueError):
         return None
+
+
+def _string_tuple(value: object) -> tuple[str, ...]:
+    if not isinstance(value, list):
+        return ()
+    return tuple(str(item) for item in value if str(item))
+
+
+def _entry_evidence(
+    entry: StrategyProfileEntry,
+    *,
+    profile_match: str,
+    requested_method: str | None,
+) -> dict[str, Any]:
+    evidence: dict[str, Any] = {
+        "profile_match": profile_match,
+        "profile_pair": entry.pair,
+        "profile_direction": entry.direction,
+        "profile_method": entry.method,
+        "requested_method": requested_method,
+        "profile_status": entry.status,
+        "required_fix": entry.required_fix,
+    }
+    for key in (
+        "target_reward_risk",
+        "positive_best_jpy",
+        "positive_tail_jpy",
+        "positive_evidence_n",
+        "live_net_jpy",
+        "live_avg_jpy",
+        "live_n",
+        "pretrade_net_jpy",
+        "pretrade_avg_jpy",
+        "pretrade_n",
+        "seat_net_jpy",
+        "seat_win_rate_pct",
+        "seat_pl_n",
+    ):
+        value = getattr(entry, key)
+        if value is not None:
+            evidence[key] = value
+    if entry.top_block_reasons:
+        evidence["top_block_reasons"] = list(entry.top_block_reasons[:3])
+    return evidence
 
 
 def _intent_method(intent: OrderIntent) -> str | None:
@@ -203,6 +319,18 @@ def _has_method_specific_entry(
         entry_pair == pair and entry_direction == direction and method is not None
         for entry_pair, entry_direction, method in entries
     )
+
+
+def _method_specific_entries(
+    entries: dict[tuple[str, str, str | None], StrategyProfileEntry],
+    pair: str,
+    direction: str,
+) -> list[StrategyProfileEntry]:
+    return [
+        entry
+        for (entry_pair, entry_direction, method), entry in entries.items()
+        if entry_pair == pair and entry_direction == direction and method is not None
+    ]
 
 
 def _synthetic_missing_profile_severity(
