@@ -731,19 +731,21 @@ def _close_recommendation_blocks_entry(
     hold_support: tuple[dict[str, Any], ...] = (),
 ) -> bool:
     if bool(rec.get("gate_b_standing_authorized")):
-        if _thesis_expiry_has_same_direction_hold_support(rec, hold_support):
+        if _close_recommendation_has_same_direction_hold_conflict(rec, hold_support):
             return close_gate_b_authorized
         return True
     return close_gate_b_authorized
 
 
-def _thesis_expiry_has_same_direction_hold_support(
+def _close_recommendation_has_same_direction_hold_conflict(
     rec: dict[str, Any],
     hold_support: tuple[dict[str, Any], ...],
 ) -> bool:
     source = str(rec.get("source") or "").strip()
     reason = str(rec.get("reason") or "")
-    if source != "thesis_evolution" or "THESIS_EXPIRED" not in reason.upper():
+    if _close_recommendation_reason_has_h4_structural_break(reason):
+        return False
+    if not _close_recommendation_can_conflict_with_hold_support(source, reason):
         return False
     trade_id = str(rec.get("trade_id") or "")
     pair = str(rec.get("pair") or "")
@@ -767,6 +769,34 @@ def _thesis_expiry_has_same_direction_hold_support(
         if str(support.get("source") or "")
     }
     return len(sources) >= 2
+
+
+def _close_recommendation_can_conflict_with_hold_support(source: str, reason: str) -> bool:
+    lowered = reason.lower()
+    if source == "thesis_evolution":
+        return True
+    if source == "position_thesis":
+        return "invalidation hit:" in lowered or "technical invalidation confirmed against" in lowered
+    if source == "position_management":
+        return "entry thesis invalidation hit" in lowered
+    return False
+
+
+def _close_recommendation_reason_has_h4_structural_break(reason: str) -> bool:
+    lowered = str(reason or "").lower()
+    if "h4" not in lowered:
+        return False
+    return any(
+        token in lowered
+        for token in (
+            "bos_",
+            "choch_",
+            "close-confirmed",
+            "structural break",
+            "order block",
+            "ob broken",
+        )
+    )
 
 
 def _operator_close_gate_b_authorized(data_root: Path) -> bool:
