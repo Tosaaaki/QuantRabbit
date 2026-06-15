@@ -3189,7 +3189,11 @@ def _decision_artifact_findings(
                 next_action="Recreate the decision receipt path before any gateway handoff.",
             )
         )
-    if trader_loaded.error is not None:
+    # `DEFAULT_TRADER_DECISION` is the legacy deterministic prefilter artifact.
+    # The live decision contract now hinges on the GPT/codex receipt; a missing
+    # legacy comparison file is only actionable when the current receipt is also
+    # unavailable.
+    if trader_loaded.error is not None and gpt_loaded.payload is None:
         out.append(
             _finding(
                 run_id=run_id,

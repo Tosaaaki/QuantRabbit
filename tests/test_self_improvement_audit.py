@@ -1762,6 +1762,44 @@ class SelfImprovementAuditorTest(unittest.TestCase):
         self.assertIn("STALE_GPT_CLOSE_BLOCKERS_FOR_CLOSED_TRADES", codes)
         self.assertEqual(codes["STALE_GPT_CLOSE_BLOCKERS_FOR_CLOSED_TRADES"]["priority"], "P1")
 
+    def test_missing_legacy_trader_decision_is_not_p1_when_gpt_decision_readable(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(
+                root,
+                active_position=False,
+                live_ready_market_rr=1.4,
+                closed_pls=(100.0, 80.0, -50.0),
+            )
+            files["trader"].unlink()
+
+            _run(files)
+            payload = json.loads(files["output"].read_text())
+
+        codes = {item["code"] for item in payload["findings"]}
+        self.assertNotIn("TRADER_DECISION_UNREADABLE", codes)
+        self.assertNotIn("GPT_DECISION_UNREADABLE", codes)
+
+    def test_missing_legacy_trader_decision_is_reported_when_gpt_decision_unreadable(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(
+                root,
+                active_position=False,
+                live_ready_market_rr=1.4,
+                closed_pls=(100.0, 80.0, -50.0),
+            )
+            files["gpt"].unlink()
+            files["trader"].unlink()
+
+            summary = _run(files)
+            payload = json.loads(files["output"].read_text())
+
+        codes = {item["code"]: item for item in payload["findings"]}
+        self.assertEqual(summary.status, STATUS_BLOCKED)
+        self.assertEqual(codes["GPT_DECISION_UNREADABLE"]["priority"], "P0")
+        self.assertEqual(codes["TRADER_DECISION_UNREADABLE"]["priority"], "P1")
+
     def test_rejected_non_close_receipt_blockers_are_not_current_p0(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
