@@ -80,6 +80,32 @@ class ForecastPersistenceTrackerTest(unittest.TestCase):
             self.assertEqual(old_rows[0]["direction"], "UP")
             self.assertEqual(rows[-1]["pair"], "GBP_USD")
 
+    def test_record_forecast_persists_range_geometry(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            forecast = _forecast("EUR_CHF", "RANGE", confidence=0.71)
+            forecast.range_low_price = 0.92008
+            forecast.range_high_price = 0.921
+            forecast.range_width_pips = 9.2
+
+            recorded = record_forecast(
+                forecast,
+                data_root=root,
+                cycle_id="cycle-range",
+                now=datetime(2026, 6, 1, 0, 0, tzinfo=timezone.utc),
+            )
+
+            rows = [
+                json.loads(line)
+                for line in (root / "forecast_history.jsonl").read_text(encoding="utf-8").splitlines()
+                if line.strip()
+            ]
+            self.assertTrue(recorded)
+            self.assertEqual(rows[0]["direction"], "RANGE")
+            self.assertEqual(rows[0]["range_low_price"], 0.92008)
+            self.assertEqual(rows[0]["range_high_price"], 0.921)
+            self.assertEqual(rows[0]["range_width_pips"], 9.2)
+
     def test_record_forecast_reuses_cycle_pair_index_when_file_unchanged(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

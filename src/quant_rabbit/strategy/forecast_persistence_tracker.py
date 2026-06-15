@@ -128,6 +128,15 @@ def record_forecast(
         "drivers_against": list(getattr(forecast, "drivers_against", ()) or ()),
         "rationale_summary": getattr(forecast, "rationale_summary", ""),
     }
+    range_low_price = getattr(forecast, "range_low_price", None)
+    range_high_price = getattr(forecast, "range_high_price", None)
+    range_width_pips = getattr(forecast, "range_width_pips", None)
+    if range_low_price is not None:
+        entry["range_low_price"] = range_low_price
+    if range_high_price is not None:
+        entry["range_high_price"] = range_high_price
+    if range_width_pips is not None:
+        entry["range_width_pips"] = range_width_pips
     with _FORECAST_HISTORY_PROCESS_LOCK:
         with path.open("a+", encoding="utf-8") as f:
             fcntl.flock(f.fileno(), fcntl.LOCK_EX)
