@@ -801,6 +801,105 @@ class IntentGeneratorTest(unittest.TestCase):
         self.assertNotIn("TELEMETRY_FORECAST_HISTORY_REQUIRED_FOR_LIVE", issue_codes)
         self.assertNotIn("TELEMETRY_DIRECTIONAL_PROJECTION_REQUIRED_FOR_LIVE", issue_codes)
 
+    def test_generate_intents_replaces_stale_same_cycle_forecast_telemetry(self) -> None:
+        from quant_rabbit.strategy.intent_generator import _pre_entry_forecast_cycle_id, _snapshot_from_json
+
+        prior_sl = os.environ.get("QR_TRADER_DISABLE_SL_REPAIR")
+        os.environ["QR_TRADER_DISABLE_SL_REPAIR"] = "1"
+        os.environ["QR_REQUIRE_TELEMETRY_FOR_LIVE"] = "1"
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                output = root / "intents.json"
+                open_ts = "2026-06-08T12:00:00+00:00"
+                snapshot_path = _snapshot(root, fetched_at_utc=open_ts, quote_timestamp_utc=open_ts)
+                pair_charts_path = _pair_charts_with_direction(
+                    root,
+                    long_score=0.46,
+                    short_score=0.54,
+                    dominant_regime="RANGE",
+                    m5_regime="RANGE",
+                )
+                snapshot = _snapshot_from_json(json.loads(snapshot_path.read_text()))
+                cycle_id = _pre_entry_forecast_cycle_id(snapshot, pair_charts_path=pair_charts_path)
+                data_root = root / "data"
+                data_root.mkdir()
+                (data_root / "forecast_history.jsonl").write_text(
+                    json.dumps(
+                        {
+                            "timestamp_utc": "2026-06-08T12:00:00Z",
+                            "cycle_id": cycle_id,
+                            "pair": "EUR_USD",
+                            "direction": "UP",
+                            "confidence": 0.34,
+                            "current_price": 1.17326,
+                            "target_price": 1.1762,
+                            "invalidation_price": 1.1718,
+                            "horizon_min": 60,
+                        }
+                    )
+                    + "\n",
+                    encoding="utf-8",
+                )
+                forecast = SimpleNamespace(
+                    pair="EUR_USD",
+                    direction="DOWN",
+                    confidence=0.91,
+                    current_price=1.17326,
+                    target_price=1.1712,
+                    invalidation_price=1.1742,
+                    horizon_min=60,
+                    rationale_summary="DOWN forecast from current tape",
+                    drivers_for=("pair_chart SHORT_LEAN",),
+                    drivers_against=("range bounce risk",),
+                )
+
+                with (
+                    patch("quant_rabbit.strategy.intent_generator.ROOT", root),
+                    patch(
+                        "quant_rabbit.strategy.intent_generator._forecast_seed_for_pair",
+                        return_value=forecast,
+                    ),
+                ):
+                    summary = IntentGenerator(
+                        campaign_plan=_campaign(root, direction="LONG"),
+                        strategy_profile=_strategy(root, status="CANDIDATE", direction="LONG"),
+                        pair_charts_path=pair_charts_path,
+                        output_path=output,
+                        report_path=root / "intents.md",
+                        max_loss_jpy=500.0,
+                    ).run(snapshot_path=snapshot_path)
+
+                payload = json.loads(output.read_text())
+                rows = [
+                    json.loads(line)
+                    for line in (data_root / "forecast_history.jsonl").read_text(encoding="utf-8").splitlines()
+                    if line.strip()
+                ]
+        finally:
+            if prior_sl is None:
+                os.environ.pop("QR_TRADER_DISABLE_SL_REPAIR", None)
+            else:
+                os.environ["QR_TRADER_DISABLE_SL_REPAIR"] = prior_sl
+
+        same_cycle_rows = [
+            row
+            for row in rows
+            if row.get("cycle_id") == cycle_id and row.get("pair") == "EUR_USD"
+        ]
+        short_results = [item for item in payload["results"] if item["intent"]["side"] == "SHORT"]
+        issue_codes = {
+            issue["code"]
+            for item in short_results
+            for issue in item["risk_issues"]
+        }
+
+        self.assertEqual(len(same_cycle_rows), 1)
+        self.assertEqual(same_cycle_rows[0]["direction"], "DOWN")
+        self.assertEqual(same_cycle_rows[0]["confidence"], 0.91)
+        self.assertGreater(summary.live_ready, 0)
+        self.assertNotIn("TELEMETRY_FORECAST_HISTORY_MISMATCH_FOR_LIVE", issue_codes)
+
     def test_generate_intents_skips_projection_telemetry_when_market_closed(self) -> None:
         prior_sl = os.environ.get("QR_TRADER_DISABLE_SL_REPAIR")
         os.environ["QR_TRADER_DISABLE_SL_REPAIR"] = "1"

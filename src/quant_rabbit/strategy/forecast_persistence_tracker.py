@@ -92,12 +92,16 @@ def record_forecast(
     data_root: Path,
     now: Optional[datetime] = None,
     cycle_id: str | None = None,
+    replace_existing: bool = False,
 ) -> bool:
     """Append a `DirectionalForecast` to forecast_history.jsonl.
 
     A cycle-level forecast is a pair fact, not a lane fact. Several runtime
     branches may ask for the same pair forecast inside one cycle, so
     `cycle_id + pair` is idempotent to keep persistence statistics honest.
+    When entry pricing recomputes a same-cycle fact after a previous writer,
+    `replace_existing` keeps that one-row invariant while making the audit row
+    match the executable intent exactly.
     """
     if _is_disabled():
         return False
@@ -135,6 +139,20 @@ def record_forecast(
                 ) = _history_cycle_pair_index_from_handle(path, f)
                 cycle_pair_key = (str(cycle_id), str(pair)) if cycle_id and pair else None
                 if cycle_pair_key and cycle_pair_key in existing_cycle_pairs:
+                    line = json.dumps(entry, ensure_ascii=False)
+                    if replace_existing:
+                        replaced, lines = _replace_history_cycle_pair_line(
+                            f,
+                            cycle_pair_key,
+                            entry,
+                            line,
+                            compacted_lines=compacted_lines,
+                        )
+                        if replaced:
+                            _rewrite_history_handle(f, lines)
+                            f.flush()
+                            _cache_forecast_history_cycle_pairs(path, f, existing_cycle_pairs)
+                            return True
                     if removed_duplicates and compacted_lines is not None:
                         _rewrite_history_handle(f, compacted_lines)
                         f.flush()
@@ -153,6 +171,71 @@ def record_forecast(
             finally:
                 fcntl.flock(f.fileno(), fcntl.LOCK_UN)
     return True
+
+
+def _replace_history_cycle_pair_line(
+    handle: IO[str],
+    cycle_pair_key: tuple[str, str],
+    entry: dict[str, Any],
+    line: str,
+    *,
+    compacted_lines: list[str] | None,
+) -> tuple[bool, list[str]]:
+    if compacted_lines is None:
+        handle.seek(0)
+        compacted_lines, _removed, _pairs = _compact_history_lines(handle.read().splitlines())
+    out: list[str] = []
+    found = False
+    changed = False
+    for raw in compacted_lines:
+        item = _json_line(raw)
+        key = (
+            str(item.get("cycle_id") or ""),
+            str(item.get("pair") or ""),
+        ) if item is not None else None
+        if key != cycle_pair_key:
+            out.append(raw)
+            continue
+        found = True
+        if _same_forecast_fact(item, entry):
+            out.append(raw)
+            continue
+        out.append(line)
+        changed = True
+    if not found:
+        out.append(line)
+        changed = True
+    return changed, out
+
+
+def _json_line(raw: str) -> dict[str, Any] | None:
+    try:
+        item = json.loads(raw)
+    except json.JSONDecodeError:
+        return None
+    return item if isinstance(item, dict) else None
+
+
+def _same_forecast_fact(left: dict[str, Any], right: dict[str, Any]) -> bool:
+    fact_keys = (
+        "cycle_id",
+        "pair",
+        "direction",
+        "confidence",
+        "current_price",
+        "invalidation_price",
+        "target_price",
+        "horizon_min",
+        "raw_confidence",
+        "calibration_multiplier",
+        "up_score",
+        "down_score",
+        "range_score",
+        "drivers_for",
+        "drivers_against",
+        "rationale_summary",
+    )
+    return all(left.get(key) == right.get(key) for key in fact_keys)
 
 
 def _history_cycle_pair_index_from_handle(

@@ -2387,7 +2387,13 @@ def _record_forecast_seed_telemetry(
             validation_time_utc=validation_time_utc,
         ):
             return
-        record_forecast(forecast_record, data_root=data_root, cycle_id=cycle_id, now=emission_time)
+        record_forecast(
+            forecast_record,
+            data_root=data_root,
+            cycle_id=cycle_id,
+            now=emission_time,
+            replace_existing=True,
+        )
         if not projection_telemetry_market_open(emission_time):
             return
         record_directional_forecast(

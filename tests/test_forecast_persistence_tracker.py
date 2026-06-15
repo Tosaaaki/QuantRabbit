@@ -228,6 +228,73 @@ class ForecastPersistenceTrackerTest(unittest.TestCase):
             self.assertEqual(len(rows), 1)
             self.assertEqual(rows[0]["direction"], "UP")
 
+    def test_record_forecast_replaces_existing_cycle_pair_when_requested(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            path = root / "forecast_history.jsonl"
+            path.write_text(
+                json.dumps(
+                    {
+                        "timestamp_utc": "2026-06-01T00:00:00Z",
+                        "cycle_id": "cycle-1",
+                        "pair": "EUR_USD",
+                        "direction": "DOWN",
+                        "confidence": 0.4,
+                        "horizon_min": 60,
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            replaced = record_forecast(
+                _forecast("EUR_USD", "UP", confidence=0.72),
+                data_root=root,
+                cycle_id="cycle-1",
+                now=datetime(2026, 6, 1, 0, 1, tzinfo=timezone.utc),
+                replace_existing=True,
+            )
+
+            rows = [
+                json.loads(line)
+                for line in path.read_text(encoding="utf-8").splitlines()
+                if line.strip()
+            ]
+            self.assertTrue(replaced)
+            self.assertEqual(len(rows), 1)
+            self.assertEqual(rows[0]["direction"], "UP")
+            self.assertEqual(rows[0]["confidence"], 0.72)
+            self.assertEqual(rows[0]["timestamp_utc"], "2026-06-01T00:01:00Z")
+
+    def test_record_forecast_replace_existing_keeps_same_fact_idempotent(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            first = record_forecast(
+                _forecast("EUR_USD", "UP", confidence=0.72),
+                data_root=root,
+                cycle_id="cycle-1",
+                now=datetime(2026, 6, 1, 0, 0, tzinfo=timezone.utc),
+                replace_existing=True,
+            )
+            second = record_forecast(
+                _forecast("EUR_USD", "UP", confidence=0.72),
+                data_root=root,
+                cycle_id="cycle-1",
+                now=datetime(2026, 6, 1, 0, 1, tzinfo=timezone.utc),
+                replace_existing=True,
+            )
+
+            history_path = root / "forecast_history.jsonl"
+            rows = [
+                json.loads(line)
+                for line in history_path.read_text(encoding="utf-8").splitlines()
+                if line.strip()
+            ]
+            self.assertTrue(first)
+            self.assertFalse(second)
+            self.assertEqual(len(rows), 1)
+            self.assertEqual(rows[0]["timestamp_utc"], "2026-06-01T00:00:00Z")
+
     def test_duplicate_pair_forecasts_in_one_cycle_count_once(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
