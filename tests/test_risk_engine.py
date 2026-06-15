@@ -131,6 +131,71 @@ class RiskEngineTest(unittest.TestCase):
         self.assertTrue(decision.allowed, decision.block_reasons)
         self.assertNotIn("MISSING_MARKET_CONTEXT", {issue.code for issue in decision.issues})
 
+    def test_forecast_geometry_inside_spread_noise_blocks_live_send(self) -> None:
+        intent = OrderIntent(
+            pair="EUR_USD",
+            side=Side.LONG,
+            order_type=OrderType.MARKET,
+            units=3000,
+            tp=1.17554,
+            sl=1.17234,
+            thesis="forecast_edge_must_clear_execution_noise",
+            market_context=MarketContext(
+                regime="TREND-BULL continuation",
+                narrative="USD softness lets EUR squeeze higher",
+                chart_story="green staircase into upper band with shallow pullbacks",
+                method=TradeMethod.TREND_CONTINUATION,
+                invalidation="forecast invalidation must not sit inside spread noise",
+            ),
+            metadata={
+                "forecast_direction": "UP",
+                "forecast_target_price": 1.17355,
+                "forecast_invalidation_price": 1.17305,
+            },
+        )
+
+        dry_run = RiskEngine(live_enabled=True).validate(intent, snapshot(), for_live_send=False)
+        live = RiskEngine(live_enabled=True).validate(intent, snapshot(), for_live_send=True)
+
+        dry_codes = {issue.code: issue.severity for issue in dry_run.issues}
+        live_codes = {issue.code: issue.severity for issue in live.issues}
+        self.assertTrue(dry_run.allowed, dry_run.block_reasons)
+        self.assertEqual(dry_codes["FORECAST_TARGET_TOO_THIN_FOR_SPREAD"], "WARN")
+        self.assertEqual(dry_codes["FORECAST_INVALIDATION_TOO_THIN_FOR_SPREAD"], "WARN")
+        self.assertFalse(live.allowed)
+        self.assertEqual(live_codes["FORECAST_TARGET_TOO_THIN_FOR_SPREAD"], "BLOCK")
+        self.assertEqual(live_codes["FORECAST_INVALIDATION_TOO_THIN_FOR_SPREAD"], "BLOCK")
+
+    def test_forecast_geometry_clearing_spread_noise_remains_live_sendable(self) -> None:
+        intent = OrderIntent(
+            pair="EUR_USD",
+            side=Side.LONG,
+            order_type=OrderType.MARKET,
+            units=3000,
+            tp=1.17554,
+            sl=1.17234,
+            thesis="forecast_edge_clears_execution_noise",
+            market_context=MarketContext(
+                regime="TREND-BULL continuation",
+                narrative="USD softness lets EUR squeeze higher",
+                chart_story="green staircase into upper band with shallow pullbacks",
+                method=TradeMethod.TREND_CONTINUATION,
+                invalidation="forecast invalidation clears spread noise",
+            ),
+            metadata={
+                "forecast_direction": "UP",
+                "forecast_target_price": 1.17400,
+                "forecast_invalidation_price": 1.17270,
+            },
+        )
+
+        decision = RiskEngine(live_enabled=True).validate(intent, snapshot(), for_live_send=True)
+
+        codes = {issue.code for issue in decision.issues}
+        self.assertTrue(decision.allowed, decision.block_reasons)
+        self.assertNotIn("FORECAST_TARGET_TOO_THIN_FOR_SPREAD", codes)
+        self.assertNotIn("FORECAST_INVALIDATION_TOO_THIN_FOR_SPREAD", codes)
+
     def test_range_method_rejects_one_way_trend_story_for_live_send(self) -> None:
         intent = OrderIntent(
             pair="EUR_USD",

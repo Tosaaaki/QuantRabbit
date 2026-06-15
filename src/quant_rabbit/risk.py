@@ -891,6 +891,15 @@ class RiskEngine:
                     f"{self.policy.min_stop_spread_multiple:.1f}x spread {spread_pips:.1f}pip",
                 )
             )
+        issues.extend(
+            self._forecast_geometry_issues(
+                intent,
+                entry_price=entry_price,
+                spec=spec,
+                spread_pips=spread_pips,
+                for_live_send=for_live_send,
+            )
+        )
         if portfolio_add_mode and self.policy.max_portfolio_loss_jpy is not None:
             portfolio_risk, risk_issue = self._open_portfolio_risk_jpy(snapshot)
             if risk_issue:
@@ -1220,6 +1229,87 @@ class RiskEngine:
                 severity=severity,
             )
         ]
+
+    def _forecast_geometry_issues(
+        self,
+        intent: OrderIntent,
+        *,
+        entry_price: float,
+        spec: InstrumentSpec,
+        spread_pips: float,
+        for_live_send: bool,
+    ) -> list[RiskIssue]:
+        metadata = intent.metadata or {}
+        direction = str(metadata.get("forecast_direction") or "").upper()
+        if direction not in {"UP", "DOWN"}:
+            return []
+        forecast_side = Side.LONG if direction == "UP" else Side.SHORT
+        if intent.side != forecast_side:
+            return []
+
+        severity = "BLOCK" if for_live_send else "WARN"
+        issues: list[RiskIssue] = []
+        target_floor = spread_pips * self.policy.min_target_spread_multiple
+        invalidation_floor = spread_pips * self.policy.min_stop_spread_multiple
+
+        target_price = _to_float(metadata.get("forecast_target_price"))
+        if target_price is not None and target_price > 0.0:
+            if intent.side == Side.LONG:
+                target_pips = (target_price - entry_price) * spec.pip_factor
+            else:
+                target_pips = (entry_price - target_price) * spec.pip_factor
+            if target_pips <= 0.0:
+                issues.append(
+                    RiskIssue(
+                        "FORECAST_TARGET_NOT_REWARD_SIDE",
+                        f"{intent.pair} {intent.side.value} forecast {direction} target "
+                        f"{target_price:.5f} is not on the reward side of entry {entry_price:.5f}; "
+                        "refresh the forecast/entry geometry before live send.",
+                        severity=severity,
+                    )
+                )
+            elif target_pips < target_floor:
+                issues.append(
+                    RiskIssue(
+                        "FORECAST_TARGET_TOO_THIN_FOR_SPREAD",
+                        f"{intent.pair} {intent.side.value} forecast {direction} target is only "
+                        f"{target_pips:.1f}pip from entry, below "
+                        f"{self.policy.min_target_spread_multiple:.1f}x spread floor "
+                        f"({target_floor:.1f}pip from spread {spread_pips:.1f}pip); "
+                        "prediction edge is inside execution noise.",
+                        severity=severity,
+                    )
+                )
+
+        invalidation_price = _to_float(metadata.get("forecast_invalidation_price"))
+        if invalidation_price is not None and invalidation_price > 0.0:
+            if intent.side == Side.LONG:
+                invalidation_pips = (entry_price - invalidation_price) * spec.pip_factor
+            else:
+                invalidation_pips = (invalidation_price - entry_price) * spec.pip_factor
+            if invalidation_pips <= 0.0:
+                issues.append(
+                    RiskIssue(
+                        "FORECAST_INVALIDATION_NOT_LOSS_SIDE",
+                        f"{intent.pair} {intent.side.value} forecast {direction} invalidation "
+                        f"{invalidation_price:.5f} is not on the loss side of entry {entry_price:.5f}; "
+                        "refresh the forecast/entry geometry before live send.",
+                        severity=severity,
+                    )
+                )
+            elif invalidation_pips < invalidation_floor:
+                issues.append(
+                    RiskIssue(
+                        "FORECAST_INVALIDATION_TOO_THIN_FOR_SPREAD",
+                        f"{intent.pair} {intent.side.value} forecast {direction} invalidation is only "
+                        f"{invalidation_pips:.1f}pip from entry, below "
+                        f"{self.policy.min_stop_spread_multiple:.1f}x spread floor "
+                        f"({invalidation_floor:.1f}pip from spread {spread_pips:.1f}pip); "
+                        "the thesis can be invalidated by normal execution noise.",
+                        severity=severity,
+                    )
+                )
+        return issues
 
     def _market_context_issues(self, intent: OrderIntent, *, for_live_send: bool) -> list[RiskIssue]:
         severity = "BLOCK" if for_live_send and self.policy.require_market_context_for_live_send else "WARN"
