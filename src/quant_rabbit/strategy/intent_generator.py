@@ -724,6 +724,52 @@ FORECAST_BOOTSTRAP_SIGNAL_CONFIDENCE_MIN = _env_float(
     0.70,
     minimum=0.50,
 )
+# Strong directional audited support (2026-06-15).
+#
+# The ordinary market-support path only rescues a calibrated near-miss forecast
+# (default max shortfall 0.10). Live evidence can also produce a different
+# shape: the aggregate final detector is pessimistic, but raw confidence clears
+# the live floor and a same-direction, current projection bucket has substantial
+# audited follow-through. That is usable only for STOP-ENTRY confirmation, where
+# price has to trade through the trigger first; MARKET/LIMIT entries would still
+# spend time underwater when the forecast is early.
+#
+# Per AGENT_CONTRACT §3.5:
+# (a) market reality: event/liquidity projection buckets with >=75% hit-rate on
+#     >=30 samples are materially different from timing-only EITHER signals.
+#     Requiring raw forecast >= the live floor preserves the pair-level thesis,
+#     while the calibrated floor stops genuinely weak final predictions from
+#     trading just because one detector is hot.
+# (b) constants rather than derived: these are operator risk-policy caps for how
+#     much audited same-direction evidence may offset the final detector.
+# (c) replace via: tune by post-trade expectancy for this override path once the
+#     execution ledger has enough STOP-ENTRY fills tagged with
+#     strong_directional_projection_support.
+FORECAST_STRONG_DIRECTIONAL_MAX_CONFIDENCE_SHORTFALL = _env_float(
+    "QR_FORECAST_STRONG_DIRECTIONAL_MAX_CONFIDENCE_SHORTFALL",
+    0.25,
+    minimum=FORECAST_MARKET_SUPPORT_MAX_CONFIDENCE_SHORTFALL,
+)
+FORECAST_STRONG_DIRECTIONAL_CALIBRATED_FLOOR = _env_float(
+    "QR_FORECAST_STRONG_DIRECTIONAL_CALIBRATED_FLOOR",
+    0.40,
+    minimum=0.0,
+)
+FORECAST_STRONG_DIRECTIONAL_MIN_HIT_RATE = _env_float(
+    "QR_FORECAST_STRONG_DIRECTIONAL_MIN_HIT_RATE",
+    0.75,
+    minimum=FORECAST_MARKET_SUPPORT_MIN_DIRECTIONAL_HIT_RATE,
+)
+FORECAST_STRONG_DIRECTIONAL_MIN_SIGNAL_CONFIDENCE = _env_float(
+    "QR_FORECAST_STRONG_DIRECTIONAL_MIN_SIGNAL_CONFIDENCE",
+    0.70,
+    minimum=FORECAST_MARKET_SUPPORT_MIN_SIGNAL_CONFIDENCE,
+)
+FORECAST_STRONG_DIRECTIONAL_MIN_SAMPLES = _env_int(
+    "QR_FORECAST_STRONG_DIRECTIONAL_MIN_SAMPLES",
+    max(30, FORECAST_MARKET_SUPPORT_MIN_SAMPLES),
+    minimum=FORECAST_MARKET_SUPPORT_MIN_SAMPLES,
+)
 # Forecast-first seeds are allowed only when the chart packet contains at
 # least two independent TF readings with both regime and family-score context.
 # A single TF can be enough for a unit fixture, but it is not enough market
@@ -5398,6 +5444,38 @@ def _forecast_market_support_override(
     )
 
 
+def _forecast_market_support_has_strong_directional_signal(
+    support: dict[str, Any],
+    *,
+    direction: str,
+) -> bool:
+    if not bool(support.get("ok")):
+        return False
+    if bool(support.get("bootstrap_projection_support")):
+        return False
+    support_direction = str(support.get("direction") or "").upper()
+    if support_direction and support_direction != direction:
+        return False
+    aligned_count = _optional_int(support.get("aligned_projection_count")) or 0
+    if aligned_count <= 0:
+        return False
+    for signal in support.get("signals") or []:
+        if not isinstance(signal, dict):
+            continue
+        if str(signal.get("direction") or "").upper() != direction:
+            continue
+        confidence = _optional_float(signal.get("confidence")) or 0.0
+        hit_rate = _optional_float(signal.get("hit_rate")) or 0.0
+        samples = _optional_int(signal.get("samples")) or 0
+        if (
+            confidence >= FORECAST_STRONG_DIRECTIONAL_MIN_SIGNAL_CONFIDENCE
+            and hit_rate >= FORECAST_STRONG_DIRECTIONAL_MIN_HIT_RATE
+            and samples >= FORECAST_STRONG_DIRECTIONAL_MIN_SAMPLES
+        ):
+            return True
+    return False
+
+
 def _forecast_market_support_allows_side(
     side: str | None,
     source: Any,
@@ -5465,6 +5543,22 @@ def _forecast_market_support_allows_side(
         and hit_rate >= FORECAST_MARKET_SUPPORT_MIN_TIMING_HIT_RATE
     )
     if breakout_proof and timing_evidence and confidence >= support_floor:
+        return True
+    strong_directional_floor = max(
+        FORECAST_STRONG_DIRECTIONAL_CALIBRATED_FLOOR,
+        min_confidence - FORECAST_STRONG_DIRECTIONAL_MAX_CONFIDENCE_SHORTFALL,
+    )
+    strong_directional_projection = (
+        breakout_proof
+        and raw_confidence is not None
+        and raw_confidence >= min_confidence
+        and confidence >= strong_directional_floor
+        and _forecast_market_support_has_strong_directional_signal(
+            support,
+            direction=direction,
+        )
+    )
+    if strong_directional_projection:
         return True
     if confidence < support_floor:
         return False

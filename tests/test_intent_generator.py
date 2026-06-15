@@ -6753,14 +6753,62 @@ class TimingEvidenceBreakoutStopTest(unittest.TestCase):
                 "best_hit_rate": hit_rate,
                 "best_samples": samples,
                 "bootstrap_projection_support": False,
+                "signals": [],
             },
         }
 
-    def _allows(self, metadata: dict, *, side: str = "LONG", order_type: OrderType | None = OrderType.STOP_ENTRY) -> bool:
+    @staticmethod
+    def _strong_directional_metadata(
+        *,
+        confidence: float = 0.45,
+        raw_confidence: float = 0.67,
+    ) -> dict:
+        metadata = TimingEvidenceBreakoutStopTest._metadata(
+            direction="DOWN",
+            confidence=confidence,
+            raw_confidence=raw_confidence,
+            bias="SHORT",
+            timing_count=2,
+            hit_rate=1.0,
+            samples=37,
+            support_ok=True,
+        )
+        metadata["forecast_market_support"]["aligned_projection_count"] = 2
+        metadata["forecast_market_support"]["direction"] = "DOWN"
+        metadata["forecast_market_support"]["signals"] = [
+            {
+                "name": "macro_event_nowcast_central_bank",
+                "calibration_name": "macro_event_nowcast_central_bank_down",
+                "direction": "DOWN",
+                "confidence": 0.79,
+                "hit_rate": 1.0,
+                "samples": 37,
+                "timeframe": None,
+            },
+            {
+                "name": "bb_squeeze_expansion_imminent",
+                "calibration_name": "bb_squeeze_expansion_imminent",
+                "direction": "EITHER",
+                "confidence": 0.63,
+                "hit_rate": 0.92,
+                "samples": 100,
+                "timeframe": "M30",
+            },
+        ]
+        return metadata
+
+    def _allows(
+        self,
+        metadata: dict,
+        *,
+        side: str = "LONG",
+        order_type: OrderType | None = OrderType.STOP_ENTRY,
+        min_confidence: float = 0.55,
+    ) -> bool:
         from quant_rabbit.strategy.intent_generator import _forecast_market_support_allows_side
 
         return _forecast_market_support_allows_side(
-            side, metadata, min_confidence=0.55, order_type=order_type
+            side, metadata, min_confidence=min_confidence, order_type=order_type
         )
 
     def test_stop_entry_with_timing_evidence_and_lean_bypasses_floor(self) -> None:
@@ -6779,6 +6827,51 @@ class TimingEvidenceBreakoutStopTest(unittest.TestCase):
                     hit_rate=0.92,
                     samples=100,
                 )
+            )
+        )
+
+    def test_strong_directional_support_rescues_stop_entry_below_near_miss_floor(self) -> None:
+        # CAD_JPY live shape: final calibration is below the 0.10 near-miss
+        # band, but raw forecast clears the floor and audited same-direction
+        # macro support is strong. Only STOP-ENTRY gets the confirmation lift.
+        self.assertTrue(
+            self._allows(
+                self._strong_directional_metadata(),
+                side="SHORT",
+                order_type=OrderType.STOP_ENTRY,
+                min_confidence=0.65,
+            )
+        )
+
+    def test_strong_directional_support_does_not_rescue_market_chase(self) -> None:
+        self.assertFalse(
+            self._allows(
+                self._strong_directional_metadata(),
+                side="SHORT",
+                order_type=OrderType.MARKET,
+                min_confidence=0.65,
+            )
+        )
+
+    def test_strong_directional_support_does_not_rescue_deeply_weak_forecast(self) -> None:
+        self.assertFalse(
+            self._allows(
+                self._strong_directional_metadata(confidence=0.26, raw_confidence=0.67),
+                side="SHORT",
+                order_type=OrderType.STOP_ENTRY,
+                min_confidence=0.65,
+            )
+        )
+
+    def test_either_best_signal_does_not_count_as_strong_directional_support(self) -> None:
+        metadata = self._strong_directional_metadata()
+        metadata["forecast_market_support"]["signals"][0]["hit_rate"] = 0.57
+        self.assertFalse(
+            self._allows(
+                metadata,
+                side="SHORT",
+                order_type=OrderType.STOP_ENTRY,
+                min_confidence=0.65,
             )
         )
 
