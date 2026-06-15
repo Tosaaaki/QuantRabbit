@@ -488,6 +488,113 @@ class CoverageOptimizerTest(unittest.TestCase):
             self.assertIn("Artifact Diagnostics", (root / "coverage.md").read_text())
             self.assertIn("Spread-normalized candidates", (root / "coverage.md").read_text())
 
+    def test_fresh_all_spread_blocked_intents_defer_strategy_expansion(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            intents = root / "intents.json"
+            target = root / "target.json"
+            risk_issue = {
+                "severity": "BLOCK",
+                "code": "SPREAD_TOO_WIDE",
+                "message": "current spread is too wide for live entry",
+            }
+            intents.write_text(
+                json.dumps(
+                    {
+                        "generated_at_utc": "2999-01-01T00:00:00Z",
+                        "results": [
+                            _result("DRY_RUN_BLOCKED", risk_issues=[risk_issue]),
+                            _result(
+                                "DRY_RUN_BLOCKED",
+                                lane_id="failure_trader:GBP_USD:SHORT:BREAKOUT_FAILURE",
+                                pair="GBP_USD",
+                                side="SHORT",
+                                risk_issues=[risk_issue],
+                            ),
+                        ],
+                    }
+                )
+            )
+            target.write_text(json.dumps({"status": "PURSUE_TARGET", "remaining_target_jpy": 500.0, "remaining_risk_budget_jpy": 500.0}))
+
+            CoverageOptimizer(
+                intents_path=intents,
+                target_state_path=target,
+                replay_path=root / "missing_replay.json",
+                market_context_matrix_path=_matrix(root),
+                output_path=root / "coverage.json",
+                report_path=root / "coverage.md",
+            ).run()
+
+            payload = json.loads((root / "coverage.json").read_text())
+            diagnostics = payload["artifact_diagnostics"]
+            self.assertFalse(diagnostics["intents_artifact_stale"])
+            self.assertFalse(diagnostics["market_context_matrix_missing"])
+            self.assertTrue(diagnostics["all_lanes_spread_blocked"])
+            self.assertTrue(diagnostics["requires_market_evidence_refresh"])
+            self.assertTrue(any("spread-blocked" in item for item in payload["blockers"]))
+            self.assertTrue(any("refresh broker-snapshot and generate-intents" in item for item in payload["action_items"]))
+            self.assertFalse(any("build at least" in item for item in payload["action_items"]))
+            self.assertFalse(any("harvest and runner opportunity paths" in item for item in payload["action_items"]))
+
+    def test_all_quote_stale_intents_require_quote_refresh_before_strategy_expansion(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            intents = root / "intents.json"
+            target = root / "target.json"
+            stale_quote_issue = {
+                "severity": "BLOCK",
+                "code": "STALE_QUOTE",
+                "message": "quote snapshot is stale",
+            }
+            telemetry_issue = {
+                "severity": "BLOCK",
+                "code": "TELEMETRY_FORECAST_QUOTE_STALE_FOR_LIVE",
+                "message": "forecast telemetry waits for a fresh quote",
+            }
+            intents.write_text(
+                json.dumps(
+                    {
+                        "generated_at_utc": "2999-01-01T00:00:00Z",
+                        "results": [
+                            _result("DRY_RUN_BLOCKED", risk_issues=[stale_quote_issue]),
+                            _result(
+                                "DRY_RUN_BLOCKED",
+                                lane_id="failure_trader:GBP_USD:SHORT:BREAKOUT_FAILURE",
+                                pair="GBP_USD",
+                                side="SHORT",
+                                risk_issues=[stale_quote_issue],
+                                strategy_issues=[telemetry_issue],
+                            ),
+                        ],
+                    }
+                )
+            )
+            target.write_text(json.dumps({"status": "PURSUE_TARGET", "remaining_target_jpy": 500.0, "remaining_risk_budget_jpy": 500.0}))
+
+            CoverageOptimizer(
+                intents_path=intents,
+                target_state_path=target,
+                replay_path=root / "missing_replay.json",
+                market_context_matrix_path=_matrix(root),
+                output_path=root / "coverage.json",
+                report_path=root / "coverage.md",
+            ).run()
+
+            payload = json.loads((root / "coverage.json").read_text())
+            diagnostics = payload["artifact_diagnostics"]
+            self.assertTrue(diagnostics["all_lanes_quote_stale"])
+            self.assertTrue(diagnostics["requires_market_evidence_refresh"])
+            self.assertEqual(diagnostics["quote_stale_result_count"], 2)
+            self.assertEqual(diagnostics["quote_normalized_candidate_count"], 2)
+            self.assertEqual(diagnostics["quote_normalized_candidate_reward_jpy"], 314.0)
+            self.assertTrue(any("quote-stale" in item for item in payload["blockers"]))
+            self.assertTrue(any("quote-normalized candidates" in item for item in payload["action_items"]))
+            self.assertFalse(any("build at least" in item for item in payload["action_items"]))
+            report = (root / "coverage.md").read_text()
+            self.assertIn("All lanes quote-stale", report)
+            self.assertIn("Quote-normalized candidates", report)
+
     def test_spread_normalized_diagnostics_name_remaining_live_blockers(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

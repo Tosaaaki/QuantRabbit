@@ -29,6 +29,7 @@ COVERAGE_INTENTS_STALE_AFTER_SECONDS = 3600.0
 DISCOVERY_EVIDENCE_SOURCE_TABLES = frozenset({"pretrade_outcomes", "seat_outcomes"})
 HARVEST_REWARD_RISK_MAX = 1.35
 RUNNER_REWARD_RISK_MIN = 2.0
+QUOTE_STALE_ISSUE_CODES = frozenset({"STALE_QUOTE", "TELEMETRY_FORECAST_QUOTE_STALE_FOR_LIVE"})
 
 
 @dataclass(frozen=True)
@@ -246,12 +247,20 @@ class CoverageOptimizer:
                 f"- Current FX open: `{market_status.get('is_fx_open')}`",
                 f"- Market closed reason: `{market_status.get('closed_reason') or 'none'}`",
                 f"- Matrix missing: `{diagnostics.get('market_context_matrix_missing')}`",
+                f"- Requires market evidence refresh: `{diagnostics.get('requires_market_evidence_refresh')}`",
                 f"- All lanes spread-blocked: `{diagnostics.get('all_lanes_spread_blocked')}`",
+                f"- All lanes quote-stale: `{diagnostics.get('all_lanes_quote_stale')}`",
                 f"- Spread-normalized candidates: `{diagnostics.get('spread_normalized_candidate_count')}` "
                 f"reward=`{diagnostics.get('spread_normalized_candidate_reward_jpy')}`",
                 f"- Spread-normalized no-live-blocker candidates: `{diagnostics.get('spread_normalized_no_live_blocker_count')}` "
                 f"reward=`{diagnostics.get('spread_normalized_no_live_blocker_reward_jpy')}`",
                 f"- Spread-normalized live-blocker counts: `{diagnostics.get('spread_normalized_live_blocker_counts') or {}}`",
+                f"- Quote-stale result count: `{diagnostics.get('quote_stale_result_count')}`",
+                f"- Quote-normalized candidates: `{diagnostics.get('quote_normalized_candidate_count')}` "
+                f"reward=`{diagnostics.get('quote_normalized_candidate_reward_jpy')}`",
+                f"- Quote-normalized no-live-blocker candidates: `{diagnostics.get('quote_normalized_no_live_blocker_count')}` "
+                f"reward=`{diagnostics.get('quote_normalized_no_live_blocker_reward_jpy')}`",
+                f"- Quote-normalized live-blocker counts: `{diagnostics.get('quote_normalized_live_blocker_counts') or {}}`",
                 f"- Risk block issue counts: `{diagnostics.get('risk_block_issue_counts') or {}}`",
                 "",
             ]
@@ -492,6 +501,13 @@ def _blockers(
             blockers.append("current FX market is closed and all intent lanes are spread-blocked; refresh broker truth after market open before judging strategy coverage")
         if artifact_diagnostics.get("intents_artifact_stale"):
             blockers.append("order_intents artifact is stale and all intent lanes are spread-blocked; rerun broker-snapshot/generate-intents before judging strategy coverage")
+        if is_fx_open is not False and not artifact_diagnostics.get("intents_artifact_stale"):
+            blockers.append("all current intent lanes are spread-blocked; refresh broker truth after spreads normalize before judging strategy coverage")
+    if artifact_diagnostics.get("all_lanes_quote_stale"):
+        if artifact_diagnostics.get("intents_artifact_stale"):
+            blockers.append("order_intents artifact is stale and all intent lanes are quote-stale; rerun broker-snapshot/generate-intents before judging strategy coverage")
+        else:
+            blockers.append("all current intent lanes are quote-stale; rerun broker-snapshot/generate-intents before judging strategy coverage")
     if not target:
         blockers.append("daily target state is missing; run daily-target-state or plan-campaign")
     if target.get("status") == "REPAIR_REQUIRED":
@@ -538,7 +554,7 @@ def _action_items(
     if artifact_diagnostics.get("market_context_matrix_missing"):
         items.append("run market-context-matrix so gold/oil/SPX/DXY/rates/news context reaches coverage and GPT packets")
     if evidence_refresh_required:
-        items.append("refresh broker-snapshot and generate-intents after the market is tradable; recompute coverage before adding new strategy lanes")
+        items.append("refresh broker-snapshot and generate-intents after quotes and spreads are tradable; recompute coverage before adding new strategy lanes")
     if duplicate_live_ready_lanes:
         items.append("dedupe same entry/tp/sl receipts before considering multi-entry execution")
     if promotion_candidates:
@@ -559,6 +575,23 @@ def _action_items(
                     top_blockers = ", ".join(f"{key}={value}" for key, value in list(blocker_counts.items())[:4])
                     items.append(
                         "repair spread-normalized live blockers before treating spread refresh as enough: "
+                        f"{top_blockers}"
+                    )
+            quote_candidates = int(artifact_diagnostics.get("quote_normalized_candidate_count") or 0)
+            quote_reward = float(artifact_diagnostics.get("quote_normalized_candidate_reward_jpy") or 0.0)
+            quote_no_live_blocker_candidates = int(
+                artifact_diagnostics.get("quote_normalized_no_live_blocker_count") or 0
+            )
+            if quote_candidates:
+                items.append(
+                    f"after quote refresh, re-evaluate {quote_candidates} quote-normalized candidates "
+                    f"({quote_reward:.0f} JPY reward; {quote_no_live_blocker_candidates} have no remaining live blockers)"
+                )
+                quote_blocker_counts = artifact_diagnostics.get("quote_normalized_live_blocker_counts")
+                if isinstance(quote_blocker_counts, dict) and quote_blocker_counts:
+                    top_blockers = ", ".join(f"{key}={value}" for key, value in list(quote_blocker_counts.items())[:4])
+                    items.append(
+                        "repair quote-normalized live blockers before treating quote refresh as enough: "
                         f"{top_blockers}"
                     )
         else:
@@ -681,8 +714,12 @@ def _artifact_diagnostics(
     risk_block_issue_counts = _issue_code_counts(results, "risk_issues", block_only=True)
     strategy_block_issue_counts = _issue_code_counts(results, "strategy_issues", block_only=True)
     spread_normalized = _spread_normalized_candidate_summary(results)
+    quote_normalized = _quote_stale_candidate_summary(results)
     all_lanes_spread_blocked = bool(results) and all(
         _result_has_block_issue_code(result, "risk_issues", "SPREAD_TOO_WIDE") for result in results
+    )
+    all_lanes_quote_stale = bool(results) and all(
+        _result_has_any_block_issue_code(result, QUOTE_STALE_ISSUE_CODES) for result in results
     )
     market_status = compute_market_status(now_utc).to_dict()
     intents_artifact_stale = bool(
@@ -691,10 +728,8 @@ def _artifact_diagnostics(
     market_context_matrix_missing = not market_context_matrix_path.exists()
     requires_market_evidence_refresh = bool(
         market_context_matrix_missing
-        or (
-            all_lanes_spread_blocked
-            and (market_status.get("is_fx_open") is False or intents_artifact_stale)
-        )
+        or all_lanes_spread_blocked
+        or all_lanes_quote_stale
     )
     return {
         "intents_path": str(intents_path),
@@ -715,7 +750,9 @@ def _artifact_diagnostics(
             results=results,
         ),
         **spread_normalized,
+        **quote_normalized,
         "all_lanes_spread_blocked": all_lanes_spread_blocked,
+        "all_lanes_quote_stale": all_lanes_quote_stale,
         "market_context_matrix_path": str(market_context_matrix_path),
         "market_context_matrix_missing": market_context_matrix_missing,
         "current_market_status": {
@@ -767,6 +804,50 @@ def _spread_normalized_candidate_summary(results: tuple[dict[str, Any], ...]) ->
         "spread_normalized_top_lane_ids": [str(item["lane_id"]) for item in top],
         "spread_normalized_top_candidates": top,
         "spread_normalized_live_blocker_counts": dict(live_blocker_counts.most_common(12)),
+    }
+
+
+def _quote_stale_candidate_summary(results: tuple[dict[str, Any], ...]) -> dict[str, Any]:
+    candidates: list[dict[str, Any]] = []
+    no_live_blocker_candidates: list[dict[str, Any]] = []
+    quote_stale_results = [
+        result for result in results if _result_has_any_block_issue_code(result, QUOTE_STALE_ISSUE_CODES)
+    ]
+    for result in quote_stale_results:
+        if not _is_quote_normalized_candidate(result):
+            continue
+        risk_jpy, reward_jpy, reward_risk = _risk_reward_from_result(result)
+        if risk_jpy <= 0 or reward_jpy <= 0:
+            continue
+        live_blockers = [str(item) for item in result.get("live_blockers", []) or [] if str(item).strip()]
+        lane = {
+            "lane_id": str(result.get("lane_id") or ""),
+            "reward_jpy": reward_jpy,
+            "risk_jpy": risk_jpy,
+            "reward_risk": reward_risk,
+            "live_blockers": live_blockers[:4],
+        }
+        candidates.append(lane)
+        if not live_blockers:
+            no_live_blocker_candidates.append(lane)
+    top = sorted(candidates, key=lambda item: float(item["reward_jpy"]), reverse=True)[:8]
+    live_blocker_counts = Counter(
+        blocker
+        for item in candidates
+        for blocker in item.get("live_blockers", [])
+        if isinstance(blocker, str) and blocker
+    )
+    return {
+        "quote_stale_result_count": len(quote_stale_results),
+        "quote_normalized_candidate_count": len(candidates),
+        "quote_normalized_candidate_reward_jpy": _round(sum(float(item["reward_jpy"]) for item in candidates)),
+        "quote_normalized_no_live_blocker_count": len(no_live_blocker_candidates),
+        "quote_normalized_no_live_blocker_reward_jpy": _round(
+            sum(float(item["reward_jpy"]) for item in no_live_blocker_candidates)
+        ),
+        "quote_normalized_top_lane_ids": [str(item["lane_id"]) for item in top],
+        "quote_normalized_top_candidates": top,
+        "quote_normalized_live_blocker_counts": dict(live_blocker_counts.most_common(12)),
     }
 
 
@@ -1186,6 +1267,18 @@ def _is_spread_normalized_candidate(result: dict[str, Any]) -> bool:
     return not non_spread_risk_blocks and not strategy_blocks
 
 
+def _is_quote_normalized_candidate(result: dict[str, Any]) -> bool:
+    block_codes: list[str] = []
+    for issue_key in ("risk_issues", "strategy_issues"):
+        for issue in result.get(issue_key, []) or []:
+            if not isinstance(issue, dict) or issue.get("severity") != "BLOCK":
+                continue
+            block_codes.append(str(issue.get("code") or issue.get("message") or "UNKNOWN"))
+    if not any(code in QUOTE_STALE_ISSUE_CODES for code in block_codes):
+        return False
+    return all(code in QUOTE_STALE_ISSUE_CODES for code in block_codes)
+
+
 def _live_blockers(result: dict[str, Any]) -> list[str]:
     return [str(item) for item in result.get("live_blockers", []) or [] if str(item).strip()]
 
@@ -1243,6 +1336,16 @@ def _result_has_block_issue_code(result: dict[str, Any], key: str, code: str) ->
     return any(
         isinstance(issue, dict) and issue.get("severity") == "BLOCK" and issue.get("code") == code
         for issue in result.get(key, []) or []
+    )
+
+
+def _result_has_any_block_issue_code(result: dict[str, Any], codes: frozenset[str]) -> bool:
+    return any(
+        isinstance(issue, dict)
+        and issue.get("severity") == "BLOCK"
+        and str(issue.get("code") or "") in codes
+        for issue_key in ("risk_issues", "strategy_issues")
+        for issue in result.get(issue_key, []) or []
     )
 
 
@@ -1481,6 +1584,8 @@ def _has_market_evidence_gap(blockers: list[str]) -> bool:
         item.startswith("market context matrix artifact is missing")
         or item.startswith("current FX market is closed")
         or item.startswith("order_intents artifact is stale")
+        or item.startswith("all current intent lanes are spread-blocked")
+        or item.startswith("all current intent lanes are quote-stale")
         for item in blockers
     )
 
