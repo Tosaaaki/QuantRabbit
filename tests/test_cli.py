@@ -6,7 +6,7 @@ import os
 import sqlite3
 import tempfile
 import unittest
-from contextlib import redirect_stdout
+from contextlib import redirect_stderr, redirect_stdout
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
@@ -2222,6 +2222,39 @@ class ConsolidatedCycleCommandTest(unittest.TestCase):
         self.assertEqual(results[0]["rc"], 2)
         self.assertNotIn("tail", results[0])
         self.assertEqual(results[1]["status"], "FAILED")
+
+    def test_cycle_refresh_refuses_existing_live_runtime_lock(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            lock_dir = Path(tmp) / "lock"
+            lock_dir.mkdir()
+            (lock_dir / "pid").write_text(f"{os.getpid()}\n")
+            digest = Path(tmp) / "digest.json"
+            stderr = io.StringIO()
+
+            with mock.patch.dict(os.environ, {"QR_AUTOTRADE_LOCK_DIR": str(lock_dir)}, clear=False):
+                with redirect_stderr(stderr):
+                    rc = main(["cycle-refresh", "--digest-output", str(digest)])
+
+            self.assertEqual(rc, 75)
+            self.assertFalse(digest.exists())
+            self.assertIn("refusing cycle-refresh overlap", stderr.getvalue())
+
+    def test_cycle_runtime_lock_restores_env_and_removes_lock(self) -> None:
+        from quant_rabbit.cli import _acquire_cycle_runtime_lock, _release_cycle_runtime_lock
+
+        with tempfile.TemporaryDirectory() as tmp:
+            lock_dir = Path(tmp) / "lock"
+            with mock.patch.dict(os.environ, {"QR_AUTOTRADE_LOCK_DIR": str(lock_dir)}, clear=False):
+                os.environ.pop("QR_AUTOTRADE_LOCK_HELD", None)
+                token = _acquire_cycle_runtime_lock("cycle-refresh")
+                self.assertIsNotNone(token)
+                self.assertTrue(lock_dir.exists())
+                self.assertEqual(os.environ.get("QR_AUTOTRADE_LOCK_HELD"), "1")
+
+                _release_cycle_runtime_lock(token)
+
+                self.assertFalse(lock_dir.exists())
+                self.assertNotIn("QR_AUTOTRADE_LOCK_HELD", os.environ)
 
     def test_cycle_refresh_steps_mirror_skill_skeleton(self) -> None:
         from quant_rabbit.cli import _cycle_refresh_steps, _cycle_sidecar_steps

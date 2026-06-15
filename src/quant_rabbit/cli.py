@@ -3,13 +3,14 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import shutil
 import sqlite3
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable
 
-from quant_rabbit.automation import AutoTradeCycle, DEFAULT_AUTOTRADE_REPORT
+from quant_rabbit.automation import AutoTradeCycle, DEFAULT_AUTOTRADE_LOCK_DIR, DEFAULT_AUTOTRADE_REPORT
 from quant_rabbit.ai_test_bot import (
     AITestBotBacktester,
     DEFAULT_MAX_ACTIVE_BUCKETS,
@@ -1084,6 +1085,71 @@ _AUTOTRADE_EXIT_ZERO_STATUSES: frozenset[str] = frozenset(
         "TARGET_REACHED_PROTECT",
     }
 )
+
+
+class _LiveRuntimeLockBusy(RuntimeError):
+    pass
+
+
+def _acquire_cycle_runtime_lock(command: str) -> tuple[Path, str | None] | None:
+    """Acquire the shared live-cycle lock for consolidated runtime commands."""
+    if os.environ.get("QR_AUTOTRADE_LOCK_HELD") == "1":
+        return None
+    lock_dir = Path(os.environ.get("QR_AUTOTRADE_LOCK_DIR") or DEFAULT_AUTOTRADE_LOCK_DIR)
+    old_held = os.environ.get("QR_AUTOTRADE_LOCK_HELD")
+    try:
+        lock_dir.parent.mkdir(parents=True, exist_ok=True)
+        lock_dir.mkdir()
+    except FileExistsError as exc:
+        existing_pid = _cycle_runtime_lock_pid(lock_dir)
+        if existing_pid is not None and _pid_is_running(existing_pid):
+            raise _LiveRuntimeLockBusy(
+                f"[qr-vnext] another live runtime cycle is already running pid={existing_pid}; "
+                f"refusing {command} overlap."
+            ) from exc
+        sys.stderr.write(f"[qr-vnext] removing stale live runtime lock: {lock_dir}\n")
+        shutil.rmtree(lock_dir, ignore_errors=True)
+        try:
+            lock_dir.mkdir()
+        except FileExistsError as retry_exc:
+            retry_pid = _cycle_runtime_lock_pid(lock_dir)
+            detail = f" pid={retry_pid}" if retry_pid is not None else ""
+            raise _LiveRuntimeLockBusy(
+                f"[qr-vnext] another live runtime cycle acquired lock{detail}; refusing {command} overlap."
+            ) from retry_exc
+    (lock_dir / "pid").write_text(f"{os.getpid()}\n")
+    (lock_dir / "command").write_text(f"{command}\n")
+    (lock_dir / "started_at_utc").write_text(f"{datetime.now(timezone.utc).isoformat()}\n")
+    os.environ["QR_AUTOTRADE_LOCK_HELD"] = "1"
+    return lock_dir, old_held
+
+
+def _release_cycle_runtime_lock(token: tuple[Path, str | None] | None) -> None:
+    if token is None:
+        return
+    lock_dir, old_held = token
+    shutil.rmtree(lock_dir, ignore_errors=True)
+    if old_held is None:
+        os.environ.pop("QR_AUTOTRADE_LOCK_HELD", None)
+    else:
+        os.environ["QR_AUTOTRADE_LOCK_HELD"] = old_held
+
+
+def _cycle_runtime_lock_pid(lock_dir: Path) -> int | None:
+    try:
+        return int((lock_dir / "pid").read_text().strip())
+    except (OSError, ValueError):
+        return None
+
+
+def _pid_is_running(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
 
 
 def _running_under_test_harness() -> bool:
@@ -2725,25 +2791,33 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if args.command in ("cycle-refresh", "cycle-sidecars"):
-        if args.command == "cycle-refresh":
-            steps = _cycle_refresh_steps(str(args.daily_risk_pct))
-            kind = "cycle_refresh_digest"
-        else:
-            steps = _cycle_sidecar_steps()
-            kind = "cycle_sidecars_digest"
-        step_results, aborted = _run_cycle_steps(steps)
-        digest = _cycle_digest(kind=kind, step_results=step_results, aborted=aborted)
-        if args.command == "cycle-refresh":
-            # The router runs after the digest artifacts exist; embed its
-            # payload so the model gets the branch decision in the same read.
-            try:
-                route = route_trader_prompts()
-                digest["route"] = route.to_payload()
-            except (OSError, ValueError, json.JSONDecodeError) as exc:
-                digest["route"] = {"error": str(exc)}
-        _write_json(args.digest_output, digest)
-        print(json.dumps(digest, ensure_ascii=False, indent=1, sort_keys=True))
-        return 2 if aborted else 0
+        try:
+            lock_token = _acquire_cycle_runtime_lock(args.command)
+        except _LiveRuntimeLockBusy as exc:
+            sys.stderr.write(f"{exc}\n")
+            return 75
+        try:
+            if args.command == "cycle-refresh":
+                steps = _cycle_refresh_steps(str(args.daily_risk_pct))
+                kind = "cycle_refresh_digest"
+            else:
+                steps = _cycle_sidecar_steps()
+                kind = "cycle_sidecars_digest"
+            step_results, aborted = _run_cycle_steps(steps)
+            digest = _cycle_digest(kind=kind, step_results=step_results, aborted=aborted)
+            if args.command == "cycle-refresh":
+                # The router runs after the digest artifacts exist; embed its
+                # payload so the model gets the branch decision in the same read.
+                try:
+                    route = route_trader_prompts()
+                    digest["route"] = route.to_payload()
+                except (OSError, ValueError, json.JSONDecodeError) as exc:
+                    digest["route"] = {"error": str(exc)}
+            _write_json(args.digest_output, digest)
+            print(json.dumps(digest, ensure_ascii=False, indent=1, sort_keys=True))
+            return 2 if aborted else 0
+        finally:
+            _release_cycle_runtime_lock(lock_token)
 
     if args.command == "import-legacy":
         summary = LegacyImporter(args.archive, args.db, args.report).run()
