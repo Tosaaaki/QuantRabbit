@@ -2402,19 +2402,28 @@ def _order_intent_context_evidence_findings(
         and matrix_generated_at is not None
         and intents_generated_at < matrix_generated_at
     ):
+        status_counts = _result_status_counts(results)
+        live_ready_count = int(status_counts.get("LIVE_READY") or 0)
+        priority = "P0" if live_ready_count > 0 else "P1"
+        live_ready_clause = (
+            f"; {live_ready_count} LIVE_READY lane(s) are tied to the stale context packet"
+            if live_ready_count > 0
+            else ""
+        )
         return [
             _finding(
                 run_id=run_id,
-                priority="P1",
+                priority=priority,
                 layer="opportunity_context",
                 code="ORDER_INTENTS_MARKET_CONTEXT_EVIDENCE_STALE",
                 message=(
                     "order_intents were generated before the current market_context_matrix, so current "
                     "gold/oil/rates/equity/news context cannot be attributed to these candidates"
+                    + live_ready_clause
                 ),
                 next_action=(
                     "Regenerate generate-intents after the latest market-context-matrix, context-asset, and news "
-                    "artifacts; do not judge non-FX/news effect from stale candidates."
+                    "artifacts; do not trust stale LIVE_READY lanes or judge non-FX/news effect from stale candidates."
                 ),
                 evidence={
                     "matrix_path": str(matrix_path),
@@ -2422,8 +2431,9 @@ def _order_intent_context_evidence_findings(
                     "matrix_generated_at_utc": matrix_generated_at.isoformat(),
                     "matrix_pairs": len(pairs),
                     "candidate_count": len(results),
+                    "live_ready_lanes": live_ready_count,
                     "with_context_refs": len(with_context),
-                    "status_counts": _result_status_counts(results),
+                    "status_counts": status_counts,
                 },
             )
         ]
