@@ -7296,6 +7296,20 @@ class TimingEvidenceBreakoutStopTest(unittest.TestCase):
             )
         )
 
+    def test_timing_only_stop_does_not_rescue_known_weak_direction_bucket(self) -> None:
+        metadata = self._metadata(
+            confidence=0.58,
+            raw_confidence=0.66,
+            timing_count=1,
+            hit_rate=0.88,
+            samples=500,
+        )
+        metadata["forecast_directional_calibration_name"] = "directional_forecast_up"
+        metadata["forecast_directional_hit_rate"] = 0.12
+        metadata["forecast_directional_samples"] = 18
+
+        self.assertFalse(self._allows(metadata, min_confidence=0.65))
+
     def test_strong_directional_support_rescues_stop_entry_below_near_miss_floor(self) -> None:
         # CAD_JPY live shape: final calibration is below the 0.10 near-miss
         # band, but raw forecast remains near the floor and audited

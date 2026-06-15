@@ -5792,6 +5792,30 @@ def _forecast_market_support_has_strong_directional_signal(
     return False
 
 
+def _forecast_directional_bucket_is_known_weak(
+    metadata: dict[str, Any],
+    support: dict[str, Any],
+) -> bool:
+    """Return true when the current direction bucket is audited weak.
+
+    EITHER/timing signals predict expansion timing, not side. If the same
+    pair/direction/regime forecast bucket is already below the live hit-rate
+    floor, timing-only support must not rescue the lane; only an audited
+    same-direction projection can replace the weak final detector.
+    """
+    hit_rate = _optional_float(metadata.get("forecast_directional_hit_rate"))
+    if hit_rate is None:
+        hit_rate = _optional_float(support.get("directional_hit_rate"))
+    samples = _optional_int(metadata.get("forecast_directional_samples")) or 0
+    if samples <= 0:
+        samples = _optional_int(support.get("directional_samples")) or 0
+    return (
+        hit_rate is not None
+        and samples >= FORECAST_DIRECTIONAL_LIVE_MIN_SAMPLES
+        and hit_rate < FORECAST_DIRECTIONAL_LIVE_MIN_HIT_RATE
+    )
+
+
 def _forecast_market_support_allows_side(
     side: str | None,
     source: Any,
@@ -5870,7 +5894,11 @@ def _forecast_market_support_allows_side(
         and (timing_samples or 0) >= FORECAST_MARKET_SUPPORT_MIN_SAMPLES
         and (timing_hit_rate or 0.0) >= FORECAST_MARKET_SUPPORT_MIN_TIMING_HIT_RATE
     )
-    if breakout_proof and timing_evidence and confidence >= support_floor:
+    known_weak_direction_bucket = _forecast_directional_bucket_is_known_weak(
+        source if isinstance(source, dict) else {},
+        support,
+    )
+    if breakout_proof and timing_evidence and confidence >= support_floor and not known_weak_direction_bucket:
         return True
     strong_directional_floor = max(
         FORECAST_STRONG_DIRECTIONAL_CALIBRATED_FLOOR,
