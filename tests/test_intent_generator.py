@@ -7423,6 +7423,43 @@ class TimingEvidenceBreakoutStopTest(unittest.TestCase):
             )
         )
 
+    def test_range_edge_stop_entry_does_not_get_support_override(self) -> None:
+        # EUR_CHF live-loss shape: a weak calibrated LONG forecast had strong
+        # macro support, but M5/M15 were boxed near the upper rail. A buy-stop
+        # there is not breakout proof; it is a range-edge fakeout candidate.
+        metadata = self._strong_directional_metadata(
+            confidence=0.45,
+            raw_confidence=0.63,
+        )
+        metadata.update(
+            {
+                "forecast_direction": "UP",
+                "chart_direction_bias": "LONG",
+                "m5_regime": "RANGE",
+                "range_phase": "RANGE_STABLE",
+                "tf_regime_map": {
+                    "M5": {"classification": "RANGE", "range_position": 0.95},
+                    "M15": {"classification": "RANGE", "range_position": 0.81},
+                },
+            }
+        )
+        metadata["forecast_market_support"]["direction"] = "UP"
+        metadata["forecast_market_support"]["signals"][0].update(
+            {
+                "direction": "UP",
+                "calibration_name": "macro_event_nowcast_central_bank_up",
+            }
+        )
+
+        self.assertFalse(
+            self._allows(
+                metadata,
+                side="LONG",
+                order_type=OrderType.STOP_ENTRY,
+                min_confidence=0.65,
+            )
+        )
+
     def test_strong_directional_support_requires_raw_forecast_near_floor(self) -> None:
         self.assertFalse(
             self._allows(

@@ -673,6 +673,18 @@ FORECAST_MARKET_SUPPORT_MAX_CONFIDENCE_SHORTFALL = _env_float(
     0.10,
     minimum=0.0,
 )
+# Weak forecast support override must not convert a range-edge fakeout into a
+# live trend entry. The 2026-06-15 EUR_CHF loss was exactly this shape:
+# calibrated forecast below the live floor, support override present, M5/M15
+# boxed near the upper rail, then a LONG STOP filled and reversed. Keep the
+# threshold as a location boundary inside the current box; replace it with
+# pair/session-calibrated failed-break outcome stats once there are enough
+# tagged support-override STOP fills.
+FORECAST_SUPPORT_RANGE_EDGE_CHASE_POSITION = _env_float(
+    "QR_FORECAST_SUPPORT_RANGE_EDGE_CHASE_POSITION",
+    0.80,
+    minimum=0.50,
+)
 # Directional projection support must beat random direction by at least five
 # points before it can offset pair-forecast calibration. Spread/RR/risk gates
 # still run after this, so this is only permission to avoid a forecast-only veto.
@@ -5904,6 +5916,13 @@ def _forecast_market_support_allows_side(
         source if isinstance(source, dict) else {},
         support,
     )
+    if _forecast_support_override_stop_entry_chases_range_edge(
+        source,
+        side=side,
+        direction=direction,
+        order_type=order_type,
+    ):
+        return False
     if breakout_proof and timing_evidence and confidence >= support_floor and not known_weak_direction_bucket:
         return True
     strong_directional_floor = max(
@@ -5944,6 +5963,50 @@ def _forecast_market_support_allows_side(
         and (timing_samples or 0) >= FORECAST_MARKET_SUPPORT_MIN_SAMPLES
         and (timing_hit_rate or 0.0) >= FORECAST_MARKET_SUPPORT_MIN_TIMING_HIT_RATE
     )
+
+
+def _forecast_support_override_stop_entry_chases_range_edge(
+    source: Any,
+    *,
+    side: str | None,
+    direction: str,
+    order_type: OrderType | None,
+) -> bool:
+    if order_type != OrderType.STOP_ENTRY or side not in {Side.LONG.value, Side.SHORT.value}:
+        return False
+    if not isinstance(source, dict):
+        return False
+    expected_trend = "TREND_UP" if side == Side.LONG.value else "TREND_DOWN"
+    m5_regime = str(source.get("m5_regime") or "").upper()
+    if m5_regime == expected_trend:
+        return False
+    range_phase = str(source.get("range_phase") or "").upper()
+    breakout_direction = str(source.get("range_breakout_direction") or "").upper()
+    if range_phase in {"BREAKOUT_UP", "BREAKOUT_DOWN"} and breakout_direction == direction:
+        return False
+
+    tf_map = source.get("tf_regime_map")
+    if not isinstance(tf_map, dict):
+        return False
+    edge = FORECAST_SUPPORT_RANGE_EDGE_CHASE_POSITION
+    lower_edge = 1.0 - edge
+    for timeframe in ("M5", "M15"):
+        tf_data = tf_map.get(timeframe)
+        if not isinstance(tf_data, dict):
+            continue
+        classification = str(
+            tf_data.get("classification") or tf_data.get("regime") or tf_data.get("state") or ""
+        ).upper()
+        if classification == expected_trend:
+            continue
+        position = _optional_float(tf_data.get("range_position"))
+        if position is None:
+            continue
+        if side == Side.LONG.value and position >= edge:
+            return True
+        if side == Side.SHORT.value and position <= lower_edge:
+            return True
+    return False
 
 
 def _fresh_entry_live_reward_risk_issue(intent: OrderIntent, metrics: Any | None) -> dict[str, str] | None:
