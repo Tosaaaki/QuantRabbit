@@ -1587,6 +1587,7 @@ class SelfImprovementAuditorTest(unittest.TestCase):
 
             summary = _run(files)
             payload = json.loads(files["output"].read_text())
+            report_text = files["report"].read_text()
 
         codes = {item["code"]: item for item in payload["findings"]}
         evidence = codes["TARGET_OPEN_NO_LIVE_READY_LANES"]["evidence"]
@@ -1601,6 +1602,9 @@ class SelfImprovementAuditorTest(unittest.TestCase):
         self.assertEqual(runner_diagnostics["runner_qualified_lanes"], 0)
         self.assertEqual(runner_diagnostics["top_demotion_reasons"][0]["reason"], "RANGE regime is not a clean runner trend")
         self.assertEqual(runner_diagnostics["top_issue_codes"][0]["code"], "TREND_MARKET_NOT_OPERATING_TREND")
+        self.assertIn("runner candidates", report_text)
+        self.assertIn("RUNNER_CANDIDATES_DEMOTED_TO_HARVEST", report_text)
+        self.assertIn("RANGE regime is not a clean runner trend=3", report_text)
         self.assertEqual(dry_run_blockers["FORECAST_CONFIDENCE_REQUIRED_FOR_LIVE"]["count"], 1)
         self.assertEqual(dry_run_blockers["STRATEGY_NOT_ELIGIBLE"]["count"], 1)
         self.assertNotIn("STRATEGY_PROFILE_MISSING", dry_run_blockers)

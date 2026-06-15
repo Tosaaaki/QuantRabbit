@@ -599,6 +599,7 @@ class SelfImprovementAuditor:
                 lines.append(
                     f"- `{item['priority']}` `{item['layer']}` `{item['code']}`: {item['message']} Next: {item['next_action']}"
                 )
+                lines.extend(_finding_report_details(item))
         else:
             lines.append("- None")
         lines.extend(["", "## Next Actions", ""])
@@ -5027,6 +5028,31 @@ def _finding(
     if evidence:
         payload["evidence"] = evidence
     return payload
+
+
+def _finding_report_details(item: dict[str, Any]) -> list[str]:
+    evidence = item.get("evidence") if isinstance(item.get("evidence"), dict) else {}
+    runner_diag = (
+        evidence.get("runner_candidate_diagnostics")
+        if isinstance(evidence.get("runner_candidate_diagnostics"), dict)
+        else {}
+    )
+    if not runner_diag:
+        return []
+    reasons = runner_diag.get("top_demotion_reasons")
+    reason_text = ", ".join(
+        f"{reason.get('reason')}={reason.get('count')}"
+        for reason in (reasons if isinstance(reasons, list) else [])[:3]
+        if isinstance(reason, dict) and str(reason.get("reason") or "").strip()
+    )
+    return [
+        "  - runner candidates: "
+        f"status=`{runner_diag.get('status')}`, "
+        f"trend=`{runner_diag.get('trend_candidate_lanes')}`, "
+        f"runner_qualified=`{runner_diag.get('runner_qualified_lanes')}`, "
+        f"attached_harvest=`{runner_diag.get('attached_harvest_lanes')}`, "
+        f"demotions=`{reason_text or 'none'}`"
+    ]
 
 
 def _dedupe_findings(findings: list[dict[str, Any]]) -> list[dict[str, Any]]:
