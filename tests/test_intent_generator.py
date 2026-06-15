@@ -2706,6 +2706,9 @@ class IntentGeneratorTest(unittest.TestCase):
                 current_price=1.17326,
                 target_price=None,
                 invalidation_price=None,
+                range_low_price=1.1724,
+                range_high_price=1.1748,
+                range_width_pips=24.0,
                 horizon_min=60,
                 rationale_summary="RANGE forecast still supports box rotation",
                 drivers_for=("M5 range rail holds",),
@@ -2748,6 +2751,9 @@ class IntentGeneratorTest(unittest.TestCase):
         self.assertTrue(seed["intent"]["metadata"]["forecast_seed"])
         self.assertEqual(seed["intent"]["metadata"]["forecast_direction"], "RANGE")
         self.assertEqual(seed["intent"]["metadata"]["forecast_confidence"], 0.52)
+        self.assertEqual(seed["intent"]["metadata"]["forecast_range_low_price"], 1.1724)
+        self.assertEqual(seed["intent"]["metadata"]["forecast_range_high_price"], 1.1748)
+        self.assertEqual(seed["intent"]["metadata"]["forecast_range_width_pips"], 24.0)
         self.assertEqual(seed["intent"]["metadata"]["geometry_model"], "RANGE_RAIL_LIMIT")
         self.assertNotIn("FORECAST_CONFIDENCE_REQUIRED_FOR_LIVE", seed_issue_codes)
 
