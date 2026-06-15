@@ -536,17 +536,29 @@ class EntryThesis:
 
     @classmethod
     def from_dict(cls, d: dict) -> "EntryThesis":
+        side = str(d.get("side", ""))
+        entry_price = float(d.get("entry_price", 0))
         return cls(
             timestamp_utc=str(d.get("timestamp_utc", "")),
             trade_id=str(d.get("trade_id", "")),
             pair=str(d.get("pair", "")),
-            side=str(d.get("side", "")),
-            entry_price=float(d.get("entry_price", 0)),
+            side=side,
+            entry_price=entry_price,
             forecast_direction=str(d.get("forecast_direction", "UNCLEAR")),
             forecast_confidence=float(d.get("forecast_confidence", 0)),
             regime=d.get("regime"),
-            invalidation_price=d.get("invalidation_price"),
-            target_price=d.get("target_price"),
+            invalidation_price=_first_directional_price(
+                side=side,
+                entry_price=entry_price,
+                role="INVALIDATION",
+                values=(d.get("invalidation_price"),),
+            ),
+            target_price=_first_directional_price(
+                side=side,
+                entry_price=entry_price,
+                role="TARGET",
+                values=(d.get("target_price"),),
+            ),
             key_drivers=list(d.get("key_drivers", [])),
             context_evidence=dict(d.get("context_evidence") or {}) if isinstance(d.get("context_evidence"), dict) else {},
             horizon_hours=_optional_positive_float(d.get("horizon_hours")),
@@ -598,17 +610,29 @@ class PendingEntryThesis:
 
     @classmethod
     def from_dict(cls, d: dict) -> "PendingEntryThesis":
+        side = str(d.get("side", ""))
+        entry_price = float(d.get("entry_price", 0))
         return cls(
             timestamp_utc=str(d.get("timestamp_utc", "")),
             order_id=str(d.get("order_id", "")),
             pair=str(d.get("pair", "")),
-            side=str(d.get("side", "")),
-            entry_price=float(d.get("entry_price", 0)),
+            side=side,
+            entry_price=entry_price,
             forecast_direction=str(d.get("forecast_direction", "UNCLEAR")),
             forecast_confidence=float(d.get("forecast_confidence", 0)),
             regime=d.get("regime"),
-            invalidation_price=d.get("invalidation_price"),
-            target_price=d.get("target_price"),
+            invalidation_price=_first_directional_price(
+                side=side,
+                entry_price=entry_price,
+                role="INVALIDATION",
+                values=(d.get("invalidation_price"),),
+            ),
+            target_price=_first_directional_price(
+                side=side,
+                entry_price=entry_price,
+                role="TARGET",
+                values=(d.get("target_price"),),
+            ),
             key_drivers=list(d.get("key_drivers", [])),
             lane_id=d.get("lane_id"),
             context_evidence=dict(d.get("context_evidence") or {}) if isinstance(d.get("context_evidence"), dict) else {},
@@ -1071,6 +1095,41 @@ def _first_price(*values: Any) -> Optional[float]:
     return None
 
 
+def _first_directional_price(
+    *,
+    side: str,
+    entry_price: Any,
+    role: str,
+    values: tuple[Any, ...],
+) -> Optional[float]:
+    """Return the first price that is on the correct side of entry.
+
+    Forecast geometry is advisory at thesis-record time; broker/intent
+    protection prices are the executable truth. If a forecast target or
+    invalidation is on the wrong side of the actual entry, recording it as the
+    entry thesis poisons later thesis-evolution checks. Keep the record
+    directional, or leave the field empty when no valid candidate exists.
+    """
+    side_up = str(side or "").upper()
+    if side_up not in {"LONG", "SHORT"}:
+        return _first_price(*values)
+    entry = _safe_float(entry_price)
+    if entry is None or entry <= 0.0:
+        return _first_price(*values)
+    role_up = str(role or "").upper()
+    for value in values:
+        parsed = _safe_float(value)
+        if parsed is None or parsed <= 0.0:
+            continue
+        if role_up == "TARGET":
+            if (side_up == "LONG" and parsed > entry) or (side_up == "SHORT" and parsed < entry):
+                return parsed
+        elif role_up == "INVALIDATION":
+            if (side_up == "LONG" and parsed < entry) or (side_up == "SHORT" and parsed > entry):
+                return parsed
+    return None
+
+
 def _nested_price(payload: Any, key: str) -> Optional[float]:
     if not isinstance(payload, dict):
         return None
@@ -1180,15 +1239,25 @@ def record_entry_thesis_from_response_result(
                 forecast_confidence=float(forecast.get("confidence") or 0.0),
                 horizon_hours=_thesis_horizon_hours_from_forecast(forecast),
                 regime=str(forecast.get("regime") or metadata.get("regime_state") or "") or None,
-                invalidation_price=_first_price(
-                    forecast.get("invalidation_price"),
-                    _response_protection_price(response, "sl"),
-                    getattr(intent, "sl", None),
+                invalidation_price=_first_directional_price(
+                    side=side_up,
+                    entry_price=getattr(intent, "entry", None),
+                    role="INVALIDATION",
+                    values=(
+                        forecast.get("invalidation_price"),
+                        _response_protection_price(response, "sl"),
+                        getattr(intent, "sl", None),
+                    ),
                 ),
-                target_price=_first_price(
-                    forecast.get("target_price"),
-                    _response_protection_price(response, "tp"),
-                    getattr(intent, "tp", None),
+                target_price=_first_directional_price(
+                    side=side_up,
+                    entry_price=getattr(intent, "entry", None),
+                    role="TARGET",
+                    values=(
+                        forecast.get("target_price"),
+                        _response_protection_price(response, "tp"),
+                        getattr(intent, "tp", None),
+                    ),
                 ),
                 key_drivers=_build_key_drivers(
                     forecast=forecast,
@@ -1248,15 +1317,25 @@ def record_entry_thesis_from_response_result(
             forecast_confidence=float(forecast.get("confidence") or 0.0),
             horizon_hours=_thesis_horizon_hours_from_forecast(forecast),
             regime=str(regime) if regime else None,
-            invalidation_price=_first_price(
-                forecast.get("invalidation_price"),
-                _response_protection_price(response, "sl"),
-                getattr(intent, "sl", None),
+            invalidation_price=_first_directional_price(
+                side=side_up,
+                entry_price=fill_price,
+                role="INVALIDATION",
+                values=(
+                    forecast.get("invalidation_price"),
+                    _response_protection_price(response, "sl"),
+                    getattr(intent, "sl", None),
+                ),
             ),
-            target_price=_first_price(
-                forecast.get("target_price"),
-                _response_protection_price(response, "tp"),
-                getattr(intent, "tp", None),
+            target_price=_first_directional_price(
+                side=side_up,
+                entry_price=fill_price,
+                role="TARGET",
+                values=(
+                    forecast.get("target_price"),
+                    _response_protection_price(response, "tp"),
+                    getattr(intent, "tp", None),
+                ),
             ),
             key_drivers=_build_key_drivers(
                 forecast=forecast,
@@ -1338,13 +1417,23 @@ def record_entry_thesis_from_order_fill(
             forecast_confidence=pending.forecast_confidence,
             horizon_hours=pending.horizon_hours,
             regime=pending.regime,
-            invalidation_price=_first_price(
-                pending.invalidation_price,
-                _transaction_protection_price(transaction, "sl"),
+            invalidation_price=_first_directional_price(
+                side=side,
+                entry_price=price,
+                role="INVALIDATION",
+                values=(
+                    pending.invalidation_price,
+                    _transaction_protection_price(transaction, "sl"),
+                ),
             ),
-            target_price=_first_price(
-                pending.target_price,
-                _transaction_protection_price(transaction, "tp"),
+            target_price=_first_directional_price(
+                side=side,
+                entry_price=price,
+                role="TARGET",
+                values=(
+                    pending.target_price,
+                    _transaction_protection_price(transaction, "tp"),
+                ),
             ),
             key_drivers=list(pending.key_drivers),
             context_evidence=dict(pending.context_evidence),

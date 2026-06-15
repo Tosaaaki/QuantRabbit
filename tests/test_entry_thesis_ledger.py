@@ -135,6 +135,30 @@ class EntryThesisLedgerTest(unittest.TestCase):
             self.assertEqual(loaded.forecast_direction, "UP")
             self.assertAlmostEqual(loaded.forecast_confidence, 0.72)
 
+    def test_load_entry_thesis_sanitizes_wrong_side_geometry(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            (root / "entry_thesis_ledger.jsonl").write_text(json.dumps({
+                "timestamp_utc": "2026-06-15T06:30:03Z",
+                "trade_id": "472445",
+                "pair": "EUR_CHF",
+                "side": "LONG",
+                "entry_price": 0.92179,
+                "forecast_direction": "UP",
+                "forecast_confidence": 0.46,
+                "regime": "RANGE",
+                "invalidation_price": 0.92210,
+                "target_price": 0.92155,
+                "key_drivers": [],
+            }) + "\n")
+
+            loaded = load_entry_thesis("472445", root)
+
+            self.assertIsNotNone(loaded)
+            assert loaded is not None
+            self.assertIsNone(loaded.target_price)
+            self.assertIsNone(loaded.invalidation_price)
+
     def test_load_latest_forecast_returns_most_recent_per_pair(self) -> None:
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
@@ -263,6 +287,117 @@ class EntryThesisLedgerTest(unittest.TestCase):
             assert written is not None
             self.assertAlmostEqual(written.target_price or 0.0, 1.105)
             self.assertAlmostEqual(written.invalidation_price or 0.0, 1.092)
+
+    def test_immediate_fill_skips_wrong_side_forecast_geometry(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            (root / "forecast_history.jsonl").write_text(json.dumps({
+                "pair": "EUR_CHF",
+                "direction": "UP",
+                "confidence": 0.46,
+                "target_price": 0.92155,
+                "invalidation_price": 0.92210,
+            }) + "\n")
+
+            class FakeIntent:
+                pair = "EUR_CHF"
+                side = _SideEnum("LONG")
+                thesis = "EUR_CHF LONG weak forecast with broker TP/SL"
+                entry = 0.92179
+                tp = 0.92317
+                sl = 0.91909
+                metadata: dict = {}
+
+            response = {
+                "orderCreateTransaction": {
+                    "takeProfitOnFill": {"price": "0.92317"},
+                    "stopLossOnFill": {"price": "0.91909"},
+                },
+                "orderFillTransaction": {
+                    "tradeOpened": {"tradeID": "472445"},
+                    "price": "0.92179",
+                },
+            }
+
+            written = record_entry_thesis_from_response(
+                response=response,
+                intent=FakeIntent(),
+                data_root=root,
+            )
+
+            assert written is not None
+            self.assertAlmostEqual(written.entry_price, 0.92179)
+            self.assertAlmostEqual(written.target_price or 0.0, 0.92317)
+            self.assertAlmostEqual(written.invalidation_price or 0.0, 0.91909)
+
+    def test_pending_order_skips_wrong_side_forecast_geometry_before_promotion(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            (root / "forecast_history.jsonl").write_text(json.dumps({
+                "pair": "EUR_CHF",
+                "direction": "UP",
+                "confidence": 0.46,
+                "target_price": 0.92155,
+                "invalidation_price": 0.92210,
+            }) + "\n")
+
+            class FakeIntent:
+                pair = "EUR_CHF"
+                side = _SideEnum("LONG")
+                thesis = "EUR_CHF LONG pending stop"
+                entry = 0.92177
+                tp = 0.92317
+                sl = 0.91909
+                market_context = _MarketContext()
+                metadata = {"parent_lane_id": "trend_trader:EUR_CHF:LONG:TREND_CONTINUATION"}
+
+            result = record_entry_thesis_from_response_result(
+                response={
+                    "orderCreateTransaction": {
+                        "id": "472444",
+                        "type": "STOP_ORDER",
+                        "instrument": "EUR_CHF",
+                        "takeProfitOnFill": {"price": "0.92317"},
+                        "stopLossOnFill": {"price": "0.91909"},
+                    }
+                },
+                intent=FakeIntent(),
+                data_root=root,
+                now=datetime(2026, 6, 15, 6, 13, 46, tzinfo=timezone.utc),
+            )
+
+            self.assertEqual(result.status, "PENDING_RECORDED")
+            pending = load_pending_entry_thesis("472444", root)
+            self.assertIsNotNone(pending)
+            assert pending is not None
+            self.assertAlmostEqual(pending.target_price or 0.0, 0.92317)
+            self.assertAlmostEqual(pending.invalidation_price or 0.0, 0.91909)
+
+            promoted = record_entry_thesis_from_order_fill(
+                transaction={
+                    "id": "472445",
+                    "type": "ORDER_FILL",
+                    "time": "2026-06-15T06:30:03.688976115Z",
+                    "orderID": "472444",
+                    "instrument": "EUR_CHF",
+                    "units": "6300",
+                    "price": "0.92179",
+                    "tradeOpened": {
+                        "tradeID": "472445",
+                        "units": "6300",
+                        "price": "0.92179",
+                    },
+                    "takeProfitOnFill": {"price": "0.92317"},
+                    "stopLossOnFill": {"price": "0.91909"},
+                },
+                data_root=root,
+            )
+
+            self.assertIsNotNone(promoted)
+            assert promoted is not None
+            self.assertAlmostEqual(promoted.entry_price, 0.92179)
+            self.assertAlmostEqual(promoted.target_price or 0.0, 0.92317)
+            self.assertAlmostEqual(promoted.invalidation_price or 0.0, 0.91909)
 
     def test_record_from_send_response_persists_market_context_evidence(self) -> None:
         with tempfile.TemporaryDirectory() as td:
