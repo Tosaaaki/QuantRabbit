@@ -1432,6 +1432,43 @@ class SelfImprovementAuditorTest(unittest.TestCase):
         )
         self.assertEqual(payload["runtime"]["open_trader_pending_entries"], 1)
 
+    def test_market_evidence_refresh_downgrades_no_live_ready_hole_from_p0(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root, active_position=False)
+            files["coverage"].write_text(
+                json.dumps(
+                    {
+                        "generated_at_utc": _NOW.isoformat(),
+                        "status": "COVERAGE_GAP",
+                        "artifact_diagnostics": {
+                            "requires_market_evidence_refresh": True,
+                            "all_lanes_spread_blocked": True,
+                            "all_lanes_quote_stale": False,
+                            "quote_stale_result_count": 8,
+                            "spread_normalized_candidate_count": 2,
+                            "spread_normalized_candidate_reward_jpy": 2376.0,
+                        },
+                        "action_items": [
+                            "refresh broker-snapshot and generate-intents after quotes and spreads are tradable",
+                        ],
+                    }
+                )
+            )
+
+            summary = _run(files)
+            payload = json.loads(files["output"].read_text())
+
+        codes = {item["code"]: item for item in payload["findings"]}
+        finding = codes["TARGET_OPEN_NO_LIVE_READY_LANES"]
+        evidence = finding["evidence"]["coverage_market_evidence_refresh"]
+        self.assertEqual(summary.status, STATUS_ACTION_REQUIRED)
+        self.assertEqual(summary.p0_findings, 0)
+        self.assertEqual(finding["priority"], "P1")
+        self.assertTrue(evidence["requires_market_evidence_refresh"])
+        self.assertTrue(evidence["all_lanes_spread_blocked"])
+        self.assertEqual(evidence["spread_normalized_candidate_count"], 2)
+
     def test_no_live_ready_evidence_names_dry_run_passed_live_gates(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

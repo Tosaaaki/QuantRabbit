@@ -41,6 +41,7 @@ from quant_rabbit.paths import (
     DEFAULT_CALENDAR_SNAPSHOT,
     DEFAULT_CAMPAIGN_PLAN,
     DEFAULT_CODEX_TRADER_DECISION_RESPONSE,
+    DEFAULT_COVERAGE_OPTIMIZATION,
     DEFAULT_COT_SNAPSHOT,
     DEFAULT_CROSS_ASSET_SNAPSHOT,
     DEFAULT_CURRENCY_STRENGTH,
@@ -160,6 +161,7 @@ def route_trader_prompts(
     campaign_plan_path: Path | None = DEFAULT_CAMPAIGN_PLAN,
     memory_health_path: Path | None = DEFAULT_MEMORY_HEALTH,
     self_improvement_audit_path: Path | None = DEFAULT_SELF_IMPROVEMENT_AUDIT,
+    coverage_optimization_path: Path | None = DEFAULT_COVERAGE_OPTIMIZATION,
     strategy_profile_path: Path | None = DEFAULT_STRATEGY_PROFILE,
     trader_overrides_path: Path | None = DEFAULT_TRADER_OVERRIDES,
     decision_response_path: Path | None = DEFAULT_CODEX_TRADER_DECISION_RESPONSE,
@@ -309,6 +311,9 @@ def route_trader_prompts(
         intents,
         memory_health_path=memory_health_path,
     )
+    coverage_market_evidence_refresh_reasons = _coverage_market_evidence_refresh_reasons(
+        coverage_optimization_path=coverage_optimization_path,
+    )
     self_improvement_audit_refresh_reasons = _self_improvement_audit_refresh_reasons(
         target_state,
         snapshot,
@@ -321,6 +326,7 @@ def route_trader_prompts(
         *campaign_plan_refresh_reasons,
         *order_intents_context_refresh_reasons,
         *memory_health_refresh_reasons,
+        *coverage_market_evidence_refresh_reasons,
         *self_improvement_audit_refresh_reasons,
     )
     if evidence_refresh_reasons:
@@ -1845,6 +1851,43 @@ def _self_improvement_audit_refresh_reasons(
         generated_at=generated_at,
         snapshot=snapshot,
         intents=intents,
+    )
+
+
+def _coverage_market_evidence_refresh_reasons(
+    *,
+    coverage_optimization_path: Path | None,
+) -> tuple[str, ...]:
+    if coverage_optimization_path is None or not coverage_optimization_path.exists():
+        return ()
+    try:
+        payload = _load_json(coverage_optimization_path)
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        return (
+            f"coverage optimization unreadable: {coverage_optimization_path}: {exc}; "
+            "run optimize-coverage before entry routing",
+        )
+    diagnostics = payload.get("artifact_diagnostics") if isinstance(payload.get("artifact_diagnostics"), dict) else {}
+    if not diagnostics.get("requires_market_evidence_refresh"):
+        return ()
+    details: list[str] = []
+    if diagnostics.get("all_lanes_spread_blocked"):
+        details.append("all_lanes_spread_blocked=true")
+    if diagnostics.get("all_lanes_quote_stale"):
+        details.append("all_lanes_quote_stale=true")
+    quote_count = diagnostics.get("quote_stale_result_count")
+    if quote_count is not None:
+        details.append(f"quote_stale_results={quote_count}")
+    spread_count = diagnostics.get("spread_normalized_candidate_count")
+    if spread_count is not None:
+        details.append(f"spread_normalized_candidates={spread_count}")
+    generated_at = payload.get("generated_at_utc")
+    if generated_at:
+        details.append(f"coverage_generated={generated_at}")
+    suffix = f" ({', '.join(details)})" if details else ""
+    return (
+        "coverage optimization requires fresh market evidence before judging no-live-ready lanes; "
+        f"refresh broker-snapshot/generate-intents after quotes and spreads are tradable{suffix}",
     )
 
 

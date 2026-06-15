@@ -114,6 +114,34 @@ class TraderPromptRouteTest(unittest.TestCase):
         self.assertTrue(any("PROJECTION_LEDGER_EXPIRED_PENDING blocks entry routing" in reason for reason in route.reasons))
         self.assertTrue(any("count=33" in reason for reason in route.reasons))
 
+    def test_coverage_market_evidence_refresh_routes_to_refresh_before_learning_gap(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root)
+            files["intents"].write_text(
+                json.dumps({"generated_at_utc": datetime.now(timezone.utc).isoformat(), "results": []})
+            )
+            files["coverage_optimization"].write_text(
+                json.dumps(
+                    {
+                        "generated_at_utc": datetime.now(timezone.utc).isoformat(),
+                        "status": "COVERAGE_GAP",
+                        "artifact_diagnostics": {
+                            "requires_market_evidence_refresh": True,
+                            "all_lanes_spread_blocked": True,
+                            "quote_stale_result_count": 4,
+                            "spread_normalized_candidate_count": 2,
+                        },
+                    }
+                )
+            )
+
+            route = route_trader_prompts(**_route_paths(files), decision_response_path=None)
+
+        self.assertEqual(route.branch, BRANCH_REFRESH)
+        self.assertTrue(any("coverage optimization requires fresh market evidence" in reason for reason in route.reasons))
+        self.assertTrue(any("all_lanes_spread_blocked=true" in reason for reason in route.reasons))
+
     def test_persistent_stale_gpt_decision_p0_routes_to_fresh_decision(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -2690,6 +2718,7 @@ def _route_paths(files: dict[str, Path]) -> dict[str, Path]:
         "campaign_plan_path": files["campaign_plan"],
         "memory_health_path": files["memory_health"],
         "self_improvement_audit_path": files["self_improvement_audit"],
+        "coverage_optimization_path": files["coverage_optimization"],
         "strategy_profile_path": files["strategy_profile"],
         "trader_overrides_path": files["trader_overrides"],
         "gpt_decision_path": files["gpt_decision"],
@@ -2723,6 +2752,7 @@ def _fixtures(root: Path, *, positions: list[dict] | None = None) -> dict[str, P
         "campaign_plan": root / "daily_campaign_plan.json",
         "memory_health": root / "memory_health.json",
         "self_improvement_audit": root / "self_improvement_audit.json",
+        "coverage_optimization": root / "coverage_optimization.json",
         "strategy_profile": root / "strategy_profile.json",
         "history_db": root / "legacy_history.db",
         "trader_overrides": root / "trader_overrides.json",
@@ -2840,6 +2870,16 @@ def _fixtures(root: Path, *, positions: list[dict] | None = None) -> dict[str, P
                 "p1_findings": 0,
                 "p2_findings": 0,
                 "findings": [],
+            }
+        )
+    )
+    files["coverage_optimization"].write_text(
+        json.dumps(
+            {
+                "generated_at_utc": now,
+                "status": "LIVE_READY_COVERAGE_READY",
+                "artifact_diagnostics": {"requires_market_evidence_refresh": False},
+                "action_items": [],
             }
         )
     )

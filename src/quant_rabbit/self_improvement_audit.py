@@ -351,6 +351,7 @@ class SelfImprovementAuditor:
                 live_ready=live_ready,
                 active_positions=active_positions,
                 pending_entry_orders=pending_entry_orders,
+                coverage_optimization=coverage_loaded.payload or {},
             )
         )
         findings.extend(
@@ -2582,21 +2583,29 @@ def _intent_findings(
     live_ready: list[dict[str, Any]],
     active_positions: list[dict[str, Any]],
     pending_entry_orders: list[dict[str, Any]],
+    coverage_optimization: dict[str, Any],
 ) -> list[dict[str, Any]]:
     out: list[dict[str, Any]] = []
     if target_open and not live_ready:
         entry_path_occupied = bool(active_positions or pending_entry_orders)
+        coverage_refresh = _coverage_market_evidence_refresh(coverage_optimization)
         out.append(
             _finding(
                 run_id=run_id,
-                priority="P0" if not entry_path_occupied else "P1",
+                priority="P0" if not (entry_path_occupied or coverage_refresh) else "P1",
                 layer="opportunity",
                 code="TARGET_OPEN_NO_LIVE_READY_LANES",
                 message="daily target is open but order_intents has no LIVE_READY lanes",
-                next_action="Refresh market context and inspect top live blockers instead of ending flat without a named gate.",
+                next_action=(
+                    "Refresh broker truth and regenerate intents after quotes/spreads become tradable; "
+                    "do not treat market-evidence noise as a strategy expansion defect yet."
+                    if coverage_refresh
+                    else "Refresh market context and inspect top live blockers instead of ending flat without a named gate."
+                ),
                 evidence={
                     "active_trader_positions": len(active_positions),
                     "trader_pending_entry_orders": _pending_entry_evidence(pending_entry_orders),
+                    "coverage_market_evidence_refresh": coverage_refresh,
                     "status_counts": _intent_status_counts(intents),
                     "top_blockers": _top_intent_blockers(intents),
                     "dry_run_passed_live_readiness_blockers": _top_intent_live_readiness_blockers(
@@ -2633,6 +2642,27 @@ def _intent_findings(
             )
         )
     return out
+
+
+def _coverage_market_evidence_refresh(payload: dict[str, Any]) -> dict[str, Any] | None:
+    diagnostics = payload.get("artifact_diagnostics") if isinstance(payload.get("artifact_diagnostics"), dict) else {}
+    if not diagnostics.get("requires_market_evidence_refresh"):
+        return None
+    action_items = payload.get("action_items") if isinstance(payload.get("action_items"), list) else []
+    return {
+        "coverage_status": payload.get("status"),
+        "generated_at_utc": payload.get("generated_at_utc"),
+        "requires_market_evidence_refresh": True,
+        "all_lanes_spread_blocked": bool(diagnostics.get("all_lanes_spread_blocked")),
+        "all_lanes_quote_stale": bool(diagnostics.get("all_lanes_quote_stale")),
+        "quote_stale_result_count": int(diagnostics.get("quote_stale_result_count") or 0),
+        "spread_normalized_candidate_count": int(diagnostics.get("spread_normalized_candidate_count") or 0),
+        "spread_normalized_candidate_reward_jpy": _maybe_float(
+            diagnostics.get("spread_normalized_candidate_reward_jpy")
+        )
+        or 0.0,
+        "action_items": [str(item) for item in action_items[:4]],
+    }
 
 
 def _order_intent_context_evidence_findings(

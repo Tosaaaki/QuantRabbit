@@ -22,6 +22,7 @@ PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli trader-prompt-route
 | Hard close sidecar exists, or soft close sidecar has explicit Gate B | `position_management` |
 | Soft-only close sidecar exists without Gate B and current `LIVE_READY` lanes exist | `entry_decision` with advisory reason |
 | Current unconsumed decision receipt exists and still matches current broker / intent artifacts | `verify_execute` |
+| Coverage diagnostics require market evidence refresh because current lanes are spread-blocked or quote-stale | `refresh_market_context` |
 | Daily target is open and current `LIVE_READY` lanes exist | `entry_decision` |
 | Daily target is open but no `LIVE_READY` lane exists | `learning_gap` |
 | Target reached or exposure needs review | `position_management` |
