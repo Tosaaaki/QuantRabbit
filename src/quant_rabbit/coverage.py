@@ -47,7 +47,11 @@ class CoverageLane:
     risk_jpy: float
     reward_jpy: float
     reward_risk: float
+    method: str
     opportunity_mode: str
+    tp_execution_mode: str
+    tp_target_intent: str
+    tp_attach_reason: str
     issue_codes: tuple[str, ...]
     counts_live_ready: bool
     counts_after_promotion: bool
@@ -129,6 +133,7 @@ class CoverageOptimizer:
         raw_live_ready_risk = _round(sum(lane.risk_jpy for lane in raw_live_ready_lanes))
         sequential_ladder = _sequential_ladder(live_ready_lanes, remaining_target, remaining_risk_budget)
         opportunity_modes = _opportunity_mode_summary(lanes, remaining_target)
+        runner_candidate_diagnostics = _runner_candidate_diagnostics(lanes)
         replay_gap = _replay_gap(replay)
         blockers = tuple(
             _blockers(
@@ -155,6 +160,7 @@ class CoverageOptimizer:
                 duplicate_live_ready_lanes=duplicate_live_ready_lanes,
                 sequential_ladder=sequential_ladder,
                 opportunity_modes=opportunity_modes,
+                runner_candidate_diagnostics=runner_candidate_diagnostics,
                 lanes=lanes,
                 replay_gap=replay_gap,
                 artifact_diagnostics=artifact_diagnostics,
@@ -193,6 +199,7 @@ class CoverageOptimizer:
             else 100.0,
             "potential_coverage_pct": _round((potential_reward / remaining_target) * 100.0) if remaining_target else 100.0,
             "opportunity_modes": opportunity_modes,
+            "runner_candidate_diagnostics": runner_candidate_diagnostics,
             "replay_gap": replay_gap,
             "artifact_diagnostics": artifact_diagnostics,
             "blockers": list(blockers),
@@ -285,6 +292,29 @@ class CoverageOptimizer:
                     f"blockers=`{top_blockers or 'none'}`"
                 )
             lines.append("")
+        runner_diag = (
+            payload.get("runner_candidate_diagnostics")
+            if isinstance(payload.get("runner_candidate_diagnostics"), dict)
+            else {}
+        )
+        if runner_diag:
+            lines.extend(["## Runner Candidate Diagnostics", ""])
+            top_reasons = runner_diag.get("top_demotion_reasons") if isinstance(runner_diag.get("top_demotion_reasons"), list) else []
+            reason_text = ", ".join(
+                f"{item.get('reason')}={item.get('count')}"
+                for item in top_reasons[:4]
+                if isinstance(item, dict) and item.get("reason")
+            )
+            lines.extend(
+                [
+                    f"- Status: `{runner_diag.get('status')}`",
+                    f"- Trend candidates: `{runner_diag.get('trend_candidate_lanes')}`",
+                    f"- Runner-qualified trend candidates: `{runner_diag.get('runner_qualified_lanes')}`",
+                    f"- Attached-HARVEST trend candidates: `{runner_diag.get('attached_harvest_lanes')}`",
+                    f"- Top demotion reasons: `{reason_text or 'none'}`",
+                    "",
+                ]
+            )
         bucket_diag = diagnostics.get("profitable_bucket_coverage") if isinstance(diagnostics.get("profitable_bucket_coverage"), dict) else {}
         if bucket_diag:
             lines.extend(
@@ -409,6 +439,8 @@ class CoverageOptimizer:
 
 def _coverage_lane(result: dict[str, Any]) -> CoverageLane:
     intent = result["intent"]
+    metadata = intent.get("metadata") if isinstance(intent.get("metadata"), dict) else {}
+    market_context = intent.get("market_context") if isinstance(intent.get("market_context"), dict) else {}
     pair = str(intent.get("pair") or "")
     direction = str(intent.get("side") or "")
     units = int(intent.get("units") or 0)
@@ -428,7 +460,11 @@ def _coverage_lane(result: dict[str, Any]) -> CoverageLane:
         risk_jpy=risk_jpy,
         reward_jpy=reward_jpy,
         reward_risk=reward_risk,
+        method=str(intent.get("method") or metadata.get("method") or market_context.get("method") or ""),
         opportunity_mode=_opportunity_mode(result, reward_risk),
+        tp_execution_mode=str(metadata.get("tp_execution_mode") or ""),
+        tp_target_intent=str(metadata.get("tp_target_intent") or ""),
+        tp_attach_reason=str(metadata.get("tp_attach_reason") or ""),
         issue_codes=tuple(_result_issue_codes(result)),
         counts_live_ready=status == "LIVE_READY" and not blockers,
         counts_after_promotion=(
@@ -592,6 +628,7 @@ def _action_items(
     duplicate_live_ready_lanes: int,
     sequential_ladder: dict[str, Any],
     opportunity_modes: dict[str, Any],
+    runner_candidate_diagnostics: dict[str, Any],
     lanes: tuple[CoverageLane, ...],
     replay_gap: str | None,
     artifact_diagnostics: dict[str, Any],
@@ -646,7 +683,10 @@ def _action_items(
             reward_gap = remaining_target - live_ready_reward
             avg_reward = _average_reward(lanes) or 1.0
             items.append(f"build at least {math.ceil(reward_gap / avg_reward)} additional live-ready trigger receipts")
-    mode_repair = _opportunity_mode_repair_item(opportunity_modes)
+    mode_repair = _opportunity_mode_repair_item(
+        opportunity_modes,
+        runner_candidate_diagnostics=runner_candidate_diagnostics,
+    )
     if mode_repair and not evidence_refresh_required:
         items.append(mode_repair)
     profitable_bucket_diag = (
@@ -1568,7 +1608,74 @@ def _opportunity_mode_summary(
     return summaries
 
 
-def _opportunity_mode_repair_item(opportunity_modes: dict[str, Any]) -> str | None:
+def _runner_candidate_diagnostics(lanes: tuple[CoverageLane, ...]) -> dict[str, Any]:
+    trend_candidates = tuple(lane for lane in lanes if lane.method == "TREND_CONTINUATION")
+    runner_qualified = tuple(
+        lane
+        for lane in trend_candidates
+        if lane.opportunity_mode == "RUNNER" or lane.tp_execution_mode == "RUNNER_NO_BROKER_TP"
+    )
+    attached_harvest = tuple(
+        lane
+        for lane in trend_candidates
+        if lane.tp_execution_mode == "ATTACHED_TECHNICAL_TP" or lane.tp_target_intent == "HARVEST"
+    )
+    reason_counts = Counter(lane.tp_attach_reason or "missing TP attach reason" for lane in attached_harvest)
+    issue_counts: Counter[str] = Counter()
+    blocker_counts: Counter[str] = Counter()
+    status_counts: Counter[str] = Counter()
+    for lane in trend_candidates:
+        status_counts[lane.status] += 1
+        issue_counts.update(lane.issue_codes)
+        blocker_counts.update(lane.blockers)
+    if runner_qualified:
+        status = "RUNNER_QUALIFIED"
+    elif trend_candidates:
+        status = "RUNNER_CANDIDATES_DEMOTED_TO_HARVEST"
+    else:
+        status = "NO_TREND_CONTINUATION_CANDIDATES"
+    return {
+        "status": status,
+        "trend_candidate_lanes": len(trend_candidates),
+        "runner_qualified_lanes": len(runner_qualified),
+        "attached_harvest_lanes": len(attached_harvest),
+        "status_counts": dict(sorted(status_counts.items(), key=lambda pair: (-pair[1], pair[0]))),
+        "top_demotion_reasons": [
+            {"reason": reason, "count": count}
+            for reason, count in reason_counts.most_common(8)
+        ],
+        "top_issue_codes": [
+            {"code": code, "count": count}
+            for code, count in issue_counts.most_common(8)
+        ],
+        "top_blockers": [
+            {"label": label, "count": count}
+            for label, count in blocker_counts.most_common(6)
+        ],
+        "top_lanes": [
+            {
+                "lane_id": lane.lane_id,
+                "status": lane.status,
+                "opportunity_mode": lane.opportunity_mode,
+                "tp_execution_mode": lane.tp_execution_mode,
+                "tp_attach_reason": lane.tp_attach_reason,
+                "reward_risk": lane.reward_risk,
+                "blockers": list(lane.blockers[:3]),
+            }
+            for lane in sorted(
+                trend_candidates,
+                key=lambda lane: (lane.reward_jpy, lane.reward_risk),
+                reverse=True,
+            )[:8]
+        ],
+    }
+
+
+def _opportunity_mode_repair_item(
+    opportunity_modes: dict[str, Any],
+    *,
+    runner_candidate_diagnostics: dict[str, Any] | None = None,
+) -> str | None:
     labels: list[str] = []
     for mode in ("HARVEST", "RUNNER"):
         item = opportunity_modes.get(mode) if isinstance(opportunity_modes.get(mode), dict) else {}
@@ -1598,6 +1705,24 @@ def _opportunity_mode_repair_item(opportunity_modes: dict[str, Any]) -> str | No
         missing_mode = "RUNNER" if present_mode == "HARVEST" else "HARVEST"
         missing_item = opportunity_modes.get(missing_mode) if isinstance(opportunity_modes.get(missing_mode), dict) else {}
         if int(missing_item.get("lanes") or 0) <= 0:
+            runner_diag = runner_candidate_diagnostics if isinstance(runner_candidate_diagnostics, dict) else {}
+            if missing_mode == "RUNNER" and int(runner_diag.get("trend_candidate_lanes") or 0) > 0:
+                reasons = runner_diag.get("top_demotion_reasons")
+                reason_labels = [
+                    str(item.get("reason"))
+                    for item in (reasons if isinstance(reasons, list) else [])[:3]
+                    if isinstance(item, dict) and str(item.get("reason") or "").strip()
+                ]
+                reason_text = (
+                    "; top demotions: " + ", ".join(reason_labels)
+                    if reason_labels
+                    else ""
+                )
+                return (
+                    "repair runner qualification before widening discovery: "
+                    f"{int(runner_diag.get('trend_candidate_lanes') or 0)} TREND_CONTINUATION lane(s) "
+                    f"were managed as HARVEST, so no clean RUNNER path is currently executable{reason_text}"
+                )
             return (
                 "repair the visible opportunity path before broad exploration and add missing "
                 f"{missing_mode} lane generation to avoid horizon opportunity loss: {labels[0]}"

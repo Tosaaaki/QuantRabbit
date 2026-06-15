@@ -218,6 +218,7 @@ class CoverageOptimizerTest(unittest.TestCase):
                             _result(
                                 "DRY_RUN_BLOCKED",
                                 lane_id="failure_trader:EUR_USD:LONG:BREAKOUT_FAILURE",
+                                method="BREAKOUT_FAILURE",
                                 risk_issues=[
                                     {
                                         "code": "REWARD_RISK_TOO_LOW",
@@ -293,6 +294,8 @@ class CoverageOptimizerTest(unittest.TestCase):
             target = root / "target.json"
             result = _result(
                 "DRY_RUN_BLOCKED",
+                lane_id="failure_trader:EUR_USD:LONG:BREAKOUT_FAILURE",
+                method="BREAKOUT_FAILURE",
                 risk_metrics={
                     "risk_jpy": 100.0,
                     "reward_jpy": 350.0,
@@ -336,6 +339,8 @@ class CoverageOptimizerTest(unittest.TestCase):
             target = root / "target.json"
             result = _result(
                 "DRY_RUN_BLOCKED",
+                lane_id="failure_trader:EUR_USD:LONG:BREAKOUT_FAILURE",
+                method="BREAKOUT_FAILURE",
                 risk_metrics={
                     "risk_jpy": 100.0,
                     "reward_jpy": 350.0,
@@ -369,6 +374,65 @@ class CoverageOptimizerTest(unittest.TestCase):
             self.assertEqual(payload["opportunity_modes"]["HARVEST"]["lanes"], 1)
             self.assertEqual(payload["opportunity_modes"]["RUNNER"]["lanes"], 0)
             self.assertTrue(any("add missing RUNNER lane generation" in item for item in payload["action_items"]))
+
+    def test_runner_candidate_diagnostics_explain_trend_lanes_demoted_to_harvest(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            intents = root / "intents.json"
+            target = root / "target.json"
+            result = _result(
+                "DRY_RUN_BLOCKED",
+                lane_id="trend_trader:GBP_USD:LONG:TREND_CONTINUATION",
+                pair="GBP_USD",
+                risk_issues=[
+                    {
+                        "code": "TREND_MARKET_NOT_OPERATING_TREND",
+                        "message": "RANGE regime is not a clean runner trend",
+                        "severity": "BLOCK",
+                    }
+                ],
+                risk_metrics={
+                    "risk_jpy": 100.0,
+                    "reward_jpy": 280.0,
+                    "reward_risk": 2.8,
+                    "spread_pips": 0.8,
+                },
+            )
+            result["intent"]["metadata"] = {
+                "opportunity_mode": "HARVEST",
+                "tp_execution_mode": "ATTACHED_TECHNICAL_TP",
+                "tp_target_intent": "HARVEST",
+                "tp_attach_reason": "RANGE regime is not a clean runner trend",
+            }
+            intents.write_text(json.dumps({"results": [result]}))
+            target.write_text(
+                json.dumps(
+                    {
+                        "status": "PURSUE_TARGET",
+                        "remaining_target_jpy": 500.0,
+                        "remaining_risk_budget_jpy": 500.0,
+                    }
+                )
+            )
+
+            CoverageOptimizer(
+                intents_path=intents,
+                target_state_path=target,
+                replay_path=root / "missing_replay.json",
+                market_context_matrix_path=_matrix(root),
+                output_path=root / "coverage.json",
+                report_path=root / "coverage.md",
+            ).run()
+
+            payload = json.loads((root / "coverage.json").read_text())
+            diagnostics = payload["runner_candidate_diagnostics"]
+            self.assertEqual(diagnostics["status"], "RUNNER_CANDIDATES_DEMOTED_TO_HARVEST")
+            self.assertEqual(diagnostics["trend_candidate_lanes"], 1)
+            self.assertEqual(diagnostics["runner_qualified_lanes"], 0)
+            self.assertEqual(diagnostics["attached_harvest_lanes"], 1)
+            self.assertEqual(diagnostics["top_demotion_reasons"][0]["reason"], "RANGE regime is not a clean runner trend")
+            self.assertTrue(any("repair runner qualification" in item for item in payload["action_items"]))
+            self.assertIn("Runner Candidate Diagnostics", (root / "coverage.md").read_text())
 
     def test_cli_coverage_gap_is_diagnostic_success(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -1147,6 +1211,7 @@ def _result(
     live_strategy_issues: list[dict] | None = None,
     risk_metrics: dict | None = None,
     include_risk_metrics: bool = True,
+    method: str = "TREND_CONTINUATION",
 ) -> dict:
     payload = {
         "lane_id": lane_id,
@@ -1169,7 +1234,7 @@ def _result(
                 "regime": "TREND_CONTINUATION campaign lane",
                 "narrative": "trend continuation pressure",
                 "chart_story": "trend staircase",
-                "method": "TREND_CONTINUATION",
+                "method": method,
                 "invalidation": "SL trades",
             },
         },
