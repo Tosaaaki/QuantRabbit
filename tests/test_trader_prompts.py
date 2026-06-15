@@ -57,6 +57,7 @@ class TraderPromptRouteTest(unittest.TestCase):
             files["self_improvement_audit"].write_text(
                 json.dumps(
                     {
+                        "generated_at_utc": datetime.now(timezone.utc).isoformat(),
                         "status": "SELF_IMPROVEMENT_BLOCKED",
                         "findings": [
                             {
@@ -92,6 +93,7 @@ class TraderPromptRouteTest(unittest.TestCase):
             files["self_improvement_audit"].write_text(
                 json.dumps(
                     {
+                        "generated_at_utc": datetime.now(timezone.utc).isoformat(),
                         "status": "SELF_IMPROVEMENT_BLOCKED",
                         "findings": [
                             {
@@ -119,6 +121,7 @@ class TraderPromptRouteTest(unittest.TestCase):
             files["self_improvement_audit"].write_text(
                 json.dumps(
                     {
+                        "generated_at_utc": datetime.now(timezone.utc).isoformat(),
                         "status": "SELF_IMPROVEMENT_BLOCKED",
                         "findings": [
                             {
@@ -165,6 +168,7 @@ class TraderPromptRouteTest(unittest.TestCase):
             files["self_improvement_audit"].write_text(
                 json.dumps(
                     {
+                        "generated_at_utc": datetime.now(timezone.utc).isoformat(),
                         "status": "SELF_IMPROVEMENT_BLOCKED",
                         "findings": [
                             {
@@ -195,6 +199,7 @@ class TraderPromptRouteTest(unittest.TestCase):
             files["self_improvement_audit"].write_text(
                 json.dumps(
                     {
+                        "generated_at_utc": datetime.now(timezone.utc).isoformat(),
                         "status": "SELF_IMPROVEMENT_BLOCKED",
                         "findings": [
                             {
@@ -233,6 +238,7 @@ class TraderPromptRouteTest(unittest.TestCase):
             files["self_improvement_audit"].write_text(
                 json.dumps(
                     {
+                        "generated_at_utc": datetime.now(timezone.utc).isoformat(),
                         "status": "SELF_IMPROVEMENT_BLOCKED",
                         "findings": [
                             {
@@ -380,6 +386,35 @@ class TraderPromptRouteTest(unittest.TestCase):
         self.assertEqual(route.branch, BRANCH_REFRESH)
         self.assertTrue(any("campaign plan target mismatch" in reason for reason in route.reasons))
 
+    def test_stale_order_intents_against_market_context_routes_open_target_to_refresh_branch(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root)
+            base = datetime(2026, 1, 1, tzinfo=timezone.utc)
+            intents = json.loads(files["intents"].read_text())
+            intents["generated_at_utc"] = base.isoformat()
+            intents["results"] = []
+            files["intents"].write_text(json.dumps(intents))
+            files["market_context_matrix"].write_text(
+                json.dumps(
+                    {
+                        "generated_at_utc": (base + timedelta(minutes=30)).isoformat(),
+                        "pairs": {
+                            "EUR_USD": {
+                                "LONG": {"context_refs": ["fixture:matrix"]},
+                                "SHORT": {"context_refs": ["fixture:matrix"]},
+                            }
+                        },
+                    }
+                )
+            )
+
+            route = route_trader_prompts(**_route_paths(files), decision_response_path=None)
+
+        self.assertEqual(route.branch, BRANCH_REFRESH)
+        self.assertTrue(any("order intents stale against market context" in reason for reason in route.reasons))
+        self.assertFalse(any("no current LIVE_READY lane" in reason for reason in route.reasons))
+
     def test_missing_memory_health_routes_open_target_to_refresh_branch(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -451,6 +486,38 @@ class TraderPromptRouteTest(unittest.TestCase):
         self.assertTrue(any("memory health audit stale" in reason for reason in route.reasons))
         self.assertTrue(any("order intents" in reason for reason in route.reasons))
         self.assertFalse(any("daily target state" in reason for reason in route.reasons))
+
+    def test_stale_self_improvement_audit_routes_open_target_to_refresh_branch(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root)
+            base = datetime(2026, 1, 1, tzinfo=timezone.utc)
+            snapshot_ts = (base + timedelta(minutes=3)).isoformat()
+            intents_ts = (base + timedelta(minutes=2)).isoformat()
+            audit_ts = (base + timedelta(minutes=1)).isoformat()
+            memory_ts = (base + timedelta(minutes=4)).isoformat()
+
+            snapshot = json.loads(files["snapshot"].read_text())
+            snapshot["fetched_at_utc"] = snapshot_ts
+            files["snapshot"].write_text(json.dumps(snapshot))
+
+            intents = json.loads(files["intents"].read_text())
+            intents["generated_at_utc"] = intents_ts
+            files["intents"].write_text(json.dumps(intents))
+
+            memory = json.loads(files["memory_health"].read_text())
+            memory["generated_at_utc"] = memory_ts
+            files["memory_health"].write_text(json.dumps(memory))
+
+            audit = json.loads(files["self_improvement_audit"].read_text())
+            audit["generated_at_utc"] = audit_ts
+            files["self_improvement_audit"].write_text(json.dumps(audit))
+
+            route = route_trader_prompts(**_route_paths(files), decision_response_path=None)
+
+        self.assertEqual(route.branch, BRANCH_REFRESH)
+        self.assertTrue(any("self-improvement audit stale" in reason for reason in route.reasons))
+        self.assertTrue(any("broker snapshot" in reason for reason in route.reasons))
 
     def test_current_accepted_gateway_decision_is_not_preempted_by_stale_memory_health(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -2128,6 +2195,8 @@ class TraderPromptRouteTest(unittest.TestCase):
                         str(files["currency_strength"]),
                         "--levels",
                         str(files["levels"]),
+                        "--market-context-matrix",
+                        str(files["market_context_matrix"]),
                         "--calendar",
                         str(files["calendar"]),
                         "--cot",
@@ -2142,6 +2211,8 @@ class TraderPromptRouteTest(unittest.TestCase):
                         str(files["campaign_plan"]),
                         "--memory-health",
                         str(files["memory_health"]),
+                        "--self-improvement-audit",
+                        str(files["self_improvement_audit"]),
                         "--strategy-profile",
                         str(files["strategy_profile"]),
                         "--trader-overrides",
@@ -2173,6 +2244,7 @@ def _route_paths(files: dict[str, Path]) -> dict[str, Path]:
         "flow_path": files["flow"],
         "currency_strength_path": files["currency_strength"],
         "levels_path": files["levels"],
+        "market_context_matrix_path": files["market_context_matrix"],
         "calendar_path": files["calendar"],
         "cot_path": files["cot"],
         "option_skew_path": files["option_skew"],
@@ -2205,6 +2277,7 @@ def _fixtures(root: Path, *, positions: list[dict] | None = None) -> dict[str, P
         "flow": root / "flow_snapshot.json",
         "currency_strength": root / "currency_strength.json",
         "levels": root / "levels_snapshot.json",
+        "market_context_matrix": root / "market_context_matrix.json",
         "calendar": root / "economic_calendar.json",
         "cot": root / "cot_snapshot.json",
         "option_skew": root / "option_skew_snapshot.json",
@@ -2266,6 +2339,7 @@ def _fixtures(root: Path, *, positions: list[dict] | None = None) -> dict[str, P
     files["intents"].write_text(
         json.dumps(
             {
+                "generated_at_utc": now,
                 "results": [
                     {
                         "lane_id": "trend_trader:EUR_USD:LONG:TREND_CONTINUATION",
@@ -2284,13 +2358,25 @@ def _fixtures(root: Path, *, positions: list[dict] | None = None) -> dict[str, P
         "flow",
         "currency_strength",
         "levels",
-        "calendar",
         "cot",
         "option_skew",
         "attack_advice",
         "learning_audit",
     ):
         files[key].write_text(json.dumps({}))
+    files["market_context_matrix"].write_text(
+        json.dumps(
+            {
+                "pairs": {
+                    "EUR_USD": {
+                        "LONG": {"context_refs": ["fixture:matrix"]},
+                        "SHORT": {"context_refs": ["fixture:matrix"]},
+                    }
+                },
+            }
+        )
+    )
+    files["calendar"].write_text(json.dumps({}))
     files["memory_health"].write_text(
         json.dumps(
             {

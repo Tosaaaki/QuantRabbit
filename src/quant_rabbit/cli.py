@@ -2021,6 +2021,7 @@ def main(argv: list[str] | None = None) -> int:
     p_prompt.add_argument("--learning-audit", type=Path, default=DEFAULT_LEARNING_AUDIT)
     p_prompt.add_argument("--campaign-plan", type=Path, default=DEFAULT_CAMPAIGN_PLAN)
     p_prompt.add_argument("--memory-health", type=Path, default=DEFAULT_MEMORY_HEALTH)
+    p_prompt.add_argument("--self-improvement-audit", type=Path, default=DEFAULT_SELF_IMPROVEMENT_AUDIT)
     p_prompt.add_argument("--strategy-profile", type=Path, default=DEFAULT_STRATEGY_PROFILE)
     p_prompt.add_argument("--trader-overrides", type=Path, default=DEFAULT_TRADER_OVERRIDES)
     p_prompt.add_argument("--decision-response", type=Path, default=DEFAULT_CODEX_TRADER_DECISION_RESPONSE)
@@ -3597,6 +3598,7 @@ def main(argv: list[str] | None = None) -> int:
                 learning_audit_path=args.learning_audit,
                 campaign_plan_path=args.campaign_plan,
                 memory_health_path=args.memory_health,
+                self_improvement_audit_path=args.self_improvement_audit,
                 strategy_profile_path=args.strategy_profile,
                 trader_overrides_path=args.trader_overrides,
                 decision_response_path=args.decision_response,

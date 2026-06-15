@@ -199,6 +199,7 @@ def route_trader_prompts(
     target_state = _load_json(target_state_path)
     intents = _load_json(intents_path)
     pair_charts = _load_json(pair_charts_path)
+    market_context_matrix = _load_json(market_context_matrix_path)
 
     position_sidecar_reasons = _position_management_sidecar_refresh_reasons(
         snapshot,
@@ -294,17 +295,32 @@ def route_trader_prompts(
         campaign_plan_path=campaign_plan_path,
         strategy_profile_path=strategy_profile_path,
     )
+    order_intents_context_refresh_reasons = _order_intents_context_refresh_reasons(
+        target_state,
+        intents,
+        market_context_matrix,
+        intents_path=intents_path,
+        market_context_matrix_path=market_context_matrix_path,
+    )
     memory_health_refresh_reasons = _memory_health_refresh_reasons(
         target_state,
         snapshot,
         intents,
         memory_health_path=memory_health_path,
     )
+    self_improvement_audit_refresh_reasons = _self_improvement_audit_refresh_reasons(
+        target_state,
+        snapshot,
+        intents,
+        self_improvement_audit_path=self_improvement_audit_path,
+    )
     evidence_refresh_reasons = (
         *trader_overrides_refresh_reasons,
         *strategy_profile_refresh_reasons,
         *campaign_plan_refresh_reasons,
+        *order_intents_context_refresh_reasons,
         *memory_health_refresh_reasons,
+        *self_improvement_audit_refresh_reasons,
     )
     if evidence_refresh_reasons:
         return _build_route(
@@ -1590,6 +1606,43 @@ def _campaign_plan_target_mismatch(plan: dict[str, Any], target_state: dict[str,
     return None
 
 
+def _order_intents_context_refresh_reasons(
+    target_state: dict[str, Any],
+    intents: dict[str, Any],
+    market_context_matrix: dict[str, Any],
+    *,
+    intents_path: Path,
+    market_context_matrix_path: Path,
+) -> tuple[str, ...]:
+    """Require candidate discovery to post-date the routed context matrix.
+
+    `market-context-matrix` folds macro, flow, levels, calendar, COT, option,
+    and chart context into the candidate evidence packet. If that matrix was
+    refreshed after `generate-intents`, no lane can honestly claim current
+    non-FX/news support or rejection, and a flat no-LIVE_READY result may just
+    be stale candidate discovery rather than a real opportunity gap.
+    """
+    if not _target_open(target_state):
+        return ()
+    matrix_generated_at = _parse_utc(market_context_matrix.get("generated_at_utc"))
+    if matrix_generated_at is None:
+        return ()
+    intents_generated_at = _parse_utc(intents.get("generated_at_utc"))
+    if intents_generated_at is None:
+        return (
+            f"order_intents lacks generated_at_utc while target is open: {intents_path}; "
+            "rerun generate-intents after the latest market-context-matrix before entry/learning routing",
+        )
+    if intents_generated_at < matrix_generated_at:
+        return (
+            "order intents stale against market context while target is open: "
+            f"order_intents generated at {intents_generated_at.isoformat()} predates "
+            f"market_context_matrix {matrix_generated_at.isoformat()} "
+            f"({market_context_matrix_path}); rerun generate-intents before entry/learning routing",
+        )
+    return ()
+
+
 def _memory_health_refresh_reasons(
     target_state: dict[str, Any],
     snapshot: dict[str, Any],
@@ -1671,6 +1724,67 @@ def _memory_health_staleness_reasons(
                 "memory health audit stale while target is open: "
                 f"memory_health generated at {generated_at.isoformat()} predates "
                 f"{label} {ref_ts.isoformat()}; run memory-health before entry/verify routing"
+            )
+    return tuple(reasons)
+
+
+def _self_improvement_audit_refresh_reasons(
+    target_state: dict[str, Any],
+    snapshot: dict[str, Any],
+    intents: dict[str, Any],
+    *,
+    self_improvement_audit_path: Path | None,
+) -> tuple[str, ...]:
+    """Require the live-facing repair gate to cover current routed evidence."""
+    if self_improvement_audit_path is None or not _target_open(target_state):
+        return ()
+    if not self_improvement_audit_path.exists():
+        return (
+            f"self-improvement audit missing while target is open: {self_improvement_audit_path}; "
+            "run self-improvement-audit before entry/verify routing",
+        )
+    try:
+        payload = _load_json(self_improvement_audit_path)
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        return (
+            f"self-improvement audit unreadable while target is open: {self_improvement_audit_path}: {exc}; "
+            "run self-improvement-audit before entry/verify routing",
+        )
+    generated_at = _parse_utc(payload.get("generated_at_utc"))
+    if generated_at is None:
+        return (
+            f"self-improvement audit lacks generated_at_utc while target is open: {self_improvement_audit_path}; "
+            "run self-improvement-audit before entry/verify routing",
+        )
+    return _self_improvement_audit_staleness_reasons(
+        generated_at=generated_at,
+        snapshot=snapshot,
+        intents=intents,
+    )
+
+
+def _self_improvement_audit_staleness_reasons(
+    *,
+    generated_at: datetime,
+    snapshot: dict[str, Any],
+    intents: dict[str, Any],
+) -> tuple[str, ...]:
+    refs: list[tuple[str, datetime]] = []
+    account = snapshot.get("account") if isinstance(snapshot.get("account"), dict) else {}
+    snapshot_ts = _parse_utc(snapshot.get("fetched_at_utc") or account.get("fetched_at_utc"))
+    intents_ts = _parse_utc(intents.get("generated_at_utc"))
+    if snapshot_ts is not None:
+        refs.append(("broker snapshot", snapshot_ts))
+    if intents_ts is not None:
+        refs.append(("order intents", intents_ts))
+
+    reasons: list[str] = []
+    for label, ref_ts in refs:
+        if generated_at < ref_ts:
+            reasons.append(
+                "self-improvement audit stale while target is open: "
+                f"self_improvement_audit generated at {generated_at.isoformat()} predates "
+                f"{label} {ref_ts.isoformat()}; run self-improvement-audit before entry/verify routing"
             )
     return tuple(reasons)
 
