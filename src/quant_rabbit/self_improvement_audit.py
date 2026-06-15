@@ -78,6 +78,12 @@ NON_GATEWAY_CLOSE_DRAG_PROVENANCES = (
     "DIRECT_OR_MANUAL_BROKER_TRADE_CLOSE",
     "NO_LOCAL_CLOSE_PROVENANCE",
 )
+_EXTERNAL_BROKER_TRADE_CLOSE_SOURCES = frozenset(
+    {
+        "DIRECT_OR_MANUAL_BROKER_TRADE_CLOSE",
+        "NON_TRADER_CLIENT_EXTENSION",
+    }
+)
 
 # Forecast-level calibration is the feedback loop for "why did the final
 # direction call miss?". Ten samples matches the projection-ledger calibration
@@ -2607,6 +2613,32 @@ def _close_gate_loss_evidence(loaded: _LoadedJson, path: Path) -> dict[str, Any]
         "broker_accepted_without_gateway_loss_side_market_close_evidence_counts": _dict_or_empty(
             close_gate.get("broker_accepted_without_gateway_loss_side_market_close_evidence_counts")
         ),
+        "broker_accepted_without_gateway_policy_gap_loss_side_market_close_count": int(
+            _maybe_float(close_gate.get("broker_accepted_without_gateway_policy_gap_loss_side_market_close_count"))
+            or 0
+        ),
+        "broker_accepted_without_gateway_policy_gap_loss_side_market_close_net_jpy": _maybe_float(
+            close_gate.get("broker_accepted_without_gateway_policy_gap_loss_side_market_close_net_jpy")
+        ),
+        "broker_accepted_without_gateway_policy_gap_loss_side_market_close_source_counts": _dict_or_empty(
+            close_gate.get("broker_accepted_without_gateway_policy_gap_loss_side_market_close_source_counts")
+        ),
+        "broker_accepted_without_gateway_policy_gap_loss_side_market_close_evidence_counts": _dict_or_empty(
+            close_gate.get("broker_accepted_without_gateway_policy_gap_loss_side_market_close_evidence_counts")
+        ),
+        "broker_accepted_without_gateway_external_loss_side_market_close_count": int(
+            _maybe_float(close_gate.get("broker_accepted_without_gateway_external_loss_side_market_close_count"))
+            or 0
+        ),
+        "broker_accepted_without_gateway_external_loss_side_market_close_net_jpy": _maybe_float(
+            close_gate.get("broker_accepted_without_gateway_external_loss_side_market_close_net_jpy")
+        ),
+        "broker_accepted_without_gateway_external_loss_side_market_close_source_counts": _dict_or_empty(
+            close_gate.get("broker_accepted_without_gateway_external_loss_side_market_close_source_counts")
+        ),
+        "broker_accepted_without_gateway_external_loss_side_market_close_evidence_counts": _dict_or_empty(
+            close_gate.get("broker_accepted_without_gateway_external_loss_side_market_close_evidence_counts")
+        ),
         "gateway_gpt_close_loss_side_market_close_count": int(
             _maybe_float(close_gate.get("gateway_gpt_close_loss_side_market_close_count")) or 0
         ),
@@ -2669,6 +2701,56 @@ def _mechanism_ablation_findings(
         if isinstance(close_gate.get("broker_accepted_without_gateway_loss_side_market_close_evidence_counts"), dict)
         else {}
     )
+    broker_without_gateway_policy_gap = int(
+        _maybe_float(close_gate.get("broker_accepted_without_gateway_policy_gap_loss_side_market_close_count")) or 0
+    )
+    broker_without_gateway_policy_sources = (
+        close_gate.get("broker_accepted_without_gateway_policy_gap_loss_side_market_close_source_counts")
+        if isinstance(
+            close_gate.get("broker_accepted_without_gateway_policy_gap_loss_side_market_close_source_counts"),
+            dict,
+        )
+        else {}
+    )
+    broker_without_gateway_policy_evidence = (
+        close_gate.get("broker_accepted_without_gateway_policy_gap_loss_side_market_close_evidence_counts")
+        if isinstance(
+            close_gate.get("broker_accepted_without_gateway_policy_gap_loss_side_market_close_evidence_counts"),
+            dict,
+        )
+        else {}
+    )
+    if broker_without_gateway and not broker_without_gateway_policy_sources:
+        broker_without_gateway_policy_sources = {
+            source: count
+            for source, count in broker_without_gateway_sources.items()
+            if source not in _EXTERNAL_BROKER_TRADE_CLOSE_SOURCES
+        }
+        broker_without_gateway_policy_gap = sum(
+            int(_maybe_float(count) or 0) for count in broker_without_gateway_policy_sources.values()
+        )
+        if broker_without_gateway_policy_gap:
+            broker_without_gateway_policy_evidence = broker_without_gateway_evidence
+    broker_without_gateway_external = int(
+        _maybe_float(close_gate.get("broker_accepted_without_gateway_external_loss_side_market_close_count")) or 0
+    )
+    broker_without_gateway_external_sources = (
+        close_gate.get("broker_accepted_without_gateway_external_loss_side_market_close_source_counts")
+        if isinstance(
+            close_gate.get("broker_accepted_without_gateway_external_loss_side_market_close_source_counts"),
+            dict,
+        )
+        else {}
+    )
+    if broker_without_gateway and not broker_without_gateway_external_sources:
+        broker_without_gateway_external_sources = {
+            source: count
+            for source, count in broker_without_gateway_sources.items()
+            if source in _EXTERNAL_BROKER_TRADE_CLOSE_SOURCES
+        }
+        broker_without_gateway_external = sum(
+            int(_maybe_float(count) or 0) for count in broker_without_gateway_external_sources.values()
+        )
     gateway_review_loss = int(_maybe_float(close_gate.get("gateway_review_exit_loss_side_market_close_count")) or 0)
     gateway_review_loss_net = _maybe_float(close_gate.get("gateway_review_exit_loss_side_market_close_net_jpy")) or 0.0
     gateway_gpt_loss = int(_maybe_float(close_gate.get("gateway_gpt_close_loss_side_market_close_count")) or 0)
@@ -2680,17 +2762,22 @@ def _mechanism_ablation_findings(
     if (
         bot_attributed
         and gateway_sent
-        and not broker_without_gateway
+        and not broker_without_gateway_policy_gap
         and not (gateway_review_loss and gateway_review_loss_net < 0)
     ):
         return []
-    if bot_attributed and broker_accept and not broker_without_gateway and not (
+    if bot_attributed and broker_accept and not broker_without_gateway_policy_gap and not (
         gateway_review_loss and gateway_review_loss_net < 0
     ):
         return []
-    if broker_without_gateway:
+    finding_code = "CLOSE_GATE_ABLATION_NOT_ATTRIBUTABLE"
+    finding_message = (
+        "CLOSE Gate A/B performance is not attributable enough to call the gate policy "
+        "verified or disproven"
+    )
+    if broker_without_gateway_policy_gap:
         trader_entry_without_gateway = sum(
-            int(_maybe_float(broker_without_gateway_sources.get(label)) or 0)
+            int(_maybe_float(broker_without_gateway_policy_sources.get(label)) or 0)
             for label in ("TRADER_ENTRY_LANE_ID", "TRADER_ENTRY_CLIENT_EXTENSION")
         )
         direct_without_gateway = int(
@@ -2707,13 +2794,7 @@ def _mechanism_ablation_findings(
                     f" {direct_without_gateway} residual direct/manual close(s) still need external-source "
                     "separation."
                 )
-        elif direct_without_gateway:
-            next_action = (
-                "Broker accepted TRADE_CLOSE loss events look direct/manual: no local gateway receipt or trader "
-                "client extension identified. Treat them as external/direct exit drag, persist explicit close "
-                "source tags, and do not use them as Gate A/B or news-weight evidence."
-            )
-        elif broker_without_gateway_sources.get("GATEWAY_GPT_CLOSE_ACCEPTED"):
+        elif broker_without_gateway_policy_sources.get("GATEWAY_GPT_CLOSE_ACCEPTED"):
             next_action = (
                 "Accepted GPT CLOSE loss events are missing matching position_execution SENT receipts. Repair "
                 "close receipt persistence and then ablate Gate A/B only on fully attributable GPT-close fills."
@@ -2723,7 +2804,27 @@ def _mechanism_ablation_findings(
                 "Trace broker accepted TRADE_CLOSE orders back to GPT/gateway/operator source and persist a local "
                 "GATEWAY_TRADE_CLOSE_SENT or equivalent source tag before relaxing or hardening live close policy."
             )
+    elif broker_without_gateway and not bot_attributed:
+        direct_without_gateway = int(
+            _maybe_float(broker_without_gateway_external_sources.get("DIRECT_OR_MANUAL_BROKER_TRADE_CLOSE")) or 0
+        )
+        if direct_without_gateway:
+            next_action = (
+                "Broker accepted TRADE_CLOSE loss events look direct/manual: no local gateway receipt or trader "
+                "client extension identified. Treat them as external/direct exit drag, persist explicit close "
+                "source tags, and do not use them as Gate A/B or news-weight evidence."
+            )
+        else:
+            next_action = (
+                "Trace broker accepted TRADE_CLOSE orders back to GPT/gateway/operator source and persist a local "
+                "GATEWAY_TRADE_CLOSE_SENT or equivalent source tag before relaxing or hardening live close policy."
+            )
     elif gateway_review_loss and gateway_review_loss_net < 0:
+        finding_code = "LEGACY_REVIEW_EXIT_CLOSE_DRAG"
+        finding_message = (
+            "Legacy REVIEW_EXIT market closes are loss-dominant and must stay separated from current "
+            "GPT_CLOSE Gate A/B evidence"
+        )
         next_action = (
             "Separate legacy REVIEW_EXIT closes from current GPT_CLOSE Gate A/B closes; keep plain auto-close blocked "
             "until structural replay proves REVIEW_EXIT timing positive."
@@ -2733,16 +2834,15 @@ def _mechanism_ablation_findings(
             "Link gateway close receipts to filled trades and ablate hard Gate A, soft Gate A, "
             "Gate B, and no-gate exit variants offline before relaxing or hardening live close policy."
         )
+    if broker_without_gateway_policy_gap or (broker_without_gateway and not bot_attributed):
+        finding_code = "CLOSE_GATE_ABLATION_NOT_ATTRIBUTABLE"
     return [
         _finding(
             run_id=run_id,
             priority="P1",
             layer="assumption_ablation",
-            code="CLOSE_GATE_ABLATION_NOT_ATTRIBUTABLE",
-            message=(
-                "CLOSE Gate A/B performance is not attributable enough to call the gate policy "
-                "verified or disproven"
-            ),
+            code=finding_code,
+            message=finding_message,
             next_action=next_action,
             evidence={
                 "ai_test_bot_backtest_path": str(path),
@@ -2774,6 +2874,21 @@ def _mechanism_ablation_findings(
                 "broker_accepted_without_gateway_loss_side_market_close_source_counts": broker_without_gateway_sources,
                 "broker_accepted_without_gateway_loss_side_market_close_evidence_counts": (
                     broker_without_gateway_evidence
+                ),
+                "broker_accepted_without_gateway_policy_gap_loss_side_market_close_count": (
+                    broker_without_gateway_policy_gap
+                ),
+                "broker_accepted_without_gateway_policy_gap_loss_side_market_close_source_counts": (
+                    broker_without_gateway_policy_sources
+                ),
+                "broker_accepted_without_gateway_policy_gap_loss_side_market_close_evidence_counts": (
+                    broker_without_gateway_policy_evidence
+                ),
+                "broker_accepted_without_gateway_external_loss_side_market_close_count": (
+                    broker_without_gateway_external
+                ),
+                "broker_accepted_without_gateway_external_loss_side_market_close_source_counts": (
+                    broker_without_gateway_external_sources
                 ),
                 "unattributed_loss_side_market_close_count": int(
                     _maybe_float(close_gate.get("unattributed_loss_side_market_close_count")) or 0

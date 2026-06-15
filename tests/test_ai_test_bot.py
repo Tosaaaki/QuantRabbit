@@ -1210,6 +1210,15 @@ class AITestBotBacktesterTest(unittest.TestCase):
                 close_gate["broker_accepted_without_gateway_loss_side_market_close_evidence_counts"],
                 {"NO_LOCAL_GATEWAY_CLOSE_RECEIPT": 1, "TRADER_ENTRY_LANE_ID": 1},
             )
+            self.assertEqual(
+                close_gate["broker_accepted_without_gateway_policy_gap_loss_side_market_close_count"],
+                1,
+            )
+            self.assertEqual(
+                close_gate["broker_accepted_without_gateway_policy_gap_loss_side_market_close_source_counts"],
+                {"TRADER_ENTRY_LANE_ID": 1},
+            )
+            self.assertEqual(close_gate["broker_accepted_without_gateway_external_loss_side_market_close_count"], 0)
             self.assertEqual(close_gate["unattributed_loss_side_market_close_count"], 0)
             example = close_gate["loss_side_market_close_examples"][0]
             self.assertFalse(example["gateway_close_sent"])
@@ -1230,6 +1239,53 @@ class AITestBotBacktesterTest(unittest.TestCase):
             self.assertIn("TRADER_ENTRY_LANE_ID", report)
             self.assertIn("NO_LOCAL_GATEWAY_CLOSE_RECEIPT", report)
             self.assertIn("Close source segments", report)
+
+    def test_close_gate_diagnostic_separates_external_broker_close_from_policy_gap(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            db = root / "legacy.db"
+            ledger = root / "execution_ledger.db"
+            _seed_db(
+                db,
+                [
+                    ("trades", "2026-06-01", "EUR_USD", "LONG", 100.0),
+                    ("trades", "2026-06-02", "EUR_USD", "LONG", -200.0),
+                ],
+            )
+            _seed_external_broker_accepted_close_ledger(ledger)
+
+            AITestBotBacktester(
+                db_path=db,
+                execution_ledger_db_path=ledger,
+                output_path=root / "ai_backtest.json",
+                report_path=root / "ai_backtest.md",
+                max_loss_jpy=100.0,
+                training_days=1,
+                min_train_trades=1,
+                max_active_buckets=1,
+                source_tables=("trades",),
+            ).run(start_balance_jpy=1000.0)
+
+            payload = json.loads((root / "ai_backtest.json").read_text())
+            close_gate = payload["mechanism_ablation"]["close_gate_ab"]
+
+        self.assertEqual(close_gate["broker_accepted_without_gateway_loss_side_market_close_count"], 1)
+        self.assertEqual(
+            close_gate["broker_accepted_without_gateway_loss_side_market_close_source_counts"],
+            {"DIRECT_OR_MANUAL_BROKER_TRADE_CLOSE": 1},
+        )
+        self.assertEqual(close_gate["broker_accepted_without_gateway_policy_gap_loss_side_market_close_count"], 0)
+        self.assertEqual(close_gate["broker_accepted_without_gateway_external_loss_side_market_close_count"], 1)
+        self.assertEqual(
+            close_gate["broker_accepted_without_gateway_external_loss_side_market_close_source_counts"],
+            {"DIRECT_OR_MANUAL_BROKER_TRADE_CLOSE": 1},
+        )
+        self.assertTrue(
+            any("external/direct broker TRADE_CLOSE orders are separated" in item for item in payload["action_items"])
+        )
+        self.assertFalse(
+            any("tag whether these were GPT/gateway" in item for item in payload["action_items"])
+        )
 
     def test_close_gate_diagnostic_uses_entry_lane_for_broker_accepted_close_source(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -2002,6 +2058,67 @@ def _seed_broker_accepted_close_ledger(path: Path) -> None:
                     None,
                     "order-close",
                     "broker-close-trade",
+                    "EUR_USD",
+                    "SHORT",
+                    1000,
+                    -250.0,
+                    "MARKET_ORDER_TRADE_CLOSE",
+                    json.dumps({"reason": "MARKET_ORDER_TRADE_CLOSE"}),
+                ),
+            ],
+        )
+
+
+def _seed_external_broker_accepted_close_ledger(path: Path) -> None:
+    with sqlite3.connect(path) as conn:
+        conn.execute(
+            """
+            CREATE TABLE execution_events (
+                event_uid TEXT,
+                ts_utc TEXT NOT NULL,
+                event_type TEXT NOT NULL,
+                lane_id TEXT,
+                order_id TEXT,
+                trade_id TEXT,
+                pair TEXT,
+                side TEXT,
+                units INTEGER,
+                realized_pl_jpy REAL,
+                exit_reason TEXT,
+                raw_json TEXT NOT NULL
+            )
+            """
+        )
+        conn.executemany(
+            """
+            INSERT INTO execution_events (
+                event_uid, ts_utc, event_type, lane_id, order_id, trade_id, pair, side, units,
+                realized_pl_jpy, exit_reason, raw_json
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            [
+                (
+                    "accepted-close",
+                    "2026-06-01T02:00:00Z",
+                    "ORDER_ACCEPTED",
+                    None,
+                    "order-close",
+                    None,
+                    "EUR_USD",
+                    "SHORT",
+                    None,
+                    None,
+                    "TRADE_CLOSE",
+                    json.dumps({"reason": "TRADE_CLOSE", "tradeClose": {"tradeID": "external-close-trade"}}),
+                ),
+                (
+                    "closed-trade",
+                    "2026-06-01T02:00:01Z",
+                    "TRADE_CLOSED",
+                    None,
+                    "order-close",
+                    "external-close-trade",
                     "EUR_USD",
                     "SHORT",
                     1000,

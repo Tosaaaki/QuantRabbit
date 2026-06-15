@@ -56,6 +56,12 @@ _FX_CURRENCIES = frozenset({"AUD", "CAD", "CHF", "EUR", "GBP", "JPY", "NZD", "US
 _COMMODITY_LINKED_CURRENCIES = frozenset({"AUD", "CAD", "NZD"})
 _EUROPEAN_RISK_CURRENCIES = frozenset({"EUR", "GBP", "CHF"})
 _JST = ZoneInfo("Asia/Tokyo")
+_EXTERNAL_BROKER_TRADE_CLOSE_SOURCES = frozenset(
+    {
+        "DIRECT_OR_MANUAL_BROKER_TRADE_CLOSE",
+        "NON_TRADER_CLIENT_EXTENSION",
+    }
+)
 
 
 @dataclass(frozen=True)
@@ -1394,6 +1400,14 @@ def _close_gate_ablation_payload(
     broker_without_gateway_loss_market_net = 0.0
     broker_without_gateway_loss_market_source_counts: dict[str, int] = {}
     broker_without_gateway_loss_market_evidence_counts: dict[str, int] = {}
+    broker_without_gateway_policy_gap_loss_market_count = 0
+    broker_without_gateway_policy_gap_loss_market_net = 0.0
+    broker_without_gateway_policy_gap_loss_market_source_counts: dict[str, int] = {}
+    broker_without_gateway_policy_gap_loss_market_evidence_counts: dict[str, int] = {}
+    broker_without_gateway_external_loss_market_count = 0
+    broker_without_gateway_external_loss_market_net = 0.0
+    broker_without_gateway_external_loss_market_source_counts: dict[str, int] = {}
+    broker_without_gateway_external_loss_market_evidence_counts: dict[str, int] = {}
     unattributed_loss_market_count = 0
     unattributed_loss_market_net = 0.0
     take_profit_count = 0
@@ -1650,6 +1664,30 @@ def _close_gate_ablation_payload(
                     broker_without_gateway_loss_market_evidence_counts[evidence] = (
                         broker_without_gateway_loss_market_evidence_counts.get(evidence, 0) + 1
                     )
+                if _broker_trade_close_has_policy_gap(broker_trade_close_sources):
+                    broker_without_gateway_policy_gap_loss_market_count += 1
+                    broker_without_gateway_policy_gap_loss_market_net += pl
+                    for source in broker_trade_close_sources:
+                        if source in _EXTERNAL_BROKER_TRADE_CLOSE_SOURCES:
+                            continue
+                        broker_without_gateway_policy_gap_loss_market_source_counts[source] = (
+                            broker_without_gateway_policy_gap_loss_market_source_counts.get(source, 0) + 1
+                        )
+                    for evidence in broker_trade_close_evidence:
+                        broker_without_gateway_policy_gap_loss_market_evidence_counts[evidence] = (
+                            broker_without_gateway_policy_gap_loss_market_evidence_counts.get(evidence, 0) + 1
+                        )
+                else:
+                    broker_without_gateway_external_loss_market_count += 1
+                    broker_without_gateway_external_loss_market_net += pl
+                    for source in broker_trade_close_sources:
+                        broker_without_gateway_external_loss_market_source_counts[source] = (
+                            broker_without_gateway_external_loss_market_source_counts.get(source, 0) + 1
+                        )
+                    for evidence in broker_trade_close_evidence:
+                        broker_without_gateway_external_loss_market_evidence_counts[evidence] = (
+                            broker_without_gateway_external_loss_market_evidence_counts.get(evidence, 0) + 1
+                        )
             if not close_order_provenance:
                 unattributed_loss_market_count += 1
                 unattributed_loss_market_net += pl
@@ -1749,6 +1787,30 @@ def _close_gate_ablation_payload(
             ),
             "broker_accepted_without_gateway_loss_side_market_close_evidence_counts": (
                 broker_without_gateway_loss_market_evidence_counts
+            ),
+            "broker_accepted_without_gateway_policy_gap_loss_side_market_close_count": (
+                broker_without_gateway_policy_gap_loss_market_count
+            ),
+            "broker_accepted_without_gateway_policy_gap_loss_side_market_close_net_jpy": _round(
+                broker_without_gateway_policy_gap_loss_market_net
+            ),
+            "broker_accepted_without_gateway_policy_gap_loss_side_market_close_source_counts": (
+                broker_without_gateway_policy_gap_loss_market_source_counts
+            ),
+            "broker_accepted_without_gateway_policy_gap_loss_side_market_close_evidence_counts": (
+                broker_without_gateway_policy_gap_loss_market_evidence_counts
+            ),
+            "broker_accepted_without_gateway_external_loss_side_market_close_count": (
+                broker_without_gateway_external_loss_market_count
+            ),
+            "broker_accepted_without_gateway_external_loss_side_market_close_net_jpy": _round(
+                broker_without_gateway_external_loss_market_net
+            ),
+            "broker_accepted_without_gateway_external_loss_side_market_close_source_counts": (
+                broker_without_gateway_external_loss_market_source_counts
+            ),
+            "broker_accepted_without_gateway_external_loss_side_market_close_evidence_counts": (
+                broker_without_gateway_external_loss_market_evidence_counts
             ),
             "unattributed_loss_side_market_close_count": unattributed_loss_market_count,
             "unattributed_loss_side_market_close_net_jpy": _round(unattributed_loss_market_net),
@@ -2213,6 +2275,12 @@ def _broker_trade_close_evidence_for_close(
     return evidence
 
 
+def _broker_trade_close_has_policy_gap(sources: set[str]) -> bool:
+    if not sources:
+        return True
+    return any(source not in _EXTERNAL_BROKER_TRADE_CLOSE_SOURCES for source in sources)
+
+
 def _broker_trade_close_accept_source(row: dict[str, object], raw: dict[str, object]) -> str:
     lane_id = str(row.get("lane_id") or "").strip()
     if lane_id:
@@ -2652,14 +2720,34 @@ def _close_gate_action_items(payload: dict[str, object]) -> Iterable[str]:
             "broker truth/live gateway/CLOSE Gate A-B ablation is not attributable until GATEWAY_ORDER_SENT receipts link to fills"
         )
     broker_without_gateway_loss_count = int(
-        payload.get("broker_accepted_without_gateway_loss_side_market_close_count") or 0
+        payload.get("broker_accepted_without_gateway_policy_gap_loss_side_market_close_count")
+        if payload.get("broker_accepted_without_gateway_policy_gap_loss_side_market_close_count") is not None
+        else payload.get("broker_accepted_without_gateway_loss_side_market_close_count")
+        or 0
     )
     broker_without_gateway_loss_net = float(
-        payload.get("broker_accepted_without_gateway_loss_side_market_close_net_jpy") or 0.0
+        payload.get("broker_accepted_without_gateway_policy_gap_loss_side_market_close_net_jpy")
+        if payload.get("broker_accepted_without_gateway_policy_gap_loss_side_market_close_net_jpy") is not None
+        else payload.get("broker_accepted_without_gateway_loss_side_market_close_net_jpy")
+        or 0.0
     )
     if broker_without_gateway_loss_count:
-        source_counts = payload.get("broker_accepted_without_gateway_loss_side_market_close_source_counts")
-        evidence_counts = payload.get("broker_accepted_without_gateway_loss_side_market_close_evidence_counts")
+        source_counts = (
+            payload.get("broker_accepted_without_gateway_policy_gap_loss_side_market_close_source_counts")
+            if isinstance(
+                payload.get("broker_accepted_without_gateway_policy_gap_loss_side_market_close_source_counts"),
+                dict,
+            )
+            else payload.get("broker_accepted_without_gateway_loss_side_market_close_source_counts")
+        )
+        evidence_counts = (
+            payload.get("broker_accepted_without_gateway_policy_gap_loss_side_market_close_evidence_counts")
+            if isinstance(
+                payload.get("broker_accepted_without_gateway_policy_gap_loss_side_market_close_evidence_counts"),
+                dict,
+            )
+            else payload.get("broker_accepted_without_gateway_loss_side_market_close_evidence_counts")
+        )
         source_suffix = ""
         if isinstance(source_counts, dict) and source_counts:
             source_suffix = f" sources={json.dumps(source_counts, sort_keys=True)};"
@@ -2672,16 +2760,18 @@ def _close_gate_action_items(payload: dict[str, object]) -> Iterable[str]:
             f"{source_suffix}{evidence_suffix} "
             "tag whether these were GPT/gateway, operator, or broker-sync-only closes before changing CLOSE Gate A-B policy"
         )
-        if (
-            isinstance(source_counts, dict)
-            and int(source_counts.get("DIRECT_OR_MANUAL_BROKER_TRADE_CLOSE") or 0) > 0
-        ):
-            direct_count = int(source_counts.get("DIRECT_OR_MANUAL_BROKER_TRADE_CLOSE") or 0)
-            yield (
-                "direct/manual broker TRADE_CLOSE orders are negative without local gateway close receipts "
-                f"({direct_count} close(s)); treat them as external/direct exit drag, not as proof that "
-                "news weighting or autonomous Gate A-B should be relaxed"
-            )
+    external_count = int(payload.get("broker_accepted_without_gateway_external_loss_side_market_close_count") or 0)
+    if external_count:
+        external_net = float(payload.get("broker_accepted_without_gateway_external_loss_side_market_close_net_jpy") or 0.0)
+        external_sources = payload.get("broker_accepted_without_gateway_external_loss_side_market_close_source_counts")
+        source_suffix = ""
+        if isinstance(external_sources, dict) and external_sources:
+            source_suffix = f" sources={json.dumps(external_sources, sort_keys=True)};"
+        yield (
+            "external/direct broker TRADE_CLOSE orders are separated from CLOSE Gate A-B attribution "
+            f"({external_count} loss-side close(s), net {external_net:.0f} JPY);{source_suffix} "
+            "treat them as operator/broker-sync exit drag, not as autonomous gate evidence"
+        )
     gpt_accepted_without_gateway_loss_count = int(
         payload.get("gateway_gpt_close_accepted_without_sent_loss_side_market_close_count") or 0
     )

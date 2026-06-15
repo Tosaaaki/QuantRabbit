@@ -741,6 +741,56 @@ class SelfImprovementAuditorTest(unittest.TestCase):
         self.assertIn("GATEWAY_TRADE_CLOSE_SENT", finding["next_action"])
         self.assertIn("1 residual direct/manual close", finding["next_action"])
 
+    def test_external_manual_close_residual_does_not_keep_close_gate_ablation_p1(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(
+                root,
+                active_position=False,
+                live_ready_market_rr=1.4,
+                closed_pls=(100.0, 80.0, -50.0),
+            )
+            files["ai_backtest"].write_text(
+                json.dumps(
+                    {
+                        "mechanism_ablation": {
+                            "close_gate_ab": {
+                                "status": "MEASURED",
+                                "close_events": 8,
+                                "bot_attributed_close_events": 8,
+                                "gateway_close_sent_events": 4,
+                                "broker_trade_close_accept_events": 4,
+                                "loss_side_market_close_count": 5,
+                                "loss_side_market_close_net_jpy": -1200.0,
+                                "broker_accepted_without_gateway_loss_side_market_close_count": 1,
+                                "broker_accepted_without_gateway_loss_side_market_close_source_counts": {
+                                    "DIRECT_OR_MANUAL_BROKER_TRADE_CLOSE": 1,
+                                },
+                                "broker_accepted_without_gateway_loss_side_market_close_evidence_counts": {
+                                    "NO_LOCAL_GATEWAY_CLOSE_RECEIPT": 1,
+                                    "NO_CLIENT_EXTENSION": 1,
+                                },
+                                "broker_accepted_without_gateway_policy_gap_loss_side_market_close_count": 0,
+                                "broker_accepted_without_gateway_policy_gap_loss_side_market_close_source_counts": {},
+                                "broker_accepted_without_gateway_policy_gap_loss_side_market_close_evidence_counts": {},
+                                "broker_accepted_without_gateway_external_loss_side_market_close_count": 1,
+                                "broker_accepted_without_gateway_external_loss_side_market_close_source_counts": {
+                                    "DIRECT_OR_MANUAL_BROKER_TRADE_CLOSE": 1,
+                                },
+                                "unattributed_loss_side_market_close_count": 0,
+                            }
+                        }
+                    }
+                )
+            )
+
+            summary = _run(files)
+            payload = json.loads(files["output"].read_text())
+
+        codes = {item["code"] for item in payload["findings"]}
+        self.assertEqual(summary.p0_findings, 0)
+        self.assertNotIn("CLOSE_GATE_ABLATION_NOT_ATTRIBUTABLE", codes)
+
     def test_legacy_review_exit_close_ablation_remains_p1_assumption_hole(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -778,8 +828,8 @@ class SelfImprovementAuditorTest(unittest.TestCase):
 
         codes = {item["code"]: item for item in payload["findings"]}
         self.assertEqual(summary.p0_findings, 0)
-        self.assertIn("CLOSE_GATE_ABLATION_NOT_ATTRIBUTABLE", codes)
-        finding = codes["CLOSE_GATE_ABLATION_NOT_ATTRIBUTABLE"]
+        self.assertIn("LEGACY_REVIEW_EXIT_CLOSE_DRAG", codes)
+        finding = codes["LEGACY_REVIEW_EXIT_CLOSE_DRAG"]
         self.assertIn("legacy REVIEW_EXIT", finding["next_action"])
         self.assertEqual(finding["evidence"]["gateway_review_exit_loss_side_market_close_count"], 3)
 
