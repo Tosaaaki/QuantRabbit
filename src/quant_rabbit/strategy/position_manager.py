@@ -181,6 +181,7 @@ class ManagedPosition:
     recommended_take_profit: float | None
     reasons: tuple[str, ...]
     owner: str = Owner.TRADER.value
+    close_review_action: str | None = None
 
 
 @dataclass(frozen=True)
@@ -250,6 +251,7 @@ class PositionManager:
                             recommended_stop_loss=m.recommended_stop_loss,
                             recommended_take_profit=m.recommended_take_profit,
                             owner=m.owner,
+                            close_review_action=m.close_review_action,
                         ))
                         continue
                     if _structural_auto_close_enabled():
@@ -278,6 +280,7 @@ class PositionManager:
                         recommended_stop_loss=m.recommended_stop_loss,
                         recommended_take_profit=m.recommended_take_profit,
                         owner=m.owner,
+                        close_review_action=ACTION_REVIEW_EXIT,
                     ))
                 else:
                     demoted.append(m)
@@ -590,6 +593,8 @@ class PositionManager:
                 f"- `{item.trade_id}` `{item.pair} {item.side}` owner=`{item.owner}` units=`{item.units}` "
                 f"action=`{item.action}` upl=`{item.unrealized_pl_jpy:.1f}`"
             )
+            if item.close_review_action:
+                lines.append(f"  - close review: `{item.close_review_action}`")
             lines.append(f"  - scores: same=`{item.same_direction_score}` opposite=`{item.opposite_direction_score}`")
             lines.append(
                 f"  - protection plan: sl=`{item.recommended_stop_loss}` tp=`{item.recommended_take_profit}`"

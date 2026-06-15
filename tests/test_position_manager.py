@@ -748,6 +748,10 @@ class PositionManagerTest(unittest.TestCase):
 
                 self.assertEqual(result.action, ACTION_HOLD_PROTECTED)
                 self.assertEqual(result.positions[0].action, ACTION_HOLD_PROTECTED)
+                self.assertEqual(result.positions[0].close_review_action, ACTION_REVIEW_EXIT)
+                payload = json.loads((root / "pm.json").read_text())
+                self.assertEqual(payload["positions"][0]["action"], ACTION_HOLD_PROTECTED)
+                self.assertEqual(payload["positions"][0]["close_review_action"], ACTION_REVIEW_EXIT)
                 self.assertIn("QR_DISABLE_AUTO_CLOSE=1", (root / "pm.md").read_text())
         finally:
             if prior is None:

@@ -1143,7 +1143,11 @@ def _position_management_recommendations(path: Path, fetched_at: datetime) -> li
         return []
     out: list[dict[str, Any]] = []
     for item in payload.get("positions", []) or []:
-        if not isinstance(item, dict) or str(item.get("action") or "") != "REVIEW_EXIT":
+        if not isinstance(item, dict):
+            continue
+        action = str(item.get("action") or "")
+        close_review_action = str(item.get("close_review_action") or "")
+        if action != "REVIEW_EXIT" and close_review_action != "REVIEW_EXIT":
             continue
         trade_id = str(item.get("trade_id") or "")
         reason_parts = [str(reason) for reason in item.get("reasons", []) or [] if str(reason)]

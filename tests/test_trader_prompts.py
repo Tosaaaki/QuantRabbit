@@ -1653,6 +1653,68 @@ class TraderPromptRouteTest(unittest.TestCase):
         self.assertTrue(recs[0]["gate_b_standing_authorized"])
         self.assertIn("loss-cut: structural OB broken", recs[0]["reason"])
 
+    def test_demoted_position_management_review_exit_carryforward_routes_to_position_management(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(
+                root,
+                positions=[
+                    {
+                        "trade_id": "472445",
+                        "pair": "EUR_CHF",
+                        "side": "LONG",
+                        "take_profit": 0.92317,
+                        "stop_loss": None,
+                        "owner": "trader",
+                        "unrealized_pl_jpy": -1019.7829,
+                    }
+                ],
+            )
+            snapshot = json.loads(files["snapshot"].read_text())
+            generated_at = (
+                datetime.fromisoformat(snapshot["fetched_at_utc"]) - timedelta(minutes=20)
+            ).isoformat()
+            (root / "position_management.json").write_text(
+                json.dumps(
+                    {
+                        "generated_at_utc": generated_at,
+                        "action": "HOLD_PROTECTED",
+                        "positions": [
+                            {
+                                "trade_id": "472445",
+                                "pair": "EUR_CHF",
+                                "side": "LONG",
+                                "action": "HOLD_PROTECTED",
+                                "close_review_action": "REVIEW_EXIT",
+                                "reasons": [
+                                    "loss-cut: structural OB broken across 2 TFs (M15@0.92000, H1@0.92100) (-1019 JPY)",
+                                    "QR_DISABLE_AUTO_CLOSE=1 -> REVIEW_EXIT demoted to HOLD_PROTECTED",
+                                ],
+                            }
+                        ],
+                    }
+                )
+            )
+
+            prior = os.environ.get("QR_TRADER_DISABLE_SL_REPAIR")
+            os.environ["QR_TRADER_DISABLE_SL_REPAIR"] = "1"
+            try:
+                route = route_trader_prompts(**_route_paths(files), decision_response_path=None)
+                recs = _fresh_close_recommendations(snapshot, data_root=root)
+            finally:
+                if prior is None:
+                    os.environ.pop("QR_TRADER_DISABLE_SL_REPAIR", None)
+                else:
+                    os.environ["QR_TRADER_DISABLE_SL_REPAIR"] = prior
+
+        self.assertEqual(route.branch, BRANCH_POSITION)
+        self.assertTrue(any("position_management REVIEW_EXIT" in reason for reason in route.reasons))
+        self.assertEqual(len(recs), 1)
+        self.assertEqual(recs[0]["source"], "position_management")
+        self.assertEqual(recs[0]["evidence_ref"], "position:management:472445")
+        self.assertTrue(recs[0]["gate_b_standing_authorized"])
+        self.assertIn("loss-cut: structural OB broken", recs[0]["reason"])
+
     def test_stale_position_management_review_exit_routes_to_sidecar_refresh_not_close_review(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
