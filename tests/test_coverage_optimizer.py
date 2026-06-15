@@ -196,9 +196,13 @@ class CoverageOptimizerTest(unittest.TestCase):
             modes = payload["opportunity_modes"]
             self.assertEqual(modes["HARVEST"]["lanes"], 1)
             self.assertEqual(modes["RUNNER"]["lanes"], 1)
+            self.assertEqual(modes["HARVEST"]["top_issue_codes"][0]["code"], "REWARD_RISK_TOO_LOW")
+            self.assertEqual(modes["RUNNER"]["top_issue_codes"][0]["code"], "FORECAST_REQUIRED")
             self.assertEqual(payload["lanes"][0]["opportunity_mode"], "HARVEST")
+            self.assertEqual(payload["lanes"][0]["issue_codes"], ["REWARD_RISK_TOO_LOW"])
             self.assertEqual(payload["lanes"][1]["opportunity_mode"], "RUNNER")
             self.assertTrue(any("harvest and runner opportunity paths" in item for item in payload["action_items"]))
+            self.assertTrue(any("top codes: REWARD_RISK_TOO_LOW" in item for item in payload["action_items"]))
             self.assertIn("Opportunity Modes", (root / "coverage.md").read_text())
 
     def test_cli_coverage_gap_is_diagnostic_success(self) -> None:

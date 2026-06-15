@@ -46,6 +46,7 @@ class CoverageLane:
     reward_jpy: float
     reward_risk: float
     opportunity_mode: str
+    issue_codes: tuple[str, ...]
     counts_live_ready: bool
     counts_after_promotion: bool
     blockers: tuple[str, ...]
@@ -263,12 +264,15 @@ class CoverageOptimizer:
                 if not item:
                     continue
                 blockers = item.get("top_blockers") if isinstance(item.get("top_blockers"), list) else []
+                issue_codes = item.get("top_issue_codes") if isinstance(item.get("top_issue_codes"), list) else []
                 top_blockers = ", ".join(str(blocker.get("label")) for blocker in blockers[:3] if isinstance(blocker, dict))
+                top_codes = ", ".join(str(issue.get("code")) for issue in issue_codes[:4] if isinstance(issue, dict))
                 lines.append(
                     f"- `{key}` lanes=`{item.get('lanes')}` live_ready=`{item.get('live_ready_lanes')}` "
                     f"promotion_candidates=`{item.get('promotion_candidate_lanes')}` "
                     f"total_reward=`{item.get('reward_jpy')}` live_reward=`{item.get('live_ready_reward_jpy')}` "
-                    f"potential_reward=`{item.get('potential_reward_jpy')}` blockers=`{top_blockers or 'none'}`"
+                    f"potential_reward=`{item.get('potential_reward_jpy')}` codes=`{top_codes or 'none'}` "
+                    f"blockers=`{top_blockers or 'none'}`"
                 )
             lines.append("")
         bucket_diag = diagnostics.get("profitable_bucket_coverage") if isinstance(diagnostics.get("profitable_bucket_coverage"), dict) else {}
@@ -415,6 +419,7 @@ def _coverage_lane(result: dict[str, Any]) -> CoverageLane:
         reward_jpy=reward_jpy,
         reward_risk=reward_risk,
         opportunity_mode=_opportunity_mode(result, reward_risk),
+        issue_codes=tuple(_result_issue_codes(result)),
         counts_live_ready=status == "LIVE_READY" and not blockers,
         counts_after_promotion=(
             status == "DRY_RUN_PASSED"
@@ -439,6 +444,18 @@ def _result_blockers(result: dict[str, Any]) -> list[str]:
             blockers.append(str(issue.get("message") or issue.get("code") or "strategy block"))
     blockers.extend(str(item) for item in result.get("live_blockers", []) or [])
     return blockers
+
+
+def _result_issue_codes(result: dict[str, Any]) -> list[str]:
+    codes: list[str] = []
+    for issue_key in ("risk_issues", "strategy_issues"):
+        for issue in result.get(issue_key, []) or []:
+            if not isinstance(issue, dict):
+                continue
+            code = str(issue.get("code") or issue.get("message") or "").strip()
+            if code:
+                codes.append(code)
+    return codes
 
 
 def _risk_reward_from_result(result: dict[str, Any]) -> tuple[float, float, float]:
@@ -1338,12 +1355,14 @@ def _opportunity_mode_summary(
             "coverage_pct": 0.0,
             "potential_coverage_pct": 0.0,
             "status_counts": {},
+            "top_issue_codes": [],
             "top_blockers": [],
             "top_lanes": [],
         }
         for mode in ("HARVEST", "RUNNER", "BALANCED")
     }
     status_counts: dict[str, Counter[str]] = {mode: Counter() for mode in summaries}
+    issue_code_counts: dict[str, Counter[str]] = {mode: Counter() for mode in summaries}
     blocker_counts: dict[str, Counter[str]] = {mode: Counter() for mode in summaries}
     top_lanes: dict[str, list[CoverageLane]] = {mode: [] for mode in summaries}
     for lane in lanes:
@@ -1359,6 +1378,7 @@ def _opportunity_mode_summary(
         if lane.counts_after_promotion:
             item["promotion_candidate_lanes"] += 1
         status_counts[mode][lane.status] += 1
+        issue_code_counts[mode].update(lane.issue_codes)
         blocker_counts[mode].update(lane.blockers)
         top_lanes[mode].append(lane)
     for mode, item in summaries.items():
@@ -1373,6 +1393,10 @@ def _opportunity_mode_summary(
             else 100.0
         )
         item["status_counts"] = dict(sorted(status_counts[mode].items(), key=lambda pair: (-pair[1], pair[0])))
+        item["top_issue_codes"] = [
+            {"code": code, "count": count}
+            for code, count in issue_code_counts[mode].most_common(12)
+        ]
         item["top_blockers"] = [
             {"label": label, "count": count}
             for label, count in blocker_counts[mode].most_common(6)
@@ -1396,14 +1420,23 @@ def _opportunity_mode_repair_item(opportunity_modes: dict[str, Any]) -> str | No
         item = opportunity_modes.get(mode) if isinstance(opportunity_modes.get(mode), dict) else {}
         if int(item.get("lanes") or 0) <= 0 or int(item.get("live_ready_lanes") or 0) > 0:
             continue
-        blockers = item.get("top_blockers") if isinstance(item.get("top_blockers"), list) else []
-        blocker_labels = [
-            str(blocker.get("label"))
-            for blocker in blockers[:2]
-            if isinstance(blocker, dict) and str(blocker.get("label") or "").strip()
+        issue_codes = item.get("top_issue_codes") if isinstance(item.get("top_issue_codes"), list) else []
+        code_labels = [
+            str(issue.get("code"))
+            for issue in issue_codes[:3]
+            if isinstance(issue, dict) and str(issue.get("code") or "").strip()
         ]
-        blocker_text = ", ".join(blocker_labels) if blocker_labels else "no explicit blocker label"
-        labels.append(f"{mode} lanes={int(item.get('lanes') or 0)} top blockers: {blocker_text}")
+        if code_labels:
+            reason_text = "top codes: " + ", ".join(code_labels)
+        else:
+            blockers = item.get("top_blockers") if isinstance(item.get("top_blockers"), list) else []
+            blocker_labels = [
+                str(blocker.get("label"))
+                for blocker in blockers[:2]
+                if isinstance(blocker, dict) and str(blocker.get("label") or "").strip()
+            ]
+            reason_text = "top blockers: " + (", ".join(blocker_labels) if blocker_labels else "no explicit blocker label")
+        labels.append(f"{mode} lanes={int(item.get('lanes') or 0)} {reason_text}")
     if len(labels) >= 2:
         return "repair both harvest and runner opportunity paths instead of treating coverage as one pool: " + "; ".join(labels)
     if labels:
