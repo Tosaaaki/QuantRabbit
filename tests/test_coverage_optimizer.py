@@ -125,6 +125,82 @@ class CoverageOptimizerTest(unittest.TestCase):
             self.assertFalse(any("promote 1 dry-run receipts" in item for item in payload["action_items"]))
             self.assertFalse(payload["lanes"][0]["counts_after_promotion"])
 
+    def test_reports_harvest_and_runner_opportunity_modes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            intents = root / "intents.json"
+            target = root / "target.json"
+            intents.write_text(
+                json.dumps(
+                    {
+                        "results": [
+                            _result(
+                                "DRY_RUN_BLOCKED",
+                                lane_id="failure_trader:EUR_USD:LONG:BREAKOUT_FAILURE",
+                                risk_issues=[
+                                    {
+                                        "code": "REWARD_RISK_TOO_LOW",
+                                        "message": "planned reward/risk is too low",
+                                        "severity": "BLOCK",
+                                    }
+                                ],
+                                risk_metrics={
+                                    "risk_jpy": 100.0,
+                                    "reward_jpy": 120.0,
+                                    "reward_risk": 1.2,
+                                    "spread_pips": 0.8,
+                                },
+                            ),
+                            _result(
+                                "DRY_RUN_BLOCKED",
+                                lane_id="trend_trader:GBP_USD:LONG:TREND_CONTINUATION",
+                                pair="GBP_USD",
+                                risk_issues=[
+                                    {
+                                        "code": "FORECAST_REQUIRED",
+                                        "message": "fresh runner forecast is missing",
+                                        "severity": "BLOCK",
+                                    }
+                                ],
+                                risk_metrics={
+                                    "risk_jpy": 100.0,
+                                    "reward_jpy": 300.0,
+                                    "reward_risk": 3.0,
+                                    "spread_pips": 0.8,
+                                },
+                            ),
+                        ]
+                    }
+                )
+            )
+            target.write_text(
+                json.dumps(
+                    {
+                        "status": "PURSUE_TARGET",
+                        "remaining_target_jpy": 500.0,
+                        "remaining_risk_budget_jpy": 500.0,
+                    }
+                )
+            )
+
+            CoverageOptimizer(
+                intents_path=intents,
+                target_state_path=target,
+                replay_path=root / "missing_replay.json",
+                market_context_matrix_path=_matrix(root),
+                output_path=root / "coverage.json",
+                report_path=root / "coverage.md",
+            ).run()
+
+            payload = json.loads((root / "coverage.json").read_text())
+            modes = payload["opportunity_modes"]
+            self.assertEqual(modes["HARVEST"]["lanes"], 1)
+            self.assertEqual(modes["RUNNER"]["lanes"], 1)
+            self.assertEqual(payload["lanes"][0]["opportunity_mode"], "HARVEST")
+            self.assertEqual(payload["lanes"][1]["opportunity_mode"], "RUNNER")
+            self.assertTrue(any("harvest and runner opportunity paths" in item for item in payload["action_items"]))
+            self.assertIn("Opportunity Modes", (root / "coverage.md").read_text())
+
     def test_cli_coverage_gap_is_diagnostic_success(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

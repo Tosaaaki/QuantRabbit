@@ -27,6 +27,8 @@ from quant_rabbit.strategy.receipt_promotion import NON_PROMOTABLE_RISK_CODES
 # with an explicit cycle id once every artifact carries one.
 COVERAGE_INTENTS_STALE_AFTER_SECONDS = 3600.0
 DISCOVERY_EVIDENCE_SOURCE_TABLES = frozenset({"pretrade_outcomes", "seat_outcomes"})
+HARVEST_REWARD_RISK_MAX = 1.35
+RUNNER_REWARD_RISK_MIN = 2.0
 
 
 @dataclass(frozen=True)
@@ -43,6 +45,7 @@ class CoverageLane:
     risk_jpy: float
     reward_jpy: float
     reward_risk: float
+    opportunity_mode: str
     counts_live_ready: bool
     counts_after_promotion: bool
     blockers: tuple[str, ...]
@@ -122,6 +125,7 @@ class CoverageOptimizer:
         raw_live_ready_reward = _round(sum(lane.reward_jpy for lane in raw_live_ready_lanes))
         raw_live_ready_risk = _round(sum(lane.risk_jpy for lane in raw_live_ready_lanes))
         sequential_ladder = _sequential_ladder(live_ready_lanes, remaining_target, remaining_risk_budget)
+        opportunity_modes = _opportunity_mode_summary(lanes, remaining_target)
         replay_gap = _replay_gap(replay)
         blockers = tuple(
             _blockers(
@@ -147,6 +151,7 @@ class CoverageOptimizer:
                 remaining_risk_budget=remaining_risk_budget,
                 duplicate_live_ready_lanes=duplicate_live_ready_lanes,
                 sequential_ladder=sequential_ladder,
+                opportunity_modes=opportunity_modes,
                 lanes=lanes,
                 replay_gap=replay_gap,
                 artifact_diagnostics=artifact_diagnostics,
@@ -184,6 +189,7 @@ class CoverageOptimizer:
             if remaining_target
             else 100.0,
             "potential_coverage_pct": _round((potential_reward / remaining_target) * 100.0) if remaining_target else 100.0,
+            "opportunity_modes": opportunity_modes,
             "replay_gap": replay_gap,
             "artifact_diagnostics": artifact_diagnostics,
             "blockers": list(blockers),
@@ -249,6 +255,22 @@ class CoverageOptimizer:
                 "",
             ]
         )
+        modes = payload.get("opportunity_modes") if isinstance(payload.get("opportunity_modes"), dict) else {}
+        if modes:
+            lines.extend(["## Opportunity Modes", ""])
+            for key in ("HARVEST", "RUNNER", "BALANCED"):
+                item = modes.get(key) if isinstance(modes.get(key), dict) else None
+                if not item:
+                    continue
+                blockers = item.get("top_blockers") if isinstance(item.get("top_blockers"), list) else []
+                top_blockers = ", ".join(str(blocker.get("label")) for blocker in blockers[:3] if isinstance(blocker, dict))
+                lines.append(
+                    f"- `{key}` lanes=`{item.get('lanes')}` live_ready=`{item.get('live_ready_lanes')}` "
+                    f"promotion_candidates=`{item.get('promotion_candidate_lanes')}` "
+                    f"total_reward=`{item.get('reward_jpy')}` live_reward=`{item.get('live_ready_reward_jpy')}` "
+                    f"potential_reward=`{item.get('potential_reward_jpy')}` blockers=`{top_blockers or 'none'}`"
+                )
+            lines.append("")
         bucket_diag = diagnostics.get("profitable_bucket_coverage") if isinstance(diagnostics.get("profitable_bucket_coverage"), dict) else {}
         if bucket_diag:
             lines.extend(
@@ -392,6 +414,7 @@ def _coverage_lane(result: dict[str, Any]) -> CoverageLane:
         risk_jpy=risk_jpy,
         reward_jpy=reward_jpy,
         reward_risk=reward_risk,
+        opportunity_mode=_opportunity_mode(result, reward_risk),
         counts_live_ready=status == "LIVE_READY" and not blockers,
         counts_after_promotion=(
             status == "DRY_RUN_PASSED"
@@ -487,6 +510,7 @@ def _action_items(
     remaining_risk_budget: float,
     duplicate_live_ready_lanes: int,
     sequential_ladder: dict[str, Any],
+    opportunity_modes: dict[str, Any],
     lanes: tuple[CoverageLane, ...],
     replay_gap: str | None,
     artifact_diagnostics: dict[str, Any],
@@ -524,6 +548,9 @@ def _action_items(
             reward_gap = remaining_target - live_ready_reward
             avg_reward = _average_reward(lanes) or 1.0
             items.append(f"build at least {math.ceil(reward_gap / avg_reward)} additional live-ready trigger receipts")
+    mode_repair = _opportunity_mode_repair_item(opportunity_modes)
+    if mode_repair and not evidence_refresh_required:
+        items.append(mode_repair)
     profitable_bucket_diag = (
         artifact_diagnostics.get("profitable_bucket_coverage")
         if isinstance(artifact_diagnostics.get("profitable_bucket_coverage"), dict)
@@ -1273,6 +1300,115 @@ def _average_reward(lanes: tuple[CoverageLane, ...]) -> float:
     if not rewards:
         rewards = [lane.reward_jpy for lane in lanes if lane.reward_jpy > 0]
     return _round(sum(rewards) / len(rewards)) if rewards else 0.0
+
+
+def _opportunity_mode(result: dict[str, Any], reward_risk: float) -> str:
+    intent = result.get("intent") if isinstance(result.get("intent"), dict) else {}
+    metadata = intent.get("metadata") if isinstance(intent.get("metadata"), dict) else {}
+    market_context = intent.get("market_context") if isinstance(intent.get("market_context"), dict) else {}
+    target_intent = str(metadata.get("tp_target_intent") or metadata.get("campaign_role") or "").upper()
+    method = str(market_context.get("method") or "").upper()
+    if any(token in target_intent for token in ("RUNNER", "TRAIL", "EXTEND", "SWING", "HOLD", "ADD")):
+        return "RUNNER"
+    if reward_risk >= RUNNER_REWARD_RISK_MIN:
+        return "RUNNER"
+    if any(token in target_intent for token in ("HARVEST", "SCALP", "QUICK")):
+        return "HARVEST"
+    if 0.0 < reward_risk <= HARVEST_REWARD_RISK_MAX:
+        return "HARVEST"
+    if method == "TREND_CONTINUATION":
+        return "RUNNER"
+    if method in {"RANGE_ROTATION", "BREAKOUT_FAILURE"}:
+        return "HARVEST"
+    return "BALANCED"
+
+
+def _opportunity_mode_summary(
+    lanes: tuple[CoverageLane, ...],
+    remaining_target: float,
+) -> dict[str, Any]:
+    summaries: dict[str, Any] = {
+        mode: {
+            "lanes": 0,
+            "live_ready_lanes": 0,
+            "promotion_candidate_lanes": 0,
+            "reward_jpy": 0.0,
+            "live_ready_reward_jpy": 0.0,
+            "potential_reward_jpy": 0.0,
+            "coverage_pct": 0.0,
+            "potential_coverage_pct": 0.0,
+            "status_counts": {},
+            "top_blockers": [],
+            "top_lanes": [],
+        }
+        for mode in ("HARVEST", "RUNNER", "BALANCED")
+    }
+    status_counts: dict[str, Counter[str]] = {mode: Counter() for mode in summaries}
+    blocker_counts: dict[str, Counter[str]] = {mode: Counter() for mode in summaries}
+    top_lanes: dict[str, list[CoverageLane]] = {mode: [] for mode in summaries}
+    for lane in lanes:
+        mode = lane.opportunity_mode if lane.opportunity_mode in summaries else "BALANCED"
+        item = summaries[mode]
+        item["lanes"] += 1
+        item["reward_jpy"] = _round(float(item["reward_jpy"]) + lane.reward_jpy)
+        if lane.counts_live_ready:
+            item["live_ready_lanes"] += 1
+            item["live_ready_reward_jpy"] = _round(float(item["live_ready_reward_jpy"]) + lane.reward_jpy)
+        if lane.counts_live_ready or lane.counts_after_promotion:
+            item["potential_reward_jpy"] = _round(float(item["potential_reward_jpy"]) + lane.reward_jpy)
+        if lane.counts_after_promotion:
+            item["promotion_candidate_lanes"] += 1
+        status_counts[mode][lane.status] += 1
+        blocker_counts[mode].update(lane.blockers)
+        top_lanes[mode].append(lane)
+    for mode, item in summaries.items():
+        item["coverage_pct"] = (
+            _round((float(item["live_ready_reward_jpy"]) / remaining_target) * 100.0)
+            if remaining_target
+            else 100.0
+        )
+        item["potential_coverage_pct"] = (
+            _round((float(item["potential_reward_jpy"]) / remaining_target) * 100.0)
+            if remaining_target
+            else 100.0
+        )
+        item["status_counts"] = dict(sorted(status_counts[mode].items(), key=lambda pair: (-pair[1], pair[0])))
+        item["top_blockers"] = [
+            {"label": label, "count": count}
+            for label, count in blocker_counts[mode].most_common(6)
+        ]
+        item["top_lanes"] = [
+            {
+                "lane_id": lane.lane_id,
+                "status": lane.status,
+                "reward_jpy": lane.reward_jpy,
+                "reward_risk": lane.reward_risk,
+                "blockers": list(lane.blockers[:3]),
+            }
+            for lane in sorted(top_lanes[mode], key=lambda lane: (lane.reward_jpy, lane.reward_risk), reverse=True)[:6]
+        ]
+    return summaries
+
+
+def _opportunity_mode_repair_item(opportunity_modes: dict[str, Any]) -> str | None:
+    labels: list[str] = []
+    for mode in ("HARVEST", "RUNNER"):
+        item = opportunity_modes.get(mode) if isinstance(opportunity_modes.get(mode), dict) else {}
+        if int(item.get("lanes") or 0) <= 0 or int(item.get("live_ready_lanes") or 0) > 0:
+            continue
+        blockers = item.get("top_blockers") if isinstance(item.get("top_blockers"), list) else []
+        blocker_labels = [
+            str(blocker.get("label"))
+            for blocker in blockers[:2]
+            if isinstance(blocker, dict) and str(blocker.get("label") or "").strip()
+        ]
+        blocker_text = ", ".join(blocker_labels) if blocker_labels else "no explicit blocker label"
+        labels.append(f"{mode} lanes={int(item.get('lanes') or 0)} top blockers: {blocker_text}")
+    if len(labels) >= 2:
+        return "repair both harvest and runner opportunity paths instead of treating coverage as one pool: " + "; ".join(labels)
+    if labels:
+        return "repair the visible opportunity path before broad exploration: " + labels[0]
+    return None
 
 
 def _has_intent(item: object) -> bool:
