@@ -1226,6 +1226,7 @@ class GPTTraderBrain:
         return {
             "contract": {
                 "allowed_actions": list(ALLOWED_ACTIONS),
+                "entry_decision_actions": list(ENTRY_DECISION_HORIZON_ACTIONS + ("CANCEL_PENDING",)),
                 "trade_requires_live_ready_lane": True,
                 "trade_may_select_multiple_live_ready_lanes": True,
                 "entry_decisions_require_twenty_minute_plan": True,
@@ -1244,6 +1245,11 @@ class GPTTraderBrain:
                 "coverage_optimization_is_read_only_gap_evidence": True,
                 "operator_precedent_is_advisory_only": True,
                 "manual_market_context_gates_only_precedent_usage": True,
+                "soft_close_advisory_non_blocking": (
+                    "position_close_recommendations include blocks_non_close_actions; "
+                    "when false, do not choose CLOSE from that advisory on the entry branch "
+                    "unless explicit operator Gate B is present"
+                ),
             },
             "artifact_timestamps": {
                 "order_intents_generated_at_utc": intents.get("generated_at_utc"),
@@ -1346,7 +1352,7 @@ class GPTTraderBrain:
                 "- Any self-improvement P0 blocks new `TRADE` receipts until the named blocker is repaired or the trader route explicitly justifies the exception.",
                 "- The 2025 operator precedent is advisory only. A `TRADE` that cites `operator:precedent` must also cite `manual:market_context`, at least one selected lane must match the current operator-precedent aligned lane set, and that selected lane must not conflict with the bounded manual technical replay buckets; otherwise the receipt must use current deterministic edge instead of precedent-based aggression.",
                 "- Evidence refs must come from the input packet; invented refs reject the decision.",
-                "- `CLOSE` requires Gate A plus the applicable Gate B. Hard Gate A (H4 close-confirmed BOS/CHOCH against side, buffered invalidation_price hit with technical confirmation, fresh thesis_evolution BROKEN/RECOMMEND_CLOSE, structural position_management REVIEW_EXIT, or position_thesis invalidation-hit/structural-break evidence with multi-TF confirmation) carries standing loss-cut authorization. M15 structure is Gate A evidence but not unattended hard Gate B unless H4 / recorded invalidation / hard sidecar also confirms; M15 internal structure or receipt-level `invalidation_price` cannot harden a matching soft entry-buffer / unrecorded-invalidation sidecar. Softer Gate A still needs `QR_OPERATOR_CLOSE_OVERRIDE=1` or a fresh `data/.operator_close_token` when the trader chooses CLOSE, but soft-only close evidence does not block TP-managed positions from taking separate current LIVE_READY entries. If the same-direction market stack still supports the open position, treat it as TP rebalance / HOLD / profit-side partial / ADD geometry, not loss-side CLOSE plus same-direction re-entry. `TRADE` must not include `close_trade_ids`; automation ends the close cycle, then the next scheduled cycle must refresh broker truth, reprice intents, and require a separate verified `TRADE` receipt. The receipt's `operator_close_authorized` field is advisory only. See AGENT_CONTRACT §10.",
+                "- `CLOSE` requires Gate A plus the applicable Gate B. Hard Gate A (H4 close-confirmed BOS/CHOCH against side, buffered invalidation_price hit with technical confirmation, fresh thesis_evolution BROKEN/RECOMMEND_CLOSE, structural position_management REVIEW_EXIT, or position_thesis invalidation-hit/structural-break evidence with multi-TF confirmation) carries standing loss-cut authorization only when it has not been downgraded by fresh same-direction HOLD/EXTEND sidecars. M15 structure is Gate A evidence but not unattended hard Gate B unless H4 / recorded invalidation / hard sidecar also confirms; M15 internal structure or receipt-level `invalidation_price` cannot harden a matching soft entry-buffer / unrecorded-invalidation sidecar. `protection_sidecars.position_close_recommendations[].blocks_non_close_actions=false` means the sidecar is advisory for entry routing: do not write CLOSE merely to test the verifier; evaluate current LIVE_READY entries unless explicit operator Gate B is present. Softer Gate A still needs `QR_OPERATOR_CLOSE_OVERRIDE=1` or a fresh `data/.operator_close_token` when the trader chooses CLOSE. If the same-direction market stack still supports the open position, treat it as TP rebalance / HOLD / profit-side partial / ADD geometry, not loss-side CLOSE plus same-direction re-entry. `TRADE` must not include `close_trade_ids`; automation ends the close cycle, then the next scheduled cycle must refresh broker truth, reprice intents, and require a separate verified `TRADE` receipt. The receipt's `operator_close_authorized` field is advisory only. See AGENT_CONTRACT §10.",
             ]
         )
         self.report_path.write_text("\n".join(lines) + "\n")
@@ -1680,6 +1686,26 @@ class DecisionVerifier:
                     reasons=position_close_reasons,
                 )
             if decision.action == "CLOSE":
+                soft_advisory_reasons = _soft_nonblocking_close_advisory_reasons(
+                    self.packet,
+                    decision.close_trade_ids,
+                )
+                if (
+                    soft_advisory_reasons
+                    and _target_requires_entry(self.packet)
+                    and not self_improvement_entry_blockers
+                    and tradeable_lanes
+                ):
+                    issues.append(
+                        VerificationIssue(
+                            "SOFT_CLOSE_ADVISORY_DOES_NOT_PREEMPT_ENTRY",
+                            "CLOSE selected a non-blocking soft close advisory while the daily target is open "
+                            "and tradeable LIVE_READY lane(s) exist. Treat the advisory as HOLD/reprice/TP "
+                            "monitoring unless explicit operator Gate B is present; write an entry-branch "
+                            f"TRADE/CANCEL/WAIT receipt instead. Soft advisory: {'; '.join(soft_advisory_reasons[:3])}. "
+                            f"Tradeable lane(s): {', '.join(tradeable_lanes[:3])}",
+                        )
+                    )
                 self._verify_close_trade_ids(decision, issues)
                 self._verify_close_discipline(decision, issues)
         # A TRADE receipt may not execute close+reentry in one packet,
@@ -2519,7 +2545,7 @@ def _protection_sidecars_packet(
         data_root=snapshot_path.parent,
     )
     if not pair_charts_path.exists():
-        return {
+        sidecars = {
             "tp_rebalance": {
                 "required": False,
                 "reasons": [],
@@ -2530,6 +2556,11 @@ def _protection_sidecars_packet(
             "entry_thesis_blockers": entry_thesis_blockers,
             "entry_thesis_close_context": entry_thesis_close_context,
         }
+        sidecars["position_close_recommendations"] = _annotated_position_close_recommendations(
+            snapshot,
+            sidecars,
+        )
+        return sidecars
     pair_charts = _load_json(pair_charts_path)
 
     reasons = _tp_rebalance_reasons(
@@ -2537,7 +2568,7 @@ def _protection_sidecars_packet(
         pair_charts,
         snapshot_path=snapshot_path,
     )
-    return {
+    sidecars = {
         "tp_rebalance": {
             "required": bool(reasons),
             "reasons": list(reasons),
@@ -2547,6 +2578,48 @@ def _protection_sidecars_packet(
         "entry_thesis_blockers": entry_thesis_blockers,
         "entry_thesis_close_context": entry_thesis_close_context,
     }
+    sidecars["position_close_recommendations"] = _annotated_position_close_recommendations(
+        snapshot,
+        sidecars,
+    )
+    return sidecars
+
+
+def _annotated_position_close_recommendations(
+    snapshot: dict[str, Any],
+    sidecars: dict[str, Any],
+) -> list[dict[str, Any]]:
+    packet = {
+        "broker_snapshot": _snapshot_packet(snapshot),
+        "protection_sidecars": sidecars,
+    }
+    annotated: list[dict[str, Any]] = []
+    for rec in sidecars.get("position_close_recommendations") or []:
+        if not isinstance(rec, dict):
+            continue
+        item = dict(rec)
+        blocks_non_close = _position_close_recommendation_blocks_non_close_action(packet, item)
+        item["blocks_non_close_actions"] = blocks_non_close
+        item["routing_effect"] = (
+            "BLOCKS_NON_CLOSE_ACTIONS"
+            if blocks_non_close
+            else "SOFT_ADVISORY_NON_BLOCKING"
+        )
+        if not blocks_non_close:
+            item["entry_decision_guidance"] = (
+                "Do not choose CLOSE from this advisory on the entry branch unless "
+                "explicit operator Gate B is present; evaluate current LIVE_READY lanes."
+            )
+            hold_conflict = _sidecar_hold_support_conflict(packet, item)
+            if hold_conflict:
+                item["non_blocking_reason"] = hold_conflict
+            elif not _operator_close_gate_authorized():
+                item["non_blocking_reason"] = (
+                    "soft close evidence lacks explicit operator Gate B and therefore "
+                    "does not preempt entry routing"
+                )
+        annotated.append(item)
+    return annotated
 
 
 def _entry_thesis_close_context(snapshot: dict[str, Any], *, data_root: Path) -> list[dict[str, Any]]:
@@ -3696,6 +3769,40 @@ def _position_close_sidecar_reasons(
         label = " ".join(part for part in (pair, side, f"id={trade_id}" if trade_id else "") if part)
         prefix = f"{source} {verdict}"
         reasons.append(f"{prefix} {label}: {reason}" if label else f"{prefix}: {reason}")
+    return reasons
+
+
+def _soft_nonblocking_close_advisory_reasons(
+    packet: dict[str, Any],
+    trade_ids: list[str] | tuple[str, ...],
+) -> list[str]:
+    sidecars = packet.get("protection_sidecars")
+    if not isinstance(sidecars, dict):
+        return []
+    recommendations = sidecars.get("position_close_recommendations")
+    if not isinstance(recommendations, list):
+        return []
+    selected = {str(trade_id) for trade_id in trade_ids if str(trade_id)}
+    reasons: list[str] = []
+    for item in recommendations:
+        if not isinstance(item, dict):
+            continue
+        trade_id = str(item.get("trade_id") or "").strip()
+        if selected and trade_id not in selected:
+            continue
+        if _position_close_recommendation_blocks_non_close_action(packet, item):
+            continue
+        pair = str(item.get("pair") or "").strip()
+        side = str(item.get("side") or "").strip()
+        source = str(item.get("source") or "position_sidecar").strip()
+        verdict = str(item.get("verdict") or "RECOMMEND_CLOSE").strip()
+        reason = str(
+            item.get("non_blocking_reason")
+            or item.get("reason")
+            or "soft close evidence does not block non-CLOSE actions"
+        ).strip()
+        label = " ".join(part for part in (pair, side, f"id={trade_id}" if trade_id else "") if part)
+        reasons.append(f"{source} {verdict} {label}: {reason}" if label else f"{source} {verdict}: {reason}")
     return reasons
 
 

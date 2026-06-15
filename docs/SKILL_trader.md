@@ -148,13 +148,20 @@ PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli cycle-refresh --daily-risk-pct 1
 # `trader-prompt-route` again if you changed an artifact after the digest.
 #
 # Position close sidecars inside the digest are read-only prediction/thesis
-# evidence. Fresh thesis_evolution BROKEN / RECOMMEND_CLOSE, structural
-# position_management REVIEW_EXIT, and position_thesis invalidation-hit or
-# structural-break evidence with multi-TF confirmation are hard standing
-# loss-cut authorization. Adverse-entry-buffer-only position_thesis evidence
-# is soft and still needs explicit Gate B before CLOSE; without Gate B, soft
-# sidecars are advisory for non-CLOSE actions and must not block separate
-# current LIVE_READY entries on other pairs or horizons.
+# evidence. Read `protection_sidecars.position_close_recommendations[]`
+# before deciding: `blocks_non_close_actions=true` means close-first work;
+# `blocks_non_close_actions=false` means soft advisory only and must not
+# produce a CLOSE receipt from the entry branch. Fresh thesis_evolution
+# BROKEN / RECOMMEND_CLOSE, structural position_management REVIEW_EXIT, and
+# position_thesis invalidation-hit or structural-break evidence with multi-TF
+# confirmation are hard standing loss-cut authorization only when they do not
+# conflict with fresh same-direction HOLD/EXTEND sidecars. If thesis_evolution
+# / position_thesis / forecast_persistence still support the open side, treat
+# the issue as HOLD/reprice/TP rebalance unless explicit Gate B is present.
+# Adverse-entry-buffer-only position_thesis evidence is soft and still needs
+# explicit Gate B before CLOSE; without Gate B, soft sidecars are advisory for
+# non-CLOSE actions and must not block separate current LIVE_READY entries on
+# other pairs or horizons.
 
 # 3. Write data/codex_trader_decision_response.json from the active decision branch
 # If broker refresh made an older receipt stale, overwrite it with one current receipt.
@@ -218,10 +225,14 @@ PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli cycle-refresh --daily-risk-pct 1
 # permission to pay it.
 # Hard sidecar Gate A or explicit Gate B close evidence is priority work: do
 # not choose TRADE, WAIT, REQUEST_EVIDENCE, PROTECT, or TIGHTEN_SL to sidestep
-# it. If only soft Gate A exists and explicit Gate B is missing, the sidecar is
-# advisory for non-CLOSE actions; keep TP/profit management active, and still
-# evaluate short / medium / long horizon LIVE_READY entries. If choosing CLOSE
-# from soft evidence, the verifier must surface `CLOSE_OPERATOR_AUTH_REQUIRED`.
+# it. If only soft Gate A exists and explicit Gate B is missing, or if a hard-
+# looking sidecar was downgraded by same-direction HOLD/EXTEND support, the
+# sidecar is advisory for non-CLOSE actions; keep TP/profit management active,
+# and still evaluate short / medium / long horizon LIVE_READY entries. Do not
+# write CLOSE merely to let the verifier reject it; in the entry branch, write
+# a TRADE/CANCEL/WAIT/REQUEST_EVIDENCE receipt from the current packet. If
+# choosing CLOSE from soft evidence, the verifier must surface
+# `CLOSE_OPERATOR_AUTH_REQUIRED`.
 # If hard Gate A or explicit Gate B is present, it must require a CLOSE receipt
 # first. The default stance when no user instruction is present is HOLD / WAIT
 # only when no fresh hard/authorized Gate A close sidecar and no current

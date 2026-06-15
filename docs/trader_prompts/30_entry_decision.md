@@ -11,7 +11,7 @@
 1. Read `docs/trader_prompts/20_market_packet.md`.
 2. State the pair-level next forecast for each candidate pair: `UP`, `DOWN`, `RANGE`, or `UNCLEAR`. Treat forecast target/invalidation levels inside current M1/M5 ATR/spread noise as non-structural. In an active range, lower-half price carries bounce/retest risk and upper-half price carries fade risk before a breakout is proved.
 3. Build the all-horizon opportunity map before deciding: M1/M5 for immediate execution, M15/M30/H1 for operating swing, and H4/D for anchor/bias. A valid trade may come from any horizon when entry, invalidation, TP, spread, and portfolio gates pass. Do not collapse the packet to a single short-term read.
-4. Treat soft-only close sidecars without explicit Gate B as advisory for entries: keep the existing TP-managed runner under monitoring, but do not let that advisory block unrelated current `LIVE_READY` lanes on another pair or horizon. Hard close evidence or explicit Gate B still requires close-first discipline.
+4. Treat soft-only close sidecars without explicit Gate B as advisory for entries: keep the existing TP-managed runner under monitoring, but do not let that advisory block unrelated current `LIVE_READY` lanes on another pair or horizon. If `protection_sidecars.position_close_recommendations[].blocks_non_close_actions=false`, do not write `CLOSE` just to "test" the verifier; `CLOSE` is not a valid action in this branch. Hard close evidence or explicit Gate B still requires close-first discipline.
 5. Read `data/market_context_matrix.json` for every current candidate. Use it to raise confidence and expose the strongest counterargument, not to invent a new blocker or reduce trade count.
 6. List every current `LIVE_READY` lane.
 7. Intersect `ai_attack_advice.recommended_now_lane_ids` with current tradeable lanes.
@@ -39,6 +39,11 @@
 - `CANCEL_PENDING`
 - `WAIT`
 - `REQUEST_EVIDENCE`
+
+Do not write `CLOSE` from this branch. A soft close advisory that lacks explicit
+Gate B is a monitoring/reprice input, not a close-first router decision. If a
+later refresh upgrades the sidecar to `blocks_non_close_actions=true`, the
+router will move to `position_management`.
 
 ## Operator Precedent (`data/operator_precedent_audit.json`, `data/manual_market_context_audit.json`, `docs/manual_trading_2025_evidence.md`)
 

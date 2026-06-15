@@ -4654,6 +4654,89 @@ class CloseDisciplineTest(unittest.TestCase):
             self.assertIn("CLOSE_SAME_DIRECTION_MARKET_SUPPORT", codes)
             self.assertNotIn("CLOSE_THESIS_STILL_VALID", codes)
 
+    def test_input_packet_marks_hold_conflicted_close_sidecar_as_nonblocking_advisory(self) -> None:
+        # Regression for 2026-06-15 EUR_CHF 472445: the router correctly chose
+        # the entry branch, but the model saw a position_thesis REVIEW_CLOSE
+        # sidecar and kept returning CLOSE. The packet must expose the
+        # hold-sidecar downgrade in machine-readable form.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _close_fixtures(root, position_side="LONG", m15_dir="UP", h4_dir="UP")
+            _write_fresh_position_thesis_close_recommendation(
+                root,
+                files,
+                side="LONG",
+                rationale_lines=[
+                    "patterns +4.0",
+                    "forward-proj +6.0",
+                    "chart-tech -18.0",
+                ],
+                context_notes=[
+                    "invalidation hit: current bid 1.17300 <= buffered invalidation 1.17350",
+                    "technical invalidation confirmed against LONG: H1 MACD-; M15 ST-; M30 MACD-; M5 ST-",
+                ],
+            )
+            _write_fresh_evolution_and_persistence_hold_support(root, files, side="LONG")
+            decision = _close_decision(trade_ids=["555"])
+            decision["evidence_refs"].extend(
+                ["position:thesis:555", "position:evolution:555", "position:persistence:555"]
+            )
+            brain = _brain(root, files, decision)
+
+            summary = brain.run(snapshot_path=files["snapshot"])
+
+            self.assertEqual(summary.status, "REJECTED", msg=summary)
+            payload = json.loads((root / "gpt_decision.json").read_text())
+            recs = payload["input_packet"]["protection_sidecars"]["position_close_recommendations"]
+            thesis_rec = next(item for item in recs if item["source"] == "position_thesis")
+            self.assertTrue(thesis_rec["gate_b_standing_authorized"])
+            self.assertFalse(thesis_rec["blocks_non_close_actions"])
+            self.assertEqual(thesis_rec["routing_effect"], "SOFT_ADVISORY_NON_BLOCKING")
+            self.assertIn("Do not choose CLOSE", thesis_rec["entry_decision_guidance"])
+            self.assertIn("same-direction", thesis_rec["non_blocking_reason"])
+
+    def test_close_from_nonblocking_soft_advisory_with_live_ready_lanes_points_back_to_entry(self) -> None:
+        # The verifier should not only reject the close; it should identify the
+        # exact contract breach so the next receipt returns to the active
+        # entry branch and current LIVE_READY lanes.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _close_fixtures(root, position_side="LONG", m15_dir="UP", h4_dir="UP")
+            matrix = json.loads(files["market_context_matrix"].read_text())
+            matrix["pairs"]["EUR_USD"]["LONG"]["supports"] = []
+            files["market_context_matrix"].write_text(json.dumps(matrix))
+            _write_fresh_position_thesis_close_recommendation(
+                root,
+                files,
+                side="LONG",
+                rationale_lines=[
+                    "patterns +4.0",
+                    "forward-proj +6.0",
+                    "chart-tech -18.0",
+                ],
+                context_notes=[
+                    "invalidation hit: current bid 1.17300 <= buffered invalidation 1.17350",
+                    "technical invalidation confirmed against LONG: H1 MACD-; M15 ST-; M30 MACD-; M5 ST-",
+                ],
+            )
+            _write_fresh_evolution_and_persistence_hold_support(root, files, side="LONG")
+            decision = _close_decision(trade_ids=["555"])
+            decision["evidence_refs"].extend(
+                ["position:thesis:555", "position:evolution:555", "position:persistence:555"]
+            )
+            brain = _brain(root, files, decision)
+
+            summary = brain.run(snapshot_path=files["snapshot"])
+
+            self.assertEqual(summary.status, "REJECTED", msg=summary)
+            payload = json.loads((root / "gpt_decision.json").read_text())
+            codes = {issue["code"] for issue in payload["verification_issues"]}
+            self.assertIn("SOFT_CLOSE_ADVISORY_DOES_NOT_PREEMPT_ENTRY", codes)
+            self.assertIn("CLOSE_OPERATOR_AUTH_REQUIRED", codes)
+            messages = "\n".join(issue["message"] for issue in payload["verification_issues"])
+            self.assertIn("TRADE/CANCEL/WAIT", messages)
+            self.assertIn(LANE_ID, messages)
+
     def test_receipt_invalidation_price_requires_token_when_hold_sidecars_support_recovery(self) -> None:
         # Same USD_CAD shape through the receipt-level invalidation path: a
         # model can copy the recorded invalidation into the CLOSE receipt, but
