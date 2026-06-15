@@ -578,6 +578,15 @@ def _close_thesis_invalidation(
                     receipt_reason = f"{reason}; {technical_reason} on {tf} per receipt"
                     if soft_blocker:
                         return True, f"{receipt_reason}; {soft_blocker}", False
+                    hold_conflict = _same_direction_hold_support_conflict(
+                        packet,
+                        trade_id=trade_id,
+                        pair=pair,
+                        side=side_upper,
+                        evidence_label="receipt-level invalidation hit",
+                    )
+                    if hold_conflict:
+                        return True, f"{receipt_reason}; {hold_conflict}", False
                     return True, receipt_reason, True
 
     sidecar_ok, sidecar_reason, sidecar_standing_authorized = _position_sidecar_close_recommended(
@@ -622,10 +631,10 @@ def _position_sidecar_close_recommended(
     reason = str(rec.get("reason") or "prediction no longer supports recovery")
     rec_trade = str(rec.get("trade_id") or "")
     standing_authorized = _sidecar_close_standing_authorized(rec)
-    expiry_hold_conflict = _thesis_expiry_hold_support_conflict(packet, rec)
-    if standing_authorized and expiry_hold_conflict:
+    hold_conflict = _sidecar_hold_support_conflict(packet, rec)
+    if standing_authorized and hold_conflict:
         standing_authorized = False
-        reason = f"{reason}; {expiry_hold_conflict}"
+        reason = f"{reason}; {hold_conflict}"
     return (
         True,
         f"{source} {verdict} for trade {rec_trade}: {reason}",
@@ -633,32 +642,87 @@ def _position_sidecar_close_recommended(
     )
 
 
-def _thesis_expiry_hold_support_conflict(
+def _sidecar_hold_support_conflict(
     packet: dict[str, Any],
     rec: dict[str, Any],
 ) -> str | None:
-    """Downgrade clock-expiry close evidence when current position stack supports hold.
+    """Downgrade close evidence when current position stack still supports hold.
 
     `THESIS_EXPIRED` is meant to stop decayed, unsupported theses. If separate
     fresh position sidecars still support the open side, the problem is
-    position geometry/repricing, not a hard unattended loss-cut.
+    position geometry/repricing, not a hard unattended loss-cut. The same
+    conflict applies to recorded-invalidation sidecars unless the reason
+    contains a higher-timeframe structural break; a small invalidation hit while
+    current forecasts still support the open side is the 2026-06-15 USD_CAD
+    loss-close failure mode.
     """
 
     source = str(rec.get("source") or "").strip()
     reason = str(rec.get("reason") or "")
-    if source != "thesis_evolution" or "THESIS_EXPIRED" not in reason.upper():
+    if _sidecar_reason_has_h4_structural_break(reason):
         return None
-    supported, support_reason = _close_same_direction_sidecar_support(
+    upper_reason = reason.upper()
+    lower_reason = reason.lower()
+    if source == "thesis_evolution":
+        conflict_label = (
+            "THESIS_EXPIRED"
+            if "THESIS_EXPIRED" in upper_reason
+            else "thesis_evolution close evidence"
+        )
+    elif source == "position_thesis" and (
+        "invalidation hit:" in lower_reason
+        or "technical invalidation confirmed against" in lower_reason
+    ):
+        conflict_label = "position_thesis invalidation evidence"
+    elif source == "position_management" and "entry thesis invalidation hit" in lower_reason:
+        conflict_label = "position_management entry-invalidation evidence"
+    else:
+        return None
+    return _same_direction_hold_support_conflict(
         packet,
         trade_id=str(rec.get("trade_id") or "") or None,
         pair=str(rec.get("pair") or ""),
         side=str(rec.get("side") or ""),
+        evidence_label=conflict_label,
+    )
+
+
+def _same_direction_hold_support_conflict(
+    packet: dict[str, Any],
+    *,
+    trade_id: str | None,
+    pair: str,
+    side: str,
+    evidence_label: str,
+) -> str | None:
+    supported, support_reason = _close_same_direction_sidecar_support(
+        packet,
+        trade_id=trade_id,
+        pair=pair,
+        side=side,
     )
     if not supported:
         return None
     return (
-        f"THESIS_EXPIRED is downgraded to soft Gate A because {support_reason}; "
+        f"{evidence_label} is downgraded to soft Gate A because {support_reason}; "
         "use HOLD/reprice/TP rebalance unless explicit Gate B authorizes the close"
+    )
+
+
+def _sidecar_reason_has_h4_structural_break(reason: str) -> bool:
+    lowered = str(reason or "").lower()
+    if "h4" not in lowered:
+        return False
+    return any(
+        token in lowered
+        for token in (
+            "bos_",
+            "choch_",
+            "close-confirmed",
+            "structural break",
+            "order block",
+            "ob broken",
+        )
     )
 
 
@@ -3647,7 +3711,7 @@ def _position_close_recommendation_blocks_non_close_action(
     fresh all-horizon entries while authorization is absent.
     """
     if bool(rec.get("gate_b_standing_authorized")):
-        if _thesis_expiry_hold_support_conflict(packet, rec):
+        if _sidecar_hold_support_conflict(packet, rec):
             return _operator_close_gate_authorized()
         return True
     trade_id = str(rec.get("trade_id") or "")

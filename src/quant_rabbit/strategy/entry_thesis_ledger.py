@@ -1413,6 +1413,12 @@ def evaluate_thesis_evolution(
             reasons.append(
                 f"{invalidation_reason}; waiting for chart/technical confirmation"
             )
+        elif forecast_support_reason:
+            reasons.append(
+                f"{invalidation_reason}; {technical_reason}; {forecast_support_reason}, so "
+                "the invalidation hit is HOLD/reprice/TP rebalance evidence until the "
+                "same-direction recovery edge disappears or higher-timeframe structure breaks"
+            )
         else:
             return ThesisEvolution(
                 trade_id=trade_id, pair=pair, side=side_up,

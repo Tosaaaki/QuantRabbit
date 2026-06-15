@@ -569,6 +569,34 @@ class EntryThesisLedgerTest(unittest.TestCase):
             self.assertEqual(ev.verdict, "RECOMMEND_CLOSE")
             self.assertIn("invalidation hit", ev.rationale)
 
+    def test_evolution_invalidation_hit_stays_hold_when_same_direction_forecast_supports_side(self) -> None:
+        # Regression for 2026-06-15 USD_CAD 472427: the recorded invalidation
+        # was hit on M5/M15 technical weakness, but the current forecast still
+        # supported the open LONG. That is geometry/reprice work unless the
+        # same-direction recovery edge disappears or higher-TF structure breaks.
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            self._seed_thesis(root)
+            ev = evaluate_thesis_evolution(
+                trade_id="T1", pair="EUR_JPY", side="LONG",
+                open_time_utc="2026-05-15T10:00:00Z",
+                current_forecast=_Forecast("UP", 0.67),
+                current_regime="RANGE",
+                data_root=root,
+                current_price=161.97,
+                current_price_label="bid",
+                invalidation_buffer_pips=2.0,
+                pair_chart=_tech_chart("DOWN"),
+            )
+            self.assertIsNotNone(ev)
+            assert ev is not None
+            self.assertEqual(ev.status, "WEAKENED")
+            self.assertEqual(ev.verdict, "HOLD")
+            self.assertIn("invalidation hit", ev.rationale)
+            self.assertIn("current forecast UP", ev.rationale)
+            self.assertIn("supports LONG", ev.rationale)
+            self.assertIn("HOLD/reprice/TP rebalance", ev.rationale)
+
     def test_evolution_broken_when_short_invalidation_price_is_hit(self) -> None:
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
