@@ -7402,6 +7402,7 @@ class TimingEvidenceBreakoutStopTest(unittest.TestCase):
             timing_count=1,
             hit_rate=0.88,
             samples=500,
+            support_ok=True,
         )
         metadata["forecast_directional_calibration_name"] = "directional_forecast_up"
         metadata["forecast_directional_hit_rate"] = 0.12

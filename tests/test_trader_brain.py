@@ -1616,6 +1616,83 @@ class ForecastLaneGateTest(unittest.TestCase):
             )
         )
 
+    def test_market_support_rejects_timing_only_known_weak_direction_bucket(self) -> None:
+        intent = {
+            "order_type": "STOP-ENTRY",
+            "metadata": {
+                "forecast_direction": "UP",
+                "forecast_confidence": 0.58,
+                "forecast_raw_confidence": 0.66,
+                "chart_direction_bias": "LONG",
+                "forecast_directional_calibration_name": "directional_forecast_up",
+                "forecast_directional_hit_rate": 0.12,
+                "forecast_directional_samples": 18,
+                "forecast_market_support": {
+                    "ok": True,
+                    "aligned_projection_count": 0,
+                    "timing_projection_count": 1,
+                    "best_hit_rate": 0.88,
+                    "best_samples": 100,
+                    "best_timing_hit_rate": 0.88,
+                    "best_timing_samples": 100,
+                },
+            },
+        }
+
+        self.assertFalse(
+            _forecast_market_support_allows_low_confidence_live_ready(
+                intent,
+                side="LONG",
+                forecast=self._forecast("UP", confidence=0.58),
+                min_confidence=0.65,
+            )
+        )
+
+    def test_market_support_rejects_range_edge_stop_entry_fakeout(self) -> None:
+        intent = {
+            "order_type": "STOP-ENTRY",
+            "metadata": {
+                "forecast_direction": "UP",
+                "forecast_confidence": 0.45,
+                "forecast_raw_confidence": 0.63,
+                "chart_direction_bias": "LONG",
+                "m5_regime": "RANGE",
+                "range_phase": "RANGE_STABLE",
+                "tf_regime_map": {
+                    "M5": {"classification": "RANGE", "range_position": 0.95},
+                    "M15": {"classification": "RANGE", "range_position": 0.81},
+                },
+                "forecast_market_support": {
+                    "ok": True,
+                    "direction": "UP",
+                    "aligned_projection_count": 1,
+                    "timing_projection_count": 1,
+                    "best_hit_rate": 0.90,
+                    "best_samples": 100,
+                    "best_aligned_hit_rate": 0.90,
+                    "best_aligned_samples": 100,
+                    "signals": [
+                        {
+                            "name": "macro_event_nowcast_central_bank",
+                            "direction": "UP",
+                            "confidence": 0.79,
+                            "hit_rate": 0.90,
+                            "samples": 100,
+                        }
+                    ],
+                },
+            },
+        }
+
+        self.assertFalse(
+            _forecast_market_support_allows_low_confidence_live_ready(
+                intent,
+                side="LONG",
+                forecast=self._forecast("UP", confidence=0.45),
+                min_confidence=0.65,
+            )
+        )
+
 
 def _snapshot(*, orders=(), positions=()) -> BrokerSnapshot:
     now = datetime.now(timezone.utc)

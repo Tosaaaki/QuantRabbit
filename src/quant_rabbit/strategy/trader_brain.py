@@ -415,7 +415,7 @@ def _short_term_momentum_class(intent_or_context: dict[str, Any] | None) -> str:
         return "LOW"
     return "NEUTRAL"
 
-from quant_rabbit.models import BrokerSnapshot, Owner, Side, TradeMethod
+from quant_rabbit.models import BrokerSnapshot, OrderType, Owner, Side, TradeMethod
 from quant_rabbit.risk import RiskPolicy
 
 
@@ -3236,96 +3236,35 @@ def _forecast_market_support_allows_low_confidence_live_ready(
     if side not in {"LONG", "SHORT"}:
         return False
     metadata = intent.get("metadata") if isinstance(intent.get("metadata"), dict) else {}
-    expected_side = "LONG" if forecast.direction == "UP" else "SHORT" if forecast.direction == "DOWN" else None
-    if expected_side != side:
-        return False
-    metadata_direction = str(metadata.get("forecast_direction") or "").upper()
-    if metadata_direction and metadata_direction != forecast.direction:
-        return False
-    shortfall_limit = _bounded_env_float(
-        "QR_FORECAST_MARKET_SUPPORT_MAX_CONFIDENCE_SHORTFALL",
-        default=0.10,
-        minimum=0.0,
-        maximum=0.50,
+    source = dict(metadata)
+    source.setdefault("forecast_direction", forecast.direction)
+    source.setdefault("forecast_confidence", forecast.confidence)
+    source.setdefault("forecast_raw_confidence", forecast.raw_confidence)
+    order_type = _intent_order_type_for_forecast_support(intent)
+
+    # Keep TraderBrain's prefilter in lockstep with IntentGenerator's live
+    # readiness contract. The support override has accumulated several safety
+    # repairs (known-weak directional buckets, STOP-only timing proof, range
+    # edge fakeout protection); duplicating the math here let SEND_ENTRY drift
+    # away from DRY_RUN/LIVE_READY classification.
+    from quant_rabbit.strategy.intent_generator import _forecast_market_support_allows_side
+
+    return _forecast_market_support_allows_side(
+        side,
+        source,
+        min_confidence=min_confidence,
+        order_type=order_type,
     )
-    support_floor = max(0.0, min_confidence - shortfall_limit)
-    if forecast.confidence < support_floor:
-        return False
-    chart_direction_bias = str(metadata.get("chart_direction_bias") or "").upper()
-    if chart_direction_bias and chart_direction_bias != side:
-        return False
-    support = metadata.get("forecast_market_support")
-    if not isinstance(support, dict) or not bool(support.get("ok")):
-        return False
-    support_direction = str(support.get("direction") or "").upper()
-    if support_direction and support_direction != forecast.direction:
-        return False
-    if bool(support.get("bootstrap_projection_support")):
-        return True
-    min_samples = _bounded_env_int(
-        "QR_FORECAST_MARKET_SUPPORT_MIN_SAMPLES",
-        default=_bounded_env_int("QR_PROJECTION_CONFIDENCE_MIN_SAMPLES", default=10, minimum=1, maximum=10_000),
-        minimum=1,
-        maximum=10_000,
-    )
-    aligned_count = _optional_int(support.get("aligned_projection_count")) or 0
-    timing_count = _optional_int(support.get("timing_projection_count")) or 0
-    samples = _optional_int(support.get("best_samples")) or 0
-    hit_rate = _optional_float(support.get("best_hit_rate")) or 0.0
-    aligned_samples = _optional_int(support.get("best_aligned_samples"))
-    if (aligned_samples is None or aligned_samples <= 0) and aligned_count > 0:
-        aligned_samples = samples
-    aligned_hit_rate = _optional_float(support.get("best_aligned_hit_rate"))
-    if aligned_hit_rate is None and aligned_count > 0:
-        aligned_hit_rate = hit_rate
-    timing_samples = _optional_int(support.get("best_timing_samples"))
-    if (timing_samples is None or timing_samples <= 0) and timing_count > 0:
-        timing_samples = samples
-    timing_hit_rate = _optional_float(support.get("best_timing_hit_rate"))
-    if timing_hit_rate is None and timing_count > 0:
-        timing_hit_rate = hit_rate
-    if aligned_count > 0:
-        min_directional_hit = _bounded_env_float(
-            "QR_FORECAST_MARKET_SUPPORT_MIN_DIRECTIONAL_HIT_RATE",
-            default=0.55,
-            minimum=0.50,
-            maximum=1.0,
-        )
-        return (
-            (aligned_samples or 0) >= min_samples
-            and (aligned_hit_rate or 0.0) >= min_directional_hit
-        )
-    if timing_count > 0:
-        raw_confidence = _optional_float(metadata.get("forecast_raw_confidence"))
-        min_timing_hit = _bounded_env_float(
-            "QR_FORECAST_MARKET_SUPPORT_MIN_TIMING_HIT_RATE",
-            default=0.70,
-            minimum=0.50,
-            maximum=1.0,
-        )
-        return (
-            raw_confidence is not None
-            and raw_confidence >= min_confidence
-            and (timing_samples or 0) >= min_samples
-            and (timing_hit_rate or 0.0) >= min_timing_hit
-        )
-    return False
 
 
-def _bounded_env_int(name: str, *, default: int, minimum: int, maximum: int) -> int:
+def _intent_order_type_for_forecast_support(intent: dict[str, Any]) -> OrderType | None:
+    raw = intent.get("order_type") or intent.get("type")
+    if raw is None:
+        return None
     try:
-        value = int(float(os.environ.get(name, str(default))))
-    except (TypeError, ValueError):
-        value = default
-    return max(minimum, min(maximum, value))
-
-
-def _bounded_env_float(name: str, *, default: float, minimum: float, maximum: float) -> float:
-    try:
-        value = float(os.environ.get(name, str(default)))
-    except (TypeError, ValueError):
-        value = default
-    return max(minimum, min(maximum, value))
+        return OrderType.parse(str(raw))
+    except ValueError:
+        return None
 
 
 def _clamp(value: float, low: float, high: float) -> float:

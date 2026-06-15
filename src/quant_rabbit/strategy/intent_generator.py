@@ -5958,6 +5958,7 @@ def _forecast_market_support_allows_side(
         )
     return (
         timing_count > 0
+        and not known_weak_direction_bucket
         and raw_confidence is not None
         and raw_confidence >= min_confidence
         and (timing_samples or 0) >= FORECAST_MARKET_SUPPORT_MIN_SAMPLES
