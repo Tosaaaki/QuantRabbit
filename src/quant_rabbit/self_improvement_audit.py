@@ -2506,6 +2506,7 @@ def _intent_findings(
                     "dry_run_passed_forecast_gate_diagnostics": _dry_run_passed_forecast_gate_diagnostics(
                         intents
                     ),
+                    "live_readiness_blocker_families": _intent_live_readiness_family_breakdown(intents),
                     "non_live_ready_live_readiness_blockers": _top_intent_live_readiness_blockers(intents),
                 },
             )
@@ -4207,35 +4208,295 @@ def _top_intent_live_readiness_blockers(
         if status_filter is not None and status not in status_filter:
             continue
 
-        seen: set[str] = set()
-        structured_issue_seen = False
-        for raw in result.get("risk_issues") or []:
-            if not _risk_issue_blocks_live_readiness(raw):
+        for issue in _live_readiness_issues(result):
+            text = str(issue.get("message") or "")
+            if not text:
                 continue
-            structured_issue_seen = (
-                _count_live_readiness_issue(counts, examples, seen, raw, result) or structured_issue_seen
-            )
-        for raw in result.get("live_strategy_issues") or []:
-            if not _strategy_issue_blocks_live_readiness(raw):
-                continue
-            structured_issue_seen = (
-                _count_live_readiness_issue(counts, examples, seen, raw, result) or structured_issue_seen
-            )
-        if "live_strategy_issues" not in result:
-            for raw in result.get("strategy_issues") or []:
-                if isinstance(raw, dict) and str(raw.get("severity") or "").upper() != "BLOCK":
-                    continue
-                structured_issue_seen = (
-                    _count_live_readiness_issue(counts, examples, seen, raw, result) or structured_issue_seen
-                )
-        if not structured_issue_seen:
-            for raw in result.get("live_blockers") or []:
-                _count_live_readiness_issue(counts, examples, seen, raw, result)
+            counts[text] = counts.get(text, 0) + 1
+            lane_id = str(result.get("lane_id") or "")
+            if lane_id and lane_id not in examples.setdefault(text, []):
+                examples[text].append(lane_id)
 
     return [
         {"message": message, "count": count, "example_lanes": examples.get(message, [])[:3]}
         for message, count in sorted(counts.items(), key=lambda item: (-item[1], item[0]))[:8]
     ]
+
+
+def _intent_live_readiness_family_breakdown(intents: dict[str, Any]) -> dict[str, Any]:
+    all_non_live = _live_readiness_family_scope(intents)
+    dry_run_passed = _live_readiness_family_scope(intents, statuses={"DRY_RUN_PASSED"})
+    return {
+        "all_non_live_ready": all_non_live["families"],
+        "dry_run_passed": dry_run_passed["families"],
+        "nearest_live_ready_candidates": dry_run_passed["nearest_candidates"],
+    }
+
+
+def _live_readiness_family_scope(
+    intents: dict[str, Any],
+    *,
+    statuses: set[str] | None = None,
+    family_limit: int = 8,
+    blocker_limit: int = 5,
+    candidate_limit: int = 8,
+) -> dict[str, Any]:
+    status_filter = {item.upper() for item in statuses} if statuses is not None else None
+    family_lane_counts: dict[str, int] = {}
+    family_lane_keys: dict[str, set[str]] = {}
+    family_blocker_counts: dict[str, dict[str, int]] = {}
+    family_blocker_keys: set[tuple[str, str, str]] = set()
+    family_examples: dict[str, list[str]] = {}
+    candidates_by_lane: dict[str, dict[str, Any]] = {}
+    anonymous_candidate_index = 0
+
+    for result in intents.get("results", []) or []:
+        if not isinstance(result, dict):
+            continue
+        status = str(result.get("status") or "").upper()
+        if status == "LIVE_READY":
+            continue
+        if status_filter is not None and status not in status_filter:
+            continue
+        issues = _live_readiness_issues(result)
+        if not issues:
+            continue
+
+        lane_key = str(result.get("lane_id") or "")
+        if not lane_key:
+            anonymous_candidate_index += 1
+            lane_key = f"__anonymous_candidate_{anonymous_candidate_index}"
+        families_seen: set[str] = set()
+        for issue in issues:
+            family = str(issue.get("family") or "other")
+            message = str(issue.get("message") or "")
+            if not message:
+                continue
+            family_blocker_counts.setdefault(family, {})
+            blocker_key = (family, message, lane_key)
+            if blocker_key not in family_blocker_keys:
+                family_blocker_keys.add(blocker_key)
+                family_blocker_counts[family][message] = (
+                    family_blocker_counts[family].get(message, 0) + 1
+                )
+            if family in families_seen:
+                continue
+            families_seen.add(family)
+            family_lane_keys.setdefault(family, set())
+            if lane_key in family_lane_keys[family]:
+                continue
+            family_lane_keys[family].add(lane_key)
+            family_lane_counts[family] = family_lane_counts.get(family, 0) + 1
+            if lane_key and lane_key not in family_examples.setdefault(family, []):
+                family_examples[family].append(lane_key)
+
+        candidate = _nearest_live_ready_candidate(result, issues)
+        previous = candidates_by_lane.get(lane_key)
+        if previous is None or _nearest_live_ready_candidate_sort_key(
+            candidate
+        ) < _nearest_live_ready_candidate_sort_key(previous):
+            candidates_by_lane[lane_key] = candidate
+
+    families = []
+    for family, lane_count in sorted(
+        family_lane_counts.items(),
+        key=lambda item: (-item[1], item[0]),
+    )[:family_limit]:
+        blockers = [
+            {"message": message, "count": count}
+            for message, count in sorted(
+                family_blocker_counts.get(family, {}).items(),
+                key=lambda item: (-item[1], item[0]),
+            )[:blocker_limit]
+        ]
+        families.append(
+            {
+                "family": family,
+                "lane_count": lane_count,
+                "top_blockers": blockers,
+                "example_lanes": family_examples.get(family, [])[:3],
+            }
+        )
+
+    candidates = sorted(
+        candidates_by_lane.values(),
+        key=_nearest_live_ready_candidate_sort_key,
+    )
+    return {"families": families, "nearest_candidates": candidates[:candidate_limit]}
+
+
+def _nearest_live_ready_candidate(
+    result: dict[str, Any],
+    issues: list[dict[str, Any]],
+) -> dict[str, Any]:
+    intent = result.get("intent") if isinstance(result.get("intent"), dict) else {}
+    metadata = intent.get("metadata") if isinstance(intent.get("metadata"), dict) else {}
+    market_context = intent.get("market_context") if isinstance(intent.get("market_context"), dict) else {}
+    risk_metrics = result.get("risk_metrics") if isinstance(result.get("risk_metrics"), dict) else {}
+    families = sorted({str(issue.get("family") or "other") for issue in issues})
+    blockers = [
+        {
+            "family": str(issue.get("family") or "other"),
+            "message": str(issue.get("message") or ""),
+            "source": str(issue.get("source") or ""),
+        }
+        for issue in issues[:6]
+    ]
+    return {
+        "lane_id": str(result.get("lane_id") or ""),
+        "status": str(result.get("status") or ""),
+        "pair": str(intent.get("pair") or metadata.get("pair") or ""),
+        "side": str(intent.get("side") or ""),
+        "method": str(market_context.get("method") or metadata.get("method") or ""),
+        "order_type": str(intent.get("order_type") or ""),
+        "reward_risk": _maybe_float(risk_metrics.get("reward_risk")),
+        "forecast_direction": str(metadata.get("forecast_direction") or ""),
+        "forecast_confidence": _maybe_float(metadata.get("forecast_confidence")),
+        "blocker_families": families,
+        "blocker_family_count": len(families),
+        "blocker_count": len(issues),
+        "blockers": blockers,
+    }
+
+
+def _nearest_live_ready_candidate_sort_key(item: dict[str, Any]) -> tuple[Any, ...]:
+    reward_risk = _maybe_float(item.get("reward_risk"))
+    forecast_confidence = _maybe_float(item.get("forecast_confidence"))
+    return (
+        int(item.get("blocker_family_count") or 0),
+        int(item.get("blocker_count") or 0),
+        0 if str(item.get("status") or "").upper() == "DRY_RUN_PASSED" else 1,
+        1 if reward_risk is None else 0,
+        -(reward_risk or 0.0),
+        1 if forecast_confidence is None else 0,
+        -(forecast_confidence or 0.0),
+        str(item.get("lane_id") or ""),
+    )
+
+
+def _live_readiness_issues(result: dict[str, Any]) -> list[dict[str, Any]]:
+    issues: list[dict[str, Any]] = []
+    seen: set[tuple[str, str]] = set()
+    structured_issue_seen = False
+
+    for raw in result.get("risk_issues") or []:
+        if not _risk_issue_blocks_live_readiness(raw):
+            continue
+        structured_issue_seen = _append_live_readiness_issue(
+            issues,
+            seen,
+            raw,
+            source="risk_issues",
+        ) or structured_issue_seen
+    for raw in result.get("live_strategy_issues") or []:
+        if not _strategy_issue_blocks_live_readiness(raw):
+            continue
+        structured_issue_seen = _append_live_readiness_issue(
+            issues,
+            seen,
+            raw,
+            source="live_strategy_issues",
+        ) or structured_issue_seen
+    if "live_strategy_issues" not in result:
+        for raw in result.get("strategy_issues") or []:
+            if isinstance(raw, dict) and str(raw.get("severity") or "").upper() != "BLOCK":
+                continue
+            structured_issue_seen = _append_live_readiness_issue(
+                issues,
+                seen,
+                raw,
+                source="strategy_issues",
+            ) or structured_issue_seen
+    if not structured_issue_seen:
+        for raw in result.get("live_blockers") or []:
+            _append_live_readiness_issue(
+                issues,
+                seen,
+                raw,
+                source="live_blockers",
+            )
+    return issues
+
+
+def _append_live_readiness_issue(
+    issues: list[dict[str, Any]],
+    seen: set[tuple[str, str]],
+    raw: Any,
+    *,
+    source: str,
+) -> bool:
+    text = _issue_text(raw)
+    if not text:
+        return False
+    key = (source, text)
+    if key in seen:
+        return False
+    seen.add(key)
+    issues.append(
+        {
+            "message": text,
+            "family": _live_readiness_issue_family(raw, source=source),
+            "source": source,
+        }
+    )
+    return True
+
+
+def _live_readiness_issue_family(raw: Any, *, source: str) -> str:
+    code = ""
+    message = _issue_text(raw)
+    if isinstance(raw, dict):
+        code = str(raw.get("code") or "")
+        message = str(raw.get("message") or message)
+    text = f"{code} {message}".upper()
+
+    if any(token in text for token in ("FORECAST", "PROJECTION", "WATCH_ONLY", "TELEMETRY")):
+        return "forecast"
+    if any(token in text for token in ("STRATEGY", "PROFILE", "METHOD_PROFILE", "ELIGIBLE")):
+        return "strategy_profile"
+    if any(
+        token in text
+        for token in (
+            "EXHAUSTION",
+            "CHASE",
+            "CHART_DIRECTION",
+            "PATTERN_REVERSAL",
+            "BREAKOUT_FAILURE",
+            "RANGE_ROTATION",
+            "TREND_MARKET",
+            "RANGE_MARKET",
+            "RAIL",
+            "RETEST",
+            "PHASE",
+            "LOCATION",
+        )
+    ):
+        return "market_structure"
+    if any(
+        token in text
+        for token in (
+            "REWARD_RISK",
+            "RISK",
+            "STOP",
+            "SPREAD",
+            "MARGIN",
+            "UNITS",
+            "ATR",
+            "DISTANCE",
+            "DISASTER",
+            "SIZE",
+            "TP",
+            "SL",
+        )
+    ):
+        return "risk_geometry"
+    if any(token in text for token in ("LIQUID", "SESSION", "GATEWAY", "BROKER", "ORDER", "FILL", "SLIPPAGE")):
+        return "execution_liquidity"
+    if source == "risk_issues":
+        return "risk_geometry"
+    if source in {"live_strategy_issues", "strategy_issues"}:
+        return "strategy_profile"
+    return "other"
 
 
 def _dry_run_passed_forecast_gate_diagnostics(
@@ -4339,24 +4600,6 @@ def _strategy_issue_blocks_live_readiness(raw: Any) -> bool:
     if not isinstance(raw, dict):
         return bool(str(raw).strip())
     return str(raw.get("severity") or "").upper() in {"BLOCK", "WARN"}
-
-
-def _count_live_readiness_issue(
-    counts: dict[str, int],
-    examples: dict[str, list[str]],
-    seen: set[str],
-    raw: Any,
-    result: dict[str, Any],
-) -> bool:
-    text = _issue_text(raw)
-    if not text or text in seen:
-        return False
-    seen.add(text)
-    counts[text] = counts.get(text, 0) + 1
-    lane_id = str(result.get("lane_id") or "")
-    if lane_id and lane_id not in examples.setdefault(text, []):
-        examples[text].append(lane_id)
-    return True
 
 
 def _only_order_intent_lane_blockers(blocking_evidence: list[Any]) -> bool:

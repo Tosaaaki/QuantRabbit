@@ -17,6 +17,7 @@ from quant_rabbit.self_improvement_audit import (
     SelfImprovementAuditor,
     _effect_metrics,
     _gateway_close_recovery_observation,
+    _intent_live_readiness_family_breakdown,
     _profitability_findings,
     _projection_expired,
     _top_intent_blockers,
@@ -162,6 +163,142 @@ class SelfImprovementAuditorTest(unittest.TestCase):
         self.assertEqual(messages["legacy live blocker fallback"]["count"], 1)
         self.assertNotIn("SPREAD_ADVISORY", messages)
         self.assertNotIn("STRATEGY_PROFILE_MISSING", messages)
+
+    def test_live_readiness_family_breakdown_separates_repair_surfaces(self) -> None:
+        breakdown = _intent_live_readiness_family_breakdown(
+            {
+                "results": [
+                    {
+                        "lane_id": "failure_trader:AUD_CAD:SHORT:BREAKOUT_FAILURE:LIMIT",
+                        "status": "DRY_RUN_PASSED",
+                        "intent": {
+                            "pair": "AUD_CAD",
+                            "side": "SHORT",
+                            "order_type": "LIMIT",
+                            "market_context": {"method": "BREAKOUT_FAILURE"},
+                            "metadata": {"forecast_direction": "DOWN", "forecast_confidence": 0.49},
+                        },
+                        "risk_metrics": {"reward_risk": 1.4},
+                        "risk_issues": [
+                            {
+                                "code": "FORECAST_CONFIDENCE_REQUIRED_FOR_LIVE",
+                                "message": "forecast confidence below live floor",
+                                "severity": "WARN",
+                            },
+                            {
+                                "code": "CHART_DIRECTION_CONFLICT",
+                                "message": "chart direction conflicts with lane side",
+                                "severity": "WARN",
+                            },
+                        ],
+                        "live_strategy_issues": [
+                            {
+                                "code": "STRATEGY_NOT_ELIGIBLE",
+                                "message": "strategy profile is not live eligible",
+                                "severity": "WARN",
+                            }
+                        ],
+                        "live_blockers": [],
+                    },
+                    {
+                        "lane_id": "range_trader:NZD_USD:SHORT:RANGE_ROTATION:MARKET",
+                        "status": "DRY_RUN_PASSED",
+                        "intent": {
+                            "pair": "NZD_USD",
+                            "side": "SHORT",
+                            "order_type": "MARKET",
+                            "market_context": {"method": "RANGE_ROTATION"},
+                            "metadata": {"forecast_direction": "RANGE", "forecast_confidence": 0.63},
+                        },
+                        "risk_metrics": {"reward_risk": 2.85},
+                        "risk_issues": [],
+                        "live_strategy_issues": [
+                            {
+                                "code": "STRATEGY_NOT_ELIGIBLE",
+                                "message": "strategy profile is not live eligible",
+                                "severity": "WARN",
+                            }
+                        ],
+                        "live_blockers": [],
+                    },
+                    {
+                        "lane_id": "range_trader:NZD_USD:SHORT:RANGE_ROTATION:MARKET",
+                        "status": "DRY_RUN_PASSED",
+                        "intent": {
+                            "pair": "NZD_USD",
+                            "side": "SHORT",
+                            "order_type": "MARKET",
+                            "market_context": {"method": "RANGE_ROTATION"},
+                            "metadata": {"forecast_direction": "RANGE", "forecast_confidence": 0.61},
+                        },
+                        "risk_metrics": {"reward_risk": 1.25},
+                        "risk_issues": [],
+                        "live_strategy_issues": [
+                            {
+                                "code": "STRATEGY_NOT_ELIGIBLE",
+                                "message": "strategy profile is not live eligible",
+                                "severity": "WARN",
+                            }
+                        ],
+                        "live_blockers": [],
+                    },
+                    {
+                        "lane_id": "trend_trader:EUR_USD:LONG:TREND_CONTINUATION:STOP",
+                        "status": "DRY_RUN_BLOCKED",
+                        "risk_issues": [
+                            {
+                                "code": "REWARD_RISK_TOO_LOW",
+                                "message": "reward/risk below floor",
+                                "severity": "BLOCK",
+                            }
+                        ],
+                        "live_strategy_issues": [],
+                        "live_blockers": [],
+                    },
+                    {
+                        "lane_id": "scalper:USD_JPY:LONG:EXECUTION:MARKET",
+                        "status": "DRY_RUN_BLOCKED",
+                        "risk_issues": [],
+                        "live_strategy_issues": [],
+                        "live_blockers": ["broker liquidity unavailable for order"],
+                    },
+                    {
+                        "lane_id": "trend_trader:EUR_CHF:LONG:TREND_CONTINUATION:MARKET",
+                        "status": "LIVE_READY",
+                        "risk_issues": [
+                            {
+                                "code": "FORECAST_CONFIDENCE_REQUIRED_FOR_LIVE",
+                                "message": "live-ready advisory must not be counted",
+                                "severity": "WARN",
+                            }
+                        ],
+                        "live_strategy_issues": [],
+                        "live_blockers": [],
+                    },
+                ]
+            }
+        )
+
+        all_families = {item["family"]: item for item in breakdown["all_non_live_ready"]}
+        dry_run_families = {item["family"]: item for item in breakdown["dry_run_passed"]}
+        self.assertEqual(all_families["forecast"]["lane_count"], 1)
+        self.assertEqual(all_families["strategy_profile"]["lane_count"], 2)
+        self.assertEqual(all_families["market_structure"]["lane_count"], 1)
+        self.assertEqual(all_families["risk_geometry"]["lane_count"], 1)
+        self.assertEqual(all_families["execution_liquidity"]["lane_count"], 1)
+        self.assertNotIn("risk_geometry", dry_run_families)
+        self.assertEqual(dry_run_families["strategy_profile"]["lane_count"], 2)
+        self.assertEqual(
+            breakdown["nearest_live_ready_candidates"][0]["lane_id"],
+            "range_trader:NZD_USD:SHORT:RANGE_ROTATION:MARKET",
+        )
+        self.assertEqual(
+            breakdown["nearest_live_ready_candidates"][0]["blocker_families"],
+            ["strategy_profile"],
+        )
+        self.assertEqual(breakdown["nearest_live_ready_candidates"][0]["reward_risk"], 2.85)
+        candidate_lane_ids = [item["lane_id"] for item in breakdown["nearest_live_ready_candidates"]]
+        self.assertEqual(len(candidate_lane_ids), len(set(candidate_lane_ids)))
 
     def test_blocks_missing_memory_projection_and_entry_thesis_holes(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
