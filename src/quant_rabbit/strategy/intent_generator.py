@@ -2811,6 +2811,7 @@ def _forecast_market_support_for_forecast(
 ) -> dict[str, Any]:
     direction = str(getattr(forecast, "direction", "") or "").upper()
     raw_confidence = _optional_float(getattr(forecast, "raw_confidence", None))
+    forecast_horizon_min = _optional_float(getattr(forecast, "horizon_min", None))
     out: dict[str, Any] = {
         "ok": False,
         "direction": direction,
@@ -2842,6 +2843,7 @@ def _forecast_market_support_for_forecast(
             projection_signals=projection_signals,
             hit_rates=hit_rates,
             regime=regime,
+            forecast_horizon_min=forecast_horizon_min,
         )
         if unselected:
             top = unselected[0]
@@ -2910,6 +2912,11 @@ def _forecast_market_support_for_forecast(
         signal_direction = str(getattr(signal, "direction", "") or "").upper()
         if not name or signal_direction not in {direction, "EITHER"}:
             continue
+        if not _projection_signal_within_forecast_horizon(
+            signal,
+            forecast_horizon_min=forecast_horizon_min,
+        ):
+            continue
         confidence = _optional_float(getattr(signal, "confidence", None)) or 0.0
         bonus = _optional_float(getattr(signal, "bonus_magnitude", None)) or 0.0
         if confidence < FORECAST_MARKET_SUPPORT_MIN_SIGNAL_CONFIDENCE:
@@ -2943,6 +2950,7 @@ def _forecast_market_support_for_forecast(
             "hit_rate": round(hit_rate, 4),
             "samples": samples,
             "timeframe": getattr(signal, "timeframe", None),
+            "lead_time_min": _projection_signal_lead_time_payload(signal),
             "rationale": str(getattr(signal, "rationale", "") or "")[:180],
         }
         considered.append(item)
@@ -2969,6 +2977,7 @@ def _forecast_market_support_for_forecast(
         projection_signals=projection_signals,
         hit_rates=hit_rates,
         regime=regime,
+        forecast_horizon_min=forecast_horizon_min,
     )
     out.update(
         {
@@ -3069,6 +3078,7 @@ def _forecast_unselected_projection_support(
     projection_signals: list[Any],
     hit_rates: dict[str, dict[str, Any]] | None,
     regime: str | None,
+    forecast_horizon_min: float | None = None,
 ) -> list[dict[str, Any]]:
     if not projection_signals or not isinstance(hit_rates, dict):
         return []
@@ -3083,6 +3093,11 @@ def _forecast_unselected_projection_support(
         name = str(getattr(signal, "name", "") or "")
         signal_direction = str(getattr(signal, "direction", "") or "").upper()
         if not name or signal_direction not in {"UP", "DOWN"}:
+            continue
+        if not _projection_signal_within_forecast_horizon(
+            signal,
+            forecast_horizon_min=forecast_horizon_min,
+        ):
             continue
         if forecast_direction in {"UP", "DOWN"} and signal_direction == forecast_direction:
             continue
@@ -3122,6 +3137,7 @@ def _forecast_unselected_projection_support(
                 "hit_rate": round(hit_rate, 4),
                 "samples": samples,
                 "timeframe": getattr(signal, "timeframe", None),
+                "lead_time_min": _projection_signal_lead_time_payload(signal),
                 "rationale": str(getattr(signal, "rationale", "") or "")[:180],
             }
         )
@@ -3153,6 +3169,11 @@ def _forecast_bootstrap_projection_support(
     for signal in projection_signals:
         signal_direction = str(getattr(signal, "direction", "") or "").upper()
         if signal_direction != direction:
+            continue
+        if not _projection_signal_within_forecast_horizon(
+            signal,
+            forecast_horizon_min=_optional_float(getattr(forecast, "horizon_min", None)),
+        ):
             continue
         confidence_value = _optional_float(getattr(signal, "confidence", None)) or 0.0
         bonus = _optional_float(getattr(signal, "bonus_magnitude", None)) or 0.0
@@ -3196,6 +3217,7 @@ def _forecast_bootstrap_projection_support(
                 "samples": audit_samples,
                 "bootstrap_projection_support": True,
                 "timeframe": getattr(signal, "timeframe", None),
+                "lead_time_min": _projection_signal_lead_time_payload(signal),
                 "rationale": str(getattr(signal, "rationale", "") or "")[:180],
                 "reason": (
                     f"{name} {signal_direction} same-cycle bootstrap: signal_conf={confidence_value:.2f}, "
@@ -3205,6 +3227,30 @@ def _forecast_bootstrap_projection_support(
             }
         )
     return sorted(out, key=lambda item: item["confidence"], reverse=True)
+
+
+def _projection_signal_lead_time_payload(signal: Any) -> float | None:
+    lead_time = _optional_float(getattr(signal, "lead_time_min", None))
+    return round(lead_time, 4) if lead_time is not None else None
+
+
+def _projection_signal_within_forecast_horizon(
+    signal: Any,
+    *,
+    forecast_horizon_min: float | None,
+) -> bool:
+    """Return whether a projection can support this forecast's time scope.
+
+    A projection whose expected move starts after the forecast horizon is
+    useful context, but it is not current live-entry support. This prevents a
+    multi-day macro nowcast from rescuing a weak one-hour entry thesis.
+    """
+    if forecast_horizon_min is None or forecast_horizon_min <= 0:
+        return True
+    lead_time = _optional_float(getattr(signal, "lead_time_min", None))
+    if lead_time is None:
+        return True
+    return max(0.0, lead_time) <= forecast_horizon_min
 
 
 def _forecast_bootstrap_audit_bucket(
@@ -5782,6 +5828,7 @@ def _forecast_market_support_has_strong_directional_signal(
     support: dict[str, Any],
     *,
     direction: str,
+    forecast_horizon_min: float | None = None,
 ) -> bool:
     if not bool(support.get("ok")):
         return False
@@ -5798,6 +5845,11 @@ def _forecast_market_support_has_strong_directional_signal(
             continue
         if str(signal.get("direction") or "").upper() != direction:
             continue
+        if not _support_signal_within_forecast_horizon(
+            signal,
+            forecast_horizon_min=forecast_horizon_min,
+        ):
+            continue
         confidence = _optional_float(signal.get("confidence")) or 0.0
         hit_rate = _optional_float(signal.get("hit_rate")) or 0.0
         samples = _optional_int(signal.get("samples")) or 0
@@ -5808,6 +5860,42 @@ def _forecast_market_support_has_strong_directional_signal(
         ):
             return True
     return False
+
+
+def _forecast_market_support_has_current_directional_signal(
+    support: dict[str, Any],
+    *,
+    direction: str,
+    forecast_horizon_min: float | None = None,
+) -> bool:
+    directional_signals = [
+        signal
+        for signal in support.get("signals") or []
+        if isinstance(signal, dict) and str(signal.get("direction") or "").upper() == direction
+    ]
+    if not directional_signals:
+        # Legacy/unit payloads may expose only aggregate aligned counts.
+        return True
+    return any(
+        _support_signal_within_forecast_horizon(
+            signal,
+            forecast_horizon_min=forecast_horizon_min,
+        )
+        for signal in directional_signals
+    )
+
+
+def _support_signal_within_forecast_horizon(
+    signal: dict[str, Any],
+    *,
+    forecast_horizon_min: float | None,
+) -> bool:
+    if forecast_horizon_min is None or forecast_horizon_min <= 0:
+        return True
+    lead_time = _optional_float(signal.get("lead_time_min"))
+    if lead_time is None:
+        return True
+    return max(0.0, lead_time) <= forecast_horizon_min
 
 
 def _forecast_directional_bucket_is_known_weak(
@@ -5847,12 +5935,14 @@ def _forecast_market_support_allows_side(
         direction = str(source.get("forecast_direction") or "").upper()
         confidence = _optional_float(source.get("forecast_confidence"))
         raw_confidence = _optional_float(source.get("forecast_raw_confidence"))
+        forecast_horizon_min = _optional_float(source.get("forecast_horizon_min"))
         support = _forecast_market_support_payload(source.get("forecast_market_support"))
         chart_direction_bias = str(source.get("chart_direction_bias") or "").upper()
     else:
         direction = str(getattr(source, "direction", "") or "").upper()
         confidence = _optional_float(getattr(source, "confidence", None))
         raw_confidence = _optional_float(getattr(source, "raw_confidence", None))
+        forecast_horizon_min = _optional_float(getattr(source, "horizon_min", None))
         support = _forecast_market_support_payload(getattr(source, "market_support", None))
         chart_direction_bias = ""
     expected_side = Side.LONG.value if direction == "UP" else Side.SHORT.value if direction == "DOWN" else None
@@ -5941,6 +6031,7 @@ def _forecast_market_support_allows_side(
         and _forecast_market_support_has_strong_directional_signal(
             support,
             direction=direction,
+            forecast_horizon_min=forecast_horizon_min,
         )
     )
     if strong_directional_projection:
@@ -5952,6 +6043,12 @@ def _forecast_market_support_allows_side(
     if bool(support.get("bootstrap_projection_support")):
         return raw_confidence is not None and raw_confidence >= min_confidence
     if aligned_count > 0:
+        if not _forecast_market_support_has_current_directional_signal(
+            support,
+            direction=direction,
+            forecast_horizon_min=forecast_horizon_min,
+        ):
+            return False
         return (
             (aligned_samples or 0) >= FORECAST_MARKET_SUPPORT_MIN_SAMPLES
             and (aligned_hit_rate or 0.0) >= FORECAST_MARKET_SUPPORT_MIN_DIRECTIONAL_HIT_RATE

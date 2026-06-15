@@ -1693,6 +1693,47 @@ class ForecastLaneGateTest(unittest.TestCase):
             )
         )
 
+    def test_market_support_rejects_out_of_horizon_macro_event_support(self) -> None:
+        intent = {
+            "order_type": "STOP-ENTRY",
+            "metadata": {
+                "forecast_direction": "UP",
+                "forecast_confidence": 0.46,
+                "forecast_raw_confidence": 0.66,
+                "forecast_horizon_min": 180,
+                "chart_direction_bias": "LONG",
+                "m5_regime": "TREND_UP",
+                "forecast_market_support": {
+                    "ok": True,
+                    "direction": "UP",
+                    "aligned_projection_count": 1,
+                    "best_hit_rate": 0.88,
+                    "best_samples": 75,
+                    "best_aligned_hit_rate": 0.88,
+                    "best_aligned_samples": 75,
+                    "signals": [
+                        {
+                            "name": "macro_event_nowcast_central_bank",
+                            "direction": "UP",
+                            "confidence": 0.79,
+                            "hit_rate": 0.88,
+                            "samples": 75,
+                            "lead_time_min": 3797.0,
+                        }
+                    ],
+                },
+            },
+        }
+
+        self.assertFalse(
+            _forecast_market_support_allows_low_confidence_live_ready(
+                intent,
+                side="LONG",
+                forecast=self._forecast("UP", confidence=0.46),
+                min_confidence=0.65,
+            )
+        )
+
 
 def _snapshot(*, orders=(), positions=()) -> BrokerSnapshot:
     now = datetime.now(timezone.utc)

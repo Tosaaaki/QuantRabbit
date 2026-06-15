@@ -3518,6 +3518,40 @@ class IntentGeneratorTest(unittest.TestCase):
         )
         self.assertIn("macro_event_nowcast_central_bank UP hit_rate=1.00 samples=34", support["reason"])
 
+    def test_projection_support_ignores_macro_event_beyond_forecast_horizon(self) -> None:
+        from quant_rabbit.strategy.intent_generator import _forecast_market_support_for_forecast
+
+        forecast = SimpleNamespace(direction="UP", confidence=0.4588, raw_confidence=0.66, horizon_min=180)
+        signals = [
+            SimpleNamespace(
+                name="macro_event_nowcast_central_bank",
+                direction="UP",
+                confidence=0.79,
+                bonus_magnitude=10.0,
+                lead_time_min=3797.0,
+                timeframe=None,
+                rationale="FOMC statement nowcast is days away, not this entry horizon",
+            )
+        ]
+        hit_rates = {
+            "macro_event_nowcast_central_bank_up": {
+                "_all_pairs:_all_regimes": {"hit_rate": 0.88, "samples": 75},
+            },
+        }
+
+        support = _forecast_market_support_for_forecast(
+            pair="EUR_CHF",
+            forecast=forecast,
+            projection_signals=signals,
+            hit_rates=hit_rates,
+            regime="RANGE",
+        )
+
+        self.assertFalse(support["ok"])
+        self.assertEqual(support["aligned_projection_count"], 0)
+        self.assertEqual(support["signals"], [])
+        self.assertEqual(support["reason"], "no current projection clears audited support floors")
+
     def test_projection_support_keeps_directional_and_timing_hit_rates_separate(self) -> None:
         from quant_rabbit.strategy.intent_generator import _forecast_market_support_for_forecast
 
@@ -7449,6 +7483,39 @@ class TimingEvidenceBreakoutStopTest(unittest.TestCase):
             {
                 "direction": "UP",
                 "calibration_name": "macro_event_nowcast_central_bank_up",
+            }
+        )
+
+        self.assertFalse(
+            self._allows(
+                metadata,
+                side="LONG",
+                order_type=OrderType.STOP_ENTRY,
+                min_confidence=0.65,
+            )
+        )
+
+    def test_strong_directional_support_must_be_inside_forecast_horizon(self) -> None:
+        # EUR_CHF 472445 shape: a multi-day macro event nowcast must not rescue
+        # a weak intraday forecast-first STOP entry.
+        metadata = self._strong_directional_metadata(
+            confidence=0.46,
+            raw_confidence=0.66,
+        )
+        metadata.update(
+            {
+                "forecast_direction": "UP",
+                "forecast_horizon_min": 180,
+                "chart_direction_bias": "LONG",
+                "m5_regime": "TREND_UP",
+            }
+        )
+        metadata["forecast_market_support"]["direction"] = "UP"
+        metadata["forecast_market_support"]["signals"][0].update(
+            {
+                "direction": "UP",
+                "calibration_name": "macro_event_nowcast_central_bank_up",
+                "lead_time_min": 3797.0,
             }
         )
 
