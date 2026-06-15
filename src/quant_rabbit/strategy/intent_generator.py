@@ -7121,10 +7121,10 @@ def _opportunity_mode_from_execution_plan(
     method_name = method.value if isinstance(method, TradeMethod) else str(method or "").upper()
     if any(token in intent for token in ("RUNNER", "TRAIL", "EXTEND", "SWING", "HOLD", "ADD")):
         return "RUNNER", f"tp_target_intent={intent}"
-    if reward_risk >= OPPORTUNITY_MODE_RUNNER_REWARD_RISK_MIN:
-        return "RUNNER", f"reward_risk>={OPPORTUNITY_MODE_RUNNER_REWARD_RISK_MIN:.2f}"
     if any(token in intent for token in ("HARVEST", "SCALP", "QUICK")):
         return "HARVEST", f"tp_target_intent={intent}"
+    if reward_risk >= OPPORTUNITY_MODE_RUNNER_REWARD_RISK_MIN:
+        return "RUNNER", f"reward_risk>={OPPORTUNITY_MODE_RUNNER_REWARD_RISK_MIN:.2f}"
     if 0.0 < reward_risk <= OPPORTUNITY_MODE_HARVEST_REWARD_RISK_MAX:
         return "HARVEST", f"reward_risk<={OPPORTUNITY_MODE_HARVEST_REWARD_RISK_MAX:.2f}"
     if method_name == TradeMethod.TREND_CONTINUATION.value:

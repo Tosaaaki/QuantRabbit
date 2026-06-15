@@ -4796,6 +4796,19 @@ class IntentGeneratorTest(unittest.TestCase):
             {issue["code"] for issue in _method_context_issues(intent)},
         )
 
+    def test_harvest_target_intent_overrides_high_reward_risk_opportunity_mode(self) -> None:
+        from quant_rabbit.models import TradeMethod
+        from quant_rabbit.strategy.intent_generator import _opportunity_mode_from_execution_plan
+
+        mode, reason = _opportunity_mode_from_execution_plan(
+            method=TradeMethod.BREAKOUT_FAILURE,
+            target_intent="HARVEST",
+            reward_risk=2.6,
+        )
+
+        self.assertEqual(mode, "HARVEST")
+        self.assertEqual(reason, "tp_target_intent=HARVEST")
+
     def test_strong_trend_uses_runner_no_broker_tp_mode(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
