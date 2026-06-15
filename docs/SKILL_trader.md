@@ -101,8 +101,8 @@ PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli trader-prompt-route
 # daily-target-state → execution-ledger-sync → import-legacy → mine-strategy →
 # pair-charts → cross-asset/context/flow/strength/levels/calendar/COT/skew →
 # market-context-matrix → mine-market-stories → news-health --strict →
-# daily-review → tp-rebalance → verify-projections →
-# generate-intents --reuse-market-artifacts → optimize-coverage → ai-attack-advice →
+# daily-review → tp-rebalance → verify-projections → broker-snapshot →
+# daily-target-state → generate-intents --reuse-market-artifacts → optimize-coverage → ai-attack-advice →
 # learning/capture/manual-market-context/operator-precedent/verification audits →
 # generate-predictive-limits → position sidecars → memory-health →
 # self-improvement-audit) in one

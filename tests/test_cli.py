@@ -2321,6 +2321,24 @@ class ConsolidatedCycleCommandTest(unittest.TestCase):
         intent_step = "generate-intents --snapshot data/broker_snapshot.json --reuse-market-artifacts"
         self.assertIn(intent_step, refresh)
         self.assertLess(refresh.index("verify-projections"), refresh.index(intent_step))
+        verify_index = refresh.index("verify-projections")
+        intent_index = refresh.index(intent_step)
+        post_projection_snapshot = [
+            index
+            for index, step in enumerate(refresh)
+            if step == "broker-snapshot --output data/broker_snapshot.json"
+            and verify_index < index < intent_index
+        ]
+        post_projection_target = [
+            index
+            for index, step in enumerate(refresh)
+            if step == "daily-target-state --snapshot data/broker_snapshot.json --daily-risk-pct 10"
+            and verify_index < index < intent_index
+        ]
+        self.assertTrue(post_projection_snapshot)
+        self.assertTrue(post_projection_target)
+        self.assertLess(post_projection_snapshot[-1], post_projection_target[-1])
+        self.assertLess(post_projection_target[-1], intent_index)
         self.assertLess(refresh.index("tp-rebalance"), refresh.index(intent_step))
         self.assertIn("news-health --strict", refresh)
         self.assertLess(refresh.index("capture-economics"), refresh.index("operator-precedent-audit"))

@@ -407,8 +407,11 @@ PYTHONPATH=src python3 -m quant_rabbit.cli mine-market-stories --news-dir logs -
 PYTHONPATH=src python3 -m quant_rabbit.cli news-health --strict    # Fresh WebSearch news + market-story sync guard after story refresh
 
 # Intent pricing uses the broker snapshot freshness gate. Refresh broker truth
-# again after market-context fetches, otherwise a slow cycle can turn every lane
-# into STALE_QUOTE before risk validation.
+# again after market-context and projection-truth fetches, otherwise a slow
+# cycle can turn every lane into STALE_QUOTE before risk validation.
+PYTHONPATH=src python3 -m quant_rabbit.cli broker-snapshot --output data/broker_snapshot.json
+PYTHONPATH=src python3 -m quant_rabbit.cli daily-target-state --snapshot data/broker_snapshot.json --daily-risk-pct 10
+PYTHONPATH=src python3 -m quant_rabbit.cli verify-projections
 PYTHONPATH=src python3 -m quant_rabbit.cli broker-snapshot --output data/broker_snapshot.json
 PYTHONPATH=src python3 -m quant_rabbit.cli daily-target-state --snapshot data/broker_snapshot.json --daily-risk-pct 10
 PYTHONPATH=src python3 -m quant_rabbit.cli generate-intents --snapshot data/broker_snapshot.json --reuse-market-artifacts

@@ -1681,6 +1681,12 @@ def _cycle_refresh_steps(daily_risk_pct: str) -> list[dict[str, Any]]:
         {"argv": snapshot_args, "required": True},
         {"argv": target_args, "required": True},
         {"argv": ["verify-projections"], "required": False},
+        # Projection verification can fetch candle truth and exceed the live
+        # quote freshness window. Re-anchor broker truth immediately before
+        # intent pricing so valid HARVEST/RUNNER lanes are not lost to
+        # cycle-internal STALE_QUOTE blockers.
+        {"argv": snapshot_args, "required": True},
+        {"argv": target_args, "required": True},
         {
             "argv": ["generate-intents", "--snapshot", "data/broker_snapshot.json", "--reuse-market-artifacts"],
             "required": True,
