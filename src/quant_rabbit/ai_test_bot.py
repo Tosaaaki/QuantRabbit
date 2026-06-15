@@ -4,7 +4,7 @@ import json
 import math
 import sqlite3
 from dataclasses import asdict, dataclass, replace
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Iterable
 from zoneinfo import ZoneInfo
@@ -1269,6 +1269,11 @@ def _close_gate_ablation_payload(
         "stale_gpt_close_satisfied_loss_side_market_close_net_jpy": 0.0,
         "gateway_review_exit_loss_side_market_close_count": 0,
         "gateway_review_exit_loss_side_market_close_net_jpy": 0.0,
+        "gateway_review_exit_recent_24h_loss_side_market_close_count": 0,
+        "gateway_review_exit_recent_24h_loss_side_market_close_net_jpy": 0.0,
+        "gateway_review_exit_recent_7d_loss_side_market_close_count": 0,
+        "gateway_review_exit_recent_7d_loss_side_market_close_net_jpy": 0.0,
+        "gateway_review_exit_latest_loss_side_market_close_ts_utc": None,
         "gateway_other_loss_side_market_close_count": 0,
         "gateway_other_loss_side_market_close_net_jpy": 0.0,
         "broker_trade_close_loss_side_market_close_count": 0,
@@ -1278,6 +1283,14 @@ def _close_gate_ablation_payload(
         "broker_accepted_without_gateway_loss_side_market_close_net_jpy": 0.0,
         "broker_accepted_without_gateway_loss_side_market_close_source_counts": {},
         "broker_accepted_without_gateway_loss_side_market_close_evidence_counts": {},
+        "broker_accepted_without_gateway_policy_gap_loss_side_market_close_count": 0,
+        "broker_accepted_without_gateway_policy_gap_loss_side_market_close_net_jpy": 0.0,
+        "broker_accepted_without_gateway_policy_gap_loss_side_market_close_source_counts": {},
+        "broker_accepted_without_gateway_policy_gap_loss_side_market_close_evidence_counts": {},
+        "broker_accepted_without_gateway_external_loss_side_market_close_count": 0,
+        "broker_accepted_without_gateway_external_loss_side_market_close_net_jpy": 0.0,
+        "broker_accepted_without_gateway_external_loss_side_market_close_source_counts": {},
+        "broker_accepted_without_gateway_external_loss_side_market_close_evidence_counts": {},
         "unattributed_loss_side_market_close_count": 0,
         "unattributed_loss_side_market_close_net_jpy": 0.0,
         "take_profit_close_count": 0,
@@ -1373,6 +1386,13 @@ def _close_gate_ablation_payload(
         )
         return base
 
+    close_timestamps = [
+        parsed for parsed in (_parse_utc_timestamp(row["ts_utc"]) for row in close_rows) if parsed is not None
+    ]
+    latest_close_ts = max(close_timestamps) if close_timestamps else None
+    recent_24h_cutoff = latest_close_ts - timedelta(hours=24) if latest_close_ts else None
+    recent_7d_cutoff = latest_close_ts - timedelta(days=7) if latest_close_ts else None
+
     segments: dict[tuple[str, str], dict[str, object]] = {}
     source_segments: dict[str, dict[str, object]] = {}
     close_net = 0.0
@@ -1391,6 +1411,11 @@ def _close_gate_ablation_payload(
     stale_gpt_satisfied_loss_market_net = 0.0
     gateway_review_exit_loss_market_count = 0
     gateway_review_exit_loss_market_net = 0.0
+    gateway_review_exit_recent_24h_loss_market_count = 0
+    gateway_review_exit_recent_24h_loss_market_net = 0.0
+    gateway_review_exit_recent_7d_loss_market_count = 0
+    gateway_review_exit_recent_7d_loss_market_net = 0.0
+    gateway_review_exit_latest_loss_market_ts: datetime | None = None
     gateway_other_loss_market_count = 0
     gateway_other_loss_market_net = 0.0
     broker_loss_market_count = 0
@@ -1423,6 +1448,7 @@ def _close_gate_ablation_payload(
         exit_reason = _close_exit_reason(row)
         event_type = _norm(row["event_type"])
         order_id = str(row["order_id"] or "").strip()
+        row_ts = _parse_utc_timestamp(row["ts_utc"])
         bot_attributed = trade_id in attributed_trade_ids
         gateway_close_sent = trade_id in gateway_close_sent_trade_ids or order_id in gateway_close_sent_order_ids
         gateway_close_reconciled = (
@@ -1645,6 +1671,15 @@ def _close_gate_ablation_payload(
             if gateway_review_exit:
                 gateway_review_exit_loss_market_count += 1
                 gateway_review_exit_loss_market_net += pl
+                if row_ts is not None:
+                    if gateway_review_exit_latest_loss_market_ts is None or row_ts > gateway_review_exit_latest_loss_market_ts:
+                        gateway_review_exit_latest_loss_market_ts = row_ts
+                    if recent_24h_cutoff is not None and row_ts >= recent_24h_cutoff:
+                        gateway_review_exit_recent_24h_loss_market_count += 1
+                        gateway_review_exit_recent_24h_loss_market_net += pl
+                    if recent_7d_cutoff is not None and row_ts >= recent_7d_cutoff:
+                        gateway_review_exit_recent_7d_loss_market_count += 1
+                        gateway_review_exit_recent_7d_loss_market_net += pl
             if gateway_other_close:
                 gateway_other_loss_market_count += 1
                 gateway_other_loss_market_net += pl
@@ -1773,6 +1808,23 @@ def _close_gate_ablation_payload(
             ),
             "gateway_review_exit_loss_side_market_close_count": gateway_review_exit_loss_market_count,
             "gateway_review_exit_loss_side_market_close_net_jpy": _round(gateway_review_exit_loss_market_net),
+            "gateway_review_exit_recent_24h_loss_side_market_close_count": (
+                gateway_review_exit_recent_24h_loss_market_count
+            ),
+            "gateway_review_exit_recent_24h_loss_side_market_close_net_jpy": _round(
+                gateway_review_exit_recent_24h_loss_market_net
+            ),
+            "gateway_review_exit_recent_7d_loss_side_market_close_count": (
+                gateway_review_exit_recent_7d_loss_market_count
+            ),
+            "gateway_review_exit_recent_7d_loss_side_market_close_net_jpy": _round(
+                gateway_review_exit_recent_7d_loss_market_net
+            ),
+            "gateway_review_exit_latest_loss_side_market_close_ts_utc": (
+                gateway_review_exit_latest_loss_market_ts.isoformat()
+                if gateway_review_exit_latest_loss_market_ts is not None
+                else None
+            ),
             "gateway_other_loss_side_market_close_count": gateway_other_loss_market_count,
             "gateway_other_loss_side_market_close_net_jpy": _round(gateway_other_loss_market_net),
             "broker_trade_close_loss_side_market_close_count": broker_loss_market_count,

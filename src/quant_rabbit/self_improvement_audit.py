@@ -2651,6 +2651,21 @@ def _close_gate_loss_evidence(loaded: _LoadedJson, path: Path) -> dict[str, Any]
         "gateway_review_exit_loss_side_market_close_net_jpy": _maybe_float(
             close_gate.get("gateway_review_exit_loss_side_market_close_net_jpy")
         ),
+        "gateway_review_exit_recent_24h_loss_side_market_close_count": int(
+            _maybe_float(close_gate.get("gateway_review_exit_recent_24h_loss_side_market_close_count")) or 0
+        ),
+        "gateway_review_exit_recent_24h_loss_side_market_close_net_jpy": _maybe_float(
+            close_gate.get("gateway_review_exit_recent_24h_loss_side_market_close_net_jpy")
+        ),
+        "gateway_review_exit_recent_7d_loss_side_market_close_count": int(
+            _maybe_float(close_gate.get("gateway_review_exit_recent_7d_loss_side_market_close_count")) or 0
+        ),
+        "gateway_review_exit_recent_7d_loss_side_market_close_net_jpy": _maybe_float(
+            close_gate.get("gateway_review_exit_recent_7d_loss_side_market_close_net_jpy")
+        ),
+        "gateway_review_exit_latest_loss_side_market_close_ts_utc": close_gate.get(
+            "gateway_review_exit_latest_loss_side_market_close_ts_utc"
+        ),
     }
     meaningful = [
         evidence["loss_side_market_close_count"],
@@ -2753,6 +2768,30 @@ def _mechanism_ablation_findings(
         )
     gateway_review_loss = int(_maybe_float(close_gate.get("gateway_review_exit_loss_side_market_close_count")) or 0)
     gateway_review_loss_net = _maybe_float(close_gate.get("gateway_review_exit_loss_side_market_close_net_jpy")) or 0.0
+    gateway_review_recent_24h_loss = int(
+        _maybe_float(close_gate.get("gateway_review_exit_recent_24h_loss_side_market_close_count")) or 0
+    )
+    gateway_review_recent_24h_loss_net = (
+        _maybe_float(close_gate.get("gateway_review_exit_recent_24h_loss_side_market_close_net_jpy")) or 0.0
+    )
+    gateway_review_recent_7d_loss = int(
+        _maybe_float(close_gate.get("gateway_review_exit_recent_7d_loss_side_market_close_count")) or 0
+    )
+    gateway_review_recent_7d_loss_net = (
+        _maybe_float(close_gate.get("gateway_review_exit_recent_7d_loss_side_market_close_net_jpy")) or 0.0
+    )
+    if (
+        gateway_review_loss
+        and "gateway_review_exit_recent_7d_loss_side_market_close_count" not in close_gate
+    ):
+        gateway_review_recent_7d_loss = gateway_review_loss
+        gateway_review_recent_7d_loss_net = gateway_review_loss_net
+    if (
+        gateway_review_loss
+        and "gateway_review_exit_recent_24h_loss_side_market_close_count" not in close_gate
+    ):
+        gateway_review_recent_24h_loss = gateway_review_loss
+        gateway_review_recent_24h_loss_net = gateway_review_loss_net
     gateway_gpt_loss = int(_maybe_float(close_gate.get("gateway_gpt_close_loss_side_market_close_count")) or 0)
     gateway_gpt_accepted_without_sent_loss = int(
         _maybe_float(close_gate.get("gateway_gpt_close_accepted_without_sent_loss_side_market_close_count")) or 0
@@ -2771,6 +2810,7 @@ def _mechanism_ablation_findings(
     ):
         return []
     finding_code = "CLOSE_GATE_ABLATION_NOT_ATTRIBUTABLE"
+    finding_priority = "P1"
     finding_message = (
         "CLOSE Gate A/B performance is not attributable enough to call the gate policy "
         "verified or disproven"
@@ -2820,15 +2860,27 @@ def _mechanism_ablation_findings(
                 "GATEWAY_TRADE_CLOSE_SENT or equivalent source tag before relaxing or hardening live close policy."
             )
     elif gateway_review_loss and gateway_review_loss_net < 0:
-        finding_code = "LEGACY_REVIEW_EXIT_CLOSE_DRAG"
-        finding_message = (
-            "Legacy REVIEW_EXIT market closes are loss-dominant and must stay separated from current "
-            "GPT_CLOSE Gate A/B evidence"
-        )
-        next_action = (
-            "Separate legacy REVIEW_EXIT closes from current GPT_CLOSE Gate A/B closes; keep plain auto-close blocked "
-            "until structural replay proves REVIEW_EXIT timing positive."
-        )
+        if gateway_review_recent_24h_loss and gateway_review_recent_24h_loss_net < 0:
+            finding_code = "LEGACY_REVIEW_EXIT_CLOSE_DRAG"
+            finding_message = (
+                "Legacy REVIEW_EXIT market closes are still firing in the last 24h and must stay separated "
+                "from current GPT_CLOSE Gate A/B evidence"
+            )
+            next_action = (
+                "Last-24h legacy REVIEW_EXIT loss closes still exist. Keep plain auto-close blocked and replay "
+                "structural REVIEW_EXIT timing before any autonomous REVIEW_EXIT path is trusted."
+            )
+        else:
+            finding_code = "LEGACY_REVIEW_EXIT_HISTORICAL_DRAG"
+            finding_priority = "P2"
+            finding_message = (
+                "Legacy REVIEW_EXIT market-close losses are historical and separated from current GPT_CLOSE "
+                "Gate A/B evidence"
+            )
+            next_action = (
+                "Keep the historical REVIEW_EXIT loss cluster as audit evidence, but do not let it occupy the "
+                "current close-gate P1 slot unless fresh 24h REVIEW_EXIT losses reappear."
+            )
     else:
         next_action = (
             "Link gateway close receipts to filled trades and ablate hard Gate A, soft Gate A, "
@@ -2839,7 +2891,7 @@ def _mechanism_ablation_findings(
     return [
         _finding(
             run_id=run_id,
-            priority="P1",
+            priority=finding_priority,
             layer="assumption_ablation",
             code=finding_code,
             message=finding_message,
@@ -2857,6 +2909,15 @@ def _mechanism_ablation_findings(
                 ),
                 "gateway_review_exit_loss_side_market_close_count": gateway_review_loss,
                 "gateway_review_exit_loss_side_market_close_net_jpy": gateway_review_loss_net,
+                "gateway_review_exit_recent_24h_loss_side_market_close_count": gateway_review_recent_24h_loss,
+                "gateway_review_exit_recent_24h_loss_side_market_close_net_jpy": (
+                    gateway_review_recent_24h_loss_net
+                ),
+                "gateway_review_exit_recent_7d_loss_side_market_close_count": gateway_review_recent_7d_loss,
+                "gateway_review_exit_recent_7d_loss_side_market_close_net_jpy": gateway_review_recent_7d_loss_net,
+                "gateway_review_exit_latest_loss_side_market_close_ts_utc": close_gate.get(
+                    "gateway_review_exit_latest_loss_side_market_close_ts_utc"
+                ),
                 "loss_side_market_close_count": int(_maybe_float(close_gate.get("loss_side_market_close_count")) or 0),
                 "loss_side_market_close_net_jpy": _maybe_float(close_gate.get("loss_side_market_close_net_jpy")),
                 "broker_trade_close_loss_side_market_close_count": int(

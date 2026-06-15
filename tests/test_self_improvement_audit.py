@@ -833,6 +833,56 @@ class SelfImprovementAuditorTest(unittest.TestCase):
         self.assertIn("legacy REVIEW_EXIT", finding["next_action"])
         self.assertEqual(finding["evidence"]["gateway_review_exit_loss_side_market_close_count"], 3)
 
+    def test_historical_review_exit_close_drag_is_p2_when_no_24h_losses(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(
+                root,
+                active_position=False,
+                live_ready_market_rr=1.4,
+                closed_pls=(100.0, 80.0, -50.0),
+            )
+            files["ai_backtest"].write_text(
+                json.dumps(
+                    {
+                        "mechanism_ablation": {
+                            "close_gate_ab": {
+                                "status": "MEASURED",
+                                "close_events": 8,
+                                "bot_attributed_close_events": 8,
+                                "gateway_close_sent_events": 3,
+                                "broker_trade_close_accept_events": 3,
+                                "loss_side_market_close_count": 3,
+                                "loss_side_market_close_net_jpy": -900.0,
+                                "gateway_gpt_close_loss_side_market_close_count": 0,
+                                "gateway_review_exit_loss_side_market_close_count": 3,
+                                "gateway_review_exit_loss_side_market_close_net_jpy": -900.0,
+                                "gateway_review_exit_recent_24h_loss_side_market_close_count": 0,
+                                "gateway_review_exit_recent_24h_loss_side_market_close_net_jpy": 0.0,
+                                "gateway_review_exit_recent_7d_loss_side_market_close_count": 1,
+                                "gateway_review_exit_recent_7d_loss_side_market_close_net_jpy": -172.0,
+                                "gateway_review_exit_latest_loss_side_market_close_ts_utc": (
+                                    "2026-05-14T14:44:38+00:00"
+                                ),
+                                "broker_accepted_without_gateway_loss_side_market_close_count": 0,
+                                "unattributed_loss_side_market_close_count": 0,
+                            }
+                        }
+                    }
+                )
+            )
+
+            summary = _run(files)
+            payload = json.loads(files["output"].read_text())
+
+        codes = {item["code"]: item for item in payload["findings"]}
+        self.assertEqual(summary.p0_findings, 0)
+        self.assertNotIn("LEGACY_REVIEW_EXIT_CLOSE_DRAG", codes)
+        finding = codes["LEGACY_REVIEW_EXIT_HISTORICAL_DRAG"]
+        self.assertEqual(finding["priority"], "P2")
+        self.assertEqual(finding["evidence"]["gateway_review_exit_recent_24h_loss_side_market_close_count"], 0)
+        self.assertEqual(finding["evidence"]["gateway_review_exit_recent_7d_loss_side_market_close_count"], 1)
+
     def test_profitable_backtest_edges_missing_from_coverage_are_p1(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

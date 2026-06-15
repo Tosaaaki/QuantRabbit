@@ -1020,6 +1020,12 @@ class AITestBotBacktesterTest(unittest.TestCase):
             self.assertEqual(close_gate["gateway_loss_side_market_close_count"], 1)
             self.assertEqual(close_gate["gateway_gpt_close_loss_side_market_close_count"], 0)
             self.assertEqual(close_gate["gateway_review_exit_loss_side_market_close_count"], 1)
+            self.assertEqual(close_gate["gateway_review_exit_recent_24h_loss_side_market_close_count"], 1)
+            self.assertEqual(close_gate["gateway_review_exit_recent_7d_loss_side_market_close_count"], 1)
+            self.assertEqual(
+                close_gate["gateway_review_exit_latest_loss_side_market_close_ts_utc"],
+                "2026-06-01T06:00:00+00:00",
+            )
             self.assertEqual(close_gate["unattributed_loss_side_market_close_count"], 1)
             self.assertEqual(close_gate["take_profit_close_net_jpy"], 220.0)
             source_segments = {item["source"]: item for item in close_gate["close_source_segments"]}
@@ -1562,6 +1568,8 @@ class AITestBotBacktesterTest(unittest.TestCase):
             self.assertEqual(close_gate["gateway_close_sent_events"], 1)
             self.assertEqual(close_gate["gateway_loss_side_market_close_count"], 1)
             self.assertEqual(close_gate["gateway_review_exit_loss_side_market_close_count"], 1)
+            self.assertEqual(close_gate["gateway_review_exit_recent_24h_loss_side_market_close_count"], 1)
+            self.assertEqual(close_gate["gateway_review_exit_recent_7d_loss_side_market_close_count"], 1)
             self.assertEqual(close_gate["broker_accepted_without_gateway_loss_side_market_close_count"], 0)
             self.assertEqual(close_gate["unattributed_loss_side_market_close_count"], 0)
             example = close_gate["loss_side_market_close_examples"][0]
