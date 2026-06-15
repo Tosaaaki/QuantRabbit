@@ -217,6 +217,30 @@ class RiskEngineTest(unittest.TestCase):
         self.assertFalse(decision.allowed)
         self.assertIn("METHOD_REGIME_MISMATCH", {issue.code for issue in decision.issues})
 
+    def test_range_forecast_blocks_non_rotation_method_for_live_send(self) -> None:
+        intent = OrderIntent(
+            pair="EUR_USD",
+            side=Side.LONG,
+            order_type=OrderType.MARKET,
+            units=3000,
+            tp=1.17554,
+            sl=1.17234,
+            thesis="range_forecast_must_not_authorize_trend_entry",
+            market_context=MarketContext(
+                regime="RANGE current; trend lane still visible",
+                narrative="forecast says two-way box, not one-way continuation",
+                chart_story="range box with no breakout confirmation",
+                method=TradeMethod.TREND_CONTINUATION,
+                invalidation="box low fails",
+            ),
+            metadata={"forecast_direction": "RANGE", "forecast_confidence": 0.72},
+        )
+
+        decision = RiskEngine(live_enabled=True).validate(intent, snapshot(), for_live_send=True)
+
+        self.assertFalse(decision.allowed)
+        self.assertIn("RANGE_FORECAST_REQUIRES_RANGE_ROTATION", {issue.code for issue in decision.issues})
+
     def test_range_forecast_blocks_opposite_unselected_projection_for_live_send(self) -> None:
         intent = OrderIntent(
             pair="EUR_USD",

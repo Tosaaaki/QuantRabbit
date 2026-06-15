@@ -442,6 +442,35 @@ def _forecast_unselected_projection_conflict_issues(
     ]
 
 
+def _forecast_range_method_issues(
+    intent: OrderIntent,
+    *,
+    for_live_send: bool,
+) -> list[RiskIssue]:
+    metadata = intent.metadata or {}
+    if str(metadata.get("forecast_direction") or "").upper() != "RANGE":
+        return []
+    method = intent.market_context.method if intent.market_context is not None else None
+    if method == TradeMethod.RANGE_ROTATION:
+        return []
+    if (
+        _intent_declares_recovery_hedge(intent)
+        and str(metadata.get("hedge_timing_class") or "").upper() == "REVERSAL"
+    ):
+        return []
+    severity = "BLOCK" if for_live_send else "WARN"
+    return [
+        RiskIssue(
+            "RANGE_FORECAST_REQUIRES_RANGE_ROTATION",
+            (
+                f"{intent.pair} {intent.side.value} has a RANGE forecast; only executable "
+                "RANGE_ROTATION rail geometry may become LIVE_READY from a RANGE prediction."
+            ),
+            severity=severity,
+        )
+    ]
+
+
 @dataclass(frozen=True)
 class RiskPolicy:
     # Library default for tests and ad-hoc construction. Production code MUST
@@ -683,6 +712,7 @@ class RiskEngine:
         issues.extend(_hedge_metadata_issues(intent))
         issues.extend(_hedge_balance_issues(intent, snapshot))
         issues.extend(_forecast_unselected_projection_conflict_issues(intent, for_live_send=for_live_send))
+        issues.extend(_forecast_range_method_issues(intent, for_live_send=for_live_send))
         issues.extend(self._market_context_issues(intent, for_live_send=for_live_send))
 
         entry_relevant_positions = self._entry_relevant_positions(snapshot)
