@@ -4371,21 +4371,22 @@ class IntentGenerator:
         # EUR_USD, 322u AUD_JPY, 2u GBP_USD entries whose spread cost
         # dominated any pip target; this gate stops the same pattern.
         if int(intent.units) == 0 and not _min_lot_test_override_active():
-            risk_issues.append(
-                _min_lot_block_issue(
-                    pair=pair,
-                    entry=(
-                        float(intent.entry)
-                        if intent.entry is not None
-                        else (quote.ask if intent.side == Side.LONG else quote.bid)
-                    ),
-                    sl=intent.sl,
-                    max_loss_jpy=max_loss_jpy,
-                    snapshot=snapshot,
-                    side=intent.side,
-                    position_intent=str(intent.metadata.get("position_intent") or ""),
-                )
+            min_lot_issue = _min_lot_block_issue(
+                pair=pair,
+                entry=(
+                    float(intent.entry)
+                    if intent.entry is not None
+                    else (quote.ask if intent.side == Side.LONG else quote.bid)
+                ),
+                sl=intent.sl,
+                max_loss_jpy=effective_max_loss_jpy,
+                snapshot=snapshot,
+                side=intent.side,
+                position_intent=str(intent.metadata.get("position_intent") or ""),
             )
+            risk_issues.append(min_lot_issue)
+            if min_lot_issue["message"] not in live_blockers:
+                live_blockers = (*live_blockers, min_lot_issue["message"])
             risk_allowed = False
         if (
             method == TradeMethod.RANGE_ROTATION
@@ -4600,6 +4601,8 @@ def _merge_live_send_preview_blockers(
         code = str(getattr(issue, "code", "") or "")
         if code == "LIVE_DISABLED":
             continue
+        if code == "BAD_UNITS" and _has_specific_min_lot_issue(risk_issues):
+            continue
         message = str(getattr(issue, "message", "") or "")
         match = next(
             (
@@ -4618,6 +4621,18 @@ def _merge_live_send_preview_blockers(
             seen_blockers.add(message)
 
     return risk_issues, tuple(blockers)
+
+
+_SPECIFIC_MIN_LOT_ISSUE_CODES = {
+    "LOSS_BUDGET_TOO_THIN_FOR_MIN_LOT",
+    "MARGIN_TOO_THIN_FOR_MIN_LOT",
+    "CONVERSION_RATE_MISSING_FOR_MIN_LOT",
+    "MIN_LOT_SIZE_UNAVAILABLE",
+}
+
+
+def _has_specific_min_lot_issue(risk_issues: list[dict[str, Any]]) -> bool:
+    return any(str(issue.get("code") or "") in _SPECIFIC_MIN_LOT_ISSUE_CODES for issue in risk_issues)
 
 
 def _lane_can_attempt(lane: dict[str, Any]) -> bool:

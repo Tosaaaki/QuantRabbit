@@ -192,6 +192,42 @@ class IntentGeneratorTest(unittest.TestCase):
             self.assertEqual(market["intent"]["metadata"]["parent_lane_id"], "trend_trader:EUR_USD:LONG:TREND_CONTINUATION")
             self.assertEqual(market["intent"]["metadata"]["order_timing"], "NOW_MARKET")
 
+    def test_min_lot_block_uses_loss_streak_adjusted_budget_in_live_blocker(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            data_root = root / "data"
+            data_root.mkdir()
+            loss_streak = SameDayLossStreak(
+                pair="EUR_USD",
+                consecutive_losses=1,
+                net_loss_jpy=-100.0,
+                last_loss_ts_utc="2026-06-15T00:00:00Z",
+            )
+
+            with patch(
+                "quant_rabbit.strategy.intent_generator.compute_same_day_loss_streaks",
+                return_value={"EUR_USD": loss_streak},
+            ):
+                IntentGenerator(
+                    campaign_plan=_campaign(root),
+                    strategy_profile=_strategy(root, status="CANDIDATE"),
+                    output_path=root / "intents.json",
+                    report_path=root / "intents.md",
+                    pair_charts_path=_pair_charts(root),
+                    data_root=data_root,
+                    max_loss_jpy=500.0,
+                ).run(snapshot_path=_snapshot(root), max_candidates=1)
+
+            payload = json.loads((root / "intents.json").read_text())
+            result = payload["results"][0]
+
+        issue_codes = {item["code"] for item in result["risk_issues"]}
+        self.assertEqual(result["intent"]["units"], 0)
+        self.assertIn("LOSS_BUDGET_TOO_THIN_FOR_MIN_LOT", issue_codes)
+        self.assertNotIn("MIN_LOT_SIZE_UNAVAILABLE", issue_codes)
+        self.assertTrue(any("loss budget can only fund" in blocker for blocker in result["live_blockers"]))
+        self.assertFalse(any("units must be positive" in blocker for blocker in result["live_blockers"]))
+
     def test_forecast_seed_telemetry_skips_stale_quote(self) -> None:
         from quant_rabbit.models import Quote
         from quant_rabbit.strategy.intent_generator import _record_forecast_seed_telemetry
