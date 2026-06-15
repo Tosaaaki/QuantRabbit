@@ -15,6 +15,20 @@ from quant_rabbit.paths import (
 
 PROMOTABLE_STATUSES = {"DRY_RUN_PASSED", "LIVE_READY"}
 PENDING_ENTRY_TYPES = {"LIMIT", "STOP-ENTRY"}
+NON_PROMOTABLE_RISK_CODES = {
+    "FORECAST_CONFIDENCE_REQUIRED_FOR_LIVE",
+    "FORECAST_CONTEXT_REQUIRED_FOR_LIVE",
+    "FORECAST_DIRECTIONAL_HIT_RATE_WEAK_FOR_LIVE",
+    "FORECAST_NOT_EXECUTABLE_FOR_LIVE",
+    "FORECAST_TREND_CONTINUATION_HIGHER_TF_REQUIRED_FOR_LIVE",
+    "FORECAST_TREND_CONTINUATION_REWARD_RISK_TOO_LOW",
+    "FORECAST_WATCH_ONLY",
+    "FRESH_ENTRY_REWARD_RISK_NOT_POSITIVE",
+    "TELEMETRY_FORECAST_CONTEXT_REQUIRED_FOR_LIVE",
+    "TELEMETRY_FORECAST_HISTORY_REQUIRED_FOR_LIVE",
+    "TELEMETRY_FORECAST_NOT_EXECUTABLE_FOR_LIVE",
+    "TELEMETRY_FORECAST_QUOTE_STALE_FOR_LIVE",
+}
 
 
 @dataclass(frozen=True)
@@ -189,6 +203,8 @@ def _eligible_receipts(intents_payload: dict[str, Any]) -> dict[tuple[str, str, 
             continue
         if _has_blocking_risk(result):
             continue
+        if _has_non_promotable_risk(result):
+            continue
         intent = result.get("intent")
         if not isinstance(intent, dict):
             continue
@@ -225,6 +241,24 @@ def _receipt_for(
 def _has_blocking_risk(result: dict[str, Any]) -> bool:
     for issue in result.get("risk_issues", []) or []:
         if isinstance(issue, dict) and issue.get("severity") == "BLOCK":
+            return True
+    return False
+
+
+def _has_non_promotable_risk(result: dict[str, Any]) -> bool:
+    """Return True when the receipt is blocked by non-strategy live evidence.
+
+    Receipt promotion fixes mined strategy-profile gaps only. A DRY_RUN_PASSED
+    lane can still be deliberately non-fillable because the current forecast is
+    watch-only, stale, or below the live confidence/telemetry floor. Promoting
+    those receipts would convert diagnostic geometry into strategy permission
+    and bypass the forecast live gates.
+    """
+
+    for issue in result.get("risk_issues", []) or []:
+        if not isinstance(issue, dict):
+            continue
+        if str(issue.get("code") or "") in NON_PROMOTABLE_RISK_CODES:
             return True
     return False
 

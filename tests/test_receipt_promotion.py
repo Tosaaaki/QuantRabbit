@@ -67,6 +67,41 @@ class ReceiptPromotionTest(unittest.TestCase):
             statuses = {(item["pair"], item["direction"]): item["status"] for item in payload["profiles"]}
             self.assertEqual(statuses[("EUR_USD", "LONG")], "RISK_REPAIR_CANDIDATE")
 
+    def test_does_not_promote_forecast_watch_only_receipt(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            profile = _profile(root)
+            intents = root / "intents.json"
+            intents.write_text(
+                json.dumps(
+                    {
+                        "snapshot_path": "snapshot.json",
+                        "results": [
+                            _receipt(
+                                "range:EUR_USD:LONG",
+                                "EUR_USD",
+                                "LONG",
+                                "LIMIT",
+                                risk_issues=[
+                                    {
+                                        "code": "FORECAST_WATCH_ONLY",
+                                        "message": "dry-run geometry only until forecast clears live floor",
+                                        "severity": "WARN",
+                                    }
+                                ],
+                            )
+                        ],
+                    }
+                )
+            )
+
+            summary = ReceiptPromoter(profile_path=profile, intents_path=intents, report_path=root / "report.md").run()
+
+            self.assertEqual(summary.promoted, 0)
+            payload = json.loads(profile.read_text())
+            statuses = {(item["pair"], item["direction"]): item["status"] for item in payload["profiles"]}
+            self.assertEqual(statuses[("EUR_USD", "LONG")], "RISK_REPAIR_CANDIDATE")
+
     def test_creates_missing_method_profile_from_pair_side_repair_receipt(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

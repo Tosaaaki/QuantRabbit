@@ -19,6 +19,7 @@ from quant_rabbit.paths import (
     DEFAULT_REPLAY_BACKTEST,
     DEFAULT_STRATEGY_PROFILE,
 )
+from quant_rabbit.strategy.receipt_promotion import NON_PROMOTABLE_RISK_CODES
 
 
 # Coverage inputs are current-cycle artifacts. One hour is an operational
@@ -392,7 +393,11 @@ def _coverage_lane(result: dict[str, Any]) -> CoverageLane:
         reward_jpy=reward_jpy,
         reward_risk=reward_risk,
         counts_live_ready=status == "LIVE_READY" and not blockers,
-        counts_after_promotion=status == "DRY_RUN_PASSED" and not _has_risk_block(result),
+        counts_after_promotion=(
+            status == "DRY_RUN_PASSED"
+            and not _has_risk_block(result)
+            and not _has_non_promotable_risk(result)
+        ),
         blockers=blockers,
     )
 
@@ -1279,6 +1284,17 @@ def _has_risk_block(result: dict[str, Any]) -> bool:
         isinstance(issue, dict) and issue.get("severity") == "BLOCK"
         for issue in result.get("risk_issues", []) or []
     )
+
+
+def _has_non_promotable_risk(result: dict[str, Any]) -> bool:
+    """Return True when strategy promotion cannot clear the live-readiness gap."""
+
+    for issue in result.get("risk_issues", []) or []:
+        if not isinstance(issue, dict):
+            continue
+        if str(issue.get("code") or "") in NON_PROMOTABLE_RISK_CODES:
+            return True
+    return False
 
 
 def _load_json(path: Path) -> dict[str, Any]:

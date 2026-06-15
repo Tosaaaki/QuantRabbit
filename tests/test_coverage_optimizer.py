@@ -75,6 +75,56 @@ class CoverageOptimizerTest(unittest.TestCase):
             self.assertTrue(any("live-ready reward misses" in item for item in payload["blockers"]))
             self.assertTrue(any("promote 1 dry-run receipts" in item for item in payload["action_items"]))
 
+    def test_forecast_watch_only_dry_run_is_not_promotion_coverage(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            intents = root / "intents.json"
+            target = root / "target.json"
+            intents.write_text(
+                json.dumps(
+                    {
+                        "results": [
+                            _result(
+                                "DRY_RUN_PASSED",
+                                live_blocker="forecast watch-only candidate below calibrated live floor",
+                                risk_issues=[
+                                    {
+                                        "code": "FORECAST_WATCH_ONLY",
+                                        "message": "dry-run geometry only",
+                                        "severity": "WARN",
+                                    }
+                                ],
+                            )
+                        ]
+                    }
+                )
+            )
+            target.write_text(
+                json.dumps(
+                    {
+                        "status": "PURSUE_TARGET",
+                        "remaining_target_jpy": 500.0,
+                        "remaining_risk_budget_jpy": 500.0,
+                    }
+                )
+            )
+
+            summary = CoverageOptimizer(
+                intents_path=intents,
+                target_state_path=target,
+                replay_path=root / "missing_replay.json",
+                market_context_matrix_path=_matrix(root),
+                output_path=root / "coverage.json",
+                report_path=root / "coverage.md",
+            ).run()
+
+            self.assertEqual(summary.status, "COVERAGE_GAP")
+            self.assertEqual(summary.promotion_candidate_lanes, 0)
+            self.assertEqual(summary.potential_reward_jpy, 0.0)
+            payload = json.loads((root / "coverage.json").read_text())
+            self.assertFalse(any("promote 1 dry-run receipts" in item for item in payload["action_items"]))
+            self.assertFalse(payload["lanes"][0]["counts_after_promotion"])
+
     def test_cli_coverage_gap_is_diagnostic_success(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
