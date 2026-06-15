@@ -4243,6 +4243,37 @@ class CloseDisciplineTest(unittest.TestCase):
             self.assertEqual(sidecar["source"], "forecast_persistence")
             self.assertIn("position:persistence:555", payload["input_packet"]["allowed_evidence_refs"])
 
+    def test_thesis_evolution_close_rejected_when_matrix_still_supports_open_side(self) -> None:
+        # Regression for 2026-06-15 EUR_CHF 472445: thesis_evolution BROKEN
+        # was treated as standing hard loss-cut authorization even though the
+        # receipt itself cited H4 still with the LONG side and matrix support
+        # 4:1 for the open direction. That is a soft Gate A conflict, not an
+        # unattended market-loss close.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _close_fixtures(root, position_side="LONG", m15_dir="DOWN", h4_dir="UP")
+            _write_same_direction_context_asset_matrix_support(files, side="LONG")
+            _write_fresh_thesis_evolution_close_recommendation(
+                root,
+                files,
+                side="LONG",
+                rationale=(
+                    "invalidation hit and technical invalidation confirmed against LONG "
+                    "on M5/M15/M30/H1; H4 still supports the open side"
+                ),
+            )
+            decision = _close_decision(trade_ids=["555"])
+            decision["evidence_refs"].extend(["position:evolution:555", "matrix:EUR_USD:LONG"])
+            brain = _brain(root, files, decision)
+
+            summary = brain.run(snapshot_path=files["snapshot"])
+
+            self.assertEqual(summary.status, "REJECTED", msg=summary)
+            payload = json.loads((root / "gpt_decision.json").read_text())
+            codes = {issue["code"] for issue in payload["verification_issues"]}
+            self.assertIn("CLOSE_SAME_DIRECTION_MARKET_SUPPORT", codes)
+            self.assertNotIn("CLOSE_THESIS_STILL_VALID", codes)
+
     def test_close_rejected_without_operator_token_when_only_forecast_persistence_sidecar(self) -> None:
         # Forecast persistence is useful Gate A evidence, but it is softer than
         # structural invalidation / thesis_evolution BROKEN. It still needs
@@ -4581,7 +4612,7 @@ class CloseDisciplineTest(unittest.TestCase):
         # context-asset artifact could block a deterministic invalidation hit.
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            files = _close_fixtures(root, position_side="LONG", m15_dir="UP", h4_dir="UP")
+            files = _close_fixtures(root, position_side="LONG", m15_dir="UP", h4_dir="DOWN")
             _write_same_direction_context_asset_matrix_support(files, side="LONG")
             _write_fresh_position_thesis_close_recommendation(
                 root,
@@ -4848,7 +4879,7 @@ class CloseDisciplineTest(unittest.TestCase):
         # says the open side remains alive.
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            files = _close_fixtures(root, position_side="LONG", m15_dir="UP", h4_dir="UP")
+            files = _close_fixtures(root, position_side="LONG", m15_dir="UP", h4_dir="DOWN")
             _write_fresh_thesis_evolution_close_recommendation(
                 root,
                 files,

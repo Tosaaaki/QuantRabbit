@@ -701,11 +701,38 @@ def _same_direction_hold_support_conflict(
         pair=pair,
         side=side,
     )
-    if not supported:
+    if supported:
+        return (
+            f"{evidence_label} is downgraded to soft Gate A because {support_reason}; "
+            "use HOLD/reprice/TP rebalance unless explicit Gate B authorizes the close"
+        )
+    matrix_supported, matrix_reason = _close_same_direction_matrix_support(packet, pair, side)
+    h4_supported, h4_reason = _close_same_direction_h4_support(packet, pair, side)
+    if not matrix_supported or not h4_supported:
         return None
     return (
-        f"{evidence_label} is downgraded to soft Gate A because {support_reason}; "
+        f"{evidence_label} is downgraded to soft Gate A because {matrix_reason}; {h4_reason}; "
         "use HOLD/reprice/TP rebalance unless explicit Gate B authorizes the close"
+    )
+
+
+def _close_same_direction_h4_support(
+    packet: dict[str, Any],
+    pair: str,
+    side: str,
+) -> tuple[bool, str]:
+    side_upper = str(side or "").upper()
+    if side_upper not in {"LONG", "SHORT"}:
+        return False, ""
+    same_direction = "UP" if side_upper == "LONG" else "DOWN"
+    event = _parse_struct_events(_pair_chart_story(packet, pair)).get("H4")
+    if event is None or event[1] != same_direction:
+        return False, ""
+    event_type, direction, price, close_confirmed = event
+    confirmation = "close-confirmed" if close_confirmed else "wick-only"
+    return (
+        True,
+        f"H4 {event_type}_{direction}@{price:g} still supports {side_upper} ({confirmation})",
     )
 
 
