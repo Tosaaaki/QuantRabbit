@@ -113,12 +113,14 @@ FORECAST_COUNTERTREND_UNCONFIRMED_MULT = float(
 FORECAST_GEOMETRY_NOISE_ATR_MULT = float(os.environ.get("QR_FORECAST_GEOMETRY_NOISE_ATR_MULT", "1.0"))
 # Forecast geometry also has to clear executable spread noise. Live risk
 # validation requires target/invalidation to clear a spread multiple from the
-# actual entry; accepting thinner forecast levels just creates lanes that are
-# predictably blocked later. This mirrors that contract without importing
-# RiskPolicy into the forecaster; replace it with pair/session MAE-MFE
+# actual entry, and forecast-first lanes expand into pending entries that sit
+# beyond the current quote by roughly another spread-offset envelope. Accepting
+# thinner forecast levels just creates STOP/LIMIT variants that are predictably
+# blocked later. This mirrors that contract without importing RiskPolicy or the
+# intent generator into the forecaster; replace it with pair/session MAE-MFE
 # calibration once the projection ledger has enough audited samples.
 FORECAST_GEOMETRY_SPREAD_NOISE_MULT = float(
-    os.environ.get("QR_FORECAST_GEOMETRY_SPREAD_NOISE_MULT", "5.0")
+    os.environ.get("QR_FORECAST_GEOMETRY_SPREAD_NOISE_MULT", "7.5")
 )
 # Missing robust target or invalidation makes a directional forecast less
 # actionable, but not useless for advisory bias. This confidence haircut is an

@@ -155,7 +155,7 @@ class ForecastGeometryTest(unittest.TestCase):
         self.assertLess(forecast.confidence, forecast.raw_confidence)
         self.assertIn("robust forecast geometry missing target", forecast.rationale_summary)
 
-    def test_forecast_geometry_clears_current_spread_noise_floor(self) -> None:
+    def test_forecast_geometry_clears_pending_entry_spread_envelope(self) -> None:
         pair_chart = {
             "views": [
                 {
@@ -163,13 +163,13 @@ class ForecastGeometryTest(unittest.TestCase):
                     "indicators": {
                         "pip_size": 0.0001,
                         "atr_pips": 2.0,
-                        "donchian_high": 1.10070,
-                        "donchian_low": 1.09920,
+                        "donchian_high": 1.10120,
+                        "donchian_low": 1.09880,
                     },
                     "structure": {
                         "swings": [
-                            {"side": "HIGH", "price": 1.10070},
-                            {"side": "LOW", "price": 1.09920},
+                            {"side": "HIGH", "price": 1.10120},
+                            {"side": "LOW", "price": 1.09880},
                         ],
                     },
                 }

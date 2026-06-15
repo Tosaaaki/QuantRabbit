@@ -516,6 +516,15 @@ RANGE_MARKET_EDGE_ZONE_ATR_MULT = 0.25
 #   metadata, while this execution shape pursues small repeatable wins.
 RANGE_DIRECTIONAL_STOP_SPREAD_MULT = 5.1
 RANGE_DIRECTIONAL_MARKET_TARGET_RR_CAP = 1.0
+# Directional range MARKET is the "small capture" lane. It must be taken from a
+# real box edge, not the middle of the range, otherwise the bot sells lower-half
+# ranges or buys upper-half ranges and pays spread for the worst part of the
+# rotation. One-third of the box is the smallest geometric edge bucket that still
+# leaves a distinct middle/no-trade zone; tune via range-scalp MAE/MFE once enough
+# live receipts exist.
+RANGE_DIRECTIONAL_MARKET_EDGE_POSITION = _env_float(
+    "QR_RANGE_DIRECTIONAL_MARKET_EDGE_POSITION", 1.0 / 3.0, minimum=0.05
+)
 
 # Structural range rails. 1σ VWAP bands are deliberately excluded here: they
 # are often the box interior / magnet zone, not the actual fail point. Treating
@@ -3798,7 +3807,27 @@ def _is_low_vol_range_context(chart_context: dict[str, Any] | None) -> bool:
 def _is_low_vol_directional_range(side: Side, chart_context: dict[str, Any] | None) -> bool:
     if not _is_low_vol_range_context(chart_context):
         return False
-    return _direction_bias_from_m5(chart_context) == side.value
+    if _direction_bias_from_m5(chart_context) != side.value:
+        return False
+    position = _m5_range_position(chart_context)
+    if position is None:
+        return False
+    edge = max(0.05, min(0.45, RANGE_DIRECTIONAL_MARKET_EDGE_POSITION))
+    if side == Side.LONG:
+        return position <= edge
+    return position >= 1.0 - edge
+
+
+def _m5_range_position(chart_context: dict[str, Any] | None) -> float | None:
+    if not chart_context:
+        return None
+    tf_map = chart_context.get("tf_regime_map")
+    if not isinstance(tf_map, dict):
+        return None
+    m5 = tf_map.get("M5")
+    if not isinstance(m5, dict):
+        return None
+    return _optional_float(m5.get("range_position"))
 
 
 def _direction_bias_from_m5(chart_context: dict[str, Any] | None) -> str | None:

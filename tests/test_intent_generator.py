@@ -4239,6 +4239,62 @@ class IntentGeneratorTest(unittest.TestCase):
             self.assertEqual(metadata["tp_target_source"], "STRUCTURAL_HARVEST")
             self.assertIn("ADX", metadata["tp_attach_reason"])
 
+    def test_directional_range_market_scalp_requires_edge_aligned_position(self) -> None:
+        from quant_rabbit.models import Quote, Side
+        from quant_rabbit.strategy.intent_generator import _directional_range_market_geometry
+
+        quote = Quote(pair="EUR_USD", bid=1.15960, ask=1.15968)
+        base_context = {
+            "m5_regime": "RANGE",
+            "m5_regime_quantile": "QUIET",
+            "m5_long_bias": 0.2,
+            "m5_short_bias": 0.7,
+            "tf_regime_map": {"M5": {"range_position": 0.05}},
+        }
+
+        self.assertIsNone(
+            _directional_range_market_geometry(
+                "EUR_USD",
+                Side.SHORT,
+                quote,
+                reward_risk=1.0,
+                atr_pips=2.0,
+                spread_pips=0.8,
+                chart_context=base_context,
+            )
+        )
+        upper_edge_short = {
+            **base_context,
+            "tf_regime_map": {"M5": {"range_position": 0.90}},
+        }
+        self.assertIsNotNone(
+            _directional_range_market_geometry(
+                "EUR_USD",
+                Side.SHORT,
+                quote,
+                reward_risk=1.0,
+                atr_pips=2.0,
+                spread_pips=0.8,
+                chart_context=upper_edge_short,
+            )
+        )
+        lower_edge_long = {
+            **base_context,
+            "m5_long_bias": 0.7,
+            "m5_short_bias": 0.2,
+        }
+        self.assertIsNotNone(
+            _directional_range_market_geometry(
+                "EUR_USD",
+                Side.LONG,
+                quote,
+                reward_risk=1.0,
+                atr_pips=2.0,
+                spread_pips=0.8,
+                chart_context=lower_edge_long,
+            )
+        )
+
     def test_attached_harvest_missing_structure_uses_fresh_live_floor_tp(self) -> None:
         from quant_rabbit.models import OrderType, Quote, Side, TradeMethod
         from quant_rabbit.strategy.intent_generator import _take_profit_execution_plan
@@ -4698,6 +4754,8 @@ class IntentGeneratorTest(unittest.TestCase):
                     m5_short_bias=0.18,
                     regime_quantile="QUIET",
                     atr_pips=3.2,
+                    range_support=1.1728,
+                    range_resistance=1.1768,
                 ),
                 max_loss_jpy=140.0,
             ).run(snapshot_path=_snapshot(root))
@@ -4735,6 +4793,8 @@ class IntentGeneratorTest(unittest.TestCase):
                     m5_short_bias=0.76,
                     regime_quantile="QUIET",
                     atr_pips=3.2,
+                    range_support=1.1680,
+                    range_resistance=1.1736,
                 ),
                 max_loss_jpy=140.0,
             ).run(snapshot_path=_snapshot(root))
@@ -5686,6 +5746,8 @@ def _pair_charts_with_direction(
     close: float = 1.1735,
     trend_score: float = 0.2,
     breakout_score: float = 0.1,
+    range_support: float = 1.1710,
+    range_resistance: float = 1.1760,
 ) -> Path:
     path = root / "pair_charts_direction.json"
     path.write_text(
@@ -5724,19 +5786,19 @@ def _pair_charts_with_direction(
                                     "close": close,
                                     "atr_pips": atr_pips,
                                     "regime_quantile": regime_quantile,
-                                    "bb_lower": 1.1710,
-                                    "bb_upper": 1.1760,
+                                    "bb_lower": range_support,
+                                    "bb_upper": range_resistance,
                                     "bb_middle": 1.1735,
-                                    "donchian_low": 1.1707,
-                                    "donchian_high": 1.1764,
+                                    "donchian_low": range_support - 0.0003,
+                                    "donchian_high": range_resistance + 0.0004,
                                     "vwap": 1.1738,
                                     "avwap_anchor": 1.1734,
                                     "avwap_lower_1sd": 1.1712,
                                     "avwap_upper_1sd": 1.1758,
-                                    "linreg_channel_lower": 1.1709,
-                                    "linreg_channel_upper": 1.1761,
-                                    "swing_low": 1.1705,
-                                    "swing_high": 1.1767,
+                                    "linreg_channel_lower": range_support - 0.0001,
+                                    "linreg_channel_upper": range_resistance + 0.0001,
+                                    "swing_low": range_support - 0.0005,
+                                    "swing_high": range_resistance + 0.0007,
                                     "adx_14": adx,
                                     "choppiness_14": choppiness,
                                     "atr_percentile_100": atr_percentile,
