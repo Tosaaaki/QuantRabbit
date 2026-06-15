@@ -1719,6 +1719,7 @@ def _memory_health_refresh_reasons(
             "run memory-health before entry/verify routing",
         )
     stale_reasons = _memory_health_staleness_reasons(
+        payload=payload,
         generated_at=generated_at,
         snapshot=snapshot,
         target_state=target_state,
@@ -1740,6 +1741,7 @@ def _memory_health_refresh_reasons(
 
 def _memory_health_staleness_reasons(
     *,
+    payload: dict[str, Any],
     generated_at: datetime,
     snapshot: dict[str, Any],
     target_state: dict[str, Any],
@@ -1766,13 +1768,29 @@ def _memory_health_staleness_reasons(
 
     reasons: list[str] = []
     for label, ref_ts in refs:
-        if generated_at < ref_ts:
+        audited_ts = _memory_health_audited_ref_ts(payload, label)
+        effective_ts = audited_ts or generated_at
+        if effective_ts < ref_ts:
             reasons.append(
                 "memory health audit stale while target is open: "
                 f"memory_health generated at {generated_at.isoformat()} predates "
                 f"{label} {ref_ts.isoformat()}; run memory-health before entry/verify routing"
             )
     return tuple(reasons)
+
+
+def _memory_health_audited_ref_ts(payload: dict[str, Any], label: str) -> datetime | None:
+    metrics = payload.get("metrics") if isinstance(payload.get("metrics"), dict) else {}
+    runtime = metrics.get("runtime") if isinstance(metrics.get("runtime"), dict) else {}
+    if label == "broker snapshot":
+        return _parse_utc(runtime.get("snapshot_fetched_at_utc"))
+    if label == "order intents":
+        order_metrics = metrics.get("order_intents") if isinstance(metrics.get("order_intents"), dict) else {}
+        return _parse_utc(
+            runtime.get("order_intents_generated_at_utc")
+            or order_metrics.get("generated_at_utc")
+        )
+    return None
 
 
 def _self_improvement_audit_refresh_reasons(

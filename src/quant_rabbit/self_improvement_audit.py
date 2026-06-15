@@ -85,6 +85,35 @@ _EXTERNAL_BROKER_TRADE_CLOSE_SOURCES = frozenset(
     }
 )
 
+
+def _external_live_runtime_lock(snapshot_path: Path) -> dict[str, Any] | None:
+    """Return active wrapper lock evidence for audits outside that wrapper."""
+
+    if os.environ.get("QR_AUTOTRADE_LOCK_HELD") == "1":
+        return None
+
+    configured = os.environ.get("QR_AUTOTRADE_LOCK_DIR")
+    if configured:
+        lock_dir = Path(configured)
+    else:
+        runtime_root = snapshot_path.parent.parent if snapshot_path.parent.name == "data" else Path.cwd()
+        lock_dir = runtime_root / ".quant_rabbit_live.lock"
+    pid_path = lock_dir / "pid"
+    if not pid_path.exists():
+        return None
+    try:
+        raw_pid = pid_path.read_text(encoding="utf-8").strip()
+        pid = int(raw_pid)
+    except (OSError, ValueError):
+        return None
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return None
+    except PermissionError:
+        pass
+    return {"lock_dir": str(lock_dir), "pid": pid}
+
 # Forecast-level calibration is the feedback loop for "why did the final
 # direction call miss?". Ten samples matches the projection-ledger calibration
 # sample floor, and the hit-rate floor is an audit warning, not a trade gate.
@@ -201,8 +230,26 @@ class SelfImprovementAuditor:
         close_gate_loss_evidence = _close_gate_loss_evidence(ai_backtest_loaded, ai_test_bot_backtest_path)
         profitability_streak_before = self._history_code_streak(PROFITABILITY_DISCIPLINE_CODES)
         latest_gpt_stale_streak_before = self._history_code_streak(("LATEST_GPT_DECISION_STALE",))
+        external_live_lock = _external_live_runtime_lock(snapshot_path)
 
         findings: list[dict[str, Any]] = []
+        if external_live_lock is not None:
+            findings.append(
+                _finding(
+                    run_id=run_id,
+                    priority="P0",
+                    layer="runtime",
+                    code="LIVE_RUNTIME_UPDATE_IN_PROGRESS",
+                    message=(
+                        "live runtime wrapper lock is active; broker/order/memory artifacts may be mid-refresh"
+                    ),
+                    next_action=(
+                        "Wait for the live wrapper to release its lock, then rerun self-improvement-audit "
+                        "before judging stale memory or order-intent blockers."
+                    ),
+                    evidence=external_live_lock,
+                )
+            )
         artifact_loads = {
             "broker_snapshot": (snapshot_loaded, snapshot_path, "runtime"),
             "daily_target_state": (target_loaded, target_state_path, "runtime"),
@@ -221,16 +268,17 @@ class SelfImprovementAuditor:
                     )
                 )
 
-        findings.extend(
-            _memory_findings(
-                run_id=run_id,
-                loaded=memory_loaded,
-                path=memory_health_path,
-                target_open=target_open,
-                snapshot=snapshot,
-                intents=intents,
+        if external_live_lock is None:
+            findings.extend(
+                _memory_findings(
+                    run_id=run_id,
+                    loaded=memory_loaded,
+                    path=memory_health_path,
+                    target_open=target_open,
+                    snapshot=snapshot,
+                    intents=intents,
+                )
             )
-        )
         findings.extend(_learning_findings(run_id=run_id, loaded=learning_loaded, path=learning_audit_path))
         findings.extend(
             _verification_findings(
@@ -955,7 +1003,12 @@ def _memory_findings(
                     evidence={"path": str(path), "reason": "missing_generated_at_utc"},
                 )
             ]
-        stale_refs = _memory_health_stale_refs(generated_at=generated_at, snapshot=snapshot, intents=intents)
+        stale_refs = _memory_health_stale_refs(
+            payload=payload,
+            generated_at=generated_at,
+            snapshot=snapshot,
+            intents=intents,
+        )
         if stale_refs:
             return [
                 _finding(
@@ -1011,6 +1064,7 @@ def _memory_findings(
 
 def _memory_health_stale_refs(
     *,
+    payload: dict[str, Any],
     generated_at: datetime,
     snapshot: dict[str, Any],
     intents: dict[str, Any],
@@ -1028,9 +1082,28 @@ def _memory_health_stale_refs(
 
     stale: list[dict[str, str]] = []
     for label, ref_ts in refs:
-        if generated_at < ref_ts:
-            stale.append({"label": label, "timestamp_utc": ref_ts.isoformat()})
+        audited_ts = _memory_health_audited_ref_ts(payload, label)
+        effective_ts = audited_ts or generated_at
+        if effective_ts < ref_ts:
+            item = {"label": label, "timestamp_utc": ref_ts.isoformat()}
+            if audited_ts is not None:
+                item["audited_timestamp_utc"] = audited_ts.isoformat()
+            stale.append(item)
     return stale
+
+
+def _memory_health_audited_ref_ts(payload: dict[str, Any], label: str) -> datetime | None:
+    metrics = payload.get("metrics") if isinstance(payload.get("metrics"), dict) else {}
+    runtime = metrics.get("runtime") if isinstance(metrics.get("runtime"), dict) else {}
+    if label == "broker_snapshot":
+        return _parse_utc(runtime.get("snapshot_fetched_at_utc"))
+    if label == "order_intents":
+        order_metrics = metrics.get("order_intents") if isinstance(metrics.get("order_intents"), dict) else {}
+        return _parse_utc(
+            runtime.get("order_intents_generated_at_utc")
+            or order_metrics.get("generated_at_utc")
+        )
+    return None
 
 
 def _learning_findings(*, run_id: str, loaded: _LoadedJson, path: Path) -> list[dict[str, Any]]:

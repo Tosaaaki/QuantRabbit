@@ -122,6 +122,7 @@ class MemoryHealthAuditor:
         intents = intents_loaded.payload or {}
         target_open = _target_open(target_state)
         snapshot_ts = _parse_utc(snapshot.get("fetched_at_utc") or (snapshot.get("account") or {}).get("fetched_at_utc"))
+        intents_ts = _parse_utc(intents.get("generated_at_utc"))
         active_positions = _active_trader_positions(snapshot)
         live_ready_pairs = _live_ready_pairs(intents)
         intent_pairs = _intent_pairs(intents)
@@ -130,6 +131,7 @@ class MemoryHealthAuditor:
         metrics["runtime"] = {
             "target_open": target_open,
             "snapshot_fetched_at_utc": snapshot_ts.isoformat() if snapshot_ts else None,
+            "order_intents_generated_at_utc": intents_ts.isoformat() if intents_ts else None,
             "active_trader_positions": len(active_positions),
             "live_ready_pairs": list(live_ready_pairs),
             "intent_pairs": list(intent_pairs),

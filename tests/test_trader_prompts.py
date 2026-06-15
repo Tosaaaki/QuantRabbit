@@ -487,6 +487,37 @@ class TraderPromptRouteTest(unittest.TestCase):
         self.assertTrue(any("order intents" in reason for reason in route.reasons))
         self.assertFalse(any("daily target state" in reason for reason in route.reasons))
 
+    def test_memory_health_audited_snapshot_time_keeps_entry_route_current(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root)
+            base = datetime(2026, 1, 1, tzinfo=timezone.utc)
+            snapshot_ts = (base + timedelta(minutes=2)).isoformat()
+            intents_ts = (base + timedelta(minutes=1)).isoformat()
+
+            snapshot = json.loads(files["snapshot"].read_text())
+            snapshot["fetched_at_utc"] = snapshot_ts
+            files["snapshot"].write_text(json.dumps(snapshot))
+
+            intents = json.loads(files["intents"].read_text())
+            intents["generated_at_utc"] = intents_ts
+            files["intents"].write_text(json.dumps(intents))
+
+            memory = json.loads(files["memory_health"].read_text())
+            memory["generated_at_utc"] = base.isoformat()
+            memory["metrics"] = {
+                "runtime": {
+                    "snapshot_fetched_at_utc": snapshot_ts,
+                    "order_intents_generated_at_utc": intents_ts,
+                }
+            }
+            files["memory_health"].write_text(json.dumps(memory))
+
+            route = route_trader_prompts(**_route_paths(files), decision_response_path=None)
+
+        self.assertEqual(route.branch, BRANCH_ENTRY)
+        self.assertFalse(any("memory health audit stale" in reason for reason in route.reasons))
+
     def test_stale_self_improvement_audit_routes_open_target_to_refresh_branch(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

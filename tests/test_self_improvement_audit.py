@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import io
 import json
+import os
 import sqlite3
 import tempfile
 import unittest
 from contextlib import redirect_stdout
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from unittest import mock
 
 from quant_rabbit.cli import main
 from quant_rabbit.self_improvement_audit import (
@@ -373,6 +375,103 @@ class SelfImprovementAuditorTest(unittest.TestCase):
         evidence = codes["MEMORY_HEALTH_STALE"]["evidence"]
         self.assertEqual(evidence["memory_health_generated_at_utc"], (_NOW - timedelta(minutes=5)).isoformat())
         self.assertEqual(evidence["stale_against"][0]["label"], "broker_snapshot")
+
+    def test_memory_health_audited_snapshot_time_prevents_false_stale_p0(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root, active_position=False, closed_pls=(100.0, 80.0, -50.0))
+            snapshot_ts = _NOW + timedelta(minutes=2)
+            intents_ts = _NOW + timedelta(minutes=1)
+
+            snapshot = json.loads(files["snapshot"].read_text())
+            snapshot["fetched_at_utc"] = snapshot_ts.isoformat()
+            snapshot["account"]["fetched_at_utc"] = snapshot_ts.isoformat()
+            files["snapshot"].write_text(json.dumps(snapshot))
+
+            intents = json.loads(files["intents"].read_text())
+            intents["generated_at_utc"] = intents_ts.isoformat()
+            files["intents"].write_text(json.dumps(intents))
+
+            memory = json.loads(files["memory"].read_text())
+            memory["generated_at_utc"] = _NOW.isoformat()
+            memory["metrics"] = {
+                "runtime": {
+                    "snapshot_fetched_at_utc": snapshot_ts.isoformat(),
+                    "order_intents_generated_at_utc": intents_ts.isoformat(),
+                }
+            }
+            files["memory"].write_text(json.dumps(memory))
+
+            _run(files)
+            payload = json.loads(files["output"].read_text())
+
+        codes = {item["code"] for item in payload["findings"]}
+        self.assertNotIn("MEMORY_HEALTH_STALE", codes)
+
+    def test_external_live_lock_defers_mid_refresh_memory_stale_judgment(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root, active_position=False, live_ready_market_rr=1.4, closed_pls=(100.0, 80.0, -50.0))
+            files["memory"].write_text(
+                json.dumps(
+                    {
+                        "generated_at_utc": (_NOW - timedelta(minutes=5)).isoformat(),
+                        "status": "MEMORY_HEALTH_PASS",
+                        "issues": [],
+                        "blockers": [],
+                        "warnings": [],
+                    }
+                )
+            )
+            lock_dir = root / ".quant_rabbit_live.lock"
+            lock_dir.mkdir()
+            (lock_dir / "pid").write_text(str(os.getpid()), encoding="utf-8")
+
+            with mock.patch.dict(
+                os.environ,
+                {"QR_AUTOTRADE_LOCK_DIR": str(lock_dir), "QR_AUTOTRADE_LOCK_HELD": ""},
+                clear=False,
+            ):
+                summary = _run(files)
+            payload = json.loads(files["output"].read_text())
+
+        codes = {item["code"]: item for item in payload["findings"]}
+        self.assertEqual(summary.status, STATUS_BLOCKED)
+        self.assertIn("LIVE_RUNTIME_UPDATE_IN_PROGRESS", codes)
+        self.assertNotIn("MEMORY_HEALTH_STALE", codes)
+        self.assertEqual(codes["LIVE_RUNTIME_UPDATE_IN_PROGRESS"]["evidence"]["pid"], os.getpid())
+
+    def test_wrapper_owned_live_lock_still_allows_memory_stale_judgment(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root, active_position=False, live_ready_market_rr=1.4, closed_pls=(100.0, 80.0, -50.0))
+            files["memory"].write_text(
+                json.dumps(
+                    {
+                        "generated_at_utc": (_NOW - timedelta(minutes=5)).isoformat(),
+                        "status": "MEMORY_HEALTH_PASS",
+                        "issues": [],
+                        "blockers": [],
+                        "warnings": [],
+                    }
+                )
+            )
+            lock_dir = root / ".quant_rabbit_live.lock"
+            lock_dir.mkdir()
+            (lock_dir / "pid").write_text(str(os.getpid()), encoding="utf-8")
+
+            with mock.patch.dict(
+                os.environ,
+                {"QR_AUTOTRADE_LOCK_DIR": str(lock_dir), "QR_AUTOTRADE_LOCK_HELD": "1"},
+                clear=False,
+            ):
+                summary = _run(files)
+            payload = json.loads(files["output"].read_text())
+
+        codes = {item["code"] for item in payload["findings"]}
+        self.assertEqual(summary.status, STATUS_BLOCKED)
+        self.assertNotIn("LIVE_RUNTIME_UPDATE_IN_PROGRESS", codes)
+        self.assertIn("MEMORY_HEALTH_STALE", codes)
 
     def test_missing_entry_thesis_ledger_without_open_trades_is_not_a_finding(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
