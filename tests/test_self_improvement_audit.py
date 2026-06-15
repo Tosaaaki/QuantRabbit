@@ -1944,6 +1944,76 @@ class SelfImprovementAuditorTest(unittest.TestCase):
         )
         self.assertEqual(codes["LATEST_GPT_DECISION_STALE"]["evidence"]["current_streak"], 1)
 
+    def test_consumed_wait_decision_predating_snapshot_is_not_stale(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(
+                root,
+                active_position=False,
+                closed_pls=(100.0, 80.0, -50.0),
+            )
+            files["gpt"].write_text(
+                json.dumps(
+                    {
+                        "status": "ACCEPTED",
+                        "generated_at_utc": (_NOW - timedelta(minutes=1)).isoformat(),
+                        "decision": {"action": "WAIT"},
+                        "verification_issues": [],
+                    }
+                )
+            )
+            with sqlite3.connect(files["execution_db"]) as conn:
+                conn.execute(
+                    """
+                    INSERT INTO execution_events(event_uid, ts_utc, event_type, pair, side, realized_pl_jpy)
+                    VALUES (?, ?, 'GATEWAY_ORDER_NO_ACTION', NULL, NULL, NULL)
+                    """,
+                    ("consumed-wait", (_NOW - timedelta(seconds=30)).isoformat()),
+                )
+
+            _run(files)
+            payload = json.loads(files["output"].read_text())
+
+        codes = {item["code"] for item in payload["findings"]}
+        self.assertNotIn("LATEST_GPT_DECISION_STALE", codes)
+
+    def test_consumed_trade_decision_predating_snapshot_is_not_stale(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(
+                root,
+                active_position=False,
+                closed_pls=(100.0, 80.0, -50.0),
+            )
+            files["gpt"].write_text(
+                json.dumps(
+                    {
+                        "status": "ACCEPTED",
+                        "generated_at_utc": (_NOW - timedelta(minutes=1)).isoformat(),
+                        "decision": {
+                            "action": "TRADE",
+                            "selected_lane_id": "trend_trader:EUR_USD:LONG:TREND_CONTINUATION:MARKET",
+                            "selected_lane_ids": ["trend_trader:EUR_USD:LONG:TREND_CONTINUATION:MARKET"],
+                        },
+                        "verification_issues": [],
+                    }
+                )
+            )
+            with sqlite3.connect(files["execution_db"]) as conn:
+                conn.execute(
+                    """
+                    INSERT INTO execution_events(event_uid, ts_utc, event_type, pair, side, realized_pl_jpy)
+                    VALUES (?, ?, 'GATEWAY_ORDER_SENT', 'EUR_USD', 'LONG', NULL)
+                    """,
+                    ("consumed-trade", (_NOW - timedelta(seconds=30)).isoformat()),
+                )
+
+            _run(files)
+            payload = json.loads(files["output"].read_text())
+
+        codes = {item["code"] for item in payload["findings"]}
+        self.assertNotIn("LATEST_GPT_DECISION_STALE", codes)
+
     def test_accepted_trade_consumed_by_current_pending_entry_is_not_stale(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

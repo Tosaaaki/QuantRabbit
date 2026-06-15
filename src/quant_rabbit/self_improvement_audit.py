@@ -334,6 +334,7 @@ class SelfImprovementAuditor:
         findings.extend(
             _decision_artifact_findings(
                 run_id=run_id,
+                db_path=self.db_path,
                 gpt_loaded=gpt_loaded,
                 trader_loaded=trader_loaded,
                 gpt_path=gpt_decision_path,
@@ -3165,6 +3166,7 @@ def _sidecar_findings(
 def _decision_artifact_findings(
     *,
     run_id: str,
+    db_path: Path,
     gpt_loaded: _LoadedJson,
     trader_loaded: _LoadedJson,
     gpt_path: Path,
@@ -3246,6 +3248,17 @@ def _decision_artifact_findings(
             and not blocking
             and _accepted_trade_has_current_pending_entry(decision, pending_entry_order_details or [])
         )
+        accepted_decision_consumed_by_gateway = (
+            status == "ACCEPTED"
+            and not blocking
+            and _accepted_gpt_decision_consumed_by_gateway(
+                db_path=db_path,
+                generated_at=generated_at,
+                snapshot_ts=snapshot_ts,
+                action=action,
+                decision=decision,
+            )
+        )
         if (
             snapshot_ts is not None
             and generated_at is not None
@@ -3253,6 +3266,7 @@ def _decision_artifact_findings(
             and not rejected_inert_receipt
             and not stale_close_for_closed_trades
             and not accepted_trade_consumed_by_pending_entry
+            and not accepted_decision_consumed_by_gateway
         ):
             priority = (
                 "P0"
@@ -3757,6 +3771,100 @@ def _accepted_trade_has_current_pending_entry(
         if (pair, side) in wanted:
             return True
     return False
+
+
+def _accepted_gpt_decision_consumed_by_gateway(
+    *,
+    db_path: Path,
+    generated_at: datetime | None,
+    snapshot_ts: datetime | None,
+    action: str,
+    decision: dict[str, Any],
+) -> bool:
+    if generated_at is None or not db_path.exists():
+        return False
+    normalized_action = str(action or "").upper()
+    event_types = _gateway_consumption_event_types(normalized_action)
+    if not event_types:
+        return False
+    selected_lane_ids = {
+        str(item)
+        for item in (decision.get("selected_lane_ids") or [])
+        if str(item)
+    }
+    for key in ("selected_lane_id", "lane_id"):
+        if decision.get(key):
+            selected_lane_ids.add(str(decision.get(key)))
+    close_trade_ids = {
+        str(item)
+        for item in (decision.get("close_trade_ids") or [])
+        if str(item)
+    }
+
+    try:
+        with sqlite3.connect(db_path) as conn:
+            columns = _table_columns(conn, "execution_events")
+            select_columns = ["ts_utc", "event_type"]
+            if "lane_id" in columns:
+                select_columns.append("lane_id")
+            if "trade_id" in columns:
+                select_columns.append("trade_id")
+            placeholders = ",".join("?" for _ in event_types)
+            rows = conn.execute(
+                f"""
+                SELECT {", ".join(select_columns)}
+                FROM execution_events
+                WHERE event_type IN ({placeholders})
+                ORDER BY ts_utc DESC
+                LIMIT 200
+                """,
+                tuple(sorted(event_types)),
+            ).fetchall()
+    except sqlite3.Error:
+        return False
+
+    for row in rows:
+        event_ts = _parse_utc(row[0])
+        if event_ts is None or event_ts < generated_at:
+            continue
+        if snapshot_ts is not None and event_ts > snapshot_ts:
+            continue
+        event = {select_columns[idx]: row[idx] for idx in range(len(select_columns))}
+        if normalized_action == "TRADE" and selected_lane_ids:
+            lane_id = str(event.get("lane_id") or "")
+            if lane_id and lane_id not in selected_lane_ids:
+                continue
+        if normalized_action == "CLOSE" and close_trade_ids:
+            trade_id = str(event.get("trade_id") or "")
+            if trade_id and trade_id not in close_trade_ids:
+                continue
+        return True
+    return False
+
+
+def _gateway_consumption_event_types(action: str) -> frozenset[str]:
+    if action == "TRADE":
+        return frozenset(
+            {
+                "GATEWAY_ORDER_SENT",
+                "GATEWAY_ORDER_BLOCKED",
+                "ORDER_ACCEPTED",
+                "ORDER_FILLED",
+            }
+        )
+    if action == "CANCEL_PENDING":
+        return frozenset({"GATEWAY_ORDER_NO_ACTION", "ORDER_CANCELED"})
+    if action in {"CLOSE", "PROTECT", "TIGHTEN_SL"}:
+        return frozenset(
+            {
+                "GATEWAY_TRADE_CLOSE_SENT",
+                "GATEWAY_POSITION_NO_ACTION",
+                "TRADE_CLOSED",
+            }
+        )
+    if action in {"WAIT", "REQUEST_EVIDENCE"}:
+        return frozenset({"GATEWAY_ORDER_NO_ACTION", "GATEWAY_POSITION_NO_ACTION"})
+    return frozenset()
 
 
 def _table_columns(conn: sqlite3.Connection, table_name: str) -> set[str]:
