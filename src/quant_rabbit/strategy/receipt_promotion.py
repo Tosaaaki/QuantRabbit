@@ -60,10 +60,15 @@ class ReceiptPromoter:
         intents_payload = json.loads(self.intents_path.read_text())
         receipts = _eligible_receipts(intents_payload)
         generated_at = datetime.now(timezone.utc).isoformat()
+        profiles = profile_payload.get("profiles")
+        if not isinstance(profiles, list):
+            profiles = []
+            profile_payload["profiles"] = profiles
+        method_specific_pairs = _method_specific_pairs(profiles)
 
         promotions: list[Promotion] = []
         still_blocked = 0
-        for item in profile_payload.get("profiles", []) or []:
+        for item in profiles:
             if not isinstance(item, dict):
                 continue
             pair = str(item.get("pair") or "")
@@ -71,6 +76,10 @@ class ReceiptPromoter:
             method = str(item.get("method") or "").strip().upper() or None
             status = str(item.get("status") or "")
             receipt = _receipt_for(receipts, pair, direction, method)
+            if _should_create_method_profile_instead(item, receipt, method_specific_pairs):
+                if status in {"RISK_REPAIR_CANDIDATE", "MINE_MISSED_EDGE", "BLOCK_UNTIL_NEW_EVIDENCE"}:
+                    still_blocked += 1
+                continue
             promotion = _promotion_for(item, receipt)
             if promotion is None:
                 if status in {"RISK_REPAIR_CANDIDATE", "MINE_MISSED_EDGE", "BLOCK_UNTIL_NEW_EVIDENCE"}:
@@ -90,6 +99,16 @@ class ReceiptPromoter:
                 "method": promotion.method,
                 "reason": promotion.reason,
             }
+            promotions.append(promotion)
+
+        profile_keys = _profile_keys(profiles)
+        for receipt in receipts.values():
+            method_profile = _method_profile_from_missing_issue(receipt, profile_keys, generated_at)
+            if method_profile is None:
+                continue
+            item, promotion = method_profile
+            profiles.append(item)
+            profile_keys.add((promotion.pair, promotion.direction, promotion.method))
             promotions.append(promotion)
 
         profile_payload["last_receipt_promotion_at_utc"] = generated_at
@@ -240,6 +259,169 @@ def _promotion_for(item: dict[str, Any], receipt: dict[str, Any] | None) -> Prom
             reason=f"missed edge converted into {order_type} trigger receipt",
         )
     return None
+
+
+def _should_create_method_profile_instead(
+    item: dict[str, Any],
+    receipt: dict[str, Any] | None,
+    method_specific_pairs: set[tuple[str, str]],
+) -> bool:
+    """Keep pair-side fallback memory intact when a concrete method is missing."""
+
+    if receipt is None:
+        return False
+    if str(item.get("method") or "").strip():
+        return False
+    pair = str(item.get("pair") or "")
+    direction = str(item.get("direction") or "")
+    if (pair, direction) not in method_specific_pairs:
+        return False
+    method = _receipt_method(receipt)
+    if method is None:
+        return False
+    return _method_missing_issue(receipt, pair=pair, direction=direction, method=method) is not None
+
+
+def _method_profile_from_missing_issue(
+    receipt: dict[str, Any],
+    existing_keys: set[tuple[str, str, str | None]],
+    generated_at: str,
+) -> tuple[dict[str, Any], Promotion] | None:
+    intent = receipt.get("intent") if isinstance(receipt.get("intent"), dict) else {}
+    pair = str(intent.get("pair") or "")
+    direction = str(intent.get("side") or "")
+    method = _receipt_method(receipt)
+    if not pair or not direction or method is None:
+        return None
+    if (pair, direction, method) in existing_keys:
+        return None
+
+    issue = _method_missing_issue(receipt, pair=pair, direction=direction, method=method)
+    if issue is None:
+        return None
+    evidence = issue.get("strategy_profile_evidence") if isinstance(issue.get("strategy_profile_evidence"), dict) else {}
+    fallback = evidence.get("fallback_pair_side_profile") if isinstance(evidence.get("fallback_pair_side_profile"), dict) else None
+    if fallback is None:
+        return None
+    if str(fallback.get("profile_pair") or "") != pair or str(fallback.get("profile_direction") or "") != direction:
+        return None
+
+    old_status = str(fallback.get("profile_status") or "")
+    order_type = str(intent.get("order_type") or "")
+    if old_status == "RISK_REPAIR_CANDIDATE":
+        reason = "method-specific profile repaired by current dry-run receipt from pair-side risk-repair fallback"
+    elif old_status == "MINE_MISSED_EDGE" and order_type in PENDING_ENTRY_TYPES:
+        reason = f"method-specific profile created from pair-side missed-edge {order_type} trigger receipt"
+    else:
+        return None
+
+    lane_id = str(receipt.get("lane_id") or "")
+    promotion = Promotion(
+        pair=pair,
+        direction=direction,
+        method=method,
+        old_status=old_status,
+        new_status="CANDIDATE",
+        lane_id=lane_id,
+        reason=reason,
+    )
+    item = _profile_from_fallback(fallback, promotion, generated_at)
+    return item, promotion
+
+
+def _method_missing_issue(
+    receipt: dict[str, Any],
+    *,
+    pair: str,
+    direction: str,
+    method: str,
+) -> dict[str, Any] | None:
+    for key in ("live_strategy_issues", "strategy_issues"):
+        for issue in receipt.get(key, []) or []:
+            if not isinstance(issue, dict) or issue.get("code") != "STRATEGY_METHOD_PROFILE_MISSING":
+                continue
+            evidence = issue.get("strategy_profile_evidence")
+            if not isinstance(evidence, dict):
+                continue
+            if str(evidence.get("profile_pair") or "") != pair:
+                continue
+            if str(evidence.get("profile_direction") or "") != direction:
+                continue
+            if str(evidence.get("requested_method") or "").strip().upper() != method:
+                continue
+            if evidence.get("profile_match") != "method_specific_missing":
+                continue
+            return issue
+    return None
+
+
+def _profile_from_fallback(
+    fallback: dict[str, Any],
+    promotion: Promotion,
+    generated_at: str,
+) -> dict[str, Any]:
+    item: dict[str, Any] = {
+        "pair": promotion.pair,
+        "direction": promotion.direction,
+        "method": promotion.method,
+        "status": "CANDIDATE",
+        "required_fix": (
+            f"promoted from {promotion.old_status} by {promotion.reason}; "
+            f"source lane {promotion.lane_id}; receipt_at_utc={generated_at}"
+        ),
+        "receipt_promotion": {
+            "promoted_at_utc": generated_at,
+            "from_status": promotion.old_status,
+            "lane_id": promotion.lane_id,
+            "method": promotion.method,
+            "reason": promotion.reason,
+        },
+    }
+    for key in (
+        "target_reward_risk",
+        "positive_best_jpy",
+        "positive_tail_jpy",
+        "positive_evidence_n",
+        "live_net_jpy",
+        "live_avg_jpy",
+        "live_n",
+        "pretrade_net_jpy",
+        "pretrade_avg_jpy",
+        "pretrade_n",
+        "seat_net_jpy",
+        "seat_win_rate_pct",
+        "seat_pl_n",
+        "top_block_reasons",
+    ):
+        if key in fallback:
+            item[key] = fallback[key]
+    return item
+
+
+def _profile_keys(profiles: list[Any]) -> set[tuple[str, str, str | None]]:
+    keys: set[tuple[str, str, str | None]] = set()
+    for item in profiles:
+        if not isinstance(item, dict):
+            continue
+        pair = str(item.get("pair") or "")
+        direction = str(item.get("direction") or "")
+        method = str(item.get("method") or "").strip().upper() or None
+        if pair and direction:
+            keys.add((pair, direction, method))
+    return keys
+
+
+def _method_specific_pairs(profiles: list[Any]) -> set[tuple[str, str]]:
+    pairs: set[tuple[str, str]] = set()
+    for item in profiles:
+        if not isinstance(item, dict):
+            continue
+        pair = str(item.get("pair") or "")
+        direction = str(item.get("direction") or "")
+        method = str(item.get("method") or "").strip()
+        if pair and direction and method:
+            pairs.add((pair, direction))
+    return pairs
 
 
 def _receipt_method(result: dict[str, Any]) -> str | None:

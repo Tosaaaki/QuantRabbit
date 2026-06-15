@@ -67,6 +67,117 @@ class ReceiptPromotionTest(unittest.TestCase):
             statuses = {(item["pair"], item["direction"]): item["status"] for item in payload["profiles"]}
             self.assertEqual(statuses[("EUR_USD", "LONG")], "RISK_REPAIR_CANDIDATE")
 
+    def test_creates_missing_method_profile_from_pair_side_repair_receipt(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            profile = root / "profile.json"
+            profile.write_text(
+                json.dumps(
+                    {
+                        "profiles": [
+                            {
+                                "pair": "EUR_USD",
+                                "direction": "SHORT",
+                                "method": "BREAKOUT_FAILURE",
+                                "status": "CANDIDATE",
+                                "required_fix": "existing failure edge",
+                            },
+                            {
+                                "pair": "EUR_USD",
+                                "direction": "SHORT",
+                                "status": "RISK_REPAIR_CANDIDATE",
+                                "required_fix": "cap risk",
+                                "target_reward_risk": 2.6,
+                                "live_net_jpy": 5738.5,
+                                "live_n": 103,
+                                "pretrade_net_jpy": 1605.1,
+                                "pretrade_n": 34,
+                            },
+                        ]
+                    }
+                )
+            )
+            intents = root / "intents.json"
+            intents.write_text(
+                json.dumps(
+                    {
+                        "snapshot_path": "snapshot.json",
+                        "results": [
+                            _method_missing_receipt(
+                                fallback_status="RISK_REPAIR_CANDIDATE",
+                                order_type="LIMIT",
+                            )
+                        ],
+                    }
+                )
+            )
+
+            summary = ReceiptPromoter(profile_path=profile, intents_path=intents, report_path=root / "report.md").run()
+
+            self.assertEqual(summary.promoted, 1)
+            payload = json.loads(profile.read_text())
+            by_key = {
+                (item["pair"], item["direction"], item.get("method")): item
+                for item in payload["profiles"]
+            }
+            self.assertEqual(by_key[("EUR_USD", "SHORT", None)]["status"], "RISK_REPAIR_CANDIDATE")
+            range_profile = by_key[("EUR_USD", "SHORT", "RANGE_ROTATION")]
+            self.assertEqual(range_profile["status"], "CANDIDATE")
+            self.assertEqual(range_profile["receipt_promotion"]["from_status"], "RISK_REPAIR_CANDIDATE")
+            self.assertEqual(range_profile["target_reward_risk"], 2.6)
+            loaded = StrategyProfile.load(profile)
+            self.assertEqual(
+                loaded.validate(_intent("EUR_USD", "SHORT", method="RANGE_ROTATION"), for_live_send=True),
+                (),
+            )
+
+    def test_does_not_create_missing_method_profile_from_blocked_fallback(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            profile = root / "profile.json"
+            profile.write_text(
+                json.dumps(
+                    {
+                        "profiles": [
+                            {
+                                "pair": "EUR_USD",
+                                "direction": "SHORT",
+                                "method": "BREAKOUT_FAILURE",
+                                "status": "CANDIDATE",
+                                "required_fix": "existing failure edge",
+                            },
+                            {
+                                "pair": "EUR_USD",
+                                "direction": "SHORT",
+                                "status": "BLOCK_UNTIL_NEW_EVIDENCE",
+                                "required_fix": "bad live history",
+                            },
+                        ]
+                    }
+                )
+            )
+            intents = root / "intents.json"
+            intents.write_text(
+                json.dumps(
+                    {
+                        "snapshot_path": "snapshot.json",
+                        "results": [
+                            _method_missing_receipt(
+                                fallback_status="BLOCK_UNTIL_NEW_EVIDENCE",
+                                order_type="LIMIT",
+                            )
+                        ],
+                    }
+                )
+            )
+
+            summary = ReceiptPromoter(profile_path=profile, intents_path=intents, report_path=root / "report.md").run()
+
+            self.assertEqual(summary.promoted, 0)
+            payload = json.loads(profile.read_text())
+            keys = {(item["pair"], item["direction"], item.get("method")) for item in payload["profiles"]}
+            self.assertNotIn(("EUR_USD", "SHORT", "RANGE_ROTATION"), keys)
+
 
 def _profile(root: Path) -> Path:
     path = root / "profile.json"
@@ -148,7 +259,48 @@ def _receipt(
     }
 
 
-def _intent(pair: str, direction: str):
+def _method_missing_receipt(*, fallback_status: str, order_type: str) -> dict:
+    receipt = _receipt(
+        "range_trader:EUR_USD:SHORT:RANGE_ROTATION",
+        "EUR_USD",
+        "SHORT",
+        order_type,
+    )
+    receipt["intent"]["market_context"]["method"] = "RANGE_ROTATION"
+    evidence = {
+        "available_methods": ["BREAKOUT_FAILURE"],
+        "fallback_pair_side_profile": {
+            "profile_pair": "EUR_USD",
+            "profile_direction": "SHORT",
+            "profile_method": None,
+            "profile_match": "pair_side_fallback_not_used",
+            "profile_status": fallback_status,
+            "requested_method": "RANGE_ROTATION",
+            "required_fix": "cap risk",
+            "target_reward_risk": 2.6,
+            "live_net_jpy": 5738.5,
+            "live_n": 103,
+            "pretrade_net_jpy": 1605.1,
+            "pretrade_n": 34,
+        },
+        "profile_direction": "SHORT",
+        "profile_match": "method_specific_missing",
+        "profile_pair": "EUR_USD",
+        "requested_method": "RANGE_ROTATION",
+    }
+    issue = {
+        "code": "STRATEGY_METHOD_PROFILE_MISSING",
+        "message": "missing method profile",
+        "severity": "BLOCK",
+        "strategy_profile_evidence": evidence,
+    }
+    receipt["strategy_issues"] = [{**issue, "severity": "WARN"}]
+    receipt["live_strategy_issues"] = [issue]
+    receipt["live_blockers"] = ["missing method profile"]
+    return receipt
+
+
+def _intent(pair: str, direction: str, *, method: str = "TREND_CONTINUATION"):
     from quant_rabbit.models import MarketContext, OrderIntent, OrderType, Owner, Side, TradeMethod
 
     return OrderIntent(
@@ -165,7 +317,7 @@ def _intent(pair: str, direction: str):
             regime="TREND_CONTINUATION test",
             narrative="test",
             chart_story="test",
-            method=TradeMethod.TREND_CONTINUATION,
+            method=TradeMethod.parse(method),
             invalidation="test",
         ),
     )
