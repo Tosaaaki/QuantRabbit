@@ -3477,6 +3477,13 @@ def _forecast_market_support_payload(value: object) -> dict[str, Any]:
         "best_samples": _optional_int(value.get("best_samples")) or 0,
         "best_unselected_hit_rate": _optional_float(value.get("best_unselected_hit_rate")),
         "best_unselected_samples": _optional_int(value.get("best_unselected_samples")) or 0,
+        "directional_calibration_name": (
+            str(value.get("directional_calibration_name") or "")
+            if value.get("directional_calibration_name") is not None
+            else None
+        ),
+        "directional_hit_rate": _optional_float(value.get("directional_hit_rate")),
+        "directional_samples": _optional_int(value.get("directional_samples")) or 0,
         "bootstrap_projection_support": bool(value.get("bootstrap_projection_support")),
         "reason": str(value.get("reason") or ""),
         "unselected_reason": str(value.get("unselected_reason") or ""),

@@ -1733,6 +1733,38 @@ class IntentGeneratorTest(unittest.TestCase):
         self.assertEqual(metadata["news_digest_ref"], "news:digest")
         self.assertEqual(metadata["news_signal_names"], ["news_theme_followthrough"])
 
+    def test_forecast_context_payload_persists_directional_calibration(self) -> None:
+        forecast = SimpleNamespace(
+            direction="UP",
+            confidence=0.82,
+            raw_confidence=0.91,
+            rationale_summary="high-confidence directional forecast",
+            drivers_for=(),
+            drivers_against=(),
+            component_scores={"UP": 91.0, "DOWN": 12.0},
+            market_support={
+                "ok": False,
+                "direction": "UP",
+                "directional_calibration_name": "directional_forecast_up",
+                "directional_hit_rate": 0.1,
+                "directional_samples": 12,
+                "reason": "directional forecast bucket is weak",
+            },
+        )
+
+        metadata = _forecast_context_payload(forecast)
+
+        self.assertEqual(
+            metadata["forecast_directional_calibration_name"],
+            "directional_forecast_up",
+        )
+        self.assertAlmostEqual(metadata["forecast_directional_hit_rate"], 0.1)
+        self.assertEqual(metadata["forecast_directional_samples"], 12)
+        support = metadata["forecast_market_support"]
+        self.assertEqual(support["directional_calibration_name"], "directional_forecast_up")
+        self.assertAlmostEqual(support["directional_hit_rate"], 0.1)
+        self.assertEqual(support["directional_samples"], 12)
+
     def test_same_cycle_projection_bootstrap_can_clear_near_miss_forecast_floor(self) -> None:
         os.environ["QR_REQUIRE_FORECAST_FOR_LIVE"] = "1"
         with tempfile.TemporaryDirectory() as tmp:
