@@ -2516,6 +2516,14 @@ def _forecast_seed_for_pair(
         return None
     if current_price <= 0:
         return None
+    try:
+        bid = float(quote.bid)
+        ask = float(quote.ask)
+        spread_pips = abs(ask - bid) * PIP_FACTORS.get(pair, instrument_pip_factor(pair))
+    except (TypeError, ValueError):
+        return None
+    if spread_pips <= 0:
+        return None
     full_charts = {
         chart_pair: chart_data.get("__raw_chart")
         for chart_pair, chart_data in charts.items()
@@ -2595,6 +2603,7 @@ def _forecast_seed_for_pair(
             reversal_short=reversal_short,
             hit_rates=hit_rates,
             regime=regime_label,
+            spread_pips=spread_pips,
         )
     except Exception:
         return None

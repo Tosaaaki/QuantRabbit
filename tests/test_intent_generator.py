@@ -2292,11 +2292,12 @@ class IntentGeneratorTest(unittest.TestCase):
             ) as compute_hit_rates, patch(
                 "quant_rabbit.strategy.directional_forecaster.synthesize_forecast",
                 return_value=forecast,
-            ):
+            ) as synthesize_forecast:
                 seed = _forecast_seed_for_pair("EUR_USD", charts or {}, snapshot, data_root=data_root)
 
             self.assertIsNotNone(seed)
             compute_hit_rates.assert_called_once_with(data_root)
+            self.assertAlmostEqual(synthesize_forecast.call_args.kwargs["spread_pips"], 0.8)
             kwargs = detect_forward.call_args.kwargs
             self.assertEqual(kwargs["calendar_path"], data_root / "economic_calendar.json")
             self.assertEqual(kwargs["news_digest_path"], root / "logs" / "news_digest.md")

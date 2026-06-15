@@ -415,6 +415,7 @@ def _short_term_momentum_class(intent_or_context: dict[str, Any] | None) -> str:
         return "LOW"
     return "NEUTRAL"
 
+from quant_rabbit.instruments import instrument_pip_factor
 from quant_rabbit.models import BrokerSnapshot, OrderType, Owner, Side, TradeMethod
 from quant_rabbit.risk import RiskPolicy
 
@@ -644,6 +645,22 @@ def _current_mid_price_for(pair: str, snapshot: BrokerSnapshot) -> float | None:
     return (bid + ask) / 2.0
 
 
+def _current_spread_pips_for(pair: str, snapshot: BrokerSnapshot) -> float | None:
+    if not pair or snapshot is None:
+        return None
+    quote = (snapshot.quotes or {}).get(pair) if hasattr(snapshot, "quotes") else None
+    if quote is None:
+        return None
+    try:
+        bid = float(quote.bid)
+        ask = float(quote.ask)
+    except (TypeError, ValueError):
+        return None
+    if bid <= 0 or ask <= 0:
+        return None
+    return abs(ask - bid) * instrument_pip_factor(pair)
+
+
 def _forecast_regime_label(pair_chart: dict[str, Any] | None) -> str | None:
     if not isinstance(pair_chart, dict):
         return None
@@ -686,6 +703,7 @@ def _pair_forecast(
         if forecast_cache is not None:
             forecast_cache[pair] = None
         return None
+    current_spread_pips = _current_spread_pips_for(pair, snapshot)
 
     cot_payload = None
     option_skew_payload = None
@@ -767,6 +785,7 @@ def _pair_forecast(
         reversal_short=reversal_short,
         hit_rates=hit_rates,
         regime=regime_label,
+        spread_pips=current_spread_pips,
     )
     if (
         forecast.direction == "UNCLEAR"

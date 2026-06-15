@@ -155,6 +155,44 @@ class ForecastGeometryTest(unittest.TestCase):
         self.assertLess(forecast.confidence, forecast.raw_confidence)
         self.assertIn("robust forecast geometry missing target", forecast.rationale_summary)
 
+    def test_forecast_geometry_clears_current_spread_noise_floor(self) -> None:
+        pair_chart = {
+            "views": [
+                {
+                    "granularity": "M5",
+                    "indicators": {
+                        "pip_size": 0.0001,
+                        "atr_pips": 2.0,
+                        "donchian_high": 1.10070,
+                        "donchian_low": 1.09920,
+                    },
+                    "structure": {
+                        "swings": [
+                            {"side": "HIGH", "price": 1.10070},
+                            {"side": "LOW", "price": 1.09920},
+                        ],
+                    },
+                }
+            ]
+        }
+
+        forecast = synthesize_forecast(
+            pair="EUR_USD",
+            pair_chart=pair_chart,
+            current_price=1.1000,
+            pattern_signals=[],
+            projection_signals=[_Sig("DOWN", 60.0, 1.0, "breakdown")],
+            correlation_signals=[],
+            paths=[],
+            spread_pips=2.0,
+        )
+
+        self.assertEqual(forecast.direction, "DOWN")
+        self.assertIsNone(forecast.target_price)
+        self.assertIsNone(forecast.invalidation_price)
+        self.assertLess(forecast.confidence, forecast.raw_confidence)
+        self.assertIn("robust forecast geometry missing target/invalidation", forecast.rationale_summary)
+
     def test_strong_htf_downtrend_prevents_micro_up_signal_from_owning_forecast(self) -> None:
         pair_chart = {
             "confluence": {

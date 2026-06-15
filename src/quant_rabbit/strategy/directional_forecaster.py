@@ -111,6 +111,15 @@ FORECAST_COUNTERTREND_UNCONFIRMED_MULT = float(
 # target/invalidation levels inside that distance are treated as non-structural
 # unless a future calibrated pair/session model replaces this floor.
 FORECAST_GEOMETRY_NOISE_ATR_MULT = float(os.environ.get("QR_FORECAST_GEOMETRY_NOISE_ATR_MULT", "1.0"))
+# Forecast geometry also has to clear executable spread noise. Live risk
+# validation requires target/invalidation to clear a spread multiple from the
+# actual entry; accepting thinner forecast levels just creates lanes that are
+# predictably blocked later. This mirrors that contract without importing
+# RiskPolicy into the forecaster; replace it with pair/session MAE-MFE
+# calibration once the projection ledger has enough audited samples.
+FORECAST_GEOMETRY_SPREAD_NOISE_MULT = float(
+    os.environ.get("QR_FORECAST_GEOMETRY_SPREAD_NOISE_MULT", "5.0")
+)
 # Missing robust target or invalidation makes a directional forecast less
 # actionable, but not useless for advisory bias. This confidence haircut is an
 # evidence-quality penalty, not a trade gate; ENTRY_CONFIDENCE_MIN remains the
@@ -270,8 +279,15 @@ def _collect_structural_levels(pair_chart: Dict[str, Any], *, side: str) -> list
     return prices
 
 
-def _forecast_noise_floor_pips(pair_chart: Dict[str, Any]) -> Optional[float]:
+def _forecast_noise_floor_pips(
+    pair_chart: Dict[str, Any],
+    *,
+    current_spread_pips: Optional[float] = None,
+) -> Optional[float]:
     floors: list[float] = []
+    explicit_spread_pips = _to_float(current_spread_pips)
+    if explicit_spread_pips is not None and explicit_spread_pips > 0:
+        floors.append(explicit_spread_pips * FORECAST_GEOMETRY_SPREAD_NOISE_MULT)
     for view in pair_chart.get("views") or []:
         if not isinstance(view, dict):
             continue
@@ -289,7 +305,7 @@ def _forecast_noise_floor_pips(pair_chart: Dict[str, Any]) -> Optional[float]:
             floors.append(atr_pips * FORECAST_GEOMETRY_NOISE_ATR_MULT)
         spread_pips = _to_float((indicators or {}).get("spread_pips"))
         if spread_pips is not None and spread_pips > 0:
-            floors.append(spread_pips)
+            floors.append(spread_pips * FORECAST_GEOMETRY_SPREAD_NOISE_MULT)
     return max(floors) if floors else None
 
 
@@ -368,6 +384,7 @@ def _forecast_geometry(
     pair_chart: Dict[str, Any],
     direction: str,
     current_price: float,
+    spread_pips: Optional[float] = None,
 ) -> tuple[Optional[float], Optional[float]]:
     """Return target/invalidation levels that are on the correct side.
 
@@ -387,7 +404,7 @@ def _forecast_geometry(
         pip_factor=pip_factor,
         intent="HARVEST",
     )
-    noise_floor_pips = _forecast_noise_floor_pips(pair_chart)
+    noise_floor_pips = _forecast_noise_floor_pips(pair_chart, current_spread_pips=spread_pips)
     if not _clears_noise(
         structural_target,
         current_price=current_price,
@@ -1308,6 +1325,7 @@ def synthesize_forecast(
     reversal_short: Optional[Any] = None,
     hit_rates: Optional[Dict[str, Dict[str, Any]]] = None,
     regime: Optional[str] = None,
+    spread_pips: Optional[float] = None,
 ) -> DirectionalForecast:
     """Combine all detector outputs into ONE directional forecast.
 
@@ -1558,6 +1576,7 @@ def synthesize_forecast(
         pair_chart=pair_chart,
         direction=winner,
         current_price=current_price,
+        spread_pips=spread_pips,
     )
     geometry_reason = ""
     if winner in {"UP", "DOWN"} and (target_price is None or invalidation_price is None):
