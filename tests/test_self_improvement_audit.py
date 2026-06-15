@@ -2033,6 +2033,55 @@ class SelfImprovementAuditorTest(unittest.TestCase):
             ["T1"],
         )
 
+    def test_operator_auth_required_close_is_not_reported_as_unresolved(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root, active_position=True)
+            files["position_thesis"].write_text(
+                json.dumps(
+                    {
+                        "generated_at_utc": _NOW.isoformat(),
+                        "assessments": [
+                            {
+                                "trade_id": "T1",
+                                "pair": "EUR_USD",
+                                "side": "LONG",
+                                "verdict": "REVIEW_CLOSE",
+                                "context_notes": [
+                                    "invalidation hit with technical invalidation confirmed against LONG"
+                                ],
+                            }
+                        ],
+                    }
+                )
+            )
+            files["gpt"].write_text(
+                json.dumps(
+                    {
+                        "status": "REJECTED",
+                        "decision": {"action": "CLOSE", "close_trade_ids": ["T1"]},
+                        "verification_issues": [
+                            {
+                                "severity": "BLOCK",
+                                "code": "CLOSE_OPERATOR_AUTH_REQUIRED",
+                                "message": "explicit Gate B is still missing for T1",
+                            }
+                        ],
+                    }
+                )
+            )
+
+            summary = _run(files)
+            payload = json.loads(files["output"].read_text())
+
+        codes = {item["code"]: item for item in payload["findings"]}
+        self.assertGreaterEqual(summary.p0_findings, 1)
+        self.assertIn("LATEST_GPT_DECISION_HAS_BLOCKING_ISSUES", codes)
+        self.assertNotIn("OPEN_POSITION_CLOSE_EVIDENCE_UNRESOLVED", codes)
+        finding = codes["OPEN_POSITION_CLOSE_OPERATOR_AUTH_REQUIRED"]
+        self.assertEqual(finding["priority"], "P1")
+        self.assertEqual(finding["evidence"]["active_close_trade_ids"], ["T1"])
+
     def test_accepted_gpt_decision_predating_snapshot_is_p0(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

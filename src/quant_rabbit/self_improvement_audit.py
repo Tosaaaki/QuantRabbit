@@ -3217,6 +3217,33 @@ def _sidecar_findings(
         gpt_action = str(gpt_decision["decision"].get("action") or "").upper()
     gpt_status = str(gpt_decision.get("status") or "").upper()
     if close_refs and not (gpt_status == "ACCEPTED" and gpt_action == "CLOSE"):
+        auth_blocker = _active_close_operator_auth_blocker(gpt_decision, active_trade_ids)
+        if auth_blocker:
+            out.append(
+                _finding(
+                    run_id=run_id,
+                    priority="P1",
+                    layer="position_review",
+                    code="OPEN_POSITION_CLOSE_OPERATOR_AUTH_REQUIRED",
+                    message=(
+                        f"{len(close_refs)} active position close/review signal(s) reached GPT, "
+                        "but verifier requires explicit operator Gate B"
+                    ),
+                    next_action=(
+                        "Do not send a live close from automation. Refresh sidecars on the next broker "
+                        "snapshot, or provide the explicit operator close token/env only if this loss-side "
+                        "close is intentionally authorized."
+                    ),
+                    evidence={
+                        "signals": close_refs[:20],
+                        "gpt_status": gpt_status,
+                        "gpt_action": gpt_action,
+                        "blocking_codes": auth_blocker["codes"],
+                        "active_close_trade_ids": auth_blocker["active_close_trade_ids"],
+                    },
+                )
+            )
+            return out
         out.append(
             _finding(
                 run_id=run_id,
@@ -3229,6 +3256,32 @@ def _sidecar_findings(
             )
         )
     return out
+
+
+def _active_close_operator_auth_blocker(
+    gpt_decision: dict[str, Any],
+    active_trade_ids: set[str],
+) -> dict[str, Any] | None:
+    if str(gpt_decision.get("status") or "").upper() != "REJECTED":
+        return None
+    decision = gpt_decision.get("decision") if isinstance(gpt_decision.get("decision"), dict) else {}
+    if str(decision.get("action") or "").upper() != "CLOSE":
+        return None
+    close_ids = {str(item) for item in decision.get("close_trade_ids", []) or [] if str(item)}
+    active_close_ids = close_ids & active_trade_ids
+    if not active_close_ids:
+        return None
+    issues = gpt_decision.get("verification_issues")
+    if not isinstance(issues, list):
+        return None
+    codes = [
+        str(item.get("code") or "")
+        for item in issues
+        if isinstance(item, dict) and str(item.get("severity") or "").upper() == "BLOCK"
+    ]
+    if "CLOSE_OPERATOR_AUTH_REQUIRED" not in codes:
+        return None
+    return {"codes": codes[:12], "active_close_trade_ids": sorted(active_close_ids)}
 
 
 def _decision_artifact_findings(
