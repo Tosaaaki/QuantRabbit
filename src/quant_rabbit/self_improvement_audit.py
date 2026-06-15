@@ -191,6 +191,11 @@ class SelfImprovementAuditor:
         active_positions = _active_trader_positions(snapshot)
         pending_entry_orders = _trader_pending_entry_orders(snapshot)
         active_trade_ids = {str(item.get("trade_id") or "") for item in active_positions if item.get("trade_id")}
+        active_position_sides = {
+            str(item.get("trade_id") or ""): str(item.get("side") or "").upper()
+            for item in active_positions
+            if item.get("trade_id")
+        }
         effect = _effect_metrics(self.db_path, window_hours=window_hours, now=clock)
         effect_24h = _effect_metrics(self.db_path, window_hours=24.0, now=clock)
         close_gate_loss_evidence = _close_gate_loss_evidence(ai_backtest_loaded, ai_test_bot_backtest_path)
@@ -341,11 +346,18 @@ class SelfImprovementAuditor:
                 trader_path=trader_decision_path,
                 target_open=target_open,
                 active_trade_ids=active_trade_ids,
+                active_position_sides=active_position_sides,
                 live_ready_lanes=len(live_ready),
                 pending_entry_orders=len(pending_entry_orders),
                 pending_entry_order_details=pending_entry_orders,
                 snapshot_ts=snapshot_ts,
                 latest_gpt_stale_streak_before=latest_gpt_stale_streak_before,
+                sidecars={
+                    "position_management": (position_management_loaded, position_management_path),
+                    "thesis_evolution": (thesis_evolution_loaded, thesis_evolution_path),
+                    "position_thesis": (position_thesis_loaded, position_thesis_path),
+                    "forecast_persistence": (forecast_persistence_loaded, forecast_persistence_path),
+                },
             )
         )
 
@@ -3374,11 +3386,13 @@ def _decision_artifact_findings(
     trader_path: Path,
     target_open: bool,
     active_trade_ids: set[str],
+    active_position_sides: dict[str, str] | None,
     live_ready_lanes: int,
     pending_entry_orders: int,
     snapshot_ts: datetime | None,
     pending_entry_order_details: list[dict[str, Any]] | None = None,
     latest_gpt_stale_streak_before: int = 0,
+    sidecars: dict[str, tuple[_LoadedJson, Path]] | None = None,
 ) -> list[dict[str, Any]]:
     out: list[dict[str, Any]] = []
     if gpt_loaded.error is not None:
@@ -3548,6 +3562,34 @@ def _decision_artifact_findings(
                     )
                 )
                 return out
+            active_close_ids = close_ids & active_trade_ids
+            if _rejected_close_is_nonblocking_soft_advisory(
+                blocking,
+                active_close_ids,
+                active_position_sides or {},
+                sidecars or {},
+            ):
+                out.append(
+                    _finding(
+                        run_id=run_id,
+                        priority="P1",
+                        layer="decision_history",
+                        code="LATEST_GPT_DECISION_SOFT_CLOSE_ADVISORY_REJECTED",
+                        message=(
+                            "latest GPT CLOSE decision was rejected from non-blocking soft close advisory "
+                            "evidence while same-direction HOLD/EXTEND sidecars still support the open trade"
+                        ),
+                        next_action=(
+                            "Do not reuse the rejected CLOSE receipt; write and verify a fresh entry-branch "
+                            "TRADE/CANCEL/WAIT receipt against the current packet."
+                        ),
+                        evidence={
+                            "codes": [str(item.get("code") or "") for item in blocking[:12]],
+                            "active_close_trade_ids": sorted(active_close_ids),
+                        },
+                    )
+                )
+                return out
             out.append(
                 _finding(
                     run_id=run_id,
@@ -3563,6 +3605,69 @@ def _decision_artifact_findings(
                 )
             )
     return out
+
+
+def _rejected_close_is_nonblocking_soft_advisory(
+    blocking: list[dict[str, Any]],
+    active_close_ids: set[str],
+    active_position_sides: dict[str, str],
+    sidecars: dict[str, tuple[_LoadedJson, Path]],
+) -> bool:
+    if not active_close_ids:
+        return False
+    codes = {
+        str(item.get("code") or "")
+        for item in blocking
+        if isinstance(item, dict) and str(item.get("severity") or "").upper() == "BLOCK"
+    }
+    allowed_codes = {
+        "CLOSE_OPERATOR_AUTH_REQUIRED",
+        "SOFT_CLOSE_ADVISORY_DOES_NOT_PREEMPT_ENTRY",
+    }
+    if "CLOSE_OPERATOR_AUTH_REQUIRED" not in codes:
+        return False
+    if any(code not in allowed_codes for code in codes):
+        return False
+    return all(
+        _trade_has_same_direction_hold_sidecar_support(sidecars, trade_id, active_position_sides.get(trade_id, ""))
+        for trade_id in active_close_ids
+    )
+
+
+def _trade_has_same_direction_hold_sidecar_support(
+    sidecars: dict[str, tuple[_LoadedJson, Path]],
+    trade_id: str,
+    active_side: str,
+) -> bool:
+    if active_side not in {"LONG", "SHORT"}:
+        return False
+    support_sources: set[str] = set()
+    support_tokens = ("HOLD", "EXTEND", "STILL_VALID", "CONTINUE", "CARRY")
+    for name, (loaded, _path) in sidecars.items():
+        if name == "position_management":
+            continue
+        payload = loaded.payload or {}
+        for key in ("evolutions", "assessments", "verdicts"):
+            rows = payload.get(key)
+            if not isinstance(rows, list):
+                continue
+            for row in rows:
+                if not isinstance(row, dict):
+                    continue
+                if str(row.get("trade_id") or "") != str(trade_id):
+                    continue
+                if str(row.get("side") or "").upper() != active_side:
+                    continue
+                status_text = " ".join(
+                    str(row.get(field) or "").upper()
+                    for field in ("action", "status", "verdict", "reason", "rationale")
+                )
+                if any(token in status_text for token in support_tokens):
+                    support_sources.add(name)
+                    break
+            if name in support_sources:
+                break
+    return len(support_sources) >= 2
 
 
 def _effect_metrics(db_path: Path, *, window_hours: float, now: datetime) -> dict[str, Any]:

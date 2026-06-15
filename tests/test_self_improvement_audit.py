@@ -2297,6 +2297,177 @@ class SelfImprovementAuditorTest(unittest.TestCase):
         self.assertEqual(finding["priority"], "P1")
         self.assertEqual(finding["evidence"]["active_close_trade_ids"], ["T1"])
 
+    def test_operator_auth_required_close_with_hold_sidecars_is_not_decision_history_p0(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root, active_position=True)
+            files["entry_thesis"].write_text(
+                json.dumps(
+                    {
+                        "trade_id": "T1",
+                        "pair": "EUR_USD",
+                        "side": "LONG",
+                        "filled_at_utc": _NOW.isoformat(),
+                    }
+                )
+                + "\n"
+            )
+            files["position_thesis"].write_text(
+                json.dumps(
+                    {
+                        "generated_at_utc": _NOW.isoformat(),
+                        "assessments": [
+                            {
+                                "trade_id": "T1",
+                                "pair": "EUR_USD",
+                                "side": "LONG",
+                                "verdict": "REVIEW_CLOSE",
+                                "context_notes": [
+                                    "invalidation hit with technical invalidation confirmed against LONG"
+                                ],
+                            }
+                        ],
+                    }
+                )
+            )
+            files["thesis_evolution"].write_text(
+                json.dumps(
+                    {
+                        "generated_at_utc": _NOW.isoformat(),
+                        "evolutions": [
+                            {
+                                "trade_id": "T1",
+                                "pair": "EUR_USD",
+                                "side": "LONG",
+                                "status": "WEAKENED",
+                                "verdict": "HOLD",
+                                "rationale": "current forecast still supports the open position side",
+                            }
+                        ],
+                    }
+                )
+            )
+            files["forecast_persistence"].write_text(
+                json.dumps(
+                    {
+                        "generated_at_utc": _NOW.isoformat(),
+                        "verdicts": [
+                            {
+                                "trade_id": "T1",
+                                "pair": "EUR_USD",
+                                "side": "LONG",
+                                "verdict": "EXTEND",
+                                "reason": "recent forecasts still support the open position side",
+                            }
+                        ],
+                    }
+                )
+            )
+            files["gpt"].write_text(
+                json.dumps(
+                    {
+                        "status": "REJECTED",
+                        "decision": {"action": "CLOSE", "close_trade_ids": ["T1"]},
+                        "verification_issues": [
+                            {
+                                "severity": "BLOCK",
+                                "code": "CLOSE_OPERATOR_AUTH_REQUIRED",
+                                "message": "explicit Gate B is still missing for T1",
+                            }
+                        ],
+                    }
+                )
+            )
+
+            summary = _run(files)
+            payload = json.loads(files["output"].read_text())
+
+        codes = {item["code"]: item for item in payload["findings"]}
+        self.assertEqual(summary.p0_findings, 0)
+        self.assertNotIn("LATEST_GPT_DECISION_HAS_BLOCKING_ISSUES", codes)
+        finding = codes["LATEST_GPT_DECISION_SOFT_CLOSE_ADVISORY_REJECTED"]
+        self.assertEqual(finding["priority"], "P1")
+        self.assertEqual(finding["evidence"]["active_close_trade_ids"], ["T1"])
+        self.assertIn("OPEN_POSITION_CLOSE_OPERATOR_AUTH_REQUIRED", codes)
+
+    def test_operator_auth_required_close_with_opposite_side_sidecars_stays_p0(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root, active_position=True)
+            files["position_thesis"].write_text(
+                json.dumps(
+                    {
+                        "generated_at_utc": _NOW.isoformat(),
+                        "assessments": [
+                            {
+                                "trade_id": "T1",
+                                "pair": "EUR_USD",
+                                "side": "LONG",
+                                "verdict": "REVIEW_CLOSE",
+                                "context_notes": [
+                                    "invalidation hit with technical invalidation confirmed against LONG"
+                                ],
+                            }
+                        ],
+                    }
+                )
+            )
+            files["thesis_evolution"].write_text(
+                json.dumps(
+                    {
+                        "generated_at_utc": _NOW.isoformat(),
+                        "evolutions": [
+                            {
+                                "trade_id": "T1",
+                                "pair": "EUR_USD",
+                                "side": "SHORT",
+                                "verdict": "HOLD",
+                                "rationale": "opposite side support must not protect the active LONG",
+                            }
+                        ],
+                    }
+                )
+            )
+            files["forecast_persistence"].write_text(
+                json.dumps(
+                    {
+                        "generated_at_utc": _NOW.isoformat(),
+                        "verdicts": [
+                            {
+                                "trade_id": "T1",
+                                "pair": "EUR_USD",
+                                "side": "SHORT",
+                                "verdict": "EXTEND",
+                                "reason": "opposite side support must not protect the active LONG",
+                            }
+                        ],
+                    }
+                )
+            )
+            files["gpt"].write_text(
+                json.dumps(
+                    {
+                        "status": "REJECTED",
+                        "decision": {"action": "CLOSE", "close_trade_ids": ["T1"]},
+                        "verification_issues": [
+                            {
+                                "severity": "BLOCK",
+                                "code": "CLOSE_OPERATOR_AUTH_REQUIRED",
+                                "message": "explicit Gate B is still missing for T1",
+                            }
+                        ],
+                    }
+                )
+            )
+
+            summary = _run(files)
+            payload = json.loads(files["output"].read_text())
+
+        codes = {item["code"]: item for item in payload["findings"]}
+        self.assertGreaterEqual(summary.p0_findings, 1)
+        self.assertIn("LATEST_GPT_DECISION_HAS_BLOCKING_ISSUES", codes)
+        self.assertNotIn("LATEST_GPT_DECISION_SOFT_CLOSE_ADVISORY_REJECTED", codes)
+
     def test_accepted_gpt_decision_predating_snapshot_is_p0(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
