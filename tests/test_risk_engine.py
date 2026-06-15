@@ -196,6 +196,40 @@ class RiskEngineTest(unittest.TestCase):
         self.assertNotIn("FORECAST_TARGET_TOO_THIN_FOR_SPREAD", codes)
         self.assertNotIn("FORECAST_INVALIDATION_TOO_THIN_FOR_SPREAD", codes)
 
+    def test_opposite_direction_forecast_blocks_live_send(self) -> None:
+        intent = OrderIntent(
+            pair="EUR_USD",
+            side=Side.LONG,
+            order_type=OrderType.MARKET,
+            units=3000,
+            tp=1.17554,
+            sl=1.17234,
+            thesis="forecast_must_match_live_entry_side",
+            market_context=MarketContext(
+                regime="TREND-BULL continuation",
+                narrative="candidate lane is long, but pair forecast points down",
+                chart_story="pullback lane remains visible",
+                method=TradeMethod.TREND_CONTINUATION,
+                invalidation="1.1716 loses on M5 bodies",
+            ),
+            metadata={
+                "forecast_direction": "DOWN",
+                "forecast_confidence": 0.83,
+                "forecast_target_price": 1.17180,
+                "forecast_invalidation_price": 1.17420,
+            },
+        )
+
+        dry_run = RiskEngine(live_enabled=True).validate(intent, snapshot(), for_live_send=False)
+        live = RiskEngine(live_enabled=True).validate(intent, snapshot(), for_live_send=True)
+
+        dry_codes = {issue.code: issue.severity for issue in dry_run.issues}
+        live_codes = {issue.code: issue.severity for issue in live.issues}
+        self.assertTrue(dry_run.allowed, dry_run.block_reasons)
+        self.assertEqual(dry_codes["FORECAST_DIRECTION_CONFLICT"], "WARN")
+        self.assertFalse(live.allowed)
+        self.assertEqual(live_codes["FORECAST_DIRECTION_CONFLICT"], "BLOCK")
+
     def test_range_method_rejects_one_way_trend_story_for_live_send(self) -> None:
         intent = OrderIntent(
             pair="EUR_USD",

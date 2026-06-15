@@ -922,6 +922,12 @@ class RiskEngine:
                 )
             )
         issues.extend(
+            self._forecast_direction_issues(
+                intent,
+                for_live_send=for_live_send,
+            )
+        )
+        issues.extend(
             self._forecast_geometry_issues(
                 intent,
                 entry_price=entry_price,
@@ -1256,6 +1262,40 @@ class RiskEngine:
                 "MARKET_ENTRY_DRIFT",
                 f"MARKET expected entry is stale versus broker quote: expected={expected} "
                 f"executable={executable} drift={drift_pips:.1f}pip > {allowed_drift:.1f}pip",
+                severity=severity,
+            )
+        ]
+
+    def _forecast_direction_issues(
+        self,
+        intent: OrderIntent,
+        *,
+        for_live_send: bool,
+    ) -> list[RiskIssue]:
+        metadata = intent.metadata or {}
+        direction = str(metadata.get("forecast_direction") or "").upper()
+        if direction not in {"UP", "DOWN"}:
+            return []
+        forecast_side = Side.LONG if direction == "UP" else Side.SHORT
+        if intent.side == forecast_side:
+            return []
+        confidence = _to_float(metadata.get("forecast_confidence"))
+        target = _to_float(metadata.get("forecast_target_price"))
+        invalidation = _to_float(metadata.get("forecast_invalidation_price"))
+        details = [f"forecast {direction}"]
+        if confidence is not None:
+            details.append(f"conf={confidence:.2f}")
+        if target is not None:
+            details.append(f"target={target:.5f}")
+        if invalidation is not None:
+            details.append(f"invalidation={invalidation:.5f}")
+        severity = "BLOCK" if for_live_send else "WARN"
+        return [
+            RiskIssue(
+                "FORECAST_DIRECTION_CONFLICT",
+                f"{intent.pair} {intent.side.value} conflicts with current directional forecast "
+                f"({', '.join(details)}); only {forecast_side.value} may be sent while this "
+                "forecast is fresh.",
                 severity=severity,
             )
         ]
