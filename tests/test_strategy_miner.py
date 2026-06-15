@@ -85,7 +85,13 @@ class StrategyMinerTest(unittest.TestCase):
 
             report = root / "strategy.md"
             profile = root / "profile.json"
-            summary = StrategyMiner(db_path, report, profile, loss_cap_jpy=500).run()
+            summary = StrategyMiner(
+                db_path,
+                report,
+                profile,
+                loss_cap_jpy=500,
+                execution_ledger_path=root / "missing_execution_ledger.db",
+            ).run()
 
             self.assertEqual(summary.candidates, 1)
             self.assertEqual(summary.risk_repair_candidates, 1)
@@ -102,6 +108,55 @@ class StrategyMinerTest(unittest.TestCase):
             self.assertEqual(profiles["AUD_USD LONG"]["seat_pl_n"], 0)
             self.assertGreaterEqual(profiles["GBP_USD LONG"]["target_reward_risk"], 1.5)
             self.assertIn("Generated System Rules", report.read_text())
+
+    def test_merges_current_execution_ledger_into_strategy_profile(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            db_path = root / "history.db"
+            _create_schema(db_path)
+            ledger_path = root / "execution_ledger.db"
+            _create_execution_ledger(ledger_path)
+            with sqlite3.connect(ledger_path) as conn:
+                for idx, pl in enumerate((120.0, -50.0, 80.0), 1):
+                    _insert_gateway_trade(
+                        conn,
+                        trade_id=f"usd-cad-{idx}",
+                        order_id=f"order-{idx}",
+                        pair="USD_CAD",
+                        side="LONG",
+                        realized_pl_jpy=pl,
+                        ts=f"2026-06-15T0{idx}:00:00+00:00",
+                    )
+                _insert_manual_trade(
+                    conn,
+                    trade_id="manual-1",
+                    pair="AUD_USD",
+                    side="LONG",
+                    realized_pl_jpy=1000.0,
+                    ts="2026-06-15T04:00:00+00:00",
+                )
+
+            report = root / "strategy.md"
+            profile = root / "profile.json"
+            summary = StrategyMiner(
+                db_path,
+                report,
+                profile,
+                loss_cap_jpy=500,
+                execution_ledger_path=ledger_path,
+            ).run()
+
+            self.assertEqual(summary.candidates, 1)
+            payload = json.loads(profile.read_text())
+            profiles = {f"{item['pair']} {item['direction']}": item for item in payload["profiles"]}
+            self.assertEqual(profiles["USD_CAD LONG"]["status"], "CANDIDATE")
+            self.assertEqual(profiles["USD_CAD LONG"]["live_n"], 3)
+            self.assertEqual(profiles["USD_CAD LONG"]["live_net_jpy"], 150.0)
+            self.assertEqual(profiles["USD_CAD LONG"]["live_worst_jpy"], -50.0)
+            self.assertNotIn("AUD_USD LONG", profiles)
+            coverage = payload["coverage"]["execution_ledger"]
+            self.assertEqual(coverage["merged_outcomes"], 3)
+            self.assertIn("current execution ledger", profiles["USD_CAD LONG"]["required_fix"])
 
     def test_refuses_to_overwrite_with_empty_profile(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -143,7 +198,13 @@ class StrategyMinerTest(unittest.TestCase):
             )
 
             with self.assertRaisesRegex(ValueError, "zero profiles"):
-                StrategyMiner(db_path, root / "strategy.md", profile, loss_cap_jpy=500).run()
+                StrategyMiner(
+                    db_path,
+                    root / "strategy.md",
+                    profile,
+                    loss_cap_jpy=500,
+                    execution_ledger_path=root / "missing_execution_ledger.db",
+                ).run()
 
             payload = json.loads(profile.read_text())
             self.assertEqual(len(payload["profiles"]), 1)
@@ -198,7 +259,13 @@ class StrategyMinerTest(unittest.TestCase):
                 )
             )
 
-            summary = StrategyMiner(db_path, root / "strategy.md", profile, loss_cap_jpy=500).run()
+            summary = StrategyMiner(
+                db_path,
+                root / "strategy.md",
+                profile,
+                loss_cap_jpy=500,
+                execution_ledger_path=root / "missing_execution_ledger.db",
+            ).run()
 
             self.assertEqual(summary.candidates, 1)
             payload = json.loads(profile.read_text())
@@ -270,7 +337,13 @@ class StrategyMinerTest(unittest.TestCase):
                 )
             )
 
-            summary = StrategyMiner(db_path, root / "strategy.md", profile, loss_cap_jpy=500).run()
+            summary = StrategyMiner(
+                db_path,
+                root / "strategy.md",
+                profile,
+                loss_cap_jpy=500,
+                execution_ledger_path=root / "missing_execution_ledger.db",
+            ).run()
 
             self.assertEqual(summary.candidates, 1)
             payload = json.loads(profile.read_text())
@@ -325,7 +398,13 @@ class StrategyMinerTest(unittest.TestCase):
                 )
             )
 
-            summary = StrategyMiner(db_path, root / "strategy.md", profile, loss_cap_jpy=500).run()
+            summary = StrategyMiner(
+                db_path,
+                root / "strategy.md",
+                profile,
+                loss_cap_jpy=500,
+                execution_ledger_path=root / "missing_execution_ledger.db",
+            ).run()
 
             self.assertEqual(summary.candidates, 0)
             payload = json.loads(profile.read_text())
@@ -356,6 +435,166 @@ def _create_schema(db_path: Path) -> None:
             );
             """
         )
+
+
+def _create_execution_ledger(db_path: Path) -> None:
+    with sqlite3.connect(db_path) as conn:
+        conn.executescript(
+            """
+            CREATE TABLE execution_events (
+                event_uid TEXT PRIMARY KEY,
+                ts_utc TEXT NOT NULL,
+                source TEXT NOT NULL,
+                event_type TEXT NOT NULL,
+                lane_id TEXT,
+                order_id TEXT,
+                trade_id TEXT,
+                client_order_id TEXT,
+                pair TEXT,
+                side TEXT,
+                units INTEGER,
+                price REAL,
+                tp REAL,
+                sl REAL,
+                realized_pl_jpy REAL,
+                financing_jpy REAL,
+                exit_reason TEXT,
+                oanda_transaction_id TEXT,
+                related_transaction_ids_json TEXT NOT NULL,
+                raw_json TEXT NOT NULL,
+                inserted_at_utc TEXT NOT NULL
+            );
+            """
+        )
+
+
+def _insert_gateway_trade(
+    conn: sqlite3.Connection,
+    *,
+    trade_id: str,
+    order_id: str,
+    pair: str,
+    side: str,
+    realized_pl_jpy: float,
+    ts: str,
+) -> None:
+    lane_id = f"failure_trader:{pair}:{side}:BREAKOUT_FAILURE:MARKET"
+    _insert_execution_event(
+        conn,
+        event_uid=f"gateway-{trade_id}",
+        ts_utc=ts,
+        event_type="GATEWAY_ORDER_SENT",
+        lane_id=lane_id,
+        order_id=order_id,
+        trade_id=None,
+        pair=pair,
+        side=side,
+        units=1000,
+        realized_pl_jpy=None,
+    )
+    _insert_execution_event(
+        conn,
+        event_uid=f"fill-{trade_id}",
+        ts_utc=ts,
+        event_type="ORDER_FILLED",
+        lane_id=None,
+        order_id=order_id,
+        trade_id=trade_id,
+        pair=pair,
+        side=side,
+        units=1000 if side == "LONG" else -1000,
+        realized_pl_jpy=None,
+    )
+    _insert_execution_event(
+        conn,
+        event_uid=f"close-{trade_id}",
+        ts_utc=ts,
+        event_type="TRADE_CLOSED",
+        lane_id=None,
+        order_id=None,
+        trade_id=trade_id,
+        pair=pair,
+        side=side,
+        units=1000 if side == "LONG" else -1000,
+        realized_pl_jpy=realized_pl_jpy,
+    )
+
+
+def _insert_manual_trade(
+    conn: sqlite3.Connection,
+    *,
+    trade_id: str,
+    pair: str,
+    side: str,
+    realized_pl_jpy: float,
+    ts: str,
+) -> None:
+    _insert_execution_event(
+        conn,
+        event_uid=f"manual-fill-{trade_id}",
+        ts_utc=ts,
+        event_type="ORDER_FILLED",
+        lane_id=None,
+        order_id=f"manual-order-{trade_id}",
+        trade_id=trade_id,
+        pair=pair,
+        side=side,
+        units=1000,
+        realized_pl_jpy=None,
+    )
+    _insert_execution_event(
+        conn,
+        event_uid=f"manual-close-{trade_id}",
+        ts_utc=ts,
+        event_type="TRADE_CLOSED",
+        lane_id=None,
+        order_id=None,
+        trade_id=trade_id,
+        pair=pair,
+        side=side,
+        units=1000,
+        realized_pl_jpy=realized_pl_jpy,
+    )
+
+
+def _insert_execution_event(
+    conn: sqlite3.Connection,
+    *,
+    event_uid: str,
+    ts_utc: str,
+    event_type: str,
+    lane_id: str | None,
+    order_id: str | None,
+    trade_id: str | None,
+    pair: str,
+    side: str,
+    units: int,
+    realized_pl_jpy: float | None,
+) -> None:
+    conn.execute(
+        """
+        INSERT INTO execution_events(
+            event_uid, ts_utc, source, event_type, lane_id, order_id, trade_id,
+            client_order_id, pair, side, units, price, tp, sl, realized_pl_jpy,
+            financing_jpy, exit_reason, oanda_transaction_id,
+            related_transaction_ids_json, raw_json, inserted_at_utc
+        )
+        VALUES (?, ?, 'test', ?, ?, ?, ?, NULL, ?, ?, ?, NULL, NULL, NULL, ?, NULL, NULL, NULL, '[]', '{}', ?)
+        """,
+        (
+            event_uid,
+            ts_utc,
+            event_type,
+            lane_id,
+            order_id,
+            trade_id,
+            pair,
+            side,
+            units,
+            realized_pl_jpy,
+            ts_utc,
+        ),
+    )
 
 
 if __name__ == "__main__":

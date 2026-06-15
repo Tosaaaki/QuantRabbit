@@ -2044,6 +2044,7 @@ def main(argv: list[str] | None = None) -> int:
     p_mine.add_argument("--profile", type=Path, default=DEFAULT_STRATEGY_PROFILE)
     p_mine.add_argument("--loss-cap-jpy", type=float, default=None)
     p_mine.add_argument("--target-state", type=Path, default=DEFAULT_DAILY_TARGET_STATE)
+    p_mine.add_argument("--execution-ledger-db", type=Path, default=DEFAULT_EXECUTION_LEDGER_DB)
 
     p_story = sub.add_parser("mine-market-stories", help="Mine narrative, market regime, and chart-story evidence.")
     p_story.add_argument("--archive", type=Path, default=DEFAULT_LEGACY_ARCHIVE)
@@ -3769,6 +3770,7 @@ def main(argv: list[str] | None = None) -> int:
             args.profile,
             loss_cap_jpy=args.loss_cap_jpy,
             target_state_path=args.target_state,
+            execution_ledger_path=args.execution_ledger_db,
         ).run()
         print(
             json.dumps(

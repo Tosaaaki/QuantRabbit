@@ -8,8 +8,20 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from quant_rabbit.paths import DEFAULT_DAILY_TARGET_STATE, DEFAULT_HISTORY_DB, DEFAULT_STRATEGY_PROFILE, DEFAULT_STRATEGY_REPORT
+from quant_rabbit.paths import (
+    DEFAULT_DAILY_TARGET_STATE,
+    DEFAULT_EXECUTION_LEDGER_DB,
+    DEFAULT_HISTORY_DB,
+    DEFAULT_STRATEGY_PROFILE,
+    DEFAULT_STRATEGY_REPORT,
+)
 from quant_rabbit.risk import RiskPolicy
+
+# Three realized trader-owned outcomes is the smallest repeat sample that is
+# not a single lucky fill or one win/loss pair. It mirrors the existing
+# three-trade negative live block in `_classify`; market geometry still comes
+# from the current intent/risk gates, not from this count.
+REPEATED_LIVE_EDGE_MIN_TRADES = 3
 
 
 @dataclass
@@ -68,6 +80,15 @@ class ResolvedStrategyLossCap:
     source: str
 
 
+@dataclass(frozen=True)
+class CurrentExecutionOutcome:
+    trade_id: str
+    pair: str
+    direction: str
+    realized_pl_jpy: float
+    ts_utc: str
+
+
 class StrategyMiner:
     def __init__(
         self,
@@ -76,12 +97,21 @@ class StrategyMiner:
         profile_path: Path = DEFAULT_STRATEGY_PROFILE,
         loss_cap_jpy: float | None = None,
         target_state_path: Path = DEFAULT_DAILY_TARGET_STATE,
+        execution_ledger_path: Path | None = DEFAULT_EXECUTION_LEDGER_DB,
     ) -> None:
         self.db_path = db_path
         self.report_path = report_path
         self.profile_path = profile_path
         self.loss_cap_jpy = loss_cap_jpy
         self.target_state_path = target_state_path
+        self.execution_ledger_path = execution_ledger_path
+        self._execution_ledger_coverage: dict[str, Any] = {
+            "path": str(execution_ledger_path) if execution_ledger_path is not None else None,
+            "enabled": execution_ledger_path is not None,
+            "exists": bool(execution_ledger_path and execution_ledger_path.exists()),
+            "merged_outcomes": 0,
+            "skipped_duplicate_trade_ids": 0,
+        }
 
     def run(self) -> StrategyMiningSummary:
         if not self.db_path.exists():
@@ -148,6 +178,11 @@ class StrategyMiner:
             item.live_avg_jpy = float(row["avg_jpy"] or 0.0)
             item.live_worst_jpy = float(row["worst_jpy"]) if row["worst_jpy"] is not None else None
 
+        current_outcomes = self._current_execution_outcomes(_legacy_trade_ids(conn))
+        for outcome in current_outcomes:
+            item = profile(outcome.pair, outcome.direction)
+            _merge_live_outcome(item, outcome.realized_pl_jpy)
+
         for row in conn.execute(
             "SELECT pair, direction, pl, raw_json FROM legacy_records WHERE source_table='seat_outcomes'"
         ):
@@ -203,7 +238,12 @@ class StrategyMiner:
         for key, reasons in block_reasons.items():
             profiles[key].top_block_reasons = [f"{count}x {reason}" for reason, count in reasons.most_common(3)]
 
-        for key, values in _positive_evidence(conn).items():
+        positive_values = _positive_evidence(conn)
+        for outcome in current_outcomes:
+            if outcome.realized_pl_jpy > 0:
+                positive_values[(outcome.pair, outcome.direction)].append(outcome.realized_pl_jpy)
+
+        for key, values in positive_values.items():
             item = profile(*key)
             positives = sorted(values)
             item.positive_evidence_n = len(positives)
@@ -258,11 +298,12 @@ class StrategyMiner:
         worst_loss = item.live_worst_jpy if item.live_worst_jpy is not None else 0.0
         positive_pretrade = item.pretrade_n >= 5 and item.pretrade_net_jpy > 0
         positive_live = item.live_n > 0 and item.live_net_jpy > 0
+        repeated_positive_live = item.live_n >= REPEATED_LIVE_EDGE_MIN_TRADES and item.live_net_jpy > 0
         missed_pressure = item.seat_missed >= 2 and item.seat_directionally_correct > item.seat_captured
         missed_pressure_profitable = missed_pressure and (item.seat_pl_n == 0 or item.seat_net_jpy > 0)
         missed_pressure_negative = missed_pressure and item.seat_pl_n > 0 and item.seat_net_jpy <= 0
         cap_text = f"{loss_cap_jpy:.0f} JPY"
-        if worst_loss <= -loss_cap_jpy and positive_pretrade and positive_live:
+        if worst_loss <= -loss_cap_jpy and (positive_pretrade or repeated_positive_live) and positive_live:
             item.status = "RISK_REPAIR_CANDIDATE"
             item.required_fix = f"edge exists but old sizing broke the loss cap; require <={cap_text} dry-run receipt before live use"
             return
@@ -280,9 +321,15 @@ class StrategyMiner:
             item.status = "BLOCK_UNTIL_NEW_EVIDENCE"
             item.required_fix = "both live execution and pretrade feedback are negative; require a new vehicle or market-structure proof"
             return
-        if positive_pretrade and item.live_net_jpy >= 0:
+        if (positive_pretrade and item.live_net_jpy >= 0) or repeated_positive_live:
             item.status = "CANDIDATE"
-            item.required_fix = "eligible for dry-run order-intent generation, still behind risk gateway"
+            if repeated_positive_live and not positive_pretrade:
+                item.required_fix = (
+                    "current execution ledger shows repeated positive trader-owned live outcomes; "
+                    "eligible for dry-run order-intent generation, still behind risk gateway"
+                )
+            else:
+                item.required_fix = "eligible for dry-run order-intent generation, still behind risk gateway"
             if missed_pressure_negative:
                 item.required_fix += "; missed-seat promotion disabled because realized seat net is negative"
             return
@@ -319,7 +366,129 @@ class StrategyMiner:
             "legacy_rows": legacy_rows,
             "live_actions": live_actions,
             "jsonl_sources": jsonl_sources,
+            "execution_ledger": dict(self._execution_ledger_coverage),
         }
+
+    def _current_execution_outcomes(self, legacy_trade_ids: set[str]) -> list[CurrentExecutionOutcome]:
+        path = self.execution_ledger_path
+        coverage: dict[str, Any] = {
+            "path": str(path) if path is not None else None,
+            "enabled": path is not None,
+            "exists": bool(path and path.exists()),
+            "merged_outcomes": 0,
+            "skipped_duplicate_trade_ids": 0,
+        }
+        self._execution_ledger_coverage = coverage
+        if path is None or not path.exists():
+            return []
+        try:
+            conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+            conn.row_factory = sqlite3.Row
+        except sqlite3.Error as exc:
+            coverage["error"] = str(exc)
+            return []
+        try:
+            row = conn.execute("SELECT COUNT(*) AS n FROM execution_events").fetchone()
+            coverage["events"] = int(row["n"] if row is not None else 0)
+            rows = conn.execute(
+                """
+                WITH gateway_entries AS (
+                    SELECT
+                        trade_id,
+                        order_id,
+                        lane_id
+                    FROM execution_events
+                    WHERE event_type IN ('GATEWAY_ORDER_SENT', 'ORDER_ACCEPTED')
+                      AND lane_id IS NOT NULL
+                      AND lane_id != ''
+                ),
+                entries AS (
+                    SELECT
+                        e.trade_id,
+                        COALESCE(NULLIF(MAX(e.lane_id), ''), MAX(g.lane_id)) AS gateway_lane_id,
+                        CASE
+                            WHEN SUM(CASE WHEN UPPER(COALESCE(e.side, '')) = 'LONG' THEN 1 ELSE 0 END) > 0 THEN 'LONG'
+                            WHEN SUM(CASE WHEN UPPER(COALESCE(e.side, '')) = 'SHORT' THEN 1 ELSE 0 END) > 0 THEN 'SHORT'
+                            WHEN MAX(e.units) > 0 THEN 'LONG'
+                            WHEN MIN(e.units) < 0 THEN 'SHORT'
+                            ELSE NULL
+                        END AS position_side
+                    FROM execution_events e
+                    LEFT JOIN gateway_entries g
+                      ON (
+                        g.trade_id IS NOT NULL
+                        AND g.trade_id != ''
+                        AND g.trade_id = e.trade_id
+                      )
+                      OR (
+                        g.order_id IS NOT NULL
+                        AND g.order_id != ''
+                        AND g.order_id = e.order_id
+                      )
+                    WHERE e.event_type = 'ORDER_FILLED'
+                      AND e.trade_id IS NOT NULL
+                      AND e.trade_id != ''
+                      AND e.units IS NOT NULL
+                    GROUP BY e.trade_id
+                    HAVING gateway_lane_id IS NOT NULL
+                       AND gateway_lane_id != ''
+                ),
+                realized AS (
+                    SELECT
+                        COALESCE(NULLIF(e.trade_id, ''), e.event_uid) AS outcome_id,
+                        e.trade_id,
+                        e.ts_utc,
+                        e.pair,
+                        entries.position_side AS original_side,
+                        e.realized_pl_jpy
+                    FROM execution_events e
+                    INNER JOIN entries ON entries.trade_id = e.trade_id
+                    WHERE e.event_type IN ('TRADE_CLOSED', 'TRADE_REDUCED')
+                      AND e.realized_pl_jpy IS NOT NULL
+                      AND e.pair IS NOT NULL
+                )
+                SELECT
+                    outcome_id,
+                    COALESCE(NULLIF(MAX(trade_id), ''), outcome_id) AS trade_id,
+                    pair,
+                    original_side,
+                    SUM(realized_pl_jpy) AS realized_pl_jpy,
+                    MAX(ts_utc) AS ts_utc
+                FROM realized
+                WHERE original_side IS NOT NULL
+                GROUP BY outcome_id, pair, original_side
+                ORDER BY ts_utc ASC
+                """
+            ).fetchall()
+        except sqlite3.Error as exc:
+            coverage["error"] = str(exc)
+            conn.close()
+            return []
+        conn.close()
+
+        outcomes: list[CurrentExecutionOutcome] = []
+        skipped = 0
+        for row in rows:
+            trade_id = str(row["trade_id"] or "").strip()
+            if trade_id and trade_id in legacy_trade_ids:
+                skipped += 1
+                continue
+            pair = str(row["pair"] or "").strip()
+            direction = str(row["original_side"] or "").strip().upper()
+            if not pair or direction not in {"LONG", "SHORT"}:
+                continue
+            outcomes.append(
+                CurrentExecutionOutcome(
+                    trade_id=trade_id,
+                    pair=pair,
+                    direction=direction,
+                    realized_pl_jpy=float(row["realized_pl_jpy"] or 0.0),
+                    ts_utc=str(row["ts_utc"] or ""),
+                )
+            )
+        coverage["merged_outcomes"] = len(outcomes)
+        coverage["skipped_duplicate_trade_ids"] = skipped
+        return outcomes
 
     def _write_profile(
         self,
@@ -388,6 +557,13 @@ class StrategyMiner:
             lines.append(f"- `{table}` rows: `{count}`")
         for source, count in coverage["jsonl_sources"].items():
             lines.append(f"- `{source}` events: `{count}`")
+        execution_ledger = coverage.get("execution_ledger") or {}
+        if execution_ledger.get("enabled"):
+            lines.append(
+                "- current execution ledger merged outcomes: "
+                f"`{execution_ledger.get('merged_outcomes', 0)}` "
+                f"(path `{execution_ledger.get('path')}`)"
+            )
 
         lines.extend(["", "## Candidate Edges", ""])
         for item in candidates[:12]:
@@ -508,6 +684,27 @@ def _load_json(text: str) -> dict[str, Any]:
     except json.JSONDecodeError:
         return {}
     return payload if isinstance(payload, dict) else {}
+
+
+def _legacy_trade_ids(conn: sqlite3.Connection) -> set[str]:
+    values: set[str] = set()
+    for row in conn.execute(
+        "SELECT DISTINCT trade_id FROM live_trade_events WHERE trade_id IS NOT NULL AND trade_id != ''"
+    ):
+        trade_id = str(row["trade_id"] or "").strip()
+        if trade_id:
+            values.add(trade_id)
+    return values
+
+
+def _merge_live_outcome(item: PairDirectionProfile, realized_pl_jpy: float) -> None:
+    item.live_n += 1
+    item.live_net_jpy = _round(item.live_net_jpy + float(realized_pl_jpy))
+    item.live_avg_jpy = _round(item.live_net_jpy / item.live_n) if item.live_n else 0.0
+    if item.live_worst_jpy is None:
+        item.live_worst_jpy = _round(float(realized_pl_jpy))
+    else:
+        item.live_worst_jpy = _round(min(item.live_worst_jpy, float(realized_pl_jpy)))
 
 
 def _positive_evidence(conn: sqlite3.Connection) -> dict[tuple[str, str], list[float]]:
