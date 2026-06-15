@@ -2671,6 +2671,39 @@ def _forecast_seed_regime_label(raw_chart: dict[str, Any]) -> str | None:
     return raw[:20] if raw else None
 
 
+def _forecast_projection_support_sort_key(item: dict[str, Any]) -> tuple[float, int, float]:
+    return (
+        _optional_float(item.get("hit_rate")) or -1.0,
+        _optional_int(item.get("samples")) or 0,
+        _optional_float(item.get("confidence")) or 0.0,
+    )
+
+
+def _dedupe_forecast_projection_support(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    # A calibration bucket is one learned edge. Repeated macro events or
+    # duplicate same-timeframe signals must not inflate the support count.
+    by_key: dict[tuple[str, str, str], dict[str, Any]] = {}
+    order: list[tuple[str, str, str]] = []
+    for item in items:
+        key = (
+            str(item.get("calibration_name") or item.get("name") or ""),
+            str(item.get("direction") or ""),
+            str(item.get("timeframe") or ""),
+        )
+        current = by_key.get(key)
+        if current is None:
+            by_key[key] = item
+            order.append(key)
+            continue
+        if _forecast_projection_support_sort_key(item) > _forecast_projection_support_sort_key(current):
+            by_key[key] = item
+    return sorted(
+        [by_key[key] for key in order],
+        key=_forecast_projection_support_sort_key,
+        reverse=True,
+    )
+
+
 def _forecast_market_support_for_forecast(
     *,
     pair: str,
@@ -2732,6 +2765,7 @@ def _forecast_market_support_for_forecast(
         pair=pair,
         regime=regime,
     )
+    bootstrap = _dedupe_forecast_projection_support(bootstrap)
     if not isinstance(hit_rates, dict):
         if bootstrap:
             out.update(
@@ -2814,10 +2848,15 @@ def _forecast_market_support_for_forecast(
         elif signal_direction == "EITHER" and hit_rate >= FORECAST_MARKET_SUPPORT_MIN_TIMING_HIT_RATE:
             timing.append(item)
 
+    aligned = _dedupe_forecast_projection_support(aligned)
+    timing = _dedupe_forecast_projection_support(timing)
+    considered = _dedupe_forecast_projection_support(considered)
     entry_min = _forecast_seed_min_confidence_for_direction(direction)
     timing_with_raw_direction = bool(timing) and raw_confidence is not None and raw_confidence >= entry_min
     ok = bool(aligned) or timing_with_raw_direction or bool(bootstrap)
-    best = max(aligned + timing, key=lambda item: item["hit_rate"], default=None)
+    ranked_support = _dedupe_forecast_projection_support(aligned + timing)
+    display_support = ranked_support if ranked_support else bootstrap
+    best = ranked_support[0] if ranked_support else None
     unselected = _forecast_unselected_projection_support(
         pair=pair,
         forecast_direction=direction,
@@ -2836,18 +2875,18 @@ def _forecast_market_support_for_forecast(
             "best_unselected_hit_rate": unselected[0]["hit_rate"] if unselected else None,
             "best_unselected_samples": unselected[0]["samples"] if unselected else 0,
             "bootstrap_projection_support": bool(bootstrap) and not bool(aligned),
-            "signals": (aligned + timing + bootstrap)[:4] if ok else (considered + bootstrap)[:4],
+            "signals": display_support[:4] if ok else (considered + bootstrap)[:4],
             "unselected_signals": unselected[:4],
         }
     )
-    if aligned:
-        top = aligned[0]
+    if best and best["direction"] == direction:
+        top = best
         out["reason"] = (
             f"{top['name']} {top['direction']} hit_rate={top['hit_rate']:.2f} "
             f"samples={top['samples']} supports weak calibrated forecast"
         )
-    elif timing_with_raw_direction and timing:
-        top = timing[0]
+    elif best and best["direction"] == "EITHER" and timing_with_raw_direction:
+        top = best
         out["reason"] = (
             f"{top['name']} timing hit_rate={top['hit_rate']:.2f} samples={top['samples']} "
             f"supports raw forecast confidence {raw_confidence:.2f}"
@@ -2928,7 +2967,7 @@ def _forecast_unselected_projection_support(
                 "rationale": str(getattr(signal, "rationale", "") or "")[:180],
             }
         )
-    return sorted(out, key=lambda item: (item["hit_rate"], item["confidence"], item["samples"]), reverse=True)
+    return _dedupe_forecast_projection_support(out)
 
 
 def _forecast_bootstrap_projection_support(

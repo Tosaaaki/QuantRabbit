@@ -2941,6 +2941,68 @@ class IntentGeneratorTest(unittest.TestCase):
         self.assertEqual(support["best_samples"], 48)
         self.assertAlmostEqual(support["best_hit_rate"], 0.62)
 
+    def test_projection_support_dedupes_repeated_calibration_and_cites_best(self) -> None:
+        from quant_rabbit.strategy.intent_generator import _forecast_market_support_for_forecast
+
+        forecast = SimpleNamespace(direction="UP", confidence=0.6326, raw_confidence=0.6913)
+        signals = [
+            SimpleNamespace(
+                name="liquidity_sweep_low",
+                direction="UP",
+                confidence=0.8976,
+                bonus_magnitude=12.0,
+                timeframe="M15",
+                rationale="M15 equal-lows sweep target, fade LONG",
+            ),
+            SimpleNamespace(
+                name="macro_event_nowcast_central_bank",
+                direction="UP",
+                confidence=0.79,
+                bonus_magnitude=10.0,
+                timeframe=None,
+                rationale="FOMC statement nowcast supports USD_CAD LONG",
+            ),
+            SimpleNamespace(
+                name="macro_event_nowcast_central_bank",
+                direction="UP",
+                confidence=0.79,
+                bonus_magnitude=10.0,
+                timeframe=None,
+                rationale="FOMC press conference nowcast supports USD_CAD LONG",
+            ),
+        ]
+        hit_rates = {
+            "liquidity_sweep_low_up": {
+                "_all_pairs:_all_regimes": {"hit_rate": 0.66, "samples": 100},
+            },
+            "macro_event_nowcast_central_bank_up": {
+                "_all_pairs:_all_regimes": {"hit_rate": 1.0, "samples": 34},
+            },
+        }
+
+        support = _forecast_market_support_for_forecast(
+            pair="USD_CAD",
+            forecast=forecast,
+            projection_signals=signals,
+            hit_rates=hit_rates,
+            regime="RANGE",
+        )
+
+        self.assertTrue(support["ok"])
+        self.assertEqual(support["aligned_projection_count"], 2)
+        self.assertEqual(support["best_samples"], 34)
+        self.assertAlmostEqual(support["best_hit_rate"], 1.0)
+        self.assertEqual(support["signals"][0]["name"], "macro_event_nowcast_central_bank")
+        self.assertEqual(
+            sum(
+                1
+                for item in support["signals"]
+                if item["calibration_name"] == "macro_event_nowcast_central_bank_up"
+            ),
+            1,
+        )
+        self.assertIn("macro_event_nowcast_central_bank UP hit_rate=1.00 samples=34", support["reason"])
+
     def test_supported_weak_opposite_forecast_blocks_this_side(self) -> None:
         from quant_rabbit.models import MarketContext, OrderIntent, OrderType, Side, TradeMethod
         from quant_rabbit.strategy.intent_generator import _method_context_issues
