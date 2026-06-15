@@ -4627,7 +4627,22 @@ def _intent_from_lane(
         loss_budget_target=bool(macro_event_sizing_metadata.get("macro_event_size_up")),
     )
     margin_metadata = _margin_sizing_metadata(pair, entry, units, snapshot, side=side, position_intent=position_intent)
-    thesis = f"{lane['desk']} {pair} {side.value} {method.value} {target_reward_risk:.2f}R: {lane['required_receipt']}"
+    required_receipt, watch_override_reason = _forecast_watch_live_override_receipt(
+        lane,
+        side,
+        order_type,
+        chart_context=chart_context,
+        geometry_metadata=geometry_metadata,
+    )
+    event_blockers = list(lane.get("blockers") or [])
+    if watch_override_reason:
+        event_blockers = [
+            item
+            for item in event_blockers
+            if "watch-only forecast candidate" not in str(item).lower()
+        ]
+        event_blockers.insert(0, watch_override_reason)
+    thesis = f"{lane['desk']} {pair} {side.value} {method.value} {target_reward_risk:.2f}R: {required_receipt}"
     if execution_regime:
         regime_context = f"{execution_regime} current; {method.value} campaign lane"
         if regime_state and regime_state != execution_regime:
@@ -4660,7 +4675,7 @@ def _intent_from_lane(
         or "campaign lane requires current chart read",
         method=method,
         invalidation=f"invalid if SL {sl} trades or campaign overlay vetoes the setup",
-        event_risk="; ".join(str(item) for item in lane.get("blockers", [])[:2]),
+        event_risk="; ".join(str(item) for item in event_blockers[:2]),
         session=session_bucket or "generated dry-run",
     )
     return OrderIntent(
@@ -4678,9 +4693,11 @@ def _intent_from_lane(
             "desk": lane.get("desk"),
             "adoption": lane.get("adoption"),
             "campaign_role": lane.get("campaign_role"),
-            "required_receipt": lane.get("required_receipt"),
+            "required_receipt": required_receipt,
             "forecast_seed": bool(lane.get("forecast_seed")),
             "forecast_watch_only": bool(lane.get("forecast_watch_only")),
+            "forecast_watch_only_live_override": bool(watch_override_reason),
+            "forecast_watch_only_live_override_reason": watch_override_reason,
             "matrix_repair_seed": bool(lane.get("matrix_repair_seed")),
             "matrix_repair_profile_status": lane.get("matrix_repair_profile_status"),
             "post_harvest_reentry_seed": bool(lane.get("post_harvest_reentry_seed")),
@@ -5447,6 +5464,45 @@ def _forecast_market_support_override(
         min_confidence=min_confidence,
         order_type=intent.order_type,
     )
+
+
+def _forecast_watch_live_override_receipt(
+    lane: dict[str, Any],
+    side: Side,
+    order_type: OrderType,
+    *,
+    chart_context: dict[str, Any] | None,
+    geometry_metadata: dict[str, Any] | None,
+) -> tuple[str, str | None]:
+    original = str(lane.get("required_receipt") or "")
+    if not bool(lane.get("forecast_watch_only")):
+        return original, None
+    source: dict[str, Any] = {}
+    source.update(chart_context or {})
+    source.update(geometry_metadata or {})
+    source.update(
+        {
+            "forecast_direction": lane.get("forecast_direction"),
+            "forecast_confidence": lane.get("forecast_confidence"),
+            "forecast_raw_confidence": lane.get("forecast_raw_confidence"),
+            "forecast_market_support": lane.get("forecast_market_support"),
+        }
+    )
+    if not _forecast_market_support_allows_side(
+        side.value,
+        source,
+        min_confidence=_forecast_live_min_confidence(source),
+        order_type=order_type,
+    ):
+        return original, None
+    support = _forecast_market_support_payload(source.get("forecast_market_support"))
+    support_reason = support.get("reason") or "audited same-direction projection support"
+    receipt = (
+        f"Forecast support override: {order_type.value} may be armed only because raw forecast "
+        "is near the live floor and audited same-direction projection support cleared "
+        f"({support_reason}). Do not convert to MARKET; refresh forecast and broker snapshot before send."
+    )
+    return receipt, f"forecast support override: {support_reason}"
 
 
 def _forecast_market_support_has_strong_directional_signal(

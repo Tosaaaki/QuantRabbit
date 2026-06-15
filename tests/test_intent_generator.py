@@ -1604,6 +1604,94 @@ class IntentGeneratorTest(unittest.TestCase):
         self.assertNotIn("FORECAST_CONFIDENCE_REQUIRED_FOR_LIVE", issue_codes)
         self.assertTrue(all(item["intent"]["metadata"]["forecast_market_support_ok"] for item in live_ready))
 
+    def test_strong_directional_watch_override_rewrites_receipt_for_live_ready_stop(self) -> None:
+        os.environ["QR_REQUIRE_FORECAST_FOR_LIVE"] = "1"
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            output = root / "intents.json"
+            campaign = root / "campaign.json"
+            campaign.write_text(json.dumps({"lanes": []}))
+            forecast = SimpleNamespace(
+                direction="UP",
+                confidence=0.44,
+                raw_confidence=0.63,
+                calibration_multiplier=0.70,
+                current_price=1.17326,
+                target_price=1.1762,
+                invalidation_price=1.1718,
+                horizon_min=60,
+                rationale_summary="raw forecast near floor with strong audited event support",
+                drivers_for=("macro_event_nowcast_central_bank UP",),
+                drivers_against=("calibrated confidence below entry gate",),
+                component_scores={"UP": 142.0, "DOWN": 63.0, "RANGE": 0.0, "EITHER": 12.0},
+                market_support={
+                    "ok": True,
+                    "direction": "UP",
+                    "aligned_projection_count": 1,
+                    "timing_projection_count": 1,
+                    "best_hit_rate": 0.86,
+                    "best_samples": 37,
+                    "reason": "macro_event_nowcast_central_bank UP hit_rate=0.86 samples=37 supports weak calibrated forecast",
+                    "signals": [
+                        {
+                            "name": "macro_event_nowcast_central_bank",
+                            "direction": "UP",
+                            "confidence": 0.79,
+                            "hit_rate": 0.86,
+                            "samples": 37,
+                        },
+                        {
+                            "name": "bb_squeeze_expansion_imminent",
+                            "direction": "EITHER",
+                            "confidence": 0.63,
+                            "hit_rate": 0.92,
+                            "samples": 100,
+                        },
+                    ],
+                },
+            )
+
+            with patch(
+                "quant_rabbit.strategy.intent_generator._forecast_seed_for_pair",
+                return_value=forecast,
+            ):
+                IntentGenerator(
+                    campaign_plan=campaign,
+                    strategy_profile=_strategy(root, status="CANDIDATE", direction="LONG"),
+                    pair_charts_path=_pair_charts_with_direction(
+                        root,
+                        long_score=0.72,
+                        short_score=0.28,
+                        dominant_regime="TREND_UP",
+                        m5_regime="TREND_UP",
+                    ),
+                    output_path=output,
+                    report_path=root / "intents.md",
+                    max_loss_jpy=500.0,
+                ).run(snapshot_path=_snapshot(root))
+
+            payload = json.loads(output.read_text())
+
+        live_ready = [
+            item
+            for item in payload["results"]
+            if item["status"] == "LIVE_READY"
+            and item["intent"]["order_type"] == OrderType.STOP_ENTRY.value
+            and item["intent"]["metadata"].get("forecast_watch_only_live_override")
+        ]
+
+        self.assertTrue(live_ready)
+        metadata = live_ready[0]["intent"]["metadata"]
+        receipt = metadata["required_receipt"]
+        event_risk = live_ready[0]["intent"]["market_context"]["event_risk"]
+        self.assertTrue(metadata["forecast_watch_only"])
+        self.assertTrue(metadata["forecast_watch_only_live_override"])
+        self.assertIn("Forecast support override", receipt)
+        self.assertNotIn("Watch-only forecast-first lane", receipt)
+        self.assertNotIn("Do not send live until", receipt)
+        self.assertIn("forecast support override", event_risk.lower())
+        self.assertNotIn("watch-only forecast candidate", event_risk.lower())
+
     def test_forecast_context_payload_persists_news_refs(self) -> None:
         forecast = SimpleNamespace(
             direction="UP",
