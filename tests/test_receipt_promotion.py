@@ -178,6 +178,92 @@ class ReceiptPromotionTest(unittest.TestCase):
             keys = {(item["pair"], item["direction"], item.get("method")) for item in payload["profiles"]}
             self.assertNotIn(("EUR_USD", "SHORT", "RANGE_ROTATION"), keys)
 
+    def test_does_not_mutate_pair_side_profile_into_existing_method(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            profile = root / "profile.json"
+            profile.write_text(
+                json.dumps(
+                    {
+                        "profiles": [
+                            {
+                                "pair": "EUR_JPY",
+                                "direction": "LONG",
+                                "method": "BREAKOUT_FAILURE",
+                                "status": "CANDIDATE",
+                                "required_fix": "existing failure edge",
+                            },
+                            {
+                                "pair": "EUR_JPY",
+                                "direction": "LONG",
+                                "status": "MINE_MISSED_EDGE",
+                                "required_fix": "arm pending receipt",
+                            },
+                        ]
+                    }
+                )
+            )
+            intents = root / "intents.json"
+            intents.write_text(
+                json.dumps(
+                    {
+                        "snapshot_path": "snapshot.json",
+                        "results": [
+                            _breakout_limit_receipt()
+                        ],
+                    }
+                )
+            )
+
+            summary = ReceiptPromoter(profile_path=profile, intents_path=intents, report_path=root / "report.md").run()
+
+            self.assertEqual(summary.promoted, 0)
+            payload = json.loads(profile.read_text())
+            by_key = {
+                (item["pair"], item["direction"], item.get("method")): item
+                for item in payload["profiles"]
+            }
+            self.assertEqual(by_key[("EUR_JPY", "LONG", None)]["status"], "MINE_MISSED_EDGE")
+            self.assertEqual(by_key[("EUR_JPY", "LONG", "BREAKOUT_FAILURE")]["status"], "CANDIDATE")
+            self.assertEqual(len(by_key), len(payload["profiles"]))
+
+    def test_dedupes_existing_exact_method_profiles(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            profile = root / "profile.json"
+            profile.write_text(
+                json.dumps(
+                    {
+                        "profiles": [
+                            {
+                                "pair": "EUR_JPY",
+                                "direction": "LONG",
+                                "method": "BREAKOUT_FAILURE",
+                                "status": "CANDIDATE",
+                                "required_fix": "first",
+                            },
+                            {
+                                "pair": "EUR_JPY",
+                                "direction": "LONG",
+                                "method": "BREAKOUT_FAILURE",
+                                "status": "CANDIDATE",
+                                "required_fix": "receipt",
+                                "receipt_promotion": {"lane_id": "preferred"},
+                            },
+                        ]
+                    }
+                )
+            )
+            intents = root / "intents.json"
+            intents.write_text(json.dumps({"snapshot_path": "snapshot.json", "results": []}))
+
+            summary = ReceiptPromoter(profile_path=profile, intents_path=intents, report_path=root / "report.md").run()
+
+            self.assertEqual(summary.promoted, 0)
+            payload = json.loads(profile.read_text())
+            self.assertEqual(len(payload["profiles"]), 1)
+            self.assertEqual(payload["profiles"][0]["required_fix"], "receipt")
+
 
 def _profile(root: Path) -> Path:
     path = root / "profile.json"
@@ -297,6 +383,17 @@ def _method_missing_receipt(*, fallback_status: str, order_type: str) -> dict:
     receipt["strategy_issues"] = [{**issue, "severity": "WARN"}]
     receipt["live_strategy_issues"] = [issue]
     receipt["live_blockers"] = ["missing method profile"]
+    return receipt
+
+
+def _breakout_limit_receipt() -> dict:
+    receipt = _receipt(
+        "failure_trader:EUR_JPY:LONG:BREAKOUT_FAILURE:LIMIT",
+        "EUR_JPY",
+        "LONG",
+        "LIMIT",
+    )
+    receipt["intent"]["market_context"]["method"] = "BREAKOUT_FAILURE"
     return receipt
 
 

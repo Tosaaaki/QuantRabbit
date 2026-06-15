@@ -64,7 +64,11 @@ class ReceiptPromoter:
         if not isinstance(profiles, list):
             profiles = []
             profile_payload["profiles"] = profiles
+        else:
+            profiles = _deduped_profiles(profiles)
+            profile_payload["profiles"] = profiles
         method_specific_pairs = _method_specific_pairs(profiles)
+        profile_keys = _profile_keys(profiles)
 
         promotions: list[Promotion] = []
         still_blocked = 0
@@ -85,9 +89,15 @@ class ReceiptPromoter:
                 if status in {"RISK_REPAIR_CANDIDATE", "MINE_MISSED_EDGE", "BLOCK_UNTIL_NEW_EVIDENCE"}:
                     still_blocked += 1
                 continue
+            if _would_duplicate_method_profile(item, promotion, profile_keys):
+                if status in {"RISK_REPAIR_CANDIDATE", "MINE_MISSED_EDGE", "BLOCK_UNTIL_NEW_EVIDENCE"}:
+                    still_blocked += 1
+                continue
             item["status"] = "CANDIDATE"
             if promotion.method:
                 item["method"] = promotion.method
+                profile_keys.discard((pair, direction, method))
+                profile_keys.add((pair, direction, promotion.method))
             item["required_fix"] = (
                 f"promoted from {promotion.old_status} by {promotion.reason}; "
                 f"source lane {promotion.lane_id}; receipt_at_utc={generated_at}"
@@ -101,7 +111,6 @@ class ReceiptPromoter:
             }
             promotions.append(promotion)
 
-        profile_keys = _profile_keys(profiles)
         for receipt in receipts.values():
             method_profile = _method_profile_from_missing_issue(receipt, profile_keys, generated_at)
             if method_profile is None:
@@ -422,6 +431,55 @@ def _method_specific_pairs(profiles: list[Any]) -> set[tuple[str, str]]:
         if pair and direction and method:
             pairs.add((pair, direction))
     return pairs
+
+
+def _would_duplicate_method_profile(
+    item: dict[str, Any],
+    promotion: Promotion,
+    profile_keys: set[tuple[str, str, str | None]],
+) -> bool:
+    current_method = str(item.get("method") or "").strip().upper() or None
+    if current_method is not None or promotion.method is None:
+        return False
+    return (promotion.pair, promotion.direction, promotion.method) in profile_keys
+
+
+def _deduped_profiles(profiles: list[Any]) -> list[Any]:
+    deduped: list[Any] = []
+    indexes: dict[tuple[str, str, str | None], int] = {}
+    for item in profiles:
+        if not isinstance(item, dict):
+            deduped.append(item)
+            continue
+        pair = str(item.get("pair") or "")
+        direction = str(item.get("direction") or "")
+        method = str(item.get("method") or "").strip().upper() or None
+        if not pair or not direction:
+            deduped.append(item)
+            continue
+        key = (pair, direction, method)
+        existing_index = indexes.get(key)
+        if existing_index is None:
+            indexes[key] = len(deduped)
+            deduped.append(item)
+            continue
+        existing = deduped[existing_index]
+        if isinstance(existing, dict) and _duplicate_profile_rank(item) > _duplicate_profile_rank(existing):
+            deduped[existing_index] = item
+    return deduped
+
+
+def _duplicate_profile_rank(item: dict[str, Any]) -> tuple[int, int]:
+    status = str(item.get("status") or "")
+    strictness = {
+        "BLOCK_UNTIL_NEW_EVIDENCE": 4,
+        "WATCH_ONLY": 3,
+        "RISK_REPAIR_CANDIDATE": 2,
+        "MINE_MISSED_EDGE": 2,
+        "CANDIDATE": 1,
+    }.get(status, 0)
+    has_receipt = 1 if isinstance(item.get("receipt_promotion"), dict) else 0
+    return strictness, has_receipt
 
 
 def _receipt_method(result: dict[str, Any]) -> str | None:
