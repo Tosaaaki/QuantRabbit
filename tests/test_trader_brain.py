@@ -1585,6 +1585,37 @@ class ForecastLaneGateTest(unittest.TestCase):
             )
         )
 
+    def test_market_support_uses_aligned_hit_rate_not_either_timing_for_direction(self) -> None:
+        intent = {
+            "metadata": {
+                "forecast_direction": "DOWN",
+                "forecast_confidence": 0.47,
+                "forecast_raw_confidence": 0.64,
+                "chart_direction_bias": "SHORT",
+                "forecast_market_support": {
+                    "ok": True,
+                    "direction": "DOWN",
+                    "aligned_projection_count": 1,
+                    "timing_projection_count": 1,
+                    "best_hit_rate": 0.90,
+                    "best_samples": 100,
+                    "best_aligned_hit_rate": 0.40,
+                    "best_aligned_samples": 100,
+                    "best_timing_hit_rate": 0.90,
+                    "best_timing_samples": 100,
+                },
+            }
+        }
+
+        self.assertFalse(
+            _forecast_market_support_allows_low_confidence_live_ready(
+                intent,
+                side="SHORT",
+                forecast=self._forecast("DOWN", confidence=0.47),
+                min_confidence=0.55,
+            )
+        )
+
 
 def _snapshot(*, orders=(), positions=()) -> BrokerSnapshot:
     now = datetime.now(timezone.utc)

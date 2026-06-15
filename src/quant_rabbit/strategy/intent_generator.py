@@ -2941,9 +2941,10 @@ def _forecast_market_support_for_forecast(
     entry_min = _forecast_seed_min_confidence_for_direction(direction)
     timing_with_raw_direction = bool(timing) and raw_confidence is not None and raw_confidence >= entry_min
     ok = bool(aligned) or timing_with_raw_direction or bool(bootstrap)
-    ranked_support = _dedupe_forecast_projection_support(aligned + timing)
-    display_support = ranked_support if ranked_support else bootstrap
-    best = ranked_support[0] if ranked_support else None
+    display_support = (aligned + timing) if (aligned or timing) else bootstrap
+    best_aligned = aligned[0] if aligned else None
+    best_timing = timing[0] if timing else None
+    best = best_aligned or (best_timing if timing_with_raw_direction else None)
     unselected = _forecast_unselected_projection_support(
         pair=pair,
         forecast_direction=direction,
@@ -2959,6 +2960,10 @@ def _forecast_market_support_for_forecast(
             "unselected_projection_count": len(unselected),
             "best_hit_rate": best["hit_rate"] if best else None,
             "best_samples": best["samples"] if best else 0,
+            "best_aligned_hit_rate": best_aligned["hit_rate"] if best_aligned else None,
+            "best_aligned_samples": best_aligned["samples"] if best_aligned else 0,
+            "best_timing_hit_rate": best_timing["hit_rate"] if best_timing else None,
+            "best_timing_samples": best_timing["samples"] if best_timing else 0,
             "best_unselected_hit_rate": unselected[0]["hit_rate"] if unselected else None,
             "best_unselected_samples": unselected[0]["samples"] if unselected else 0,
             "bootstrap_projection_support": bool(bootstrap) and not bool(aligned),
@@ -3475,6 +3480,10 @@ def _forecast_market_support_payload(value: object) -> dict[str, Any]:
         "unselected_projection_count": _optional_int(value.get("unselected_projection_count")) or 0,
         "best_hit_rate": _optional_float(value.get("best_hit_rate")),
         "best_samples": _optional_int(value.get("best_samples")) or 0,
+        "best_aligned_hit_rate": _optional_float(value.get("best_aligned_hit_rate")),
+        "best_aligned_samples": _optional_int(value.get("best_aligned_samples")) or 0,
+        "best_timing_hit_rate": _optional_float(value.get("best_timing_hit_rate")),
+        "best_timing_samples": _optional_int(value.get("best_timing_samples")) or 0,
         "best_unselected_hit_rate": _optional_float(value.get("best_unselected_hit_rate")),
         "best_unselected_samples": _optional_int(value.get("best_unselected_samples")) or 0,
         "directional_calibration_name": (
@@ -5781,6 +5790,18 @@ def _forecast_market_support_allows_side(
     aligned_count = _optional_int(support.get("aligned_projection_count")) or 0
     timing_count = _optional_int(support.get("timing_projection_count")) or 0
     hit_rate = _optional_float(support.get("best_hit_rate")) or 0.0
+    aligned_samples = _optional_int(support.get("best_aligned_samples"))
+    if (aligned_samples is None or aligned_samples <= 0) and aligned_count > 0:
+        aligned_samples = samples
+    aligned_hit_rate = _optional_float(support.get("best_aligned_hit_rate"))
+    if aligned_hit_rate is None and aligned_count > 0:
+        aligned_hit_rate = hit_rate
+    timing_samples = _optional_int(support.get("best_timing_samples"))
+    if (timing_samples is None or timing_samples <= 0) and timing_count > 0:
+        timing_samples = samples
+    timing_hit_rate = _optional_float(support.get("best_timing_hit_rate"))
+    if timing_hit_rate is None and timing_count > 0:
+        timing_hit_rate = hit_rate
     support_floor = max(0.0, min_confidence - FORECAST_MARKET_SUPPORT_MAX_CONFIDENCE_SHORTFALL)
     # Timing-evidence breakout stop (AGENT_CONTRACT §8, 2026-06-10).
     # Projection-ledger truth (87k scored rows): volatility-timing detectors
@@ -5812,8 +5833,8 @@ def _forecast_market_support_allows_side(
     )
     timing_evidence = (
         timing_count > 0
-        and samples >= FORECAST_MARKET_SUPPORT_MIN_SAMPLES
-        and hit_rate >= FORECAST_MARKET_SUPPORT_MIN_TIMING_HIT_RATE
+        and (timing_samples or 0) >= FORECAST_MARKET_SUPPORT_MIN_SAMPLES
+        and (timing_hit_rate or 0.0) >= FORECAST_MARKET_SUPPORT_MIN_TIMING_HIT_RATE
     )
     if breakout_proof and timing_evidence and confidence >= support_floor:
         return True
@@ -5843,15 +5864,17 @@ def _forecast_market_support_allows_side(
         return False
     if bool(support.get("bootstrap_projection_support")):
         return raw_confidence is not None and raw_confidence >= min_confidence
-    if samples < FORECAST_MARKET_SUPPORT_MIN_SAMPLES:
-        return False
     if aligned_count > 0:
-        return hit_rate >= FORECAST_MARKET_SUPPORT_MIN_DIRECTIONAL_HIT_RATE
+        return (
+            (aligned_samples or 0) >= FORECAST_MARKET_SUPPORT_MIN_SAMPLES
+            and (aligned_hit_rate or 0.0) >= FORECAST_MARKET_SUPPORT_MIN_DIRECTIONAL_HIT_RATE
+        )
     return (
         timing_count > 0
         and raw_confidence is not None
         and raw_confidence >= min_confidence
-        and hit_rate >= FORECAST_MARKET_SUPPORT_MIN_TIMING_HIT_RATE
+        and (timing_samples or 0) >= FORECAST_MARKET_SUPPORT_MIN_SAMPLES
+        and (timing_hit_rate or 0.0) >= FORECAST_MARKET_SUPPORT_MIN_TIMING_HIT_RATE
     )
 
 

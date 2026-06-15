@@ -3268,12 +3268,22 @@ def _forecast_market_support_allows_low_confidence_live_ready(
         minimum=1,
         maximum=10_000,
     )
-    samples = _optional_int(support.get("best_samples")) or 0
-    if samples < min_samples:
-        return False
     aligned_count = _optional_int(support.get("aligned_projection_count")) or 0
     timing_count = _optional_int(support.get("timing_projection_count")) or 0
+    samples = _optional_int(support.get("best_samples")) or 0
     hit_rate = _optional_float(support.get("best_hit_rate")) or 0.0
+    aligned_samples = _optional_int(support.get("best_aligned_samples"))
+    if (aligned_samples is None or aligned_samples <= 0) and aligned_count > 0:
+        aligned_samples = samples
+    aligned_hit_rate = _optional_float(support.get("best_aligned_hit_rate"))
+    if aligned_hit_rate is None and aligned_count > 0:
+        aligned_hit_rate = hit_rate
+    timing_samples = _optional_int(support.get("best_timing_samples"))
+    if (timing_samples is None or timing_samples <= 0) and timing_count > 0:
+        timing_samples = samples
+    timing_hit_rate = _optional_float(support.get("best_timing_hit_rate"))
+    if timing_hit_rate is None and timing_count > 0:
+        timing_hit_rate = hit_rate
     if aligned_count > 0:
         min_directional_hit = _bounded_env_float(
             "QR_FORECAST_MARKET_SUPPORT_MIN_DIRECTIONAL_HIT_RATE",
@@ -3281,7 +3291,10 @@ def _forecast_market_support_allows_low_confidence_live_ready(
             minimum=0.50,
             maximum=1.0,
         )
-        return hit_rate >= min_directional_hit
+        return (
+            (aligned_samples or 0) >= min_samples
+            and (aligned_hit_rate or 0.0) >= min_directional_hit
+        )
     if timing_count > 0:
         raw_confidence = _optional_float(metadata.get("forecast_raw_confidence"))
         min_timing_hit = _bounded_env_float(
@@ -3290,7 +3303,12 @@ def _forecast_market_support_allows_low_confidence_live_ready(
             minimum=0.50,
             maximum=1.0,
         )
-        return raw_confidence is not None and raw_confidence >= min_confidence and hit_rate >= min_timing_hit
+        return (
+            raw_confidence is not None
+            and raw_confidence >= min_confidence
+            and (timing_samples or 0) >= min_samples
+            and (timing_hit_rate or 0.0) >= min_timing_hit
+        )
     return False
 
 

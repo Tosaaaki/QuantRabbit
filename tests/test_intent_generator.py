@@ -3378,6 +3378,56 @@ class IntentGeneratorTest(unittest.TestCase):
         )
         self.assertIn("macro_event_nowcast_central_bank UP hit_rate=1.00 samples=34", support["reason"])
 
+    def test_projection_support_keeps_directional_and_timing_hit_rates_separate(self) -> None:
+        from quant_rabbit.strategy.intent_generator import _forecast_market_support_for_forecast
+
+        forecast = SimpleNamespace(direction="UP", confidence=0.2437, raw_confidence=0.544)
+        signals = [
+            SimpleNamespace(
+                name="bb_squeeze_expansion_imminent",
+                direction="EITHER",
+                confidence=0.60,
+                bonus_magnitude=8.0,
+                timeframe="M15",
+                rationale="M15 squeeze timing, direction must be supplied elsewhere",
+            ),
+            SimpleNamespace(
+                name="liquidity_sweep_low",
+                direction="UP",
+                confidence=0.93,
+                bonus_magnitude=12.0,
+                timeframe="M5",
+                rationale="M5 equal-lows sweep target, fade LONG",
+            ),
+        ]
+        hit_rates = {
+            "bb_squeeze_expansion_imminent": {
+                "_all_pairs:_all_regimes": {"hit_rate": 0.90, "samples": 100},
+            },
+            "liquidity_sweep_low_up": {
+                "_all_pairs:_all_regimes": {"hit_rate": 0.61, "samples": 100},
+            },
+        }
+
+        support = _forecast_market_support_for_forecast(
+            pair="AUD_JPY",
+            forecast=forecast,
+            projection_signals=signals,
+            hit_rates=hit_rates,
+            regime="TREND",
+        )
+
+        self.assertTrue(support["ok"])
+        self.assertEqual(support["aligned_projection_count"], 1)
+        self.assertEqual(support["timing_projection_count"], 1)
+        self.assertAlmostEqual(support["best_aligned_hit_rate"], 0.61)
+        self.assertEqual(support["best_aligned_samples"], 100)
+        self.assertAlmostEqual(support["best_timing_hit_rate"], 0.90)
+        self.assertEqual(support["best_timing_samples"], 100)
+        self.assertAlmostEqual(support["best_hit_rate"], 0.61)
+        self.assertIn("liquidity_sweep_low UP hit_rate=0.61 samples=100", support["reason"])
+        self.assertEqual(support["signals"][0]["direction"], "UP")
+
     def test_supported_weak_opposite_forecast_blocks_this_side(self) -> None:
         from quant_rabbit.models import MarketContext, OrderIntent, OrderType, Side, TradeMethod
         from quant_rabbit.strategy.intent_generator import _method_context_issues
@@ -7257,6 +7307,36 @@ class TimingEvidenceBreakoutStopTest(unittest.TestCase):
                 metadata,
                 side="SHORT",
                 order_type=OrderType.STOP_ENTRY,
+                min_confidence=0.65,
+            )
+        )
+
+    def test_either_timing_hit_rate_cannot_launder_weak_aligned_market_support(self) -> None:
+        metadata = self._metadata(
+            direction="UP",
+            confidence=0.60,
+            raw_confidence=0.60,
+            bias="LONG",
+            timing_count=1,
+            hit_rate=0.90,
+            samples=100,
+            support_ok=True,
+        )
+        metadata["forecast_market_support"].update(
+            {
+                "aligned_projection_count": 1,
+                "best_aligned_hit_rate": 0.40,
+                "best_aligned_samples": 100,
+                "best_timing_hit_rate": 0.90,
+                "best_timing_samples": 100,
+            }
+        )
+
+        self.assertFalse(
+            self._allows(
+                metadata,
+                side="LONG",
+                order_type=OrderType.MARKET,
                 min_confidence=0.65,
             )
         )
