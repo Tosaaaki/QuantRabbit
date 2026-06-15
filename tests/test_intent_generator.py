@@ -1855,6 +1855,119 @@ class IntentGeneratorTest(unittest.TestCase):
 
         self.assertEqual(issue["code"], "FORECAST_CONFIDENCE_REQUIRED_FOR_LIVE")
 
+    def test_weak_forecast_trend_continuation_needs_two_higher_tf_confirmations(self) -> None:
+        from quant_rabbit.models import MarketContext, OrderIntent, OrderType, Side, TradeMethod
+        from quant_rabbit.strategy.intent_generator import _forecast_live_readiness_issue
+
+        os.environ["QR_REQUIRE_FORECAST_FOR_LIVE"] = "1"
+        metadata = {
+            "forecast_seed": True,
+            "forecast_direction": "UP",
+            "forecast_confidence": 0.45,
+            "forecast_raw_confidence": 0.72,
+            "chart_direction_bias": "LONG",
+            "trend_timeframes": ["H4:TREND_UP"],
+            "tf_regime_map": {
+                "H1": {"classification": "RANGE"},
+                "H4": {"classification": "TREND_UP"},
+                "D": {"classification": "RANGE"},
+            },
+            "forecast_market_support": {
+                "ok": True,
+                "direction": "UP",
+                "aligned_projection_count": 1,
+                "timing_projection_count": 0,
+                "best_hit_rate": 0.88,
+                "best_samples": 75,
+                "reason": "macro_event_nowcast_central_bank UP supports weak calibrated forecast",
+                "signals": [
+                    {
+                        "name": "macro_event_nowcast_central_bank",
+                        "direction": "UP",
+                        "confidence": 0.79,
+                        "hit_rate": 0.88,
+                        "samples": 75,
+                    }
+                ],
+            },
+        }
+        intent = OrderIntent(
+            pair="EUR_CHF",
+            side=Side.LONG,
+            order_type=OrderType.STOP_ENTRY,
+            units=6300,
+            entry=0.92177,
+            tp=0.92317,
+            sl=0.91909,
+            thesis="weak forecast-first continuation in range",
+            market_context=MarketContext(
+                regime="RANGE current; TREND_CONTINUATION campaign lane",
+                narrative="",
+                chart_story="",
+                method=TradeMethod.TREND_CONTINUATION,
+                invalidation="",
+            ),
+            metadata=metadata,
+        )
+
+        issue = _forecast_live_readiness_issue(intent, metadata, TradeMethod.TREND_CONTINUATION)
+
+        self.assertEqual(issue["code"], "FORECAST_TREND_CONTINUATION_HIGHER_TF_REQUIRED_FOR_LIVE")
+
+    def test_weak_forecast_trend_continuation_allows_two_higher_tf_confirmations(self) -> None:
+        from quant_rabbit.models import MarketContext, OrderIntent, OrderType, Side, TradeMethod
+        from quant_rabbit.strategy.intent_generator import _forecast_live_readiness_issue
+
+        os.environ["QR_REQUIRE_FORECAST_FOR_LIVE"] = "1"
+        metadata = {
+            "forecast_seed": True,
+            "forecast_direction": "DOWN",
+            "forecast_confidence": 0.53,
+            "forecast_raw_confidence": 0.80,
+            "chart_direction_bias": "SHORT",
+            "trend_timeframes": ["H4:TREND_DOWN", "D:TREND_DOWN"],
+            "forecast_market_support": {
+                "ok": True,
+                "direction": "DOWN",
+                "aligned_projection_count": 1,
+                "timing_projection_count": 0,
+                "best_hit_rate": 0.88,
+                "best_samples": 75,
+                "reason": "macro_event_nowcast_central_bank DOWN supports weak calibrated forecast",
+                "signals": [
+                    {
+                        "name": "macro_event_nowcast_central_bank",
+                        "direction": "DOWN",
+                        "confidence": 0.79,
+                        "hit_rate": 0.88,
+                        "samples": 75,
+                    }
+                ],
+            },
+        }
+        intent = OrderIntent(
+            pair="CAD_JPY",
+            side=Side.SHORT,
+            order_type=OrderType.STOP_ENTRY,
+            units=11000,
+            entry=114.525,
+            tp=114.14,
+            sl=114.673,
+            thesis="weak forecast-first continuation with higher-TF confirmation",
+            market_context=MarketContext(
+                regime="TREND_DOWN current; TREND_CONTINUATION campaign lane",
+                narrative="",
+                chart_story="",
+                method=TradeMethod.TREND_CONTINUATION,
+                invalidation="",
+            ),
+            metadata=metadata,
+        )
+
+        issue = _forecast_live_readiness_issue(intent, metadata, TradeMethod.TREND_CONTINUATION)
+
+        self.assertIsNone(issue)
+
     def test_same_cycle_projection_bootstrap_is_built_without_ledger_samples(self) -> None:
         from quant_rabbit.strategy.intent_generator import _forecast_market_support_for_forecast
 
@@ -2915,6 +3028,36 @@ class IntentGeneratorTest(unittest.TestCase):
             metadata={"position_intent": "HEDGE", "hedge_recovery": True},
         )
         self.assertIsNone(_fresh_entry_live_reward_risk_issue(hedge_intent, SimpleNamespace(reward_risk=0.83)))
+
+    def test_forecast_first_trend_continuation_needs_live_reward_risk_floor(self) -> None:
+        from quant_rabbit.models import MarketContext, OrderIntent, OrderType, Side, TradeMethod
+        from quant_rabbit.strategy.intent_generator import _fresh_entry_live_reward_risk_issue
+
+        intent = OrderIntent(
+            pair="EUR_CHF",
+            side=Side.LONG,
+            order_type=OrderType.STOP_ENTRY,
+            units=6300,
+            entry=0.92177,
+            tp=0.92317,
+            sl=0.91909,
+            thesis="forecast-first continuation with thin payoff",
+            market_context=MarketContext(
+                regime="RANGE current; TREND_CONTINUATION campaign lane",
+                narrative="",
+                chart_story="",
+                method=TradeMethod.TREND_CONTINUATION,
+                invalidation="",
+            ),
+            metadata={"forecast_seed": True},
+        )
+
+        issue = _fresh_entry_live_reward_risk_issue(intent, SimpleNamespace(reward_risk=1.196))
+
+        self.assertIsNotNone(issue)
+        self.assertEqual(issue["code"], "FORECAST_TREND_CONTINUATION_REWARD_RISK_TOO_LOW")
+        self.assertEqual(issue["severity"], "WARN")
+        self.assertIsNone(_fresh_entry_live_reward_risk_issue(intent, SimpleNamespace(reward_risk=1.5)))
 
     def test_range_rotation_uses_range_probability_floor_for_live_context(self) -> None:
         from quant_rabbit.models import MarketContext, OrderIntent, OrderType, Side, TradeMethod

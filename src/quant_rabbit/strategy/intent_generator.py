@@ -775,6 +775,16 @@ FORECAST_STRONG_DIRECTIONAL_MIN_SAMPLES = _env_int(
     max(30, FORECAST_MARKET_SUPPORT_MIN_SAMPLES),
     minimum=FORECAST_MARKET_SUPPORT_MIN_SAMPLES,
 )
+# Forecast-first trend continuation must pay for being wrong. RANGE-side
+# breakout STOPs can be useful, but the 2026-06-15 EUR_CHF loss showed that
+# a weak calibrated forecast + one higher-TF trend hint + ~1.2R geometry spends
+# hours underwater and then exits by thesis invalidation. Keep those as dry-run
+# evidence unless the live geometry offers at least a real trend-trade payoff.
+FORECAST_SEED_TREND_MIN_LIVE_REWARD_RISK = _env_float(
+    "QR_FORECAST_SEED_TREND_MIN_LIVE_REWARD_RISK",
+    1.5,
+    minimum=1.0,
+)
 # Forecast-first seeds are allowed only when the chart packet contains at
 # least two independent TF readings with both regime and family-score context.
 # A single TF can be enough for a unit fixture, but it is not enough market
@@ -5364,6 +5374,70 @@ def _forecast_supported_opposite_side_blocks(
     return hit_rate >= FORECAST_MARKET_SUPPORT_MIN_DIRECTIONAL_HIT_RATE
 
 
+def _trend_timeframe_support_count(metadata: dict[str, Any], side: Side) -> int:
+    expected = "TREND_UP" if side == Side.LONG else "TREND_DOWN"
+    seen: set[str] = set()
+    trend_timeframes = metadata.get("trend_timeframes")
+    if isinstance(trend_timeframes, list):
+        for raw in trend_timeframes:
+            text = str(raw or "").upper()
+            if ":" not in text:
+                continue
+            timeframe, classification = text.split(":", 1)
+            if timeframe in {"H1", "H4", "D"} and classification == expected:
+                seen.add(timeframe)
+    tf_map = metadata.get("tf_regime_map")
+    if isinstance(tf_map, dict):
+        for timeframe in ("H1", "H4", "D"):
+            tf_data = tf_map.get(timeframe)
+            if not isinstance(tf_data, dict):
+                continue
+            classification = str(
+                tf_data.get("classification") or tf_data.get("regime") or tf_data.get("state") or ""
+            ).upper()
+            if classification == expected:
+                seen.add(timeframe)
+    return len(seen)
+
+
+def _has_higher_tf_confirmation_data(metadata: dict[str, Any]) -> bool:
+    if isinstance(metadata.get("trend_timeframes"), list):
+        return True
+    tf_map = metadata.get("tf_regime_map")
+    return isinstance(tf_map, dict) and any(timeframe in tf_map for timeframe in ("H1", "H4", "D"))
+
+
+def _weak_forecast_trend_continuation_issue(
+    intent: OrderIntent,
+    metadata: dict[str, Any],
+    method: TradeMethod | None,
+    *,
+    confidence: float | None,
+    min_confidence: float,
+) -> dict[str, str] | None:
+    if method != TradeMethod.TREND_CONTINUATION:
+        return None
+    if not metadata.get("forecast_seed"):
+        return None
+    if confidence is None or confidence >= min_confidence:
+        return None
+    if not _has_higher_tf_confirmation_data(metadata):
+        return None
+    support_count = _trend_timeframe_support_count(metadata, intent.side)
+    if support_count >= 2:
+        return None
+    return {
+        "code": "FORECAST_TREND_CONTINUATION_HIGHER_TF_REQUIRED_FOR_LIVE",
+        "message": (
+            f"{intent.pair} {intent.side.value} forecast-first TREND_CONTINUATION has weak calibrated "
+            f"confidence {confidence:.2f} < {min_confidence:.2f} and only {support_count} aligned H1/H4/D "
+            "trend timeframe(s); keep the STOP as dry-run until at least two higher timeframes confirm "
+            "the continuation side or the calibrated forecast clears the live floor."
+        ),
+        "severity": "WARN",
+    }
+
+
 def _forecast_live_readiness_issue(
     intent: OrderIntent,
     metadata: dict[str, Any],
@@ -5399,6 +5473,15 @@ def _forecast_live_readiness_issue(
     if confidence is None or confidence < min_confidence:
         if recovery_reversal_override:
             return None
+        weak_trend_issue = _weak_forecast_trend_continuation_issue(
+            intent,
+            metadata,
+            method,
+            confidence=confidence,
+            min_confidence=min_confidence,
+        )
+        if weak_trend_issue is not None:
+            return weak_trend_issue
         if _forecast_market_support_override(intent, metadata, min_confidence=min_confidence):
             return None
         return {
@@ -5650,6 +5733,22 @@ def _fresh_entry_live_reward_risk_issue(intent: OrderIntent, metrics: Any | None
     if bool(metadata.get("hedge_recovery")):
         return None
     reward_risk = _optional_float(getattr(metrics, "reward_risk", None))
+    method = intent.market_context.method if intent.market_context else None
+    if (
+        metadata.get("forecast_seed")
+        and method == TradeMethod.TREND_CONTINUATION
+        and reward_risk is not None
+        and reward_risk < FORECAST_SEED_TREND_MIN_LIVE_REWARD_RISK
+    ):
+        return {
+            "code": "FORECAST_TREND_CONTINUATION_REWARD_RISK_TOO_LOW",
+            "message": (
+                f"{intent.pair} {intent.side.value} forecast-first TREND_CONTINUATION reward/risk "
+                f"{reward_risk:.2f}x < {FORECAST_SEED_TREND_MIN_LIVE_REWARD_RISK:.2f}x; keep as dry-run "
+                "because weak continuation forecasts need enough payoff to absorb invalidation risk."
+            ),
+            "severity": "WARN",
+        }
     if reward_risk is None or reward_risk > 0.0:
         return None
     return {
