@@ -3098,6 +3098,43 @@ class IntentGeneratorTest(unittest.TestCase):
         weak_issue = _forecast_live_readiness_issue(intent, weak_metadata, TradeMethod.RANGE_ROTATION)
         self.assertEqual(weak_issue["code"], "FORECAST_CONFIDENCE_REQUIRED_FOR_LIVE")
 
+    def test_directional_forecast_weak_hit_rate_blocks_live_readiness(self) -> None:
+        from quant_rabbit.models import MarketContext, OrderIntent, OrderType, Side, TradeMethod
+        from quant_rabbit.strategy.intent_generator import _forecast_live_readiness_issue
+
+        os.environ["QR_REQUIRE_FORECAST_FOR_LIVE"] = "1"
+        metadata = {
+            "forecast_direction": "UP",
+            "forecast_confidence": 0.82,
+            "forecast_raw_confidence": 0.91,
+            "forecast_directional_calibration_name": "directional_forecast_up",
+            "forecast_directional_hit_rate": 0.1,
+            "forecast_directional_samples": 12,
+        }
+        intent = OrderIntent(
+            pair="USD_CAD",
+            side=Side.LONG,
+            order_type=OrderType.MARKET,
+            units=5000,
+            entry=None,
+            tp=1.4050,
+            sl=1.3900,
+            thesis="high-confidence forecast from a weak realized bucket",
+            market_context=MarketContext(
+                regime="TREND_UP current; BREAKOUT_FAILURE campaign lane",
+                narrative="",
+                chart_story="",
+                method=TradeMethod.BREAKOUT_FAILURE,
+                invalidation="",
+            ),
+            metadata=metadata,
+        )
+
+        issue = _forecast_live_readiness_issue(intent, metadata, TradeMethod.BREAKOUT_FAILURE)
+
+        self.assertEqual(issue["code"], "FORECAST_DIRECTIONAL_HIT_RATE_WEAK_FOR_LIVE")
+        self.assertIn("hit_rate=0.10", issue["message"])
+
     def test_projection_support_does_not_clear_opposing_chart_bias(self) -> None:
         from quant_rabbit.models import MarketContext, OrderIntent, OrderType, Side, TradeMethod
         from quant_rabbit.strategy.intent_generator import _forecast_live_readiness_issue
@@ -3171,6 +3208,30 @@ class IntentGeneratorTest(unittest.TestCase):
         self.assertTrue(support["ok"])
         self.assertEqual(support["best_samples"], 48)
         self.assertAlmostEqual(support["best_hit_rate"], 0.62)
+
+    def test_forecast_market_support_exposes_directional_forecast_calibration(self) -> None:
+        from quant_rabbit.strategy.intent_generator import _forecast_market_support_for_forecast
+
+        forecast = SimpleNamespace(direction="UP", raw_confidence=0.91)
+        hit_rates = {
+            "directional_forecast_up": {
+                "USD_CAD:TREND": {"hit_rate": 0.1, "samples": 12},
+                "_all_pairs:_all_regimes": {"hit_rate": 0.62, "samples": 100},
+            }
+        }
+
+        support = _forecast_market_support_for_forecast(
+            pair="USD_CAD",
+            forecast=forecast,
+            projection_signals=[],
+            hit_rates=hit_rates,
+            regime="TREND",
+        )
+
+        self.assertFalse(support["ok"])
+        self.assertEqual(support["directional_calibration_name"], "directional_forecast_up")
+        self.assertAlmostEqual(support["directional_hit_rate"], 0.1)
+        self.assertEqual(support["directional_samples"], 12)
 
     def test_projection_support_dedupes_repeated_calibration_and_cites_best(self) -> None:
         from quant_rabbit.strategy.intent_generator import _forecast_market_support_for_forecast

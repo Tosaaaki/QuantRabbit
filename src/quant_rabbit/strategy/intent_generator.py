@@ -702,6 +702,24 @@ FORECAST_MARKET_SUPPORT_MIN_SAMPLES = _env_int(
     _env_int("QR_PROJECTION_CONFIDENCE_MIN_SAMPLES", 10, minimum=1),
     minimum=1,
 )
+# Directional forecast calibration is the final detector's own realized truth,
+# not a secondary market signal. If its current pair/regime/side bucket is
+# below 45% HIT on enough samples, high raw confidence is not enough for live
+# entry: that is the "confident but reverse-first" failure mode seen in recent
+# USD_CAD/EUR_CHF loss-closes. These defaults mirror the self-improvement
+# forecast warning floor so audit and live-readiness use the same market fact.
+# Replace them only after projection_ledger bucket expectancy shows a different
+# break-even floor for live entries, not by lowering the gate to create volume.
+FORECAST_DIRECTIONAL_LIVE_MIN_HIT_RATE = _env_float(
+    "QR_FORECAST_DIRECTIONAL_LIVE_MIN_HIT_RATE",
+    0.45,
+    minimum=0.0,
+)
+FORECAST_DIRECTIONAL_LIVE_MIN_SAMPLES = _env_int(
+    "QR_FORECAST_DIRECTIONAL_LIVE_MIN_SAMPLES",
+    FORECAST_MARKET_SUPPORT_MIN_SAMPLES,
+    minimum=FORECAST_MARKET_SUPPORT_MIN_SAMPLES,
+)
 # Same-cycle projection bootstrap for newly added detectors. The normal path
 # requires projection_ledger samples before a near-miss forecast can trade.
 # That is correct for mature detectors, but it creates a cold-start dead zone:
@@ -2791,6 +2809,14 @@ def _forecast_market_support_for_forecast(
         "unselected_signals": [],
         "unselected_reason": "",
     }
+    out.update(
+        _forecast_directional_calibration_for_forecast(
+            pair=pair,
+            direction=direction,
+            hit_rates=hit_rates,
+            regime=regime,
+        )
+    )
     if direction not in {"UP", "DOWN"} or not projection_signals:
         unselected = _forecast_unselected_projection_support(
             pair=pair,
@@ -2963,6 +2989,54 @@ def _forecast_market_support_for_forecast(
             f"samples={top['samples']} did not align with forecast={direction}"
         )
     return out
+
+
+def _forecast_directional_calibration_for_forecast(
+    *,
+    pair: str,
+    direction: str,
+    hit_rates: dict[str, dict[str, Any]] | None,
+    regime: str | None,
+) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "directional_calibration_name": None,
+        "directional_hit_rate": None,
+        "directional_samples": 0,
+    }
+    direction = str(direction or "").upper()
+    if direction not in {"UP", "DOWN"} or not isinstance(hit_rates, dict):
+        return payload
+    try:
+        from quant_rabbit.strategy.projection_ledger import select_calibration_signal_name
+    except Exception:
+        return payload
+    calibration_name = select_calibration_signal_name(
+        "directional_forecast",
+        direction,
+        pair,
+        hit_rates=hit_rates,
+        regime=regime,
+    )
+    bucket = _projection_hit_rate_bucket(
+        hit_rates,
+        calibration_name,
+        pair=pair,
+        regime=regime,
+    )
+    if bucket is None:
+        return payload
+    hit_rate = _optional_float(bucket.get("hit_rate"))
+    samples = _optional_int(bucket.get("samples")) or 0
+    if hit_rate is None:
+        return payload
+    payload.update(
+        {
+            "directional_calibration_name": calibration_name,
+            "directional_hit_rate": round(hit_rate, 4),
+            "directional_samples": samples,
+        }
+    )
+    return payload
 
 
 def _forecast_unselected_projection_support(
@@ -3350,6 +3424,9 @@ def _forecast_context_payload(forecast: Any, *, cycle_id: str | None = None) -> 
         "forecast_market_support": market_support,
         "forecast_market_support_ok": bool(market_support.get("ok")),
         "forecast_market_support_reason": market_support.get("reason"),
+        "forecast_directional_calibration_name": market_support.get("directional_calibration_name"),
+        "forecast_directional_hit_rate": market_support.get("directional_hit_rate"),
+        "forecast_directional_samples": market_support.get("directional_samples"),
     }
     payload.update(_forecast_news_ref_metadata(forecast, market_support))
     return payload
@@ -5509,7 +5586,40 @@ def _forecast_live_readiness_issue(
             ),
             "severity": "WARN",
         }
+    weak_calibration_issue = _forecast_directional_hit_rate_issue(intent, metadata, direction=direction)
+    if weak_calibration_issue is not None:
+        return weak_calibration_issue
     return None
+
+
+def _forecast_directional_hit_rate_issue(
+    intent: OrderIntent,
+    metadata: dict[str, Any],
+    *,
+    direction: str,
+) -> dict[str, str] | None:
+    if direction not in {"UP", "DOWN"}:
+        return None
+    expected_side = Side.LONG.value if direction == "UP" else Side.SHORT.value
+    if intent.side.value != expected_side:
+        return None
+    hit_rate = _optional_float(metadata.get("forecast_directional_hit_rate"))
+    samples = _optional_int(metadata.get("forecast_directional_samples")) or 0
+    if hit_rate is None or samples < FORECAST_DIRECTIONAL_LIVE_MIN_SAMPLES:
+        return None
+    if hit_rate >= FORECAST_DIRECTIONAL_LIVE_MIN_HIT_RATE:
+        return None
+    calibration_name = str(metadata.get("forecast_directional_calibration_name") or "directional_forecast")
+    return {
+        "code": "FORECAST_DIRECTIONAL_HIT_RATE_WEAK_FOR_LIVE",
+        "message": (
+            f"{intent.pair} {intent.side.value} forecast {direction} bucket "
+            f"{calibration_name} hit_rate={hit_rate:.2f} over {samples} sample(s) is below "
+            f"{FORECAST_DIRECTIONAL_LIVE_MIN_HIT_RATE:.2f}; keep this forecast as dry-run "
+            "until the calibrated direction recovers or independent live evidence replaces it."
+        ),
+        "severity": "WARN",
+    }
 
 
 def _forecast_watch_only_issue(intent: OrderIntent, metadata: dict[str, Any]) -> dict[str, str] | None:
