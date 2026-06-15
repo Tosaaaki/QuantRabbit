@@ -4814,6 +4814,9 @@ def _intent_from_lane(
             "forecast_market_support": lane.get("forecast_market_support"),
             "forecast_market_support_ok": lane.get("forecast_market_support_ok"),
             "forecast_market_support_reason": lane.get("forecast_market_support_reason"),
+            "forecast_directional_calibration_name": lane.get("forecast_directional_calibration_name"),
+            "forecast_directional_hit_rate": lane.get("forecast_directional_hit_rate"),
+            "forecast_directional_samples": lane.get("forecast_directional_samples"),
             "mirror_of": lane.get("mirror_of"),
             "target_reward_risk": target_reward_risk,
             "base_target_reward_risk": base_reward_risk,
@@ -5610,13 +5613,22 @@ def _forecast_directional_hit_rate_issue(
     expected_side = Side.LONG.value if direction == "UP" else Side.SHORT.value
     if intent.side.value != expected_side:
         return None
+    support = _forecast_market_support_payload(metadata.get("forecast_market_support"))
     hit_rate = _optional_float(metadata.get("forecast_directional_hit_rate"))
+    if hit_rate is None:
+        hit_rate = _optional_float(support.get("directional_hit_rate"))
     samples = _optional_int(metadata.get("forecast_directional_samples")) or 0
+    if samples <= 0:
+        samples = _optional_int(support.get("directional_samples")) or 0
     if hit_rate is None or samples < FORECAST_DIRECTIONAL_LIVE_MIN_SAMPLES:
         return None
     if hit_rate >= FORECAST_DIRECTIONAL_LIVE_MIN_HIT_RATE:
         return None
-    calibration_name = str(metadata.get("forecast_directional_calibration_name") or "directional_forecast")
+    calibration_name = str(
+        metadata.get("forecast_directional_calibration_name")
+        or support.get("directional_calibration_name")
+        or "directional_forecast"
+    )
     return {
         "code": "FORECAST_DIRECTIONAL_HIT_RATE_WEAK_FOR_LIVE",
         "message": (
