@@ -2583,6 +2583,31 @@ class TraderPromptRouteTest(unittest.TestCase):
         self.assertEqual(route.branch, BRANCH_ENTRY)
         self.assertIn("predates refreshed broker snapshot", route.reasons[0])
 
+    def test_routes_decision_with_stale_payload_timestamp_back_to_entry_branch(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root)
+            snapshot = json.loads(files["snapshot"].read_text())
+            snapshot_ts = datetime.fromisoformat(snapshot["fetched_at_utc"])
+            decision_response = root / "codex_trader_decision_response.json"
+            decision_response.write_text(
+                json.dumps(
+                    {
+                        "action": "WAIT",
+                        "generated_at_utc": (snapshot_ts - timedelta(minutes=1)).isoformat(),
+                    }
+                )
+            )
+            _set_mtime(files["snapshot"], 100.0)
+            _set_mtime(files["intents"], 100.0)
+            _set_mtime(decision_response, 101.0)
+
+            route = route_trader_prompts(**_route_paths(files), decision_response_path=decision_response)
+
+        self.assertEqual(route.branch, BRANCH_ENTRY)
+        self.assertTrue(any("generated_at_utc" in reason for reason in route.reasons))
+        self.assertTrue(any("predates broker snapshot" in reason for reason in route.reasons))
+
     def test_stale_position_action_names_previous_gateway_blocker(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

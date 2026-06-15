@@ -458,6 +458,12 @@ def _current_accepted_gpt_action_pending_gateway(
 ) -> DecisionReceiptState | None:
     if decision_response_path is None or not decision_response_path.exists():
         return None
+    if _decision_payload_stale_reasons(
+        decision_response_path=decision_response_path,
+        snapshot_path=snapshot_path,
+        intents_path=intents_path,
+    ):
+        return None
     decision_mtime_ns = decision_response_path.stat().st_mtime_ns
     for path in (snapshot_path, intents_path):
         if _artifact_newer(path, decision_mtime_ns):
@@ -496,6 +502,13 @@ def _decision_receipt_state(
                 pending=False,
                 reasons=tuple(reasons),
             )
+    timestamp_stale_reasons = _decision_payload_stale_reasons(
+        decision_response_path=decision_response_path,
+        snapshot_path=snapshot_path,
+        intents_path=intents_path,
+    )
+    if timestamp_stale_reasons:
+        return DecisionReceiptState(pending=False, reasons=timestamp_stale_reasons)
 
     gpt_pending = _accepted_gpt_action_pending_gateway(
         gpt_decision_path=gpt_decision_path,
@@ -576,6 +589,48 @@ def _accepted_gpt_action_pending_gateway(
 
 def _artifact_newer(path: Path | None, decision_mtime_ns: int) -> bool:
     return path is not None and path.exists() and path.stat().st_mtime_ns > decision_mtime_ns
+
+
+def _decision_payload_stale_reasons(
+    *,
+    decision_response_path: Path,
+    snapshot_path: Path,
+    intents_path: Path,
+) -> tuple[str, ...]:
+    try:
+        payload = _load_json(decision_response_path)
+    except (OSError, ValueError, json.JSONDecodeError):
+        return ()
+    generated = payload.get("generated_at_utc")
+    if generated is None and isinstance(payload.get("decision"), dict):
+        generated = payload["decision"].get("generated_at_utc")
+    decision_ts = _parse_utc(generated)
+    if decision_ts is None:
+        return ()
+
+    refs: tuple[tuple[Path, str, datetime | None], ...] = (
+        (snapshot_path, "broker snapshot", _artifact_payload_timestamp(snapshot_path, "fetched_at_utc")),
+        (intents_path, "order intents", _artifact_payload_timestamp(intents_path, "generated_at_utc")),
+    )
+    reasons: list[str] = []
+    for path, label, ref_ts in refs:
+        if ref_ts is not None and decision_ts < ref_ts:
+            reasons.append(
+                f"decision response generated_at_utc {decision_ts.isoformat()} predates "
+                f"{label} {ref_ts.isoformat()}; refresh decision from broker truth: {path}"
+            )
+    return tuple(reasons)
+
+
+def _artifact_payload_timestamp(path: Path, key: str) -> datetime | None:
+    try:
+        payload = _load_json(path)
+    except (OSError, ValueError, json.JSONDecodeError):
+        return None
+    value: Any = payload.get(key)
+    if value is None and key == "fetched_at_utc" and isinstance(payload.get("account"), dict):
+        value = payload["account"].get("fetched_at_utc")
+    return _parse_utc(value)
 
 
 def _gpt_decision_terminal_state(path: Path | None, decision_mtime_ns: int) -> str | None:

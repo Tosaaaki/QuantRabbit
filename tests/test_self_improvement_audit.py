@@ -2662,7 +2662,7 @@ class SelfImprovementAuditorTest(unittest.TestCase):
         self.assertIn("LATEST_GPT_DECISION_HAS_BLOCKING_ISSUES", codes)
         self.assertNotIn("LATEST_GPT_DECISION_SOFT_CLOSE_ADVISORY_REJECTED", codes)
 
-    def test_accepted_gpt_decision_predating_snapshot_is_p0(self) -> None:
+    def test_accepted_wait_predating_snapshot_without_risk_is_p1(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             files = _fixtures(
@@ -2687,12 +2687,50 @@ class SelfImprovementAuditorTest(unittest.TestCase):
         codes = {item["code"]: item for item in payload["findings"]}
         self.assertEqual(summary.status, STATUS_BLOCKED)
         self.assertIn("LATEST_GPT_DECISION_STALE", codes)
-        self.assertEqual(codes["LATEST_GPT_DECISION_STALE"]["priority"], "P0")
+        self.assertEqual(codes["LATEST_GPT_DECISION_STALE"]["priority"], "P1")
         self.assertEqual(
             codes["LATEST_GPT_DECISION_STALE"]["evidence"]["snapshot_fetched_at_utc"],
             _NOW.isoformat(),
         )
         self.assertEqual(codes["LATEST_GPT_DECISION_STALE"]["evidence"]["current_streak"], 1)
+
+    def test_accepted_wait_predating_snapshot_with_open_position_stays_p0(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(
+                root,
+                active_position=True,
+                closed_pls=(100.0, 80.0, -50.0),
+            )
+            files["entry_thesis"].write_text(
+                json.dumps(
+                    {
+                        "trade_id": "T1",
+                        "pair": "EUR_USD",
+                        "side": "LONG",
+                        "filled_at_utc": _NOW.isoformat(),
+                    }
+                )
+                + "\n"
+            )
+            files["gpt"].write_text(
+                json.dumps(
+                    {
+                        "status": "ACCEPTED",
+                        "generated_at_utc": (_NOW - timedelta(minutes=1)).isoformat(),
+                        "decision": {"action": "WAIT"},
+                        "verification_issues": [],
+                    }
+                )
+            )
+
+            summary = _run(files)
+            payload = json.loads(files["output"].read_text())
+
+        codes = {item["code"]: item for item in payload["findings"]}
+        self.assertEqual(summary.status, STATUS_BLOCKED)
+        self.assertIn("LATEST_GPT_DECISION_STALE", codes)
+        self.assertEqual(codes["LATEST_GPT_DECISION_STALE"]["priority"], "P0")
 
     def test_consumed_wait_decision_predating_snapshot_is_not_stale(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
