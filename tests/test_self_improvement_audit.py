@@ -2396,6 +2396,64 @@ class SelfImprovementAuditorTest(unittest.TestCase):
         self.assertEqual(finding["priority"], "P1")
         self.assertEqual(finding["evidence"]["active_close_trade_ids"], ["T1"])
 
+    def test_guardian_close_review_is_reported_as_unresolved(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root, active_position=True)
+            files["gpt"].write_text(
+                json.dumps(
+                    {
+                        "generated_at_utc": _NOW.isoformat(),
+                        "status": "ACCEPTED",
+                        "decision": {"action": "TRADE"},
+                        "verification_issues": [],
+                    }
+                )
+            )
+            files["entry_thesis"].write_text(
+                json.dumps(
+                    {
+                        "trade_id": "T1",
+                        "pair": "EUR_USD",
+                        "side": "LONG",
+                        "filled_at_utc": _NOW.isoformat(),
+                    }
+                )
+                + "\n"
+            )
+            files["position_guardian_management"].write_text(
+                json.dumps(
+                    {
+                        "generated_at_utc": _NOW.isoformat(),
+                        "action": "HOLD_PROTECTED",
+                        "positions": [
+                            {
+                                "trade_id": "T1",
+                                "pair": "EUR_USD",
+                                "side": "LONG",
+                                "action": "HOLD_PROTECTED",
+                                "close_review_action": "REVIEW_EXIT",
+                                "reasons": [
+                                    "loss-cut: structural OB broken across 2 TFs (M15@1.17000, H1@1.17100) (-120 JPY)",
+                                    "QR_DISABLE_AUTO_CLOSE=1 -> REVIEW_EXIT demoted to HOLD_PROTECTED",
+                                ],
+                            }
+                        ],
+                    }
+                )
+            )
+
+            summary = _run(files)
+            payload = json.loads(files["output"].read_text())
+
+        codes = {item["code"]: item for item in payload["findings"]}
+        self.assertEqual(summary.p0_findings, 0)
+        self.assertGreaterEqual(summary.p1_findings, 1)
+        self.assertIn("OPEN_POSITION_CLOSE_EVIDENCE_UNRESOLVED", codes)
+        signals = codes["OPEN_POSITION_CLOSE_EVIDENCE_UNRESOLVED"]["evidence"]["signals"]
+        self.assertEqual(signals[0]["source"], "position_guardian_management")
+        self.assertEqual(signals[0]["trade_id"], "T1")
+
     def test_operator_auth_required_close_with_hold_sidecars_is_not_decision_history_p0(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -2902,6 +2960,7 @@ def _run(files: dict[str, Path], *, now: datetime = _NOW):
         gpt_decision_path=files["gpt"],
         trader_decision_path=files["trader"],
         position_management_path=files["position_management"],
+        position_guardian_management_path=files["position_guardian_management"],
         thesis_evolution_path=files["thesis_evolution"],
         position_thesis_path=files["position_thesis"],
         forecast_persistence_path=files["forecast_persistence"],
@@ -2941,6 +3000,7 @@ def _fixtures(
         "gpt": root / "gpt_trader_decision.json",
         "trader": root / "trader_decision.json",
         "position_management": root / "position_management.json",
+        "position_guardian_management": root / "position_guardian_management.json",
         "thesis_evolution": root / "thesis_evolution_report.json",
         "position_thesis": root / "position_thesis_report.json",
         "forecast_persistence": root / "forecast_persistence_report.json",

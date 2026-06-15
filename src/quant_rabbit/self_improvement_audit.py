@@ -21,6 +21,7 @@ from quant_rabbit.paths import (
     DEFAULT_MARKET_CONTEXT_MATRIX,
     DEFAULT_MEMORY_HEALTH,
     DEFAULT_ORDER_INTENTS,
+    DEFAULT_POSITION_GUARDIAN_MANAGEMENT,
     DEFAULT_POSITION_MANAGEMENT,
     DEFAULT_PROJECTION_LEDGER,
     DEFAULT_SELF_IMPROVEMENT_AUDIT,
@@ -183,6 +184,7 @@ class SelfImprovementAuditor:
         gpt_decision_path: Path = DEFAULT_GPT_TRADER_DECISION,
         trader_decision_path: Path = DEFAULT_TRADER_DECISION,
         position_management_path: Path = DEFAULT_POSITION_MANAGEMENT,
+        position_guardian_management_path: Path = DEFAULT_POSITION_GUARDIAN_MANAGEMENT,
         thesis_evolution_path: Path = Path("data/thesis_evolution_report.json"),
         position_thesis_path: Path = Path("data/position_thesis_report.json"),
         forecast_persistence_path: Path = Path("data/forecast_persistence_report.json"),
@@ -205,6 +207,11 @@ class SelfImprovementAuditor:
         gpt_loaded = _read_json(gpt_decision_path)
         trader_loaded = _read_json(trader_decision_path)
         position_management_loaded = _read_json(position_management_path)
+        position_guardian_management_loaded = (
+            _read_json(position_guardian_management_path)
+            if position_guardian_management_path.exists()
+            else None
+        )
         thesis_evolution_loaded = _read_json(thesis_evolution_path)
         position_thesis_loaded = _read_json(position_thesis_path)
         forecast_persistence_loaded = _read_json(forecast_persistence_path)
@@ -370,18 +377,25 @@ class SelfImprovementAuditor:
                 path=ai_test_bot_backtest_path,
             )
         )
+        position_sidecars = {
+            "position_management": (position_management_loaded, position_management_path),
+            "thesis_evolution": (thesis_evolution_loaded, thesis_evolution_path),
+            "position_thesis": (position_thesis_loaded, position_thesis_path),
+            "forecast_persistence": (forecast_persistence_loaded, forecast_persistence_path),
+        }
+        if position_guardian_management_loaded is not None:
+            position_sidecars["position_guardian_management"] = (
+                position_guardian_management_loaded,
+                position_guardian_management_path,
+            )
+
         findings.extend(
             _sidecar_findings(
                 run_id=run_id,
                 snapshot_ts=snapshot_ts,
                 active_trade_ids=active_trade_ids,
                 gpt_decision=gpt_loaded.payload or {},
-                sidecars={
-                    "position_management": (position_management_loaded, position_management_path),
-                    "thesis_evolution": (thesis_evolution_loaded, thesis_evolution_path),
-                    "position_thesis": (position_thesis_loaded, position_thesis_path),
-                    "forecast_persistence": (forecast_persistence_loaded, forecast_persistence_path),
-                },
+                sidecars=position_sidecars,
             )
         )
         findings.extend(
@@ -400,12 +414,7 @@ class SelfImprovementAuditor:
                 pending_entry_order_details=pending_entry_orders,
                 snapshot_ts=snapshot_ts,
                 latest_gpt_stale_streak_before=latest_gpt_stale_streak_before,
-                sidecars={
-                    "position_management": (position_management_loaded, position_management_path),
-                    "thesis_evolution": (thesis_evolution_loaded, thesis_evolution_path),
-                    "position_thesis": (position_thesis_loaded, position_thesis_path),
-                    "forecast_persistence": (forecast_persistence_loaded, forecast_persistence_path),
-                },
+                sidecars=position_sidecars,
             )
         )
 
@@ -439,6 +448,7 @@ class SelfImprovementAuditor:
                 "gpt_decision": str(gpt_decision_path),
                 "trader_decision": str(trader_decision_path),
                 "position_management": str(position_management_path),
+                "position_guardian_management": str(position_guardian_management_path),
                 "thesis_evolution": str(thesis_evolution_path),
                 "position_thesis": str(position_thesis_path),
                 "forecast_persistence": str(forecast_persistence_path),
@@ -4829,11 +4839,25 @@ def _close_recommendations(
                 trade_id = str(row.get("trade_id") or "")
                 if trade_id not in active_trade_ids:
                     continue
-                status_text = " ".join(
-                    str(row.get(field) or "").upper()
-                    for field in ("action", "status", "verdict", "reason")
-                )
-                if any(token in status_text for token in ("REVIEW_CLOSE", "RECOMMEND_CLOSE", "REVIEW_EXIT", "BROKEN", "REQUIRE_THESIS_REPAIR", "UNVERIFIABLE")):
+                status_parts = [
+                    str(row.get(field) or "")
+                    for field in ("action", "status", "verdict", "reason", "close_review_action")
+                ]
+                reasons = row.get("reasons")
+                if isinstance(reasons, list):
+                    status_parts.extend(str(item or "") for item in reasons)
+                status_text = " ".join(status_parts).upper()
+                if any(
+                    token in status_text
+                    for token in (
+                        "REVIEW_CLOSE",
+                        "RECOMMEND_CLOSE",
+                        "REVIEW_EXIT",
+                        "BROKEN",
+                        "REQUIRE_THESIS_REPAIR",
+                        "UNVERIFIABLE",
+                    )
+                ):
                     refs.append(
                         {
                             "source": name,
@@ -4843,6 +4867,7 @@ def _close_recommendations(
                             "status": row.get("status"),
                             "verdict": row.get("verdict"),
                             "action": row.get("action"),
+                            "close_review_action": row.get("close_review_action"),
                         }
                     )
     return refs

@@ -674,8 +674,11 @@ def _sidecar_hold_support_conflict(
         or "technical invalidation confirmed against" in lower_reason
     ):
         conflict_label = "position_thesis invalidation evidence"
-    elif source == "position_management" and "entry thesis invalidation hit" in lower_reason:
-        conflict_label = "position_management entry-invalidation evidence"
+    elif (
+        source in {"position_management", "position_guardian_management"}
+        and "entry thesis invalidation hit" in lower_reason
+    ):
+        conflict_label = f"{source} entry-invalidation evidence"
     else:
         return None
     return _same_direction_hold_support_conflict(
@@ -779,7 +782,7 @@ def _sidecar_close_standing_authorized(rec: dict[str, Any]) -> bool:
         has_invalidation_hit = "invalidation hit:" in reason
         has_structural_break = _position_thesis_structural_break_text(reason)
         return has_technical_confirmation and (has_invalidation_hit or has_structural_break)
-    if source == "position_management" and verdict == "REVIEW_EXIT":
+    if source in {"position_management", "position_guardian_management"} and verdict == "REVIEW_EXIT":
         reason = str(rec.get("reason") or "").lower()
         return "close-confirmed structural break" in reason or "structural ob broken" in reason
     return False
@@ -2737,6 +2740,7 @@ def _allowed_refs(
                 f"position:thesis:{trade_id}",
                 f"position:evolution:{trade_id}",
                 f"position:management:{trade_id}",
+                f"position:guardian_management:{trade_id}",
                 f"position:persistence:{trade_id}",
             ]
         )

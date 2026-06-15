@@ -3854,6 +3854,7 @@ def _write_recent_position_management_close_recommendation(
     pair: str = "EUR_USD",
     side: str = "SHORT",
     reasons: list[str] | None = None,
+    path_name: str = "position_management.json",
 ) -> None:
     snapshot = json.loads(files["snapshot"].read_text())
     generated_at = (
@@ -3864,7 +3865,7 @@ def _write_recent_position_management_close_recommendation(
             "score context before structural review",
             "loss-cut: structural OB broken across 2 TFs (M15@1.17000, H1@1.17100) (-1900 JPY)",
         ]
-    (root / "position_management.json").write_text(
+    (root / path_name).write_text(
         json.dumps(
             {
                 "generated_at_utc": generated_at,
@@ -4821,6 +4822,32 @@ class CloseDisciplineTest(unittest.TestCase):
             self.assertEqual(recs[0]["source"], "position_management")
             self.assertTrue(recs[0]["gate_b_standing_authorized"])
             self.assertIn("position:management:555", payload["input_packet"]["allowed_evidence_refs"])
+
+    def test_close_accepted_without_operator_token_when_guardian_structural_review_exit(self) -> None:
+        # Position guardian runs more frequently than the full trader cycle; its
+        # REVIEW_EXIT carry-forward must be visible to the next GPT CLOSE pass.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _close_fixtures(root, position_side="SHORT", m15_dir="DOWN", h4_dir="DOWN")
+            _write_recent_position_management_close_recommendation(
+                root,
+                files,
+                path_name="position_guardian_management.json",
+            )
+            decision = _close_decision(trade_ids=["555"])
+            decision["evidence_refs"].append("position:guardian_management:555")
+            brain = _brain(root, files, decision)
+
+            summary = brain.run(snapshot_path=files["snapshot"])
+
+            self.assertEqual(summary.status, "ACCEPTED", msg=summary)
+            self.assertTrue(summary.allowed)
+            payload = json.loads((root / "gpt_decision.json").read_text())
+            self.assertEqual(payload["verification_issues"], [])
+            recs = payload["input_packet"]["protection_sidecars"]["position_close_recommendations"]
+            self.assertEqual(recs[0]["source"], "position_guardian_management")
+            self.assertTrue(recs[0]["gate_b_standing_authorized"])
+            self.assertIn("position:guardian_management:555", payload["input_packet"]["allowed_evidence_refs"])
 
     def test_close_rejected_without_operator_token_when_position_management_entry_invalidation_hit(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

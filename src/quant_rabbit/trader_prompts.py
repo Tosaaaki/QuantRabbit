@@ -55,6 +55,7 @@ from quant_rabbit.paths import (
     DEFAULT_OPTION_SKEW,
     DEFAULT_ORDER_INTENTS,
     DEFAULT_PAIR_CHARTS,
+    DEFAULT_POSITION_GUARDIAN_MANAGEMENT,
     DEFAULT_POSITION_MANAGEMENT,
     DEFAULT_POSITION_EXECUTION,
     DEFAULT_SELF_IMPROVEMENT_AUDIT,
@@ -857,7 +858,20 @@ def _fresh_close_recommendations(snapshot: dict[str, Any], *, data_root: Path) -
     recs: list[dict[str, Any]] = []
     recs.extend(_position_thesis_recommendations(data_root / "position_thesis_report.json", fetched_at))
     recs.extend(_thesis_evolution_recommendations(data_root / "thesis_evolution_report.json", fetched_at))
-    recs.extend(_position_management_recommendations(data_root / "position_management.json", fetched_at))
+    recs.extend(
+        _position_management_recommendations(
+            data_root / "position_management.json",
+            fetched_at,
+        )
+    )
+    recs.extend(
+        _position_management_recommendations(
+            data_root / DEFAULT_POSITION_GUARDIAN_MANAGEMENT.name,
+            fetched_at,
+            source="position_guardian_management",
+            evidence_prefix="position:guardian_management",
+        )
+    )
     recs.extend(_forecast_persistence_recommendations(data_root / "forecast_persistence_report.json", fetched_at))
     out: list[dict[str, Any]] = []
     for rec in recs:
@@ -1133,7 +1147,13 @@ def _thesis_evolution_hold_support(path: Path, fetched_at: datetime) -> list[dic
     return out
 
 
-def _position_management_recommendations(path: Path, fetched_at: datetime) -> list[dict[str, Any]]:
+def _position_management_recommendations(
+    path: Path,
+    fetched_at: datetime,
+    *,
+    source: str = "position_management",
+    evidence_prefix: str = "position:management",
+) -> list[dict[str, Any]]:
     payload = _recent_report_payload(
         path,
         fetched_at,
@@ -1158,8 +1178,8 @@ def _position_management_recommendations(path: Path, fetched_at: datetime) -> li
         )
         out.append(
             {
-                "source": "position_management",
-                "evidence_ref": f"position:management:{trade_id}",
+                "source": source,
+                "evidence_ref": f"{evidence_prefix}:{trade_id}",
                 "trade_id": trade_id,
                 "pair": item.get("pair"),
                 "side": item.get("side"),
