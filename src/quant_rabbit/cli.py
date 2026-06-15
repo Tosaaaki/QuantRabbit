@@ -1689,6 +1689,7 @@ def _cycle_refresh_steps(daily_risk_pct: str) -> list[dict[str, Any]]:
         {"argv": ["ai-attack-advice"], "required": False},
         {"argv": ["learning-audit"], "required": False},
         {"argv": ["capture-economics"], "required": False},
+        {"argv": ["manual-market-context-audit"], "required": False},
         {"argv": ["operator-precedent-audit"], "required": False},
         {"argv": ["verification-ledger-audit"], "required": False},
         {"argv": ["generate-predictive-limits"], "required": False},

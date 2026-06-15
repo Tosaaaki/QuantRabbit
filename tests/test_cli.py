@@ -2324,6 +2324,8 @@ class ConsolidatedCycleCommandTest(unittest.TestCase):
         self.assertLess(refresh.index("tp-rebalance"), refresh.index(intent_step))
         self.assertIn("news-health --strict", refresh)
         self.assertLess(refresh.index("capture-economics"), refresh.index("operator-precedent-audit"))
+        self.assertLess(refresh.index("capture-economics"), refresh.index("manual-market-context-audit"))
+        self.assertLess(refresh.index("manual-market-context-audit"), refresh.index("operator-precedent-audit"))
         self.assertLess(refresh.index("operator-precedent-audit"), refresh.index("verification-ledger-audit"))
         self.assertLess(refresh.index("memory-health"), refresh.index("self-improvement-audit"))
         self.assertEqual(refresh[-1], "self-improvement-audit")
