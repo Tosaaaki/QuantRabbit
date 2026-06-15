@@ -388,6 +388,61 @@ class SelfImprovementAuditorTest(unittest.TestCase):
         self.assertAlmostEqual(evidence["hit_rate"], 0.1)
         self.assertTrue(evidence["worst_buckets"])
 
+    def test_directional_forecast_historical_weakness_is_p2_when_recent_window_recovers(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(
+                root,
+                active_position=False,
+                live_ready_market_rr=1.4,
+                closed_pls=(100.0, 80.0, -50.0),
+            )
+            rows = []
+            for idx in range(10):
+                rows.append(
+                    {
+                        "timestamp_emitted_utc": (_NOW - timedelta(days=8, hours=idx)).isoformat(),
+                        "pair": "EUR_USD",
+                        "direction": "UP",
+                        "regime_at_emission": "TREND",
+                        "signal_name": "directional_forecast",
+                        "predicted_target_price": 1.1720,
+                        "predicted_invalidation_price": 1.1680,
+                        "resolution_window_min": 60.0,
+                        "resolution_status": "MISS",
+                        "cycle_id": f"old-cycle-{idx}",
+                    }
+                )
+            for idx in range(10):
+                rows.append(
+                    {
+                        "timestamp_emitted_utc": (_NOW - timedelta(hours=idx + 2)).isoformat(),
+                        "pair": "EUR_USD",
+                        "direction": "UP",
+                        "regime_at_emission": "TREND",
+                        "signal_name": "directional_forecast",
+                        "predicted_target_price": 1.1720,
+                        "predicted_invalidation_price": 1.1680,
+                        "resolution_window_min": 60.0,
+                        "resolution_status": "HIT" if idx < 6 else "MISS",
+                        "cycle_id": f"recent-cycle-{idx}",
+                    }
+                )
+            files["projection_ledger"].write_text("\n".join(json.dumps(row) for row in rows) + "\n")
+
+            summary = _run(files)
+            payload = json.loads(files["output"].read_text())
+
+        codes = {item["code"]: item for item in payload["findings"]}
+        self.assertEqual(summary.p0_findings, 0)
+        hit_rate = codes["DIRECTIONAL_FORECAST_HIT_RATE_WEAK"]
+        self.assertEqual(hit_rate["priority"], "P2")
+        self.assertTrue(hit_rate["evidence"]["recent_recovered"])
+        self.assertAlmostEqual(hit_rate["evidence"]["window_hit_rates"]["7d"]["hit_rate"], 0.6)
+        bucket = codes["DIRECTIONAL_FORECAST_BUCKET_HIT_RATE_WEAK"]
+        self.assertEqual(bucket["priority"], "P2")
+        self.assertTrue(bucket["evidence"]["recent_recovered"])
+
     def test_directional_forecast_timeout_dominant_is_p1_calibration_hole(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

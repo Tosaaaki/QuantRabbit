@@ -1825,7 +1825,7 @@ def _projection_findings(
                 evidence={"examples": [_projection_ref(row) for row in expired[:8]]},
             )
         )
-    out.extend(_directional_forecast_quality_findings(run_id=run_id, rows=rows))
+    out.extend(_directional_forecast_quality_findings(run_id=run_id, rows=rows, now=now))
     return out
 
 
@@ -1833,6 +1833,7 @@ def _directional_forecast_quality_findings(
     *,
     run_id: str,
     rows: list[dict[str, Any]],
+    now: datetime,
 ) -> list[dict[str, Any]]:
     directional = [
         row for row in rows
@@ -1903,25 +1904,62 @@ def _directional_forecast_quality_findings(
         min_samples=FORECAST_CALIBRATION_MIN_SAMPLES,
         warn_below=FORECAST_HIT_RATE_WARN_BELOW,
     )
+    recent_24h = _directional_forecast_rows_since(calibrated, now=now, window=timedelta(hours=24))
+    recent_7d = _directional_forecast_rows_since(calibrated, now=now, window=timedelta(days=7))
+    window_stats = {
+        "24h": {"window": "24h", **_directional_forecast_hit_stats(recent_24h)},
+        "7d": {"window": "7d", **_directional_forecast_hit_stats(recent_7d)},
+        "all": {"window": "all", **_directional_forecast_hit_stats(calibrated)},
+    }
     if weak_buckets:
+        recent_24h_weak_buckets = _directional_forecast_worst_buckets(
+            recent_24h,
+            min_samples=FORECAST_CALIBRATION_MIN_SAMPLES,
+            warn_below=FORECAST_HIT_RATE_WARN_BELOW,
+        )
+        recent_7d_weak_buckets = _directional_forecast_worst_buckets(
+            recent_7d,
+            min_samples=FORECAST_CALIBRATION_MIN_SAMPLES,
+            warn_below=FORECAST_HIT_RATE_WARN_BELOW,
+        )
+        bucket_gate = window_stats["7d"] if int(window_stats["7d"]["samples"]) >= FORECAST_CALIBRATION_MIN_SAMPLES else window_stats["24h"]
+        bucket_recent_recovered = (
+            int(bucket_gate["samples"]) >= FORECAST_CALIBRATION_MIN_SAMPLES
+            and (
+                (bucket_gate["window"] == "7d" and not recent_7d_weak_buckets)
+                or (bucket_gate["window"] == "24h" and not recent_24h_weak_buckets)
+            )
+        )
         findings.append(
             _finding(
                 run_id=run_id,
-                priority="P1",
+                priority="P2" if bucket_recent_recovered else "P1",
                 layer="forecast",
                 code="DIRECTIONAL_FORECAST_BUCKET_HIT_RATE_WEAK",
                 message=(
                     f"{len(weak_buckets)} directional_forecast pair/direction/regime bucket(s) "
                     f"are below {FORECAST_HIT_RATE_WARN_BELOW:.0%} HIT rate"
+                    + (
+                        f", but recent {bucket_gate['window']} buckets no longer breach"
+                        if bucket_recent_recovered
+                        else ""
+                    )
                 ),
                 next_action=(
                     "Dampen or rework the named forecast buckets before treating them as opportunity "
                     "expansion candidates for the 10% campaign."
+                    if not bucket_recent_recovered
+                    else "Keep weak historical buckets as repair evidence, but avoid suppressing current "
+                    "edge discovery when the recent calibrated window has recovered."
                 ),
                 evidence={
                     "min_samples": FORECAST_CALIBRATION_MIN_SAMPLES,
                     "warn_below": FORECAST_HIT_RATE_WARN_BELOW,
                     "weak_buckets": weak_buckets,
+                    "recent_recovered": bucket_recent_recovered,
+                    "recent_24h_weak_buckets": recent_24h_weak_buckets,
+                    "recent_7d_weak_buckets": recent_7d_weak_buckets,
+                    "window_hit_rates": window_stats,
                 },
             )
         )
@@ -1929,25 +1967,41 @@ def _directional_forecast_quality_findings(
     hit_count = sum(1 for row in calibrated if str(row.get("resolution_status") or "").upper() == "HIT")
     hit_rate = hit_count / samples if samples else 0.0
     if samples >= FORECAST_CALIBRATION_MIN_SAMPLES and hit_rate < FORECAST_HIT_RATE_WARN_BELOW:
+        recent_gate = window_stats["7d"] if int(window_stats["7d"]["samples"]) >= FORECAST_CALIBRATION_MIN_SAMPLES else window_stats["24h"]
+        recent_recovered = (
+            int(recent_gate["samples"]) >= FORECAST_CALIBRATION_MIN_SAMPLES
+            and float(recent_gate["hit_rate"]) >= FORECAST_HIT_RATE_WARN_BELOW
+        )
         findings.append(
             _finding(
                 run_id=run_id,
-                priority="P1",
+                priority="P2" if recent_recovered else "P1",
                 layer="forecast",
                 code="DIRECTIONAL_FORECAST_HIT_RATE_WEAK",
                 message=(
                     f"directional_forecast HIT rate is {hit_rate:.1%} "
                     f"over {samples} calibrated sample(s)"
+                    + (
+                        f", but recent {recent_gate['window']} recovered to "
+                        f"{float(recent_gate['hit_rate']):.1%}"
+                        if recent_recovered
+                        else ""
+                    )
                 ),
                 next_action=(
-                    "Rank the weakest pair/direction buckets and adjust forecast priors, target geometry, "
-                    "or range-location handling before increasing opportunity frequency."
+                    "Rank the weakest current pair/direction buckets and adjust forecast priors, target "
+                    "geometry, or range-location handling before increasing opportunity frequency."
+                    if not recent_recovered
+                    else "Keep the recent recovered forecast cadence, but do not use stale all-history "
+                    "weakness alone to block current edge discovery."
                 ),
                 evidence={
                     "samples": samples,
                     "hit_count": hit_count,
                     "hit_rate": round(hit_rate, 4),
                     "warn_below": FORECAST_HIT_RATE_WARN_BELOW,
+                    "recent_recovered": recent_recovered,
+                    "window_hit_rates": window_stats,
                     "worst_buckets": _directional_forecast_worst_buckets(
                         calibrated,
                         min_samples=FORECAST_CALIBRATION_MIN_SAMPLES,
@@ -1960,6 +2014,31 @@ def _directional_forecast_quality_findings(
 
 def _directional_forecast_has_target_invalidation(row: dict[str, Any]) -> bool:
     return row.get("predicted_target_price") is not None and row.get("predicted_invalidation_price") is not None
+
+
+def _directional_forecast_rows_since(
+    rows: list[dict[str, Any]],
+    *,
+    now: datetime,
+    window: timedelta,
+) -> list[dict[str, Any]]:
+    cutoff = now - window
+    out: list[dict[str, Any]] = []
+    for row in rows:
+        emitted_at = _parse_utc(row.get("timestamp_emitted_utc"))
+        if emitted_at is not None and emitted_at >= cutoff:
+            out.append(row)
+    return out
+
+
+def _directional_forecast_hit_stats(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    samples = len(rows)
+    hit_count = sum(1 for row in rows if str(row.get("resolution_status") or "").upper() == "HIT")
+    return {
+        "samples": samples,
+        "hit_count": hit_count,
+        "hit_rate": round(hit_count / samples, 4) if samples else 0.0,
+    }
 
 
 def _directional_forecast_worst_buckets(
