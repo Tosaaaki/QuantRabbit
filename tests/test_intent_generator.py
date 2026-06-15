@@ -6761,7 +6761,7 @@ class TimingEvidenceBreakoutStopTest(unittest.TestCase):
     def _strong_directional_metadata(
         *,
         confidence: float = 0.45,
-        raw_confidence: float = 0.67,
+        raw_confidence: float = 0.63,
     ) -> dict:
         metadata = TimingEvidenceBreakoutStopTest._metadata(
             direction="DOWN",
@@ -6832,11 +6832,22 @@ class TimingEvidenceBreakoutStopTest(unittest.TestCase):
 
     def test_strong_directional_support_rescues_stop_entry_below_near_miss_floor(self) -> None:
         # CAD_JPY live shape: final calibration is below the 0.10 near-miss
-        # band, but raw forecast clears the floor and audited same-direction
-        # macro support is strong. Only STOP-ENTRY gets the confirmation lift.
+        # band, but raw forecast remains near the floor and audited
+        # same-direction macro support is strong. Only STOP-ENTRY gets the
+        # confirmation lift.
         self.assertTrue(
             self._allows(
                 self._strong_directional_metadata(),
+                side="SHORT",
+                order_type=OrderType.STOP_ENTRY,
+                min_confidence=0.65,
+            )
+        )
+
+    def test_strong_directional_support_requires_raw_forecast_near_floor(self) -> None:
+        self.assertFalse(
+            self._allows(
+                self._strong_directional_metadata(raw_confidence=0.59),
                 side="SHORT",
                 order_type=OrderType.STOP_ENTRY,
                 min_confidence=0.65,

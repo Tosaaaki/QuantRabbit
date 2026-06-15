@@ -737,9 +737,9 @@ FORECAST_BOOTSTRAP_SIGNAL_CONFIDENCE_MIN = _env_float(
 # Per AGENT_CONTRACT §3.5:
 # (a) market reality: event/liquidity projection buckets with >=75% hit-rate on
 #     >=30 samples are materially different from timing-only EITHER signals.
-#     Requiring raw forecast >= the live floor preserves the pair-level thesis,
-#     while the calibrated floor stops genuinely weak final predictions from
-#     trading just because one detector is hot.
+#     Requiring raw forecast to be near the live floor preserves the pair-level
+#     thesis, while the calibrated floor stops genuinely weak final predictions
+#     from trading just because one detector is hot.
 # (b) constants rather than derived: these are operator risk-policy caps for how
 #     much audited same-direction evidence may offset the final detector.
 # (c) replace via: tune by post-trade expectancy for this override path once the
@@ -749,6 +749,11 @@ FORECAST_STRONG_DIRECTIONAL_MAX_CONFIDENCE_SHORTFALL = _env_float(
     "QR_FORECAST_STRONG_DIRECTIONAL_MAX_CONFIDENCE_SHORTFALL",
     0.25,
     minimum=FORECAST_MARKET_SUPPORT_MAX_CONFIDENCE_SHORTFALL,
+)
+FORECAST_STRONG_DIRECTIONAL_RAW_MAX_CONFIDENCE_SHORTFALL = _env_float(
+    "QR_FORECAST_STRONG_DIRECTIONAL_RAW_MAX_CONFIDENCE_SHORTFALL",
+    0.05,
+    minimum=0.0,
 )
 FORECAST_STRONG_DIRECTIONAL_CALIBRATED_FLOOR = _env_float(
     "QR_FORECAST_STRONG_DIRECTIONAL_CALIBRATED_FLOOR",
@@ -5548,10 +5553,14 @@ def _forecast_market_support_allows_side(
         FORECAST_STRONG_DIRECTIONAL_CALIBRATED_FLOOR,
         min_confidence - FORECAST_STRONG_DIRECTIONAL_MAX_CONFIDENCE_SHORTFALL,
     )
+    strong_directional_raw_floor = max(
+        FORECAST_BOOTSTRAP_RAW_CONFIDENCE_MIN,
+        min_confidence - FORECAST_STRONG_DIRECTIONAL_RAW_MAX_CONFIDENCE_SHORTFALL,
+    )
     strong_directional_projection = (
         breakout_proof
         and raw_confidence is not None
-        and raw_confidence >= min_confidence
+        and raw_confidence >= strong_directional_raw_floor
         and confidence >= strong_directional_floor
         and _forecast_market_support_has_strong_directional_signal(
             support,
