@@ -242,6 +242,45 @@ class RecordTest(unittest.TestCase):
             self.assertEqual(entries[0].predicted_target_price, 1.0950)
             self.assertEqual(entries[0].predicted_invalidation_price, 1.1030)
 
+    def test_record_range_forecast_feeds_calibration_ledger(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            forecast = type(
+                "Forecast",
+                (),
+                {
+                    "direction": "RANGE",
+                    "confidence": 0.67,
+                    "current_price": 1.1050,
+                    "target_price": 1.1120,
+                    "invalidation_price": 1.0980,
+                    "range_low_price": 1.1000,
+                    "range_high_price": 1.1100,
+                    "range_width_pips": 100.0,
+                    "horizon_min": 120,
+                },
+            )()
+
+            written = record_directional_forecast(
+                forecast,
+                pair="EUR_USD",
+                current_price=None,
+                data_root=root,
+                regime_at_emission="RANGE",
+                cycle_id="range-cycle",
+            )
+
+            self.assertEqual(written, 1)
+            entries = load_ledger(root)
+            self.assertEqual(len(entries), 1)
+            self.assertEqual(entries[0].signal_name, "directional_forecast")
+            self.assertEqual(entries[0].direction, "RANGE")
+            self.assertIsNone(entries[0].predicted_target_price)
+            self.assertIsNone(entries[0].predicted_invalidation_price)
+            self.assertEqual(entries[0].predicted_range_low_price, 1.1000)
+            self.assertEqual(entries[0].predicted_range_high_price, 1.1100)
+            self.assertEqual(entries[0].pre_emission_range_pips, 100.0)
+
     def test_record_directional_forecast_dedupes_same_cycle_race(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -546,6 +585,82 @@ class VerifyTest(unittest.TestCase):
             entry = load_ledger(root)[0]
             self.assertEqual(entry.resolution_status, "HIT")
             self.assertIn("target 1.09800 touched before invalidation 1.10100", entry.resolution_evidence)
+
+    def test_range_forecast_box_hold_is_hit(self) -> None:
+        emitted = datetime.now(timezone.utc) - timedelta(minutes=150)
+        tmp, root = self._setup({
+            "name": "directional_forecast",
+            "direction": "RANGE",
+            "lead_time_min": 120,
+            "window": 120,
+            "entry_price": 1.1050,
+        })
+        with tmp:
+            from quant_rabbit.strategy.projection_ledger import write_ledger
+            entries = load_ledger(root)
+            entries[0].timestamp_emitted_utc = emitted.isoformat().replace("+00:00", "Z")
+            entries[0].predicted_range_low_price = 1.1000
+            entries[0].predicted_range_high_price = 1.1100
+            entries[0].pre_emission_range_pips = 100.0
+            write_ledger(entries, root)
+
+            counts = verify_pending(
+                root,
+                atr_pips_by_pair={"EUR_USD": 4.0},
+                candles_by_pair={
+                    "EUR_USD": [
+                        {
+                            "timestamp": (emitted + timedelta(minutes=30)).isoformat(),
+                            "high": 1.1098,
+                            "low": 1.1003,
+                            "close": 1.1055,
+                        }
+                    ]
+                },
+            )
+
+            entry = load_ledger(root)[0]
+            self.assertEqual(counts["HIT"], 1)
+            self.assertEqual(entry.resolution_status, "HIT")
+            self.assertIn("range held", entry.resolution_evidence)
+
+    def test_range_forecast_box_break_is_miss(self) -> None:
+        emitted = datetime.now(timezone.utc) - timedelta(minutes=150)
+        tmp, root = self._setup({
+            "name": "directional_forecast",
+            "direction": "RANGE",
+            "lead_time_min": 120,
+            "window": 120,
+            "entry_price": 1.1050,
+        })
+        with tmp:
+            from quant_rabbit.strategy.projection_ledger import write_ledger
+            entries = load_ledger(root)
+            entries[0].timestamp_emitted_utc = emitted.isoformat().replace("+00:00", "Z")
+            entries[0].predicted_range_low_price = 1.1000
+            entries[0].predicted_range_high_price = 1.1100
+            entries[0].pre_emission_range_pips = 100.0
+            write_ledger(entries, root)
+
+            counts = verify_pending(
+                root,
+                atr_pips_by_pair={"EUR_USD": 4.0},
+                candles_by_pair={
+                    "EUR_USD": [
+                        {
+                            "timestamp": (emitted + timedelta(minutes=30)).isoformat(),
+                            "high": 1.1125,
+                            "low": 1.1004,
+                            "close": 1.1118,
+                        }
+                    ]
+                },
+            )
+
+            entry = load_ledger(root)[0]
+            self.assertEqual(counts["MISS"], 1)
+            self.assertEqual(entry.resolution_status, "MISS")
+            self.assertIn("range broke", entry.resolution_evidence)
 
     def test_directional_forecast_same_candle_target_and_invalidation_is_miss(self) -> None:
         emitted = datetime.now(timezone.utc) - timedelta(minutes=30)
@@ -925,6 +1040,46 @@ class HitRatesTest(unittest.TestCase):
             # Aggregate buckets also present
             self.assertIn("EUR_USD:_all_regimes", hr["bb_squeeze"])
             self.assertIn("_all_pairs:_all_regimes", hr["bb_squeeze"])
+
+    def test_range_directional_forecast_gets_direction_specific_calibration(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            from quant_rabbit.strategy.projection_ledger import write_ledger
+
+            entries = [
+                LedgerEntry(
+                    timestamp_emitted_utc="2026-06-16T00:00:00Z",
+                    pair="EUR_USD",
+                    signal_name="directional_forecast",
+                    direction="RANGE",
+                    lead_time_min=120,
+                    confidence=0.7,
+                    entry_price=1.1050,
+                    predicted_target_price=None,
+                    predicted_invalidation_price=None,
+                    predicted_range_low_price=1.1000,
+                    predicted_range_high_price=1.1100,
+                    pre_emission_range_pips=100.0,
+                    resolution_window_min=120,
+                    resolution_status=status,
+                    regime_at_emission="RANGE",
+                )
+                for status in ["HIT", "HIT", "MISS", "HIT"]
+            ]
+            write_ledger(entries, root)
+
+            hit_rates = compute_hit_rates(root)
+
+            self.assertIn("directional_forecast", hit_rates)
+            self.assertIn("directional_forecast_range", hit_rates)
+            self.assertEqual(
+                hit_rates["directional_forecast_range"]["EUR_USD:RANGE"]["samples"],
+                4,
+            )
+            self.assertEqual(
+                hit_rates["directional_forecast_range"]["EUR_USD:RANGE"]["hit_rate"],
+                0.75,
+            )
 
     def test_compute_hit_rates_caches_until_ledger_stat_changes(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

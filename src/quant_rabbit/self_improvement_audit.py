@@ -2108,6 +2108,11 @@ def _directional_forecast_quality_findings(
 
 
 def _directional_forecast_has_target_invalidation(row: dict[str, Any]) -> bool:
+    if str(row.get("direction") or "").upper() == "RANGE":
+        return (
+            row.get("predicted_range_low_price") is not None
+            and row.get("predicted_range_high_price") is not None
+        )
     return row.get("predicted_target_price") is not None and row.get("predicted_invalidation_price") is not None
 
 

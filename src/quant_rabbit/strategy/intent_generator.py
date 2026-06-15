@@ -3534,6 +3534,9 @@ def _forecast_context_payload(forecast: Any, *, cycle_id: str | None = None) -> 
         "forecast_current_price": getattr(forecast, "current_price", None),
         "forecast_target_price": getattr(forecast, "target_price", None),
         "forecast_invalidation_price": getattr(forecast, "invalidation_price", None),
+        "forecast_range_low_price": getattr(forecast, "range_low_price", None),
+        "forecast_range_high_price": getattr(forecast, "range_high_price", None),
+        "forecast_range_width_pips": getattr(forecast, "range_width_pips", None),
         "forecast_horizon_min": getattr(forecast, "horizon_min", None),
         "forecast_rationale": str(getattr(forecast, "rationale_summary", "") or ""),
         "forecast_drivers_for": [str(item) for item in list(getattr(forecast, "drivers_for", ()) or ())[:3]],
@@ -6478,7 +6481,7 @@ def _telemetry_live_readiness_issues(
                         )
                     )
 
-    if latest_is_current and direction in {"UP", "DOWN"}:
+    if latest_is_current and direction in {"UP", "DOWN", "RANGE"}:
         cycle_id = projection_cycle_id
         projection_recorded = (
             (intent.pair, cycle_id) in cache.directional_projection_keys
@@ -6494,7 +6497,7 @@ def _telemetry_live_readiness_issues(
                 _telemetry_issue(
                     "TELEMETRY_DIRECTIONAL_PROJECTION_REQUIRED_FOR_LIVE",
                     (
-                        f"{intent.pair} {intent.side.value} has a directional forecast but "
+                        f"{intent.pair} {intent.side.value} has a {direction} forecast but "
                         "projection_ledger.jsonl has no matching directional_forecast row for "
                         f"cycle_id={cycle_id or 'missing'}; the prediction must be logged for "
                         "future hit/miss calibration before live entry."

@@ -165,9 +165,12 @@ class DirectionalForecast:
     raw_confidence: float = 0.0
     calibration_multiplier: float = 1.0
     component_scores: dict[str, float] = field(default_factory=dict)
+    range_low_price: Optional[float] = None
+    range_high_price: Optional[float] = None
+    range_width_pips: Optional[float] = None
 
     def to_dict(self) -> dict:
-        return {
+        payload = {
             "pair": self.pair,
             "direction": self.direction,
             "confidence": round(self.confidence, 3),
@@ -185,6 +188,13 @@ class DirectionalForecast:
             "calibration_multiplier": round(self.calibration_multiplier, 3),
             "component_scores": {k: round(v, 3) for k, v in self.component_scores.items()},
         }
+        if self.range_low_price is not None:
+            payload["range_low_price"] = self.range_low_price
+        if self.range_high_price is not None:
+            payload["range_high_price"] = self.range_high_price
+        if self.range_width_pips is not None:
+            payload["range_width_pips"] = round(self.range_width_pips, 3)
+        return payload
 
 
 @dataclass(frozen=True)
@@ -194,6 +204,9 @@ class _RangePhase:
     direction: str | None
     rationale: str
     evidence: tuple[str, ...]
+    range_low_price: Optional[float] = None
+    range_high_price: Optional[float] = None
+    range_width_pips: Optional[float] = None
 
 
 def _is_disabled() -> bool:
@@ -604,7 +617,9 @@ def _indicator_first(indicators: Dict[str, Any], keys: tuple[str, ...]) -> Optio
     return None
 
 
-def _range_position(indicators: Dict[str, Any]) -> tuple[Optional[float], Optional[float], Optional[float]]:
+def _range_bounds(
+    indicators: Dict[str, Any],
+) -> tuple[Optional[float], Optional[float], Optional[float], Optional[float], Optional[float]]:
     close = _to_float((indicators or {}).get("close"))
     low = _indicator_first(
         indicators,
@@ -615,9 +630,25 @@ def _range_position(indicators: Dict[str, Any]) -> tuple[Optional[float], Option
         ("donchian_high", "bb_upper", "linreg_channel_upper", "avwap_upper_2sd", "avwap_swing_high"),
     )
     if close is None or low is None or high is None or high <= low:
-        return close, None, None
+        return close, low, high, None, None
     position = (close - low) / (high - low)
-    return close, low, max(0.0, min(1.0, position))
+    pip_size = _to_float((indicators or {}).get("pip_size"))
+    width_pips = (high - low) / pip_size if pip_size is not None and pip_size > 0 else None
+    return close, low, high, max(0.0, min(1.0, position)), width_pips
+
+
+def _range_position(indicators: Dict[str, Any]) -> tuple[Optional[float], Optional[float], Optional[float]]:
+    close, low, _high, position, _width_pips = _range_bounds(indicators)
+    return close, low, position
+
+
+def _range_phase_bounds(
+    candidates: list[tuple[int, float, float, float]],
+) -> tuple[Optional[float], Optional[float], Optional[float]]:
+    if not candidates:
+        return None, None, None
+    _priority, low, high, width_pips = sorted(candidates, key=lambda item: (item[0], item[3]))[0]
+    return low, high, width_pips
 
 
 def _view_regime_state(view: Dict[str, Any]) -> str:
@@ -641,6 +672,8 @@ def _range_phase_analysis(pair_chart: Dict[str, Any]) -> _RangePhase:
     break_up = 0.0
     break_down = 0.0
     evidence: list[str] = []
+    bound_candidates: list[tuple[int, float, float, float]] = []
+    bound_priority = {"M15": 0, "M5": 1, "M30": 2, "H1": 3}
 
     for view in pair_chart.get("views") or []:
         if not isinstance(view, dict):
@@ -664,7 +697,18 @@ def _range_phase_analysis(pair_chart: Dict[str, Any]) -> _RangePhase:
         trend_score = _to_float((families or {}).get("trend_score")) or 0.0
         breakout_score = _to_float((families or {}).get("breakout_score")) or 0.0
         slope = _to_float((indicators or {}).get("linreg_slope_20")) or 0.0
-        close, lower, position = _range_position(indicators)
+        close, lower, upper, position, width_pips = _range_bounds(indicators)
+        if (
+            lower is not None
+            and upper is not None
+            and width_pips is not None
+            and width_pips > 0
+            and (
+                state in {"RANGE", "TREND_WEAK", "TRANSITION", "BREAKOUT_PENDING"}
+                or "RANGE" in str(view.get("regime") or "").upper()
+            )
+        ):
+            bound_candidates.append((bound_priority.get(tf, 9), lower, upper, width_pips))
 
         if state == "RANGE":
             contribution = weight * reading_conf
@@ -717,6 +761,7 @@ def _range_phase_analysis(pair_chart: Dict[str, Any]) -> _RangePhase:
     if total_evidence <= 0:
         return _RangePhase("NONE", 0.0, None, "no range-phase evidence", ())
 
+    range_low, range_high, range_width_pips = _range_phase_bounds(bound_candidates)
     top_break = max(break_up, break_down)
     if top_break >= FORECAST_RANGE_BREAKOUT_MIN_EVIDENCE and top_break >= pending * 0.7:
         direction = "UP" if break_up >= break_down else "DOWN"
@@ -727,6 +772,9 @@ def _range_phase_analysis(pair_chart: Dict[str, Any]) -> _RangePhase:
             direction,
             f"range breakout confirmed {direction}: up={break_up:.1f} down={break_down:.1f} pending={pending:.1f}",
             tuple(evidence[:6]),
+            range_low,
+            range_high,
+            range_width_pips,
         )
 
     if pending >= FORECAST_RANGE_PHASE_MIN_EVIDENCE and pending >= stable * 0.6:
@@ -737,6 +785,9 @@ def _range_phase_analysis(pair_chart: Dict[str, Any]) -> _RangePhase:
             None,
             f"range breakout pending: pending={pending:.1f} stable={stable:.1f} forming={forming:.1f}",
             tuple(evidence[:6]),
+            range_low,
+            range_high,
+            range_width_pips,
         )
 
     if stable >= FORECAST_RANGE_PHASE_MIN_EVIDENCE:
@@ -747,6 +798,9 @@ def _range_phase_analysis(pair_chart: Dict[str, Any]) -> _RangePhase:
             None,
             f"inside stable range: stable={stable:.1f} forming={forming:.1f}",
             tuple(evidence[:6]),
+            range_low,
+            range_high,
+            range_width_pips,
         )
 
     if forming >= FORECAST_RANGE_FORMING_MIN_EVIDENCE:
@@ -757,9 +811,21 @@ def _range_phase_analysis(pair_chart: Dict[str, Any]) -> _RangePhase:
             None,
             f"range forming: forming={forming:.1f} stable={stable:.1f}",
             tuple(evidence[:6]),
+            range_low,
+            range_high,
+            range_width_pips,
         )
 
-    return _RangePhase("NONE", 0.0, None, "range-phase evidence below threshold", tuple(evidence[:6]))
+    return _RangePhase(
+        "NONE",
+        0.0,
+        None,
+        "range-phase evidence below threshold",
+        tuple(evidence[:6]),
+        range_low,
+        range_high,
+        range_width_pips,
+    )
 
 
 def _range_phase_priors(phase: _RangePhase) -> list[tuple[str, float, str]]:
@@ -1547,6 +1613,9 @@ def synthesize_forecast(
                 raw_confidence=contested_range_confidence,
                 calibration_multiplier=cal_mult,
                 component_scores={"UP": up_score, "DOWN": down_score, "RANGE": range_score, "EITHER": either_score},
+                range_low_price=range_phase.range_low_price,
+                range_high_price=range_phase.range_high_price,
+                range_width_pips=range_phase.range_width_pips,
             )
         # Too contested → UNCLEAR
         return DirectionalForecast(
@@ -1630,4 +1699,7 @@ def synthesize_forecast(
         raw_confidence=raw_confidence,
         calibration_multiplier=cal_mult,
         component_scores={"UP": up_score, "DOWN": down_score, "RANGE": range_score, "EITHER": either_score},
+        range_low_price=range_phase.range_low_price if winner == "RANGE" else None,
+        range_high_price=range_phase.range_high_price if winner == "RANGE" else None,
+        range_width_pips=range_phase.range_width_pips if winner == "RANGE" else None,
     )

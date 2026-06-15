@@ -83,6 +83,15 @@ IMMEDIATE_PROJECTION_RESOLUTION_WINDOW_MIN = float(
 )
 if IMMEDIATE_PROJECTION_RESOLUTION_WINDOW_MIN <= 0:
     raise ValueError("QR_IMMEDIATE_PROJECTION_RESOLUTION_WINDOW_MIN must be positive")
+# RANGE forecast calibration checks whether the emitted box stayed intact.
+# The tolerance is ATR-derived, matching the existing projection verifier's
+# half-ATR movement threshold, so normal bar noise does not mislabel a held
+# range as a breakout.
+RANGE_FORECAST_BREAKOUT_TOLERANCE_ATR_MULT = float(
+    os.environ.get("QR_RANGE_FORECAST_BREAKOUT_TOLERANCE_ATR_MULT", "0.5")
+)
+if RANGE_FORECAST_BREAKOUT_TOLERANCE_ATR_MULT < 0:
+    raise ValueError("QR_RANGE_FORECAST_BREAKOUT_TOLERANCE_ATR_MULT must be non-negative")
 
 
 @dataclass
@@ -101,6 +110,8 @@ class LedgerEntry:
     resolved_at_utc: Optional[str] = None
     resolution_evidence: str = ""
     pre_emission_range_pips: Optional[float] = None
+    predicted_range_low_price: Optional[float] = None
+    predicted_range_high_price: Optional[float] = None
     # 2026-05-14: regime tagging for segmented hit_rate calculation.
     # Detectors that fire in TREND regimes often perform very differently
     # from the same detector in RANGE regimes — bucketing the calibration
@@ -124,6 +135,8 @@ class LedgerEntry:
             "resolved_at_utc": self.resolved_at_utc,
             "resolution_evidence": self.resolution_evidence,
             "pre_emission_range_pips": self.pre_emission_range_pips,
+            "predicted_range_low_price": self.predicted_range_low_price,
+            "predicted_range_high_price": self.predicted_range_high_price,
             "regime_at_emission": self.regime_at_emission,
             "cycle_id": self.cycle_id,
         }
@@ -145,6 +158,8 @@ class LedgerEntry:
             resolved_at_utc=d.get("resolved_at_utc"),
             resolution_evidence=str(d.get("resolution_evidence", "")),
             pre_emission_range_pips=d.get("pre_emission_range_pips"),
+            predicted_range_low_price=d.get("predicted_range_low_price"),
+            predicted_range_high_price=d.get("predicted_range_high_price"),
             regime_at_emission=d.get("regime_at_emission"),
             cycle_id=d.get("cycle_id"),
         )
@@ -248,7 +263,7 @@ def record_directional_forecast(
     always returned the neutral 1.0 multiplier. This entry closes that loop.
     """
     direction = str(getattr(forecast, "direction", "") or "").upper()
-    if direction not in {"UP", "DOWN"}:
+    if direction not in {"UP", "DOWN", "RANGE"}:
         return 0
     entry_price = current_price
     if entry_price is None:
@@ -269,6 +284,28 @@ def record_directional_forecast(
         parsed_invalidation = float(invalidation_price) if invalidation_price is not None else None
     except (TypeError, ValueError):
         parsed_invalidation = None
+    range_low_price = getattr(forecast, "range_low_price", None)
+    range_high_price = getattr(forecast, "range_high_price", None)
+    try:
+        parsed_range_low = float(range_low_price) if range_low_price is not None else None
+    except (TypeError, ValueError):
+        parsed_range_low = None
+    try:
+        parsed_range_high = float(range_high_price) if range_high_price is not None else None
+    except (TypeError, ValueError):
+        parsed_range_high = None
+    range_width_pips = getattr(forecast, "range_width_pips", None)
+    try:
+        parsed_range_width = float(range_width_pips) if range_width_pips is not None else None
+    except (TypeError, ValueError):
+        parsed_range_width = None
+    if (
+        (parsed_range_width is None or parsed_range_width <= 0)
+        and parsed_range_low is not None
+        and parsed_range_high is not None
+        and parsed_range_high > parsed_range_low
+    ):
+        parsed_range_width = (parsed_range_high - parsed_range_low) * float(instrument_pip_factor(pair))
     try:
         horizon_min = float(getattr(forecast, "horizon_min", 0) or 0)
     except (TypeError, ValueError):
@@ -293,11 +330,13 @@ def record_directional_forecast(
         lead_time_min=horizon_min,
         confidence=float(getattr(forecast, "confidence", 0.0) or 0.0),
         entry_price=parsed_entry,
-        predicted_target_price=parsed_target,
+        predicted_target_price=parsed_target if direction != "RANGE" else None,
         resolution_window_min=horizon_min,
         resolution_status="PENDING",
-        predicted_invalidation_price=parsed_invalidation,
-        pre_emission_range_pips=None,
+        predicted_invalidation_price=parsed_invalidation if direction != "RANGE" else None,
+        pre_emission_range_pips=parsed_range_width if direction == "RANGE" else None,
+        predicted_range_low_price=parsed_range_low if direction == "RANGE" else None,
+        predicted_range_high_price=parsed_range_high if direction == "RANGE" else None,
         regime_at_emission=regime_at_emission,
         cycle_id=cycle_id,
     )
@@ -633,7 +672,12 @@ def _verify_pending_unlocked(
         pip_factor = float(instrument_pip_factor(e.pair))
         atr_pips = atr_pips_by_pair.get(e.pair)
         move_threshold_price = None
-        if e.predicted_target_price is None and (atr_pips is None or atr_pips <= 0):
+        needs_atr_threshold = (
+            e.predicted_target_price is None
+            and str(e.direction or "").upper() in {"UP", "DOWN", "EITHER"}
+            and (atr_pips is None or atr_pips <= 0)
+        )
+        if needs_atr_threshold:
             e.resolution_status = "TIMEOUT"
             e.resolved_at_utc = now.isoformat().replace("+00:00", "Z")
             e.resolution_evidence = "missing ATR threshold for projection verification"
@@ -727,6 +771,16 @@ def _verify_pending_unlocked(
                     f"did not reach {target:.5f}"
                 )
                 counts["MISS"] += 1
+        elif e.signal_name == "directional_forecast" and str(e.direction or "").upper() == "RANGE":
+            status, evidence = _range_forecast_outcome(
+                e,
+                price_path=price_path,
+                atr_pips=atr_pips,
+                pip_factor=pip_factor,
+            )
+            e.resolution_status = status
+            e.resolution_evidence = evidence
+            counts[status] += 1
         elif e.direction == "EITHER":
             if move_threshold_price is None or atr_pips is None:
                 e.resolution_status = "TIMEOUT"
@@ -779,6 +833,75 @@ def _verify_pending_unlocked(
     else:
         write_ledger(entries, data_root)
     return counts
+
+
+def _range_forecast_outcome(
+    entry: LedgerEntry,
+    *,
+    price_path: Dict[str, float],
+    atr_pips: Optional[float],
+    pip_factor: float,
+) -> tuple[str, str]:
+    tolerance_pips = 0.0
+    if atr_pips is not None and atr_pips > 0:
+        tolerance_pips = atr_pips * RANGE_FORECAST_BREAKOUT_TOLERANCE_ATR_MULT
+    tolerance_price = tolerance_pips / pip_factor if pip_factor > 0 else 0.0
+    range_low = entry.predicted_range_low_price
+    range_high = entry.predicted_range_high_price
+    try:
+        low = float(range_low) if range_low is not None else None
+        high = float(range_high) if range_high is not None else None
+    except (TypeError, ValueError):
+        low = None
+        high = None
+    if low is not None and high is not None and high > low:
+        lower_bound = low - tolerance_price
+        upper_bound = high + tolerance_price
+        broke_low = price_path["low"] < lower_bound
+        broke_high = price_path["high"] > upper_bound
+        if broke_low or broke_high:
+            return (
+                "MISS",
+                (
+                    f"range broke: window high/low {price_path['high']:.5f}/{price_path['low']:.5f} "
+                    f"exceeded box {low:.5f}-{high:.5f} plus {tolerance_pips:.1f}pip ATR tolerance"
+                ),
+            )
+        return (
+            "HIT",
+            (
+                f"range held: window high/low {price_path['high']:.5f}/{price_path['low']:.5f} "
+                f"stayed inside box {low:.5f}-{high:.5f} plus {tolerance_pips:.1f}pip ATR tolerance"
+            ),
+        )
+
+    try:
+        emitted_width_pips = (
+            float(entry.pre_emission_range_pips)
+            if entry.pre_emission_range_pips is not None
+            else None
+        )
+    except (TypeError, ValueError):
+        emitted_width_pips = None
+    if emitted_width_pips is None or emitted_width_pips <= 0:
+        return "TIMEOUT", "missing emitted range bounds for RANGE forecast verification"
+    window_range_pips = (price_path["high"] - price_path["low"]) * pip_factor
+    allowed_pips = emitted_width_pips + tolerance_pips
+    if window_range_pips <= allowed_pips:
+        return (
+            "HIT",
+            (
+                f"range held: window range {window_range_pips:.1f}pip <= "
+                f"emitted range {emitted_width_pips:.1f}pip + {tolerance_pips:.1f}pip ATR tolerance"
+            ),
+        )
+    return (
+        "MISS",
+        (
+            f"range broke: window range {window_range_pips:.1f}pip > "
+            f"emitted range {emitted_width_pips:.1f}pip + {tolerance_pips:.1f}pip ATR tolerance"
+        ),
+    )
 
 
 def _retryable_truth_timeout(entry: LedgerEntry) -> bool:
@@ -1157,7 +1280,7 @@ def directional_calibration_signal_name(signal_name: str, direction: str) -> Opt
     """
     base = str(signal_name or "").strip()
     direction_norm = str(direction or "").upper()
-    if not base or direction_norm not in {"UP", "DOWN"}:
+    if not base or direction_norm not in {"UP", "DOWN", "RANGE"}:
         return None
     suffix = direction_norm.lower()
     if base.endswith(f"_{suffix}"):

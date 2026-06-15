@@ -523,6 +523,9 @@ class ForecastGeometryTest(unittest.TestCase):
         self.assertEqual(forecast.direction, "RANGE")
         self.assertGreater(forecast.range_score, forecast.up_score)
         self.assertIn("inside stable range", " ".join(forecast.drivers_for))
+        self.assertEqual(forecast.range_low_price, 1.1000)
+        self.assertEqual(forecast.range_high_price, 1.1100)
+        self.assertAlmostEqual(forecast.range_width_pips or 0.0, 100.0)
 
     def test_contested_direction_inside_range_forecasts_range(self) -> None:
         pair_chart = {
