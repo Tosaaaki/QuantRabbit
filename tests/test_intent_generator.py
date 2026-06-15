@@ -450,6 +450,199 @@ class IntentGeneratorTest(unittest.TestCase):
             self.assertGreaterEqual(metadata["target_reward_risk"], 2.4)
             self.assertTrue(any("BLOCK_UNTIL_NEW_EVIDENCE" in blocker for row in usd_rows for blocker in row["live_blockers"]))
 
+    def test_matrix_supported_watch_only_edge_gets_diagnostic_dry_run_lanes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            strategy = root / "strategy.json"
+            strategy.write_text(
+                json.dumps(
+                    {
+                        "profiles": [
+                            {
+                                "pair": "AUD_JPY",
+                                "direction": "LONG",
+                                "status": "WATCH_ONLY",
+                                "required_fix": (
+                                    "missed seats were directionally correct, but realized seat net is negative; "
+                                    "repair discovery filters before mining this edge"
+                                ),
+                                "target_reward_risk": 2.2,
+                                "positive_best_jpy": 1180.0,
+                                "positive_tail_jpy": 240.0,
+                                "positive_evidence_n": 12,
+                                "pretrade_net_jpy": 1408.0,
+                            }
+                        ]
+                    }
+                )
+            )
+            charts = root / "pair_charts.json"
+            charts.write_text(
+                json.dumps(
+                    {
+                        "charts": [
+                            {
+                                "pair": "AUD_JPY",
+                                "dominant_regime": "TREND_UP",
+                                "long_score": 0.61,
+                                "short_score": 0.34,
+                                "confluence": {
+                                    "score_balance": "LONG_LEAN",
+                                    "score_gap": 0.27,
+                                    "tf_agreement_score": 0.8,
+                                    "range_24h_sigma_multiple": 1.0,
+                                    "price_percentile_24h": 0.58,
+                                    "price_percentile_7d": 0.62,
+                                },
+                                "views": [
+                                    {
+                                        "granularity": "M5",
+                                        "regime": "TREND_UP",
+                                        "long_bias": 0.66,
+                                        "short_bias": 0.24,
+                                        "indicators": {
+                                            "atr_pips": 8.0,
+                                            "bb_lower": 113.10,
+                                            "bb_upper": 113.90,
+                                            "bb_middle": 113.50,
+                                            "donchian_low": 113.05,
+                                            "donchian_high": 113.95,
+                                            "swing_low": 113.00,
+                                            "swing_high": 114.00,
+                                        },
+                                    },
+                                    {
+                                        "granularity": "H1",
+                                        "regime": "TREND_UP",
+                                        "indicators": {"atr_pips": 24.0, "adx_14": 31.0},
+                                    },
+                                    {
+                                        "granularity": "H4",
+                                        "regime": "TREND_UP",
+                                        "indicators": {"atr_pips": 42.0, "adx_14": 31.0},
+                                    },
+                                ],
+                            }
+                        ]
+                    }
+                )
+            )
+            matrix = root / "matrix.json"
+            matrix.write_text(
+                json.dumps(
+                    {
+                        "pairs": {
+                            "AUD_JPY": {
+                                "LONG": {
+                                    "evidence_ref": "matrix:AUD_JPY:LONG",
+                                    "support_count": 4,
+                                    "reject_count": 0,
+                                    "supports": [
+                                        {
+                                            "code": "CHART_CONFLUENCE_LONG_LEAN",
+                                            "layer": "chart",
+                                            "message": "AUD_JPY confluence score_balance=LONG_LEAN",
+                                            "evidence_refs": ["chart:AUD_JPY:structure"],
+                                        },
+                                        {
+                                            "code": "BASE_STRENGTH_EXCEEDS_QUOTE",
+                                            "layer": "strength",
+                                            "message": "AUD strength exceeds JPY",
+                                            "evidence_refs": ["strength:AUD_JPY"],
+                                        },
+                                        {
+                                            "code": "RISK_ASSET_JPY_CROSS_DIRECTION",
+                                            "layer": "cross_asset",
+                                            "message": "SPX risk context maps to AUD_JPY LONG",
+                                            "evidence_refs": ["cross:spx"],
+                                        },
+                                        {
+                                            "code": "FLOW_SPREAD_EXECUTABLE",
+                                            "layer": "flow",
+                                            "message": "AUD_JPY spread stress=NORMAL",
+                                            "evidence_refs": ["flow:AUD_JPY"],
+                                        },
+                                    ],
+                                }
+                            }
+                        },
+                        "issues": [],
+                    }
+                )
+            )
+            snapshot = root / "snapshot.json"
+            now = datetime.now(timezone.utc).isoformat()
+            snapshot.write_text(
+                json.dumps(
+                    {
+                        "fetched_at_utc": now,
+                        "positions": [],
+                        "orders": [],
+                        "quotes": {
+                            "EUR_USD": {"bid": 1.17322, "ask": 1.17330, "timestamp_utc": now},
+                            "AUD_JPY": {"bid": 113.36, "ask": 113.376, "timestamp_utc": now},
+                        },
+                        "account": {
+                            "nav_jpy": 200000.0,
+                            "balance_jpy": 200000.0,
+                            "margin_used_jpy": 0.0,
+                            "margin_available_jpy": 200000.0,
+                            "fetched_at_utc": now,
+                        },
+                    }
+                )
+            )
+            output = root / "intents.json"
+
+            prior_sl_free = os.environ.get("QR_TRADER_DISABLE_SL_REPAIR")
+            os.environ["QR_TRADER_DISABLE_SL_REPAIR"] = "1"
+            try:
+                with patch(
+                    "quant_rabbit.strategy.intent_generator._forecast_seed_for_pair",
+                    return_value=None,
+                ):
+                    IntentGenerator(
+                        campaign_plan=_campaign(root),
+                        strategy_profile=strategy,
+                        output_path=output,
+                        report_path=root / "intents.md",
+                        pair_charts_path=charts,
+                        market_context_matrix_path=matrix,
+                        max_loss_jpy=500.0,
+                    ).run(snapshot_path=snapshot)
+            finally:
+                if prior_sl_free is None:
+                    os.environ.pop("QR_TRADER_DISABLE_SL_REPAIR", None)
+                else:
+                    os.environ["QR_TRADER_DISABLE_SL_REPAIR"] = prior_sl_free
+
+            payload = json.loads(output.read_text())
+            aud_rows = [
+                item
+                for item in payload["results"]
+                if (item.get("intent") or {}).get("pair") == "AUD_JPY"
+                and (item.get("intent") or {}).get("side") == "LONG"
+            ]
+
+            self.assertGreaterEqual(len(aud_rows), 2)
+            self.assertFalse(any(row["status"] == "LIVE_READY" for row in aud_rows))
+            self.assertFalse(any(row["intent"]["order_type"] == "MARKET" for row in aud_rows))
+            methods = {row["intent"]["market_context"]["method"] for row in aud_rows}
+            self.assertIn("BREAKOUT_FAILURE", methods)
+            self.assertIn("TREND_CONTINUATION", methods)
+            metadata = aud_rows[0]["intent"]["metadata"]
+            self.assertTrue(metadata["matrix_repair_seed"])
+            self.assertTrue(metadata["matrix_watch_only_seed"])
+            self.assertEqual(metadata["matrix_repair_profile_status"], "WATCH_ONLY")
+            self.assertTrue(any("WATCH_ONLY" in blocker for row in aud_rows for blocker in row["live_blockers"]))
+            self.assertTrue(
+                any(
+                    issue["code"] == "STRATEGY_NOT_ELIGIBLE" and issue["severity"] == "BLOCK"
+                    for row in aud_rows
+                    for issue in row["live_strategy_issues"]
+                )
+            )
+
     def test_post_harvest_profit_take_seeds_pullback_limit_reentry_lane(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

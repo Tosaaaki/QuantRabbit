@@ -2109,7 +2109,7 @@ def _append_matrix_supported_repair_lanes(
     }
     ranked: list[tuple[float, int, int, int, str, str, str, Any, dict[str, Any]]] = []
     for entry in strategy_profile.entries.values():
-        if entry.status not in {"RISK_REPAIR_CANDIDATE", "BLOCK_UNTIL_NEW_EVIDENCE"}:
+        if not _matrix_repair_entry_can_seed(entry):
             continue
         if entry.direction not in {Side.LONG.value, Side.SHORT.value}:
             continue
@@ -2162,6 +2162,31 @@ def _matrix_side_is_strong_repair_support(side_payload: dict[str, Any]) -> bool:
     return len(support_layers) >= MATRIX_REPAIR_MIN_SUPPORT_LAYERS
 
 
+def _matrix_repair_entry_can_seed(entry: Any) -> bool:
+    status = str(getattr(entry, "status", "") or "").upper()
+    if status in {"RISK_REPAIR_CANDIDATE", "BLOCK_UNTIL_NEW_EVIDENCE"}:
+        return True
+    if status != "WATCH_ONLY":
+        return False
+    return _watch_only_matrix_entry_has_positive_discovery(entry)
+
+
+def _watch_only_matrix_entry_has_positive_discovery(entry: Any) -> bool:
+    """Allow WATCH_ONLY matrix seeds only as diagnostic candidate coverage.
+
+    WATCH_ONLY still blocks live send through StrategyProfile. The seed exists
+    so coverage can price short-horizon and trigger-horizon geometry for a
+    currently supported edge instead of hiding it as NO_CURRENT_LANE.
+    """
+
+    for attr in ("pretrade_net_jpy", "positive_best_jpy", "positive_tail_jpy"):
+        value = _optional_float(getattr(entry, attr, None))
+        if value is not None and value > 0:
+            return True
+    evidence_n = _optional_int(getattr(entry, "positive_evidence_n", None)) or 0
+    return evidence_n > 0
+
+
 def _matrix_support_layers(side_payload: dict[str, Any]) -> set[str]:
     layers: set[str] = set()
     for raw in side_payload.get("supports") or []:
@@ -2196,6 +2221,7 @@ def _matrix_repair_seed_lane(
     method: str,
     side_payload: dict[str, Any],
 ) -> dict[str, Any]:
+    watch_only = str(getattr(entry, "status", "") or "").upper() == "WATCH_ONLY"
     support_messages = [
         str(item.get("message") or item.get("code") or "")
         for item in side_payload.get("supports") or []
@@ -2210,21 +2236,30 @@ def _matrix_repair_seed_lane(
         "direction": entry.direction,
         "method": method,
         "adoption": "TRIGGER_RECEIPT_REQUIRED",
-        "campaign_role": "MATRIX_SUPPORTED_REPAIR",
+        "campaign_role": "MATRIX_SUPPORTED_WATCH_ONLY_REPAIR" if watch_only else "MATRIX_SUPPORTED_REPAIR",
         "reason": (
             f"matrix-supported repair seed: {side_payload.get('evidence_ref') or entry.pair + ':' + entry.direction} "
             f"support_count={support_count} layers={','.join(sorted(_matrix_support_layers(side_payload)))}; "
             f"profile={entry.status}"
+            + ("; watch-only diagnostic geometry only" if watch_only else "")
         ),
         "required_receipt": (
-            "Matrix-supported repair lane: create only a pending LIMIT/STOP-ENTRY dry-run receipt; "
-            "do not market-chase the supported direction. RiskEngine, forecast freshness, spread, "
-            "profile repair, and live gateway gates must still decide execution."
+            (
+                "Watch-only matrix-supported lane: create pending dry-run geometry and blocker reasons only; "
+                "do not send live until new evidence repairs the mined strategy profile."
+            )
+            if watch_only
+            else (
+                "Matrix-supported repair lane: create only a pending LIMIT/STOP-ENTRY dry-run receipt; "
+                "do not market-chase the supported direction. RiskEngine, forecast freshness, spread, "
+                "profile repair, and live gateway gates must still decide execution."
+            )
         ),
         "target_reward_risk": rr,
         "blockers": [entry.required_fix] if entry.required_fix else [],
         "story_examples": support_messages[:2],
         "matrix_repair_seed": True,
+        "matrix_watch_only_seed": watch_only,
         "matrix_repair_profile_status": entry.status,
     }
 
@@ -4938,6 +4973,7 @@ def _intent_from_lane(
             "forecast_watch_only_live_override": bool(watch_override_reason),
             "forecast_watch_only_live_override_reason": watch_override_reason,
             "matrix_repair_seed": bool(lane.get("matrix_repair_seed")),
+            "matrix_watch_only_seed": bool(lane.get("matrix_watch_only_seed")),
             "matrix_repair_profile_status": lane.get("matrix_repair_profile_status"),
             "post_harvest_reentry_seed": bool(lane.get("post_harvest_reentry_seed")),
             "post_harvest_trade_id": lane.get("post_harvest_trade_id"),
