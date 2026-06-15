@@ -2606,6 +2606,7 @@ def _intent_findings(
                     "active_trader_positions": len(active_positions),
                     "trader_pending_entry_orders": _pending_entry_evidence(pending_entry_orders),
                     "coverage_market_evidence_refresh": coverage_refresh,
+                    "opportunity_modes": _coverage_opportunity_mode_summary(coverage_optimization),
                     "status_counts": _intent_status_counts(intents),
                     "top_blockers": _top_intent_blockers(intents),
                     "dry_run_passed_live_readiness_blockers": _top_intent_live_readiness_blockers(
@@ -2642,6 +2643,37 @@ def _intent_findings(
             )
         )
     return out
+
+
+def _coverage_opportunity_mode_summary(payload: dict[str, Any]) -> dict[str, Any]:
+    modes = payload.get("opportunity_modes") if isinstance(payload.get("opportunity_modes"), dict) else {}
+    summary: dict[str, Any] = {}
+    for mode in ("HARVEST", "RUNNER", "BALANCED"):
+        item = modes.get(mode)
+        if not isinstance(item, dict):
+            continue
+        summary[mode] = {
+            "lanes": _maybe_int(item.get("lanes")) or 0,
+            "live_ready_lanes": _maybe_int(item.get("live_ready_lanes")) or 0,
+            "promotion_candidate_lanes": _maybe_int(item.get("promotion_candidate_lanes")) or 0,
+            "top_issue_codes": [
+                {
+                    "code": str(issue.get("code") or ""),
+                    "count": _maybe_int(issue.get("count")) or 0,
+                }
+                for issue in (item.get("top_issue_codes") or [])[:5]
+                if isinstance(issue, dict) and str(issue.get("code") or "").strip()
+            ],
+            "top_blockers": [
+                {
+                    "label": str(blocker.get("label") or ""),
+                    "count": _maybe_int(blocker.get("count")) or 0,
+                }
+                for blocker in (item.get("top_blockers") or [])[:3]
+                if isinstance(blocker, dict) and str(blocker.get("label") or "").strip()
+            ],
+        }
+    return summary
 
 
 def _coverage_market_evidence_refresh(payload: dict[str, Any]) -> dict[str, Any] | None:
@@ -4772,6 +4804,10 @@ def _dry_run_passed_forecast_gate_diagnostics(
                 "lane_id": str(result.get("lane_id") or ""),
                 "side": str(intent.get("side") or ""),
                 "order_type": str(intent.get("order_type") or ""),
+                "opportunity_mode": str(metadata.get("opportunity_mode") or ""),
+                "opportunity_mode_reason": str(metadata.get("opportunity_mode_reason") or ""),
+                "opportunity_mode_reward_risk": _maybe_float(metadata.get("opportunity_mode_reward_risk")),
+                "tp_target_intent": str(metadata.get("tp_target_intent") or ""),
                 "forecast_direction": str(metadata.get("forecast_direction") or ""),
                 "forecast_confidence": _maybe_float(metadata.get("forecast_confidence")),
                 "forecast_raw_confidence": _maybe_float(metadata.get("forecast_raw_confidence")),

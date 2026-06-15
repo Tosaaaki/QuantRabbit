@@ -1484,6 +1484,10 @@ class SelfImprovementAuditorTest(unittest.TestCase):
                                     "side": "SHORT",
                                     "order_type": "LIMIT",
                                     "metadata": {
+                                        "opportunity_mode": "HARVEST",
+                                        "opportunity_mode_reason": "tp_target_intent=HARVEST",
+                                        "opportunity_mode_reward_risk": 1.18,
+                                        "tp_target_intent": "HARVEST",
                                         "forecast_direction": "DOWN",
                                         "forecast_confidence": 0.311,
                                         "forecast_raw_confidence": 0.5244919527711897,
@@ -1540,6 +1544,28 @@ class SelfImprovementAuditorTest(unittest.TestCase):
                     }
                 )
             )
+            files["coverage"].write_text(
+                json.dumps(
+                    {
+                        "opportunity_modes": {
+                            "HARVEST": {
+                                "lanes": 1,
+                                "live_ready_lanes": 0,
+                                "promotion_candidate_lanes": 0,
+                                "top_issue_codes": [{"code": "FORECAST_CONFIDENCE_REQUIRED_FOR_LIVE", "count": 1}],
+                                "top_blockers": [{"label": "forecast confidence below live floor", "count": 1}],
+                            },
+                            "RUNNER": {
+                                "lanes": 1,
+                                "live_ready_lanes": 0,
+                                "promotion_candidate_lanes": 0,
+                                "top_issue_codes": [{"code": "FORECAST_WATCH_ONLY", "count": 1}],
+                                "top_blockers": [{"label": "runner forecast watch-only", "count": 1}],
+                            },
+                        }
+                    }
+                )
+            )
 
             summary = _run(files)
             payload = json.loads(files["output"].read_text())
@@ -1549,6 +1575,8 @@ class SelfImprovementAuditorTest(unittest.TestCase):
         dry_run_blockers = {item["message"]: item for item in evidence["dry_run_passed_live_readiness_blockers"]}
         self.assertEqual(summary.status, STATUS_BLOCKED)
         self.assertEqual(evidence["status_counts"]["DRY_RUN_PASSED"], 1)
+        self.assertEqual(evidence["opportunity_modes"]["HARVEST"]["lanes"], 1)
+        self.assertEqual(evidence["opportunity_modes"]["RUNNER"]["top_issue_codes"][0]["code"], "FORECAST_WATCH_ONLY")
         self.assertEqual(dry_run_blockers["FORECAST_CONFIDENCE_REQUIRED_FOR_LIVE"]["count"], 1)
         self.assertEqual(dry_run_blockers["STRATEGY_NOT_ELIGIBLE"]["count"], 1)
         self.assertNotIn("STRATEGY_PROFILE_MISSING", dry_run_blockers)
@@ -1557,6 +1585,9 @@ class SelfImprovementAuditorTest(unittest.TestCase):
         self.assertIn("liquidity_sweep_high DOWN", forecast_diagnostics["reason_counts"][0]["reason"])
         lane_diagnostic = forecast_diagnostics["lanes"][0]
         self.assertEqual(lane_diagnostic["lane_id"], "failure_trader:AUD_CAD:SHORT:BREAKOUT_FAILURE:LIMIT")
+        self.assertEqual(lane_diagnostic["opportunity_mode"], "HARVEST")
+        self.assertEqual(lane_diagnostic["opportunity_mode_reward_risk"], 1.18)
+        self.assertEqual(lane_diagnostic["tp_target_intent"], "HARVEST")
         self.assertEqual(lane_diagnostic["chart_direction_bias"], "LONG")
         self.assertEqual(lane_diagnostic["forecast_confidence"], 0.311)
         self.assertTrue(lane_diagnostic["forecast_market_support_ok"])
