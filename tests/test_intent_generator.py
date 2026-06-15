@@ -2757,6 +2757,135 @@ class IntentGeneratorTest(unittest.TestCase):
         self.assertEqual(seed["intent"]["metadata"]["geometry_model"], "RANGE_RAIL_LIMIT")
         self.assertNotIn("FORECAST_CONFIDENCE_REQUIRED_FOR_LIVE", seed_issue_codes)
 
+    def test_range_forecast_box_seeds_watch_only_rotation_when_auto_edge_is_not_confirmed(self) -> None:
+        os.environ["QR_REQUIRE_FORECAST_FOR_LIVE"] = "1"
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            output = root / "intents.json"
+            charts = root / "pair_charts.json"
+            charts.write_text(
+                json.dumps(
+                    {
+                        "charts": [
+                            {
+                                "pair": "EUR_USD",
+                                "dominant_regime": "RANGE",
+                                "long_score": 0.58,
+                                "short_score": 0.42,
+                                "confluence": {
+                                    "score_balance": "LONG_LEAN",
+                                    "score_gap": 0.16,
+                                    "dominant_regime": "RANGE",
+                                },
+                                "views": [
+                                    {
+                                        "granularity": "M5",
+                                        "regime": "RANGE",
+                                        "long_bias": 0.58,
+                                        "short_bias": 0.42,
+                                        "regime_reading": {"state": "TREND_WEAK", "confidence": 0.62},
+                                        "family_scores": {"mean_rev_score": 1.2, "trend_score": 0.1, "breakout_score": 0.0},
+                                        "indicators": {
+                                            "close": 1.1732,
+                                            "atr_pips": 8.0,
+                                            "bb_lower": 1.1710,
+                                            "bb_upper": 1.1760,
+                                            "donchian_low": 1.1707,
+                                            "donchian_high": 1.1764,
+                                            "swing_low": 1.1705,
+                                            "swing_high": 1.1767,
+                                            "linreg_channel_lower": 1.1709,
+                                            "linreg_channel_upper": 1.1761,
+                                            "adx_14": 17.0,
+                                            "choppiness_14": 58.0,
+                                        },
+                                    },
+                                    {
+                                        "granularity": "M15",
+                                        "regime": "RANGE",
+                                        "regime_reading": {"state": "TRANSITION", "confidence": 0.52},
+                                        "family_scores": {"mean_rev_score": 1.0, "trend_score": 0.0, "breakout_score": 0.0},
+                                        "indicators": {
+                                            "close": 1.1732,
+                                            "atr_pips": 11.0,
+                                            "bb_lower": 1.1708,
+                                            "bb_upper": 1.1763,
+                                            "donchian_low": 1.1705,
+                                            "donchian_high": 1.1766,
+                                            "adx_14": 18.0,
+                                            "choppiness_14": 59.0,
+                                        },
+                                    },
+                                    {
+                                        "granularity": "M30",
+                                        "regime": "UNCLEAR",
+                                        "regime_reading": {"state": "BREAKOUT_PENDING", "confidence": 0.61},
+                                        "family_scores": {"mean_rev_score": 0.7, "trend_score": 0.2, "breakout_score": 0.3},
+                                        "indicators": {
+                                            "close": 1.1732,
+                                            "atr_pips": 15.0,
+                                            "bb_lower": 1.1700,
+                                            "bb_upper": 1.1770,
+                                            "donchian_low": 1.1698,
+                                            "donchian_high": 1.1772,
+                                            "adx_14": 21.0,
+                                            "choppiness_14": 42.0,
+                                        },
+                                    },
+                                ],
+                            }
+                        ]
+                    }
+                )
+            )
+            forecast = SimpleNamespace(
+                direction="RANGE",
+                confidence=0.56,
+                raw_confidence=0.76,
+                current_price=1.17326,
+                target_price=None,
+                invalidation_price=None,
+                range_low_price=1.1710,
+                range_high_price=1.1760,
+                range_width_pips=50.0,
+                horizon_min=120,
+                rationale_summary="RANGE forecast has a measurable box, but higher timeframe is pending",
+                drivers_for=("M5/M15 rails still define the box",),
+                drivers_against=("M30 breakout pending",),
+            )
+
+            with (
+                patch("quant_rabbit.strategy.intent_generator._forecast_seed_for_pair", return_value=forecast),
+                patch("quant_rabbit.strategy.intent_generator._record_forecast_seed_telemetry", return_value=None),
+            ):
+                IntentGenerator(
+                    campaign_plan=_campaign(root),
+                    strategy_profile=_strategy(root, status="CANDIDATE", direction="LONG"),
+                    pair_charts_path=charts,
+                    output_path=output,
+                    report_path=root / "intents.md",
+                    max_loss_jpy=500.0,
+                ).run(snapshot_path=_snapshot(root))
+
+            payload = json.loads(output.read_text())
+
+        seed = next(
+            item
+            for item in payload["results"]
+            if item["lane_id"] == "range_trader:EUR_USD:LONG:RANGE_ROTATION"
+        )
+        metadata = seed["intent"]["metadata"]
+        issue_codes = {issue["code"] for issue in seed["risk_issues"]}
+
+        self.assertTrue(metadata["forecast_seed"])
+        self.assertTrue(metadata["forecast_watch_only"])
+        self.assertIn("current range-rotation edge is not confirmed", metadata["forecast_watch_only_reason"])
+        self.assertEqual(metadata["forecast_direction"], "RANGE")
+        self.assertEqual(metadata["forecast_range_low_price"], 1.1710)
+        self.assertEqual(metadata["forecast_range_high_price"], 1.1760)
+        self.assertEqual(metadata["geometry_model"], "RANGE_RAIL_LIMIT")
+        self.assertIn("FORECAST_WATCH_ONLY", issue_codes)
+
     def test_reversal_recovery_hedge_uses_recovery_forecast_floor_for_live_context(self) -> None:
         from quant_rabbit.models import BrokerSnapshot, MarketContext, OrderIntent, OrderType, Quote, Side, TradeMethod
         from quant_rabbit.strategy.intent_generator import (

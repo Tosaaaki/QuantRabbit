@@ -2352,6 +2352,13 @@ def _append_forecast_seed_lanes(
                 )
                 if watch_reason is None:
                     continue
+        range_geometry_watch_reason = _range_forecast_geometry_watch_reason(pair, forecast, charts)
+        if range_geometry_watch_reason:
+            watch_reason = (
+                f"{watch_reason}; {range_geometry_watch_reason}"
+                if watch_reason
+                else range_geometry_watch_reason
+            )
         methods = _forecast_seed_methods(pair, forecast, charts)
         if not methods:
             continue
@@ -2386,6 +2393,7 @@ def _append_forecast_seed_lanes(
                     "on a fresh snapshot."
                 )
                 lane["reason"] = f"{lane.get('reason') or 'forecast-first candidate discovery'}; {watch_reason}"
+                lane["forecast_watch_only_reason"] = watch_reason
                 lane["blockers"] = [
                     *list(lane.get("blockers") or []),
                     "watch-only forecast candidate below calibrated live-entry confidence",
@@ -3379,7 +3387,9 @@ def _forecast_seed_methods(
 ) -> tuple[str, ...]:
     direction = str(getattr(forecast, "direction", "") or "").upper()
     if direction == "RANGE":
-        return FORECAST_SEED_RANGE_METHODS if _pair_has_current_range_rotation_edge(pair, charts) else ()
+        if _pair_has_current_range_rotation_edge(pair, charts):
+            return FORECAST_SEED_RANGE_METHODS
+        return FORECAST_SEED_RANGE_METHODS if _forecast_has_range_box(forecast) else ()
     if direction not in {"UP", "DOWN"}:
         return ()
     methods: list[str] = []
@@ -3387,6 +3397,29 @@ def _forecast_seed_methods(
         methods.append(TradeMethod.RANGE_ROTATION.value)
     methods.extend(FORECAST_SEED_DIRECTIONAL_METHODS)
     return tuple(dict.fromkeys(methods))
+
+
+def _forecast_has_range_box(forecast: Any) -> bool:
+    low = _optional_float(getattr(forecast, "range_low_price", None))
+    high = _optional_float(getattr(forecast, "range_high_price", None))
+    return low is not None and high is not None and high > low
+
+
+def _range_forecast_geometry_watch_reason(
+    pair: str,
+    forecast: Any,
+    charts: dict[str, dict[str, Any]],
+) -> str | None:
+    if str(getattr(forecast, "direction", "") or "").upper() != "RANGE":
+        return None
+    if not _forecast_has_range_box(forecast):
+        return None
+    if _pair_has_current_range_rotation_edge(pair, charts):
+        return None
+    return (
+        "RANGE forecast has a measured rail box, but the current range-rotation edge is not confirmed; "
+        "expose RANGE_ROTATION dry-run geometry only until the chart phase clears the auto-lane gate."
+    )
 
 
 def _forecast_watch_candidate_reason(
@@ -4973,6 +5006,7 @@ def _intent_from_lane(
             "required_receipt": required_receipt,
             "forecast_seed": bool(lane.get("forecast_seed")),
             "forecast_watch_only": bool(lane.get("forecast_watch_only")),
+            "forecast_watch_only_reason": lane.get("forecast_watch_only_reason"),
             "forecast_watch_only_live_override": bool(watch_override_reason),
             "forecast_watch_only_live_override_reason": watch_override_reason,
             "matrix_repair_seed": bool(lane.get("matrix_repair_seed")),
@@ -5839,13 +5873,15 @@ def _forecast_watch_only_issue(intent: OrderIntent, metadata: dict[str, Any]) ->
         return None
     direction = str(metadata.get("forecast_direction") or "").upper() or "UNKNOWN"
     confidence = _optional_float(metadata.get("forecast_confidence"))
+    reason = str(metadata.get("forecast_watch_only_reason") or "").strip()
+    reason_tail = f" Reason: {reason}" if reason else ""
     return {
         "code": "FORECAST_WATCH_ONLY",
         "message": (
             f"{intent.pair} {intent.side.value} is a watch-only forecast candidate "
             f"({direction} conf={0.0 if confidence is None else confidence:.2f}); "
             "dry-run geometry is exposed for review, but live send is blocked until "
-            "a fresh calibrated forecast clears the entry floor."
+            f"a fresh calibrated forecast clears the entry floor.{reason_tail}"
         ),
         "severity": "WARN",
     }
