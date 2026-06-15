@@ -84,6 +84,37 @@ THESIS_EXPIRY_PRIOR_CHECK_MIN_AGE_SECONDS = 600.0
 RANGE_ROTATION_FAIL_TARGET_FRACTION = float(os.environ.get("QR_RANGE_ROTATION_FAIL_TARGET_FRACTION", "0.35"))
 
 
+def _same_direction_hold_confidence_min() -> float:
+    """Confidence floor for using a forecast to override close evidence.
+
+    (a) market reality: once broker truth has crossed the recorded invalidation
+        with technical confirmation, a weak same-direction forecast is not enough
+        to keep carrying adverse exposure. The hold override must be at least as
+        selective as the directional live-entry floor that allowed the system to
+        create new risk.
+    (b) constant rather than derived: mirrors the operator live-entry policy
+        (`QR_FORECAST_DIRECTIONAL_LIVE_MIN_CONFIDENCE`, default 0.65) without
+        importing intent_generator and creating a strategy circular dependency.
+    (c) replace via: post-trade expectancy for invalidation-hit holds versus
+        immediate close/re-entry once there are enough tagged samples.
+    """
+
+    raw = (
+        os.environ.get("QR_POSITION_HOLD_DIRECTIONAL_MIN_CONFIDENCE")
+        or os.environ.get("QR_FORECAST_DIRECTIONAL_LIVE_MIN_CONFIDENCE")
+        or "0.65"
+    )
+    try:
+        value = float(raw)
+    except (TypeError, ValueError) as exc:
+        raise RuntimeError(
+            "QR_POSITION_HOLD_DIRECTIONAL_MIN_CONFIDENCE must be a positive confidence value"
+        ) from exc
+    if value <= 0:
+        raise RuntimeError("QR_POSITION_HOLD_DIRECTIONAL_MIN_CONFIDENCE must be positive")
+    return max(ENTRY_CONFIDENCE_MIN, value)
+
+
 def _thesis_horizon_hours_from_forecast(forecast: Dict[str, Any]) -> Optional[float]:
     """Derive the thesis horizon from the entry forecast's declared horizon."""
     try:
@@ -381,10 +412,10 @@ def same_direction_forecast_support_reason(
 ) -> Optional[str]:
     """Return same-side forecast support for HOLD/reprice decisions.
 
-    This is intentionally softer than ENTRY_CONFIDENCE_MIN: a sub-entry
-    confidence forecast cannot open new risk, but when it points with an
-    existing position it is evidence that a RANGE thesis should be repriced or
-    TP-managed instead of converted into unattended hard loss-close evidence.
+    This is intentionally aligned with the directional live-entry floor. A weak
+    same-side forecast can inform TP/reprice work, but it must not override an
+    invalidation hit or a failed range rotation after the position has already
+    moved against the entry thesis.
     """
 
     side_up = str(side or "").upper()
@@ -398,6 +429,8 @@ def same_direction_forecast_support_reason(
         confidence = float(current_confidence)
     except (TypeError, ValueError):
         confidence = 0.0
+    if confidence < _same_direction_hold_confidence_min():
+        return None
     return f"current forecast {direction} conf={confidence:.2f} supports {side_up}"
 
 

@@ -732,6 +732,32 @@ class EntryThesisLedgerTest(unittest.TestCase):
             self.assertIn("supports LONG", ev.rationale)
             self.assertIn("HOLD/reprice/TP rebalance", ev.rationale)
 
+    def test_evolution_invalidation_hit_breaks_when_same_direction_forecast_is_below_hold_floor(self) -> None:
+        # Regression for 2026-06-15 EUR_CHF 472445: a weak forecast-first LONG
+        # kept carrying after broker truth crossed the recorded invalidation and
+        # M5/M15/M30/H1 technicals all confirmed against the side. A sub-live
+        # same-direction forecast must not override that close evidence.
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            self._seed_thesis(root)
+            ev = evaluate_thesis_evolution(
+                trade_id="T1", pair="EUR_JPY", side="LONG",
+                open_time_utc="2026-05-15T10:00:00Z",
+                current_forecast=_Forecast("UP", 0.56),
+                current_regime="RANGE",
+                data_root=root,
+                current_price=161.97,
+                current_price_label="bid",
+                invalidation_buffer_pips=2.0,
+                pair_chart=_tech_chart("DOWN"),
+            )
+            self.assertIsNotNone(ev)
+            assert ev is not None
+            self.assertEqual(ev.status, "BROKEN")
+            self.assertEqual(ev.verdict, "RECOMMEND_CLOSE")
+            self.assertIn("invalidation hit", ev.rationale)
+            self.assertNotIn("supports LONG", ev.rationale)
+
     def test_evolution_broken_when_short_invalidation_price_is_hit(self) -> None:
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
@@ -989,7 +1015,7 @@ class EntryThesisLedgerTest(unittest.TestCase):
             self.assertEqual(ev.verdict, "RECOMMEND_CLOSE")
             self.assertIn("RANGE_ROTATION_FAILED", ev.rationale)
 
-    def test_range_rotation_adverse_move_stays_hold_when_current_forecast_supports_side(self) -> None:
+    def test_range_rotation_adverse_move_breaks_when_current_forecast_is_below_hold_floor(self) -> None:
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
             record_entry_thesis(
@@ -1022,6 +1048,52 @@ class EntryThesisLedgerTest(unittest.TestCase):
                 side="SHORT",
                 open_time_utc="2026-06-12T17:53:49Z",
                 current_forecast=_Forecast("DOWN", 0.395),
+                current_regime="RANGE",
+                data_root=root,
+                current_price=0.81720,
+                current_price_label="ask",
+                now=datetime(2026, 6, 15, 0, 51, 25, tzinfo=timezone.utc),
+            )
+
+            assert ev is not None
+            self.assertEqual(ev.status, "BROKEN")
+            self.assertEqual(ev.verdict, "RECOMMEND_CLOSE")
+            self.assertIn("RANGE_ROTATION_FAILED", ev.rationale)
+            self.assertIn("without strong current directional support", ev.rationale)
+
+    def test_range_rotation_adverse_move_stays_hold_when_current_forecast_strongly_supports_side(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            record_entry_thesis(
+                EntryThesis(
+                    timestamp_utc="2026-06-12T17:53:49Z",
+                    trade_id="472380",
+                    pair="NZD_CAD",
+                    side="SHORT",
+                    entry_price=0.81516,
+                    forecast_direction="RANGE",
+                    forecast_confidence=0.572,
+                    regime="RANGE",
+                    invalidation_price=0.82086,
+                    target_price=0.81357,
+                    key_drivers=["lane_id=range_trader:NZD_CAD:SHORT:RANGE_ROTATION"],
+                    horizon_hours=12.0,
+                ),
+                root,
+            )
+            self._write_history(
+                root,
+                status="WEAKENED",
+                generated_at_utc="2026-06-15T00:39:44Z",
+                trade_id="472380",
+            )
+
+            ev = evaluate_thesis_evolution(
+                trade_id="472380",
+                pair="NZD_CAD",
+                side="SHORT",
+                open_time_utc="2026-06-12T17:53:49Z",
+                current_forecast=_Forecast("DOWN", 0.67),
                 current_regime="RANGE",
                 data_root=root,
                 current_price=0.81720,
