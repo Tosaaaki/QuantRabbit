@@ -294,6 +294,44 @@ class ForecastGeometryTest(unittest.TestCase):
         self.assertNotEqual(forecast.direction, "UP")
         self.assertLess(forecast.up_score, 90.0)
 
+    def test_countertrend_dampens_decisive_score_gap_even_when_tf_agreement_is_mixed(self) -> None:
+        pair_chart = {
+            "confluence": {
+                "score_balance": "LONG_LEAN",
+                "score_gap": 0.28,
+                "tf_agreement_score": 1.0 / 3.0,
+                "dominant_regime": "TREND_UP",
+            },
+            "views": [
+                {
+                    "granularity": "H1",
+                    "regime": "TREND_UP",
+                    "indicators": {"pip_size": 0.0001, "adx_14": 28.0},
+                    "structure": {"structure_events": []},
+                },
+                {
+                    "granularity": "H4",
+                    "regime": "TREND_UP",
+                    "indicators": {"pip_size": 0.0001, "adx_14": 30.0},
+                    "structure": {"structure_events": []},
+                },
+            ],
+        }
+
+        forecast = synthesize_forecast(
+            pair="AUD_JPY",
+            pair_chart=pair_chart,
+            current_price=113.40,
+            pattern_signals=[_Sig("DOWN", 45.0, 1.0, "unconfirmed top fade")],
+            projection_signals=[],
+            correlation_signals=[],
+            paths=[],
+        )
+
+        self.assertEqual(forecast.direction, "UP")
+        self.assertGreater(forecast.up_score, forecast.down_score)
+        self.assertIn("countertrend DOWN damped", forecast.rationale_summary)
+
     def test_countertrend_confirmation_accepts_latest_h1_reversal(self) -> None:
         pair_chart = {
             "confluence": {

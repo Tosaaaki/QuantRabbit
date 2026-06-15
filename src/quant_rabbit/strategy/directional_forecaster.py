@@ -1175,8 +1175,10 @@ def _countertrend_adjustment(
         return winner_score, None
     if abs(score_gap) < 0.2:
         return winner_score, None
-    if tf_agree is not None and tf_agree < (2.0 / 3.0):
-        return winner_score, None
+    # Low TF agreement means the tape is mixed; it is not evidence that a
+    # short-term countertrend forecast should be trusted. A decisive pair-chart
+    # score gap still has to damp an unconfirmed fade, otherwise mixed tapes
+    # are where micro reversal signals most often become reverse-first entries.
     if _has_close_confirmed_structure(pair_chart, winner):
         return winner_score, (
             f"countertrend {winner} allowed: M15/H1 close-confirmed structure offsets "
