@@ -2982,7 +2982,16 @@ def _coverage_findings(
     if not bucket_diag:
         return out
     blocked_edges = _blocked_profitable_bucket_edges(bucket_diag)
-    if blocked_edges:
+    forecast_gated_edges = [edge for edge in blocked_edges if _edge_is_forecast_gated(edge)]
+    strategy_gated_edges = [
+        edge for edge in blocked_edges
+        if not _edge_is_forecast_gated(edge) and _edge_is_strategy_gated(edge)
+    ]
+    coverage_repair_edges = [
+        edge for edge in blocked_edges
+        if not _edge_is_forecast_gated(edge) and not _edge_is_strategy_gated(edge)
+    ]
+    if coverage_repair_edges:
         out.append(
             _finding(
                 run_id=run_id,
@@ -3004,12 +3013,55 @@ def _coverage_findings(
                     "positive_pair_directions": bucket_diag.get("positive_pair_directions"),
                     "positive_managed_net_jpy": bucket_diag.get("positive_managed_net_jpy"),
                     "state_counts": bucket_diag.get("state_counts") or {},
-                    "blocked_edges": blocked_edges[:8],
+                    "blocked_edges": coverage_repair_edges[:8],
+                },
+            )
+        )
+    if forecast_gated_edges:
+        out.append(
+            _finding(
+                run_id=run_id,
+                priority="P2",
+                layer="forecast",
+                code="PROFITABLE_BACKTEST_EDGE_FORECAST_GATED",
+                message=(
+                    f"{len(forecast_gated_edges)} profitable backtest edge(s) are visible, "
+                    "but current forecast gates block live expansion"
+                ),
+                next_action=(
+                    "Treat these as forecast-repair evidence, not live coverage expansion; keep "
+                    "RiskEngine and forecast-confidence gates intact until the current prediction "
+                    "packet supports the side."
+                ),
+                evidence={
+                    "coverage_path": str(path),
+                    "forecast_gated_edges": forecast_gated_edges[:8],
+                },
+            )
+        )
+    if strategy_gated_edges:
+        out.append(
+            _finding(
+                run_id=run_id,
+                priority="P2",
+                layer="opportunity",
+                code="PROFITABLE_BACKTEST_EDGE_STRATEGY_GATED",
+                message=(
+                    f"{len(strategy_gated_edges)} profitable backtest edge(s) remain blocked by "
+                    "strategy-profile repair gates"
+                ),
+                next_action=(
+                    "Do not amplify these historical buckets until a current risk-resized dry-run "
+                    "receipt or new market-structure proof reopens the strategy profile gate."
+                ),
+                evidence={
+                    "coverage_path": str(path),
+                    "strategy_gated_edges": strategy_gated_edges[:8],
                 },
             )
         )
     context_supported = [
-        edge for edge in blocked_edges
+        edge for edge in coverage_repair_edges
         if _edge_has_same_side_matrix_support(edge)
     ]
     if context_supported:
@@ -3097,6 +3149,22 @@ def _edge_has_same_side_matrix_support(edge: dict[str, Any]) -> bool:
     support_context = edge.get("matrix_support_context")
     has_support_context = isinstance(support_context, list) and bool(support_context)
     return support_count > 0 and support_count > reject_count and has_support_context
+
+
+def _edge_is_forecast_gated(edge: dict[str, Any]) -> bool:
+    blockers = [str(item).upper() for item in edge.get("top_blockers") or []]
+    return any(
+        "FORECAST_" in blocker
+        or " CURRENT PAIR FORECAST" in blocker
+        or "FORECAST TELEMETRY" in blocker
+        or "WEAK PREDICTION" in blocker
+        for blocker in blockers
+    )
+
+
+def _edge_is_strategy_gated(edge: dict[str, Any]) -> bool:
+    status = str(edge.get("strategy_profile_status") or "").upper()
+    return bool(edge.get("strategy_profile_blocks_live") is True and status == "BLOCK_UNTIL_NEW_EVIDENCE")
 
 
 def _sidecar_findings(

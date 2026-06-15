@@ -964,6 +964,127 @@ class SelfImprovementAuditorTest(unittest.TestCase):
         supported = codes["MARKET_CONTEXT_SUPPORTED_EDGE_NOT_ACTIONABLE"]
         self.assertIn("GOLD_CONTEXT_TECHNICAL_DIRECTION", supported["evidence"]["supported_edges"][0]["matrix_cross_asset_context"][0])
 
+    def test_forecast_gated_profitable_edges_do_not_become_coverage_p1(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(
+                root,
+                active_position=False,
+                live_ready_market_rr=1.4,
+                closed_pls=(100.0, 80.0, -50.0),
+            )
+            files["coverage"].write_text(
+                json.dumps(
+                    {
+                        "artifact_diagnostics": {
+                            "profitable_bucket_coverage": {
+                                "source_status": "RESEARCH_PROFITABLE_NOT_CERTIFIED",
+                                "live_permission": False,
+                                "positive_pair_directions": 1,
+                                "positive_managed_net_jpy": 900.0,
+                                "state_counts": {"SURFACED_BUT_BLOCKED": 1},
+                                "blocked_or_missing_top": [
+                                    {
+                                        "pair": "EUR_USD",
+                                        "direction": "LONG",
+                                        "coverage_state": "SURFACED_BUT_BLOCKED",
+                                        "managed_net_jpy": 900.0,
+                                        "raw_net_jpy": 800.0,
+                                        "trades": 10,
+                                        "days": 3,
+                                        "current_lane_count": 4,
+                                        "spread_normalized_candidate_count": 0,
+                                        "spread_normalized_no_live_blocker_count": 0,
+                                        "top_blockers": [
+                                            "FORECAST_CONFIDENCE_REQUIRED_FOR_LIVE",
+                                            "EUR_USD LONG forecast RANGE confidence 0.38 < 0.55",
+                                        ],
+                                        "strategy_profile_status": "CANDIDATE",
+                                        "strategy_profile_required_fix": "eligible but forecast blocked",
+                                        "strategy_profile_blocks_live": False,
+                                        "matrix_support_count": 8,
+                                        "matrix_reject_count": 1,
+                                        "matrix_support_context": [
+                                            "GOLD_CONTEXT_TECHNICAL_DIRECTION: XAU_USD maps to LONG",
+                                        ],
+                                        "same_side_matrix_context_supported": True,
+                                    }
+                                ],
+                            }
+                        }
+                    }
+                )
+            )
+
+            _run(files)
+            payload = json.loads(files["output"].read_text())
+
+        codes = {item["code"]: item for item in payload["findings"]}
+        self.assertNotIn("PROFITABLE_BACKTEST_EDGE_COVERAGE_GAP", codes)
+        self.assertNotIn("MARKET_CONTEXT_SUPPORTED_EDGE_NOT_ACTIONABLE", codes)
+        finding = codes["PROFITABLE_BACKTEST_EDGE_FORECAST_GATED"]
+        self.assertEqual(finding["priority"], "P2")
+        self.assertEqual(finding["evidence"]["forecast_gated_edges"][0]["pair"], "EUR_USD")
+
+    def test_strategy_gated_profitable_edges_do_not_become_coverage_p1(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(
+                root,
+                active_position=False,
+                live_ready_market_rr=1.4,
+                closed_pls=(100.0, 80.0, -50.0),
+            )
+            files["coverage"].write_text(
+                json.dumps(
+                    {
+                        "artifact_diagnostics": {
+                            "profitable_bucket_coverage": {
+                                "source_status": "RESEARCH_PROFITABLE_NOT_CERTIFIED",
+                                "live_permission": False,
+                                "positive_pair_directions": 1,
+                                "positive_managed_net_jpy": 700.0,
+                                "state_counts": {"NO_CURRENT_LANE": 1},
+                                "blocked_or_missing_top": [
+                                    {
+                                        "pair": "USD_JPY",
+                                        "direction": "LONG",
+                                        "coverage_state": "NO_CURRENT_LANE",
+                                        "managed_net_jpy": 700.0,
+                                        "raw_net_jpy": 650.0,
+                                        "trades": 7,
+                                        "days": 2,
+                                        "current_lane_count": 0,
+                                        "spread_normalized_candidate_count": 0,
+                                        "spread_normalized_no_live_blocker_count": 0,
+                                        "top_blockers": [],
+                                        "strategy_profile_status": "BLOCK_UNTIL_NEW_EVIDENCE",
+                                        "strategy_profile_required_fix": "current evidence required",
+                                        "strategy_profile_blocks_live": True,
+                                        "matrix_support_count": 6,
+                                        "matrix_reject_count": 0,
+                                        "matrix_support_context": [
+                                            "DXY_CONTEXT_TECHNICAL_DIRECTION: DXY maps to LONG",
+                                        ],
+                                        "same_side_matrix_context_supported": True,
+                                    }
+                                ],
+                            }
+                        }
+                    }
+                )
+            )
+
+            _run(files)
+            payload = json.loads(files["output"].read_text())
+
+        codes = {item["code"]: item for item in payload["findings"]}
+        self.assertNotIn("PROFITABLE_BACKTEST_EDGE_COVERAGE_GAP", codes)
+        self.assertNotIn("MARKET_CONTEXT_SUPPORTED_EDGE_NOT_ACTIONABLE", codes)
+        finding = codes["PROFITABLE_BACKTEST_EDGE_STRATEGY_GATED"]
+        self.assertEqual(finding["priority"], "P2")
+        self.assertEqual(finding["evidence"]["strategy_gated_edges"][0]["pair"], "USD_JPY")
+
     def test_lane_only_verification_blockers_do_not_mask_opportunity_hole(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
