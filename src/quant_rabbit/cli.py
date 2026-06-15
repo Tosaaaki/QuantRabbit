@@ -3,12 +3,13 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import signal
 import shutil
 import sqlite3
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any, Callable, Iterable
 
 from quant_rabbit.automation import AutoTradeCycle, DEFAULT_AUTOTRADE_LOCK_DIR, DEFAULT_AUTOTRADE_REPORT
 from quant_rabbit.ai_test_bot import (
@@ -1087,6 +1088,17 @@ _AUTOTRADE_EXIT_ZERO_STATUSES: frozenset[str] = frozenset(
 )
 
 
+# One consolidated live refresh must fit the roughly 20-minute trader cadence.
+# A single internal step taking more than five minutes is operationally stale
+# evidence, usually a wedged HTTPS/read-only data fetch, and should be recorded
+# as a named failure instead of holding the live runtime lock indefinitely.
+DEFAULT_CYCLE_STEP_TIMEOUT_SECONDS = 300.0
+
+
+class _CycleStepTimeout(BaseException):
+    pass
+
+
 class _LiveRuntimeLockBusy(RuntimeError):
     pass
 
@@ -1150,6 +1162,50 @@ def _pid_is_running(pid: int) -> bool:
     except PermissionError:
         return True
     return True
+
+
+def _cycle_step_timeout_seconds(spec: dict[str, Any]) -> float | None:
+    raw = spec.get("timeout_seconds")
+    if raw is None:
+        raw = os.environ.get("QR_CYCLE_STEP_TIMEOUT_SECONDS", str(DEFAULT_CYCLE_STEP_TIMEOUT_SECONDS))
+    try:
+        seconds = float(raw)
+    except (TypeError, ValueError):
+        seconds = DEFAULT_CYCLE_STEP_TIMEOUT_SECONDS
+    if seconds <= 0:
+        return None
+    return seconds
+
+
+def _run_with_cycle_step_timeout(timeout_seconds: float | None, fn: Callable[[], Any]) -> int:
+    if timeout_seconds is None:
+        return int(fn() or 0)
+
+    signal_alarm = getattr(signal, "SIGALRM", None)
+    setitimer = getattr(signal, "setitimer", None)
+    itimer_real = getattr(signal, "ITIMER_REAL", None)
+    if signal_alarm is None or setitimer is None or itimer_real is None:
+        return int(fn() or 0)
+
+    previous_handler = signal.getsignal(signal_alarm)
+    previous_timer = setitimer(itimer_real, 0)
+    started = datetime.now(timezone.utc)
+
+    def _handle_timeout(_signum: int, _frame: Any) -> None:
+        raise _CycleStepTimeout(f"cycle step exceeded {timeout_seconds:.1f}s timeout")
+
+    try:
+        signal.signal(signal_alarm, _handle_timeout)
+        setitimer(itimer_real, timeout_seconds)
+        return int(fn() or 0)
+    finally:
+        setitimer(itimer_real, 0)
+        signal.signal(signal_alarm, previous_handler)
+        if previous_timer[0] > 0:
+            elapsed = (datetime.now(timezone.utc) - started).total_seconds()
+            remaining = max(0.0, previous_timer[0] - elapsed)
+            if remaining > 0:
+                setitimer(itimer_real, remaining, previous_timer[1])
 
 
 def _running_under_test_harness() -> bool:
@@ -1696,7 +1752,13 @@ def _run_cycle_steps(steps: list[dict[str, Any]]) -> tuple[list[dict[str, Any]],
         rc = 0
         try:
             with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(buf):
-                rc = int(main(argv) or 0)
+                rc = _run_with_cycle_step_timeout(
+                    _cycle_step_timeout_seconds(spec),
+                    lambda: main(argv),
+                )
+        except _CycleStepTimeout as exc:
+            rc = 124
+            buf.write(f"\n{type(exc).__name__}: {exc}")
         except SystemExit as exc:  # argparse errors and explicit exits
             code = exc.code
             rc = code if isinstance(code, int) else 1
@@ -1705,12 +1767,18 @@ def _run_cycle_steps(steps: list[dict[str, Any]]) -> tuple[list[dict[str, Any]],
             buf.write(f"\n{type(exc).__name__}: {exc}")
         elapsed = round(_time.monotonic() - started, 1)
         ok_rcs = {int(item) for item in spec.get("ok_rcs", [0])}
-        entry: dict[str, Any] = {"step": name, "status": "OK" if rc in ok_rcs else "FAILED", "rc": rc, "seconds": elapsed}
+        timed_out = rc == 124
+        entry: dict[str, Any] = {
+            "step": name,
+            "status": "OK" if rc in ok_rcs else ("TIMED_OUT" if timed_out else "FAILED"),
+            "rc": rc,
+            "seconds": elapsed,
+        }
         if rc not in ok_rcs:
             tail = buf.getvalue().strip()
             entry["tail"] = tail[-1500:]
             if spec.get("required"):
-                entry["status"] = "FAILED_REQUIRED"
+                entry["status"] = "TIMED_OUT_REQUIRED" if timed_out else "FAILED_REQUIRED"
                 aborted = True
         results.append(entry)
     return results, aborted

@@ -2223,6 +2223,62 @@ class ConsolidatedCycleCommandTest(unittest.TestCase):
         self.assertNotIn("tail", results[0])
         self.assertEqual(results[1]["status"], "FAILED")
 
+    def test_run_cycle_steps_records_optional_step_timeout(self) -> None:
+        from quant_rabbit.cli import _CycleStepTimeout, _run_cycle_steps
+
+        steps = [
+            {"argv": ["broker-snapshot"], "required": False},
+            {"argv": ["another-bad-command"], "required": False},
+        ]
+
+        with mock.patch(
+            "quant_rabbit.cli._run_with_cycle_step_timeout",
+            side_effect=[_CycleStepTimeout("cycle step exceeded 0.1s timeout"), 0],
+        ):
+            results, aborted = _run_cycle_steps(steps)
+
+        self.assertFalse(aborted)
+        self.assertEqual(results[0]["status"], "TIMED_OUT")
+        self.assertEqual(results[0]["rc"], 124)
+        self.assertIn("_CycleStepTimeout", results[0]["tail"])
+        self.assertEqual(results[1]["status"], "OK")
+
+    def test_run_cycle_steps_aborts_after_required_step_timeout(self) -> None:
+        from quant_rabbit.cli import _CycleStepTimeout, _run_cycle_steps
+
+        steps = [
+            {"argv": ["broker-snapshot"], "required": True},
+            {"argv": ["another-bad-command"], "required": False},
+        ]
+
+        with mock.patch(
+            "quant_rabbit.cli._run_with_cycle_step_timeout",
+            side_effect=_CycleStepTimeout("cycle step exceeded 0.1s timeout"),
+        ):
+            results, aborted = _run_cycle_steps(steps)
+
+        self.assertTrue(aborted)
+        self.assertEqual(results[0]["status"], "TIMED_OUT_REQUIRED")
+        self.assertEqual(results[0]["rc"], 124)
+        self.assertIn("_CycleStepTimeout", results[0]["tail"])
+        self.assertEqual(results[1]["status"], "SKIPPED_AFTER_ABORT")
+
+    def test_cycle_step_timeout_seconds_respects_env_and_overrides(self) -> None:
+        from quant_rabbit.cli import DEFAULT_CYCLE_STEP_TIMEOUT_SECONDS, _cycle_step_timeout_seconds
+
+        with mock.patch.dict(os.environ, {"QR_CYCLE_STEP_TIMEOUT_SECONDS": "0"}, clear=False):
+            self.assertIsNone(_cycle_step_timeout_seconds({"argv": ["broker-snapshot"]}))
+            self.assertEqual(
+                _cycle_step_timeout_seconds({"argv": ["broker-snapshot"], "timeout_seconds": "7.5"}),
+                7.5,
+            )
+
+        with mock.patch.dict(os.environ, {"QR_CYCLE_STEP_TIMEOUT_SECONDS": "not-a-number"}, clear=False):
+            self.assertEqual(
+                _cycle_step_timeout_seconds({"argv": ["broker-snapshot"]}),
+                DEFAULT_CYCLE_STEP_TIMEOUT_SECONDS,
+            )
+
     def test_cycle_refresh_refuses_existing_live_runtime_lock(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             lock_dir = Path(tmp) / "lock"
