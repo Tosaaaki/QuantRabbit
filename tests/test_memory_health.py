@@ -372,6 +372,57 @@ class MemoryHealthAuditorTest(unittest.TestCase):
         self.assertEqual(payload["metrics"]["order_intents"]["memory_blockers"], 0)
         self.assertGreater(payload["metrics"]["order_intents"]["advisory_memory_blockers"], 0)
 
+    def test_no_live_ready_strategy_profile_gap_is_advisory(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root)
+            files["intents"].write_text(
+                json.dumps(
+                    {
+                        "results": [
+                            {
+                                "lane_id": "trend_trader:EUR_USD:LONG:TREND_CONTINUATION",
+                                "status": "DRY_RUN_BLOCKED",
+                                "intent": {"pair": "EUR_USD"},
+                                "risk_issues": [],
+                                "strategy_issues": [
+                                    {
+                                        "code": "STRATEGY_PROFILE_MISSING",
+                                        "message": "no mined live edge for this pair/direction/method yet",
+                                        "severity": "BLOCK",
+                                    }
+                                ],
+                                "live_blockers": ["STRATEGY_PROFILE_MISSING"],
+                            },
+                            {
+                                "lane_id": "range_trader:EUR_USD:SHORT:RANGE_ROTATION",
+                                "status": "DRY_RUN_BLOCKED",
+                                "intent": {"pair": "EUR_USD"},
+                                "risk_issues": [],
+                                "strategy_issues": [
+                                    {
+                                        "code": "STRATEGY_METHOD_PROFILE_MISSING",
+                                        "message": "method-specific profile is missing",
+                                        "severity": "BLOCK",
+                                    }
+                                ],
+                                "live_blockers": ["STRATEGY_METHOD_PROFILE_MISSING"],
+                            },
+                        ]
+                    }
+                )
+            )
+
+            summary = _run(files)
+            payload = json.loads(files["output"].read_text())
+
+        self.assertEqual(summary.status, STATUS_PASS)
+        self.assertEqual(summary.layers["short_term"], "PASS")
+        self.assertEqual(payload["metrics"]["order_intents"]["live_ready"], 0)
+        self.assertEqual(payload["metrics"]["order_intents"]["memory_blockers"], 0)
+        self.assertGreater(payload["metrics"]["order_intents"]["advisory_memory_blockers"], 0)
+        self.assertFalse(any(issue["code"] == "SHORT_ORDER_INTENTS_MEMORY_BLOCKERS" for issue in payload["issues"]))
+
     def test_no_live_ready_memory_blocker_still_blocks(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

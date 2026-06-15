@@ -42,6 +42,11 @@ _MEMORY_BLOCKER_TOKENS = (
     "LEARNING_AUDIT",
 )
 
+_STRATEGY_PROFILE_GAP_CODES = (
+    "STRATEGY_PROFILE_MISSING",
+    "STRATEGY_METHOD_PROFILE_MISSING",
+)
+
 # Memory-health audits a market packet assembled over several network and
 # forecast calls. The live gateway may refresh broker truth immediately after
 # forecast generation for send safety; this engineering grace treats that
@@ -933,6 +938,10 @@ def _audit_intent_memory_blockers(
                     structured_advisory.update(issue_variants)
                     advisory_memory_blockers += 1
                     continue
+                if _is_strategy_profile_gap(item):
+                    structured_advisory.update(issue_variants)
+                    advisory_memory_blockers += 1
+                    continue
                 if isinstance(item, dict) and str(item.get("severity") or "").upper() != "BLOCK":
                     structured_advisory.update(issue_variants)
                     advisory_memory_blockers += 1
@@ -948,6 +957,9 @@ def _audit_intent_memory_blockers(
                 if issue_text in structured_advisory:
                     continue
                 if _is_quote_freshness_blocker(item):
+                    advisory_memory_blockers += 1
+                    continue
+                if _is_strategy_profile_gap(item):
                     advisory_memory_blockers += 1
                     continue
                 result_memory_blockers.append(issue_text)
@@ -1138,6 +1150,15 @@ def _is_quote_freshness_blocker(item: Any) -> bool:
     if isinstance(item, dict) and str(item.get("code") or "").upper() == "STALE_QUOTE":
         return True
     return "QUOTE IS" in text and "LIVE FRESHNESS CONTRACT" in text
+
+
+def _is_strategy_profile_gap(item: Any) -> bool:
+    text = _issue_text(item).upper()
+    if isinstance(item, dict):
+        code = str(item.get("code") or "").upper()
+        if code in _STRATEGY_PROFILE_GAP_CODES:
+            return True
+    return text in _STRATEGY_PROFILE_GAP_CODES
 
 
 def _parse_utc(value: Any) -> datetime | None:
