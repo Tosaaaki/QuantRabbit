@@ -141,6 +141,60 @@ class AttackAdvisorTest(unittest.TestCase):
             edge_lane = next(item for item in payload["lanes"] if item["lane_id"] == "small_edge:EUR_USD:LONG:TREND_CONTINUATION")
             self.assertIsNone(edge_lane["historical_edge_jpy"])
 
+    def test_negative_ai_backtest_edge_is_advisory_not_rank_penalty(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            intents = root / "intents.json"
+            target = root / "target.json"
+            backtest = root / "ai_backtest.json"
+            coverage = root / "coverage.json"
+            intents.write_text(json.dumps({"results": [_result()]}))
+            target.write_text(
+                json.dumps(
+                    {
+                        "status": "PURSUE_TARGET",
+                        "remaining_target_jpy": 1000.0,
+                        "remaining_risk_budget_jpy": 500.0,
+                    }
+                )
+            )
+            backtest.write_text(
+                json.dumps(
+                    {
+                        "status": "TARGET_COVERAGE_CERTIFIED",
+                        "live_permission": False,
+                        "blockers": [],
+                        "bucket_contributions": [
+                            {
+                                "bucket": "trades:EUR_USD:LONG:UNSPECIFIED:UNSPECIFIED",
+                                "managed_net_jpy": -1500.0,
+                                "trades": 12,
+                            }
+                        ],
+                    }
+                )
+            )
+            coverage.write_text(json.dumps({"status": "LIVE_READY_COVERAGE_READY"}))
+
+            AttackAdvisor(
+                intents_path=intents,
+                target_state_path=target,
+                ai_backtest_path=backtest,
+                outcome_mart_path=root / "missing_outcome_mart.json",
+                coverage_path=coverage,
+                output_path=root / "advice.json",
+                report_path=root / "advice.md",
+            ).run()
+
+            payload = json.loads((root / "advice.json").read_text())
+            lane = payload["lanes"][0]
+            self.assertEqual(payload["recommended_now_lane_ids"], ["trend_trader:EUR_USD:LONG:TREND_CONTINUATION"])
+            self.assertEqual(lane["score"], 63.0)
+            self.assertEqual(lane["historical_edge_jpy"], -1500.0)
+            self.assertEqual(lane["learning_score_delta"], 0.0)
+            self.assertEqual(lane["learning_influences"], [])
+            self.assertTrue(any("advisory only" in item for item in lane["rationale"]))
+
     def test_allows_audited_profitable_research_backtest_edges_for_ranking(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -768,6 +822,86 @@ class AttackAdvisorTest(unittest.TestCase):
             self.assertEqual(lane["score"], 63.0)
             self.assertEqual(lane["archive_condition_validation_actual_net_jpy"], -250.0)
             self.assertIn("positive archive condition edge failed walk-forward validation", lane["rationale"])
+
+    def test_negative_outcome_mart_edge_is_advisory_not_rank_penalty(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            intents = root / "intents.json"
+            target = root / "target.json"
+            backtest = root / "ai_backtest.json"
+            outcome_mart = root / "outcome_mart.json"
+            coverage = root / "coverage.json"
+            intents.write_text(
+                json.dumps(
+                    {
+                        "generated_at_utc": "2026-05-06T08:30:00+00:00",
+                        "results": [
+                            _result(
+                                lane_id="range_trader:EUR_USD:LONG:RANGE_ROTATION",
+                                method="RANGE_ROTATION",
+                                context={
+                                    "method": "RANGE_ROTATION",
+                                    "narrative": "test",
+                                    "chart_story": "test",
+                                    "invalidation": "test",
+                                    "regime": "RANGE_ROTATION campaign lane",
+                                    "session": "generated dry-run",
+                                },
+                                metadata={"regime_state": "TREND_UP"},
+                            )
+                        ],
+                    }
+                )
+            )
+            target.write_text(
+                json.dumps(
+                    {
+                        "status": "PURSUE_TARGET",
+                        "remaining_target_jpy": 1000.0,
+                        "remaining_risk_budget_jpy": 500.0,
+                    }
+                )
+            )
+            backtest.write_text(json.dumps({"bucket_contributions": []}))
+            coverage.write_text(json.dumps({"status": "LIVE_READY_COVERAGE_READY"}))
+            outcome_mart.write_text(
+                json.dumps(
+                    {
+                        "condition_edges": [
+                            {
+                                "key": "ALL:ALL:RANGE_ROTATION:MARKET:LONDON:TRENDING",
+                                "method": "RANGE_ROTATION",
+                                "order_type": "MARKET",
+                                "session_bucket": "LONDON",
+                                "regime": "TRENDING",
+                                "net_jpy": -900.0,
+                                "avg_jpy": -90.0,
+                                "outcome_n": 10,
+                            }
+                        ],
+                        "method_edges": [],
+                    }
+                )
+            )
+
+            AttackAdvisor(
+                intents_path=intents,
+                target_state_path=target,
+                ai_backtest_path=backtest,
+                outcome_mart_path=outcome_mart,
+                coverage_path=coverage,
+                output_path=root / "advice.json",
+                report_path=root / "advice.md",
+            ).run()
+
+            payload = json.loads((root / "advice.json").read_text())
+            lane = payload["lanes"][0]
+            self.assertEqual(payload["recommended_now_lane_ids"], ["range_trader:EUR_USD:LONG:RANGE_ROTATION"])
+            self.assertEqual(lane["score"], 63.0)
+            self.assertEqual(lane["archive_condition_edge_jpy"], -900.0)
+            self.assertEqual(lane["learning_score_delta"], 0.0)
+            self.assertEqual(lane["learning_influences"], [])
+            self.assertIn("negative archive condition edge; advisory only", lane["rationale"])
 
 
 def _result(

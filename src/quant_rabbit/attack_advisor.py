@@ -26,10 +26,8 @@ ADVISORY_REWARD_COVERAGE_SCORE_CAP = 40.0
 ADVISORY_REWARD_RISK_SCORE_MULT = 6.0
 ADVISORY_POSITIVE_EDGE_SCORE = 25.0
 ADVISORY_RESEARCH_POSITIVE_EDGE_SCORE = 8.0
-ADVISORY_NEGATIVE_EDGE_PENALTY = 25.0
 ADVISORY_OUTCOME_MART_EDGE_SCORE = 15.0
 ADVISORY_OUTCOME_MART_UNVALIDATED_EDGE_SCORE = 4.0
-ADVISORY_OUTCOME_MART_NEGATIVE_PENALTY = 15.0
 ADVISORY_OUTCOME_MART_MIN_TRIALS = 5
 ADVISORY_MARKET_PARTICIPATION_SCORE = 5.0
 REPORT_LANE_LIMIT = 12
@@ -431,21 +429,10 @@ def _attack_lane(
         )
         rationale.append(f"positive AI-test-bot pair/direction edge ({source_status}, +{delta:.1f})")
     elif edge_jpy is not None and edge_jpy < 0:
-        delta = -ADVISORY_NEGATIVE_EDGE_PENALTY
-        score += delta
-        learning_score_delta += delta
-        learning_influences.append("ai_backtest_negative_edge")
-        learning_details.append(
-            {
-                "source": "ai_backtest",
-                "influence": "ai_backtest_negative_edge",
-                "score_delta": delta,
-                "source_status": str(edge.get("source_status") or ""),
-                "edge_jpy": _round(edge_jpy),
-                "trades": edge_trades,
-            }
+        rationale.append(
+            "negative AI-test-bot pair/direction edge is advisory only; "
+            "current LIVE_READY rank is not demoted"
         )
-        rationale.append(f"negative AI-test-bot pair/direction edge ({edge.get('source_status')}, {delta:.1f})")
     condition_is_actionable = condition_trials >= ADVISORY_OUTCOME_MART_MIN_TRIALS
     if condition_net_jpy is not None and condition_is_actionable and condition_net_jpy > 0:
         if (
@@ -494,29 +481,14 @@ def _attack_lane(
             )
             rationale.append(f"positive archive condition edge lacks walk-forward validation floor (+{delta:.1f})")
     elif condition_net_jpy is not None and condition_is_actionable and condition_net_jpy < 0:
-        delta = -ADVISORY_OUTCOME_MART_NEGATIVE_PENALTY
-        score += delta
-        learning_score_delta += delta
-        learning_influences.append("outcome_mart_negative_edge")
-        learning_details.append(
-            {
-                "source": "outcome_mart",
-                "influence": "outcome_mart_negative_edge",
-                "score_delta": delta,
-                "condition_key": condition_key,
-                "outcomes": condition_trials,
-                "net_jpy": _round(condition_net_jpy),
-                "validation_outcomes": condition_validation_outcomes,
-            }
-        )
         if (
             condition_validation_outcomes >= ADVISORY_OUTCOME_MART_MIN_TRIALS
             and condition_validation_actual_net_jpy is not None
             and condition_validation_actual_net_jpy < 0
         ):
-            rationale.append("negative archive condition edge validated walk-forward")
+            rationale.append("negative archive condition edge validated walk-forward; advisory only")
         else:
-            rationale.append("negative archive condition edge")
+            rationale.append("negative archive condition edge; advisory only")
     elif condition_net_jpy is not None and not condition_is_actionable:
         rationale.append("archive condition edge below sample floor")
     if order_type == "MARKET":
