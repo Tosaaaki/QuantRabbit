@@ -823,6 +823,99 @@ class AttackAdvisorTest(unittest.TestCase):
             self.assertEqual(lane["archive_condition_validation_actual_net_jpy"], -250.0)
             self.assertIn("positive archive condition edge failed walk-forward validation", lane["rationale"])
 
+    def test_archive_condition_boost_rejects_negative_partial_walk_forward(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            intents = root / "intents.json"
+            target = root / "target.json"
+            backtest = root / "ai_backtest.json"
+            outcome_mart = root / "outcome_mart.json"
+            coverage = root / "coverage.json"
+            intents.write_text(
+                json.dumps(
+                    {
+                        "generated_at_utc": "2026-05-06T08:30:00+00:00",
+                        "results": [
+                            _result(
+                                lane_id="failure_trader:USD_CAD:LONG:BREAKOUT_FAILURE:MARKET",
+                                pair="USD_CAD",
+                                side="LONG",
+                                method="BREAKOUT_FAILURE",
+                                context={
+                                    "method": "BREAKOUT_FAILURE",
+                                    "narrative": "test",
+                                    "chart_story": "test",
+                                    "invalidation": "test",
+                                    "regime": "BREAKOUT_FAILURE campaign lane",
+                                    "session_bucket": "NY",
+                                    "session": "generated dry-run",
+                                },
+                                metadata={"regime_state": "RANGE"},
+                            )
+                        ]
+                    }
+                )
+            )
+            target.write_text(
+                json.dumps(
+                    {
+                        "status": "PURSUE_TARGET",
+                        "remaining_target_jpy": 1000.0,
+                        "remaining_risk_budget_jpy": 500.0,
+                    }
+                )
+            )
+            backtest.write_text(json.dumps({"bucket_contributions": []}))
+            coverage.write_text(json.dumps({"status": "LIVE_READY_COVERAGE_READY"}))
+            outcome_mart.write_text(
+                json.dumps(
+                    {
+                        "condition_edges": [
+                            {
+                                "key": "ALL:ALL:BREAKOUT_FAILURE:MARKET:NY:RANGE",
+                                "method": "BREAKOUT_FAILURE",
+                                "order_type": "MARKET",
+                                "session_bucket": "NY",
+                                "regime": "RANGE",
+                                "net_jpy": 500.0,
+                                "avg_jpy": 50.0,
+                                "outcome_n": 10,
+                            }
+                        ],
+                        "condition_validation": {
+                            "matched_edges": [
+                                {
+                                    "key": "ALL:ALL:BREAKOUT_FAILURE:MARKET:NY:RANGE",
+                                    "predicted_edge": "POSITIVE",
+                                    "outcomes": 2,
+                                    "actual_net_jpy": -1947.8026,
+                                    "directional_hit_rate_pct": 0.0,
+                                }
+                            ]
+                        },
+                        "method_edges": [],
+                    }
+                )
+            )
+
+            AttackAdvisor(
+                intents_path=intents,
+                target_state_path=target,
+                ai_backtest_path=backtest,
+                outcome_mart_path=outcome_mart,
+                coverage_path=coverage,
+                output_path=root / "advice.json",
+                report_path=root / "advice.md",
+            ).run()
+
+            payload = json.loads((root / "advice.json").read_text())
+            lane = payload["lanes"][0]
+            self.assertEqual(lane["archive_condition_validation_outcomes"], 2)
+            self.assertEqual(lane["archive_condition_validation_actual_net_jpy"], -1947.8026)
+            self.assertEqual(lane["learning_score_delta"], 0.0)
+            self.assertEqual(lane["learning_influences"], [])
+            self.assertIn("negative partial walk-forward validation", " ".join(lane["rationale"]))
+
     def test_negative_outcome_mart_edge_is_advisory_not_rank_penalty(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

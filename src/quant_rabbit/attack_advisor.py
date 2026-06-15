@@ -442,6 +442,15 @@ def _attack_lane(
         ):
             rationale.append("positive archive condition edge failed walk-forward validation")
         elif (
+            0 < condition_validation_outcomes < ADVISORY_OUTCOME_MART_MIN_TRIALS
+            and condition_validation_actual_net_jpy is not None
+            and condition_validation_actual_net_jpy <= 0
+        ):
+            rationale.append(
+                "positive archive condition edge has negative partial walk-forward validation; "
+                "no learning boost until validation recovers"
+            )
+        elif (
             condition_validation_outcomes >= ADVISORY_OUTCOME_MART_MIN_TRIALS
             and condition_validation_actual_net_jpy is not None
             and condition_validation_actual_net_jpy > 0
