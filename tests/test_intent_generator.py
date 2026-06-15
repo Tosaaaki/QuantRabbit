@@ -1544,9 +1544,9 @@ class IntentGeneratorTest(unittest.TestCase):
             output = root / "intents.json"
             forecast = SimpleNamespace(
                 direction="UP",
-                confidence=0.49,
-                raw_confidence=0.63,
-                calibration_multiplier=0.78,
+                confidence=0.58,
+                raw_confidence=0.67,
+                calibration_multiplier=0.87,
                 current_price=1.17326,
                 target_price=1.1762,
                 invalidation_price=1.1718,
@@ -1652,9 +1652,9 @@ class IntentGeneratorTest(unittest.TestCase):
             output = root / "intents.json"
             forecast = SimpleNamespace(
                 direction="UP",
-                confidence=0.49,
-                raw_confidence=0.66,
-                calibration_multiplier=0.74,
+                confidence=0.58,
+                raw_confidence=0.67,
+                calibration_multiplier=0.87,
                 current_price=1.17326,
                 target_price=1.1762,
                 invalidation_price=1.1718,
@@ -1722,6 +1722,50 @@ class IntentGeneratorTest(unittest.TestCase):
                 for item in live_ready
             )
         )
+
+    def test_same_cycle_projection_bootstrap_requires_raw_forecast_above_live_floor(self) -> None:
+        from quant_rabbit.models import MarketContext, TradeMethod
+        from quant_rabbit.strategy.intent_generator import _forecast_live_readiness_issue
+
+        os.environ["QR_REQUIRE_FORECAST_FOR_LIVE"] = "1"
+        metadata = {
+            "forecast_direction": "UP",
+            "forecast_confidence": 0.58,
+            "forecast_raw_confidence": 0.64,
+            "chart_direction_bias": "LONG",
+            "forecast_market_support": {
+                "ok": True,
+                "direction": "UP",
+                "aligned_projection_count": 1,
+                "timing_projection_count": 0,
+                "best_hit_rate": None,
+                "best_samples": 0,
+                "bootstrap_projection_support": True,
+                "reason": "same-cycle bootstrap should not bypass the live directional floor",
+            },
+        }
+        intent = OrderIntent(
+            pair="EUR_USD",
+            side=Side.LONG,
+            order_type=OrderType.STOP_ENTRY,
+            units=5000,
+            entry=1.1734,
+            tp=1.1762,
+            sl=1.1718,
+            thesis="near-miss bootstrap with raw forecast still below live floor",
+            market_context=MarketContext(
+                regime="TREND_UP current; TREND_CONTINUATION campaign lane",
+                narrative="",
+                chart_story="",
+                method=TradeMethod.TREND_CONTINUATION,
+                invalidation="",
+            ),
+            metadata=metadata,
+        )
+
+        issue = _forecast_live_readiness_issue(intent, metadata, TradeMethod.TREND_CONTINUATION)
+
+        self.assertEqual(issue["code"], "FORECAST_CONFIDENCE_REQUIRED_FOR_LIVE")
 
     def test_same_cycle_projection_bootstrap_is_built_without_ledger_samples(self) -> None:
         from quant_rabbit.strategy.intent_generator import _forecast_market_support_for_forecast

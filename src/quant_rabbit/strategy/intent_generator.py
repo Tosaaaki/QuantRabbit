@@ -610,6 +610,18 @@ FORECAST_RANGE_ROTATION_MIN_CONFIDENCE = _env_float(
     0.50,
     minimum=0.50,
 )
+# 2026-06-15 live forecast audit:
+# - OANDA M1 truth on 2,466 post-cycle UP/DOWN forecasts: hit=45.7%,
+#   avg_move=-0.95p, avg_MAE=7.92p > avg_MFE=6.37p.
+# - Calibrated confidence >=0.55 was still negative expectancy; >=0.65 was
+#   the first bucket with hit>50% and positive average move. Keep candidate
+#   seeding at the forecaster floor, but require the higher bar for LIVE_READY
+#   directional entries unless audited projection support rescues a near miss.
+FORECAST_DIRECTIONAL_LIVE_MIN_CONFIDENCE = _env_float(
+    "QR_FORECAST_DIRECTIONAL_LIVE_MIN_CONFIDENCE",
+    0.65,
+    minimum=0.50,
+)
 # Watch-only forecast lanes expose geometry for pairs the campaign list omits
 # when either the raw forecast or the current chart vote is materially strong,
 # but calibrated confidence is still below the live-entry floor. This prevents
@@ -655,7 +667,7 @@ MATRIX_REPAIR_MAX_SEEDS = _env_int(
 # may clear live context only when current, same-cycle projection evidence is
 # auditable and materially better than chance. The confidence shortfall is
 # bounded to 0.10 so this path rescues calibrated near-misses (for example
-# 0.47 vs a 0.55 floor), not genuinely weak predictions.
+# 0.58 vs a 0.65 floor), not genuinely weak predictions.
 FORECAST_MARKET_SUPPORT_MAX_CONFIDENCE_SHORTFALL = _env_float(
     "QR_FORECAST_MARKET_SUPPORT_MAX_CONFIDENCE_SHORTFALL",
     0.10,
@@ -5416,7 +5428,7 @@ def _forecast_market_support_allows_side(
     if not bool(support.get("ok")):
         return False
     if bool(support.get("bootstrap_projection_support")):
-        return True
+        return raw_confidence is not None and raw_confidence >= min_confidence
     if samples < FORECAST_MARKET_SUPPORT_MIN_SAMPLES:
         return False
     if aligned_count > 0:
@@ -5496,7 +5508,7 @@ def _forecast_live_min_confidence(metadata: dict[str, Any]) -> float:
         and str(metadata.get("hedge_timing_class") or "").upper() == "REVERSAL"
     ):
         return min(entry_min, RECOVERY_HEDGE_DEFAULT_CONVICTION_SCALE)
-    return entry_min
+    return max(entry_min, FORECAST_DIRECTIONAL_LIVE_MIN_CONFIDENCE)
 
 
 def _is_range_rotation_forecast_metadata(metadata: dict[str, Any]) -> bool:
