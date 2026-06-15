@@ -2607,6 +2607,9 @@ def _intent_findings(
                     "trader_pending_entry_orders": _pending_entry_evidence(pending_entry_orders),
                     "coverage_market_evidence_refresh": coverage_refresh,
                     "opportunity_modes": _coverage_opportunity_mode_summary(coverage_optimization),
+                    "runner_candidate_diagnostics": _coverage_runner_candidate_diagnostics(
+                        coverage_optimization
+                    ),
                     "status_counts": _intent_status_counts(intents),
                     "top_blockers": _top_intent_blockers(intents),
                     "dry_run_passed_live_readiness_blockers": _top_intent_live_readiness_blockers(
@@ -2674,6 +2677,38 @@ def _coverage_opportunity_mode_summary(payload: dict[str, Any]) -> dict[str, Any
             ],
         }
     return summary
+
+
+def _coverage_runner_candidate_diagnostics(payload: dict[str, Any]) -> dict[str, Any]:
+    diagnostics = (
+        payload.get("runner_candidate_diagnostics")
+        if isinstance(payload.get("runner_candidate_diagnostics"), dict)
+        else {}
+    )
+    if not diagnostics:
+        return {}
+    return {
+        "status": str(diagnostics.get("status") or ""),
+        "trend_candidate_lanes": _maybe_int(diagnostics.get("trend_candidate_lanes")) or 0,
+        "runner_qualified_lanes": _maybe_int(diagnostics.get("runner_qualified_lanes")) or 0,
+        "attached_harvest_lanes": _maybe_int(diagnostics.get("attached_harvest_lanes")) or 0,
+        "top_demotion_reasons": [
+            {
+                "reason": str(item.get("reason") or ""),
+                "count": _maybe_int(item.get("count")) or 0,
+            }
+            for item in (diagnostics.get("top_demotion_reasons") or [])[:5]
+            if isinstance(item, dict) and str(item.get("reason") or "").strip()
+        ],
+        "top_issue_codes": [
+            {
+                "code": str(item.get("code") or ""),
+                "count": _maybe_int(item.get("count")) or 0,
+            }
+            for item in (diagnostics.get("top_issue_codes") or [])[:5]
+            if isinstance(item, dict) and str(item.get("code") or "").strip()
+        ],
+    }
 
 
 def _coverage_market_evidence_refresh(payload: dict[str, Any]) -> dict[str, Any] | None:

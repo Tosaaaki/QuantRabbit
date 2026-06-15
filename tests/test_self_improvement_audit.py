@@ -1562,7 +1562,25 @@ class SelfImprovementAuditorTest(unittest.TestCase):
                                 "top_issue_codes": [{"code": "FORECAST_WATCH_ONLY", "count": 1}],
                                 "top_blockers": [{"label": "runner forecast watch-only", "count": 1}],
                             },
-                        }
+                        },
+                        "runner_candidate_diagnostics": {
+                            "status": "RUNNER_CANDIDATES_DEMOTED_TO_HARVEST",
+                            "trend_candidate_lanes": 4,
+                            "runner_qualified_lanes": 0,
+                            "attached_harvest_lanes": 4,
+                            "top_demotion_reasons": [
+                                {
+                                    "reason": "RANGE regime is not a clean runner trend",
+                                    "count": 3,
+                                }
+                            ],
+                            "top_issue_codes": [
+                                {
+                                    "code": "TREND_MARKET_NOT_OPERATING_TREND",
+                                    "count": 2,
+                                }
+                            ],
+                        },
                     }
                 )
             )
@@ -1577,6 +1595,12 @@ class SelfImprovementAuditorTest(unittest.TestCase):
         self.assertEqual(evidence["status_counts"]["DRY_RUN_PASSED"], 1)
         self.assertEqual(evidence["opportunity_modes"]["HARVEST"]["lanes"], 1)
         self.assertEqual(evidence["opportunity_modes"]["RUNNER"]["top_issue_codes"][0]["code"], "FORECAST_WATCH_ONLY")
+        runner_diagnostics = evidence["runner_candidate_diagnostics"]
+        self.assertEqual(runner_diagnostics["status"], "RUNNER_CANDIDATES_DEMOTED_TO_HARVEST")
+        self.assertEqual(runner_diagnostics["trend_candidate_lanes"], 4)
+        self.assertEqual(runner_diagnostics["runner_qualified_lanes"], 0)
+        self.assertEqual(runner_diagnostics["top_demotion_reasons"][0]["reason"], "RANGE regime is not a clean runner trend")
+        self.assertEqual(runner_diagnostics["top_issue_codes"][0]["code"], "TREND_MARKET_NOT_OPERATING_TREND")
         self.assertEqual(dry_run_blockers["FORECAST_CONFIDENCE_REQUIRED_FOR_LIVE"]["count"], 1)
         self.assertEqual(dry_run_blockers["STRATEGY_NOT_ELIGIBLE"]["count"], 1)
         self.assertNotIn("STRATEGY_PROFILE_MISSING", dry_run_blockers)

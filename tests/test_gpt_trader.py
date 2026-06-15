@@ -1471,6 +1471,35 @@ class GPTTraderBrainTest(unittest.TestCase):
                                 ],
                             },
                         },
+                        "runner_candidate_diagnostics": {
+                            "status": "RUNNER_CANDIDATES_DEMOTED_TO_HARVEST",
+                            "trend_candidate_lanes": 3,
+                            "runner_qualified_lanes": 0,
+                            "attached_harvest_lanes": 3,
+                            "status_counts": {"DRY_RUN_BLOCKED": 3},
+                            "top_demotion_reasons": [
+                                {
+                                    "reason": "UNCLEAR regime is not a clean runner trend",
+                                    "count": 2,
+                                }
+                            ],
+                            "top_issue_codes": [
+                                {
+                                    "code": "TREND_MARKET_NOT_OPERATING_TREND",
+                                    "count": 2,
+                                }
+                            ],
+                            "top_lanes": [
+                                {
+                                    "lane_id": "trend_trader:EUR_USD:LONG:TREND_CONTINUATION",
+                                    "status": "DRY_RUN_BLOCKED",
+                                    "opportunity_mode": "HARVEST",
+                                    "tp_execution_mode": "ATTACHED_TECHNICAL_TP",
+                                    "tp_attach_reason": "UNCLEAR regime is not a clean runner trend",
+                                    "reward_risk": 2.8,
+                                }
+                            ],
+                        },
                         "artifact_diagnostics": {
                             "spread_normalized_candidate_count": 8,
                             "spread_normalized_no_live_blocker_count": 2,
@@ -1556,6 +1585,12 @@ class GPTTraderBrainTest(unittest.TestCase):
             self.assertFalse(packet["live_permission"])
             self.assertEqual(packet["opportunity_modes"]["HARVEST"]["lanes"], 6)
             self.assertEqual(packet["opportunity_modes"]["RUNNER"]["top_issue_codes"][0]["code"], "FORECAST_REQUIRED")
+            runner_diagnostics = packet["runner_candidate_diagnostics"]
+            self.assertEqual(runner_diagnostics["status"], "RUNNER_CANDIDATES_DEMOTED_TO_HARVEST")
+            self.assertEqual(runner_diagnostics["trend_candidate_lanes"], 3)
+            self.assertEqual(runner_diagnostics["runner_qualified_lanes"], 0)
+            self.assertEqual(runner_diagnostics["top_demotion_reasons"][0]["reason"], "UNCLEAR regime is not a clean runner trend")
+            self.assertEqual(runner_diagnostics["top_lanes"][0]["opportunity_mode"], "HARVEST")
             bucket = packet["profitable_bucket_coverage"]
             self.assertEqual(bucket["source_status"], "RESEARCH_PROFITABLE_NOT_CERTIFIED")
             edge = bucket["top_edges"][0]

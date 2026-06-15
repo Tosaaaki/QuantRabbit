@@ -3047,7 +3047,50 @@ def _coverage_optimization_packet(payload: dict[str, Any] | None) -> dict[str, A
         ),
         "profitable_bucket_coverage": _profitable_bucket_coverage_packet(bucket_diag),
         "opportunity_modes": _opportunity_modes_packet(payload.get("opportunity_modes")),
+        "runner_candidate_diagnostics": _runner_candidate_diagnostics_packet(
+            payload.get("runner_candidate_diagnostics")
+        ),
         "action_items": [str(item) for item in (payload.get("action_items") or [])[:8] if str(item).strip()],
+    }
+
+
+def _runner_candidate_diagnostics_packet(payload: object) -> dict[str, Any]:
+    if not isinstance(payload, dict):
+        return {}
+    return {
+        "status": payload.get("status"),
+        "trend_candidate_lanes": payload.get("trend_candidate_lanes"),
+        "runner_qualified_lanes": payload.get("runner_qualified_lanes"),
+        "attached_harvest_lanes": payload.get("attached_harvest_lanes"),
+        "status_counts": payload.get("status_counts") if isinstance(payload.get("status_counts"), dict) else {},
+        "top_demotion_reasons": [
+            {
+                "reason": str(item.get("reason") or ""),
+                "count": item.get("count"),
+            }
+            for item in (payload.get("top_demotion_reasons") or [])[:5]
+            if isinstance(item, dict) and str(item.get("reason") or "").strip()
+        ],
+        "top_issue_codes": [
+            {
+                "code": str(item.get("code") or ""),
+                "count": item.get("count"),
+            }
+            for item in (payload.get("top_issue_codes") or [])[:5]
+            if isinstance(item, dict) and str(item.get("code") or "").strip()
+        ],
+        "top_lanes": [
+            {
+                "lane_id": str(item.get("lane_id") or ""),
+                "status": item.get("status"),
+                "opportunity_mode": item.get("opportunity_mode"),
+                "tp_execution_mode": item.get("tp_execution_mode"),
+                "tp_attach_reason": item.get("tp_attach_reason"),
+                "reward_risk": item.get("reward_risk"),
+            }
+            for item in (payload.get("top_lanes") or [])[:5]
+            if isinstance(item, dict) and str(item.get("lane_id") or "").strip()
+        ],
     }
 
 
