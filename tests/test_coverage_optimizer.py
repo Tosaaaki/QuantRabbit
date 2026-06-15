@@ -205,6 +205,49 @@ class CoverageOptimizerTest(unittest.TestCase):
             self.assertTrue(any("top codes: REWARD_RISK_TOO_LOW" in item for item in payload["action_items"]))
             self.assertIn("Opportunity Modes", (root / "coverage.md").read_text())
 
+    def test_opportunity_mode_prefers_intent_metadata_when_present(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            intents = root / "intents.json"
+            target = root / "target.json"
+            result = _result(
+                "DRY_RUN_BLOCKED",
+                risk_metrics={
+                    "risk_jpy": 100.0,
+                    "reward_jpy": 350.0,
+                    "reward_risk": 3.5,
+                    "spread_pips": 0.8,
+                },
+            )
+            result["intent"]["metadata"] = {
+                "opportunity_mode": "HARVEST",
+                "opportunity_mode_reason": "tp_target_intent=HARVEST",
+            }
+            intents.write_text(json.dumps({"results": [result]}))
+            target.write_text(
+                json.dumps(
+                    {
+                        "status": "PURSUE_TARGET",
+                        "remaining_target_jpy": 500.0,
+                        "remaining_risk_budget_jpy": 500.0,
+                    }
+                )
+            )
+
+            CoverageOptimizer(
+                intents_path=intents,
+                target_state_path=target,
+                replay_path=root / "missing_replay.json",
+                market_context_matrix_path=_matrix(root),
+                output_path=root / "coverage.json",
+                report_path=root / "coverage.md",
+            ).run()
+
+            payload = json.loads((root / "coverage.json").read_text())
+            self.assertEqual(payload["lanes"][0]["opportunity_mode"], "HARVEST")
+            self.assertEqual(payload["opportunity_modes"]["HARVEST"]["lanes"], 1)
+            self.assertEqual(payload["opportunity_modes"]["RUNNER"]["lanes"], 0)
+
     def test_cli_coverage_gap_is_diagnostic_success(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

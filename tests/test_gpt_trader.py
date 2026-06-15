@@ -1429,6 +1429,48 @@ class GPTTraderBrainTest(unittest.TestCase):
                         "live_ready_reward_jpy": 0.0,
                         "potential_reward_jpy": 0.0,
                         "coverage_pct": 0.0,
+                        "opportunity_modes": {
+                            "HARVEST": {
+                                "lanes": 6,
+                                "live_ready_lanes": 0,
+                                "promotion_candidate_lanes": 0,
+                                "reward_jpy": 7400.0,
+                                "live_ready_reward_jpy": 0.0,
+                                "potential_reward_jpy": 0.0,
+                                "coverage_pct": 0.0,
+                                "potential_coverage_pct": 0.0,
+                                "top_issue_codes": [{"code": "SPREAD_TOO_WIDE", "count": 4}],
+                                "top_blockers": [{"label": "spread too wide", "count": 4}],
+                                "top_lanes": [
+                                    {
+                                        "lane_id": "range_trader:EUR_USD:LONG:RANGE_ROTATION",
+                                        "status": "DRY_RUN_BLOCKED",
+                                        "reward_jpy": 1200.0,
+                                        "reward_risk": 1.2,
+                                    }
+                                ],
+                            },
+                            "RUNNER": {
+                                "lanes": 3,
+                                "live_ready_lanes": 0,
+                                "promotion_candidate_lanes": 0,
+                                "reward_jpy": 11600.0,
+                                "live_ready_reward_jpy": 0.0,
+                                "potential_reward_jpy": 0.0,
+                                "coverage_pct": 0.0,
+                                "potential_coverage_pct": 0.0,
+                                "top_issue_codes": [{"code": "FORECAST_REQUIRED", "count": 2}],
+                                "top_blockers": [{"label": "fresh runner forecast is missing", "count": 2}],
+                                "top_lanes": [
+                                    {
+                                        "lane_id": "trend_trader:EUR_USD:LONG:TREND_CONTINUATION",
+                                        "status": "DRY_RUN_BLOCKED",
+                                        "reward_jpy": 3000.0,
+                                        "reward_risk": 3.0,
+                                    }
+                                ],
+                            },
+                        },
                         "artifact_diagnostics": {
                             "spread_normalized_candidate_count": 8,
                             "spread_normalized_no_live_blocker_count": 2,
@@ -1512,6 +1554,8 @@ class GPTTraderBrainTest(unittest.TestCase):
             packet = payload["input_packet"]["coverage_optimization"]
             self.assertEqual(packet["status"], "COVERAGE_GAP")
             self.assertFalse(packet["live_permission"])
+            self.assertEqual(packet["opportunity_modes"]["HARVEST"]["lanes"], 6)
+            self.assertEqual(packet["opportunity_modes"]["RUNNER"]["top_issue_codes"][0]["code"], "FORECAST_REQUIRED")
             bucket = packet["profitable_bucket_coverage"]
             self.assertEqual(bucket["source_status"], "RESEARCH_PROFITABLE_NOT_CERTIFIED")
             edge = bucket["top_edges"][0]
@@ -1528,6 +1572,7 @@ class GPTTraderBrainTest(unittest.TestCase):
             self.assertIn("coverage:optimization", payload["input_packet"]["allowed_evidence_refs"])
             self.assertIn("coverage:profitable_bucket:EUR_USD:LONG", payload["input_packet"]["allowed_evidence_refs"])
             self.assertIn("coverage:profitable_bucket:AUD_JPY:SHORT", payload["input_packet"]["allowed_evidence_refs"])
+            self.assertEqual(payload["input_packet"]["lanes"][0]["opportunity"]["opportunity_mode"], "RUNNER")
 
     def test_accepts_attack_advice_evidence_refs(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -3166,6 +3211,14 @@ def _result(*, lane_id: str = LANE_ID, method: str = "TREND_CONTINUATION") -> di
                 "invalidation": "Invalid if the shelf breaks before entry.",
                 "event_risk": "",
                 "session": "test",
+            },
+            "metadata": {
+                "opportunity_mode": "RUNNER",
+                "opportunity_mode_reason": "tp_target_intent=EXTEND",
+                "opportunity_mode_reward_risk": 2.4,
+                "tp_execution_mode": "RUNNER_NO_BROKER_TP",
+                "tp_target_intent": "EXTEND",
+                "tp_target_source": "STRUCTURAL_EXTEND",
             },
         },
     }

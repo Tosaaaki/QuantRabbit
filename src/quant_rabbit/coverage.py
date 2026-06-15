@@ -1425,6 +1425,9 @@ def _average_reward(lanes: tuple[CoverageLane, ...]) -> float:
 def _opportunity_mode(result: dict[str, Any], reward_risk: float) -> str:
     intent = result.get("intent") if isinstance(result.get("intent"), dict) else {}
     metadata = intent.get("metadata") if isinstance(intent.get("metadata"), dict) else {}
+    metadata_mode = str(metadata.get("opportunity_mode") or "").upper()
+    if metadata_mode in {"HARVEST", "RUNNER", "BALANCED"}:
+        return metadata_mode
     market_context = intent.get("market_context") if isinstance(intent.get("market_context"), dict) else {}
     target_intent = str(metadata.get("tp_target_intent") or metadata.get("campaign_role") or "").upper()
     method = str(market_context.get("method") or "").upper()

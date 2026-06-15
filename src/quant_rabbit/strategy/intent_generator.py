@@ -376,6 +376,8 @@ FORECAST_CONFIDENCE_TELEMETRY_TOLERANCE = _env_float(
 # otherwise this intent layer silently reintroduces the fixed-RR veto that
 # range/failure scalps were explicitly designed to avoid.
 FRESH_ENTRY_HARVEST_TP_FALLBACK_MIN_REWARD_RISK = 1.0
+OPPORTUNITY_MODE_HARVEST_REWARD_RISK_MAX = 1.35
+OPPORTUNITY_MODE_RUNNER_REWARD_RISK_MIN = 2.0
 
 
 def _broker_price_tick_pips(pair: str) -> float:
@@ -7085,7 +7087,15 @@ def _take_profit_execution_plan(
 
     target_pips = abs(effective_tp - entry) * pip_factor
     virtual_rr = target_pips / stop_pips if stop_pips > 0 else 0.0
+    opportunity_mode, opportunity_reason = _opportunity_mode_from_execution_plan(
+        method=method,
+        target_intent=target_intent,
+        reward_risk=virtual_rr,
+    )
     metadata = {
+        "opportunity_mode": opportunity_mode,
+        "opportunity_mode_reason": opportunity_reason,
+        "opportunity_mode_reward_risk": round(virtual_rr, 3),
         "tp_execution_mode": "ATTACHED_TECHNICAL_TP" if attach_tp else "RUNNER_NO_BROKER_TP",
         "attach_take_profit_on_fill": attach_tp,
         "tp_attach_reason": attach_reason,
@@ -7099,6 +7109,29 @@ def _take_profit_execution_plan(
         "tp_atr_pips": atr_pips,
     }
     return _round_price(pair, effective_tp), metadata
+
+
+def _opportunity_mode_from_execution_plan(
+    *,
+    method: TradeMethod,
+    target_intent: str,
+    reward_risk: float,
+) -> tuple[str, str]:
+    intent = str(target_intent or "").upper()
+    method_name = method.value if isinstance(method, TradeMethod) else str(method or "").upper()
+    if any(token in intent for token in ("RUNNER", "TRAIL", "EXTEND", "SWING", "HOLD", "ADD")):
+        return "RUNNER", f"tp_target_intent={intent}"
+    if reward_risk >= OPPORTUNITY_MODE_RUNNER_REWARD_RISK_MIN:
+        return "RUNNER", f"reward_risk>={OPPORTUNITY_MODE_RUNNER_REWARD_RISK_MIN:.2f}"
+    if any(token in intent for token in ("HARVEST", "SCALP", "QUICK")):
+        return "HARVEST", f"tp_target_intent={intent}"
+    if 0.0 < reward_risk <= OPPORTUNITY_MODE_HARVEST_REWARD_RISK_MAX:
+        return "HARVEST", f"reward_risk<={OPPORTUNITY_MODE_HARVEST_REWARD_RISK_MAX:.2f}"
+    if method_name == TradeMethod.TREND_CONTINUATION.value:
+        return "RUNNER", "method=TREND_CONTINUATION"
+    if method_name in {TradeMethod.RANGE_ROTATION.value, TradeMethod.BREAKOUT_FAILURE.value}:
+        return "HARVEST", f"method={method_name}"
+    return "BALANCED", "no dominant harvest/runner signal"
 
 
 def _attached_harvest_floor_tp_candidate(

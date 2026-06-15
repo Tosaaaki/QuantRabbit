@@ -4681,6 +4681,8 @@ class IntentGeneratorTest(unittest.TestCase):
 
         self.assertEqual(tp, 1.15814)
         self.assertEqual(metadata["tp_target_source"], "OPERATING_HARVEST_FLOOR")
+        self.assertEqual(metadata["opportunity_mode"], "HARVEST")
+        self.assertEqual(metadata["opportunity_mode_reward_risk"], metadata["virtual_take_profit_reward_risk"])
         self.assertEqual(metadata["tp_target_distance_pips"], 45.8)
         self.assertGreater(metadata["virtual_take_profit_reward_risk"], 1.0)
         self.assertIn("structural anchor missing", metadata["tp_target_reason"])
@@ -4811,6 +4813,7 @@ class IntentGeneratorTest(unittest.TestCase):
             result = json.loads(output.read_text())["results"][0]
             metadata = result["intent"]["metadata"]
             self.assertFalse(metadata["attach_take_profit_on_fill"])
+            self.assertEqual(metadata["opportunity_mode"], "RUNNER")
             self.assertEqual(metadata["tp_execution_mode"], "RUNNER_NO_BROKER_TP")
             self.assertEqual(metadata["tp_target_source"], "STRUCTURAL_EXTEND")
             self.assertIn("qualifies as runner", metadata["tp_attach_reason"])

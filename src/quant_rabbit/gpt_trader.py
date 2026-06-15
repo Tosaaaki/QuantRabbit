@@ -2377,6 +2377,17 @@ def _lane_packet(
                 ),
                 "story": _small_dict(story_index.get(pair), ("methods", "themes", "examples")),
                 "forecast": _lane_forecast_packet(intent.get("metadata")),
+                "opportunity": _small_dict(
+                    metadata,
+                    (
+                        "opportunity_mode",
+                        "opportunity_mode_reason",
+                        "opportunity_mode_reward_risk",
+                        "tp_execution_mode",
+                        "tp_target_intent",
+                        "tp_target_source",
+                    ),
+                ),
                 "position_building": _small_dict(
                     metadata,
                     (
@@ -3035,8 +3046,33 @@ def _coverage_optimization_packet(payload: dict[str, Any] | None) -> dict[str, A
             ),
         ),
         "profitable_bucket_coverage": _profitable_bucket_coverage_packet(bucket_diag),
+        "opportunity_modes": _opportunity_modes_packet(payload.get("opportunity_modes")),
         "action_items": [str(item) for item in (payload.get("action_items") or [])[:8] if str(item).strip()],
     }
+
+
+def _opportunity_modes_packet(payload: object) -> dict[str, Any]:
+    if not isinstance(payload, dict):
+        return {}
+    out: dict[str, Any] = {}
+    for mode in ("HARVEST", "RUNNER", "BALANCED"):
+        item = payload.get(mode)
+        if not isinstance(item, dict):
+            continue
+        out[mode] = {
+            "lanes": item.get("lanes"),
+            "live_ready_lanes": item.get("live_ready_lanes"),
+            "promotion_candidate_lanes": item.get("promotion_candidate_lanes"),
+            "reward_jpy": item.get("reward_jpy"),
+            "live_ready_reward_jpy": item.get("live_ready_reward_jpy"),
+            "potential_reward_jpy": item.get("potential_reward_jpy"),
+            "coverage_pct": item.get("coverage_pct"),
+            "potential_coverage_pct": item.get("potential_coverage_pct"),
+            "top_issue_codes": list(item.get("top_issue_codes") or [])[:5],
+            "top_blockers": list(item.get("top_blockers") or [])[:3],
+            "top_lanes": list(item.get("top_lanes") or [])[:3],
+        }
+    return out
 
 
 def _profitable_bucket_coverage_packet(payload: dict[str, Any]) -> dict[str, Any]:
