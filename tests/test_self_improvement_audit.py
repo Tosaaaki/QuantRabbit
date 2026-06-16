@@ -1558,6 +1558,9 @@ class SelfImprovementAuditorTest(unittest.TestCase):
                                 "live_ready_lanes": 0,
                                 "promotion_candidate_lanes": 0,
                                 "top_issue_codes": [{"code": "FORECAST_CONFIDENCE_REQUIRED_FOR_LIVE", "count": 1}],
+                                "top_live_blocker_codes": [
+                                    {"code": "FORECAST_CONFIDENCE_REQUIRED_FOR_LIVE", "count": 1}
+                                ],
                                 "top_blockers": [{"label": "forecast confidence below live floor", "count": 1}],
                             },
                             "RUNNER": {
@@ -1565,6 +1568,7 @@ class SelfImprovementAuditorTest(unittest.TestCase):
                                 "live_ready_lanes": 0,
                                 "promotion_candidate_lanes": 0,
                                 "top_issue_codes": [{"code": "FORECAST_WATCH_ONLY", "count": 1}],
+                                "top_live_blocker_codes": [{"code": "FORECAST_WATCH_ONLY", "count": 1}],
                                 "top_blockers": [{"label": "runner forecast watch-only", "count": 1}],
                             },
                         },
@@ -1580,6 +1584,12 @@ class SelfImprovementAuditorTest(unittest.TestCase):
                                 }
                             ],
                             "top_issue_codes": [
+                                {
+                                    "code": "TREND_MARKET_NOT_OPERATING_TREND",
+                                    "count": 2,
+                                }
+                            ],
+                            "top_live_blocker_codes": [
                                 {
                                     "code": "TREND_MARKET_NOT_OPERATING_TREND",
                                     "count": 2,
@@ -1601,14 +1611,23 @@ class SelfImprovementAuditorTest(unittest.TestCase):
         self.assertEqual(evidence["status_counts"]["DRY_RUN_PASSED"], 1)
         self.assertEqual(evidence["opportunity_modes"]["HARVEST"]["lanes"], 1)
         self.assertEqual(evidence["opportunity_modes"]["RUNNER"]["top_issue_codes"][0]["code"], "FORECAST_WATCH_ONLY")
+        self.assertEqual(
+            evidence["opportunity_modes"]["RUNNER"]["top_live_blocker_codes"][0]["code"],
+            "FORECAST_WATCH_ONLY",
+        )
         runner_diagnostics = evidence["runner_candidate_diagnostics"]
         self.assertEqual(runner_diagnostics["status"], "RUNNER_CANDIDATES_DEMOTED_TO_HARVEST")
         self.assertEqual(runner_diagnostics["trend_candidate_lanes"], 4)
         self.assertEqual(runner_diagnostics["runner_qualified_lanes"], 0)
         self.assertEqual(runner_diagnostics["top_demotion_reasons"][0]["reason"], "RANGE regime is not a clean runner trend")
         self.assertEqual(runner_diagnostics["top_issue_codes"][0]["code"], "TREND_MARKET_NOT_OPERATING_TREND")
+        self.assertEqual(
+            runner_diagnostics["top_live_blocker_codes"][0]["code"],
+            "TREND_MARKET_NOT_OPERATING_TREND",
+        )
         self.assertIn("runner candidates", report_text)
         self.assertIn("opportunity modes", report_text)
+        self.assertIn("live_codes=`FORECAST_WATCH_ONLY`", report_text)
         self.assertIn("dry-run blocker families", report_text)
         self.assertIn("nearest dry-run lanes", report_text)
         self.assertIn("forecast gate reasons", report_text)

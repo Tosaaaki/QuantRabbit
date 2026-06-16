@@ -3079,6 +3079,14 @@ def _runner_candidate_diagnostics_packet(payload: object) -> dict[str, Any]:
             for item in (payload.get("top_issue_codes") or [])[:5]
             if isinstance(item, dict) and str(item.get("code") or "").strip()
         ],
+        "top_live_blocker_codes": [
+            {
+                "code": str(item.get("code") or ""),
+                "count": item.get("count"),
+            }
+            for item in (payload.get("top_live_blocker_codes") or [])[:5]
+            if isinstance(item, dict) and str(item.get("code") or "").strip()
+        ],
         "top_lanes": [
             {
                 "lane_id": str(item.get("lane_id") or ""),
@@ -3117,6 +3125,7 @@ def _opportunity_modes_packet(payload: object) -> dict[str, Any]:
             "diagnostic_status": item.get("diagnostic_status"),
             "top_demotion_reasons": list(item.get("top_demotion_reasons") or [])[:5],
             "top_issue_codes": list(item.get("top_issue_codes") or [])[:5],
+            "top_live_blocker_codes": list(item.get("top_live_blocker_codes") or [])[:5],
             "top_blockers": list(item.get("top_blockers") or [])[:3],
             "top_lanes": list(item.get("top_lanes") or [])[:3],
         }

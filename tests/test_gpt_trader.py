@@ -1440,6 +1440,7 @@ class GPTTraderBrainTest(unittest.TestCase):
                                 "coverage_pct": 0.0,
                                 "potential_coverage_pct": 0.0,
                                 "top_issue_codes": [{"code": "SPREAD_TOO_WIDE", "count": 4}],
+                                "top_live_blocker_codes": [{"code": "SPREAD_TOO_WIDE", "count": 4}],
                                 "top_blockers": [{"label": "spread too wide", "count": 4}],
                                 "top_lanes": [
                                     {
@@ -1460,6 +1461,7 @@ class GPTTraderBrainTest(unittest.TestCase):
                                 "coverage_pct": 0.0,
                                 "potential_coverage_pct": 0.0,
                                 "top_issue_codes": [{"code": "FORECAST_REQUIRED", "count": 2}],
+                                "top_live_blocker_codes": [{"code": "FORECAST_REQUIRED", "count": 2}],
                                 "top_blockers": [{"label": "fresh runner forecast is missing", "count": 2}],
                                 "top_lanes": [
                                     {
@@ -1484,6 +1486,12 @@ class GPTTraderBrainTest(unittest.TestCase):
                                 }
                             ],
                             "top_issue_codes": [
+                                {
+                                    "code": "TREND_MARKET_NOT_OPERATING_TREND",
+                                    "count": 2,
+                                }
+                            ],
+                            "top_live_blocker_codes": [
                                 {
                                     "code": "TREND_MARKET_NOT_OPERATING_TREND",
                                     "count": 2,
@@ -1585,11 +1593,19 @@ class GPTTraderBrainTest(unittest.TestCase):
             self.assertFalse(packet["live_permission"])
             self.assertEqual(packet["opportunity_modes"]["HARVEST"]["lanes"], 6)
             self.assertEqual(packet["opportunity_modes"]["RUNNER"]["top_issue_codes"][0]["code"], "FORECAST_REQUIRED")
+            self.assertEqual(
+                packet["opportunity_modes"]["RUNNER"]["top_live_blocker_codes"][0]["code"],
+                "FORECAST_REQUIRED",
+            )
             runner_diagnostics = packet["runner_candidate_diagnostics"]
             self.assertEqual(runner_diagnostics["status"], "RUNNER_CANDIDATES_DEMOTED_TO_HARVEST")
             self.assertEqual(runner_diagnostics["trend_candidate_lanes"], 3)
             self.assertEqual(runner_diagnostics["runner_qualified_lanes"], 0)
             self.assertEqual(runner_diagnostics["top_demotion_reasons"][0]["reason"], "UNCLEAR regime is not a clean runner trend")
+            self.assertEqual(
+                runner_diagnostics["top_live_blocker_codes"][0]["code"],
+                "TREND_MARKET_NOT_OPERATING_TREND",
+            )
             self.assertEqual(runner_diagnostics["top_lanes"][0]["opportunity_mode"], "HARVEST")
             bucket = packet["profitable_bucket_coverage"]
             self.assertEqual(bucket["source_status"], "RESEARCH_PROFITABLE_NOT_CERTIFIED")

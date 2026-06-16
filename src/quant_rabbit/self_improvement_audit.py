@@ -2821,6 +2821,14 @@ def _coverage_opportunity_mode_summary(payload: dict[str, Any]) -> dict[str, Any
                 for issue in (item.get("top_issue_codes") or [])[:5]
                 if isinstance(issue, dict) and str(issue.get("code") or "").strip()
             ],
+            "top_live_blocker_codes": [
+                {
+                    "code": str(issue.get("code") or ""),
+                    "count": _maybe_int(issue.get("count")) or 0,
+                }
+                for issue in (item.get("top_live_blocker_codes") or [])[:5]
+                if isinstance(issue, dict) and str(issue.get("code") or "").strip()
+            ],
             "top_blockers": [
                 {
                     "label": str(blocker.get("label") or ""),
@@ -2860,6 +2868,14 @@ def _coverage_runner_candidate_diagnostics(payload: dict[str, Any]) -> dict[str,
                 "count": _maybe_int(item.get("count")) or 0,
             }
             for item in (diagnostics.get("top_issue_codes") or [])[:5]
+            if isinstance(item, dict) and str(item.get("code") or "").strip()
+        ],
+        "top_live_blocker_codes": [
+            {
+                "code": str(item.get("code") or ""),
+                "count": _maybe_int(item.get("count")) or 0,
+            }
+            for item in (diagnostics.get("top_live_blocker_codes") or [])[:5]
             if isinstance(item, dict) and str(item.get("code") or "").strip()
         ],
     }
@@ -5243,6 +5259,16 @@ def _report_opportunity_mode_text(raw: Any) -> str:
         item = modes.get(key) if isinstance(modes.get(key), dict) else None
         if not item:
             continue
+        live_blocker_codes = (
+            item.get("top_live_blocker_codes")
+            if isinstance(item.get("top_live_blocker_codes"), list)
+            else []
+        )
+        live_codes = ", ".join(
+            str(issue.get("code"))
+            for issue in live_blocker_codes[:3]
+            if isinstance(issue, dict) and str(issue.get("code") or "").strip()
+        )
         issue_codes = item.get("top_issue_codes") if isinstance(item.get("top_issue_codes"), list) else []
         top_codes = ", ".join(
             str(issue.get("code"))
@@ -5251,7 +5277,8 @@ def _report_opportunity_mode_text(raw: Any) -> str:
         )
         parts.append(
             f"{key} lanes=`{item.get('lanes')}` live=`{item.get('live_ready_lanes')}` "
-            f"reward=`{item.get('reward_jpy')}` codes=`{top_codes or 'none'}`"
+            f"reward=`{item.get('reward_jpy')}` live_codes=`{live_codes or 'none'}` "
+            f"codes=`{top_codes or 'none'}`"
         )
     return "; ".join(parts)
 
