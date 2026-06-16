@@ -855,7 +855,7 @@ class LiquiditySweepDirectionTest(unittest.TestCase):
         signals = [
             _Sig("liquidity_sweep_low", "UP", "M1 equal-lows at 1.09970 (3.0pip down)"),
             _Sig("liquidity_sweep_low", "UP", "M5 equal-lows at 1.09973 (2.7pip down)"),
-            _Sig("liquidity_sweep_low", "UP", "M15 equal-lows at 1.09977 (2.3pip down)"),
+            _Sig("liquidity_sweep_low", "UP", "M15 equal-lows at 1.09980 (2.0pip down)"),
             _Sig("liquidity_sweep_low", "UP", "M30 equal-lows at 1.09970 (3.0pip down)"),
         ]
 

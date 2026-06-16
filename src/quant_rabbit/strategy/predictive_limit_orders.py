@@ -234,11 +234,12 @@ def _same_predictive_trap(left: PredictiveLimitOrder, right: PredictiveLimitOrde
     # there as separate exposure. Keep this constant at the pip granularity
     # until projection signals carry a stable source-level id across timeframes.
     tolerance = 0.01 if left.pair.endswith("_JPY") else 0.0001
-    if abs(float(left.limit_price) - float(right.limit_price)) > tolerance:
+    epsilon = tolerance * 1e-6
+    if abs(float(left.limit_price) - float(right.limit_price)) > tolerance + epsilon:
         return False
     if left.take_profit_price is None or right.take_profit_price is None:
         return left.take_profit_price is None and right.take_profit_price is None
-    return abs(float(left.take_profit_price) - float(right.take_profit_price)) <= tolerance
+    return abs(float(left.take_profit_price) - float(right.take_profit_price)) <= tolerance + epsilon
 
 
 def _predictive_order_rank(order: PredictiveLimitOrder) -> tuple[int, int]:
