@@ -4251,6 +4251,9 @@ class IntentGenerator:
             if snapshot is not None
             else {}
         )
+        self_improvement_profitability_issue = (
+            _self_improvement_profitability_p0_issue(self.data_root) if snapshot is not None else None
+        )
         results: list[GeneratedIntent] = []
         for lane in lanes[:max_candidates]:
             variants = (None,) if snapshot is None else _order_variants_for(lane)
@@ -4270,6 +4273,7 @@ class IntentGenerator:
                         telemetry_cache=telemetry_cache,
                         data_root=self.data_root,
                         loss_streaks=loss_streaks,
+                        self_improvement_profitability_issue=self_improvement_profitability_issue,
                     )
                 )
         generated_at = datetime.now(timezone.utc).isoformat()
@@ -4301,6 +4305,7 @@ class IntentGenerator:
         telemetry_cache: _TelemetryLiveReadinessCache | None = None,
         data_root: Path | None = None,
         loss_streaks: dict[str, SameDayLossStreak] | None = None,
+        self_improvement_profitability_issue: dict[str, str] | None = None,
     ) -> GeneratedIntent:
         parent_lane_id = _lane_id(lane)
         method = TradeMethod.parse(str(lane["method"]))
@@ -4500,6 +4505,13 @@ class IntentGenerator:
             risk_issues.extend(loss_streak_issues)
             if any(issue.get("severity") == "BLOCK" for issue in loss_streak_issues):
                 risk_allowed = False
+        if (
+            self_improvement_profitability_issue is not None
+            and str(intent.metadata.get("position_intent") or "").upper() != "HEDGE"
+        ):
+            risk_issues.append(dict(self_improvement_profitability_issue))
+            live_blockers = (*live_blockers, self_improvement_profitability_issue["message"])
+            risk_allowed = False
         forecast_live_issue = _forecast_live_readiness_issue(intent, intent.metadata or {}, method)
         if forecast_live_issue is not None:
             risk_issues.append(forecast_live_issue)
@@ -5227,6 +5239,64 @@ def _same_day_loss_streak_issues(
             "severity": "WARN",
         }
     ]
+
+
+def _self_improvement_profitability_p0_issue(data_root: Path) -> dict[str, str] | None:
+    """Turn an active profitability P0 into an intent-generation hard block.
+
+    `gpt-trader-decision` and `LiveOrderGateway` already reject sends under a
+    self-improvement P0. This earlier dry-run block keeps `order_intents.json`
+    from advertising LIVE_READY lanes while the audit says close discipline is
+    still system-negative.
+    """
+    path = data_root / "self_improvement_audit.json"
+    if not path.exists():
+        return None
+    try:
+        payload = json.loads(path.read_text())
+    except (OSError, json.JSONDecodeError, ValueError):
+        return None
+    for item in payload.get("findings", []) or []:
+        if not isinstance(item, dict):
+            continue
+        if str(item.get("priority") or "").upper() != "P0":
+            continue
+        code = str(item.get("code") or "")
+        layer = str(item.get("layer") or "")
+        if code != "PERSISTENT_PROFITABILITY_DISCIPLINE_BLOCKED":
+            continue
+        if layer and layer != "profitability":
+            continue
+        evidence = item.get("evidence") if isinstance(item.get("evidence"), dict) else {}
+        system = (
+            evidence.get("system_defect_evidence")
+            if isinstance(evidence.get("system_defect_evidence"), dict)
+            else {}
+        )
+        details: list[str] = []
+        streak = evidence.get("current_streak")
+        if streak is not None:
+            details.append(f"streak={streak}")
+        pf = system.get("profit_factor")
+        expectancy = system.get("expectancy_jpy")
+        gateway_bleed = system.get("gateway_close_bleed_observation")
+        if pf is not None:
+            details.append(f"PF={pf}")
+        if expectancy is not None:
+            details.append(f"expectancy={expectancy}")
+        if isinstance(gateway_bleed, dict) and gateway_bleed.get("gateway_net_jpy") is not None:
+            details.append(f"24h_gateway_net={gateway_bleed.get('gateway_net_jpy')}")
+        suffix = f" ({', '.join(details)})" if details else ""
+        return {
+            "code": "SELF_IMPROVEMENT_P0_PROFITABILITY_DISCIPLINE",
+            "message": (
+                "self-improvement profitability P0 blocks LIVE_READY intent generation; "
+                "repair close discipline before new risk"
+                f"{suffix}"
+            ),
+            "severity": "BLOCK",
+        }
+    return None
 
 
 def _method_context_issues(intent: OrderIntent) -> list[dict[str, str]]:

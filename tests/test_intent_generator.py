@@ -5524,6 +5524,71 @@ class IntentGeneratorTest(unittest.TestCase):
             self.assertTrue(all(item["status"] == "DRY_RUN_BLOCKED" for item in payload["results"]))
             self.assertIn("DAILY_RISK_BUDGET_EXHAUSTED", issue_codes)
 
+    def test_self_improvement_profitability_p0_blocks_fresh_live_ready_generation(self) -> None:
+        # Regression from qr-self-improvement-watch 2026-06-16: the verifier
+        # and gateway rejected trades under the persistent profitability P0,
+        # but generate-intents could still advertise fresh LIVE_READY lanes.
+        # The dry-run layer should surface the same new-risk block directly.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            data_root = root / "data"
+            data_root.mkdir()
+            (data_root / "self_improvement_audit.json").write_text(
+                json.dumps(
+                    {
+                        "generated_at_utc": datetime.now(timezone.utc).isoformat(),
+                        "findings": [
+                            {
+                                "priority": "P0",
+                                "layer": "profitability",
+                                "code": "PERSISTENT_PROFITABILITY_DISCIPLINE_BLOCKED",
+                                "message": "profitability discipline has failed for 16 consecutive audit run(s)",
+                                "evidence": {
+                                    "current_streak": 16,
+                                    "system_defect_evidence": {
+                                        "profit_factor": 0.971,
+                                        "expectancy_jpy": -7.22,
+                                        "gateway_close_bleed_observation": {
+                                            "gateway_net_jpy": -783.03,
+                                        },
+                                    },
+                                },
+                            }
+                        ],
+                    }
+                )
+            )
+            output = root / "intents.json"
+
+            summary = IntentGenerator(
+                campaign_plan=_campaign(root),
+                strategy_profile=_strategy(root, status="CANDIDATE"),
+                output_path=output,
+                report_path=root / "intents.md",
+                pair_charts_path=_pair_charts(root),
+                data_root=data_root,
+                max_loss_jpy=500.0,
+            ).run(snapshot_path=_snapshot(root))
+
+            payload = json.loads(output.read_text())
+            issue_codes = {
+                issue["code"]
+                for item in payload["results"]
+                for issue in item["risk_issues"]
+            }
+
+            self.assertEqual(summary.live_ready, 0)
+            self.assertTrue(payload["results"])
+            self.assertTrue(all(item["status"] == "DRY_RUN_BLOCKED" for item in payload["results"]))
+            self.assertIn("SELF_IMPROVEMENT_P0_PROFITABILITY_DISCIPLINE", issue_codes)
+            self.assertTrue(
+                any(
+                    "self-improvement profitability P0 blocks LIVE_READY" in blocker
+                    for item in payload["results"]
+                    for blocker in item["live_blockers"]
+                )
+            )
+
     def test_sizes_units_with_percentage_risk_cap(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
