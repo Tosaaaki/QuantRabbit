@@ -3846,6 +3846,72 @@ class AutoTradeCycleTest(unittest.TestCase):
             self.assertTrue((root / "live_order.json").exists())
             self.assertIn("Campaign exposure required: `True`", (root / "report.md").read_text())
 
+    def test_gpt_cancel_pending_preempts_campaign_exposure_recovery_lane(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            now = datetime.now(timezone.utc)
+            target_state = _open_target_state(root)
+            client = FakeCycleClient(
+                BrokerSnapshot(
+                    fetched_at_utc=now,
+                    quotes={
+                        "EUR_USD": Quote("EUR_USD", 1.17298, 1.17306, timestamp_utc=now),
+                        "USD_JPY": Quote("USD_JPY", 157.0, 157.01, timestamp_utc=now),
+                    },
+                )
+            )
+
+            class CancelPendingCycle(AutoTradeCycle):
+                def _run_gpt_handoff(self) -> GptHandoffSummary:
+                    return GptHandoffSummary(
+                        status="ACCEPTED",
+                        action="CANCEL_PENDING",
+                        selected_lane_id=None,
+                        allowed=True,
+                        issues=0,
+                        cancel_order_ids=("stale-pending",),
+                    )
+
+            summary = CancelPendingCycle(
+                client=client,
+                snapshot_path=root / "snapshot.json",
+                intents_path=root / "intents.json",
+                intent_report_path=root / "intents.md",
+                decision_path=root / "decision.json",
+                decision_report_path=root / "decision.md",
+                gpt_decision_path=root / "gpt_decision.json",
+                gpt_decision_report_path=root / "gpt_decision.md",
+                gpt_attack_advice_path=root / "attack_missing.json",
+                position_management_path=root / "pm.json",
+                position_management_report_path=root / "pm.md",
+                position_execution_path=root / "pe.json",
+                position_execution_report_path=root / "pe.md",
+                live_order_output_path=root / "live_order.json",
+                live_order_report_path=root / "live_order.md",
+                report_path=root / "report.md",
+                campaign_plan_path=_campaign(root),
+                strategy_profile_path=_candidate_profile(root),
+                market_story_profile_path=_stories(root),
+                receipt_promotion_report_path=root / "promotion.md",
+                target_state_path=target_state,
+                target_report_path=root / "target.md",
+                gpt_target_state_path=target_state,
+                use_gpt_trader=True,
+                refresh_market_story=False,
+                live_enabled=True,
+            ).run(send=True)
+
+            self.assertEqual(summary.status, "CANCELED_GPT_PENDING")
+            self.assertEqual(summary.decision_source, "gpt_trader")
+            self.assertEqual(summary.gpt_action, "CANCEL_PENDING")
+            self.assertIsNone(summary.selected_lane_id)
+            self.assertFalse(summary.sent)
+            self.assertEqual(summary.sent_count, 0)
+            self.assertEqual(summary.canceled_orders, ("stale-pending",))
+            self.assertEqual(client.orders_canceled, ["stale-pending"])
+            self.assertEqual(client.orders_sent, [])
+            self.assertFalse((root / "live_order.json").exists())
+
     def test_gpt_wait_without_live_ready_does_not_regenerate_intents(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
