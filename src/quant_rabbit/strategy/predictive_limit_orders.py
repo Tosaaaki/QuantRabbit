@@ -215,8 +215,35 @@ def _append_unique(
     )
     if key in seen_order_keys:
         return
+    for idx, existing in enumerate(out):
+        if not _same_predictive_trap(existing, order):
+            continue
+        if _predictive_order_rank(order) > _predictive_order_rank(existing):
+            out[idx] = order
+        return
     seen_order_keys.add(key)
     out.append(order)
+
+
+def _same_predictive_trap(left: PredictiveLimitOrder, right: PredictiveLimitOrder) -> bool:
+    if left.pair != right.pair or left.side != right.side or left.source != right.source:
+        return False
+    # One instrument pip is the duplicate bucket for this execution path:
+    # liquidity levels often arrive once per timeframe with a few tenths of a
+    # pip of candle-rounding drift, while the broker would treat stacked LIMITs
+    # there as separate exposure. Keep this constant at the pip granularity
+    # until projection signals carry a stable source-level id across timeframes.
+    tolerance = 0.01 if left.pair.endswith("_JPY") else 0.0001
+    if abs(float(left.limit_price) - float(right.limit_price)) > tolerance:
+        return False
+    if left.take_profit_price is None or right.take_profit_price is None:
+        return left.take_profit_price is None and right.take_profit_price is None
+    return abs(float(left.take_profit_price) - float(right.take_profit_price)) <= tolerance
+
+
+def _predictive_order_rank(order: PredictiveLimitOrder) -> tuple[int, int]:
+    grade_rank = 2 if str(order.grade).upper() == "A" else 1
+    return grade_rank, int(order.units)
 
 
 def _signal_word(count: int) -> str:
@@ -346,6 +373,7 @@ def apply_limit_orders(
     broker_client: Any,
     *,
     dry_run: bool = True,
+    confirm_live: bool = False,
 ) -> List[dict]:
     """Send LIMIT orders via OANDA `post_order_json` when not dry-run.
 
@@ -360,6 +388,13 @@ def apply_limit_orders(
             "rationale": o.rationale, "sent": False, "error": None,
         }
         if dry_run:
+            results.append(entry)
+            continue
+        if not _predictive_limit_live_send_enabled(confirm_live):
+            entry["error"] = (
+                "PREDICTIVE_LIMIT_LIVE_GATE_BLOCKED: set QR_LIVE_ENABLED=1 and pass "
+                "--send --confirm-live before predictive LIMIT orders may be sent"
+            )
             results.append(entry)
             continue
         units_signed = o.units if o.side == "LONG" else -o.units
@@ -384,3 +419,9 @@ def apply_limit_orders(
             entry["error"] = str(exc)
         results.append(entry)
     return results
+
+
+def _predictive_limit_live_send_enabled(confirm_live: bool) -> bool:
+    if not confirm_live:
+        return False
+    return os.environ.get("QR_LIVE_ENABLED", "").strip() in {"1", "true", "TRUE", "yes", "YES"}

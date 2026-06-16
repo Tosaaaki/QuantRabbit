@@ -15,7 +15,11 @@ from quant_rabbit.strategy.forward_projection import (
     aggregate_projection_score,
     detect_forward_projections,
 )
-from quant_rabbit.strategy.predictive_limit_orders import generate_limits_from_projections
+from quant_rabbit.strategy.predictive_limit_orders import (
+    PredictiveLimitOrder,
+    apply_limit_orders,
+    generate_limits_from_projections,
+)
 
 
 _QUIET_SESSION_NOW = datetime(2026, 5, 28, 12, 0, tzinfo=timezone.utc)
@@ -846,3 +850,64 @@ class LiquiditySweepDirectionTest(unittest.TestCase):
         )
 
         self.assertEqual(len(orders), 1)
+
+    def test_predictive_limit_dedupes_nearby_same_trap_prices(self) -> None:
+        signals = [
+            _Sig("liquidity_sweep_low", "UP", "M1 equal-lows at 1.09970 (3.0pip down)"),
+            _Sig("liquidity_sweep_low", "UP", "M5 equal-lows at 1.09973 (2.7pip down)"),
+            _Sig("liquidity_sweep_low", "UP", "M15 equal-lows at 1.09977 (2.3pip down)"),
+            _Sig("liquidity_sweep_low", "UP", "M30 equal-lows at 1.09970 (3.0pip down)"),
+        ]
+
+        orders = generate_limits_from_projections(
+            pair="EUR_USD",
+            pair_chart={
+                "views": [{"granularity": "M15", "indicators": {"atr_pips": 10.0}}],
+            },
+            current_bid=1.1000,
+            current_ask=1.1001,
+            projection_signals=signals,
+            paths=[],
+        )
+
+        self.assertEqual(len(orders), 1)
+        self.assertEqual(orders[0].grade, "A")
+
+    def test_predictive_limit_send_requires_live_confirmation(self) -> None:
+        class _Broker:
+            def __init__(self) -> None:
+                self.requests: list[dict] = []
+
+            def post_order_json(self, payload: dict) -> None:
+                self.requests.append(payload)
+
+        old_live_enabled = os.environ.pop("QR_LIVE_ENABLED", None)
+        self.addCleanup(
+            lambda: (
+                os.environ.__setitem__("QR_LIVE_ENABLED", old_live_enabled)
+                if old_live_enabled is not None
+                else os.environ.pop("QR_LIVE_ENABLED", None)
+            )
+        )
+        broker = _Broker()
+        order = PredictiveLimitOrder(
+            pair="EUR_USD",
+            side="LONG",
+            limit_price=1.0997,
+            take_profit_price=1.1017,
+            units=5000,
+            rationale="liquidity sweep fade",
+            source="liquidity_sweep_fade",
+            grade="A",
+            gtd_utc="2026-06-16T06:00:00Z",
+        )
+
+        blocked = apply_limit_orders([order], broker, dry_run=False, confirm_live=False)
+        self.assertEqual(broker.requests, [])
+        self.assertFalse(blocked[0]["sent"])
+        self.assertIn("PREDICTIVE_LIMIT_LIVE_GATE_BLOCKED", blocked[0]["error"])
+
+        os.environ["QR_LIVE_ENABLED"] = "1"
+        sent = apply_limit_orders([order], broker, dry_run=False, confirm_live=True)
+        self.assertTrue(sent[0]["sent"])
+        self.assertEqual(len(broker.requests), 1)
