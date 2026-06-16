@@ -1391,6 +1391,16 @@ class GPTTraderBrainTest(unittest.TestCase):
                                 "net_jpy": -72400.0,
                             }
                         },
+                        "repair_summary": {
+                            "dominant_loss_exit_reason": "MARKET_ORDER_TRADE_CLOSE",
+                            "dominant_loss_exit_net_jpy": -72400.0,
+                            "payoff_gap_to_breakeven": 0.325,
+                            "strongest_positive_exit_reason": "TAKE_PROFIT_ORDER",
+                            "strongest_positive_exit_net_jpy": 46874.8,
+                        },
+                        "action_items": [
+                            "contain MARKET_ORDER_TRADE_CLOSE drag: prefer TP and hard Gate A/B closes"
+                        ],
                     }
                 )
             )
@@ -1413,6 +1423,11 @@ class GPTTraderBrainTest(unittest.TestCase):
                 capture["by_exit_reason"]["MARKET_ORDER_TRADE_CLOSE"]["net_jpy"],
                 -72400.0,
             )
+            self.assertEqual(
+                capture["repair_summary"]["dominant_loss_exit_reason"],
+                "MARKET_ORDER_TRADE_CLOSE",
+            )
+            self.assertIn("MARKET_ORDER_TRADE_CLOSE drag", capture["action_items"][0])
             codes = {issue["code"] for issue in payload["verification_issues"]}
             self.assertNotIn("UNKNOWN_EVIDENCE_REF", codes)
 

@@ -83,6 +83,17 @@ class CaptureEconomicsTest(unittest.TestCase):
             self.assertAlmostEqual(summary.breakeven_payoff or 0, 0.4286, places=3)
             payload = json.loads((root / "out.json").read_text())
             self.assertIn("MARKET_ORDER_TRADE_CLOSE", payload["by_exit_reason"])
+            self.assertEqual(
+                payload["repair_summary"]["dominant_loss_exit_reason"],
+                "MARKET_ORDER_TRADE_CLOSE",
+            )
+            self.assertGreater(payload["repair_summary"]["payoff_gap_to_breakeven"], 0)
+            self.assertTrue(
+                any("MARKET_ORDER_TRADE_CLOSE drag" in item for item in payload["action_items"])
+            )
+            report = (root / "report.md").read_text()
+            self.assertIn("## Repair Summary", report)
+            self.assertIn("MARKET_ORDER_TRADE_CLOSE", report)
 
     def test_partial_closes_aggregate_to_one_trade_outcome(self) -> None:
         """TRADE_REDUCED milestones + final TRADE_CLOSED on the same trade_id

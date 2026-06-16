@@ -39,6 +39,12 @@ DEFAULT_CAPTURE_ECONOMICS_REPORT = ROOT / "docs" / "capture_economics_report.md"
 # statistical floor, not a tuned market threshold.
 MIN_SAMPLE_FOR_VERDICT = 20
 
+# Report/action payloads are read by the trader prompt packet. Keep them short
+# so the 20-minute cycle sees the repair priorities without drowning out the
+# current broker/intent evidence; this is an engineering display cap, not a
+# market threshold.
+EXIT_REPAIR_ITEM_LIMIT = 4
+
 _ATTRIBUTED_REALIZED_SQL = """
 WITH gateway_entries AS (
     SELECT trade_id, order_id, lane_id
@@ -130,6 +136,131 @@ def _iso_week(ts_utc: str) -> str:
     return f"{year}-W{week:02d}"
 
 
+def _negative_exit_rows(by_exit: dict[str, Any]) -> list[tuple[str, dict[str, Any]]]:
+    rows: list[tuple[str, dict[str, Any]]] = []
+    for reason, metrics in by_exit.items():
+        if not isinstance(metrics, dict):
+            continue
+        net = _optional_float(metrics.get("net_jpy"))
+        trades = int(metrics.get("trades") or 0)
+        if trades <= 0 or net is None or net >= 0:
+            continue
+        rows.append((reason, metrics))
+    return sorted(rows, key=lambda item: float(item[1].get("net_jpy") or 0.0))
+
+
+def _positive_exit_rows(by_exit: dict[str, Any]) -> list[tuple[str, dict[str, Any]]]:
+    rows: list[tuple[str, dict[str, Any]]] = []
+    for reason, metrics in by_exit.items():
+        if not isinstance(metrics, dict):
+            continue
+        net = _optional_float(metrics.get("net_jpy"))
+        trades = int(metrics.get("trades") or 0)
+        if trades <= 0 or net is None or net <= 0:
+            continue
+        rows.append((reason, metrics))
+    return sorted(rows, key=lambda item: float(item[1].get("net_jpy") or 0.0), reverse=True)
+
+
+def _capture_repair_summary(
+    *,
+    status: str,
+    overall: dict[str, Any],
+    by_exit: dict[str, Any],
+) -> dict[str, Any]:
+    negative = _negative_exit_rows(by_exit)
+    positive = _positive_exit_rows(by_exit)
+    payoff = _optional_float(overall.get("payoff_ratio"))
+    breakeven = _optional_float(overall.get("breakeven_payoff_at_win_rate"))
+    summary: dict[str, Any] = {
+        "status": status,
+        "payoff_gap_to_breakeven": (
+            round(max(0.0, breakeven - payoff), 3)
+            if payoff is not None and breakeven is not None
+            else None
+        ),
+        "top_negative_exit_reasons": [
+            {
+                "exit_reason": reason,
+                "trades": int(metrics.get("trades") or 0),
+                "net_jpy": metrics.get("net_jpy"),
+                "expectancy_jpy_per_trade": metrics.get("expectancy_jpy_per_trade"),
+                "win_rate": metrics.get("win_rate"),
+                "payoff_ratio": metrics.get("payoff_ratio"),
+            }
+            for reason, metrics in negative[:EXIT_REPAIR_ITEM_LIMIT]
+        ],
+        "top_positive_exit_reasons": [
+            {
+                "exit_reason": reason,
+                "trades": int(metrics.get("trades") or 0),
+                "net_jpy": metrics.get("net_jpy"),
+                "expectancy_jpy_per_trade": metrics.get("expectancy_jpy_per_trade"),
+                "win_rate": metrics.get("win_rate"),
+                "payoff_ratio": metrics.get("payoff_ratio"),
+            }
+            for reason, metrics in positive[:EXIT_REPAIR_ITEM_LIMIT]
+        ],
+    }
+    if negative:
+        reason, metrics = negative[0]
+        summary["dominant_loss_exit_reason"] = reason
+        summary["dominant_loss_exit_net_jpy"] = metrics.get("net_jpy")
+        summary["dominant_loss_exit_expectancy_jpy_per_trade"] = metrics.get(
+            "expectancy_jpy_per_trade"
+        )
+    if positive:
+        reason, metrics = positive[0]
+        summary["strongest_positive_exit_reason"] = reason
+        summary["strongest_positive_exit_net_jpy"] = metrics.get("net_jpy")
+    return summary
+
+
+def _capture_action_items(
+    *,
+    status: str,
+    overall: dict[str, Any],
+    by_exit: dict[str, Any],
+    repair_summary: dict[str, Any],
+) -> list[str]:
+    if status == "LOW_SAMPLE":
+        return ["collect more trader-attributed realized exits before changing exit policy"]
+    items: list[str] = []
+    payoff = _optional_float(overall.get("payoff_ratio"))
+    breakeven = _optional_float(overall.get("breakeven_payoff_at_win_rate"))
+    if status == "NEGATIVE_EXPECTANCY":
+        if payoff is not None and breakeven is not None:
+            items.append(
+                "repair exit payoff asymmetry before treating the daily target as arithmetically reachable: "
+                f"payoff_ratio={payoff:.3f} breakeven={breakeven:.3f}"
+            )
+        dominant_reason = str(repair_summary.get("dominant_loss_exit_reason") or "")
+        dominant_net = _optional_float(repair_summary.get("dominant_loss_exit_net_jpy"))
+        if dominant_reason:
+            net_text = f"{dominant_net:.1f} JPY" if dominant_net is not None else "net loss"
+            if dominant_reason == "MARKET_ORDER_TRADE_CLOSE":
+                items.append(
+                    "contain MARKET_ORDER_TRADE_CLOSE drag "
+                    f"({net_text}): prefer attached TP, TP-rebalance, profit-side TAKE_PROFIT_MARKET, "
+                    "and require hard Gate A/B evidence for loss-side CLOSE"
+                )
+            else:
+                items.append(f"repair dominant negative exit bucket {dominant_reason} ({net_text})")
+    strongest_positive = str(repair_summary.get("strongest_positive_exit_reason") or "")
+    if strongest_positive:
+        items.append(
+            f"preserve profitable {strongest_positive} behavior while repairing negative exit buckets"
+        )
+    return items[:EXIT_REPAIR_ITEM_LIMIT]
+
+
+def _optional_float(value: object) -> float | None:
+    try:
+        return float(value) if value is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
 def build_capture_economics(
     *,
     ledger_path: Path,
@@ -170,6 +301,13 @@ def build_capture_economics(
         status = "POSITIVE_EXPECTANCY"
     else:
         status = "NEGATIVE_EXPECTANCY"
+    repair_summary = _capture_repair_summary(status=status, overall=overall, by_exit=by_exit)
+    action_items = _capture_action_items(
+        status=status,
+        overall=overall,
+        by_exit=by_exit,
+        repair_summary=repair_summary,
+    )
 
     generated_at = datetime.now(timezone.utc).isoformat()
     payload = {
@@ -179,6 +317,8 @@ def build_capture_economics(
         "overall": overall,
         "by_exit_reason": by_exit,
         "by_iso_week": by_week,
+        "repair_summary": repair_summary,
+        "action_items": action_items,
         "note": (
             "Advisory audit (AGENT_CONTRACT §8): payoff_ratio must reach "
             "breakeven_payoff_at_win_rate before the daily 5% floor has an "
@@ -201,6 +341,18 @@ def build_capture_economics(
             f"- Avg win / avg loss: `{overall.get('avg_win_jpy')}` / `{overall.get('avg_loss_jpy')}` JPY",
             f"- Payoff ratio: `{overall.get('payoff_ratio')}` (breakeven at win rate: `{overall.get('breakeven_payoff_at_win_rate')}`)",
             f"- Expectancy: `{overall.get('expectancy_jpy_per_trade')}` JPY/trade, net `{overall.get('net_jpy')}` JPY",
+            "",
+            "## Repair Summary",
+            "",
+            f"- Dominant loss exit: `{repair_summary.get('dominant_loss_exit_reason') or 'none'}` "
+            f"net `{repair_summary.get('dominant_loss_exit_net_jpy')}` JPY",
+            f"- Strongest positive exit: `{repair_summary.get('strongest_positive_exit_reason') or 'none'}` "
+            f"net `{repair_summary.get('strongest_positive_exit_net_jpy')}` JPY",
+            f"- Payoff gap to breakeven: `{repair_summary.get('payoff_gap_to_breakeven')}`",
+            "",
+            "## Action Items",
+            "",
+            *[f"- {item}" for item in action_items],
             "",
             "## By exit reason",
             "",

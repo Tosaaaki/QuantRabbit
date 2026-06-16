@@ -2996,6 +2996,21 @@ def _capture_economics_packet(payload: dict[str, Any] | None) -> dict[str, Any]:
             ),
         ),
         "by_exit_reason": by_exit,
+        "repair_summary": _small_dict(
+            payload.get("repair_summary"),
+            (
+                "status",
+                "payoff_gap_to_breakeven",
+                "dominant_loss_exit_reason",
+                "dominant_loss_exit_net_jpy",
+                "dominant_loss_exit_expectancy_jpy_per_trade",
+                "strongest_positive_exit_reason",
+                "strongest_positive_exit_net_jpy",
+                "top_negative_exit_reasons",
+                "top_positive_exit_reasons",
+            ),
+        ),
+        "action_items": [str(item) for item in (payload.get("action_items") or [])[:6] if str(item).strip()],
     }
 
 
