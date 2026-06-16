@@ -730,6 +730,61 @@ class SelfImprovementAuditorTest(unittest.TestCase):
         self.assertAlmostEqual(evidence["hit_rate"], 0.1)
         self.assertTrue(evidence["worst_buckets"])
 
+    def test_directional_forecast_low_hit_rate_excludes_range_box_hits(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(
+                root,
+                active_position=False,
+                live_ready_market_rr=1.4,
+                closed_pls=(100.0, 80.0, -50.0),
+            )
+            rows = []
+            for idx in range(10):
+                rows.append(
+                    {
+                        "timestamp_emitted_utc": (_NOW - timedelta(hours=idx + 2)).isoformat(),
+                        "pair": "EUR_USD",
+                        "direction": "UP",
+                        "regime_at_emission": "TREND",
+                        "signal_name": "directional_forecast",
+                        "predicted_target_price": 1.1720,
+                        "predicted_invalidation_price": 1.1680,
+                        "resolution_window_min": 60.0,
+                        "resolution_status": "MISS",
+                        "cycle_id": f"movement-cycle-{idx}",
+                    }
+                )
+            for idx in range(20):
+                rows.append(
+                    {
+                        "timestamp_emitted_utc": (_NOW - timedelta(hours=idx + 2)).isoformat(),
+                        "pair": "EUR_USD",
+                        "direction": "RANGE",
+                        "regime_at_emission": "RANGE",
+                        "signal_name": "directional_forecast",
+                        "predicted_range_low_price": 1.1680,
+                        "predicted_range_high_price": 1.1720,
+                        "resolution_window_min": 120.0,
+                        "resolution_status": "HIT",
+                        "cycle_id": f"range-cycle-{idx}",
+                    }
+                )
+            files["projection_ledger"].write_text("\n".join(json.dumps(row) for row in rows) + "\n")
+
+            summary = _run(files)
+            payload = json.loads(files["output"].read_text())
+
+        codes = {item["code"]: item for item in payload["findings"]}
+        self.assertEqual(summary.status, STATUS_ACTION_REQUIRED)
+        hit_rate = codes["DIRECTIONAL_FORECAST_HIT_RATE_WEAK"]
+        evidence = hit_rate["evidence"]
+        self.assertEqual(evidence["samples"], 10)
+        self.assertEqual(evidence["hit_count"], 0)
+        self.assertAlmostEqual(evidence["hit_rate"], 0.0)
+        self.assertEqual(evidence["range_samples_excluded"], 20)
+        self.assertEqual(evidence["total_calibrated_samples"], 30)
+
     def test_directional_forecast_historical_weakness_is_p2_when_recent_window_recovers(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

@@ -1969,6 +1969,14 @@ def _directional_forecast_quality_findings(
                 },
             )
         ]
+    movement_calibrated = [
+        row for row in calibrated
+        if _directional_forecast_is_movement_direction(row)
+    ]
+    range_calibrated = [
+        row for row in calibrated
+        if str(row.get("direction") or "").upper() == "RANGE"
+    ]
     findings: list[dict[str, Any]] = []
     calibration_coverage = len(calibrated) / len(directional)
     timeout_count = int(status_counts.get("TIMEOUT") or 0)
@@ -2029,16 +2037,16 @@ def _directional_forecast_quality_findings(
                 )
             )
     weak_buckets = _directional_forecast_worst_buckets(
-        calibrated,
+        movement_calibrated,
         min_samples=FORECAST_CALIBRATION_MIN_SAMPLES,
         warn_below=FORECAST_HIT_RATE_WARN_BELOW,
     )
-    recent_24h = _directional_forecast_rows_since(calibrated, now=now, window=timedelta(hours=24))
-    recent_7d = _directional_forecast_rows_since(calibrated, now=now, window=timedelta(days=7))
+    recent_24h = _directional_forecast_rows_since(movement_calibrated, now=now, window=timedelta(hours=24))
+    recent_7d = _directional_forecast_rows_since(movement_calibrated, now=now, window=timedelta(days=7))
     window_stats = {
         "24h": {"window": "24h", **_directional_forecast_hit_stats(recent_24h)},
         "7d": {"window": "7d", **_directional_forecast_hit_stats(recent_7d)},
-        "all": {"window": "all", **_directional_forecast_hit_stats(calibrated)},
+        "all": {"window": "all", **_directional_forecast_hit_stats(movement_calibrated)},
     }
     if weak_buckets:
         recent_24h_weak_buckets = _directional_forecast_worst_buckets(
@@ -2084,6 +2092,9 @@ def _directional_forecast_quality_findings(
                 evidence={
                     "min_samples": FORECAST_CALIBRATION_MIN_SAMPLES,
                     "warn_below": FORECAST_HIT_RATE_WARN_BELOW,
+                    "movement_samples": len(movement_calibrated),
+                    "range_samples_excluded": len(range_calibrated),
+                    "total_calibrated_samples": len(calibrated),
                     "weak_buckets": weak_buckets,
                     "recent_recovered": bucket_recent_recovered,
                     "recent_24h_weak_buckets": recent_24h_weak_buckets,
@@ -2092,8 +2103,8 @@ def _directional_forecast_quality_findings(
                 },
             )
         )
-    samples = len(calibrated)
-    hit_count = sum(1 for row in calibrated if str(row.get("resolution_status") or "").upper() == "HIT")
+    samples = len(movement_calibrated)
+    hit_count = sum(1 for row in movement_calibrated if str(row.get("resolution_status") or "").upper() == "HIT")
     hit_rate = hit_count / samples if samples else 0.0
     if samples >= FORECAST_CALIBRATION_MIN_SAMPLES and hit_rate < FORECAST_HIT_RATE_WARN_BELOW:
         recent_gate = window_stats["7d"] if int(window_stats["7d"]["samples"]) >= FORECAST_CALIBRATION_MIN_SAMPLES else window_stats["24h"]
@@ -2128,17 +2139,23 @@ def _directional_forecast_quality_findings(
                     "samples": samples,
                     "hit_count": hit_count,
                     "hit_rate": round(hit_rate, 4),
+                    "range_samples_excluded": len(range_calibrated),
+                    "total_calibrated_samples": len(calibrated),
                     "warn_below": FORECAST_HIT_RATE_WARN_BELOW,
                     "recent_recovered": recent_recovered,
                     "window_hit_rates": window_stats,
                     "worst_buckets": _directional_forecast_worst_buckets(
-                        calibrated,
+                        movement_calibrated,
                         min_samples=FORECAST_CALIBRATION_MIN_SAMPLES,
                     )[:8],
                 },
             )
         )
     return findings
+
+
+def _directional_forecast_is_movement_direction(row: dict[str, Any]) -> bool:
+    return str(row.get("direction") or "").upper() in {"UP", "DOWN"}
 
 
 def _directional_forecast_has_target_invalidation(row: dict[str, Any]) -> bool:
