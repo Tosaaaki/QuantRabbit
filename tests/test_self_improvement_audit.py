@@ -13,6 +13,7 @@ from unittest import mock
 
 from quant_rabbit.cli import main
 from quant_rabbit.self_improvement_audit import (
+    PROFITABILITY_DISCIPLINE_CODES,
     PROJECTION_PENDING_EXPIRY_GRACE_SECONDS,
     STATUS_ACTION_REQUIRED,
     STATUS_BLOCKED,
@@ -2034,6 +2035,110 @@ class SelfImprovementAuditorTest(unittest.TestCase):
         bleed = blocked["evidence"]["system_defect_evidence"]["gateway_close_bleed_observation"]
         self.assertAlmostEqual(bleed["gateway_net_jpy"], -673.02, places=2)
         self.assertEqual(bleed["gateway_loss_trades"], 3)
+
+    def test_profitability_streak_counts_negative_expectancy_without_loss_asymmetry(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "history.db"
+            with sqlite3.connect(db_path) as conn:
+                conn.executescript(
+                    """
+                    CREATE TABLE self_improvement_audit_runs (
+                        run_uid TEXT PRIMARY KEY,
+                        ts_utc TEXT NOT NULL,
+                        status TEXT NOT NULL,
+                        output_path TEXT NOT NULL,
+                        report_path TEXT NOT NULL,
+                        window_hours REAL NOT NULL,
+                        findings INTEGER NOT NULL,
+                        p0_findings INTEGER NOT NULL,
+                        p1_findings INTEGER NOT NULL,
+                        p2_findings INTEGER NOT NULL,
+                        closed_trades INTEGER NOT NULL,
+                        net_jpy REAL NOT NULL,
+                        profit_factor REAL,
+                        expectancy_jpy REAL,
+                        live_ready_lanes INTEGER NOT NULL,
+                        open_trader_positions INTEGER NOT NULL,
+                        inserted_at_utc TEXT NOT NULL
+                    );
+                    CREATE TABLE self_improvement_findings (
+                        finding_uid TEXT PRIMARY KEY,
+                        run_uid TEXT NOT NULL,
+                        ts_utc TEXT NOT NULL,
+                        priority TEXT NOT NULL,
+                        layer TEXT NOT NULL,
+                        code TEXT NOT NULL,
+                        message TEXT NOT NULL,
+                        next_action TEXT NOT NULL,
+                        evidence_json TEXT NOT NULL,
+                        inserted_at_utc TEXT NOT NULL
+                    );
+                    """
+                )
+                for index in range(3):
+                    ts = (_NOW - timedelta(minutes=index * 3)).isoformat()
+                    run_uid = f"run-{index}"
+                    conn.execute(
+                        """
+                        INSERT INTO self_improvement_audit_runs(
+                            run_uid, ts_utc, status, output_path, report_path, window_hours,
+                            findings, p0_findings, p1_findings, p2_findings, closed_trades,
+                            net_jpy, profit_factor, expectancy_jpy, live_ready_lanes,
+                            open_trader_positions, inserted_at_utc
+                        )
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            run_uid,
+                            ts,
+                            STATUS_ACTION_REQUIRED,
+                            "out.json",
+                            "report.md",
+                            168.0,
+                            1,
+                            0,
+                            1,
+                            0,
+                            29,
+                            -209.58,
+                            0.971,
+                            -7.23,
+                            1,
+                            0,
+                            ts,
+                        ),
+                    )
+                    conn.execute(
+                        """
+                        INSERT INTO self_improvement_findings(
+                            finding_uid, run_uid, ts_utc, priority, layer, code,
+                            message, next_action, evidence_json, inserted_at_utc
+                        )
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            f"finding-{index}",
+                            run_uid,
+                            ts,
+                            "P1",
+                            "profitability",
+                            "NEGATIVE_RECENT_EXPECTANCY",
+                            "recent outcome window is not profitable",
+                            "repair profitability discipline",
+                            "{}",
+                            ts,
+                        ),
+                    )
+
+            auditor = SelfImprovementAuditor(history_db_path=db_path)
+
+            self.assertEqual(auditor._history_code_streak(PROFITABILITY_DISCIPLINE_CODES), 3)
+            self.assertEqual(
+                auditor._history_code_streak(
+                    ("NEGATIVE_RECENT_EXPECTANCY", "SMALL_WIN_LARGE_LOSS_ASYMMETRY")
+                ),
+                0,
+            )
 
     def test_effect_metrics_attributes_closed_pl_to_opening_lane_method(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
