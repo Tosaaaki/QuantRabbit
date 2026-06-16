@@ -2711,6 +2711,7 @@ def _intent_findings(
     coverage_optimization: dict[str, Any],
 ) -> list[dict[str, Any]]:
     out: list[dict[str, Any]] = []
+    forecast_arbitration = _forecast_arbitration_diagnostics(intents) if target_open else {}
     if target_open and not live_ready:
         entry_path_occupied = bool(active_positions or pending_entry_orders)
         coverage_refresh = _coverage_market_evidence_refresh(coverage_optimization)
@@ -2747,9 +2748,29 @@ def _intent_findings(
                     "dry_run_passed_forecast_gate_diagnostics": _dry_run_passed_forecast_gate_diagnostics(
                         intents
                     ),
+                    "forecast_arbitration_diagnostics": forecast_arbitration,
                     "live_readiness_blocker_families": _intent_live_readiness_family_breakdown(intents),
                     "non_live_ready_live_readiness_blockers": _top_intent_live_readiness_blockers(intents),
                 },
+            )
+        )
+    if target_open and int(forecast_arbitration.get("lane_count") or 0) > 0:
+        out.append(
+            _finding(
+                run_id=run_id,
+                priority="P1" if not live_ready else "P2",
+                layer="forecast",
+                code="FORECAST_ARBITRATION_UNSELECTED_PROJECTION_REPAIR_REQUIRED",
+                message=(
+                    f"{forecast_arbitration['lane_count']} dry-run passed lane(s) have audited "
+                    "directional projection evidence that the pair forecast left unselected"
+                ),
+                next_action=(
+                    "Repair forecast arbitration before forcing live sends: either resolve the pair "
+                    "forecast toward the audited projection with target/invalidation geometry, or keep "
+                    "the opposing RANGE/UNCLEAR lane blocked with the named projection conflict."
+                ),
+                evidence={"forecast_arbitration_diagnostics": forecast_arbitration},
             )
         )
     if target_open and live_ready:
@@ -5339,6 +5360,98 @@ def _dry_run_passed_forecast_gate_diagnostics(
     }
 
 
+def _forecast_arbitration_diagnostics(
+    intents: dict[str, Any],
+    *,
+    limit: int = 8,
+) -> dict[str, Any]:
+    lanes: list[dict[str, Any]] = []
+    signal_counts: dict[str, int] = {}
+    direction_counts: dict[str, int] = {}
+    pair_direction_counts: dict[str, int] = {}
+    reason_counts: dict[str, int] = {}
+    for result in intents.get("results", []) or []:
+        if not isinstance(result, dict):
+            continue
+        if str(result.get("status") or "").upper() != "DRY_RUN_PASSED":
+            continue
+        intent = result.get("intent") if isinstance(result.get("intent"), dict) else {}
+        metadata = intent.get("metadata") if isinstance(intent.get("metadata"), dict) else {}
+        support = metadata.get("forecast_market_support")
+        support = support if isinstance(support, dict) else {}
+        unselected = support.get("unselected_signals")
+        if not isinstance(unselected, list) or not unselected:
+            continue
+        top = next((item for item in unselected if isinstance(item, dict)), None)
+        if top is None:
+            continue
+        signal_name = str(top.get("name") or "projection")
+        signal_direction = str(top.get("direction") or "").upper()
+        pair = str(intent.get("pair") or metadata.get("pair") or "").upper()
+        side = str(intent.get("side") or "").upper()
+        if not pair:
+            lane_id = str(result.get("lane_id") or "")
+            parts = lane_id.split(":")
+            if len(parts) >= 3:
+                pair = parts[1].upper()
+        if not signal_direction:
+            signal_direction = "UNKNOWN"
+        signal_key = f"{signal_name}:{signal_direction}"
+        pair_direction_key = f"{pair or 'UNKNOWN'}:{signal_direction}"
+        signal_counts[signal_key] = signal_counts.get(signal_key, 0) + 1
+        direction_counts[signal_direction] = direction_counts.get(signal_direction, 0) + 1
+        pair_direction_counts[pair_direction_key] = pair_direction_counts.get(pair_direction_key, 0) + 1
+        reason = str(support.get("unselected_reason") or support.get("reason") or "")
+        if reason:
+            reason_counts[reason] = reason_counts.get(reason, 0) + 1
+        risk_metrics = result.get("risk_metrics") if isinstance(result.get("risk_metrics"), dict) else {}
+        lanes.append(
+            {
+                "lane_id": str(result.get("lane_id") or ""),
+                "pair": pair,
+                "side": side,
+                "status": str(result.get("status") or ""),
+                "order_type": str(intent.get("order_type") or ""),
+                "forecast_direction": str(metadata.get("forecast_direction") or ""),
+                "forecast_confidence": _maybe_float(metadata.get("forecast_confidence")),
+                "forecast_raw_confidence": _maybe_float(metadata.get("forecast_raw_confidence")),
+                "chart_direction_bias": str(metadata.get("chart_direction_bias") or ""),
+                "forecast_market_support_reason": str(support.get("reason") or ""),
+                "forecast_market_support_unselected_reason": reason,
+                "top_unselected_signal": {
+                    "name": signal_name,
+                    "direction": signal_direction,
+                    "confidence": _maybe_float(top.get("confidence")),
+                    "hit_rate": _maybe_float(top.get("hit_rate")),
+                    "samples": _maybe_int(top.get("samples")),
+                    "timeframe": str(top.get("timeframe") or ""),
+                    "rationale": str(top.get("rationale") or "")[:180],
+                },
+                "unselected_projection_count": _maybe_int(support.get("unselected_projection_count")) or len(unselected),
+                "reward_risk": _maybe_float(risk_metrics.get("reward_risk")),
+                "reward_jpy": _maybe_float(risk_metrics.get("reward_jpy")),
+                "risk_issue_codes": sorted(_issue_codes(result.get("risk_issues"))),
+                "live_strategy_issue_codes": sorted(_issue_codes(result.get("live_strategy_issues"))),
+            }
+        )
+
+    def _count_items(counts: dict[str, int], key_name: str) -> list[dict[str, Any]]:
+        return [
+            {key_name: key, "count": count}
+            for key, count in sorted(counts.items(), key=lambda item: (-item[1], item[0]))[:limit]
+            if key
+        ]
+
+    return {
+        "lane_count": len(lanes),
+        "signal_counts": _count_items(signal_counts, "signal"),
+        "direction_counts": _count_items(direction_counts, "direction"),
+        "pair_direction_counts": _count_items(pair_direction_counts, "pair_direction"),
+        "reason_counts": _count_items(reason_counts, "reason"),
+        "lanes": lanes[:limit],
+    }
+
+
 def _issue_codes(items: Any) -> set[str]:
     codes: set[str] = set()
     for raw in items or []:
@@ -5520,6 +5633,9 @@ def _finding_report_details(item: dict[str, Any]) -> list[str]:
     forecast_gate_text = _report_forecast_gate_text(evidence.get("dry_run_passed_forecast_gate_diagnostics"))
     if forecast_gate_text:
         details.append(f"  - forecast gate reasons: {forecast_gate_text}")
+    arbitration_text = _report_forecast_arbitration_text(evidence.get("forecast_arbitration_diagnostics"))
+    if arbitration_text:
+        details.append(f"  - forecast arbitration: {arbitration_text}")
     if not runner_diag:
         return details
     reasons = runner_diag.get("top_demotion_reasons")
@@ -5658,6 +5774,42 @@ def _report_forecast_gate_text(raw: Any) -> str:
         if reason:
             parts.append(f"{reason}={item.get('count')}")
     return "; ".join(parts)
+
+
+def _report_forecast_arbitration_text(raw: Any) -> str:
+    payload = raw if isinstance(raw, dict) else {}
+    lane_count = _maybe_int(payload.get("lane_count")) or 0
+    if lane_count <= 0:
+        return ""
+    directions = payload.get("direction_counts") if isinstance(payload.get("direction_counts"), list) else []
+    signals = payload.get("signal_counts") if isinstance(payload.get("signal_counts"), list) else []
+    lanes = payload.get("lanes") if isinstance(payload.get("lanes"), list) else []
+    direction_text = ", ".join(
+        f"{item.get('direction')}={item.get('count')}"
+        for item in directions[:3]
+        if isinstance(item, dict) and str(item.get("direction") or "").strip()
+    )
+    signal_text = ", ".join(
+        f"{item.get('signal')}={item.get('count')}"
+        for item in signals[:3]
+        if isinstance(item, dict) and str(item.get("signal") or "").strip()
+    )
+    lane_labels: list[str] = []
+    for item in lanes[:3]:
+        if not isinstance(item, dict):
+            continue
+        top = item.get("top_unselected_signal") if isinstance(item.get("top_unselected_signal"), dict) else {}
+        pair = str(item.get("pair") or "").strip()
+        side = str(item.get("side") or "").strip()
+        signal = str(top.get("name") or "").strip()
+        direction = str(top.get("direction") or "").strip()
+        if pair and side and signal and direction:
+            lane_labels.append(f"{pair} {side}->{signal} {direction}")
+    return (
+        f"lanes=`{lane_count}`, directions=`{direction_text or 'none'}`, "
+        f"signals=`{signal_text or 'none'}`"
+        + (", top=" + "; ".join(lane_labels) if lane_labels else "")
+    )
 
 
 def _dedupe_findings(findings: list[dict[str, Any]]) -> list[dict[str, Any]]:
