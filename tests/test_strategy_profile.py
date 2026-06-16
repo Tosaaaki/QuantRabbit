@@ -399,6 +399,105 @@ class StrategyProfileTest(unittest.TestCase):
         self.assertEqual(issues[0].code, "STRATEGY_PROFILE_MISSING")
         self.assertEqual(issues[0].severity, "BLOCK")
 
+    def test_range_rail_missing_profile_uses_same_side_projection_support_under_sl_free(self) -> None:
+        # The profile gate mirrors the RiskEngine/intents RANGE rail support
+        # exception: a passive LIMIT at the correct rail may collect missing
+        # profile evidence when the calibrated RANGE forecast is a near miss and
+        # a current audited projection supports the same fade side. This is not
+        # a MARKET/chase override and does not rescue weak/no-evidence lanes.
+        with tempfile.TemporaryDirectory() as tmp:
+            profile = StrategyProfile.load(_profile(Path(tmp), status="CANDIDATE"))
+            prior = os.environ.get("QR_TRADER_DISABLE_SL_REPAIR")
+            os.environ["QR_TRADER_DISABLE_SL_REPAIR"] = "1"
+            try:
+                issues = profile.validate(
+                    _intent(
+                        "GBP_USD",
+                        method=TradeMethod.RANGE_ROTATION,
+                        order_type=OrderType.LIMIT,
+                        metadata={
+                            "forecast_seed": True,
+                            "forecast_direction": "RANGE",
+                            "forecast_confidence": 0.49,
+                            "forecast_horizon_min": 120,
+                            "geometry_model": "RANGE_RAIL_LIMIT",
+                            "range_entry_side": "support",
+                            "range_tp_is_inside_box": True,
+                            "range_sl_outside_box": True,
+                            "chart_direction_bias": "LONG",
+                            "forecast_market_support": {
+                                "ok": False,
+                                "direction": "RANGE",
+                                "unselected_projection_count": 1,
+                                "unselected_signals": [
+                                    {
+                                        "name": "liquidity_sweep_low",
+                                        "direction": "UP",
+                                        "confidence": 0.65,
+                                        "hit_rate": 0.92,
+                                        "samples": 41,
+                                        "lead_time_min": 15.0,
+                                    }
+                                ],
+                            },
+                        },
+                    ),
+                    for_live_send=True,
+                )
+            finally:
+                _restore_env("QR_TRADER_DISABLE_SL_REPAIR", prior)
+
+        self.assertEqual(len(issues), 1)
+        self.assertEqual(issues[0].code, "STRATEGY_PROFILE_MISSING")
+        self.assertEqual(issues[0].severity, "WARN")
+
+    def test_range_rail_missing_profile_blocks_opposite_projection_support_under_sl_free(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            profile = StrategyProfile.load(_profile(Path(tmp), status="CANDIDATE"))
+            prior = os.environ.get("QR_TRADER_DISABLE_SL_REPAIR")
+            os.environ["QR_TRADER_DISABLE_SL_REPAIR"] = "1"
+            try:
+                issues = profile.validate(
+                    _intent(
+                        "GBP_USD",
+                        method=TradeMethod.RANGE_ROTATION,
+                        order_type=OrderType.LIMIT,
+                        metadata={
+                            "forecast_seed": True,
+                            "forecast_direction": "RANGE",
+                            "forecast_confidence": 0.49,
+                            "forecast_horizon_min": 120,
+                            "geometry_model": "RANGE_RAIL_LIMIT",
+                            "range_entry_side": "support",
+                            "range_tp_is_inside_box": True,
+                            "range_sl_outside_box": True,
+                            "chart_direction_bias": "LONG",
+                            "forecast_market_support": {
+                                "ok": False,
+                                "direction": "RANGE",
+                                "unselected_projection_count": 1,
+                                "unselected_signals": [
+                                    {
+                                        "name": "liquidity_sweep_high",
+                                        "direction": "DOWN",
+                                        "confidence": 0.9,
+                                        "hit_rate": 0.92,
+                                        "samples": 41,
+                                        "lead_time_min": 15.0,
+                                    }
+                                ],
+                            },
+                        },
+                    ),
+                    for_live_send=True,
+                )
+            finally:
+                _restore_env("QR_TRADER_DISABLE_SL_REPAIR", prior)
+
+        self.assertEqual(len(issues), 1)
+        self.assertEqual(issues[0].code, "STRATEGY_PROFILE_MISSING")
+        self.assertEqual(issues[0].severity, "BLOCK")
+
     def test_high_confidence_forecast_seed_missing_profile_blocks_when_chart_opposes_side(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             profile = StrategyProfile.load(_profile(Path(tmp), status="CANDIDATE"))

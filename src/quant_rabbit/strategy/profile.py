@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from quant_rabbit.models import OrderIntent, OrderType, RiskIssue
+from quant_rabbit.risk import _forecast_range_unselected_projection_support_allows_side
 
 
 def _sl_free_active() -> bool:
@@ -383,7 +384,16 @@ def _forecast_seed_missing_profile_severity(intent: OrderIntent) -> str | None:
     side = str(intent.side.value).upper()
     metadata = intent.metadata or {}
     if _range_rotation_rail_side_matches(intent, metadata, side=side):
-        if confidence >= _forecast_seed_missing_profile_range_min_confidence():
+        range_min_confidence = _forecast_seed_missing_profile_range_min_confidence()
+        if confidence >= range_min_confidence:
+            return "WARN"
+        if _forecast_range_unselected_projection_support_allows_side(
+            intent,
+            metadata,
+            _forecast_market_support(metadata),
+            confidence=confidence,
+            min_confidence=range_min_confidence,
+        ):
             return "WARN"
         return None
     if (
@@ -529,6 +539,11 @@ def _range_rotation_rail_side_matches(
     return (side == "LONG" and rail_side in support_sides) or (
         side == "SHORT" and rail_side in resistance_sides
     )
+
+
+def _forecast_market_support(metadata: dict[str, Any]) -> dict[str, Any]:
+    support = metadata.get("forecast_market_support")
+    return support if isinstance(support, dict) else {}
 
 
 def _method_suffix(entry: StrategyProfileEntry) -> str:
