@@ -1263,12 +1263,18 @@ def _calibration_dedupe_key(entry: LedgerEntry, *, fallback_index: int) -> tuple
 
 def _calibration_entry_eligible(entry: LedgerEntry) -> bool:
     """Exclude known-ambiguous legacy forecast samples from confidence learning."""
-    if (
-        entry.signal_name == "directional_forecast"
-        and entry.predicted_target_price is not None
-        and entry.predicted_invalidation_price is None
-    ):
-        return False
+    if entry.signal_name == "directional_forecast":
+        direction = str(entry.direction or "").upper()
+        if direction in {"UP", "DOWN"}:
+            return (
+                entry.predicted_target_price is not None
+                and entry.predicted_invalidation_price is not None
+            )
+        if direction == "RANGE":
+            return (
+                entry.predicted_range_low_price is not None
+                and entry.predicted_range_high_price is not None
+            )
     return True
 
 

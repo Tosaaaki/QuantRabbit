@@ -757,6 +757,61 @@ class SelfImprovementAuditorTest(unittest.TestCase):
         self.assertEqual(evidence["status_counts"]["TIMEOUT"], 10)
         self.assertLess(evidence["calibration_coverage"], evidence["min_coverage"])
 
+    def test_directional_forecast_missing_geometry_is_p1_calibration_hole(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(
+                root,
+                active_position=False,
+                live_ready_market_rr=1.4,
+                closed_pls=(100.0, 80.0, -50.0),
+            )
+            rows = []
+            for idx in range(2):
+                rows.append(
+                    {
+                        "timestamp_emitted_utc": (_NOW - timedelta(hours=idx + 2)).isoformat(),
+                        "pair": "EUR_USD",
+                        "direction": "UP",
+                        "regime_at_emission": "TREND",
+                        "signal_name": "directional_forecast",
+                        "predicted_target_price": 1.1720,
+                        "predicted_invalidation_price": 1.1680,
+                        "resolution_window_min": 60.0,
+                        "resolution_status": "HIT" if idx == 0 else "MISS",
+                        "cycle_id": f"cycle-hitmiss-{idx}",
+                    }
+                )
+            for idx in range(10):
+                rows.append(
+                    {
+                        "timestamp_emitted_utc": (_NOW - timedelta(hours=idx + 4)).isoformat(),
+                        "pair": "EUR_USD",
+                        "direction": "UP",
+                        "regime_at_emission": "TREND",
+                        "signal_name": "directional_forecast",
+                        "predicted_target_price": None,
+                        "predicted_invalidation_price": None,
+                        "resolution_window_min": 60.0,
+                        "resolution_status": "HIT" if idx < 6 else "MISS",
+                        "cycle_id": f"cycle-legacy-{idx}",
+                    }
+                )
+            files["projection_ledger"].write_text("\n".join(json.dumps(row) for row in rows) + "\n")
+
+            summary = _run(files)
+            payload = json.loads(files["output"].read_text())
+
+        codes = {item["code"]: item for item in payload["findings"]}
+        self.assertEqual(summary.status, STATUS_ACTION_REQUIRED)
+        self.assertEqual(summary.p0_findings, 0)
+        self.assertIn("DIRECTIONAL_FORECAST_CALIBRATION_GEOMETRY_MISSING", codes)
+        self.assertNotIn("DIRECTIONAL_FORECAST_CALIBRATION_TIMEOUT_DOMINANT", codes)
+        evidence = codes["DIRECTIONAL_FORECAST_CALIBRATION_GEOMETRY_MISSING"]["evidence"]
+        self.assertEqual(evidence["calibrated_samples"], 2)
+        self.assertEqual(evidence["missing_geometry_samples"], 10)
+        self.assertLess(evidence["calibration_coverage"], evidence["min_coverage"])
+
     def test_order_intents_without_market_context_refs_are_p1_when_matrix_exists(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

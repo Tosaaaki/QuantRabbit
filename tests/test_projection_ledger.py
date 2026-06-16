@@ -1207,11 +1207,15 @@ class HitRatesTest(unittest.TestCase):
             from quant_rabbit.strategy.projection_ledger import write_ledger
             entries = []
             for status, direction in [("MISS", "UP"), ("HIT", "DOWN")]:
+                target = 1.01 if direction == "UP" else 0.99
+                invalidation = 0.99 if direction == "UP" else 1.01
                 entries.append(LedgerEntry(
                     timestamp_emitted_utc="2026-05-14T00:00:00Z",
                     pair="EUR_USD", signal_name="directional_forecast", direction=direction,
                     lead_time_min=60, confidence=0.7,
-                    entry_price=1.0, predicted_target_price=None,
+                    entry_price=1.0,
+                    predicted_target_price=target,
+                    predicted_invalidation_price=invalidation,
                     resolution_window_min=60, resolution_status=status,
                     regime_at_emission="TREND",
                 ))
@@ -1286,6 +1290,15 @@ class HitRatesTest(unittest.TestCase):
                     pair="EUR_USD", signal_name="directional_forecast", direction="UP",
                     lead_time_min=60, confidence=0.7,
                     entry_price=1.0, predicted_target_price=1.01,
+                    resolution_window_min=60, resolution_status="HIT",
+                    regime_at_emission="TREND",
+                ),
+                LedgerEntry(
+                    timestamp_emitted_utc="2026-05-14T00:01:00Z",
+                    pair="EUR_USD", signal_name="directional_forecast", direction="UP",
+                    lead_time_min=60, confidence=0.7,
+                    entry_price=1.0, predicted_target_price=None,
+                    predicted_invalidation_price=None,
                     resolution_window_min=60, resolution_status="HIT",
                     regime_at_emission="TREND",
                 )

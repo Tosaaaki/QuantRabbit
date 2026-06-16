@@ -1971,31 +1971,62 @@ def _directional_forecast_quality_findings(
     findings: list[dict[str, Any]] = []
     calibration_coverage = len(calibrated) / len(directional)
     timeout_count = int(status_counts.get("TIMEOUT") or 0)
-    if calibration_coverage < FORECAST_CALIBRATION_MIN_COVERAGE and timeout_count >= FORECAST_CALIBRATION_MIN_SAMPLES:
-        findings.append(
-            _finding(
-                run_id=run_id,
-                priority="P1",
-                layer="forecast",
-                code="DIRECTIONAL_FORECAST_CALIBRATION_TIMEOUT_DOMINANT",
-                message=(
-                    f"directional_forecast has only {len(calibrated)}/{len(directional)} "
-                    "HIT/MISS target/invalidation calibration samples; TIMEOUT dominates"
-                ),
-                next_action=(
-                    "Verify projection windows with candle truth quickly enough to resolve HIT/MISS, "
-                    "then recalibrate directional confidence before using forecast strength to expand entries."
-                ),
-                evidence={
-                    "rows": len(directional),
-                    "calibrated_samples": len(calibrated),
-                    "calibration_coverage": round(calibration_coverage, 4),
-                    "min_coverage": FORECAST_CALIBRATION_MIN_COVERAGE,
-                    "status_counts": status_counts,
-                    "examples": [_projection_ref(row) for row in directional[:8]],
-                },
+    hit_miss_count = int(status_counts.get("HIT") or 0) + int(status_counts.get("MISS") or 0)
+    missing_geometry_count = max(0, hit_miss_count - len(calibrated))
+    if calibration_coverage < FORECAST_CALIBRATION_MIN_COVERAGE:
+        if timeout_count >= FORECAST_CALIBRATION_MIN_SAMPLES and timeout_count >= missing_geometry_count:
+            findings.append(
+                _finding(
+                    run_id=run_id,
+                    priority="P1",
+                    layer="forecast",
+                    code="DIRECTIONAL_FORECAST_CALIBRATION_TIMEOUT_DOMINANT",
+                    message=(
+                        f"directional_forecast has only {len(calibrated)}/{len(directional)} "
+                        "HIT/MISS target/invalidation calibration samples; TIMEOUT dominates"
+                    ),
+                    next_action=(
+                        "Verify projection windows with candle truth quickly enough to resolve HIT/MISS, "
+                        "then recalibrate directional confidence before using forecast strength to expand entries."
+                    ),
+                    evidence={
+                        "rows": len(directional),
+                        "calibrated_samples": len(calibrated),
+                        "calibration_coverage": round(calibration_coverage, 4),
+                        "min_coverage": FORECAST_CALIBRATION_MIN_COVERAGE,
+                        "missing_geometry_samples": missing_geometry_count,
+                        "status_counts": status_counts,
+                        "examples": [_projection_ref(row) for row in directional[:8]],
+                    },
+                )
             )
-        )
+        elif missing_geometry_count >= FORECAST_CALIBRATION_MIN_SAMPLES:
+            findings.append(
+                _finding(
+                    run_id=run_id,
+                    priority="P1",
+                    layer="forecast",
+                    code="DIRECTIONAL_FORECAST_CALIBRATION_GEOMETRY_MISSING",
+                    message=(
+                        f"directional_forecast has only {len(calibrated)}/{len(directional)} "
+                        "HIT/MISS target/invalidation calibration samples; resolved legacy samples "
+                        "are missing target/invalidation geometry"
+                    ),
+                    next_action=(
+                        "Keep final forecast writes populated with target and invalidation prices, "
+                        "and exclude older geometry-less direction samples from confidence expansion."
+                    ),
+                    evidence={
+                        "rows": len(directional),
+                        "calibrated_samples": len(calibrated),
+                        "missing_geometry_samples": missing_geometry_count,
+                        "calibration_coverage": round(calibration_coverage, 4),
+                        "min_coverage": FORECAST_CALIBRATION_MIN_COVERAGE,
+                        "status_counts": status_counts,
+                        "examples": [_projection_ref(row) for row in directional[:8]],
+                    },
+                )
+            )
     weak_buckets = _directional_forecast_worst_buckets(
         calibrated,
         min_samples=FORECAST_CALIBRATION_MIN_SAMPLES,
