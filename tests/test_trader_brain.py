@@ -479,6 +479,93 @@ class TraderBrainTest(unittest.TestCase):
 
             self.assertEqual(_contaminated_pending_order_ids(snapshot, (score,), data_root=root), ())
 
+    def test_cancels_pending_when_current_pair_scores_only_opposite_side(self) -> None:
+        now = datetime.now(timezone.utc)
+        pending = BrokerOrder(
+            order_id="opposite-only-short-limit",
+            pair="AUD_CAD",
+            order_type="LIMIT",
+            price=0.98980,
+            state="PENDING",
+            units=-8000,
+            owner=Owner.TRADER,
+            raw={
+                "createTime": now.isoformat(),
+                "clientExtensions": {"tag": "trader"},
+                "takeProfitOnFill": {"price": "0.98870"},
+                "stopLossOnFill": {"price": "0.99501"},
+            },
+        )
+        snapshot = BrokerSnapshot(
+            fetched_at_utc=now,
+            orders=(pending,),
+            quotes={"AUD_CAD": Quote("AUD_CAD", 0.98942, 0.98950, timestamp_utc=now)},
+        )
+        opposite_only = LaneScore(
+            lane_id="range_trader:AUD_CAD:LONG:RANGE_ROTATION",
+            pair="AUD_CAD",
+            direction="LONG",
+            method="RANGE_ROTATION",
+            order_type="LIMIT",
+            entry=0.98913,
+            tp=0.99023,
+            sl=0.98741,
+            status="DRY_RUN_BLOCKED",
+            score=24.0,
+            action=ACTION_NO_TRADE,
+            blockers=("forecast watch-only", "range location chase"),
+            rationale=("current packet exposes only AUD_CAD LONG candidates",),
+            spread_pips=2.2,
+            estimated_margin_jpy=36_000.0,
+        )
+
+        self.assertEqual(
+            _contaminated_pending_order_ids(snapshot, (opposite_only,)),
+            ("opposite-only-short-limit",),
+        )
+
+    def test_keeps_pending_when_current_packet_has_no_pair_scores(self) -> None:
+        now = datetime.now(timezone.utc)
+        pending = BrokerOrder(
+            order_id="unseen-pair-short-limit",
+            pair="AUD_CAD",
+            order_type="LIMIT",
+            price=0.98980,
+            state="PENDING",
+            units=-8000,
+            owner=Owner.TRADER,
+            raw={
+                "createTime": now.isoformat(),
+                "clientExtensions": {"tag": "trader"},
+                "takeProfitOnFill": {"price": "0.98870"},
+                "stopLossOnFill": {"price": "0.99501"},
+            },
+        )
+        snapshot = BrokerSnapshot(
+            fetched_at_utc=now,
+            orders=(pending,),
+            quotes={"AUD_CAD": Quote("AUD_CAD", 0.98942, 0.98950, timestamp_utc=now)},
+        )
+        unrelated_score = LaneScore(
+            lane_id="range_trader:EUR_USD:LONG:RANGE_ROTATION",
+            pair="EUR_USD",
+            direction="LONG",
+            method="RANGE_ROTATION",
+            order_type="LIMIT",
+            entry=1.1600,
+            tp=1.1620,
+            sl=1.1585,
+            status="DRY_RUN_BLOCKED",
+            score=12.0,
+            action=ACTION_NO_TRADE,
+            blockers=("forecast confidence low",),
+            rationale=("unrelated pair only",),
+            spread_pips=0.8,
+            estimated_margin_jpy=20_000.0,
+        )
+
+        self.assertEqual(_contaminated_pending_order_ids(snapshot, (unrelated_score,)), ())
+
     def test_snapshot_reuse_cancels_pending_when_ledger_invalidation_breaks(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

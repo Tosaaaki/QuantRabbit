@@ -2573,6 +2573,8 @@ def _pending_entry_still_has_live_thesis(
         return False
     if _pending_recovery_hedge_still_has_live_thesis(order, snapshot, compatible_scores):
         return True
+    if _pending_entry_has_opposite_only_pair_thesis(order, scores):
+        return False
     if _pending_entry_has_hard_current_veto(compatible_scores):
         return False
     if _pending_entry_market_has_opposed_thesis(order, scores):
@@ -2617,6 +2619,29 @@ def _pending_entry_has_hard_current_veto(scores: list[LaneScore]) -> bool:
         if any(keyword in blocker_text for keyword in PENDING_ENTRY_HARD_CANCEL_KEYWORDS):
             return True
     return False
+
+
+def _pending_entry_has_opposite_only_pair_thesis(order: BrokerOrder, scores: tuple[LaneScore, ...]) -> bool:
+    """Cancel stale pending entries when the current packet only sees the other side.
+
+    A pending order can survive temporary quote/spread/session blockers when a
+    same-side score is still present. If the current intent packet still covers
+    the pair but emits only the opposite side, the old pending thesis is no
+    longer represented by current market evidence and should not remain
+    fillable into the next cycle.
+    """
+
+    pair = order.pair or ""
+    direction = _order_direction(order.units)
+    if not pair or direction is None:
+        return False
+    same_pair_scores = [score for score in scores if score.pair == pair]
+    if not same_pair_scores:
+        return False
+    if any(score.direction == direction for score in same_pair_scores):
+        return False
+    opposite = Side.SHORT.value if direction == Side.LONG.value else Side.LONG.value
+    return any(score.direction == opposite for score in same_pair_scores)
 
 
 def _pending_entry_market_has_opposed_thesis(order: BrokerOrder, scores: tuple[LaneScore, ...]) -> bool:
