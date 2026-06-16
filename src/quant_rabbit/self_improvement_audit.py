@@ -2287,6 +2287,7 @@ def _profitability_findings(
     )
     current_discipline_streak = previous_discipline_streak + 1
     direct_close_repair = _direct_or_manual_close_repair_evidence(effect, effect_24h)
+    gateway_close_bleed = _gateway_close_bleed_observation(effect_24h)
     if has_negative_expectancy and has_loss_asymmetry and direct_close_repair:
         out.append(
             _finding(
@@ -2307,7 +2308,7 @@ def _profitability_findings(
         )
     if (
         has_negative_expectancy
-        and has_loss_asymmetry
+        and (has_loss_asymmetry or gateway_close_bleed is not None)
         and not direct_close_repair
         and current_discipline_streak >= max(1, PERSISTENT_PROFITABILITY_STREAK_MIN)
     ):
@@ -2324,6 +2325,8 @@ def _profitability_findings(
         }
         if close_gate_loss_evidence:
             system_defect_evidence["ai_backtest_close_gate_loss_evidence"] = close_gate_loss_evidence
+        if gateway_close_bleed is not None:
+            system_defect_evidence["gateway_close_bleed_observation"] = gateway_close_bleed
         if recovery_observation is not None:
             out.append(
                 _finding(
@@ -2364,6 +2367,11 @@ def _profitability_findings(
                         f"profitability discipline has failed for {current_discipline_streak} consecutive audit run(s): "
                         f"PF={_fmt_optional(pf)}, expectancy={_fmt_optional(expectancy)}, "
                         f"avg_loss={_fmt_optional(avg_loss)} JPY vs avg_win={_fmt_optional(avg_win)} JPY"
+                        + (
+                            f", 24h_gateway_net={gateway_close_bleed['gateway_net_jpy']:.2f} JPY"
+                            if gateway_close_bleed is not None
+                            else ""
+                        )
                     ),
                     next_action=(
                         "Block new-risk confidence until execution_ledger.db worst segments prove repaired "
@@ -2533,6 +2541,51 @@ def _gateway_close_recovery_observation(effect_24h: dict[str, Any]) -> dict[str,
         "gateway_loss_trades": loss_trades,
         "gateway_avg_win_jpy": avg_win,
         "gateway_avg_loss_jpy_abs": avg_loss,
+        "excluded_provenances": list(RECOVERY_EXCLUDED_CLOSE_PROVENANCES),
+    }
+
+
+def _gateway_close_bleed_observation(effect_24h: dict[str, Any]) -> dict[str, Any] | None:
+    """Return current gateway-attributable close loss evidence.
+
+    Average win/loss asymmetry catches one class of broken close discipline,
+    but a sequence can still be system-negative when gateway closes bleed more
+    often than TP fills while average loss size is similar to average win size.
+    That is still a production discipline defect because it is attributable to
+    QuantRabbit's close path, not operator/manual broker actions.
+    """
+    if effect_24h.get("error"):
+        return None
+    metrics = effect_24h.get("close_provenance_metrics")
+    if not isinstance(metrics, dict) or not metrics:
+        return None
+    net = 0.0
+    gross_profit = 0.0
+    gross_loss = 0.0
+    trades = 0
+    win_trades = 0
+    loss_trades = 0
+    for provenance, values in metrics.items():
+        if provenance in RECOVERY_EXCLUDED_CLOSE_PROVENANCES:
+            continue
+        if not isinstance(values, dict):
+            continue
+        net += float(values.get("net_jpy") or 0.0)
+        gross_profit += float(values.get("gross_profit_jpy") or 0.0)
+        gross_loss += float(values.get("gross_loss_jpy") or 0.0)
+        trades += int(values.get("trades") or 0)
+        win_trades += int(values.get("win_trades") or 0)
+        loss_trades += int(values.get("loss_trades") or 0)
+    if loss_trades < 1 or net >= 0.0:
+        return None
+    return {
+        "window_hours": 24.0,
+        "gateway_net_jpy": net,
+        "gateway_trades": trades,
+        "gateway_win_trades": win_trades,
+        "gateway_loss_trades": loss_trades,
+        "gateway_avg_win_jpy": (gross_profit / win_trades) if win_trades else None,
+        "gateway_avg_loss_jpy_abs": (gross_loss / loss_trades) if loss_trades else None,
         "excluded_provenances": list(RECOVERY_EXCLUDED_CLOSE_PROVENANCES),
     }
 

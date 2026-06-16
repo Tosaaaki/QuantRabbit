@@ -1957,6 +1957,84 @@ class SelfImprovementAuditorTest(unittest.TestCase):
         self.assertNotIn("PERSISTENT_PROFITABILITY_DISCIPLINE_RECOVERY", codes)
         self.assertEqual(codes["PERSISTENT_PROFITABILITY_DISCIPLINE_BLOCKED"]["priority"], "P0")
 
+    def test_persistent_profitability_escalates_when_gateway_close_bleeds_without_loss_asymmetry(
+        self,
+    ) -> None:
+        effect = {
+            "closed_trades": 29,
+            "net_jpy": -209.58,
+            "profit_factor": 0.971,
+            "expectancy_jpy": -7.23,
+            "avg_win_jpy": 509.21,
+            "avg_loss_jpy_abs": 489.24,
+            "worst_segments": [],
+            "market_order_trade_close_loss_provenance_metrics": {
+                "GATEWAY_TRADE_CLOSE_SENT": {
+                    "trades": 15,
+                    "net_jpy": -7338.58,
+                    "gross_profit_jpy": 0.0,
+                    "gross_loss_jpy": 7338.58,
+                    "win_trades": 0,
+                    "loss_trades": 15,
+                }
+            },
+        }
+        effect_24h = {
+            "closed_trades": 6,
+            "net_jpy": -673.02,
+            "gross_profit_jpy": 1515.79,
+            "gross_loss_jpy": 2188.81,
+            "profit_factor": 0.693,
+            "expectancy_jpy": -112.17,
+            "close_provenance_metrics": {
+                "GATEWAY_TRADE_CLOSE_SENT": {
+                    "trades": 5,
+                    "net_jpy": -1331.96,
+                    "gross_profit_jpy": 856.85,
+                    "gross_loss_jpy": 2188.81,
+                    "win_trades": 2,
+                    "loss_trades": 3,
+                },
+                "TAKE_PROFIT_ORDER": {
+                    "trades": 1,
+                    "net_jpy": 658.94,
+                    "gross_profit_jpy": 658.94,
+                    "gross_loss_jpy": 0.0,
+                    "win_trades": 1,
+                    "loss_trades": 0,
+                },
+            },
+            "market_order_trade_close_loss_provenance_metrics": {
+                "GATEWAY_TRADE_CLOSE_SENT": {
+                    "trades": 3,
+                    "net_jpy": -2188.81,
+                    "gross_profit_jpy": 0.0,
+                    "gross_loss_jpy": 2188.81,
+                    "win_trades": 0,
+                    "loss_trades": 3,
+                }
+            },
+        }
+
+        findings = _profitability_findings(
+            run_id="run-gateway-bleed",
+            effect=effect,
+            effect_24h=effect_24h,
+            snapshot={},
+            min_sample=3,
+            close_gate_loss_evidence=None,
+            previous_discipline_streak=2,
+        )
+
+        codes = {item["code"]: item for item in findings}
+        self.assertIn("NEGATIVE_RECENT_EXPECTANCY", codes)
+        self.assertNotIn("SMALL_WIN_LARGE_LOSS_ASYMMETRY", codes)
+        blocked = codes["PERSISTENT_PROFITABILITY_DISCIPLINE_BLOCKED"]
+        self.assertEqual(blocked["priority"], "P0")
+        bleed = blocked["evidence"]["system_defect_evidence"]["gateway_close_bleed_observation"]
+        self.assertAlmostEqual(bleed["gateway_net_jpy"], -673.02, places=2)
+        self.assertEqual(bleed["gateway_loss_trades"], 3)
+
     def test_effect_metrics_attributes_closed_pl_to_opening_lane_method(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             db_path = Path(tmp) / "execution_ledger.db"
