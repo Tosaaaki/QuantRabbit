@@ -364,14 +364,14 @@ class SelfImprovementAuditor:
                     target_open=target_open,
                 )
             )
-            findings.extend(
-                _coverage_findings(
-                    run_id=run_id,
-                    loaded=coverage_loaded,
-                    path=coverage_optimization_path,
-                    target_open=target_open,
-                )
+        findings.extend(
+            _coverage_findings(
+                run_id=run_id,
+                loaded=coverage_loaded,
+                path=coverage_optimization_path,
+                target_open=target_open,
             )
+        )
         findings.extend(
             _mechanism_ablation_findings(
                 run_id=run_id,

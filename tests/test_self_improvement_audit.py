@@ -443,6 +443,57 @@ class SelfImprovementAuditorTest(unittest.TestCase):
         self.assertNotIn("TARGET_OPEN_NO_LIVE_READY_LANES", codes)
         self.assertEqual(codes["LIVE_RUNTIME_UPDATE_IN_PROGRESS"]["evidence"]["pid"], os.getpid())
 
+    def test_external_live_lock_still_surfaces_coverage_perspective_repair(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root, active_position=False, live_ready_market_rr=1.4, closed_pls=(100.0, 80.0, -50.0))
+            files["coverage"].write_text(
+                json.dumps(
+                    {
+                        "artifact_diagnostics": {},
+                        "perspective_alignment_diagnostics": {
+                            "status": "RANGE_METHOD_MISMATCH_REPAIR_REQUIRED",
+                            "pair_direction_groups": 2,
+                            "range_forecast_method_mismatch_groups": 1,
+                            "range_forecast_method_mismatch_lanes": 3,
+                            "range_forecast_method_mismatch_top": [
+                                {
+                                    "pair": "AUD_JPY",
+                                    "direction": "SHORT",
+                                    "method_mismatch_lanes": 3,
+                                    "range_rotation_lanes": 0,
+                                    "range_rotation_live_ready_lanes": 0,
+                                    "top_live_blocker_codes": [
+                                        {"code": "RANGE_FORECAST_REQUIRES_RANGE_ROTATION", "count": 3}
+                                    ],
+                                }
+                            ],
+                        },
+                    }
+                )
+            )
+            lock_dir = root / ".quant_rabbit_live.lock"
+            lock_dir.mkdir()
+            (lock_dir / "pid").write_text(str(os.getpid()), encoding="utf-8")
+
+            with mock.patch.dict(
+                os.environ,
+                {"QR_AUTOTRADE_LOCK_DIR": str(lock_dir), "QR_AUTOTRADE_LOCK_HELD": ""},
+                clear=False,
+            ):
+                summary = _run(files)
+            payload = json.loads(files["output"].read_text())
+
+        codes = {item["code"]: item for item in payload["findings"]}
+        self.assertEqual(summary.status, STATUS_BLOCKED)
+        self.assertIn("LIVE_RUNTIME_UPDATE_IN_PROGRESS", codes)
+        self.assertNotIn("TARGET_OPEN_NO_LIVE_READY_LANES", codes)
+        finding = codes["RANGE_FORECAST_METHOD_MISMATCH_REPAIR_REQUIRED"]
+        self.assertEqual(finding["priority"], "P1")
+        perspective = finding["evidence"]["perspective_alignment_diagnostics"]
+        self.assertEqual(perspective["range_forecast_method_mismatch_lanes"], 3)
+        self.assertEqual(perspective["range_forecast_method_mismatch_top"][0]["pair"], "AUD_JPY")
+
     def test_wrapper_owned_live_lock_still_allows_memory_stale_judgment(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
