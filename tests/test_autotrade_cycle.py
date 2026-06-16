@@ -1705,11 +1705,16 @@ class AutoTradeCycleTest(unittest.TestCase):
                 max_loss_jpy=1_500,
             ).run(send=True)
 
+            self.assertEqual(summary.status, "NO_ACTION")
+            self.assertFalse(summary.sent)
             self.assertEqual(summary.canceled_orders, ())
             self.assertEqual(client.orders_canceled, [])
             self.assertEqual(client.orders_sent, [])
             result = json.loads((root / "live_order.json").read_text())
-            self.assertIn("BASKET_DUPLICATE_PARENT_LANE", {issue["code"] for issue in result["risk_issues"]})
+            self.assertEqual(result["status"], "NO_ACTION")
+            self.assertEqual(result["cancel_order_ids"], [pending.order_id])
+            self.assertIn("preserved equivalent trader-owned pending entry", result["reason"])
+            self.assertEqual(result["risk_issues"], [])
 
     def test_gpt_trade_preserves_same_lane_pending_with_disaster_stop_match(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

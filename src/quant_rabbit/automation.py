@@ -11,7 +11,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from quant_rabbit.broker.execution import ACTIVE_FX_SESSION_BUCKETS_PER_DAY, LiveOrderGateway
+from quant_rabbit.broker.execution import ACTIVE_FX_SESSION_BUCKETS_PER_DAY, LiveOrderGateway, LiveOrderStageSummary
 from quant_rabbit.broker.oanda import OandaExecutionClient
 from quant_rabbit.broker.position_execution import PositionExecutionSummary, PositionProtectionGateway
 from quant_rabbit.analysis.market_status import (
@@ -3450,6 +3450,7 @@ class AutoTradeCycle:
             if gpt_summary is not None and gpt_summary.action == "TRADE"
             else ()
         )
+        requested_replace_order_ids = replace_order_ids
         if replace_order_ids:
             replace_order_ids = _filtered_gpt_trade_cancel_order_ids(
                 client=order_gateway.client,
@@ -3460,6 +3461,15 @@ class AutoTradeCycle:
             if gpt_summary is not None and replace_order_ids != gpt_summary.cancel_order_ids:
                 gpt_summary = replace(gpt_summary, cancel_order_ids=replace_order_ids)
         if not replace_order_ids:
+            if requested_replace_order_ids:
+                return (
+                    self._write_preserved_pending_entry_no_action(
+                        lane_ids=lane_ids,
+                        cancel_order_ids=requested_replace_order_ids,
+                        send=send,
+                    ),
+                    (),
+                )
             return (
                 order_gateway.run_batch(
                     intents_path=intents_path,
@@ -3508,6 +3518,86 @@ class AutoTradeCycle:
             confirm_live=send,
         )
         return sent, canceled
+
+    def _write_preserved_pending_entry_no_action(
+        self,
+        *,
+        lane_ids: tuple[str, ...],
+        cancel_order_ids: tuple[str, ...],
+        send: bool,
+    ) -> LiveOrderStageSummary:
+        generated_at = datetime.now(timezone.utc).isoformat()
+        primary_lane_id = lane_ids[0] if lane_ids else None
+        result = {
+            "generated_at_utc": generated_at,
+            "status": "NO_ACTION",
+            "lane_id": primary_lane_id,
+            "lane_ids": list(lane_ids),
+            "requested_units": None,
+            "size_multiple": None,
+            "scaled_units": None,
+            "send_requested": send,
+            "sent": False,
+            "sent_count": 0,
+            "portfolio_position_cap": None,
+            "order_request": None,
+            "risk_issues": [],
+            "strategy_issues": [],
+            "cancel_order_ids": list(cancel_order_ids),
+            "reason": (
+                "preserved equivalent trader-owned pending entry named by GPT cancel_order_ids; "
+                "no duplicate fresh entry staged"
+            ),
+        }
+        self.live_order_output_path.parent.mkdir(parents=True, exist_ok=True)
+        self.live_order_output_path.write_text(json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True) + "\n")
+        self.live_order_report_path.parent.mkdir(parents=True, exist_ok=True)
+        self.live_order_report_path.write_text(
+            "\n".join(
+                [
+                    "# Live Order Stage Report",
+                    "",
+                    f"- Generated at UTC: `{generated_at}`",
+                    "- Status: `NO_ACTION`",
+                    f"- Lane: `{primary_lane_id}`",
+                    f"- Lanes: `{', '.join(lane_ids) if lane_ids else 'none'}`",
+                    "- Requested units: `None` size multiple: `None` scaled units:`None`",
+                    f"- Send requested: `{send}`",
+                    "- Sent: `False`",
+                    "- Sent count: `0`",
+                    f"- Cancel order ids preserved: `{', '.join(cancel_order_ids)}`",
+                    "",
+                    "## Order Request",
+                    "",
+                    "- none",
+                    "",
+                    "## Issues",
+                    "",
+                    "- none",
+                    "",
+                    "## Reason",
+                    "",
+                    "- Equivalent trader-owned pending entry remains active; duplicate fresh entry was not staged.",
+                    "",
+                    "## Send Contract",
+                    "",
+                    "- Existing pending broker truth remains the active entry thesis.",
+                    "- A fresh entry is staged only after cancellation is still required by current gateway validation.",
+                ]
+            )
+            + "\n"
+        )
+        return LiveOrderStageSummary(
+            status="NO_ACTION",
+            lane_id=primary_lane_id,
+            output_path=self.live_order_output_path,
+            report_path=self.live_order_report_path,
+            sent=False,
+            risk_issues=0,
+            strategy_issues=0,
+            sent_count=0,
+            lane_ids=lane_ids,
+        )
 
     def _cancel_gpt_pending_orders(
         self,
