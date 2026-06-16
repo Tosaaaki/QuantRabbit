@@ -1980,6 +1980,58 @@ class SelfImprovementAuditorTest(unittest.TestCase):
         self.assertNotIn("PERSISTENT_PROFITABILITY_DISCIPLINE_RECOVERY", codes)
         self.assertEqual(codes["PERSISTENT_PROFITABILITY_DISCIPLINE_BLOCKED"]["priority"], "P0")
 
+    def test_persistent_profitability_recovers_when_gateway_loss_close_contained_sl_risk(self) -> None:
+        effect_24h = {
+            "closed_trades": 2,
+            "net_jpy": -200.0,
+            "gross_profit_jpy": 800.0,
+            "gross_loss_jpy": 1000.0,
+            "profit_factor": 0.8,
+            "expectancy_jpy": -100.0,
+            "close_provenance_metrics": {
+                "GATEWAY_TRADE_CLOSE_SENT": {
+                    "trades": 1,
+                    "net_jpy": -1000.0,
+                    "gross_profit_jpy": 0.0,
+                    "gross_loss_jpy": 1000.0,
+                    "win_trades": 0,
+                    "loss_trades": 1,
+                    "loss_containment_trades": 1,
+                    "loss_containment_net_jpy": -1000.0,
+                    "loss_containment_avoided_loss_jpy": 2400.0,
+                },
+                "TAKE_PROFIT_ORDER": {
+                    "trades": 1,
+                    "net_jpy": 800.0,
+                    "gross_profit_jpy": 800.0,
+                    "gross_loss_jpy": 0.0,
+                    "win_trades": 1,
+                    "loss_trades": 0,
+                },
+            },
+            "market_order_trade_close_loss_provenance_metrics": {},
+        }
+
+        findings = _profitability_findings(
+            run_id="run-contained-close",
+            effect=self._failed_trailing_effect(),
+            effect_24h=effect_24h,
+            snapshot={},
+            min_sample=3,
+            close_gate_loss_evidence=None,
+            previous_discipline_streak=5,
+        )
+
+        codes = {item["code"]: item for item in findings}
+        self.assertNotIn("PERSISTENT_PROFITABILITY_DISCIPLINE_BLOCKED", codes)
+        recovery = codes["PERSISTENT_PROFITABILITY_DISCIPLINE_RECOVERY"]
+        observation = recovery["evidence"]["recovery_observation"]
+        self.assertEqual(recovery["priority"], "P1")
+        self.assertEqual(observation["gateway_raw_net_jpy"], -200.0)
+        self.assertEqual(observation["gateway_net_jpy"], 800.0)
+        self.assertEqual(observation["gateway_loss_trades"], 0)
+        self.assertEqual(observation["loss_containment_trades"], 1)
+
     def test_persistent_profitability_escalates_when_gateway_close_bleeds_without_loss_asymmetry(
         self,
     ) -> None:
@@ -2264,6 +2316,48 @@ class SelfImprovementAuditorTest(unittest.TestCase):
         market_loss = effect["market_order_trade_close_loss_provenance_metrics"]
         self.assertEqual(market_loss["GATEWAY_TRADE_CLOSE_SENT"]["trades"], 1)
         self.assertAlmostEqual(market_loss["GATEWAY_TRADE_CLOSE_SENT"]["net_jpy"], -500.0)
+
+    def test_effect_metrics_marks_gateway_loss_close_contained_before_stop(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "execution_ledger.db"
+            _write_market_close_attribution_ledger(db_path, include_gateway_close=True)
+            with sqlite3.connect(db_path) as conn:
+                conn.execute("UPDATE execution_events SET price = 1.1000 WHERE event_uid = 'fill'")
+                conn.execute("UPDATE execution_events SET price = 1.0980 WHERE event_uid = 'close'")
+                conn.execute(
+                    """
+                    INSERT INTO execution_events(
+                        event_uid, ts_utc, event_type, lane_id, order_id, trade_id,
+                        pair, side, units, realized_pl_jpy, exit_reason, price, sl
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        "protection-sl",
+                        (_NOW - timedelta(hours=2, minutes=50)).isoformat(),
+                        "PROTECTION_CREATED",
+                        "",
+                        "SL42",
+                        "T42",
+                        "EUR_USD",
+                        "",
+                        None,
+                        None,
+                        "ON_FILL",
+                        1.0950,
+                        1.0950,
+                    ),
+                )
+
+            effect = _effect_metrics(db_path, window_hours=168.0, now=_NOW)
+
+        market_loss = effect["market_order_trade_close_loss_provenance_metrics"]["GATEWAY_TRADE_CLOSE_SENT"]
+        close_metric = effect["close_provenance_metrics"]["GATEWAY_TRADE_CLOSE_SENT"]
+        self.assertEqual(market_loss["trades"], 1)
+        self.assertAlmostEqual(market_loss["net_jpy"], -500.0)
+        self.assertEqual(market_loss["loss_containment_trades"], 1)
+        self.assertGreater(market_loss["loss_containment_avoided_loss_jpy"], 0.0)
+        self.assertEqual(close_metric["loss_containment_trades"], 1)
 
     def test_effect_metrics_matches_gateway_market_order_loss_close_by_order_id(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -3627,6 +3721,9 @@ def _write_direct_manual_close_recovery_ledger(path: Path) -> None:
                 pair TEXT,
                 side TEXT,
                 units INTEGER,
+                price REAL,
+                tp REAL,
+                sl REAL,
                 realized_pl_jpy REAL,
                 exit_reason TEXT
             );
@@ -3860,6 +3957,9 @@ def _write_market_close_attribution_ledger(
                 pair TEXT,
                 side TEXT,
                 units INTEGER,
+                price REAL,
+                tp REAL,
+                sl REAL,
                 realized_pl_jpy REAL,
                 exit_reason TEXT
             );

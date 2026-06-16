@@ -2510,6 +2510,9 @@ def _gateway_close_recovery_observation(effect_24h: dict[str, Any]) -> dict[str,
     if not isinstance(metrics, dict) or not metrics:
         return None
     net = 0.0
+    loss_containment_net = 0.0
+    loss_containment_trades = 0
+    loss_containment_avoided = 0.0
     gross_profit = 0.0
     gross_loss = 0.0
     trades = 0
@@ -2521,27 +2524,43 @@ def _gateway_close_recovery_observation(effect_24h: dict[str, Any]) -> dict[str,
         if not isinstance(values, dict):
             continue
         net += float(values.get("net_jpy") or 0.0)
+        loss_containment_net += float(values.get("loss_containment_net_jpy") or 0.0)
+        loss_containment_trades += int(values.get("loss_containment_trades") or 0)
+        loss_containment_avoided += float(values.get("loss_containment_avoided_loss_jpy") or 0.0)
         gross_profit += float(values.get("gross_profit_jpy") or 0.0)
         gross_loss += float(values.get("gross_loss_jpy") or 0.0)
         trades += int(values.get("trades") or 0)
         win_trades += int(values.get("win_trades") or 0)
         loss_trades += int(values.get("loss_trades") or 0)
-    if win_trades < 1 or net < 0.0:
+    close_discipline_net = net - loss_containment_net
+    active_loss_trades = max(0, loss_trades - loss_containment_trades)
+    active_gross_loss = max(0.0, gross_loss - abs(loss_containment_net))
+    if win_trades < 1 or close_discipline_net < 0.0:
         return None
     avg_win = gross_profit / win_trades
-    avg_loss = (gross_loss / loss_trades) if loss_trades else None
+    avg_loss = (active_gross_loss / active_loss_trades) if active_loss_trades else None
     if avg_loss is not None and avg_loss > avg_win * 2:
         return None
-    return {
+    observation = {
         "window_hours": 24.0,
-        "gateway_net_jpy": net,
+        "gateway_net_jpy": close_discipline_net,
+        "gateway_raw_net_jpy": net,
         "gateway_trades": trades,
         "gateway_win_trades": win_trades,
-        "gateway_loss_trades": loss_trades,
+        "gateway_loss_trades": active_loss_trades,
         "gateway_avg_win_jpy": avg_win,
         "gateway_avg_loss_jpy_abs": avg_loss,
         "excluded_provenances": list(RECOVERY_EXCLUDED_CLOSE_PROVENANCES),
     }
+    if loss_containment_trades:
+        observation.update(
+            {
+                "loss_containment_trades": loss_containment_trades,
+                "loss_containment_net_jpy": loss_containment_net,
+                "loss_containment_avoided_loss_jpy": loss_containment_avoided,
+            }
+        )
+    return observation
 
 
 def _gateway_close_bleed_observation(effect_24h: dict[str, Any]) -> dict[str, Any] | None:
@@ -2559,6 +2578,9 @@ def _gateway_close_bleed_observation(effect_24h: dict[str, Any]) -> dict[str, An
     if not isinstance(metrics, dict) or not metrics:
         return None
     net = 0.0
+    loss_containment_net = 0.0
+    loss_containment_trades = 0
+    loss_containment_avoided = 0.0
     gross_profit = 0.0
     gross_loss = 0.0
     trades = 0
@@ -2570,23 +2592,39 @@ def _gateway_close_bleed_observation(effect_24h: dict[str, Any]) -> dict[str, An
         if not isinstance(values, dict):
             continue
         net += float(values.get("net_jpy") or 0.0)
+        loss_containment_net += float(values.get("loss_containment_net_jpy") or 0.0)
+        loss_containment_trades += int(values.get("loss_containment_trades") or 0)
+        loss_containment_avoided += float(values.get("loss_containment_avoided_loss_jpy") or 0.0)
         gross_profit += float(values.get("gross_profit_jpy") or 0.0)
         gross_loss += float(values.get("gross_loss_jpy") or 0.0)
         trades += int(values.get("trades") or 0)
         win_trades += int(values.get("win_trades") or 0)
         loss_trades += int(values.get("loss_trades") or 0)
-    if loss_trades < 1 or net >= 0.0:
+    close_discipline_net = net - loss_containment_net
+    active_loss_trades = max(0, loss_trades - loss_containment_trades)
+    active_gross_loss = max(0.0, gross_loss - abs(loss_containment_net))
+    if active_loss_trades < 1 or close_discipline_net >= 0.0:
         return None
-    return {
+    observation = {
         "window_hours": 24.0,
-        "gateway_net_jpy": net,
+        "gateway_net_jpy": close_discipline_net,
+        "gateway_raw_net_jpy": net,
         "gateway_trades": trades,
         "gateway_win_trades": win_trades,
-        "gateway_loss_trades": loss_trades,
+        "gateway_loss_trades": active_loss_trades,
         "gateway_avg_win_jpy": (gross_profit / win_trades) if win_trades else None,
-        "gateway_avg_loss_jpy_abs": (gross_loss / loss_trades) if loss_trades else None,
+        "gateway_avg_loss_jpy_abs": (active_gross_loss / active_loss_trades) if active_loss_trades else None,
         "excluded_provenances": list(RECOVERY_EXCLUDED_CLOSE_PROVENANCES),
     }
+    if loss_containment_trades:
+        observation.update(
+            {
+                "loss_containment_trades": loss_containment_trades,
+                "loss_containment_net_jpy": loss_containment_net,
+                "loss_containment_avoided_loss_jpy": loss_containment_avoided,
+            }
+        )
+    return observation
 
 
 def _combined_close_provenance_metric(
@@ -4076,13 +4114,31 @@ def _effect_metrics(db_path: Path, *, window_hours: float, now: datetime) -> dic
                     accepted_close_rows = _broker_trade_close_accept_rows(conn, columns)
                     lane_select = "e.lane_id AS lane_id" if has_lane_id else "NULL AS lane_id"
                     open_lane_expr = "MAX(NULLIF(lane_id, ''))" if has_lane_id else "NULL"
+                    entry_price_expr = "MAX(price)" if "price" in columns else "NULL"
+                    if "sl" in columns:
+                        stop_loss_expr = "MAX(sl)"
+                    elif "price" in columns:
+                        stop_loss_expr = "MAX(price)"
+                    else:
+                        stop_loss_expr = "NULL"
+                    close_price_select = "e.price AS close_price" if "price" in columns else "NULL AS close_price"
                     query = f"""
                         WITH open_fills AS (
                             SELECT
                                 trade_id,
-                                {open_lane_expr} AS open_lane_id
+                                {open_lane_expr} AS open_lane_id,
+                                {entry_price_expr} AS entry_price
                             FROM execution_events
                             WHERE event_type = 'ORDER_FILLED'
+                              AND COALESCE(trade_id, '') <> ''
+                            GROUP BY trade_id
+                        ),
+                        protection_sls AS (
+                            SELECT
+                                trade_id,
+                                {stop_loss_expr} AS stop_loss_price
+                            FROM execution_events
+                            WHERE event_type = 'PROTECTION_CREATED'
                               AND COALESCE(trade_id, '') <> ''
                             GROUP BY trade_id
                         )
@@ -4094,11 +4150,15 @@ def _effect_metrics(db_path: Path, *, window_hours: float, now: datetime) -> dic
                             e.trade_id,
                             {lane_select},
                             open_fills.open_lane_id,
+                            open_fills.entry_price,
+                            protection_sls.stop_loss_price,
+                            {close_price_select},
                             {_sql_column_or_null(columns, "order_id")},
                             {_sql_column_or_null(columns, "exit_reason")},
                             {_sql_column_or_null(columns, "raw_json")}
                         FROM execution_events e
                         LEFT JOIN open_fills ON open_fills.trade_id = e.trade_id
+                        LEFT JOIN protection_sls ON protection_sls.trade_id = e.trade_id
                         WHERE e.event_type = 'TRADE_CLOSED'
                           AND e.realized_pl_jpy IS NOT NULL
                     """
@@ -4112,6 +4172,9 @@ def _effect_metrics(db_path: Path, *, window_hours: float, now: datetime) -> dic
                             NULL AS trade_id,
                             NULL AS lane_id,
                             NULL AS open_lane_id,
+                            NULL AS entry_price,
+                            NULL AS stop_loss_price,
+                            NULL AS close_price,
                             {_sql_column_or_null(columns, "order_id", qualifier="")},
                             {_sql_column_or_null(columns, "exit_reason", qualifier="")},
                             {_sql_column_or_null(columns, "raw_json", qualifier="")}
@@ -4149,13 +4212,25 @@ def _effect_metrics(db_path: Path, *, window_hours: float, now: datetime) -> dic
             gpt_close_trade_ids=gpt_close_trade_ids,
             stale_close_satisfied_trade_ids=stale_close_satisfied_trade_ids,
         )
-        _add_close_provenance_metric(close_provenance_metrics, close_provenance, value)
         exit_reason = str(_row_text(row, "exit_reason") or "").strip().upper()
+        contained_loss = False
+        avoided_loss_jpy: float | None = None
+        if exit_reason == "MARKET_ORDER_TRADE_CLOSE" and value < 0:
+            contained_loss, avoided_loss_jpy = _loss_close_containment(row, value, close_provenance)
+        _add_close_provenance_metric(
+            close_provenance_metrics,
+            close_provenance,
+            value,
+            contained_loss=contained_loss,
+            avoided_loss_jpy=avoided_loss_jpy,
+        )
         if exit_reason == "MARKET_ORDER_TRADE_CLOSE" and value < 0:
             _add_close_provenance_metric(
                 market_order_trade_close_loss_provenance_metrics,
                 close_provenance,
                 value,
+                contained_loss=contained_loss,
+                avoided_loss_jpy=avoided_loss_jpy,
             )
         segment = segments.setdefault(
             key,
@@ -4364,7 +4439,62 @@ def _close_provenance_for_effect_row(
     return "BROKER_TRADE_CLOSE_ACCEPTED:" + "+".join(sorted(sources))
 
 
-def _add_close_provenance_metric(metrics: dict[str, dict[str, Any]], label: str, value: float) -> None:
+_LOSS_CONTAINMENT_CLOSE_PROVENANCES = frozenset(
+    {
+        "GATEWAY_TRADE_CLOSE_SENT",
+        "GATEWAY_TRADE_CLOSE_RECONCILED",
+        "GATEWAY_GPT_CLOSE_ACCEPTED",
+    }
+)
+
+
+def _loss_close_containment(
+    row: sqlite3.Row,
+    value: float,
+    close_provenance: str,
+) -> tuple[bool, float | None]:
+    """Detect loss-side gateway closes that reduced broker-side SL loss.
+
+    A realized negative GPT/gateway close can be good close discipline when it
+    exits a broken thesis before the attached broker SL. Those trades should
+    still count in overall expectancy, but they should not by themselves prove
+    a close-discipline P0.
+    """
+
+    if value >= 0 or close_provenance not in _LOSS_CONTAINMENT_CLOSE_PROVENANCES:
+        return False, None
+    side = str(_row_text(row, "side") or "").upper()
+    entry = _maybe_float(row["entry_price"]) if "entry_price" in row.keys() else None
+    stop = _maybe_float(row["stop_loss_price"]) if "stop_loss_price" in row.keys() else None
+    close = _maybe_float(row["close_price"]) if "close_price" in row.keys() else None
+    if side not in {"LONG", "SHORT"} or entry is None or stop is None or close is None:
+        return False, None
+    if side == "LONG":
+        if not (stop < close < entry):
+            return False, None
+        planned_loss_distance = entry - stop
+        actual_loss_distance = entry - close
+    else:
+        if not (entry < close < stop):
+            return False, None
+        planned_loss_distance = stop - entry
+        actual_loss_distance = close - entry
+    if planned_loss_distance <= 0 or actual_loss_distance <= 0:
+        return False, None
+    avoided_loss = None
+    if planned_loss_distance > actual_loss_distance:
+        avoided_loss = abs(value) * ((planned_loss_distance / actual_loss_distance) - 1.0)
+    return True, avoided_loss
+
+
+def _add_close_provenance_metric(
+    metrics: dict[str, dict[str, Any]],
+    label: str,
+    value: float,
+    *,
+    contained_loss: bool = False,
+    avoided_loss_jpy: float | None = None,
+) -> None:
     bucket = metrics.setdefault(
         label,
         {
@@ -4384,11 +4514,19 @@ def _add_close_provenance_metric(metrics: dict[str, dict[str, Any]], label: str,
     elif value < 0:
         bucket["gross_loss_jpy"] = float(bucket["gross_loss_jpy"]) + abs(value)
         bucket["loss_trades"] = int(bucket["loss_trades"]) + 1
+        if contained_loss:
+            bucket["loss_containment_trades"] = int(bucket.get("loss_containment_trades") or 0) + 1
+            bucket["loss_containment_net_jpy"] = float(bucket.get("loss_containment_net_jpy") or 0.0) + value
+            if avoided_loss_jpy is not None:
+                bucket["loss_containment_avoided_loss_jpy"] = (
+                    float(bucket.get("loss_containment_avoided_loss_jpy") or 0.0) + avoided_loss_jpy
+                )
 
 
 def _sorted_close_provenance_metrics(metrics: dict[str, dict[str, Any]]) -> dict[str, dict[str, Any]]:
-    return {
-        label: {
+    out: dict[str, dict[str, Any]] = {}
+    for label, values in sorted(metrics.items()):
+        item = {
             "trades": int(values.get("trades") or 0),
             "net_jpy": float(values.get("net_jpy") or 0.0),
             "gross_profit_jpy": float(values.get("gross_profit_jpy") or 0.0),
@@ -4396,8 +4534,14 @@ def _sorted_close_provenance_metrics(metrics: dict[str, dict[str, Any]]) -> dict
             "win_trades": int(values.get("win_trades") or 0),
             "loss_trades": int(values.get("loss_trades") or 0),
         }
-        for label, values in sorted(metrics.items())
-    }
+        if int(values.get("loss_containment_trades") or 0):
+            item["loss_containment_trades"] = int(values.get("loss_containment_trades") or 0)
+            item["loss_containment_net_jpy"] = float(values.get("loss_containment_net_jpy") or 0.0)
+            item["loss_containment_avoided_loss_jpy"] = float(
+                values.get("loss_containment_avoided_loss_jpy") or 0.0
+            )
+        out[label] = item
+    return out
 
 
 def _row_text(row: sqlite3.Row, key: str) -> str | None:
