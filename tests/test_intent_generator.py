@@ -3142,6 +3142,102 @@ class IntentGeneratorTest(unittest.TestCase):
         self.assertEqual(metadata["geometry_model"], "RANGE_RAIL_LIMIT")
         self.assertIn("FORECAST_WATCH_ONLY", issue_codes)
 
+    def test_range_forecast_box_supplies_rotation_rails_when_chart_rails_are_missing(self) -> None:
+        os.environ["QR_REQUIRE_FORECAST_FOR_LIVE"] = "1"
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            output = root / "intents.json"
+            charts = root / "pair_charts.json"
+            charts.write_text(
+                json.dumps(
+                    {
+                        "charts": [
+                            {
+                                "pair": "EUR_USD",
+                                "dominant_regime": "UNCLEAR",
+                                "long_score": 0.54,
+                                "short_score": 0.46,
+                                "confluence": {
+                                    "score_balance": "LONG_LEAN",
+                                    "score_gap": 0.08,
+                                    "dominant_regime": "UNCLEAR",
+                                },
+                                "views": [
+                                    {
+                                        "granularity": "M5",
+                                        "regime": "TREND_WEAK",
+                                        "long_bias": 0.54,
+                                        "short_bias": 0.46,
+                                        "regime_reading": {"state": "TREND_WEAK", "confidence": 0.6},
+                                        "family_scores": {
+                                            "mean_rev_score": 0.8,
+                                            "trend_score": 0.2,
+                                            "breakout_score": 0.0,
+                                        },
+                                        "indicators": {
+                                            "close": 1.17326,
+                                            "atr_pips": 8.0,
+                                            "adx_14": 22.0,
+                                            "choppiness_14": 49.0,
+                                        },
+                                    }
+                                ],
+                            }
+                        ]
+                    }
+                )
+            )
+            forecast = SimpleNamespace(
+                direction="RANGE",
+                confidence=0.56,
+                raw_confidence=0.74,
+                current_price=1.17326,
+                target_price=None,
+                invalidation_price=None,
+                range_low_price=1.1724,
+                range_high_price=1.1748,
+                range_width_pips=24.0,
+                horizon_min=120,
+                rationale_summary="RANGE forecast box survives but chart rail keys are missing",
+                drivers_for=("forecast range low/high define executable rails",),
+                drivers_against=("chart packet lacks explicit M5 support/resistance keys",),
+            )
+
+            with (
+                patch("quant_rabbit.strategy.intent_generator._forecast_seed_for_pair", return_value=forecast),
+                patch("quant_rabbit.strategy.intent_generator._record_forecast_seed_telemetry", return_value=None),
+            ):
+                IntentGenerator(
+                    campaign_plan=_campaign(root),
+                    strategy_profile=_strategy(root, status="CANDIDATE", direction="LONG"),
+                    pair_charts_path=charts,
+                    output_path=output,
+                    report_path=root / "intents.md",
+                    max_loss_jpy=500.0,
+                ).run(snapshot_path=_snapshot(root))
+
+            payload = json.loads(output.read_text())
+
+        seed = next(
+            item
+            for item in payload["results"]
+            if item["lane_id"] == "range_trader:EUR_USD:LONG:RANGE_ROTATION"
+        )
+        metadata = seed["intent"]["metadata"]
+        issue_codes = {issue["code"] for issue in seed["risk_issues"]}
+
+        self.assertTrue(metadata["forecast_seed"])
+        self.assertTrue(metadata["forecast_watch_only"])
+        self.assertEqual(metadata["forecast_direction"], "RANGE")
+        self.assertEqual(metadata["geometry_model"], "RANGE_RAIL_LIMIT")
+        self.assertEqual(metadata["range_indicator_source"], "forecast_range_box")
+        self.assertEqual(metadata["range_support"], 1.1724)
+        self.assertEqual(metadata["range_resistance"], 1.1748)
+        self.assertEqual(metadata["range_entry_side"], "support")
+        self.assertTrue(metadata["range_tp_is_inside_box"])
+        self.assertTrue(metadata["range_sl_outside_box"])
+        self.assertIn("FORECAST_WATCH_ONLY", issue_codes)
+
     def test_reversal_recovery_hedge_uses_recovery_forecast_floor_for_live_context(self) -> None:
         from quant_rabbit.models import BrokerSnapshot, MarketContext, OrderIntent, OrderType, Quote, Side, TradeMethod
         from quant_rabbit.strategy.intent_generator import (

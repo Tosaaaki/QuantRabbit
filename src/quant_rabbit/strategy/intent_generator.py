@@ -1823,6 +1823,63 @@ def _range_indicators_for(
     return indicators if isinstance(indicators, dict) and indicators else None
 
 
+def _range_indicators_cover_price(
+    indicators: dict[str, Any] | None,
+    current_price: float,
+) -> bool:
+    if not indicators:
+        return False
+    support = _nearest_below(current_price, _numeric_levels(indicators, RANGE_SUPPORT_LEVEL_KEYS))
+    resistance = _nearest_above(current_price, _numeric_levels(indicators, RANGE_RESISTANCE_LEVEL_KEYS))
+    return support is not None and resistance is not None and resistance > support
+
+
+def _forecast_range_indicators(source: Any) -> dict[str, Any] | None:
+    """Expose a RANGE forecast box through the existing rail-geometry API.
+
+    This is only a fallback for RANGE_ROTATION dry-run geometry when the chart
+    packet lacks executable M5 rail keys. The forecast low/high are generated
+    from the live chart packet by directional_forecaster, so they preserve the
+    same market-derived box instead of inventing a fixed pip width.
+    """
+    if isinstance(source, dict):
+        low = _optional_float(source.get("forecast_range_low_price") or source.get("range_low_price"))
+        high = _optional_float(source.get("forecast_range_high_price") or source.get("range_high_price"))
+    else:
+        low = _optional_float(getattr(source, "range_low_price", None))
+        high = _optional_float(getattr(source, "range_high_price", None))
+    if low is None or high is None or high <= low:
+        return None
+    return {
+        "bb_lower": low,
+        "bb_upper": high,
+        "forecast_range_box_low": low,
+        "forecast_range_box_high": high,
+        "range_indicator_source": "forecast_range_box",
+    }
+
+
+def _range_indicators_for_lane(
+    pair: str,
+    charts: dict[str, dict[str, Any]] | None,
+    lane: dict[str, Any],
+    *,
+    current_price: float,
+    method: TradeMethod,
+) -> dict[str, Any] | None:
+    chart_indicators = _range_indicators_for(pair, charts)
+    if _range_indicators_cover_price(chart_indicators, current_price):
+        return chart_indicators
+    if method != TradeMethod.RANGE_ROTATION:
+        return chart_indicators
+    if str(lane.get("forecast_direction") or "").upper() != "RANGE":
+        return chart_indicators
+    forecast_indicators = _forecast_range_indicators(lane)
+    if _range_indicators_cover_price(forecast_indicators, current_price):
+        return forecast_indicators
+    return chart_indicators
+
+
 def _append_current_range_phase_lanes(
     lanes: list[dict[str, Any]],
     charts: dict[str, dict[str, Any]] | None,
@@ -2434,7 +2491,7 @@ def _append_forecast_seed_lanes(
         for method in methods:
             if direction == "RANGE":
                 # RANGE forecasts are executable only through rail/box geometry.
-                side = _range_seed_direction(pair, charts, quote.mid)
+                side = _range_seed_direction(pair, charts, quote.mid, forecast=forecast)
                 if side is None:
                     continue
             if side not in {Side.LONG.value, Side.SHORT.value}:
@@ -3572,9 +3629,17 @@ def _forecast_watch_chart_score(
     return None
 
 
-def _range_seed_direction(pair: str, charts: dict[str, dict[str, Any]], current_price: float) -> str | None:
+def _range_seed_direction(
+    pair: str,
+    charts: dict[str, dict[str, Any]],
+    current_price: float,
+    *,
+    forecast: Any | None = None,
+) -> str | None:
     indicators = _range_indicators_for(pair, charts)
-    if not indicators:
+    if not _range_indicators_cover_price(indicators, current_price):
+        indicators = _forecast_range_indicators(forecast) if forecast is not None else indicators
+    if not _range_indicators_cover_price(indicators, current_price):
         return None
     support = _nearest_below(current_price, _numeric_levels(indicators, RANGE_SUPPORT_LEVEL_KEYS))
     resistance = _nearest_above(current_price, _numeric_levels(indicators, RANGE_RESISTANCE_LEVEL_KEYS))
@@ -4373,7 +4438,13 @@ class IntentGenerator:
                 note="Cannot build priced intent without a live quote.",
             )
         atr_pips = _atr_pips_for(pair, pair_charts)
-        range_indicators = _range_indicators_for(pair, pair_charts)
+        range_indicators = _range_indicators_for_lane(
+            pair,
+            pair_charts,
+            lane,
+            current_price=quote.mid,
+            method=method,
+        )
         pair_chart = _pair_chart_for(pair, pair_charts)
         regime_state = _regime_state_for(pair, pair_charts)
         regime_reading = _regime_reading_for(pair, pair_charts)
@@ -8271,6 +8342,7 @@ def _geometry_metadata(
         model = "RANGE_RAIL_LIMIT"
     return {
         "geometry_model": model,
+        "range_indicator_source": range_indicators.get("range_indicator_source") or "chart_levels",
         "range_support": round(support, 3 if pair.endswith("_JPY") else 5),
         "range_resistance": round(resistance, 3 if pair.endswith("_JPY") else 5),
         "range_entry_side": "support" if side == Side.LONG else "resistance",
