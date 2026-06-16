@@ -70,6 +70,15 @@ PERSISTENT_PROFITABILITY_STREAK_MIN = int(
     _env_nonnegative_float("QR_SELF_IMPROVEMENT_PROFITABILITY_STREAK_MIN", 3.0)
 )
 
+# A loss-containment close is positive close-discipline evidence only when it
+# avoids at least twice the realized containment cost. The 2x boundary mirrors
+# the audit's loss/win asymmetry line: below this, a loss close is still too
+# weak to prove the close path is repaired without a winning close in-window.
+LOSS_CONTAINMENT_RECOVERY_MIN_AVOIDED_MULT = _env_nonnegative_float(
+    "QR_LOSS_CONTAINMENT_RECOVERY_MIN_AVOIDED_MULT",
+    2.0,
+)
+
 PROFITABILITY_DISCIPLINE_CODES = (
     "NEGATIVE_RECENT_EXPECTANCY",
 )
@@ -2825,14 +2834,14 @@ def _gateway_close_recovery_observation(effect_24h: dict[str, Any]) -> dict[str,
     documented operational recovery window, the same boundary
     `_direct_or_manual_close_repair_evidence` uses.
 
-    Recovery requires positive evidence, not absence of evidence: at least one
-    gateway-attributable winning close, a non-negative gateway-attributable
-    net, and no small-win/large-loss asymmetry (same 2x boundary as
-    SMALL_WIN_LARGE_LOSS_ASYMMETRY) inside the window. TP fills and gateway
-    closes of held positions keep generating this evidence even while fresh
-    entries are blocked, so the gate can clear without bypassing risk
-    validation; a truly flat blocked book stays blocked until the trailing
-    window rolls the old losers out.
+    Recovery requires positive evidence, not absence of evidence: either a
+    gateway-attributable winning close, or a material loss-containment close
+    that avoided more loss than it realized while leaving active close
+    discipline non-negative. The active close window must not show
+    small-win/large-loss asymmetry (same 2x boundary as
+    SMALL_WIN_LARGE_LOSS_ASYMMETRY). TP fills and gateway closes of held
+    positions keep generating this evidence even while fresh entries are
+    blocked, so the gate can clear without bypassing risk validation.
     """
     if effect_24h.get("error"):
         return None
@@ -2865,14 +2874,21 @@ def _gateway_close_recovery_observation(effect_24h: dict[str, Any]) -> dict[str,
     close_discipline_net = net - loss_containment_net
     active_loss_trades = max(0, loss_trades - loss_containment_trades)
     active_gross_loss = max(0.0, gross_loss - abs(loss_containment_net))
-    if win_trades < 1 or close_discipline_net < 0.0:
+    material_loss_containment = (
+        loss_containment_trades > 0
+        and active_loss_trades == 0
+        and loss_containment_avoided
+        >= abs(loss_containment_net) * LOSS_CONTAINMENT_RECOVERY_MIN_AVOIDED_MULT
+    )
+    if close_discipline_net < 0.0 or (win_trades < 1 and not material_loss_containment):
         return None
-    avg_win = gross_profit / win_trades
+    avg_win = gross_profit / win_trades if win_trades else None
     avg_loss = (active_gross_loss / active_loss_trades) if active_loss_trades else None
-    if avg_loss is not None and avg_loss > avg_win * 2:
+    if avg_win is not None and avg_loss is not None and avg_loss > avg_win * 2:
         return None
     observation = {
         "window_hours": 24.0,
+        "recovery_basis": "material_loss_containment" if win_trades < 1 else "winning_close_window",
         "gateway_net_jpy": close_discipline_net,
         "gateway_raw_net_jpy": net,
         "gateway_trades": trades,

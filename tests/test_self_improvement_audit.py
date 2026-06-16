@@ -2902,7 +2902,7 @@ class SelfImprovementAuditorTest(unittest.TestCase):
         self.assertNotIn("PERSISTENT_PROFITABILITY_DISCIPLINE_RECOVERY", codes)
         self.assertEqual(codes["PERSISTENT_PROFITABILITY_DISCIPLINE_BLOCKED"]["priority"], "P0")
 
-    def test_persistent_profitability_stays_p0_without_gateway_recovery_proof(self) -> None:
+    def test_persistent_profitability_stays_p0_without_material_gateway_recovery_proof(self) -> None:
         effect_24h = {
             "closed_trades": 1,
             "net_jpy": -661.5,
@@ -2920,7 +2920,7 @@ class SelfImprovementAuditorTest(unittest.TestCase):
                     "loss_trades": 1,
                     "loss_containment_trades": 1,
                     "loss_containment_net_jpy": -661.5,
-                    "loss_containment_avoided_loss_jpy": 5782.5,
+                    "loss_containment_avoided_loss_jpy": 800.0,
                 },
             },
             "market_order_trade_close_loss_provenance_metrics": {
@@ -2962,6 +2962,70 @@ class SelfImprovementAuditorTest(unittest.TestCase):
                 "last_24h_gateway_recovery_proven"
             ]
         )
+
+    def test_persistent_profitability_recovers_when_gateway_close_only_materially_contained_loss(
+        self,
+    ) -> None:
+        effect_24h = {
+            "closed_trades": 1,
+            "net_jpy": -661.5,
+            "gross_profit_jpy": 0.0,
+            "gross_loss_jpy": 661.5,
+            "profit_factor": 0.0,
+            "expectancy_jpy": -661.5,
+            "close_provenance_metrics": {
+                "GATEWAY_TRADE_CLOSE_SENT": {
+                    "trades": 1,
+                    "net_jpy": -661.5,
+                    "gross_profit_jpy": 0.0,
+                    "gross_loss_jpy": 661.5,
+                    "win_trades": 0,
+                    "loss_trades": 1,
+                    "loss_containment_trades": 1,
+                    "loss_containment_net_jpy": -661.5,
+                    "loss_containment_avoided_loss_jpy": 5782.5,
+                },
+            },
+            "market_order_trade_close_loss_provenance_metrics": {
+                "GATEWAY_TRADE_CLOSE_SENT": {
+                    "trades": 1,
+                    "net_jpy": -661.5,
+                    "gross_profit_jpy": 0.0,
+                    "gross_loss_jpy": 661.5,
+                    "win_trades": 0,
+                    "loss_trades": 1,
+                }
+            },
+        }
+
+        findings = _profitability_findings(
+            run_id="run-contained-only",
+            effect={
+                **self._failed_trailing_effect(),
+                "profit_factor": 0.891,
+                "expectancy_jpy": -29.04,
+                "avg_win_jpy": 509.21,
+                "avg_loss_jpy_abs": 500.0,
+            },
+            effect_24h=effect_24h,
+            snapshot={},
+            min_sample=3,
+            close_gate_loss_evidence=None,
+            previous_discipline_streak=5,
+        )
+
+        codes = {item["code"]: item for item in findings}
+        self.assertNotIn("PERSISTENT_PROFITABILITY_DISCIPLINE_BLOCKED", codes)
+        recovery = codes["PERSISTENT_PROFITABILITY_DISCIPLINE_RECOVERY"]
+        observation = recovery["evidence"]["recovery_observation"]
+        self.assertEqual(recovery["priority"], "P1")
+        self.assertEqual(observation["recovery_basis"], "material_loss_containment")
+        self.assertEqual(observation["gateway_win_trades"], 0)
+        self.assertEqual(observation["gateway_loss_trades"], 0)
+        self.assertEqual(observation["gateway_net_jpy"], 0.0)
+        self.assertEqual(observation["gateway_raw_net_jpy"], -661.5)
+        self.assertEqual(observation["loss_containment_trades"], 1)
+        self.assertGreater(observation["loss_containment_avoided_loss_jpy"], 1323.0)
 
     def test_persistent_profitability_recovers_when_gateway_loss_close_contained_sl_risk(self) -> None:
         effect_24h = {
@@ -3010,6 +3074,7 @@ class SelfImprovementAuditorTest(unittest.TestCase):
         recovery = codes["PERSISTENT_PROFITABILITY_DISCIPLINE_RECOVERY"]
         observation = recovery["evidence"]["recovery_observation"]
         self.assertEqual(recovery["priority"], "P1")
+        self.assertEqual(observation["recovery_basis"], "winning_close_window")
         self.assertEqual(observation["gateway_raw_net_jpy"], -200.0)
         self.assertEqual(observation["gateway_net_jpy"], 800.0)
         self.assertEqual(observation["gateway_loss_trades"], 0)
