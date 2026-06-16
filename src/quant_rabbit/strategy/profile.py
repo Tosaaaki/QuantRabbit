@@ -500,15 +500,16 @@ def _forecast_seed_side_aligned(intent: OrderIntent, metadata: dict[str, Any]) -
     """Keep forecast-seed profile exceptions out of opposite-side chases."""
 
     side = str(intent.side.value).upper()
+    if _range_rotation_rail_side_matches(intent, metadata, side=side):
+        # A rail fade intentionally enters against the local push into
+        # support/resistance. Judge that by rail geometry before the generic
+        # chart-bias chase filter, otherwise upper-rail SHORT and lower-rail
+        # LONG triggers are treated as if they were trend continuations.
+        return True
+
     chart_bias = str(metadata.get("chart_direction_bias") or "").upper()
     if (side == "LONG" and chart_bias == "SHORT") or (side == "SHORT" and chart_bias == "LONG"):
         return False
-
-    if _range_rotation_rail_side_matches(intent, metadata, side=side):
-        # A rail fade intentionally enters against the local M5 push at
-        # support/resistance. The profile gate should not reclassify that
-        # range-rotation geometry as a trend-continuation side conflict.
-        return True
 
     long_bias = _optional_float(metadata.get("m5_long_bias"))
     short_bias = _optional_float(metadata.get("m5_short_bias"))

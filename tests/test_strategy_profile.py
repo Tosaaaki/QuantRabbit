@@ -260,6 +260,38 @@ class StrategyProfileTest(unittest.TestCase):
         self.assertEqual(issues[0].code, "STRATEGY_NOT_ELIGIBLE")
         self.assertEqual(issues[0].severity, "WARN")
 
+    def test_watch_only_upper_rail_short_seed_is_advisory_despite_long_push_bias(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            profile = StrategyProfile.load(_pair_side_profile(Path(tmp), status="WATCH_ONLY", direction="SHORT"))
+            prior = os.environ.get("QR_TRADER_DISABLE_SL_REPAIR")
+            os.environ["QR_TRADER_DISABLE_SL_REPAIR"] = "1"
+            try:
+                issues = profile.validate(
+                    _intent(
+                        "EUR_USD",
+                        side=Side.SHORT,
+                        method=TradeMethod.RANGE_ROTATION,
+                        order_type=OrderType.LIMIT,
+                        metadata={
+                            "forecast_seed": True,
+                            "forecast_direction": "RANGE",
+                            "forecast_confidence": 0.78,
+                            "geometry_model": "RANGE_RAIL_LIMIT",
+                            "range_entry_side": "resistance",
+                            "chart_direction_bias": "LONG",
+                            "m5_long_bias": 0.75,
+                            "m5_short_bias": 0.125,
+                        },
+                    ),
+                    for_live_send=True,
+                )
+            finally:
+                _restore_env("QR_TRADER_DISABLE_SL_REPAIR", prior)
+
+        self.assertEqual(len(issues), 1)
+        self.assertEqual(issues[0].code, "STRATEGY_NOT_ELIGIBLE")
+        self.assertEqual(issues[0].severity, "WARN")
+
     def test_watch_only_range_rotation_wrong_rail_side_still_blocks_under_sl_free(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             profile = StrategyProfile.load(_pair_side_profile(Path(tmp), status="WATCH_ONLY"))
@@ -645,7 +677,7 @@ def _profile(root: Path, *, status: str) -> Path:
     return path
 
 
-def _pair_side_profile(root: Path, *, status: str) -> Path:
+def _pair_side_profile(root: Path, *, status: str, direction: str = "LONG") -> Path:
     path = root / "strategy.json"
     path.write_text(
         json.dumps(
@@ -653,7 +685,7 @@ def _pair_side_profile(root: Path, *, status: str) -> Path:
                 "profiles": [
                     {
                         "pair": "EUR_USD",
-                        "direction": "LONG",
+                        "direction": direction,
                         "status": status,
                         "required_fix": "insufficient or mixed evidence; can be observed but not promoted to live execution",
                     }
@@ -667,13 +699,14 @@ def _pair_side_profile(root: Path, *, status: str) -> Path:
 def _intent(
     pair: str,
     *,
+    side: Side = Side.LONG,
     method: TradeMethod = TradeMethod.TREND_CONTINUATION,
     order_type: OrderType = OrderType.MARKET,
     metadata: dict | None = None,
 ) -> OrderIntent:
     return OrderIntent(
         pair=pair,
-        side=Side.LONG,
+        side=side,
         order_type=order_type,
         units=1000,
         entry=1.0,
