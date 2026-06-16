@@ -2735,6 +2735,9 @@ def _intent_findings(
                     "runner_candidate_diagnostics": _coverage_runner_candidate_diagnostics(
                         coverage_optimization
                     ),
+                    "perspective_alignment_diagnostics": _coverage_perspective_alignment_diagnostics(
+                        coverage_optimization
+                    ),
                     "status_counts": _intent_status_counts(intents),
                     "top_blockers": _top_intent_blockers(intents),
                     "dry_run_passed_live_readiness_blockers": _top_intent_live_readiness_blockers(
@@ -2777,6 +2780,9 @@ def _intent_findings(
                         "trader_pending_entry_orders": _pending_entry_evidence(pending_entry_orders),
                         "opportunity_modes": _coverage_opportunity_mode_summary(coverage_optimization),
                         "runner_candidate_diagnostics": _coverage_runner_candidate_diagnostics(
+                            coverage_optimization
+                        ),
+                        "perspective_alignment_diagnostics": _coverage_perspective_alignment_diagnostics(
                             coverage_optimization
                         ),
                         "status_counts": _intent_status_counts(intents),
@@ -2991,6 +2997,59 @@ def _coverage_market_evidence_refresh(payload: dict[str, Any]) -> dict[str, Any]
         )
         or 0.0,
         "action_items": [str(item) for item in action_items[:4]],
+    }
+
+
+def _coverage_perspective_alignment_diagnostics(payload: dict[str, Any]) -> dict[str, Any]:
+    diagnostics = (
+        payload.get("perspective_alignment_diagnostics")
+        if isinstance(payload.get("perspective_alignment_diagnostics"), dict)
+        else {}
+    )
+    if not diagnostics:
+        return {}
+    return {
+        "status": str(diagnostics.get("status") or ""),
+        "pair_direction_groups": _maybe_int(diagnostics.get("pair_direction_groups")) or 0,
+        "range_forecast_method_mismatch_groups": _maybe_int(
+            diagnostics.get("range_forecast_method_mismatch_groups")
+        )
+        or 0,
+        "range_forecast_method_mismatch_lanes": _maybe_int(
+            diagnostics.get("range_forecast_method_mismatch_lanes")
+        )
+        or 0,
+        "range_forecast_method_mismatch_top": [
+            {
+                "pair": str(item.get("pair") or ""),
+                "direction": str(item.get("direction") or ""),
+                "method_mismatch_lanes": _maybe_int(item.get("method_mismatch_lanes")) or 0,
+                "method_mismatch_reward_jpy": _maybe_float(item.get("method_mismatch_reward_jpy")) or 0.0,
+                "range_rotation_lanes": _maybe_int(item.get("range_rotation_lanes")) or 0,
+                "range_rotation_live_ready_lanes": _maybe_int(
+                    item.get("range_rotation_live_ready_lanes")
+                )
+                or 0,
+                "range_rotation_top_live_blocker_codes": [
+                    {
+                        "code": str(blocker.get("code") or ""),
+                        "count": _maybe_int(blocker.get("count")) or 0,
+                    }
+                    for blocker in (item.get("range_rotation_top_live_blocker_codes") or [])[:5]
+                    if isinstance(blocker, dict) and str(blocker.get("code") or "").strip()
+                ],
+                "top_live_blocker_codes": [
+                    {
+                        "code": str(blocker.get("code") or ""),
+                        "count": _maybe_int(blocker.get("count")) or 0,
+                    }
+                    for blocker in (item.get("top_live_blocker_codes") or [])[:5]
+                    if isinstance(blocker, dict) and str(blocker.get("code") or "").strip()
+                ],
+            }
+            for item in (diagnostics.get("range_forecast_method_mismatch_top") or [])[:8]
+            if isinstance(item, dict) and str(item.get("pair") or "").strip()
+        ],
     }
 
 
@@ -3513,6 +3572,33 @@ def _coverage_findings(
         return out
     payload = loaded.payload or {}
     diagnostics = payload.get("artifact_diagnostics") if isinstance(payload.get("artifact_diagnostics"), dict) else {}
+    perspective_diag = _coverage_perspective_alignment_diagnostics(payload)
+    if (
+        perspective_diag
+        and perspective_diag.get("status") == "RANGE_METHOD_MISMATCH_REPAIR_REQUIRED"
+        and int(perspective_diag.get("range_forecast_method_mismatch_lanes") or 0) > 0
+    ):
+        out.append(
+            _finding(
+                run_id=run_id,
+                priority="P1",
+                layer="forecast",
+                code="RANGE_FORECAST_METHOD_MISMATCH_REPAIR_REQUIRED",
+                message=(
+                    f"{perspective_diag['range_forecast_method_mismatch_lanes']} lane(s) have RANGE "
+                    "forecasts surfaced through directional entry methods"
+                ),
+                next_action=(
+                    "Repair these as RANGE_ROTATION rail/phase quality problems before forcing "
+                    "always-on directional entries; keep RANGE forecasts from authorizing "
+                    "BREAKOUT_FAILURE or TREND_CONTINUATION sends."
+                ),
+                evidence={
+                    "coverage_path": str(path),
+                    "perspective_alignment_diagnostics": perspective_diag,
+                },
+            )
+        )
     bucket_diag = (
         diagnostics.get("profitable_bucket_coverage")
         if isinstance(diagnostics.get("profitable_bucket_coverage"), dict)
@@ -5422,6 +5508,9 @@ def _finding_report_details(item: dict[str, Any]) -> list[str]:
     mode_text = _report_opportunity_mode_text(evidence.get("opportunity_modes"))
     if mode_text:
         details.append(f"  - opportunity modes: {mode_text}")
+    perspective_text = _report_perspective_alignment_text(evidence.get("perspective_alignment_diagnostics"))
+    if perspective_text:
+        details.append(f"  - perspective alignment: {perspective_text}")
     family_text = _report_dry_run_family_text(evidence.get("live_readiness_blocker_families"))
     if family_text:
         details.append(f"  - dry-run blocker families: {family_text}")
@@ -5479,6 +5568,41 @@ def _report_opportunity_mode_text(raw: Any) -> str:
             f"codes=`{top_codes or 'none'}`"
         )
     return "; ".join(parts)
+
+
+def _report_perspective_alignment_text(raw: Any) -> str:
+    diagnostics = raw if isinstance(raw, dict) else {}
+    if not diagnostics:
+        return ""
+    status = str(diagnostics.get("status") or "")
+    mismatch_lanes = _maybe_int(diagnostics.get("range_forecast_method_mismatch_lanes")) or 0
+    mismatch_groups = _maybe_int(diagnostics.get("range_forecast_method_mismatch_groups")) or 0
+    rows = diagnostics.get("range_forecast_method_mismatch_top")
+    labels: list[str] = []
+    for item in (rows if isinstance(rows, list) else [])[:3]:
+        if not isinstance(item, dict):
+            continue
+        pair = str(item.get("pair") or "").strip()
+        direction = str(item.get("direction") or "").strip()
+        if not pair or not direction:
+            continue
+        blockers = item.get("range_rotation_top_live_blocker_codes")
+        codes = [
+            str(blocker.get("code") or "")
+            for blocker in (blockers if isinstance(blockers, list) else [])[:3]
+            if isinstance(blocker, dict) and str(blocker.get("code") or "").strip()
+        ]
+        labels.append(
+            f"{pair} {direction} mismatch={_maybe_int(item.get('method_mismatch_lanes')) or 0} "
+            f"range_lanes={_maybe_int(item.get('range_rotation_lanes')) or 0} "
+            f"blockers={','.join(codes) if codes else 'none'}"
+        )
+    if not (status or mismatch_lanes or labels):
+        return ""
+    return (
+        f"status=`{status}`, groups=`{mismatch_groups}`, lanes=`{mismatch_lanes}`"
+        + (", top=" + "; ".join(labels) if labels else "")
+    )
 
 
 def _report_dry_run_family_text(raw: Any) -> str:

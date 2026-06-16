@@ -1653,6 +1653,28 @@ class SelfImprovementAuditorTest(unittest.TestCase):
                                 }
                             ],
                         },
+                        "perspective_alignment_diagnostics": {
+                            "status": "RANGE_METHOD_MISMATCH_REPAIR_REQUIRED",
+                            "pair_direction_groups": 4,
+                            "range_forecast_method_mismatch_groups": 1,
+                            "range_forecast_method_mismatch_lanes": 2,
+                            "range_forecast_method_mismatch_top": [
+                                {
+                                    "pair": "EUR_USD",
+                                    "direction": "SHORT",
+                                    "method_mismatch_lanes": 2,
+                                    "method_mismatch_reward_jpy": 2800.0,
+                                    "range_rotation_lanes": 1,
+                                    "range_rotation_live_ready_lanes": 0,
+                                    "range_rotation_top_live_blocker_codes": [
+                                        {"code": "RANGE_ROTATION_BROADER_LOCATION_CHASE", "count": 1}
+                                    ],
+                                    "top_live_blocker_codes": [
+                                        {"code": "RANGE_FORECAST_REQUIRES_RANGE_ROTATION", "count": 2}
+                                    ],
+                                }
+                            ],
+                        },
                     }
                 )
             )
@@ -1683,10 +1705,20 @@ class SelfImprovementAuditorTest(unittest.TestCase):
             runner_diagnostics["top_live_blocker_codes"][0]["code"],
             "TREND_MARKET_NOT_OPERATING_TREND",
         )
+        perspective_diagnostics = evidence["perspective_alignment_diagnostics"]
+        self.assertEqual(perspective_diagnostics["status"], "RANGE_METHOD_MISMATCH_REPAIR_REQUIRED")
+        self.assertEqual(perspective_diagnostics["range_forecast_method_mismatch_lanes"], 2)
+        self.assertEqual(
+            perspective_diagnostics["range_forecast_method_mismatch_top"][0]["range_rotation_top_live_blocker_codes"][0]["code"],
+            "RANGE_ROTATION_BROADER_LOCATION_CHASE",
+        )
         self.assertIn("runner candidates", report_text)
+        self.assertIn("perspective alignment", report_text)
         self.assertIn("opportunity modes", report_text)
         self.assertIn("reward=`420.0`", report_text)
         self.assertIn("live_codes=`TREND_MARKET_NOT_OPERATING_TREND`", report_text)
+        self.assertIn("RANGE_METHOD_MISMATCH_REPAIR_REQUIRED", report_text)
+        self.assertIn("EUR_USD SHORT mismatch=2", report_text)
         self.assertIn("dry-run blocker families", report_text)
         self.assertIn("nearest dry-run lanes", report_text)
         self.assertIn("forecast gate reasons", report_text)
@@ -1714,6 +1746,61 @@ class SelfImprovementAuditorTest(unittest.TestCase):
         self.assertTrue(lane_diagnostic["forecast_market_support_ok"])
         self.assertEqual(lane_diagnostic["forecast_market_support_best_hit_rate"], 0.82)
         self.assertEqual(lane_diagnostic["forecast_market_support_top_signal"]["name"], "liquidity_sweep_high")
+
+    def test_coverage_perspective_mismatch_becomes_self_improvement_finding(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root, active_position=False)
+            files["coverage"].write_text(
+                json.dumps(
+                    {
+                        "status": "COVERAGE_GAP",
+                        "perspective_alignment_diagnostics": {
+                            "status": "RANGE_METHOD_MISMATCH_REPAIR_REQUIRED",
+                            "pair_direction_groups": 3,
+                            "range_forecast_method_mismatch_groups": 1,
+                            "range_forecast_method_mismatch_lanes": 5,
+                            "range_forecast_method_mismatch_top": [
+                                {
+                                    "pair": "EUR_USD",
+                                    "direction": "SHORT",
+                                    "method_mismatch_lanes": 5,
+                                    "method_mismatch_reward_jpy": 6500.0,
+                                    "range_rotation_lanes": 2,
+                                    "range_rotation_live_ready_lanes": 0,
+                                    "range_rotation_top_live_blocker_codes": [
+                                        {"code": "FORECAST_RANGE_UNSELECTED_DIRECTION_CONFLICT", "count": 2},
+                                        {"code": "RANGE_ROTATION_BROADER_LOCATION_CHASE", "count": 2},
+                                    ],
+                                    "top_live_blocker_codes": [
+                                        {"code": "RANGE_FORECAST_REQUIRES_RANGE_ROTATION", "count": 5}
+                                    ],
+                                }
+                            ],
+                        },
+                    }
+                )
+            )
+
+            summary = _run(files)
+            payload = json.loads(files["output"].read_text())
+            report_text = files["report"].read_text()
+
+        codes = {item["code"]: item for item in payload["findings"]}
+        finding = codes["RANGE_FORECAST_METHOD_MISMATCH_REPAIR_REQUIRED"]
+        perspective = finding["evidence"]["perspective_alignment_diagnostics"]
+        self.assertEqual(summary.status, STATUS_BLOCKED)
+        self.assertEqual(finding["priority"], "P1")
+        self.assertEqual(finding["layer"], "forecast")
+        self.assertEqual(perspective["range_forecast_method_mismatch_lanes"], 5)
+        self.assertEqual(perspective["range_forecast_method_mismatch_top"][0]["pair"], "EUR_USD")
+        self.assertEqual(
+            perspective["range_forecast_method_mismatch_top"][0]["range_rotation_top_live_blocker_codes"][0]["code"],
+            "FORECAST_RANGE_UNSELECTED_DIRECTION_CONFLICT",
+        )
+        self.assertIn("RANGE_FORECAST_METHOD_MISMATCH_REPAIR_REQUIRED", report_text)
+        self.assertIn("perspective alignment", report_text)
+        self.assertIn("EUR_USD SHORT mismatch=5", report_text)
 
     def test_partial_live_ready_coverage_still_names_target_shortfall(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
