@@ -1706,6 +1706,7 @@ class DecisionVerifier:
                 and not position_close_reasons
                 and not exposure_blockers
                 and tradeable_lanes
+                and not _all_tradeable_lanes_blocked_by_learning_audit(self.packet, tradeable_lanes)
             ):
                 issues.append(
                     VerificationIssue(
@@ -4217,6 +4218,18 @@ def _learning_audit_allows_influenced_lane(packet: dict[str, Any], lane_id: str)
     if lane_id not in _learning_audit_lane_ids(packet):
         return False, f"learning audit does not cover influenced lane {lane_id}"
     return True, ""
+
+
+def _all_tradeable_lanes_blocked_by_learning_audit(packet: dict[str, Any], lane_ids: list[str]) -> bool:
+    if not lane_ids:
+        return False
+    for lane_id in lane_ids:
+        if not _attack_lane_learning_influenced(packet, lane_id):
+            return False
+        allowed, _reason = _learning_audit_allows_influenced_lane(packet, lane_id)
+        if allowed:
+            return False
+    return True
 
 
 def _learning_audit_trade_issues(

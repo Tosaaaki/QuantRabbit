@@ -1267,6 +1267,42 @@ class GPTTraderBrainTest(unittest.TestCase):
             self.assertIn("CANCEL_PENDING_WITH_LIVE_READY_LANES", codes)
             self.assertEqual(payload["decision"]["cancel_order_ids"], ["pending-1"])
 
+    def test_accepts_cancel_pending_when_live_ready_lane_is_learning_blocked(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root, orders=[_pending_order()])
+            files["attack_advice"].write_text(json.dumps(_learning_influenced_attack_advice()))
+            files["learning_audit"].write_text(
+                json.dumps(_learning_audit_payload(status="LEARNING_AUDIT_BLOCKED", blockers=["recent learned lane effect is negative"]))
+            )
+            decision = _cancel_pending_decision(cancel_order_ids=["pending-1"])
+            decision["evidence_refs"].extend(["attack:advice", f"attack:lane:{LANE_ID}", "learning:audit"])
+            brain = _brain(root, files, decision)
+
+            summary = brain.run(snapshot_path=files["snapshot"])
+
+            self.assertEqual(summary.status, "ACCEPTED")
+            payload = json.loads((root / "gpt_decision.json").read_text())
+            self.assertEqual(payload["verification_issues"], [])
+            self.assertEqual(payload["decision"]["cancel_order_ids"], ["pending-1"])
+
+    def test_rejects_cancel_pending_when_learning_influenced_lane_is_allowed(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root, orders=[_pending_order()])
+            files["attack_advice"].write_text(json.dumps(_learning_influenced_attack_advice()))
+            files["learning_audit"].write_text(json.dumps(_learning_audit_payload(status="LEARNING_AUDIT_WARN")))
+            decision = _cancel_pending_decision(cancel_order_ids=["pending-1"])
+            decision["evidence_refs"].extend(["attack:advice", f"attack:lane:{LANE_ID}", "learning:audit"])
+            brain = _brain(root, files, decision)
+
+            summary = brain.run(snapshot_path=files["snapshot"])
+
+            self.assertEqual(summary.status, "REJECTED")
+            payload = json.loads((root / "gpt_decision.json").read_text())
+            codes = {issue["code"] for issue in payload["verification_issues"]}
+            self.assertIn("CANCEL_PENDING_WITH_LIVE_READY_LANES", codes)
+
     def test_accepts_cancel_pending_when_no_current_live_ready_lane_exists(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
