@@ -230,6 +230,128 @@ class RiskEngineTest(unittest.TestCase):
         self.assertFalse(live.allowed)
         self.assertEqual(live_codes["FORECAST_DIRECTION_CONFLICT"], "BLOCK")
 
+    def test_low_confidence_opposite_forecast_does_not_become_direction_veto(self) -> None:
+        intent = OrderIntent(
+            pair="EUR_USD",
+            side=Side.SHORT,
+            order_type=OrderType.MARKET,
+            units=1000,
+            tp=1.17100,
+            sl=1.17500,
+            thesis="short_retest_after_weak_up_forecast",
+            market_context=MarketContext(
+                regime="BREAKOUT_FAILURE rejection retest",
+                narrative="failed upside break rejects at resistance",
+                chart_story="failed break retest with seller response",
+                method=TradeMethod.BREAKOUT_FAILURE,
+                invalidation="resistance recaptures on M5 bodies",
+            ),
+            metadata={
+                "forecast_direction": "UP",
+                "forecast_confidence": 0.30,
+                "forecast_raw_confidence": 0.52,
+                "forecast_directional_calibration_name": "directional_forecast_up",
+                "forecast_directional_hit_rate": 0.28,
+                "forecast_directional_samples": 100,
+                "forecast_market_support": {
+                    "ok": False,
+                    "direction": "UP",
+                    "aligned_projection_count": 0,
+                    "best_hit_rate": None,
+                    "best_samples": 0,
+                },
+            },
+        )
+
+        dry_run = RiskEngine(live_enabled=True).validate(intent, snapshot(), for_live_send=False)
+        live = RiskEngine(live_enabled=True).validate(intent, snapshot(), for_live_send=True)
+
+        dry_codes = {issue.code for issue in dry_run.issues}
+        live_codes = {issue.code: issue.severity for issue in live.issues}
+        self.assertTrue(dry_run.allowed, dry_run.block_reasons)
+        self.assertNotIn("FORECAST_DIRECTION_CONFLICT", dry_codes)
+        self.assertNotIn("FORECAST_DIRECTION_CONFLICT", live_codes)
+        self.assertFalse(live.allowed)
+        self.assertEqual(live_codes["FORECAST_DIRECTIONAL_HIT_RATE_WEAK_FOR_LIVE"], "BLOCK")
+
+    def test_unsupported_weak_directional_bucket_does_not_become_direction_veto(self) -> None:
+        intent = OrderIntent(
+            pair="EUR_USD",
+            side=Side.SHORT,
+            order_type=OrderType.MARKET,
+            units=1000,
+            tp=1.17100,
+            sl=1.17500,
+            thesis="short_retest_after_bad_up_bucket",
+            market_context=MarketContext(
+                regime="BREAKOUT_FAILURE rejection retest",
+                narrative="failed upside break rejects at resistance",
+                chart_story="failed break retest with seller response",
+                method=TradeMethod.BREAKOUT_FAILURE,
+                invalidation="resistance recaptures on M5 bodies",
+            ),
+            metadata={
+                "forecast_direction": "UP",
+                "forecast_confidence": 0.82,
+                "forecast_raw_confidence": 0.91,
+                "forecast_directional_calibration_name": "directional_forecast_up",
+                "forecast_directional_hit_rate": 0.10,
+                "forecast_directional_samples": 30,
+                "forecast_market_support": {
+                    "ok": False,
+                    "direction": "UP",
+                    "aligned_projection_count": 0,
+                    "best_hit_rate": None,
+                    "best_samples": 0,
+                },
+            },
+        )
+
+        live = RiskEngine(live_enabled=True).validate(intent, snapshot(), for_live_send=True)
+
+        live_codes = {issue.code: issue.severity for issue in live.issues}
+        self.assertNotIn("FORECAST_DIRECTION_CONFLICT", live_codes)
+        self.assertFalse(live.allowed)
+        self.assertEqual(live_codes["FORECAST_DIRECTIONAL_HIT_RATE_WEAK_FOR_LIVE"], "BLOCK")
+
+    def test_supported_low_confidence_opposite_forecast_still_blocks_this_side(self) -> None:
+        intent = OrderIntent(
+            pair="EUR_USD",
+            side=Side.SHORT,
+            order_type=OrderType.MARKET,
+            units=1000,
+            tp=1.17100,
+            sl=1.17500,
+            thesis="do_not_short_supported_up_forecast",
+            market_context=MarketContext(
+                regime="BREAKOUT_FAILURE rejection retest",
+                narrative="failed upside break is visible but projection favors continuation",
+                chart_story="failed break retest has not overruled audited projection support",
+                method=TradeMethod.BREAKOUT_FAILURE,
+                invalidation="resistance recaptures on M5 bodies",
+            ),
+            metadata={
+                "forecast_direction": "UP",
+                "forecast_confidence": 0.58,
+                "forecast_raw_confidence": 0.60,
+                "chart_direction_bias": "LONG",
+                "forecast_market_support": {
+                    "ok": True,
+                    "direction": "UP",
+                    "aligned_projection_count": 1,
+                    "best_hit_rate": 0.77,
+                    "best_samples": 13,
+                    "reason": "news_theme_followthrough UP supports weak calibrated forecast",
+                },
+            },
+        )
+
+        live = RiskEngine(live_enabled=True).validate(intent, snapshot(), for_live_send=True)
+
+        live_codes = {issue.code: issue.severity for issue in live.issues}
+        self.assertFalse(live.allowed)
+        self.assertEqual(live_codes["FORECAST_DIRECTION_CONFLICT"], "BLOCK")
+
     def test_range_method_rejects_one_way_trend_story_for_live_send(self) -> None:
         intent = OrderIntent(
             pair="EUR_USD",

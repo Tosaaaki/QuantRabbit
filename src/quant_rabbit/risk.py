@@ -179,6 +179,26 @@ FORECAST_MARKET_SUPPORT_MIN_SAMPLES = (
     or _env_optional_int("QR_PROJECTION_CONFIDENCE_MIN_SAMPLES", None)
     or 10
 )
+FORECAST_MARKET_SUPPORT_MAX_CONFIDENCE_SHORTFALL = _env_float_or(
+    "QR_FORECAST_MARKET_SUPPORT_MAX_CONFIDENCE_SHORTFALL",
+    0.10,
+    minimum=0.0,
+)
+FORECAST_DIRECTIONAL_LIVE_MIN_CONFIDENCE = _env_float_or(
+    "QR_FORECAST_DIRECTIONAL_LIVE_MIN_CONFIDENCE",
+    0.65,
+    minimum=0.50,
+)
+FORECAST_DIRECTIONAL_LIVE_MIN_HIT_RATE = _env_float_or(
+    "QR_FORECAST_DIRECTIONAL_LIVE_MIN_HIT_RATE",
+    0.45,
+    minimum=0.0,
+)
+FORECAST_DIRECTIONAL_LIVE_MIN_SAMPLES = max(
+    FORECAST_MARKET_SUPPORT_MIN_SAMPLES,
+    _env_optional_int("QR_FORECAST_DIRECTIONAL_LIVE_MIN_SAMPLES", None)
+    or FORECAST_MARKET_SUPPORT_MIN_SAMPLES,
+)
 
 
 _SPREAD_SESSION_MULTS: dict[str, float] = {
@@ -440,6 +460,110 @@ def _forecast_unselected_projection_conflict_issues(
             severity=severity,
         )
     ]
+
+
+def _forecast_market_support(metadata: dict) -> dict:
+    support = metadata.get("forecast_market_support")
+    return support if isinstance(support, dict) else {}
+
+
+def _forecast_directional_hit_rate(metadata: dict, support: dict) -> tuple[float | None, int, str]:
+    hit_rate = _to_float(metadata.get("forecast_directional_hit_rate"))
+    if hit_rate is None:
+        hit_rate = _to_float(support.get("directional_hit_rate"))
+    samples = _to_int(metadata.get("forecast_directional_samples")) or 0
+    if samples <= 0:
+        samples = _to_int(support.get("directional_samples")) or 0
+    calibration_name = str(
+        metadata.get("forecast_directional_calibration_name")
+        or support.get("directional_calibration_name")
+        or "directional_forecast"
+    )
+    return hit_rate, samples, calibration_name
+
+
+def _forecast_directional_bucket_is_known_weak(metadata: dict, support: dict) -> bool:
+    hit_rate, samples, _ = _forecast_directional_hit_rate(metadata, support)
+    return (
+        hit_rate is not None
+        and samples >= FORECAST_DIRECTIONAL_LIVE_MIN_SAMPLES
+        and hit_rate < FORECAST_DIRECTIONAL_LIVE_MIN_HIT_RATE
+    )
+
+
+def _forecast_supported_opposite_side_blocks(
+    metadata: dict,
+    *,
+    forecast_side: Side,
+    min_confidence: float,
+) -> bool:
+    direction = str(metadata.get("forecast_direction") or "").upper()
+    expected_side = Side.LONG if direction == "UP" else Side.SHORT if direction == "DOWN" else None
+    if expected_side != forecast_side:
+        return False
+    raw_confidence = _to_float(metadata.get("forecast_raw_confidence"))
+    support_floor = max(0.0, min_confidence - FORECAST_MARKET_SUPPORT_MAX_CONFIDENCE_SHORTFALL)
+    if raw_confidence is None or raw_confidence < support_floor:
+        return False
+    chart_direction_bias = str(metadata.get("chart_direction_bias") or "").upper()
+    if chart_direction_bias and chart_direction_bias != forecast_side.value:
+        return False
+    support = _forecast_market_support(metadata)
+    if not bool(support.get("ok")):
+        return False
+    support_direction = str(support.get("direction") or "").upper()
+    if support_direction and support_direction != direction:
+        return False
+    if bool(support.get("bootstrap_projection_support")):
+        return True
+    aligned_count = _to_int(support.get("aligned_projection_count")) or 0
+    if aligned_count <= 0:
+        return False
+    samples = _to_int(support.get("best_samples")) or 0
+    if samples < FORECAST_MARKET_SUPPORT_MIN_SAMPLES:
+        return False
+    hit_rate = _to_float(support.get("best_hit_rate")) or 0.0
+    return hit_rate >= FORECAST_MARKET_SUPPORT_MIN_DIRECTIONAL_HIT_RATE
+
+
+def _forecast_confidence_required_issue(
+    intent: OrderIntent,
+    *,
+    direction: str,
+    confidence: float | None,
+    min_confidence: float,
+) -> RiskIssue:
+    return RiskIssue(
+        "FORECAST_CONFIDENCE_REQUIRED_FOR_LIVE",
+        (
+            f"{intent.pair} {intent.side.value} forecast {direction} confidence "
+            f"{0.0 if confidence is None else confidence:.2f} < {min_confidence:.2f}; "
+            "the weak forecast cannot veto the opposite side, but live send still needs "
+            "an executable forecast or audited replacement evidence."
+        ),
+        severity="BLOCK",
+    )
+
+
+def _forecast_directional_hit_rate_weak_issue(
+    intent: OrderIntent,
+    *,
+    direction: str,
+    metadata: dict,
+    support: dict,
+) -> RiskIssue:
+    hit_rate, samples, calibration_name = _forecast_directional_hit_rate(metadata, support)
+    return RiskIssue(
+        "FORECAST_DIRECTIONAL_HIT_RATE_WEAK_FOR_LIVE",
+        (
+            f"{intent.pair} {intent.side.value} forecast {direction} bucket "
+            f"{calibration_name} hit_rate={0.0 if hit_rate is None else hit_rate:.2f} "
+            f"over {samples} sample(s) is below {FORECAST_DIRECTIONAL_LIVE_MIN_HIT_RATE:.2f}; "
+            "this weak bucket cannot veto the opposite side or authorize live send without "
+            "independent audited projection support."
+        ),
+        severity="BLOCK",
+    )
 
 
 def _forecast_range_method_issues(
@@ -1280,6 +1404,37 @@ class RiskEngine:
         if intent.side == forecast_side:
             return []
         confidence = _to_float(metadata.get("forecast_confidence"))
+        min_confidence = FORECAST_DIRECTIONAL_LIVE_MIN_CONFIDENCE
+        support = _forecast_market_support(metadata)
+        unsupported_weak_forecast = (
+            confidence is None
+            or confidence < min_confidence
+            or _forecast_directional_bucket_is_known_weak(metadata, support)
+        )
+        if unsupported_weak_forecast and not _forecast_supported_opposite_side_blocks(
+            metadata,
+            forecast_side=forecast_side,
+            min_confidence=min_confidence,
+        ):
+            if not for_live_send:
+                return []
+            if _forecast_directional_bucket_is_known_weak(metadata, support):
+                return [
+                    _forecast_directional_hit_rate_weak_issue(
+                        intent,
+                        direction=direction,
+                        metadata=metadata,
+                        support=support,
+                    )
+                ]
+            return [
+                _forecast_confidence_required_issue(
+                    intent,
+                    direction=direction,
+                    confidence=confidence,
+                    min_confidence=min_confidence,
+                )
+            ]
         target = _to_float(metadata.get("forecast_target_price"))
         invalidation = _to_float(metadata.get("forecast_invalidation_price"))
         details = [f"forecast {direction}"]

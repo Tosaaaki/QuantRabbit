@@ -4085,6 +4085,48 @@ class IntentGeneratorTest(unittest.TestCase):
 
         self.assertEqual(codes["FORECAST_DIRECTION_CONFLICT"], "BLOCK")
 
+    def test_unsupported_weak_directional_bucket_does_not_veto_opposite_side(self) -> None:
+        from quant_rabbit.models import MarketContext, OrderIntent, OrderType, Side, TradeMethod
+        from quant_rabbit.strategy.intent_generator import _method_context_issues
+
+        intent = OrderIntent(
+            pair="EUR_JPY",
+            side=Side.SHORT,
+            order_type=OrderType.LIMIT,
+            units=5000,
+            entry=185.60,
+            tp=185.10,
+            sl=185.95,
+            thesis="short_retest_while_up_forecast_bucket_is_weak",
+            market_context=MarketContext(
+                regime="BREAKOUT_FAILURE retest",
+                narrative="upside break failed and retest is selling",
+                chart_story="failed break retest near resistance",
+                method=TradeMethod.BREAKOUT_FAILURE,
+                invalidation="resistance reclaims on M5 bodies",
+            ),
+            metadata={
+                "forecast_direction": "UP",
+                "forecast_confidence": 0.82,
+                "forecast_raw_confidence": 0.91,
+                "forecast_directional_calibration_name": "directional_forecast_up",
+                "forecast_directional_hit_rate": 0.10,
+                "forecast_directional_samples": 30,
+                "forecast_market_support": {
+                    "ok": False,
+                    "direction": "UP",
+                    "aligned_projection_count": 0,
+                    "best_hit_rate": None,
+                    "best_samples": 0,
+                    "reason": "no current projection clears audited support floors",
+                },
+            },
+        )
+
+        codes = {issue["code"]: issue["severity"] for issue in _method_context_issues(intent)}
+
+        self.assertNotIn("FORECAST_DIRECTION_CONFLICT", codes)
+
     def test_unclear_forecast_records_unselected_audited_news_projection(self) -> None:
         from quant_rabbit.strategy.intent_generator import _forecast_market_support_for_forecast
 

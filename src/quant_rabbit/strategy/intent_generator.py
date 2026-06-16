@@ -5630,7 +5630,12 @@ def _forecast_direction_conflict_issue(intent: OrderIntent, metadata: dict[str, 
     if forecast_side == intent.side.value:
         return None
     min_confidence = _forecast_live_min_confidence(metadata)
-    if confidence is None or confidence < min_confidence:
+    support = _forecast_market_support_payload(metadata.get("forecast_market_support"))
+    if (
+        confidence is None
+        or confidence < min_confidence
+        or _forecast_directional_bucket_is_known_weak(metadata, support)
+    ):
         if not _forecast_supported_opposite_side_blocks(
             metadata,
             forecast_side=forecast_side,
