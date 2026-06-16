@@ -381,6 +381,59 @@ def _nearest_level(
     return None
 
 
+def _nearest_forecast_target(
+    *,
+    direction: str,
+    current_price: float,
+    pip_factor: float,
+    noise_floor_pips: Optional[float],
+    structural_target: Optional[float],
+    levels: list[float],
+) -> Optional[float]:
+    candidates: list[float] = []
+    if direction == "UP":
+        nearest_level = _nearest_level(
+            levels,
+            above=current_price,
+            pip_factor=pip_factor,
+            noise_floor_pips=noise_floor_pips,
+        )
+        for price in (nearest_level, structural_target):
+            if (
+                price is not None
+                and price > current_price
+                and _clears_noise(
+                    price,
+                    current_price=current_price,
+                    pip_factor=pip_factor,
+                    noise_floor_pips=noise_floor_pips,
+                )
+            ):
+                candidates.append(price)
+        return min(candidates) if candidates else None
+    if direction == "DOWN":
+        nearest_level = _nearest_level(
+            levels,
+            below=current_price,
+            pip_factor=pip_factor,
+            noise_floor_pips=noise_floor_pips,
+        )
+        for price in (nearest_level, structural_target):
+            if (
+                price is not None
+                and price < current_price
+                and _clears_noise(
+                    price,
+                    current_price=current_price,
+                    pip_factor=pip_factor,
+                    noise_floor_pips=noise_floor_pips,
+                )
+            ):
+                candidates.append(price)
+        return max(candidates) if candidates else None
+    return None
+
+
 def _geometry_valid(direction: str, *, current_price: float, target_price: Optional[float], invalidation_price: Optional[float]) -> tuple[Optional[float], Optional[float]]:
     if direction == "UP":
         target = target_price if target_price is not None and target_price > current_price else None
@@ -420,22 +473,17 @@ def _forecast_geometry(
         intent="HARVEST",
     )
     noise_floor_pips = _forecast_noise_floor_pips(pair_chart, current_spread_pips=spread_pips)
-    if not _clears_noise(
-        structural_target,
-        current_price=current_price,
-        pip_factor=pip_factor,
-        noise_floor_pips=noise_floor_pips,
-    ):
-        structural_target = None
 
     high_levels = _collect_structural_levels(pair_chart, side="HIGH")
     low_levels = _collect_structural_levels(pair_chart, side="LOW")
     if direction == "UP":
-        target_price = structural_target or _nearest_level(
-            high_levels,
-            above=current_price,
+        target_price = _nearest_forecast_target(
+            direction=direction,
+            current_price=current_price,
             pip_factor=pip_factor,
             noise_floor_pips=noise_floor_pips,
+            structural_target=structural_target,
+            levels=high_levels,
         )
         invalidation_price = _nearest_level(
             low_levels,
@@ -444,11 +492,13 @@ def _forecast_geometry(
             noise_floor_pips=noise_floor_pips,
         )
     else:
-        target_price = structural_target or _nearest_level(
-            low_levels,
-            below=current_price,
+        target_price = _nearest_forecast_target(
+            direction=direction,
+            current_price=current_price,
             pip_factor=pip_factor,
             noise_floor_pips=noise_floor_pips,
+            structural_target=structural_target,
+            levels=low_levels,
         )
         invalidation_price = _nearest_level(
             high_levels,

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import unittest
 from dataclasses import dataclass
+from unittest.mock import patch
 
 from quant_rabbit.strategy.directional_forecaster import (
     FORECAST_D_ANCHOR_HORIZON_MIN,
@@ -81,6 +82,43 @@ class ForecastGeometryTest(unittest.TestCase):
         self.assertIn("breakdown", " ".join(forecast.drivers_for))
         self.assertEqual(forecast.current_price, 1.1)
         self.assertGreater(forecast.down_score, 0.0)
+
+    def test_forecast_target_prefers_nearest_executable_level_over_distant_structural_tp(self) -> None:
+        pair_chart = {
+            "views": [
+                {
+                    "granularity": "M5",
+                    "indicators": {
+                        "pip_size": 0.0001,
+                        "atr_pips": 2.0,
+                    },
+                    "structure": {
+                        "swings": [
+                            {"side": "LOW", "price": 1.0990},
+                            {"side": "HIGH", "price": 1.1005},
+                        ],
+                    },
+                }
+            ]
+        }
+
+        with patch(
+            "quant_rabbit.strategy.directional_forecaster.structural_tp_target",
+            return_value=(1.0950, "far H1 structural target"),
+        ):
+            forecast = synthesize_forecast(
+                pair="EUR_USD",
+                pair_chart=pair_chart,
+                current_price=1.1000,
+                pattern_signals=[],
+                projection_signals=[_Sig("DOWN", 60.0, 1.0, "breakdown")],
+                correlation_signals=[],
+                paths=[],
+            )
+
+        self.assertEqual(forecast.direction, "DOWN")
+        self.assertEqual(forecast.target_price, 1.099)
+        self.assertEqual(forecast.invalidation_price, 1.1005)
 
     def test_forecast_invalidation_ignores_levels_inside_operating_noise(self) -> None:
         pair_chart = {
