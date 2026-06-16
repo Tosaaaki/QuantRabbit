@@ -2551,6 +2551,53 @@ class ConsolidatedCycleCommandTest(unittest.TestCase):
         self.assertEqual(len(digest["steps_failed"]), 1)
         self.assertEqual(digest["steps_failed"][0]["step"], "news-health --strict")
 
+    def test_cycle_digest_uses_live_blocker_codes(self) -> None:
+        from quant_rabbit.cli import _cycle_digest
+
+        with tempfile.TemporaryDirectory() as tmp:
+            intents_path = Path(tmp) / "order_intents.json"
+            intents_path.write_text(
+                json.dumps(
+                    {
+                        "generated_at_utc": "2026-01-02T00:00:00+00:00",
+                        "results": [
+                            {
+                                "lane_id": "range_trader:EUR_USD:LONG:RANGE_ROTATION",
+                                "status": "DRY_RUN_PASSED",
+                                "live_blockers": [
+                                    "EUR_USD LONG forecast UP confidence 0.48 < 0.65 for live send"
+                                ],
+                                "live_blocker_codes": ["FORECAST_CONFIDENCE_REQUIRED_FOR_LIVE"],
+                                "risk_issues": [
+                                    {
+                                        "code": "FORECAST_CONFIDENCE_REQUIRED_FOR_LIVE",
+                                        "message": "EUR_USD LONG forecast UP confidence 0.48 < 0.65 for live send",
+                                        "severity": "WARN",
+                                    }
+                                ],
+                            },
+                            {
+                                "lane_id": "legacy:EUR_USD:SHORT:RANGE_ROTATION",
+                                "status": "DRY_RUN_BLOCKED",
+                                "live_blockers": [{"code": "LEGACY_BLOCKER"}],
+                            }
+                        ],
+                    }
+                )
+            )
+
+            with mock.patch("quant_rabbit.cli.DEFAULT_ORDER_INTENTS", intents_path):
+                digest = _cycle_digest(
+                    kind="cycle_refresh_digest",
+                    step_results=[],
+                    aborted=False,
+                )
+
+        self.assertEqual(
+            digest["intents"]["top_blockers"],
+            {"FORECAST_CONFIDENCE_REQUIRED_FOR_LIVE": 1, "LEGACY_BLOCKER": 1},
+        )
+
     def test_cycle_digest_summarizes_operator_precedent(self) -> None:
         from quant_rabbit.cli import _cycle_digest
 

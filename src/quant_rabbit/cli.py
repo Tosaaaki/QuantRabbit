@@ -1909,6 +1909,44 @@ def _read_json_quiet(path: Path) -> Any:
         return None
 
 
+def _intent_live_blocker_codes_for_digest(result: dict[str, Any]) -> list[str]:
+    explicit_codes: list[str] = []
+    seen_explicit: set[str] = set()
+    for item in result.get("live_blocker_codes", []) or []:
+        code = str(item).strip()
+        if code and code not in seen_explicit:
+            seen_explicit.add(code)
+            explicit_codes.append(code)
+    if explicit_codes:
+        return explicit_codes
+
+    live_blockers = result.get("live_blockers", []) or []
+    live_blocker_messages = {str(item).strip() for item in live_blockers if str(item).strip()}
+    codes: list[str] = []
+    seen: set[str] = set()
+    for issue_key in ("risk_issues", "strategy_issues", "live_strategy_issues"):
+        for issue in result.get(issue_key, []) or []:
+            if not isinstance(issue, dict):
+                continue
+            message = str(issue.get("message") or "").strip()
+            severity = str(issue.get("severity") or "").upper()
+            if severity != "BLOCK" and message not in live_blocker_messages:
+                continue
+            code = str(issue.get("code") or issue.get("message") or "").strip()
+            if code and code not in seen:
+                seen.add(code)
+                codes.append(code)
+    if codes:
+        return codes
+    for item in live_blockers:
+        code = item.get("code") if isinstance(item, dict) else item
+        code = str(code).strip()
+        if code and code not in seen:
+            seen.add(code)
+            codes.append(code)
+    return codes
+
+
 def _cycle_digest(*, kind: str, step_results: list[dict[str, Any]], aborted: bool) -> dict[str, Any]:
     """Compact single-read packet for the scheduled trader.
 
@@ -1966,10 +2004,8 @@ def _cycle_digest(*, kind: str, step_results: list[dict[str, Any]], aborted: boo
         for r in results:
             if not isinstance(r, dict):
                 continue
-            for issue in (r.get("live_blockers") or []):
-                code = issue.get("code") if isinstance(issue, dict) else str(issue)
-                if code:
-                    blocker_counts[str(code)] = blocker_counts.get(str(code), 0) + 1
+            for code in _intent_live_blocker_codes_for_digest(r):
+                blocker_counts[code] = blocker_counts.get(code, 0) + 1
         digest["intents"] = {
             "generated_at_utc": intents.get("generated_at_utc"),
             "lanes": len(results),

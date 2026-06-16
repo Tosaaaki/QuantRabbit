@@ -664,6 +664,16 @@ def _result_live_blocker_codes(result: dict[str, Any]) -> list[str]:
     advisory strategy/risk issue as an equal blocker.
     """
 
+    explicit_codes: list[str] = []
+    seen_explicit: set[str] = set()
+    for item in result.get("live_blocker_codes", []) or []:
+        code = str(item).strip()
+        if code and code not in seen_explicit:
+            seen_explicit.add(code)
+            explicit_codes.append(code)
+    if explicit_codes:
+        return explicit_codes
+
     live_blocker_messages = {
         str(item).strip()
         for item in result.get("live_blockers", []) or []

@@ -6,7 +6,7 @@ import sqlite3
 from dataclasses import asdict, dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Sequence
 
 from quant_rabbit.instruments import DEFAULT_TRADER_PAIRS, instrument_pip_factor
 from quant_rabbit.models import BrokerOrder, BrokerPosition, BrokerSnapshot, MarketContext, OrderIntent, OrderType, Owner, Quote, Side, TradeMethod
@@ -4175,6 +4175,7 @@ class GeneratedIntent:
     strategy_issues: tuple[dict[str, Any], ...]
     live_strategy_issues: tuple[dict[str, Any], ...]
     live_blockers: tuple[str, ...]
+    live_blocker_codes: tuple[str, ...]
     note: str
 
 
@@ -4421,6 +4422,7 @@ class IntentGenerator:
                 strategy_issues=(),
                 live_strategy_issues=(),
                 live_blockers=("broker snapshot is required to price entry/TP/SL",),
+                live_blocker_codes=("BROKER_SNAPSHOT_REQUIRED",),
                 note="Run broker-snapshot to a JSON file, then rerun generate-intents with --snapshot.",
             )
         quote = snapshot.quotes.get(pair)
@@ -4435,6 +4437,7 @@ class IntentGenerator:
                 strategy_issues=(),
                 live_strategy_issues=(),
                 live_blockers=(f"snapshot has no quote for {pair}",),
+                live_blocker_codes=("MISSING_QUOTE",),
                 note="Cannot build priced intent without a live quote.",
             )
         atr_pips = _atr_pips_for(pair, pair_charts)
@@ -4644,6 +4647,12 @@ class IntentGenerator:
             live_blockers,
             live_risk.issues,
         )
+        live_blocker_codes = _live_blocker_codes_from_issues(
+            live_blockers=live_blockers,
+            risk_issues=risk_issues,
+            strategy_issues=strategy_issues,
+            live_strategy_issues=live_strategy_issues,
+        )
         risk_issues = tuple(risk_issues)
         if risk_allowed and not live_blockers:
             status = "LIVE_READY"
@@ -4661,6 +4670,7 @@ class IntentGenerator:
             strategy_issues=strategy_issues,
             live_strategy_issues=live_strategy_issues,
             live_blockers=live_blockers,
+            live_blocker_codes=live_blocker_codes,
             note="Dry-run geometry built from current snapshot; live use still requires fresh snapshot at send time.",
         )
 
@@ -4746,6 +4756,8 @@ class IntentGenerator:
                 lines.append(f"  - strategy {issue['severity']}: {issue['code']} {issue['message']}")
             for issue in item.live_strategy_issues:
                 lines.append(f"  - live strategy {issue['severity']}: {issue['code']} {issue['message']}")
+            if item.live_blocker_codes:
+                lines.append(f"  - live blocker codes: {', '.join(item.live_blocker_codes)}")
             for blocker in item.live_blockers:
                 lines.append(f"  - live blocker: {blocker}")
         lines.extend(
@@ -4806,6 +4818,40 @@ def _merge_live_send_preview_blockers(
             seen_blockers.add(message)
 
     return risk_issues, tuple(blockers)
+
+
+def _live_blocker_codes_from_issues(
+    *,
+    live_blockers: tuple[str, ...],
+    risk_issues: Sequence[dict[str, Any]],
+    strategy_issues: Sequence[dict[str, Any]],
+    live_strategy_issues: Sequence[dict[str, Any]],
+) -> tuple[str, ...]:
+    """Return stable blocker codes while preserving legacy blocker text.
+
+    `live_blockers` is intentionally kept as human-readable text for older
+    prompts and reports. The improvement/audit layers need code-level causes
+    though; otherwise every confidence value or pair name becomes a distinct
+    "top blocker" and the repair priority is unreadable.
+    """
+
+    blocker_messages = {str(item).strip() for item in live_blockers if str(item).strip()}
+    codes: list[str] = []
+    seen: set[str] = set()
+    for issue_group in (risk_issues, strategy_issues, live_strategy_issues):
+        for issue in issue_group or ():
+            if not isinstance(issue, dict):
+                continue
+            message = str(issue.get("message") or "").strip()
+            severity = str(issue.get("severity") or "").upper()
+            if severity != "BLOCK" and message not in blocker_messages:
+                continue
+            code = str(issue.get("code") or message or "").strip()
+            if not code or code in seen:
+                continue
+            seen.add(code)
+            codes.append(code)
+    return tuple(codes)
 
 
 _SPECIFIC_MIN_LOT_ISSUE_CODES = {

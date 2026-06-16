@@ -186,6 +186,7 @@ class IntentGeneratorTest(unittest.TestCase):
             self.assertLessEqual(result["risk_metrics"]["risk_jpy"], cap_jpy)
             self.assertGreater(result["risk_metrics"]["spread_pips"], 0.0)
             self.assertTrue(result["live_blockers"])
+            self.assertTrue(result["live_blocker_codes"])
 
             market = next(item for item in payload["results"] if item["intent"]["order_type"] == "MARKET")
             self.assertEqual(market["lane_id"], "trend_trader:EUR_USD:LONG:TREND_CONTINUATION:MARKET")
