@@ -170,6 +170,8 @@ class IntentGeneratorTest(unittest.TestCase):
                 output_path=output,
                 report_path=report,
                 pair_charts_path=_pair_charts(root),
+                market_context_matrix_path=root / "market_context_matrix.json",
+                data_root=root,
                 max_loss_jpy=cap_jpy,
             ).run(snapshot_path=snapshot)
 
@@ -5204,6 +5206,8 @@ class IntentGeneratorTest(unittest.TestCase):
                 output_path=output,
                 report_path=root / "intents.md",
                 pair_charts_path=_pair_charts(root),
+                market_context_matrix_path=root / "market_context_matrix.json",
+                data_root=root,
                 max_loss_jpy=500.0,
             ).run(snapshot_path=_snapshot(root))
 
@@ -5222,6 +5226,8 @@ class IntentGeneratorTest(unittest.TestCase):
                 output_path=output,
                 report_path=root / "intents.md",
                 pair_charts_path=_pair_charts_tp_mode(root, adx=16.0, atr_percentile=0.2),
+                market_context_matrix_path=root / "market_context_matrix.json",
+                data_root=root,
                 max_loss_jpy=500.0,
             ).run(snapshot_path=_snapshot(root))
 
@@ -5449,6 +5455,8 @@ class IntentGeneratorTest(unittest.TestCase):
                 output_path=output,
                 report_path=root / "intents.md",
                 pair_charts_path=_pair_charts_tp_mode(root, adx=31.0, atr_percentile=0.8),
+                market_context_matrix_path=root / "market_context_matrix.json",
+                data_root=root,
                 max_loss_jpy=500.0,
             ).run(snapshot_path=_snapshot(root))
 

@@ -13,6 +13,7 @@ from quant_rabbit.memory_health import (
     MemoryHealthAuditor,
     STATUS_BLOCKED,
     STATUS_PASS,
+    STATUS_WARN,
 )
 
 
@@ -30,6 +31,92 @@ class MemoryHealthAuditorTest(unittest.TestCase):
         self.assertEqual(summary.layers["medium_term"], "PASS")
         self.assertEqual(summary.layers["long_term"], "PASS")
         self.assertEqual(summary.layers["position_memory"], "PASS")
+
+    def test_learning_audit_quarantines_influenced_lanes_without_global_block(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root)
+            files["learning_audit"].write_text(
+                json.dumps(
+                    {
+                        "status": "LEARNING_AUDIT_BLOCKED",
+                        "blockers": [
+                            "risk-increasing learning influence is active while recent effect window is negative"
+                        ],
+                        "warnings": [],
+                        "checks": [
+                            {
+                                "check_name": "learning_influence_recent_outcome",
+                                "status": "BLOCK",
+                                "severity": "BLOCK",
+                                "message": (
+                                    "risk-increasing learning influence is active while recent effect "
+                                    "window is negative"
+                                ),
+                            }
+                        ],
+                        "learning_influence": {
+                            "influenced_lanes": 1,
+                            "risk_increasing_lanes": 1,
+                            "total_learning_score_delta": 8.0,
+                            "lanes": [
+                                {
+                                    "lane_id": "trend_trader:AUD_USD:LONG:TREND_CONTINUATION",
+                                    "learning_influences": ["ai_backtest_research_positive_edge"],
+                                    "learning_score_delta": 8.0,
+                                }
+                            ],
+                        },
+                    }
+                )
+            )
+
+            summary = _run(files)
+            payload = json.loads(files["output"].read_text())
+
+        self.assertEqual(summary.status, STATUS_WARN)
+        self.assertEqual(summary.layers["medium_term"], "WARN")
+        self.assertEqual(payload["metrics"]["learning_audit"]["influenced_lanes"], 1)
+        self.assertFalse(any(issue["severity"] == "BLOCK" for issue in payload["issues"]))
+        self.assertTrue(
+            any(issue["code"] == "MEDIUM_LEARNING_AUDIT_INFLUENCED_LANES_QUARANTINED" for issue in payload["issues"])
+        )
+
+    def test_learning_audit_other_influenced_blocker_still_blocks(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root)
+            files["learning_audit"].write_text(
+                json.dumps(
+                    {
+                        "status": "LEARNING_AUDIT_BLOCKED",
+                        "blockers": ["attack advice must rank only and never grant live permission"],
+                        "warnings": [],
+                        "checks": [
+                            {
+                                "check_name": "read_only_learning",
+                                "status": "BLOCK",
+                                "severity": "BLOCK",
+                                "message": "attack advice must rank only and never grant live permission",
+                            }
+                        ],
+                        "learning_influence": {
+                            "influenced_lanes": 1,
+                            "risk_increasing_lanes": 1,
+                            "total_learning_score_delta": 8.0,
+                        },
+                    }
+                )
+            )
+
+            summary = _run(files)
+            payload = json.loads(files["output"].read_text())
+
+        self.assertEqual(summary.status, STATUS_BLOCKED)
+        self.assertEqual(summary.layers["medium_term"], "BLOCK")
+        self.assertTrue(
+            any(issue["code"] == "MEDIUM_LEARNING_AUDIT_BLOCKING_INFLUENCE" for issue in payload["issues"])
+        )
 
     def test_blocks_empty_strategy_profile(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

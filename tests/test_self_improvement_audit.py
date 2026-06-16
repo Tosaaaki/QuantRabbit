@@ -423,6 +423,62 @@ class SelfImprovementAuditorTest(unittest.TestCase):
         self.assertEqual(evidence["memory_health_generated_at_utc"], (_NOW - timedelta(minutes=5)).isoformat())
         self.assertEqual(evidence["stale_against"][0]["label"], "broker_snapshot")
 
+    def test_learning_audit_quarantine_is_p1_not_global_p0(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(
+                root,
+                active_position=False,
+                live_ready_market_rr=1.4,
+                closed_pls=(100.0, 80.0, 50.0),
+            )
+            files["learning"].write_text(
+                json.dumps(
+                    {
+                        "generated_at_utc": _NOW.isoformat(),
+                        "status": "LEARNING_AUDIT_BLOCKED",
+                        "blockers": [
+                            "risk-increasing learning influence is active while recent effect window is negative"
+                        ],
+                        "warnings": [],
+                        "checks": [
+                            {
+                                "check_name": "learning_influence_recent_outcome",
+                                "status": "BLOCK",
+                                "severity": "BLOCK",
+                                "message": (
+                                    "risk-increasing learning influence is active while recent effect "
+                                    "window is negative"
+                                ),
+                            }
+                        ],
+                        "learning_influence": {
+                            "influenced_lanes": 1,
+                            "risk_increasing_lanes": 1,
+                            "total_learning_score_delta": 8.0,
+                            "lanes": [
+                                {
+                                    "lane_id": "trend_trader:AUD_USD:LONG:TREND_CONTINUATION",
+                                    "learning_influences": ["ai_backtest_research_positive_edge"],
+                                    "learning_score_delta": 8.0,
+                                }
+                            ],
+                        },
+                        "effect_metrics": {"closed_trades": 30, "net_jpy": -100.0, "profit_factor": 0.9},
+                        "min_effect_sample": 3,
+                    }
+                )
+            )
+
+            summary = _run(files)
+            payload = json.loads(files["output"].read_text())
+
+        codes = {item["code"]: item for item in payload["findings"]}
+        self.assertEqual(summary.p0_findings, 0)
+        self.assertEqual(summary.status, STATUS_ACTION_REQUIRED)
+        self.assertNotIn("LEARNING_AUDIT_BLOCKED", codes)
+        self.assertEqual(codes["LEARNING_AUDIT_INFLUENCED_LANES_QUARANTINED"]["priority"], "P1")
+
     def test_memory_health_audited_snapshot_time_prevents_false_stale_p0(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

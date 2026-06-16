@@ -47,6 +47,10 @@ _STRATEGY_PROFILE_GAP_CODES = (
     "STRATEGY_METHOD_PROFILE_MISSING",
 )
 
+_LEARNING_AUDIT_LANE_QUARANTINE_MESSAGES = (
+    "risk-increasing learning influence is active while recent effect window is negative",
+)
+
 # Memory-health audits a market packet assembled over several network and
 # forecast calls. The live gateway may refresh broker truth immediately after
 # forecast generation for send safety; this engineering grace treats that
@@ -750,6 +754,24 @@ def _audit_learning_audit(
         )
         return
     if ("BLOCK" in status.upper() or blockers) and influenced_lanes > 0:
+        if _learning_audit_block_only_quarantines_influenced_lanes(payload):
+            issues.append(
+                _issue(
+                    layer=LAYER_MEDIUM,
+                    severity="WARN",
+                    code="MEDIUM_LEARNING_AUDIT_INFLUENCED_LANES_QUARANTINED",
+                    message=(
+                        "learning_audit blocks only risk-increasing learning influence; "
+                        "quarantine influenced lanes without blocking clean live-ready lanes"
+                    ),
+                    evidence={
+                        "influenced_lanes": influenced_lanes,
+                        "risk_increasing_lanes": _int_value((influence or {}).get("risk_increasing_lanes")),
+                        "blockers": blockers[:8],
+                    },
+                )
+            )
+            return
         issues.append(
             _issue(
                 layer=LAYER_MEDIUM,
@@ -769,6 +791,39 @@ def _audit_learning_audit(
                 message="learning_audit is blocked, but no live lane receives learning influence",
             )
         )
+
+
+def _learning_audit_block_only_quarantines_influenced_lanes(payload: dict[str, Any]) -> bool:
+    influence = payload.get("learning_influence") if isinstance(payload.get("learning_influence"), dict) else {}
+    if _int_value((influence or {}).get("influenced_lanes")) <= 0:
+        return False
+    blockers = [str(item) for item in (payload.get("blockers") or []) if str(item).strip()]
+    if not blockers:
+        return False
+    if not all(_is_learning_lane_quarantine_message(message) for message in blockers):
+        return False
+    checks = payload.get("checks") if isinstance(payload.get("checks"), list) else []
+    blocking_checks = [
+        item
+        for item in checks
+        if isinstance(item, dict)
+        and (
+            str(item.get("status") or "").upper() == "BLOCK"
+            or str(item.get("severity") or "").upper() == "BLOCK"
+        )
+    ]
+    if not blocking_checks:
+        return True
+    return all(
+        str(item.get("check_name") or "") == "learning_influence_recent_outcome"
+        or _is_learning_lane_quarantine_message(str(item.get("message") or ""))
+        for item in blocking_checks
+    )
+
+
+def _is_learning_lane_quarantine_message(message: str) -> bool:
+    lowered = message.lower()
+    return any(token in lowered for token in _LEARNING_AUDIT_LANE_QUARANTINE_MESSAGES)
 
 
 def _audit_strategy_profile(

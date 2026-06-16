@@ -85,6 +85,10 @@ _EXTERNAL_BROKER_TRADE_CLOSE_SOURCES = frozenset(
     }
 )
 
+_LEARNING_AUDIT_LANE_QUARANTINE_MESSAGES = (
+    "risk-increasing learning influence is active while recent effect window is negative",
+)
+
 
 def _external_live_runtime_lock(snapshot_path: Path) -> dict[str, Any] | None:
     """Return active wrapper lock evidence for audits outside that wrapper."""
@@ -1143,6 +1147,30 @@ def _learning_findings(*, run_id: str, loaded: _LoadedJson, path: Path) -> list[
     blockers = payload.get("blockers") if isinstance(payload.get("blockers"), list) else []
     warnings = payload.get("warnings") if isinstance(payload.get("warnings"), list) else []
     if "BLOCK" in status.upper() or blockers:
+        if _learning_audit_block_only_quarantines_influenced_lanes(payload):
+            influence = payload.get("learning_influence") if isinstance(payload.get("learning_influence"), dict) else {}
+            return [
+                _finding(
+                    run_id=run_id,
+                    priority="P1",
+                    layer="learning",
+                    code="LEARNING_AUDIT_INFLUENCED_LANES_QUARANTINED",
+                    message=(
+                        "learning_audit blocks only risk-increasing learning influence; "
+                        "non-learning live-ready lanes can still be routed"
+                    ),
+                    next_action=(
+                        "Do not select learning-influenced lanes until learning-audit passes; "
+                        "continue evaluating clean live-ready lanes through GPT verification."
+                    ),
+                    evidence={
+                        "status": status,
+                        "blockers": blockers[:8],
+                        "influenced_lanes": int(_maybe_float(influence.get("influenced_lanes")) or 0),
+                        "risk_increasing_lanes": int(_maybe_float(influence.get("risk_increasing_lanes")) or 0),
+                    },
+                )
+            ]
         return [
             _finding(
                 run_id=run_id,
@@ -1167,6 +1195,39 @@ def _learning_findings(*, run_id: str, loaded: _LoadedJson, path: Path) -> list[
             )
         ]
     return []
+
+
+def _learning_audit_block_only_quarantines_influenced_lanes(payload: dict[str, Any]) -> bool:
+    influence = payload.get("learning_influence") if isinstance(payload.get("learning_influence"), dict) else {}
+    if int(_maybe_float(influence.get("influenced_lanes")) or 0) <= 0:
+        return False
+    blockers = [str(item) for item in (payload.get("blockers") or []) if str(item).strip()]
+    if not blockers:
+        return False
+    if not all(_is_learning_lane_quarantine_message(message) for message in blockers):
+        return False
+    checks = payload.get("checks") if isinstance(payload.get("checks"), list) else []
+    blocking_checks = [
+        item
+        for item in checks
+        if isinstance(item, dict)
+        and (
+            str(item.get("status") or "").upper() == "BLOCK"
+            or str(item.get("severity") or "").upper() == "BLOCK"
+        )
+    ]
+    if not blocking_checks:
+        return True
+    return all(
+        str(item.get("check_name") or "") == "learning_influence_recent_outcome"
+        or _is_learning_lane_quarantine_message(str(item.get("message") or ""))
+        for item in blocking_checks
+    )
+
+
+def _is_learning_lane_quarantine_message(message: str) -> bool:
+    lowered = message.lower()
+    return any(token in lowered for token in _LEARNING_AUDIT_LANE_QUARANTINE_MESSAGES)
 
 
 def _verification_findings(

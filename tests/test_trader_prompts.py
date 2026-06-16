@@ -320,6 +320,39 @@ class TraderPromptRouteTest(unittest.TestCase):
             )
         )
 
+    def test_no_live_ready_with_pending_entry_routes_to_cancel_review(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root)
+            snapshot = json.loads(files["snapshot"].read_text())
+            snapshot["orders"] = [
+                {
+                    "order_id": "472124",
+                    "pair": "EUR_GBP",
+                    "order_type": "LIMIT",
+                    "state": "PENDING",
+                    "units": -1000,
+                    "owner": "trader",
+                    "trade_id": None,
+                }
+            ]
+            files["snapshot"].write_text(json.dumps(snapshot))
+            intents = json.loads(files["intents"].read_text())
+            for result in intents["results"]:
+                result["status"] = "DRY_RUN_PASSED"
+                result["live_blockers"] = ["FORECAST_CONFIDENCE_REQUIRED_FOR_LIVE"]
+            files["intents"].write_text(json.dumps(intents))
+
+            route = route_trader_prompts(**_route_paths(files), decision_response_path=None)
+
+        self.assertEqual(route.branch, BRANCH_ENTRY)
+        read_paths = _read_paths(route)
+        self.assertTrue(any(path.endswith("30_entry_decision.md") for path in read_paths))
+        self.assertTrue(any(path.endswith("90_decision_receipt_schema.md") for path in read_paths))
+        self.assertTrue(any("trader pending entry order(s) occupy the gateway entry slot" in reason for reason in route.reasons))
+        self.assertTrue(any("no current LIVE_READY lane" in reason for reason in route.reasons))
+        self.assertTrue(any("CANCEL_PENDING" in reason for reason in route.reasons))
+
     def test_stale_trader_overrides_routes_open_target_to_refresh_branch(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -507,6 +540,38 @@ class TraderPromptRouteTest(unittest.TestCase):
         self.assertEqual(route.branch, BRANCH_REFRESH)
         self.assertTrue(any("memory health audit is blocked" in reason for reason in route.reasons))
         self.assertTrue(any("LONG_STRATEGY_PROFILE_EMPTY" in reason for reason in route.reasons))
+
+    def test_learning_quarantine_p1_does_not_block_clean_live_ready_entry_route(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root)
+            audit = json.loads(files["self_improvement_audit"].read_text())
+            audit.update(
+                {
+                    "status": "SELF_IMPROVEMENT_ACTION_REQUIRED",
+                    "p0_findings": 0,
+                    "p1_findings": 1,
+                    "p2_findings": 0,
+                    "findings": [
+                        {
+                            "priority": "P1",
+                            "layer": "learning",
+                            "code": "LEARNING_AUDIT_INFLUENCED_LANES_QUARANTINED",
+                            "message": (
+                                "learning_audit blocks only risk-increasing learning influence; "
+                                "non-learning live-ready lanes can still be routed"
+                            ),
+                        }
+                    ],
+                }
+            )
+            files["self_improvement_audit"].write_text(json.dumps(audit))
+
+            route = route_trader_prompts(**_route_paths(files), decision_response_path=None)
+
+        self.assertEqual(route.branch, BRANCH_ENTRY)
+        self.assertTrue(any("current LIVE_READY lane" in reason for reason in route.reasons))
+        self.assertFalse(any("self-improvement P0 blocks" in reason for reason in route.reasons))
 
     def test_stale_memory_health_routes_open_target_to_refresh_branch(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

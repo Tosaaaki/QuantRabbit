@@ -419,6 +419,17 @@ def route_trader_prompts(
                 ),
                 include_content=include_content,
             )
+        if pending_entry_reasons:
+            return _build_route(
+                BRANCH_ENTRY,
+                (
+                    *carry_reasons,
+                    *pending_entry_reasons,
+                    no_live_ready_reason,
+                    "resolve stale pending entry risk with CANCEL_PENDING or an explicit keep justification before learning-gap work",
+                ),
+                include_content=include_content,
+            )
         return _build_route(
             BRANCH_LEARNING,
             (

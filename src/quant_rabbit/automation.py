@@ -37,6 +37,8 @@ from quant_rabbit.paths import (
     DEFAULT_LIVE_ORDER_STAGE_REPORT,
     DEFAULT_LEARNING_AUDIT,
     DEFAULT_LEARNING_AUDIT_REPORT,
+    DEFAULT_LEVELS_SNAPSHOT,
+    DEFAULT_MARKET_CONTEXT_MATRIX,
     DEFAULT_MARKET_STATUS,
     DEFAULT_MARKET_STATUS_REPORT,
     DEFAULT_MARKET_STORY_PROFILE,
@@ -2665,6 +2667,8 @@ class AutoTradeCycle:
             strategy_profile=self.strategy_profile_path,
             output_path=self.intents_path,
             report_path=self.intent_report_path,
+            levels_path=data_root / DEFAULT_LEVELS_SNAPSHOT.name,
+            market_context_matrix_path=data_root / DEFAULT_MARKET_CONTEXT_MATRIX.name,
             data_root=data_root,
             max_loss_jpy=max_loss_jpy,
         )
