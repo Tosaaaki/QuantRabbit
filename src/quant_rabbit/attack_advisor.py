@@ -1005,12 +1005,18 @@ def _precision_index_from_intents(intents: dict[str, Any]) -> dict[str, dict[str
         if not isinstance(lane_id, str):
             continue
         intent_doc = item.get("intent") if isinstance(item.get("intent"), dict) else {}
+        context_doc = intent_doc.get("market_context") if isinstance(intent_doc.get("market_context"), dict) else {}
         metadata = intent_doc.get("metadata") if isinstance(intent_doc.get("metadata"), dict) else {}
         out[lane_id] = {
             "price_percentile_24h": _optional_float(metadata.get("price_percentile_24h")),
             "tf_agreement_score": _optional_float(metadata.get("tf_agreement_score")),
             "range_24h_sigma_multiple": _optional_float(metadata.get("range_24h_sigma_multiple")),
             "direction": (intent_doc.get("side") or "").upper(),
+            "method": str(context_doc.get("method") or "").upper(),
+            "order_type": str(intent_doc.get("order_type") or "").upper(),
+            "geometry_model": str(metadata.get("geometry_model") or "").upper(),
+            "range_tp_is_inside_box": bool(metadata.get("range_tp_is_inside_box")),
+            "range_sl_outside_box": bool(metadata.get("range_sl_outside_box")),
         }
     return out
 
@@ -1043,6 +1049,20 @@ def _precision_lane_blocker(lane: AttackLaneAdvice, idx: dict[str, dict[str, Any
             )
     tf_agree = ctx.get("tf_agreement_score")
     if tf_agree is not None and tf_agree < ATTACK_PRECISION_TF_AGREEMENT_MIN:
+        # A passive range-rail LIMIT is not chasing the fractured operating TF;
+        # it waits for price to return to an executable rail. IntentGenerator
+        # and RiskEngine still own the broader-location, spread, and geometry
+        # gates, so keep these lanes visible as attack candidates instead of
+        # deleting the only low-cost fallback when the first advised lane fails
+        # broker-truth spread revalidation.
+        if (
+            ctx.get("method") == "RANGE_ROTATION"
+            and ctx.get("order_type") in {"LIMIT", "LIMIT_ORDER"}
+            and ctx.get("geometry_model") == "RANGE_RAIL_LIMIT"
+            and bool(ctx.get("range_tp_is_inside_box"))
+            and bool(ctx.get("range_sl_outside_box"))
+        ):
+            return None
         return (
             f"tf agreement {tf_agree:.2f} < "
             f"{ATTACK_PRECISION_TF_AGREEMENT_MIN:.2f}"
