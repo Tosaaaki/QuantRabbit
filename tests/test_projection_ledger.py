@@ -1419,6 +1419,52 @@ class CalibrationTest(unittest.TestCase):
 
         self.assertEqual(selected, "sig_x")
 
+    def test_select_calibration_signal_name_ignores_thin_global_directional_bucket(self) -> None:
+        hr = {
+            "directional_forecast": {"EUR_USD:TREND": {"hit_rate": 0.8, "samples": 100}},
+            "directional_forecast_down": {
+                "_all_pairs:_all_regimes": {"hit_rate": 0.0, "samples": 10},
+            },
+        }
+
+        selected = select_calibration_signal_name(
+            "directional_forecast", "DOWN", "EUR_USD", hit_rates=hr, regime="TREND",
+        )
+
+        self.assertEqual(selected, "directional_forecast")
+
+    def test_confidence_calibration_ignores_thin_global_bucket(self) -> None:
+        hr = {
+            "directional_forecast_down": {
+                "_all_pairs:_all_regimes": {"hit_rate": 0.0, "samples": 10},
+            },
+        }
+
+        mult = confidence_calibration(
+            "directional_forecast_down",
+            "EUR_USD",
+            hit_rates=hr,
+            regime="TREND",
+        )
+
+        self.assertEqual(mult, 1.0)
+
+    def test_confidence_calibration_uses_broad_global_bucket(self) -> None:
+        hr = {
+            "directional_forecast_down": {
+                "_all_pairs:_all_regimes": {"hit_rate": 0.0, "samples": 30},
+            },
+        }
+
+        mult = confidence_calibration(
+            "directional_forecast_down",
+            "EUR_USD",
+            hit_rates=hr,
+            regime="TREND",
+        )
+
+        self.assertLess(mult, 1.0)
+
     def test_select_calibration_signal_name_keeps_range_bucket_when_thin(self) -> None:
         hr = {
             "directional_forecast": {"EUR_USD:RANGE": {"hit_rate": 0.1, "samples": 100}},

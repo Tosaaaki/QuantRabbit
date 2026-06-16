@@ -61,6 +61,16 @@ from quant_rabbit.instruments import instrument_pip_factor
 LEDGER_FILENAME = "projection_ledger.jsonl"
 HIT_RATE_LOOKBACK = int(os.environ.get("QR_PROJECTION_HIT_RATE_LOOKBACK", "100"))
 CONFIDENCE_MIN_SAMPLES = int(os.environ.get("QR_PROJECTION_CONFIDENCE_MIN_SAMPLES", "10"))
+# Pair-specific calibration can move confidence after the base sample floor.
+# Cross-pair FX behavior is much less homogeneous: a 10-row all-pairs bucket can
+# come from only a few instruments/regimes and should not globally punish every
+# fresh directional forecast. Require a broader cross-section before using the
+# all-pairs fallback to move confidence away from neutral.
+GLOBAL_CONFIDENCE_MIN_SAMPLES = int(
+    os.environ.get("QR_PROJECTION_GLOBAL_CONFIDENCE_MIN_SAMPLES", str(CONFIDENCE_MIN_SAMPLES * 3))
+)
+if GLOBAL_CONFIDENCE_MIN_SAMPLES < CONFIDENCE_MIN_SAMPLES:
+    raise ValueError("QR_PROJECTION_GLOBAL_CONFIDENCE_MIN_SAMPLES must be >= QR_PROJECTION_CONFIDENCE_MIN_SAMPLES")
 CONFIDENCE_DAMPING = float(os.environ.get("QR_PROJECTION_CONFIDENCE_DAMPING", "0.6"))
 # Multiplier when a detector has 100% hit-rate
 CONFIDENCE_MAX_MULTIPLIER = float(os.environ.get("QR_PROJECTION_CONFIDENCE_MAX_MULT", "1.5"))
@@ -1297,14 +1307,14 @@ def has_confidence_calibration_samples(
 ) -> bool:
     """Whether `confidence_calibration` has enough samples for this bucket."""
     by_key = hit_rates.get(signal_name) or {}
-    for candidate in _calibration_candidates(by_key, pair=pair, regime=regime):
+    for key, candidate in _calibration_candidate_items(by_key, pair=pair, regime=regime):
         if not isinstance(candidate, dict):
             continue
         try:
             samples = int(candidate.get("samples", 0) or 0)
         except (TypeError, ValueError):
             continue
-        if samples >= CONFIDENCE_MIN_SAMPLES:
+        if samples >= _confidence_min_samples_for_bucket(key):
             return True
     return False
 
@@ -1414,12 +1424,12 @@ def confidence_calibration(
     by_key = hit_rates.get(signal_name) or {}
 
     chosen = None
-    for c in _calibration_candidates(by_key, pair=pair, regime=regime):
+    for key, c in _calibration_candidate_items(by_key, pair=pair, regime=regime):
         if c is None:
             continue
         # Need raw samples count; old "_all_pairs" / new buckets all have "samples".
         samples = c.get("samples", 0)
-        if samples >= CONFIDENCE_MIN_SAMPLES:
+        if samples >= _confidence_min_samples_for_bucket(key):
             chosen = c
             break
     if chosen is None:
@@ -1442,6 +1452,36 @@ def confidence_calibration(
     else:
         mult = 1.0 - (0.5 - pessimistic) * 2.0 * (1.0 - CONFIDENCE_MIN_MULTIPLIER)
     return round(mult, 3)
+
+
+def _calibration_candidate_items(
+    by_key: Dict[str, Any],
+    *,
+    pair: str,
+    regime: Optional[str] = None,
+) -> List[tuple[str, Optional[Dict[str, Any]]]]:
+    candidates_in_order: List[tuple[str, Optional[Dict[str, Any]]]] = []
+    if regime is not None:
+        key = f"{pair}:{regime}"
+        candidates_in_order.append((key, by_key.get(key)))
+    key = f"{pair}:_all_regimes"
+    candidates_in_order.append((key, by_key.get(key)))
+    if regime is not None:
+        key = f"_all_pairs:{regime}"
+        candidates_in_order.append((key, by_key.get(key)))
+    candidates_in_order.append(("_all_pairs:_all_regimes", by_key.get("_all_pairs:_all_regimes")))
+    # Backward compatibility: previous schema used just "<pair>" / "_all_pairs".
+    if pair in by_key and isinstance(by_key[pair], dict):
+        candidates_in_order.append((pair, by_key.get(pair)))
+    if "_all_pairs" in by_key and isinstance(by_key["_all_pairs"], dict):
+        candidates_in_order.append(("_all_pairs", by_key.get("_all_pairs")))
+    return candidates_in_order
+
+
+def _confidence_min_samples_for_bucket(key: str) -> int:
+    if key.startswith("_all_pairs"):
+        return GLOBAL_CONFIDENCE_MIN_SAMPLES
+    return CONFIDENCE_MIN_SAMPLES
 
 
 def setup_grade(
