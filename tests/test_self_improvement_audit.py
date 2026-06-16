@@ -23,6 +23,7 @@ from quant_rabbit.self_improvement_audit import (
     _intent_live_readiness_family_breakdown,
     _profitability_findings,
     _projection_expired,
+    _report_perspective_alignment_text,
     _top_intent_blockers,
     _top_intent_live_readiness_blockers,
 )
@@ -30,6 +31,35 @@ from quant_rabbit.paths import DEFAULT_EXECUTION_LEDGER_DB, DEFAULT_SELF_IMPROVE
 
 
 class SelfImprovementAuditorTest(unittest.TestCase):
+    def test_perspective_alignment_report_keeps_later_opposite_rail_view(self) -> None:
+        text = _report_perspective_alignment_text(
+            {
+                "status": "RANGE_METHOD_MISMATCH_REPAIR_REQUIRED",
+                "range_forecast_method_mismatch_groups": 4,
+                "range_forecast_method_mismatch_lanes": 9,
+                "range_forecast_method_mismatch_top": [
+                    {"pair": "AUD_JPY", "direction": "LONG", "method_mismatch_lanes": 3, "range_rotation_lanes": 0},
+                    {"pair": "AUD_JPY", "direction": "SHORT", "method_mismatch_lanes": 3, "range_rotation_lanes": 0},
+                    {"pair": "USD_CHF", "direction": "LONG", "method_mismatch_lanes": 2, "range_rotation_lanes": 1},
+                    {
+                        "pair": "USD_CAD",
+                        "direction": "LONG",
+                        "method_mismatch_lanes": 1,
+                        "range_rotation_lanes": 1,
+                        "range_rotation_other_side_lanes": 2,
+                        "range_rotation_other_side_directions": [{"code": "SHORT", "count": 2}],
+                        "range_rotation_other_side_top_live_blocker_codes": [
+                            {"code": "SPREAD_TOO_WIDE", "count": 2}
+                        ],
+                    },
+                ],
+            }
+        )
+
+        self.assertIn("USD_CAD LONG mismatch=1", text)
+        self.assertIn("other_rail=SHORT", text)
+        self.assertIn("other_blockers=SPREAD_TOO_WIDE", text)
+
     def test_default_history_db_is_separate_from_execution_ledger(self) -> None:
         auditor = SelfImprovementAuditor()
 

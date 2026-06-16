@@ -5876,9 +5876,7 @@ def _report_perspective_alignment_text(raw: Any) -> str:
     mismatch_groups = _maybe_int(diagnostics.get("range_forecast_method_mismatch_groups")) or 0
     rows = diagnostics.get("range_forecast_method_mismatch_top")
     labels: list[str] = []
-    for item in (rows if isinstance(rows, list) else [])[:3]:
-        if not isinstance(item, dict):
-            continue
+    for item in _perspective_alignment_report_rows(rows if isinstance(rows, list) else []):
         pair = str(item.get("pair") or "").strip()
         direction = str(item.get("direction") or "").strip()
         if not pair or not direction:
@@ -5918,6 +5916,17 @@ def _report_perspective_alignment_text(raw: Any) -> str:
         f"status=`{status}`, groups=`{mismatch_groups}`, lanes=`{mismatch_lanes}`"
         + (", top=" + "; ".join(labels) if labels else "")
     )
+
+
+def _perspective_alignment_report_rows(rows: list[Any]) -> list[dict[str, Any]]:
+    typed_rows = [item for item in rows if isinstance(item, dict)]
+    selected = typed_rows[:3]
+    if any(_maybe_int(item.get("range_rotation_other_side_lanes")) for item in selected):
+        return selected
+    for item in typed_rows[3:]:
+        if _maybe_int(item.get("range_rotation_other_side_lanes")):
+            return [*selected, item]
+    return selected
 
 
 def _report_dry_run_family_text(raw: Any) -> str:

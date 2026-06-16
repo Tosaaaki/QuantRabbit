@@ -510,9 +510,7 @@ def _cycle_perspective_alignment_parts(payload: dict[str, Any]) -> list[str]:
             f"range_mismatch_lanes={_report_value(mismatch_lanes)}"
         )
     top_parts: list[str] = []
-    for item in rows[:3]:
-        if not isinstance(item, dict):
-            continue
+    for item in _cycle_perspective_alignment_rows(rows):
         pair = str(item.get("pair") or "").strip()
         direction = str(item.get("direction") or "").strip()
         if not pair or not direction:
@@ -546,6 +544,24 @@ def _cycle_perspective_alignment_parts(payload: dict[str, Any]) -> list[str]:
     if top_parts:
         parts.append("top=`" + " | ".join(top_parts) + "`")
     return parts
+
+
+def _cycle_perspective_alignment_rows(rows: list[Any]) -> list[dict[str, Any]]:
+    typed_rows = [item for item in rows if isinstance(item, dict)]
+    selected = typed_rows[:3]
+    if any(_has_other_side_rotation(item) for item in selected):
+        return selected
+    for item in typed_rows[3:]:
+        if _has_other_side_rotation(item):
+            return [*selected, item]
+    return selected
+
+
+def _has_other_side_rotation(item: dict[str, Any]) -> bool:
+    try:
+        return int(item.get("range_rotation_other_side_lanes") or 0) > 0
+    except (TypeError, ValueError):
+        return False
 
 
 def _report_count_items(items: object, *, key: str, limit: int) -> str:

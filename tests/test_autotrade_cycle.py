@@ -16,6 +16,7 @@ from quant_rabbit.automation import (
     AutoTradeCycleSummary,
     GptHandoffSummary,
     _gpt_lanes_pass_prefilter_or_recovery,
+    _cycle_perspective_alignment_parts,
     _passes_gpt_prefilter,
     _snapshot_to_json,
 )
@@ -26,6 +27,35 @@ from quant_rabbit.strategy.trader_brain import ACTION_NO_TRADE, ACTION_SEND_ENTR
 
 
 class AutoTradeCycleTest(unittest.TestCase):
+    def test_cycle_perspective_alignment_keeps_later_opposite_rail_view(self) -> None:
+        parts = _cycle_perspective_alignment_parts(
+            {
+                "status": "RANGE_METHOD_MISMATCH_REPAIR_REQUIRED",
+                "range_forecast_method_mismatch_lanes": 9,
+                "range_forecast_method_mismatch_top": [
+                    {"pair": "AUD_JPY", "direction": "LONG", "method_mismatch_lanes": 3, "range_rotation_lanes": 0},
+                    {"pair": "AUD_JPY", "direction": "SHORT", "method_mismatch_lanes": 3, "range_rotation_lanes": 0},
+                    {"pair": "USD_CHF", "direction": "LONG", "method_mismatch_lanes": 2, "range_rotation_lanes": 1},
+                    {
+                        "pair": "USD_CAD",
+                        "direction": "LONG",
+                        "method_mismatch_lanes": 1,
+                        "range_rotation_lanes": 1,
+                        "range_rotation_other_side_lanes": 2,
+                        "range_rotation_other_side_directions": [{"code": "SHORT", "count": 2}],
+                        "range_rotation_other_side_top_live_blocker_codes": [
+                            {"code": "SPREAD_TOO_WIDE", "count": 2}
+                        ],
+                    },
+                ],
+            }
+        )
+
+        text = "; ".join(parts)
+        self.assertIn("USD_CAD LONG mismatch=1", text)
+        self.assertIn("other_rail=SHORT:2", text)
+        self.assertIn("other_blockers=SPREAD_TOO_WIDE:2", text)
+
     def test_target_state_refreshes_ai_backtest_before_pace_recalculation(self) -> None:
         prior = os.environ.get("QR_REFRESH_AI_BACKTEST_IN_TESTS")
         os.environ["QR_REFRESH_AI_BACKTEST_IN_TESTS"] = "1"
