@@ -1916,6 +1916,8 @@ def _perspective_alignment_diagnostics(lanes: tuple[CoverageLane, ...]) -> dict[
 
 
 def _is_range_forecast_method_mismatch(lane: CoverageLane) -> bool:
+    if lane.status == "DRY_RUN_BLOCKED":
+        return False
     return (
         lane.forecast_direction == "RANGE"
         and lane.method in DIRECTIONAL_ENTRY_METHODS

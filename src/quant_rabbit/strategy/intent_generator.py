@@ -6126,7 +6126,7 @@ def _forecast_live_readiness_issue(
                 f"{intent.pair} {intent.side.value} has a RANGE forecast; only executable "
                 "RANGE_ROTATION rail geometry may become LIVE_READY from a RANGE prediction."
             ),
-            "severity": "WARN",
+            "severity": "BLOCK",
         }
     weak_calibration_issue = _forecast_directional_hit_rate_issue(intent, metadata, direction=direction)
     if weak_calibration_issue is not None:

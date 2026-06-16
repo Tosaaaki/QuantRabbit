@@ -1476,7 +1476,7 @@ class CoverageOptimizerTest(unittest.TestCase):
                 "message": "RANGE forecast is still below the rail-rotation live floor",
             }
             failure_lane = _result(
-                "DRY_RUN_BLOCKED",
+                "DRY_RUN_PASSED",
                 lane_id="failure_trader:AUD_JPY:LONG:BREAKOUT_FAILURE:LIMIT",
                 pair="AUD_JPY",
                 side="LONG",
@@ -1554,6 +1554,62 @@ class CoverageOptimizerTest(unittest.TestCase):
                 any("opposite rail side SHORT surfaced" in item for item in payload["action_items"])
             )
             self.assertIn("other_rail_sides=`SHORT`", (root / "coverage.md").read_text())
+
+    def test_blocked_range_forecast_method_mismatch_is_not_actionable_repair(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            intents = root / "intents.json"
+            target = root / "target.json"
+            mismatch_issue = {
+                "severity": "BLOCK",
+                "code": "RANGE_FORECAST_REQUIRES_RANGE_ROTATION",
+                "message": "RANGE forecast only authorizes RANGE_ROTATION rail geometry",
+            }
+            failure_lane = _result(
+                "DRY_RUN_BLOCKED",
+                lane_id="failure_trader:EUR_USD:SHORT:BREAKOUT_FAILURE:LIMIT",
+                pair="EUR_USD",
+                side="SHORT",
+                method="BREAKOUT_FAILURE",
+                order_type="LIMIT",
+                risk_issues=[mismatch_issue],
+                risk_metrics={
+                    "risk_jpy": 100.0,
+                    "reward_jpy": 260.0,
+                    "reward_risk": 2.6,
+                    "spread_pips": 0.8,
+                },
+            )
+            failure_lane["intent"]["metadata"] = {
+                "forecast_direction": "RANGE",
+                "forecast_confidence": 0.72,
+                "chart_direction_bias": "SHORT",
+                "range_phase": "RANGE_FORMING",
+            }
+            intents.write_text(json.dumps({"results": [failure_lane]}))
+            target.write_text(
+                json.dumps(
+                    {
+                        "status": "PURSUE_TARGET",
+                        "remaining_target_jpy": 500.0,
+                        "remaining_risk_budget_jpy": 500.0,
+                    }
+                )
+            )
+
+            CoverageOptimizer(
+                intents_path=intents,
+                target_state_path=target,
+                replay_path=root / "missing_replay.json",
+                market_context_matrix_path=_matrix(root),
+                output_path=root / "coverage.json",
+                report_path=root / "coverage.md",
+            ).run()
+
+            payload = json.loads((root / "coverage.json").read_text())
+            diagnostics = payload["perspective_alignment_diagnostics"]
+            self.assertEqual(diagnostics["status"], "NO_RANGE_METHOD_MISMATCH")
+            self.assertEqual(diagnostics["range_forecast_method_mismatch_lanes"], 0)
 
     def test_risk_blocker_messages_are_not_duplicated(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

@@ -3322,6 +3322,7 @@ class IntentGeneratorTest(unittest.TestCase):
             TradeMethod.TREND_CONTINUATION,
         )
         self.assertEqual(range_fresh_issue["code"], "RANGE_FORECAST_REQUIRES_RANGE_ROTATION")
+        self.assertEqual(range_fresh_issue["severity"], "BLOCK")
 
         chart_reversal_metadata = {
             "position_intent": "HEDGE",
