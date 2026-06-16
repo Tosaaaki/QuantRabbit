@@ -342,35 +342,36 @@ class SelfImprovementAuditor:
                 previous_discipline_streak=profitability_streak_before,
             )
         )
-        findings.extend(
-            _intent_findings(
-                run_id=run_id,
-                intents=intents,
-                target_state=target_state,
-                target_open=target_open,
-                live_ready=live_ready,
-                active_positions=active_positions,
-                pending_entry_orders=pending_entry_orders,
-                coverage_optimization=coverage_loaded.payload or {},
+        if external_live_lock is None:
+            findings.extend(
+                _intent_findings(
+                    run_id=run_id,
+                    intents=intents,
+                    target_state=target_state,
+                    target_open=target_open,
+                    live_ready=live_ready,
+                    active_positions=active_positions,
+                    pending_entry_orders=pending_entry_orders,
+                    coverage_optimization=coverage_loaded.payload or {},
+                )
             )
-        )
-        findings.extend(
-            _order_intent_context_evidence_findings(
-                run_id=run_id,
-                intents=intents,
-                matrix_loaded=market_context_matrix_loaded,
-                matrix_path=market_context_matrix_path,
-                target_open=target_open,
+            findings.extend(
+                _order_intent_context_evidence_findings(
+                    run_id=run_id,
+                    intents=intents,
+                    matrix_loaded=market_context_matrix_loaded,
+                    matrix_path=market_context_matrix_path,
+                    target_open=target_open,
+                )
             )
-        )
-        findings.extend(
-            _coverage_findings(
-                run_id=run_id,
-                loaded=coverage_loaded,
-                path=coverage_optimization_path,
-                target_open=target_open,
+            findings.extend(
+                _coverage_findings(
+                    run_id=run_id,
+                    loaded=coverage_loaded,
+                    path=coverage_optimization_path,
+                    target_open=target_open,
+                )
             )
-        )
         findings.extend(
             _mechanism_ablation_findings(
                 run_id=run_id,

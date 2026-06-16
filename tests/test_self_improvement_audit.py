@@ -440,6 +440,7 @@ class SelfImprovementAuditorTest(unittest.TestCase):
         self.assertEqual(summary.status, STATUS_BLOCKED)
         self.assertIn("LIVE_RUNTIME_UPDATE_IN_PROGRESS", codes)
         self.assertNotIn("MEMORY_HEALTH_STALE", codes)
+        self.assertNotIn("TARGET_OPEN_NO_LIVE_READY_LANES", codes)
         self.assertEqual(codes["LIVE_RUNTIME_UPDATE_IN_PROGRESS"]["evidence"]["pid"], os.getpid())
 
     def test_wrapper_owned_live_lock_still_allows_memory_stale_judgment(self) -> None:
