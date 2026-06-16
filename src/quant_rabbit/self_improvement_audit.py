@@ -347,6 +347,7 @@ class SelfImprovementAuditor:
             _intent_findings(
                 run_id=run_id,
                 intents=intents,
+                target_state=target_state,
                 target_open=target_open,
                 live_ready=live_ready,
                 active_positions=active_positions,
@@ -2580,6 +2581,7 @@ def _intent_findings(
     *,
     run_id: str,
     intents: dict[str, Any],
+    target_state: dict[str, Any],
     target_open: bool,
     live_ready: list[dict[str, Any]],
     active_positions: list[dict[str, Any]],
@@ -2625,6 +2627,42 @@ def _intent_findings(
                 },
             )
         )
+    if target_open and live_ready:
+        coverage_gap = _coverage_live_ready_shortfall(
+            coverage_optimization=coverage_optimization,
+            target_state=target_state,
+            live_ready_count=len(live_ready),
+        )
+        if coverage_gap:
+            out.append(
+                _finding(
+                    run_id=run_id,
+                    priority="P1",
+                    layer="opportunity",
+                    code="TARGET_OPEN_LIVE_READY_COVERAGE_SHORTFALL",
+                    message=(
+                        "daily target is open and current LIVE_READY coverage is only "
+                        f"{coverage_gap['target_coverage_pct']:.1f}% of remaining target"
+                    ),
+                    next_action=(
+                        "Keep the current tradeable lane managed, then build additional HARVEST and "
+                        "RUNNER candidates from the named forecast/strategy blockers before treating "
+                        "the campaign as sufficiently covered."
+                    ),
+                    evidence={
+                        **coverage_gap,
+                        "active_trader_positions": len(active_positions),
+                        "trader_pending_entry_orders": _pending_entry_evidence(pending_entry_orders),
+                        "opportunity_modes": _coverage_opportunity_mode_summary(coverage_optimization),
+                        "runner_candidate_diagnostics": _coverage_runner_candidate_diagnostics(
+                            coverage_optimization
+                        ),
+                        "status_counts": _intent_status_counts(intents),
+                        "top_blockers": _top_intent_blockers(intents),
+                        "non_live_ready_live_readiness_blockers": _top_intent_live_readiness_blockers(intents),
+                    },
+                )
+            )
     low_rr: list[dict[str, Any]] = []
     for result in live_ready:
         intent = result.get("intent") if isinstance(result.get("intent"), dict) else {}
@@ -2647,6 +2685,56 @@ def _intent_findings(
             )
         )
     return out
+
+
+def _coverage_live_ready_shortfall(
+    *,
+    coverage_optimization: dict[str, Any],
+    target_state: dict[str, Any],
+    live_ready_count: int,
+) -> dict[str, Any] | None:
+    if live_ready_count <= 0:
+        return None
+    live_reward = _maybe_float(coverage_optimization.get("live_ready_reward_jpy"))
+    if live_reward is None:
+        live_reward = _coverage_modes_live_reward(coverage_optimization)
+    remaining_target = _maybe_float(coverage_optimization.get("remaining_target_jpy"))
+    if remaining_target is None:
+        remaining_target = _maybe_float(target_state.get("remaining_target_jpy"))
+    remaining_minimum = _maybe_float(target_state.get("remaining_minimum_jpy"))
+    if remaining_target is None or remaining_target <= 0:
+        return None
+    live_reward = max(0.0, float(live_reward or 0.0))
+    if live_reward >= remaining_target:
+        return None
+    minimum_shortfall = (
+        max(0.0, remaining_minimum - live_reward)
+        if remaining_minimum is not None and remaining_minimum > 0
+        else None
+    )
+    return {
+        "live_ready_lanes": live_ready_count,
+        "live_ready_reward_jpy": round(live_reward, 4),
+        "remaining_target_jpy": round(float(remaining_target), 4),
+        "remaining_minimum_jpy": round(float(remaining_minimum), 4)
+        if remaining_minimum is not None
+        else None,
+        "required_additional_reward_jpy": round(max(0.0, float(remaining_target) - live_reward), 4),
+        "minimum_floor_shortfall_jpy": round(minimum_shortfall, 4)
+        if minimum_shortfall is not None
+        else None,
+        "target_coverage_pct": round((live_reward / float(remaining_target)) * 100.0, 4),
+        "coverage_status": coverage_optimization.get("status"),
+    }
+
+
+def _coverage_modes_live_reward(payload: dict[str, Any]) -> float:
+    modes = payload.get("opportunity_modes") if isinstance(payload.get("opportunity_modes"), dict) else {}
+    reward = 0.0
+    for item in modes.values():
+        if isinstance(item, dict):
+            reward += float(_maybe_float(item.get("live_ready_reward_jpy")) or 0.0)
+    return reward
 
 
 def _coverage_opportunity_mode_summary(payload: dict[str, Any]) -> dict[str, Any]:
@@ -5032,27 +5120,38 @@ def _finding(
 
 def _finding_report_details(item: dict[str, Any]) -> list[str]:
     evidence = item.get("evidence") if isinstance(item.get("evidence"), dict) else {}
+    details: list[str] = []
+    if item.get("code") == "TARGET_OPEN_LIVE_READY_COVERAGE_SHORTFALL":
+        details.append(
+            "  - live coverage: "
+            f"lanes=`{evidence.get('live_ready_lanes')}`, "
+            f"reward=`{evidence.get('live_ready_reward_jpy')}` JPY, "
+            f"remaining_target=`{evidence.get('remaining_target_jpy')}` JPY, "
+            f"remaining_floor=`{evidence.get('remaining_minimum_jpy')}` JPY, "
+            f"target_coverage=`{evidence.get('target_coverage_pct')}`%"
+        )
     runner_diag = (
         evidence.get("runner_candidate_diagnostics")
         if isinstance(evidence.get("runner_candidate_diagnostics"), dict)
         else {}
     )
     if not runner_diag:
-        return []
+        return details
     reasons = runner_diag.get("top_demotion_reasons")
     reason_text = ", ".join(
         f"{reason.get('reason')}={reason.get('count')}"
         for reason in (reasons if isinstance(reasons, list) else [])[:3]
         if isinstance(reason, dict) and str(reason.get("reason") or "").strip()
     )
-    return [
+    details.append(
         "  - runner candidates: "
         f"status=`{runner_diag.get('status')}`, "
         f"trend=`{runner_diag.get('trend_candidate_lanes')}`, "
         f"runner_qualified=`{runner_diag.get('runner_qualified_lanes')}`, "
         f"attached_harvest=`{runner_diag.get('attached_harvest_lanes')}`, "
         f"demotions=`{reason_text or 'none'}`"
-    ]
+    )
+    return details
 
 
 def _dedupe_findings(findings: list[dict[str, Any]]) -> list[dict[str, Any]]:

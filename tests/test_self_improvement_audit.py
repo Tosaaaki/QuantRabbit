@@ -1622,6 +1622,79 @@ class SelfImprovementAuditorTest(unittest.TestCase):
         self.assertEqual(lane_diagnostic["forecast_market_support_best_hit_rate"], 0.82)
         self.assertEqual(lane_diagnostic["forecast_market_support_top_signal"]["name"], "liquidity_sweep_high")
 
+    def test_partial_live_ready_coverage_still_names_target_shortfall(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root, active_position=False, live_ready_market_rr=1.5, pending_entry=True)
+            files["target"].write_text(
+                json.dumps(
+                    {
+                        "status": "PURSUE_TARGET",
+                        "remaining_target_jpy": 1000.0,
+                        "remaining_minimum_jpy": 500.0,
+                    }
+                )
+            )
+            files["coverage"].write_text(
+                json.dumps(
+                    {
+                        "generated_at_utc": _NOW.isoformat(),
+                        "status": "COVERAGE_GAP",
+                        "remaining_target_jpy": 1000.0,
+                        "live_ready_reward_jpy": 120.0,
+                        "opportunity_modes": {
+                            "HARVEST": {
+                                "lanes": 4,
+                                "live_ready_lanes": 1,
+                                "live_ready_reward_jpy": 120.0,
+                                "promotion_candidate_lanes": 0,
+                                "top_issue_codes": [
+                                    {"code": "FORECAST_CONFIDENCE_REQUIRED_FOR_LIVE", "count": 3}
+                                ],
+                                "top_blockers": [
+                                    {"label": "forecast confidence below live floor", "count": 3}
+                                ],
+                            },
+                            "RUNNER": {
+                                "lanes": 0,
+                                "live_ready_lanes": 0,
+                                "live_ready_reward_jpy": 0.0,
+                                "promotion_candidate_lanes": 0,
+                            },
+                        },
+                        "runner_candidate_diagnostics": {
+                            "status": "RUNNER_CANDIDATES_DEMOTED_TO_HARVEST",
+                            "trend_candidate_lanes": 3,
+                            "runner_qualified_lanes": 0,
+                            "attached_harvest_lanes": 3,
+                            "top_demotion_reasons": [
+                                {"reason": "RANGE regime is not a clean runner trend", "count": 2}
+                            ],
+                        },
+                    }
+                )
+            )
+
+            summary = _run(files)
+            payload = json.loads(files["output"].read_text())
+            report_text = files["report"].read_text()
+
+        codes = {item["code"]: item for item in payload["findings"]}
+        finding = codes["TARGET_OPEN_LIVE_READY_COVERAGE_SHORTFALL"]
+        self.assertEqual(summary.status, STATUS_ACTION_REQUIRED)
+        self.assertEqual(finding["priority"], "P1")
+        self.assertEqual(finding["evidence"]["live_ready_lanes"], 1)
+        self.assertEqual(finding["evidence"]["live_ready_reward_jpy"], 120.0)
+        self.assertEqual(finding["evidence"]["required_additional_reward_jpy"], 880.0)
+        self.assertEqual(finding["evidence"]["minimum_floor_shortfall_jpy"], 380.0)
+        self.assertEqual(finding["evidence"]["opportunity_modes"]["HARVEST"]["live_ready_lanes"], 1)
+        self.assertEqual(
+            finding["evidence"]["runner_candidate_diagnostics"]["status"],
+            "RUNNER_CANDIDATES_DEMOTED_TO_HARVEST",
+        )
+        self.assertIn("live coverage", report_text)
+        self.assertIn("runner candidates", report_text)
+
     def test_lane_only_verification_blockers_are_not_p0_with_live_ready_lane(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
