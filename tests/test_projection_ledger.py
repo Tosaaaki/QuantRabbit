@@ -1419,6 +1419,22 @@ class CalibrationTest(unittest.TestCase):
 
         self.assertEqual(selected, "sig_x")
 
+    def test_select_calibration_signal_name_keeps_range_bucket_when_thin(self) -> None:
+        hr = {
+            "directional_forecast": {"EUR_USD:RANGE": {"hit_rate": 0.1, "samples": 100}},
+            "directional_forecast_range": {"EUR_USD:RANGE": {"hit_rate": 0.0, "samples": 3}},
+        }
+
+        selected = select_calibration_signal_name(
+            "directional_forecast", "RANGE", "EUR_USD", hit_rates=hr, regime="RANGE",
+        )
+
+        self.assertEqual(selected, "directional_forecast_range")
+        self.assertEqual(
+            confidence_calibration(selected, "EUR_USD", hit_rates=hr, regime="RANGE"),
+            1.0,
+        )
+
 
 class SetupGradeTest(unittest.TestCase):
     def test_grade_a_strong_confluence_no_news(self) -> None:

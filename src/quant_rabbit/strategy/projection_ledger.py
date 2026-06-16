@@ -1319,6 +1319,13 @@ def select_calibration_signal_name(
 ) -> str:
     """Prefer direction-specific calibration when it has enough evidence."""
     directional_name = directional_calibration_signal_name(signal_name, direction)
+    if directional_name is not None and str(direction or "").upper() == "RANGE":
+        # RANGE forecasts score a different truth condition from UP/DOWN:
+        # the emitted box must hold instead of target/invalidation side winning.
+        # Falling back to the base bucket would mix box-hold calibration with
+        # directional movement calibration and can falsely suppress executable
+        # range-rotation forecasts when the RANGE bucket is still young.
+        return directional_name
     if directional_name is not None and has_confidence_calibration_samples(
         directional_name,
         pair,
