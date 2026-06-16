@@ -2902,6 +2902,67 @@ class SelfImprovementAuditorTest(unittest.TestCase):
         self.assertNotIn("PERSISTENT_PROFITABILITY_DISCIPLINE_RECOVERY", codes)
         self.assertEqual(codes["PERSISTENT_PROFITABILITY_DISCIPLINE_BLOCKED"]["priority"], "P0")
 
+    def test_persistent_profitability_stays_p0_without_gateway_recovery_proof(self) -> None:
+        effect_24h = {
+            "closed_trades": 1,
+            "net_jpy": -661.5,
+            "gross_profit_jpy": 0.0,
+            "gross_loss_jpy": 661.5,
+            "profit_factor": 0.0,
+            "expectancy_jpy": -661.5,
+            "close_provenance_metrics": {
+                "GATEWAY_TRADE_CLOSE_SENT": {
+                    "trades": 1,
+                    "net_jpy": -661.5,
+                    "gross_profit_jpy": 0.0,
+                    "gross_loss_jpy": 661.5,
+                    "win_trades": 0,
+                    "loss_trades": 1,
+                    "loss_containment_trades": 1,
+                    "loss_containment_net_jpy": -661.5,
+                    "loss_containment_avoided_loss_jpy": 5782.5,
+                },
+            },
+            "market_order_trade_close_loss_provenance_metrics": {
+                "GATEWAY_TRADE_CLOSE_SENT": {
+                    "trades": 1,
+                    "net_jpy": -661.5,
+                    "gross_profit_jpy": 0.0,
+                    "gross_loss_jpy": 661.5,
+                    "win_trades": 0,
+                    "loss_trades": 1,
+                }
+            },
+        }
+
+        findings = _profitability_findings(
+            run_id="run-no-recovery-proof",
+            effect={
+                **self._failed_trailing_effect(),
+                "profit_factor": 0.891,
+                "expectancy_jpy": -29.04,
+                "avg_win_jpy": 509.21,
+                "avg_loss_jpy_abs": 500.0,
+            },
+            effect_24h=effect_24h,
+            snapshot={},
+            min_sample=3,
+            close_gate_loss_evidence=None,
+            previous_discipline_streak=5,
+        )
+
+        codes = {item["code"]: item for item in findings}
+        blocked = codes["PERSISTENT_PROFITABILITY_DISCIPLINE_BLOCKED"]
+        self.assertEqual(blocked["priority"], "P0")
+        self.assertNotIn("PERSISTENT_PROFITABILITY_DISCIPLINE_RECOVERY", codes)
+        evidence = blocked["evidence"]["system_defect_evidence"]
+        self.assertIn("persistent_negative_expectancy_without_recovery", evidence)
+        self.assertFalse(
+            evidence["persistent_negative_expectancy_without_recovery"][
+                "last_24h_gateway_recovery_proven"
+            ]
+        )
+
     def test_persistent_profitability_recovers_when_gateway_loss_close_contained_sl_risk(self) -> None:
         effect_24h = {
             "closed_trades": 2,

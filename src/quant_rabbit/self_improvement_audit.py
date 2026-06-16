@@ -2628,7 +2628,6 @@ def _profitability_findings(
         )
     if (
         has_negative_expectancy
-        and (has_loss_asymmetry or gateway_close_bleed is not None)
         and not direct_close_repair
         and current_discipline_streak >= max(1, PERSISTENT_PROFITABILITY_STREAK_MIN)
     ):
@@ -2647,6 +2646,16 @@ def _profitability_findings(
             system_defect_evidence["ai_backtest_close_gate_loss_evidence"] = close_gate_loss_evidence
         if gateway_close_bleed is not None:
             system_defect_evidence["gateway_close_bleed_observation"] = gateway_close_bleed
+        elif not has_loss_asymmetry:
+            system_defect_evidence["persistent_negative_expectancy_without_recovery"] = {
+                "profit_factor": pf,
+                "expectancy_jpy": expectancy,
+                "current_streak": current_discipline_streak,
+                "last_24h_closed_trades": int(effect_24h.get("closed_trades") or 0),
+                "last_24h_profit_factor": _maybe_float(effect_24h.get("profit_factor")),
+                "last_24h_expectancy_jpy": _maybe_float(effect_24h.get("expectancy_jpy")),
+                "last_24h_gateway_recovery_proven": False,
+            }
         if recovery_observation is not None:
             out.append(
                 _finding(
