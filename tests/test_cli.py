@@ -1090,8 +1090,8 @@ class CliHelpTest(unittest.TestCase):
                 status="MEMORY_HEALTH_PASS",
                 output_path=memory,
                 report_path=memory_report,
-                blockers=(),
-                warnings=(),
+                blockers=0,
+                warnings=0,
             )
             stdout = io.StringIO()
 
@@ -1150,6 +1150,8 @@ class CliHelpTest(unittest.TestCase):
         )
         payload = json.loads(stdout.getvalue())
         self.assertEqual(payload["memory_health_refresh"]["status"], "MEMORY_HEALTH_PASS")
+        self.assertEqual(payload["memory_health_refresh"]["blockers"], 0)
+        self.assertEqual(payload["memory_health_refresh"]["warnings"], 0)
 
     def test_generate_intents_returns_json_error_for_stale_campaign_plan(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

@@ -334,6 +334,71 @@ class StrategyProfileTest(unittest.TestCase):
         self.assertEqual(issues[0].code, "STRATEGY_PROFILE_MISSING")
         self.assertEqual(issues[0].severity, "WARN")
 
+    def test_range_rail_forecast_seed_missing_profile_is_advisory_under_sl_free(self) -> None:
+        # Current live shape: a pair with no mined profile can still expose a
+        # non-market range-rail LIMIT when the forecast is an auditable RANGE
+        # and the order waits on the correct support/resistance side. Other
+        # forecast, spread, reward/risk, and gateway gates still decide whether
+        # the lane becomes LIVE_READY.
+        with tempfile.TemporaryDirectory() as tmp:
+            profile = StrategyProfile.load(_profile(Path(tmp), status="CANDIDATE"))
+            prior = os.environ.get("QR_TRADER_DISABLE_SL_REPAIR")
+            os.environ["QR_TRADER_DISABLE_SL_REPAIR"] = "1"
+            try:
+                issues = profile.validate(
+                    _intent(
+                        "GBP_USD",
+                        method=TradeMethod.RANGE_ROTATION,
+                        order_type=OrderType.LIMIT,
+                        metadata={
+                            "forecast_seed": True,
+                            "forecast_direction": "RANGE",
+                            "forecast_confidence": 0.52,
+                            "geometry_model": "RANGE_RAIL_LIMIT",
+                            "range_entry_side": "support",
+                            "chart_direction_bias": "LONG",
+                            "m5_long_bias": 0.125,
+                            "m5_short_bias": 0.75,
+                        },
+                    ),
+                    for_live_send=True,
+                )
+            finally:
+                _restore_env("QR_TRADER_DISABLE_SL_REPAIR", prior)
+
+        self.assertEqual(len(issues), 1)
+        self.assertEqual(issues[0].code, "STRATEGY_PROFILE_MISSING")
+        self.assertEqual(issues[0].severity, "WARN")
+
+    def test_low_confidence_range_rail_missing_profile_still_blocks_under_sl_free(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            profile = StrategyProfile.load(_profile(Path(tmp), status="CANDIDATE"))
+            prior = os.environ.get("QR_TRADER_DISABLE_SL_REPAIR")
+            os.environ["QR_TRADER_DISABLE_SL_REPAIR"] = "1"
+            try:
+                issues = profile.validate(
+                    _intent(
+                        "GBP_USD",
+                        method=TradeMethod.RANGE_ROTATION,
+                        order_type=OrderType.LIMIT,
+                        metadata={
+                            "forecast_seed": True,
+                            "forecast_direction": "RANGE",
+                            "forecast_confidence": 0.49,
+                            "geometry_model": "RANGE_RAIL_LIMIT",
+                            "range_entry_side": "support",
+                            "chart_direction_bias": "LONG",
+                        },
+                    ),
+                    for_live_send=True,
+                )
+            finally:
+                _restore_env("QR_TRADER_DISABLE_SL_REPAIR", prior)
+
+        self.assertEqual(len(issues), 1)
+        self.assertEqual(issues[0].code, "STRATEGY_PROFILE_MISSING")
+        self.assertEqual(issues[0].severity, "BLOCK")
+
     def test_high_confidence_forecast_seed_missing_profile_blocks_when_chart_opposes_side(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             profile = StrategyProfile.load(_profile(Path(tmp), status="CANDIDATE"))

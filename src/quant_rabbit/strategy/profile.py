@@ -366,10 +366,13 @@ def _forecast_seed_missing_profile_severity(intent: OrderIntent) -> str | None:
 
     A mined profile gap means the pair/side/method has not yet proved itself in
     strategy memory. Under SL-free live trading we still allow a high-confidence
-    forecast-seed *trigger* to collect that evidence, but not a market chase and
-    not a low calibrated forecast rescued only by projection support. That
-    low-confidence/no-profile combination is the reverse-first failure mode the
-    user flagged on 2026-06-15.
+    forecast-seed *trigger* to collect that evidence. RANGE_RAIL_LIMIT orders
+    use the same market-proof shape: the order waits at the correct support or
+    resistance rail and still has to pass the forecast, spread, reward/risk,
+    location, and gateway gates. The exception never applies to a market chase
+    and never rescues a low calibrated forecast with projection support alone.
+    That low-confidence/no-profile combination is the reverse-first failure mode
+    the user flagged on 2026-06-15.
     """
 
     if intent.order_type == OrderType.MARKET:
@@ -377,12 +380,44 @@ def _forecast_seed_missing_profile_severity(intent: OrderIntent) -> str | None:
     confidence = _optional_float((intent.metadata or {}).get("forecast_confidence"))
     if confidence is None:
         return None
+    side = str(intent.side.value).upper()
+    metadata = intent.metadata or {}
+    if _range_rotation_rail_side_matches(intent, metadata, side=side):
+        if confidence >= _forecast_seed_missing_profile_range_min_confidence():
+            return "WARN"
+        return None
     if (
         confidence >= _forecast_seed_missing_profile_min_confidence()
-        and _forecast_seed_side_aligned(intent, intent.metadata or {})
+        and _forecast_seed_side_aligned(intent, metadata)
     ):
         return "WARN"
     return None
+
+
+def _forecast_seed_missing_profile_range_min_confidence() -> float:
+    """Range-rail confidence floor for no-profile forecast-seed LIMITs.
+
+    This mirrors `QR_FORECAST_RANGE_ROTATION_MIN_CONFIDENCE` in
+    intent_generator without importing that module and creating a cycle. The
+    0.50 default is the documented range-rotation live floor: a RANGE forecast
+    must be at least more likely than not before a profile gap can become
+    advisory.
+    """
+
+    raw = (
+        os.environ.get("QR_FORECAST_SEED_MISSING_PROFILE_RANGE_MIN_CONFIDENCE")
+        or os.environ.get("QR_FORECAST_RANGE_ROTATION_MIN_CONFIDENCE")
+        or "0.50"
+    )
+    try:
+        value = float(raw)
+    except (TypeError, ValueError) as exc:
+        raise RuntimeError(
+            "QR_FORECAST_SEED_MISSING_PROFILE_RANGE_MIN_CONFIDENCE must be a positive confidence value"
+        ) from exc
+    if value <= 0:
+        raise RuntimeError("QR_FORECAST_SEED_MISSING_PROFILE_RANGE_MIN_CONFIDENCE must be positive")
+    return value
 
 
 def _forecast_seed_missing_profile_min_confidence() -> float:

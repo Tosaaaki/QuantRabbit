@@ -736,13 +736,34 @@ def _refresh_memory_health_after_intents_if_required(
         )
     except (OSError, json.JSONDecodeError, sqlite3.Error, ValueError) as exc:
         return {"status": "REFRESH_FAILED", "error": str(exc)}
+    blocker_count, blocker_samples = _memory_health_count_and_samples(summary.blockers)
+    warning_count, warning_samples = _memory_health_count_and_samples(summary.warnings)
     return {
         "status": summary.status,
         "output_path": str(summary.output_path),
         "report_path": str(summary.report_path),
-        "blockers": list(summary.blockers)[:8],
-        "warnings": list(summary.warnings)[:8],
+        "blockers": blocker_count,
+        "warnings": warning_count,
+        "blocker_samples": blocker_samples,
+        "warning_samples": warning_samples,
     }
+
+
+def _memory_health_count_and_samples(value: object) -> tuple[int, list[str]]:
+    if isinstance(value, int):
+        return value, []
+    if value is None:
+        return 0, []
+    if isinstance(value, str):
+        text = value.strip()
+        return (1, [text]) if text else (0, [])
+    try:
+        items = list(value)  # type: ignore[arg-type]
+    except TypeError:
+        text = str(value).strip()
+        return (1, [text]) if text else (0, [])
+    samples = [str(item) for item in items[:8] if str(item).strip()]
+    return len(items), samples
 
 
 def _refresh_snapshot_after_market_evidence_if_required(
