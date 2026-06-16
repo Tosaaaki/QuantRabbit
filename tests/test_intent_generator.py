@@ -3014,7 +3014,7 @@ class IntentGeneratorTest(unittest.TestCase):
         self.assertEqual(seed["intent"]["metadata"]["geometry_model"], "RANGE_RAIL_LIMIT")
         self.assertNotIn("FORECAST_CONFIDENCE_REQUIRED_FOR_LIVE", seed_issue_codes)
 
-    def test_range_forecast_box_seeds_watch_only_rotation_when_auto_edge_is_not_confirmed(self) -> None:
+    def test_range_forecast_box_keeps_breakout_pending_rotation_blocked(self) -> None:
         os.environ["QR_REQUIRE_FORECAST_FOR_LIVE"] = "1"
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -3141,7 +3141,8 @@ class IntentGeneratorTest(unittest.TestCase):
         self.assertEqual(metadata["forecast_range_low_price"], 1.1710)
         self.assertEqual(metadata["forecast_range_high_price"], 1.1760)
         self.assertEqual(metadata["geometry_model"], "RANGE_RAIL_LIMIT")
-        self.assertIn("FORECAST_WATCH_ONLY", issue_codes)
+        self.assertNotIn("FORECAST_WATCH_ONLY", issue_codes)
+        self.assertIn("RANGE_PHASE_NOT_ROTATION", issue_codes)
 
     def test_range_forecast_box_supplies_rotation_rails_when_chart_rails_are_missing(self) -> None:
         os.environ["QR_REQUIRE_FORECAST_FOR_LIVE"] = "1"
@@ -3237,7 +3238,11 @@ class IntentGeneratorTest(unittest.TestCase):
         self.assertEqual(metadata["range_entry_side"], "support")
         self.assertTrue(metadata["range_tp_is_inside_box"])
         self.assertTrue(metadata["range_sl_outside_box"])
-        self.assertIn("FORECAST_WATCH_ONLY", issue_codes)
+        self.assertTrue(metadata["forecast_watch_only_live_override"])
+        self.assertIn("Range rail override", metadata["required_receipt"])
+        self.assertIn("range rail override", seed["intent"]["market_context"]["event_risk"])
+        self.assertNotIn("FORECAST_WATCH_ONLY", issue_codes)
+        self.assertEqual(seed["status"], "LIVE_READY")
 
     def test_reversal_recovery_hedge_uses_recovery_forecast_floor_for_live_context(self) -> None:
         from quant_rabbit.models import BrokerSnapshot, MarketContext, OrderIntent, OrderType, Quote, Side, TradeMethod

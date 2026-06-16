@@ -6255,6 +6255,8 @@ def _forecast_directional_invalidation_first_issue(
 def _forecast_watch_only_issue(intent: OrderIntent, metadata: dict[str, Any]) -> dict[str, str] | None:
     if not metadata.get("forecast_watch_only"):
         return None
+    if _range_rail_limit_watch_only_can_trade(intent, metadata):
+        return None
     if _forecast_market_support_override(
         intent,
         metadata,
@@ -6275,6 +6277,84 @@ def _forecast_watch_only_issue(intent: OrderIntent, metadata: dict[str, Any]) ->
         ),
         "severity": "WARN",
     }
+
+
+def _range_rail_limit_watch_only_can_trade(intent: OrderIntent, metadata: dict[str, Any]) -> bool:
+    return _range_rail_limit_watch_only_metadata_can_trade(
+        side=intent.side,
+        order_type=intent.order_type,
+        metadata=metadata,
+    )
+
+
+def _range_rail_limit_watch_only_metadata_can_trade(
+    *,
+    side: Side,
+    order_type: OrderType,
+    metadata: dict[str, Any],
+) -> bool:
+    """Let measured RANGE rail LIMITs graduate past watch-only.
+
+    `forecast_watch_only` is still correct for weak directional forecasts and
+    range MARKET chases. A passive RANGE_RAIL_LIMIT with TP inside the box and
+    SL outside it is different: the broker order waits at the rail, so live
+    permission should be decided by forecast confidence, range geometry, risk,
+    strategy, spread, telemetry, and gateway validation rather than by the
+    auto-lane evidence counter alone.
+    """
+
+    if order_type != OrderType.LIMIT:
+        return False
+    if not _is_range_rotation_forecast_metadata(metadata):
+        return False
+    if not _range_rotation_rail_side_matches_metadata(side=side, metadata=metadata):
+        return False
+    confidence = _optional_float(metadata.get("forecast_confidence"))
+    if confidence is None or confidence < _forecast_live_min_confidence(metadata):
+        return False
+    if not _range_forecast_box_present(metadata):
+        return False
+    if _range_watch_reason_has_hard_breakout_risk(metadata):
+        return False
+    return True
+
+
+def _range_rotation_rail_side_matches_metadata(
+    *,
+    side: Side,
+    metadata: dict[str, Any],
+) -> bool:
+    rail_side = str(metadata.get("range_entry_side") or "").strip().lower().replace("-", "_")
+    support_sides = {"support", "lower", "lower_rail", "range_low"}
+    resistance_sides = {"resistance", "upper", "upper_rail", "range_high"}
+    return (side == Side.LONG and rail_side in support_sides) or (
+        side == Side.SHORT and rail_side in resistance_sides
+    )
+
+
+def _range_forecast_box_present(metadata: dict[str, Any]) -> bool:
+    low = _optional_float(metadata.get("forecast_range_low_price") or metadata.get("range_support"))
+    high = _optional_float(metadata.get("forecast_range_high_price") or metadata.get("range_resistance"))
+    return low is not None and high is not None and high > low
+
+
+def _range_watch_reason_has_hard_breakout_risk(metadata: dict[str, Any]) -> bool:
+    text = " ".join(
+        str(metadata.get(key) or "")
+        for key in (
+            "forecast_watch_only_reason",
+            "forecast_rationale",
+            "chart_story_structural",
+            "chart_story",
+        )
+    ).upper()
+    hard_markers = (
+        "BREAKOUT_PENDING",
+        "BREAKOUT_UP",
+        "BREAKOUT_DOWN",
+        "SQUEEZE",
+    )
+    return any(marker in text for marker in hard_markers)
 
 
 def _matrix_repair_reject_context_issue(intent: OrderIntent) -> dict[str, str] | None:
@@ -6336,6 +6416,18 @@ def _forecast_watch_live_override_receipt(
             "forecast_market_support": lane.get("forecast_market_support"),
         }
     )
+    if _range_rail_limit_watch_only_metadata_can_trade(
+        side=side,
+        order_type=order_type,
+        metadata=source,
+    ):
+        receipt = (
+            "Range rail override: measured RANGE_RAIL_LIMIT may be armed because the current "
+            "forecast box has a rail-side LIMIT entry, TP inside the box, SL outside the box, "
+            "and calibrated range confidence clears the live floor. Do not convert to MARKET; "
+            "refresh forecast and broker snapshot before send."
+        )
+        return receipt, "range rail override: measured RANGE_RAIL_LIMIT clears watch-only"
     if not _forecast_market_support_allows_side(
         side.value,
         source,

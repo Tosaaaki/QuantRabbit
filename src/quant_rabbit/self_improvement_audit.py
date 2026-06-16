@@ -1989,6 +1989,27 @@ def _directional_forecast_quality_findings(
     timeout_count = int(status_counts.get("TIMEOUT") or 0)
     hit_miss_count = int(status_counts.get("HIT") or 0) + int(status_counts.get("MISS") or 0)
     missing_geometry_count = max(0, hit_miss_count - len(calibrated))
+    recent_24h_directional = _directional_forecast_rows_since(directional, now=now, window=timedelta(hours=24))
+    recent_24h_calibrated = _directional_forecast_rows_since(calibrated, now=now, window=timedelta(hours=24))
+    recent_7d_directional = _directional_forecast_rows_since(directional, now=now, window=timedelta(days=7))
+    recent_7d_calibrated = _directional_forecast_rows_since(calibrated, now=now, window=timedelta(days=7))
+    recent_24h_coverage = (
+        len(recent_24h_calibrated) / len(recent_24h_directional)
+        if recent_24h_directional
+        else 0.0
+    )
+    recent_7d_coverage = (
+        len(recent_7d_calibrated) / len(recent_7d_directional)
+        if recent_7d_directional
+        else 0.0
+    )
+    recent_geometry_recovered = (
+        len(recent_24h_directional) >= FORECAST_CALIBRATION_MIN_SAMPLES
+        and recent_24h_coverage >= FORECAST_CALIBRATION_MIN_COVERAGE
+    ) or (
+        len(recent_7d_directional) >= FORECAST_CALIBRATION_MIN_SAMPLES
+        and recent_7d_coverage >= FORECAST_CALIBRATION_MIN_COVERAGE
+    )
     if calibration_coverage < FORECAST_CALIBRATION_MIN_COVERAGE:
         if timeout_count >= FORECAST_CALIBRATION_MIN_SAMPLES and timeout_count >= missing_geometry_count:
             findings.append(
@@ -2020,17 +2041,25 @@ def _directional_forecast_quality_findings(
             findings.append(
                 _finding(
                     run_id=run_id,
-                    priority="P1",
+                    priority="P2" if recent_geometry_recovered else "P1",
                     layer="forecast",
                     code="DIRECTIONAL_FORECAST_CALIBRATION_GEOMETRY_MISSING",
                     message=(
                         f"directional_forecast has only {len(calibrated)}/{len(directional)} "
                         "HIT/MISS target/invalidation calibration samples; resolved legacy samples "
                         "are missing target/invalidation geometry"
+                        + (
+                            ", but recent geometry coverage has recovered"
+                            if recent_geometry_recovered
+                            else ""
+                        )
                     ),
                     next_action=(
                         "Keep final forecast writes populated with target and invalidation prices, "
                         "and exclude older geometry-less direction samples from confidence expansion."
+                        if not recent_geometry_recovered
+                        else "Keep current forecast writes populated and treat older geometry-less rows "
+                        "as legacy audit debt, not a reason to suppress current calibrated edge discovery."
                     ),
                     evidence={
                         "rows": len(directional),
@@ -2038,6 +2067,13 @@ def _directional_forecast_quality_findings(
                         "missing_geometry_samples": missing_geometry_count,
                         "calibration_coverage": round(calibration_coverage, 4),
                         "min_coverage": FORECAST_CALIBRATION_MIN_COVERAGE,
+                        "recent_recovered": recent_geometry_recovered,
+                        "recent_24h_rows": len(recent_24h_directional),
+                        "recent_24h_calibrated_samples": len(recent_24h_calibrated),
+                        "recent_24h_calibration_coverage": round(recent_24h_coverage, 4),
+                        "recent_7d_rows": len(recent_7d_directional),
+                        "recent_7d_calibrated_samples": len(recent_7d_calibrated),
+                        "recent_7d_calibration_coverage": round(recent_7d_coverage, 4),
                         "status_counts": status_counts,
                         "examples": [_projection_ref(row) for row in directional[:8]],
                     },
