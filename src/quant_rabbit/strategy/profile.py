@@ -459,6 +459,12 @@ def _forecast_seed_side_aligned(intent: OrderIntent, metadata: dict[str, Any]) -
     if (side == "LONG" and chart_bias == "SHORT") or (side == "SHORT" and chart_bias == "LONG"):
         return False
 
+    if _range_rotation_rail_side_matches(intent, metadata, side=side):
+        # A rail fade intentionally enters against the local M5 push at
+        # support/resistance. The profile gate should not reclassify that
+        # range-rotation geometry as a trend-continuation side conflict.
+        return True
+
     long_bias = _optional_float(metadata.get("m5_long_bias"))
     short_bias = _optional_float(metadata.get("m5_short_bias"))
     if long_bias is not None and short_bias is not None:
@@ -468,6 +474,26 @@ def _forecast_seed_side_aligned(intent: OrderIntent, metadata: dict[str, Any]) -
             return False
 
     return True
+
+
+def _range_rotation_rail_side_matches(
+    intent: OrderIntent,
+    metadata: dict[str, Any],
+    *,
+    side: str,
+) -> bool:
+    if _intent_method(intent) != "RANGE_ROTATION":
+        return False
+    if str(metadata.get("forecast_direction") or "").strip().upper() != "RANGE":
+        return False
+    if str(metadata.get("geometry_model") or "").strip().upper() != "RANGE_RAIL_LIMIT":
+        return False
+    rail_side = str(metadata.get("range_entry_side") or "").strip().lower().replace("-", "_")
+    support_sides = {"support", "lower", "lower_rail", "range_low"}
+    resistance_sides = {"resistance", "upper", "upper_rail", "range_high"}
+    return (side == "LONG" and rail_side in support_sides) or (
+        side == "SHORT" and rail_side in resistance_sides
+    )
 
 
 def _method_suffix(entry: StrategyProfileEntry) -> str:

@@ -229,6 +229,68 @@ class StrategyProfileTest(unittest.TestCase):
         self.assertEqual(issues[0].code, "STRATEGY_NOT_ELIGIBLE")
         self.assertEqual(issues[0].severity, "BLOCK")
 
+    def test_watch_only_range_rotation_rail_seed_is_advisory_despite_local_fade_bias(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            profile = StrategyProfile.load(_pair_side_profile(Path(tmp), status="WATCH_ONLY"))
+            prior = os.environ.get("QR_TRADER_DISABLE_SL_REPAIR")
+            os.environ["QR_TRADER_DISABLE_SL_REPAIR"] = "1"
+            try:
+                issues = profile.validate(
+                    _intent(
+                        "EUR_USD",
+                        method=TradeMethod.RANGE_ROTATION,
+                        order_type=OrderType.LIMIT,
+                        metadata={
+                            "forecast_seed": True,
+                            "forecast_direction": "RANGE",
+                            "forecast_confidence": 0.78,
+                            "geometry_model": "RANGE_RAIL_LIMIT",
+                            "range_entry_side": "support",
+                            "chart_direction_bias": "LONG",
+                            "m5_long_bias": 0.125,
+                            "m5_short_bias": 0.75,
+                        },
+                    ),
+                    for_live_send=True,
+                )
+            finally:
+                _restore_env("QR_TRADER_DISABLE_SL_REPAIR", prior)
+
+        self.assertEqual(len(issues), 1)
+        self.assertEqual(issues[0].code, "STRATEGY_NOT_ELIGIBLE")
+        self.assertEqual(issues[0].severity, "WARN")
+
+    def test_watch_only_range_rotation_wrong_rail_side_still_blocks_under_sl_free(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            profile = StrategyProfile.load(_pair_side_profile(Path(tmp), status="WATCH_ONLY"))
+            prior = os.environ.get("QR_TRADER_DISABLE_SL_REPAIR")
+            os.environ["QR_TRADER_DISABLE_SL_REPAIR"] = "1"
+            try:
+                issues = profile.validate(
+                    _intent(
+                        "EUR_USD",
+                        method=TradeMethod.RANGE_ROTATION,
+                        order_type=OrderType.LIMIT,
+                        metadata={
+                            "forecast_seed": True,
+                            "forecast_direction": "RANGE",
+                            "forecast_confidence": 0.78,
+                            "geometry_model": "RANGE_RAIL_LIMIT",
+                            "range_entry_side": "resistance",
+                            "chart_direction_bias": "LONG",
+                            "m5_long_bias": 0.125,
+                            "m5_short_bias": 0.75,
+                        },
+                    ),
+                    for_live_send=True,
+                )
+            finally:
+                _restore_env("QR_TRADER_DISABLE_SL_REPAIR", prior)
+
+        self.assertEqual(len(issues), 1)
+        self.assertEqual(issues[0].code, "STRATEGY_NOT_ELIGIBLE")
+        self.assertEqual(issues[0].severity, "BLOCK")
+
     def test_missing_profile_blocks_live_send_under_sl_free(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             profile = StrategyProfile.load(_profile(Path(tmp), status="CANDIDATE"))
@@ -411,6 +473,25 @@ def _profile(root: Path, *, status: str) -> Path:
                         "method": "BREAKOUT_FAILURE",
                         "status": status,
                         "required_fix": "build trigger/pending-entry receipts before live execution",
+                    }
+                ]
+            }
+        )
+    )
+    return path
+
+
+def _pair_side_profile(root: Path, *, status: str) -> Path:
+    path = root / "strategy.json"
+    path.write_text(
+        json.dumps(
+            {
+                "profiles": [
+                    {
+                        "pair": "EUR_USD",
+                        "direction": "LONG",
+                        "status": status,
+                        "required_fix": "insufficient or mixed evidence; can be observed but not promoted to live execution",
                     }
                 ]
             }
