@@ -1798,7 +1798,99 @@ class SelfImprovementAuditorTest(unittest.TestCase):
         self.assertEqual(lane_diagnostic["forecast_market_support_best_hit_rate"], 0.82)
         self.assertEqual(lane_diagnostic["forecast_market_support_top_signal"]["name"], "liquidity_sweep_high")
 
-    def test_unselected_projection_arbitration_becomes_forecast_repair_finding(self) -> None:
+    def test_same_side_unselected_projection_arbitration_becomes_forecast_repair_finding(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root, active_position=False)
+            files["intents"].write_text(
+                json.dumps(
+                    {
+                        "results": [
+                            {
+                                "lane_id": "range_trader:EUR_JPY:LONG:RANGE_ROTATION",
+                                "status": "DRY_RUN_PASSED",
+                                "intent": {
+                                    "pair": "EUR_JPY",
+                                    "side": "LONG",
+                                    "order_type": "LIMIT",
+                                    "metadata": {
+                                        "forecast_direction": "RANGE",
+                                        "forecast_confidence": 0.944,
+                                        "forecast_raw_confidence": 0.821,
+                                        "chart_direction_bias": "LONG",
+                                        "forecast_market_support": {
+                                            "ok": False,
+                                            "direction": "RANGE",
+                                            "reason": "forecast RANGE has no executable direction; audited projection unselected",
+                                            "unselected_projection_count": 2,
+                                            "unselected_reason": (
+                                                "liquidity_sweep_low UP audited hit_rate=1.00 "
+                                                "samples=40 was unselected because forecast=RANGE"
+                                            ),
+                                            "unselected_signals": [
+                                                {
+                                                    "confidence": 0.9918,
+                                                    "direction": "UP",
+                                                    "hit_rate": 1.0,
+                                                    "name": "liquidity_sweep_low",
+                                                    "samples": 40,
+                                                    "timeframe": "M15",
+                                                    "rationale": "sell-side sweep target, fade LONG",
+                                                },
+                                                {
+                                                    "confidence": 0.8123,
+                                                    "direction": "UP",
+                                                    "hit_rate": 0.78,
+                                                    "name": "liquidity_sweep_low",
+                                                    "samples": 18,
+                                                    "timeframe": "M30",
+                                                    "rationale": "higher-timeframe sell-side sweep target",
+                                                }
+                                            ],
+                                        },
+                                    },
+                                },
+                                "risk_issues": [],
+                                "strategy_issues": [],
+                                "live_strategy_issues": [],
+                                "live_blockers": [],
+                                "risk_metrics": {
+                                    "reward_jpy": 1200.0,
+                                    "reward_risk": 1.2,
+                                },
+                            }
+                        ]
+                    }
+                )
+            )
+
+            summary = _run(files)
+            payload = json.loads(files["output"].read_text())
+            report_text = files["report"].read_text()
+
+        codes = {item["code"]: item for item in payload["findings"]}
+        self.assertEqual(summary.status, STATUS_BLOCKED)
+        self.assertIn("TARGET_OPEN_NO_LIVE_READY_LANES", codes)
+        finding = codes["FORECAST_ARBITRATION_UNSELECTED_PROJECTION_REPAIR_REQUIRED"]
+        self.assertEqual(finding["priority"], "P1")
+        diagnostics = finding["evidence"]["forecast_arbitration_diagnostics"]
+        self.assertEqual(diagnostics["lane_count"], 1)
+        self.assertEqual(diagnostics["same_side_lane_count"], 1)
+        self.assertEqual(diagnostics["opposite_side_lane_count"], 0)
+        self.assertEqual(diagnostics["relation_counts"][0]["relation"], "same_side")
+        self.assertEqual(diagnostics["direction_counts"][0]["direction"], "UP")
+        self.assertEqual(diagnostics["signal_counts"][0]["signal"], "liquidity_sweep_low:UP")
+        self.assertEqual(diagnostics["lanes"][0]["pair"], "EUR_JPY")
+        self.assertEqual(diagnostics["lanes"][0]["top_unselected_signal_side"], "LONG")
+        self.assertEqual(diagnostics["lanes"][0]["top_unselected_signal_relation"], "same_side")
+        self.assertEqual(diagnostics["lanes"][0]["top_unselected_signal"]["hit_rate"], 1.0)
+        no_live_ready_evidence = codes["TARGET_OPEN_NO_LIVE_READY_LANES"]["evidence"]
+        self.assertEqual(no_live_ready_evidence["forecast_arbitration_diagnostics"]["lane_count"], 1)
+        self.assertIn("forecast arbitration", report_text)
+        self.assertIn("relations=`same_side=1`", report_text)
+        self.assertIn("EUR_JPY LONG->liquidity_sweep_low UP", report_text)
+
+    def test_opposite_unselected_projection_arbitration_is_enforced_not_repair(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             files = _fixtures(root, active_position=False)
@@ -1873,19 +1965,111 @@ class SelfImprovementAuditorTest(unittest.TestCase):
 
         codes = {item["code"]: item for item in payload["findings"]}
         self.assertEqual(summary.status, STATUS_BLOCKED)
-        self.assertIn("TARGET_OPEN_NO_LIVE_READY_LANES", codes)
-        finding = codes["FORECAST_ARBITRATION_UNSELECTED_PROJECTION_REPAIR_REQUIRED"]
-        self.assertEqual(finding["priority"], "P1")
+        self.assertNotIn("FORECAST_ARBITRATION_UNSELECTED_PROJECTION_REPAIR_REQUIRED", codes)
+        finding = codes["FORECAST_ARBITRATION_OPPOSITE_PROJECTION_CONFLICTS_ENFORCED"]
+        self.assertEqual(finding["priority"], "P2")
         diagnostics = finding["evidence"]["forecast_arbitration_diagnostics"]
         self.assertEqual(diagnostics["lane_count"], 1)
-        self.assertEqual(diagnostics["direction_counts"][0]["direction"], "UP")
-        self.assertEqual(diagnostics["signal_counts"][0]["signal"], "liquidity_sweep_low:UP")
-        self.assertEqual(diagnostics["lanes"][0]["pair"], "EUR_JPY")
-        self.assertEqual(diagnostics["lanes"][0]["top_unselected_signal"]["hit_rate"], 1.0)
-        no_live_ready_evidence = codes["TARGET_OPEN_NO_LIVE_READY_LANES"]["evidence"]
-        self.assertEqual(no_live_ready_evidence["forecast_arbitration_diagnostics"]["lane_count"], 1)
-        self.assertIn("forecast arbitration", report_text)
-        self.assertIn("EUR_JPY SHORT->liquidity_sweep_low UP", report_text)
+        self.assertEqual(diagnostics["same_side_lane_count"], 0)
+        self.assertEqual(diagnostics["opposite_side_lane_count"], 1)
+        self.assertEqual(diagnostics["relation_counts"][0]["relation"], "opposite_side")
+        self.assertEqual(diagnostics["lanes"][0]["top_unselected_signal_relation"], "opposite_side")
+        self.assertIn("relations=`opposite_side=1`", report_text)
+
+    def test_mixed_unselected_projection_arbitration_is_not_same_side_repair(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root, active_position=False)
+            files["intents"].write_text(
+                json.dumps(
+                    {
+                        "results": [
+                            {
+                                "lane_id": "range_trader:GBP_JPY:SHORT:RANGE_ROTATION",
+                                "status": "DRY_RUN_PASSED",
+                                "intent": {
+                                    "pair": "GBP_JPY",
+                                    "side": "SHORT",
+                                    "order_type": "LIMIT",
+                                    "metadata": {
+                                        "forecast_direction": "RANGE",
+                                        "forecast_confidence": 0.985,
+                                        "forecast_raw_confidence": 0.9,
+                                        "chart_direction_bias": "LONG",
+                                        "forecast_market_support": {
+                                            "ok": False,
+                                            "direction": "RANGE",
+                                            "reason": "forecast RANGE has no executable direction; audited projection unselected",
+                                            "unselected_projection_count": 2,
+                                            "unselected_reason": "mixed sweep projections were unselected because forecast=RANGE",
+                                            "unselected_signals": [
+                                                {
+                                                    "confidence": 0.68,
+                                                    "direction": "DOWN",
+                                                    "hit_rate": 0.825,
+                                                    "name": "liquidity_sweep_high",
+                                                    "samples": 40,
+                                                    "timeframe": "M5",
+                                                    "rationale": "buy-side sweep target, fade SHORT",
+                                                },
+                                                {
+                                                    "confidence": 0.875,
+                                                    "direction": "UP",
+                                                    "hit_rate": 0.667,
+                                                    "name": "liquidity_sweep_low",
+                                                    "samples": 24,
+                                                    "timeframe": "M15",
+                                                    "rationale": "sell-side sweep target, fade LONG",
+                                                },
+                                            ],
+                                        },
+                                    },
+                                },
+                                "risk_issues": [
+                                    {
+                                        "code": "FORECAST_RANGE_UNSELECTED_DIRECTION_CONFLICT",
+                                        "message": "audited projection conflicts with RANGE lane",
+                                        "severity": "WARN",
+                                    }
+                                ],
+                                "strategy_issues": [],
+                                "live_strategy_issues": [],
+                                "live_blockers": [
+                                    {
+                                        "code": "FORECAST_RANGE_UNSELECTED_DIRECTION_CONFLICT",
+                                        "message": "audited projection conflicts with RANGE lane",
+                                        "severity": "BLOCK",
+                                    }
+                                ],
+                                "risk_metrics": {
+                                    "reward_jpy": 1200.0,
+                                    "reward_risk": 1.2,
+                                },
+                            }
+                        ]
+                    }
+                )
+            )
+
+            summary = _run(files)
+            payload = json.loads(files["output"].read_text())
+            report_text = files["report"].read_text()
+
+        codes = {item["code"]: item for item in payload["findings"]}
+        self.assertEqual(summary.status, STATUS_BLOCKED)
+        self.assertNotIn("FORECAST_ARBITRATION_UNSELECTED_PROJECTION_REPAIR_REQUIRED", codes)
+        finding = codes["FORECAST_ARBITRATION_OPPOSITE_PROJECTION_CONFLICTS_ENFORCED"]
+        diagnostics = finding["evidence"]["forecast_arbitration_diagnostics"]
+        self.assertEqual(diagnostics["lane_count"], 1)
+        self.assertEqual(diagnostics["same_side_lane_count"], 0)
+        self.assertEqual(diagnostics["opposite_side_lane_count"], 0)
+        self.assertEqual(diagnostics["mixed_relation_lane_count"], 1)
+        self.assertEqual(diagnostics["opposite_conflict_lane_count"], 1)
+        self.assertEqual(diagnostics["relation_counts"][0]["relation"], "mixed_with_opposite")
+        self.assertEqual(diagnostics["lanes"][0]["top_unselected_signal_relation"], "mixed_with_opposite")
+        self.assertEqual(diagnostics["lanes"][0]["same_side_unselected_signal"]["direction"], "DOWN")
+        self.assertEqual(diagnostics["lanes"][0]["opposite_side_unselected_signal"]["direction"], "UP")
+        self.assertIn("relations=`mixed_with_opposite=1`", report_text)
 
     def test_coverage_perspective_mismatch_becomes_self_improvement_finding(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
