@@ -272,6 +272,34 @@ class StrategyProfileTest(unittest.TestCase):
         self.assertEqual(issues[0].code, "STRATEGY_PROFILE_MISSING")
         self.assertEqual(issues[0].severity, "WARN")
 
+    def test_high_confidence_forecast_seed_missing_profile_blocks_when_chart_opposes_side(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            profile = StrategyProfile.load(_profile(Path(tmp), status="CANDIDATE"))
+            prior = os.environ.get("QR_TRADER_DISABLE_SL_REPAIR")
+            os.environ["QR_TRADER_DISABLE_SL_REPAIR"] = "1"
+            try:
+                issues = profile.validate(
+                    _intent(
+                        "GBP_USD",
+                        method=TradeMethod.TREND_CONTINUATION,
+                        order_type=OrderType.STOP_ENTRY,
+                        metadata={
+                            "forecast_seed": True,
+                            "forecast_confidence": 0.72,
+                            "chart_direction_bias": "SHORT",
+                            "m5_long_bias": 0.2,
+                            "m5_short_bias": 0.8,
+                        },
+                    ),
+                    for_live_send=True,
+                )
+            finally:
+                _restore_env("QR_TRADER_DISABLE_SL_REPAIR", prior)
+
+        self.assertEqual(len(issues), 1)
+        self.assertEqual(issues[0].code, "STRATEGY_PROFILE_MISSING")
+        self.assertEqual(issues[0].severity, "BLOCK")
+
     def test_low_confidence_forecast_seed_missing_profile_blocks_under_sl_free(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             profile = StrategyProfile.load(_profile(Path(tmp), status="CANDIDATE"))

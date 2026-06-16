@@ -377,7 +377,10 @@ def _forecast_seed_missing_profile_severity(intent: OrderIntent) -> str | None:
     confidence = _optional_float((intent.metadata or {}).get("forecast_confidence"))
     if confidence is None:
         return None
-    if confidence >= _forecast_seed_missing_profile_min_confidence():
+    if (
+        confidence >= _forecast_seed_missing_profile_min_confidence()
+        and _forecast_seed_side_aligned(intent, intent.metadata or {})
+    ):
         return "WARN"
     return None
 
@@ -442,14 +445,14 @@ def _watch_only_severity(intent: OrderIntent, *, sl_free: bool, for_live_send: b
     if (
         metadata.get("forecast_seed")
         and intent.order_type != OrderType.MARKET
-        and _watch_only_forecast_seed_side_aligned(intent, metadata)
+        and _forecast_seed_side_aligned(intent, metadata)
     ):
         return "WARN"
     return "BLOCK"
 
 
-def _watch_only_forecast_seed_side_aligned(intent: OrderIntent, metadata: dict[str, Any]) -> bool:
-    """Keep the forecast-seed WATCH_ONLY exception out of opposite-side chases."""
+def _forecast_seed_side_aligned(intent: OrderIntent, metadata: dict[str, Any]) -> bool:
+    """Keep forecast-seed profile exceptions out of opposite-side chases."""
 
     side = str(intent.side.value).upper()
     chart_bias = str(metadata.get("chart_direction_bias") or "").upper()
