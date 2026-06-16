@@ -3964,6 +3964,75 @@ class IntentGeneratorTest(unittest.TestCase):
         weak_issue = _forecast_live_readiness_issue(intent, weak_metadata, TradeMethod.RANGE_ROTATION)
         self.assertEqual(weak_issue["code"], "FORECAST_CONFIDENCE_REQUIRED_FOR_LIVE")
 
+    def test_range_limit_uses_same_side_unselected_projection_support(self) -> None:
+        from quant_rabbit.models import MarketContext, OrderIntent, OrderType, Side, TradeMethod
+        from quant_rabbit.strategy.intent_generator import _forecast_live_readiness_issue
+
+        os.environ["QR_REQUIRE_FORECAST_FOR_LIVE"] = "1"
+        metadata = {
+            "forecast_direction": "RANGE",
+            "forecast_confidence": 0.43,
+            "forecast_horizon_min": 120,
+            "geometry_model": "RANGE_RAIL_LIMIT",
+            "range_tp_is_inside_box": True,
+            "range_sl_outside_box": True,
+            "forecast_market_support": {
+                "ok": False,
+                "direction": "RANGE",
+                "unselected_projection_count": 1,
+                "unselected_signals": [
+                    {
+                        "name": "liquidity_sweep_high",
+                        "direction": "DOWN",
+                        "confidence": 0.7034,
+                        "hit_rate": 1.0,
+                        "samples": 22,
+                        "lead_time_min": 15.0,
+                    }
+                ],
+            },
+        }
+        intent = OrderIntent(
+            pair="USD_CAD",
+            side=Side.SHORT,
+            order_type=OrderType.LIMIT,
+            units=8000,
+            entry=1.40019,
+            tp=1.39933,
+            sl=1.40121,
+            thesis="upper-rail sweep fade",
+            market_context=MarketContext(
+                regime="RANGE current; RANGE_ROTATION campaign lane",
+                narrative="audited sweep supports the upper-rail fade",
+                chart_story="range rail geometry waits above current price",
+                method=TradeMethod.RANGE_ROTATION,
+                invalidation="SL trades",
+            ),
+            metadata=metadata,
+        )
+
+        self.assertIsNone(_forecast_live_readiness_issue(intent, metadata, TradeMethod.RANGE_ROTATION))
+
+        market_intent = OrderIntent(
+            pair="USD_CAD",
+            side=Side.SHORT,
+            order_type=OrderType.MARKET,
+            units=8000,
+            entry=None,
+            tp=1.39933,
+            sl=1.40121,
+            thesis="do not market-chase weak range forecast",
+            market_context=intent.market_context,
+            metadata=metadata,
+        )
+        market_issue = _forecast_live_readiness_issue(
+            market_intent,
+            metadata,
+            TradeMethod.RANGE_ROTATION,
+        )
+
+        self.assertEqual(market_issue["code"], "FORECAST_CONFIDENCE_REQUIRED_FOR_LIVE")
+
     def test_directional_forecast_weak_hit_rate_blocks_live_readiness(self) -> None:
         from quant_rabbit.models import MarketContext, OrderIntent, OrderType, Side, TradeMethod
         from quant_rabbit.strategy.intent_generator import _forecast_live_readiness_issue

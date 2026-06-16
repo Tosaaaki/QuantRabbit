@@ -174,6 +174,11 @@ FORECAST_MARKET_SUPPORT_MIN_DIRECTIONAL_HIT_RATE = _env_float_or(
     0.55,
     minimum=0.50,
 )
+FORECAST_MARKET_SUPPORT_MIN_SIGNAL_CONFIDENCE = _env_float_or(
+    "QR_FORECAST_MARKET_SUPPORT_MIN_SIGNAL_CONFIDENCE",
+    0.55,
+    minimum=0.0,
+)
 FORECAST_MARKET_SUPPORT_MIN_SAMPLES = (
     _env_optional_int("QR_FORECAST_MARKET_SUPPORT_MIN_SAMPLES", None)
     or _env_optional_int("QR_PROJECTION_CONFIDENCE_MIN_SAMPLES", None)
@@ -187,6 +192,15 @@ FORECAST_MARKET_SUPPORT_MAX_CONFIDENCE_SHORTFALL = _env_float_or(
 FORECAST_DIRECTIONAL_LIVE_MIN_CONFIDENCE = _env_float_or(
     "QR_FORECAST_DIRECTIONAL_LIVE_MIN_CONFIDENCE",
     0.65,
+    minimum=0.50,
+)
+# RANGE rotation confidence mirrors intent_generator: 50% is the minimum
+# probability that the box remains tradeable, and live send may go below it
+# only when a current audited same-side projection supports a passive rail
+# LIMIT. This is gateway defense-in-depth, not a separate tuning surface.
+FORECAST_RANGE_ROTATION_MIN_CONFIDENCE = _env_float_or(
+    "QR_FORECAST_RANGE_ROTATION_MIN_CONFIDENCE",
+    0.50,
     minimum=0.50,
 )
 FORECAST_DIRECTIONAL_LIVE_MIN_HIT_RATE = _env_float_or(
@@ -600,6 +614,115 @@ def _forecast_confidence_required_issue(
     )
 
 
+def _range_rail_limit_metadata_ok(metadata: dict) -> bool:
+    return (
+        str(metadata.get("geometry_model") or "").upper() == "RANGE_RAIL_LIMIT"
+        and bool(metadata.get("range_tp_is_inside_box"))
+        and bool(metadata.get("range_sl_outside_box"))
+    )
+
+
+def _support_signal_within_forecast_horizon(
+    signal: dict,
+    *,
+    forecast_horizon_min: float | None,
+) -> bool:
+    if forecast_horizon_min is None or forecast_horizon_min <= 0:
+        return True
+    lead_time = _to_float(signal.get("lead_time_min"))
+    if lead_time is None:
+        return True
+    return max(0.0, lead_time) <= forecast_horizon_min
+
+
+def _forecast_range_unselected_projection_support_allows_side(
+    intent: OrderIntent,
+    metadata: dict,
+    support: dict,
+    *,
+    confidence: float | None,
+    min_confidence: float,
+) -> bool:
+    """Mirror intent_generator's RANGE rail support override at the gateway."""
+    if intent.side not in {Side.LONG, Side.SHORT}:
+        return False
+    if intent.order_type != OrderType.LIMIT:
+        return False
+    method = intent.market_context.method if intent.market_context is not None else None
+    if method != TradeMethod.RANGE_ROTATION:
+        return False
+    if not _range_rail_limit_metadata_ok(metadata):
+        return False
+    if confidence is None:
+        return False
+    support_floor = max(0.0, min_confidence - FORECAST_MARKET_SUPPORT_MAX_CONFIDENCE_SHORTFALL)
+    if confidence < support_floor:
+        return False
+    expected_direction = "UP" if intent.side == Side.LONG else "DOWN"
+    forecast_horizon_min = _to_float(metadata.get("forecast_horizon_min"))
+    signals = support.get("unselected_signals")
+    if not isinstance(signals, list):
+        return False
+    for signal in signals:
+        if not isinstance(signal, dict):
+            continue
+        if str(signal.get("direction") or "").upper() != expected_direction:
+            continue
+        if not _support_signal_within_forecast_horizon(
+            signal,
+            forecast_horizon_min=forecast_horizon_min,
+        ):
+            continue
+        signal_confidence = _to_float(signal.get("confidence")) or 0.0
+        hit_rate = _to_float(signal.get("hit_rate")) or 0.0
+        samples = _to_int(signal.get("samples")) or 0
+        if (
+            signal_confidence >= FORECAST_MARKET_SUPPORT_MIN_SIGNAL_CONFIDENCE
+            and hit_rate >= FORECAST_MARKET_SUPPORT_MIN_DIRECTIONAL_HIT_RATE
+            and samples >= FORECAST_MARKET_SUPPORT_MIN_SAMPLES
+        ):
+            return True
+    return False
+
+
+def _forecast_range_confidence_issues(
+    intent: OrderIntent,
+    *,
+    for_live_send: bool,
+) -> list[RiskIssue]:
+    if not for_live_send:
+        return []
+    metadata = intent.metadata or {}
+    if str(metadata.get("forecast_direction") or "").upper() != "RANGE":
+        return []
+    if (
+        _intent_declares_recovery_hedge(intent)
+        and str(metadata.get("hedge_timing_class") or "").upper() == "REVERSAL"
+    ):
+        return []
+    confidence = _to_float(metadata.get("forecast_confidence"))
+    min_confidence = FORECAST_RANGE_ROTATION_MIN_CONFIDENCE
+    if confidence is not None and confidence >= min_confidence:
+        return []
+    support = _forecast_market_support(metadata)
+    if _forecast_range_unselected_projection_support_allows_side(
+        intent,
+        metadata,
+        support,
+        confidence=confidence,
+        min_confidence=min_confidence,
+    ):
+        return []
+    return [
+        _forecast_confidence_required_issue(
+            intent,
+            direction="RANGE",
+            confidence=confidence,
+            min_confidence=min_confidence,
+        )
+    ]
+
+
 def _forecast_directional_hit_rate_weak_issue(
     intent: OrderIntent,
     *,
@@ -892,6 +1015,7 @@ class RiskEngine:
         issues.extend(_hedge_balance_issues(intent, snapshot))
         issues.extend(_forecast_unselected_projection_conflict_issues(intent, for_live_send=for_live_send))
         issues.extend(_forecast_range_method_issues(intent, for_live_send=for_live_send))
+        issues.extend(_forecast_range_confidence_issues(intent, for_live_send=for_live_send))
         issues.extend(self._market_context_issues(intent, for_live_send=for_live_send))
 
         entry_relevant_positions = self._entry_relevant_positions(snapshot)

@@ -440,10 +440,11 @@ class RiskEngineTest(unittest.TestCase):
         intent = OrderIntent(
             pair="EUR_USD",
             side=Side.SHORT,
-            order_type=OrderType.MARKET,
+            order_type=OrderType.LIMIT,
             units=1000,
+            entry=1.17400,
             tp=1.17130,
-            sl=1.17430,
+            sl=1.17470,
             thesis="sell_range_when_audited_projection_points_down",
             market_context=MarketContext(
                 regime="RANGE current; RANGE_ROTATION campaign lane",
@@ -454,13 +455,20 @@ class RiskEngineTest(unittest.TestCase):
             ),
             metadata={
                 "forecast_direction": "RANGE",
+                "forecast_confidence": 0.43,
+                "forecast_horizon_min": 120,
+                "geometry_model": "RANGE_RAIL_LIMIT",
+                "range_tp_is_inside_box": True,
+                "range_sl_outside_box": True,
                 "forecast_market_support": {
                     "unselected_signals": [
                         {
                             "name": "news_theme_followthrough",
                             "direction": "DOWN",
+                            "confidence": 0.8,
                             "hit_rate": 1.0,
                             "samples": 12,
+                            "lead_time_min": 20.0,
                         }
                     ]
                 },
@@ -474,6 +482,49 @@ class RiskEngineTest(unittest.TestCase):
             "FORECAST_RANGE_UNSELECTED_DIRECTION_CONFLICT",
             {issue.code for issue in decision.issues},
         )
+
+    def test_range_forecast_same_side_unselected_projection_does_not_authorize_market(self) -> None:
+        intent = OrderIntent(
+            pair="EUR_USD",
+            side=Side.SHORT,
+            order_type=OrderType.MARKET,
+            units=1000,
+            tp=1.17130,
+            sl=1.17430,
+            thesis="do_not_market_sell_weak_range_forecast",
+            market_context=MarketContext(
+                regime="RANGE current; RANGE_ROTATION campaign lane",
+                narrative="same-side projection is only a passive rail fade aid",
+                chart_story="range rail geometry exists but the order chases now",
+                method=TradeMethod.RANGE_ROTATION,
+                invalidation="SL trades",
+            ),
+            metadata={
+                "forecast_direction": "RANGE",
+                "forecast_confidence": 0.43,
+                "forecast_horizon_min": 120,
+                "geometry_model": "RANGE_RAIL_LIMIT",
+                "range_tp_is_inside_box": True,
+                "range_sl_outside_box": True,
+                "forecast_market_support": {
+                    "unselected_signals": [
+                        {
+                            "name": "news_theme_followthrough",
+                            "direction": "DOWN",
+                            "confidence": 0.8,
+                            "hit_rate": 1.0,
+                            "samples": 12,
+                            "lead_time_min": 20.0,
+                        }
+                    ]
+                },
+            },
+        )
+
+        decision = RiskEngine(live_enabled=True).validate(intent, snapshot(), for_live_send=True)
+
+        self.assertFalse(decision.allowed)
+        self.assertIn("FORECAST_CONFIDENCE_REQUIRED_FOR_LIVE", {issue.code for issue in decision.issues})
 
     def test_directional_forecast_blocks_opposite_unselected_projection_without_selected_support(self) -> None:
         intent = OrderIntent(

@@ -6395,6 +6395,17 @@ def _forecast_market_support_allows_side(
         forecast_horizon_min = _optional_float(getattr(source, "horizon_min", None))
         support = _forecast_market_support_payload(getattr(source, "market_support", None))
         chart_direction_bias = ""
+    if _forecast_range_unselected_projection_support_allows_side(
+        side,
+        source,
+        direction=direction,
+        confidence=confidence,
+        support=support,
+        min_confidence=min_confidence,
+        forecast_horizon_min=forecast_horizon_min,
+        order_type=order_type,
+    ):
+        return True
     expected_side = Side.LONG.value if direction == "UP" else Side.SHORT.value if direction == "DOWN" else None
     if expected_side != side:
         return False
@@ -6512,6 +6523,61 @@ def _forecast_market_support_allows_side(
         and (timing_samples or 0) >= FORECAST_MARKET_SUPPORT_MIN_SAMPLES
         and (timing_hit_rate or 0.0) >= FORECAST_MARKET_SUPPORT_MIN_TIMING_HIT_RATE
     )
+
+
+def _forecast_range_unselected_projection_support_allows_side(
+    side: str | None,
+    source: Any,
+    *,
+    direction: str,
+    confidence: float | None,
+    support: dict[str, Any],
+    min_confidence: float,
+    forecast_horizon_min: float | None,
+    order_type: OrderType | None,
+) -> bool:
+    """Allow weak RANGE rail LIMITs when an audited sweep supports the same side.
+
+    RANGE confidence measures whether the current box is tradeable. A current
+    unselected directional projection can still be the missing micro-view for a
+    passive rail fade, but only for LIMIT geometry that waits at the rail.
+    MARKET/STOP entries keep the ordinary confidence gate because they can
+    become the reverse-first chase the forecast floor was added to prevent.
+    """
+    if not isinstance(source, dict):
+        return False
+    if side not in {Side.LONG.value, Side.SHORT.value}:
+        return False
+    if direction != "RANGE" or order_type != OrderType.LIMIT:
+        return False
+    if not _is_range_rotation_forecast_metadata(source):
+        return False
+    if confidence is None:
+        return False
+    support_floor = max(0.0, min_confidence - FORECAST_MARKET_SUPPORT_MAX_CONFIDENCE_SHORTFALL)
+    if confidence < support_floor:
+        return False
+    expected_signal_direction = "UP" if side == Side.LONG.value else "DOWN"
+    for signal in support.get("unselected_signals") or []:
+        if not isinstance(signal, dict):
+            continue
+        if str(signal.get("direction") or "").upper() != expected_signal_direction:
+            continue
+        if not _support_signal_within_forecast_horizon(
+            signal,
+            forecast_horizon_min=forecast_horizon_min,
+        ):
+            continue
+        signal_confidence = _optional_float(signal.get("confidence")) or 0.0
+        hit_rate = _optional_float(signal.get("hit_rate")) or 0.0
+        samples = _optional_int(signal.get("samples")) or 0
+        if (
+            signal_confidence >= FORECAST_MARKET_SUPPORT_MIN_SIGNAL_CONFIDENCE
+            and hit_rate >= FORECAST_MARKET_SUPPORT_MIN_DIRECTIONAL_HIT_RATE
+            and samples >= FORECAST_MARKET_SUPPORT_MIN_SAMPLES
+        ):
+            return True
+    return False
 
 
 def _forecast_support_override_stop_entry_chases_range_edge(
