@@ -1283,6 +1283,9 @@ class GPTTraderBrain:
             },
             "artifact_timestamps": {
                 "order_intents_generated_at_utc": intents.get("generated_at_utc"),
+                "ai_attack_advice_generated_at_utc": (
+                    attack_advice.get("generated_at_utc") if isinstance(attack_advice, dict) else None
+                ),
                 "market_context_matrix_generated_at_utc": (
                     market_context_matrix.get("generated_at_utc")
                     if isinstance(market_context_matrix, dict)
@@ -1783,6 +1786,11 @@ class DecisionVerifier:
                         _parse_utc(artifact_timestamps.get("order_intents_generated_at_utc")),
                         "order intents",
                         "current order intents are rebuilt from the latest market packet",
+                    ),
+                    (
+                        _parse_utc(artifact_timestamps.get("ai_attack_advice_generated_at_utc")),
+                        "ai_attack_advice",
+                        "current attack advice is reflected into the decision receipt",
                     ),
                     (
                         _parse_utc(artifact_timestamps.get("market_context_matrix_generated_at_utc")),

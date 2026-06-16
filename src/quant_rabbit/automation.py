@@ -2117,6 +2117,7 @@ class AutoTradeCycle:
         for path, label in (
             (self.snapshot_path, "broker snapshot"),
             (self.intents_path, "order intents"),
+            (self.gpt_attack_advice_path, "ai_attack_advice"),
         ):
             if path.exists() and path.stat().st_mtime_ns > decision_mtime_ns:
                 return (
@@ -2932,7 +2933,7 @@ class AutoTradeCycle:
             return None
         if not self._verified_gpt_decision_matches_source(decision, source_payload):
             return None
-        if action == "TRADE" and not self._verified_gpt_order_intents_still_match(verified_payload, decision):
+        if action == "TRADE" and not self._verified_gpt_entry_artifacts_still_match(verified_payload, decision):
             return None
         selected_lane_id = str(decision.get("selected_lane_id") or "") or None
         selected_lane_ids = self._string_tuple(decision.get("selected_lane_ids"))
@@ -2971,11 +2972,13 @@ class AutoTradeCycle:
                 return False
         return True
 
-    def _verified_gpt_order_intents_still_match(
+    def _verified_gpt_entry_artifacts_still_match(
         self,
         verified_payload: dict[str, Any],
         decision: dict[str, Any],
     ) -> bool:
+        if not self._verified_gpt_attack_advice_still_matches(verified_payload):
+            return False
         try:
             current_intents = json.loads(self.intents_path.read_text())
         except (OSError, json.JSONDecodeError, ValueError):
@@ -3004,6 +3007,27 @@ class AutoTradeCycle:
             if not set(selected_lane_ids).issubset(live_ready_lane_ids):
                 return False
         return True
+
+    def _verified_gpt_attack_advice_still_matches(self, verified_payload: dict[str, Any]) -> bool:
+        if not self.gpt_attack_advice_path.exists():
+            return True
+        try:
+            current_attack_advice = json.loads(self.gpt_attack_advice_path.read_text())
+        except (OSError, json.JSONDecodeError, ValueError):
+            return False
+        packet = verified_payload.get("input_packet")
+        artifact_timestamps = packet.get("artifact_timestamps") if isinstance(packet, dict) else {}
+        verified_attack_ts = (
+            artifact_timestamps.get("ai_attack_advice_generated_at_utc")
+            if isinstance(artifact_timestamps, dict)
+            else None
+        )
+        current_attack_ts = (
+            current_attack_advice.get("generated_at_utc") if isinstance(current_attack_advice, dict) else None
+        )
+        if current_attack_ts:
+            return verified_attack_ts == current_attack_ts
+        return not verified_attack_ts
 
     def _continue_after_gpt_close(
         self,

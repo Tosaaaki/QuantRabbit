@@ -4374,6 +4374,128 @@ class AutoTradeCycleTest(unittest.TestCase):
                 pinned_ts.isoformat(),
             )
 
+    def test_reuse_market_artifacts_rejects_accepted_gpt_packet_after_attack_advice_refresh(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            now = datetime.now(timezone.utc)
+            pinned_ts = now
+            intents_ts = pinned_ts + timedelta(seconds=10)
+            attack_ts = pinned_ts + timedelta(seconds=15)
+            decision_ts = pinned_ts + timedelta(seconds=20)
+            refreshed_attack_ts = pinned_ts + timedelta(seconds=30)
+            snapshot_path = root / "snapshot.json"
+            snapshot_path.write_text(
+                _snapshot_to_json(
+                    BrokerSnapshot(
+                        fetched_at_utc=pinned_ts,
+                        quotes={
+                            "EUR_USD": Quote("EUR_USD", 1.17298, 1.17306, timestamp_utc=pinned_ts),
+                            "USD_JPY": Quote("USD_JPY", 157.000, 157.004, timestamp_utc=pinned_ts),
+                        },
+                    )
+                )
+                + "\n"
+            )
+            intents_path = root / "intents.json"
+            _write_live_ready_intents(intents_path)
+            intents_payload = json.loads(intents_path.read_text())
+            intents_payload["generated_at_utc"] = intents_ts.isoformat()
+            intents_path.write_text(json.dumps(intents_payload) + "\n")
+            attack_advice_path = root / "ai_attack_advice.json"
+            attack_advice_path.write_text(
+                json.dumps(
+                    {
+                        "generated_at_utc": refreshed_attack_ts.isoformat(),
+                        "status": "ATTACK_PARTIAL",
+                        "recommended_now_lane_ids": ["trend_trader:EUR_USD:LONG:TREND_CONTINUATION"],
+                    }
+                )
+                + "\n"
+            )
+            target_state = root / "target.json"
+            target_state.write_text(
+                json.dumps(
+                    {
+                        "start_balance_jpy": 100_000,
+                        "target_return_pct": 10.0,
+                        "daily_risk_budget_jpy": 2_000,
+                        "target_trades_per_day": 10,
+                    }
+                )
+            )
+            response_path = root / "codex_trader_decision_response.json"
+            decision = _gpt_trade_decision()
+            decision["generated_at_utc"] = decision_ts.isoformat()
+            response_path.write_text(json.dumps(decision) + "\n")
+            gpt_decision_path = root / "gpt_decision.json"
+            gpt_decision_path.write_text(
+                json.dumps(
+                    {
+                        "generated_at_utc": (decision_ts + timedelta(seconds=1)).isoformat(),
+                        "status": "ACCEPTED",
+                        "decision": decision,
+                        "verification_issues": [],
+                        "input_packet": {
+                            "artifact_timestamps": {
+                                "order_intents_generated_at_utc": intents_ts.isoformat(),
+                                "ai_attack_advice_generated_at_utc": attack_ts.isoformat(),
+                            },
+                            "broker_snapshot": {"fetched_at_utc": pinned_ts.isoformat()},
+                        },
+                    }
+                )
+                + "\n"
+            )
+            os.utime(response_path, (100.0, 100.0))
+            os.utime(gpt_decision_path, (101.0, 101.0))
+            os.utime(snapshot_path, (99.0, 99.0))
+            os.utime(intents_path, (99.0, 99.0))
+            os.utime(attack_advice_path, (102.0, 102.0))
+            client = FakeCycleClient(
+                BrokerSnapshot(
+                    fetched_at_utc=pinned_ts,
+                    quotes={
+                        "EUR_USD": Quote("EUR_USD", 1.17298, 1.17306, timestamp_utc=pinned_ts),
+                        "USD_JPY": Quote("USD_JPY", 157.000, 157.004, timestamp_utc=pinned_ts),
+                    },
+                )
+            )
+
+            summary = AutoTradeCycle(
+                client=client,
+                snapshot_path=snapshot_path,
+                intents_path=intents_path,
+                intent_report_path=root / "intents.md",
+                decision_path=root / "decision.json",
+                decision_report_path=root / "decision.md",
+                gpt_decision_path=gpt_decision_path,
+                gpt_decision_report_path=root / "gpt_decision.md",
+                gpt_attack_advice_path=attack_advice_path,
+                position_management_path=root / "pm.json",
+                position_management_report_path=root / "pm.md",
+                position_execution_path=root / "pe.json",
+                position_execution_report_path=root / "pe.md",
+                live_order_output_path=root / "live_order.json",
+                live_order_report_path=root / "live_order.md",
+                report_path=root / "report.md",
+                campaign_plan_path=_campaign(root),
+                strategy_profile_path=_candidate_profile(root),
+                market_story_profile_path=_stories(root),
+                receipt_promotion_report_path=root / "promotion.md",
+                target_state_path=target_state,
+                target_report_path=root / "target.md",
+                gpt_target_state_path=target_state,
+                use_gpt_trader=True,
+                gpt_provider=StaticTraderProvider(decision, source_path=response_path),
+                reuse_market_artifacts=True,
+                live_enabled=True,
+                max_loss_jpy=1_500,
+            ).run(send=False)
+
+            self.assertEqual(summary.status, "STAGED")
+            self.assertEqual(summary.gpt_status, "STALE_DECISION")
+            self.assertIn("predates ai_attack_advice", summary.gpt_error or "")
+
     def test_gpt_trade_at_position_capacity_stays_monitor_only(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
