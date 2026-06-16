@@ -3299,6 +3299,59 @@ class IntentGeneratorTest(unittest.TestCase):
         self.assertFalse(trend["risk_allowed"])
         self.assertIn("RANGE_FORECAST_REQUIRES_RANGE_ROTATION", issue_codes)
 
+    def test_weak_range_forecast_non_rotation_lane_is_dry_run_blocked(self) -> None:
+        os.environ["QR_REQUIRE_FORECAST_FOR_LIVE"] = "1"
+        forecast = SimpleNamespace(
+            pair="EUR_USD",
+            direction="RANGE",
+            confidence=0.31,
+            raw_confidence=0.78,
+            current_price=1.17326,
+            target_price=None,
+            invalidation_price=None,
+            range_low_price=1.1724,
+            range_high_price=1.1748,
+            horizon_min=60,
+            rationale_summary="weak two-way range, not directional continuation",
+            drivers_for=("M5 box still active",),
+            drivers_against=("no breakout confirmation",),
+        )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            output = root / "intents.json"
+            with patch(
+                "quant_rabbit.strategy.intent_generator._forecast_seed_for_pair",
+                return_value=forecast,
+            ):
+                IntentGenerator(
+                    campaign_plan=_campaign(root, direction="LONG"),
+                    strategy_profile=_strategy(root, status="CANDIDATE", direction="LONG"),
+                    pair_charts_path=_pair_charts_with_direction(
+                        root,
+                        long_score=0.54,
+                        short_score=0.46,
+                        dominant_regime="RANGE",
+                        m5_regime="RANGE",
+                    ),
+                    output_path=output,
+                    report_path=root / "intents.md",
+                    max_loss_jpy=500.0,
+                ).run(snapshot_path=_snapshot(root))
+
+            payload = json.loads(output.read_text())
+
+        trend = next(
+            item
+            for item in payload["results"]
+            if item["lane_id"] == "trend_trader:EUR_USD:LONG:TREND_CONTINUATION"
+        )
+        issue_codes = {issue["code"] for issue in trend["risk_issues"]}
+
+        self.assertEqual(trend["status"], "DRY_RUN_BLOCKED")
+        self.assertFalse(trend["risk_allowed"])
+        self.assertIn("RANGE_FORECAST_REQUIRES_RANGE_ROTATION", issue_codes)
+
     def test_reversal_recovery_hedge_uses_recovery_forecast_floor_for_live_context(self) -> None:
         from quant_rabbit.models import BrokerSnapshot, MarketContext, OrderIntent, OrderType, Quote, Side, TradeMethod
         from quant_rabbit.strategy.intent_generator import (

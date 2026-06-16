@@ -6130,6 +6130,22 @@ def _forecast_live_readiness_issue(
             ),
             "severity": "WARN",
         }
+    if (
+        direction == "RANGE"
+        and method != TradeMethod.RANGE_ROTATION
+        and not (
+            _is_hedge_recovery_metadata(metadata)
+            and str(metadata.get("hedge_timing_class") or "").upper() == "REVERSAL"
+        )
+    ):
+        return {
+            "code": "RANGE_FORECAST_REQUIRES_RANGE_ROTATION",
+            "message": (
+                f"{intent.pair} {intent.side.value} has a RANGE forecast; only executable "
+                "RANGE_ROTATION rail geometry may become LIVE_READY from a RANGE prediction."
+            ),
+            "severity": "BLOCK",
+        }
     if confidence is None or confidence < min_confidence:
         if recovery_reversal_override:
             return None
@@ -6152,22 +6168,6 @@ def _forecast_live_readiness_issue(
                 "do not trade a weak prediction just to satisfy campaign exposure."
             ),
             "severity": "WARN",
-        }
-    if (
-        direction == "RANGE"
-        and method != TradeMethod.RANGE_ROTATION
-        and not (
-            _is_hedge_recovery_metadata(metadata)
-            and str(metadata.get("hedge_timing_class") or "").upper() == "REVERSAL"
-        )
-    ):
-        return {
-            "code": "RANGE_FORECAST_REQUIRES_RANGE_ROTATION",
-            "message": (
-                f"{intent.pair} {intent.side.value} has a RANGE forecast; only executable "
-                "RANGE_ROTATION rail geometry may become LIVE_READY from a RANGE prediction."
-            ),
-            "severity": "BLOCK",
         }
     adverse_path_issue = _forecast_directional_invalidation_first_issue(intent, metadata, direction=direction)
     if adverse_path_issue is not None:
