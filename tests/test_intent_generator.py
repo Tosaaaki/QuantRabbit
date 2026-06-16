@@ -3538,6 +3538,66 @@ class IntentGeneratorTest(unittest.TestCase):
         opposed_codes = {issue["code"] for issue in _method_context_issues(opposed)}
         self.assertIn("FORECAST_DIRECTION_CONFLICT", opposed_codes)
 
+    def test_weak_range_forecast_box_seeds_range_rotation_watch_lane(self) -> None:
+        forecast = SimpleNamespace(
+            direction="RANGE",
+            confidence=0.30,
+            raw_confidence=0.73,
+            calibration_multiplier=0.41,
+            current_price=1.17326,
+            target_price=None,
+            invalidation_price=None,
+            range_low_price=1.1710,
+            range_high_price=1.1760,
+            range_width_pips=50.0,
+            horizon_min=120,
+            rationale_summary="weak calibrated directional forecast inside measured range box",
+            drivers_for=("range forming",),
+            drivers_against=("directional bucket weak",),
+            component_scores={"RANGE": 10.0, "UP": 8.0, "DOWN": 12.0},
+            market_support={"ok": False, "direction": "RANGE", "reason": "forecast RANGE has no executable direction"},
+        )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            output = root / "intents.json"
+            with patch(
+                "quant_rabbit.strategy.intent_generator._forecast_seed_for_pair",
+                return_value=forecast,
+            ):
+                IntentGenerator(
+                    campaign_plan=_campaign(root, direction="LONG"),
+                    strategy_profile=_strategy(root, status="CANDIDATE", direction="LONG"),
+                    output_path=output,
+                    report_path=root / "intents.md",
+                    pair_charts_path=_pair_charts_with_direction(
+                        root,
+                        long_score=0.54,
+                        short_score=0.46,
+                        dominant_regime="TREND_UP",
+                        m5_regime="TREND_UP",
+                        adx=34.0,
+                        choppiness=42.0,
+                    ),
+                    max_loss_jpy=500.0,
+                ).run(snapshot_path=_snapshot(root))
+
+            payload = json.loads(output.read_text())
+
+        range_lane = next(
+            item
+            for item in payload["results"]
+            if item["lane_id"] == "range_trader:EUR_USD:LONG:RANGE_ROTATION"
+        )
+        metadata = range_lane["intent"]["metadata"]
+
+        self.assertTrue(metadata["forecast_seed"])
+        self.assertTrue(metadata["forecast_watch_only"])
+        self.assertEqual(metadata["forecast_direction"], "RANGE")
+        self.assertEqual(metadata["forecast_range_low_price"], 1.1710)
+        self.assertEqual(metadata["forecast_range_high_price"], 1.1760)
+        self.assertIn("watch-only forecast candidate", range_lane["intent"]["market_context"]["event_risk"])
+
     def test_same_forecast_from_later_cycle_does_not_stale_current_intent(self) -> None:
         from quant_rabbit.models import BrokerSnapshot, MarketContext, OrderIntent, OrderType, Quote, Side, TradeMethod
         from quant_rabbit.strategy.intent_generator import _telemetry_live_readiness_issues

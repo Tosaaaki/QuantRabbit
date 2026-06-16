@@ -2486,6 +2486,8 @@ def _append_forecast_seed_lanes(
                     source_by_pair=source_by_pair,
                     min_confidence=min_confidence,
                 )
+                if watch_reason is None and direction == "RANGE" and _forecast_has_range_box(forecast):
+                    watch_reason = _weak_range_box_watch_reason(pair, forecast, min_confidence=min_confidence)
                 if watch_reason is None:
                     continue
         range_geometry_watch_reason = _range_forecast_geometry_watch_reason(pair, forecast, charts)
@@ -3593,6 +3595,16 @@ def _range_forecast_geometry_watch_reason(
     return (
         "RANGE forecast has a measured rail box, but the current range-rotation edge is not confirmed; "
         "expose RANGE_ROTATION dry-run geometry only until the chart phase clears the auto-lane gate."
+    )
+
+
+def _weak_range_box_watch_reason(pair: str, forecast: Any, *, min_confidence: float) -> str:
+    confidence = _optional_float(getattr(forecast, "confidence", None))
+    return (
+        f"{pair} RANGE forecast has a measured rail box but calibrated confidence "
+        f"{0.0 if confidence is None else confidence:.2f} < live floor {min_confidence:.2f}; "
+        "expose RANGE_ROTATION dry-run geometry instead of attaching the RANGE forecast only "
+        "to directional methods."
     )
 
 
