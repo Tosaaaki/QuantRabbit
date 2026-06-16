@@ -13,11 +13,14 @@ from types import SimpleNamespace
 from unittest import mock
 
 from quant_rabbit.cli import (
+    DIRECT_AUTOTRADE_AUDIT_SIDECARS_DIGEST,
     _LIVE_RUNTIME_COMMANDS,
     _SL_FREE_RUNTIME_DEFAULTS,
     _auto_refresh_market_evidence_if_required,
+    _direct_autotrade_audit_sidecar_steps,
     _pre_entry_projection_verification_if_required,
     _refresh_current_forecast_history,
+    _run_direct_autotrade_audit_sidecars,
     _snapshot_from_json,
     _snapshot_to_json,
     main,
@@ -1046,6 +1049,107 @@ class CliHelpTest(unittest.TestCase):
             snapshot_path=root / "data" / "broker_snapshot.json",
             max_candidates=56,
         )
+
+    def test_generate_intents_refreshes_memory_health_after_direct_intent_write(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            data_root = root / "data"
+            docs_root = root / "docs"
+            data_root.mkdir()
+            docs_root.mkdir()
+            snapshot = data_root / "broker_snapshot.json"
+            intents = data_root / "order_intents.json"
+            memory = data_root / "memory_health.json"
+            memory_report = docs_root / "memory_health_report.md"
+            snapshot.write_text(
+                json.dumps(
+                    {
+                        "fetched_at_utc": "2026-06-16T09:46:24+00:00",
+                        "account": {"fetched_at_utc": "2026-06-16T09:46:24+00:00"},
+                        "quotes": {"EUR_USD": {"bid": 1.1, "ask": 1.1001}},
+                    }
+                )
+            )
+            summary = SimpleNamespace(
+                output_path=intents,
+                report_path=docs_root / "order_intents_report.md",
+                candidates_seen=1,
+                generated=1,
+                needs_snapshot=False,
+                dry_run_passed=1,
+                live_ready=1,
+            )
+
+            def generator_run(**_: object) -> SimpleNamespace:
+                intents.write_text(
+                    json.dumps({"generated_at_utc": "2026-06-16T09:46:59+00:00", "results": []})
+                )
+                return summary
+
+            health_summary = SimpleNamespace(
+                status="MEMORY_HEALTH_PASS",
+                output_path=memory,
+                report_path=memory_report,
+                blockers=(),
+                warnings=(),
+            )
+            stdout = io.StringIO()
+
+            with mock.patch.dict(os.environ, {"QR_LIVE_ENABLED": "1"}, clear=False), mock.patch(
+                "quant_rabbit.cli.DEFAULT_MEMORY_HEALTH",
+                memory,
+            ), mock.patch(
+                "quant_rabbit.cli.DEFAULT_MEMORY_HEALTH_REPORT",
+                memory_report,
+            ), mock.patch(
+                "quant_rabbit.cli._auto_refresh_market_evidence_if_required",
+                return_value={"status": "SKIPPED", "reason": "test"},
+            ), mock.patch(
+                "quant_rabbit.cli._refresh_snapshot_after_market_evidence_if_required",
+                return_value=None,
+            ), mock.patch(
+                "quant_rabbit.cli._pre_entry_execution_ledger_sync_if_required",
+                return_value=None,
+            ), mock.patch(
+                "quant_rabbit.cli._pre_entry_projection_verification_if_required",
+                return_value=None,
+            ), mock.patch(
+                "quant_rabbit.memory_health.MemoryHealthAuditor"
+            ) as memory_cls, mock.patch("quant_rabbit.cli.IntentGenerator") as generator_cls, redirect_stdout(stdout):
+                generator_cls.return_value.run.side_effect = generator_run
+                memory_cls.return_value.run.return_value = health_summary
+                code = main(
+                    [
+                        "generate-intents",
+                        "--campaign-plan",
+                        str(data_root / "daily_campaign_plan.json"),
+                        "--strategy-profile",
+                        str(data_root / "strategy_profile.json"),
+                        "--snapshot",
+                        str(snapshot),
+                        "--output",
+                        str(intents),
+                        "--report",
+                        str(summary.report_path),
+                        "--no-refresh-market-story",
+                    ]
+                )
+
+        self.assertEqual(code, 0)
+        memory_cls.assert_called_once_with(output_path=memory, report_path=memory_report)
+        memory_cls.return_value.run.assert_called_once_with(
+            snapshot_path=snapshot,
+            target_state_path=mock.ANY,
+            order_intents_path=intents,
+            strategy_profile_path=mock.ANY,
+            forecast_history_path=mock.ANY,
+            projection_ledger_path=mock.ANY,
+            learning_audit_path=mock.ANY,
+            entry_thesis_ledger_path=mock.ANY,
+            execution_ledger_db_path=mock.ANY,
+        )
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(payload["memory_health_refresh"]["status"], "MEMORY_HEALTH_PASS")
 
     def test_generate_intents_returns_json_error_for_stale_campaign_plan(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -2367,6 +2471,65 @@ class ConsolidatedCycleCommandTest(unittest.TestCase):
         with mock.patch.dict(os.environ, {"QR_LIVE_ENABLED": "1"}, clear=False):
             sidecars_live = [" ".join(s["argv"]) for s in _cycle_sidecar_steps()]
         self.assertIn("profit-partial-close --send --confirm-live", sidecars_live)
+
+    def test_direct_autotrade_audit_sidecars_run_without_wrapper_lock(self) -> None:
+        digest = {
+            "kind": "direct_autotrade_audit_sidecars_digest",
+            "aborted": False,
+            "steps_failed": [],
+        }
+        step_results = [{"step": "memory-health", "status": "OK", "rc": 0}]
+
+        with (
+            mock.patch.dict(
+                os.environ,
+                {
+                    "QR_RUN_DIRECT_AUTOTRADE_AUDIT_SIDECARS": "1",
+                    "QR_AUTOTRADE_LOCK_HELD": "",
+                },
+                clear=False,
+            ),
+            mock.patch("quant_rabbit.cli._running_under_test_harness", return_value=False),
+            mock.patch("quant_rabbit.cli._run_cycle_steps", return_value=(step_results, False)) as run_steps,
+            mock.patch("quant_rabbit.cli._cycle_digest", return_value=digest) as cycle_digest,
+            mock.patch("quant_rabbit.cli._write_json") as write_json,
+        ):
+            result = _run_direct_autotrade_audit_sidecars()
+
+        self.assertEqual(result, digest)
+        run_steps.assert_called_once_with(_direct_autotrade_audit_sidecar_steps())
+        cycle_digest.assert_called_once_with(
+            kind="direct_autotrade_audit_sidecars_digest",
+            step_results=step_results,
+            aborted=False,
+        )
+        write_json.assert_called_once_with(DIRECT_AUTOTRADE_AUDIT_SIDECARS_DIGEST, digest)
+
+    def test_direct_autotrade_audit_sidecars_skip_under_wrapper_lock(self) -> None:
+        with (
+            mock.patch.dict(os.environ, {"QR_AUTOTRADE_LOCK_HELD": "1"}, clear=False),
+            mock.patch("quant_rabbit.cli._running_under_test_harness", return_value=False),
+            mock.patch("quant_rabbit.cli._run_cycle_steps") as run_steps,
+        ):
+            result = _run_direct_autotrade_audit_sidecars()
+
+        self.assertIsNone(result)
+        run_steps.assert_not_called()
+
+    def test_direct_autotrade_audit_sidecars_can_be_disabled(self) -> None:
+        with (
+            mock.patch.dict(
+                os.environ,
+                {"QR_RUN_DIRECT_AUTOTRADE_AUDIT_SIDECARS": "0", "QR_AUTOTRADE_LOCK_HELD": ""},
+                clear=False,
+            ),
+            mock.patch("quant_rabbit.cli._running_under_test_harness", return_value=False),
+            mock.patch("quant_rabbit.cli._run_cycle_steps") as run_steps,
+        ):
+            result = _run_direct_autotrade_audit_sidecars()
+
+        self.assertIsNone(result)
+        run_steps.assert_not_called()
 
     def test_cycle_digest_summarizes_failed_steps(self) -> None:
         from quant_rabbit.cli import _cycle_digest

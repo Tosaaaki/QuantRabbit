@@ -696,6 +696,55 @@ def _pre_entry_execution_ledger_sync_if_required(
     }
 
 
+def _refresh_memory_health_after_intents_if_required(
+    *,
+    snapshot_path: Path | None,
+    target_state_path: Path,
+    order_intents_path: Path,
+) -> dict[str, Any] | None:
+    """Keep standalone intent pricing from leaving stale memory gates behind.
+
+    `cycle-refresh` and `cycle-sidecars` already run memory-health after all
+    packet writes. A direct `generate-intents` invocation can still advance
+    broker_snapshot/order_intents and leave the previous passing memory audit
+    attached to older evidence, which becomes a persistent target-open P0 in
+    self-improvement-audit. Do not run inside the consolidated cycle lock; the
+    required later memory-health step owns that path.
+    """
+    if os.environ.get("QR_AUTOTRADE_LOCK_HELD") == "1":
+        return {"status": "SKIPPED", "reason": "cycle_or_live_wrapper_runs_memory_health"}
+    if _running_under_test_harness() and os.environ.get("QR_LIVE_ENABLED") != "1":
+        return {"status": "SKIPPED", "reason": "test_harness"}
+    if snapshot_path is None or not snapshot_path.exists() or not order_intents_path.exists():
+        return {"status": "SKIPPED", "reason": "missing_snapshot_or_order_intents"}
+    try:
+        from quant_rabbit.memory_health import MemoryHealthAuditor
+
+        summary = MemoryHealthAuditor(
+            output_path=DEFAULT_MEMORY_HEALTH,
+            report_path=DEFAULT_MEMORY_HEALTH_REPORT,
+        ).run(
+            snapshot_path=snapshot_path,
+            target_state_path=target_state_path,
+            order_intents_path=order_intents_path,
+            strategy_profile_path=DEFAULT_STRATEGY_PROFILE,
+            forecast_history_path=DEFAULT_FORECAST_HISTORY,
+            projection_ledger_path=DEFAULT_PROJECTION_LEDGER,
+            learning_audit_path=DEFAULT_LEARNING_AUDIT,
+            entry_thesis_ledger_path=DEFAULT_ENTRY_THESIS_LEDGER,
+            execution_ledger_db_path=DEFAULT_EXECUTION_LEDGER_DB,
+        )
+    except (OSError, json.JSONDecodeError, sqlite3.Error, ValueError) as exc:
+        return {"status": "REFRESH_FAILED", "error": str(exc)}
+    return {
+        "status": summary.status,
+        "output_path": str(summary.output_path),
+        "report_path": str(summary.report_path),
+        "blockers": list(summary.blockers)[:8],
+        "warnings": list(summary.warnings)[:8],
+    }
+
+
 def _refresh_snapshot_after_market_evidence_if_required(
     *,
     market_evidence_refresh: dict[str, Any] | None,
@@ -1639,6 +1688,8 @@ def _write_json(path: Path, payload: dict[str, Any]) -> None:
 # `docs/SKILL_trader.md` in the same commit.
 # ---------------------------------------------------------------------------
 
+DIRECT_AUTOTRADE_AUDIT_SIDECARS_DIGEST = ROOT / "data" / "direct_autotrade_audit_sidecars_digest.json"
+
 
 def _cycle_refresh_steps(daily_risk_pct: str) -> list[dict[str, Any]]:
     """Step list mirroring docs/SKILL_trader.md '2. Refresh evidence'.
@@ -1733,6 +1784,45 @@ def _cycle_sidecar_steps() -> list[dict[str, Any]]:
         {"argv": ["memory-health"], "required": True},
         {"argv": ["self-improvement-audit"], "required": False, "ok_rcs": [0, 2]},
     ]
+
+
+def _direct_autotrade_audit_sidecar_steps() -> list[dict[str, Any]]:
+    """Read-only audit repair pass for direct autotrade-cycle invocations.
+
+    `run-autotrade-live.sh` already runs the fuller post-gateway sidecar list
+    under the live lock. A direct CLI cycle can still refresh broker truth or
+    repriced intents after `cycle-refresh`; these audit-only sidecars keep the
+    next route from inheriting a stale memory-health/self-improvement P0.
+    """
+    return [
+        {"argv": ["position-thesis-check"], "required": False},
+        {"argv": ["thesis-evolution-check"], "required": False},
+        {"argv": ["forecast-persistence-check"], "required": False},
+        {"argv": ["position-management"], "required": True},
+        {"argv": ["memory-health"], "required": True},
+        {"argv": ["self-improvement-audit"], "required": False, "ok_rcs": [0, 2]},
+    ]
+
+
+def _should_run_direct_autotrade_audit_sidecars() -> bool:
+    if os.environ.get("QR_RUN_DIRECT_AUTOTRADE_AUDIT_SIDECARS") == "0":
+        return False
+    if os.environ.get("QR_AUTOTRADE_LOCK_HELD") == "1":
+        return False
+    return not _running_under_test_harness()
+
+
+def _run_direct_autotrade_audit_sidecars() -> dict[str, Any] | None:
+    if not _should_run_direct_autotrade_audit_sidecars():
+        return None
+    step_results, aborted = _run_cycle_steps(_direct_autotrade_audit_sidecar_steps())
+    digest = _cycle_digest(
+        kind="direct_autotrade_audit_sidecars_digest",
+        step_results=step_results,
+        aborted=aborted,
+    )
+    _write_json(DIRECT_AUTOTRADE_AUDIT_SIDECARS_DIGEST, digest)
+    return digest
 
 
 def _run_cycle_steps(steps: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], bool]:
@@ -3020,6 +3110,11 @@ def main(argv: list[str] | None = None) -> int:
         except (RuntimeError, ValueError, OSError, json.JSONDecodeError) as exc:
             print(json.dumps({"error": str(exc)}, ensure_ascii=False, indent=2, sort_keys=True))
             return 2
+        memory_health_refresh = _refresh_memory_health_after_intents_if_required(
+            snapshot_path=args.snapshot,
+            target_state_path=DEFAULT_DAILY_TARGET_STATE,
+            order_intents_path=args.output,
+        )
         print(
             json.dumps(
                 {
@@ -3035,6 +3130,7 @@ def main(argv: list[str] | None = None) -> int:
                     "forecast_refresh": forecast_refresh,
                     "live_ready": summary.live_ready,
                     "market_evidence_refresh": market_evidence_refresh,
+                    "memory_health_refresh": memory_health_refresh,
                     "snapshot_refresh": snapshot_refresh,
                     "projection_verification": projection_verification,
                 },
@@ -3144,46 +3240,47 @@ def main(argv: list[str] | None = None) -> int:
                 max_loss_pct=args.max_loss_pct,
                 risk_equity_jpy=args.risk_equity_jpy,
             ).run(send=args.send)
+            post_audit_digest = _run_direct_autotrade_audit_sidecars()
         except (RuntimeError, OSError, ValueError, json.JSONDecodeError) as exc:
             print(json.dumps({"error": str(exc)}, ensure_ascii=False, indent=2, sort_keys=True))
             return 2
-        print(
-            json.dumps(
-                {
-                    "status": summary.status,
-                    "report_path": str(summary.report_path),
-                    "snapshot_path": str(summary.snapshot_path),
-                    "intents_path": str(summary.intents_path),
-                    "selected_lane_id": summary.selected_lane_id,
-                    "selected_lane_ids": list(summary.selected_lane_ids),
-                    "deterministic_lane_id": summary.deterministic_lane_id,
-                    "decision_source": summary.decision_source,
-                    "sent": summary.sent,
-                    "sent_count": summary.sent_count,
-                    "positions": summary.positions,
-                    "orders": summary.orders,
-                    "live_ready": summary.live_ready,
-                    "receipt_promotions": summary.receipt_promotions,
-                    "canceled_orders": list(summary.canceled_orders),
-                    "position_management_action": summary.position_management_action,
-                    "position_execution_status": summary.position_execution_status,
-                    "position_execution_sent": summary.position_execution_sent,
-                    "target_status": summary.target_status,
-                    "target_remaining_jpy": summary.target_remaining_jpy,
-                    "target_progress_pct": summary.target_progress_pct,
-                    "selected_lane_score": summary.selected_lane_score,
-                    "selected_lane_size_multiple": summary.selected_lane_size_multiple,
-                    "gpt_status": summary.gpt_status,
-                    "gpt_action": summary.gpt_action,
-                    "gpt_allowed": summary.gpt_allowed,
-                    "gpt_issues": summary.gpt_issues,
-                    "gpt_error": summary.gpt_error,
-                },
-                ensure_ascii=False,
-                indent=2,
-                sort_keys=True,
-            )
-        )
+        payload = {
+            "status": summary.status,
+            "report_path": str(summary.report_path),
+            "snapshot_path": str(summary.snapshot_path),
+            "intents_path": str(summary.intents_path),
+            "selected_lane_id": summary.selected_lane_id,
+            "selected_lane_ids": list(summary.selected_lane_ids),
+            "deterministic_lane_id": summary.deterministic_lane_id,
+            "decision_source": summary.decision_source,
+            "sent": summary.sent,
+            "sent_count": summary.sent_count,
+            "positions": summary.positions,
+            "orders": summary.orders,
+            "live_ready": summary.live_ready,
+            "receipt_promotions": summary.receipt_promotions,
+            "canceled_orders": list(summary.canceled_orders),
+            "position_management_action": summary.position_management_action,
+            "position_execution_status": summary.position_execution_status,
+            "position_execution_sent": summary.position_execution_sent,
+            "target_status": summary.target_status,
+            "target_remaining_jpy": summary.target_remaining_jpy,
+            "target_progress_pct": summary.target_progress_pct,
+            "selected_lane_score": summary.selected_lane_score,
+            "selected_lane_size_multiple": summary.selected_lane_size_multiple,
+            "gpt_status": summary.gpt_status,
+            "gpt_action": summary.gpt_action,
+            "gpt_allowed": summary.gpt_allowed,
+            "gpt_issues": summary.gpt_issues,
+            "gpt_error": summary.gpt_error,
+        }
+        if post_audit_digest is not None:
+            payload["post_autotrade_audit_sidecars"] = {
+                "aborted": post_audit_digest.get("aborted"),
+                "digest_path": str(DIRECT_AUTOTRADE_AUDIT_SIDECARS_DIGEST),
+                "steps_failed": post_audit_digest.get("steps_failed", []),
+            }
+        print(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))
         return 0 if summary.status in _AUTOTRADE_EXIT_ZERO_STATUSES else 2
     if args.command == "plan-campaign":
         target_summary = DailyTargetLedger(

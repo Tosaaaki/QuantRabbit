@@ -47,6 +47,7 @@ from quant_rabbit.paths import (
     DEFAULT_CURRENCY_STRENGTH,
     DEFAULT_DAILY_TARGET_STATE,
     DEFAULT_FLOW_SNAPSHOT,
+    DEFAULT_FORECAST_HISTORY,
     DEFAULT_GPT_TRADER_DECISION,
     DEFAULT_LIVE_ORDER_REQUEST,
     DEFAULT_LEVELS_SNAPSHOT,
@@ -158,6 +159,7 @@ def route_trader_prompts(
     option_skew_path: Path = DEFAULT_OPTION_SKEW,
     attack_advice_path: Path = DEFAULT_AI_ATTACK_ADVICE,
     learning_audit_path: Path = DEFAULT_LEARNING_AUDIT,
+    forecast_history_path: Path | None = DEFAULT_FORECAST_HISTORY,
     campaign_plan_path: Path | None = DEFAULT_CAMPAIGN_PLAN,
     memory_health_path: Path | None = DEFAULT_MEMORY_HEALTH,
     self_improvement_audit_path: Path | None = DEFAULT_SELF_IMPROVEMENT_AUDIT,
@@ -305,6 +307,12 @@ def route_trader_prompts(
         intents_path=intents_path,
         market_context_matrix_path=market_context_matrix_path,
     )
+    order_intents_forecast_refresh_reasons = _order_intents_forecast_refresh_reasons(
+        target_state,
+        intents,
+        intents_path=intents_path,
+        forecast_history_path=forecast_history_path,
+    )
     memory_health_refresh_reasons = _memory_health_refresh_reasons(
         target_state,
         snapshot,
@@ -325,6 +333,7 @@ def route_trader_prompts(
         *strategy_profile_refresh_reasons,
         *campaign_plan_refresh_reasons,
         *order_intents_context_refresh_reasons,
+        *order_intents_forecast_refresh_reasons,
         *memory_health_refresh_reasons,
         *coverage_market_evidence_refresh_reasons,
         *self_improvement_audit_refresh_reasons,
@@ -1769,6 +1778,56 @@ def _order_intents_context_refresh_reasons(
             f"({market_context_matrix_path}); rerun generate-intents before entry/learning routing",
         )
     return ()
+
+
+def _order_intents_forecast_refresh_reasons(
+    target_state: dict[str, Any],
+    intents: dict[str, Any],
+    *,
+    intents_path: Path,
+    forecast_history_path: Path | None,
+) -> tuple[str, ...]:
+    """Require candidate discovery to include the latest pair forecast rows."""
+    if forecast_history_path is None or not _target_open(target_state) or not forecast_history_path.exists():
+        return ()
+    latest_forecast_at = _latest_forecast_history_timestamp(forecast_history_path)
+    if latest_forecast_at is None:
+        return ()
+    intents_generated_at = _parse_utc(intents.get("generated_at_utc"))
+    if intents_generated_at is None:
+        return (
+            f"order_intents lacks generated_at_utc while target is open: {intents_path}; "
+            "rerun generate-intents after the latest forecast_history before entry/learning routing",
+        )
+    if intents_generated_at < latest_forecast_at:
+        return (
+            "order intents stale against forecast history while target is open: "
+            f"order_intents generated at {intents_generated_at.isoformat()} predates "
+            f"forecast_history latest row {latest_forecast_at.isoformat()} "
+            f"({forecast_history_path}); rerun generate-intents before entry/learning routing",
+        )
+    return ()
+
+
+def _latest_forecast_history_timestamp(path: Path) -> datetime | None:
+    latest: datetime | None = None
+    try:
+        lines = path.read_text().splitlines()
+    except OSError:
+        return None
+    for line in lines:
+        if not line.strip():
+            continue
+        try:
+            payload = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(payload, dict):
+            continue
+        ts = _parse_utc(payload.get("timestamp_utc") or payload.get("generated_at_utc"))
+        if ts is not None and (latest is None or ts > latest):
+            latest = ts
+    return latest
 
 
 def _memory_health_refresh_reasons(
