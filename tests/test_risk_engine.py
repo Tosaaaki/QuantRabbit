@@ -475,6 +475,96 @@ class RiskEngineTest(unittest.TestCase):
             {issue.code for issue in decision.issues},
         )
 
+    def test_directional_forecast_blocks_opposite_unselected_projection_without_selected_support(self) -> None:
+        intent = OrderIntent(
+            pair="EUR_USD",
+            side=Side.SHORT,
+            order_type=OrderType.MARKET,
+            units=1000,
+            tp=1.17130,
+            sl=1.17430,
+            thesis="do_not_sell_when_opposite_projection_has_better_audit",
+            market_context=MarketContext(
+                regime="TREND_DOWN continuation candidate",
+                narrative="selected forecast is down but the audited sweep model points up",
+                chart_story="breakdown attempt near lower liquidity",
+                method=TradeMethod.BREAKOUT_FAILURE,
+                invalidation="reclaims range low",
+            ),
+            metadata={
+                "forecast_direction": "DOWN",
+                "forecast_confidence": 0.72,
+                "forecast_raw_confidence": 0.78,
+                "forecast_market_support": {
+                    "ok": False,
+                    "direction": "DOWN",
+                    "aligned_projection_count": 0,
+                    "unselected_signals": [
+                        {
+                            "name": "liquidity_sweep_low",
+                            "direction": "UP",
+                            "hit_rate": 0.69,
+                            "samples": 100,
+                        }
+                    ],
+                },
+            },
+        )
+
+        decision = RiskEngine(live_enabled=True).validate(intent, snapshot(), for_live_send=True)
+
+        self.assertFalse(decision.allowed)
+        self.assertIn(
+            "FORECAST_UNSELECTED_OPPOSITE_PROJECTION",
+            {issue.code for issue in decision.issues},
+        )
+
+    def test_directional_forecast_allows_opposite_unselected_projection_when_selected_support_clears(self) -> None:
+        intent = OrderIntent(
+            pair="EUR_USD",
+            side=Side.SHORT,
+            order_type=OrderType.MARKET,
+            units=1000,
+            tp=1.17130,
+            sl=1.17430,
+            thesis="sell_when_selected_forecast_has_current_audited_support",
+            market_context=MarketContext(
+                regime="TREND_DOWN continuation candidate",
+                narrative="selected down forecast has current projection support",
+                chart_story="breakdown retest with aligned sweep continuation",
+                method=TradeMethod.BREAKOUT_FAILURE,
+                invalidation="reclaims range low",
+            ),
+            metadata={
+                "forecast_direction": "DOWN",
+                "forecast_confidence": 0.72,
+                "forecast_raw_confidence": 0.78,
+                "forecast_market_support": {
+                    "ok": True,
+                    "direction": "DOWN",
+                    "aligned_projection_count": 1,
+                    "best_hit_rate": 0.74,
+                    "best_samples": 35,
+                    "unselected_signals": [
+                        {
+                            "name": "liquidity_sweep_low",
+                            "direction": "UP",
+                            "hit_rate": 0.69,
+                            "samples": 100,
+                        }
+                    ],
+                },
+            },
+        )
+
+        decision = RiskEngine(live_enabled=True).validate(intent, snapshot(), for_live_send=True)
+
+        self.assertTrue(decision.allowed, decision.block_reasons)
+        self.assertNotIn(
+            "FORECAST_UNSELECTED_OPPOSITE_PROJECTION",
+            {issue.code for issue in decision.issues},
+        )
+
     def test_risk_cap_blocks_oversized_trade(self) -> None:
         intent = OrderIntent(
             pair="EUR_USD",

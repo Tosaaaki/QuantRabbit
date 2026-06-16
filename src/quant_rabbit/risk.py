@@ -167,8 +167,8 @@ def _env_optional_float(name: str, default: float | None) -> float | None:
 # strategy.intent_generator. They are validation-contract constants: a RANGE
 # forecast may be tradable as rail rotation, but if the same current packet
 # says an audited directional projection was unselected, the broker gateway
-# must not send the opposite entry just because another blocker happened to be
-# absent.
+# must not send the lower-quality opposite entry just because another blocker
+# happened to be absent.
 FORECAST_MARKET_SUPPORT_MIN_DIRECTIONAL_HIT_RATE = _env_float_or(
     "QR_FORECAST_MARKET_SUPPORT_MIN_DIRECTIONAL_HIT_RATE",
     0.55,
@@ -413,7 +413,8 @@ def _forecast_unselected_projection_conflict_issues(
     for_live_send: bool,
 ) -> list[RiskIssue]:
     metadata = intent.metadata or {}
-    if str(metadata.get("forecast_direction") or "").upper() != "RANGE":
+    direction = str(metadata.get("forecast_direction") or "").upper()
+    if direction not in {"RANGE", "UP", "DOWN"}:
         return []
     support = metadata.get("forecast_market_support")
     if not isinstance(support, dict):
@@ -448,6 +449,30 @@ def _forecast_unselected_projection_conflict_issues(
     signal_direction = str(top.get("direction") or "").upper()
     hit_rate = _to_float(top.get("hit_rate")) or 0.0
     samples = _to_int(top.get("samples")) or 0
+    if direction in {"UP", "DOWN"}:
+        forecast_side = Side.LONG if direction == "UP" else Side.SHORT
+        if intent.side != forecast_side:
+            return []
+        if _forecast_selected_direction_has_audited_support(
+            metadata,
+            support,
+            direction=direction,
+        ):
+            return []
+        return [
+            RiskIssue(
+                "FORECAST_UNSELECTED_OPPOSITE_PROJECTION",
+                (
+                    f"{intent.pair} {intent.side.value} forecast {direction} selected the "
+                    f"{forecast_side.value} side, but audited unselected {signal_name} "
+                    f"projection supports {signal_direction} (hit_rate={hit_rate:.2f}, "
+                    f"samples={samples}); keep this entry dry-run until the selected "
+                    "direction has current audited projection support or the opposing "
+                    "projection no longer conflicts."
+                ),
+                severity=severity,
+            )
+        ]
     return [
         RiskIssue(
             "FORECAST_RANGE_UNSELECTED_DIRECTION_CONFLICT",
@@ -465,6 +490,36 @@ def _forecast_unselected_projection_conflict_issues(
 def _forecast_market_support(metadata: dict) -> dict:
     support = metadata.get("forecast_market_support")
     return support if isinstance(support, dict) else {}
+
+
+def _forecast_selected_direction_has_audited_support(
+    metadata: dict,
+    support: dict,
+    *,
+    direction: str,
+) -> bool:
+    if _forecast_directional_bucket_is_known_weak(metadata, support):
+        return False
+    if not bool(support.get("ok")):
+        return False
+    support_direction = str(support.get("direction") or "").upper()
+    if support_direction and support_direction != direction:
+        return False
+    if bool(support.get("bootstrap_projection_support")):
+        raw_confidence = _to_float(metadata.get("forecast_raw_confidence"))
+        return raw_confidence is not None and raw_confidence >= FORECAST_DIRECTIONAL_LIVE_MIN_CONFIDENCE
+    aligned_count = _to_int(support.get("aligned_projection_count")) or 0
+    if aligned_count <= 0:
+        return False
+    samples = _to_int(support.get("best_aligned_samples"))
+    if samples is None or samples <= 0:
+        samples = _to_int(support.get("best_samples")) or 0
+    if samples < FORECAST_MARKET_SUPPORT_MIN_SAMPLES:
+        return False
+    hit_rate = _to_float(support.get("best_aligned_hit_rate"))
+    if hit_rate is None:
+        hit_rate = _to_float(support.get("best_hit_rate"))
+    return hit_rate is not None and hit_rate >= FORECAST_MARKET_SUPPORT_MIN_DIRECTIONAL_HIT_RATE
 
 
 def _forecast_directional_hit_rate(metadata: dict, support: dict) -> tuple[float | None, int, str]:
