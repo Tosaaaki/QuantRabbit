@@ -2659,6 +2659,7 @@ def _intent_findings(
                         ),
                         "status_counts": _intent_status_counts(intents),
                         "top_blockers": _top_intent_blockers(intents),
+                        "live_readiness_blocker_families": _intent_live_readiness_family_breakdown(intents),
                         "non_live_ready_live_readiness_blockers": _top_intent_live_readiness_blockers(intents),
                     },
                 )
@@ -4722,6 +4723,11 @@ def _nearest_live_ready_candidate(
         "method": str(market_context.get("method") or metadata.get("method") or ""),
         "order_type": str(intent.get("order_type") or ""),
         "reward_risk": _maybe_float(risk_metrics.get("reward_risk")),
+        "reward_jpy": _maybe_float(risk_metrics.get("reward_jpy")),
+        "opportunity_mode": str(metadata.get("opportunity_mode") or ""),
+        "opportunity_mode_reason": str(metadata.get("opportunity_mode_reason") or ""),
+        "tp_execution_mode": str(metadata.get("tp_execution_mode") or ""),
+        "tp_target_intent": str(metadata.get("tp_target_intent") or ""),
         "forecast_direction": str(metadata.get("forecast_direction") or ""),
         "forecast_confidence": _maybe_float(metadata.get("forecast_confidence")),
         "blocker_families": families,
@@ -5135,6 +5141,18 @@ def _finding_report_details(item: dict[str, Any]) -> list[str]:
         if isinstance(evidence.get("runner_candidate_diagnostics"), dict)
         else {}
     )
+    mode_text = _report_opportunity_mode_text(evidence.get("opportunity_modes"))
+    if mode_text:
+        details.append(f"  - opportunity modes: {mode_text}")
+    family_text = _report_dry_run_family_text(evidence.get("live_readiness_blocker_families"))
+    if family_text:
+        details.append(f"  - dry-run blocker families: {family_text}")
+    nearest_text = _report_nearest_candidate_text(evidence.get("live_readiness_blocker_families"))
+    if nearest_text:
+        details.append(f"  - nearest dry-run lanes: {nearest_text}")
+    forecast_gate_text = _report_forecast_gate_text(evidence.get("dry_run_passed_forecast_gate_diagnostics"))
+    if forecast_gate_text:
+        details.append(f"  - forecast gate reasons: {forecast_gate_text}")
     if not runner_diag:
         return details
     reasons = runner_diag.get("top_demotion_reasons")
@@ -5152,6 +5170,81 @@ def _finding_report_details(item: dict[str, Any]) -> list[str]:
         f"demotions=`{reason_text or 'none'}`"
     )
     return details
+
+
+def _report_opportunity_mode_text(raw: Any) -> str:
+    modes = raw if isinstance(raw, dict) else {}
+    parts: list[str] = []
+    for key in ("HARVEST", "RUNNER"):
+        item = modes.get(key) if isinstance(modes.get(key), dict) else None
+        if not item:
+            continue
+        issue_codes = item.get("top_issue_codes") if isinstance(item.get("top_issue_codes"), list) else []
+        top_codes = ", ".join(
+            str(issue.get("code"))
+            for issue in issue_codes[:3]
+            if isinstance(issue, dict) and str(issue.get("code") or "").strip()
+        )
+        parts.append(
+            f"{key} lanes=`{item.get('lanes')}` live=`{item.get('live_ready_lanes')}` "
+            f"reward=`{item.get('reward_jpy')}` codes=`{top_codes or 'none'}`"
+        )
+    return "; ".join(parts)
+
+
+def _report_dry_run_family_text(raw: Any) -> str:
+    payload = raw if isinstance(raw, dict) else {}
+    families = payload.get("dry_run_passed") if isinstance(payload.get("dry_run_passed"), list) else []
+    parts: list[str] = []
+    for item in families[:5]:
+        if not isinstance(item, dict):
+            continue
+        family = str(item.get("family") or "")
+        if not family:
+            continue
+        parts.append(f"{family}={item.get('lane_count')}")
+    return ", ".join(parts)
+
+
+def _report_nearest_candidate_text(raw: Any) -> str:
+    payload = raw if isinstance(raw, dict) else {}
+    candidates = (
+        payload.get("nearest_live_ready_candidates")
+        if isinstance(payload.get("nearest_live_ready_candidates"), list)
+        else []
+    )
+    parts: list[str] = []
+    for item in candidates[:4]:
+        if not isinstance(item, dict):
+            continue
+        lane_id = str(item.get("lane_id") or "")
+        if not lane_id:
+            continue
+        method = str(item.get("method") or "unknown")
+        order_type = str(item.get("order_type") or "unknown")
+        mode = str(item.get("opportunity_mode") or item.get("tp_target_intent") or "unknown")
+        families = item.get("blocker_families") if isinstance(item.get("blocker_families"), list) else []
+        family_text = "/".join(str(family) for family in families[:3] if str(family).strip()) or "none"
+        parts.append(
+            f"`{lane_id}` {method}/{order_type}/{mode} "
+            f"rr=`{_fmt_optional(item.get('reward_risk'))}` "
+            f"reward=`{_fmt_optional(item.get('reward_jpy'))}` "
+            f"conf=`{_fmt_optional(item.get('forecast_confidence'))}` blockers=`{family_text}`"
+        )
+    return "; ".join(parts)
+
+
+def _report_forecast_gate_text(raw: Any) -> str:
+    payload = raw if isinstance(raw, dict) else {}
+    reasons = payload.get("reason_counts") if isinstance(payload.get("reason_counts"), list) else []
+    parts: list[str] = []
+    for item in reasons[:3]:
+        if not isinstance(item, dict):
+            continue
+        reason = str(item.get("reason") or "")
+        if reason:
+            parts.append(f"{reason}={item.get('count')}")
+    return "; ".join(parts)
 
 
 def _dedupe_findings(findings: list[dict[str, Any]]) -> list[dict[str, Any]]:

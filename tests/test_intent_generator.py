@@ -1598,6 +1598,68 @@ class IntentGeneratorTest(unittest.TestCase):
         self.assertEqual(market["status"], "DRY_RUN_PASSED")
         self.assertTrue(any("WATCH_ONLY" in blocker for blocker in market["live_blockers"]))
 
+    def test_forecast_seed_watch_only_trigger_with_opposing_chart_bias_stays_dry_run(self) -> None:
+        prior = os.environ.get("QR_TRADER_DISABLE_SL_REPAIR")
+        os.environ["QR_TRADER_DISABLE_SL_REPAIR"] = "1"
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                output = root / "intents.json"
+                forecast = SimpleNamespace(
+                    direction="DOWN",
+                    confidence=0.91,
+                    current_price=1.17326,
+                    target_price=1.1702,
+                    invalidation_price=1.1748,
+                    horizon_min=60,
+                    rationale_summary="DOWN forecast from current tape",
+                    drivers_for=("buy-side sweep fade",),
+                    drivers_against=("old profile is watch-only",),
+                )
+
+                with patch(
+                    "quant_rabbit.strategy.intent_generator._forecast_seed_for_pair",
+                    return_value=forecast,
+                ):
+                    IntentGenerator(
+                        campaign_plan=_campaign(root, direction="LONG"),
+                        strategy_profile=_strategy(root, status="WATCH_ONLY", direction="SHORT"),
+                        pair_charts_path=_pair_charts_with_direction(
+                            root,
+                            long_score=0.82,
+                            short_score=0.18,
+                            dominant_regime="RANGE",
+                            m5_regime="RANGE",
+                            m5_long_bias=0.86,
+                            m5_short_bias=0.14,
+                        ),
+                        output_path=output,
+                        report_path=root / "intents.md",
+                        max_loss_jpy=500.0,
+                    ).run(snapshot_path=_snapshot(root))
+
+                payload = json.loads(output.read_text())
+        finally:
+            if prior is None:
+                os.environ.pop("QR_TRADER_DISABLE_SL_REPAIR", None)
+            else:
+                os.environ["QR_TRADER_DISABLE_SL_REPAIR"] = prior
+
+        trigger = next(
+            item
+            for item in payload["results"]
+            if item["lane_id"] == "failure_trader:EUR_USD:SHORT:BREAKOUT_FAILURE"
+        )
+        self.assertTrue(trigger["intent"]["metadata"]["forecast_seed"])
+        self.assertNotEqual(trigger["status"], "LIVE_READY")
+        self.assertTrue(any("WATCH_ONLY" in blocker for blocker in trigger["live_blockers"]))
+        self.assertTrue(
+            any(
+                issue["code"] == "STRATEGY_NOT_ELIGIBLE" and issue["severity"] == "BLOCK"
+                for issue in trigger["live_strategy_issues"]
+            )
+        )
+
     def test_carries_current_regime_and_session_bucket_from_pair_charts(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

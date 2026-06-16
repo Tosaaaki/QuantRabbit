@@ -1539,6 +1539,10 @@ class SelfImprovementAuditorTest(unittest.TestCase):
                                     }
                                 ],
                                 "live_blockers": [],
+                                "risk_metrics": {
+                                    "reward_jpy": 420.0,
+                                    "reward_risk": 1.18,
+                                },
                             }
                         ]
                     }
@@ -1603,8 +1607,18 @@ class SelfImprovementAuditorTest(unittest.TestCase):
         self.assertEqual(runner_diagnostics["top_demotion_reasons"][0]["reason"], "RANGE regime is not a clean runner trend")
         self.assertEqual(runner_diagnostics["top_issue_codes"][0]["code"], "TREND_MARKET_NOT_OPERATING_TREND")
         self.assertIn("runner candidates", report_text)
+        self.assertIn("opportunity modes", report_text)
+        self.assertIn("dry-run blocker families", report_text)
+        self.assertIn("nearest dry-run lanes", report_text)
+        self.assertIn("forecast gate reasons", report_text)
         self.assertIn("RUNNER_CANDIDATES_DEMOTED_TO_HARVEST", report_text)
         self.assertIn("RANGE regime is not a clean runner trend=3", report_text)
+        self.assertIn("failure_trader:AUD_CAD:SHORT:BREAKOUT_FAILURE:LIMIT", report_text)
+        self.assertIn("HARVEST", report_text)
+        self.assertIn("forecast=1", report_text)
+        self.assertIn("rr=`1.180`", report_text)
+        self.assertIn("reward=`420.000`", report_text)
+        self.assertIn("liquidity_sweep_high DOWN", report_text)
         self.assertEqual(dry_run_blockers["FORECAST_CONFIDENCE_REQUIRED_FOR_LIVE"]["count"], 1)
         self.assertEqual(dry_run_blockers["STRATEGY_NOT_ELIGIBLE"]["count"], 1)
         self.assertNotIn("STRATEGY_PROFILE_MISSING", dry_run_blockers)

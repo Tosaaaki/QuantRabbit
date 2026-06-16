@@ -439,9 +439,32 @@ def _watch_only_severity(intent: OrderIntent, *, sl_free: bool, for_live_send: b
     if not sl_free:
         return "BLOCK"
     metadata = intent.metadata or {}
-    if metadata.get("forecast_seed") and intent.order_type != OrderType.MARKET:
+    if (
+        metadata.get("forecast_seed")
+        and intent.order_type != OrderType.MARKET
+        and _watch_only_forecast_seed_side_aligned(intent, metadata)
+    ):
         return "WARN"
     return "BLOCK"
+
+
+def _watch_only_forecast_seed_side_aligned(intent: OrderIntent, metadata: dict[str, Any]) -> bool:
+    """Keep the forecast-seed WATCH_ONLY exception out of opposite-side chases."""
+
+    side = str(intent.side.value).upper()
+    chart_bias = str(metadata.get("chart_direction_bias") or "").upper()
+    if (side == "LONG" and chart_bias == "SHORT") or (side == "SHORT" and chart_bias == "LONG"):
+        return False
+
+    long_bias = _optional_float(metadata.get("m5_long_bias"))
+    short_bias = _optional_float(metadata.get("m5_short_bias"))
+    if long_bias is not None and short_bias is not None:
+        if side == "LONG" and long_bias < short_bias:
+            return False
+        if side == "SHORT" and short_bias < long_bias:
+            return False
+
+    return True
 
 
 def _method_suffix(entry: StrategyProfileEntry) -> str:
