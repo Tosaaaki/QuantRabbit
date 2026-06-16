@@ -1253,6 +1253,8 @@ class GPTTraderBrain:
             market_context_matrix=market_context_matrix,
             option_skew=option_skew,
         )
+        attack_packet = _attack_advice_packet(attack_advice)
+        learning_packet = _learning_audit_packet(learning_audit)
         return {
             "contract": {
                 "allowed_actions": list(ALLOWED_ACTIONS),
@@ -1281,6 +1283,12 @@ class GPTTraderBrain:
                     "unless explicit operator Gate B is present"
                 ),
             },
+            "decision_requirements": {
+                "learning_influenced_lane_evidence": _learning_influenced_lane_evidence_requirements(
+                    attack_packet,
+                    learning_packet,
+                ),
+            },
             "artifact_timestamps": {
                 "order_intents_generated_at_utc": intents.get("generated_at_utc"),
                 "ai_attack_advice_generated_at_utc": (
@@ -1305,10 +1313,10 @@ class GPTTraderBrain:
             "broker_snapshot": _snapshot_packet(snapshot),
             "daily_target": _target_packet(target),
             "lanes": lanes,
-            "ai_attack_advice": _attack_advice_packet(attack_advice),
+            "ai_attack_advice": attack_packet,
             "capture_economics": _capture_economics_packet(capture_economics),
             "coverage_optimization": _coverage_optimization_packet(coverage_optimization),
-            "learning_audit": _learning_audit_packet(learning_audit),
+            "learning_audit": learning_packet,
             "verification_ledger": _verification_ledger_packet(verification_ledger),
             "self_improvement_audit": _self_improvement_audit_packet(self_improvement_audit),
             "operator_precedent": _operator_precedent_packet(operator_precedent),
@@ -3359,6 +3367,38 @@ def _learning_audit_packet(payload: dict[str, Any] | None) -> dict[str, Any]:
             "lanes": lanes[:20],
         },
     }
+
+
+def _learning_influenced_lane_evidence_requirements(
+    attack_packet: dict[str, Any],
+    learning_packet: dict[str, Any],
+) -> list[dict[str, Any]]:
+    lane_ids = [str(item) for item in attack_packet.get("learning_influenced_lane_ids", []) or [] if str(item).strip()]
+    if not lane_ids:
+        return []
+    audit_lanes = learning_packet.get("learning_influence", {}).get("lanes") or []
+    audit_lane_ids = {
+        str(lane.get("lane_id") or "")
+        for lane in audit_lanes
+        if isinstance(lane, dict) and str(lane.get("lane_id") or "").strip()
+    }
+    status = str(learning_packet.get("status") or "missing")
+    requirements: list[dict[str, Any]] = []
+    for lane_id in lane_ids[:20]:
+        lane_ref = f"learning:lane:{lane_id}"
+        requirements.append(
+            {
+                "lane_id": lane_id,
+                "audit_status": status,
+                "covered_by_learning_audit": lane_id in audit_lane_ids,
+                "required_evidence_refs": ["learning:audit", lane_ref],
+                "verifier_rule": (
+                    "TRADE selecting this learning-influenced lane is rejected unless "
+                    "decision.evidence_refs includes every required_evidence_refs value."
+                ),
+            }
+        )
+    return requirements
 
 
 def _learning_exit_reason_metrics(effect: dict[str, Any]) -> dict[str, dict[str, Any]]:

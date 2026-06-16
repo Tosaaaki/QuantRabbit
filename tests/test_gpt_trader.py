@@ -1845,6 +1845,32 @@ class GPTTraderBrainTest(unittest.TestCase):
             self.assertEqual(payload["verification_issues"], [])
             self.assertEqual(payload["input_packet"]["learning_audit"]["status"], "LEARNING_AUDIT_WARN")
 
+    def test_input_packet_exposes_required_learning_lane_refs(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root)
+            files["attack_advice"].write_text(json.dumps(_learning_influenced_attack_advice()))
+            files["learning_audit"].write_text(json.dumps(_learning_audit_payload(status="LEARNING_AUDIT_WARN")))
+            decision = _trade_decision()
+            decision["evidence_refs"].extend(
+                ["attack:advice", f"attack:lane:{LANE_ID}", "learning:audit", f"learning:lane:{LANE_ID}"]
+            )
+            brain = _brain(root, files, decision)
+
+            summary = brain.run(snapshot_path=files["snapshot"])
+
+            self.assertEqual(summary.status, "ACCEPTED")
+            payload = json.loads((root / "gpt_decision.json").read_text())
+            requirements = payload["input_packet"]["decision_requirements"]["learning_influenced_lane_evidence"]
+            self.assertEqual(len(requirements), 1)
+            self.assertEqual(requirements[0]["lane_id"], LANE_ID)
+            self.assertTrue(requirements[0]["covered_by_learning_audit"])
+            self.assertEqual(
+                requirements[0]["required_evidence_refs"],
+                ["learning:audit", f"learning:lane:{LANE_ID}"],
+            )
+            self.assertIn(f"learning:lane:{LANE_ID}", payload["input_packet"]["allowed_evidence_refs"])
+
     def test_input_packet_exposes_learning_exit_reason_metrics(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
