@@ -1318,6 +1318,65 @@ class LiveOrderGatewayTest(unittest.TestCase):
             else:
                 os.environ["QR_NEW_ENTRY_INITIAL_SL"] = prior_initial_sl
 
+    def test_batch_blocks_existing_pending_parent_lane_with_drifted_geometry(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            client = FakeExecutionClient()
+            client.snapshot_value = BrokerSnapshot(
+                fetched_at_utc=client.snapshot_value.fetched_at_utc,
+                positions=(),
+                orders=(
+                    BrokerOrder(
+                        order_id="472480",
+                        pair="EUR_USD",
+                        order_type="LIMIT",
+                        price=1.17336,
+                        units=1000,
+                        owner=Owner.TRADER,
+                        raw={
+                            "id": "472480",
+                            "instrument": "EUR_USD",
+                            "type": "LIMIT_ORDER",
+                            "price": "1.17336",
+                            "units": "1000",
+                            "clientExtensions": {
+                                "comment": "qr-vnext lane=lane:EUR_USD:LONG desk=trend_trader role=NOW",
+                                "id": "qrv1-EURUSD-L-existing",
+                                "tag": "trader",
+                            },
+                            "tradeClientExtensions": {
+                                "comment": "qr-vnext lane=lane:EUR_USD:LONG desk=trend_trader role=NOW",
+                                "id": "qrv1-EURUSD-L-existing-trade",
+                                "tag": "trader",
+                            },
+                            "takeProfitOnFill": {"price": "1.17456"},
+                            "stopLossOnFill": {"price": "1.17244"},
+                        },
+                    ),
+                ),
+                quotes=client.snapshot_value.quotes,
+                account=client.snapshot_value.account,
+            )
+
+            summary = LiveOrderGateway(
+                client=client,
+                strategy_profile=_profile(root),
+                output_path=root / "request.json",
+                report_path=root / "report.md",
+                live_enabled=True,
+            ).run_batch(
+                intents_path=_intents(root, order_type="LIMIT"),
+                lane_ids=("lane:EUR_USD:LONG",),
+                send=True,
+                confirm_live=True,
+            )
+
+            self.assertEqual(summary.status, "BLOCKED")
+            self.assertEqual(summary.sent_count, 0)
+            self.assertEqual(client.orders, [])
+            payload = json.loads((root / "request.json").read_text())
+            self.assertIn("BASKET_DUPLICATE_PARENT_LANE", {issue["code"] for issue in payload["risk_issues"]})
+
 
 class FakeExecutionClient:
     def __init__(self) -> None:

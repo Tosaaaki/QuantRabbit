@@ -336,7 +336,7 @@ class LiveOrderGateway:
         accepted_risk_jpy = 0.0
         accepted_margin_jpy = 0.0
         seen_geometry = set(_pending_geometry_keys(initial_snapshot))
-        seen_parent_lanes: set[str] = set()
+        seen_parent_lanes: set[str] = set(_pending_parent_lane_keys(initial_snapshot))
         accepted_pair_sides: dict[str, Side] = {}
         order_results: list[dict[str, Any]] = []
         batch_risk_issues = 0
@@ -954,6 +954,10 @@ def _selected_parent_lane_key(selected: dict[str, Any], requested_lane_id: str |
     if isinstance(parent, str) and parent.strip():
         return parent.strip()
     lane_id = str(selected.get("lane_id") or requested_lane_id or "")
+    return _parent_lane_id_from_lane_id(lane_id)
+
+
+def _parent_lane_id_from_lane_id(lane_id: str) -> str:
     if lane_id.endswith(":MARKET"):
         return lane_id[: -len(":MARKET")]
     return lane_id
@@ -1105,6 +1109,17 @@ def _pending_geometry_keys(snapshot: BrokerSnapshot) -> tuple[tuple[object, ...]
     return tuple(keys)
 
 
+def _pending_parent_lane_keys(snapshot: BrokerSnapshot) -> tuple[str, ...]:
+    keys: list[str] = []
+    for order in snapshot.orders:
+        if not _is_trader_pending_entry(order):
+            continue
+        key = _pending_order_parent_lane_key(order)
+        if key:
+            keys.append(key)
+    return tuple(keys)
+
+
 def _pending_risk_margin_jpy(snapshot: BrokerSnapshot) -> tuple[float, float, RiskIssue | None]:
     risk = 0.0
     margin = 0.0
@@ -1182,6 +1197,28 @@ def _pending_order_geometry_key(order) -> tuple[object, ...] | None:
     sl = _raw_dependent_price(order.raw, "stopLossOnFill")
     order_type = "STOP-ENTRY" if str(order.order_type).upper() == "STOP" else str(order.order_type).upper()
     return (order.pair, side.value, order_type, _price_key(order.pair, order.price), _price_key(order.pair, tp), _price_key(order.pair, sl))
+
+
+def _pending_order_parent_lane_key(order) -> str | None:
+    raw = order.raw if isinstance(order.raw, dict) else {}
+    for extension_key in ("clientExtensions", "tradeClientExtensions"):
+        extension = raw.get(extension_key)
+        if not isinstance(extension, dict):
+            continue
+        lane_id = _lane_id_from_extension_comment(extension.get("comment"))
+        if lane_id:
+            return _parent_lane_id_from_lane_id(lane_id)
+    return None
+
+
+def _lane_id_from_extension_comment(comment: Any) -> str | None:
+    if not isinstance(comment, str):
+        return None
+    for token in comment.split():
+        if token.startswith("lane="):
+            lane_id = token[len("lane="):].strip()
+            return lane_id or None
+    return None
 
 
 def _intent_geometry_key(intent: OrderIntent) -> tuple[object, ...]:
