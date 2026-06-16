@@ -1354,8 +1354,54 @@ class HitRatesTest(unittest.TestCase):
 
             bucket = hr["directional_forecast_up"]["EUR_USD:TREND"]
             self.assertEqual(bucket["samples"], 1)
+            self.assertEqual(bucket["calibration_samples"], 2)
+            self.assertEqual(bucket["target_timeout_count"], 1)
+            self.assertAlmostEqual(bucket["target_timeout_rate"], 0.5)
             self.assertEqual(bucket["invalidation_first_count"], 1)
             self.assertAlmostEqual(bucket["invalidation_first_rate"], 1.0)
+
+    def test_directional_forecast_timeouts_dampen_confidence_without_polluting_hit_rate(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            from quant_rabbit.strategy.projection_ledger import write_ledger
+
+            entries = [
+                LedgerEntry(
+                    timestamp_emitted_utc=f"2026-06-16T00:{idx:02d}:00Z",
+                    pair="EUR_CHF",
+                    signal_name="directional_forecast",
+                    direction="DOWN",
+                    lead_time_min=60,
+                    confidence=0.7,
+                    entry_price=0.94,
+                    predicted_target_price=0.936,
+                    predicted_invalidation_price=0.943,
+                    resolution_window_min=60,
+                    resolution_status="TIMEOUT",
+                    resolution_evidence="target and invalidation both untouched in forecast window",
+                    regime_at_emission="TREND",
+                    cycle_id=f"timeout-{idx}",
+                )
+                for idx in range(12)
+            ]
+            write_ledger(entries, root)
+
+            hr = compute_hit_rates(root)
+            bucket = hr["directional_forecast_down"]["EUR_CHF:TREND"]
+
+            self.assertEqual(bucket["samples"], 0)
+            self.assertEqual(bucket["calibration_samples"], 12)
+            self.assertEqual(bucket["target_timeout_count"], 12)
+            self.assertEqual(bucket["target_timeout_rate"], 1.0)
+            self.assertEqual(bucket["hit_rate"], 0.0)
+            mult = confidence_calibration(
+                "directional_forecast_down",
+                "EUR_CHF",
+                hit_rates=hr,
+                regime="TREND",
+            )
+            self.assertLess(mult, 1.0)
+            self.assertGreater(mult, CONFIDENCE_MIN_MULTIPLIER)
 
     def test_pair_regime_bucket_survives_global_multi_pair_history(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

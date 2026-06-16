@@ -1189,21 +1189,27 @@ def _compute_hit_rates_uncached(
 ) -> Dict[str, Dict[str, Dict[str, float]]]:
     entries = load_ledger(data_root)
     resolved = _deduped_calibration_entries([
-        e for e in entries
-        if e.resolution_status in ("HIT", "MISS") and _calibration_entry_eligible(e)
+        e
+        for e in entries
+        if (
+            e.resolution_status in ("HIT", "MISS")
+            and _calibration_entry_eligible(e)
+        )
+        or _directional_forecast_timing_penalty_eligible(e)
     ])
-    grouped: Dict[str, Dict[str, List[tuple[bool, bool]]]] = {}
+    grouped: Dict[str, Dict[str, List[tuple[bool | None, bool, bool]]]] = {}
     for e in resolved:
-        hit = e.resolution_status == "HIT"
+        is_timeout_penalty = _directional_forecast_timing_penalty_eligible(e)
+        hit = None if is_timeout_penalty else e.resolution_status == "HIT"
         invalidation_first = _calibration_invalidation_first_like(e)
         for signal_name in _calibration_signal_names(e):
             s = grouped.setdefault(signal_name, {})
             regime = e.regime_at_emission or "UNCLEAR"
             # 3-level bucketing: most specific → most general
-            s.setdefault(f"{e.pair}:{regime}", []).append((hit, invalidation_first))
-            s.setdefault(f"{e.pair}:_all_regimes", []).append((hit, invalidation_first))
-            s.setdefault(f"_all_pairs:{regime}", []).append((hit, invalidation_first))
-            s.setdefault("_all_pairs:_all_regimes", []).append((hit, invalidation_first))
+            s.setdefault(f"{e.pair}:{regime}", []).append((hit, invalidation_first, is_timeout_penalty))
+            s.setdefault(f"{e.pair}:_all_regimes", []).append((hit, invalidation_first, is_timeout_penalty))
+            s.setdefault(f"_all_pairs:{regime}", []).append((hit, invalidation_first, is_timeout_penalty))
+            s.setdefault("_all_pairs:_all_regimes", []).append((hit, invalidation_first, is_timeout_penalty))
     out: Dict[str, Dict[str, Dict[str, float]]] = {}
     for sig, by_key in grouped.items():
         out[sig] = {}
@@ -1212,14 +1218,25 @@ def _compute_hit_rates_uncached(
             recent = results[-n:]
             if not recent:
                 continue
-            hits = sum(1 for hit, _invalidation_first in recent if hit)
-            invalidation_first_count = sum(1 for _hit, invalidation_first in recent if invalidation_first)
-            hr = hits / float(n)
+            hit_miss_recent = [item for item in recent if item[0] is not None]
+            sample_count = len(hit_miss_recent)
+            hits = sum(1 for hit, _invalidation_first, _timeout in hit_miss_recent if hit)
+            invalidation_first_count = sum(1 for _hit, invalidation_first, _timeout in hit_miss_recent if invalidation_first)
+            target_timeout_count = sum(1 for _hit, _invalidation_first, timeout in recent if timeout)
+            calibration_samples = sample_count + target_timeout_count
+            hr = hits / float(sample_count) if sample_count else 0.0
             out[sig][key] = {
                 "hit_rate": round(hr, 3),
-                "samples": n,
+                "samples": sample_count,
+                "calibration_samples": calibration_samples,
                 "invalidation_first_count": invalidation_first_count,
-                "invalidation_first_rate": round(invalidation_first_count / float(n), 4),
+                "invalidation_first_rate": round(invalidation_first_count / float(sample_count), 4)
+                if sample_count
+                else 0.0,
+                "target_timeout_count": target_timeout_count,
+                "target_timeout_rate": round(target_timeout_count / float(calibration_samples), 4)
+                if calibration_samples
+                else 0.0,
             }
     return out
 
@@ -1234,6 +1251,25 @@ def _calibration_invalidation_first_like(entry: LedgerEntry) -> bool:
         "before target" in evidence
         or "invalidation also touched" in evidence
     )
+
+
+def _directional_forecast_timing_penalty_eligible(entry: LedgerEntry) -> bool:
+    """Count no-touch directional forecasts as timing-quality penalties.
+
+    HIT/MISS hit-rate should remain an adverse-direction calibration: a no-touch
+    forecast is not the same defect as invalidation-first. It still matters for
+    live entries, because a forecast whose target regularly fails to materialize
+    inside its horizon should not keep full confidence for executable orders.
+    """
+    if entry.signal_name != "directional_forecast":
+        return False
+    if str(entry.direction or "").upper() not in {"UP", "DOWN"}:
+        return False
+    if entry.predicted_target_price is None or entry.predicted_invalidation_price is None:
+        return False
+    if entry.resolution_status == "TIMEOUT":
+        return True
+    return _directional_forecast_target_timeout_like(entry)
 
 
 def _copy_hit_rates(
@@ -1488,34 +1524,70 @@ def confidence_calibration(
     by_key = hit_rates.get(signal_name) or {}
 
     chosen = None
+    chosen_key = ""
     for key, c in _calibration_candidate_items(by_key, pair=pair, regime=regime):
         if c is None:
             continue
         # Need raw samples count; old "_all_pairs" / new buckets all have "samples".
-        samples = c.get("samples", 0)
+        samples = _effective_calibration_samples(c)
         if samples >= _confidence_min_samples_for_bucket(key):
             chosen = c
+            chosen_key = key
             break
     if chosen is None:
         return 1.0
 
-    hit_rate_obs = chosen.get("hit_rate", 0.5)
-    samples = chosen.get("samples", 0)
-    hits = int(round(hit_rate_obs * samples))
-    # Bayesian posterior mean + variance
-    mu = _bayesian_posterior_mean(hits, samples)
-    var = _bayesian_posterior_variance(hits, samples)
-    sigma = math.sqrt(var)
-    # Lower 90% bound (1.28σ) — pessimistic estimate. As samples grow,
-    # σ shrinks toward 0, so bound approaches mean.
-    pessimistic = max(0.0, min(1.0, mu - 1.28 * sigma))
-    # Map [0, 1] hit-rate to [MIN_MULT, MAX_MULT] via linear interp
-    # centered at 0.5 = 1.0.
-    if pessimistic >= 0.5:
-        mult = 1.0 + (pessimistic - 0.5) * 2.0 * (CONFIDENCE_MAX_MULTIPLIER - 1.0)
+    hit_miss_samples = _hit_miss_samples(chosen)
+    if hit_miss_samples >= _confidence_min_samples_for_bucket(chosen_key):
+        hit_rate_obs = chosen.get("hit_rate", 0.5)
+        hits = int(round(hit_rate_obs * hit_miss_samples))
+        # Bayesian posterior mean + variance
+        mu = _bayesian_posterior_mean(hits, hit_miss_samples)
+        var = _bayesian_posterior_variance(hits, hit_miss_samples)
+        sigma = math.sqrt(var)
+        # Lower 90% bound (1.28σ) — pessimistic estimate. As samples grow,
+        # σ shrinks toward 0, so bound approaches mean.
+        pessimistic = max(0.0, min(1.0, mu - 1.28 * sigma))
+        # Map [0, 1] hit-rate to [MIN_MULT, MAX_MULT] via linear interp
+        # centered at 0.5 = 1.0.
+        if pessimistic >= 0.5:
+            mult = 1.0 + (pessimistic - 0.5) * 2.0 * (CONFIDENCE_MAX_MULTIPLIER - 1.0)
+        else:
+            mult = 1.0 - (0.5 - pessimistic) * 2.0 * (1.0 - CONFIDENCE_MIN_MULTIPLIER)
     else:
-        mult = 1.0 - (0.5 - pessimistic) * 2.0 * (1.0 - CONFIDENCE_MIN_MULTIPLIER)
+        mult = 1.0
+    timeout_rate = _target_timeout_rate(chosen)
+    if timeout_rate > 0:
+        # Timing misses are not adverse-direction misses, so keep them out of
+        # hit_rate. They still reduce executable confidence: the target did not
+        # arrive inside the forecast horizon. Cap the haircut so a bucket can
+        # recover once adverse-direction HIT/MISS performance improves.
+        mult *= 1.0 - min(0.65, timeout_rate * 0.65)
     return round(mult, 3)
+
+
+def _effective_calibration_samples(candidate: Dict[str, Any]) -> int:
+    try:
+        samples = int(candidate.get("calibration_samples", candidate.get("samples", 0)) or 0)
+    except (TypeError, ValueError):
+        return 0
+    return max(samples, 0)
+
+
+def _hit_miss_samples(candidate: Dict[str, Any]) -> int:
+    try:
+        samples = int(candidate.get("samples", 0) or 0)
+    except (TypeError, ValueError):
+        return 0
+    return max(samples, 0)
+
+
+def _target_timeout_rate(candidate: Dict[str, Any]) -> float:
+    try:
+        rate = float(candidate.get("target_timeout_rate", 0.0) or 0.0)
+    except (TypeError, ValueError):
+        return 0.0
+    return max(0.0, min(1.0, rate))
 
 
 def _calibration_candidate_items(
