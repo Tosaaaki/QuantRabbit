@@ -280,12 +280,103 @@ class CoverageOptimizerTest(unittest.TestCase):
             self.assertEqual(modes["RUNNER"]["lanes"], 1)
             self.assertEqual(modes["HARVEST"]["top_issue_codes"][0]["code"], "REWARD_RISK_TOO_LOW")
             self.assertEqual(modes["RUNNER"]["top_issue_codes"][0]["code"], "FORECAST_REQUIRED")
+            self.assertEqual(modes["HARVEST"]["top_live_blocker_codes"][0]["code"], "REWARD_RISK_TOO_LOW")
+            self.assertEqual(modes["RUNNER"]["top_live_blocker_codes"][0]["code"], "FORECAST_REQUIRED")
             self.assertEqual(payload["lanes"][0]["opportunity_mode"], "HARVEST")
             self.assertEqual(payload["lanes"][0]["issue_codes"], ["REWARD_RISK_TOO_LOW"])
+            self.assertEqual(payload["lanes"][0]["live_blocker_codes"], ["REWARD_RISK_TOO_LOW"])
             self.assertEqual(payload["lanes"][1]["opportunity_mode"], "RUNNER")
             self.assertTrue(any("harvest and runner opportunity paths" in item for item in payload["action_items"]))
             self.assertTrue(any("top codes: REWARD_RISK_TOO_LOW" in item for item in payload["action_items"]))
             self.assertIn("Opportunity Modes", (root / "coverage.md").read_text())
+
+    def test_opportunity_modes_separate_live_blocker_codes_from_advisory_issue_codes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            intents = root / "intents.json"
+            target = root / "target.json"
+            forecast_message = "EUR_USD LONG forecast UP confidence 0.48 < 0.65"
+            profile_message = "EUR_USD LONG is absent from the mined strategy profile"
+            intents.write_text(
+                json.dumps(
+                    {
+                        "results": [
+                            _result(
+                                "DRY_RUN_PASSED",
+                                lane_id="failure_trader:EUR_USD:LONG:BREAKOUT_FAILURE",
+                                method="BREAKOUT_FAILURE",
+                                live_blocker=forecast_message,
+                                risk_issues=[
+                                    {
+                                        "code": "FORECAST_CONFIDENCE_REQUIRED_FOR_LIVE",
+                                        "message": forecast_message,
+                                        "severity": "WARN",
+                                    }
+                                ],
+                                strategy_issues=[
+                                    {
+                                        "code": "STRATEGY_NOT_ELIGIBLE",
+                                        "message": "pair-side is watch only in dry-run profile evidence",
+                                        "severity": "WARN",
+                                    }
+                                ],
+                                live_strategy_issues=[
+                                    {
+                                        "code": "STRATEGY_PROFILE_MISSING",
+                                        "message": profile_message,
+                                        "severity": "BLOCK",
+                                    }
+                                ],
+                                risk_metrics={
+                                    "risk_jpy": 100.0,
+                                    "reward_jpy": 120.0,
+                                    "reward_risk": 1.2,
+                                    "spread_pips": 0.8,
+                                },
+                            )
+                        ]
+                    }
+                )
+            )
+            target.write_text(
+                json.dumps(
+                    {
+                        "status": "PURSUE_TARGET",
+                        "remaining_target_jpy": 500.0,
+                        "remaining_risk_budget_jpy": 500.0,
+                    }
+                )
+            )
+
+            CoverageOptimizer(
+                intents_path=intents,
+                target_state_path=target,
+                replay_path=root / "missing_replay.json",
+                market_context_matrix_path=_matrix(root),
+                output_path=root / "coverage.json",
+                report_path=root / "coverage.md",
+            ).run()
+
+            payload = json.loads((root / "coverage.json").read_text())
+            lane = payload["lanes"][0]
+            mode = payload["opportunity_modes"]["HARVEST"]
+            self.assertEqual(
+                lane["issue_codes"],
+                ["FORECAST_CONFIDENCE_REQUIRED_FOR_LIVE", "STRATEGY_NOT_ELIGIBLE"],
+            )
+            self.assertEqual(
+                lane["live_blocker_codes"],
+                ["FORECAST_CONFIDENCE_REQUIRED_FOR_LIVE", "STRATEGY_PROFILE_MISSING"],
+            )
+            self.assertEqual(
+                [item["code"] for item in mode["top_live_blocker_codes"]],
+                ["FORECAST_CONFIDENCE_REQUIRED_FOR_LIVE", "STRATEGY_PROFILE_MISSING"],
+            )
+            self.assertNotIn(
+                "STRATEGY_NOT_ELIGIBLE",
+                [item["code"] for item in mode["top_live_blocker_codes"]],
+            )
+            self.assertIn("live_blocker_codes=`FORECAST_CONFIDENCE_REQUIRED_FOR_LIVE", (root / "coverage.md").read_text())
 
     def test_opportunity_mode_prefers_intent_metadata_when_present(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

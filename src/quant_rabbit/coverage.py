@@ -53,6 +53,7 @@ class CoverageLane:
     tp_target_intent: str
     tp_attach_reason: str
     issue_codes: tuple[str, ...]
+    live_blocker_codes: tuple[str, ...]
     counts_live_ready: bool
     counts_after_promotion: bool
     blockers: tuple[str, ...]
@@ -286,8 +287,16 @@ class CoverageOptimizer:
                     continue
                 blockers = item.get("top_blockers") if isinstance(item.get("top_blockers"), list) else []
                 issue_codes = item.get("top_issue_codes") if isinstance(item.get("top_issue_codes"), list) else []
+                live_blocker_codes = (
+                    item.get("top_live_blocker_codes")
+                    if isinstance(item.get("top_live_blocker_codes"), list)
+                    else []
+                )
                 top_blockers = ", ".join(str(blocker.get("label")) for blocker in blockers[:3] if isinstance(blocker, dict))
                 top_codes = ", ".join(str(issue.get("code")) for issue in issue_codes[:4] if isinstance(issue, dict))
+                top_live_codes = ", ".join(
+                    str(issue.get("code")) for issue in live_blocker_codes[:4] if isinstance(issue, dict)
+                )
                 diagnostic_text = ""
                 diagnostic_candidates = item.get("diagnostic_candidate_lanes")
                 demoted = item.get("demoted_to_harvest_lanes")
@@ -301,7 +310,7 @@ class CoverageOptimizer:
                     f"promotion_candidates=`{item.get('promotion_candidate_lanes')}` "
                     f"total_reward=`{item.get('reward_jpy')}` live_reward=`{item.get('live_ready_reward_jpy')}` "
                     f"potential_reward=`{item.get('potential_reward_jpy')}`{diagnostic_text} codes=`{top_codes or 'none'}` "
-                    f"blockers=`{top_blockers or 'none'}`"
+                    f"live_blocker_codes=`{top_live_codes or 'none'}` blockers=`{top_blockers or 'none'}`"
                 )
             lines.append("")
         runner_diag = (
@@ -478,6 +487,7 @@ def _coverage_lane(result: dict[str, Any]) -> CoverageLane:
         tp_target_intent=str(metadata.get("tp_target_intent") or ""),
         tp_attach_reason=str(metadata.get("tp_attach_reason") or ""),
         issue_codes=tuple(_result_issue_codes(result)),
+        live_blocker_codes=tuple(_result_live_blocker_codes(result)),
         counts_live_ready=status == "LIVE_READY" and not blockers,
         counts_after_promotion=(
             status == "DRY_RUN_PASSED"
@@ -560,6 +570,39 @@ def _result_issue_codes(result: dict[str, Any]) -> list[str]:
             code = str(issue.get("code") or issue.get("message") or "").strip()
             if code:
                 codes.append(code)
+    return codes
+
+
+def _result_live_blocker_codes(result: dict[str, Any]) -> list[str]:
+    """Return code-level causes that actually prevented LIVE_READY.
+
+    Intent generation uses `live_blockers` for some live-only WARN issues
+    (forecast confidence/watch-only, telemetry readiness) because they block
+    live sends without making the dry-run risk receipt invalid. Coverage
+    diagnostics therefore need a separate code list instead of treating every
+    advisory strategy/risk issue as an equal blocker.
+    """
+
+    live_blocker_messages = {
+        str(item).strip()
+        for item in result.get("live_blockers", []) or []
+        if str(item).strip()
+    }
+    codes: list[str] = []
+    seen: set[str] = set()
+    for issue_key in ("risk_issues", "strategy_issues", "live_strategy_issues"):
+        for issue in result.get(issue_key, []) or []:
+            if not isinstance(issue, dict):
+                continue
+            message = str(issue.get("message") or "").strip()
+            severity = str(issue.get("severity") or "").upper()
+            if severity != "BLOCK" and message not in live_blocker_messages:
+                continue
+            code = str(issue.get("code") or issue.get("message") or "").strip()
+            if not code or code in seen:
+                continue
+            seen.add(code)
+            codes.append(code)
     return codes
 
 
@@ -1564,6 +1607,7 @@ def _opportunity_mode_summary(
             "potential_coverage_pct": 0.0,
             "status_counts": {},
             "top_issue_codes": [],
+            "top_live_blocker_codes": [],
             "top_blockers": [],
             "top_lanes": [],
             "diagnostic_candidate_lanes": 0,
@@ -1572,6 +1616,7 @@ def _opportunity_mode_summary(
     }
     status_counts: dict[str, Counter[str]] = {mode: Counter() for mode in summaries}
     issue_code_counts: dict[str, Counter[str]] = {mode: Counter() for mode in summaries}
+    live_blocker_code_counts: dict[str, Counter[str]] = {mode: Counter() for mode in summaries}
     blocker_counts: dict[str, Counter[str]] = {mode: Counter() for mode in summaries}
     top_lanes: dict[str, list[CoverageLane]] = {mode: [] for mode in summaries}
     for lane in lanes:
@@ -1588,6 +1633,7 @@ def _opportunity_mode_summary(
             item["promotion_candidate_lanes"] += 1
         status_counts[mode][lane.status] += 1
         issue_code_counts[mode].update(lane.issue_codes)
+        live_blocker_code_counts[mode].update(lane.live_blocker_codes)
         blocker_counts[mode].update(lane.blockers)
         top_lanes[mode].append(lane)
     for mode, item in summaries.items():
@@ -1605,6 +1651,10 @@ def _opportunity_mode_summary(
         item["top_issue_codes"] = [
             {"code": code, "count": count}
             for code, count in issue_code_counts[mode].most_common(12)
+        ]
+        item["top_live_blocker_codes"] = [
+            {"code": code, "count": count}
+            for code, count in live_blocker_code_counts[mode].most_common(12)
         ]
         item["top_blockers"] = [
             {"label": label, "count": count}
@@ -1670,11 +1720,13 @@ def _runner_candidate_diagnostics(lanes: tuple[CoverageLane, ...]) -> dict[str, 
     )
     reason_counts = Counter(lane.tp_attach_reason or "missing TP attach reason" for lane in attached_harvest)
     issue_counts: Counter[str] = Counter()
+    live_blocker_code_counts: Counter[str] = Counter()
     blocker_counts: Counter[str] = Counter()
     status_counts: Counter[str] = Counter()
     for lane in trend_candidates:
         status_counts[lane.status] += 1
         issue_counts.update(lane.issue_codes)
+        live_blocker_code_counts.update(lane.live_blocker_codes)
         blocker_counts.update(lane.blockers)
     if runner_qualified:
         status = "RUNNER_QUALIFIED"
@@ -1695,6 +1747,10 @@ def _runner_candidate_diagnostics(lanes: tuple[CoverageLane, ...]) -> dict[str, 
         "top_issue_codes": [
             {"code": code, "count": count}
             for code, count in issue_counts.most_common(8)
+        ],
+        "top_live_blocker_codes": [
+            {"code": code, "count": count}
+            for code, count in live_blocker_code_counts.most_common(8)
         ],
         "top_blockers": [
             {"label": label, "count": count}
@@ -1729,7 +1785,13 @@ def _opportunity_mode_repair_item(
         item = opportunity_modes.get(mode) if isinstance(opportunity_modes.get(mode), dict) else {}
         if int(item.get("lanes") or 0) <= 0 or int(item.get("live_ready_lanes") or 0) > 0:
             continue
-        issue_codes = item.get("top_issue_codes") if isinstance(item.get("top_issue_codes"), list) else []
+        issue_codes = (
+            item.get("top_live_blocker_codes")
+            if isinstance(item.get("top_live_blocker_codes"), list)
+            else []
+        )
+        if not issue_codes:
+            issue_codes = item.get("top_issue_codes") if isinstance(item.get("top_issue_codes"), list) else []
         code_labels = [
             str(issue.get("code"))
             for issue in issue_codes[:3]

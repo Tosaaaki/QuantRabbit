@@ -575,6 +575,9 @@ class AutoTradeCycleTest(unittest.TestCase):
                                 "top_issue_codes": [
                                     {"code": "FORECAST_CONFIDENCE_REQUIRED_FOR_LIVE", "count": 4}
                                 ],
+                                "top_live_blocker_codes": [
+                                    {"code": "FORECAST_CONFIDENCE_REQUIRED_FOR_LIVE", "count": 3}
+                                ],
                             },
                             "RUNNER": {
                                 "lanes": 0,
@@ -585,6 +588,9 @@ class AutoTradeCycleTest(unittest.TestCase):
                                 "reward_jpy": 0.0,
                                 "top_issue_codes": [
                                     {"code": "FORECAST_WATCH_ONLY", "count": 3}
+                                ],
+                                "top_live_blocker_codes": [
+                                    {"code": "RUNNER_REGIME_NOT_CLEAN", "count": 2}
                                 ],
                             },
                         },
@@ -628,6 +634,11 @@ class AutoTradeCycleTest(unittest.TestCase):
             self.assertIn(
                 "- Opportunity issue codes: HARVEST=`FORECAST_CONFIDENCE_REQUIRED_FOR_LIVE:4`; "
                 "RUNNER=`FORECAST_WATCH_ONLY:3`",
+                report_text,
+            )
+            self.assertIn(
+                "- Opportunity live blocker codes: HARVEST=`FORECAST_CONFIDENCE_REQUIRED_FOR_LIVE:3`; "
+                "RUNNER=`RUNNER_REGIME_NOT_CLEAN:2`",
                 report_text,
             )
             self.assertIn(

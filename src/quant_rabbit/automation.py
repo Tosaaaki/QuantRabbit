@@ -437,6 +437,7 @@ def _cycle_opportunity_mode_report_lines(intents_path: Path) -> list[str]:
 
     mode_parts: list[str] = []
     issue_parts: list[str] = []
+    live_blocker_code_parts: list[str] = []
     for mode in ("HARVEST", "RUNNER", "BALANCED"):
         item = modes.get(mode)
         if not isinstance(item, dict):
@@ -460,10 +461,15 @@ def _cycle_opportunity_mode_report_lines(intents_path: Path) -> list[str]:
         top_codes = _report_count_items(item.get("top_issue_codes"), key="code", limit=4)
         if top_codes:
             issue_parts.append(f"{mode}=`{top_codes}`")
+        top_live_blocker_codes = _report_count_items(item.get("top_live_blocker_codes"), key="code", limit=4)
+        if top_live_blocker_codes:
+            live_blocker_code_parts.append(f"{mode}=`{top_live_blocker_codes}`")
 
     lines: list[str] = []
     if mode_parts:
         lines.append(f"- Opportunity modes: {'; '.join(f'`{part}`' for part in mode_parts)}")
+    if live_blocker_code_parts:
+        lines.append(f"- Opportunity live blocker codes: {'; '.join(live_blocker_code_parts)}")
     if issue_parts:
         lines.append(f"- Opportunity issue codes: {'; '.join(issue_parts)}")
 
