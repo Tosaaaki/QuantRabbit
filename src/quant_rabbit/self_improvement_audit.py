@@ -2284,7 +2284,6 @@ def _directional_forecast_invalidation_first_like(row: dict[str, Any]) -> bool:
         return False
     return (
         "before target" in evidence
-        or "not reached before invalidation" in evidence
         or "invalidation also touched" in evidence
     )
 

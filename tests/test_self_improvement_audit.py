@@ -19,6 +19,7 @@ from quant_rabbit.self_improvement_audit import (
     STATUS_BLOCKED,
     SelfImprovementAuditor,
     _effect_metrics,
+    _directional_forecast_invalidation_first_like,
     _gateway_close_recovery_observation,
     _intent_live_readiness_family_breakdown,
     _profitability_findings,
@@ -81,6 +82,21 @@ class SelfImprovementAuditorTest(unittest.TestCase):
             _NOW - timedelta(minutes=30) - grace - timedelta(seconds=1)
         ).isoformat()
         self.assertTrue(_projection_expired(row, now=_NOW))
+
+    def test_no_touch_directional_miss_is_not_invalidation_first(self) -> None:
+        no_touch = {
+            "resolution_status": "MISS",
+            "resolution_evidence": (
+                "target 1.10200 not reached; invalidation 1.09900 also untouched in forecast window"
+            ),
+        }
+        invalidation_first = {
+            "resolution_status": "MISS",
+            "resolution_evidence": "2026-06-16T00:10:00Z invalidation 1.09900 touched before target 1.10200",
+        }
+
+        self.assertFalse(_directional_forecast_invalidation_first_like(no_touch))
+        self.assertTrue(_directional_forecast_invalidation_first_like(invalidation_first))
 
     def test_top_intent_blockers_ignore_dry_run_strategy_warnings(self) -> None:
         blockers = _top_intent_blockers(

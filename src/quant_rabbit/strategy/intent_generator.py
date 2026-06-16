@@ -4645,6 +4645,8 @@ class IntentGenerator:
         if forecast_live_issue is not None:
             risk_issues.append(forecast_live_issue)
             live_blockers = (*live_blockers, forecast_live_issue["message"])
+            if forecast_live_issue.get("severity") == "BLOCK":
+                risk_allowed = False
         forecast_watch_issue = _forecast_watch_only_issue(intent, intent.metadata or {})
         if forecast_watch_issue is not None:
             risk_issues.append(forecast_watch_issue)

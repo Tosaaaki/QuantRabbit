@@ -1265,6 +1265,56 @@ class HitRatesTest(unittest.TestCase):
             self.assertEqual(bucket["invalidation_first_count"], 3)
             self.assertAlmostEqual(bucket["invalidation_first_rate"], 0.75)
 
+    def test_compute_hit_rates_does_not_count_no_touch_miss_as_invalidation_first(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            from quant_rabbit.strategy.projection_ledger import write_ledger
+
+            entries = [
+                LedgerEntry(
+                    timestamp_emitted_utc="2026-06-16T00:00:00Z",
+                    pair="EUR_USD",
+                    signal_name="directional_forecast",
+                    direction="UP",
+                    lead_time_min=60,
+                    confidence=0.7,
+                    entry_price=1.1,
+                    predicted_target_price=1.102,
+                    predicted_invalidation_price=1.099,
+                    resolution_window_min=60,
+                    resolution_status="MISS",
+                    resolution_evidence=(
+                        "target 1.10200 not reached; invalidation 1.09900 also untouched in forecast window"
+                    ),
+                    regime_at_emission="TREND",
+                    cycle_id="cycle-no-touch",
+                ),
+                LedgerEntry(
+                    timestamp_emitted_utc="2026-06-16T00:01:00Z",
+                    pair="EUR_USD",
+                    signal_name="directional_forecast",
+                    direction="UP",
+                    lead_time_min=60,
+                    confidence=0.7,
+                    entry_price=1.1,
+                    predicted_target_price=1.102,
+                    predicted_invalidation_price=1.099,
+                    resolution_window_min=60,
+                    resolution_status="MISS",
+                    resolution_evidence="2026-06-16T00:10:00Z invalidation 1.09900 touched before target 1.10200",
+                    regime_at_emission="TREND",
+                    cycle_id="cycle-invalidation-first",
+                ),
+            ]
+            write_ledger(entries, root)
+
+            hr = compute_hit_rates(root)
+
+            bucket = hr["directional_forecast_up"]["EUR_USD:TREND"]
+            self.assertEqual(bucket["samples"], 2)
+            self.assertEqual(bucket["invalidation_first_count"], 1)
+            self.assertAlmostEqual(bucket["invalidation_first_rate"], 0.5)
+
     def test_pair_regime_bucket_survives_global_multi_pair_history(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

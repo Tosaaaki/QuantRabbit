@@ -1071,7 +1071,10 @@ def _directional_target_invalidation_outcome(
         if target_touched:
             return "HIT", f"{ts} target {target:.5f} touched before invalidation {invalidation:.5f}"
 
-    return "MISS", f"target {target:.5f} not reached before invalidation {invalidation:.5f}"
+    return (
+        "MISS",
+        f"target {target:.5f} not reached; invalidation {invalidation:.5f} also untouched in forecast window",
+    )
 
 
 def _directional_invalidation_touched(entry: LedgerEntry, price_path: dict[str, float]) -> bool:
@@ -1227,7 +1230,6 @@ def _calibration_invalidation_first_like(entry: LedgerEntry) -> bool:
         return False
     return (
         "before target" in evidence
-        or "not reached before invalidation" in evidence
         or "invalidation also touched" in evidence
     )
 
