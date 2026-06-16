@@ -1361,6 +1361,105 @@ class CoverageOptimizerTest(unittest.TestCase):
             report = (root / "coverage.md").read_text()
             self.assertIn("Matrix-Supported Repair Queue", report)
 
+    def test_range_forecast_method_mismatch_points_to_range_rotation_repair(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            intents = root / "intents.json"
+            target = root / "target.json"
+            mismatch_issue = {
+                "severity": "BLOCK",
+                "code": "RANGE_FORECAST_REQUIRES_RANGE_ROTATION",
+                "message": "RANGE forecast only authorizes RANGE_ROTATION rail geometry",
+            }
+            range_block = {
+                "severity": "BLOCK",
+                "code": "RANGE_ROTATION_BROADER_LOCATION_CHASE",
+                "message": "RANGE_ROTATION is on the wrong side of broader location",
+            }
+            failure_lane = _result(
+                "DRY_RUN_PASSED",
+                lane_id="failure_trader:EUR_USD:SHORT:BREAKOUT_FAILURE:LIMIT",
+                pair="EUR_USD",
+                side="SHORT",
+                method="BREAKOUT_FAILURE",
+                order_type="LIMIT",
+                risk_issues=[mismatch_issue],
+                risk_metrics={
+                    "risk_jpy": 100.0,
+                    "reward_jpy": 260.0,
+                    "reward_risk": 2.6,
+                    "spread_pips": 0.8,
+                },
+            )
+            failure_lane["intent"]["metadata"] = {
+                "forecast_direction": "RANGE",
+                "forecast_confidence": 0.49,
+                "chart_direction_bias": "SHORT",
+                "range_phase": "RANGE_FORMING",
+            }
+            range_lane = _result(
+                "DRY_RUN_BLOCKED",
+                lane_id="range_trader:EUR_USD:SHORT:RANGE_ROTATION",
+                pair="EUR_USD",
+                side="SHORT",
+                method="RANGE_ROTATION",
+                order_type="LIMIT",
+                risk_issues=[range_block],
+                risk_metrics={
+                    "risk_jpy": 100.0,
+                    "reward_jpy": 90.0,
+                    "reward_risk": 0.9,
+                    "spread_pips": 0.8,
+                },
+            )
+            range_lane["intent"]["metadata"] = {
+                "forecast_direction": "RANGE",
+                "forecast_confidence": 0.49,
+                "chart_direction_bias": "SHORT",
+                "range_phase": "RANGE_FORMING",
+                "range_entry_side": "resistance",
+                "price_percentile_24h": 0.07,
+                "price_percentile_7d": 0.65,
+            }
+            intents.write_text(json.dumps({"results": [failure_lane, range_lane]}))
+            target.write_text(
+                json.dumps(
+                    {
+                        "status": "PURSUE_TARGET",
+                        "remaining_target_jpy": 500.0,
+                        "remaining_risk_budget_jpy": 500.0,
+                    }
+                )
+            )
+
+            CoverageOptimizer(
+                intents_path=intents,
+                target_state_path=target,
+                replay_path=root / "missing_replay.json",
+                market_context_matrix_path=_matrix(root),
+                output_path=root / "coverage.json",
+                report_path=root / "coverage.md",
+            ).run()
+
+            payload = json.loads((root / "coverage.json").read_text())
+            diagnostics = payload["perspective_alignment_diagnostics"]
+            self.assertEqual(diagnostics["status"], "RANGE_METHOD_MISMATCH_REPAIR_REQUIRED")
+            self.assertEqual(diagnostics["range_forecast_method_mismatch_groups"], 1)
+            self.assertEqual(diagnostics["range_forecast_method_mismatch_lanes"], 1)
+            top = diagnostics["range_forecast_method_mismatch_top"][0]
+            self.assertEqual(top["pair"], "EUR_USD")
+            self.assertEqual(top["direction"], "SHORT")
+            self.assertEqual(top["method_mismatch_lanes"], 1)
+            self.assertEqual(top["range_rotation_lanes"], 1)
+            self.assertEqual(
+                top["range_rotation_top_live_blocker_codes"][0]["code"],
+                "RANGE_ROTATION_BROADER_LOCATION_CHASE",
+            )
+            self.assertTrue(
+                any("repair RANGE-forecast method mismatches" in item for item in payload["action_items"])
+            )
+            self.assertIn("Perspective Alignment", (root / "coverage.md").read_text())
+
     def test_risk_blocker_messages_are_not_duplicated(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

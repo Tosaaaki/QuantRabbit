@@ -1508,6 +1508,45 @@ class GPTTraderBrainTest(unittest.TestCase):
                                 }
                             ],
                         },
+                        "perspective_alignment_diagnostics": {
+                            "status": "RANGE_METHOD_MISMATCH_REPAIR_REQUIRED",
+                            "pair_direction_groups": 4,
+                            "range_forecast_method_mismatch_groups": 1,
+                            "range_forecast_method_mismatch_lanes": 2,
+                            "range_forecast_method_mismatch_top": [
+                                {
+                                    "pair": "EUR_USD",
+                                    "direction": "SHORT",
+                                    "method_mismatch_lanes": 2,
+                                    "method_mismatch_reward_jpy": 2800.0,
+                                    "range_rotation_lanes": 1,
+                                    "range_rotation_live_ready_lanes": 0,
+                                    "method_counts": [
+                                        {"code": "BREAKOUT_FAILURE", "count": 2},
+                                        {"code": "RANGE_ROTATION", "count": 1},
+                                    ],
+                                    "forecast_direction_counts": [{"code": "RANGE", "count": 3}],
+                                    "chart_direction_bias_counts": [{"code": "SHORT", "count": 3}],
+                                    "range_rotation_top_live_blocker_codes": [
+                                        {"code": "RANGE_ROTATION_BROADER_LOCATION_CHASE", "count": 1}
+                                    ],
+                                    "top_live_blocker_codes": [
+                                        {"code": "RANGE_FORECAST_REQUIRES_RANGE_ROTATION", "count": 2}
+                                    ],
+                                    "top_lanes": [
+                                        {
+                                            "lane_id": "failure_trader:EUR_USD:SHORT:BREAKOUT_FAILURE:LIMIT",
+                                            "status": "DRY_RUN_PASSED",
+                                            "method": "BREAKOUT_FAILURE",
+                                            "forecast_direction": "RANGE",
+                                            "chart_direction_bias": "SHORT",
+                                            "reward_jpy": 1400.0,
+                                            "reward_risk": 2.6,
+                                        }
+                                    ],
+                                }
+                            ],
+                        },
                         "artifact_diagnostics": {
                             "spread_normalized_candidate_count": 8,
                             "spread_normalized_no_live_blocker_count": 2,
@@ -1607,6 +1646,14 @@ class GPTTraderBrainTest(unittest.TestCase):
                 "TREND_MARKET_NOT_OPERATING_TREND",
             )
             self.assertEqual(runner_diagnostics["top_lanes"][0]["opportunity_mode"], "HARVEST")
+            perspective = packet["perspective_alignment_diagnostics"]
+            self.assertEqual(perspective["status"], "RANGE_METHOD_MISMATCH_REPAIR_REQUIRED")
+            self.assertEqual(perspective["range_forecast_method_mismatch_lanes"], 2)
+            self.assertEqual(perspective["range_forecast_method_mismatch_top"][0]["pair"], "EUR_USD")
+            self.assertEqual(
+                perspective["range_forecast_method_mismatch_top"][0]["range_rotation_top_live_blocker_codes"][0]["code"],
+                "RANGE_ROTATION_BROADER_LOCATION_CHASE",
+            )
             bucket = packet["profitable_bucket_coverage"]
             self.assertEqual(bucket["source_status"], "RESEARCH_PROFITABLE_NOT_CERTIFIED")
             edge = bucket["top_edges"][0]

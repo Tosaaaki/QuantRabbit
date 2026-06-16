@@ -3050,7 +3050,53 @@ def _coverage_optimization_packet(payload: dict[str, Any] | None) -> dict[str, A
         "runner_candidate_diagnostics": _runner_candidate_diagnostics_packet(
             payload.get("runner_candidate_diagnostics")
         ),
+        "perspective_alignment_diagnostics": _perspective_alignment_diagnostics_packet(
+            payload.get("perspective_alignment_diagnostics")
+        ),
         "action_items": [str(item) for item in (payload.get("action_items") or [])[:8] if str(item).strip()],
+    }
+
+
+def _perspective_alignment_diagnostics_packet(payload: object) -> dict[str, Any]:
+    if not isinstance(payload, dict):
+        return {}
+    return {
+        "status": payload.get("status"),
+        "pair_direction_groups": payload.get("pair_direction_groups"),
+        "range_forecast_method_mismatch_groups": payload.get("range_forecast_method_mismatch_groups"),
+        "range_forecast_method_mismatch_lanes": payload.get("range_forecast_method_mismatch_lanes"),
+        "range_forecast_method_mismatch_top": [
+            {
+                "pair": str(item.get("pair") or ""),
+                "direction": str(item.get("direction") or ""),
+                "method_mismatch_lanes": item.get("method_mismatch_lanes"),
+                "method_mismatch_reward_jpy": item.get("method_mismatch_reward_jpy"),
+                "range_rotation_lanes": item.get("range_rotation_lanes"),
+                "range_rotation_live_ready_lanes": item.get("range_rotation_live_ready_lanes"),
+                "method_counts": list(item.get("method_counts") or [])[:5],
+                "forecast_direction_counts": list(item.get("forecast_direction_counts") or [])[:5],
+                "chart_direction_bias_counts": list(item.get("chart_direction_bias_counts") or [])[:5],
+                "range_rotation_top_live_blocker_codes": list(
+                    item.get("range_rotation_top_live_blocker_codes") or []
+                )[:5],
+                "top_live_blocker_codes": list(item.get("top_live_blocker_codes") or [])[:5],
+                "top_lanes": [
+                    {
+                        "lane_id": str(lane.get("lane_id") or ""),
+                        "status": lane.get("status"),
+                        "method": lane.get("method"),
+                        "forecast_direction": lane.get("forecast_direction"),
+                        "chart_direction_bias": lane.get("chart_direction_bias"),
+                        "reward_jpy": lane.get("reward_jpy"),
+                        "reward_risk": lane.get("reward_risk"),
+                    }
+                    for lane in (item.get("top_lanes") or [])[:4]
+                    if isinstance(lane, dict) and str(lane.get("lane_id") or "").strip()
+                ],
+            }
+            for item in (payload.get("range_forecast_method_mismatch_top") or [])[:8]
+            if isinstance(item, dict) and str(item.get("pair") or "").strip()
+        ],
     }
 
 

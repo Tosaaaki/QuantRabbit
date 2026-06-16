@@ -31,6 +31,9 @@ HARVEST_REWARD_RISK_MAX = 1.35
 RUNNER_REWARD_RISK_MIN = 2.0
 QUOTE_STALE_ISSUE_CODES = frozenset({"STALE_QUOTE", "TELEMETRY_FORECAST_QUOTE_STALE_FOR_LIVE"})
 PENDING_ENTRY_ORDER_TYPES = frozenset({"LIMIT", "STOP-ENTRY"})
+DIRECTIONAL_ENTRY_METHODS = frozenset({"BREAKOUT_FAILURE", "TREND_CONTINUATION"})
+RANGE_ENTRY_METHOD = "RANGE_ROTATION"
+RANGE_FORECAST_METHOD_MISMATCH_CODE = "RANGE_FORECAST_REQUIRES_RANGE_ROTATION"
 
 
 @dataclass(frozen=True)
@@ -52,6 +55,15 @@ class CoverageLane:
     tp_execution_mode: str
     tp_target_intent: str
     tp_attach_reason: str
+    forecast_direction: str
+    forecast_confidence: float | None
+    forecast_raw_confidence: float | None
+    forecast_watch_only: bool
+    chart_direction_bias: str
+    range_phase: str
+    range_entry_side: str
+    price_percentile_24h: float | None
+    price_percentile_7d: float | None
     issue_codes: tuple[str, ...]
     live_blocker_codes: tuple[str, ...]
     counts_live_ready: bool
@@ -134,6 +146,7 @@ class CoverageOptimizer:
         raw_live_ready_risk = _round(sum(lane.risk_jpy for lane in raw_live_ready_lanes))
         sequential_ladder = _sequential_ladder(live_ready_lanes, remaining_target, remaining_risk_budget)
         runner_candidate_diagnostics = _runner_candidate_diagnostics(lanes)
+        perspective_alignment_diagnostics = _perspective_alignment_diagnostics(lanes)
         opportunity_modes = _opportunity_mode_summary(
             lanes,
             remaining_target,
@@ -166,6 +179,7 @@ class CoverageOptimizer:
                 sequential_ladder=sequential_ladder,
                 opportunity_modes=opportunity_modes,
                 runner_candidate_diagnostics=runner_candidate_diagnostics,
+                perspective_alignment_diagnostics=perspective_alignment_diagnostics,
                 lanes=lanes,
                 replay_gap=replay_gap,
                 artifact_diagnostics=artifact_diagnostics,
@@ -205,6 +219,7 @@ class CoverageOptimizer:
             "potential_coverage_pct": _round((potential_reward / remaining_target) * 100.0) if remaining_target else 100.0,
             "opportunity_modes": opportunity_modes,
             "runner_candidate_diagnostics": runner_candidate_diagnostics,
+            "perspective_alignment_diagnostics": perspective_alignment_diagnostics,
             "replay_gap": replay_gap,
             "artifact_diagnostics": artifact_diagnostics,
             "blockers": list(blockers),
@@ -336,6 +351,44 @@ class CoverageOptimizer:
                     "",
                 ]
             )
+        perspective_diag = (
+            payload.get("perspective_alignment_diagnostics")
+            if isinstance(payload.get("perspective_alignment_diagnostics"), dict)
+            else {}
+        )
+        if perspective_diag:
+            mismatch_rows = (
+                perspective_diag.get("range_forecast_method_mismatch_top")
+                if isinstance(perspective_diag.get("range_forecast_method_mismatch_top"), list)
+                else []
+            )
+            lines.extend(
+                [
+                    "## Perspective Alignment",
+                    "",
+                    f"- Status: `{perspective_diag.get('status')}`",
+                    f"- Pair/direction groups: `{perspective_diag.get('pair_direction_groups')}`",
+                    f"- Range forecast method mismatch groups: `{perspective_diag.get('range_forecast_method_mismatch_groups')}`",
+                    f"- Range forecast method mismatch lanes: `{perspective_diag.get('range_forecast_method_mismatch_lanes')}`",
+                    "",
+                ]
+            )
+            for item in mismatch_rows[:8]:
+                if not isinstance(item, dict):
+                    continue
+                blockers = (
+                    item.get("range_rotation_top_live_blocker_codes")
+                    if isinstance(item.get("range_rotation_top_live_blocker_codes"), list)
+                    else []
+                )
+                blocker_text = ", ".join(str(blocker.get("code")) for blocker in blockers[:4] if isinstance(blocker, dict))
+                lines.append(
+                    f"- `{item.get('pair')} {item.get('direction')}` mismatch_lanes=`{item.get('method_mismatch_lanes')}` "
+                    f"range_rotation_lanes=`{item.get('range_rotation_lanes')}` "
+                    f"range_rotation_live_ready=`{item.get('range_rotation_live_ready_lanes')}` "
+                    f"range_blockers=`{blocker_text or 'none'}`"
+                )
+            lines.append("")
         bucket_diag = diagnostics.get("profitable_bucket_coverage") if isinstance(diagnostics.get("profitable_bucket_coverage"), dict) else {}
         if bucket_diag:
             lines.extend(
@@ -486,6 +539,15 @@ def _coverage_lane(result: dict[str, Any]) -> CoverageLane:
         tp_execution_mode=str(metadata.get("tp_execution_mode") or ""),
         tp_target_intent=str(metadata.get("tp_target_intent") or ""),
         tp_attach_reason=str(metadata.get("tp_attach_reason") or ""),
+        forecast_direction=str(metadata.get("forecast_direction") or ""),
+        forecast_confidence=_optional_float(metadata.get("forecast_confidence")),
+        forecast_raw_confidence=_optional_float(metadata.get("forecast_raw_confidence")),
+        forecast_watch_only=bool(metadata.get("forecast_watch_only")),
+        chart_direction_bias=str(metadata.get("chart_direction_bias") or ""),
+        range_phase=str(metadata.get("range_phase") or ""),
+        range_entry_side=str(metadata.get("range_entry_side") or ""),
+        price_percentile_24h=_optional_float(metadata.get("price_percentile_24h")),
+        price_percentile_7d=_optional_float(metadata.get("price_percentile_7d")),
         issue_codes=tuple(_result_issue_codes(result)),
         live_blocker_codes=tuple(_result_live_blocker_codes(result)),
         counts_live_ready=status == "LIVE_READY" and not blockers,
@@ -684,6 +746,7 @@ def _action_items(
     sequential_ladder: dict[str, Any],
     opportunity_modes: dict[str, Any],
     runner_candidate_diagnostics: dict[str, Any],
+    perspective_alignment_diagnostics: dict[str, Any],
     lanes: tuple[CoverageLane, ...],
     replay_gap: str | None,
     artifact_diagnostics: dict[str, Any],
@@ -744,6 +807,9 @@ def _action_items(
     )
     if mode_repair and not evidence_refresh_required:
         items.append(mode_repair)
+    perspective_repair = _perspective_alignment_repair_item(perspective_alignment_diagnostics)
+    if perspective_repair and not evidence_refresh_required:
+        items.append(perspective_repair)
     profitable_bucket_diag = (
         artifact_diagnostics.get("profitable_bucket_coverage")
         if isinstance(artifact_diagnostics.get("profitable_bucket_coverage"), dict)
@@ -1672,6 +1738,174 @@ def _opportunity_mode_summary(
         ]
     _annotate_runner_opportunity_diagnostics(summaries, runner_candidate_diagnostics)
     return summaries
+
+
+def _perspective_alignment_diagnostics(lanes: tuple[CoverageLane, ...]) -> dict[str, Any]:
+    groups: dict[tuple[str, str], list[CoverageLane]] = {}
+    for lane in lanes:
+        if not lane.pair or not lane.direction:
+            continue
+        groups.setdefault((lane.pair, lane.direction), []).append(lane)
+
+    summaries: list[dict[str, Any]] = []
+    mismatch_summaries: list[dict[str, Any]] = []
+    mismatch_lanes = 0
+    for (pair, direction), group in sorted(groups.items()):
+        group_tuple = tuple(group)
+        method_counts = Counter(lane.method or "MISSING" for lane in group_tuple)
+        forecast_counts = Counter(lane.forecast_direction or "MISSING" for lane in group_tuple)
+        chart_bias_counts = Counter(lane.chart_direction_bias or "MISSING" for lane in group_tuple)
+        status_counts = Counter(lane.status or "UNKNOWN" for lane in group_tuple)
+        issue_counts = Counter(code for lane in group_tuple for code in lane.issue_codes)
+        live_blocker_code_counts = Counter(code for lane in group_tuple for code in lane.live_blocker_codes)
+        blocker_counts = Counter(blocker for lane in group_tuple for blocker in lane.blockers)
+        range_method_mismatches = tuple(lane for lane in group_tuple if _is_range_forecast_method_mismatch(lane))
+        range_rotation_lanes = tuple(lane for lane in group_tuple if lane.method == RANGE_ENTRY_METHOD)
+        range_rotation_live_ready = tuple(lane for lane in range_rotation_lanes if lane.counts_live_ready)
+        range_rotation_live_blocker_code_counts = Counter(
+            code for lane in range_rotation_lanes for code in lane.live_blocker_codes
+        )
+        range_rotation_blocker_counts = Counter(blocker for lane in range_rotation_lanes for blocker in lane.blockers)
+        forecast_confidences = [lane.forecast_confidence for lane in group_tuple if lane.forecast_confidence is not None]
+        summary = {
+            "pair": pair,
+            "direction": direction,
+            "lanes": len(group_tuple),
+            "live_ready_lanes": sum(1 for lane in group_tuple if lane.counts_live_ready),
+            "reward_jpy": _round(sum(lane.reward_jpy for lane in group_tuple)),
+            "best_reward_jpy": _round(max((lane.reward_jpy for lane in group_tuple), default=0.0)),
+            "method_counts": _counter_items(method_counts),
+            "forecast_direction_counts": _counter_items(forecast_counts),
+            "chart_direction_bias_counts": _counter_items(chart_bias_counts),
+            "status_counts": dict(sorted(status_counts.items(), key=lambda item: (-item[1], item[0]))),
+            "top_issue_codes": _counter_items(issue_counts, limit=8),
+            "top_live_blocker_codes": _counter_items(live_blocker_code_counts, limit=8),
+            "top_blockers": _counter_items(blocker_counts, key_name="label", limit=5),
+            "method_mismatch_lanes": len(range_method_mismatches),
+            "method_mismatch_reward_jpy": _round(sum(lane.reward_jpy for lane in range_method_mismatches)),
+            "range_rotation_lanes": len(range_rotation_lanes),
+            "range_rotation_live_ready_lanes": len(range_rotation_live_ready),
+            "range_rotation_top_live_blocker_codes": _counter_items(
+                range_rotation_live_blocker_code_counts,
+                limit=6,
+            ),
+            "range_rotation_top_blockers": _counter_items(
+                range_rotation_blocker_counts,
+                key_name="label",
+                limit=4,
+            ),
+            "max_forecast_confidence": _round(max(forecast_confidences)) if forecast_confidences else None,
+            "top_lanes": [
+                {
+                    "lane_id": lane.lane_id,
+                    "status": lane.status,
+                    "method": lane.method,
+                    "forecast_direction": lane.forecast_direction,
+                    "chart_direction_bias": lane.chart_direction_bias,
+                    "reward_jpy": lane.reward_jpy,
+                    "reward_risk": lane.reward_risk,
+                    "live_blocker_codes": list(lane.live_blocker_codes[:4]),
+                }
+                for lane in sorted(
+                    group_tuple,
+                    key=lambda lane: (lane.reward_jpy, lane.reward_risk, lane.lane_id),
+                    reverse=True,
+                )[:4]
+            ],
+        }
+        summaries.append(summary)
+        if range_method_mismatches:
+            mismatch_lanes += len(range_method_mismatches)
+            mismatch_summaries.append(summary)
+
+    mismatch_summaries = sorted(
+        mismatch_summaries,
+        key=lambda item: (
+            -int(item.get("method_mismatch_lanes") or 0),
+            -float(item.get("method_mismatch_reward_jpy") or 0.0),
+            str(item.get("pair") or ""),
+            str(item.get("direction") or ""),
+        ),
+    )
+    status = (
+        "RANGE_METHOD_MISMATCH_REPAIR_REQUIRED"
+        if mismatch_summaries
+        else "NO_RANGE_METHOD_MISMATCH"
+    )
+    return {
+        "status": status,
+        "pair_direction_groups": len(groups),
+        "range_forecast_method_mismatch_groups": len(mismatch_summaries),
+        "range_forecast_method_mismatch_lanes": mismatch_lanes,
+        "range_forecast_method_mismatch_top": mismatch_summaries[:8],
+        "top_pair_direction_views": sorted(
+            summaries,
+            key=lambda item: (
+                -int(item.get("lanes") or 0),
+                -float(item.get("best_reward_jpy") or 0.0),
+                str(item.get("pair") or ""),
+                str(item.get("direction") or ""),
+            ),
+        )[:10],
+    }
+
+
+def _is_range_forecast_method_mismatch(lane: CoverageLane) -> bool:
+    return (
+        lane.forecast_direction == "RANGE"
+        and lane.method in DIRECTIONAL_ENTRY_METHODS
+        and RANGE_FORECAST_METHOD_MISMATCH_CODE in set(lane.issue_codes + lane.live_blocker_codes)
+    )
+
+
+def _counter_items(
+    counter: Counter[str],
+    *,
+    key_name: str = "code",
+    limit: int | None = None,
+) -> list[dict[str, Any]]:
+    rows = [
+        {key_name: str(key), "count": count}
+        for key, count in counter.most_common(limit)
+        if str(key).strip()
+    ]
+    return rows
+
+
+def _perspective_alignment_repair_item(payload: dict[str, Any] | None) -> str | None:
+    diagnostics = payload if isinstance(payload, dict) else {}
+    rows = diagnostics.get("range_forecast_method_mismatch_top")
+    if not isinstance(rows, list) or not rows:
+        return None
+    labels: list[str] = []
+    for item in rows[:4]:
+        if not isinstance(item, dict):
+            continue
+        pair = str(item.get("pair") or "").strip()
+        direction = str(item.get("direction") or "").strip()
+        if not pair or not direction:
+            continue
+        blockers = (
+            item.get("range_rotation_top_live_blocker_codes")
+            if isinstance(item.get("range_rotation_top_live_blocker_codes"), list)
+            else []
+        )
+        codes = [
+            str(blocker.get("code"))
+            for blocker in blockers[:3]
+            if isinstance(blocker, dict) and str(blocker.get("code") or "").strip()
+        ]
+        blocker_text = ", ".join(codes) if codes else "no executable RANGE_ROTATION blocker surfaced"
+        labels.append(
+            f"{pair} {direction} mismatch_lanes={int(item.get('method_mismatch_lanes') or 0)} "
+            f"range_rotation_lanes={int(item.get('range_rotation_lanes') or 0)} blockers={blocker_text}"
+        )
+    if not labels:
+        return None
+    return (
+        "repair RANGE-forecast method mismatches before forcing always-on entries: "
+        + "; ".join(labels)
+    )
 
 
 def _annotate_runner_opportunity_diagnostics(
