@@ -4071,6 +4071,45 @@ class IntentGeneratorTest(unittest.TestCase):
         self.assertEqual(issue["code"], "FORECAST_DIRECTIONAL_HIT_RATE_WEAK_FOR_LIVE")
         self.assertIn("hit_rate=0.10", issue["message"])
 
+    def test_directional_forecast_invalidation_first_blocks_live_readiness(self) -> None:
+        from quant_rabbit.models import MarketContext, OrderIntent, OrderType, Side, TradeMethod
+        from quant_rabbit.strategy.intent_generator import _forecast_live_readiness_issue
+
+        os.environ["QR_REQUIRE_FORECAST_FOR_LIVE"] = "1"
+        metadata = {
+            "forecast_direction": "UP",
+            "forecast_confidence": 0.82,
+            "forecast_raw_confidence": 0.91,
+            "forecast_directional_calibration_name": "directional_forecast_up",
+            "forecast_directional_hit_rate": 0.72,
+            "forecast_directional_samples": 20,
+            "forecast_directional_invalidation_first_rate": 0.75,
+            "forecast_directional_invalidation_first_count": 15,
+        }
+        intent = OrderIntent(
+            pair="USD_CAD",
+            side=Side.LONG,
+            order_type=OrderType.MARKET,
+            units=5000,
+            entry=None,
+            tp=1.4050,
+            sl=1.3900,
+            thesis="high-confidence forecast that still touches invalidation first",
+            market_context=MarketContext(
+                regime="TREND_UP current; TREND_CONTINUATION campaign lane",
+                narrative="",
+                chart_story="",
+                method=TradeMethod.TREND_CONTINUATION,
+                invalidation="",
+            ),
+            metadata=metadata,
+        )
+
+        issue = _forecast_live_readiness_issue(intent, metadata, TradeMethod.TREND_CONTINUATION)
+
+        self.assertEqual(issue["code"], "FORECAST_DIRECTIONAL_INVALIDATION_FIRST_FOR_LIVE")
+        self.assertIn("15/20", issue["message"])
+
     def test_directional_forecast_weak_hit_rate_falls_back_to_market_support(self) -> None:
         from quant_rabbit.models import MarketContext, OrderIntent, OrderType, Side, TradeMethod
         from quant_rabbit.strategy.intent_generator import _forecast_live_readiness_issue

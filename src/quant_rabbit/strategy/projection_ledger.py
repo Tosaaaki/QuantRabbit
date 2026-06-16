@@ -1187,16 +1187,18 @@ def _compute_hit_rates_uncached(
         e for e in entries
         if e.resolution_status in ("HIT", "MISS") and _calibration_entry_eligible(e)
     ])
-    grouped: Dict[str, Dict[str, List[bool]]] = {}
+    grouped: Dict[str, Dict[str, List[tuple[bool, bool]]]] = {}
     for e in resolved:
+        hit = e.resolution_status == "HIT"
+        invalidation_first = _calibration_invalidation_first_like(e)
         for signal_name in _calibration_signal_names(e):
             s = grouped.setdefault(signal_name, {})
             regime = e.regime_at_emission or "UNCLEAR"
             # 3-level bucketing: most specific → most general
-            s.setdefault(f"{e.pair}:{regime}", []).append(e.resolution_status == "HIT")
-            s.setdefault(f"{e.pair}:_all_regimes", []).append(e.resolution_status == "HIT")
-            s.setdefault(f"_all_pairs:{regime}", []).append(e.resolution_status == "HIT")
-            s.setdefault("_all_pairs:_all_regimes", []).append(e.resolution_status == "HIT")
+            s.setdefault(f"{e.pair}:{regime}", []).append((hit, invalidation_first))
+            s.setdefault(f"{e.pair}:_all_regimes", []).append((hit, invalidation_first))
+            s.setdefault(f"_all_pairs:{regime}", []).append((hit, invalidation_first))
+            s.setdefault("_all_pairs:_all_regimes", []).append((hit, invalidation_first))
     out: Dict[str, Dict[str, Dict[str, float]]] = {}
     for sig, by_key in grouped.items():
         out[sig] = {}
@@ -1205,9 +1207,29 @@ def _compute_hit_rates_uncached(
             recent = results[-n:]
             if not recent:
                 continue
-            hr = sum(1 for r in recent if r) / float(n)
-            out[sig][key] = {"hit_rate": round(hr, 3), "samples": n}
+            hits = sum(1 for hit, _invalidation_first in recent if hit)
+            invalidation_first_count = sum(1 for _hit, invalidation_first in recent if invalidation_first)
+            hr = hits / float(n)
+            out[sig][key] = {
+                "hit_rate": round(hr, 3),
+                "samples": n,
+                "invalidation_first_count": invalidation_first_count,
+                "invalidation_first_rate": round(invalidation_first_count / float(n), 4),
+            }
     return out
+
+
+def _calibration_invalidation_first_like(entry: LedgerEntry) -> bool:
+    if entry.resolution_status != "MISS":
+        return False
+    evidence = str(entry.resolution_evidence or "").lower()
+    if "invalidation" not in evidence:
+        return False
+    return (
+        "before target" in evidence
+        or "not reached before invalidation" in evidence
+        or "invalidation also touched" in evidence
+    )
 
 
 def _copy_hit_rates(

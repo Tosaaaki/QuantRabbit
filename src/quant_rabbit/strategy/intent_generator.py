@@ -743,6 +743,17 @@ FORECAST_DIRECTIONAL_LIVE_MIN_SAMPLES = _env_int(
     FORECAST_MARKET_SUPPORT_MIN_SAMPLES,
     minimum=FORECAST_MARKET_SUPPORT_MIN_SAMPLES,
 )
+# Adverse-path calibration is distinct from hit-rate: a bucket can look
+# directionally plausible but still touch invalidation before target often
+# enough that entries spend their life underwater. The default 0.60 is a
+# majority-of-samples threshold mirrored from self_improvement_audit; lower it
+# only when MAE/MFE and realized expectancy prove the bucket can survive normal
+# adverse path.
+FORECAST_DIRECTIONAL_LIVE_MAX_INVALIDATION_FIRST_RATE = _env_float(
+    "QR_FORECAST_DIRECTIONAL_LIVE_MAX_INVALIDATION_FIRST_RATE",
+    0.60,
+    minimum=0.0,
+)
 # Same-cycle projection bootstrap for newly added detectors. The normal path
 # requires projection_ledger samples before a near-miss forecast can trade.
 # That is correct for mature detectors, but it creates a cold-start dead zone:
@@ -3220,6 +3231,8 @@ def _forecast_directional_calibration_for_forecast(
         "directional_calibration_name": None,
         "directional_hit_rate": None,
         "directional_samples": 0,
+        "directional_invalidation_first_rate": None,
+        "directional_invalidation_first_count": 0,
     }
     direction = str(direction or "").upper()
     if direction not in {"UP", "DOWN"} or not isinstance(hit_rates, dict):
@@ -3246,6 +3259,8 @@ def _forecast_directional_calibration_for_forecast(
         return payload
     hit_rate = _optional_float(bucket.get("hit_rate"))
     samples = _optional_int(bucket.get("samples")) or 0
+    invalidation_first_rate = _optional_float(bucket.get("invalidation_first_rate"))
+    invalidation_first_count = _optional_int(bucket.get("invalidation_first_count")) or 0
     if hit_rate is None:
         return payload
     payload.update(
@@ -3253,6 +3268,12 @@ def _forecast_directional_calibration_for_forecast(
             "directional_calibration_name": calibration_name,
             "directional_hit_rate": round(hit_rate, 4),
             "directional_samples": samples,
+            "directional_invalidation_first_rate": (
+                round(invalidation_first_rate, 4)
+                if invalidation_first_rate is not None
+                else None
+            ),
+            "directional_invalidation_first_count": invalidation_first_count,
         }
     )
     return payload
@@ -3746,6 +3767,10 @@ def _forecast_context_payload(forecast: Any, *, cycle_id: str | None = None) -> 
         "forecast_directional_calibration_name": market_support.get("directional_calibration_name"),
         "forecast_directional_hit_rate": market_support.get("directional_hit_rate"),
         "forecast_directional_samples": market_support.get("directional_samples"),
+        "forecast_directional_invalidation_first_rate": market_support.get("directional_invalidation_first_rate"),
+        "forecast_directional_invalidation_first_count": market_support.get(
+            "directional_invalidation_first_count"
+        ),
     }
     payload.update(_forecast_news_ref_metadata(forecast, market_support))
     return payload
@@ -3807,6 +3832,8 @@ def _forecast_market_support_payload(value: object) -> dict[str, Any]:
         ),
         "directional_hit_rate": _optional_float(value.get("directional_hit_rate")),
         "directional_samples": _optional_int(value.get("directional_samples")) or 0,
+        "directional_invalidation_first_rate": _optional_float(value.get("directional_invalidation_first_rate")),
+        "directional_invalidation_first_count": _optional_int(value.get("directional_invalidation_first_count")) or 0,
         "bootstrap_projection_support": bool(value.get("bootstrap_projection_support")),
         "reason": str(value.get("reason") or ""),
         "unselected_reason": str(value.get("unselected_reason") or ""),
@@ -6128,6 +6155,9 @@ def _forecast_live_readiness_issue(
             ),
             "severity": "BLOCK",
         }
+    adverse_path_issue = _forecast_directional_invalidation_first_issue(intent, metadata, direction=direction)
+    if adverse_path_issue is not None:
+        return adverse_path_issue
     weak_calibration_issue = _forecast_directional_hit_rate_issue(intent, metadata, direction=direction)
     if weak_calibration_issue is not None:
         return weak_calibration_issue
@@ -6168,6 +6198,55 @@ def _forecast_directional_hit_rate_issue(
             f"{calibration_name} hit_rate={hit_rate:.2f} over {samples} sample(s) is below "
             f"{FORECAST_DIRECTIONAL_LIVE_MIN_HIT_RATE:.2f}; keep this forecast as dry-run "
             "until the calibrated direction recovers or independent live evidence replaces it."
+        ),
+        "severity": "WARN",
+    }
+
+
+def _forecast_directional_invalidation_first_issue(
+    intent: OrderIntent,
+    metadata: dict[str, Any],
+    *,
+    direction: str,
+) -> dict[str, str] | None:
+    if direction not in {"UP", "DOWN"}:
+        return None
+    expected_side = Side.LONG.value if direction == "UP" else Side.SHORT.value
+    if intent.side.value != expected_side:
+        return None
+    support = _forecast_market_support_payload(metadata.get("forecast_market_support"))
+    invalidation_first_rate = _optional_float(metadata.get("forecast_directional_invalidation_first_rate"))
+    if invalidation_first_rate is None:
+        invalidation_first_rate = _optional_float(support.get("directional_invalidation_first_rate"))
+    samples = _optional_int(metadata.get("forecast_directional_samples")) or 0
+    if samples <= 0:
+        samples = _optional_int(support.get("directional_samples")) or 0
+    invalidation_first_count = _optional_int(metadata.get("forecast_directional_invalidation_first_count"))
+    if invalidation_first_count is None:
+        invalidation_first_count = _optional_int(support.get("directional_invalidation_first_count"))
+    if (
+        invalidation_first_rate is None
+        or samples < FORECAST_DIRECTIONAL_LIVE_MIN_SAMPLES
+        or invalidation_first_rate < FORECAST_DIRECTIONAL_LIVE_MAX_INVALIDATION_FIRST_RATE
+    ):
+        return None
+    calibration_name = str(
+        metadata.get("forecast_directional_calibration_name")
+        or support.get("directional_calibration_name")
+        or "directional_forecast"
+    )
+    count_text = (
+        f"{invalidation_first_count}/{samples}"
+        if invalidation_first_count is not None
+        else f"{samples} sample(s)"
+    )
+    return {
+        "code": "FORECAST_DIRECTIONAL_INVALIDATION_FIRST_FOR_LIVE",
+        "message": (
+            f"{intent.pair} {intent.side.value} forecast {direction} bucket "
+            f"{calibration_name} touched invalidation before target in {count_text} "
+            f"sample(s) ({invalidation_first_rate:.2f}); keep this forecast as dry-run "
+            "until adverse-path calibration improves or independent live evidence replaces it."
         ),
         "severity": "WARN",
     }
@@ -6365,11 +6444,20 @@ def _forecast_directional_bucket_is_known_weak(
     samples = _optional_int(metadata.get("forecast_directional_samples")) or 0
     if samples <= 0:
         samples = _optional_int(support.get("directional_samples")) or 0
-    return (
+    weak_hit_rate = (
         hit_rate is not None
         and samples >= FORECAST_DIRECTIONAL_LIVE_MIN_SAMPLES
         and hit_rate < FORECAST_DIRECTIONAL_LIVE_MIN_HIT_RATE
     )
+    invalidation_first_rate = _optional_float(metadata.get("forecast_directional_invalidation_first_rate"))
+    if invalidation_first_rate is None:
+        invalidation_first_rate = _optional_float(support.get("directional_invalidation_first_rate"))
+    adverse_path = (
+        invalidation_first_rate is not None
+        and samples >= FORECAST_DIRECTIONAL_LIVE_MIN_SAMPLES
+        and invalidation_first_rate >= FORECAST_DIRECTIONAL_LIVE_MAX_INVALIDATION_FIRST_RATE
+    )
+    return weak_hit_rate or adverse_path
 
 
 def _forecast_market_support_allows_side(
