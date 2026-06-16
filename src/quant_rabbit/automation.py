@@ -313,6 +313,19 @@ def _optional_float(value: Any) -> float | None:
         return None
 
 
+def _truthy_env(name: str) -> bool:
+    return os.environ.get(name, "").strip() in {"1", "true", "TRUE", "yes", "YES"}
+
+
+def _attached_replacement_stop_loss(intent: dict[str, Any]) -> float | None:
+    initial_sl_on = _truthy_env("QR_NEW_ENTRY_INITIAL_SL")
+    sl_repair_disabled = _truthy_env("QR_TRADER_DISABLE_SL_REPAIR")
+    if initial_sl_on or not sl_repair_disabled:
+        return _optional_float(intent.get("sl"))
+    metadata = intent.get("metadata") if isinstance(intent.get("metadata"), dict) else {}
+    return _optional_float(metadata.get("disaster_sl"))
+
+
 def _price_drift_pips(pair: str, left: float | None, right: float | None) -> float:
     if left is None or right is None:
         return 0.0
@@ -392,6 +405,7 @@ def _selected_replacement_candidates(
                 "entry": _optional_float(intent.get("entry")),
                 "tp": _optional_float(intent.get("tp")),
                 "sl": _optional_float(intent.get("sl")),
+                "attached_sl": _attached_replacement_stop_loss(intent),
                 "spread_pips": _optional_float(risk_metrics.get("spread_pips")),
             }
         )
@@ -491,7 +505,7 @@ def _replacement_geometry_drift_exceeds_tolerance(
     price_pairs = (
         (_optional_float(getattr(order, "price", None)), _optional_float(candidate.get("entry"))),
         (_raw_dependent_order_price(order, "takeProfitOnFill"), _optional_float(candidate.get("tp"))),
-        (_raw_dependent_order_price(order, "stopLossOnFill"), _optional_float(candidate.get("sl"))),
+        (_raw_dependent_order_price(order, "stopLossOnFill"), _optional_float(candidate.get("attached_sl"))),
     )
     return any(_price_drift_pips(pair, left, right) > tolerance_pips for left, right in price_pairs)
 

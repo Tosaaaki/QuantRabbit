@@ -17,6 +17,7 @@ from quant_rabbit.automation import (
     GptHandoffSummary,
     _gpt_lanes_pass_prefilter_or_recovery,
     _cycle_perspective_alignment_parts,
+    _filtered_gpt_trade_cancel_order_ids,
     _passes_gpt_prefilter,
     _snapshot_to_json,
 )
@@ -1709,6 +1710,86 @@ class AutoTradeCycleTest(unittest.TestCase):
             self.assertEqual(client.orders_sent, [])
             result = json.loads((root / "live_order.json").read_text())
             self.assertIn("BASKET_DUPLICATE_PARENT_LANE", {issue["code"] for issue in result["risk_issues"]})
+
+    def test_gpt_trade_preserves_same_lane_pending_with_disaster_stop_match(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            now = datetime.now(timezone.utc)
+            lane_id = "range_trader:EUR_USD:LONG:RANGE_ROTATION"
+            pending = BrokerOrder(
+                order_id="same-lane-disaster-pending",
+                pair="EUR_USD",
+                order_type="LIMIT",
+                price=1.1500,
+                state="PENDING",
+                units=1000,
+                owner=Owner.TRADER,
+                raw={
+                    "clientExtensions": {
+                        "comment": f"qr-vnext lane={lane_id} desk=range_trader role=FORECAST_FIRST"
+                    },
+                    "takeProfitOnFill": {"price": "1.15600"},
+                    "stopLossOnFill": {"price": "1.13800"},
+                },
+            )
+            intents_path = root / "intents.json"
+            intents_path.write_text(
+                json.dumps(
+                    {
+                        "results": [
+                            {
+                                "lane_id": lane_id,
+                                "status": "LIVE_READY",
+                                "intent": {
+                                    "pair": "EUR_USD",
+                                    "side": "LONG",
+                                    "order_type": "LIMIT",
+                                    "units": 1000,
+                                    "entry": 1.1500,
+                                    "tp": 1.1560,
+                                    "sl": 1.1470,
+                                    "metadata": {"disaster_sl": 1.1380},
+                                },
+                                "risk_metrics": {"spread_pips": 1.0},
+                            }
+                        ]
+                    }
+                )
+                + "\n"
+            )
+            client = FakeCycleClient(
+                BrokerSnapshot(
+                    fetched_at_utc=now,
+                    orders=(pending,),
+                    quotes={
+                        "EUR_USD": Quote("EUR_USD", 1.1510, 1.1511, timestamp_utc=now),
+                        "USD_JPY": Quote("USD_JPY", 157.0, 157.01, timestamp_utc=now),
+                    },
+                )
+            )
+
+            prior_sl_free = os.environ.get("QR_TRADER_DISABLE_SL_REPAIR")
+            prior_initial_sl = os.environ.get("QR_NEW_ENTRY_INITIAL_SL")
+            os.environ["QR_TRADER_DISABLE_SL_REPAIR"] = "1"
+            os.environ["QR_NEW_ENTRY_INITIAL_SL"] = "0"
+            try:
+                filtered = _filtered_gpt_trade_cancel_order_ids(
+                    client=client,
+                    intents_path=intents_path,
+                    lane_ids=(lane_id,),
+                    cancel_order_ids=(pending.order_id,),
+                )
+            finally:
+                if prior_sl_free is None:
+                    os.environ.pop("QR_TRADER_DISABLE_SL_REPAIR", None)
+                else:
+                    os.environ["QR_TRADER_DISABLE_SL_REPAIR"] = prior_sl_free
+                if prior_initial_sl is None:
+                    os.environ.pop("QR_NEW_ENTRY_INITIAL_SL", None)
+                else:
+                    os.environ["QR_NEW_ENTRY_INITIAL_SL"] = prior_initial_sl
+
+            self.assertEqual(filtered, ())
 
     def test_gpt_trade_cancels_named_pending_orders_before_capacity_checked_send(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
