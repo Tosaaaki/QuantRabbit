@@ -28,6 +28,8 @@ window:
 - For directional_forecast with both target and invalidation: whichever
   level touches first wins. Invalidation-first is MISS even if the target
   prints later; same-candle ambiguity is treated as MISS for calibration.
+  If neither level touches inside the forecast window, the row is TIMEOUT:
+  the full target did not materialize, but the direction was not proven wrong.
 
 Resolved entries get tagged HIT / MISS / TIMEOUT. Rolling hit-rate per
 `(signal_name, pair, regime, direction)` is then queryable by `confidence_calibration()`
@@ -1072,8 +1074,8 @@ def _directional_target_invalidation_outcome(
             return "HIT", f"{ts} target {target:.5f} touched before invalidation {invalidation:.5f}"
 
     return (
-        "MISS",
-        f"target {target:.5f} not reached; invalidation {invalidation:.5f} also untouched in forecast window",
+        "TIMEOUT",
+        f"target {target:.5f} and invalidation {invalidation:.5f} both untouched in forecast window",
     )
 
 
@@ -1290,6 +1292,8 @@ def _calibration_entry_eligible(entry: LedgerEntry) -> bool:
     if entry.signal_name == "directional_forecast":
         direction = str(entry.direction or "").upper()
         if direction in {"UP", "DOWN"}:
+            if _directional_forecast_target_timeout_like(entry):
+                return False
             return (
                 entry.predicted_target_price is not None
                 and entry.predicted_invalidation_price is not None
@@ -1300,6 +1304,37 @@ def _calibration_entry_eligible(entry: LedgerEntry) -> bool:
                 and entry.predicted_range_high_price is not None
             )
     return True
+
+
+def _directional_forecast_target_timeout_like(entry: LedgerEntry) -> bool:
+    """Legacy MISS rows where neither forecast target nor invalidation touched.
+
+    Older verifiers stored a full-target no-touch as MISS. That made the final
+    direction calibration treat "did not reach a structural target in time" as
+    the same defect as "moved against the forecast first", which collapses the
+    usable short-horizon signal. Keep adverse/invalidation MISS rows in the
+    learning set, but exclude no-touch legacy rows from confidence calibration.
+    """
+    if entry.signal_name != "directional_forecast":
+        return False
+    if entry.resolution_status != "MISS":
+        return False
+    if str(entry.direction or "").upper() not in {"UP", "DOWN"}:
+        return False
+    evidence = str(entry.resolution_evidence or "").lower()
+    if not evidence:
+        return False
+    if "touched before target" in evidence or "invalidation also touched" in evidence:
+        return False
+    if "ordering ambiguous" in evidence:
+        return False
+    if "both untouched" in evidence or "also untouched" in evidence:
+        return True
+    if "target" in evidence and "not reached before invalidation" in evidence:
+        return True
+    if "did not reach target" in evidence or "did not reach the target" in evidence:
+        return True
+    return False
 
 
 def _calibration_signal_names(entry: LedgerEntry) -> tuple[str, ...]:

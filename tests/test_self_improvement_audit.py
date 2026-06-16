@@ -20,6 +20,7 @@ from quant_rabbit.self_improvement_audit import (
     SelfImprovementAuditor,
     _effect_metrics,
     _directional_forecast_invalidation_first_like,
+    _directional_forecast_target_timeout_like,
     _gateway_close_recovery_observation,
     _intent_live_readiness_family_breakdown,
     _profitability_findings,
@@ -85,18 +86,22 @@ class SelfImprovementAuditorTest(unittest.TestCase):
 
     def test_no_touch_directional_miss_is_not_invalidation_first(self) -> None:
         no_touch = {
+            "direction": "UP",
             "resolution_status": "MISS",
             "resolution_evidence": (
                 "target 1.10200 not reached; invalidation 1.09900 also untouched in forecast window"
             ),
         }
         invalidation_first = {
+            "direction": "UP",
             "resolution_status": "MISS",
             "resolution_evidence": "2026-06-16T00:10:00Z invalidation 1.09900 touched before target 1.10200",
         }
 
         self.assertFalse(_directional_forecast_invalidation_first_like(no_touch))
+        self.assertTrue(_directional_forecast_target_timeout_like(no_touch))
         self.assertTrue(_directional_forecast_invalidation_first_like(invalidation_first))
+        self.assertFalse(_directional_forecast_target_timeout_like(invalidation_first))
 
     def test_top_intent_blockers_ignore_dry_run_strategy_warnings(self) -> None:
         blockers = _top_intent_blockers(
@@ -856,6 +861,67 @@ class SelfImprovementAuditorTest(unittest.TestCase):
         self.assertAlmostEqual(evidence["hit_rate"], 0.0)
         self.assertEqual(evidence["range_samples_excluded"], 20)
         self.assertEqual(evidence["total_calibrated_samples"], 30)
+
+    def test_directional_forecast_no_touch_misses_are_target_timeout_not_hit_rate(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(
+                root,
+                active_position=False,
+                live_ready_market_rr=1.4,
+                closed_pls=(100.0, 80.0, -50.0),
+            )
+            rows = []
+            for idx in range(15):
+                rows.append(
+                    {
+                        "timestamp_emitted_utc": (_NOW - timedelta(hours=idx + 2)).isoformat(),
+                        "pair": "EUR_USD",
+                        "direction": "UP",
+                        "regime_at_emission": "TREND",
+                        "signal_name": "directional_forecast",
+                        "predicted_target_price": 1.1720,
+                        "predicted_invalidation_price": 1.1680,
+                        "resolution_window_min": 60.0,
+                        "resolution_status": "MISS",
+                        "resolution_evidence": "target 1.17200 not reached before invalidation 1.16800",
+                        "cycle_id": f"target-timeout-cycle-{idx}",
+                    }
+                )
+            for idx in range(10):
+                status = "HIT" if idx < 5 else "MISS"
+                rows.append(
+                    {
+                        "timestamp_emitted_utc": (_NOW - timedelta(hours=idx + 20)).isoformat(),
+                        "pair": "EUR_USD",
+                        "direction": "UP",
+                        "regime_at_emission": "TREND",
+                        "signal_name": "directional_forecast",
+                        "predicted_target_price": 1.1720,
+                        "predicted_invalidation_price": 1.1680,
+                        "resolution_window_min": 60.0,
+                        "resolution_status": status,
+                        "resolution_evidence": (
+                            "2026-06-16T04:24:00Z target 1.17200 touched before invalidation 1.16800"
+                            if status == "HIT"
+                            else "2026-06-16T04:44:00Z invalidation 1.16800 touched before target 1.17200"
+                        ),
+                        "cycle_id": f"touch-cycle-{idx}",
+                    }
+                )
+            files["projection_ledger"].write_text("\n".join(json.dumps(row) for row in rows) + "\n")
+
+            summary = _run(files)
+            payload = json.loads(files["output"].read_text())
+
+        codes = {item["code"]: item for item in payload["findings"]}
+        self.assertEqual(summary.status, STATUS_ACTION_REQUIRED)
+        self.assertIn("DIRECTIONAL_FORECAST_TARGET_TIMEOUT_DOMINANT", codes)
+        self.assertNotIn("DIRECTIONAL_FORECAST_HIT_RATE_WEAK", codes)
+        evidence = codes["DIRECTIONAL_FORECAST_TARGET_TIMEOUT_DOMINANT"]["evidence"]
+        self.assertEqual(evidence["target_timeout_samples"], 15)
+        self.assertEqual(evidence["touch_calibrated_samples"], 10)
+        self.assertAlmostEqual(evidence["target_timeout_rate"], 0.6)
 
     def test_directional_forecast_invalidation_first_dominant_is_p1(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

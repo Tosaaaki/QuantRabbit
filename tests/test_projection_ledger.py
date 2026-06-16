@@ -586,6 +586,48 @@ class VerifyTest(unittest.TestCase):
             self.assertEqual(entry.resolution_status, "HIT")
             self.assertIn("target 1.09800 touched before invalidation 1.10100", entry.resolution_evidence)
 
+    def test_directional_forecast_no_touch_is_timeout_not_miss(self) -> None:
+        emitted = datetime.now(timezone.utc) - timedelta(minutes=30)
+        tmp, root = self._setup({
+            "name": "directional_forecast",
+            "direction": "UP",
+            "lead_time_min": 5,
+            "window": 10,
+            "entry_price": 1.1000,
+            "target": 1.1020,
+            "invalidation": 1.0990,
+        })
+        with tmp:
+            from quant_rabbit.strategy.projection_ledger import write_ledger
+            entries = load_ledger(root)
+            entries[0].timestamp_emitted_utc = emitted.isoformat().replace("+00:00", "Z")
+            write_ledger(entries, root)
+
+            counts = verify_pending(
+                root,
+                candles_by_pair={
+                    "EUR_USD": [
+                        {
+                            "timestamp": (emitted + timedelta(minutes=1)).isoformat(),
+                            "high": 1.1008,
+                            "low": 1.0993,
+                            "close": 1.1002,
+                        },
+                        {
+                            "timestamp": (emitted + timedelta(minutes=4)).isoformat(),
+                            "high": 1.1011,
+                            "low": 1.0994,
+                            "close": 1.1007,
+                        },
+                    ]
+                },
+            )
+
+            self.assertEqual(counts["TIMEOUT"], 1)
+            entry = load_ledger(root)[0]
+            self.assertEqual(entry.resolution_status, "TIMEOUT")
+            self.assertIn("both untouched in forecast window", entry.resolution_evidence)
+
     def test_range_forecast_box_hold_is_hit(self) -> None:
         emitted = datetime.now(timezone.utc) - timedelta(minutes=150)
         tmp, root = self._setup({
@@ -1265,7 +1307,7 @@ class HitRatesTest(unittest.TestCase):
             self.assertEqual(bucket["invalidation_first_count"], 3)
             self.assertAlmostEqual(bucket["invalidation_first_rate"], 0.75)
 
-    def test_compute_hit_rates_does_not_count_no_touch_miss_as_invalidation_first(self) -> None:
+    def test_compute_hit_rates_excludes_no_touch_miss_from_direction_calibration(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             from quant_rabbit.strategy.projection_ledger import write_ledger
@@ -1311,9 +1353,9 @@ class HitRatesTest(unittest.TestCase):
             hr = compute_hit_rates(root)
 
             bucket = hr["directional_forecast_up"]["EUR_USD:TREND"]
-            self.assertEqual(bucket["samples"], 2)
+            self.assertEqual(bucket["samples"], 1)
             self.assertEqual(bucket["invalidation_first_count"], 1)
-            self.assertAlmostEqual(bucket["invalidation_first_rate"], 0.5)
+            self.assertAlmostEqual(bucket["invalidation_first_rate"], 1.0)
 
     def test_pair_regime_bucket_survives_global_multi_pair_history(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

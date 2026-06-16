@@ -134,6 +134,13 @@ FORECAST_INVALIDATION_FIRST_WARN_ABOVE = min(
     1.0,
     _env_nonnegative_float("QR_SELF_IMPROVEMENT_FORECAST_INVALIDATION_FIRST_WARN_ABOVE", 0.6),
 )
+# Audit-only majority threshold for full-target no-touch outcomes. These are
+# not adverse-path misses, but they show the forecast target/horizon is too
+# ambitious for short-horizon opportunity capture.
+FORECAST_TARGET_TIMEOUT_WARN_ABOVE = min(
+    1.0,
+    _env_nonnegative_float("QR_SELF_IMPROVEMENT_FORECAST_TARGET_TIMEOUT_WARN_ABOVE", 0.6),
+)
 # Audit feedback coverage floor only. Directional calls with mostly TIMEOUT
 # outcomes are not learnable enough to justify stronger forecast confidence.
 FORECAST_CALIBRATION_MIN_COVERAGE = min(
@@ -2009,10 +2016,14 @@ def _directional_forecast_quality_findings(
         return []
     status_counts: dict[str, int] = {}
     calibrated: list[dict[str, Any]] = []
+    target_timeout_rows: list[dict[str, Any]] = []
     for row in directional:
         status = str(row.get("resolution_status") or "PENDING").upper()
         status_counts[status] = status_counts.get(status, 0) + 1
         if status in {"HIT", "MISS"} and _directional_forecast_has_target_invalidation(row):
+            if _directional_forecast_target_timeout_like(row):
+                target_timeout_rows.append(row)
+                continue
             calibrated.append(row)
     if not calibrated:
         return [
@@ -2032,6 +2043,7 @@ def _directional_forecast_quality_findings(
                 evidence={
                     "rows": len(directional),
                     "status_counts": status_counts,
+                    "target_timeout_samples": len(target_timeout_rows),
                     "min_samples": FORECAST_CALIBRATION_MIN_SAMPLES,
                     "examples": [_projection_ref(row) for row in directional[:8]],
                 },
@@ -2047,8 +2059,13 @@ def _directional_forecast_quality_findings(
     ]
     findings: list[dict[str, Any]] = []
     calibration_coverage = len(calibrated) / len(directional)
-    timeout_count = int(status_counts.get("TIMEOUT") or 0)
-    hit_miss_count = int(status_counts.get("HIT") or 0) + int(status_counts.get("MISS") or 0)
+    target_timeout_count = len(target_timeout_rows)
+    timeout_count = int(status_counts.get("TIMEOUT") or 0) + target_timeout_count
+    hit_miss_count = (
+        int(status_counts.get("HIT") or 0)
+        + int(status_counts.get("MISS") or 0)
+        - target_timeout_count
+    )
     missing_geometry_count = max(0, hit_miss_count - len(calibrated))
     recent_24h_directional = _directional_forecast_rows_since(directional, now=now, window=timedelta(hours=24))
     recent_24h_calibrated = _directional_forecast_rows_since(calibrated, now=now, window=timedelta(hours=24))
@@ -2093,6 +2110,7 @@ def _directional_forecast_quality_findings(
                         "calibration_coverage": round(calibration_coverage, 4),
                         "min_coverage": FORECAST_CALIBRATION_MIN_COVERAGE,
                         "missing_geometry_samples": missing_geometry_count,
+                        "target_timeout_samples": target_timeout_count,
                         "status_counts": status_counts,
                         "examples": [_projection_ref(row) for row in directional[:8]],
                     },
@@ -2126,6 +2144,7 @@ def _directional_forecast_quality_findings(
                         "rows": len(directional),
                         "calibrated_samples": len(calibrated),
                         "missing_geometry_samples": missing_geometry_count,
+                        "target_timeout_samples": target_timeout_count,
                         "calibration_coverage": round(calibration_coverage, 4),
                         "min_coverage": FORECAST_CALIBRATION_MIN_COVERAGE,
                         "recent_recovered": recent_geometry_recovered,
@@ -2140,6 +2159,45 @@ def _directional_forecast_quality_findings(
                     },
                 )
             )
+    movement_target_timeouts = [
+        row for row in target_timeout_rows
+        if _directional_forecast_is_movement_direction(row)
+    ]
+    touch_or_timeout_samples = len(movement_calibrated) + len(movement_target_timeouts)
+    target_timeout_rate = (
+        len(movement_target_timeouts) / touch_or_timeout_samples
+        if touch_or_timeout_samples
+        else 0.0
+    )
+    if (
+        touch_or_timeout_samples >= FORECAST_CALIBRATION_MIN_SAMPLES
+        and target_timeout_rate >= FORECAST_TARGET_TIMEOUT_WARN_ABOVE
+    ):
+        findings.append(
+            _finding(
+                run_id=run_id,
+                priority="P2",
+                layer="forecast",
+                code="DIRECTIONAL_FORECAST_TARGET_TIMEOUT_DOMINANT",
+                message=(
+                    "directional_forecast full target was not reached before expiry in "
+                    f"{target_timeout_rate:.1%} of {touch_or_timeout_samples} movement sample(s)"
+                ),
+                next_action=(
+                    "Separate full-target forecasting from short-horizon entry capture: tighten target/horizon "
+                    "geometry for scalps, or route these setups through RANGE/micro-rotation evidence instead "
+                    "of treating target non-arrival as an adverse direction miss."
+                ),
+                evidence={
+                    "samples": touch_or_timeout_samples,
+                    "target_timeout_samples": len(movement_target_timeouts),
+                    "target_timeout_rate": round(target_timeout_rate, 4),
+                    "warn_above": FORECAST_TARGET_TIMEOUT_WARN_ABOVE,
+                    "touch_calibrated_samples": len(movement_calibrated),
+                    "examples": [_projection_ref(row) for row in movement_target_timeouts[:8]],
+                },
+            )
+        )
     weak_buckets = _directional_forecast_worst_buckets(
         movement_calibrated,
         min_samples=FORECAST_CALIBRATION_MIN_SAMPLES,
@@ -2244,6 +2302,7 @@ def _directional_forecast_quality_findings(
                     "hit_count": hit_count,
                     "hit_rate": round(hit_rate, 4),
                     "range_samples_excluded": len(range_calibrated),
+                    "target_timeout_samples_excluded": len(movement_target_timeouts),
                     "total_calibrated_samples": len(calibrated),
                     "warn_below": FORECAST_HIT_RATE_WARN_BELOW,
                     "recent_recovered": recent_recovered,
@@ -2300,6 +2359,27 @@ def _directional_forecast_has_target_invalidation(row: dict[str, Any]) -> bool:
             and row.get("predicted_range_high_price") is not None
         )
     return row.get("predicted_target_price") is not None and row.get("predicted_invalidation_price") is not None
+
+
+def _directional_forecast_target_timeout_like(row: dict[str, Any]) -> bool:
+    if str(row.get("resolution_status") or "").upper() != "MISS":
+        return False
+    if str(row.get("direction") or "").upper() not in {"UP", "DOWN"}:
+        return False
+    evidence = str(row.get("resolution_evidence") or "").lower()
+    if not evidence:
+        return False
+    if "touched before target" in evidence or "invalidation also touched" in evidence:
+        return False
+    if "ordering ambiguous" in evidence:
+        return False
+    if "both untouched" in evidence or "also untouched" in evidence:
+        return True
+    if "target" in evidence and "not reached before invalidation" in evidence:
+        return True
+    if "did not reach target" in evidence or "did not reach the target" in evidence:
+        return True
+    return False
 
 
 def _directional_forecast_rows_since(
