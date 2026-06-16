@@ -2754,7 +2754,12 @@ def _intent_findings(
                 },
             )
         )
-    same_side_arbitration = int(forecast_arbitration.get("same_side_lane_count") or 0)
+    same_side_arbitration = int(
+        forecast_arbitration.get("same_side_actionable_repair_lane_count") or 0
+    )
+    same_side_context_blocked = int(
+        forecast_arbitration.get("same_side_context_blocked_lane_count") or 0
+    )
     opposite_arbitration = int(
         forecast_arbitration.get("opposite_conflict_lane_count")
         or forecast_arbitration.get("opposite_side_lane_count")
@@ -2775,6 +2780,24 @@ def _intent_findings(
                     "Repair forecast arbitration before forcing live sends: resolve only these same-side "
                     "projection candidates into a pair forecast with target/invalidation geometry, while "
                     "keeping opposite-projection RANGE/UNCLEAR lanes blocked."
+                ),
+                evidence={"forecast_arbitration_diagnostics": forecast_arbitration},
+            )
+        )
+    if target_open and same_side_context_blocked > 0:
+        out.append(
+            _finding(
+                run_id=run_id,
+                priority="P2",
+                layer="forecast",
+                code="FORECAST_ARBITRATION_SAME_SIDE_CONTEXT_BLOCKED",
+                message=(
+                    f"{same_side_context_blocked} dry-run passed same-side projection candidate(s) "
+                    "also have non-forecast live-readiness blockers"
+                ),
+                next_action=(
+                    "Do not count these as immediately missed entries: repair forecast arbitration only "
+                    "after the named chart, strategy-profile, liquidity, or risk-geometry blockers clear."
                 ),
                 evidence={"forecast_arbitration_diagnostics": forecast_arbitration},
             )
@@ -4980,6 +5003,8 @@ _FORECAST_LIVE_GATE_CODES = {
     "TELEMETRY_FORECAST_NOT_EXECUTABLE_FOR_LIVE",
 }
 
+_FORECAST_ARBITRATION_REPAIR_FAMILY = "forecast"
+
 
 def _top_intent_live_readiness_blockers(
     intents: dict[str, Any],
@@ -5392,6 +5417,8 @@ def _forecast_arbitration_diagnostics(
 ) -> dict[str, Any]:
     lanes: list[dict[str, Any]] = []
     same_side_lanes: list[dict[str, Any]] = []
+    same_side_actionable_repair_lanes: list[dict[str, Any]] = []
+    same_side_context_blocked_lanes: list[dict[str, Any]] = []
     opposite_side_lanes: list[dict[str, Any]] = []
     mixed_relation_lanes: list[dict[str, Any]] = []
     signal_counts: dict[str, int] = {}
@@ -5399,6 +5426,7 @@ def _forecast_arbitration_diagnostics(
     relation_counts: dict[str, int] = {}
     pair_direction_counts: dict[str, int] = {}
     reason_counts: dict[str, int] = {}
+    same_side_context_blocker_counts: dict[str, int] = {}
     for result in intents.get("results", []) or []:
         if not isinstance(result, dict):
             continue
@@ -5456,6 +5484,19 @@ def _forecast_arbitration_diagnostics(
         if reason:
             reason_counts[reason] = reason_counts.get(reason, 0) + 1
         risk_metrics = result.get("risk_metrics") if isinstance(result.get("risk_metrics"), dict) else {}
+        live_readiness_issues = _live_readiness_issues(result)
+        live_readiness_families = sorted(
+            {
+                str(issue.get("family") or "other")
+                for issue in live_readiness_issues
+                if str(issue.get("family") or "").strip()
+            }
+        )
+        context_blocker_families = [
+            family
+            for family in live_readiness_families
+            if family != _FORECAST_ARBITRATION_REPAIR_FAMILY
+        ]
         lane = {
             "lane_id": str(result.get("lane_id") or ""),
             "pair": pair,
@@ -5484,12 +5525,22 @@ def _forecast_arbitration_diagnostics(
             "unselected_projection_count": _maybe_int(support.get("unselected_projection_count")) or len(unselected),
             "reward_risk": _maybe_float(risk_metrics.get("reward_risk")),
             "reward_jpy": _maybe_float(risk_metrics.get("reward_jpy")),
+            "live_readiness_families": live_readiness_families,
+            "context_blocker_families": context_blocker_families,
             "risk_issue_codes": sorted(_issue_codes(result.get("risk_issues"))),
             "live_strategy_issue_codes": sorted(_issue_codes(result.get("live_strategy_issues"))),
         }
         lanes.append(lane)
         if relation == "same_side":
             same_side_lanes.append(lane)
+            if context_blocker_families:
+                same_side_context_blocked_lanes.append(lane)
+                for family in context_blocker_families:
+                    same_side_context_blocker_counts[family] = (
+                        same_side_context_blocker_counts.get(family, 0) + 1
+                    )
+            else:
+                same_side_actionable_repair_lanes.append(lane)
         elif relation == "opposite_side":
             opposite_side_lanes.append(lane)
         elif relation == "mixed_with_opposite":
@@ -5505,6 +5556,8 @@ def _forecast_arbitration_diagnostics(
     return {
         "lane_count": len(lanes),
         "same_side_lane_count": len(same_side_lanes),
+        "same_side_actionable_repair_lane_count": len(same_side_actionable_repair_lanes),
+        "same_side_context_blocked_lane_count": len(same_side_context_blocked_lanes),
         "opposite_side_lane_count": len(opposite_side_lanes),
         "mixed_relation_lane_count": len(mixed_relation_lanes),
         "opposite_conflict_lane_count": len(opposite_side_lanes) + len(mixed_relation_lanes),
@@ -5517,8 +5570,11 @@ def _forecast_arbitration_diagnostics(
         "direction_counts": _count_items(direction_counts, "direction"),
         "pair_direction_counts": _count_items(pair_direction_counts, "pair_direction"),
         "reason_counts": _count_items(reason_counts, "reason"),
+        "same_side_context_blocker_counts": _count_items(same_side_context_blocker_counts, "family"),
         "lanes": lanes[:limit],
         "same_side_lanes": same_side_lanes[:limit],
+        "same_side_actionable_repair_lanes": same_side_actionable_repair_lanes[:limit],
+        "same_side_context_blocked_lanes": same_side_context_blocked_lanes[:limit],
         "opposite_side_lanes": opposite_side_lanes[:limit],
         "mixed_relation_lanes": mixed_relation_lanes[:limit],
         "opposite_conflict_lanes": (opposite_side_lanes + mixed_relation_lanes)[:limit],
@@ -5880,7 +5936,16 @@ def _report_forecast_arbitration_text(raw: Any) -> str:
     directions = payload.get("direction_counts") if isinstance(payload.get("direction_counts"), list) else []
     relations = payload.get("relation_counts") if isinstance(payload.get("relation_counts"), list) else []
     signals = payload.get("signal_counts") if isinstance(payload.get("signal_counts"), list) else []
-    lanes = payload.get("lanes") if isinstance(payload.get("lanes"), list) else []
+    actionable = _maybe_int(payload.get("same_side_actionable_repair_lane_count")) or 0
+    context_blocked = _maybe_int(payload.get("same_side_context_blocked_lane_count")) or 0
+    lanes = (
+        payload.get("same_side_actionable_repair_lanes")
+        if isinstance(payload.get("same_side_actionable_repair_lanes"), list)
+        and payload.get("same_side_actionable_repair_lanes")
+        else payload.get("lanes")
+        if isinstance(payload.get("lanes"), list)
+        else []
+    )
     direction_text = ", ".join(
         f"{item.get('direction')}={item.get('count')}"
         for item in directions[:3]
@@ -5909,7 +5974,9 @@ def _report_forecast_arbitration_text(raw: Any) -> str:
             lane_labels.append(f"{pair} {side}->{signal} {direction}")
     return (
         f"lanes=`{lane_count}`, directions=`{direction_text or 'none'}`, "
-        f"relations=`{relation_text or 'none'}`, signals=`{signal_text or 'none'}`"
+        f"relations=`{relation_text or 'none'}`, "
+        f"same_side_actionable=`{actionable}`, same_side_context_blocked=`{context_blocked}`, "
+        f"signals=`{signal_text or 'none'}`"
         + (", top=" + "; ".join(lane_labels) if lane_labels else "")
     )
 

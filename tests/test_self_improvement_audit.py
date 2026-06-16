@@ -1876,6 +1876,8 @@ class SelfImprovementAuditorTest(unittest.TestCase):
         diagnostics = finding["evidence"]["forecast_arbitration_diagnostics"]
         self.assertEqual(diagnostics["lane_count"], 1)
         self.assertEqual(diagnostics["same_side_lane_count"], 1)
+        self.assertEqual(diagnostics["same_side_actionable_repair_lane_count"], 1)
+        self.assertEqual(diagnostics["same_side_context_blocked_lane_count"], 0)
         self.assertEqual(diagnostics["opposite_side_lane_count"], 0)
         self.assertEqual(diagnostics["relation_counts"][0]["relation"], "same_side")
         self.assertEqual(diagnostics["direction_counts"][0]["direction"], "UP")
@@ -1889,6 +1891,103 @@ class SelfImprovementAuditorTest(unittest.TestCase):
         self.assertIn("forecast arbitration", report_text)
         self.assertIn("relations=`same_side=1`", report_text)
         self.assertIn("EUR_JPY LONG->liquidity_sweep_low UP", report_text)
+
+    def test_same_side_unselected_projection_with_context_blockers_is_not_actionable_repair(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root, active_position=False)
+            files["intents"].write_text(
+                json.dumps(
+                    {
+                        "results": [
+                            {
+                                "lane_id": "range_trader:EUR_JPY:LONG:RANGE_ROTATION",
+                                "status": "DRY_RUN_PASSED",
+                                "intent": {
+                                    "pair": "EUR_JPY",
+                                    "side": "LONG",
+                                    "order_type": "LIMIT",
+                                    "metadata": {
+                                        "forecast_direction": "RANGE",
+                                        "forecast_confidence": 0.7,
+                                        "forecast_raw_confidence": 0.82,
+                                        "chart_direction_bias": "SHORT",
+                                        "forecast_market_support": {
+                                            "ok": False,
+                                            "direction": "RANGE",
+                                            "reason": "forecast RANGE has no executable direction; audited projection unselected",
+                                            "unselected_projection_count": 1,
+                                            "unselected_reason": (
+                                                "liquidity_sweep_low UP audited hit_rate=0.78 "
+                                                "samples=18 was unselected because forecast=RANGE"
+                                            ),
+                                            "unselected_signals": [
+                                                {
+                                                    "confidence": 0.8123,
+                                                    "direction": "UP",
+                                                    "hit_rate": 0.78,
+                                                    "name": "liquidity_sweep_low",
+                                                    "samples": 18,
+                                                    "timeframe": "M30",
+                                                    "rationale": "higher-timeframe sell-side sweep target",
+                                                }
+                                            ],
+                                        },
+                                    },
+                                },
+                                "risk_issues": [
+                                    {
+                                        "code": "CHART_DIRECTION_CONFLICT",
+                                        "message": "chart direction conflicts with entry side",
+                                        "severity": "WARN",
+                                    }
+                                ],
+                                "strategy_issues": [],
+                                "live_strategy_issues": [
+                                    {
+                                        "code": "STRATEGY_PROFILE_MISSING",
+                                        "message": "EUR_JPY LONG is absent from mined strategy profile",
+                                        "severity": "WARN",
+                                    }
+                                ],
+                                "live_blockers": [],
+                                "risk_metrics": {
+                                    "reward_jpy": 1200.0,
+                                    "reward_risk": 1.2,
+                                },
+                            }
+                        ]
+                    }
+                )
+            )
+
+            summary = _run(files)
+            payload = json.loads(files["output"].read_text())
+            report_text = files["report"].read_text()
+
+        codes = {item["code"]: item for item in payload["findings"]}
+        self.assertEqual(summary.status, STATUS_BLOCKED)
+        self.assertNotIn("FORECAST_ARBITRATION_UNSELECTED_PROJECTION_REPAIR_REQUIRED", codes)
+        finding = codes["FORECAST_ARBITRATION_SAME_SIDE_CONTEXT_BLOCKED"]
+        self.assertEqual(finding["priority"], "P2")
+        diagnostics = finding["evidence"]["forecast_arbitration_diagnostics"]
+        self.assertEqual(diagnostics["same_side_lane_count"], 1)
+        self.assertEqual(diagnostics["same_side_actionable_repair_lane_count"], 0)
+        self.assertEqual(diagnostics["same_side_context_blocked_lane_count"], 1)
+        self.assertEqual(
+            diagnostics["same_side_context_blocked_lanes"][0]["context_blocker_families"],
+            ["market_structure", "strategy_profile"],
+        )
+        self.assertEqual(
+            diagnostics["same_side_context_blocker_counts"],
+            [
+                {"family": "market_structure", "count": 1},
+                {"family": "strategy_profile", "count": 1},
+            ],
+        )
+        self.assertIn("same_side_context_blocked=`1`", report_text)
 
     def test_opposite_unselected_projection_arbitration_is_enforced_not_repair(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
