@@ -5323,6 +5323,34 @@ class IntentGeneratorTest(unittest.TestCase):
         self.assertIn("structural anchor missing", metadata["tp_target_reason"])
         self.assertIn("fresh_live_rr_floor", metadata["tp_target_reason"])
 
+    def test_range_rotation_far_rail_uses_operating_harvest_floor_tp(self) -> None:
+        from quant_rabbit.models import OrderType, Quote, Side, TradeMethod
+        from quant_rabbit.strategy.intent_generator import _take_profit_execution_plan
+
+        tp, metadata = _take_profit_execution_plan(
+            pair="EUR_USD",
+            side=Side.LONG,
+            method=TradeMethod.RANGE_ROTATION,
+            order_type=OrderType.LIMIT,
+            quote=Quote(pair="EUR_USD", bid=1.17000, ask=1.17008),
+            entry=1.17000,
+            tp=1.18000,
+            sl=1.16800,
+            reward_risk=1.2,
+            execution_regime="RANGE",
+            chart_context={"m5_regime": "RANGE", "m5_regime_quantile": "QUIET"},
+            pair_chart=None,
+            atr_pips=3.0,
+        )
+
+        self.assertEqual(tp, 1.1712)
+        self.assertEqual(metadata["tp_target_source"], "OPERATING_RANGE_HARVEST_FLOOR")
+        self.assertEqual(metadata["opportunity_mode"], "HARVEST")
+        self.assertEqual(metadata["tp_target_distance_pips"], 12.0)
+        self.assertAlmostEqual(metadata["virtual_take_profit_reward_risk"], 0.6)
+        self.assertIn("range rail target too far", metadata["tp_target_reason"])
+        self.assertIn("range_rr_floor", metadata["tp_target_reason"])
+
     def test_recovery_hedge_missing_harvest_structure_uses_operating_floor_tp(self) -> None:
         from quant_rabbit.models import OrderType, Quote, Side, TradeMethod
         from quant_rabbit.strategy.intent_generator import _take_profit_execution_plan

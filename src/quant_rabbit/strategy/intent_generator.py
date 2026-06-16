@@ -7617,6 +7617,27 @@ def _take_profit_execution_plan(
     if (
         attach_tp
         and target_intent == "HARVEST"
+        and method == TradeMethod.RANGE_ROTATION
+        and not hedge_recovery
+        and harvest_target_too_far
+    ):
+        fallback_tp, fallback_reason = _attached_harvest_floor_tp_candidate(
+            pair=pair,
+            side=side,
+            entry=entry,
+            stop_pips=stop_pips,
+            spread_pips=spread_pips,
+            atr_pips=atr_pips,
+            fresh_new_entry=False,
+            reason_subject="range rail target too far",
+        )
+        if fallback_tp is not None and _tp_closer_to_entry(entry, fallback_tp, effective_tp):
+            effective_tp = fallback_tp
+            target_source = "OPERATING_RANGE_HARVEST_FLOOR"
+            target_reason = f"{target_reason}; {fallback_reason}" if target_reason else fallback_reason
+    if (
+        attach_tp
+        and target_intent == "HARVEST"
         and (method == TradeMethod.BREAKOUT_FAILURE or hedge_recovery)
         and not structural_target_found
         and (harvest_target_too_far or hedge_recovery)
@@ -7721,6 +7742,7 @@ def _attached_harvest_floor_tp_candidate(
     spread_pips: float,
     atr_pips: float | None,
     fresh_new_entry: bool,
+    reason_subject: str = "structural anchor missing",
 ) -> tuple[float | None, str]:
     """Fallback for attached HARVEST TP when no structural anchor is usable.
 
@@ -7767,7 +7789,7 @@ def _attached_harvest_floor_tp_candidate(
     rr_label = "fresh_live_rr_floor" if fresh_new_entry else "range_rr_floor"
     rr_floor = rounded_distance / stop_pips if stop_pips > 0 else 0.0
     return candidate, (
-        f"attached HARVEST structural anchor missing; using minimum acceptable "
+        f"attached HARVEST {reason_subject}; using minimum acceptable "
         f"operating target {rounded_distance:.1f}pip "
         f"({rr_label}={rr_floor:.2f}, "
         f"max={max_distance_pips:.1f}pip/{HARVEST_TP_MAX_OPERATING_ATR_MULT:.1f}×ATR)"
