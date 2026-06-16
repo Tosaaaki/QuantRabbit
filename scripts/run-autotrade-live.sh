@@ -261,8 +261,10 @@ if [[ "${QR_RUN_POST_GATEWAY_SIDECARS:-1}" == "1" ]]; then
     echo "[run-autotrade-live] refreshing post-gateway sidecars under live lock." >&2
     "$QR_PYTHON" -m quant_rabbit.cli cycle-sidecars
   else
-    echo "[run-autotrade-live] autotrade-cycle exited status=${cycle_exit}; refreshing read-only position/audit sidecars under live lock." >&2
+    echo "[run-autotrade-live] autotrade-cycle exited status=${cycle_exit}; refreshing projection, position, and audit sidecars under live lock." >&2
     set +e
+    "$QR_PYTHON" -m quant_rabbit.cli verify-projections
+    post_audit_verify_projections_exit="$?"
     "$QR_PYTHON" -m quant_rabbit.cli position-thesis-check
     post_audit_position_thesis_exit="$?"
     "$QR_PYTHON" -m quant_rabbit.cli thesis-evolution-check
@@ -276,10 +278,10 @@ if [[ "${QR_RUN_POST_GATEWAY_SIDECARS:-1}" == "1" ]]; then
     "$QR_PYTHON" -m quant_rabbit.cli self-improvement-audit
     post_audit_self_exit="$?"
     set -e
-    if [[ "$post_audit_position_thesis_exit" -ne 0 || "$post_audit_thesis_evolution_exit" -ne 0 || "$post_audit_forecast_persistence_exit" -ne 0 ]] \
+    if [[ "$post_audit_verify_projections_exit" -ne 0 || "$post_audit_position_thesis_exit" -ne 0 || "$post_audit_thesis_evolution_exit" -ne 0 || "$post_audit_forecast_persistence_exit" -ne 0 ]] \
       || [[ "$post_audit_pm_exit" -ne 0 || "$post_audit_memory_exit" -ne 0 ]] \
       || [[ "$post_audit_self_exit" -ne 0 && "$post_audit_self_exit" -ne 2 ]]; then
-      echo "[run-autotrade-live] read-only position/audit sidecar refresh incomplete: position-thesis-check=${post_audit_position_thesis_exit} thesis-evolution-check=${post_audit_thesis_evolution_exit} forecast-persistence-check=${post_audit_forecast_persistence_exit} position-management=${post_audit_pm_exit} memory-health=${post_audit_memory_exit} self-improvement-audit=${post_audit_self_exit}" >&2
+      echo "[run-autotrade-live] projection/position/audit sidecar refresh incomplete: verify-projections=${post_audit_verify_projections_exit} position-thesis-check=${post_audit_position_thesis_exit} thesis-evolution-check=${post_audit_thesis_evolution_exit} forecast-persistence-check=${post_audit_forecast_persistence_exit} position-management=${post_audit_pm_exit} memory-health=${post_audit_memory_exit} self-improvement-audit=${post_audit_self_exit}" >&2
     fi
   fi
 fi

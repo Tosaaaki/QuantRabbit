@@ -2500,6 +2500,10 @@ class ConsolidatedCycleCommandTest(unittest.TestCase):
 
         self.assertEqual(result, digest)
         run_steps.assert_called_once_with(_direct_autotrade_audit_sidecar_steps())
+        direct_sidecars = [" ".join(s["argv"]) for s in _direct_autotrade_audit_sidecar_steps()]
+        self.assertEqual(direct_sidecars[0], "verify-projections")
+        self.assertLess(direct_sidecars.index("verify-projections"), direct_sidecars.index("memory-health"))
+        self.assertLess(direct_sidecars.index("verify-projections"), direct_sidecars.index("self-improvement-audit"))
         cycle_digest.assert_called_once_with(
             kind="direct_autotrade_audit_sidecars_digest",
             step_results=step_results,

@@ -1808,14 +1808,16 @@ def _cycle_sidecar_steps() -> list[dict[str, Any]]:
 
 
 def _direct_autotrade_audit_sidecar_steps() -> list[dict[str, Any]]:
-    """Read-only audit repair pass for direct autotrade-cycle invocations.
+    """Audit repair pass for direct autotrade-cycle invocations.
 
     `run-autotrade-live.sh` already runs the fuller post-gateway sidecar list
     under the live lock. A direct CLI cycle can still refresh broker truth or
-    repriced intents after `cycle-refresh`; these audit-only sidecars keep the
-    next route from inheriting a stale memory-health/self-improvement P0.
+    repriced intents after `cycle-refresh`; these sidecars resolve projection
+    ledger housekeeping before memory/self-improvement checks so the next route
+    does not inherit stale verification P0s.
     """
     return [
+        {"argv": ["verify-projections"], "required": False},
         {"argv": ["position-thesis-check"], "required": False},
         {"argv": ["thesis-evolution-check"], "required": False},
         {"argv": ["forecast-persistence-check"], "required": False},
