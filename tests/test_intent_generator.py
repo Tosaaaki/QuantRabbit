@@ -7963,6 +7963,21 @@ class TimingEvidenceBreakoutStopTest(unittest.TestCase):
             )
         )
 
+    def test_strong_directional_support_does_not_rescue_known_weak_direction_bucket(self) -> None:
+        metadata = self._strong_directional_metadata()
+        metadata["forecast_directional_calibration_name"] = "directional_forecast_down"
+        metadata["forecast_directional_hit_rate"] = 0.12
+        metadata["forecast_directional_samples"] = 37
+
+        self.assertFalse(
+            self._allows(
+                metadata,
+                side="SHORT",
+                order_type=OrderType.STOP_ENTRY,
+                min_confidence=0.65,
+            )
+        )
+
     def test_range_edge_stop_entry_does_not_get_support_override(self) -> None:
         # EUR_CHF live-loss shape: a weak calibrated LONG forecast had strong
         # macro support, but M5/M15 were boxed near the upper rail. A buy-stop

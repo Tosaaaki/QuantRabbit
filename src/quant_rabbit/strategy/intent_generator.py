@@ -6161,6 +6161,7 @@ def _forecast_market_support_allows_side(
         and raw_confidence is not None
         and raw_confidence >= strong_directional_raw_floor
         and confidence >= strong_directional_floor
+        and not known_weak_direction_bucket
         and _forecast_market_support_has_strong_directional_signal(
             support,
             direction=direction,
