@@ -586,15 +586,15 @@ class AutoTradeCycleTest(unittest.TestCase):
                                 "demoted_to_harvest_lanes": 3,
                                 "runner_qualified_lanes": 0,
                                 "reward_jpy": 0.0,
-                                "top_issue_codes": [
-                                    {"code": "FORECAST_WATCH_ONLY", "count": 3}
-                                ],
-                                "top_live_blocker_codes": [
-                                    {"code": "RUNNER_REGIME_NOT_CLEAN", "count": 2}
-                                ],
                             },
                         },
                         "runner_candidate_diagnostics": {
+                            "top_issue_codes": [
+                                {"code": "FORECAST_WATCH_ONLY", "count": 3}
+                            ],
+                            "top_live_blocker_codes": [
+                                {"code": "RUNNER_REGIME_NOT_CLEAN", "count": 2}
+                            ],
                             "top_demotion_reasons": [
                                 {"reason": "RANGE regime is not a clean runner trend", "count": 2},
                                 {"reason": "ADX below trend threshold", "count": 1},

@@ -434,6 +434,11 @@ def _cycle_opportunity_mode_report_lines(intents_path: Path) -> list[str]:
     modes = payload.get("opportunity_modes")
     if not isinstance(modes, dict):
         return []
+    runner_diag = (
+        payload.get("runner_candidate_diagnostics")
+        if isinstance(payload.get("runner_candidate_diagnostics"), dict)
+        else {}
+    )
 
     mode_parts: list[str] = []
     issue_parts: list[str] = []
@@ -459,9 +464,17 @@ def _cycle_opportunity_mode_report_lines(intents_path: Path) -> list[str]:
         mode_parts.append(" ".join(fields))
 
         top_codes = _report_count_items(item.get("top_issue_codes"), key="code", limit=4)
+        if not top_codes and mode == "RUNNER":
+            top_codes = _report_count_items(runner_diag.get("top_issue_codes"), key="code", limit=4)
         if top_codes:
             issue_parts.append(f"{mode}=`{top_codes}`")
         top_live_blocker_codes = _report_count_items(item.get("top_live_blocker_codes"), key="code", limit=4)
+        if not top_live_blocker_codes and mode == "RUNNER":
+            top_live_blocker_codes = _report_count_items(
+                runner_diag.get("top_live_blocker_codes"),
+                key="code",
+                limit=4,
+            )
         if top_live_blocker_codes:
             live_blocker_code_parts.append(f"{mode}=`{top_live_blocker_codes}`")
 
@@ -473,11 +486,6 @@ def _cycle_opportunity_mode_report_lines(intents_path: Path) -> list[str]:
     if issue_parts:
         lines.append(f"- Opportunity issue codes: {'; '.join(issue_parts)}")
 
-    runner_diag = (
-        payload.get("runner_candidate_diagnostics")
-        if isinstance(payload.get("runner_candidate_diagnostics"), dict)
-        else {}
-    )
     demotions = _report_count_items(runner_diag.get("top_demotion_reasons"), key="reason", limit=4)
     if demotions:
         lines.append(f"- Runner demotions: `{demotions}`")

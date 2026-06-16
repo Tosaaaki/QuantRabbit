@@ -2801,6 +2801,11 @@ def _coverage_opportunity_mode_summary(payload: dict[str, Any]) -> dict[str, Any
             "lanes": _maybe_int(item.get("lanes")) or 0,
             "live_ready_lanes": _maybe_int(item.get("live_ready_lanes")) or 0,
             "promotion_candidate_lanes": _maybe_int(item.get("promotion_candidate_lanes")) or 0,
+            "reward_jpy": _maybe_float(item.get("reward_jpy")) or 0.0,
+            "live_ready_reward_jpy": _maybe_float(item.get("live_ready_reward_jpy")) or 0.0,
+            "potential_reward_jpy": _maybe_float(item.get("potential_reward_jpy")) or 0.0,
+            "coverage_pct": _maybe_float(item.get("coverage_pct")) or 0.0,
+            "potential_coverage_pct": _maybe_float(item.get("potential_coverage_pct")) or 0.0,
             "diagnostic_candidate_lanes": _maybe_int(item.get("diagnostic_candidate_lanes")) or 0,
             "demoted_to_harvest_lanes": _maybe_int(item.get("demoted_to_harvest_lanes")) or 0,
             "runner_qualified_lanes": _maybe_int(item.get("runner_qualified_lanes")) or 0,
@@ -2838,6 +2843,15 @@ def _coverage_opportunity_mode_summary(payload: dict[str, Any]) -> dict[str, Any
                 if isinstance(blocker, dict) and str(blocker.get("label") or "").strip()
             ],
         }
+    runner_diag = _coverage_runner_candidate_diagnostics(payload)
+    runner = summary.get("RUNNER")
+    if runner and runner_diag:
+        for key in ("top_issue_codes", "top_live_blocker_codes", "top_blockers"):
+            if runner.get(key):
+                continue
+            values = runner_diag.get(key)
+            if isinstance(values, list):
+                runner[key] = values[:5]
     return summary
 
 
@@ -2877,6 +2891,14 @@ def _coverage_runner_candidate_diagnostics(payload: dict[str, Any]) -> dict[str,
             }
             for item in (diagnostics.get("top_live_blocker_codes") or [])[:5]
             if isinstance(item, dict) and str(item.get("code") or "").strip()
+        ],
+        "top_blockers": [
+            {
+                "label": str(item.get("label") or ""),
+                "count": _maybe_int(item.get("count")) or 0,
+            }
+            for item in (diagnostics.get("top_blockers") or [])[:5]
+            if isinstance(item, dict) and str(item.get("label") or "").strip()
         ],
     }
 

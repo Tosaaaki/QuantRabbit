@@ -528,7 +528,15 @@ class CoverageOptimizerTest(unittest.TestCase):
             self.assertEqual(runner_mode["demoted_to_harvest_lanes"], 1)
             self.assertEqual(runner_mode["diagnostic_status"], "RUNNER_CANDIDATES_DEMOTED_TO_HARVEST")
             self.assertEqual(runner_mode["top_demotion_reasons"][0]["reason"], "RANGE regime is not a clean runner trend")
-            self.assertTrue(any("repair runner qualification" in item for item in payload["action_items"]))
+            self.assertEqual(runner_mode["top_issue_codes"][0]["code"], "TREND_MARKET_NOT_OPERATING_TREND")
+            self.assertEqual(runner_mode["top_live_blocker_codes"][0]["code"], "TREND_MARKET_NOT_OPERATING_TREND")
+            self.assertTrue(
+                any(
+                    "repair both harvest and runner opportunity paths" in item
+                    and "repair runner qualification" in item
+                    for item in payload["action_items"]
+                )
+            )
             self.assertIn("Runner Candidate Diagnostics", (root / "coverage.md").read_text())
 
     def test_live_ready_harvest_does_not_hide_demoted_runner_path(self) -> None:
@@ -604,6 +612,10 @@ class CoverageOptimizerTest(unittest.TestCase):
             self.assertEqual(payload["opportunity_modes"]["RUNNER"]["lanes"], 0)
             self.assertEqual(payload["opportunity_modes"]["RUNNER"]["diagnostic_candidate_lanes"], 1)
             self.assertEqual(payload["opportunity_modes"]["RUNNER"]["demoted_to_harvest_lanes"], 1)
+            self.assertEqual(
+                payload["opportunity_modes"]["RUNNER"]["top_live_blocker_codes"][0]["code"],
+                "TREND_MARKET_NOT_OPERATING_TREND",
+            )
             self.assertEqual(payload["runner_candidate_diagnostics"]["trend_candidate_lanes"], 1)
             self.assertIn("diagnostic_candidates=`1`", (root / "coverage.md").read_text())
             self.assertTrue(

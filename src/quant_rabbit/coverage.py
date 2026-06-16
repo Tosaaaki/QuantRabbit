@@ -1703,6 +1703,18 @@ def _annotate_runner_opportunity_diagnostics(
         for item in (diagnostics.get("top_demotion_reasons") or [])[:5]
         if isinstance(item, dict)
     ]
+    for key, limit in (
+        ("top_issue_codes", 8),
+        ("top_live_blocker_codes", 8),
+        ("top_blockers", 6),
+        ("top_lanes", 8),
+    ):
+        if runner.get(key):
+            continue
+        values = diagnostics.get(key)
+        if not isinstance(values, list):
+            continue
+        runner[key] = [dict(item) for item in values[:limit] if isinstance(item, dict)]
     runner["diagnostic_status"] = str(diagnostics.get("status") or "")
 
 
@@ -1817,7 +1829,10 @@ def _opportunity_mode_repair_item(
         if int(missing_item.get("lanes") or 0) <= 0:
             runner_repair = _runner_qualification_repair_item(runner_candidate_diagnostics)
             if missing_mode == "RUNNER" and runner_repair:
-                return runner_repair
+                return (
+                    "repair both harvest and runner opportunity paths instead of treating coverage as one pool: "
+                    f"{labels[0]}; {runner_repair}"
+                )
             return (
                 "repair the visible opportunity path before broad exploration and add missing "
                 f"{missing_mode} lane generation to avoid horizon opportunity loss: {labels[0]}"
