@@ -4229,12 +4229,12 @@ class IntentGeneratorTest(unittest.TestCase):
         self.assertIsNone(support["directional_hit_rate"])
         self.assertEqual(support["directional_samples"], 0)
 
-    def test_forecast_directional_calibration_uses_broad_global_bucket(self) -> None:
+    def test_forecast_directional_calibration_uses_broad_directional_global_bucket(self) -> None:
         from quant_rabbit.strategy.intent_generator import _forecast_market_support_for_forecast
 
         forecast = SimpleNamespace(direction="UP", raw_confidence=0.91)
         hit_rates = {
-            "directional_forecast": {
+            "directional_forecast_up": {
                 "_all_pairs:_all_regimes": {"hit_rate": 0.34, "samples": 30},
             }
         }
@@ -4247,6 +4247,7 @@ class IntentGeneratorTest(unittest.TestCase):
             regime="UNCLEAR",
         )
 
+        self.assertEqual(support["directional_calibration_name"], "directional_forecast_up")
         self.assertAlmostEqual(support["directional_hit_rate"], 0.34)
         self.assertEqual(support["directional_samples"], 30)
 
