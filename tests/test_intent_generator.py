@@ -13,7 +13,9 @@ from unittest.mock import patch
 from quant_rabbit.models import OrderIntent, OrderType, Side
 from quant_rabbit.strategy.intent_generator import (
     IntentGenerator,
+    RANGE_TARGET_SPREAD_CUSHION_MULT,
     _forecast_context_payload,
+    _minimum_range_target_pips,
     _same_day_loss_streak_issues,
 )
 from quant_rabbit.strategy.lane_history_ledger import SameDayLossStreak
@@ -3015,6 +3017,11 @@ class IntentGeneratorTest(unittest.TestCase):
         self.assertEqual(seed["intent"]["metadata"]["forecast_range_width_pips"], 24.0)
         self.assertEqual(seed["intent"]["metadata"]["geometry_model"], "RANGE_RAIL_LIMIT")
         self.assertNotIn("FORECAST_CONFIDENCE_REQUIRED_FOR_LIVE", seed_issue_codes)
+
+    def test_range_target_floor_keeps_send_time_spread_cushion(self) -> None:
+        target_pips = _minimum_range_target_pips(stop_pips=10.0, spread_pips=2.0)
+
+        self.assertAlmostEqual(target_pips, 10.0 * RANGE_TARGET_SPREAD_CUSHION_MULT)
 
     def test_range_forecast_box_keeps_breakout_pending_rotation_blocked(self) -> None:
         os.environ["QR_REQUIRE_FORECAST_FOR_LIVE"] = "1"

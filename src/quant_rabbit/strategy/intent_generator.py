@@ -487,6 +487,10 @@ REGIME_MAX_STOP_WIDEN = 1.5  # ceiling — never widen more than 1.5× ATR floor
 # cost is the immediate market reality around a limit fill.
 RANGE_RAIL_ENTRY_BUFFER_SPREAD_MULT = 0.5
 RANGE_OPPOSING_RAIL_BUFFER_SPREAD_MULT = 0.5
+# Range-rail TP must clear the RiskEngine spread floor again at broker-send
+# time, after quote refresh. The floor therefore needs a generator-side cushion
+# for ordinary spread flicker; the live RiskEngine gate remains the authority.
+RANGE_TARGET_SPREAD_CUSHION_MULT = _env_float("QR_RANGE_TARGET_SPREAD_CUSHION_MULT", 1.12, minimum=1.0)
 
 # A range LIMIT must still be pending, not effectively marketable. The minimum
 # distance from current bid/ask is expressed in current spread multiples so it
@@ -8234,7 +8238,7 @@ def _directional_range_market_geometry(
         return None
     target_pips = max(
         stop_pips * min(reward_risk, RANGE_DIRECTIONAL_MARKET_TARGET_RR_CAP),
-        spread_pips * RiskPolicy().min_target_spread_multiple,
+        _minimum_range_target_pips(stop_pips, spread_pips),
     )
     if side == Side.LONG:
         entry = quote.ask
@@ -8320,7 +8324,7 @@ def _minimum_range_target_pips(stop_pips: float, spread_pips: float) -> float:
     policy = RiskPolicy()
     return max(
         stop_pips * policy.range_min_reward_risk,
-        spread_pips * policy.min_target_spread_multiple,
+        spread_pips * policy.min_target_spread_multiple * RANGE_TARGET_SPREAD_CUSHION_MULT,
     )
 
 
