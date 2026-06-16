@@ -557,6 +557,85 @@ class AutoTradeCycleTest(unittest.TestCase):
         self.assertEqual(client.orders_canceled, ["pending-1"])
         self.assertEqual(client.orders_sent, [])
 
+    def test_report_summarizes_harvest_and_runner_opportunity_modes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            data_root = root / "data"
+            data_root.mkdir()
+            intents_path = data_root / "order_intents.json"
+            intents_path.write_text(json.dumps({"results": []}))
+            (data_root / "coverage_optimization.json").write_text(
+                json.dumps(
+                    {
+                        "opportunity_modes": {
+                            "HARVEST": {
+                                "lanes": 7,
+                                "live_ready_lanes": 2,
+                                "reward_jpy": 1234.5,
+                                "top_issue_codes": [
+                                    {"code": "FORECAST_CONFIDENCE_REQUIRED_FOR_LIVE", "count": 4}
+                                ],
+                            },
+                            "RUNNER": {
+                                "lanes": 0,
+                                "live_ready_lanes": 0,
+                                "diagnostic_candidate_lanes": 3,
+                                "demoted_to_harvest_lanes": 3,
+                                "runner_qualified_lanes": 0,
+                                "reward_jpy": 0.0,
+                                "top_issue_codes": [
+                                    {"code": "FORECAST_WATCH_ONLY", "count": 3}
+                                ],
+                            },
+                        },
+                        "runner_candidate_diagnostics": {
+                            "top_demotion_reasons": [
+                                {"reason": "RANGE regime is not a clean runner trend", "count": 2},
+                                {"reason": "ADX below trend threshold", "count": 1},
+                            ]
+                        },
+                    }
+                )
+            )
+            report_path = root / "report.md"
+            summary = AutoTradeCycleSummary(
+                status="NO_LIVE_READY_INTENT",
+                report_path=report_path,
+                snapshot_path=root / "snapshot.json",
+                intents_path=intents_path,
+                selected_lane_id=None,
+                deterministic_lane_id=None,
+                sent=False,
+                positions=0,
+                orders=0,
+                live_ready=0,
+            )
+
+            AutoTradeCycle(
+                client=object(),
+                intents_path=intents_path,
+                report_path=report_path,
+                refresh_market_story=False,
+            )._write_report(summary, "2026-06-16T00:00:00+00:00")
+
+            report_text = report_path.read_text()
+            self.assertIn(
+                "- Opportunity modes: `HARVEST lanes=7 live_ready=2 reward_jpy=1234.5`; "
+                "`RUNNER lanes=0 live_ready=0 diagnostic_candidates=3 demoted_to_harvest=3 "
+                "runner_qualified=0 reward_jpy=0`",
+                report_text,
+            )
+            self.assertIn(
+                "- Opportunity issue codes: HARVEST=`FORECAST_CONFIDENCE_REQUIRED_FOR_LIVE:4`; "
+                "RUNNER=`FORECAST_WATCH_ONLY:3`",
+                report_text,
+            )
+            self.assertIn(
+                "- Runner demotions: `RANGE regime is not a clean runner trend:2, "
+                "ADX below trend threshold:1`",
+                report_text,
+            )
+
     def test_rejected_gpt_close_ids_do_not_call_broker(self) -> None:
         class Client:
             def __init__(self) -> None:

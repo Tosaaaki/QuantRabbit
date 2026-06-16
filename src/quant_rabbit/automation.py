@@ -423,6 +423,88 @@ def _running_under_test_harness() -> bool:
     return "unittest" in argv0 or "pytest" in argv0
 
 
+def _cycle_opportunity_mode_report_lines(intents_path: Path) -> list[str]:
+    coverage_path = intents_path.with_name("coverage_optimization.json")
+    try:
+        payload = json.loads(coverage_path.read_text())
+    except (OSError, json.JSONDecodeError):
+        return []
+    if not isinstance(payload, dict):
+        return []
+    modes = payload.get("opportunity_modes")
+    if not isinstance(modes, dict):
+        return []
+
+    mode_parts: list[str] = []
+    issue_parts: list[str] = []
+    for mode in ("HARVEST", "RUNNER", "BALANCED"):
+        item = modes.get(mode)
+        if not isinstance(item, dict):
+            continue
+        fields = [
+            f"{mode} lanes={_report_value(item.get('lanes'))}",
+            f"live_ready={_report_value(item.get('live_ready_lanes'))}",
+        ]
+        if mode == "RUNNER":
+            fields.extend(
+                [
+                    f"diagnostic_candidates={_report_value(item.get('diagnostic_candidate_lanes'))}",
+                    f"demoted_to_harvest={_report_value(item.get('demoted_to_harvest_lanes'))}",
+                    f"runner_qualified={_report_value(item.get('runner_qualified_lanes'))}",
+                ]
+            )
+        if item.get("reward_jpy") is not None:
+            fields.append(f"reward_jpy={_report_value(item.get('reward_jpy'))}")
+        mode_parts.append(" ".join(fields))
+
+        top_codes = _report_count_items(item.get("top_issue_codes"), key="code", limit=4)
+        if top_codes:
+            issue_parts.append(f"{mode}=`{top_codes}`")
+
+    lines: list[str] = []
+    if mode_parts:
+        lines.append(f"- Opportunity modes: {'; '.join(f'`{part}`' for part in mode_parts)}")
+    if issue_parts:
+        lines.append(f"- Opportunity issue codes: {'; '.join(issue_parts)}")
+
+    runner_diag = (
+        payload.get("runner_candidate_diagnostics")
+        if isinstance(payload.get("runner_candidate_diagnostics"), dict)
+        else {}
+    )
+    demotions = _report_count_items(runner_diag.get("top_demotion_reasons"), key="reason", limit=4)
+    if demotions:
+        lines.append(f"- Runner demotions: `{demotions}`")
+    return lines
+
+
+def _report_count_items(items: object, *, key: str, limit: int) -> str:
+    if not isinstance(items, list):
+        return ""
+    parts: list[str] = []
+    for item in items[:limit]:
+        if not isinstance(item, dict):
+            continue
+        label = str(item.get(key) or "").strip()
+        if not label:
+            continue
+        parts.append(f"{label}:{_report_value(item.get('count'))}")
+    return ", ".join(parts)
+
+
+def _report_value(value: object) -> str:
+    if value is None:
+        return "None"
+    if isinstance(value, bool):
+        return str(value)
+    if isinstance(value, int):
+        return str(value)
+    if isinstance(value, float):
+        text = f"{value:.4f}".rstrip("0").rstrip(".")
+        return text or "0"
+    return str(value)
+
+
 @dataclass(frozen=True)
 class AutoTradeCycleSummary:
     status: str
@@ -2177,6 +2259,7 @@ class AutoTradeCycle:
             f"- Market artifact mode: `{'reuse_existing' if self.reuse_market_artifacts else 'refresh_and_reprice'}`",
             f"- Market story refresh: `{self.refresh_market_story}` (source: `{self.market_news_root}`)",
         ]
+        lines.extend(_cycle_opportunity_mode_report_lines(self.intents_path))
         if self._projection_preflight_summary is not None:
             preflight = self._projection_preflight_summary
             lines.append(
