@@ -3183,6 +3183,7 @@ def _forecast_directional_calibration_for_forecast(
         calibration_name,
         pair=pair,
         regime=regime,
+        confidence_sample_floor=True,
     )
     if bucket is None:
         return payload
@@ -3417,6 +3418,7 @@ def _projection_hit_rate_bucket(
     *,
     pair: str,
     regime: str | None,
+    confidence_sample_floor: bool = False,
 ) -> dict[str, Any] | None:
     by_key = hit_rates.get(signal_name)
     if not isinstance(by_key, dict):
@@ -3435,9 +3437,35 @@ def _projection_hit_rate_bucket(
             if first_bucket is None:
                 first_bucket = bucket
             samples = _optional_int(bucket.get("samples")) or 0
-            if samples >= FORECAST_MARKET_SUPPORT_MIN_SAMPLES:
+            if samples >= _projection_bucket_min_samples(
+                key,
+                confidence_sample_floor=confidence_sample_floor,
+            ):
                 return bucket
+    if confidence_sample_floor:
+        return None
     return first_bucket
+
+
+def _projection_bucket_min_samples(
+    key: str,
+    *,
+    confidence_sample_floor: bool,
+) -> int:
+    if not confidence_sample_floor:
+        return FORECAST_MARKET_SUPPORT_MIN_SAMPLES
+    try:
+        from quant_rabbit.strategy.projection_ledger import (
+            CONFIDENCE_MIN_SAMPLES,
+            GLOBAL_CONFIDENCE_MIN_SAMPLES,
+        )
+    except Exception:
+        if key.startswith("_all_pairs"):
+            return max(30, FORECAST_MARKET_SUPPORT_MIN_SAMPLES)
+        return FORECAST_MARKET_SUPPORT_MIN_SAMPLES
+    if key.startswith("_all_pairs"):
+        return GLOBAL_CONFIDENCE_MIN_SAMPLES
+    return CONFIDENCE_MIN_SAMPLES
 
 
 def _optional_int(value: object) -> int | None:

@@ -4041,6 +4041,48 @@ class IntentGeneratorTest(unittest.TestCase):
         self.assertAlmostEqual(support["directional_hit_rate"], 0.1)
         self.assertEqual(support["directional_samples"], 12)
 
+    def test_forecast_directional_calibration_ignores_thin_global_bucket(self) -> None:
+        from quant_rabbit.strategy.intent_generator import _forecast_market_support_for_forecast
+
+        forecast = SimpleNamespace(direction="UP", raw_confidence=0.91)
+        hit_rates = {
+            "directional_forecast": {
+                "_all_pairs:_all_regimes": {"hit_rate": 0.34, "samples": 29},
+            }
+        }
+
+        support = _forecast_market_support_for_forecast(
+            pair="AUD_JPY",
+            forecast=forecast,
+            projection_signals=[],
+            hit_rates=hit_rates,
+            regime="UNCLEAR",
+        )
+
+        self.assertIsNone(support["directional_hit_rate"])
+        self.assertEqual(support["directional_samples"], 0)
+
+    def test_forecast_directional_calibration_uses_broad_global_bucket(self) -> None:
+        from quant_rabbit.strategy.intent_generator import _forecast_market_support_for_forecast
+
+        forecast = SimpleNamespace(direction="UP", raw_confidence=0.91)
+        hit_rates = {
+            "directional_forecast": {
+                "_all_pairs:_all_regimes": {"hit_rate": 0.34, "samples": 30},
+            }
+        }
+
+        support = _forecast_market_support_for_forecast(
+            pair="AUD_JPY",
+            forecast=forecast,
+            projection_signals=[],
+            hit_rates=hit_rates,
+            regime="UNCLEAR",
+        )
+
+        self.assertAlmostEqual(support["directional_hit_rate"], 0.34)
+        self.assertEqual(support["directional_samples"], 30)
+
     def test_projection_support_dedupes_repeated_calibration_and_cites_best(self) -> None:
         from quant_rabbit.strategy.intent_generator import _forecast_market_support_for_forecast
 
