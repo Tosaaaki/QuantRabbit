@@ -75,6 +75,7 @@ class LearningAuditorTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             files = _fixtures(root, ai_status="RESEARCH_PROFITABLE_NOT_CERTIFIED")
+            _write_learning_push_attack_advice(files["ai_attack_advice"])
             db = root / "execution_ledger.db"
             _seed_negative_execution_events(db)
 
@@ -95,6 +96,32 @@ class LearningAuditorTest(unittest.TestCase):
             payload = json.loads((root / "learning_audit.json").read_text())
             self.assertEqual(payload["learning_influence"]["risk_increasing_lanes"], 1)
             self.assertTrue(any("risk-increasing learning influence" in item for item in payload["blockers"]))
+
+    def test_does_not_block_when_positive_learning_does_not_change_recommended_set(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root, ai_status="RESEARCH_PROFITABLE_NOT_CERTIFIED")
+            db = root / "execution_ledger.db"
+            _seed_negative_execution_events(db)
+
+            summary = LearningAuditor(
+                db_path=db,
+                output_path=root / "learning_audit.json",
+                report_path=root / "learning_audit.md",
+            ).run(
+                ai_backtest_path=files["ai_backtest"],
+                outcome_mart_path=files["outcome_mart"],
+                post_trade_learning_path=files["post_trade_learning"],
+                ai_attack_advice_path=files["ai_attack_advice"],
+                min_effect_sample=2,
+                now=datetime(2026, 6, 3, 0, 0, tzinfo=timezone.utc),
+            )
+
+            self.assertEqual(summary.status, "LEARNING_AUDIT_WARN")
+            payload = json.loads((root / "learning_audit.json").read_text())
+            self.assertEqual(payload["learning_influence"]["risk_increasing_lanes"], 0)
+            self.assertFalse(any("risk-increasing learning influence" in item for item in payload["blockers"]))
+            self.assertTrue(any("does not change the recommended risk set" in item for item in payload["warnings"]))
 
     def test_warns_for_protective_learning_penalty_when_recent_effect_is_negative(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -122,7 +149,7 @@ class LearningAuditorTest(unittest.TestCase):
             self.assertEqual(summary.total_learning_score_delta, -15.0)
             payload = json.loads((root / "learning_audit.json").read_text())
             self.assertEqual(payload["learning_influence"]["risk_increasing_lanes"], 0)
-            self.assertTrue(any("non-positive learning score deltas" in item for item in payload["warnings"]))
+            self.assertTrue(any("does not change the recommended risk set" in item for item in payload["warnings"]))
 
     def test_cli_runs_learning_audit(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -282,6 +309,44 @@ def _write_negative_attack_advice(path: Path) -> None:
                             }
                         ],
                     }
+                ],
+            }
+        )
+    )
+
+
+def _write_learning_push_attack_advice(path: Path) -> None:
+    path.write_text(
+        json.dumps(
+            {
+                "status": "ATTACK_PARTIAL",
+                "read_only": True,
+                "live_permission": False,
+                "recommended_now_lane_ids": ["lane:EUR_USD:LONG"],
+                "lanes": [
+                    {
+                        "lane_id": "lane:EUR_USD:LONG",
+                        "score": 42.0,
+                        "learning_score_delta": 8.0,
+                        "learning_influences": ["ai_backtest_research_positive_edge"],
+                        "learning_influence_details": [
+                            {
+                                "source": "ai_backtest",
+                                "influence": "ai_backtest_research_positive_edge",
+                                "score_delta": 8.0,
+                                "source_status": "RESEARCH_PROFITABLE_NOT_CERTIFIED",
+                                "edge_jpy": 5000.0,
+                                "trades": 40,
+                            }
+                        ],
+                    },
+                    {
+                        "lane_id": "lane:GBP_USD:LONG",
+                        "score": 40.0,
+                        "learning_score_delta": 0.0,
+                        "learning_influences": [],
+                        "learning_influence_details": [],
+                    },
                 ],
             }
         )

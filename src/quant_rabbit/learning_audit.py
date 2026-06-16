@@ -598,11 +598,10 @@ def _advice_influence_checks(
         risk_increasing_lanes = [
             lane
             for lane in influenced_lanes
-            if float(lane.get("learning_score_delta") or 0.0) > 0
-            or any(
-                _maybe_float(detail.get("score_delta")) and float(_maybe_float(detail.get("score_delta")) or 0.0) > 0
-                for detail in lane.get("details", [])
-                if isinstance(detail, dict)
+            if _learning_influence_increases_recommended_risk(
+                lane,
+                lanes=lanes,
+                recommended_ids=recommended_ids,
             )
         ]
         checks.append(
@@ -655,8 +654,11 @@ def _advice_influence_checks(
                 check_name="protective_learning_influence_recent_outcome",
                 status="WARN",
                 severity="WARN",
-                message="only non-positive learning score deltas are active while recent effect window is negative",
-                evidence=effect,
+                message=(
+                    "recommended learning influence is active while recent effect window is negative, "
+                    "but it does not change the recommended risk set"
+                ),
+                evidence={**effect, "influenced_lanes": influenced_lanes[:20]},
             )
         )
     return {
@@ -666,6 +668,52 @@ def _advice_influence_checks(
         "total_learning_score_delta": round(total_delta, 4),
         "lanes": influenced_lanes,
     }
+
+
+def _learning_influence_increases_recommended_risk(
+    influenced_lane: dict[str, Any],
+    *,
+    lanes: list[Any],
+    recommended_ids: set[str],
+) -> bool:
+    lane_delta = _maybe_float(influenced_lane.get("learning_score_delta")) or 0.0
+    has_positive_detail = any(
+        _maybe_float(detail.get("score_delta")) is not None
+        and float(_maybe_float(detail.get("score_delta")) or 0.0) > 0
+        for detail in influenced_lane.get("details", [])
+        if isinstance(detail, dict)
+    )
+    if lane_delta <= 0 and not has_positive_detail:
+        return False
+
+    lane_id = str(influenced_lane.get("lane_id") or "")
+    if not lane_id:
+        return True
+    recommended_count = len(recommended_ids)
+    if recommended_count <= 0:
+        return True
+
+    ranked: list[tuple[float, int, str]] = []
+    for index, lane in enumerate(lanes):
+        if not isinstance(lane, dict):
+            continue
+        candidate_id = str(lane.get("lane_id") or "")
+        if not candidate_id:
+            continue
+        score = _maybe_float(lane.get("score")) or 0.0
+        delta = _maybe_float(lane.get("learning_score_delta")) or 0.0
+        base_score = score - delta
+        ranked.append((base_score, index, candidate_id))
+    if not ranked:
+        return True
+
+    base_recommended = {
+        candidate_id
+        for _score, _index, candidate_id in sorted(ranked, key=lambda item: (-item[0], item[1]))[
+            :recommended_count
+        ]
+    }
+    return lane_id not in base_recommended
 
 
 def _lane_influence_checks(
