@@ -2625,8 +2625,8 @@ def main(argv: list[str] | None = None) -> int:
     )
     p_plim.add_argument("--snapshot", type=Path, default=DEFAULT_BROKER_SNAPSHOT)
     p_plim.add_argument("--pair-charts", type=Path, default=DEFAULT_PAIR_CHARTS)
-    p_plim.add_argument("--send", action="store_true", help="Send LIMITs via OANDA. Default is dry-run JSON only.")
-    p_plim.add_argument("--confirm-live", action="store_true", help="Required with --send before predictive LIMITs can reach OANDA.")
+    p_plim.add_argument("--send", action="store_true", help="Compatibility flag; direct predictive LIMIT sends are gateway-only blocked.")
+    p_plim.add_argument("--confirm-live", action="store_true", help="Compatibility flag; predictive LIMITs remain advisory evidence.")
     p_plim.add_argument("--output", type=Path, default=Path("data/predictive_limit_orders.json"))
 
     p_vproj = sub.add_parser(
@@ -4753,22 +4753,27 @@ def main(argv: list[str] | None = None) -> int:
             all_orders.extend(orders)
         results = []
         if all_orders:
-            live_confirmed = args.confirm_live and os.environ.get("QR_LIVE_ENABLED", "").strip() in {
-                "1", "true", "TRUE", "yes", "YES"
-            }
-            client = OandaExecutionClient() if args.send and live_confirmed else None
-            results = apply_limit_orders(all_orders, client, dry_run=not args.send, confirm_live=args.confirm_live)
+            results = apply_limit_orders(
+                all_orders,
+                None,
+                dry_run=not args.send,
+                confirm_live=args.confirm_live,
+            )
         args.output.parent.mkdir(parents=True, exist_ok=True)
         args.output.write_text(json.dumps({
             "generated_at_utc": __import__("datetime").datetime.now(__import__("datetime").timezone.utc).isoformat(),
-            "dry_run": not args.send,
+            "dry_run": True,
+            "send_requested": bool(args.send),
+            "gateway_only": True,
             "orders": serialize_limit_orders(all_orders),
             "send_results": results,
         }, ensure_ascii=False, indent=2))
         print(json.dumps({
             "status": "OK",
             "orders_count": len(all_orders),
-            "sent": args.send,
+            "sent": False,
+            "send_requested": bool(args.send),
+            "gateway_only": True,
             "output_path": str(args.output),
         }, indent=2, ensure_ascii=False))
         return 0

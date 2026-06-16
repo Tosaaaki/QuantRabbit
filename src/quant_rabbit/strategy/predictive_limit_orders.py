@@ -28,9 +28,9 @@ Each generated LIMIT has:
 - Time-in-force = GTD (expire after `LIMIT_TTL_MIN`)
 
 The CLI command `generate-predictive-limits` writes them to
-`data/predictive_limit_orders.json` (DRY_RUN) or sends via OANDA when
-`--send` is passed. The user controls when to send; the module by
-itself never sends without explicit consent.
+`data/predictive_limit_orders.json` as advisory DRY_RUN timing evidence.
+It must not submit broker orders directly: live entries are allowed only
+through the verified decision receipt -> LiveOrderGateway path.
 
 Kill switch: `QR_DISABLE_PREDICTIVE_LIMITS=1`.
 """
@@ -371,15 +371,17 @@ def serialize_limit_orders(orders: List[PredictiveLimitOrder]) -> List[dict]:
 
 def apply_limit_orders(
     orders: List[PredictiveLimitOrder],
-    broker_client: Any,
+    _broker_client: Any,
     *,
     dry_run: bool = True,
     confirm_live: bool = False,
 ) -> List[dict]:
-    """Send LIMIT orders via OANDA `post_order_json` when not dry-run.
+    """Return per-order advisory status without direct broker submission.
 
-    Returns per-order result dicts. Failures captured per-order so a
-    single broker error doesn't block the rest.
+    Predictive limits are timing evidence for the trader packet. Sending them
+    directly would bypass RiskEngine, strategy-profile validation, basket
+    margin checks, GPT receipt verification, and LiveOrderGateway. Keep the
+    dry-run artifact visible until a gateway-backed intent path consumes it.
     """
     results: List[dict] = []
     for o in orders:
@@ -391,38 +393,10 @@ def apply_limit_orders(
         if dry_run:
             results.append(entry)
             continue
-        if not _predictive_limit_live_send_enabled(confirm_live):
-            entry["error"] = (
-                "PREDICTIVE_LIMIT_LIVE_GATE_BLOCKED: set QR_LIVE_ENABLED=1 and pass "
-                "--send --confirm-live before predictive LIMIT orders may be sent"
-            )
-            results.append(entry)
-            continue
-        units_signed = o.units if o.side == "LONG" else -o.units
-        order_request: Dict[str, Any] = {
-            "type": "LIMIT",
-            "instrument": o.pair,
-            "units": str(units_signed),
-            "price": f"{o.limit_price:.3f}" if o.pair.endswith("_JPY") else f"{o.limit_price:.5f}",
-            "timeInForce": "GTD",
-            "gtdTime": o.gtd_utc,
-            "positionFill": "DEFAULT",
-        }
-        if o.take_profit_price is not None:
-            order_request["takeProfitOnFill"] = {
-                "price": f"{o.take_profit_price:.3f}" if o.pair.endswith("_JPY") else f"{o.take_profit_price:.5f}",
-                "timeInForce": "GTC",
-            }
-        try:
-            broker_client.post_order_json(order_request)
-            entry["sent"] = True
-        except Exception as exc:  # noqa: BLE001
-            entry["error"] = str(exc)
+        entry["error"] = (
+            "PREDICTIVE_LIMIT_GATEWAY_ONLY: predictive LIMITs are advisory timing "
+            "evidence and must be converted into a verified LiveOrderGateway lane "
+            "before any broker order may be sent"
+        )
         results.append(entry)
     return results
-
-
-def _predictive_limit_live_send_enabled(confirm_live: bool) -> bool:
-    if not confirm_live:
-        return False
-    return os.environ.get("QR_LIVE_ENABLED", "").strip() in {"1", "true", "TRUE", "yes", "YES"}

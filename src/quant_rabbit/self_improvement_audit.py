@@ -123,6 +123,13 @@ FORECAST_CALIBRATION_MIN_SAMPLES = int(
 FORECAST_HIT_RATE_WARN_BELOW = _env_nonnegative_float(
     "QR_SELF_IMPROVEMENT_FORECAST_HIT_RATE_WARN_BELOW", 0.45
 )
+# Audit-only majority threshold: if most calibrated directional misses hit
+# invalidation before target, the defect is not generic uncertainty. It is an
+# adverse-path / reversal-prior problem that needs a different repair queue.
+FORECAST_INVALIDATION_FIRST_WARN_ABOVE = min(
+    1.0,
+    _env_nonnegative_float("QR_SELF_IMPROVEMENT_FORECAST_INVALIDATION_FIRST_WARN_ABOVE", 0.6),
+)
 # Audit feedback coverage floor only. Directional calls with mostly TIMEOUT
 # outcomes are not learnable enough to justify stronger forecast confidence.
 FORECAST_CALIBRATION_MIN_COVERAGE = min(
@@ -2151,6 +2158,37 @@ def _directional_forecast_quality_findings(
                 },
             )
         )
+    invalidation_first_stats = _directional_forecast_invalidation_first_stats(movement_calibrated)
+    if (
+        samples >= FORECAST_CALIBRATION_MIN_SAMPLES
+        and float(invalidation_first_stats["invalidation_first_rate"]) >= FORECAST_INVALIDATION_FIRST_WARN_ABOVE
+    ):
+        findings.append(
+            _finding(
+                run_id=run_id,
+                priority="P1",
+                layer="forecast",
+                code="DIRECTIONAL_FORECAST_INVALIDATION_FIRST_DOMINANT",
+                message=(
+                    "directional_forecast invalidation was touched before target in "
+                    f"{float(invalidation_first_stats['invalidation_first_rate']):.1%} "
+                    f"of {samples} calibrated movement sample(s)"
+                ),
+                next_action=(
+                    "Treat this as an adverse-path forecast repair, not as permission to increase entry "
+                    "frequency. Rework range-location priors, reversal handling, or target/invalidation "
+                    "geometry before using these buckets for live expansion."
+                ),
+                evidence={
+                    **invalidation_first_stats,
+                    "warn_above": FORECAST_INVALIDATION_FIRST_WARN_ABOVE,
+                    "worst_buckets": _directional_forecast_invalidation_first_buckets(
+                        movement_calibrated,
+                        min_samples=FORECAST_CALIBRATION_MIN_SAMPLES,
+                    )[:8],
+                },
+            )
+        )
     return findings
 
 
@@ -2190,6 +2228,64 @@ def _directional_forecast_hit_stats(rows: list[dict[str, Any]]) -> dict[str, Any
         "hit_count": hit_count,
         "hit_rate": round(hit_count / samples, 4) if samples else 0.0,
     }
+
+
+def _directional_forecast_invalidation_first_stats(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    samples = len(rows)
+    invalidation_first_count = sum(1 for row in rows if _directional_forecast_invalidation_first_like(row))
+    return {
+        "samples": samples,
+        "invalidation_first_count": invalidation_first_count,
+        "invalidation_first_rate": round(invalidation_first_count / samples, 4) if samples else 0.0,
+    }
+
+
+def _directional_forecast_invalidation_first_like(row: dict[str, Any]) -> bool:
+    if str(row.get("resolution_status") or "").upper() != "MISS":
+        return False
+    evidence = str(row.get("resolution_evidence") or "").lower()
+    if "invalidation" not in evidence:
+        return False
+    return (
+        "before target" in evidence
+        or "not reached before invalidation" in evidence
+        or "invalidation also touched" in evidence
+    )
+
+
+def _directional_forecast_invalidation_first_buckets(
+    rows: list[dict[str, Any]],
+    *,
+    min_samples: int = 1,
+) -> list[dict[str, Any]]:
+    buckets: dict[tuple[str, str, str], dict[str, Any]] = {}
+    for row in rows:
+        pair = str(row.get("pair") or "UNKNOWN")
+        direction = str(row.get("direction") or "UNKNOWN").upper()
+        regime = str(row.get("regime_at_emission") or "UNCLEAR").upper()
+        item = buckets.setdefault(
+            (pair, direction, regime),
+            {"pair": pair, "direction": direction, "regime": regime, "samples": 0, "invalidation_first": 0},
+        )
+        item["samples"] = int(item["samples"]) + 1
+        if _directional_forecast_invalidation_first_like(row):
+            item["invalidation_first"] = int(item["invalidation_first"]) + 1
+    ranked: list[dict[str, Any]] = []
+    for item in buckets.values():
+        samples = int(item["samples"])
+        invalidation_first = int(item["invalidation_first"])
+        if samples < min_samples:
+            continue
+        ranked.append(
+            {
+                **item,
+                "invalidation_first_rate": round(invalidation_first / samples, 4) if samples else 0.0,
+            }
+        )
+    return sorted(
+        ranked,
+        key=lambda item: (-float(item["invalidation_first_rate"]), -int(item["samples"]), str(item["pair"])),
+    )
 
 
 def _directional_forecast_worst_buckets(

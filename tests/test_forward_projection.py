@@ -873,7 +873,7 @@ class LiquiditySweepDirectionTest(unittest.TestCase):
         self.assertEqual(len(orders), 1)
         self.assertEqual(orders[0].grade, "A")
 
-    def test_predictive_limit_send_requires_live_confirmation(self) -> None:
+    def test_predictive_limit_send_is_gateway_only(self) -> None:
         class _Broker:
             def __init__(self) -> None:
                 self.requests: list[dict] = []
@@ -905,9 +905,10 @@ class LiquiditySweepDirectionTest(unittest.TestCase):
         blocked = apply_limit_orders([order], broker, dry_run=False, confirm_live=False)
         self.assertEqual(broker.requests, [])
         self.assertFalse(blocked[0]["sent"])
-        self.assertIn("PREDICTIVE_LIMIT_LIVE_GATE_BLOCKED", blocked[0]["error"])
+        self.assertIn("PREDICTIVE_LIMIT_GATEWAY_ONLY", blocked[0]["error"])
 
         os.environ["QR_LIVE_ENABLED"] = "1"
         sent = apply_limit_orders([order], broker, dry_run=False, confirm_live=True)
-        self.assertTrue(sent[0]["sent"])
-        self.assertEqual(len(broker.requests), 1)
+        self.assertFalse(sent[0]["sent"])
+        self.assertIn("PREDICTIVE_LIMIT_GATEWAY_ONLY", sent[0]["error"])
+        self.assertEqual(broker.requests, [])
