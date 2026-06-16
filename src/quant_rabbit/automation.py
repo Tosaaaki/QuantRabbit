@@ -1419,13 +1419,6 @@ class AutoTradeCycle:
                             prefiltered_lane_ids=set(basket_lane_ids),
                         )
                         if not gpt_lanes_allowed:
-                            canceled_orders.extend(
-                                self._cancel_gpt_pending_orders(
-                                    gpt_summary,
-                                    send=send,
-                                    already_canceled=tuple(canceled_orders),
-                                )
-                            )
                             summary = AutoTradeCycleSummary(
                                 status="GPT_DECISION_NOT_PREFILTERED",
                                 report_path=self.report_path,
@@ -1457,20 +1450,13 @@ class AutoTradeCycle:
                             return summary
                         if gpt_recovery_bypass:
                             gpt_recovery_source = "RECOVERY_HEDGE_GPT_NOT_PREFILTERED"
-                        canceled_orders.extend(
-                            self._cancel_gpt_pending_orders(
-                                gpt_summary,
-                                send=send,
-                                already_canceled=tuple(canceled_orders),
-                            )
-                        )
                         basket_lane_ids, basket_size_multiples = self._expanded_gpt_basket_plan(
                             decision=decision,
                             gpt_lane_ids=gpt_lane_ids,
                             allow_existing_pending=True,
                             margin_room_jpy=_basket_margin_room_jpy(snapshot),
                         )
-                    order_summary = LiveOrderGateway(
+                    order_gateway = LiveOrderGateway(
                         client=self.client,
                         strategy_profile=self.strategy_profile_path,
                         output_path=self.live_order_output_path,
@@ -1480,13 +1466,17 @@ class AutoTradeCycle:
                         portfolio_loss_cap_jpy=self._portfolio_loss_cap_jpy_from_target_state(),
                         self_improvement_audit=self.gateway_self_improvement_audit_path,
                         verified_decision_path=self.gpt_decision_path if self.use_gpt_trader else None,
-                    ).run_batch(
+                    )
+                    order_summary, deferred_canceled = self._run_order_batch_with_deferred_gpt_trade_cancels(
+                        order_gateway=order_gateway,
                         intents_path=self.intents_path,
                         lane_ids=basket_lane_ids,
                         size_multiples=basket_size_multiples,
                         send=send,
-                        confirm_live=send,
+                        gpt_summary=gpt_summary,
+                        already_canceled=tuple(canceled_orders),
                     )
+                    canceled_orders.extend(deferred_canceled)
                     selected_lane_id = order_summary.lane_id
                     selected_lane_score, selected_lane_size_multiple = self._selected_lane_meta(
                         decision=decision,
@@ -3139,6 +3129,72 @@ class AutoTradeCycle:
             ai_attack_advice_path=self.gpt_attack_advice_path,
             learning_audit_path=self.gpt_learning_audit_path,
         )
+
+    def _run_order_batch_with_deferred_gpt_trade_cancels(
+        self,
+        *,
+        order_gateway: LiveOrderGateway,
+        intents_path: Path,
+        lane_ids: tuple[str, ...],
+        size_multiples: dict[str, float],
+        send: bool,
+        gpt_summary: GptHandoffSummary | None,
+        already_canceled: tuple[str, ...] = (),
+    ):
+        replace_order_ids = (
+            gpt_summary.cancel_order_ids
+            if gpt_summary is not None and gpt_summary.action == "TRADE"
+            else ()
+        )
+        if not replace_order_ids:
+            return (
+                order_gateway.run_batch(
+                    intents_path=intents_path,
+                    lane_ids=lane_ids,
+                    size_multiples=size_multiples,
+                    send=send,
+                    confirm_live=send,
+                ),
+                (),
+            )
+
+        if not send or not self.live_enabled:
+            return (
+                order_gateway.run_batch(
+                    intents_path=intents_path,
+                    lane_ids=lane_ids,
+                    size_multiples=size_multiples,
+                    ignore_pending_order_ids=replace_order_ids,
+                    send=send,
+                    confirm_live=send,
+                ),
+                (),
+            )
+
+        preflight = order_gateway.run_batch(
+            intents_path=intents_path,
+            lane_ids=lane_ids,
+            size_multiples=size_multiples,
+            ignore_pending_order_ids=replace_order_ids,
+            send=False,
+            confirm_live=False,
+        )
+        if preflight.status != "STAGED":
+            return preflight, ()
+
+        canceled = self._cancel_gpt_pending_orders(
+            gpt_summary,
+            send=send,
+            already_canceled=already_canceled,
+        )
+        sent = order_gateway.run_batch(
+            intents_path=intents_path,
+            lane_ids=lane_ids,
+            size_multiples=size_multiples,
+            send=send,
+            confirm_live=send,
+        )
+        return sent, canceled
 
     def _cancel_gpt_pending_orders(
         self,

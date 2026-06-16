@@ -301,6 +301,7 @@ class LiveOrderGateway:
         intents_path: Path = DEFAULT_ORDER_INTENTS,
         lane_ids: tuple[str, ...],
         size_multiples: dict[str, float] | None = None,
+        ignore_pending_order_ids: tuple[str, ...] = (),
         send: bool = False,
         confirm_live: bool = False,
     ) -> LiveOrderStageSummary:
@@ -326,8 +327,10 @@ class LiveOrderGateway:
             self._write_report(result)
             return LiveOrderStageSummary("NO_INTENT", None, self.output_path, self.report_path, False, 0, 0)
 
+        ignored_pending_order_ids = _order_id_tuple(ignore_pending_order_ids)
         initial_snapshot = self.client.snapshot(_snapshot_pairs(intents_payload, _intent_from_json(selected_items[0][0]["intent"])))
-        initial_occupancy = _trader_entry_occupancy(initial_snapshot)
+        validation_snapshot = _snapshot_without_trader_pending_orders(initial_snapshot, ignored_pending_order_ids)
+        initial_occupancy = _trader_entry_occupancy(validation_snapshot)
         portfolio_position_cap = _portfolio_position_cap_from_state()
         sent_count = 0
         accepted_count = 0
@@ -335,8 +338,8 @@ class LiveOrderGateway:
         validation_cumulative_margin_jpy = 0.0
         accepted_risk_jpy = 0.0
         accepted_margin_jpy = 0.0
-        seen_geometry = set(_pending_geometry_keys(initial_snapshot))
-        seen_parent_lanes: set[str] = set(_pending_parent_lane_keys(initial_snapshot))
+        seen_geometry = set(_pending_geometry_keys(validation_snapshot))
+        seen_parent_lanes: set[str] = set(_pending_parent_lane_keys(validation_snapshot))
         accepted_pair_sides: dict[str, Side] = {}
         order_results: list[dict[str, Any]] = []
         batch_risk_issues = 0
@@ -408,6 +411,7 @@ class LiveOrderGateway:
                 seen_geometry=seen_geometry,
                 portfolio_position_cap=portfolio_position_cap,
                 intents_path=intents_path,
+                ignore_pending_order_ids=ignored_pending_order_ids,
             )
             order_results.append(item_result)
             batch_risk_issues += len(item_result["risk_issues"])
@@ -465,6 +469,7 @@ class LiveOrderGateway:
             "cumulative_risk_jpy": accepted_risk_jpy,
             "cumulative_margin_jpy": accepted_margin_jpy,
             "initial_trader_entry_occupancy": initial_occupancy,
+            "ignored_pending_order_ids": list(ignored_pending_order_ids),
             "portfolio_position_cap": portfolio_position_cap,
         }
         self._write_result(result)
@@ -497,6 +502,7 @@ class LiveOrderGateway:
         seen_geometry: set[tuple[object, ...]] | None = None,
         portfolio_position_cap: int | None = None,
         intents_path: Path = DEFAULT_ORDER_INTENTS,
+        ignore_pending_order_ids: tuple[str, ...] = (),
     ) -> dict[str, Any]:
         selected_lane_id = str(selected.get("lane_id") or "")
         intent = _intent_from_json(selected["intent"])
@@ -516,6 +522,7 @@ class LiveOrderGateway:
             validate_live_enabled=validate_live_enabled,
             allow_basket_pending=allow_basket_pending,
             portfolio_position_cap=portfolio_position_cap or _portfolio_position_cap_from_state(),
+            ignore_pending_order_ids=ignore_pending_order_ids,
         )
         if allow_basket_pending and risk.metrics is not None:
             scale_multiple, scale_issue = _basket_size_multiple(
@@ -714,8 +721,10 @@ class LiveOrderGateway:
         validate_live_enabled: bool,
         allow_basket_pending: bool,
         portfolio_position_cap: int,
+        ignore_pending_order_ids: tuple[str, ...] = (),
     ):
         snapshot = self.client.snapshot(snapshot_pairs)
+        snapshot = _snapshot_without_trader_pending_orders(snapshot, ignore_pending_order_ids)
         risk = self._validate_intent(
             intent=intent,
             snapshot=snapshot,
@@ -734,6 +743,7 @@ class LiveOrderGateway:
             if retry_sleep_seconds > 0:
                 time.sleep(retry_sleep_seconds)
             snapshot = self.client.snapshot(snapshot_pairs)
+            snapshot = _snapshot_without_trader_pending_orders(snapshot, ignore_pending_order_ids)
             risk = self._validate_intent(
                 intent=intent,
                 snapshot=snapshot,
@@ -1096,6 +1106,35 @@ def _trader_entry_occupancy(snapshot: BrokerSnapshot) -> int:
     positions = sum(1 for position in snapshot.positions if position.owner == Owner.TRADER)
     orders = sum(1 for order in snapshot.orders if _is_trader_pending_entry(order))
     return positions + orders
+
+
+def _order_id_tuple(order_ids: tuple[str, ...] | list[str] | set[str] | None) -> tuple[str, ...]:
+    if not order_ids:
+        return ()
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for order_id in order_ids:
+        value = str(order_id or "").strip()
+        if not value or value in seen:
+            continue
+        normalized.append(value)
+        seen.add(value)
+    return tuple(normalized)
+
+
+def _snapshot_without_trader_pending_orders(
+    snapshot: BrokerSnapshot,
+    order_ids: tuple[str, ...] | list[str] | set[str] | None,
+) -> BrokerSnapshot:
+    ignored = set(_order_id_tuple(order_ids))
+    if not ignored:
+        return snapshot
+    orders = tuple(
+        order
+        for order in snapshot.orders
+        if not (order.order_id in ignored and _is_trader_pending_entry(order))
+    )
+    return snapshot if len(orders) == len(snapshot.orders) else replace(snapshot, orders=orders)
 
 
 def _pending_geometry_keys(snapshot: BrokerSnapshot) -> tuple[tuple[object, ...], ...]:

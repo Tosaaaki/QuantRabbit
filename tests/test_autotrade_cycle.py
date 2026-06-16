@@ -1715,7 +1715,162 @@ class AutoTradeCycleTest(unittest.TestCase):
             self.assertEqual(client.orders_canceled, [order.order_id for order in pending_orders])
             self.assertEqual(len(client.orders_sent), 1)
 
-    def test_gpt_trade_not_prefiltered_still_cancels_named_pending_orders(self) -> None:
+    def test_gpt_trade_blocked_by_gateway_preserves_named_pending_orders(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            now = datetime.now(timezone.utc)
+            pending = BrokerOrder(
+                order_id="pending-to-preserve",
+                pair="USD_CAD",
+                order_type="LIMIT",
+                price=1.40026,
+                state="PENDING",
+                units=-1000,
+                owner=Owner.TRADER,
+                raw={
+                    "clientExtensions": {
+                        "comment": "qr-vnext lane=range_trader:USD_CAD:SHORT:RANGE_ROTATION desk=range_trader"
+                    },
+                    "takeProfitOnFill": {"price": "1.39941"},
+                    "stopLossOnFill": {"price": "1.40576"},
+                },
+            )
+            snapshot = BrokerSnapshot(
+                fetched_at_utc=now,
+                orders=(pending,),
+                quotes={
+                    "EUR_USD": Quote("EUR_USD", 1.16056, 1.16064, timestamp_utc=now),
+                    "USD_CAD": Quote("USD_CAD", 1.40040, 1.40048, timestamp_utc=now),
+                    "USD_JPY": Quote("USD_JPY", 157.0, 157.01, timestamp_utc=now),
+                },
+            )
+            snapshot_path = root / "snapshot.json"
+            snapshot_path.write_text(_snapshot_to_json(snapshot) + "\n")
+            invalid_lane = "range_trader:EUR_USD:SHORT:RANGE_ROTATION"
+            intents_path = root / "intents.json"
+            _write_live_ready_intents(intents_path)
+            payload = json.loads(intents_path.read_text())
+            item = payload["results"][0]
+            item["lane_id"] = invalid_lane
+            item["intent"].update(
+                {
+                    "side": "SHORT",
+                    "order_type": "LIMIT",
+                    "units": 1000,
+                    "entry": 1.16025,
+                    "tp": 1.15893,
+                    "sl": 1.16622,
+                    "thesis": "EUR_USD range short waits above market, but this stale receipt is below bid.",
+                    "market_context": {
+                        "regime": "RANGE current; RANGE_ROTATION campaign lane",
+                        "narrative": "Fade the upper rail only if price reaches the planned limit.",
+                        "chart_story": "M5 range rotation near upper rail.",
+                        "method": "RANGE_ROTATION",
+                        "invalidation": "range cap breaks higher",
+                        "event_risk": "none",
+                        "session": "test",
+                    },
+                    "metadata": {"max_loss_jpy": 1_500, "desk": "range_trader", "campaign_role": "NOW"},
+                }
+            )
+            item["risk_metrics"] = {
+                "risk_jpy": 938.0,
+                "reward_jpy": 207.2,
+                "reward_risk": 0.22,
+                "spread_pips": 0.8,
+                "estimated_margin_jpy": 5_000.0,
+            }
+            intents_path.write_text(json.dumps(payload) + "\n")
+            decision = TraderDecision(
+                action=ACTION_SEND_ENTRY,
+                selected_lane_id=invalid_lane,
+                selected_lane_score=91.0,
+                selected_lane_size_multiple=1.0,
+                generated_at_utc=now.isoformat(),
+                reason="deterministic prefilter selected the same range-rotation lane",
+                scores=(
+                    LaneScore(
+                        lane_id=invalid_lane,
+                        pair="EUR_USD",
+                        direction="SHORT",
+                        method="RANGE_ROTATION",
+                        order_type="LIMIT",
+                        entry=1.16025,
+                        tp=1.15893,
+                        sl=1.16622,
+                        status="LIVE_READY",
+                        score=91.0,
+                        action=ACTION_SEND_ENTRY,
+                        blockers=(),
+                        rationale=(),
+                        size_multiple=1.0,
+                        estimated_margin_jpy=5_000.0,
+                    ),
+                ),
+                positions=0,
+                orders=1,
+            )
+
+            class StaticBrain:
+                def run(self, snapshot):
+                    return decision
+
+            class BlockedReplacementCycle(AutoTradeCycle):
+                def _brain(self):
+                    return StaticBrain()
+
+            gpt_decision = _gpt_trade_decision(
+                lane_id=invalid_lane,
+                pair="EUR_USD",
+                method="RANGE_ROTATION",
+                direction="SHORT",
+            )
+            gpt_decision["selected_lane_ids"] = [invalid_lane]
+            gpt_decision["cancel_order_ids"] = [pending.order_id]
+            client = FakeCycleClient(snapshot)
+            target_state = _open_target_state(root)
+
+            summary = BlockedReplacementCycle(
+                client=client,
+                snapshot_path=snapshot_path,
+                intents_path=intents_path,
+                intent_report_path=root / "intents.md",
+                decision_path=root / "decision.json",
+                decision_report_path=root / "decision.md",
+                gpt_decision_path=root / "gpt_decision.json",
+                gpt_decision_report_path=root / "gpt_decision.md",
+                gpt_attack_advice_path=root / "attack_missing.json",
+                position_management_path=root / "pm.json",
+                position_management_report_path=root / "pm.md",
+                position_execution_path=root / "pe.json",
+                position_execution_report_path=root / "pe.md",
+                live_order_output_path=root / "live_order.json",
+                live_order_report_path=root / "live_order.md",
+                report_path=root / "report.md",
+                campaign_plan_path=_campaign(root),
+                strategy_profile_path=_short_candidate_profile(root),
+                market_story_profile_path=_short_stories(root),
+                receipt_promotion_report_path=root / "promotion.md",
+                target_state_path=target_state,
+                target_report_path=root / "target.md",
+                gpt_target_state_path=target_state,
+                use_gpt_trader=True,
+                gpt_provider=StaticTraderProvider(gpt_decision),
+                reuse_market_artifacts=True,
+                refresh_market_story=False,
+                live_enabled=True,
+                max_loss_jpy=1_500,
+            ).run(send=True)
+
+            self.assertEqual(summary.status, "BLOCKED")
+            self.assertFalse(summary.sent)
+            self.assertEqual(summary.canceled_orders, ())
+            self.assertEqual(client.orders_canceled, [])
+            self.assertEqual(client.orders_sent, [])
+            result = json.loads((root / "live_order.json").read_text())
+            self.assertIn("LIMIT_ENTRY_NOT_ABOVE_MARKET", {issue["code"] for issue in result["risk_issues"]})
+
+    def test_gpt_trade_not_prefiltered_preserves_named_pending_orders(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             now = datetime.now(timezone.utc)
@@ -1850,8 +2005,8 @@ class AutoTradeCycleTest(unittest.TestCase):
             self.assertEqual(summary.status, "GPT_DECISION_NOT_PREFILTERED")
             self.assertFalse(summary.sent)
             self.assertEqual(summary.sent_count, 0)
-            self.assertEqual(summary.canceled_orders, (pending.order_id,))
-            self.assertEqual(client.orders_canceled, [pending.order_id])
+            self.assertEqual(summary.canceled_orders, ())
+            self.assertEqual(client.orders_canceled, [])
             self.assertEqual(client.orders_sent, [])
 
     def test_protected_position_with_pending_can_replace_pending_before_capacity_send(self) -> None:
