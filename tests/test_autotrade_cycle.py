@@ -3546,15 +3546,16 @@ class AutoTradeCycleTest(unittest.TestCase):
 
                 projection_row = json.loads((root / "projection_ledger.jsonl").read_text())
                 # §2/§8: a consumed/already-verified receipt degrades the cycle
-                # to deterministic continuation instead of stopping it. The
-                # stale receipt itself must never reach the gateway.
-                self.assertEqual(summary.status, "GPT_REJECTED")
+                # to deterministic continuation instead of stopping it. With
+                # no current LIVE_READY lane, the root status must name the
+                # executable opportunity gap while retaining stale GPT evidence.
+                self.assertEqual(summary.status, "NO_LIVE_READY_INTENT")
                 self.assertEqual(summary.gpt_status, "STALE_DECISION")
                 self.assertEqual(projection_row["resolution_status"], "HIT")
                 self.assertFalse((root / "live_order.json").exists())
                 self.assertIn("already verified as ACCEPTED WAIT", summary.gpt_error or "")
                 report_text = (root / "report.md").read_text()
-                self.assertIn("GPT_REJECTED", report_text)
+                self.assertIn("NO_LIVE_READY_INTENT", report_text)
             finally:
                 if prior_telemetry is None:
                     os.environ.pop("QR_REQUIRE_TELEMETRY_FOR_LIVE", None)
@@ -3827,9 +3828,10 @@ class AutoTradeCycleTest(unittest.TestCase):
             ).run(send=True)
 
             # §2/§8: a receipt that predates current market artifacts degrades
-            # the cycle to deterministic continuation; it never reaches the
-            # gateway, but the cycle itself is not a no-op anymore.
-            self.assertEqual(summary.status, "GPT_REJECTED")
+            # the cycle to deterministic continuation. Since there is no
+            # current LIVE_READY lane, the cycle reports the opportunity gap
+            # instead of making stale GPT look like the entry blocker.
+            self.assertEqual(summary.status, "NO_LIVE_READY_INTENT")
             self.assertEqual(summary.gpt_status, "STALE_DECISION")
             self.assertFalse((root / "live_order.json").exists())
             self.assertIn("predates broker snapshot", summary.gpt_error or "")

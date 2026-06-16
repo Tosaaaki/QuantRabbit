@@ -1591,11 +1591,14 @@ class AutoTradeCycle:
                     )
 
             if selected_lane_id is None:
-                status = (
-                    "GPT_REJECTED"
-                    if gpt_summary.status != "ACCEPTED" or not gpt_summary.allowed
-                    else f"GPT_{gpt_summary.action or 'NO_TRADE'}"
-                )
+                if intent_summary.live_ready == 0 and gpt_summary.status == "STALE_DECISION":
+                    status = "NO_LIVE_READY_INTENT"
+                else:
+                    status = (
+                        "GPT_REJECTED"
+                        if gpt_summary.status != "ACCEPTED" or not gpt_summary.allowed
+                        else f"GPT_{gpt_summary.action or 'NO_TRADE'}"
+                    )
                 summary = AutoTradeCycleSummary(
                     status=status,
                     report_path=self.report_path,
