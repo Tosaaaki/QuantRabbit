@@ -431,6 +431,12 @@ class CoverageOptimizerTest(unittest.TestCase):
             self.assertEqual(diagnostics["runner_qualified_lanes"], 0)
             self.assertEqual(diagnostics["attached_harvest_lanes"], 1)
             self.assertEqual(diagnostics["top_demotion_reasons"][0]["reason"], "RANGE regime is not a clean runner trend")
+            runner_mode = payload["opportunity_modes"]["RUNNER"]
+            self.assertEqual(runner_mode["lanes"], 0)
+            self.assertEqual(runner_mode["diagnostic_candidate_lanes"], 1)
+            self.assertEqual(runner_mode["demoted_to_harvest_lanes"], 1)
+            self.assertEqual(runner_mode["diagnostic_status"], "RUNNER_CANDIDATES_DEMOTED_TO_HARVEST")
+            self.assertEqual(runner_mode["top_demotion_reasons"][0]["reason"], "RANGE regime is not a clean runner trend")
             self.assertTrue(any("repair runner qualification" in item for item in payload["action_items"]))
             self.assertIn("Runner Candidate Diagnostics", (root / "coverage.md").read_text())
 
@@ -505,7 +511,10 @@ class CoverageOptimizerTest(unittest.TestCase):
             payload = json.loads((root / "coverage.json").read_text())
             self.assertEqual(payload["opportunity_modes"]["HARVEST"]["live_ready_lanes"], 1)
             self.assertEqual(payload["opportunity_modes"]["RUNNER"]["lanes"], 0)
+            self.assertEqual(payload["opportunity_modes"]["RUNNER"]["diagnostic_candidate_lanes"], 1)
+            self.assertEqual(payload["opportunity_modes"]["RUNNER"]["demoted_to_harvest_lanes"], 1)
             self.assertEqual(payload["runner_candidate_diagnostics"]["trend_candidate_lanes"], 1)
+            self.assertIn("diagnostic_candidates=`1`", (root / "coverage.md").read_text())
             self.assertTrue(
                 any(
                     "repair runner qualification before widening discovery" in item

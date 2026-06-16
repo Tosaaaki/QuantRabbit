@@ -132,8 +132,12 @@ class CoverageOptimizer:
         raw_live_ready_reward = _round(sum(lane.reward_jpy for lane in raw_live_ready_lanes))
         raw_live_ready_risk = _round(sum(lane.risk_jpy for lane in raw_live_ready_lanes))
         sequential_ladder = _sequential_ladder(live_ready_lanes, remaining_target, remaining_risk_budget)
-        opportunity_modes = _opportunity_mode_summary(lanes, remaining_target)
         runner_candidate_diagnostics = _runner_candidate_diagnostics(lanes)
+        opportunity_modes = _opportunity_mode_summary(
+            lanes,
+            remaining_target,
+            runner_candidate_diagnostics=runner_candidate_diagnostics,
+        )
         replay_gap = _replay_gap(replay)
         blockers = tuple(
             _blockers(
@@ -284,11 +288,19 @@ class CoverageOptimizer:
                 issue_codes = item.get("top_issue_codes") if isinstance(item.get("top_issue_codes"), list) else []
                 top_blockers = ", ".join(str(blocker.get("label")) for blocker in blockers[:3] if isinstance(blocker, dict))
                 top_codes = ", ".join(str(issue.get("code")) for issue in issue_codes[:4] if isinstance(issue, dict))
+                diagnostic_text = ""
+                diagnostic_candidates = item.get("diagnostic_candidate_lanes")
+                demoted = item.get("demoted_to_harvest_lanes")
+                if key == "RUNNER" and diagnostic_candidates:
+                    diagnostic_text = (
+                        f" diagnostic_candidates=`{diagnostic_candidates}`"
+                        f" demoted_to_harvest=`{demoted or 0}`"
+                    )
                 lines.append(
                     f"- `{key}` lanes=`{item.get('lanes')}` live_ready=`{item.get('live_ready_lanes')}` "
                     f"promotion_candidates=`{item.get('promotion_candidate_lanes')}` "
                     f"total_reward=`{item.get('reward_jpy')}` live_reward=`{item.get('live_ready_reward_jpy')}` "
-                    f"potential_reward=`{item.get('potential_reward_jpy')}` codes=`{top_codes or 'none'}` "
+                    f"potential_reward=`{item.get('potential_reward_jpy')}`{diagnostic_text} codes=`{top_codes or 'none'}` "
                     f"blockers=`{top_blockers or 'none'}`"
                 )
             lines.append("")
@@ -1537,6 +1549,8 @@ def _opportunity_mode(result: dict[str, Any], reward_risk: float) -> str:
 def _opportunity_mode_summary(
     lanes: tuple[CoverageLane, ...],
     remaining_target: float,
+    *,
+    runner_candidate_diagnostics: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     summaries: dict[str, Any] = {
         mode: {
@@ -1552,6 +1566,7 @@ def _opportunity_mode_summary(
             "top_issue_codes": [],
             "top_blockers": [],
             "top_lanes": [],
+            "diagnostic_candidate_lanes": 0,
         }
         for mode in ("HARVEST", "RUNNER", "BALANCED")
     }
@@ -1605,7 +1620,40 @@ def _opportunity_mode_summary(
             }
             for lane in sorted(top_lanes[mode], key=lambda lane: (lane.reward_jpy, lane.reward_risk), reverse=True)[:6]
         ]
+    _annotate_runner_opportunity_diagnostics(summaries, runner_candidate_diagnostics)
     return summaries
+
+
+def _annotate_runner_opportunity_diagnostics(
+    summaries: dict[str, Any],
+    runner_candidate_diagnostics: dict[str, Any] | None,
+) -> None:
+    """Expose demoted trend candidates in the RUNNER mode without live permission.
+
+    A TREND_CONTINUATION lane can be correctly managed as HARVEST when the
+    current tape is range/unclear/low-ADX. Those lanes must not inflate
+    `RUNNER.lanes`, because they are not executable runners. They still matter
+    for opportunity-loss audit: the operator needs to see that a runner path
+    existed, but was demoted for named market reasons.
+    """
+
+    runner = summaries.get("RUNNER") if isinstance(summaries.get("RUNNER"), dict) else None
+    diagnostics = runner_candidate_diagnostics if isinstance(runner_candidate_diagnostics, dict) else {}
+    if not runner or not diagnostics:
+        return
+    trend_candidates = int(diagnostics.get("trend_candidate_lanes") or 0)
+    runner_qualified = int(diagnostics.get("runner_qualified_lanes") or 0)
+    attached_harvest = int(diagnostics.get("attached_harvest_lanes") or 0)
+    demoted = max(attached_harvest - runner_qualified, 0)
+    runner["diagnostic_candidate_lanes"] = trend_candidates
+    runner["demoted_to_harvest_lanes"] = demoted
+    runner["runner_qualified_lanes"] = runner_qualified
+    runner["top_demotion_reasons"] = [
+        dict(item)
+        for item in (diagnostics.get("top_demotion_reasons") or [])[:5]
+        if isinstance(item, dict)
+    ]
+    runner["diagnostic_status"] = str(diagnostics.get("status") or "")
 
 
 def _runner_candidate_diagnostics(lanes: tuple[CoverageLane, ...]) -> dict[str, Any]:

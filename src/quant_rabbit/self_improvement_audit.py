@@ -2801,6 +2801,18 @@ def _coverage_opportunity_mode_summary(payload: dict[str, Any]) -> dict[str, Any
             "lanes": _maybe_int(item.get("lanes")) or 0,
             "live_ready_lanes": _maybe_int(item.get("live_ready_lanes")) or 0,
             "promotion_candidate_lanes": _maybe_int(item.get("promotion_candidate_lanes")) or 0,
+            "diagnostic_candidate_lanes": _maybe_int(item.get("diagnostic_candidate_lanes")) or 0,
+            "demoted_to_harvest_lanes": _maybe_int(item.get("demoted_to_harvest_lanes")) or 0,
+            "runner_qualified_lanes": _maybe_int(item.get("runner_qualified_lanes")) or 0,
+            "diagnostic_status": str(item.get("diagnostic_status") or ""),
+            "top_demotion_reasons": [
+                {
+                    "reason": str(reason.get("reason") or ""),
+                    "count": _maybe_int(reason.get("count")) or 0,
+                }
+                for reason in (item.get("top_demotion_reasons") or [])[:5]
+                if isinstance(reason, dict) and str(reason.get("reason") or "").strip()
+            ],
             "top_issue_codes": [
                 {
                     "code": str(issue.get("code") or ""),
