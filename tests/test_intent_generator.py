@@ -679,6 +679,164 @@ class IntentGeneratorTest(unittest.TestCase):
                 )
             )
 
+    def test_contested_matrix_supported_edge_gets_blocked_diagnostic_lane(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            strategy = root / "strategy.json"
+            strategy.write_text(
+                json.dumps(
+                    {
+                        "profiles": [
+                            {
+                                "pair": "USD_JPY",
+                                "direction": "LONG",
+                                "status": "RISK_REPAIR_CANDIDATE",
+                                "required_fix": "risk-resized receipt required",
+                                "target_reward_risk": 2.1,
+                                "positive_best_jpy": 910.0,
+                                "positive_evidence_n": 11,
+                            }
+                        ]
+                    }
+                )
+            )
+            charts = root / "pair_charts.json"
+            charts.write_text(
+                json.dumps(
+                    {
+                        "charts": [
+                            {
+                                "pair": "USD_JPY",
+                                "dominant_regime": "TREND_UP",
+                                "long_score": 0.71,
+                                "short_score": 0.18,
+                                "confluence": {
+                                    "score_balance": "LONG_LEAN",
+                                    "score_gap": 0.53,
+                                    "tf_agreement_score": 0.8,
+                                    "range_24h_sigma_multiple": 1.0,
+                                },
+                                "views": [
+                                    {
+                                        "granularity": "M5",
+                                        "regime": "TREND_UP",
+                                        "long_bias": 0.69,
+                                        "short_bias": 0.16,
+                                        "indicators": {
+                                            "atr_pips": 8.0,
+                                            "bb_lower": 156.20,
+                                            "bb_upper": 157.10,
+                                            "donchian_low": 156.10,
+                                            "donchian_high": 157.20,
+                                            "swing_low": 156.05,
+                                            "swing_high": 157.25,
+                                        },
+                                    }
+                                ],
+                            }
+                        ]
+                    }
+                )
+            )
+            matrix = root / "matrix.json"
+            matrix.write_text(
+                json.dumps(
+                    {
+                        "pairs": {
+                            "USD_JPY": {
+                                "LONG": {
+                                    "evidence_ref": "matrix:USD_JPY:LONG",
+                                    "support_count": 4,
+                                    "reject_count": 1,
+                                    "supports": [
+                                        {
+                                            "code": "CHART_CONFLUENCE_LONG_LEAN",
+                                            "layer": "chart",
+                                            "message": "USD_JPY confluence score_balance=LONG_LEAN",
+                                        },
+                                        {
+                                            "code": "BASE_STRENGTH_EXCEEDS_QUOTE",
+                                            "layer": "strength",
+                                            "message": "USD strength exceeds JPY",
+                                        },
+                                        {
+                                            "code": "DXY_24H_DIRECTION",
+                                            "layer": "cross_asset",
+                                            "message": "DXY maps to USD_JPY LONG",
+                                        },
+                                        {
+                                            "code": "FLOW_SPREAD_EXECUTABLE",
+                                            "layer": "flow",
+                                            "message": "USD_JPY spread stress=NORMAL",
+                                        },
+                                    ],
+                                    "rejects": [
+                                        {
+                                            "code": "CALENDAR_RISK_WINDOW",
+                                            "layer": "calendar",
+                                            "message": "USD_JPY high-impact event window still active",
+                                        }
+                                    ],
+                                }
+                            }
+                        },
+                        "issues": [],
+                    }
+                )
+            )
+            output = root / "intents.json"
+
+            prior_sl_free = os.environ.get("QR_TRADER_DISABLE_SL_REPAIR")
+            os.environ["QR_TRADER_DISABLE_SL_REPAIR"] = "1"
+            try:
+                with patch(
+                    "quant_rabbit.strategy.intent_generator._forecast_seed_for_pair",
+                    return_value=None,
+                ):
+                    IntentGenerator(
+                        campaign_plan=_campaign(root),
+                        strategy_profile=strategy,
+                        output_path=output,
+                        report_path=root / "intents.md",
+                        pair_charts_path=charts,
+                        market_context_matrix_path=matrix,
+                        max_loss_jpy=500.0,
+                    ).run(snapshot_path=_snapshot(root))
+            finally:
+                if prior_sl_free is None:
+                    os.environ.pop("QR_TRADER_DISABLE_SL_REPAIR", None)
+                else:
+                    os.environ["QR_TRADER_DISABLE_SL_REPAIR"] = prior_sl_free
+
+            payload = json.loads(output.read_text())
+            contested_rows = [
+                item
+                for item in payload["results"]
+                if ((item.get("intent") or {}).get("metadata") or {}).get("matrix_repair_reject_blocked")
+            ]
+
+            self.assertGreaterEqual(len(contested_rows), 1)
+            self.assertFalse(any(row["status"] == "LIVE_READY" for row in contested_rows))
+            self.assertTrue(
+                any(
+                    issue["code"] == "MATRIX_REPAIR_REJECT_CONTEXT"
+                    and issue["severity"] == "BLOCK"
+                    for row in contested_rows
+                    for issue in row["risk_issues"]
+                )
+            )
+            metadata = contested_rows[0]["intent"]["metadata"]
+            self.assertTrue(metadata["matrix_repair_seed"])
+            self.assertEqual(metadata["matrix_repair_profile_status"], "RISK_REPAIR_CANDIDATE")
+            self.assertEqual(metadata["matrix_repair_reject_reasons"], ["USD_JPY high-impact event window still active"])
+            self.assertTrue(
+                any(
+                    "current reject context" in blocker
+                    for row in contested_rows
+                    for blocker in row["live_blockers"]
+                )
+            )
+
     def test_post_harvest_profit_take_seeds_pullback_limit_reentry_lane(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

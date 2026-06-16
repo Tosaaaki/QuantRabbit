@@ -2109,14 +2109,22 @@ def _append_matrix_supported_repair_lanes(
         (lane.get("desk"), lane.get("pair"), lane.get("direction"), lane.get("method"))
         for lane in lanes
     }
-    ranked: list[tuple[float, int, int, int, str, str, str, Any, dict[str, Any]]] = []
+    existing_pair_sides = {(lane.get("pair"), lane.get("direction")) for lane in lanes}
+    ranked: list[tuple[float, int, int, int, str, str, str, Any, dict[str, Any], bool]] = []
     for entry in strategy_profile.entries.values():
         if not _matrix_repair_entry_can_seed(entry):
             continue
         if entry.direction not in {Side.LONG.value, Side.SHORT.value}:
             continue
         side_payload = _matrix_side_payload(pairs_payload, entry.pair, entry.direction)
-        if side_payload is None or not _matrix_side_is_strong_repair_support(side_payload):
+        if side_payload is None:
+            continue
+        strong_support = _matrix_side_is_strong_repair_support(side_payload)
+        diagnostic_support = _matrix_side_is_contested_diagnostic_support(side_payload)
+        if not strong_support and not diagnostic_support:
+            continue
+        reject_blocked = not strong_support
+        if reject_blocked and (entry.pair, entry.direction) in existing_pair_sides:
             continue
         support_count = _optional_int(side_payload.get("support_count")) or len(side_payload.get("supports") or [])
         layer_count = len(_matrix_support_layers(side_payload))
@@ -2129,15 +2137,33 @@ def _append_matrix_supported_repair_lanes(
             key = (desk, entry.pair, entry.direction, method)
             if key in existing:
                 continue
-            ranked.append((profit_score, support_count, layer_count, evidence_n, entry.pair, entry.direction, method, entry, side_payload))
+            ranked.append(
+                (
+                    profit_score,
+                    support_count,
+                    layer_count,
+                    evidence_n,
+                    entry.pair,
+                    entry.direction,
+                    method,
+                    entry,
+                    side_payload,
+                    reject_blocked,
+                )
+            )
             existing.add(key)
 
     if not ranked:
         return lanes
     ranked.sort(key=lambda item: (-item[0], -item[1], -item[2], -item[3], item[4], item[5], item[6]))
     seeds = [
-        _matrix_repair_seed_lane(entry, method=method, side_payload=side_payload)
-        for _, _, _, _, _, _, method, entry, side_payload in ranked[:MATRIX_REPAIR_MAX_SEEDS]
+        _matrix_repair_seed_lane(
+            entry,
+            method=method,
+            side_payload=side_payload,
+            reject_blocked=reject_blocked,
+        )
+        for _, _, _, _, _, _, method, entry, side_payload, reject_blocked in ranked[:MATRIX_REPAIR_MAX_SEEDS]
     ]
     return seeds + lanes
 
@@ -2162,6 +2188,21 @@ def _matrix_side_is_strong_repair_support(side_payload: dict[str, Any]) -> bool:
         return False
     support_layers = _matrix_support_layers(side_payload)
     return len(support_layers) >= MATRIX_REPAIR_MIN_SUPPORT_LAYERS
+
+
+def _matrix_side_is_contested_diagnostic_support(side_payload: dict[str, Any]) -> bool:
+    support_layers = _matrix_support_layers(side_payload)
+    if len(support_layers) < MATRIX_REPAIR_MIN_SUPPORT_LAYERS:
+        return False
+    support_count = _optional_int(side_payload.get("support_count"))
+    if support_count is None:
+        support_count = len(side_payload.get("supports") or [])
+    reject_count = _optional_int(side_payload.get("reject_count"))
+    if reject_count is None:
+        reject_count = len(side_payload.get("rejects") or [])
+    if reject_count <= 0:
+        return False
+    return support_count > reject_count
 
 
 def _matrix_repair_entry_can_seed(entry: Any) -> bool:
@@ -2222,6 +2263,7 @@ def _matrix_repair_seed_lane(
     *,
     method: str,
     side_payload: dict[str, Any],
+    reject_blocked: bool = False,
 ) -> dict[str, Any]:
     watch_only = str(getattr(entry, "status", "") or "").upper() == "WATCH_ONLY"
     support_messages = [
@@ -2230,22 +2272,44 @@ def _matrix_repair_seed_lane(
         if isinstance(item, dict)
     ]
     support_messages = [message for message in support_messages if message]
+    reject_messages = [
+        str(item.get("message") or item.get("code") or "")
+        for item in side_payload.get("rejects") or []
+        if isinstance(item, dict)
+    ]
+    reject_messages = [message for message in reject_messages if message]
     support_count = _optional_int(side_payload.get("support_count")) or len(side_payload.get("supports") or [])
     rr = max(_optional_float(getattr(entry, "target_reward_risk", None)) or 0.0, DYNAMIC_RR_BASE)
+    blockers = [entry.required_fix] if entry.required_fix else []
+    if reject_blocked:
+        blockers.extend(reject_messages[:3])
     return {
         "desk": FORECAST_SEED_DESK_BY_METHOD[method],
         "pair": entry.pair,
         "direction": entry.direction,
         "method": method,
         "adoption": "TRIGGER_RECEIPT_REQUIRED",
-        "campaign_role": "MATRIX_SUPPORTED_WATCH_ONLY_REPAIR" if watch_only else "MATRIX_SUPPORTED_REPAIR",
+        "campaign_role": (
+            "MATRIX_SUPPORTED_REJECT_DIAGNOSTIC_REPAIR"
+            if reject_blocked
+            else "MATRIX_SUPPORTED_WATCH_ONLY_REPAIR"
+            if watch_only
+            else "MATRIX_SUPPORTED_REPAIR"
+        ),
         "reason": (
             f"matrix-supported repair seed: {side_payload.get('evidence_ref') or entry.pair + ':' + entry.direction} "
             f"support_count={support_count} layers={','.join(sorted(_matrix_support_layers(side_payload)))}; "
             f"profile={entry.status}"
+            + ("; current matrix rejects make this diagnostic-only" if reject_blocked else "")
             + ("; watch-only diagnostic geometry only" if watch_only else "")
         ),
         "required_receipt": (
+            (
+                "Contested matrix-supported lane: build pending dry-run geometry and blocker reasons only; "
+                "do not send live until the current matrix reject context clears on a fresh market-context refresh."
+            )
+            if reject_blocked
+            else
             (
                 "Watch-only matrix-supported lane: create pending dry-run geometry and blocker reasons only; "
                 "do not send live until new evidence repairs the mined strategy profile."
@@ -2258,10 +2322,12 @@ def _matrix_repair_seed_lane(
             )
         ),
         "target_reward_risk": rr,
-        "blockers": [entry.required_fix] if entry.required_fix else [],
+        "blockers": blockers,
         "story_examples": support_messages[:2],
         "matrix_repair_seed": True,
         "matrix_watch_only_seed": watch_only,
+        "matrix_repair_reject_blocked": reject_blocked,
+        "matrix_repair_reject_reasons": reject_messages[:4],
         "matrix_repair_profile_status": entry.status,
     }
 
@@ -4407,6 +4473,12 @@ class IntentGenerator:
                 }
             )
             risk_allowed = False
+        matrix_reject_issue = _matrix_repair_reject_context_issue(intent)
+        if matrix_reject_issue is not None:
+            risk_issues.append(matrix_reject_issue)
+            if matrix_reject_issue["message"] not in live_blockers:
+                live_blockers = (*live_blockers, matrix_reject_issue["message"])
+            risk_allowed = False
         context_issues = _method_context_issues(intent)
         if context_issues:
             risk_issues.extend(context_issues)
@@ -5028,6 +5100,8 @@ def _intent_from_lane(
             "forecast_watch_only_live_override_reason": watch_override_reason,
             "matrix_repair_seed": bool(lane.get("matrix_repair_seed")),
             "matrix_watch_only_seed": bool(lane.get("matrix_watch_only_seed")),
+            "matrix_repair_reject_blocked": bool(lane.get("matrix_repair_reject_blocked")),
+            "matrix_repair_reject_reasons": lane.get("matrix_repair_reject_reasons") or [],
             "matrix_repair_profile_status": lane.get("matrix_repair_profile_status"),
             "post_harvest_reentry_seed": bool(lane.get("post_harvest_reentry_seed")),
             "post_harvest_trade_id": lane.get("post_harvest_trade_id"),
@@ -5906,6 +5980,29 @@ def _forecast_watch_only_issue(intent: OrderIntent, metadata: dict[str, Any]) ->
             f"a fresh calibrated forecast clears the entry floor.{reason_tail}"
         ),
         "severity": "WARN",
+    }
+
+
+def _matrix_repair_reject_context_issue(intent: OrderIntent) -> dict[str, str] | None:
+    metadata = intent.metadata or {}
+    if not metadata.get("matrix_repair_reject_blocked"):
+        return None
+    reasons = [
+        str(reason).strip()
+        for reason in metadata.get("matrix_repair_reject_reasons") or []
+        if str(reason).strip()
+    ]
+    reason_text = "; ".join(reasons[:2]) if reasons else "current matrix reject present"
+    evidence_ref = str(metadata.get("market_context_matrix_ref") or "").strip()
+    ref_text = f" ({evidence_ref})" if evidence_ref else ""
+    return {
+        "code": "MATRIX_REPAIR_REJECT_CONTEXT",
+        "message": (
+            f"{intent.pair} {intent.side.value} matrix-supported repair seed{ref_text} "
+            f"still has current reject context: {reason_text}; keep this lane diagnostic "
+            "until a fresh market-context-matrix refresh clears the rejects."
+        ),
+        "severity": "BLOCK",
     }
 
 
