@@ -2040,15 +2040,16 @@ class AutoTradeCycle:
                     deterministic_lane_id=deterministic_lane_id,
                 )
                 if recovery_lane_id:
-                    selected_lane_id = recovery_lane_id
-                    selected_lane_score, selected_lane_size_multiple = self._selected_lane_meta(
-                        decision=decision,
-                        lane_id=selected_lane_id,
-                    )
                     gpt_recovery_source = (
                         gpt_recovery_source
                         or f"CAMPAIGN_EXPOSURE_RECOVERY_GPT_{gpt_summary.status}_{gpt_summary.action or 'NO_TRADE'}"
                     )
+                    if not _learning_audit_blocks_recovery_lane(self.gpt_learning_audit_path, recovery_lane_id):
+                        selected_lane_id = recovery_lane_id
+                        selected_lane_score, selected_lane_size_multiple = self._selected_lane_meta(
+                            decision=decision,
+                            lane_id=selected_lane_id,
+                        )
 
             if selected_lane_id is None:
                 if intent_summary.live_ready == 0 and gpt_summary.status == "STALE_DECISION":
@@ -2175,6 +2176,41 @@ class AutoTradeCycle:
                     if campaign_exposure_required:
                         reason = gpt_summary.action or gpt_summary.status or "NO_TRADE"
                         gpt_recovery_source = f"CAMPAIGN_EXPOSURE_RECOVERY_GPT_{reason}"
+                        if _learning_audit_blocks_recovery_lane(self.gpt_learning_audit_path, selected_lane_id):
+                            summary = AutoTradeCycleSummary(
+                                status="LEARNING_AUDIT_BLOCKED",
+                                report_path=self.report_path,
+                                snapshot_path=self.snapshot_path,
+                                intents_path=self.intents_path,
+                                selected_lane_id=None,
+                                selected_lane_ids=(),
+                                selected_lane_score=None,
+                                selected_lane_size_multiple=None,
+                                deterministic_lane_id=deterministic_lane_id,
+                                sent=False,
+                                sent_count=0,
+                                positions=positions,
+                                orders=orders,
+                                live_ready=intent_summary.live_ready,
+                                decision_source="gpt_trader",
+                                receipt_promotions=promotion_summary.promoted,
+                                position_management_action=position_decision.action if position_decision else None,
+                                position_execution_status=position_execution.status if position_execution else None,
+                                position_execution_sent=position_execution.sent if position_execution else False,
+                                target_status=target_summary.status if target_summary else None,
+                                target_remaining_jpy=target_summary.remaining_target_jpy if target_summary else None,
+                                target_progress_pct=target_summary.progress_pct if target_summary else None,
+                                gpt_status=gpt_summary.status,
+                                gpt_action=gpt_summary.action,
+                                gpt_allowed=gpt_summary.allowed,
+                                gpt_issues=gpt_summary.issues,
+                                gpt_error=gpt_summary.error,
+                                gpt_wait_retries=gpt_wait_retries,
+                                gpt_recovery_source=gpt_recovery_source,
+                                campaign_exposure_required=campaign_exposure_required,
+                            )
+                            self._write_report(summary, generated_at)
+                            return summary
                     else:
                         status = (
                             "GPT_REJECTED"
@@ -4089,6 +4125,28 @@ def _campaign_exposure_required(
         and pending_entries == 0
         and live_ready > 0
     )
+
+
+def _learning_audit_blocks_recovery_lane(path: Path, lane_id: str | None) -> bool:
+    if not lane_id or not path.exists():
+        return False
+    try:
+        payload = json.loads(path.read_text())
+    except (OSError, json.JSONDecodeError, ValueError):
+        return False
+    if payload.get("status") != "LEARNING_AUDIT_BLOCKED":
+        return False
+    influence = payload.get("learning_influence")
+    lanes = influence.get("lanes") if isinstance(influence, dict) else None
+    if not isinstance(lanes, list):
+        return False
+    for lane in lanes:
+        if not isinstance(lane, dict):
+            continue
+        if str(lane.get("lane_id") or "") != lane_id:
+            continue
+        return bool(lane.get("learning_influences"))
+    return False
 
 
 def _portfolio_add_allowed(snapshot) -> bool:
