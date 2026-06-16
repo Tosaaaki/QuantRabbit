@@ -434,6 +434,86 @@ class CoverageOptimizerTest(unittest.TestCase):
             self.assertTrue(any("repair runner qualification" in item for item in payload["action_items"]))
             self.assertIn("Runner Candidate Diagnostics", (root / "coverage.md").read_text())
 
+    def test_live_ready_harvest_does_not_hide_demoted_runner_path(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            intents = root / "intents.json"
+            target = root / "target.json"
+            harvest = _result(
+                "LIVE_READY",
+                lane_id="range_trader:USD_CAD:SHORT:RANGE_ROTATION",
+                pair="USD_CAD",
+                side="SHORT",
+                method="RANGE_ROTATION",
+                order_type="LIMIT",
+                risk_metrics={
+                    "risk_jpy": 100.0,
+                    "reward_jpy": 120.0,
+                    "reward_risk": 1.2,
+                    "spread_pips": 0.8,
+                },
+            )
+            harvest["intent"]["metadata"] = {
+                "opportunity_mode": "HARVEST",
+                "tp_execution_mode": "ATTACHED_TECHNICAL_TP",
+                "tp_target_intent": "HARVEST",
+            }
+            demoted_runner = _result(
+                "DRY_RUN_BLOCKED",
+                lane_id="trend_trader:GBP_USD:LONG:TREND_CONTINUATION",
+                pair="GBP_USD",
+                risk_issues=[
+                    {
+                        "code": "TREND_MARKET_NOT_OPERATING_TREND",
+                        "message": "UNCLEAR regime is not a clean runner trend",
+                        "severity": "BLOCK",
+                    }
+                ],
+                risk_metrics={
+                    "risk_jpy": 100.0,
+                    "reward_jpy": 280.0,
+                    "reward_risk": 2.8,
+                    "spread_pips": 0.8,
+                },
+            )
+            demoted_runner["intent"]["metadata"] = {
+                "opportunity_mode": "HARVEST",
+                "tp_execution_mode": "ATTACHED_TECHNICAL_TP",
+                "tp_target_intent": "HARVEST",
+                "tp_attach_reason": "UNCLEAR regime is not a clean runner trend",
+            }
+            intents.write_text(json.dumps({"results": [harvest, demoted_runner]}))
+            target.write_text(
+                json.dumps(
+                    {
+                        "status": "PURSUE_TARGET",
+                        "remaining_target_jpy": 1000.0,
+                        "remaining_risk_budget_jpy": 500.0,
+                    }
+                )
+            )
+
+            CoverageOptimizer(
+                intents_path=intents,
+                target_state_path=target,
+                replay_path=root / "missing_replay.json",
+                market_context_matrix_path=_matrix(root),
+                output_path=root / "coverage.json",
+                report_path=root / "coverage.md",
+            ).run()
+
+            payload = json.loads((root / "coverage.json").read_text())
+            self.assertEqual(payload["opportunity_modes"]["HARVEST"]["live_ready_lanes"], 1)
+            self.assertEqual(payload["opportunity_modes"]["RUNNER"]["lanes"], 0)
+            self.assertEqual(payload["runner_candidate_diagnostics"]["trend_candidate_lanes"], 1)
+            self.assertTrue(
+                any(
+                    "repair runner qualification before widening discovery" in item
+                    and "UNCLEAR regime is not a clean runner trend" in item
+                    for item in payload["action_items"]
+                )
+            )
+
     def test_cli_coverage_gap_is_diagnostic_success(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

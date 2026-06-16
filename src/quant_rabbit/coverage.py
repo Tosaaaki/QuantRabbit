@@ -1705,30 +1705,35 @@ def _opportunity_mode_repair_item(
         missing_mode = "RUNNER" if present_mode == "HARVEST" else "HARVEST"
         missing_item = opportunity_modes.get(missing_mode) if isinstance(opportunity_modes.get(missing_mode), dict) else {}
         if int(missing_item.get("lanes") or 0) <= 0:
-            runner_diag = runner_candidate_diagnostics if isinstance(runner_candidate_diagnostics, dict) else {}
-            if missing_mode == "RUNNER" and int(runner_diag.get("trend_candidate_lanes") or 0) > 0:
-                reasons = runner_diag.get("top_demotion_reasons")
-                reason_labels = [
-                    str(item.get("reason"))
-                    for item in (reasons if isinstance(reasons, list) else [])[:3]
-                    if isinstance(item, dict) and str(item.get("reason") or "").strip()
-                ]
-                reason_text = (
-                    "; top demotions: " + ", ".join(reason_labels)
-                    if reason_labels
-                    else ""
-                )
-                return (
-                    "repair runner qualification before widening discovery: "
-                    f"{int(runner_diag.get('trend_candidate_lanes') or 0)} TREND_CONTINUATION lane(s) "
-                    f"were managed as HARVEST, so no clean RUNNER path is currently executable{reason_text}"
-                )
+            runner_repair = _runner_qualification_repair_item(runner_candidate_diagnostics)
+            if missing_mode == "RUNNER" and runner_repair:
+                return runner_repair
             return (
                 "repair the visible opportunity path before broad exploration and add missing "
                 f"{missing_mode} lane generation to avoid horizon opportunity loss: {labels[0]}"
             )
         return "repair the visible opportunity path before broad exploration: " + labels[0]
-    return None
+    return _runner_qualification_repair_item(runner_candidate_diagnostics)
+
+
+def _runner_qualification_repair_item(runner_candidate_diagnostics: dict[str, Any] | None) -> str | None:
+    runner_diag = runner_candidate_diagnostics if isinstance(runner_candidate_diagnostics, dict) else {}
+    trend_candidates = int(runner_diag.get("trend_candidate_lanes") or 0)
+    runner_qualified = int(runner_diag.get("runner_qualified_lanes") or 0)
+    if trend_candidates <= 0 or runner_qualified > 0:
+        return None
+    reasons = runner_diag.get("top_demotion_reasons")
+    reason_labels = [
+        str(item.get("reason"))
+        for item in (reasons if isinstance(reasons, list) else [])[:3]
+        if isinstance(item, dict) and str(item.get("reason") or "").strip()
+    ]
+    reason_text = "; top demotions: " + ", ".join(reason_labels) if reason_labels else ""
+    return (
+        "repair runner qualification before widening discovery: "
+        f"{trend_candidates} TREND_CONTINUATION lane(s) were managed as HARVEST, "
+        f"so no clean RUNNER path is currently executable{reason_text}"
+    )
 
 
 def _has_intent(item: object) -> bool:
