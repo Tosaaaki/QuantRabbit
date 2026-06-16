@@ -78,6 +78,7 @@ from quant_rabbit.strategy.trader_brain import (
     ACTION_NO_TRADE,
     ACTION_SEND_ENTRY,
     LaneScore,
+    PENDING_ENTRY_REPLACE_SPREAD_MULT,
     TraderBrain,
     TraderDecision,
     load_trader_settings,
@@ -104,6 +105,12 @@ GPT_POSITION_GATEWAY_ACTIONS = frozenset({"PROTECT", "TIGHTEN_SL", "CLOSE"})
 # basket fit while the gateway correctly rejected it with
 # `BASKET_MARGIN_UTILIZATION_CAP_EXCEEDED`.
 MARGIN_AWARE_BASKET_BUFFER = 0.9
+
+# A GPT replacement must improve same-lane fill odds by at least one current
+# spread before it is allowed to churn an otherwise equivalent pending order.
+# One spread is the minimum market cost/noise unit for changing the trigger;
+# smaller reprices are not a meaningful executable improvement.
+GPT_PENDING_REPLACEMENT_MIN_FILL_IMPROVEMENT_SPREAD_MULT = 1.0
 
 
 def _basket_margin_room_jpy(snapshot: object) -> float | None:
@@ -286,6 +293,285 @@ def _basket_parent_lane_id(lane_id: str | None) -> str | None:
     if lane_id.endswith(":MARKET"):
         return lane_id[: -len(":MARKET")]
     return lane_id
+
+
+def _normalized_pending_order_type(order_type: str | None) -> str:
+    text = str(order_type or "").upper().replace("_", "-")
+    if text == "STOP":
+        return "STOP-ENTRY"
+    return text
+
+
+def _optional_float(value: Any) -> float | None:
+    if value is None:
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _price_drift_pips(pair: str, left: float | None, right: float | None) -> float:
+    if left is None or right is None:
+        return 0.0
+    pip_factor = 100 if pair.endswith("_JPY") else 10000
+    return abs(float(left) - float(right)) * pip_factor
+
+
+def _raw_dependent_order_price(order: object, key: str) -> float | None:
+    raw = getattr(order, "raw", None)
+    if not isinstance(raw, dict):
+        return None
+    nested = raw.get(key)
+    if not isinstance(nested, dict):
+        return None
+    return _optional_float(nested.get("price"))
+
+
+def _order_owner_value(order: object) -> str:
+    owner = getattr(order, "owner", None)
+    return str(getattr(owner, "value", owner) or "").lower()
+
+
+def _order_side_from_units(order: object) -> str | None:
+    units = getattr(order, "units", None)
+    try:
+        numeric_units = int(units)
+    except (TypeError, ValueError):
+        return None
+    if numeric_units > 0:
+        return "LONG"
+    if numeric_units < 0:
+        return "SHORT"
+    return None
+
+
+def _pending_order_lane_parent(order: object) -> str | None:
+    raw = getattr(order, "raw", None)
+    if not isinstance(raw, dict):
+        return None
+    comments: list[str] = []
+    for key in ("clientExtensions", "tradeClientExtensions"):
+        nested = raw.get(key)
+        if isinstance(nested, dict) and nested.get("comment"):
+            comments.append(str(nested.get("comment")))
+    for comment in comments:
+        for token in comment.split():
+            if token.startswith("lane="):
+                return _basket_parent_lane_id(token[len("lane=") :])
+    return None
+
+
+def _selected_replacement_candidates(
+    intents_payload: dict[str, Any],
+    lane_ids: tuple[str, ...],
+) -> tuple[dict[str, Any], ...]:
+    rows = {
+        str(item.get("lane_id") or ""): item
+        for item in intents_payload.get("results", []) or []
+        if isinstance(item, dict)
+    }
+    candidates: list[dict[str, Any]] = []
+    for lane_id in dict.fromkeys(lane_id for lane_id in lane_ids if lane_id):
+        item = rows.get(lane_id)
+        if not isinstance(item, dict):
+            continue
+        intent = item.get("intent")
+        if not isinstance(intent, dict):
+            continue
+        risk_metrics = item.get("risk_metrics") if isinstance(item.get("risk_metrics"), dict) else {}
+        candidates.append(
+            {
+                "lane_id": lane_id,
+                "parent_lane_id": _basket_parent_lane_id(lane_id),
+                "pair": str(intent.get("pair") or ""),
+                "side": str(intent.get("side") or "").upper(),
+                "order_type": _normalized_pending_order_type(str(intent.get("order_type") or "")),
+                "entry": _optional_float(intent.get("entry")),
+                "tp": _optional_float(intent.get("tp")),
+                "sl": _optional_float(intent.get("sl")),
+                "spread_pips": _optional_float(risk_metrics.get("spread_pips")),
+            }
+        )
+    return tuple(candidates)
+
+
+def _pending_entry_invalidated_by_stop(order: object, snapshot: object) -> bool:
+    pair = str(getattr(order, "pair", "") or "")
+    quote = (getattr(snapshot, "quotes", {}) or {}).get(pair)
+    side = _order_side_from_units(order)
+    stop_loss = _raw_dependent_order_price(order, "stopLossOnFill")
+    if quote is None or side is None or stop_loss is None:
+        return False
+    bid = _optional_float(getattr(quote, "bid", None))
+    ask = _optional_float(getattr(quote, "ask", None))
+    if side == "LONG" and bid is not None:
+        return bid <= stop_loss
+    if side == "SHORT" and ask is not None:
+        return ask >= stop_loss
+    return False
+
+
+def _distance_to_fill_pips(
+    *,
+    pair: str,
+    side: str,
+    order_type: str,
+    entry: float | None,
+    snapshot: object,
+) -> float | None:
+    if entry is None:
+        return None
+    quote = (getattr(snapshot, "quotes", {}) or {}).get(pair)
+    if quote is None:
+        return None
+    bid = _optional_float(getattr(quote, "bid", None))
+    ask = _optional_float(getattr(quote, "ask", None))
+    pip_factor = 100 if pair.endswith("_JPY") else 10000
+    distance: float | None = None
+    if order_type == "LIMIT":
+        if side == "LONG" and ask is not None:
+            distance = ask - entry
+        elif side == "SHORT" and bid is not None:
+            distance = entry - bid
+    elif order_type == "STOP-ENTRY":
+        if side == "LONG" and ask is not None:
+            distance = entry - ask
+        elif side == "SHORT" and bid is not None:
+            distance = bid - entry
+    if distance is None:
+        return None
+    return max(0.0, distance * pip_factor)
+
+
+def _replacement_materially_improves_fill(
+    *,
+    order: object,
+    candidate: dict[str, Any],
+    snapshot: object,
+) -> bool:
+    spread_pips = _optional_float(candidate.get("spread_pips"))
+    if spread_pips is None or spread_pips <= 0:
+        return False
+    pair = str(candidate.get("pair") or "")
+    side = str(candidate.get("side") or "")
+    order_type = str(candidate.get("order_type") or "")
+    current_distance = _distance_to_fill_pips(
+        pair=pair,
+        side=side,
+        order_type=order_type,
+        entry=_optional_float(getattr(order, "price", None)),
+        snapshot=snapshot,
+    )
+    replacement_distance = _distance_to_fill_pips(
+        pair=pair,
+        side=side,
+        order_type=order_type,
+        entry=_optional_float(candidate.get("entry")),
+        snapshot=snapshot,
+    )
+    if current_distance is None or replacement_distance is None:
+        return False
+    improvement = current_distance - replacement_distance
+    return improvement >= spread_pips * GPT_PENDING_REPLACEMENT_MIN_FILL_IMPROVEMENT_SPREAD_MULT
+
+
+def _replacement_geometry_drift_exceeds_tolerance(
+    *,
+    order: object,
+    candidate: dict[str, Any],
+) -> bool:
+    spread_pips = _optional_float(candidate.get("spread_pips"))
+    pair = str(candidate.get("pair") or "")
+    if spread_pips is None or spread_pips <= 0 or not pair:
+        return False
+    tolerance_pips = spread_pips * PENDING_ENTRY_REPLACE_SPREAD_MULT
+    price_pairs = (
+        (_optional_float(getattr(order, "price", None)), _optional_float(candidate.get("entry"))),
+        (_raw_dependent_order_price(order, "takeProfitOnFill"), _optional_float(candidate.get("tp"))),
+        (_raw_dependent_order_price(order, "stopLossOnFill"), _optional_float(candidate.get("sl"))),
+    )
+    return any(_price_drift_pips(pair, left, right) > tolerance_pips for left, right in price_pairs)
+
+
+def _should_preserve_gpt_trade_cancel(
+    *,
+    order: object,
+    candidates: tuple[dict[str, Any], ...],
+    snapshot: object,
+) -> bool:
+    if getattr(order, "trade_id", None):
+        return False
+    if _normalized_pending_order_type(str(getattr(order, "order_type", "") or "")) not in {
+        "LIMIT",
+        "STOP-ENTRY",
+        "MARKET-IF-TOUCHED",
+        "MARKET-IF-TOUCHED-ORDER",
+    }:
+        return False
+    if _order_owner_value(order) != "trader":
+        return False
+    parent_lane_id = _pending_order_lane_parent(order)
+    if parent_lane_id is None:
+        return False
+    pair = str(getattr(order, "pair", "") or "")
+    side = _order_side_from_units(order)
+    order_type = _normalized_pending_order_type(str(getattr(order, "order_type", "") or ""))
+    if not pair or side is None:
+        return False
+    if _pending_entry_invalidated_by_stop(order, snapshot):
+        return False
+    for candidate in candidates:
+        if candidate.get("parent_lane_id") != parent_lane_id:
+            continue
+        if candidate.get("pair") != pair or candidate.get("side") != side:
+            continue
+        if candidate.get("order_type") != order_type:
+            continue
+        if _replacement_materially_improves_fill(order=order, candidate=candidate, snapshot=snapshot):
+            return False
+        if _replacement_geometry_drift_exceeds_tolerance(order=order, candidate=candidate):
+            return False
+        return True
+    return False
+
+
+def _filtered_gpt_trade_cancel_order_ids(
+    *,
+    client: object,
+    intents_path: Path,
+    lane_ids: tuple[str, ...],
+    cancel_order_ids: tuple[str, ...],
+) -> tuple[str, ...]:
+    if not cancel_order_ids:
+        return ()
+    try:
+        intents_payload = json.loads(intents_path.read_text())
+    except (OSError, json.JSONDecodeError, ValueError):
+        return cancel_order_ids
+    candidates = _selected_replacement_candidates(intents_payload, lane_ids)
+    if not candidates:
+        return cancel_order_ids
+    pairs = tuple(sorted({str(candidate.get("pair") or "") for candidate in candidates if candidate.get("pair")}))
+    try:
+        snapshot = client.snapshot(pairs)
+    except (RuntimeError, ValueError, OSError, sqlite3.Error, json.JSONDecodeError):
+        return cancel_order_ids
+    orders_by_id = {
+        str(getattr(order, "order_id", "") or ""): order
+        for order in getattr(snapshot, "orders", ()) or ()
+    }
+    filtered: list[str] = []
+    for order_id in cancel_order_ids:
+        order = orders_by_id.get(str(order_id))
+        if order is not None and _should_preserve_gpt_trade_cancel(
+            order=order,
+            candidates=candidates,
+            snapshot=snapshot,
+        ):
+            continue
+        filtered.append(str(order_id))
+    return tuple(filtered)
 
 
 def _basket_parent_lane_set(lane_ids: tuple[str, ...]) -> set[str]:
@@ -3146,6 +3432,15 @@ class AutoTradeCycle:
             if gpt_summary is not None and gpt_summary.action == "TRADE"
             else ()
         )
+        if replace_order_ids:
+            replace_order_ids = _filtered_gpt_trade_cancel_order_ids(
+                client=order_gateway.client,
+                intents_path=intents_path,
+                lane_ids=lane_ids,
+                cancel_order_ids=replace_order_ids,
+            )
+            if gpt_summary is not None and replace_order_ids != gpt_summary.cancel_order_ids:
+                gpt_summary = replace(gpt_summary, cancel_order_ids=replace_order_ids)
         if not replace_order_ids:
             return (
                 order_gateway.run_batch(
