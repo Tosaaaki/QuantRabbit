@@ -382,11 +382,30 @@ class CoverageOptimizer:
                     else []
                 )
                 blocker_text = ", ".join(str(blocker.get("code")) for blocker in blockers[:4] if isinstance(blocker, dict))
+                other_dirs = (
+                    item.get("range_rotation_other_side_directions")
+                    if isinstance(item.get("range_rotation_other_side_directions"), list)
+                    else []
+                )
+                other_codes = (
+                    item.get("range_rotation_other_side_top_live_blocker_codes")
+                    if isinstance(item.get("range_rotation_other_side_top_live_blocker_codes"), list)
+                    else []
+                )
+                other_dir_text = ", ".join(
+                    str(row.get("code")) for row in other_dirs[:3] if isinstance(row, dict)
+                )
+                other_blocker_text = ", ".join(
+                    str(row.get("code")) for row in other_codes[:4] if isinstance(row, dict)
+                )
                 lines.append(
                     f"- `{item.get('pair')} {item.get('direction')}` mismatch_lanes=`{item.get('method_mismatch_lanes')}` "
                     f"range_rotation_lanes=`{item.get('range_rotation_lanes')}` "
                     f"range_rotation_live_ready=`{item.get('range_rotation_live_ready_lanes')}` "
-                    f"range_blockers=`{blocker_text or 'none'}`"
+                    f"range_blockers=`{blocker_text or 'none'}` "
+                    f"same_side_absence=`{item.get('range_rotation_absence_reason') or 'n/a'}` "
+                    f"other_rail_sides=`{other_dir_text or 'none'}` "
+                    f"other_rail_blockers=`{other_blocker_text or 'none'}`"
                 )
             lines.append("")
         bucket_diag = diagnostics.get("profitable_bucket_coverage") if isinstance(diagnostics.get("profitable_bucket_coverage"), dict) else {}
@@ -1742,10 +1761,12 @@ def _opportunity_mode_summary(
 
 def _perspective_alignment_diagnostics(lanes: tuple[CoverageLane, ...]) -> dict[str, Any]:
     groups: dict[tuple[str, str], list[CoverageLane]] = {}
+    pair_groups: dict[str, list[CoverageLane]] = {}
     for lane in lanes:
         if not lane.pair or not lane.direction:
             continue
         groups.setdefault((lane.pair, lane.direction), []).append(lane)
+        pair_groups.setdefault(lane.pair, []).append(lane)
 
     summaries: list[dict[str, Any]] = []
     mismatch_summaries: list[dict[str, Any]] = []
@@ -1761,11 +1782,33 @@ def _perspective_alignment_diagnostics(lanes: tuple[CoverageLane, ...]) -> dict[
         blocker_counts = Counter(blocker for lane in group_tuple for blocker in lane.blockers)
         range_method_mismatches = tuple(lane for lane in group_tuple if _is_range_forecast_method_mismatch(lane))
         range_rotation_lanes = tuple(lane for lane in group_tuple if lane.method == RANGE_ENTRY_METHOD)
+        pair_range_rotation_lanes = tuple(
+            lane for lane in pair_groups.get(pair, []) if lane.method == RANGE_ENTRY_METHOD
+        )
+        range_rotation_other_side_lanes = tuple(
+            lane for lane in pair_range_rotation_lanes if lane.direction != direction
+        )
         range_rotation_live_ready = tuple(lane for lane in range_rotation_lanes if lane.counts_live_ready)
         range_rotation_live_blocker_code_counts = Counter(
             code for lane in range_rotation_lanes for code in lane.live_blocker_codes
         )
         range_rotation_blocker_counts = Counter(blocker for lane in range_rotation_lanes for blocker in lane.blockers)
+        other_side_direction_counts = Counter(
+            lane.direction or "MISSING" for lane in range_rotation_other_side_lanes
+        )
+        other_side_live_blocker_code_counts = Counter(
+            code for lane in range_rotation_other_side_lanes for code in lane.live_blocker_codes
+        )
+        other_side_blocker_counts = Counter(
+            blocker for lane in range_rotation_other_side_lanes for blocker in lane.blockers
+        )
+        range_rotation_absence_reason = None
+        if range_method_mismatches and not range_rotation_lanes:
+            range_rotation_absence_reason = (
+                "OPPOSITE_RAIL_SIDE_SURFACED"
+                if range_rotation_other_side_lanes
+                else "NO_RANGE_ROTATION_SURFACED"
+            )
         forecast_confidences = [lane.forecast_confidence for lane in group_tuple if lane.forecast_confidence is not None]
         summary = {
             "pair": pair,
@@ -1785,6 +1828,18 @@ def _perspective_alignment_diagnostics(lanes: tuple[CoverageLane, ...]) -> dict[
             "method_mismatch_reward_jpy": _round(sum(lane.reward_jpy for lane in range_method_mismatches)),
             "range_rotation_lanes": len(range_rotation_lanes),
             "range_rotation_live_ready_lanes": len(range_rotation_live_ready),
+            "range_rotation_absence_reason": range_rotation_absence_reason,
+            "range_rotation_other_side_lanes": len(range_rotation_other_side_lanes),
+            "range_rotation_other_side_directions": _counter_items(other_side_direction_counts),
+            "range_rotation_other_side_top_live_blocker_codes": _counter_items(
+                other_side_live_blocker_code_counts,
+                limit=6,
+            ),
+            "range_rotation_other_side_top_blockers": _counter_items(
+                other_side_blocker_counts,
+                key_name="label",
+                limit=4,
+            ),
             "range_rotation_top_live_blocker_codes": _counter_items(
                 range_rotation_live_blocker_code_counts,
                 limit=6,
@@ -1895,7 +1950,37 @@ def _perspective_alignment_repair_item(payload: dict[str, Any] | None) -> str | 
             for blocker in blockers[:3]
             if isinstance(blocker, dict) and str(blocker.get("code") or "").strip()
         ]
-        blocker_text = ", ".join(codes) if codes else "no executable RANGE_ROTATION blocker surfaced"
+        blocker_text = ", ".join(codes) if codes else ""
+        if not blocker_text:
+            other_dirs = (
+                item.get("range_rotation_other_side_directions")
+                if isinstance(item.get("range_rotation_other_side_directions"), list)
+                else []
+            )
+            other_codes = (
+                item.get("range_rotation_other_side_top_live_blocker_codes")
+                if isinstance(item.get("range_rotation_other_side_top_live_blocker_codes"), list)
+                else []
+            )
+            direction_labels = [
+                str(row.get("code"))
+                for row in other_dirs[:3]
+                if isinstance(row, dict) and str(row.get("code") or "").strip()
+            ]
+            code_labels = [
+                str(row.get("code"))
+                for row in other_codes[:3]
+                if isinstance(row, dict) and str(row.get("code") or "").strip()
+            ]
+            if direction_labels:
+                blocker_text = (
+                    "same-side RANGE_ROTATION absent; opposite rail side "
+                    f"{'/'.join(direction_labels)} surfaced"
+                )
+                if code_labels:
+                    blocker_text += f" blockers={', '.join(code_labels)}"
+            else:
+                blocker_text = "no executable RANGE_ROTATION blocker surfaced"
         labels.append(
             f"{pair} {direction} mismatch_lanes={int(item.get('method_mismatch_lanes') or 0)} "
             f"range_rotation_lanes={int(item.get('range_rotation_lanes') or 0)} blockers={blocker_text}"

@@ -1460,6 +1460,101 @@ class CoverageOptimizerTest(unittest.TestCase):
             )
             self.assertIn("Perspective Alignment", (root / "coverage.md").read_text())
 
+    def test_range_mismatch_surfaces_opposite_rail_rotation_view(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            intents = root / "intents.json"
+            target = root / "target.json"
+            mismatch_issue = {
+                "severity": "BLOCK",
+                "code": "RANGE_FORECAST_REQUIRES_RANGE_ROTATION",
+                "message": "RANGE forecast only authorizes RANGE_ROTATION rail geometry",
+            }
+            range_block = {
+                "severity": "BLOCK",
+                "code": "FORECAST_CONFIDENCE_REQUIRED_FOR_LIVE",
+                "message": "RANGE forecast is still below the rail-rotation live floor",
+            }
+            failure_lane = _result(
+                "DRY_RUN_BLOCKED",
+                lane_id="failure_trader:AUD_JPY:LONG:BREAKOUT_FAILURE:LIMIT",
+                pair="AUD_JPY",
+                side="LONG",
+                method="BREAKOUT_FAILURE",
+                order_type="LIMIT",
+                risk_issues=[mismatch_issue],
+                risk_metrics={
+                    "risk_jpy": 100.0,
+                    "reward_jpy": 300.0,
+                    "reward_risk": 3.0,
+                    "spread_pips": 1.0,
+                },
+            )
+            failure_lane["intent"]["metadata"] = {
+                "forecast_direction": "RANGE",
+                "forecast_confidence": 0.72,
+                "chart_direction_bias": "SHORT",
+                "range_phase": "RANGE_FORMING",
+            }
+            range_lane = _result(
+                "DRY_RUN_BLOCKED",
+                lane_id="range_trader:AUD_JPY:SHORT:RANGE_ROTATION",
+                pair="AUD_JPY",
+                side="SHORT",
+                method="RANGE_ROTATION",
+                order_type="LIMIT",
+                risk_issues=[range_block],
+                risk_metrics={
+                    "risk_jpy": 100.0,
+                    "reward_jpy": 140.0,
+                    "reward_risk": 1.4,
+                    "spread_pips": 1.0,
+                },
+            )
+            range_lane["intent"]["metadata"] = {
+                "forecast_direction": "RANGE",
+                "forecast_confidence": 0.72,
+                "chart_direction_bias": "SHORT",
+                "range_phase": "RANGE_FORMING",
+                "range_entry_side": "resistance",
+            }
+            intents.write_text(json.dumps({"results": [failure_lane, range_lane]}))
+            target.write_text(
+                json.dumps(
+                    {
+                        "status": "PURSUE_TARGET",
+                        "remaining_target_jpy": 500.0,
+                        "remaining_risk_budget_jpy": 500.0,
+                    }
+                )
+            )
+
+            CoverageOptimizer(
+                intents_path=intents,
+                target_state_path=target,
+                replay_path=root / "missing_replay.json",
+                market_context_matrix_path=_matrix(root),
+                output_path=root / "coverage.json",
+                report_path=root / "coverage.md",
+            ).run()
+
+            payload = json.loads((root / "coverage.json").read_text())
+            top = payload["perspective_alignment_diagnostics"]["range_forecast_method_mismatch_top"][0]
+            self.assertEqual(top["pair"], "AUD_JPY")
+            self.assertEqual(top["direction"], "LONG")
+            self.assertEqual(top["range_rotation_lanes"], 0)
+            self.assertEqual(top["range_rotation_absence_reason"], "OPPOSITE_RAIL_SIDE_SURFACED")
+            self.assertEqual(top["range_rotation_other_side_lanes"], 1)
+            self.assertEqual(top["range_rotation_other_side_directions"][0]["code"], "SHORT")
+            self.assertEqual(
+                top["range_rotation_other_side_top_live_blocker_codes"][0]["code"],
+                "FORECAST_CONFIDENCE_REQUIRED_FOR_LIVE",
+            )
+            self.assertTrue(
+                any("opposite rail side SHORT surfaced" in item for item in payload["action_items"])
+            )
+            self.assertIn("other_rail_sides=`SHORT`", (root / "coverage.md").read_text())
+
     def test_risk_blocker_messages_are_not_duplicated(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
