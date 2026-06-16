@@ -527,6 +527,110 @@ class ForecastGeometryTest(unittest.TestCase):
         self.assertEqual(forecast.range_high_price, 1.1100)
         self.assertAlmostEqual(forecast.range_width_pips or 0.0, 100.0)
 
+    def test_weak_calibrated_direction_inside_range_falls_back_to_range(self) -> None:
+        pair_chart = {
+            "confluence": {
+                "score_balance": "TIED",
+                "score_gap": 0.0,
+                "dominant_regime": "UNCLEAR",
+            },
+            "views": [
+                {
+                    "granularity": "M15",
+                    "regime": "RANGE",
+                    "regime_reading": {"state": "RANGE", "confidence": 0.9},
+                    "indicators": {
+                        "pip_size": 0.0001,
+                        "adx_14": 14.0,
+                        "choppiness_14": 66.0,
+                        "close": 1.1050,
+                        "donchian_low": 1.1000,
+                        "donchian_high": 1.1100,
+                    },
+                },
+                {
+                    "granularity": "H1",
+                    "regime": "RANGE",
+                    "regime_reading": {"state": "RANGE", "confidence": 0.9},
+                    "indicators": {
+                        "pip_size": 0.0001,
+                        "adx_14": 16.0,
+                        "choppiness_14": 64.0,
+                        "close": 1.1050,
+                        "donchian_low": 1.0990,
+                        "donchian_high": 1.1110,
+                    },
+                },
+            ],
+        }
+
+        forecast = synthesize_forecast(
+            pair="EUR_USD",
+            pair_chart=pair_chart,
+            current_price=1.1050,
+            pattern_signals=[],
+            projection_signals=[_Sig("DOWN", 120.0, 1.0, "raw downside pressure")],
+            correlation_signals=[],
+            paths=[],
+            hit_rates={
+                "directional_forecast_down": {
+                    "EUR_USD:RANGE": {"hit_rate": 0.0, "samples": 30},
+                },
+            },
+            regime="RANGE",
+        )
+
+        self.assertEqual(forecast.direction, "RANGE")
+        self.assertEqual(forecast.range_low_price, 1.1000)
+        self.assertEqual(forecast.range_high_price, 1.1100)
+        self.assertIn("weak calibrated DOWN forecast inside IN_RANGE", forecast.rationale_summary)
+        self.assertIn("raw downside pressure", " ".join(forecast.drivers_against))
+
+    def test_strong_direction_inside_range_stays_directional(self) -> None:
+        pair_chart = {
+            "views": [
+                {
+                    "granularity": "M15",
+                    "regime": "RANGE",
+                    "regime_reading": {"state": "RANGE", "confidence": 0.9},
+                    "indicators": {
+                        "pip_size": 0.0001,
+                        "adx_14": 14.0,
+                        "choppiness_14": 66.0,
+                        "close": 1.1050,
+                        "donchian_low": 1.1000,
+                        "donchian_high": 1.1100,
+                    },
+                    "structure": {
+                        "swings": [
+                            {"side": "HIGH", "price": 1.1110},
+                            {"side": "LOW", "price": 1.0990},
+                        ],
+                    },
+                }
+            ],
+        }
+
+        forecast = synthesize_forecast(
+            pair="EUR_USD",
+            pair_chart=pair_chart,
+            current_price=1.1050,
+            pattern_signals=[],
+            projection_signals=[_Sig("DOWN", 120.0, 1.0, "audited downside pressure")],
+            correlation_signals=[],
+            paths=[],
+            hit_rates={
+                "directional_forecast_down": {
+                    "EUR_USD:RANGE": {"hit_rate": 0.8, "samples": 30},
+                },
+            },
+            regime="RANGE",
+        )
+
+        self.assertEqual(forecast.direction, "DOWN")
+        self.assertGreaterEqual(forecast.confidence, 0.55)
+        self.assertIn("audited downside pressure", " ".join(forecast.drivers_for))
+
     def test_contested_direction_inside_range_forecasts_range(self) -> None:
         pair_chart = {
             "confluence": {

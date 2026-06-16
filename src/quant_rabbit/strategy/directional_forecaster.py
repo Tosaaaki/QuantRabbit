@@ -1320,6 +1320,39 @@ def _contested_range_raw_confidence(
     return min(1.0, max(0.0, (directional_uncertainty + range_materiality) / 2.0))
 
 
+def _weak_directional_range_raw_confidence(
+    *,
+    phase: _RangePhase,
+    winner: str,
+    directional_confidence: float,
+    winner_score: float,
+    range_score: float,
+) -> Optional[float]:
+    """Return RANGE confidence when a calibrated direction is weak inside a box.
+
+    A decisive raw UP/DOWN score inside a measured box is not enough for live
+    direction if the audited directional bucket has already damped it below the
+    entry floor. In that case, keep the box thesis executable as RANGE_ROTATION
+    and let the range rail / spread / RR gates decide whether a small rotation
+    can actually trade.
+    """
+    if winner not in {"UP", "DOWN"}:
+        return None
+    if phase.phase not in {"IN_RANGE", "RANGE_FORMING"}:
+        return None
+    if phase.range_low_price is None or phase.range_high_price is None:
+        return None
+    if directional_confidence >= ENTRY_CONFIDENCE_MIN:
+        return None
+    phase_confidence = max(0.0, min(1.0, float(phase.confidence or 0.0)))
+    if phase_confidence < 0.5:
+        return None
+    if range_score <= 0:
+        return None
+    range_materiality = min(1.0, range_score / max(winner_score * 0.25, 1.0))
+    return min(1.0, max(phase_confidence, (phase_confidence + range_materiality) / 2.0))
+
+
 def _calibrated_confidence(
     *,
     pair: str,
@@ -1643,6 +1676,56 @@ def synthesize_forecast(
         hit_rates=hit_rates,
         regime=regime,
     )
+
+    weak_directional_range_confidence = _weak_directional_range_raw_confidence(
+        phase=range_phase,
+        winner=winner,
+        directional_confidence=calibrated_confidence,
+        winner_score=winner_score,
+        range_score=range_score,
+    )
+    if weak_directional_range_confidence is not None:
+        range_confidence, range_cal_mult = _calibrated_confidence(
+            pair=pair,
+            direction="RANGE",
+            raw_confidence=weak_directional_range_confidence,
+            hit_rates=hit_rates,
+            regime=regime,
+        )
+        evidence = "; ".join(range_phase.evidence[:3])
+        rationale_summary = (
+            f"weak calibrated {winner} forecast inside {range_phase.phase}: "
+            f"UP={up_score:.1f} DOWN={down_score:.1f} RANGE={range_score:.1f} "
+            f"EITHER={either_score:.1f}; {winner} conf {raw_confidence:.2f} × cal "
+            f"{cal_mult:.2f} = {calibrated_confidence:.2f} < {ENTRY_CONFIDENCE_MIN:.2f} "
+            f"→ RANGE conf {weak_directional_range_confidence:.2f} × cal "
+            f"{range_cal_mult:.2f} = {range_confidence:.2f}"
+        )
+        return DirectionalForecast(
+            pair=pair,
+            direction="RANGE",
+            confidence=range_confidence,
+            invalidation_price=None,
+            target_price=None,
+            horizon_min=FORECAST_RANGE_HORIZON_MIN,
+            drivers_for=(
+                (range_phase.rationale,)
+                + ((evidence,) if evidence else ())
+                + _top_reasons(contributions, direction="RANGE", limit=3)
+            ),
+            drivers_against=_top_reasons(contributions, direction=winner),
+            rationale_summary=rationale_summary,
+            current_price=_round_price(pair, current_price),
+            up_score=up_score,
+            down_score=down_score,
+            range_score=range_score,
+            raw_confidence=weak_directional_range_confidence,
+            calibration_multiplier=range_cal_mult,
+            component_scores={"UP": up_score, "DOWN": down_score, "RANGE": range_score, "EITHER": either_score},
+            range_low_price=range_phase.range_low_price,
+            range_high_price=range_phase.range_high_price,
+            range_width_pips=range_phase.range_width_pips,
+        )
 
     target_price, invalidation_price = _forecast_geometry(
         pair=pair,
