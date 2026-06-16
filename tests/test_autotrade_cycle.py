@@ -600,6 +600,24 @@ class AutoTradeCycleTest(unittest.TestCase):
                                 {"reason": "ADX below trend threshold", "count": 1},
                             ]
                         },
+                        "perspective_alignment_diagnostics": {
+                            "status": "RANGE_METHOD_MISMATCH_REPAIR_REQUIRED",
+                            "range_forecast_method_mismatch_lanes": 4,
+                            "range_forecast_method_mismatch_top": [
+                                {
+                                    "pair": "AUD_JPY",
+                                    "direction": "LONG",
+                                    "method_mismatch_lanes": 3,
+                                    "range_rotation_lanes": 0,
+                                    "range_rotation_other_side_directions": [
+                                        {"code": "SHORT", "count": 1}
+                                    ],
+                                    "range_rotation_other_side_top_live_blocker_codes": [
+                                        {"code": "FORECAST_CONFIDENCE_REQUIRED_FOR_LIVE", "count": 1}
+                                    ],
+                                }
+                            ],
+                        },
                     }
                 )
             )
@@ -644,6 +662,12 @@ class AutoTradeCycleTest(unittest.TestCase):
             self.assertIn(
                 "- Runner demotions: `RANGE regime is not a clean runner trend:2, "
                 "ADX below trend threshold:1`",
+                report_text,
+            )
+            self.assertIn(
+                "- Perspective alignment: status=RANGE_METHOD_MISMATCH_REPAIR_REQUIRED "
+                "range_mismatch_lanes=4; top=`AUD_JPY LONG mismatch=3 range_lanes=0 "
+                "other_rail=SHORT:1 other_blockers=FORECAST_CONFIDENCE_REQUIRED_FOR_LIVE:1`",
                 report_text,
             )
 

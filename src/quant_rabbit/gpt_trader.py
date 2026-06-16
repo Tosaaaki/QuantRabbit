@@ -3088,12 +3088,23 @@ def _perspective_alignment_diagnostics_packet(payload: object) -> dict[str, Any]
                 "method_mismatch_reward_jpy": item.get("method_mismatch_reward_jpy"),
                 "range_rotation_lanes": item.get("range_rotation_lanes"),
                 "range_rotation_live_ready_lanes": item.get("range_rotation_live_ready_lanes"),
+                "range_rotation_absence_reason": item.get("range_rotation_absence_reason"),
+                "range_rotation_other_side_lanes": item.get("range_rotation_other_side_lanes"),
+                "range_rotation_other_side_directions": list(
+                    item.get("range_rotation_other_side_directions") or []
+                )[:5],
                 "method_counts": list(item.get("method_counts") or [])[:5],
                 "forecast_direction_counts": list(item.get("forecast_direction_counts") or [])[:5],
                 "chart_direction_bias_counts": list(item.get("chart_direction_bias_counts") or [])[:5],
                 "range_rotation_top_live_blocker_codes": list(
                     item.get("range_rotation_top_live_blocker_codes") or []
                 )[:5],
+                "range_rotation_other_side_top_live_blocker_codes": list(
+                    item.get("range_rotation_other_side_top_live_blocker_codes") or []
+                )[:5],
+                "range_rotation_other_side_top_blockers": list(
+                    item.get("range_rotation_other_side_top_blockers") or []
+                )[:4],
                 "top_live_blocker_codes": list(item.get("top_live_blocker_codes") or [])[:5],
                 "top_lanes": [
                     {

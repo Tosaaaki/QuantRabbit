@@ -1545,6 +1545,17 @@ class GPTTraderBrainTest(unittest.TestCase):
                                     "range_rotation_top_live_blocker_codes": [
                                         {"code": "RANGE_ROTATION_BROADER_LOCATION_CHASE", "count": 1}
                                     ],
+                                    "range_rotation_absence_reason": "OPPOSITE_RAIL_SIDE_SURFACED",
+                                    "range_rotation_other_side_lanes": 1,
+                                    "range_rotation_other_side_directions": [
+                                        {"code": "LONG", "count": 1}
+                                    ],
+                                    "range_rotation_other_side_top_live_blocker_codes": [
+                                        {"code": "FORECAST_CONFIDENCE_REQUIRED_FOR_LIVE", "count": 1}
+                                    ],
+                                    "range_rotation_other_side_top_blockers": [
+                                        {"label": "opposite rail still below live confidence", "count": 1}
+                                    ],
                                     "top_live_blocker_codes": [
                                         {"code": "RANGE_FORECAST_REQUIRES_RANGE_ROTATION", "count": 2}
                                     ],
@@ -1668,6 +1679,18 @@ class GPTTraderBrainTest(unittest.TestCase):
             self.assertEqual(
                 perspective["range_forecast_method_mismatch_top"][0]["range_rotation_top_live_blocker_codes"][0]["code"],
                 "RANGE_ROTATION_BROADER_LOCATION_CHASE",
+            )
+            self.assertEqual(
+                perspective["range_forecast_method_mismatch_top"][0]["range_rotation_other_side_directions"][0]["code"],
+                "LONG",
+            )
+            self.assertEqual(
+                perspective["range_forecast_method_mismatch_top"][0]["range_rotation_other_side_top_live_blocker_codes"][0]["code"],
+                "FORECAST_CONFIDENCE_REQUIRED_FOR_LIVE",
+            )
+            self.assertEqual(
+                perspective["range_forecast_method_mismatch_top"][0]["range_rotation_other_side_top_blockers"][0]["label"],
+                "opposite rail still below live confidence",
             )
             bucket = packet["profitable_bucket_coverage"]
             self.assertEqual(bucket["source_status"], "RESEARCH_PROFITABLE_NOT_CERTIFIED")

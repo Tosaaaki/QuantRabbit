@@ -3099,6 +3099,19 @@ def _coverage_perspective_alignment_diagnostics(payload: dict[str, Any]) -> dict
                     item.get("range_rotation_live_ready_lanes")
                 )
                 or 0,
+                "range_rotation_absence_reason": str(item.get("range_rotation_absence_reason") or ""),
+                "range_rotation_other_side_lanes": _maybe_int(
+                    item.get("range_rotation_other_side_lanes")
+                )
+                or 0,
+                "range_rotation_other_side_directions": [
+                    {
+                        "code": str(row.get("code") or ""),
+                        "count": _maybe_int(row.get("count")) or 0,
+                    }
+                    for row in (item.get("range_rotation_other_side_directions") or [])[:5]
+                    if isinstance(row, dict) and str(row.get("code") or "").strip()
+                ],
                 "range_rotation_top_live_blocker_codes": [
                     {
                         "code": str(blocker.get("code") or ""),
@@ -3106,6 +3119,22 @@ def _coverage_perspective_alignment_diagnostics(payload: dict[str, Any]) -> dict
                     }
                     for blocker in (item.get("range_rotation_top_live_blocker_codes") or [])[:5]
                     if isinstance(blocker, dict) and str(blocker.get("code") or "").strip()
+                ],
+                "range_rotation_other_side_top_live_blocker_codes": [
+                    {
+                        "code": str(blocker.get("code") or ""),
+                        "count": _maybe_int(blocker.get("count")) or 0,
+                    }
+                    for blocker in (item.get("range_rotation_other_side_top_live_blocker_codes") or [])[:5]
+                    if isinstance(blocker, dict) and str(blocker.get("code") or "").strip()
+                ],
+                "range_rotation_other_side_top_blockers": [
+                    {
+                        "label": str(blocker.get("label") or ""),
+                        "count": _maybe_int(blocker.get("count")) or 0,
+                    }
+                    for blocker in (item.get("range_rotation_other_side_top_blockers") or [])[:4]
+                    if isinstance(blocker, dict) and str(blocker.get("label") or "").strip()
                 ],
                 "top_live_blocker_codes": [
                     {
@@ -5860,10 +5889,28 @@ def _report_perspective_alignment_text(raw: Any) -> str:
             for blocker in (blockers if isinstance(blockers, list) else [])[:3]
             if isinstance(blocker, dict) and str(blocker.get("code") or "").strip()
         ]
+        other_side_directions = item.get("range_rotation_other_side_directions")
+        other_side_codes = item.get("range_rotation_other_side_top_live_blocker_codes")
+        other_labels = [
+            str(row.get("code") or "")
+            for row in (other_side_directions if isinstance(other_side_directions, list) else [])[:3]
+            if isinstance(row, dict) and str(row.get("code") or "").strip()
+        ]
+        other_blocker_codes = [
+            str(row.get("code") or "")
+            for row in (other_side_codes if isinstance(other_side_codes, list) else [])[:3]
+            if isinstance(row, dict) and str(row.get("code") or "").strip()
+        ]
+        other_text = ""
+        if other_labels:
+            other_text = f" other_rail={'/'.join(other_labels)}"
+            if other_blocker_codes:
+                other_text += f" other_blockers={','.join(other_blocker_codes)}"
         labels.append(
             f"{pair} {direction} mismatch={_maybe_int(item.get('method_mismatch_lanes')) or 0} "
             f"range_lanes={_maybe_int(item.get('range_rotation_lanes')) or 0} "
             f"blockers={','.join(codes) if codes else 'none'}"
+            f"{other_text}"
         )
     if not (status or mismatch_lanes or labels):
         return ""

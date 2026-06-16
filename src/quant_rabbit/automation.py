@@ -489,7 +489,63 @@ def _cycle_opportunity_mode_report_lines(intents_path: Path) -> list[str]:
     demotions = _report_count_items(runner_diag.get("top_demotion_reasons"), key="reason", limit=4)
     if demotions:
         lines.append(f"- Runner demotions: `{demotions}`")
+    perspective = payload.get("perspective_alignment_diagnostics")
+    if isinstance(perspective, dict):
+        perspective_parts = _cycle_perspective_alignment_parts(perspective)
+        if perspective_parts:
+            lines.append(f"- Perspective alignment: {'; '.join(perspective_parts)}")
     return lines
+
+
+def _cycle_perspective_alignment_parts(payload: dict[str, Any]) -> list[str]:
+    rows = payload.get("range_forecast_method_mismatch_top")
+    if not isinstance(rows, list):
+        rows = []
+    parts: list[str] = []
+    status = str(payload.get("status") or "").strip()
+    mismatch_lanes = payload.get("range_forecast_method_mismatch_lanes")
+    if status or mismatch_lanes is not None:
+        parts.append(
+            f"status={_report_value(status or 'UNKNOWN')} "
+            f"range_mismatch_lanes={_report_value(mismatch_lanes)}"
+        )
+    top_parts: list[str] = []
+    for item in rows[:3]:
+        if not isinstance(item, dict):
+            continue
+        pair = str(item.get("pair") or "").strip()
+        direction = str(item.get("direction") or "").strip()
+        if not pair or not direction:
+            continue
+        same_codes = _report_count_items(
+            item.get("range_rotation_top_live_blocker_codes"),
+            key="code",
+            limit=3,
+        )
+        other_dirs = _report_count_items(
+            item.get("range_rotation_other_side_directions"),
+            key="code",
+            limit=3,
+        )
+        other_codes = _report_count_items(
+            item.get("range_rotation_other_side_top_live_blocker_codes"),
+            key="code",
+            limit=3,
+        )
+        text = (
+            f"{pair} {direction} mismatch={_report_value(item.get('method_mismatch_lanes'))} "
+            f"range_lanes={_report_value(item.get('range_rotation_lanes'))}"
+        )
+        if same_codes:
+            text += f" blockers={same_codes}"
+        if other_dirs:
+            text += f" other_rail={other_dirs}"
+        if other_codes:
+            text += f" other_blockers={other_codes}"
+        top_parts.append(text)
+    if top_parts:
+        parts.append("top=`" + " | ".join(top_parts) + "`")
+    return parts
 
 
 def _report_count_items(items: object, *, key: str, limit: int) -> str:

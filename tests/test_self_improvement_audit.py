@@ -2195,6 +2195,17 @@ class SelfImprovementAuditorTest(unittest.TestCase):
                                         {"code": "FORECAST_RANGE_UNSELECTED_DIRECTION_CONFLICT", "count": 2},
                                         {"code": "RANGE_ROTATION_BROADER_LOCATION_CHASE", "count": 2},
                                     ],
+                                    "range_rotation_absence_reason": "OPPOSITE_RAIL_SIDE_SURFACED",
+                                    "range_rotation_other_side_lanes": 1,
+                                    "range_rotation_other_side_directions": [
+                                        {"code": "LONG", "count": 1}
+                                    ],
+                                    "range_rotation_other_side_top_live_blocker_codes": [
+                                        {"code": "FORECAST_CONFIDENCE_REQUIRED_FOR_LIVE", "count": 1}
+                                    ],
+                                    "range_rotation_other_side_top_blockers": [
+                                        {"label": "opposite rail confidence still below live floor", "count": 1}
+                                    ],
                                     "top_live_blocker_codes": [
                                         {"code": "RANGE_FORECAST_REQUIRES_RANGE_ROTATION", "count": 5}
                                     ],
@@ -2221,9 +2232,19 @@ class SelfImprovementAuditorTest(unittest.TestCase):
             perspective["range_forecast_method_mismatch_top"][0]["range_rotation_top_live_blocker_codes"][0]["code"],
             "FORECAST_RANGE_UNSELECTED_DIRECTION_CONFLICT",
         )
+        self.assertEqual(
+            perspective["range_forecast_method_mismatch_top"][0]["range_rotation_other_side_directions"][0]["code"],
+            "LONG",
+        )
+        self.assertEqual(
+            perspective["range_forecast_method_mismatch_top"][0]["range_rotation_other_side_top_live_blocker_codes"][0]["code"],
+            "FORECAST_CONFIDENCE_REQUIRED_FOR_LIVE",
+        )
         self.assertIn("RANGE_FORECAST_METHOD_MISMATCH_REPAIR_REQUIRED", report_text)
         self.assertIn("perspective alignment", report_text)
         self.assertIn("EUR_USD SHORT mismatch=5", report_text)
+        self.assertIn("other_rail=LONG", report_text)
+        self.assertIn("other_blockers=FORECAST_CONFIDENCE_REQUIRED_FOR_LIVE", report_text)
 
     def test_partial_live_ready_coverage_still_names_target_shortfall(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
