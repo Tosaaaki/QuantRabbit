@@ -154,6 +154,253 @@ class LiveOrderGatewayTest(unittest.TestCase):
             else:
                 os.environ["QR_NEW_ENTRY_INITIAL_SL"] = prior_initial_sl
 
+    def test_sl_free_disaster_stop_blocks_when_attached_tail_risk_exceeds_cap_below_min_lot(self) -> None:
+        prior_sl_free = os.environ.get("QR_TRADER_DISABLE_SL_REPAIR")
+        prior_initial_sl = os.environ.get("QR_NEW_ENTRY_INITIAL_SL")
+        os.environ["QR_TRADER_DISABLE_SL_REPAIR"] = "1"
+        os.environ.pop("QR_NEW_ENTRY_INITIAL_SL", None)
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                client = FakeExecutionClient()
+                summary = LiveOrderGateway(
+                    client=client,
+                    strategy_profile=_profile(root),
+                    output_path=root / "request.json",
+                    report_path=root / "report.md",
+                    max_loss_jpy=300.0,
+                ).run(
+                    intents_path=_intents(
+                        root,
+                        metadata={
+                            "desk": "trend_trader",
+                            "campaign_role": "NOW",
+                            "disaster_sl": 1.17000,
+                        },
+                    ),
+                    lane_id="lane:EUR_USD:LONG",
+                    send=True,
+                    confirm_live=True,
+                )
+
+                self.assertEqual(summary.status, "BLOCKED")
+                self.assertFalse(summary.sent)
+                self.assertEqual(client.orders, [])
+                payload = json.loads((root / "request.json").read_text())
+                self.assertEqual(payload["order_request"]["stopLossOnFill"]["price"], "1.17000")
+                self.assertGreater(payload["attached_stop_risk_metrics"]["risk_jpy"], 300.0)
+                self.assertIn(
+                    "ATTACHED_STOP_LOSS_CAP_BELOW_MIN_LOT",
+                    {issue["code"] for issue in payload["risk_issues"]},
+                )
+        finally:
+            if prior_sl_free is None:
+                os.environ.pop("QR_TRADER_DISABLE_SL_REPAIR", None)
+            else:
+                os.environ["QR_TRADER_DISABLE_SL_REPAIR"] = prior_sl_free
+            if prior_initial_sl is None:
+                os.environ.pop("QR_NEW_ENTRY_INITIAL_SL", None)
+            else:
+                os.environ["QR_NEW_ENTRY_INITIAL_SL"] = prior_initial_sl
+
+    def test_sl_free_disaster_stop_clips_units_to_attached_tail_cap(self) -> None:
+        prior_sl_free = os.environ.get("QR_TRADER_DISABLE_SL_REPAIR")
+        prior_initial_sl = os.environ.get("QR_NEW_ENTRY_INITIAL_SL")
+        os.environ["QR_TRADER_DISABLE_SL_REPAIR"] = "1"
+        os.environ.pop("QR_NEW_ENTRY_INITIAL_SL", None)
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                client = FakeExecutionClient()
+                summary = LiveOrderGateway(
+                    client=client,
+                    strategy_profile=_profile(root),
+                    output_path=root / "request.json",
+                    report_path=root / "report.md",
+                    max_loss_jpy=1100.0,
+                ).run(
+                    intents_path=_intents(
+                        root,
+                        units=3000,
+                        metadata={
+                            "desk": "trend_trader",
+                            "campaign_role": "NOW",
+                            "disaster_sl": 1.17000,
+                        },
+                    ),
+                    lane_id="lane:EUR_USD:LONG",
+                )
+
+                self.assertEqual(summary.status, "STAGED")
+                payload = json.loads((root / "request.json").read_text())
+                scaled_units = int(payload["order_request"]["units"])
+                self.assertGreaterEqual(scaled_units, 1000)
+                self.assertLess(scaled_units, 3000)
+                self.assertEqual(payload["scaled_units"], scaled_units)
+                self.assertLessEqual(payload["attached_stop_risk_metrics"]["risk_jpy"], 1100.0)
+                self.assertIn(
+                    "SIZE_MULTIPLE_CLIPPED_TO_ATTACHED_STOP_CAP",
+                    {issue["code"] for issue in payload["risk_issues"]},
+                )
+        finally:
+            if prior_sl_free is None:
+                os.environ.pop("QR_TRADER_DISABLE_SL_REPAIR", None)
+            else:
+                os.environ["QR_TRADER_DISABLE_SL_REPAIR"] = prior_sl_free
+            if prior_initial_sl is None:
+                os.environ.pop("QR_NEW_ENTRY_INITIAL_SL", None)
+            else:
+                os.environ["QR_NEW_ENTRY_INITIAL_SL"] = prior_initial_sl
+
+    def test_attached_tail_risk_counts_against_portfolio_remaining_cap(self) -> None:
+        prior_sl_free = os.environ.get("QR_TRADER_DISABLE_SL_REPAIR")
+        prior_initial_sl = os.environ.get("QR_NEW_ENTRY_INITIAL_SL")
+        os.environ["QR_TRADER_DISABLE_SL_REPAIR"] = "1"
+        os.environ.pop("QR_NEW_ENTRY_INITIAL_SL", None)
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                client = FakeExecutionClient()
+                summary = LiveOrderGateway(
+                    client=client,
+                    strategy_profile=_profile(root),
+                    output_path=root / "request.json",
+                    report_path=root / "report.md",
+                    max_loss_jpy=10_000.0,
+                    portfolio_loss_cap_jpy=300.0,
+                ).run(
+                    intents_path=_intents(
+                        root,
+                        metadata={
+                            "desk": "trend_trader",
+                            "campaign_role": "NOW",
+                            "disaster_sl": 1.17000,
+                        },
+                    ),
+                    lane_id="lane:EUR_USD:LONG",
+                    send=True,
+                    confirm_live=True,
+                )
+
+                self.assertEqual(summary.status, "BLOCKED")
+                self.assertFalse(summary.sent)
+                self.assertEqual(client.orders, [])
+                payload = json.loads((root / "request.json").read_text())
+                self.assertLessEqual(payload["risk_metrics"]["risk_jpy"], 300.0)
+                self.assertGreater(payload["attached_stop_risk_metrics"]["risk_jpy"], 300.0)
+                self.assertIn(
+                    "ATTACHED_STOP_LOSS_CAP_BELOW_MIN_LOT",
+                    {issue["code"] for issue in payload["risk_issues"]},
+                )
+        finally:
+            if prior_sl_free is None:
+                os.environ.pop("QR_TRADER_DISABLE_SL_REPAIR", None)
+            else:
+                os.environ["QR_TRADER_DISABLE_SL_REPAIR"] = prior_sl_free
+            if prior_initial_sl is None:
+                os.environ.pop("QR_NEW_ENTRY_INITIAL_SL", None)
+            else:
+                os.environ["QR_NEW_ENTRY_INITIAL_SL"] = prior_initial_sl
+
+    def test_batch_counts_attached_tail_risk_in_cumulative_portfolio_cap(self) -> None:
+        prior_sl_free = os.environ.get("QR_TRADER_DISABLE_SL_REPAIR")
+        prior_initial_sl = os.environ.get("QR_NEW_ENTRY_INITIAL_SL")
+        os.environ["QR_TRADER_DISABLE_SL_REPAIR"] = "1"
+        os.environ.pop("QR_NEW_ENTRY_INITIAL_SL", None)
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                client = FakeExecutionClient()
+                intents = _intents(
+                    root,
+                    metadata={
+                        "desk": "trend_trader",
+                        "campaign_role": "NOW",
+                        "disaster_sl": 1.17000,
+                    },
+                )
+                payload = json.loads(intents.read_text())
+                second = json.loads(json.dumps(payload["results"][0]))
+                second["lane_id"] = "lane:EUR_USD:LONG:reload"
+                second["intent"]["entry"] = 1.17360
+                second["intent"]["tp"] = 1.17480
+                second["intent"]["sl"] = 1.17280
+                payload["results"].append(second)
+                intents.write_text(json.dumps(payload))
+
+                summary = LiveOrderGateway(
+                    client=client,
+                    strategy_profile=_profile(root),
+                    output_path=root / "request.json",
+                    report_path=root / "report.md",
+                    max_loss_jpy=10_000.0,
+                    portfolio_loss_cap_jpy=800.0,
+                ).run_batch(
+                    intents_path=intents,
+                    lane_ids=("lane:EUR_USD:LONG", "lane:EUR_USD:LONG:reload"),
+                )
+
+                self.assertEqual(summary.status, "STAGED")
+                self.assertEqual(summary.sent_count, 0)
+                result = json.loads((root / "request.json").read_text())
+                self.assertEqual(result["staged_count"], 1)
+                self.assertEqual(result["blocked_count"], 1)
+                first, second = result["orders"]
+                self.assertEqual(first["status"], "STAGED")
+                self.assertGreater(
+                    first["attached_stop_risk_metrics"]["risk_jpy"],
+                    first["risk_metrics"]["risk_jpy"],
+                )
+                self.assertEqual(second["status"], "BLOCKED")
+                self.assertLessEqual(second["risk_metrics"]["risk_jpy"], 800.0)
+                self.assertIn(
+                    "ATTACHED_STOP_LOSS_CAP_BELOW_MIN_LOT",
+                    {issue["code"] for issue in second["risk_issues"]},
+                )
+        finally:
+            if prior_sl_free is None:
+                os.environ.pop("QR_TRADER_DISABLE_SL_REPAIR", None)
+            else:
+                os.environ["QR_TRADER_DISABLE_SL_REPAIR"] = prior_sl_free
+            if prior_initial_sl is None:
+                os.environ.pop("QR_NEW_ENTRY_INITIAL_SL", None)
+            else:
+                os.environ["QR_NEW_ENTRY_INITIAL_SL"] = prior_initial_sl
+
+    def test_gateway_clips_units_to_intent_metadata_loss_cap(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            client = FakeExecutionClient()
+            summary = LiveOrderGateway(
+                client=client,
+                strategy_profile=_profile(root),
+                output_path=root / "request.json",
+                report_path=root / "report.md",
+            ).run(
+                intents_path=_intents(
+                    root,
+                    units=3000,
+                    metadata={
+                        "desk": "trend_trader",
+                        "campaign_role": "NOW",
+                        "max_loss_jpy": 250.0,
+                    },
+                ),
+                lane_id="lane:EUR_USD:LONG",
+            )
+
+            self.assertEqual(summary.status, "STAGED")
+            payload = json.loads((root / "request.json").read_text())
+            scaled_units = int(payload["order_request"]["units"])
+            self.assertGreaterEqual(scaled_units, 1000)
+            self.assertLess(scaled_units, 3000)
+            self.assertEqual(payload["scaled_units"], scaled_units)
+            self.assertLessEqual(payload["risk_metrics"]["risk_jpy"], 250.0)
+            self.assertIn(
+                "SIZE_MULTIPLE_CLIPPED_TO_LOSS_CAP",
+                {issue["code"] for issue in payload["risk_issues"]},
+            )
+
     def test_stage_receipt_persists_market_context_evidence(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -1570,6 +1817,7 @@ def _intents(
     status: str = "LIVE_READY",
     metadata: dict[str, Any] | None = None,
     order_type: str = "STOP-ENTRY",
+    units: int = 1000,
 ) -> Path:
     path = root / "intents.json"
     path.write_text(
@@ -1584,7 +1832,7 @@ def _intents(
                             "pair": "EUR_USD",
                             "side": "LONG",
                             "order_type": order_type,
-                            "units": 1000,
+                            "units": units,
                             "entry": 1.17306 if order_type == "MARKET" else 1.17330,
                             "tp": 1.17450,
                             "sl": 1.17250,

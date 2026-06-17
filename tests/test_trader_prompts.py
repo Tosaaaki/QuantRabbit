@@ -2417,6 +2417,57 @@ class TraderPromptRouteTest(unittest.TestCase):
         self.assertTrue(any("predates refreshed broker snapshot" in reason for reason in route.reasons))
         self.assertTrue(any("position_management sidecar stale" in reason for reason in route.reasons))
 
+    def test_position_branch_preserves_pending_entry_risk_reason(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            base = datetime(2026, 1, 1, tzinfo=timezone.utc)
+            files = _fixtures(
+                root,
+                positions=[
+                    {
+                        "trade_id": "9001",
+                        "pair": "EUR_USD",
+                        "side": "LONG",
+                        "owner": "trader",
+                        "entry_price": 1.17,
+                        "take_profit": 1.172,
+                        "stop_loss": 1.168,
+                        "unrealized_pl_jpy": 30.0,
+                    }
+                ],
+            )
+            snapshot = json.loads(files["snapshot"].read_text())
+            snapshot["fetched_at_utc"] = (base + timedelta(minutes=1)).isoformat()
+            snapshot["orders"] = [
+                {
+                    "order_id": "472533",
+                    "pair": "CAD_CHF",
+                    "order_type": "LIMIT",
+                    "state": "PENDING",
+                    "units": 1000,
+                    "owner": "trader",
+                    "trade_id": None,
+                }
+            ]
+            files["snapshot"].write_text(json.dumps(snapshot))
+            files["position_management"].write_text(
+                json.dumps(
+                    {
+                        "generated_at_utc": base.isoformat(),
+                        "snapshot_fetched_at_utc": base.isoformat(),
+                        "action": "HOLD_PROTECTED",
+                        "positions": [{"trade_id": "9001", "action": "HOLD_PROTECTED"}],
+                    }
+                )
+            )
+
+            route = route_trader_prompts(**_route_paths(files), decision_response_path=None)
+
+        self.assertEqual(route.branch, BRANCH_POSITION)
+        self.assertTrue(any("position_management sidecar stale" in reason for reason in route.reasons))
+        self.assertTrue(any("trader pending entry order(s) occupy the gateway entry slot" in reason for reason in route.reasons))
+        self.assertTrue(any("472533" in reason for reason in route.reasons))
+
     def test_routes_rejected_decision_response_back_to_entry_branch(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

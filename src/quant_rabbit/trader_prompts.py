@@ -278,6 +278,7 @@ def route_trader_prompts(
             BRANCH_POSITION,
             (
                 *carry_reasons,
+                *pending_entry_reasons,
                 *position_sidecar_reasons,
                 *position_reasons,
                 *tp_rebalance_reasons,

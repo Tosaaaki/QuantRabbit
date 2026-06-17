@@ -196,6 +196,31 @@ class LiveOrderGateway:
             size_multiple=size_multiple,
         )
         scale_issues.extend(loss_cap_scale_issues)
+        order_request, order_build_issues = _build_order_request(intent)
+        (
+            intent,
+            risk,
+            order_request,
+            attached_stop_metrics,
+            size_multiple,
+            attached_stop_scale_issues,
+            order_build_issues,
+        ) = self._clip_intent_to_attached_stop_cap(
+            intent=intent,
+            risk=risk,
+            snapshot=snapshot,
+            max_loss_jpy=max_loss_jpy,
+            portfolio_loss_cap=portfolio_loss_cap,
+            cumulative_risk_jpy=0.0,
+            validate_live_enabled=validate_live_enabled,
+            allow_basket_pending=False,
+            portfolio_position_cap=portfolio_position_cap,
+            requested_units=requested_units,
+            size_multiple=size_multiple,
+            order_request=order_request,
+            order_build_issues=order_build_issues,
+        )
+        scale_issues.extend(attached_stop_scale_issues)
         strategy_issues = tuple(
             issue.__dict__ for issue in StrategyProfile.load(self.strategy_profile).validate(intent, for_live_send=True)
         )
@@ -220,7 +245,6 @@ class LiveOrderGateway:
             or any(issue["severity"] == "BLOCK" for issue in send_issues)
             or any(issue.severity == "BLOCK" for issue in scale_issues)
         )
-        order_request, order_build_issues = _build_order_request(intent)
         all_blocked = all_blocked or any(issue["severity"] == "BLOCK" for issue in order_build_issues)
         response = None
         sent = False
@@ -273,7 +297,7 @@ class LiveOrderGateway:
             "order_request": order_request,
             "context_evidence": _context_evidence_from_intent(intent),
             "risk_metrics": asdict(risk.metrics) if risk.metrics else None,
-            "attached_stop_risk_metrics": _attached_stop_risk_metrics(intent, order_request, risk.metrics),
+            "attached_stop_risk_metrics": attached_stop_metrics,
             "risk_issues": [
                 *risk_issues,
                 *intent_status_issues,
@@ -298,7 +322,7 @@ class LiveOrderGateway:
             "quote_refresh_attempts": quote_refresh_attempts,
             "size_multiple": size_multiple,
             "requested_units": requested_units,
-            "scaled_units": scaled_units,
+            "scaled_units": intent.units,
             "portfolio_position_cap": portfolio_position_cap,
         }
         self._write_result(result)
@@ -441,13 +465,14 @@ class LiveOrderGateway:
                 seen_parent_lanes.add(parent_lane)
                 accepted_pair_sides.setdefault(candidate_intent.pair, candidate_intent.side)
                 metrics = item_result.get("risk_metrics") if isinstance(item_result.get("risk_metrics"), dict) else {}
-                accepted_risk_jpy += float(metrics.get("risk_jpy") or 0.0)
+                receipt_risk_jpy = _receipt_risk_jpy(item_result)
+                accepted_risk_jpy += receipt_risk_jpy
                 accepted_margin_jpy += float(metrics.get("estimated_margin_jpy") or 0.0)
                 # Dry-run staged orders are not visible in broker truth, so
                 # carry them synthetically. Live sends are verified against the
                 # next fresh broker snapshot to avoid double-counting margin.
                 if not item_result.get("sent"):
-                    validation_cumulative_risk_jpy += float(metrics.get("risk_jpy") or 0.0)
+                    validation_cumulative_risk_jpy += receipt_risk_jpy
                     validation_cumulative_margin_jpy += float(metrics.get("estimated_margin_jpy") or 0.0)
                 geometry_key = item_result.get("geometry_key")
                 if geometry_key:
@@ -587,6 +612,31 @@ class LiveOrderGateway:
                         portfolio_position_cap=portfolio_position_cap or _portfolio_position_cap_from_state(),
                     )
                     size_multiple *= scale_multiple
+        order_request, order_build_issues = _build_order_request(intent)
+        (
+            intent,
+            risk,
+            order_request,
+            attached_stop_metrics,
+            size_multiple,
+            attached_stop_scale_issues,
+            order_build_issues,
+        ) = self._clip_intent_to_attached_stop_cap(
+            intent=intent,
+            risk=risk,
+            snapshot=snapshot,
+            max_loss_jpy=max_loss_jpy,
+            portfolio_loss_cap=portfolio_loss_cap,
+            cumulative_risk_jpy=cumulative_risk_jpy,
+            validate_live_enabled=validate_live_enabled,
+            allow_basket_pending=allow_basket_pending,
+            portfolio_position_cap=portfolio_position_cap or _portfolio_position_cap_from_state(),
+            requested_units=requested_units,
+            size_multiple=size_multiple,
+            order_request=order_request,
+            order_build_issues=order_build_issues,
+        )
+        scale_issues.extend(attached_stop_scale_issues)
         strategy_issues = tuple(
             issue.__dict__ for issue in StrategyProfile.load(self.strategy_profile).validate(intent, for_live_send=True)
         )
@@ -624,7 +674,6 @@ class LiveOrderGateway:
             or any(issue["severity"] == "BLOCK" for issue in send_issues)
             or any(issue.severity == "BLOCK" for issue in scale_issues)
         )
-        order_request, order_build_issues = _build_order_request(intent)
         all_blocked = all_blocked or any(issue["severity"] == "BLOCK" for issue in order_build_issues)
         response = None
         sent = False
@@ -672,7 +721,7 @@ class LiveOrderGateway:
             "order_request": order_request,
             "context_evidence": _context_evidence_from_intent(intent),
             "risk_metrics": asdict(risk.metrics) if risk.metrics else None,
-            "attached_stop_risk_metrics": _attached_stop_risk_metrics(intent, order_request, risk.metrics),
+            "attached_stop_risk_metrics": attached_stop_metrics,
             "risk_issues": [
                 *risk_issues,
                 *intent_status_issues,
@@ -756,10 +805,11 @@ class LiveOrderGateway:
         size_multiple: float,
     ):
         metrics = risk.metrics
-        if metrics is None or metrics.risk_jpy <= max_loss_jpy:
+        effective_max_loss_jpy = _attached_stop_loss_cap_jpy(intent, max_loss_jpy) or max_loss_jpy
+        if metrics is None or metrics.risk_jpy <= effective_max_loss_jpy:
             issues: list[RiskIssue] = []
         else:
-            scale = _capacity_scale(abs(intent.units), metrics.risk_jpy, max_loss_jpy)
+            scale = _capacity_scale(abs(intent.units), metrics.risk_jpy, effective_max_loss_jpy)
             scaled_units, issues = _scaled_units(intent.units, scale, sub_min_lot_mode="block")
             if scaled_units is None:
                 return intent, risk, size_multiple, issues
@@ -780,7 +830,7 @@ class LiveOrderGateway:
                 RiskIssue(
                     "SIZE_MULTIPLE_CLIPPED_TO_LOSS_CAP",
                     f"scaled units {original_units}u would risk {metrics.risk_jpy:.0f} JPY "
-                    f"above cap {max_loss_jpy:.0f} JPY; clipped to {scaled_units}u.",
+                    f"above cap {effective_max_loss_jpy:.0f} JPY; clipped to {scaled_units}u.",
                     "WARN",
                 ),
                 *issues,
@@ -798,6 +848,97 @@ class LiveOrderGateway:
             size_multiple=size_multiple,
             prior_issues=issues,
         )
+
+    def _clip_intent_to_attached_stop_cap(
+        self,
+        *,
+        intent: OrderIntent,
+        risk,
+        snapshot: BrokerSnapshot,
+        max_loss_jpy: float,
+        portfolio_loss_cap: float | None,
+        cumulative_risk_jpy: float,
+        validate_live_enabled: bool,
+        allow_basket_pending: bool,
+        portfolio_position_cap: int,
+        requested_units: int,
+        size_multiple: float,
+        order_request: dict[str, Any] | None,
+        order_build_issues: list[dict[str, str]],
+    ):
+        metrics = risk.metrics
+        attached_stop = _attached_stop_risk_metrics(intent, order_request, metrics)
+        cap = _attached_stop_effective_loss_cap_jpy(
+            intent=intent,
+            policy_max_loss_jpy=max_loss_jpy,
+            snapshot=snapshot,
+            portfolio_loss_cap=portfolio_loss_cap,
+            cumulative_risk_jpy=cumulative_risk_jpy,
+        )
+        if (
+            metrics is None
+            or order_request is None
+            or attached_stop is None
+            or cap is None
+            or attached_stop["risk_jpy"] <= cap
+        ):
+            return intent, risk, order_request, attached_stop, size_multiple, [], order_build_issues
+
+        original_units = intent.units
+        original_attached_risk_jpy = float(attached_stop["risk_jpy"])
+        scale = _capacity_scale(abs(intent.units), original_attached_risk_jpy, cap)
+        scaled_units, scaled_issues = _scaled_units(intent.units, scale, sub_min_lot_mode="block")
+        if scaled_units is None:
+            return (
+                intent,
+                risk,
+                order_request,
+                attached_stop,
+                size_multiple,
+                [
+                    RiskIssue(
+                        "ATTACHED_STOP_LOSS_CAP_BELOW_MIN_LOT",
+                        f"attached broker SL risk {original_attached_risk_jpy:.0f} JPY exceeds effective "
+                        f"cap {cap:.0f} JPY, and fitting the cap would require a sub-"
+                        f"{MIN_PRODUCTION_LOT_UNITS}u order; skip this lane until current geometry "
+                        "or the broker-side catastrophe stop fits the production minimum lot.",
+                    )
+                ],
+                order_build_issues,
+            )
+
+        intent = replace(intent, units=scaled_units)
+        risk = self._validate_intent(
+            intent=intent,
+            snapshot=snapshot,
+            max_loss_jpy=max_loss_jpy,
+            portfolio_loss_cap=portfolio_loss_cap,
+            validate_live_enabled=validate_live_enabled,
+            allow_basket_pending=allow_basket_pending,
+            portfolio_position_cap=portfolio_position_cap,
+        )
+        if requested_units:
+            size_multiple = abs(scaled_units) / abs(requested_units)
+        order_request, order_build_issues = _build_order_request(intent)
+        attached_stop = _attached_stop_risk_metrics(intent, order_request, risk.metrics)
+        issues = [
+            RiskIssue(
+                "SIZE_MULTIPLE_CLIPPED_TO_ATTACHED_STOP_CAP",
+                f"attached broker SL risk {original_attached_risk_jpy:.0f} JPY for {original_units}u "
+                f"exceeded effective cap {cap:.0f} JPY; clipped to {scaled_units}u before staging.",
+                "WARN",
+            ),
+            *scaled_issues,
+        ]
+        if attached_stop is not None and attached_stop["risk_jpy"] > cap:
+            issues.append(
+                RiskIssue(
+                    "ATTACHED_STOP_LOSS_CAP_EXCEEDED",
+                    f"attached broker SL risk {attached_stop['risk_jpy']:.0f} JPY still exceeds "
+                    f"effective cap {cap:.0f} JPY after size clipping; block live send.",
+                )
+            )
+        return intent, risk, order_request, attached_stop, size_multiple, issues, order_build_issues
 
     def _clip_intent_to_pair_margin_cap(
         self,
@@ -1138,6 +1279,19 @@ def _blocked_batch_result(*, generated_at: str, selected: dict[str, Any], lane_i
         "requested_units": None,
         "scaled_units": None,
     }
+
+
+def _receipt_risk_jpy(result: dict[str, Any]) -> float:
+    metrics = result.get("risk_metrics") if isinstance(result.get("risk_metrics"), dict) else {}
+    attached_stop = (
+        result.get("attached_stop_risk_metrics")
+        if isinstance(result.get("attached_stop_risk_metrics"), dict)
+        else {}
+    )
+    return max(
+        _positive_float(metrics.get("risk_jpy")) or 0.0,
+        _positive_float(attached_stop.get("risk_jpy")) or 0.0,
+    )
 
 
 def _selected_parent_lane_key(selected: dict[str, Any], requested_lane_id: str | None) -> str:
@@ -1518,6 +1672,88 @@ def _attached_stop_risk_metrics(
         "risk_delta_jpy": risk_jpy - metrics.risk_jpy,
         "loss_delta_pips": loss_pips - metrics.loss_pips,
     }
+
+
+def _attached_stop_loss_cap_jpy(intent: OrderIntent, policy_max_loss_jpy: float | None) -> float | None:
+    """Return the effective cap for broker-attached stop risk.
+
+    RiskEngine validates `intent.sl` before the gateway builds an OANDA order.
+    In SL-free runtime the gateway may attach a farther catastrophe stop, so
+    the fillable broker order needs one more cap check against the same
+    machine-readable loss budget. This is not a new sizing policy; it prevents
+    the executable `stopLossOnFill` from exceeding the cap that made the intent
+    acceptable.
+    """
+
+    metadata = intent.metadata or {}
+    cap = _positive_float(metadata.get("max_loss_jpy"))
+    if cap is None:
+        cap = policy_max_loss_jpy if policy_max_loss_jpy is not None and policy_max_loss_jpy > 0 else None
+
+    asymmetry_cap = _loss_asymmetry_cap_from_metadata(metadata)
+    if asymmetry_cap is not None:
+        cap = asymmetry_cap if cap is None else min(cap, asymmetry_cap)
+    return cap
+
+
+def _attached_stop_effective_loss_cap_jpy(
+    *,
+    intent: OrderIntent,
+    policy_max_loss_jpy: float | None,
+    snapshot: BrokerSnapshot,
+    portfolio_loss_cap: float | None,
+    cumulative_risk_jpy: float,
+) -> float | None:
+    cap = _attached_stop_loss_cap_jpy(intent, policy_max_loss_jpy)
+    portfolio_remaining = _portfolio_loss_remaining_jpy(
+        snapshot=snapshot,
+        portfolio_loss_cap=portfolio_loss_cap,
+        cumulative_risk_jpy=cumulative_risk_jpy,
+    )
+    if portfolio_remaining is not None:
+        cap = portfolio_remaining if cap is None else min(cap, portfolio_remaining)
+    return cap
+
+
+def _portfolio_loss_remaining_jpy(
+    *,
+    snapshot: BrokerSnapshot,
+    portfolio_loss_cap: float | None,
+    cumulative_risk_jpy: float,
+) -> float | None:
+    if portfolio_loss_cap is None:
+        return None
+    pending_risk, _, pending_issue = _pending_risk_margin_jpy(snapshot)
+    open_risk, open_issue = _open_trader_position_risk_jpy(snapshot)
+    if pending_issue is not None or open_issue is not None:
+        return None
+    return max(0.0, portfolio_loss_cap - open_risk - pending_risk - max(0.0, cumulative_risk_jpy))
+
+
+def _loss_asymmetry_cap_from_metadata(metadata: dict[str, Any]) -> float | None:
+    status = str(metadata.get("capture_economics_status") or "").upper()
+    active = str(metadata.get("loss_asymmetry_guard_active") or "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+    avg_win = _positive_float(metadata.get("capture_avg_win_jpy"))
+    avg_loss = _positive_float(metadata.get("capture_avg_loss_jpy"))
+    if not active and not (status == "NEGATIVE_EXPECTANCY" and avg_win is not None and avg_loss is not None and avg_loss > avg_win):
+        return None
+    explicit_cap = _positive_float(metadata.get("loss_asymmetry_guard_loss_cap_jpy"))
+    if explicit_cap is not None:
+        return explicit_cap
+    return avg_win
+
+
+def _positive_float(value: object) -> float | None:
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        return None
+    return parsed if parsed > 0 else None
 
 
 def _attach_take_profit_on_fill(intent: OrderIntent) -> bool:
