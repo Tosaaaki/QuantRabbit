@@ -213,6 +213,16 @@ FORECAST_DIRECTIONAL_LIVE_MIN_SAMPLES = max(
     _env_optional_int("QR_FORECAST_DIRECTIONAL_LIVE_MIN_SAMPLES", None)
     or FORECAST_MARKET_SUPPORT_MIN_SAMPLES,
 )
+# Adverse-path calibration is the final detector's realized path truth. A
+# bucket that hits invalidation before target in a majority of calibrated
+# samples is unsafe even when its headline direction confidence is high; mirror
+# intent_generator/self_improvement_audit so gateway validation cannot be
+# weaker than intent construction.
+FORECAST_DIRECTIONAL_LIVE_MAX_INVALIDATION_FIRST_RATE = _env_float_or(
+    "QR_FORECAST_DIRECTIONAL_LIVE_MAX_INVALIDATION_FIRST_RATE",
+    0.60,
+    minimum=0.0,
+)
 
 
 _SPREAD_SESSION_MULTS: dict[str, float] = {
@@ -608,10 +618,76 @@ def _forecast_directional_hit_rate(metadata: dict, support: dict) -> tuple[float
 
 def _forecast_directional_bucket_is_known_weak(metadata: dict, support: dict) -> bool:
     hit_rate, samples, _ = _forecast_directional_hit_rate(metadata, support)
-    return (
+    weak_hit_rate = (
         hit_rate is not None
         and samples >= FORECAST_DIRECTIONAL_LIVE_MIN_SAMPLES
         and hit_rate < FORECAST_DIRECTIONAL_LIVE_MIN_HIT_RATE
+    )
+    invalidation_first_rate, _, _ = _forecast_directional_invalidation_first(metadata, support)
+    adverse_path = (
+        invalidation_first_rate is not None
+        and samples >= FORECAST_DIRECTIONAL_LIVE_MIN_SAMPLES
+        and invalidation_first_rate >= FORECAST_DIRECTIONAL_LIVE_MAX_INVALIDATION_FIRST_RATE
+    )
+    return weak_hit_rate or adverse_path
+
+
+def _forecast_directional_invalidation_first(metadata: dict, support: dict) -> tuple[float | None, int | None, str]:
+    invalidation_first_rate = _to_float(metadata.get("forecast_directional_invalidation_first_rate"))
+    if invalidation_first_rate is None:
+        invalidation_first_rate = _to_float(support.get("directional_invalidation_first_rate"))
+    invalidation_first_count = _to_int(metadata.get("forecast_directional_invalidation_first_count"))
+    if invalidation_first_count is None:
+        invalidation_first_count = _to_int(support.get("directional_invalidation_first_count"))
+    calibration_name = str(
+        metadata.get("forecast_directional_calibration_name")
+        or support.get("directional_calibration_name")
+        or "directional_forecast"
+    )
+    return invalidation_first_rate, invalidation_first_count, calibration_name
+
+
+def _forecast_directional_bucket_issue(
+    intent: OrderIntent,
+    *,
+    direction: str,
+    metadata: dict,
+    support: dict,
+) -> RiskIssue:
+    invalidation_first_rate, invalidation_first_count, calibration_name = _forecast_directional_invalidation_first(
+        metadata,
+        support,
+    )
+    _hit_rate, samples, hit_rate_calibration_name = _forecast_directional_hit_rate(metadata, support)
+    if (
+        invalidation_first_rate is not None
+        and samples >= FORECAST_DIRECTIONAL_LIVE_MIN_SAMPLES
+        and invalidation_first_rate >= FORECAST_DIRECTIONAL_LIVE_MAX_INVALIDATION_FIRST_RATE
+    ):
+        count_text = (
+            f"{invalidation_first_count}/{samples}"
+            if invalidation_first_count is not None
+            else f"{samples} sample(s)"
+        )
+        return RiskIssue(
+            "FORECAST_DIRECTIONAL_INVALIDATION_FIRST_FOR_LIVE",
+            (
+                f"{intent.pair} {intent.side.value} forecast {direction} bucket "
+                f"{calibration_name} touched invalidation before target in {count_text} "
+                f"sample(s) ({invalidation_first_rate:.2f}); this adverse-path bucket cannot "
+                "veto the opposite side or authorize live send without independent audited "
+                "projection support."
+            ),
+            severity="BLOCK",
+        )
+    return _forecast_directional_hit_rate_weak_issue(
+        intent,
+        direction=direction,
+        metadata=metadata
+        | {
+            "forecast_directional_calibration_name": hit_rate_calibration_name,
+        },
+        support=support,
     )
 
 
@@ -1286,6 +1362,12 @@ class RiskEngine:
             )
         )
         issues.extend(
+            self._forecast_directional_live_readiness_issues(
+                intent,
+                for_live_send=for_live_send,
+            )
+        )
+        issues.extend(
             self._forecast_geometry_issues(
                 intent,
                 entry_price=entry_price,
@@ -1654,7 +1736,7 @@ class RiskEngine:
                 return []
             if _forecast_directional_bucket_is_known_weak(metadata, support):
                 return [
-                    _forecast_directional_hit_rate_weak_issue(
+                    _forecast_directional_bucket_issue(
                         intent,
                         direction=direction,
                         metadata=metadata,
@@ -1686,6 +1768,39 @@ class RiskEngine:
                 f"({', '.join(details)}); only {forecast_side.value} may be sent while this "
                 "forecast is fresh.",
                 severity=severity,
+            )
+        ]
+
+    def _forecast_directional_live_readiness_issues(
+        self,
+        intent: OrderIntent,
+        *,
+        for_live_send: bool,
+    ) -> list[RiskIssue]:
+        if not for_live_send:
+            return []
+        metadata = intent.metadata or {}
+        direction = str(metadata.get("forecast_direction") or "").upper()
+        if direction not in {"UP", "DOWN"}:
+            return []
+        forecast_side = Side.LONG if direction == "UP" else Side.SHORT
+        if intent.side != forecast_side:
+            return []
+        support = _forecast_market_support(metadata)
+        if not _forecast_directional_bucket_is_known_weak(metadata, support):
+            return []
+        if _forecast_selected_direction_has_audited_support(
+            metadata,
+            support,
+            direction=direction,
+        ):
+            return []
+        return [
+            _forecast_directional_bucket_issue(
+                intent,
+                direction=direction,
+                metadata=metadata,
+                support=support,
             )
         ]
 

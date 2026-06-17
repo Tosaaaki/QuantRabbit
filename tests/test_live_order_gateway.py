@@ -538,6 +538,58 @@ class LiveOrderGatewayTest(unittest.TestCase):
             codes = {issue["code"] for issue in payload["risk_issues"]}
             self.assertIn("SELF_IMPROVEMENT_P0_BLOCKS_LIVE_ORDER", codes)
 
+    def test_forecast_adverse_path_blocks_live_order_staging(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            audit = root / "self_improvement.json"
+            audit.write_text(
+                json.dumps(
+                    {
+                        "root_cause_focus": {
+                            "primary": {
+                                "family": "FORECAST_ADVERSE_PATH",
+                                "confidence": "HIGH",
+                                "priority": "P1",
+                                "process_loop_streak": 16,
+                                "supporting_codes": [
+                                    "DIRECTIONAL_FORECAST_HIT_RATE_WEAK",
+                                    "DIRECTIONAL_FORECAST_INVALIDATION_FIRST_DOMINANT",
+                                ],
+                                "metrics": {
+                                    "directional_hit_rate": 0.261,
+                                    "invalidation_first_rate": 0.739,
+                                    "profit_factor": 0.891,
+                                },
+                            }
+                        },
+                        "findings": [
+                            {
+                                "priority": "P1",
+                                "layer": "forecast",
+                                "code": "DIRECTIONAL_FORECAST_HIT_RATE_WEAK",
+                                "message": "directional_forecast HIT rate is weak",
+                            }
+                        ],
+                    }
+                )
+            )
+            client = FakeExecutionClient()
+            summary = LiveOrderGateway(
+                client=client,
+                strategy_profile=_profile(root),
+                output_path=root / "request.json",
+                report_path=root / "report.md",
+                self_improvement_audit=audit,
+            ).run(intents_path=_intents(root), lane_id="lane:EUR_USD:LONG")
+
+            self.assertEqual(summary.status, "BLOCKED")
+            self.assertFalse(summary.sent)
+            self.assertEqual(client.orders, [])
+            payload = json.loads((root / "request.json").read_text())
+            codes = {issue["code"] for issue in payload["risk_issues"]}
+            self.assertIn("SELF_IMPROVEMENT_P0_BLOCKS_LIVE_ORDER", codes)
+            self.assertIn("SELF_IMPROVEMENT_FORECAST_ADVERSE_PATH", payload["risk_issues"][-1]["message"])
+
     def test_stale_prior_gpt_decision_p0_does_not_block_live_order_staging(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

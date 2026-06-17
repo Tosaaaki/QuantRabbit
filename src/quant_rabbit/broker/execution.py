@@ -42,6 +42,7 @@ from quant_rabbit.risk import (
     resolve_max_loss_jpy,
 )
 from quant_rabbit.risk import DEFAULT_SPECS, estimate_required_margin_jpy, margin_budget_jpy
+from quant_rabbit.self_improvement_guards import forecast_adverse_path_new_risk_blocker
 from quant_rabbit.strategy.intent_generator import (
     _daily_risk_budget_from_state,
     _expired_pending_projection_count,
@@ -1920,12 +1921,15 @@ def _self_improvement_gateway_issues(
             continue
         message = str(item.get("message") or code)
         blockers.append(f"{code}: {message}")
+    forecast_blocker = forecast_adverse_path_new_risk_blocker(payload)
+    if forecast_blocker is not None:
+        blockers.append(f"{forecast_blocker['code']}: {forecast_blocker['message']}")
     if not blockers:
         return []
     return [
         RiskIssue(
             "SELF_IMPROVEMENT_P0_BLOCKS_LIVE_ORDER",
-            "self-improvement P0 blocks new live entry risk: " + "; ".join(blockers[:3]),
+            "self-improvement blocks new live entry risk: " + "; ".join(blockers[:3]),
         ).__dict__
     ]
 

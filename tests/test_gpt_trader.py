@@ -591,6 +591,74 @@ class GPTTraderBrainTest(unittest.TestCase):
                 payload["input_packet"]["allowed_evidence_refs"],
             )
 
+    def test_rejects_trade_when_forecast_adverse_path_persists(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root)
+            files["self_improvement_audit"].write_text(
+                json.dumps(
+                    {
+                        "generated_at_utc": datetime.now(timezone.utc).isoformat(),
+                        "status": "SELF_IMPROVEMENT_BLOCKED",
+                        "p0_findings": 0,
+                        "p1_findings": 3,
+                        "p2_findings": 0,
+                        "root_cause_focus": {
+                            "primary": {
+                                "family": "FORECAST_ADVERSE_PATH",
+                                "confidence": "HIGH",
+                                "priority": "P1",
+                                "process_loop_streak": 16,
+                                "supporting_codes": [
+                                    "DIRECTIONAL_FORECAST_HIT_RATE_WEAK",
+                                    "DIRECTIONAL_FORECAST_INVALIDATION_FIRST_DOMINANT",
+                                ],
+                                "metrics": {
+                                    "directional_hit_rate": 0.261,
+                                    "invalidation_first_rate": 0.739,
+                                    "profit_factor": 0.891,
+                                },
+                                "next_action": "Repair directional forecast buckets before expanding exposure.",
+                            }
+                        },
+                        "findings": [
+                            {
+                                "priority": "P1",
+                                "layer": "forecast",
+                                "code": "DIRECTIONAL_FORECAST_HIT_RATE_WEAK",
+                                "message": "directional_forecast HIT rate is weak",
+                            }
+                        ],
+                    }
+                )
+            )
+            decision = _trade_decision()
+            decision["evidence_refs"].extend(
+                [
+                    "self_improvement:audit",
+                    "self_improvement:forecast",
+                    "self_improvement:root_cause:FORECAST_ADVERSE_PATH",
+                    "self_improvement:finding:DIRECTIONAL_FORECAST_HIT_RATE_WEAK",
+                ]
+            )
+            brain = _brain(root, files, decision)
+
+            summary = brain.run(snapshot_path=files["snapshot"])
+
+            self.assertEqual(summary.status, "REJECTED")
+            payload = json.loads((root / "gpt_decision.json").read_text())
+            codes = {issue["code"] for issue in payload["verification_issues"]}
+            self.assertIn("SELF_IMPROVEMENT_P0_BLOCKS_TRADE", codes)
+            packet = payload["input_packet"]["self_improvement_audit"]
+            self.assertEqual(
+                packet["new_risk_blockers"][0]["code"],
+                "SELF_IMPROVEMENT_FORECAST_ADVERSE_PATH",
+            )
+            self.assertIn(
+                "self_improvement:root_cause:FORECAST_ADVERSE_PATH",
+                payload["input_packet"]["allowed_evidence_refs"],
+            )
+
     def test_allows_trade_when_only_self_improvement_p0_is_stale_prior_gpt_decision(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

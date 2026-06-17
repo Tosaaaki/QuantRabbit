@@ -113,6 +113,7 @@ REPEATED_REPAIR_LOOP_CODE = "REPEATED_SELF_IMPROVEMENT_LOOP"
 ROOT_CAUSE_CODE = "ROOT_CAUSE_FOCUS"
 ROOT_CAUSE_PRIORITY_WEIGHTS = {"P0": 100.0, "P1": 30.0, "P2": 10.0}
 ROOT_CAUSE_CODE_BOOSTS = {
+    "DIRECTIONAL_FORECAST_ENTRY_GRADE_SAMPLE_SHORTFALL": 65.0,
     "DIRECTIONAL_FORECAST_INVALIDATION_FIRST_DOMINANT": 90.0,
     "DIRECTIONAL_FORECAST_HIT_RATE_WEAK": 70.0,
     "DIRECTIONAL_FORECAST_BUCKET_HIT_RATE_WEAK": 55.0,
@@ -223,6 +224,13 @@ FORECAST_TARGET_TIMEOUT_WARN_ABOVE = min(
 FORECAST_CALIBRATION_MIN_COVERAGE = min(
     1.0,
     _env_nonnegative_float("QR_SELF_IMPROVEMENT_FORECAST_CALIBRATION_MIN_COVERAGE", 0.5),
+)
+# Use the same confidence floor as the live-entry forecaster. Rows below this
+# are watch-only telemetry: important for coverage diagnostics, but not proof
+# that entry-grade directional forecasts are weak.
+FORECAST_ENTRY_GRADE_CONFIDENCE_MIN = _env_nonnegative_float(
+    "QR_FORECAST_ENTRY_CONFIDENCE_MIN",
+    0.55,
 )
 
 

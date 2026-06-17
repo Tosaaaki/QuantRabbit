@@ -406,6 +406,89 @@ class RiskEngineTest(unittest.TestCase):
         self.assertFalse(live.allowed)
         self.assertEqual(live_codes["FORECAST_DIRECTIONAL_HIT_RATE_WEAK_FOR_LIVE"], "BLOCK")
 
+    def test_adverse_path_directional_bucket_blocks_same_side_live_send(self) -> None:
+        intent = OrderIntent(
+            pair="EUR_USD",
+            side=Side.LONG,
+            order_type=OrderType.MARKET,
+            units=1000,
+            tp=1.17554,
+            sl=1.17234,
+            thesis="long_forecast_hits_invalidation_first_too_often",
+            market_context=MarketContext(
+                regime="TREND_CONTINUATION pullback",
+                narrative="upside continuation after pullback",
+                chart_story="higher low holds with buyers returning",
+                method=TradeMethod.TREND_CONTINUATION,
+                invalidation="support shelf breaks on M5 close",
+            ),
+            metadata={
+                "forecast_direction": "UP",
+                "forecast_confidence": 0.82,
+                "forecast_raw_confidence": 0.91,
+                "forecast_directional_calibration_name": "directional_forecast_up",
+                "forecast_directional_hit_rate": 0.72,
+                "forecast_directional_samples": 20,
+                "forecast_directional_invalidation_first_rate": 0.75,
+                "forecast_directional_invalidation_first_count": 15,
+                "forecast_market_support": {
+                    "ok": False,
+                    "direction": "UP",
+                    "aligned_projection_count": 0,
+                    "best_hit_rate": None,
+                    "best_samples": 0,
+                },
+            },
+        )
+
+        live = _capped_engine(live_enabled=True).validate(intent, snapshot(), for_live_send=True)
+
+        live_codes = {issue.code: issue.severity for issue in live.issues}
+        self.assertFalse(live.allowed)
+        self.assertEqual(live_codes["FORECAST_DIRECTIONAL_INVALIDATION_FIRST_FOR_LIVE"], "BLOCK")
+
+    def test_adverse_path_directional_bucket_does_not_become_direction_veto(self) -> None:
+        intent = OrderIntent(
+            pair="EUR_USD",
+            side=Side.SHORT,
+            order_type=OrderType.MARKET,
+            units=1000,
+            tp=1.17100,
+            sl=1.17500,
+            thesis="short_retest_after_adverse_path_up_bucket",
+            market_context=MarketContext(
+                regime="BREAKOUT_FAILURE rejection retest",
+                narrative="failed upside break rejects at resistance",
+                chart_story="failed break retest with seller response",
+                method=TradeMethod.BREAKOUT_FAILURE,
+                invalidation="resistance recaptures on M5 bodies",
+            ),
+            metadata={
+                "forecast_direction": "UP",
+                "forecast_confidence": 0.82,
+                "forecast_raw_confidence": 0.91,
+                "forecast_directional_calibration_name": "directional_forecast_up",
+                "forecast_directional_hit_rate": 0.72,
+                "forecast_directional_samples": 20,
+                "forecast_directional_invalidation_first_rate": 0.75,
+                "forecast_directional_invalidation_first_count": 15,
+                "forecast_market_support": {
+                    "ok": False,
+                    "direction": "UP",
+                    "aligned_projection_count": 0,
+                    "best_hit_rate": None,
+                    "best_samples": 0,
+                },
+            },
+        )
+
+        live = _capped_engine(live_enabled=True).validate(intent, snapshot(), for_live_send=True)
+
+        live_codes = {issue.code: issue.severity for issue in live.issues}
+        self.assertNotIn("FORECAST_DIRECTION_CONFLICT", live_codes)
+        self.assertFalse(live.allowed)
+        self.assertEqual(live_codes["FORECAST_DIRECTIONAL_INVALIDATION_FIRST_FOR_LIVE"], "BLOCK")
+
     def test_supported_low_confidence_opposite_forecast_still_blocks_this_side(self) -> None:
         intent = OrderIntent(
             pair="EUR_USD",

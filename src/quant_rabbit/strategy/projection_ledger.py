@@ -105,6 +105,17 @@ RANGE_FORECAST_BREAKOUT_TOLERANCE_ATR_MULT = float(
 if RANGE_FORECAST_BREAKOUT_TOLERANCE_ATR_MULT < 0:
     raise ValueError("QR_RANGE_FORECAST_BREAKOUT_TOLERANCE_ATR_MULT must be non-negative")
 
+# Calibration should learn from forecasts that were strong enough to matter for
+# live entry. Low-confidence UP/DOWN rows are still useful audit telemetry, but
+# letting them train `directional_forecast_up/down` drags entry-grade forecasts
+# into a watch-only failure pool. This value mirrors directional_forecaster's
+# live-entry confidence floor through the same environment variable.
+DIRECTIONAL_FORECAST_ENTRY_GRADE_CONFIDENCE_MIN = float(
+    os.environ.get("QR_FORECAST_ENTRY_CONFIDENCE_MIN", "0.55")
+)
+if DIRECTIONAL_FORECAST_ENTRY_GRADE_CONFIDENCE_MIN < 0:
+    raise ValueError("QR_FORECAST_ENTRY_CONFIDENCE_MIN must be non-negative")
+
 
 @dataclass
 class LedgerEntry:
@@ -1265,6 +1276,8 @@ def _directional_forecast_timing_penalty_eligible(entry: LedgerEntry) -> bool:
         return False
     if str(entry.direction or "").upper() not in {"UP", "DOWN"}:
         return False
+    if not _directional_forecast_entry_grade(entry):
+        return False
     if entry.predicted_target_price is None or entry.predicted_invalidation_price is None:
         return False
     if entry.resolution_status == "TIMEOUT":
@@ -1328,6 +1341,8 @@ def _calibration_entry_eligible(entry: LedgerEntry) -> bool:
     if entry.signal_name == "directional_forecast":
         direction = str(entry.direction or "").upper()
         if direction in {"UP", "DOWN"}:
+            if not _directional_forecast_entry_grade(entry):
+                return False
             if _directional_forecast_target_timeout_like(entry):
                 return False
             return (
@@ -1340,6 +1355,19 @@ def _calibration_entry_eligible(entry: LedgerEntry) -> bool:
                 and entry.predicted_range_high_price is not None
             )
     return True
+
+
+def _directional_forecast_entry_grade(entry: LedgerEntry) -> bool:
+    """Whether a final UP/DOWN forecast was strong enough for live calibration.
+
+    Watch-only rows below the live-entry confidence floor remain in the append
+    ledger for audit, but they must not train the entry-grade confidence bucket.
+    """
+    try:
+        confidence = float(entry.confidence)
+    except (TypeError, ValueError):
+        return True
+    return confidence >= DIRECTIONAL_FORECAST_ENTRY_GRADE_CONFIDENCE_MIN
 
 
 def _directional_forecast_target_timeout_like(entry: LedgerEntry) -> bool:

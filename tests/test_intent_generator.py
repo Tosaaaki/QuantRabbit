@@ -6196,6 +6196,74 @@ class IntentGeneratorTest(unittest.TestCase):
                 )
             )
 
+    def test_self_improvement_forecast_adverse_path_blocks_fresh_live_ready_generation(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            data_root = root / "data"
+            data_root.mkdir()
+            (data_root / "self_improvement_audit.json").write_text(
+                json.dumps(
+                    {
+                        "generated_at_utc": datetime.now(timezone.utc).isoformat(),
+                        "root_cause_focus": {
+                            "primary": {
+                                "family": "FORECAST_ADVERSE_PATH",
+                                "confidence": "HIGH",
+                                "priority": "P1",
+                                "process_loop_streak": 16,
+                                "supporting_codes": [
+                                    "DIRECTIONAL_FORECAST_HIT_RATE_WEAK",
+                                    "DIRECTIONAL_FORECAST_INVALIDATION_FIRST_DOMINANT",
+                                ],
+                                "metrics": {
+                                    "directional_hit_rate": 0.261,
+                                    "invalidation_first_rate": 0.739,
+                                    "profit_factor": 0.891,
+                                },
+                            }
+                        },
+                        "findings": [
+                            {
+                                "priority": "P1",
+                                "layer": "forecast",
+                                "code": "DIRECTIONAL_FORECAST_HIT_RATE_WEAK",
+                                "message": "directional_forecast HIT rate is weak",
+                            }
+                        ],
+                    }
+                )
+            )
+            output = root / "intents.json"
+
+            summary = IntentGenerator(
+                campaign_plan=_campaign(root),
+                strategy_profile=_strategy(root, status="CANDIDATE"),
+                output_path=output,
+                report_path=root / "intents.md",
+                pair_charts_path=_pair_charts(root),
+                data_root=data_root,
+                max_loss_jpy=500.0,
+            ).run(snapshot_path=_snapshot(root))
+
+            payload = json.loads(output.read_text())
+            issue_codes = {
+                issue["code"]
+                for item in payload["results"]
+                for issue in item["risk_issues"]
+            }
+
+            self.assertEqual(summary.live_ready, 0)
+            self.assertTrue(payload["results"])
+            self.assertTrue(all(item["status"] == "DRY_RUN_BLOCKED" for item in payload["results"]))
+            self.assertIn("SELF_IMPROVEMENT_FORECAST_ADVERSE_PATH", issue_codes)
+            self.assertTrue(
+                any(
+                    "persistent high-confidence forecast adverse path" in blocker
+                    for item in payload["results"]
+                    for blocker in item["live_blockers"]
+                )
+            )
+
     def test_sizes_units_with_percentage_risk_cap(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

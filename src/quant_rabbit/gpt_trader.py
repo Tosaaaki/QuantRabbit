@@ -946,6 +946,7 @@ from quant_rabbit.instruments import (
     instrument_pip_factor,
 )
 from quant_rabbit.risk import RiskPolicy, _spread_session_multiplier_from_tag
+from quant_rabbit.self_improvement_guards import forecast_adverse_path_new_risk_blocker
 from quant_rabbit.strategy.entry_thesis_ledger import (
     invalidation_price_hit_reason,
     technical_invalidation_confirmation_reason,
@@ -2901,6 +2902,17 @@ def _allowed_refs(
                     refs.append(ref)
     if self_improvement_audit:
         refs.extend(["self_improvement:audit", "self_improvement:profitability"])
+        root_focus = (
+            self_improvement_audit.get("root_cause_focus")
+            if isinstance(self_improvement_audit.get("root_cause_focus"), dict)
+            else {}
+        )
+        primary_root = (
+            root_focus.get("primary") if isinstance(root_focus.get("primary"), dict) else {}
+        )
+        root_family = str(primary_root.get("family") or "").strip()
+        if root_family:
+            refs.append(f"self_improvement:root_cause:{root_family}")
         for finding in self_improvement_audit.get("findings", []) or []:
             if not isinstance(finding, dict):
                 continue
@@ -3522,6 +3534,7 @@ def _self_improvement_audit_packet(payload: dict[str, Any] | None) -> dict[str, 
             "p0_findings": 0,
             "p0_blockers": [],
             "profitability_blockers": [],
+            "new_risk_blockers": [],
         }
     blockers: list[dict[str, Any]] = []
     p0_blockers: list[dict[str, Any]] = []
@@ -3562,6 +3575,10 @@ def _self_improvement_audit_packet(payload: dict[str, Any] | None) -> dict[str, 
                     "worst_segments": list(system_evidence.get("worst_segments", []) or [])[:5],
                 }
             )
+    new_risk_blockers: list[dict[str, Any]] = []
+    forecast_blocker = forecast_adverse_path_new_risk_blocker(payload)
+    if forecast_blocker is not None:
+        new_risk_blockers.append(forecast_blocker)
     return {
         "evidence_ref": "self_improvement:audit",
         "generated_at_utc": payload.get("generated_at_utc"),
@@ -3582,6 +3599,7 @@ def _self_improvement_audit_packet(payload: dict[str, Any] | None) -> dict[str, 
         ),
         "p0_blockers": p0_blockers,
         "profitability_blockers": blockers,
+        "new_risk_blockers": new_risk_blockers,
     }
 
 
@@ -4431,7 +4449,11 @@ def _self_improvement_trade_blockers(
         _parse_utc(decision_generated_at_utc) if decision_generated_at_utc else None
     )
     out: list[str] = []
-    blockers = audit.get("p0_blockers", []) or audit.get("profitability_blockers", []) or []
+    blockers = (
+        list(audit.get("p0_blockers", []) or [])
+        + list(audit.get("profitability_blockers", []) or [])
+        + list(audit.get("new_risk_blockers", []) or [])
+    )
     for blocker in blockers:
         if not isinstance(blocker, dict):
             continue
