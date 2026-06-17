@@ -66,6 +66,8 @@ from quant_rabbit.paths import (
     DEFAULT_DRY_RUN_CERTIFICATION_REPORT,
     DEFAULT_EXECUTION_LEDGER_DB,
     DEFAULT_EXECUTION_LEDGER_REPORT,
+    DEFAULT_EXECUTION_TIMING_AUDIT,
+    DEFAULT_EXECUTION_TIMING_AUDIT_REPORT,
     DEFAULT_VERIFICATION_LEDGER,
     DEFAULT_VERIFICATION_LEDGER_REPORT,
     DEFAULT_EXECUTION_REPLAY,
@@ -1767,6 +1769,7 @@ def _cycle_refresh_steps(daily_risk_pct: str) -> list[dict[str, Any]]:
         {"argv": ["ai-attack-advice"], "required": False},
         {"argv": ["learning-audit"], "required": False},
         {"argv": ["capture-economics"], "required": False},
+        {"argv": ["execution-timing-audit", "--lookback-hours", "24", "--max-events", "80"], "required": False},
         {"argv": ["manual-market-context-audit"], "required": False},
         {"argv": ["operator-precedent-audit"], "required": False},
         {"argv": ["verification-ledger-audit"], "required": False},
@@ -2059,6 +2062,23 @@ def _cycle_digest(*, kind: str, step_results: list[dict[str, Any]], aborted: boo
             "payoff_ratio": overall.get("payoff_ratio"),
             "breakeven_payoff_at_win_rate": overall.get("breakeven_payoff_at_win_rate"),
             "expectancy_jpy_per_trade": overall.get("expectancy_jpy_per_trade"),
+        }
+
+    timing = _read_json_quiet(DEFAULT_EXECUTION_TIMING_AUDIT)
+    if isinstance(timing, dict):
+        summary = timing.get("summary") or {}
+        digest["execution_timing_audit"] = {
+            "status": timing.get("status"),
+            "canceled_orders_audited": summary.get("canceled_orders_audited"),
+            "canceled_entry_touched_after_cancel": summary.get("canceled_entry_touched_after_cancel"),
+            "canceled_positive_after_cancel_entry": summary.get("canceled_positive_after_cancel_entry"),
+            "canceled_tp_touched_after_cancel": summary.get("canceled_tp_touched_after_cancel"),
+            "canceled_estimated_missed_mfe_jpy": summary.get("canceled_estimated_missed_mfe_jpy"),
+            "loss_closes_audited": summary.get("loss_closes_audited"),
+            "loss_closes_had_positive_mfe": summary.get("loss_closes_had_positive_mfe"),
+            "loss_closes_tp_touched_before_close": summary.get("loss_closes_tp_touched_before_close"),
+            "loss_close_estimated_mfe_jpy": summary.get("loss_close_estimated_mfe_jpy"),
+            "avg_decision_lag_minutes_after_first_positive": summary.get("avg_decision_lag_minutes_after_first_positive"),
         }
 
     operator_precedent = _read_json_quiet(DEFAULT_OPERATOR_PRECEDENT_AUDIT)
@@ -2851,6 +2871,19 @@ def main(argv: list[str] | None = None) -> int:
     p_capture.add_argument("--output", type=Path, default=None)
     p_capture.add_argument("--report", type=Path, default=None)
 
+    p_timing = sub.add_parser(
+        "execution-timing-audit",
+        help="Audit canceled-entry and losing-close timing regret from execution ledger plus bid/ask candles.",
+    )
+    p_timing.add_argument("--execution-ledger-db", type=Path, default=DEFAULT_EXECUTION_LEDGER_DB)
+    p_timing.add_argument("--snapshot", type=Path, default=DEFAULT_BROKER_SNAPSHOT)
+    p_timing.add_argument("--output", type=Path, default=DEFAULT_EXECUTION_TIMING_AUDIT)
+    p_timing.add_argument("--report", type=Path, default=DEFAULT_EXECUTION_TIMING_AUDIT_REPORT)
+    p_timing.add_argument("--lookback-hours", type=float, default=168.0)
+    p_timing.add_argument("--post-cancel-hours", type=float, default=6.0)
+    p_timing.add_argument("--granularity", default="M1")
+    p_timing.add_argument("--max-events", type=int, default=None)
+
     p_precedent = sub.add_parser(
         "operator-precedent-audit",
         help="Audit the 2025 manual success precedent against current live-ready lanes.",
@@ -2949,6 +2982,35 @@ def main(argv: list[str] | None = None) -> int:
                     "payoff_ratio": summary.payoff_ratio,
                     "breakeven_payoff": summary.breakeven_payoff,
                     "expectancy_jpy": summary.expectancy_jpy,
+                },
+                ensure_ascii=False,
+                indent=2,
+                sort_keys=True,
+            )
+        )
+        return 0
+
+    if args.command == "execution-timing-audit":
+        from quant_rabbit.execution_timing_audit import build_execution_timing_audit
+
+        payload = build_execution_timing_audit(
+            ledger_path=args.execution_ledger_db,
+            snapshot_path=args.snapshot,
+            output_path=args.output,
+            report_path=args.report,
+            lookback_hours=args.lookback_hours,
+            post_cancel_hours=args.post_cancel_hours,
+            granularity=args.granularity,
+            max_events=args.max_events,
+        )
+        print(
+            json.dumps(
+                {
+                    "output_path": str(args.output),
+                    "report_path": str(args.report),
+                    "status": payload.get("status"),
+                    "summary": payload.get("summary"),
+                    "fetch_errors": len(payload.get("fetch_errors") or []),
                 },
                 ensure_ascii=False,
                 indent=2,

@@ -103,7 +103,7 @@ PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli trader-prompt-route
 # market-context-matrix → mine-market-stories → news-health --strict →
 # daily-review → tp-rebalance → verify-projections → broker-snapshot →
 # daily-target-state → generate-intents --reuse-market-artifacts → optimize-coverage → ai-attack-advice →
-# learning/capture/manual-market-context/operator-precedent/verification audits →
+# learning/capture/execution-timing/manual-market-context/operator-precedent/verification audits →
 # generate-predictive-limits → position sidecars → memory-health →
 # self-improvement-audit) in one
 # process, in the same order and with the same arguments the per-step
