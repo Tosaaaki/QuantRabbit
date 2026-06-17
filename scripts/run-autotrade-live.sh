@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+readonly SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 readonly ROOT_DIR="${QR_TRADER_ROOT_DIR:-/Users/tossaki/App/QuantRabbit-live}"
 cd "$ROOT_DIR"
 
@@ -77,38 +78,22 @@ export QR_REQUIRE_FORECAST_FOR_LIVE="${QR_REQUIRE_FORECAST_FOR_LIVE:-1}"
 export QR_REQUIRE_TELEMETRY_FOR_LIVE="${QR_REQUIRE_TELEMETRY_FOR_LIVE:-1}"
 
 readonly QR_AUTOTRADE_LOCK_DIR="${QR_AUTOTRADE_LOCK_DIR:-${ROOT_DIR}/.quant_rabbit_live.lock}"
+readonly QR_AUTOTRADE_LOCK_WAIT_SECONDS="${QR_AUTOTRADE_LOCK_WAIT_SECONDS:-180}"
+readonly QR_AUTOTRADE_LOCK_WAIT_COMMAND_PATTERN="${QR_AUTOTRADE_LOCK_WAIT_COMMAND_PATTERN:-run-position-guardian-live.sh}"
+readonly QR_AUTOTRADE_LOCK_POLL_SECONDS="${QR_AUTOTRADE_LOCK_POLL_SECONDS:-2}"
 readonly QR_LIVE_SYNC_ENABLED="${QR_LIVE_SYNC_ENABLED:-1}"
 readonly DEFAULT_SYNC_DEV_ROOT="/Users/tossaki/App/QuantRabbit"
 readonly DEFAULT_SYNC_MAIN_BRANCH="main"
 
+source "${SCRIPT_DIR}/qr-live-lock.sh"
+
 acquire_lock() {
-  if mkdir "$QR_AUTOTRADE_LOCK_DIR" 2>/dev/null; then
-    printf '%s\n' "$$" > "${QR_AUTOTRADE_LOCK_DIR}/pid"
-    export QR_AUTOTRADE_LOCK_HELD=1
-    trap 'rm -rf "$QR_AUTOTRADE_LOCK_DIR"' EXIT INT TERM
-    return 0
-  fi
-
-  local existing_pid=""
-  if [[ -f "${QR_AUTOTRADE_LOCK_DIR}/pid" ]]; then
-    existing_pid="$(cat "${QR_AUTOTRADE_LOCK_DIR}/pid" 2>/dev/null || true)"
-  fi
-  if [[ -n "$existing_pid" ]] && kill -0 "$existing_pid" 2>/dev/null; then
-    echo "[run-autotrade-live] another autotrade cycle is already running pid=${existing_pid}; refusing overlap." >&2
-    exit 75
-  fi
-
-  echo "[run-autotrade-live] removing stale lock: ${QR_AUTOTRADE_LOCK_DIR}" >&2
-  rm -rf "$QR_AUTOTRADE_LOCK_DIR"
-  if mkdir "$QR_AUTOTRADE_LOCK_DIR" 2>/dev/null; then
-    printf '%s\n' "$$" > "${QR_AUTOTRADE_LOCK_DIR}/pid"
-    export QR_AUTOTRADE_LOCK_HELD=1
-    trap 'rm -rf "$QR_AUTOTRADE_LOCK_DIR"' EXIT INT TERM
-    return 0
-  fi
-
-  echo "[run-autotrade-live] failed to acquire autotrade lock: ${QR_AUTOTRADE_LOCK_DIR}" >&2
-  exit 75
+  qr_live_lock_acquire \
+    "$QR_AUTOTRADE_LOCK_DIR" \
+    "run-autotrade-live" \
+    "$QR_AUTOTRADE_LOCK_WAIT_SECONDS" \
+    "$QR_AUTOTRADE_LOCK_WAIT_COMMAND_PATTERN" \
+    "$QR_AUTOTRADE_LOCK_POLL_SECONDS"
 }
 
 is_report_path() {

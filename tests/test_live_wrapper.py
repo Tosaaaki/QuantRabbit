@@ -250,6 +250,78 @@ class LiveWrapperTest(unittest.TestCase):
             self.assertFalse(capture.exists())
             self.assertIn("another autotrade cycle is already running", result.stderr)
 
+    def test_live_send_waits_for_position_guardian_lock_then_runs(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            capture = root / "capture.json"
+            env = _wrapper_env(root, capture, live_enabled="1")
+            env["QR_RUN_POST_GATEWAY_SIDECARS"] = "0"
+            env["QR_AUTOTRADE_LOCK_WAIT_SECONDS"] = "5"
+            env["QR_AUTOTRADE_LOCK_POLL_SECONDS"] = "0.1"
+            holder = root / "run-position-guardian-live.sh"
+            holder.write_text("#!/usr/bin/env bash\nsleep 1\n")
+            holder.chmod(0o755)
+            proc = subprocess.Popen([str(holder)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            try:
+                lock_dir = root / "lock"
+                lock_dir.mkdir()
+                (lock_dir / "pid").write_text(f"{proc.pid}\n")
+
+                result = subprocess.run(
+                    ["bash", str(WRAPPER), "--send"],
+                    env=env,
+                    text=True,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    check=False,
+                )
+            finally:
+                try:
+                    proc.wait(timeout=2)
+                except subprocess.TimeoutExpired:
+                    proc.terminate()
+                    proc.wait(timeout=2)
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertTrue(capture.exists())
+            self.assertIn("waiting up to 5s", result.stderr)
+            self.assertIn("removing defunct lock holder", result.stderr)
+
+    def test_live_lock_release_preserves_reacquired_lock_token(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            lock_dir = root / "lock"
+            env = os.environ.copy()
+            env.update(
+                {
+                    "QR_HELPER": str(ROOT / "scripts" / "qr-live-lock.sh"),
+                    "QR_LOCK_DIR": str(lock_dir),
+                }
+            )
+
+            result = subprocess.run(
+                [
+                    "bash",
+                    "-c",
+                    (
+                        "set -euo pipefail; "
+                        "source \"$QR_HELPER\"; "
+                        "qr_live_lock_acquire \"$QR_LOCK_DIR\" test-lock 0 '' 0.1; "
+                        "printf '%s\\n' other-token > \"$QR_LOCK_DIR/token\"; "
+                        "qr_live_lock_release; "
+                        "test -d \"$QR_LOCK_DIR\""
+                    ),
+                ],
+                env=env,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=False,
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertTrue(lock_dir.exists())
+
     def test_direct_send_lock_blocks_overlapping_cycle(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
