@@ -205,6 +205,7 @@ def route_trader_prompts(
     intents = _load_json(intents_path)
     pair_charts = _load_json(pair_charts_path)
     market_context_matrix = _load_json(market_context_matrix_path)
+    attack_advice = _load_json(attack_advice_path)
 
     position_sidecar_reasons = _position_management_sidecar_refresh_reasons(
         snapshot,
@@ -313,6 +314,13 @@ def route_trader_prompts(
         intents_path=intents_path,
         forecast_history_path=forecast_history_path,
     )
+    attack_advice_refresh_reasons = _attack_advice_refresh_reasons(
+        target_state,
+        intents,
+        attack_advice,
+        intents_path=intents_path,
+        attack_advice_path=attack_advice_path,
+    )
     memory_health_refresh_reasons = _memory_health_refresh_reasons(
         target_state,
         snapshot,
@@ -334,6 +342,7 @@ def route_trader_prompts(
         *campaign_plan_refresh_reasons,
         *order_intents_context_refresh_reasons,
         *order_intents_forecast_refresh_reasons,
+        *attack_advice_refresh_reasons,
         *memory_health_refresh_reasons,
         *coverage_market_evidence_refresh_reasons,
         *self_improvement_audit_refresh_reasons,
@@ -1816,6 +1825,35 @@ def _order_intents_forecast_refresh_reasons(
             f"order_intents generated at {intents_generated_at.isoformat()} predates "
             f"forecast_history latest row {latest_forecast_at.isoformat()} "
             f"({forecast_history_path}); rerun generate-intents before entry/learning routing",
+        )
+    return ()
+
+
+def _attack_advice_refresh_reasons(
+    target_state: dict[str, Any],
+    intents: dict[str, Any],
+    attack_advice: dict[str, Any],
+    *,
+    intents_path: Path,
+    attack_advice_path: Path,
+) -> tuple[str, ...]:
+    if not _target_open(target_state) or not attack_advice:
+        return ()
+    advice_generated_at = _parse_utc(attack_advice.get("generated_at_utc"))
+    intents_generated_at = _parse_utc(intents.get("generated_at_utc"))
+    if intents_generated_at is None:
+        return ()
+    if advice_generated_at is None:
+        return (
+            f"ai_attack_advice lacks generated_at_utc while target is open: {attack_advice_path}; "
+            f"rerun ai-attack-advice after current order_intents {intents_path} before entry decision",
+        )
+    if advice_generated_at < intents_generated_at:
+        return (
+            "ai_attack_advice stale against order_intents while target is open: "
+            f"ai_attack_advice generated at {advice_generated_at.isoformat()} predates "
+            f"order_intents {intents_generated_at.isoformat()} ({intents_path}); "
+            "rerun ai-attack-advice before entry decision",
         )
     return ()
 

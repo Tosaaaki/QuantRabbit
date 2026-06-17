@@ -151,6 +151,39 @@ class GPTTraderBrainTest(unittest.TestCase):
             ]
             self.assertTrue(any("ai_attack_advice" in message for message in stale_messages))
 
+    def test_rejects_attack_advice_packet_that_predates_order_intents(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root)
+            snapshot = json.loads(files["snapshot"].read_text())
+            snapshot_ts = datetime.fromisoformat(snapshot["fetched_at_utc"])
+            attack_ts = snapshot_ts + timedelta(seconds=1)
+            intents_ts = snapshot_ts + timedelta(seconds=2)
+            decision_ts = snapshot_ts + timedelta(seconds=3)
+            intents = json.loads(files["intents"].read_text())
+            intents["generated_at_utc"] = intents_ts.isoformat()
+            files["intents"].write_text(json.dumps(intents))
+            files["attack_advice"].write_text(
+                json.dumps(
+                    {
+                        "generated_at_utc": attack_ts.isoformat(),
+                        "status": "NO_ATTACK_ADVICE",
+                        "live_ready_lanes": 0,
+                        "recommended_now_lane_ids": [],
+                    }
+                )
+            )
+            decision = _trade_decision()
+            decision["generated_at_utc"] = decision_ts.isoformat()
+            brain = _brain(root, files, decision)
+
+            summary = brain.run(snapshot_path=files["snapshot"])
+
+            self.assertEqual(summary.status, "REJECTED")
+            payload = json.loads((root / "gpt_decision.json").read_text())
+            codes = {issue["code"] for issue in payload["verification_issues"]}
+            self.assertIn("STALE_ATTACK_ADVICE_PACKET", codes)
+
     def test_rejects_trade_without_twenty_minute_plan(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

@@ -1789,15 +1789,25 @@ class DecisionVerifier:
         ]
         artifact_timestamps = self.packet.get("artifact_timestamps")
         if isinstance(artifact_timestamps, dict):
+            order_intents_ts = _parse_utc(artifact_timestamps.get("order_intents_generated_at_utc"))
+            attack_advice_ts = _parse_utc(artifact_timestamps.get("ai_attack_advice_generated_at_utc"))
+            if order_intents_ts is not None and attack_advice_ts is not None and attack_advice_ts < order_intents_ts:
+                issues.append(
+                    VerificationIssue(
+                        "STALE_ATTACK_ADVICE_PACKET",
+                        "ai_attack_advice predates the order_intents used for verification; rerun "
+                        "ai-attack-advice after current order intents before accepting TRADE/WAIT.",
+                    )
+                )
             freshness_checks.extend(
                 [
                     (
-                        _parse_utc(artifact_timestamps.get("order_intents_generated_at_utc")),
+                        order_intents_ts,
                         "order intents",
                         "current order intents are rebuilt from the latest market packet",
                     ),
                     (
-                        _parse_utc(artifact_timestamps.get("ai_attack_advice_generated_at_utc")),
+                        attack_advice_ts,
                         "ai_attack_advice",
                         "current attack advice is reflected into the decision receipt",
                     ),

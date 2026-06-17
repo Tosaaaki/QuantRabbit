@@ -502,6 +502,30 @@ class TraderPromptRouteTest(unittest.TestCase):
         self.assertTrue(any("order intents stale against forecast history" in reason for reason in route.reasons))
         self.assertFalse(any("no current LIVE_READY lane" in reason for reason in route.reasons))
 
+    def test_stale_attack_advice_against_order_intents_routes_to_refresh_branch(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root)
+            base = datetime(2026, 1, 1, tzinfo=timezone.utc)
+            intents = json.loads(files["intents"].read_text())
+            intents["generated_at_utc"] = (base + timedelta(minutes=10)).isoformat()
+            files["intents"].write_text(json.dumps(intents))
+            files["attack_advice"].write_text(
+                json.dumps(
+                    {
+                        "generated_at_utc": base.isoformat(),
+                        "status": "NO_ATTACK_ADVICE",
+                        "live_ready_lanes": 0,
+                        "recommended_now_lane_ids": [],
+                    }
+                )
+            )
+
+            route = route_trader_prompts(**_route_paths(files), decision_response_path=None)
+
+        self.assertEqual(route.branch, BRANCH_REFRESH)
+        self.assertTrue(any("ai_attack_advice stale against order_intents" in reason for reason in route.reasons))
+
     def test_missing_memory_health_routes_open_target_to_refresh_branch(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
