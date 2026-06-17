@@ -87,6 +87,7 @@ from quant_rabbit.strategy.trader_brain import (
     TraderBrain,
     TraderDecision,
     load_trader_settings,
+    _pending_entry_recent_cancel_regret_supports_preservation,
 )
 from quant_rabbit.verification_ledger import VerificationLedger
 
@@ -583,14 +584,50 @@ def _filtered_gpt_trade_cancel_order_ids(
     filtered: list[str] = []
     for order_id in cancel_order_ids:
         order = orders_by_id.get(str(order_id))
-        if order is not None and _should_preserve_gpt_trade_cancel(
-            order=order,
-            candidates=candidates,
-            snapshot=snapshot,
-        ):
-            continue
+        if order is not None:
+            if _should_preserve_gpt_trade_cancel(
+                order=order,
+                candidates=candidates,
+                snapshot=snapshot,
+            ):
+                continue
+            if (
+                _pending_entry_recent_cancel_regret_supports_preservation(order, intents_path.parent)
+                and not _gpt_cancel_has_material_same_parent_replacement(
+                    order=order,
+                    candidates=candidates,
+                    snapshot=snapshot,
+                )
+            ):
+                continue
         filtered.append(str(order_id))
     return tuple(filtered)
+
+
+def _gpt_cancel_has_material_same_parent_replacement(
+    *,
+    order: object,
+    candidates: tuple[dict[str, Any], ...],
+    snapshot: object,
+) -> bool:
+    parent_lane_id = _pending_order_lane_parent(order)
+    if parent_lane_id is None:
+        return False
+    pair = str(getattr(order, "pair", "") or "")
+    side = _order_side_from_units(order)
+    order_type = _normalized_pending_order_type(str(getattr(order, "order_type", "") or ""))
+    if not pair or side is None:
+        return False
+    for candidate in candidates:
+        if candidate.get("parent_lane_id") != parent_lane_id:
+            continue
+        if candidate.get("pair") != pair or candidate.get("side") != side:
+            continue
+        if candidate.get("order_type") != order_type:
+            continue
+        if _replacement_materially_improves_fill(order=order, candidate=candidate, snapshot=snapshot):
+            return True
+    return False
 
 
 def _basket_parent_lane_set(lane_ids: tuple[str, ...]) -> set[str]:

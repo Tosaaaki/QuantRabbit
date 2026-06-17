@@ -1943,6 +1943,79 @@ class AutoTradeCycleTest(unittest.TestCase):
 
             self.assertEqual(filtered, ())
 
+    def test_gpt_trade_preserves_recent_cancel_regret_pending_for_other_lane(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            now = datetime.now(timezone.utc)
+            _write_execution_timing_cancel_regret(
+                root,
+                pair="AUD_NZD",
+                side="SHORT",
+                order_type="LIMIT_ORDER",
+            )
+            pending = BrokerOrder(
+                order_id="regret-audnzd-short",
+                pair="AUD_NZD",
+                order_type="LIMIT",
+                price=1.21395,
+                state="PENDING",
+                units=-1000,
+                owner=Owner.TRADER,
+                raw={
+                    "clientExtensions": {
+                        "comment": "qr-vnext lane=range_trader:AUD_NZD:SHORT:RANGE_ROTATION"
+                    },
+                    "createTime": now.isoformat(),
+                    "takeProfitOnFill": {"price": "1.21199"},
+                    "stopLossOnFill": {"price": "1.21852"},
+                },
+            )
+            selected_lane = "range_trader:EUR_USD:LONG:RANGE_ROTATION"
+            intents_path = root / "intents.json"
+            intents_path.write_text(
+                json.dumps(
+                    {
+                        "results": [
+                            {
+                                "lane_id": selected_lane,
+                                "status": "LIVE_READY",
+                                "intent": {
+                                    "pair": "EUR_USD",
+                                    "side": "LONG",
+                                    "order_type": "LIMIT",
+                                    "units": 1000,
+                                    "entry": 1.1500,
+                                    "tp": 1.1560,
+                                    "sl": 1.1470,
+                                },
+                                "risk_metrics": {"spread_pips": 1.0},
+                            }
+                        ]
+                    }
+                )
+                + "\n"
+            )
+            client = FakeCycleClient(
+                BrokerSnapshot(
+                    fetched_at_utc=now,
+                    orders=(pending,),
+                    quotes={
+                        "AUD_NZD": Quote("AUD_NZD", 1.21420, 1.21435, timestamp_utc=now),
+                        "EUR_USD": Quote("EUR_USD", 1.1500, 1.1501, timestamp_utc=now),
+                        "USD_JPY": Quote("USD_JPY", 157.0, 157.01, timestamp_utc=now),
+                    },
+                )
+            )
+
+            filtered = _filtered_gpt_trade_cancel_order_ids(
+                client=client,
+                intents_path=intents_path,
+                lane_ids=(selected_lane,),
+                cancel_order_ids=(pending.order_id,),
+            )
+
+            self.assertEqual(filtered, ())
+
     def test_gpt_trade_cancels_named_pending_orders_before_capacity_checked_send(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -6056,6 +6129,36 @@ def _write_recovery_hedge_intents(path: Path, lane_id: str) -> None:
                         "live_blockers": [],
                     }
                 ]
+            }
+        )
+        + "\n"
+    )
+
+
+def _write_execution_timing_cancel_regret(
+    root: Path,
+    *,
+    pair: str,
+    side: str,
+    order_type: str,
+) -> None:
+    (root / "execution_timing_audit.json").write_text(
+        json.dumps(
+            {
+                "generated_at_utc": datetime.now(timezone.utc).isoformat(),
+                "status": "OK",
+                "canceled_order_regrets": [
+                    {
+                        "order_id": "prior-regret",
+                        "pair": pair,
+                        "side": side,
+                        "order_type": order_type,
+                        "entry_touched_after_cancel": True,
+                        "tp_touched_after_cancel": False,
+                        "sl_touched_after_cancel": False,
+                        "mfe_pips_after_cancel_entry": 2.7,
+                    }
+                ],
             }
         )
         + "\n"
