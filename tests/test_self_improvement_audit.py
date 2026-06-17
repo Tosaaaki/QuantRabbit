@@ -960,6 +960,181 @@ class SelfImprovementAuditorTest(unittest.TestCase):
         self.assertGreater(order_review["attached_sl_risk_jpy"], 100.0)
         self.assertIn("Pending entry reconcile", report)
 
+    def test_gateway_pending_tail_risk_uses_portfolio_cap_not_per_trade_cap(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(
+                root,
+                active_position=False,
+                closed_pls=(100.0, 80.0, 50.0),
+            )
+            snapshot = json.loads(files["snapshot"].read_text())
+            snapshot["home_conversions"] = {"USD": 150.0}
+            snapshot["orders"] = [
+                {
+                    "order_id": "gateway-tail",
+                    "pair": "EUR_USD",
+                    "order_type": "STOP",
+                    "state": "PENDING",
+                    "units": 2000,
+                    "price": 1.171,
+                    "owner": "trader",
+                    "trade_id": None,
+                    "raw": {
+                        "createTime": (_NOW - timedelta(minutes=10)).isoformat(),
+                        "clientExtensions": {
+                            "comment": (
+                                "qr-vnext lane=trend_trader:EUR_USD:LONG:TREND_CONTINUATION "
+                                "desk=trend_trader"
+                            ),
+                            "tag": "trader",
+                        },
+                        "takeProfitOnFill": {"price": "1.1730"},
+                        "stopLossOnFill": {"price": "1.1600"},
+                    },
+                }
+            ]
+            files["snapshot"].write_text(json.dumps(snapshot))
+            files["target"].write_text(
+                json.dumps(
+                    {
+                        "status": "PURSUE_TARGET",
+                        "remaining_target_jpy": 1000.0,
+                        "per_trade_risk_budget_jpy": 100.0,
+                        "daily_risk_budget_jpy": 10_000.0,
+                        "open_risk_jpy": 0.0,
+                        "remaining_risk_budget_jpy": 10_000.0,
+                    }
+                )
+            )
+            files["intents"].write_text(
+                json.dumps(
+                    {
+                        "generated_at_utc": _NOW.isoformat(),
+                        "results": [
+                            {
+                                "lane_id": "trend_trader:EUR_USD:LONG:TREND_CONTINUATION",
+                                "status": "LIVE_READY",
+                                "intent": {
+                                    "pair": "EUR_USD",
+                                    "side": "LONG",
+                                    "order_type": "STOP-ENTRY",
+                                },
+                                "risk_issues": [],
+                                "live_blockers": [],
+                            }
+                        ],
+                    }
+                )
+            )
+            files["attack_advice"].write_text(
+                json.dumps(
+                    {
+                        "generated_at_utc": _NOW.isoformat(),
+                        "status": "ATTACK_PARTIAL",
+                        "recommended_now_lane_ids": ["trend_trader:EUR_USD:LONG:TREND_CONTINUATION"],
+                    }
+                )
+            )
+
+            _run(files)
+            payload = json.loads(files["output"].read_text())
+
+        codes = {item["code"]: item for item in payload["findings"]}
+        review = payload["execution_quality"]["pending_entry_reconcile"]
+        self.assertNotIn("PENDING_ENTRY_CANCEL_REVIEW_REQUIRED", codes)
+        self.assertEqual(review["cancel_review_orders"], 0)
+        self.assertEqual(review["cancel_review_order_ids"], [])
+
+    def test_gateway_pending_tail_risk_blocks_when_portfolio_capacity_exceeded(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(
+                root,
+                active_position=False,
+                closed_pls=(100.0, 80.0, 50.0),
+            )
+            snapshot = json.loads(files["snapshot"].read_text())
+            snapshot["home_conversions"] = {"USD": 150.0}
+            snapshot["orders"] = [
+                {
+                    "order_id": "gateway-tail",
+                    "pair": "EUR_USD",
+                    "order_type": "STOP",
+                    "state": "PENDING",
+                    "units": 2000,
+                    "price": 1.171,
+                    "owner": "trader",
+                    "trade_id": None,
+                    "raw": {
+                        "createTime": (_NOW - timedelta(minutes=10)).isoformat(),
+                        "clientExtensions": {
+                            "comment": (
+                                "qr-vnext lane=trend_trader:EUR_USD:LONG:TREND_CONTINUATION "
+                                "desk=trend_trader"
+                            ),
+                            "tag": "trader",
+                        },
+                        "takeProfitOnFill": {"price": "1.1730"},
+                        "stopLossOnFill": {"price": "1.1600"},
+                    },
+                }
+            ]
+            files["snapshot"].write_text(json.dumps(snapshot))
+            files["target"].write_text(
+                json.dumps(
+                    {
+                        "status": "PURSUE_TARGET",
+                        "remaining_target_jpy": 1000.0,
+                        "per_trade_risk_budget_jpy": 100.0,
+                        "daily_risk_budget_jpy": 1_000.0,
+                        "open_risk_jpy": 0.0,
+                        "remaining_risk_budget_jpy": 1_000.0,
+                    }
+                )
+            )
+            files["intents"].write_text(
+                json.dumps(
+                    {
+                        "generated_at_utc": _NOW.isoformat(),
+                        "results": [
+                            {
+                                "lane_id": "trend_trader:EUR_USD:LONG:TREND_CONTINUATION",
+                                "status": "LIVE_READY",
+                                "intent": {
+                                    "pair": "EUR_USD",
+                                    "side": "LONG",
+                                    "order_type": "STOP-ENTRY",
+                                },
+                                "risk_issues": [],
+                                "live_blockers": [],
+                            }
+                        ],
+                    }
+                )
+            )
+            files["attack_advice"].write_text(
+                json.dumps(
+                    {
+                        "generated_at_utc": _NOW.isoformat(),
+                        "status": "ATTACK_PARTIAL",
+                        "recommended_now_lane_ids": ["trend_trader:EUR_USD:LONG:TREND_CONTINUATION"],
+                    }
+                )
+            )
+
+            summary = _run(files)
+            payload = json.loads(files["output"].read_text())
+
+        codes = {item["code"]: item for item in payload["findings"]}
+        self.assertEqual(summary.status, STATUS_BLOCKED)
+        self.assertIn("PENDING_ENTRY_CANCEL_REVIEW_REQUIRED", codes)
+        review = payload["execution_quality"]["pending_entry_reconcile"]
+        reason_codes = {item["code"] for item in review["orders"][0]["review_reasons"]}
+        self.assertIn("PENDING_ATTACHED_SL_PORTFOLIO_RISK_EXCEEDS_CAP", reason_codes)
+        self.assertNotIn("PENDING_ATTACHED_SL_RISK_EXCEEDS_CAP", reason_codes)
+        self.assertEqual(review["orders"][0]["attached_sl_risk_cap_basis"], "PORTFOLIO_CAP")
+
     def test_repeated_self_improvement_finding_surfaces_anti_loop_action(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

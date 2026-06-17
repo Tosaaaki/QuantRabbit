@@ -176,7 +176,7 @@ class TraderPromptRouteTest(unittest.TestCase):
         self.assertTrue(any("decision-history P0 persists" in reason for reason in route.reasons))
         self.assertTrue(any("streak=13" in reason for reason in route.reasons))
 
-    def test_persistent_stale_gpt_decision_p0_with_pending_entry_routes_to_cancel_review(self) -> None:
+    def test_persistent_stale_gpt_decision_p0_with_pending_entry_routes_to_entry_rewrite(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             files = _fixtures(root)
@@ -216,7 +216,7 @@ class TraderPromptRouteTest(unittest.TestCase):
 
             route = route_trader_prompts(**_route_paths(files), decision_response_path=None)
 
-        self.assertEqual(route.branch, BRANCH_POSITION)
+        self.assertEqual(route.branch, BRANCH_ENTRY)
         self.assertTrue(any("pending entry order" in reason for reason in route.reasons))
         self.assertTrue(any("rewrite" in reason for reason in route.reasons))
 
@@ -290,7 +290,7 @@ class TraderPromptRouteTest(unittest.TestCase):
         self.assertTrue(any("trader pending entry order(s) occupy the gateway entry slot" in reason for reason in route.reasons))
         self.assertTrue(any("write CANCEL_PENDING" in reason for reason in route.reasons))
 
-    def test_pending_cancel_review_p0_names_order_ids_in_route(self) -> None:
+    def test_pending_cancel_review_p0_with_live_ready_routes_to_entry_replacement(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             files = _fixtures(root)
@@ -307,6 +307,68 @@ class TraderPromptRouteTest(unittest.TestCase):
                 }
             ]
             files["snapshot"].write_text(json.dumps(snapshot))
+            files["self_improvement_audit"].write_text(
+                json.dumps(
+                    {
+                        "generated_at_utc": datetime.now(timezone.utc).isoformat(),
+                        "status": "SELF_IMPROVEMENT_BLOCKED",
+                        "findings": [
+                            {
+                                "priority": "P0",
+                                "layer": "execution_quality",
+                                "code": "PENDING_ENTRY_CANCEL_REVIEW_REQUIRED",
+                                "message": "1 trader-owned pending entry needs cancel review",
+                                "evidence": {
+                                    "cancel_review_order_ids": ["472533"],
+                                    "orders": [
+                                        {
+                                            "order_id": "472533",
+                                            "pair": "CAD_CHF",
+                                            "side": "LONG",
+                                            "method": "RANGE_ROTATION",
+                                            "review_reasons": [
+                                                {"code": "PENDING_CURRENT_CANDIDATE_MISSING"}
+                                            ],
+                                        }
+                                    ],
+                                },
+                            }
+                        ],
+                    }
+                )
+            )
+
+            route = route_trader_prompts(**_route_paths(files), decision_response_path=None)
+
+        self.assertEqual(route.branch, BRANCH_ENTRY)
+        self.assertTrue(any("pending cancel review" in reason for reason in route.reasons))
+        self.assertTrue(any("current LIVE_READY replacement" in reason for reason in route.reasons))
+        self.assertTrue(any("TRADE with cancel_order_ids" in reason for reason in route.reasons))
+        self.assertTrue(any("472533" in reason for reason in route.reasons))
+        self.assertTrue(any("PENDING_CURRENT_CANDIDATE_MISSING" in reason for reason in route.reasons))
+
+    def test_pending_cancel_review_p0_without_live_ready_routes_to_position_cancel_review(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root)
+            snapshot = json.loads(files["snapshot"].read_text())
+            snapshot["orders"] = [
+                {
+                    "order_id": "472533",
+                    "pair": "CAD_CHF",
+                    "order_type": "LIMIT",
+                    "state": "PENDING",
+                    "units": 1000,
+                    "owner": "trader",
+                    "trade_id": None,
+                }
+            ]
+            files["snapshot"].write_text(json.dumps(snapshot))
+            intents = json.loads(files["intents"].read_text())
+            for result in intents["results"]:
+                result["status"] = "DRY_RUN_BLOCKED"
+                result["live_blockers"] = ["FORECAST_CONFIDENCE_REQUIRED_FOR_LIVE"]
+            files["intents"].write_text(json.dumps(intents))
             files["self_improvement_audit"].write_text(
                 json.dumps(
                     {

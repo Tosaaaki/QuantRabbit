@@ -1765,6 +1765,7 @@ def _pending_entry_reconcile_metrics(
         return metrics
 
     per_trade_cap = _maybe_float(target_state.get("per_trade_risk_budget_jpy"))
+    portfolio_remaining = _pending_entry_portfolio_remaining_jpy(target_state)
     intent_index = _pending_reconcile_intent_index(intents)
     recommended_parents = {
         _parent_lane_id(str(item))
@@ -1774,15 +1775,21 @@ def _pending_entry_reconcile_metrics(
     attack_generated_at = _parse_utc(attack_advice.get("generated_at_utc"))
 
     reviews: list[dict[str, Any]] = []
+    cumulative_attached_risk = 0.0
     for order in orders:
         review = _pending_entry_order_reconcile(
             order=order,
             snapshot=snapshot,
             per_trade_cap=per_trade_cap,
+            portfolio_remaining=portfolio_remaining,
+            cumulative_attached_risk=cumulative_attached_risk,
             intent_index=intent_index,
             recommended_parent_lanes=recommended_parents,
             attack_generated_at=attack_generated_at,
         )
+        risk_jpy = _maybe_float(review.get("attached_sl_risk_jpy"))
+        if risk_jpy is not None:
+            cumulative_attached_risk += max(0.0, risk_jpy)
         if review.get("review_reasons"):
             reviews.append(review)
 
@@ -1798,6 +1805,8 @@ def _pending_entry_order_reconcile(
     order: dict[str, Any],
     snapshot: dict[str, Any],
     per_trade_cap: float | None,
+    portfolio_remaining: float | None,
+    cumulative_attached_risk: float,
     intent_index: dict[str, Any],
     recommended_parent_lanes: set[str],
     attack_generated_at: datetime | None,
@@ -1820,6 +1829,10 @@ def _pending_entry_order_reconcile(
     )
 
     reasons: list[dict[str, Any]] = []
+    portfolio_remaining_before_order = None
+    if portfolio_remaining is not None:
+        portfolio_remaining_before_order = max(0.0, portfolio_remaining - max(0.0, cumulative_attached_risk))
+    risk_cap_basis = "PER_TRADE_CAP"
     if per_trade_cap is not None and per_trade_cap > 0:
         if risk.get("risk_jpy") is None and risk.get("issue_code"):
             reasons.append(
@@ -1829,15 +1842,35 @@ def _pending_entry_order_reconcile(
                 }
             )
         elif _maybe_float(risk.get("risk_jpy")) is not None and float(risk["risk_jpy"]) > per_trade_cap:
-            reasons.append(
-                {
-                    "code": "PENDING_ATTACHED_SL_RISK_EXCEEDS_CAP",
-                    "message": (
-                        f"attached stop risk {float(risk['risk_jpy']):.2f} JPY exceeds "
-                        f"per-trade cap {per_trade_cap:.2f} JPY"
-                    ),
-                }
-            )
+            risk_jpy = float(risk["risk_jpy"])
+            if _pending_gateway_tail_risk_allowed(
+                order=order,
+                risk_jpy=risk_jpy,
+                portfolio_remaining_before_order=portfolio_remaining_before_order,
+            ):
+                risk_cap_basis = "GATEWAY_TAIL_WITHIN_PORTFOLIO_CAP"
+            elif portfolio_remaining_before_order is not None and risk_jpy > portfolio_remaining_before_order:
+                risk_cap_basis = "PORTFOLIO_CAP"
+                reasons.append(
+                    {
+                        "code": "PENDING_ATTACHED_SL_PORTFOLIO_RISK_EXCEEDS_CAP",
+                        "message": (
+                            f"attached stop risk {risk_jpy:.2f} JPY exceeds "
+                            f"remaining portfolio risk capacity {portfolio_remaining_before_order:.2f} JPY"
+                        ),
+                    }
+                )
+            else:
+                risk_cap_basis = "PER_TRADE_CAP"
+                reasons.append(
+                    {
+                        "code": "PENDING_ATTACHED_SL_RISK_EXCEEDS_CAP",
+                        "message": (
+                            f"attached stop risk {risk_jpy:.2f} JPY exceeds "
+                            f"per-trade cap {per_trade_cap:.2f} JPY"
+                        ),
+                    }
+                )
 
     if parent_lane_id and not candidates:
         reasons.append(
@@ -1882,12 +1915,55 @@ def _pending_entry_order_reconcile(
         "parent_lane_id": parent_lane_id,
         "created_at_utc": created_at.isoformat() if created_at else None,
         "risk_cap_jpy": per_trade_cap,
+        "portfolio_risk_remaining_before_order_jpy": portfolio_remaining_before_order,
+        "attached_sl_risk_cap_basis": risk_cap_basis,
         "attached_sl": risk.get("stop_loss"),
         "attached_sl_risk_jpy": risk.get("risk_jpy"),
         "current_candidate_count": len(candidates),
         "current_live_ready_candidate_count": sum(1 for item in candidates if str(item.get("status") or "") == "LIVE_READY"),
         "review_reasons": reasons,
     }
+
+
+def _pending_entry_portfolio_remaining_jpy(target_state: dict[str, Any]) -> float | None:
+    remaining = _maybe_float(target_state.get("remaining_risk_budget_jpy"))
+    if remaining is not None and remaining >= 0:
+        return remaining
+    daily_budget = _maybe_float(target_state.get("daily_risk_budget_jpy"))
+    if daily_budget is None:
+        return None
+    open_risk = _maybe_float(target_state.get("open_risk_jpy")) or 0.0
+    return max(0.0, daily_budget - max(0.0, open_risk))
+
+
+def _pending_gateway_tail_risk_allowed(
+    *,
+    order: dict[str, Any],
+    risk_jpy: float,
+    portfolio_remaining_before_order: float | None,
+) -> bool:
+    if portfolio_remaining_before_order is None or risk_jpy > portfolio_remaining_before_order:
+        return False
+    # LiveOrderGateway deliberately allows SL-free disaster stops to exceed the
+    # per-trade expected-invalidation cap, but counts that tail exposure against
+    # the portfolio/day capacity. Broker snapshots do not preserve the original
+    # intent metadata, so the gateway lane tag is the durable signal that this
+    # pending order came through the executable gateway path rather than a
+    # hand-written broker order.
+    return _pending_order_has_gateway_lane_tag(order)
+
+
+def _pending_order_has_gateway_lane_tag(order: dict[str, Any]) -> bool:
+    raw = order.get("raw") if isinstance(order.get("raw"), dict) else {}
+    for extension_key in ("clientExtensions", "tradeClientExtensions"):
+        extension = raw.get(extension_key)
+        if not isinstance(extension, dict):
+            continue
+        comment = str(extension.get("comment") or "")
+        tag = str(extension.get("tag") or "")
+        if "lane=" in comment and ("qr-vnext" in comment or tag == "trader"):
+            return True
+    return False
 
 
 def _pending_reconcile_intent_index(intents: dict[str, Any]) -> dict[str, Any]:

@@ -364,13 +364,14 @@ def route_trader_prompts(
     if _target_open(target_state) and self_improvement_decision_refresh_reasons:
         if pending_entry_reasons:
             return _build_route(
-                BRANCH_POSITION,
+                BRANCH_ENTRY,
                 (
                     *carry_reasons,
                     *advisory_close_review_reasons,
                     *pending_entry_reasons,
                     "self-improvement stale-decision P0 blocks fresh risk while trader-owned pending entry risk remains fillable; "
-                    "write CANCEL_PENDING or explicitly justify keeping the current pending order before rewriting the decision receipt",
+                    "rewrite the decision receipt now; use TRADE with cancel_order_ids when replacing it with current LIVE_READY risk, "
+                    "or CANCEL_PENDING / explicit keep when no current live replacement exists",
                     *self_improvement_decision_refresh_reasons,
                 ),
                 include_content=include_content,
@@ -385,6 +386,24 @@ def route_trader_prompts(
             include_content=include_content,
         )
     if _target_open(target_state) and self_improvement_repair_reasons:
+        pending_cancel_review_reasons = _pending_cancel_review_reasons(self_improvement_repair_reasons)
+        other_repair_reasons = tuple(
+            reason for reason in self_improvement_repair_reasons if reason not in pending_cancel_review_reasons
+        )
+        if pending_entry_reasons and live_ready_lanes and pending_cancel_review_reasons and not other_repair_reasons:
+            return _build_route(
+                BRANCH_ENTRY,
+                (
+                    *carry_reasons,
+                    *advisory_close_review_reasons,
+                    *pending_entry_reasons,
+                    "self-improvement pending cancel review has current LIVE_READY replacement lane(s); "
+                    "write TRADE with cancel_order_ids for stale/lower-priority pending entries because CANCEL_PENDING alone "
+                    "is rejected while executable replacement risk exists",
+                    *self_improvement_repair_reasons,
+                ),
+                include_content=include_content,
+            )
         if pending_entry_reasons:
             return _build_route(
                 BRANCH_POSITION,
@@ -455,6 +474,12 @@ def route_trader_prompts(
         BRANCH_POSITION,
         (*carry_reasons, "daily target is closed or protected; review exposure before adding risk"),
         include_content=include_content,
+    )
+
+
+def _pending_cancel_review_reasons(reasons: tuple[str, ...]) -> tuple[str, ...]:
+    return tuple(
+        reason for reason in reasons if reason.startswith("self-improvement pending cancel review ")
     )
 
 

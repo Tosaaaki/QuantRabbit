@@ -221,6 +221,10 @@ average winner as a temporary loss-asymmetry cap for fresh `NEW` entries.
   are still fillable new-risk exposure. Either write `CANCEL_PENDING` for the
   current pending ids or explicitly justify why the existing order should remain;
   do not route to learning/gap work while leaving that risk unreviewed.
+- If a current `LIVE_READY` replacement lane exists for a self-improvement
+  pending-cancel review, this branch should not issue a standalone
+  `CANCEL_PENDING`. The entry branch must write `TRADE` with `cancel_order_ids`
+  so stale pending risk is replaced in the same verified gateway cycle.
 - If the daily target is already reached, trader-owned pending entry ids are canceled instead of left fillable.
 - Manual/tagless pending orders are observed only.
 
