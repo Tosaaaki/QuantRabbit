@@ -739,7 +739,10 @@ class SelfImprovementAuditorTest(unittest.TestCase):
         self.assertEqual(lifecycle["accepted_entry_orders"], 3)
         self.assertEqual(lifecycle["filled_entry_orders"], 0)
         self.assertEqual(lifecycle["canceled_before_fill_orders"], 3)
+        self.assertEqual(lifecycle["canceled_before_fill_replaced_orders"], 0)
+        self.assertEqual(lifecycle["canceled_before_fill_orphan_orders"], 3)
         self.assertEqual(lifecycle["cancel_before_fill_rate"], 1.0)
+        self.assertEqual(lifecycle["cancel_replacement_rate"], 0.0)
         self.assertIn("Pending entry lifecycle", report)
 
     def test_pending_entry_lifecycle_flags_high_cancel_rate_even_with_fills(self) -> None:
@@ -774,8 +777,39 @@ class SelfImprovementAuditorTest(unittest.TestCase):
         self.assertEqual(lifecycle["accepted_entry_orders"], 5)
         self.assertEqual(lifecycle["filled_entry_orders"], 2)
         self.assertEqual(lifecycle["canceled_before_fill_orders"], 3)
+        self.assertEqual(lifecycle["canceled_before_fill_replaced_orders"], 0)
+        self.assertEqual(lifecycle["canceled_before_fill_orphan_orders"], 3)
         self.assertAlmostEqual(lifecycle["cancel_before_fill_rate"], 0.6)
+        self.assertEqual(lifecycle["cancel_replacement_rate"], 0.0)
         self.assertEqual(payload["root_cause_focus"]["primary"]["family"], "EXECUTION_LIFECYCLE")
+
+    def test_pending_entry_lifecycle_distinguishes_replaced_from_orphan_cancels(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(
+                root,
+                active_position=False,
+                live_ready_market_rr=1.4,
+                closed_pls=(100.0, 80.0, 50.0),
+            )
+            _write_pending_replacement_churn_ledger(files["execution_db"])
+
+            summary = _run(files)
+            payload = json.loads(files["output"].read_text())
+
+        codes = {item["code"]: item for item in payload["findings"]}
+        lifecycle = payload["execution_quality"]["pending_entry_lifecycle"]
+        self.assertEqual(summary.status, STATUS_ACTION_REQUIRED)
+        self.assertIn("PENDING_ENTRY_FILL_RATE_WEAK", codes)
+        self.assertEqual(lifecycle["accepted_entry_orders"], 4)
+        self.assertEqual(lifecycle["canceled_before_fill_orders"], 3)
+        self.assertEqual(lifecycle["canceled_before_fill_replaced_orders"], 1)
+        self.assertEqual(lifecycle["canceled_before_fill_orphan_orders"], 2)
+        self.assertAlmostEqual(lifecycle["cancel_replacement_rate"], 1 / 3)
+        samples = codes["PENDING_ENTRY_FILL_RATE_WEAK"]["evidence"]["samples"]
+        replaced = next(item for item in samples if item["order_id"] == "replace-source")
+        self.assertEqual(replaced["replaced_with_order_id"], "replace-next")
+        self.assertAlmostEqual(replaced["replacement_after_min"], 5.0)
 
     def test_repeated_self_improvement_finding_surfaces_anti_loop_action(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -5066,6 +5100,125 @@ def _write_pending_mixed_cancel_churn_ledger(path: Path) -> None:
                     1.2 + idx / 1000,
                     exit_reason,
                 ),
+            )
+
+
+def _write_pending_replacement_churn_ledger(path: Path) -> None:
+    if path.exists():
+        path.unlink()
+    with sqlite3.connect(path) as conn:
+        conn.executescript(
+            """
+            CREATE TABLE sync_state (key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at_utc TEXT NOT NULL);
+            CREATE TABLE execution_events (
+                event_uid TEXT PRIMARY KEY,
+                ts_utc TEXT NOT NULL,
+                event_type TEXT NOT NULL,
+                lane_id TEXT,
+                order_id TEXT,
+                trade_id TEXT,
+                pair TEXT,
+                side TEXT,
+                units INTEGER,
+                price REAL,
+                realized_pl_jpy REAL,
+                exit_reason TEXT
+            );
+            """
+        )
+        conn.execute(
+            "INSERT INTO sync_state(key, value, updated_at_utc) VALUES (?, ?, ?)",
+            ("last_oanda_transaction_id", "100", _NOW.isoformat()),
+        )
+        rows = [
+            (
+                "accepted-source",
+                _NOW - timedelta(minutes=55),
+                "ORDER_ACCEPTED",
+                "range_trader:AUD_CAD:SHORT:RANGE_ROTATION",
+                "replace-source",
+                "AUD_CAD",
+                "SHORT",
+                -1000,
+                0.9898,
+            ),
+            (
+                "canceled-source",
+                _NOW - timedelta(minutes=50),
+                "ORDER_CANCELED",
+                "range_trader:AUD_CAD:SHORT:RANGE_ROTATION",
+                "replace-source",
+                "AUD_CAD",
+                "SHORT",
+                -1000,
+                0.9898,
+            ),
+            (
+                "accepted-next",
+                _NOW - timedelta(minutes=45),
+                "ORDER_ACCEPTED",
+                "range_trader:AUD_CAD:SHORT:RANGE_ROTATION",
+                "replace-next",
+                "AUD_CAD",
+                "SHORT",
+                -1000,
+                0.9897,
+            ),
+            (
+                "accepted-orphan-1",
+                _NOW - timedelta(minutes=40),
+                "ORDER_ACCEPTED",
+                "range_trader:CAD_CHF:LONG:RANGE_ROTATION",
+                "orphan-1",
+                "CAD_CHF",
+                "LONG",
+                1000,
+                0.5665,
+            ),
+            (
+                "canceled-orphan-1",
+                _NOW - timedelta(minutes=32),
+                "ORDER_CANCELED",
+                "range_trader:CAD_CHF:LONG:RANGE_ROTATION",
+                "orphan-1",
+                "CAD_CHF",
+                "LONG",
+                1000,
+                0.5665,
+            ),
+            (
+                "accepted-orphan-2",
+                _NOW - timedelta(minutes=25),
+                "ORDER_ACCEPTED",
+                "range_trader:NZD_JPY:SHORT:RANGE_ROTATION",
+                "orphan-2",
+                "NZD_JPY",
+                "SHORT",
+                -1000,
+                93.56,
+            ),
+            (
+                "canceled-orphan-2",
+                _NOW - timedelta(minutes=18),
+                "ORDER_CANCELED",
+                "range_trader:NZD_JPY:SHORT:RANGE_ROTATION",
+                "orphan-2",
+                "NZD_JPY",
+                "SHORT",
+                -1000,
+                93.56,
+            ),
+        ]
+        for event_uid, ts, event_type, lane_id, order_id, pair, side, units, price in rows:
+            conn.execute(
+                """
+                INSERT INTO execution_events(
+                    event_uid, ts_utc, event_type, lane_id, order_id,
+                    pair, side, units, price, exit_reason
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)
+                """,
+                (event_uid, ts.isoformat(), event_type, lane_id, order_id, pair, side, units, price),
             )
 
 

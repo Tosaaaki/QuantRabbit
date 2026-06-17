@@ -84,6 +84,13 @@ PENDING_ENTRY_CANCEL_RATE_WARN_ABOVE = min(
     1.0,
     _env_nonnegative_float("QR_SELF_IMPROVEMENT_PENDING_CANCEL_RATE_WARN_ABOVE", 0.5),
 )
+# Replacement within this operational audit window means a canceled pending was
+# deliberately re-armed nearby in time, not simply abandoned. This is diagnostic
+# bookkeeping for cancel churn, not a market/risk threshold.
+PENDING_ENTRY_CANCEL_REPLACEMENT_WINDOW_MIN = _env_nonnegative_float(
+    "QR_SELF_IMPROVEMENT_PENDING_CANCEL_REPLACEMENT_WINDOW_MIN",
+    30.0,
+)
 
 # A loss-containment close is positive close-discipline evidence only when it
 # avoids at least twice the realized containment cost. The 2x boundary mirrors
@@ -1589,7 +1596,14 @@ def _pending_entry_lifecycle_findings(
                     "accepted_entry_orders": accepted,
                     "filled_entry_orders": filled,
                     "canceled_before_fill_orders": canceled_before_fill,
+                    "canceled_before_fill_replaced_orders": int(
+                        metrics.get("canceled_before_fill_replaced_orders") or 0
+                    ),
+                    "canceled_before_fill_orphan_orders": int(
+                        metrics.get("canceled_before_fill_orphan_orders") or 0
+                    ),
                     "cancel_before_fill_rate": cancel_rate,
+                    "cancel_replacement_rate": metrics.get("cancel_replacement_rate"),
                     "fill_rate": fill_rate,
                     "samples": metrics.get("canceled_before_fill_samples", [])[:8],
                 },
@@ -1614,7 +1628,14 @@ def _pending_entry_lifecycle_findings(
                 "accepted_entry_orders": accepted,
                 "filled_entry_orders": filled,
                 "canceled_before_fill_orders": canceled_before_fill,
+                "canceled_before_fill_replaced_orders": int(
+                    metrics.get("canceled_before_fill_replaced_orders") or 0
+                ),
+                "canceled_before_fill_orphan_orders": int(
+                    metrics.get("canceled_before_fill_orphan_orders") or 0
+                ),
                 "cancel_before_fill_rate": cancel_rate,
+                "cancel_replacement_rate": metrics.get("cancel_replacement_rate"),
                 "fill_rate": fill_rate,
                 "samples": metrics.get("canceled_before_fill_samples", [])[:8],
             },
@@ -1634,9 +1655,12 @@ def _pending_entry_lifecycle_metrics(
         "accepted_entry_orders": 0,
         "filled_entry_orders": 0,
         "canceled_before_fill_orders": 0,
+        "canceled_before_fill_replaced_orders": 0,
+        "canceled_before_fill_orphan_orders": 0,
         "open_unfilled_entry_orders": 0,
         "fill_rate": None,
         "cancel_before_fill_rate": None,
+        "cancel_replacement_rate": None,
         "canceled_before_fill_samples": [],
         "error": None,
     }
@@ -1713,6 +1737,8 @@ def _pending_entry_lifecycle_metrics(
     canceled_before_fill_samples: list[dict[str, Any]] = []
     filled_count = 0
     canceled_before_fill_count = 0
+    canceled_replaced_count = 0
+    canceled_orphan_count = 0
     open_unfilled_count = 0
     for order_id, order in accepted.items():
         if order_id in filled_order_ids:
@@ -1727,6 +1753,15 @@ def _pending_entry_lifecycle_metrics(
                 if cancel_ts is not None
                 else None
             )
+            replacement = (
+                _pending_cancel_replacement(order, accepted, cancel_ts)
+                if cancel_ts is not None
+                else None
+            )
+            if replacement is not None:
+                canceled_replaced_count += 1
+            else:
+                canceled_orphan_count += 1
             canceled_before_fill_samples.append(
                 {
                     "order_id": order_id,
@@ -1738,6 +1773,12 @@ def _pending_entry_lifecycle_metrics(
                     "accepted_at_utc": order["accepted_ts"].isoformat(),
                     "canceled_at_utc": cancel_ts.isoformat() if cancel_ts else None,
                     "age_min": round(age_min, 3) if age_min is not None else None,
+                    "replaced_with_order_id": replacement["order_id"] if replacement else None,
+                    "replacement_after_min": (
+                        round(replacement["replacement_after_min"], 3)
+                        if replacement
+                        else None
+                    ),
                 }
             )
             continue
@@ -1747,6 +1788,8 @@ def _pending_entry_lifecycle_metrics(
     metrics["accepted_entry_orders"] = accepted_count
     metrics["filled_entry_orders"] = filled_count
     metrics["canceled_before_fill_orders"] = canceled_before_fill_count
+    metrics["canceled_before_fill_replaced_orders"] = canceled_replaced_count
+    metrics["canceled_before_fill_orphan_orders"] = canceled_orphan_count
     metrics["open_unfilled_entry_orders"] = open_unfilled_count
     metrics["fill_rate"] = (filled_count / accepted_count) if accepted_count else None
     metrics["cancel_before_fill_rate"] = (
@@ -1754,9 +1797,53 @@ def _pending_entry_lifecycle_metrics(
         if accepted_count
         else None
     )
+    metrics["cancel_replacement_rate"] = (
+        canceled_replaced_count / canceled_before_fill_count
+        if canceled_before_fill_count
+        else None
+    )
     canceled_before_fill_samples.sort(key=lambda item: str(item.get("canceled_at_utc") or ""), reverse=True)
     metrics["canceled_before_fill_samples"] = canceled_before_fill_samples[:12]
     return metrics
+
+
+def _pending_cancel_replacement(
+    canceled_order: dict[str, Any],
+    accepted: dict[str, dict[str, Any]],
+    cancel_ts: datetime,
+) -> dict[str, Any] | None:
+    window = timedelta(minutes=PENDING_ENTRY_CANCEL_REPLACEMENT_WINDOW_MIN)
+    lane_id = str(canceled_order.get("lane_id") or "").strip()
+    pair = str(canceled_order.get("pair") or "").strip()
+    side = str(canceled_order.get("side") or "").strip()
+    candidates: list[dict[str, Any]] = []
+    for candidate in accepted.values():
+        if candidate.get("order_id") == canceled_order.get("order_id"):
+            continue
+        accepted_ts = candidate.get("accepted_ts")
+        if not isinstance(accepted_ts, datetime):
+            continue
+        delta = accepted_ts - cancel_ts
+        if delta <= timedelta(0) or delta > window:
+            continue
+        candidate_lane_id = str(candidate.get("lane_id") or "").strip()
+        if lane_id:
+            if candidate_lane_id != lane_id:
+                continue
+        else:
+            if pair and str(candidate.get("pair") or "").strip() != pair:
+                continue
+            if side and str(candidate.get("side") or "").strip() != side:
+                continue
+        candidates.append(
+            {
+                "order_id": candidate.get("order_id"),
+                "replacement_after_min": delta.total_seconds() / 60.0,
+            }
+        )
+    if not candidates:
+        return None
+    return min(candidates, key=lambda item: float(item["replacement_after_min"]))
 
 
 def _execution_event_is_entry_order(row: sqlite3.Row) -> bool:
