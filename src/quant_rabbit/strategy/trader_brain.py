@@ -1173,23 +1173,20 @@ class TraderBrain:
         # — protected trader-owned exposure is not by itself a no-trade gate,
         # and a self-contradicting pending must not silently lock the basket).
         pending_cancel_order_ids = _contaminated_pending_order_ids(snapshot, scores, data_root=data_root)
-        # MONITOR only when the open exposure is unprotected (portfolio_add_allowed
-        # is False) and there's something to monitor. A pending entry alone does
-        # NOT lock the basket when portfolio_add_allowed=True: the pending will
-        # either get canceled here (if contaminated) or coexist with the new
-        # entry via gateway basket validation. Prior behavior (2026-05-13 fix):
-        # `if exposure_blockers or pending_entries:` self-locked the basket on a
-        # single stale pending while 9 portfolio slots were free, contradicting
-        # §11 and starving daily-target progress when the cycle held one
-        # protected position.
-        if exposure_blockers or (pending_entries and not portfolio_add_allowed):
+        # MONITOR only when non-layerable open exposure is present. A trader-owned
+        # pending entry is already broker-anchored risk, but it is not a blanket
+        # no-trade gate: stale pendings are surfaced via pending_cancel_order_ids,
+        # compatible pendings are counted by the gateway's basket/margin checks,
+        # and current LIVE_READY lanes must still be compared so the campaign can
+        # keep filling available high-quality opportunities.
+        if exposure_blockers:
             decision = TraderDecision(
                 action=ACTION_MONITOR_EXISTING,
                 selected_lane_id=None,
                 selected_lane_score=None,
                 selected_lane_size_multiple=None,
                 generated_at_utc=generated_at,
-                reason="Pending entry or non-layerable exposure is open; evaluate but do not add fresh risk.",
+                reason="Non-layerable open exposure is present; evaluate but do not add fresh risk.",
                 scores=scores,
                 positions=positions,
                 orders=orders,
@@ -2017,7 +2014,7 @@ class TraderBrain:
                 "",
                 "- This layer must compare lanes; it must not send the first live-ready candidate mechanically.",
                 "- Scores rank attention only; live entry requires explicit discretionary gates, not a single score threshold.",
-                "- Pending entry or non-layerable exposure makes TraderBrain monitor-only; automation may pass compatible pending entries to gateway basket validation.",
+                "- Non-layerable open exposure makes TraderBrain monitor-only; pending entries are canceled when stale or counted by gateway basket validation.",
                 "- JPY-cross long trades are penalized when intervention / thin-liquidity themes are active.",
                 "- The execution gateway remains the final authority for live risk.",
             ]
@@ -2467,11 +2464,6 @@ def _exposure_blockers(snapshot: BrokerSnapshot) -> tuple[str, ...]:
         if position.owner in {Owner.MANUAL, Owner.UNKNOWN}:
             continue
         blockers.append(f"open position exists: {position.pair} {position.side.value} id={position.trade_id}")
-    for order in snapshot.orders:
-        if order.owner in {Owner.MANUAL, Owner.UNKNOWN}:
-            continue
-        if not order.trade_id and order.order_type.upper() in PENDING_ENTRY_TYPES:
-            blockers.append(f"pending entry exists: {order.pair} {order.order_type} id={order.order_id}")
     return tuple(blockers)
 
 

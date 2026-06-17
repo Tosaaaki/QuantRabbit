@@ -196,7 +196,7 @@ class TraderBrainTest(unittest.TestCase):
             self.assertGreaterEqual(len(seen_maps), 2)
             self.assertTrue(all(correlation_map is built_map for correlation_map in seen_maps))
 
-    def test_existing_pending_order_forces_monitor_only(self) -> None:
+    def test_existing_pending_order_does_not_force_monitor_only(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             brain = TraderBrain(
@@ -225,8 +225,8 @@ class TraderBrainTest(unittest.TestCase):
 
             decision = brain.run(snapshot)
 
-            self.assertEqual(decision.action, ACTION_MONITOR_EXISTING)
-            self.assertIsNone(decision.selected_lane_id)
+            self.assertEqual(decision.action, ACTION_SEND_ENTRY)
+            self.assertIsNotNone(decision.selected_lane_id)
             self.assertEqual(decision.pending_cancel_order_ids, ())
 
     def test_keeps_pending_when_compatible_lane_exists_below_top_score(self) -> None:
@@ -258,7 +258,7 @@ class TraderBrainTest(unittest.TestCase):
 
             decision = brain.run(snapshot)
 
-            self.assertEqual(decision.action, ACTION_MONITOR_EXISTING)
+            self.assertEqual(decision.action, ACTION_SEND_ENTRY)
             self.assertEqual(decision.pending_cancel_order_ids, ())
 
     def test_target_open_keeps_passive_pending_for_gateway_basket_counting(self) -> None:
@@ -291,7 +291,7 @@ class TraderBrainTest(unittest.TestCase):
 
             decision = brain.run(snapshot)
 
-            self.assertEqual(decision.action, ACTION_MONITOR_EXISTING)
+            self.assertEqual(decision.action, ACTION_SEND_ENTRY)
             self.assertEqual(decision.pending_cancel_order_ids, ())
 
     def test_cancels_pending_only_when_same_type_lane_has_moved_outside_spread_band(self) -> None:

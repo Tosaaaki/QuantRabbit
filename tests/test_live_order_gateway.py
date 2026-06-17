@@ -154,7 +154,7 @@ class LiveOrderGatewayTest(unittest.TestCase):
             else:
                 os.environ["QR_NEW_ENTRY_INITIAL_SL"] = prior_initial_sl
 
-    def test_sl_free_disaster_stop_blocks_when_attached_tail_risk_exceeds_cap_below_min_lot(self) -> None:
+    def test_sl_free_disaster_stop_does_not_block_on_per_trade_tail_cap(self) -> None:
         prior_sl_free = os.environ.get("QR_TRADER_DISABLE_SL_REPAIR")
         prior_initial_sl = os.environ.get("QR_NEW_ENTRY_INITIAL_SL")
         os.environ["QR_TRADER_DISABLE_SL_REPAIR"] = "1"
@@ -169,6 +169,7 @@ class LiveOrderGatewayTest(unittest.TestCase):
                     output_path=root / "request.json",
                     report_path=root / "report.md",
                     max_loss_jpy=300.0,
+                    live_enabled=True,
                 ).run(
                     intents_path=_intents(
                         root,
@@ -183,13 +184,13 @@ class LiveOrderGatewayTest(unittest.TestCase):
                     confirm_live=True,
                 )
 
-                self.assertEqual(summary.status, "BLOCKED")
-                self.assertFalse(summary.sent)
-                self.assertEqual(client.orders, [])
+                self.assertEqual(summary.status, "SENT")
+                self.assertTrue(summary.sent)
+                self.assertEqual(len(client.orders), 1)
                 payload = json.loads((root / "request.json").read_text())
                 self.assertEqual(payload["order_request"]["stopLossOnFill"]["price"], "1.17000")
                 self.assertGreater(payload["attached_stop_risk_metrics"]["risk_jpy"], 300.0)
-                self.assertIn(
+                self.assertNotIn(
                     "ATTACHED_STOP_LOSS_CAP_BELOW_MIN_LOT",
                     {issue["code"] for issue in payload["risk_issues"]},
                 )
@@ -203,7 +204,7 @@ class LiveOrderGatewayTest(unittest.TestCase):
             else:
                 os.environ["QR_NEW_ENTRY_INITIAL_SL"] = prior_initial_sl
 
-    def test_sl_free_disaster_stop_clips_units_to_attached_tail_cap(self) -> None:
+    def test_sl_free_disaster_stop_does_not_clip_units_to_attached_tail_cap(self) -> None:
         prior_sl_free = os.environ.get("QR_TRADER_DISABLE_SL_REPAIR")
         prior_initial_sl = os.environ.get("QR_NEW_ENTRY_INITIAL_SL")
         os.environ["QR_TRADER_DISABLE_SL_REPAIR"] = "1"
@@ -234,11 +235,11 @@ class LiveOrderGatewayTest(unittest.TestCase):
                 self.assertEqual(summary.status, "STAGED")
                 payload = json.loads((root / "request.json").read_text())
                 scaled_units = int(payload["order_request"]["units"])
-                self.assertGreaterEqual(scaled_units, 1000)
-                self.assertLess(scaled_units, 3000)
+                self.assertEqual(scaled_units, 3000)
                 self.assertEqual(payload["scaled_units"], scaled_units)
-                self.assertLessEqual(payload["attached_stop_risk_metrics"]["risk_jpy"], 1100.0)
-                self.assertIn(
+                self.assertGreater(payload["attached_stop_risk_metrics"]["risk_jpy"], 1100.0)
+                self.assertEqual(payload["attached_stop_risk_metrics"]["basis"], "DISASTER_SL")
+                self.assertNotIn(
                     "SIZE_MULTIPLE_CLIPPED_TO_ATTACHED_STOP_CAP",
                     {issue["code"] for issue in payload["risk_issues"]},
                 )
@@ -289,7 +290,7 @@ class LiveOrderGatewayTest(unittest.TestCase):
                 self.assertLessEqual(payload["risk_metrics"]["risk_jpy"], 300.0)
                 self.assertGreater(payload["attached_stop_risk_metrics"]["risk_jpy"], 300.0)
                 self.assertIn(
-                    "ATTACHED_STOP_LOSS_CAP_BELOW_MIN_LOT",
+                    "DISASTER_STOP_PORTFOLIO_CAP_EXCEEDED",
                     {issue["code"] for issue in payload["risk_issues"]},
                 )
         finally:
@@ -354,7 +355,7 @@ class LiveOrderGatewayTest(unittest.TestCase):
                 self.assertEqual(second["status"], "BLOCKED")
                 self.assertLessEqual(second["risk_metrics"]["risk_jpy"], 800.0)
                 self.assertIn(
-                    "ATTACHED_STOP_LOSS_CAP_BELOW_MIN_LOT",
+                    "DISASTER_STOP_PORTFOLIO_CAP_EXCEEDED",
                     {issue["code"] for issue in second["risk_issues"]},
                 )
         finally:

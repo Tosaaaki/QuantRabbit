@@ -885,6 +885,32 @@ class LiveOrderGateway:
         ):
             return intent, risk, order_request, attached_stop, size_multiple, [], order_build_issues
 
+        if attached_stop.get("basis") == "DISASTER_SL":
+            portfolio_remaining = _portfolio_loss_remaining_jpy(
+                snapshot=snapshot,
+                portfolio_loss_cap=portfolio_loss_cap,
+                cumulative_risk_jpy=cumulative_risk_jpy,
+            )
+            if portfolio_remaining is not None and attached_stop["risk_jpy"] > portfolio_remaining:
+                return (
+                    intent,
+                    risk,
+                    order_request,
+                    attached_stop,
+                    size_multiple,
+                    [
+                        RiskIssue(
+                            "DISASTER_STOP_PORTFOLIO_CAP_EXCEEDED",
+                            f"disaster stop risk {attached_stop['risk_jpy']:.0f} JPY exceeds "
+                            f"portfolio remaining capacity {portfolio_remaining:.0f} JPY; keep units "
+                            "sized by the expected invalidation and skip this lane until the basket "
+                            "can absorb the full catastrophe-stop exposure.",
+                        )
+                    ],
+                    order_build_issues,
+                )
+            return intent, risk, order_request, attached_stop, size_multiple, [], order_build_issues
+
         original_units = intent.units
         original_attached_risk_jpy = float(attached_stop["risk_jpy"])
         scale = _capacity_scale(abs(intent.units), original_attached_risk_jpy, cap)
