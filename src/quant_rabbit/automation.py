@@ -3725,10 +3725,24 @@ class AutoTradeCycle:
         canceled: list[str] = []
         already = set(already_canceled)
         allowed = set(allowed_order_ids) if allowed_order_ids is not None else None
+        preserved_current_thesis_ids: set[str] = set()
+        if gpt_summary.action == "CANCEL_PENDING" and self.intents_path.exists():
+            try:
+                preserved_current_thesis_ids = set(
+                    _pending_cancel_ids_with_visible_current_thesis(
+                        self._load_snapshot_artifact(),
+                        intents_path=self.intents_path,
+                        cancel_order_ids=gpt_summary.cancel_order_ids,
+                    )
+                )
+            except (OSError, ValueError, json.JSONDecodeError):
+                preserved_current_thesis_ids = set()
         for order_id in gpt_summary.cancel_order_ids:
             if order_id in already:
                 continue
             if allowed is not None and order_id not in allowed:
+                continue
+            if order_id in preserved_current_thesis_ids:
                 continue
             self.client.cancel_order(order_id)
             canceled.append(order_id)

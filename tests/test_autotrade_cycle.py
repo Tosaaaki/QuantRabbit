@@ -1495,6 +1495,55 @@ class AutoTradeCycleTest(unittest.TestCase):
             self.assertEqual(client.orders_canceled, [])
             self.assertEqual(client.orders_sent, [])
 
+    def test_gpt_cancel_helper_preserves_pending_with_current_thesis(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            now = datetime.now(timezone.utc)
+            pending = BrokerOrder(
+                order_id="current-thesis-pending",
+                pair="EUR_USD",
+                order_type="STOP",
+                price=1.17345,
+                state="PENDING",
+                units=1000,
+                owner=Owner.TRADER,
+                raw={
+                    "createTime": now.isoformat(),
+                    "clientExtensions": {"tag": "trader"},
+                    "takeProfitOnFill": {"price": "1.17500"},
+                    "stopLossOnFill": {"price": "1.17280"},
+                },
+            )
+            snapshot = BrokerSnapshot(
+                fetched_at_utc=now,
+                orders=(pending,),
+                quotes={"EUR_USD": Quote("EUR_USD", 1.17298, 1.17306, timestamp_utc=now)},
+            )
+            snapshot_path = root / "snapshot.json"
+            snapshot_path.write_text(_snapshot_to_json(snapshot) + "\n")
+            intents_path = root / "intents.json"
+            _write_live_ready_intents(intents_path)
+            client = FakeCycleClient(snapshot)
+            cycle = AutoTradeCycle(
+                client=client,
+                snapshot_path=snapshot_path,
+                intents_path=intents_path,
+                live_enabled=True,
+            )
+            gpt_summary = GptHandoffSummary(
+                status="ACCEPTED",
+                action="CANCEL_PENDING",
+                selected_lane_id=None,
+                allowed=True,
+                issues=0,
+                cancel_order_ids=("current-thesis-pending",),
+            )
+
+            canceled = cycle._cancel_gpt_pending_orders(gpt_summary, send=True)
+
+            self.assertEqual(canceled, ())
+            self.assertEqual(client.orders_canceled, [])
+
     def test_trader_pending_order_can_add_verified_basket_when_risk_is_known(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
