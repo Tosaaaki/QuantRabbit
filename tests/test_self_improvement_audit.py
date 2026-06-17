@@ -959,6 +959,52 @@ class SelfImprovementAuditorTest(unittest.TestCase):
         self.assertAlmostEqual(evidence["hit_rate"], 0.1)
         self.assertTrue(evidence["worst_buckets"])
 
+    def test_directional_forecast_watch_only_samples_do_not_trigger_entry_grade_hit_rate_repair(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(
+                root,
+                active_position=False,
+                live_ready_market_rr=1.4,
+                closed_pls=(100.0, 80.0, -50.0),
+            )
+            rows = []
+            for idx in range(12):
+                rows.append(
+                    {
+                        "timestamp_emitted_utc": (_NOW - timedelta(hours=idx + 2)).isoformat(),
+                        "pair": "EUR_USD",
+                        "direction": "UP",
+                        "confidence": 0.12,
+                        "regime_at_emission": "TREND",
+                        "signal_name": "directional_forecast",
+                        "predicted_target_price": 1.1720,
+                        "predicted_invalidation_price": 1.1680,
+                        "resolution_window_min": 60.0,
+                        "resolution_status": "MISS",
+                        "resolution_evidence": (
+                            "2026-06-16T04:44:00Z invalidation 1.16800 touched before target 1.17200"
+                        ),
+                        "cycle_id": f"watch-only-cycle-{idx}",
+                    }
+                )
+            files["projection_ledger"].write_text("\n".join(json.dumps(row) for row in rows) + "\n")
+
+            summary = _run(files)
+            payload = json.loads(files["output"].read_text())
+
+        codes = {item["code"]: item for item in payload["findings"]}
+        self.assertEqual(summary.status, STATUS_ACTION_REQUIRED)
+        self.assertIn("DIRECTIONAL_FORECAST_ENTRY_GRADE_SAMPLE_SHORTFALL", codes)
+        self.assertNotIn("DIRECTIONAL_FORECAST_HIT_RATE_WEAK", codes)
+        self.assertNotIn("DIRECTIONAL_FORECAST_INVALIDATION_FIRST_DOMINANT", codes)
+        finding = codes["DIRECTIONAL_FORECAST_ENTRY_GRADE_SAMPLE_SHORTFALL"]
+        self.assertEqual(finding["priority"], "P1")
+        evidence = finding["evidence"]
+        self.assertEqual(evidence["entry_grade_samples"], 0)
+        self.assertEqual(evidence["watch_only_movement_samples"], 12)
+        self.assertEqual(evidence["movement_samples"], 12)
+
     def test_directional_forecast_low_hit_rate_excludes_range_box_hits(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

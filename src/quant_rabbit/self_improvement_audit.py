@@ -2604,11 +2604,20 @@ def _directional_forecast_quality_findings(
                     },
                 )
             )
+    entry_grade_movement_calibrated = [
+        row for row in movement_calibrated
+        if _directional_forecast_entry_grade(row)
+    ]
+    watch_only_movement_calibrated = [
+        row for row in movement_calibrated
+        if not _directional_forecast_entry_grade(row)
+    ]
     movement_target_timeouts = [
         row for row in target_timeout_rows
         if _directional_forecast_is_movement_direction(row)
+        and _directional_forecast_entry_grade(row)
     ]
-    touch_or_timeout_samples = len(movement_calibrated) + len(movement_target_timeouts)
+    touch_or_timeout_samples = len(entry_grade_movement_calibrated) + len(movement_target_timeouts)
     target_timeout_rate = (
         len(movement_target_timeouts) / touch_or_timeout_samples
         if touch_or_timeout_samples
@@ -2638,22 +2647,66 @@ def _directional_forecast_quality_findings(
                     "target_timeout_samples": len(movement_target_timeouts),
                     "target_timeout_rate": round(target_timeout_rate, 4),
                     "warn_above": FORECAST_TARGET_TIMEOUT_WARN_ABOVE,
-                    "touch_calibrated_samples": len(movement_calibrated),
+                    "touch_calibrated_samples": len(entry_grade_movement_calibrated),
+                    "watch_only_movement_samples_excluded": len(watch_only_movement_calibrated),
                     "examples": [_projection_ref(row) for row in movement_target_timeouts[:8]],
                 },
             )
         )
+    if (
+        len(movement_calibrated) >= FORECAST_CALIBRATION_MIN_SAMPLES
+        and len(entry_grade_movement_calibrated) < FORECAST_CALIBRATION_MIN_SAMPLES
+        and len(watch_only_movement_calibrated) >= FORECAST_CALIBRATION_MIN_SAMPLES
+    ):
+        findings.append(
+            _finding(
+                run_id=run_id,
+                priority="P1",
+                layer="forecast",
+                code="DIRECTIONAL_FORECAST_ENTRY_GRADE_SAMPLE_SHORTFALL",
+                message=(
+                    "directional_forecast has too few entry-grade movement samples: "
+                    f"{len(entry_grade_movement_calibrated)}/{len(movement_calibrated)} "
+                    "movement sample(s) cleared confidence >= "
+                    f"{FORECAST_ENTRY_GRADE_CONFIDENCE_MIN:.2f}"
+                ),
+                next_action=(
+                    "Keep watch-only movement forecasts out of live-entry calibration, then improve raw "
+                    "forecast priors and geometry until enough target/invalidation-scored samples clear "
+                    "the entry confidence floor."
+                ),
+                evidence={
+                    "entry_grade_samples": len(entry_grade_movement_calibrated),
+                    "watch_only_movement_samples": len(watch_only_movement_calibrated),
+                    "movement_samples": len(movement_calibrated),
+                    "confidence_floor": FORECAST_ENTRY_GRADE_CONFIDENCE_MIN,
+                    "watch_only_hit_stats": _directional_forecast_hit_stats(
+                        watch_only_movement_calibrated
+                    ),
+                    "watch_only_invalidation_first_stats": (
+                        _directional_forecast_invalidation_first_stats(
+                            watch_only_movement_calibrated
+                        )
+                    ),
+                    "watch_only_worst_buckets": _directional_forecast_worst_buckets(
+                        watch_only_movement_calibrated,
+                        min_samples=FORECAST_CALIBRATION_MIN_SAMPLES,
+                    )[:8],
+                    "examples": [_projection_ref(row) for row in watch_only_movement_calibrated[:8]],
+                },
+            )
+        )
     weak_buckets = _directional_forecast_worst_buckets(
-        movement_calibrated,
+        entry_grade_movement_calibrated,
         min_samples=FORECAST_CALIBRATION_MIN_SAMPLES,
         warn_below=FORECAST_HIT_RATE_WARN_BELOW,
     )
-    recent_24h = _directional_forecast_rows_since(movement_calibrated, now=now, window=timedelta(hours=24))
-    recent_7d = _directional_forecast_rows_since(movement_calibrated, now=now, window=timedelta(days=7))
+    recent_24h = _directional_forecast_rows_since(entry_grade_movement_calibrated, now=now, window=timedelta(hours=24))
+    recent_7d = _directional_forecast_rows_since(entry_grade_movement_calibrated, now=now, window=timedelta(days=7))
     window_stats = {
         "24h": {"window": "24h", **_directional_forecast_hit_stats(recent_24h)},
         "7d": {"window": "7d", **_directional_forecast_hit_stats(recent_7d)},
-        "all": {"window": "all", **_directional_forecast_hit_stats(movement_calibrated)},
+        "all": {"window": "all", **_directional_forecast_hit_stats(entry_grade_movement_calibrated)},
     }
     if weak_buckets:
         recent_24h_weak_buckets = _directional_forecast_worst_buckets(
@@ -2699,7 +2752,8 @@ def _directional_forecast_quality_findings(
                 evidence={
                     "min_samples": FORECAST_CALIBRATION_MIN_SAMPLES,
                     "warn_below": FORECAST_HIT_RATE_WARN_BELOW,
-                    "movement_samples": len(movement_calibrated),
+                    "movement_samples": len(entry_grade_movement_calibrated),
+                    "watch_only_movement_samples_excluded": len(watch_only_movement_calibrated),
                     "range_samples_excluded": len(range_calibrated),
                     "total_calibrated_samples": len(calibrated),
                     "weak_buckets": weak_buckets,
@@ -2710,8 +2764,8 @@ def _directional_forecast_quality_findings(
                 },
             )
         )
-    samples = len(movement_calibrated)
-    hit_count = sum(1 for row in movement_calibrated if str(row.get("resolution_status") or "").upper() == "HIT")
+    samples = len(entry_grade_movement_calibrated)
+    hit_count = sum(1 for row in entry_grade_movement_calibrated if str(row.get("resolution_status") or "").upper() == "HIT")
     hit_rate = hit_count / samples if samples else 0.0
     if samples >= FORECAST_CALIBRATION_MIN_SAMPLES and hit_rate < FORECAST_HIT_RATE_WARN_BELOW:
         recent_gate = window_stats["7d"] if int(window_stats["7d"]["samples"]) >= FORECAST_CALIBRATION_MIN_SAMPLES else window_stats["24h"]
@@ -2748,18 +2802,19 @@ def _directional_forecast_quality_findings(
                     "hit_rate": round(hit_rate, 4),
                     "range_samples_excluded": len(range_calibrated),
                     "target_timeout_samples_excluded": len(movement_target_timeouts),
+                    "watch_only_movement_samples_excluded": len(watch_only_movement_calibrated),
                     "total_calibrated_samples": len(calibrated),
                     "warn_below": FORECAST_HIT_RATE_WARN_BELOW,
                     "recent_recovered": recent_recovered,
                     "window_hit_rates": window_stats,
                     "worst_buckets": _directional_forecast_worst_buckets(
-                        movement_calibrated,
+                        entry_grade_movement_calibrated,
                         min_samples=FORECAST_CALIBRATION_MIN_SAMPLES,
                     )[:8],
                 },
             )
         )
-    invalidation_first_stats = _directional_forecast_invalidation_first_stats(movement_calibrated)
+    invalidation_first_stats = _directional_forecast_invalidation_first_stats(entry_grade_movement_calibrated)
     if (
         samples >= FORECAST_CALIBRATION_MIN_SAMPLES
         and float(invalidation_first_stats["invalidation_first_rate"]) >= FORECAST_INVALIDATION_FIRST_WARN_ABOVE
@@ -2783,8 +2838,9 @@ def _directional_forecast_quality_findings(
                 evidence={
                     **invalidation_first_stats,
                     "warn_above": FORECAST_INVALIDATION_FIRST_WARN_ABOVE,
+                    "watch_only_movement_samples_excluded": len(watch_only_movement_calibrated),
                     "worst_buckets": _directional_forecast_invalidation_first_buckets(
-                        movement_calibrated,
+                        entry_grade_movement_calibrated,
                         min_samples=FORECAST_CALIBRATION_MIN_SAMPLES,
                     )[:8],
                 },
@@ -2795,6 +2851,18 @@ def _directional_forecast_quality_findings(
 
 def _directional_forecast_is_movement_direction(row: dict[str, Any]) -> bool:
     return str(row.get("direction") or "").upper() in {"UP", "DOWN"}
+
+
+def _directional_forecast_entry_grade(row: dict[str, Any]) -> bool:
+    if not _directional_forecast_is_movement_direction(row):
+        return True
+    if "confidence" not in row:
+        return True
+    try:
+        confidence = float(row.get("confidence"))
+    except (TypeError, ValueError):
+        return True
+    return confidence >= FORECAST_ENTRY_GRADE_CONFIDENCE_MIN
 
 
 def _directional_forecast_has_target_invalidation(row: dict[str, Any]) -> bool:
