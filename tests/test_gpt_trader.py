@@ -1409,6 +1409,9 @@ class GPTTraderBrainTest(unittest.TestCase):
             root = Path(tmp)
             files = _fixtures(root, orders=[_pending_order()])
             blocked_result = _result()
+            blocked_result["lane_id"] = "range_trader:USD_JPY:SHORT:RANGE_ROTATION"
+            blocked_result["intent"]["pair"] = "USD_JPY"
+            blocked_result["intent"]["side"] = "SHORT"
             blocked_result["status"] = "DRY_RUN_BLOCKED"
             blocked_result["live_blockers"] = ["forecast no longer backs this entry"]
             files["intents"].write_text(json.dumps({"results": [blocked_result]}))
@@ -1419,6 +1422,23 @@ class GPTTraderBrainTest(unittest.TestCase):
             self.assertEqual(summary.status, "ACCEPTED")
             payload = json.loads((root / "gpt_decision.json").read_text())
             self.assertEqual(payload["verification_issues"], [])
+
+    def test_rejects_cancel_pending_when_same_pair_thesis_still_visible(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root, orders=[_pending_order()])
+            blocked_result = _result()
+            blocked_result["status"] = "DRY_RUN_BLOCKED"
+            blocked_result["live_blockers"] = ["temporary spread block; thesis remains visible"]
+            files["intents"].write_text(json.dumps({"results": [blocked_result]}))
+            brain = _brain(root, files, _cancel_pending_decision(cancel_order_ids=["pending-1"]))
+
+            summary = brain.run(snapshot_path=files["snapshot"])
+
+            self.assertEqual(summary.status, "REJECTED")
+            payload = json.loads((root / "gpt_decision.json").read_text())
+            codes = {issue["code"] for issue in payload["verification_issues"]}
+            self.assertIn("CANCEL_PENDING_CURRENT_THESIS_VISIBLE", codes)
 
     def test_cli_uses_external_decision_response_without_model_api(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

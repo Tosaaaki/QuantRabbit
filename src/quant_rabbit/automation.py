@@ -1835,10 +1835,18 @@ class AutoTradeCycle:
                 and trader_positions == 0
                 and decision.pending_cancel_order_ids
             ):
-                for order_id in decision.pending_cancel_order_ids:
-                    self.client.cancel_order(order_id)
-                    canceled_orders.append(order_id)
-                status = "CANCELED_CONTAMINATED_PENDING"
+                visible_thesis_ids = _pending_cancel_ids_with_visible_current_thesis(
+                    snapshot,
+                    intents_path=self.intents_path,
+                    cancel_order_ids=decision.pending_cancel_order_ids,
+                )
+                if visible_thesis_ids:
+                    status = "PENDING_PRESERVED_CURRENT_THESIS"
+                else:
+                    for order_id in decision.pending_cancel_order_ids:
+                        self.client.cancel_order(order_id)
+                        canceled_orders.append(order_id)
+                    status = "CANCELED_CONTAMINATED_PENDING"
             summary = AutoTradeCycleSummary(
                 status=status,
                 report_path=self.report_path,
@@ -4139,6 +4147,49 @@ def _trader_pending_entry_order_ids(snapshot) -> tuple[str, ...]:
         and order.owner.value not in {"manual", "unknown"}
         and order.order_id
     )
+
+
+def _pending_cancel_ids_with_visible_current_thesis(
+    snapshot,
+    *,
+    intents_path: Path,
+    cancel_order_ids: tuple[str, ...],
+) -> tuple[str, ...]:
+    cancel_set = {str(order_id) for order_id in cancel_order_ids if str(order_id)}
+    if not cancel_set:
+        return ()
+    try:
+        intents_payload = json.loads(intents_path.read_text())
+    except (OSError, json.JSONDecodeError, ValueError):
+        return ()
+    current_pair_sides = {
+        (
+            str((item.get("intent") or {}).get("pair") or ""),
+            str((item.get("intent") or {}).get("side") or "").upper(),
+        )
+        for item in intents_payload.get("results", []) or []
+        if isinstance(item, dict) and isinstance(item.get("intent"), dict)
+    }
+    if not current_pair_sides:
+        return ()
+    preserved: list[str] = []
+    for order in snapshot.orders:
+        order_id = str(getattr(order, "order_id", "") or "")
+        if order_id not in cancel_set:
+            continue
+        if getattr(order, "trade_id", None):
+            continue
+        if str(getattr(order, "order_type", "") or "").upper() not in PENDING_ENTRY_TYPES:
+            continue
+        if _order_owner_value(order) != "trader":
+            continue
+        pair_side = (
+            str(getattr(order, "pair", "") or ""),
+            str(_order_side_from_units(order) or "").upper(),
+        )
+        if pair_side in current_pair_sides:
+            preserved.append(order_id)
+    return tuple(preserved)
 
 
 def _campaign_exposure_required(

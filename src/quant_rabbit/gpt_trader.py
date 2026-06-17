@@ -1706,6 +1706,27 @@ class DecisionVerifier:
                 _target_requires_entry(self.packet)
                 and not position_close_reasons
                 and not exposure_blockers
+                and not tradeable_lanes
+            ):
+                visible_thesis = _cancel_pending_visible_current_theses(
+                    self.packet,
+                    decision.cancel_order_ids,
+                )
+                if visible_thesis:
+                    issues.append(
+                        VerificationIssue(
+                            "CANCEL_PENDING_CURRENT_THESIS_VISIBLE",
+                            "CANCEL_PENDING must not clear a broker-anchored pending entry while a current "
+                            "same-pair/same-side thesis remains visible in order_intents. Preserve the pending "
+                            "entry unless the current packet removes the candidate, or replace it through a "
+                            "TRADE receipt with cancel_order_ids: "
+                            + "; ".join(visible_thesis[:3]),
+                        )
+                    )
+            if (
+                _target_requires_entry(self.packet)
+                and not position_close_reasons
+                and not exposure_blockers
                 and tradeable_lanes
                 and not _all_tradeable_lanes_blocked_by_learning_audit(self.packet, tradeable_lanes)
             ):
@@ -2543,6 +2564,9 @@ def _pending_order_packet(orders: list[Any]) -> list[dict[str, Any]]:
                 "trade_id": item.get("trade_id"),
                 "price": item.get("price"),
                 "units": item.get("units"),
+                "side": item.get("side") or _side_from_order_units(item.get("units")),
+                "lane_id": item.get("lane_id") or item.get("client_lane_id"),
+                "client_order_id": item.get("client_order_id") or item.get("clientOrderID"),
                 "owner": item.get("owner"),
             }
         )
@@ -2562,6 +2586,18 @@ def _is_pending_entry_order_payload(item: Any) -> bool:
         return False
     order_type = str(item.get("order_type") or "").upper()
     return order_type in {"LIMIT", "STOP", "MARKET_IF_TOUCHED", "MARKET_IF_TOUCHED_ORDER"}
+
+
+def _side_from_order_units(units: Any) -> str:
+    try:
+        value = float(units)
+    except (TypeError, ValueError):
+        return ""
+    if value > 0:
+        return "LONG"
+    if value < 0:
+        return "SHORT"
+    return ""
 
 
 def _parent_lane_id(lane_id: str) -> str:
@@ -3923,8 +3959,16 @@ def _has_pending_entry_order(packet: dict[str, Any]) -> bool:
 
 
 def _pending_entry_order_ids(packet: dict[str, Any]) -> list[str]:
+    return [
+        str(order.get("order_id") or "")
+        for order in _pending_entry_orders(packet)
+        if str(order.get("order_id") or "")
+    ]
+
+
+def _pending_entry_orders(packet: dict[str, Any]) -> list[dict[str, Any]]:
     snapshot = packet.get("broker_snapshot", {})
-    order_ids: list[str] = []
+    orders: list[dict[str, Any]] = []
     for order in snapshot.get("pending_orders", []) or []:
         owner = str(order.get("owner") or "")
         if owner in {"manual", "unknown"}:
@@ -3934,8 +3978,37 @@ def _pending_entry_order_ids(packet: dict[str, Any]) -> list[str]:
         order_type = str(order.get("order_type") or "").upper()
         order_id = str(order.get("order_id") or "")
         if order_id and order_type in {"LIMIT", "STOP", "MARKET_IF_TOUCHED", "MARKET_IF_TOUCHED_ORDER"}:
-            order_ids.append(order_id)
-    return order_ids
+            orders.append(order)
+    return orders
+
+
+def _cancel_pending_visible_current_theses(
+    packet: dict[str, Any],
+    cancel_order_ids: tuple[str, ...],
+) -> list[str]:
+    cancel_set = {str(order_id) for order_id in cancel_order_ids if str(order_id)}
+    if not cancel_set:
+        return []
+    out: list[str] = []
+    for order in _pending_entry_orders(packet):
+        order_id = str(order.get("order_id") or "")
+        if order_id not in cancel_set:
+            continue
+        pair = str(order.get("pair") or "").strip()
+        side = str(order.get("side") or _side_from_order_units(order.get("units")) or "").upper()
+        if not pair or not side:
+            continue
+        matching_lanes = [
+            str(lane.get("lane_id") or "")
+            for lane in packet.get("lanes", []) or []
+            if isinstance(lane, dict)
+            and str(lane.get("pair") or "").strip() == pair
+            and str(lane.get("direction") or "").upper() == side
+            and str(lane.get("lane_id") or "")
+        ]
+        if matching_lanes:
+            out.append(f"{order_id} {pair} {side} still has current thesis {matching_lanes[0]}")
+    return out
 
 
 def _trade_exposure_blockers(packet: dict[str, Any]) -> list[str]:

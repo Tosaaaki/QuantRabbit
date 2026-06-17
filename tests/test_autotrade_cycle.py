@@ -535,8 +535,9 @@ class AutoTradeCycleTest(unittest.TestCase):
             else:
                 os.environ["QR_REQUIRE_TELEMETRY_FOR_LIVE"] = prior
 
-        self.assertEqual(summary.status, "CANCELED_GPT_PENDING")
-        self.assertEqual(summary.gpt_action, "CANCEL_PENDING")
+        self.assertEqual(summary.status, "PENDING_PRESERVED_CURRENT_THESIS")
+        self.assertEqual(summary.gpt_action, None)
+        self.assertEqual(summary.canceled_orders, ())
         self.assertEqual(row["resolution_status"], "HIT")
         self.assertIn("Projection preflight: status=`OK`", report)
 
@@ -1353,7 +1354,7 @@ class AutoTradeCycleTest(unittest.TestCase):
             self.assertIn("monitor-only", (root / "report.md").read_text())
             self.assertTrue((root / "decision.json").exists())
 
-    def test_no_live_ready_pending_cleanup_cancels_contaminated_order(self) -> None:
+    def test_no_live_ready_pending_cleanup_preserves_current_thesis_order(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             now = datetime.now(timezone.utc)
@@ -1413,10 +1414,10 @@ class AutoTradeCycleTest(unittest.TestCase):
                 max_loss_jpy=1_500,
             ).run(send=True)
 
-            self.assertEqual(summary.status, "CANCELED_GPT_PENDING")
-            self.assertEqual(summary.gpt_action, "CANCEL_PENDING")
-            self.assertEqual(summary.canceled_orders, ("pending-1",))
-            self.assertEqual(client.orders_canceled, ["pending-1"])
+            self.assertEqual(summary.status, "PENDING_PRESERVED_CURRENT_THESIS")
+            self.assertEqual(summary.gpt_action, None)
+            self.assertEqual(summary.canceled_orders, ())
+            self.assertEqual(client.orders_canceled, [])
             self.assertEqual(client.orders_sent, [])
 
     def test_no_live_ready_gpt_cancel_preserves_anchored_pending_without_contamination(self) -> None:
