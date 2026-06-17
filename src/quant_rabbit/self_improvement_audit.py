@@ -107,6 +107,24 @@ REPEATED_REPAIR_LOOP_STREAK_MIN = int(
 )
 REPEATED_REPAIR_LOOP_CODE = "REPEATED_SELF_IMPROVEMENT_LOOP"
 
+# Root-cause focus is an audit summarizer, not a new live gate. It collapses
+# repeated symptoms into the smallest repair surface so the next cycle does not
+# treat process loops, coverage gaps, and execution churn as unrelated work.
+ROOT_CAUSE_CODE = "ROOT_CAUSE_FOCUS"
+ROOT_CAUSE_PRIORITY_WEIGHTS = {"P0": 100.0, "P1": 30.0, "P2": 10.0}
+ROOT_CAUSE_CODE_BOOSTS = {
+    "DIRECTIONAL_FORECAST_INVALIDATION_FIRST_DOMINANT": 90.0,
+    "DIRECTIONAL_FORECAST_HIT_RATE_WEAK": 70.0,
+    "DIRECTIONAL_FORECAST_BUCKET_HIT_RATE_WEAK": 55.0,
+    "FORECAST_ARBITRATION_UNSELECTED_PROJECTION_REPAIR_REQUIRED": 50.0,
+    "RANGE_FORECAST_METHOD_MISMATCH_REPAIR_REQUIRED": 45.0,
+    "TARGET_OPEN_LIVE_READY_COVERAGE_SHORTFALL": 60.0,
+    "TARGET_OPEN_NO_LIVE_READY_LANES": 60.0,
+    "PENDING_ENTRY_FILL_RATE_WEAK": 45.0,
+    "PENDING_ENTRY_CANCEL_RATE_HIGH": 40.0,
+    "NEGATIVE_RECENT_EXPECTANCY": 35.0,
+}
+
 NON_GATEWAY_CLOSE_DRAG_PROVENANCES = (
     "DIRECT_OR_MANUAL_BROKER_TRADE_CLOSE",
     "NO_LOCAL_CLOSE_PROVENANCE",
@@ -516,6 +534,30 @@ class SelfImprovementAuditor:
         p1 = sum(1 for item in findings if item["priority"] == "P1")
         p2 = sum(1 for item in findings if item["priority"] == "P2")
         status = STATUS_BLOCKED if p0 else (STATUS_ACTION_REQUIRED if findings else STATUS_OK)
+        runtime_summary = {
+            "target_open": target_open,
+            "snapshot_fetched_at_utc": snapshot_ts.isoformat() if snapshot_ts else None,
+            "open_trader_positions": len(active_positions),
+            "open_trader_pending_entries": len(pending_entry_orders),
+            "live_ready_lanes": len(live_ready),
+            "gpt_status": (gpt_loaded.payload or {}).get("status"),
+            "gpt_action": ((gpt_loaded.payload or {}).get("decision") or {}).get("action")
+            if isinstance((gpt_loaded.payload or {}).get("decision"), dict)
+            else None,
+        }
+        effect_summary = {
+            "window": effect,
+            "last_24h": effect_24h,
+        }
+        execution_quality = {
+            "pending_entry_lifecycle": pending_entry_lifecycle,
+        }
+        root_cause_focus = _root_cause_focus(
+            findings=findings,
+            runtime=runtime_summary,
+            effect_metrics=effect_summary,
+            execution_quality=execution_quality,
+        )
         payload = {
             "generated_at_utc": run_id,
             "status": status,
@@ -547,26 +589,12 @@ class SelfImprovementAuditor:
                 "forecast_persistence": str(forecast_persistence_path),
                 "coverage_optimization": str(coverage_optimization_path),
             },
-            "runtime": {
-                "target_open": target_open,
-                "snapshot_fetched_at_utc": snapshot_ts.isoformat() if snapshot_ts else None,
-                "open_trader_positions": len(active_positions),
-                "open_trader_pending_entries": len(pending_entry_orders),
-                "live_ready_lanes": len(live_ready),
-                "gpt_status": (gpt_loaded.payload or {}).get("status"),
-                "gpt_action": ((gpt_loaded.payload or {}).get("decision") or {}).get("action")
-                if isinstance((gpt_loaded.payload or {}).get("decision"), dict)
-                else None,
-            },
-            "effect_metrics": {
-                "window": effect,
-                "last_24h": effect_24h,
-            },
-            "execution_quality": {
-                "pending_entry_lifecycle": pending_entry_lifecycle,
-            },
+            "runtime": runtime_summary,
+            "effect_metrics": effect_summary,
+            "execution_quality": execution_quality,
+            "root_cause_focus": root_cause_focus,
             "findings": findings,
-            "next_actions": _next_actions(findings),
+            "next_actions": _next_actions(findings, root_cause_focus=root_cause_focus),
             "contract": {
                 "read_only_live_permission": False,
                 "audit_can_write_history_db": True,
@@ -663,6 +691,8 @@ class SelfImprovementAuditor:
             if isinstance(payload.get("execution_quality"), dict)
             else {}
         )
+        root_focus = payload.get("root_cause_focus") if isinstance(payload.get("root_cause_focus"), dict) else {}
+        root_primary = root_focus.get("primary") if isinstance(root_focus.get("primary"), dict) else {}
         lines = [
             "# Self Improvement Audit Report",
             "",
@@ -710,6 +740,34 @@ class SelfImprovementAuditor:
                     ),
                 ]
             )
+        if root_primary:
+            lines.extend(
+                [
+                    "",
+                    "## Root Cause Focus",
+                    "",
+                    (
+                        f"- Primary: `{root_primary.get('family')}` "
+                        f"score `{_fmt_optional(root_primary.get('score'))}` "
+                        f"confidence `{root_primary.get('confidence')}`"
+                    ),
+                    f"- Why: {root_primary.get('why')}",
+                    f"- Goal adjustment: {root_primary.get('goal_adjustment')}",
+                    f"- Next: {root_primary.get('next_action')}",
+                ]
+            )
+            support = root_primary.get("supporting_codes")
+            if isinstance(support, list) and support:
+                lines.append(
+                    "- Supporting codes: "
+                    + ", ".join(f"`{code}`" for code in support[:8] if str(code).strip())
+                )
+            symptoms = root_primary.get("downstream_symptoms")
+            if isinstance(symptoms, list) and symptoms:
+                lines.append(
+                    "- Downstream symptoms: "
+                    + ", ".join(f"`{item}`" for item in symptoms[:8] if str(item).strip())
+                )
         lines.extend(["", "## Findings", ""])
         if payload["findings"]:
             for item in payload["findings"]:
@@ -1496,13 +1554,39 @@ def _pending_entry_lifecycle_findings(
     filled = int(metrics.get("filled_entry_orders") or 0)
     canceled_before_fill = int(metrics.get("canceled_before_fill_orders") or 0)
     cancel_rate = _maybe_float(metrics.get("cancel_before_fill_rate"))
+    fill_rate = _maybe_float(metrics.get("fill_rate"))
     if (
         accepted < PENDING_ENTRY_LIFECYCLE_MIN_ACCEPTED
-        or filled > 0
         or cancel_rate is None
         or cancel_rate <= PENDING_ENTRY_CANCEL_RATE_WARN_ABOVE
     ):
         return []
+    if filled > 0:
+        return [
+            _finding(
+                run_id=run_id,
+                priority="P1",
+                layer="execution_quality",
+                code="PENDING_ENTRY_CANCEL_RATE_HIGH",
+                message=(
+                    f"{accepted} accepted entry order(s) in the audit window filled {filled} time(s), "
+                    f"but {canceled_before_fill} order(s) were canceled before fill"
+                ),
+                next_action=(
+                    "Treat cancel churn as a downstream symptom: separate thesis invalidation from "
+                    "entry-distance/TTL failures by pair, then preserve pending entries whose forecast "
+                    "and range-rail thesis remain valid."
+                ),
+                evidence={
+                    "accepted_entry_orders": accepted,
+                    "filled_entry_orders": filled,
+                    "canceled_before_fill_orders": canceled_before_fill,
+                    "cancel_before_fill_rate": cancel_rate,
+                    "fill_rate": fill_rate,
+                    "samples": metrics.get("canceled_before_fill_samples", [])[:8],
+                },
+            )
+        ]
     return [
         _finding(
             run_id=run_id,
@@ -1523,7 +1607,7 @@ def _pending_entry_lifecycle_findings(
                 "filled_entry_orders": filled,
                 "canceled_before_fill_orders": canceled_before_fill,
                 "cancel_before_fill_rate": cancel_rate,
-                "fill_rate": metrics.get("fill_rate"),
+                "fill_rate": fill_rate,
                 "samples": metrics.get("canceled_before_fill_samples", [])[:8],
             },
         )
@@ -6440,6 +6524,344 @@ def _finding(
     return payload
 
 
+def _root_cause_focus(
+    *,
+    findings: list[dict[str, Any]],
+    runtime: dict[str, Any],
+    effect_metrics: dict[str, Any],
+    execution_quality: dict[str, Any],
+) -> dict[str, Any]:
+    candidates: dict[str, dict[str, Any]] = {}
+    for item in findings:
+        code = str(item.get("code") or "").strip()
+        if not code:
+            continue
+        evidence = item.get("evidence") if isinstance(item.get("evidence"), dict) else {}
+        repeated_code = ""
+        repeated_from_process_loop = False
+        if code == REPEATED_REPAIR_LOOP_CODE:
+            repeated_code = str(evidence.get("repeated_code") or "").strip()
+            family = _root_cause_family_for_code(
+                repeated_code,
+                layer=str(evidence.get("repeated_layer") or item.get("layer") or ""),
+            )
+            repeated_from_process_loop = bool(family)
+            if not family:
+                family = "PROCESS_LOOP"
+        else:
+            family = _root_cause_family_for_code(code, layer=str(item.get("layer") or ""))
+        if not family:
+            continue
+        candidate = candidates.setdefault(
+            family,
+            {
+                "family": family,
+                "score": 0.0,
+                "priority": "P2",
+                "supporting_codes": [],
+                "supporting_findings": [],
+                "metrics": {},
+                "process_loop_streak": None,
+            },
+        )
+        priority = str(item.get("priority") or "P2").upper()
+        candidate["score"] = float(candidate["score"]) + ROOT_CAUSE_PRIORITY_WEIGHTS.get(priority, 5.0)
+        candidate["score"] = float(candidate["score"]) + ROOT_CAUSE_CODE_BOOSTS.get(
+            repeated_code if repeated_from_process_loop else code,
+            0.0,
+        )
+        if repeated_from_process_loop:
+            # A repeated diagnosis is not the essence. It strengthens the
+            # family it keeps pointing to, then the primary action can stay
+            # narrow instead of becoming "fix the loop" as its own task.
+            candidate["score"] = float(candidate["score"]) + 25.0
+            candidate["process_loop_streak"] = evidence.get("current_streak")
+            support_code = repeated_code
+        else:
+            support_code = code
+        supporting_codes = candidate["supporting_codes"]
+        if isinstance(supporting_codes, list) and support_code and support_code not in supporting_codes:
+            supporting_codes.append(support_code)
+        supporting_findings = candidate["supporting_findings"]
+        if isinstance(supporting_findings, list):
+            supporting_findings.append(
+                {
+                    "priority": priority,
+                    "code": code,
+                    "message": item.get("message"),
+                }
+            )
+        _root_cause_merge_metrics(
+            candidate,
+            code=support_code,
+            finding_evidence=evidence,
+            runtime=runtime,
+            effect_metrics=effect_metrics,
+            execution_quality=execution_quality,
+        )
+
+    if not candidates:
+        return {
+            "status": "NO_ACTIONABLE_ROOT_CAUSE",
+            "primary": None,
+            "candidates": [],
+        }
+    finalized = [_root_cause_finalize_candidate(item) for item in candidates.values()]
+    finalized.sort(
+        key=lambda item: (
+            -float(item.get("score") or 0.0),
+            _root_cause_family_rank(str(item.get("family") or "")),
+        )
+    )
+    primary = dict(finalized[0])
+    primary["downstream_symptoms"] = [
+        _root_cause_downstream_label(item)
+        for item in finalized[1:]
+        if _root_cause_downstream_label(item)
+    ][:6]
+    return {
+        "status": "FOCUSED",
+        "primary": primary,
+        "candidates": finalized,
+    }
+
+
+def _root_cause_family_for_code(code: str, *, layer: str = "") -> str:
+    code = str(code or "").upper()
+    layer = str(layer or "").lower()
+    if not code:
+        return ""
+    if code == "VERIFICATION_LEDGER_LANE_BLOCKERS_RECORDED":
+        return ""
+    if code.startswith("DIRECTIONAL_FORECAST_") or code.startswith("FORECAST_ARBITRATION_"):
+        return "FORECAST_ADVERSE_PATH"
+    if code.startswith("RANGE_FORECAST_") or code in {
+        "PROFITABLE_BACKTEST_EDGE_FORECAST_GATED",
+        "FORECAST_HISTORY_DUPLICATE_CYCLE_PAIR",
+        "FORECAST_HISTORY_LEGACY_PHANTOM_CLUSTERS",
+    }:
+        return "FORECAST_ADVERSE_PATH"
+    if code in {"TARGET_OPEN_NO_LIVE_READY_LANES", "TARGET_OPEN_LIVE_READY_COVERAGE_SHORTFALL"}:
+        return "OPPORTUNITY_COVERAGE"
+    if code.startswith("PENDING_ENTRY_") or code == "LIVE_READY_MARKET_RR_BELOW_ONE":
+        return "EXECUTION_LIFECYCLE"
+    if "PROFITABILITY" in code or "EXPECTANCY" in code or "CLOSE_DRAG" in code:
+        return "EXIT_AND_PROFIT_CAPTURE"
+    if code.startswith("LEGACY_REVIEW_EXIT_") or code.startswith("CLOSE_GATE_"):
+        return "EXIT_AND_PROFIT_CAPTURE"
+    if code.endswith("_UNREADABLE") or "STALE" in code or "MISSING" in code:
+        return "DATA_FRESHNESS"
+    if "LEDGER" in code or layer in {"runtime", "memory"}:
+        return "DATA_FRESHNESS"
+    if code == REPEATED_REPAIR_LOOP_CODE:
+        return "PROCESS_LOOP"
+    if layer == "forecast":
+        return "FORECAST_ADVERSE_PATH"
+    if layer == "opportunity":
+        return "OPPORTUNITY_COVERAGE"
+    if layer == "execution_quality":
+        return "EXECUTION_LIFECYCLE"
+    if layer == "profitability":
+        return "EXIT_AND_PROFIT_CAPTURE"
+    return ""
+
+
+def _root_cause_family_rank(family: str) -> int:
+    ranks = {
+        "DATA_FRESHNESS": 0,
+        "FORECAST_ADVERSE_PATH": 1,
+        "EXIT_AND_PROFIT_CAPTURE": 2,
+        "EXECUTION_LIFECYCLE": 3,
+        "OPPORTUNITY_COVERAGE": 4,
+        "PROCESS_LOOP": 5,
+    }
+    return ranks.get(family, 99)
+
+
+def _root_cause_merge_metrics(
+    candidate: dict[str, Any],
+    *,
+    code: str,
+    finding_evidence: dict[str, Any],
+    runtime: dict[str, Any],
+    effect_metrics: dict[str, Any],
+    execution_quality: dict[str, Any],
+) -> None:
+    metrics = candidate.get("metrics")
+    if not isinstance(metrics, dict):
+        metrics = {}
+        candidate["metrics"] = metrics
+    metrics.setdefault("live_ready_lanes", runtime.get("live_ready_lanes"))
+    window = effect_metrics.get("window") if isinstance(effect_metrics.get("window"), dict) else {}
+    metrics.setdefault("net_jpy", window.get("net_jpy"))
+    metrics.setdefault("profit_factor", window.get("profit_factor"))
+    if code == "DIRECTIONAL_FORECAST_HIT_RATE_WEAK":
+        metrics["directional_hit_rate"] = finding_evidence.get("hit_rate")
+        metrics["directional_samples"] = finding_evidence.get("samples")
+    elif code == "DIRECTIONAL_FORECAST_INVALIDATION_FIRST_DOMINANT":
+        metrics["invalidation_first_rate"] = finding_evidence.get("invalidation_first_rate")
+        metrics["invalidation_first_samples"] = finding_evidence.get("samples")
+    elif code == "DIRECTIONAL_FORECAST_BUCKET_HIT_RATE_WEAK":
+        metrics["weak_forecast_buckets"] = len(finding_evidence.get("weak_buckets") or [])
+    elif code == "TARGET_OPEN_LIVE_READY_COVERAGE_SHORTFALL":
+        metrics["target_coverage_pct"] = finding_evidence.get("target_coverage_pct")
+        metrics["remaining_target_jpy"] = finding_evidence.get("remaining_target_jpy")
+    elif code in {"PENDING_ENTRY_FILL_RATE_WEAK", "PENDING_ENTRY_CANCEL_RATE_HIGH"}:
+        metrics["pending_fill_rate"] = finding_evidence.get("fill_rate")
+        metrics["pending_cancel_before_fill_rate"] = finding_evidence.get("cancel_before_fill_rate")
+    pending_lifecycle = (
+        execution_quality.get("pending_entry_lifecycle")
+        if isinstance(execution_quality.get("pending_entry_lifecycle"), dict)
+        else {}
+    )
+    if pending_lifecycle and candidate.get("family") == "EXECUTION_LIFECYCLE":
+        metrics.setdefault("pending_fill_rate", pending_lifecycle.get("fill_rate"))
+        metrics.setdefault("pending_cancel_before_fill_rate", pending_lifecycle.get("cancel_before_fill_rate"))
+
+
+def _root_cause_finalize_candidate(candidate: dict[str, Any]) -> dict[str, Any]:
+    family = str(candidate.get("family") or "")
+    meta = _root_cause_family_meta(family)
+    priorities = [
+        str(item.get("priority") or "P2")
+        for item in candidate.get("supporting_findings", [])
+        if isinstance(item, dict)
+    ]
+    priority = "P0" if "P0" in priorities else ("P1" if "P1" in priorities else "P2")
+    out = dict(candidate)
+    out["score"] = round(float(candidate.get("score") or 0.0), 3)
+    out["priority"] = priority
+    out["confidence"] = _root_cause_confidence(out)
+    out["label"] = meta["label"]
+    out["why"] = _root_cause_why(out, meta)
+    out["goal_adjustment"] = meta["goal_adjustment"]
+    out["next_action"] = meta["next_action"]
+    return out
+
+
+def _root_cause_family_meta(family: str) -> dict[str, str]:
+    if family == "FORECAST_ADVERSE_PATH":
+        return {
+            "label": "forecast adverse path is failing before entry expansion",
+            "goal_adjustment": (
+                "Shift the immediate improvement goal from more entries to reducing invalidation-first "
+                "directional forecasts and weak buckets; only then expand coverage."
+            ),
+            "next_action": (
+                "Repair the named directional forecast buckets and range-location priors, then verify "
+                "recent hit-rate and invalidation-first metrics before increasing entry frequency."
+            ),
+        }
+    if family == "OPPORTUNITY_COVERAGE":
+        return {
+            "label": "campaign coverage is too small for the open target",
+            "goal_adjustment": (
+                "Shift the goal from single-lane selection to building enough current LIVE_READY coverage "
+                "for the remaining floor/target while preserving risk gates."
+            ),
+            "next_action": (
+                "Promote only the nearest named forecast/strategy blockers into additional HARVEST or RUNNER "
+                "candidates, then rerun coverage metrics."
+            ),
+        }
+    if family == "EXECUTION_LIFECYCLE":
+        return {
+            "label": "orders are being accepted but the fill lifecycle is weak",
+            "goal_adjustment": (
+                "Shift the goal from new candidate search to entry-distance, TTL, and thesis-invalidation "
+                "separation for already accepted pending orders."
+            ),
+            "next_action": (
+                "Audit canceled-before-fill orders by pair and cancel reason, preserve still-valid rail "
+                "theses, and retune entry distance/TTL only where the thesis survives."
+            ),
+        }
+    if family == "EXIT_AND_PROFIT_CAPTURE":
+        return {
+            "label": "realized outcome and close/TP capture remain the profit leak",
+            "goal_adjustment": (
+                "Shift the goal from entry count to realized capture: TP fills, profit-side exits, and "
+                "loss-side close discipline must explain the negative expectancy."
+            ),
+            "next_action": (
+                "Rank losing close provenance and TP/giveback segments, then repair the worst segment before "
+                "increasing exposure."
+            ),
+        }
+    if family == "DATA_FRESHNESS":
+        return {
+            "label": "audit data freshness or ledger integrity is the prerequisite defect",
+            "goal_adjustment": (
+                "Shift the goal to broker-truth/data repair because strategy changes from stale artifacts "
+                "will produce false diagnoses."
+            ),
+            "next_action": (
+                "Regenerate the stale or missing artifact, sync execution ledger to broker transaction id, "
+                "then rerun self-improvement before strategy edits."
+            ),
+        }
+    return {
+        "label": "self-improvement process is looping without a narrower repair",
+        "goal_adjustment": (
+            "Shift the goal from broad analysis repetition to one measurable repair target."
+        ),
+        "next_action": (
+            "Select the repeated finding's named metric, execute one narrow repair, and do not revisit the "
+            "same diagnosis until that metric changes."
+        ),
+    }
+
+
+def _root_cause_confidence(candidate: dict[str, Any]) -> str:
+    score = float(candidate.get("score") or 0.0)
+    support = candidate.get("supporting_codes") if isinstance(candidate.get("supporting_codes"), list) else []
+    if score >= 150.0 and len(support) >= 2:
+        return "HIGH"
+    if score >= 80.0:
+        return "MEDIUM"
+    return "LOW"
+
+
+def _root_cause_why(candidate: dict[str, Any], meta: dict[str, str]) -> str:
+    metrics = candidate.get("metrics") if isinstance(candidate.get("metrics"), dict) else {}
+    parts = [meta["label"]]
+    if "directional_hit_rate" in metrics:
+        parts.append(f"directional_hit_rate={_fmt_optional(metrics.get('directional_hit_rate'))}")
+    if "invalidation_first_rate" in metrics:
+        parts.append(f"invalidation_first_rate={_fmt_optional(metrics.get('invalidation_first_rate'))}")
+    if "target_coverage_pct" in metrics:
+        parts.append(f"target_coverage_pct={_fmt_optional(metrics.get('target_coverage_pct'))}")
+    if "pending_cancel_before_fill_rate" in metrics:
+        parts.append(
+            f"pending_cancel_before_fill_rate={_fmt_optional(metrics.get('pending_cancel_before_fill_rate'))}"
+        )
+    if "profit_factor" in metrics:
+        parts.append(f"profit_factor={_fmt_optional(metrics.get('profit_factor'))}")
+    loop = candidate.get("process_loop_streak")
+    if loop is not None:
+        parts.append(f"same finding repeated {loop} audit run(s)")
+    codes = candidate.get("supporting_codes") if isinstance(candidate.get("supporting_codes"), list) else []
+    if codes:
+        parts.append("codes=" + ",".join(str(code) for code in codes[:5]))
+    return "; ".join(parts)
+
+
+def _root_cause_downstream_label(candidate: dict[str, Any]) -> str:
+    family = str(candidate.get("family") or "")
+    label_by_family = {
+        "OPPORTUNITY_COVERAGE": "coverage shortfall",
+        "EXECUTION_LIFECYCLE": "pending-order fill/cancel churn",
+        "EXIT_AND_PROFIT_CAPTURE": "realized P/L leak",
+        "DATA_FRESHNESS": "data freshness/integrity",
+        "PROCESS_LOOP": "process loop",
+        "FORECAST_ADVERSE_PATH": "forecast adverse path",
+    }
+    label = label_by_family.get(family, "")
+    if not label:
+        return ""
+    return f"{label} score={_fmt_optional(candidate.get('score'))}"
+
+
 def _finding_report_details(item: dict[str, Any]) -> list[str]:
     evidence = item.get("evidence") if isinstance(item.get("evidence"), dict) else {}
     details: list[str] = []
@@ -6709,15 +7131,40 @@ def _dedupe_findings(findings: list[dict[str, Any]]) -> list[dict[str, Any]]:
     )
 
 
-def _next_actions(findings: list[dict[str, Any]]) -> list[dict[str, str]]:
-    return [
-        {
-            "priority": str(item.get("priority") or ""),
-            "code": str(item.get("code") or ""),
-            "next_action": str(item.get("next_action") or ""),
-        }
-        for item in findings[:3]
-    ]
+def _next_actions(
+    findings: list[dict[str, Any]],
+    *,
+    root_cause_focus: dict[str, Any] | None = None,
+) -> list[dict[str, str]]:
+    actions: list[dict[str, str]] = []
+    primary = (
+        root_cause_focus.get("primary")
+        if isinstance(root_cause_focus, dict) and isinstance(root_cause_focus.get("primary"), dict)
+        else {}
+    )
+    primary_family = str(primary.get("family") or "")
+    if primary_family:
+        actions.append(
+            {
+                "priority": str(primary.get("priority") or "P1"),
+                "code": f"{ROOT_CAUSE_CODE}:{primary_family}",
+                "next_action": str(primary.get("next_action") or ""),
+            }
+        )
+    for item in findings:
+        code = str(item.get("code") or "")
+        if any(action["code"] == code for action in actions):
+            continue
+        actions.append(
+            {
+                "priority": str(item.get("priority") or ""),
+                "code": code,
+                "next_action": str(item.get("next_action") or ""),
+            }
+        )
+        if len(actions) >= 3:
+            break
+    return actions
 
 
 def _issue_text(raw: Any) -> str:
