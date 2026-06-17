@@ -75,6 +75,19 @@ In automation, "GPT" means whichever model is currently dispatched by the schedu
 
 ---
 
+## 3.1. Critical Thinking / Anti-Absolutism
+
+Every QuantRabbit guard, profile status, prompt rule, score penalty, audit blocker, and safety wrapper is a falsifiable hypothesis, not absolute truth. A rule created to repair one failure can become the next profit blocker. Agents must therefore audit self-created mechanisms with the same skepticism applied to market forecasts.
+
+- Treat every blocker as guilty until it proves current value: when profitability is poor or opportunity coverage is thin, rank `live_blocker_codes`, cancel regrets, missed MFE, stale artifacts, and exit-reason drag by actual opportunity cost before adding another rule.
+- A guard must publish its escape condition in executable form. If prose says "require a new vehicle or market-structure proof" but code never recognizes that proof, the guard is a bug.
+- Prefer downgrade paths over permanent bans: use `WARN`, smaller size, non-market triggers, shorter TTL, attached TP, or explicit evidence collection when broker truth, current forecast, rail geometry, and gateway risk checks still support a bounded attempt.
+- Negative history is advisory unless it is current, well-sampled, and still matches the present vehicle. Do not let stale or over-segmented strategy memory block a fresh market-proof `LIMIT` / `STOP-ENTRY` that has current forecast support, correct structure, bounded risk, and attached TP.
+- Before preserving a blocker, state the strongest counterargument against it. If the counterargument is supported by live ledger, execution-timing audit, or capture economics, change the blocker or make it evidence-conditional.
+- New guards need two tests: one proving the original failure remains blocked, and one proving the guard does not block the valid current shape it claims to allow.
+
+---
+
 ## 3.5. No Thoughtless Hardcodes or Fallbacks
 
 This rule applies to every file the trader reads or writes — `src/quant_rabbit/**`, `tools/**`, CLI flags, scheduled-task SKILLs, prompts, and config.

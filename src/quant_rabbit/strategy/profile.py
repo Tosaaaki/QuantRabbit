@@ -208,6 +208,19 @@ class StrategyProfile:
                 ),
             )
         if entry.status == "BLOCK_UNTIL_NEW_EVIDENCE" and for_live_send:
+            scout_severity = _blocked_profile_market_structure_scout_severity(
+                intent,
+                entry,
+                sl_free=sl_free,
+            )
+            if scout_severity is not None:
+                return (
+                    RiskIssue(
+                        "STRATEGY_NOT_ELIGIBLE",
+                        f"{entry.pair} {entry.direction}{_method_suffix(entry)} is {entry.status}: {entry.required_fix}",
+                        severity=scout_severity,
+                    ),
+                )
             return (
                 RiskIssue(
                     "STRATEGY_NOT_ELIGIBLE",
@@ -402,6 +415,62 @@ def _forecast_seed_missing_profile_severity(intent: OrderIntent) -> str | None:
     ):
         return "WARN"
     return None
+
+
+def _blocked_profile_market_structure_scout_severity(
+    intent: OrderIntent,
+    entry: StrategyProfileEntry,
+    *,
+    sl_free: bool,
+) -> str | None:
+    """Downgrade stale pair-side blocks when the current vehicle proves itself.
+
+    `BLOCK_UNTIL_NEW_EVIDENCE` says a lane needs a new vehicle or market-
+    structure proof. Treating that status as a permanent veto is the exact
+    anti-pattern AGENT_CONTRACT §3.1 calls out. The escape hatch is intentionally
+    narrow: only SL-free, non-market, range-rail forecast seeds with attached
+    HARVEST TP, TP inside the box, SL outside the box, and at least some
+    positive historical evidence can collect a new live sample. Method-specific
+    rejected profiles stay hard blocks; this only applies to broad pair/side
+    memory that may not match the current rail-limit vehicle.
+    """
+
+    if not sl_free:
+        return None
+    if entry.method is not None:
+        return None
+    if intent.order_type == OrderType.MARKET:
+        return None
+    metadata = intent.metadata or {}
+    if not metadata.get("forecast_seed"):
+        return None
+    side = str(intent.side.value).upper()
+    if not _range_rotation_rail_side_matches(intent, metadata, side=side):
+        return None
+    if str(metadata.get("tp_execution_mode") or "").upper() != "ATTACHED_TECHNICAL_TP":
+        return None
+    if str(metadata.get("opportunity_mode") or "").upper() != "HARVEST":
+        return None
+    if not metadata.get("range_tp_is_inside_box") or not metadata.get("range_sl_outside_box"):
+        return None
+    confidence = _optional_float(metadata.get("forecast_confidence"))
+    if confidence is None:
+        return None
+    range_min_confidence = _forecast_seed_missing_profile_range_min_confidence()
+    supported = confidence >= range_min_confidence
+    if not supported:
+        supported = _forecast_range_unselected_projection_support_allows_side(
+            intent,
+            metadata,
+            _forecast_market_support(metadata),
+            confidence=confidence,
+            min_confidence=range_min_confidence,
+        )
+    if not supported:
+        return None
+    if (entry.positive_evidence_n or 0) <= 0 and (entry.pretrade_net_jpy or 0.0) <= 0:
+        return None
+    return "WARN"
 
 
 def _forecast_seed_missing_profile_range_min_confidence() -> float:
