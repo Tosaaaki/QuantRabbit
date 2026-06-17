@@ -115,6 +115,9 @@ REPEATED_REPAIR_LOOP_STREAK_MIN = int(
     _env_nonnegative_float("QR_SELF_IMPROVEMENT_REPEATED_REPAIR_LOOP_STREAK_MIN", 3.0)
 )
 REPEATED_REPAIR_LOOP_CODE = "REPEATED_SELF_IMPROVEMENT_LOOP"
+# Report the top repeated repair loops together so a persistent P0 does not hide
+# a simultaneous code-owned P1 repair surface from root-cause guards.
+REPEATED_REPAIR_LOOP_MAX_FINDINGS = 3
 
 # Root-cause focus is an audit summarizer, not a new live gate. It collapses
 # repeated symptoms into the smallest repair surface so the next cycle does not
@@ -982,43 +985,72 @@ class SelfImprovementAuditor:
         run_id: str,
         findings: list[dict[str, Any]],
     ) -> list[dict[str, Any]]:
+        repeated: list[dict[str, Any]] = []
+        seen_codes: set[str] = set()
         for item in findings:
             priority = str(item.get("priority") or "").upper()
             if priority not in {"P0", "P1"}:
                 continue
             code = str(item.get("code") or "").strip()
-            if not code or code == REPEATED_REPAIR_LOOP_CODE:
+            if not code or code == REPEATED_REPAIR_LOOP_CODE or code in seen_codes:
                 continue
+            seen_codes.add(code)
             prior_streak = self._history_code_streak((code,))
             current_streak = prior_streak + 1
             if current_streak < REPEATED_REPAIR_LOOP_STREAK_MIN:
                 continue
-            return [
-                _finding(
-                    run_id=run_id,
-                    priority="P1",
-                    layer="process",
-                    code=REPEATED_REPAIR_LOOP_CODE,
-                    message=(
-                        f"same self-improvement finding `{code}` has persisted for "
-                        f"{current_streak} non-duplicate audit run(s)"
-                    ),
-                    next_action=(
-                        "Stop repeating broad refresh/analysis for this finding. Execute the current finding's "
-                        "named next_action as a narrow repair, then verify with its target metric before cycling "
-                        "back to the same diagnosis."
-                    ),
-                    evidence={
-                        "repeated_code": code,
-                        "repeated_priority": priority,
-                        "current_streak": current_streak,
-                        "previous_streak": prior_streak,
-                        "current_message": item.get("message"),
-                        "current_next_action": item.get("next_action"),
-                    },
-                )
-            ]
-        return []
+            repeated.append(
+                {
+                    "code": code,
+                    "priority": priority,
+                    "layer": str(item.get("layer") or ""),
+                    "current_streak": current_streak,
+                    "previous_streak": prior_streak,
+                    "message": item.get("message"),
+                    "next_action": item.get("next_action"),
+                }
+            )
+        if not repeated:
+            return []
+        priority_rank = {"P0": 0, "P1": 1}
+        repeated.sort(
+            key=lambda item: (
+                priority_rank.get(str(item.get("priority") or ""), 9),
+                -int(item.get("current_streak") or 0),
+                str(item.get("code") or ""),
+            )
+        )
+        repeated = repeated[:REPEATED_REPAIR_LOOP_MAX_FINDINGS]
+        primary = repeated[0]
+        repeated_code = str(primary.get("code") or "")
+        current_streak = int(primary.get("current_streak") or 0)
+        previous_streak = int(primary.get("previous_streak") or 0)
+        return [
+            _finding(
+                run_id=run_id,
+                priority="P1",
+                layer="process",
+                code=REPEATED_REPAIR_LOOP_CODE,
+                message=(
+                    f"same self-improvement finding `{repeated_code}` has persisted for "
+                    f"{current_streak} non-duplicate audit run(s)"
+                ),
+                next_action=(
+                    "Stop repeating broad refresh/analysis for this finding. Execute the current finding's "
+                    "named next_action as a narrow repair, then verify with its target metric before cycling "
+                    "back to the same diagnosis."
+                ),
+                evidence={
+                    "repeated_code": repeated_code,
+                    "repeated_priority": primary.get("priority"),
+                    "current_streak": current_streak,
+                    "previous_streak": previous_streak,
+                    "current_message": primary.get("message"),
+                    "current_next_action": primary.get("next_action"),
+                    "repeated_findings": repeated,
+                },
+            )
+        ]
 
 
 def _history_has_recent_duplicate(
@@ -5608,6 +5640,29 @@ def _decision_artifact_findings(
                 )
                 return out
             active_close_ids = close_ids & active_trade_ids
+            if _rejected_close_deferred_by_liquidity(blocking, active_close_ids):
+                out.append(
+                    _finding(
+                        run_id=run_id,
+                        priority="P1",
+                        layer="decision_history",
+                        code="LATEST_GPT_CLOSE_DEFERRED_BY_LIQUIDITY",
+                        message=(
+                            "latest GPT CLOSE decision was rejected only by deterministic close-spread "
+                            "liquidity gates for still-open trader-owned trade(s)"
+                        ),
+                        next_action=(
+                            "Do not reuse or override the rejected CLOSE receipt. Refresh broker truth and "
+                            "position sidecars on the next cycle, then verify a fresh CLOSE only if the "
+                            "thesis remains broken and close spread has normalized."
+                        ),
+                        evidence={
+                            "codes": [str(item.get("code") or "") for item in blocking[:12]],
+                            "active_close_trade_ids": sorted(active_close_ids),
+                        },
+                    )
+                )
+                return out
             if _rejected_close_is_nonblocking_soft_advisory(
                 blocking,
                 active_close_ids,
@@ -5650,6 +5705,25 @@ def _decision_artifact_findings(
                 )
             )
     return out
+
+
+def _rejected_close_deferred_by_liquidity(
+    blocking: list[dict[str, Any]],
+    active_close_ids: set[str],
+) -> bool:
+    if not active_close_ids:
+        return False
+    codes = {
+        str(item.get("code") or "")
+        for item in blocking
+        if isinstance(item, dict) and str(item.get("severity") or "").upper() == "BLOCK"
+    }
+    if not codes:
+        return False
+    return codes <= {
+        "POSITION_CLOSE_SPREAD_TOO_WIDE",
+        "POSITION_CLOSE_FLOW_SPREAD_TOO_WIDE",
+    }
 
 
 def _rejected_close_is_nonblocking_soft_advisory(
@@ -7204,7 +7278,7 @@ def _root_cause_focus(
     execution_quality: dict[str, Any],
 ) -> dict[str, Any]:
     candidates: dict[str, dict[str, Any]] = {}
-    for item in findings:
+    for item in _expand_repeated_repair_findings(findings):
         code = str(item.get("code") or "").strip()
         if not code:
             continue
@@ -7487,11 +7561,49 @@ def _root_cause_family_meta(family: str) -> dict[str, str]:
 def _root_cause_confidence(candidate: dict[str, Any]) -> str:
     score = float(candidate.get("score") or 0.0)
     support = candidate.get("supporting_codes") if isinstance(candidate.get("supporting_codes"), list) else []
+    loop = _optional_int(candidate.get("process_loop_streak"))
+    if loop is not None and loop >= REPEATED_REPAIR_LOOP_STREAK_MIN and score >= 100.0:
+        return "HIGH"
     if score >= 150.0 and len(support) >= 2:
         return "HIGH"
     if score >= 80.0:
         return "MEDIUM"
     return "LOW"
+
+
+def _expand_repeated_repair_findings(findings: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    expanded: list[dict[str, Any]] = []
+    for item in findings:
+        if str(item.get("code") or "") != REPEATED_REPAIR_LOOP_CODE:
+            expanded.append(item)
+            continue
+        evidence = item.get("evidence") if isinstance(item.get("evidence"), dict) else {}
+        repeated = evidence.get("repeated_findings")
+        if not isinstance(repeated, list) or not repeated:
+            expanded.append(item)
+            continue
+        for repeated_item in repeated:
+            if not isinstance(repeated_item, dict):
+                continue
+            repeated_code = str(repeated_item.get("code") or "").strip()
+            if not repeated_code:
+                continue
+            repeated_evidence = dict(evidence)
+            repeated_evidence.update(
+                {
+                    "repeated_code": repeated_code,
+                    "repeated_priority": repeated_item.get("priority"),
+                    "repeated_layer": repeated_item.get("layer"),
+                    "current_streak": repeated_item.get("current_streak"),
+                    "previous_streak": repeated_item.get("previous_streak"),
+                    "current_message": repeated_item.get("message"),
+                    "current_next_action": repeated_item.get("next_action"),
+                }
+            )
+            expanded_item = dict(item)
+            expanded_item["evidence"] = repeated_evidence
+            expanded.append(expanded_item)
+    return expanded
 
 
 def _root_cause_why(candidate: dict[str, Any], meta: dict[str, str]) -> str:

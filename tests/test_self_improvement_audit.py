@@ -4257,6 +4257,74 @@ class SelfImprovementAuditorTest(unittest.TestCase):
             ["T1"],
         )
 
+    def test_rejected_close_deferred_only_by_spread_is_not_current_p0(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root, active_position=True)
+            files["entry_thesis"].write_text(
+                json.dumps(
+                    {
+                        "trade_id": "T1",
+                        "pair": "EUR_USD",
+                        "side": "LONG",
+                        "filled_at_utc": _NOW.isoformat(),
+                    }
+                )
+                + "\n"
+            )
+            files["position_thesis"].write_text(
+                json.dumps(
+                    {
+                        "generated_at_utc": _NOW.isoformat(),
+                        "assessments": [
+                            {
+                                "trade_id": "T1",
+                                "pair": "EUR_USD",
+                                "side": "LONG",
+                                "verdict": "REVIEW_CLOSE",
+                                "context_notes": [
+                                    "invalidation hit with technical invalidation confirmed against LONG"
+                                ],
+                            }
+                        ],
+                    }
+                )
+            )
+            files["gpt"].write_text(
+                json.dumps(
+                    {
+                        "status": "REJECTED",
+                        "decision": {"action": "CLOSE", "close_trade_ids": ["T1"]},
+                        "verification_issues": [
+                            {
+                                "severity": "BLOCK",
+                                "code": "POSITION_CLOSE_SPREAD_TOO_WIDE",
+                                "message": "close spread is above the deterministic cap",
+                            },
+                            {
+                                "severity": "BLOCK",
+                                "code": "POSITION_CLOSE_FLOW_SPREAD_TOO_WIDE",
+                                "message": "flow spread is above the deterministic cap",
+                            },
+                        ],
+                    }
+                )
+            )
+
+            summary = _run(files)
+            payload = json.loads(files["output"].read_text())
+
+        codes = {item["code"]: item for item in payload["findings"]}
+        self.assertEqual(summary.p0_findings, 0)
+        self.assertNotIn("LATEST_GPT_DECISION_HAS_BLOCKING_ISSUES", codes)
+        finding = codes["LATEST_GPT_CLOSE_DEFERRED_BY_LIQUIDITY"]
+        self.assertEqual(finding["priority"], "P1")
+        self.assertEqual(finding["evidence"]["active_close_trade_ids"], ["T1"])
+        self.assertEqual(
+            finding["evidence"]["codes"],
+            ["POSITION_CLOSE_SPREAD_TOO_WIDE", "POSITION_CLOSE_FLOW_SPREAD_TOO_WIDE"],
+        )
+
     def test_operator_auth_required_close_is_not_reported_as_unresolved(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
