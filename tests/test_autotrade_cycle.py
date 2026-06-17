@@ -1397,6 +1397,81 @@ class AutoTradeCycleTest(unittest.TestCase):
             self.assertEqual(client.orders_canceled, ["pending-1"])
             self.assertEqual(client.orders_sent, [])
 
+    def test_no_live_ready_gpt_cancel_preserves_anchored_pending_without_contamination(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            now = datetime.now(timezone.utc)
+            lane_id = "range_trader:EUR_USD:SHORT:RANGE_ROTATION"
+            pending = BrokerOrder(
+                order_id="anchored-pending",
+                pair="EUR_USD",
+                order_type="LIMIT",
+                price=1.16145,
+                state="PENDING",
+                units=-6000,
+                owner=Owner.TRADER,
+                raw={
+                    "clientExtensions": {
+                        "comment": f"qr-vnext lane={lane_id} desk=range_trader role=FORECAST_WATCH"
+                    },
+                    "createTime": now.isoformat(),
+                    "takeProfitOnFill": {"price": "1.16103"},
+                    "stopLossOnFill": {"price": "1.16880"},
+                },
+            )
+            snapshot = BrokerSnapshot(
+                fetched_at_utc=now,
+                orders=(pending,),
+                quotes={
+                    "EUR_USD": Quote("EUR_USD", 1.16120, 1.16128, timestamp_utc=now),
+                    "USD_JPY": Quote("USD_JPY", 157.0, 157.01, timestamp_utc=now),
+                },
+            )
+            snapshot_path = root / "snapshot.json"
+            snapshot_path.write_text(_snapshot_to_json(snapshot) + "\n")
+            intents_path = root / "intents.json"
+            intents_path.write_text(json.dumps({"generated_at_utc": now.isoformat(), "results": []}) + "\n")
+            target_state = _open_target_state(root)
+            client = FakeCycleClient(snapshot)
+
+            summary = AutoTradeCycle(
+                client=client,
+                snapshot_path=snapshot_path,
+                intents_path=intents_path,
+                intent_report_path=root / "intents.md",
+                decision_path=root / "decision.json",
+                decision_report_path=root / "decision.md",
+                gpt_decision_path=root / "gpt_decision.json",
+                gpt_decision_report_path=root / "gpt_decision.md",
+                gpt_attack_advice_path=root / "attack_missing.json",
+                position_management_path=root / "pm.json",
+                position_management_report_path=root / "pm.md",
+                position_execution_path=root / "pe.json",
+                position_execution_report_path=root / "pe.md",
+                live_order_output_path=root / "live_order.json",
+                live_order_report_path=root / "live_order.md",
+                report_path=root / "report.md",
+                campaign_plan_path=_campaign(root),
+                strategy_profile_path=_candidate_profile(root),
+                market_story_profile_path=_stories(root),
+                receipt_promotion_report_path=root / "promotion.md",
+                target_state_path=target_state,
+                target_report_path=root / "target.md",
+                gpt_target_state_path=target_state,
+                use_gpt_trader=True,
+                gpt_provider=StaticTraderProvider(_gpt_cancel_pending_decision(["anchored-pending"])),
+                reuse_market_artifacts=True,
+                refresh_market_story=False,
+                live_enabled=True,
+                max_loss_jpy=1_500,
+            ).run(send=True)
+
+            self.assertEqual(summary.status, "PENDING_PRESERVED_GPT_CANCEL_NOT_CONTAMINATED")
+            self.assertEqual(summary.gpt_action, "CANCEL_PENDING")
+            self.assertEqual(summary.canceled_orders, ())
+            self.assertEqual(client.orders_canceled, [])
+            self.assertEqual(client.orders_sent, [])
+
     def test_trader_pending_order_can_add_verified_basket_when_risk_is_known(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

@@ -1557,15 +1557,24 @@ class AutoTradeCycle:
                         and gpt_summary.allowed
                         and gpt_summary.action == "CANCEL_PENDING"
                     ):
+                        allowed_cancel_ids = tuple(decision.pending_cancel_order_ids)
                         canceled_orders.extend(
                             self._cancel_gpt_pending_orders(
                                 gpt_summary,
                                 send=send,
                                 already_canceled=tuple(canceled_orders),
+                                allowed_order_ids=allowed_cancel_ids,
                             )
                         )
+                        status = "CANCELED_GPT_PENDING" if canceled_orders else "GPT_CANCEL_PENDING"
+                        if (
+                            not canceled_orders
+                            and gpt_summary.cancel_order_ids
+                            and not allowed_cancel_ids
+                        ):
+                            status = "PENDING_PRESERVED_GPT_CANCEL_NOT_CONTAMINATED"
                         summary = AutoTradeCycleSummary(
-                            status="CANCELED_GPT_PENDING" if canceled_orders else "GPT_CANCEL_PENDING",
+                            status=status,
                             report_path=self.report_path,
                             snapshot_path=self.snapshot_path,
                             intents_path=self.intents_path,
@@ -3683,13 +3692,17 @@ class AutoTradeCycle:
         *,
         send: bool,
         already_canceled: tuple[str, ...] = (),
+        allowed_order_ids: tuple[str, ...] | None = None,
     ) -> tuple[str, ...]:
         if not send or not self.live_enabled or not gpt_summary.cancel_order_ids:
             return ()
         canceled: list[str] = []
         already = set(already_canceled)
+        allowed = set(allowed_order_ids) if allowed_order_ids is not None else None
         for order_id in gpt_summary.cancel_order_ids:
             if order_id in already:
+                continue
+            if allowed is not None and order_id not in allowed:
                 continue
             self.client.cancel_order(order_id)
             canceled.append(order_id)
