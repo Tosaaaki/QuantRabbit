@@ -70,6 +70,21 @@ PERSISTENT_PROFITABILITY_STREAK_MIN = int(
     _env_nonnegative_float("QR_SELF_IMPROVEMENT_PROFITABILITY_STREAK_MIN", 3.0)
 )
 
+# Three accepted entry orders is the smallest sample that proves repeated
+# execution behavior rather than one missed quote. This audit does not block
+# live trades; it fixes the repair focus when the system sends orders but gets
+# no fills.
+PENDING_ENTRY_LIFECYCLE_MIN_ACCEPTED = int(
+    _env_nonnegative_float("QR_SELF_IMPROVEMENT_PENDING_LIFECYCLE_MIN_ACCEPTED", 3.0)
+)
+# Majority cancellation before fill means the active bottleneck is execution
+# lifecycle, not just lane discovery. 0.5 is a categorical majority boundary,
+# not a market price/risk parameter.
+PENDING_ENTRY_CANCEL_RATE_WARN_ABOVE = min(
+    1.0,
+    _env_nonnegative_float("QR_SELF_IMPROVEMENT_PENDING_CANCEL_RATE_WARN_ABOVE", 0.5),
+)
+
 # A loss-containment close is positive close-discipline evidence only when it
 # avoids at least twice the realized containment cost. The 2x boundary mirrors
 # the audit's loss/win asymmetry line: below this, a loss close is still too
@@ -82,6 +97,15 @@ LOSS_CONTAINMENT_RECOVERY_MIN_AVOIDED_MULT = _env_nonnegative_float(
 PROFITABILITY_DISCIPLINE_CODES = (
     "NEGATIVE_RECENT_EXPECTANCY",
 )
+
+# Same repair finding across three non-duplicate audits is an operator-process
+# loop. It must redirect the next cycle to a narrower repair, but it is P1
+# because it is not by itself a broker-truth or risk reason to stop a valid
+# current lane.
+REPEATED_REPAIR_LOOP_STREAK_MIN = int(
+    _env_nonnegative_float("QR_SELF_IMPROVEMENT_REPEATED_REPAIR_LOOP_STREAK_MIN", 3.0)
+)
+REPEATED_REPAIR_LOOP_CODE = "REPEATED_SELF_IMPROVEMENT_LOOP"
 
 NON_GATEWAY_CLOSE_DRAG_PROVENANCES = (
     "DIRECT_OR_MANUAL_BROKER_TRADE_CLOSE",
@@ -290,6 +314,11 @@ class SelfImprovementAuditor:
         profitability_streak_before = self._history_code_streak(PROFITABILITY_DISCIPLINE_CODES)
         latest_gpt_stale_streak_before = self._history_code_streak(("LATEST_GPT_DECISION_STALE",))
         external_live_lock = _external_live_runtime_lock(snapshot_path)
+        pending_entry_lifecycle = _pending_entry_lifecycle_metrics(
+            self.db_path,
+            window_hours=window_hours,
+            now=clock,
+        )
 
         findings: list[dict[str, Any]] = []
         if external_live_lock is not None:
@@ -351,6 +380,13 @@ class SelfImprovementAuditor:
                 run_id=run_id,
                 db_path=self.db_path,
                 snapshot=snapshot,
+            )
+        )
+        findings.extend(
+            _pending_entry_lifecycle_findings(
+                run_id=run_id,
+                metrics=pending_entry_lifecycle,
+                target_open=target_open,
             )
         )
         findings.extend(
@@ -474,6 +510,8 @@ class SelfImprovementAuditor:
         )
 
         findings = _dedupe_findings(findings)
+        findings.extend(self._repeated_repair_loop_findings(run_id=run_id, findings=findings))
+        findings = _dedupe_findings(findings)
         p0 = sum(1 for item in findings if item["priority"] == "P0")
         p1 = sum(1 for item in findings if item["priority"] == "P1")
         p2 = sum(1 for item in findings if item["priority"] == "P2")
@@ -523,6 +561,9 @@ class SelfImprovementAuditor:
             "effect_metrics": {
                 "window": effect,
                 "last_24h": effect_24h,
+            },
+            "execution_quality": {
+                "pending_entry_lifecycle": pending_entry_lifecycle,
             },
             "findings": findings,
             "next_actions": _next_actions(findings),
@@ -617,6 +658,11 @@ class SelfImprovementAuditor:
         runtime = payload["runtime"]
         window = payload["effect_metrics"]["window"]
         last_24h = payload["effect_metrics"]["last_24h"]
+        pending_lifecycle = (
+            (payload.get("execution_quality") or {}).get("pending_entry_lifecycle")
+            if isinstance(payload.get("execution_quality"), dict)
+            else {}
+        )
         lines = [
             "# Self Improvement Audit Report",
             "",
@@ -646,6 +692,23 @@ class SelfImprovementAuditor:
         if isinstance(market_close_loss_24h, dict) and market_close_loss_24h:
             lines.append(
                 f"- Last-24h market-order loss close provenance: `{_fmt_close_provenance_metrics(market_close_loss_24h)}`"
+            )
+        if isinstance(pending_lifecycle, dict) and pending_lifecycle:
+            lines.extend(
+                [
+                    "",
+                    "## Execution Quality",
+                    "",
+                    (
+                        "- Pending entry lifecycle: "
+                        f"accepted `{pending_lifecycle.get('accepted_entry_orders', 0)}`, "
+                        f"filled `{pending_lifecycle.get('filled_entry_orders', 0)}`, "
+                        f"canceled_before_fill `{pending_lifecycle.get('canceled_before_fill_orders', 0)}`, "
+                        f"open_unfilled `{pending_lifecycle.get('open_unfilled_entry_orders', 0)}`, "
+                        f"fill_rate `{_fmt_optional(pending_lifecycle.get('fill_rate'))}`, "
+                        f"cancel_before_fill_rate `{_fmt_optional(pending_lifecycle.get('cancel_before_fill_rate'))}`"
+                    ),
+                ]
             )
         lines.extend(["", "## Findings", ""])
         if payload["findings"]:
@@ -804,6 +867,50 @@ class SelfImprovementAuditor:
         except sqlite3.Error:
             return 0
 
+    def _repeated_repair_loop_findings(
+        self,
+        *,
+        run_id: str,
+        findings: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        for item in findings:
+            priority = str(item.get("priority") or "").upper()
+            if priority not in {"P0", "P1"}:
+                continue
+            code = str(item.get("code") or "").strip()
+            if not code or code == REPEATED_REPAIR_LOOP_CODE:
+                continue
+            prior_streak = self._history_code_streak((code,))
+            current_streak = prior_streak + 1
+            if current_streak < REPEATED_REPAIR_LOOP_STREAK_MIN:
+                continue
+            return [
+                _finding(
+                    run_id=run_id,
+                    priority="P1",
+                    layer="process",
+                    code=REPEATED_REPAIR_LOOP_CODE,
+                    message=(
+                        f"same self-improvement finding `{code}` has persisted for "
+                        f"{current_streak} non-duplicate audit run(s)"
+                    ),
+                    next_action=(
+                        "Stop repeating broad refresh/analysis for this finding. Execute the current finding's "
+                        "named next_action as a narrow repair, then verify with its target metric before cycling "
+                        "back to the same diagnosis."
+                    ),
+                    evidence={
+                        "repeated_code": code,
+                        "repeated_priority": priority,
+                        "current_streak": current_streak,
+                        "previous_streak": prior_streak,
+                        "current_message": item.get("message"),
+                        "current_next_action": item.get("next_action"),
+                    },
+                )
+            ]
+        return []
+
 
 def _history_has_recent_duplicate(
     conn: sqlite3.Connection,
@@ -950,6 +1057,13 @@ def _history_finding_signature(
 
 
 def _history_normalized_message(code: str, message: str) -> str:
+    if code == REPEATED_REPAIR_LOOP_CODE:
+        marker = " has persisted for "
+        prefix, sep, suffix = message.partition(marker)
+        if not sep:
+            return message
+        _, _, tail = suffix.partition(" non-duplicate audit run(s)")
+        return f"{prefix}{marker}<streak> non-duplicate audit run(s){tail}"
     if code != "PERSISTENT_PROFITABILITY_DISCIPLINE_BLOCKED":
         return message
     marker = " consecutive audit run(s): "
@@ -972,6 +1086,7 @@ HISTORY_VOLATILE_STREAK_CODES = frozenset(
     {
         "PERSISTENT_PROFITABILITY_DISCIPLINE_BLOCKED",
         "LATEST_GPT_DECISION_STALE",
+        REPEATED_REPAIR_LOOP_CODE,
     }
 )
 
@@ -1367,6 +1482,209 @@ def _ledger_sync_findings(*, run_id: str, db_path: Path, snapshot: dict[str, Any
             )
         ]
     return []
+
+
+def _pending_entry_lifecycle_findings(
+    *,
+    run_id: str,
+    metrics: dict[str, Any],
+    target_open: bool,
+) -> list[dict[str, Any]]:
+    if not target_open or metrics.get("error"):
+        return []
+    accepted = int(metrics.get("accepted_entry_orders") or 0)
+    filled = int(metrics.get("filled_entry_orders") or 0)
+    canceled_before_fill = int(metrics.get("canceled_before_fill_orders") or 0)
+    cancel_rate = _maybe_float(metrics.get("cancel_before_fill_rate"))
+    if (
+        accepted < PENDING_ENTRY_LIFECYCLE_MIN_ACCEPTED
+        or filled > 0
+        or cancel_rate is None
+        or cancel_rate <= PENDING_ENTRY_CANCEL_RATE_WARN_ABOVE
+    ):
+        return []
+    return [
+        _finding(
+            run_id=run_id,
+            priority="P1",
+            layer="execution_quality",
+            code="PENDING_ENTRY_FILL_RATE_WEAK",
+            message=(
+                f"{accepted} accepted entry order(s) in the audit window produced {filled} fill(s) "
+                f"and {canceled_before_fill} cancellation(s) before fill"
+            ),
+            next_action=(
+                "Treat execution lifecycle as the active repair surface: preserve broker-anchored pending "
+                "entries until thesis invalidation, then audit entry distance/TTL by pair instead of issuing "
+                "another generic CANCEL_PENDING."
+            ),
+            evidence={
+                "accepted_entry_orders": accepted,
+                "filled_entry_orders": filled,
+                "canceled_before_fill_orders": canceled_before_fill,
+                "cancel_before_fill_rate": cancel_rate,
+                "fill_rate": metrics.get("fill_rate"),
+                "samples": metrics.get("canceled_before_fill_samples", [])[:8],
+            },
+        )
+    ]
+
+
+def _pending_entry_lifecycle_metrics(
+    db_path: Path,
+    *,
+    window_hours: float,
+    now: datetime,
+) -> dict[str, Any]:
+    metrics: dict[str, Any] = {
+        "window_hours": window_hours,
+        "gateway_sent_orders": 0,
+        "accepted_entry_orders": 0,
+        "filled_entry_orders": 0,
+        "canceled_before_fill_orders": 0,
+        "open_unfilled_entry_orders": 0,
+        "fill_rate": None,
+        "cancel_before_fill_rate": None,
+        "canceled_before_fill_samples": [],
+        "error": None,
+    }
+    if not db_path.exists():
+        metrics["error"] = "missing"
+        return metrics
+    cutoff = now - timedelta(hours=max(0.0, window_hours))
+    try:
+        with sqlite3.connect(f"file:{db_path}?mode=ro", uri=True) as conn:
+            conn.row_factory = sqlite3.Row
+            columns = _table_columns(conn, "execution_events")
+            required = {"ts_utc", "event_type", "order_id"}
+            if not required <= columns:
+                metrics["error"] = "execution_events lacks pending lifecycle columns"
+                return metrics
+            select_columns = ["ts_utc", "event_type", "order_id"]
+            for column in ("lane_id", "trade_id", "pair", "side", "units", "price", "exit_reason"):
+                select_columns.append(column if column in columns else f"NULL AS {column}")
+            rows = list(
+                conn.execute(
+                    f"""
+                    SELECT {', '.join(select_columns)}
+                    FROM execution_events
+                    WHERE event_type IN (
+                        'GATEWAY_ORDER_SENT',
+                        'ORDER_ACCEPTED',
+                        'ORDER_FILLED',
+                        'ORDER_CANCELED'
+                    )
+                      AND ts_utc >= ?
+                    ORDER BY ts_utc ASC
+                    """,
+                    (cutoff.isoformat(),),
+                )
+            )
+    except sqlite3.Error as exc:
+        metrics["error"] = str(exc)
+        return metrics
+
+    accepted: dict[str, dict[str, Any]] = {}
+    filled_order_ids: set[str] = set()
+    canceled: dict[str, sqlite3.Row] = {}
+    for row in rows:
+        ts = _parse_utc(row["ts_utc"])
+        if ts is None:
+            continue
+        event_type = str(row["event_type"] or "").upper()
+        order_id = str(row["order_id"] or "").strip()
+        if event_type == "GATEWAY_ORDER_SENT":
+            metrics["gateway_sent_orders"] = int(metrics["gateway_sent_orders"]) + 1
+            continue
+        if not order_id:
+            continue
+        if event_type == "ORDER_ACCEPTED":
+            if not _execution_event_is_entry_order(row):
+                continue
+            accepted.setdefault(
+                order_id,
+                {
+                    "accepted_ts": ts,
+                    "order_id": order_id,
+                    "lane_id": _row_text(row, "lane_id"),
+                    "pair": _row_text(row, "pair"),
+                    "side": _entry_order_side(row),
+                    "units": _maybe_float(row["units"]),
+                    "price": _maybe_float(row["price"]),
+                },
+            )
+        elif event_type == "ORDER_FILLED":
+            filled_order_ids.add(order_id)
+        elif event_type == "ORDER_CANCELED":
+            canceled[order_id] = row
+
+    canceled_before_fill_samples: list[dict[str, Any]] = []
+    filled_count = 0
+    canceled_before_fill_count = 0
+    open_unfilled_count = 0
+    for order_id, order in accepted.items():
+        if order_id in filled_order_ids:
+            filled_count += 1
+            continue
+        cancel_row = canceled.get(order_id)
+        if cancel_row is not None:
+            canceled_before_fill_count += 1
+            cancel_ts = _parse_utc(cancel_row["ts_utc"])
+            age_min = (
+                (cancel_ts - order["accepted_ts"]).total_seconds() / 60.0
+                if cancel_ts is not None
+                else None
+            )
+            canceled_before_fill_samples.append(
+                {
+                    "order_id": order_id,
+                    "lane_id": order.get("lane_id"),
+                    "pair": order.get("pair"),
+                    "side": order.get("side"),
+                    "units": order.get("units"),
+                    "price": order.get("price"),
+                    "accepted_at_utc": order["accepted_ts"].isoformat(),
+                    "canceled_at_utc": cancel_ts.isoformat() if cancel_ts else None,
+                    "age_min": round(age_min, 3) if age_min is not None else None,
+                }
+            )
+            continue
+        open_unfilled_count += 1
+
+    accepted_count = len(accepted)
+    metrics["accepted_entry_orders"] = accepted_count
+    metrics["filled_entry_orders"] = filled_count
+    metrics["canceled_before_fill_orders"] = canceled_before_fill_count
+    metrics["open_unfilled_entry_orders"] = open_unfilled_count
+    metrics["fill_rate"] = (filled_count / accepted_count) if accepted_count else None
+    metrics["cancel_before_fill_rate"] = (
+        canceled_before_fill_count / accepted_count
+        if accepted_count
+        else None
+    )
+    canceled_before_fill_samples.sort(key=lambda item: str(item.get("canceled_at_utc") or ""), reverse=True)
+    metrics["canceled_before_fill_samples"] = canceled_before_fill_samples[:12]
+    return metrics
+
+
+def _execution_event_is_entry_order(row: sqlite3.Row) -> bool:
+    exit_reason = str(_row_text(row, "exit_reason") or "").upper()
+    if "TRADE_CLOSE" in exit_reason or "POSITION_CLOSE" in exit_reason:
+        return False
+    units = _maybe_float(row["units"]) if "units" in row.keys() else None
+    if units == 0:
+        return False
+    return True
+
+
+def _entry_order_side(row: sqlite3.Row) -> str | None:
+    side = str(_row_text(row, "side") or "").upper()
+    if side in {"LONG", "SHORT"}:
+        return side
+    units = _maybe_float(row["units"]) if "units" in row.keys() else None
+    if units is None or units == 0:
+        return None
+    return "LONG" if units > 0 else "SHORT"
 
 
 def _market_close_attribution_findings(

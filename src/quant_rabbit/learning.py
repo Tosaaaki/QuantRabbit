@@ -14,8 +14,6 @@ from quant_rabbit.paths import (
     DEFAULT_POSITION_EXECUTION,
     DEFAULT_TRADER_DECISION,
 )
-from quant_rabbit.risk import RiskPolicy
-
 
 @dataclass(frozen=True)
 class LearningCandidate:
@@ -53,7 +51,7 @@ class PostTradeLearner:
         gpt_decision_path: Path = DEFAULT_GPT_TRADER_DECISION,
         output_path: Path = DEFAULT_POST_TRADE_LEARNING,
         report_path: Path = DEFAULT_POST_TRADE_LEARNING_REPORT,
-        max_loss_jpy: float = RiskPolicy().max_loss_jpy,
+        max_loss_jpy: float | None = None,
     ) -> None:
         self.outcome_path = outcome_path
         self.live_order_path = live_order_path

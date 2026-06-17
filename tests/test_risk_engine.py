@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import unittest
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 
 from quant_rabbit.models import AccountSummary, BrokerOrder, BrokerPosition, BrokerSnapshot, MarketContext, OrderIntent, OrderType, Owner, Quote, Side, TradeMethod
@@ -38,7 +39,37 @@ def snapshot(
     )
 
 
+TEST_MAX_LOSS_JPY = 500.0
+
+
+def _capped_engine(*, policy: RiskPolicy | None = None, **kwargs) -> RiskEngine:
+    if policy is None:
+        policy = RiskPolicy(max_loss_jpy=TEST_MAX_LOSS_JPY)
+    elif policy.max_loss_jpy is None:
+        policy = replace(policy, max_loss_jpy=TEST_MAX_LOSS_JPY)
+    return RiskEngine(policy=policy, **kwargs)
+
+
 class RiskEngineTest(unittest.TestCase):
+    def test_default_policy_has_no_jpy_loss_cap_literal(self) -> None:
+        self.assertIsNone(RiskPolicy().max_loss_jpy)
+
+    def test_missing_loss_cap_blocks_validation_instead_of_using_literal_fallback(self) -> None:
+        intent = OrderIntent(
+            pair="EUR_USD",
+            side=Side.LONG,
+            order_type=OrderType.MARKET,
+            units=1000,
+            tp=1.17554,
+            sl=1.17234,
+            thesis="missing_loss_cap_must_fail_closed",
+        )
+
+        decision = RiskEngine().validate(intent, snapshot())
+
+        self.assertFalse(decision.allowed)
+        self.assertIn("LOSS_CAP_MISSING", {issue.code for issue in decision.issues})
+
     def test_valid_dry_run_intent_passes(self) -> None:
         intent = OrderIntent(
             pair="EUR_USD",
@@ -49,11 +80,11 @@ class RiskEngineTest(unittest.TestCase):
             sl=1.17234,
             thesis="eurusd_direct_usd_continuation",
         )
-        decision = RiskEngine().validate(intent, snapshot())
+        decision = _capped_engine().validate(intent, snapshot())
         self.assertTrue(decision.allowed, decision.block_reasons)
         self.assertIsNotNone(decision.metrics)
         assert decision.metrics is not None
-        self.assertLessEqual(decision.metrics.risk_jpy, 500)
+        self.assertLessEqual(decision.metrics.risk_jpy, TEST_MAX_LOSS_JPY)
         self.assertGreaterEqual(decision.metrics.reward_risk, 1.2)
         self.assertIn("MISSING_MARKET_CONTEXT", {issue.code for issue in decision.issues})
 
@@ -85,8 +116,8 @@ class RiskEngineTest(unittest.TestCase):
             thesis="batch_generation_must_not_self_expire_quotes",
         )
 
-        frozen = RiskEngine(validation_time_utc=quote_time + timedelta(seconds=5)).validate(intent, snap)
-        realtime = RiskEngine().validate(intent, snap)
+        frozen = _capped_engine(validation_time_utc=quote_time + timedelta(seconds=5)).validate(intent, snap)
+        realtime = _capped_engine().validate(intent, snap)
 
         self.assertTrue(frozen.allowed, frozen.block_reasons)
         self.assertNotIn("STALE_QUOTE", {issue.code for issue in frozen.issues})
@@ -103,7 +134,7 @@ class RiskEngineTest(unittest.TestCase):
             sl=1.17234,
             thesis="eurusd_direct_usd_continuation",
         )
-        decision = RiskEngine(live_enabled=False).validate(intent, snapshot(), for_live_send=True)
+        decision = _capped_engine(live_enabled=False).validate(intent, snapshot(), for_live_send=True)
         self.assertFalse(decision.allowed)
         self.assertIn("LIVE_DISABLED", {issue.code for issue in decision.issues})
         self.assertIn("MISSING_MARKET_CONTEXT", {issue.code for issue in decision.issues})
@@ -127,7 +158,7 @@ class RiskEngineTest(unittest.TestCase):
                 session="London-NY overlap",
             ),
         )
-        decision = RiskEngine().validate(intent, snapshot())
+        decision = _capped_engine().validate(intent, snapshot())
         self.assertTrue(decision.allowed, decision.block_reasons)
         self.assertNotIn("MISSING_MARKET_CONTEXT", {issue.code for issue in decision.issues})
 
@@ -156,7 +187,7 @@ class RiskEngineTest(unittest.TestCase):
             },
         )
 
-        decision = RiskEngine(policy=RiskPolicy(max_loss_jpy=1000.0)).validate(intent, snapshot())
+        decision = _capped_engine(policy=RiskPolicy(max_loss_jpy=1000.0)).validate(intent, snapshot())
 
         self.assertFalse(decision.allowed)
         self.assertIn("LOSS_ASYMMETRY_GUARD_EXCEEDED", {issue.code for issue in decision.issues})
@@ -187,7 +218,7 @@ class RiskEngineTest(unittest.TestCase):
             },
         )
 
-        decision = RiskEngine(policy=RiskPolicy(max_loss_jpy=1000.0)).validate(intent, snapshot())
+        decision = _capped_engine(policy=RiskPolicy(max_loss_jpy=1000.0)).validate(intent, snapshot())
 
         self.assertTrue(decision.allowed, decision.block_reasons)
         self.assertNotIn("LOSS_ASYMMETRY_GUARD_EXCEEDED", {issue.code for issue in decision.issues})
@@ -215,8 +246,8 @@ class RiskEngineTest(unittest.TestCase):
             },
         )
 
-        dry_run = RiskEngine(live_enabled=True).validate(intent, snapshot(), for_live_send=False)
-        live = RiskEngine(live_enabled=True).validate(intent, snapshot(), for_live_send=True)
+        dry_run = _capped_engine(live_enabled=True).validate(intent, snapshot(), for_live_send=False)
+        live = _capped_engine(live_enabled=True).validate(intent, snapshot(), for_live_send=True)
 
         dry_codes = {issue.code: issue.severity for issue in dry_run.issues}
         live_codes = {issue.code: issue.severity for issue in live.issues}
@@ -250,7 +281,7 @@ class RiskEngineTest(unittest.TestCase):
             },
         )
 
-        decision = RiskEngine(live_enabled=True).validate(intent, snapshot(), for_live_send=True)
+        decision = _capped_engine(live_enabled=True).validate(intent, snapshot(), for_live_send=True)
 
         codes = {issue.code for issue in decision.issues}
         self.assertTrue(decision.allowed, decision.block_reasons)
@@ -281,8 +312,8 @@ class RiskEngineTest(unittest.TestCase):
             },
         )
 
-        dry_run = RiskEngine(live_enabled=True).validate(intent, snapshot(), for_live_send=False)
-        live = RiskEngine(live_enabled=True).validate(intent, snapshot(), for_live_send=True)
+        dry_run = _capped_engine(live_enabled=True).validate(intent, snapshot(), for_live_send=False)
+        live = _capped_engine(live_enabled=True).validate(intent, snapshot(), for_live_send=True)
 
         dry_codes = {issue.code: issue.severity for issue in dry_run.issues}
         live_codes = {issue.code: issue.severity for issue in live.issues}
@@ -324,8 +355,8 @@ class RiskEngineTest(unittest.TestCase):
             },
         )
 
-        dry_run = RiskEngine(live_enabled=True).validate(intent, snapshot(), for_live_send=False)
-        live = RiskEngine(live_enabled=True).validate(intent, snapshot(), for_live_send=True)
+        dry_run = _capped_engine(live_enabled=True).validate(intent, snapshot(), for_live_send=False)
+        live = _capped_engine(live_enabled=True).validate(intent, snapshot(), for_live_send=True)
 
         dry_codes = {issue.code for issue in dry_run.issues}
         live_codes = {issue.code: issue.severity for issue in live.issues}
@@ -368,7 +399,7 @@ class RiskEngineTest(unittest.TestCase):
             },
         )
 
-        live = RiskEngine(live_enabled=True).validate(intent, snapshot(), for_live_send=True)
+        live = _capped_engine(live_enabled=True).validate(intent, snapshot(), for_live_send=True)
 
         live_codes = {issue.code: issue.severity for issue in live.issues}
         self.assertNotIn("FORECAST_DIRECTION_CONFLICT", live_codes)
@@ -407,7 +438,7 @@ class RiskEngineTest(unittest.TestCase):
             },
         )
 
-        live = RiskEngine(live_enabled=True).validate(intent, snapshot(), for_live_send=True)
+        live = _capped_engine(live_enabled=True).validate(intent, snapshot(), for_live_send=True)
 
         live_codes = {issue.code: issue.severity for issue in live.issues}
         self.assertFalse(live.allowed)
@@ -430,7 +461,7 @@ class RiskEngineTest(unittest.TestCase):
                 invalidation="1.1716 loses on bodies",
             ),
         )
-        decision = RiskEngine(live_enabled=True).validate(intent, snapshot(), for_live_send=True)
+        decision = _capped_engine(live_enabled=True).validate(intent, snapshot(), for_live_send=True)
         self.assertFalse(decision.allowed)
         self.assertIn("METHOD_REGIME_MISMATCH", {issue.code for issue in decision.issues})
 
@@ -453,7 +484,7 @@ class RiskEngineTest(unittest.TestCase):
             metadata={"forecast_direction": "RANGE", "forecast_confidence": 0.72},
         )
 
-        decision = RiskEngine(live_enabled=True).validate(intent, snapshot(), for_live_send=True)
+        decision = _capped_engine(live_enabled=True).validate(intent, snapshot(), for_live_send=True)
 
         self.assertFalse(decision.allowed)
         self.assertIn("RANGE_FORECAST_REQUIRES_RANGE_ROTATION", {issue.code for issue in decision.issues})
@@ -489,7 +520,7 @@ class RiskEngineTest(unittest.TestCase):
             },
         )
 
-        decision = RiskEngine(live_enabled=True).validate(intent, snapshot(), for_live_send=True)
+        decision = _capped_engine(live_enabled=True).validate(intent, snapshot(), for_live_send=True)
 
         self.assertFalse(decision.allowed)
         self.assertIn(
@@ -536,7 +567,7 @@ class RiskEngineTest(unittest.TestCase):
             },
         )
 
-        decision = RiskEngine(live_enabled=True).validate(intent, snapshot(), for_live_send=True)
+        decision = _capped_engine(live_enabled=True).validate(intent, snapshot(), for_live_send=True)
 
         self.assertTrue(decision.allowed, decision.block_reasons)
         self.assertNotIn(
@@ -582,7 +613,7 @@ class RiskEngineTest(unittest.TestCase):
             },
         )
 
-        decision = RiskEngine(live_enabled=True).validate(intent, snapshot(), for_live_send=True)
+        decision = _capped_engine(live_enabled=True).validate(intent, snapshot(), for_live_send=True)
 
         self.assertFalse(decision.allowed)
         self.assertIn("FORECAST_CONFIDENCE_REQUIRED_FOR_LIVE", {issue.code for issue in decision.issues})
@@ -623,7 +654,7 @@ class RiskEngineTest(unittest.TestCase):
             },
         )
 
-        decision = RiskEngine(live_enabled=True).validate(intent, snapshot(), for_live_send=True)
+        decision = _capped_engine(live_enabled=True).validate(intent, snapshot(), for_live_send=True)
 
         self.assertFalse(decision.allowed)
         self.assertIn(
@@ -669,7 +700,7 @@ class RiskEngineTest(unittest.TestCase):
             },
         )
 
-        decision = RiskEngine(live_enabled=True).validate(intent, snapshot(), for_live_send=True)
+        decision = _capped_engine(live_enabled=True).validate(intent, snapshot(), for_live_send=True)
 
         self.assertTrue(decision.allowed, decision.block_reasons)
         self.assertNotIn(
@@ -687,7 +718,7 @@ class RiskEngineTest(unittest.TestCase):
             sl=1.17234,
             thesis="oversized_rebuild_regression",
         )
-        decision = RiskEngine().validate(intent, snapshot())
+        decision = _capped_engine().validate(intent, snapshot())
         self.assertFalse(decision.allowed)
         self.assertIn("LOSS_CAP_EXCEEDED", {issue.code for issue in decision.issues})
 
@@ -705,7 +736,7 @@ class RiskEngineTest(unittest.TestCase):
         prior_sl = os.environ.get("QR_TRADER_DISABLE_SL_REPAIR")
         os.environ["QR_TRADER_DISABLE_SL_REPAIR"] = "1"
         try:
-            decision = RiskEngine().validate(intent, snapshot())
+            decision = _capped_engine().validate(intent, snapshot())
         finally:
             if prior_sl is None:
                 os.environ.pop("QR_TRADER_DISABLE_SL_REPAIR", None)
@@ -741,7 +772,7 @@ class RiskEngineTest(unittest.TestCase):
             thesis="eurusd_must_fit_margin_before_send",
         )
 
-        decision = RiskEngine().validate(intent, snap)
+        decision = _capped_engine().validate(intent, snap)
 
         codes = {issue.code for issue in decision.issues}
         self.assertFalse(decision.allowed)
@@ -778,7 +809,7 @@ class RiskEngineTest(unittest.TestCase):
             metadata={"max_loss_jpy": 1_000.0},
         )
 
-        decision = RiskEngine().validate(intent, snap)
+        decision = _capped_engine().validate(intent, snap)
 
         codes = {issue.code for issue in decision.issues}
         self.assertNotIn("MARGIN_UTILIZATION_CAP_EXCEEDED", codes)
@@ -807,7 +838,7 @@ class RiskEngineTest(unittest.TestCase):
             sl=1.17234,
             thesis="must_not_trade_while_external_risk_open",
         )
-        decision = RiskEngine().validate(intent, snapshot(positions=(external,)))
+        decision = _capped_engine().validate(intent, snapshot(positions=(external,)))
         codes = {issue.code for issue in decision.issues}
         self.assertFalse(decision.allowed)
         self.assertIn("EXTERNAL_RISK_OPEN", codes)
@@ -833,7 +864,7 @@ class RiskEngineTest(unittest.TestCase):
             sl=1.17234,
             thesis="manual_usdjpy_is_operator_managed_parallel_exposure",
         )
-        decision = RiskEngine().validate(intent, snapshot(positions=(manual,)))
+        decision = _capped_engine().validate(intent, snapshot(positions=(manual,)))
         codes = {issue.code for issue in decision.issues}
         self.assertTrue(decision.allowed, decision.block_reasons)
         self.assertNotIn("EXTERNAL_RISK_OPEN", codes)
@@ -859,7 +890,7 @@ class RiskEngineTest(unittest.TestCase):
             sl=156.789,
             thesis="fresh_entry_must_wait_for_protection",
         )
-        decision = RiskEngine().validate(intent, snapshot(positions=(unprotected,)))
+        decision = _capped_engine().validate(intent, snapshot(positions=(unprotected,)))
         self.assertFalse(decision.allowed)
         self.assertIn("UNPROTECTED_POSITION", {issue.code for issue in decision.issues})
 
@@ -891,7 +922,7 @@ class RiskEngineTest(unittest.TestCase):
         os.environ["QR_TRADER_DISABLE_SL_REPAIR"] = "1"
         os.environ.pop("QR_ENABLE_MISSING_TP_REPAIR", None)
         try:
-            decision = RiskEngine(
+            decision = _capped_engine(
                 policy=RiskPolicy(
                     allow_protected_trader_position_adds=True,
                     max_portfolio_loss_jpy=10_000.0,
@@ -934,7 +965,7 @@ class RiskEngineTest(unittest.TestCase):
             sl=156.789,
             thesis="fresh_entry_must_not_stack_on_protected_position",
         )
-        decision = RiskEngine().validate(intent, snapshot(positions=(protected,)))
+        decision = _capped_engine().validate(intent, snapshot(positions=(protected,)))
         self.assertFalse(decision.allowed)
         self.assertIn("OPEN_POSITION_EXISTS", {issue.code for issue in decision.issues})
 
@@ -969,7 +1000,7 @@ class RiskEngineTest(unittest.TestCase):
 
         from quant_rabbit.risk import RiskPolicy
 
-        decision = RiskEngine(
+        decision = _capped_engine(
             policy=RiskPolicy(
                 allow_protected_trader_position_adds=True,
                 max_portfolio_loss_jpy=500.0,
@@ -1021,7 +1052,7 @@ class RiskEngineTest(unittest.TestCase):
 
         from quant_rabbit.risk import RiskPolicy
 
-        decision = RiskEngine(
+        decision = _capped_engine(
             policy=RiskPolicy(
                 allow_protected_trader_position_adds=True,
                 max_portfolio_loss_jpy=50_000.0,
@@ -1078,7 +1109,7 @@ class RiskEngineTest(unittest.TestCase):
 
         from quant_rabbit.risk import RiskPolicy
 
-        decision = RiskEngine(
+        decision = _capped_engine(
             policy=RiskPolicy(
                 allow_protected_trader_position_adds=True,
                 max_portfolio_loss_jpy=50_000.0,
@@ -1129,7 +1160,7 @@ class RiskEngineTest(unittest.TestCase):
 
         from quant_rabbit.risk import RiskPolicy
 
-        decision = RiskEngine(
+        decision = _capped_engine(
             policy=RiskPolicy(
                 allow_protected_trader_position_adds=True,
                 max_portfolio_positions=10,
@@ -1175,7 +1206,7 @@ class RiskEngineTest(unittest.TestCase):
 
         from quant_rabbit.risk import RiskPolicy
 
-        decision = RiskEngine(
+        decision = _capped_engine(
             policy=RiskPolicy(
                 allow_protected_trader_position_adds=True,
                 max_same_pair_trader_positions=None,
@@ -1222,7 +1253,7 @@ class RiskEngineTest(unittest.TestCase):
 
         from quant_rabbit.risk import RiskPolicy
 
-        decision = RiskEngine(
+        decision = _capped_engine(
             policy=RiskPolicy(
                 allow_protected_trader_position_adds=True,
                 max_same_pair_trader_positions=None,
@@ -1270,7 +1301,7 @@ class RiskEngineTest(unittest.TestCase):
 
         from quant_rabbit.risk import RiskPolicy
 
-        decision = RiskEngine(
+        decision = _capped_engine(
             policy=RiskPolicy(
                 allow_protected_trader_position_adds=True,
                 max_same_pair_trader_positions=None,
@@ -1318,7 +1349,7 @@ class RiskEngineTest(unittest.TestCase):
 
         from quant_rabbit.risk import RiskPolicy
 
-        decision = RiskEngine(
+        decision = _capped_engine(
             policy=RiskPolicy(
                 allow_protected_trader_position_adds=True,
                 max_same_pair_trader_positions=None,
@@ -1378,7 +1409,7 @@ class RiskEngineTest(unittest.TestCase):
 
         from quant_rabbit.risk import RiskPolicy
 
-        decision = RiskEngine(
+        decision = _capped_engine(
             policy=RiskPolicy(
                 allow_protected_trader_position_adds=True,
                 max_same_pair_trader_positions=1,
@@ -1424,7 +1455,7 @@ class RiskEngineTest(unittest.TestCase):
 
         from quant_rabbit.risk import RiskPolicy
 
-        decision = RiskEngine(
+        decision = _capped_engine(
             policy=RiskPolicy(
                 allow_protected_trader_position_adds=True,
                 max_portfolio_loss_jpy=50_000.0,
@@ -1473,7 +1504,7 @@ class RiskEngineTest(unittest.TestCase):
 
         from quant_rabbit.risk import RiskPolicy
 
-        decision = RiskEngine(
+        decision = _capped_engine(
             policy=RiskPolicy(
                 allow_protected_trader_position_adds=True,
                 max_portfolio_loss_jpy=500.0,
@@ -1514,7 +1545,7 @@ class RiskEngineTest(unittest.TestCase):
 
         from quant_rabbit.risk import RiskPolicy
 
-        decision = RiskEngine(
+        decision = _capped_engine(
             policy=RiskPolicy(
                 allow_protected_trader_position_adds=True,
                 max_portfolio_loss_jpy=500.0,
@@ -1562,7 +1593,7 @@ class RiskEngineTest(unittest.TestCase):
 
         from quant_rabbit.risk import RiskPolicy
 
-        decision = RiskEngine(
+        decision = _capped_engine(
             policy=RiskPolicy(
                 allow_protected_trader_position_adds=True,
                 max_portfolio_loss_jpy=500.0,
@@ -1604,7 +1635,7 @@ class RiskEngineTest(unittest.TestCase):
 
         from quant_rabbit.risk import RiskPolicy
 
-        decision = RiskEngine(
+        decision = _capped_engine(
             policy=RiskPolicy(
                 allow_protected_trader_position_adds=True,
                 max_portfolio_loss_jpy=500.0,
@@ -1655,7 +1686,7 @@ class RiskEngineTest(unittest.TestCase):
 
         from quant_rabbit.risk import RiskPolicy
 
-        decision = RiskEngine(
+        decision = _capped_engine(
             policy=RiskPolicy(
                 allow_protected_trader_position_adds=True,
                 max_loss_jpy=5_000.0,
@@ -1722,7 +1753,7 @@ class RiskEngineTest(unittest.TestCase):
 
         from quant_rabbit.risk import RiskPolicy
 
-        decision = RiskEngine(
+        decision = _capped_engine(
             policy=RiskPolicy(
                 allow_protected_trader_position_adds=True,
                 max_loss_jpy=5_000.0,
@@ -1779,7 +1810,7 @@ class RiskEngineTest(unittest.TestCase):
 
         from quant_rabbit.risk import RiskPolicy
 
-        decision = RiskEngine(
+        decision = _capped_engine(
             policy=RiskPolicy(
                 allow_protected_trader_position_adds=True,
                 max_loss_jpy=5_000.0,
@@ -1842,7 +1873,7 @@ class RiskEngineTest(unittest.TestCase):
 
         from quant_rabbit.risk import RiskPolicy
 
-        decision = RiskEngine(
+        decision = _capped_engine(
             policy=RiskPolicy(
                 allow_protected_trader_position_adds=True,
                 max_loss_jpy=5_000.0,
@@ -1905,7 +1936,7 @@ class RiskEngineTest(unittest.TestCase):
 
         from quant_rabbit.risk import RiskPolicy
 
-        decision = RiskEngine(
+        decision = _capped_engine(
             policy=RiskPolicy(
                 allow_protected_trader_position_adds=True,
                 max_loss_jpy=5_000.0,
@@ -1979,7 +2010,7 @@ class RiskEngineTest(unittest.TestCase):
 
         from quant_rabbit.risk import RiskPolicy
 
-        decision = RiskEngine(
+        decision = _capped_engine(
             policy=RiskPolicy(
                 allow_protected_trader_position_adds=True,
                 max_loss_jpy=5_000.0,
@@ -2062,7 +2093,7 @@ class RiskEngineTest(unittest.TestCase):
         try:
             from quant_rabbit.risk import RiskPolicy
 
-            decision = RiskEngine(
+            decision = _capped_engine(
                 policy=RiskPolicy(
                     allow_protected_trader_position_adds=True,
                     max_loss_jpy=5_000.0,
@@ -2126,7 +2157,7 @@ class RiskEngineTest(unittest.TestCase):
 
         from quant_rabbit.risk import RiskPolicy
 
-        decision = RiskEngine(
+        decision = _capped_engine(
             policy=RiskPolicy(
                 allow_protected_trader_position_adds=True,
                 max_portfolio_loss_jpy=500.0,
@@ -2156,7 +2187,7 @@ class RiskEngineTest(unittest.TestCase):
             sl=1.17250,
             thesis="must_not_stack_entry_orders",
         )
-        decision = RiskEngine().validate(intent, snapshot(orders=(pending,)))
+        decision = _capped_engine().validate(intent, snapshot(orders=(pending,)))
         self.assertFalse(decision.allowed)
         self.assertIn("PENDING_ENTRY_ORDER_OPEN", {issue.code for issue in decision.issues})
 
@@ -2180,7 +2211,7 @@ class RiskEngineTest(unittest.TestCase):
             thesis="operator pending order is parallel manual exposure",
         )
 
-        decision = RiskEngine().validate(intent, snapshot(orders=(pending,)))
+        decision = _capped_engine().validate(intent, snapshot(orders=(pending,)))
 
         self.assertTrue(decision.allowed, decision.block_reasons)
         self.assertNotIn("PENDING_ENTRY_ORDER_OPEN", {issue.code for issue in decision.issues})
@@ -2207,8 +2238,8 @@ class RiskEngineTest(unittest.TestCase):
             thesis="sell_limit_must_not_be_parked_below_current_bid",
         )
 
-        long_decision = RiskEngine().validate(long_stop_below_market, snapshot())
-        short_decision = RiskEngine().validate(short_limit_below_market, snapshot())
+        long_decision = _capped_engine().validate(long_stop_below_market, snapshot())
+        short_decision = _capped_engine().validate(short_limit_below_market, snapshot())
 
         self.assertFalse(long_decision.allowed)
         self.assertIn("STOP_ENTRY_NOT_ABOVE_MARKET", {issue.code for issue in long_decision.issues})
@@ -2234,7 +2265,7 @@ class RiskEngineTest(unittest.TestCase):
             ),
         )
 
-        decision = RiskEngine(live_enabled=True).validate(intent, snapshot(), for_live_send=True)
+        decision = _capped_engine(live_enabled=True).validate(intent, snapshot(), for_live_send=True)
 
         self.assertFalse(decision.allowed)
         self.assertIn("MARKET_ENTRY_DRIFT", {issue.code for issue in decision.issues})
@@ -2250,7 +2281,7 @@ class RiskEngineTest(unittest.TestCase):
             sl=156.789,
             thesis="usd_jpy_low_rr_regression",
         )
-        decision = RiskEngine().validate(intent, snapshot())
+        decision = _capped_engine().validate(intent, snapshot())
         self.assertFalse(decision.allowed)
         self.assertIn("REWARD_RISK_TOO_LOW", {issue.code for issue in decision.issues})
 
@@ -2272,7 +2303,7 @@ class RiskEngineTest(unittest.TestCase):
             ),
         )
 
-        decision = RiskEngine().validate(intent, snapshot())
+        decision = _capped_engine().validate(intent, snapshot())
 
         codes = {issue.code for issue in decision.issues}
         self.assertFalse(decision.allowed)
@@ -2301,7 +2332,7 @@ class RiskEngineTest(unittest.TestCase):
             metadata={"regime_state": "TREND_DOWN", "geometry_model": "RANGE_RAIL_MARKET"},
         )
 
-        decision = RiskEngine().validate(intent, snapshot())
+        decision = _capped_engine().validate(intent, snapshot())
 
         codes = {issue.code for issue in decision.issues}
         self.assertNotIn("REWARD_RISK_TOO_LOW", codes)
@@ -2332,8 +2363,8 @@ class RiskEngineTest(unittest.TestCase):
             account=low_conversion.account,
         )
 
-        low = RiskEngine().validate(intent, low_conversion)
-        high = RiskEngine().validate(intent, high_conversion)
+        low = _capped_engine().validate(intent, low_conversion)
+        high = _capped_engine().validate(intent, high_conversion)
 
         self.assertIsNotNone(low.metrics)
         self.assertIsNotNone(high.metrics)
@@ -2360,7 +2391,7 @@ class RiskEngineTest(unittest.TestCase):
             account=base.account,
         )
 
-        decision = RiskEngine().validate(intent, missing_conversion)
+        decision = _capped_engine().validate(intent, missing_conversion)
 
         self.assertFalse(decision.allowed)
         self.assertIsNone(decision.metrics)
@@ -2390,7 +2421,7 @@ class RiskEngineTest(unittest.TestCase):
             thesis="home_conversion_is_broker_truth",
         )
 
-        decision = RiskEngine().validate(intent, snap)
+        decision = _capped_engine().validate(intent, snap)
 
         self.assertIsNotNone(decision.metrics)
         self.assertNotIn("STALE_CONVERSION_QUOTE", {issue.code for issue in decision.issues})
@@ -2429,34 +2460,34 @@ class MinLotFloorTest(unittest.TestCase):
         )
 
     def test_999_units_blocked_with_min_lot_violation(self) -> None:
-        decision = RiskEngine().validate(self._intent(999), snapshot())
+        decision = _capped_engine().validate(self._intent(999), snapshot())
         codes = {issue.code for issue in decision.issues}
         self.assertIn("MIN_LOT_VIOLATION", codes)
         self.assertFalse(decision.allowed)
 
     def test_322_units_blocked_with_min_lot_violation(self) -> None:
         # The exact 470904 AUD/JPY SHORT 322u scenario.
-        decision = RiskEngine().validate(self._intent(322), snapshot())
+        decision = _capped_engine().validate(self._intent(322), snapshot())
         self.assertIn("MIN_LOT_VIOLATION", {issue.code for issue in decision.issues})
 
     def test_2_units_blocked_with_min_lot_violation(self) -> None:
         # The exact 470907 GBP/USD SHORT 2u scenario.
-        decision = RiskEngine().validate(self._intent(2), snapshot())
+        decision = _capped_engine().validate(self._intent(2), snapshot())
         self.assertIn("MIN_LOT_VIOLATION", {issue.code for issue in decision.issues})
 
     def test_1000_units_passes_min_lot_floor(self) -> None:
-        decision = RiskEngine().validate(self._intent(1000), snapshot())
+        decision = _capped_engine().validate(self._intent(1000), snapshot())
         self.assertNotIn("MIN_LOT_VIOLATION", {issue.code for issue in decision.issues})
 
     def test_5000_units_passes_min_lot_floor(self) -> None:
-        decision = RiskEngine().validate(self._intent(5000), snapshot())
+        decision = _capped_engine().validate(self._intent(5000), snapshot())
         self.assertNotIn("MIN_LOT_VIOLATION", {issue.code for issue in decision.issues})
 
     def test_zero_units_does_not_fire_min_lot_violation(self) -> None:
         # `units == 0` is BAD_UNITS territory (intent didn't reach broker
         # path at all), not MIN_LOT_VIOLATION. The gate covers sub-floor
         # *fillable* sizes.
-        decision = RiskEngine().validate(self._intent(0), snapshot())
+        decision = _capped_engine().validate(self._intent(0), snapshot())
         codes = {issue.code for issue in decision.issues}
         self.assertNotIn("MIN_LOT_VIOLATION", codes)
         self.assertIn("BAD_UNITS", codes)
@@ -2464,7 +2495,7 @@ class MinLotFloorTest(unittest.TestCase):
     def test_qr_allow_test_micro_lot_disables_gate(self) -> None:
         import os
         os.environ["QR_ALLOW_TEST_MICRO_LOT"] = "1"
-        decision = RiskEngine().validate(self._intent(500), snapshot())
+        decision = _capped_engine().validate(self._intent(500), snapshot())
         self.assertNotIn("MIN_LOT_VIOLATION", {issue.code for issue in decision.issues})
 
     def test_short_side_negative_units_also_gated(self) -> None:
@@ -2480,7 +2511,7 @@ class MinLotFloorTest(unittest.TestCase):
             sl=1.17500,
             thesis="short_micro_lot_negative_path",
         )
-        decision = RiskEngine().validate(intent, snapshot())
+        decision = _capped_engine().validate(intent, snapshot())
         self.assertIn("MIN_LOT_VIOLATION", {issue.code for issue in decision.issues})
         self.assertEqual(MIN_PRODUCTION_LOT_UNITS, 1000)
 

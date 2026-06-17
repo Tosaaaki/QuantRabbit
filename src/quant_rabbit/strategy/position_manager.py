@@ -15,7 +15,6 @@ from quant_rabbit.paths import (
     DEFAULT_POSITION_MANAGEMENT_REPORT,
     DEFAULT_TRADER_DECISION,
 )
-from quant_rabbit.risk import RiskPolicy
 from quant_rabbit.strategy.intent_generator import (
     GEOMETRY_ATR_TIMEFRAME,
     GEOMETRY_SPREAD_FLOOR_MULT,
@@ -2486,9 +2485,8 @@ def _repair_loss_cap_jpy() -> float | None:
     """Return the current per-trade cap for capped SL repair.
 
     Position repair must not widen exposure from a stale literal. Prefer the
-    daily target ledger's equity-derived per-trade cap; use RiskPolicy's
-    documented library default only when the ledger is absent in tests/ad-hoc
-    runs.
+    daily target ledger's equity-derived per-trade cap; return None when the
+    ledger is absent instead of inventing a JPY fallback.
     """
     if DEFAULT_DAILY_TARGET_STATE.exists():
         try:
@@ -2498,5 +2496,4 @@ def _repair_loss_cap_jpy() -> float | None:
                 return value
         except (OSError, ValueError, TypeError, json.JSONDecodeError):
             return None
-    policy_cap = RiskPolicy().max_loss_jpy
-    return float(policy_cap) if policy_cap is not None and policy_cap > 0 else None
+    return None

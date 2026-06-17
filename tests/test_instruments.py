@@ -47,6 +47,7 @@ class InstrumentUniverseTest(unittest.TestCase):
                 method=TradeMethod.TREND_CONTINUATION,
                 invalidation="SL trades",
             ),
+            metadata={"max_loss_jpy": 10_000.0},
         )
 
         decision = RiskEngine().validate(intent, snapshot)

@@ -474,7 +474,7 @@ class LegacyImporter:
                 "## Mandatory vNext Implications",
                 "",
                 "- Broker-synced or manual/tagless exposure must block fresh entries until adopted or closed.",
-                "- Any live order path must compute JPY loss before send; risk above 500 JPY is not an execution detail.",
+                "- Any live order path must compute JPY loss before send; risk above the active equity-derived cap is not an execution detail.",
                 "- Reward/risk below 1.2x and targets/stops inside live spread friction are hard rejects.",
                 "- The importer intentionally excludes secrets, Python environments, Git internals, and large replay/tick caches from the source index; the legacy archive still contains them.",
             ]

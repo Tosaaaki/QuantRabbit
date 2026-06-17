@@ -28,6 +28,28 @@ from quant_rabbit.strategy.trader_brain import ACTION_NO_TRADE, ACTION_SEND_ENTR
 
 
 class AutoTradeCycleTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self._default_settings_tmp = tempfile.TemporaryDirectory()
+        tmp_root = Path(self._default_settings_tmp.name)
+        self._default_settings_path = tmp_root / "trader_settings.json"
+        self._default_target_state_path = tmp_root / "daily_target_state.json"
+        self._default_settings_path.write_text(json.dumps({"risk": {"max_loss_pct": 0.25}}) + "\n")
+        self._default_settings_patch = mock.patch(
+            "quant_rabbit.automation.DEFAULT_TRADER_SETTINGS",
+            self._default_settings_path,
+        )
+        self._default_target_state_patch = mock.patch(
+            "quant_rabbit.automation.DEFAULT_DAILY_TARGET_STATE",
+            self._default_target_state_path,
+        )
+        self._default_settings_patch.start()
+        self._default_target_state_patch.start()
+
+    def tearDown(self) -> None:
+        self._default_target_state_patch.stop()
+        self._default_settings_patch.stop()
+        self._default_settings_tmp.cleanup()
+
     def test_cycle_perspective_alignment_keeps_later_opposite_rail_view(self) -> None:
         parts = _cycle_perspective_alignment_parts(
             {
@@ -546,7 +568,7 @@ class AutoTradeCycleTest(unittest.TestCase):
             snapshot_path = root / "snapshot.json"
             snapshot_path.write_text(_snapshot_to_json(snapshot) + "\n")
             intents_path = root / "intents.json"
-            _write_no_live_ready_intents(intents_path)
+            intents_path.write_text(json.dumps({"generated_at_utc": now.isoformat(), "results": []}) + "\n")
             target_state = _open_target_state(root)
             client = FakeCycleClient(snapshot)
 

@@ -972,7 +972,7 @@ class AutoTradeCycle:
         pair_charts_path: Path | None = None,
         strategy_profile_path: Path = DEFAULT_STRATEGY_PROFILE,
         market_story_profile_path: Path = DEFAULT_MARKET_STORY_PROFILE,
-        trader_settings_path: Path = DEFAULT_TRADER_SETTINGS,
+        trader_settings_path: Path | None = None,
         receipt_promotion_report_path: Path = DEFAULT_RECEIPT_PROMOTION_REPORT,
         target_state_path: Path | None = None,
         target_report_path: Path | None = None,
@@ -1027,7 +1027,7 @@ class AutoTradeCycle:
         self.pair_charts_path = pair_charts_path or _default_pair_charts_path(campaign_plan_path)
         self.strategy_profile_path = strategy_profile_path
         self.market_story_profile_path = market_story_profile_path
-        self.trader_settings_path = trader_settings_path
+        self.trader_settings_path = trader_settings_path or DEFAULT_TRADER_SETTINGS
         self.receipt_promotion_report_path = receipt_promotion_report_path
         self.target_state_path = target_state_path
         self.target_report_path = target_report_path
@@ -1380,7 +1380,7 @@ class AutoTradeCycle:
         trader_positions = _trader_position_count(snapshot)
         orders = len(snapshot.orders)
         pending_entries = _pending_entry_order_count(snapshot)
-        resolved_max_loss_jpy = self._resolve_max_loss_jpy()
+        resolved_max_loss_jpy = self._resolve_max_loss_jpy(snapshot)
         # H (2026-05-13) — Trailing SL pass. Runs ONCE per cycle on
         # trader-owned positions that already carry a broker SL. By
         # construction `apply_trailing_sls` skips every position with
@@ -3011,6 +3011,7 @@ class AutoTradeCycle:
             market_story_profile=self.market_story_profile_path,
             report_path=campaign_report_path,
             plan_path=self.campaign_plan_path,
+            target_state_path=self.target_state_path or DEFAULT_DAILY_TARGET_STATE,
         ).run(start_balance_jpy=start_balance, target_return_pct=target_return_pct)
 
     def _refresh_ai_test_bot_backtest_for_target_pace(self) -> bool:
@@ -3919,7 +3920,7 @@ class AutoTradeCycle:
             max_lanes=self.gpt_max_lanes,
         )
 
-    def _resolve_max_loss_jpy(self) -> float:
+    def _resolve_max_loss_jpy(self, snapshot=None) -> float:
         # AGENT_CONTRACT §3.5: per-trade JPY cap is *always* the
         # equity-derived `per_trade_risk_budget_jpy` from the daily-target
         # ledger when that file exists. The operator has only one knob for
@@ -3933,35 +3934,31 @@ class AutoTradeCycle:
         explicit_jpy = self.max_loss_jpy
         explicit_pct = self.max_loss_pct
         if explicit_jpy is not None or explicit_pct is not None:
-            risk_equity_jpy = self._risk_equity_jpy_for_pct()
+            risk_equity_jpy = self._risk_equity_jpy_for_pct(snapshot)
             return resolve_max_loss_jpy(
                 max_loss_jpy=explicit_jpy,
                 max_loss_pct=explicit_pct,
                 equity_jpy=risk_equity_jpy,
-                default_max_loss_jpy=RiskPolicy().max_loss_jpy,
+                default_max_loss_jpy=None,
                 label="autotrade-cycle risk cap",
             )
         ledger_cap = self._daily_risk_budget_jpy_from_target_state()
         if ledger_cap is not None:
             return ledger_cap
-        # No CLI override and no ledger — fall through to trader_settings, then
-        # policy literal. Preserve first-run / test compatibility: when
-        # max_loss_pct is set but equity is unknown, fall back to the policy
-        # literal rather than raising. This branch never executes in
-        # production because the ledger is always present; it exists for the
-        # narrow window before `daily-target-state` first runs.
+        # No CLI override and no ledger — fall through to trader_settings, but
+        # never invent a JPY literal. If settings specify pct, use target-state
+        # equity when present, otherwise the current broker snapshot NAV/balance.
+        # Without either source, resolve_max_loss_jpy raises and the cycle fails
+        # closed.
         settings = load_trader_settings(self.trader_settings_path)
-        risk_equity_jpy = self._risk_equity_jpy_for_pct()
+        risk_equity_jpy = self._risk_equity_jpy_for_pct(snapshot)
         max_loss_jpy = settings.default_max_loss_jpy
         max_loss_pct = settings.default_max_loss_pct
-        if max_loss_jpy is None and max_loss_pct is not None and risk_equity_jpy is None:
-            max_loss_jpy = RiskPolicy().max_loss_jpy
-            max_loss_pct = None
         return resolve_max_loss_jpy(
             max_loss_jpy=max_loss_jpy,
             max_loss_pct=max_loss_pct,
             equity_jpy=risk_equity_jpy,
-            default_max_loss_jpy=RiskPolicy().max_loss_jpy,
+            default_max_loss_jpy=None,
             label="autotrade-cycle risk cap",
         )
 
@@ -4014,18 +4011,23 @@ class AutoTradeCycle:
             return None
         return value if value > 0 else None
 
-    def _risk_equity_jpy_for_pct(self) -> float | None:
+    def _risk_equity_jpy_for_pct(self, snapshot=None) -> float | None:
         if self.risk_equity_jpy is not None:
             return self.risk_equity_jpy
-        if self.target_state_path is None or not self.target_state_path.exists():
-            return None
-        try:
-            payload = json.loads(self.target_state_path.read_text())
-        except (OSError, json.JSONDecodeError, ValueError):
-            return None
-        value = payload.get("current_equity_jpy")
-        if value is None:
-            value = payload.get("start_balance_jpy")
+        value = None
+        if self.target_state_path is not None and self.target_state_path.exists():
+            try:
+                payload = json.loads(self.target_state_path.read_text())
+            except (OSError, json.JSONDecodeError, ValueError):
+                payload = {}
+            value = payload.get("current_equity_jpy")
+            if value is None:
+                value = payload.get("start_balance_jpy")
+        if value is None and snapshot is not None:
+            account = getattr(snapshot, "account", None)
+            value = getattr(account, "nav_jpy", None)
+            if value is None:
+                value = getattr(account, "balance_jpy", None)
         if value is None:
             return None
         try:

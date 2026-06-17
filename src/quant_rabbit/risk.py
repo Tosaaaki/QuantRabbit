@@ -830,11 +830,10 @@ def _forecast_range_method_issues(
 
 @dataclass(frozen=True)
 class RiskPolicy:
-    # Library default for tests and ad-hoc construction. Production code MUST
-    # NOT rely on this literal: target.py derives daily_risk_budget_jpy from
-    # equity * daily_risk_pct, intent_generator pulls that into intent.metadata,
-    # and validate() prefers metadata over policy when both are present.
-    max_loss_jpy: float | None = 500.0
+    # No JPY literal fallback: production and tests must inject a cap from
+    # intent.metadata, an explicit policy, or an equity-derived daily target
+    # ledger. RiskEngine fails closed with LOSS_CAP_MISSING when absent.
+    max_loss_jpy: float | None = None
     # Equity-percent cap used by daily-target-state to derive the day's risk
     # budget from starting balance (e.g. 2.0 = 2% of equity per trading day).
     daily_risk_pct: float | None = 2.0

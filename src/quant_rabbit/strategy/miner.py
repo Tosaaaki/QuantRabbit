@@ -15,7 +15,6 @@ from quant_rabbit.paths import (
     DEFAULT_STRATEGY_PROFILE,
     DEFAULT_STRATEGY_REPORT,
 )
-from quant_rabbit.risk import RiskPolicy
 
 # Three realized trader-owned outcomes is the smallest repeat sample that is
 # not a single lucky fill or one win/loss pair. It mirrors the existing
@@ -737,10 +736,10 @@ def _resolve_strategy_loss_cap(explicit_loss_cap_jpy: float | None, target_state
     state_cap = _loss_cap_from_target_state(target_state_path)
     if state_cap is not None:
         return ResolvedStrategyLossCap(state_cap, f"daily target state {target_state_path}")
-    policy_cap = RiskPolicy().max_loss_jpy
-    if policy_cap is None or policy_cap <= 0:
-        raise ValueError("mine-strategy cannot derive a positive loss cap")
-    return ResolvedStrategyLossCap(round(float(policy_cap), 4), "RiskPolicy.max_loss_jpy library default")
+    raise ValueError(
+        "mine-strategy cannot derive a positive loss cap; pass an explicit "
+        "loss cap or refresh daily-target-state for an equity-derived per-trade cap"
+    )
 
 
 def _loss_cap_from_target_state(path: Path) -> float | None:

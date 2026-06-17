@@ -15,13 +15,17 @@ from quant_rabbit.models import AccountSummary, BrokerOrder, BrokerPosition, Bro
 from quant_rabbit.risk import OANDA_JP_RETAIL_FX_MARGIN_RATE
 
 
+TEST_PER_TRADE_RISK_JPY = 10_000.0
+TEST_DAILY_RISK_BUDGET_JPY = 50_000.0
+
+
 class LiveOrderGatewayTest(unittest.TestCase):
     def setUp(self) -> None:
         self._original_per_trade_reader = execution_module._per_trade_risk_from_state
         self._original_daily_budget_reader = execution_module._daily_risk_budget_from_state
         self._original_target_trades_reader = execution_module._target_trades_per_day_from_state
-        execution_module._per_trade_risk_from_state = lambda: None
-        execution_module._daily_risk_budget_from_state = lambda path=None: None
+        execution_module._per_trade_risk_from_state = lambda: TEST_PER_TRADE_RISK_JPY
+        execution_module._daily_risk_budget_from_state = lambda path=None: TEST_DAILY_RISK_BUDGET_JPY
         execution_module._target_trades_per_day_from_state = lambda path=None: None
 
     def tearDown(self) -> None:

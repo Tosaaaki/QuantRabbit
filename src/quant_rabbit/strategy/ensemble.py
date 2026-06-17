@@ -10,10 +10,10 @@ from quant_rabbit.models import TradeMethod
 from quant_rabbit.paths import (
     DEFAULT_CAMPAIGN_PLAN,
     DEFAULT_CAMPAIGN_REPORT,
+    DEFAULT_DAILY_TARGET_STATE,
     DEFAULT_MARKET_STORY_PROFILE,
     DEFAULT_STRATEGY_PROFILE,
 )
-from quant_rabbit.risk import RiskPolicy
 
 
 DESK_METHODS: dict[str, TradeMethod] = {
@@ -105,15 +105,17 @@ class CampaignPlanner:
         market_story_profile: Path = DEFAULT_MARKET_STORY_PROFILE,
         report_path: Path = DEFAULT_CAMPAIGN_REPORT,
         plan_path: Path = DEFAULT_CAMPAIGN_PLAN,
+        target_state_path: Path = DEFAULT_DAILY_TARGET_STATE,
     ) -> None:
         self.strategy_profile = strategy_profile
         self.market_story_profile = market_story_profile
         self.report_path = report_path
         self.plan_path = plan_path
+        self.target_state_path = target_state_path
 
     def run(self, *, start_balance_jpy: float, target_return_pct: float = 10.0) -> CampaignSummary:
         strategies = _load_strategy_profile(self.strategy_profile)
-        loss_cap_jpy, loss_cap_source = _load_strategy_loss_cap(self.strategy_profile)
+        loss_cap_jpy, loss_cap_source = _load_strategy_loss_cap(self.strategy_profile, self.target_state_path)
         stories = _load_market_story_profile(self.market_story_profile)
         lanes = tuple(self._build_lanes(strategies, stories, loss_cap_jpy=loss_cap_jpy))
         target_jpy = round(start_balance_jpy * (target_return_pct / 100.0), 2)
@@ -400,7 +402,7 @@ def _load_strategy_profile(path: Path) -> dict[str, list[StrategyEvidence]]:
     return by_pair
 
 
-def _load_strategy_loss_cap(path: Path) -> tuple[float, str]:
+def _load_strategy_loss_cap(path: Path, target_state_path: Path = DEFAULT_DAILY_TARGET_STATE) -> tuple[float, str]:
     payload = json.loads(path.read_text())
     contract = payload.get("system_contract", {}) if isinstance(payload, dict) else {}
     raw = contract.get("loss_cap_jpy") if isinstance(contract, dict) else None
@@ -411,10 +413,33 @@ def _load_strategy_loss_cap(path: Path) -> tuple[float, str]:
     if cap > 0:
         source = str(contract.get("loss_cap_source") or "strategy profile system_contract")
         return round(cap, 4), source
-    policy_cap = RiskPolicy().max_loss_jpy
-    if policy_cap is None or policy_cap <= 0:
-        raise ValueError(f"strategy profile has no usable loss cap: {path}")
-    return round(float(policy_cap), 4), "RiskPolicy.max_loss_jpy library default"
+    state_cap = _loss_cap_from_target_state(target_state_path)
+    if state_cap is not None:
+        return state_cap, f"daily target state {target_state_path}"
+    raise ValueError(
+        f"strategy profile has no usable loss cap: {path}; rebuild the profile "
+        "from an equity-derived daily target state or provide system_contract.loss_cap_jpy"
+    )
+
+
+def _loss_cap_from_target_state(path: Path) -> float | None:
+    if not path.exists():
+        return None
+    try:
+        payload = json.loads(path.read_text())
+    except (OSError, json.JSONDecodeError, ValueError):
+        return None
+    if not isinstance(payload, dict):
+        return None
+    for key in ("per_trade_risk_budget_jpy", "daily_risk_budget_jpy"):
+        raw = payload.get(key)
+        try:
+            value = float(raw) if raw is not None else 0.0
+        except (TypeError, ValueError):
+            continue
+        if value > 0:
+            return round(value, 4)
+    return None
 
 
 def _load_market_story_profile(path: Path) -> dict[str, MarketStoryEvidence]:

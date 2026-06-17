@@ -152,15 +152,11 @@ class LiveOrderGateway:
         intent = _intent_from_json(selected["intent"])
         intent = _intent_with_gateway_metadata(intent, selected_lane_id)
         requested_units = intent.units
-        scaled_units, scale_issues = _scaled_units(intent.units, size_multiple)
+        scaled_units, scale_issues, size_multiple = _scaled_units_for_intent(intent, size_multiple)
         if scaled_units is not None:
             intent = replace(intent, units=scaled_units)
         portfolio_position_cap = _portfolio_position_cap_from_state()
         default_max_loss_jpy = _per_trade_risk_from_state()
-        if default_max_loss_jpy is None:
-            # First-run/test compatibility only. Production cycles should have a
-            # daily target ledger before the live gateway is reached.
-            default_max_loss_jpy = RiskPolicy().max_loss_jpy
         max_loss_jpy = resolve_max_loss_jpy(
             max_loss_jpy=self.max_loss_jpy,
             max_loss_pct=self.max_loss_pct,
@@ -187,6 +183,19 @@ class LiveOrderGateway:
             allow_basket_pending=False,
             portfolio_position_cap=portfolio_position_cap,
         )
+        intent, risk, size_multiple, loss_cap_scale_issues = self._clip_intent_to_loss_cap(
+            intent=intent,
+            risk=risk,
+            snapshot=snapshot,
+            max_loss_jpy=max_loss_jpy,
+            portfolio_loss_cap=portfolio_loss_cap,
+            validate_live_enabled=validate_live_enabled,
+            allow_basket_pending=False,
+            portfolio_position_cap=portfolio_position_cap,
+            requested_units=requested_units,
+            size_multiple=size_multiple,
+        )
+        scale_issues.extend(loss_cap_scale_issues)
         strategy_issues = tuple(
             issue.__dict__ for issue in StrategyProfile.load(self.strategy_profile).validate(intent, for_live_send=True)
         )
@@ -519,7 +528,7 @@ class LiveOrderGateway:
         intent = _intent_from_json(selected["intent"])
         intent = _intent_with_gateway_metadata(intent, selected_lane_id)
         requested_units = intent.units
-        scaled_units, scale_issues = _scaled_units(intent.units, size_multiple)
+        scaled_units, scale_issues, size_multiple = _scaled_units_for_intent(intent, size_multiple)
         if scaled_units is not None:
             intent = replace(intent, units=scaled_units)
         max_loss_jpy = self._resolve_gateway_max_loss_jpy()
@@ -535,6 +544,19 @@ class LiveOrderGateway:
             portfolio_position_cap=portfolio_position_cap or _portfolio_position_cap_from_state(),
             ignore_pending_order_ids=ignore_pending_order_ids,
         )
+        intent, risk, size_multiple, loss_cap_scale_issues = self._clip_intent_to_loss_cap(
+            intent=intent,
+            risk=risk,
+            snapshot=snapshot,
+            max_loss_jpy=max_loss_jpy,
+            portfolio_loss_cap=portfolio_loss_cap,
+            validate_live_enabled=validate_live_enabled,
+            allow_basket_pending=allow_basket_pending,
+            portfolio_position_cap=portfolio_position_cap or _portfolio_position_cap_from_state(),
+            requested_units=requested_units,
+            size_multiple=size_multiple,
+        )
+        scale_issues.extend(loss_cap_scale_issues)
         if allow_basket_pending and risk.metrics is not None:
             scale_multiple, scale_issue = _basket_size_multiple(
                 intent=intent,
@@ -682,10 +704,6 @@ class LiveOrderGateway:
 
     def _resolve_gateway_max_loss_jpy(self) -> float:
         default_max_loss_jpy = _per_trade_risk_from_state()
-        if default_max_loss_jpy is None:
-            # First-run/test compatibility only. Production cycles should have a
-            # daily target ledger before the live gateway is reached.
-            default_max_loss_jpy = RiskPolicy().max_loss_jpy
         return resolve_max_loss_jpy(
             max_loss_jpy=self.max_loss_jpy,
             max_loss_pct=self.max_loss_pct,
@@ -722,6 +740,125 @@ class LiveOrderGateway:
             ),
             live_enabled=validate_live_enabled,
         ).validate(intent, snapshot, for_live_send=True)
+
+    def _clip_intent_to_loss_cap(
+        self,
+        *,
+        intent: OrderIntent,
+        risk,
+        snapshot: BrokerSnapshot,
+        max_loss_jpy: float,
+        portfolio_loss_cap: float | None,
+        validate_live_enabled: bool,
+        allow_basket_pending: bool,
+        portfolio_position_cap: int,
+        requested_units: int,
+        size_multiple: float,
+    ):
+        metrics = risk.metrics
+        if metrics is None or metrics.risk_jpy <= max_loss_jpy:
+            issues: list[RiskIssue] = []
+        else:
+            scale = _capacity_scale(abs(intent.units), metrics.risk_jpy, max_loss_jpy)
+            scaled_units, issues = _scaled_units(intent.units, scale, sub_min_lot_mode="block")
+            if scaled_units is None:
+                return intent, risk, size_multiple, issues
+            original_units = intent.units
+            intent = replace(intent, units=scaled_units)
+            risk = self._validate_intent(
+                intent=intent,
+                snapshot=snapshot,
+                max_loss_jpy=max_loss_jpy,
+                portfolio_loss_cap=portfolio_loss_cap,
+                validate_live_enabled=validate_live_enabled,
+                allow_basket_pending=allow_basket_pending,
+                portfolio_position_cap=portfolio_position_cap,
+            )
+            if requested_units:
+                size_multiple = abs(scaled_units) / abs(requested_units)
+            issues = [
+                RiskIssue(
+                    "SIZE_MULTIPLE_CLIPPED_TO_LOSS_CAP",
+                    f"scaled units {original_units}u would risk {metrics.risk_jpy:.0f} JPY "
+                    f"above cap {max_loss_jpy:.0f} JPY; clipped to {scaled_units}u.",
+                    "WARN",
+                ),
+                *issues,
+            ]
+        return self._clip_intent_to_pair_margin_cap(
+            intent=intent,
+            risk=risk,
+            snapshot=snapshot,
+            max_loss_jpy=max_loss_jpy,
+            portfolio_loss_cap=portfolio_loss_cap,
+            validate_live_enabled=validate_live_enabled,
+            allow_basket_pending=allow_basket_pending,
+            portfolio_position_cap=portfolio_position_cap,
+            requested_units=requested_units,
+            size_multiple=size_multiple,
+            prior_issues=issues,
+        )
+
+    def _clip_intent_to_pair_margin_cap(
+        self,
+        *,
+        intent: OrderIntent,
+        risk,
+        snapshot: BrokerSnapshot,
+        max_loss_jpy: float,
+        portfolio_loss_cap: float | None,
+        validate_live_enabled: bool,
+        allow_basket_pending: bool,
+        portfolio_position_cap: int,
+        requested_units: int,
+        size_multiple: float,
+        prior_issues: list[RiskIssue],
+    ):
+        if not any(issue.code == "PAIR_MARGIN_CONCENTRATION_LIMIT" for issue in risk.issues):
+            return intent, risk, size_multiple, prior_issues
+        metrics = risk.metrics
+        account = snapshot.account
+        cap_pct = RiskPolicy().max_same_pair_margin_utilization_pct
+        if (
+            metrics is None
+            or account is None
+            or account.nav_jpy <= 0
+            or cap_pct is None
+            or cap_pct <= 0
+            or metrics.estimated_margin_jpy is None
+            or metrics.estimated_margin_jpy <= 0
+        ):
+            return intent, risk, size_multiple, prior_issues
+        cap_jpy = account.nav_jpy * (cap_pct / 100.0)
+        if metrics.estimated_margin_jpy <= cap_jpy:
+            return intent, risk, size_multiple, prior_issues
+        scale = _capacity_scale(abs(intent.units), metrics.estimated_margin_jpy, cap_jpy)
+        scaled_units, issues = _scaled_units(intent.units, scale, sub_min_lot_mode="block")
+        if scaled_units is None:
+            return intent, risk, size_multiple, [*prior_issues, *issues]
+        original_units = intent.units
+        intent = replace(intent, units=scaled_units)
+        risk = self._validate_intent(
+            intent=intent,
+            snapshot=snapshot,
+            max_loss_jpy=max_loss_jpy,
+            portfolio_loss_cap=portfolio_loss_cap,
+            validate_live_enabled=validate_live_enabled,
+            allow_basket_pending=allow_basket_pending,
+            portfolio_position_cap=portfolio_position_cap,
+        )
+        if requested_units:
+            size_multiple = abs(scaled_units) / abs(requested_units)
+        return intent, risk, size_multiple, [
+            *prior_issues,
+            RiskIssue(
+                "SIZE_MULTIPLE_CLIPPED_TO_PAIR_MARGIN_CAP",
+                f"scaled units {original_units}u would use {metrics.estimated_margin_jpy:.0f} JPY "
+                f"same-pair margin above cap {cap_jpy:.0f} JPY; clipped to {scaled_units}u.",
+                "WARN",
+            ),
+            *issues,
+        ]
 
     def _snapshot_and_validate_intent(
         self,
@@ -936,6 +1073,28 @@ def _scaled_units(
         ]
     scaled = scaled_abs if units >= 0 else -scaled_abs
     return scaled, []
+
+
+def _scaled_units_for_intent(intent: OrderIntent, size_multiple: float) -> tuple[int | None, list[RiskIssue], float]:
+    if not _intent_declares_hedge(intent):
+        scaled_units, issues = _scaled_units(intent.units, size_multiple)
+        return scaled_units, issues, size_multiple
+    if not math.isfinite(size_multiple) or size_multiple <= 0:
+        return None, [RiskIssue("INVALID_SIZE_MULTIPLE", "size_multiple must be a finite positive number")], size_multiple
+    if math.isclose(size_multiple, 1.0):
+        return intent.units, [], 1.0
+    return (
+        intent.units,
+        [
+            RiskIssue(
+                "HEDGE_SIZE_MULTIPLE_IGNORED",
+                "HEDGE units are capped by the uncovered opposite exposure; "
+                f"kept {intent.units}u instead of applying size_multiple {size_multiple:.4g}.",
+                "WARN",
+            )
+        ],
+        1.0,
+    )
 
 
 def _portfolio_position_cap_from_state(

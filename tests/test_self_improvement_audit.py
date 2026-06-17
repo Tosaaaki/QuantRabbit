@@ -716,6 +716,55 @@ class SelfImprovementAuditorTest(unittest.TestCase):
             self.assertEqual(finding_count, first.findings)
             self.assertEqual(stale_streaks, [1])
 
+    def test_pending_entry_lifecycle_flags_cancel_before_fill_churn(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(
+                root,
+                active_position=False,
+                live_ready_market_rr=1.4,
+                closed_pls=(100.0, 80.0, 50.0),
+            )
+            _write_pending_cancel_churn_ledger(files["execution_db"])
+
+            summary = _run(files)
+            payload = json.loads(files["output"].read_text())
+            report = files["report"].read_text()
+
+        codes = {item["code"]: item for item in payload["findings"]}
+        lifecycle = payload["execution_quality"]["pending_entry_lifecycle"]
+        self.assertEqual(summary.status, STATUS_ACTION_REQUIRED)
+        self.assertIn("PENDING_ENTRY_FILL_RATE_WEAK", codes)
+        self.assertEqual(codes["PENDING_ENTRY_FILL_RATE_WEAK"]["priority"], "P1")
+        self.assertEqual(lifecycle["accepted_entry_orders"], 3)
+        self.assertEqual(lifecycle["filled_entry_orders"], 0)
+        self.assertEqual(lifecycle["canceled_before_fill_orders"], 3)
+        self.assertEqual(lifecycle["cancel_before_fill_rate"], 1.0)
+        self.assertIn("Pending entry lifecycle", report)
+
+    def test_repeated_self_improvement_finding_surfaces_anti_loop_action(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(
+                root,
+                active_position=False,
+                closed_pls=(100.0, 80.0, 50.0),
+            )
+
+            _run(files, now=_NOW)
+            _run(files, now=_NOW + timedelta(minutes=3))
+            third = _run(files, now=_NOW + timedelta(minutes=6))
+            payload = json.loads(files["output"].read_text())
+
+        codes = {item["code"]: item for item in payload["findings"]}
+        self.assertEqual(third.status, STATUS_BLOCKED)
+        self.assertIn("REPEATED_SELF_IMPROVEMENT_LOOP", codes)
+        loop = codes["REPEATED_SELF_IMPROVEMENT_LOOP"]
+        self.assertEqual(loop["priority"], "P1")
+        self.assertEqual(loop["evidence"]["current_streak"], 3)
+        self.assertEqual(loop["evidence"]["previous_streak"], 2)
+        self.assertEqual(loop["evidence"]["repeated_code"], "TARGET_OPEN_NO_LIVE_READY_LANES")
+
     def test_action_required_for_hidden_open_loss_and_low_market_rr(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -4758,6 +4807,60 @@ def _write_execution_ledger(path: Path, *, closed_pls: tuple[float, ...], last_t
                 VALUES (?, ?, 'TRADE_CLOSED', 'EUR_USD', 'LONG', ?)
                 """,
                 (f"closed-{idx}", (_NOW - timedelta(hours=idx + 1)).isoformat(), pl),
+            )
+
+
+def _write_pending_cancel_churn_ledger(path: Path) -> None:
+    if path.exists():
+        path.unlink()
+    with sqlite3.connect(path) as conn:
+        conn.executescript(
+            """
+            CREATE TABLE sync_state (key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at_utc TEXT NOT NULL);
+            CREATE TABLE execution_events (
+                event_uid TEXT PRIMARY KEY,
+                ts_utc TEXT NOT NULL,
+                event_type TEXT NOT NULL,
+                lane_id TEXT,
+                order_id TEXT,
+                trade_id TEXT,
+                pair TEXT,
+                side TEXT,
+                units INTEGER,
+                price REAL,
+                realized_pl_jpy REAL,
+                exit_reason TEXT
+            );
+            """
+        )
+        conn.execute(
+            "INSERT INTO sync_state(key, value, updated_at_utc) VALUES (?, ?, ?)",
+            ("last_oanda_transaction_id", "100", _NOW.isoformat()),
+        )
+        for idx, pair in enumerate(("AUD_CAD", "CAD_CHF", "NZD_CHF")):
+            accepted_ts = _NOW - timedelta(minutes=30 - idx * 5)
+            canceled_ts = accepted_ts + timedelta(minutes=8 + idx)
+            order_id = f"O-pending-{idx}"
+            lane_id = f"range_trader:{pair}:LONG:RANGE_ROTATION"
+            conn.execute(
+                """
+                INSERT INTO execution_events(
+                    event_uid, ts_utc, event_type, lane_id, order_id,
+                    pair, side, units, price, exit_reason
+                )
+                VALUES (?, ?, 'ORDER_ACCEPTED', ?, ?, ?, 'LONG', 1000, ?, NULL)
+                """,
+                (f"accepted-{idx}", accepted_ts.isoformat(), lane_id, order_id, pair, 1.1 + idx / 1000),
+            )
+            conn.execute(
+                """
+                INSERT INTO execution_events(
+                    event_uid, ts_utc, event_type, lane_id, order_id,
+                    pair, side, units, price, exit_reason
+                )
+                VALUES (?, ?, 'ORDER_CANCELED', ?, ?, ?, 'LONG', 1000, ?, NULL)
+                """,
+                (f"canceled-{idx}", canceled_ts.isoformat(), lane_id, order_id, pair, 1.1 + idx / 1000),
             )
 
 
