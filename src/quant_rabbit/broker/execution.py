@@ -10,7 +10,17 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Protocol
 
-from quant_rabbit.models import BrokerSnapshot, MarketContext, OrderIntent, OrderType, Owner, Quote, Side, TradeMethod
+from quant_rabbit.models import (
+    BrokerSnapshot,
+    MarketContext,
+    OrderIntent,
+    OrderType,
+    Owner,
+    Quote,
+    RiskMetrics,
+    Side,
+    TradeMethod,
+)
 
 
 def _trader_sl_repair_disabled() -> bool:
@@ -254,6 +264,7 @@ class LiveOrderGateway:
             "order_request": order_request,
             "context_evidence": _context_evidence_from_intent(intent),
             "risk_metrics": asdict(risk.metrics) if risk.metrics else None,
+            "attached_stop_risk_metrics": _attached_stop_risk_metrics(intent, order_request, risk.metrics),
             "risk_issues": [
                 *risk_issues,
                 *intent_status_issues,
@@ -639,6 +650,7 @@ class LiveOrderGateway:
             "order_request": order_request,
             "context_evidence": _context_evidence_from_intent(intent),
             "risk_metrics": asdict(risk.metrics) if risk.metrics else None,
+            "attached_stop_risk_metrics": _attached_stop_risk_metrics(intent, order_request, risk.metrics),
             "risk_issues": [
                 *risk_issues,
                 *intent_status_issues,
@@ -802,8 +814,14 @@ class LiveOrderGateway:
                 metrics = item.get("risk_metrics") if isinstance(item.get("risk_metrics"), dict) else None
                 if metrics:
                     lines.append(
-                        f"  - broker-truth risk: `{metrics['risk_jpy']:.1f} JPY` reward=`{metrics['reward_jpy']:.1f} JPY` "
+                        f"  - intent risk: `{metrics['risk_jpy']:.1f} JPY` reward=`{metrics['reward_jpy']:.1f} JPY` "
                         f"rr=`{metrics['reward_risk']:.2f}` margin=`{metrics.get('estimated_margin_jpy', 0.0):.1f} JPY`"
+                    )
+                attached_stop = item.get("attached_stop_risk_metrics")
+                if isinstance(attached_stop, dict):
+                    lines.append(
+                        f"  - attached broker SL: `{attached_stop['basis']}` price=`{attached_stop['price']}` "
+                        f"loss=`{attached_stop['loss_pips']:.1f}pip` risk=`{attached_stop['risk_jpy']:.1f} JPY`"
                     )
         order = None if batch_orders else result.get("order_request")
         if order:
@@ -826,8 +844,14 @@ class LiveOrderGateway:
                     if after is not None and cap is not None:
                         margin_tail += f" margin_after=`{after:.1f}%/{cap:.1f}%`"
                 lines.append(
-                    f"- broker-truth risk: `{metrics['risk_jpy']:.1f} JPY` reward=`{metrics['reward_jpy']:.1f} JPY` "
+                    f"- intent risk: `{metrics['risk_jpy']:.1f} JPY` reward=`{metrics['reward_jpy']:.1f} JPY` "
                     f"rr=`{metrics['reward_risk']:.2f}` spread=`{metrics['spread_pips']:.1f}pip`{margin_tail}"
+                )
+            attached_stop = result.get("attached_stop_risk_metrics")
+            if isinstance(attached_stop, dict):
+                lines.append(
+                    f"- attached broker SL: `{attached_stop['basis']}` price=`{attached_stop['price']}` "
+                    f"loss=`{attached_stop['loss_pips']:.1f}pip` risk=`{attached_stop['risk_jpy']:.1f} JPY`"
                 )
         elif not batch_orders:
             lines.append("- none")
@@ -1288,6 +1312,53 @@ def _attached_stop_loss_price(intent: OrderIntent) -> float | None:
         return float(disaster_sl)
     except (TypeError, ValueError):
         return None
+
+
+def _attached_stop_risk_metrics(
+    intent: OrderIntent,
+    order_request: dict[str, Any] | None,
+    metrics: RiskMetrics | None,
+) -> dict[str, Any] | None:
+    if not order_request or metrics is None:
+        return None
+    attached_sl = _raw_dependent_price(order_request, "stopLossOnFill")
+    if attached_sl is None:
+        return None
+    spec = DEFAULT_SPECS.get(intent.pair)
+    if spec is None:
+        return None
+    try:
+        entry = float(order_request.get("price") or metrics.entry_price)
+    except (TypeError, ValueError):
+        entry = metrics.entry_price
+    if intent.side == Side.LONG:
+        loss_pips = (entry - attached_sl) * spec.pip_factor
+    else:
+        loss_pips = (attached_sl - entry) * spec.pip_factor
+    loss_pips = max(0.0, loss_pips)
+    risk_jpy = loss_pips * metrics.jpy_per_pip
+    basis = "BROKER_ATTACHED_SL"
+    tolerance = 0.5 / spec.pip_factor
+    disaster_sl_raw = (intent.metadata or {}).get("disaster_sl")
+    try:
+        disaster_sl = None if disaster_sl_raw is None else float(disaster_sl_raw)
+    except (TypeError, ValueError):
+        disaster_sl = None
+    if disaster_sl is not None and abs(attached_sl - disaster_sl) <= tolerance:
+        basis = "DISASTER_SL"
+    elif abs(attached_sl - intent.sl) <= tolerance:
+        basis = "INTENT_SL"
+    return {
+        "basis": basis,
+        "price": _price(intent.pair, attached_sl),
+        "loss_pips": loss_pips,
+        "risk_jpy": risk_jpy,
+        "intent_sl": _price(intent.pair, intent.sl),
+        "intent_loss_pips": metrics.loss_pips,
+        "intent_risk_jpy": metrics.risk_jpy,
+        "risk_delta_jpy": risk_jpy - metrics.risk_jpy,
+        "loss_delta_pips": loss_pips - metrics.loss_pips,
+    }
 
 
 def _attach_take_profit_on_fill(intent: OrderIntent) -> bool:
