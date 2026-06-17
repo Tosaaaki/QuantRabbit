@@ -2541,6 +2541,102 @@ class IntentGeneratorTest(unittest.TestCase):
 
         self.assertEqual(issue["code"], "FORECAST_CONFIDENCE_REQUIRED_FOR_LIVE")
 
+    def test_unclear_forecast_limit_allows_same_side_unselected_projection_support(self) -> None:
+        from quant_rabbit.models import MarketContext, TradeMethod
+        from quant_rabbit.strategy.intent_generator import _forecast_live_readiness_issue
+
+        os.environ["QR_REQUIRE_FORECAST_FOR_LIVE"] = "1"
+        metadata = {
+            "forecast_direction": "UNCLEAR",
+            "forecast_confidence": 0.21,
+            "forecast_horizon_min": 60,
+            "chart_direction_bias": "LONG",
+            "forecast_market_support": {
+                "ok": False,
+                "direction": "UNCLEAR",
+                "reason": "forecast UNCLEAR has no executable direction; audited projection unselected",
+                "unselected_projection_count": 1,
+                "unselected_signals": [
+                    {
+                        "name": "macro_event_nowcast_central_bank",
+                        "direction": "UP",
+                        "confidence": 0.74,
+                        "hit_rate": 0.562,
+                        "samples": 16,
+                    }
+                ],
+            },
+        }
+        intent = OrderIntent(
+            pair="EUR_JPY",
+            side=Side.LONG,
+            order_type=OrderType.LIMIT,
+            units=5000,
+            entry=168.4,
+            tp=168.9,
+            sl=168.0,
+            thesis="passive failed-break retest with audited same-side projection",
+            market_context=MarketContext(
+                regime="BREAKOUT_FAILURE retest",
+                narrative="",
+                chart_story="",
+                method=TradeMethod.BREAKOUT_FAILURE,
+                invalidation="",
+            ),
+            metadata=metadata,
+        )
+
+        issue = _forecast_live_readiness_issue(intent, metadata, TradeMethod.BREAKOUT_FAILURE)
+
+        self.assertIsNone(issue)
+
+    def test_unclear_forecast_market_keeps_same_side_unselected_projection_blocked(self) -> None:
+        from quant_rabbit.models import MarketContext, TradeMethod
+        from quant_rabbit.strategy.intent_generator import _forecast_live_readiness_issue
+
+        os.environ["QR_REQUIRE_FORECAST_FOR_LIVE"] = "1"
+        metadata = {
+            "forecast_direction": "UNCLEAR",
+            "forecast_confidence": 0.21,
+            "chart_direction_bias": "LONG",
+            "forecast_market_support": {
+                "ok": False,
+                "direction": "UNCLEAR",
+                "unselected_projection_count": 1,
+                "unselected_signals": [
+                    {
+                        "name": "macro_event_nowcast_central_bank",
+                        "direction": "UP",
+                        "confidence": 0.74,
+                        "hit_rate": 0.562,
+                        "samples": 16,
+                    }
+                ],
+            },
+        }
+        intent = OrderIntent(
+            pair="EUR_JPY",
+            side=Side.LONG,
+            order_type=OrderType.MARKET,
+            units=5000,
+            entry=None,
+            tp=168.9,
+            sl=168.0,
+            thesis="market chase must wait for executable pair forecast",
+            market_context=MarketContext(
+                regime="BREAKOUT_FAILURE retest",
+                narrative="",
+                chart_story="",
+                method=TradeMethod.BREAKOUT_FAILURE,
+                invalidation="",
+            ),
+            metadata=metadata,
+        )
+
+        issue = _forecast_live_readiness_issue(intent, metadata, TradeMethod.BREAKOUT_FAILURE)
+
+        self.assertEqual(issue["code"], "FORECAST_NOT_EXECUTABLE_FOR_LIVE")
+
     def test_weak_forecast_trend_continuation_needs_two_higher_tf_confirmations(self) -> None:
         from quant_rabbit.models import MarketContext, OrderIntent, OrderType, Side, TradeMethod
         from quant_rabbit.strategy.intent_generator import _forecast_live_readiness_issue

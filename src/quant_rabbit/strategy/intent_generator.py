@@ -6210,6 +6210,8 @@ def _forecast_live_readiness_issue(
     if direction not in {"UP", "DOWN", "RANGE"}:
         if recovery_reversal_override:
             return None
+        if _forecast_market_support_override(intent, metadata, min_confidence=min_confidence):
+            return None
         if direction:
             return {
                 "code": "FORECAST_NOT_EXECUTABLE_FOR_LIVE",
@@ -6698,6 +6700,16 @@ def _forecast_market_support_allows_side(
         order_type=order_type,
     ):
         return True
+    if _forecast_unclear_unselected_projection_support_allows_side(
+        side,
+        source,
+        direction=direction,
+        support=support,
+        forecast_horizon_min=forecast_horizon_min,
+        order_type=order_type,
+        chart_direction_bias=chart_direction_bias,
+    ):
+        return True
     expected_side = Side.LONG.value if direction == "UP" else Side.SHORT.value if direction == "DOWN" else None
     if expected_side != side:
         return False
@@ -6872,6 +6884,62 @@ def _forecast_range_unselected_projection_support_allows_side(
     return False
 
 
+def _forecast_unclear_unselected_projection_support_allows_side(
+    side: str | None,
+    source: Any,
+    *,
+    direction: str,
+    support: dict[str, Any],
+    forecast_horizon_min: float | None,
+    order_type: OrderType | None,
+    chart_direction_bias: str,
+) -> bool:
+    """Allow only passive LIMIT entries when audited projection resolves UNCLEAR.
+
+    The pair forecast still has no executable side, so this path is limited to
+    waiting orders whose current unselected projection supports the same side
+    and has no comparable opposite projection. MARKET and STOP entries stay
+    blocked to avoid converting a conflicted forecast into a chase.
+    """
+    if not isinstance(source, dict):
+        return False
+    if side not in {Side.LONG.value, Side.SHORT.value}:
+        return False
+    if direction != "UNCLEAR" or order_type != OrderType.LIMIT:
+        return False
+    if chart_direction_bias and chart_direction_bias != side:
+        return False
+    expected_signal_direction = "UP" if side == Side.LONG.value else "DOWN"
+    opposite_signal_direction = "DOWN" if expected_signal_direction == "UP" else "UP"
+    has_same_side_signal = False
+    for signal in support.get("unselected_signals") or []:
+        if not isinstance(signal, dict):
+            continue
+        signal_direction = str(signal.get("direction") or "").upper()
+        if signal_direction not in {"UP", "DOWN"}:
+            continue
+        if not _support_signal_within_forecast_horizon(
+            signal,
+            forecast_horizon_min=forecast_horizon_min,
+        ):
+            continue
+        signal_confidence = _optional_float(signal.get("confidence")) or 0.0
+        hit_rate = _optional_float(signal.get("hit_rate")) or 0.0
+        samples = _optional_int(signal.get("samples")) or 0
+        strong_enough = (
+            signal_confidence >= FORECAST_MARKET_SUPPORT_MIN_SIGNAL_CONFIDENCE
+            and hit_rate >= FORECAST_MARKET_SUPPORT_MIN_DIRECTIONAL_HIT_RATE
+            and samples >= FORECAST_MARKET_SUPPORT_MIN_SAMPLES
+        )
+        if not strong_enough:
+            continue
+        if signal_direction == opposite_signal_direction:
+            return False
+        if signal_direction == expected_signal_direction:
+            has_same_side_signal = True
+    return has_same_side_signal
+
+
 def _forecast_support_override_stop_entry_chases_range_edge(
     source: Any,
     *,
@@ -7028,7 +7096,16 @@ def _telemetry_live_readiness_issues(
     direction = str(metadata.get("forecast_direction") or "").upper()
     confidence = _optional_float(metadata.get("forecast_confidence"))
     recovery_reversal_override = _reversal_recovery_chart_forecast_override(intent, metadata)
-    if direction not in {"UP", "DOWN", "RANGE"} and not recovery_reversal_override:
+    forecast_support_override = _forecast_market_support_override(
+        intent,
+        metadata,
+        min_confidence=_forecast_live_min_confidence(metadata),
+    )
+    if (
+        direction not in {"UP", "DOWN", "RANGE"}
+        and not recovery_reversal_override
+        and not forecast_support_override
+    ):
         if direction:
             issues.append(
                 _telemetry_issue(
