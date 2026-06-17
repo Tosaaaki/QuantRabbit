@@ -1354,6 +1354,34 @@ class GPTTraderBrainTest(unittest.TestCase):
             codes = {issue["code"] for issue in payload["verification_issues"]}
             self.assertIn("MISSING_CANCEL_ORDER_IDS", codes)
 
+    def test_rejects_wait_when_self_improvement_pending_cancel_review_is_p0(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root, orders=[_pending_order()])
+            files["self_improvement_audit"].write_text(
+                json.dumps(_self_improvement_pending_cancel_review_p0())
+            )
+            decision = _wait_decision()
+            decision["evidence_refs"].extend(
+                [
+                    "self_improvement:audit",
+                    "self_improvement:execution_quality",
+                    "self_improvement:finding:PENDING_ENTRY_CANCEL_REVIEW_REQUIRED",
+                ]
+            )
+            brain = _brain(root, files, decision)
+
+            summary = brain.run(snapshot_path=files["snapshot"])
+
+            self.assertEqual(summary.status, "REJECTED")
+            payload = json.loads((root / "gpt_decision.json").read_text())
+            codes = {issue["code"] for issue in payload["verification_issues"]}
+            self.assertIn("SELF_IMPROVEMENT_PENDING_CANCEL_REVIEW_REQUIRED", codes)
+            packet = payload["input_packet"]["self_improvement_audit"]
+            self.assertEqual(
+                packet["p0_blockers"][0]["cancel_review_order_ids"], ["pending-1"]
+            )
+
     def test_rejects_cancel_pending_when_current_live_ready_lane_exists(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -1422,6 +1450,34 @@ class GPTTraderBrainTest(unittest.TestCase):
             self.assertEqual(summary.status, "ACCEPTED")
             payload = json.loads((root / "gpt_decision.json").read_text())
             self.assertEqual(payload["verification_issues"], [])
+
+    def test_accepts_cancel_pending_for_self_improvement_pending_cancel_review_p0(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root, orders=[_pending_order()])
+            blocked_result = _result()
+            blocked_result["status"] = "DRY_RUN_BLOCKED"
+            blocked_result["live_blockers"] = ["pending parent lane is no longer LIVE_READY"]
+            files["intents"].write_text(json.dumps({"results": [blocked_result]}))
+            files["self_improvement_audit"].write_text(
+                json.dumps(_self_improvement_pending_cancel_review_p0())
+            )
+            decision = _cancel_pending_decision(cancel_order_ids=["pending-1"])
+            decision["evidence_refs"].extend(
+                [
+                    "self_improvement:audit",
+                    "self_improvement:execution_quality",
+                    "self_improvement:finding:PENDING_ENTRY_CANCEL_REVIEW_REQUIRED",
+                ]
+            )
+            brain = _brain(root, files, decision)
+
+            summary = brain.run(snapshot_path=files["snapshot"])
+
+            self.assertEqual(summary.status, "ACCEPTED")
+            payload = json.loads((root / "gpt_decision.json").read_text())
+            self.assertEqual(payload["verification_issues"], [])
+            self.assertEqual(payload["decision"]["cancel_order_ids"], ["pending-1"])
 
     def test_rejects_cancel_pending_when_same_pair_thesis_still_visible(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -3450,6 +3506,49 @@ def _self_improvement_projection_p0() -> dict:
                             "signal_name": "directional_forecast",
                             "timestamp_emitted_utc": "2026-06-08T00:41:09.769570Z",
                             "resolution_window_min": 180.0,
+                        }
+                    ],
+                },
+            }
+        ],
+    }
+
+
+def _self_improvement_pending_cancel_review_p0() -> dict:
+    return {
+        "generated_at_utc": datetime.now(timezone.utc).isoformat(),
+        "status": "SELF_IMPROVEMENT_BLOCKED",
+        "p0_findings": 1,
+        "p1_findings": 1,
+        "p2_findings": 0,
+        "effect_metrics": {
+            "closed_trades": 32,
+            "net_jpy": -845.32,
+            "profit_factor": 0.894,
+            "expectancy_jpy": -26.416,
+        },
+        "findings": [
+            {
+                "priority": "P0",
+                "layer": "execution_quality",
+                "code": "PENDING_ENTRY_CANCEL_REVIEW_REQUIRED",
+                "message": "1 trader-owned pending entry order(s) need cancel review",
+                "next_action": (
+                    "Write a CANCEL_PENDING receipt for these order ids when no current "
+                    "LIVE_READY replacement exists, or write a TRADE receipt with "
+                    "cancel_order_ids when replacing them with a current verified basket."
+                ),
+                "evidence": {
+                    "cancel_review_order_ids": ["pending-1"],
+                    "orders": [
+                        {
+                            "order_id": "pending-1",
+                            "pair": "EUR_USD",
+                            "side": "LONG",
+                            "method": "TREND_CONTINUATION",
+                            "review_reasons": [
+                                {"code": "PENDING_CURRENT_CANDIDATE_NOT_LIVE_READY"}
+                            ],
                         }
                     ],
                 },

@@ -1676,6 +1676,20 @@ class DecisionVerifier:
                     action=decision.action,
                     reasons=position_close_reasons,
                 )
+            pending_cancel_reasons = _self_improvement_pending_cancel_review_reasons(
+                self.packet
+            )
+            if pending_cancel_reasons:
+                issues.append(
+                    VerificationIssue(
+                        "SELF_IMPROVEMENT_PENDING_CANCEL_REVIEW_REQUIRED",
+                        "WAIT / REQUEST_EVIDENCE rejected while self-improvement audit requires "
+                        "a pending-entry cancel review. Write CANCEL_PENDING for the named broker "
+                        "order ids, or TRADE with cancel_order_ids when replacing them with a "
+                        "current verified basket: "
+                        + "; ".join(pending_cancel_reasons[:3]),
+                    )
+                )
             if (
                 not position_close_reasons
                 and _target_requires_entry(self.packet)
@@ -1746,6 +1760,9 @@ class DecisionVerifier:
                 visible_thesis = _cancel_pending_visible_current_theses(
                     self.packet,
                     decision.cancel_order_ids,
+                    exempt_order_ids=_self_improvement_pending_cancel_review_order_ids(
+                        self.packet
+                    ),
                 )
                 if visible_thesis:
                     issues.append(
@@ -3626,6 +3643,9 @@ def _self_improvement_audit_packet(payload: dict[str, Any] | None) -> dict[str, 
                     "next_action": finding.get("next_action"),
                     "current_streak": evidence.get("current_streak"),
                     "count": evidence.get("count"),
+                    "cancel_review_order_ids": list(
+                        evidence.get("cancel_review_order_ids", []) or []
+                    )[:10],
                     "examples": list(evidence.get("examples", []) or [])[:3],
                 }
             )
@@ -4020,8 +4040,11 @@ def _pending_entry_orders(packet: dict[str, Any]) -> list[dict[str, Any]]:
 def _cancel_pending_visible_current_theses(
     packet: dict[str, Any],
     cancel_order_ids: tuple[str, ...],
+    *,
+    exempt_order_ids: set[str] | None = None,
 ) -> list[str]:
     cancel_set = {str(order_id) for order_id in cancel_order_ids if str(order_id)}
+    cancel_set -= set(exempt_order_ids or set())
     if not cancel_set:
         return []
     out: list[str] = []
@@ -4606,6 +4629,48 @@ def _self_improvement_trade_blockers(
         suffix = f" ({', '.join(details)})" if details else ""
         out.append(f"{code}{suffix}: {message or 'self-improvement P0 blocks new risk'}")
     return out
+
+
+def _self_improvement_pending_cancel_review_reasons(packet: dict[str, Any]) -> list[str]:
+    audit = packet.get("self_improvement_audit")
+    if not isinstance(audit, dict):
+        return []
+    reasons: list[str] = []
+    for blocker in audit.get("p0_blockers", []) or []:
+        if not isinstance(blocker, dict):
+            continue
+        if str(blocker.get("code") or "") != "PENDING_ENTRY_CANCEL_REVIEW_REQUIRED":
+            continue
+        ids = [
+            str(order_id)
+            for order_id in blocker.get("cancel_review_order_ids", []) or []
+            if str(order_id)
+        ]
+        details: list[str] = []
+        if ids:
+            details.append("ids=" + ",".join(ids))
+        message = str(blocker.get("message") or "").strip()
+        if message:
+            details.append(message)
+        reasons.append("; ".join(details) or "PENDING_ENTRY_CANCEL_REVIEW_REQUIRED")
+    return reasons
+
+
+def _self_improvement_pending_cancel_review_order_ids(packet: dict[str, Any]) -> set[str]:
+    audit = packet.get("self_improvement_audit")
+    if not isinstance(audit, dict):
+        return set()
+    order_ids: set[str] = set()
+    for blocker in audit.get("p0_blockers", []) or []:
+        if not isinstance(blocker, dict):
+            continue
+        if str(blocker.get("code") or "") != "PENDING_ENTRY_CANCEL_REVIEW_REQUIRED":
+            continue
+        for order_id in blocker.get("cancel_review_order_ids", []) or []:
+            text = str(order_id or "").strip()
+            if text:
+                order_ids.add(text)
+    return order_ids
 
 
 def _self_improvement_non_trade_blocker(code: str, blocker: dict[str, Any]) -> bool:
