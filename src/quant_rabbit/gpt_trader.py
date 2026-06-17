@@ -247,6 +247,7 @@ def _close_same_direction_sidecar_support(
     trade_id: str | None,
     pair: str,
     side: str,
+    allow_single_strong: bool = False,
 ) -> tuple[bool, str]:
     """Whether fresh position sidecars still support carrying this position.
 
@@ -254,7 +255,9 @@ def _close_same_direction_sidecar_support(
     position-review sidecars: position_thesis, thesis_evolution, and
     forecast_persistence. This is not a market threshold; it prevents one M15
     internal structure flip from forcing out an H1/H4 swing while most of the
-    current position stack still says the thesis is alive.
+    current position stack still says the thesis is alive. Decay-only
+    thesis_evolution closes may opt into accepting one strong HOLD source
+    because that path is forecast/expiry disagreement, not a hard invalidation.
     """
 
     sidecars = packet.get("protection_sidecars")
@@ -281,7 +284,17 @@ def _close_same_direction_sidecar_support(
 
     sources = sorted({str(rec.get("source") or "") for rec in matched if str(rec.get("source") or "")})
     if len(sources) < 2:
-        return False, ""
+        if not allow_single_strong or not sources:
+            return False, ""
+        strong = {"position_thesis", "forecast_persistence"}
+        if sources[0] not in strong:
+            return False, ""
+        summary = ", ".join(
+            f"{rec.get('source')}:{rec.get('verdict') or rec.get('status')}"
+            for rec in matched
+            if rec.get("source")
+        )
+        return True, f"fresh same-direction {sources[0]} supports HOLD/EXTEND ({summary})"
     summary = ", ".join(
         f"{rec.get('source')}:{rec.get('verdict') or rec.get('status')}"
         for rec in matched
@@ -669,16 +682,19 @@ def _sidecar_hold_support_conflict(
             if "THESIS_EXPIRED" in upper_reason
             else "thesis_evolution close evidence"
         )
+        allow_single_strong = not _thesis_evolution_reason_has_hard_close_evidence(reason)
     elif source == "position_thesis" and (
         "invalidation hit:" in lower_reason
         or "technical invalidation confirmed against" in lower_reason
     ):
         conflict_label = "position_thesis invalidation evidence"
+        allow_single_strong = False
     elif (
         source in {"position_management", "position_guardian_management"}
         and "entry thesis invalidation hit" in lower_reason
     ):
         conflict_label = f"{source} entry-invalidation evidence"
+        allow_single_strong = False
     else:
         return None
     return _same_direction_hold_support_conflict(
@@ -687,6 +703,7 @@ def _sidecar_hold_support_conflict(
         pair=str(rec.get("pair") or ""),
         side=str(rec.get("side") or ""),
         evidence_label=conflict_label,
+        allow_single_strong_sidecar=allow_single_strong,
     )
 
 
@@ -697,12 +714,14 @@ def _same_direction_hold_support_conflict(
     pair: str,
     side: str,
     evidence_label: str,
+    allow_single_strong_sidecar: bool = False,
 ) -> str | None:
     supported, support_reason = _close_same_direction_sidecar_support(
         packet,
         trade_id=trade_id,
         pair=pair,
         side=side,
+        allow_single_strong=allow_single_strong_sidecar,
     )
     if supported:
         return (
@@ -752,6 +771,22 @@ def _sidecar_reason_has_h4_structural_break(reason: str) -> bool:
             "structural break",
             "order block",
             "ob broken",
+        )
+    )
+
+
+def _thesis_evolution_reason_has_hard_close_evidence(reason: str) -> bool:
+    lowered = str(reason or "").lower()
+    return any(
+        token in lowered
+        for token in (
+            "invalidation hit",
+            "buffered invalidation",
+            "technical invalidation confirmed against",
+            "close-confirmed",
+            "structural break",
+            "bos_",
+            "choch_",
         )
     )
 

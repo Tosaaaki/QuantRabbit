@@ -5329,6 +5329,65 @@ class CloseDisciplineTest(unittest.TestCase):
             self.assertEqual(summary.status, "ACCEPTED", msg=summary)
             self.assertTrue(summary.allowed)
 
+    def test_thesis_evolution_forecast_decay_with_position_thesis_hold_is_soft_advisory(self) -> None:
+        # Regression for 2026-06-16 NZD_CAD 472380 shape: thesis_evolution can
+        # recommend CLOSE from forecast/confidence/regime decay while a fresh
+        # position_thesis assessment still says HOLD. That is not unattended
+        # hard invalidation evidence.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _close_fixtures(root, position_side="LONG", m15_dir="UP", h4_dir="UP")
+            snapshot = json.loads(files["snapshot"].read_text())
+            generated_at = (
+                datetime.fromisoformat(snapshot["fetched_at_utc"]) + timedelta(seconds=1)
+            ).isoformat()
+            _write_fresh_thesis_evolution_close_recommendation(
+                root,
+                files,
+                side="LONG",
+                rationale=(
+                    "current_forecast DOWN vs entry_forecast RANGE; "
+                    "current_confidence 0.42 below entry_confidence 0.68; "
+                    "current_regime RANGE no longer supports recovery to target"
+                ),
+            )
+            (root / "position_thesis_report.json").write_text(
+                json.dumps(
+                    {
+                        "generated_at_utc": generated_at,
+                        "assessments": [
+                            {
+                                "trade_id": "555",
+                                "pair": "EUR_USD",
+                                "side": "LONG",
+                                "verdict": "HOLD",
+                                "aggregate_score": 58.25,
+                                "rationale_lines": ["position thesis still supports LONG carry"],
+                                "context_notes": [],
+                            }
+                        ],
+                    }
+                )
+            )
+            decision = _close_decision(trade_ids=["555"])
+            decision["evidence_refs"].append("position:evolution:555")
+            brain = _brain(root, files, decision)
+
+            summary = brain.run(snapshot_path=files["snapshot"])
+
+            self.assertEqual(summary.status, "REJECTED", msg=summary)
+            payload = json.loads((root / "gpt_decision.json").read_text())
+            codes = {issue["code"] for issue in payload["verification_issues"]}
+            self.assertIn("CLOSE_SAME_DIRECTION_MARKET_SUPPORT", codes)
+            self.assertIn("SOFT_CLOSE_ADVISORY_DOES_NOT_PREEMPT_ENTRY", codes)
+            self.assertNotIn("CLOSE_OPERATOR_AUTH_REQUIRED", codes)
+            self.assertNotIn("CLOSE_THESIS_STILL_VALID", codes)
+            recs = payload["input_packet"]["protection_sidecars"]["position_close_recommendations"]
+            self.assertEqual(recs[0]["source"], "thesis_evolution")
+            self.assertFalse(recs[0]["blocks_non_close_actions"])
+            self.assertEqual(recs[0]["routing_effect"], "SOFT_ADVISORY_NON_BLOCKING")
+            self.assertIn("position_thesis:HOLD", recs[0]["non_blocking_reason"])
+
     def test_thesis_expired_with_hold_sidecars_rejects_loss_close(self) -> None:
         # Regression for 2026-06-12 USD_CAD 472336 shape: a thesis can be past
         # its forecast horizon while position_thesis / forecast_persistence
