@@ -27,6 +27,7 @@ from quant_rabbit.self_improvement_audit import (
     _profitability_findings,
     _projection_expired,
     _report_perspective_alignment_text,
+    _root_cause_focus,
     _top_intent_blockers,
     _top_intent_live_readiness_blockers,
 )
@@ -1040,6 +1041,81 @@ class SelfImprovementAuditorTest(unittest.TestCase):
         )
         self.assertEqual(payload["next_actions"][0]["code"], "ROOT_CAUSE_FOCUS:FORECAST_ADVERSE_PATH")
         self.assertIn("REPEATED_SELF_IMPROVEMENT_LOOP", {item["code"] for item in payload["findings"]})
+
+    def test_root_cause_focus_keeps_secondary_repeated_pending_churn(self) -> None:
+        findings = [
+            {
+                "priority": "P0",
+                "layer": "decision_history",
+                "code": "LATEST_GPT_DECISION_HAS_BLOCKING_ISSUES",
+                "message": "latest GPT CLOSE rejected by spread gates",
+                "next_action": "verify a fresh decision",
+                "evidence": {},
+            },
+            {
+                "priority": "P1",
+                "layer": "execution_quality",
+                "code": "PENDING_ENTRY_CANCEL_RATE_HIGH",
+                "message": "pending entries are canceled before fill",
+                "next_action": "separate thesis invalidation from entry-distance/TTL failures",
+                "evidence": {
+                    "cancel_before_fill_rate": 0.67,
+                    "fill_rate": 0.33,
+                },
+            },
+            {
+                "priority": "P1",
+                "layer": "process",
+                "code": "REPEATED_SELF_IMPROVEMENT_LOOP",
+                "message": "same self-improvement finding persisted",
+                "next_action": "execute a narrow repair",
+                "evidence": {
+                    "repeated_code": "LATEST_GPT_DECISION_HAS_BLOCKING_ISSUES",
+                    "repeated_priority": "P0",
+                    "current_streak": 4,
+                    "previous_streak": 3,
+                    "repeated_findings": [
+                        {
+                            "code": "LATEST_GPT_DECISION_HAS_BLOCKING_ISSUES",
+                            "priority": "P0",
+                            "layer": "decision_history",
+                            "current_streak": 4,
+                            "previous_streak": 3,
+                            "message": "latest GPT CLOSE rejected by spread gates",
+                            "next_action": "verify a fresh decision",
+                        },
+                        {
+                            "code": "PENDING_ENTRY_CANCEL_RATE_HIGH",
+                            "priority": "P1",
+                            "layer": "execution_quality",
+                            "current_streak": 21,
+                            "previous_streak": 20,
+                            "message": "pending entries are canceled before fill",
+                            "next_action": "separate thesis invalidation from entry-distance/TTL failures",
+                        },
+                    ],
+                },
+            },
+        ]
+
+        root_focus = _root_cause_focus(
+            findings=findings,
+            runtime={"live_ready_lanes": 0},
+            effect_metrics={"window": {"net_jpy": -1084.8, "profit_factor": 0.868}},
+            execution_quality={
+                "pending_entry_lifecycle": {
+                    "cancel_before_fill_rate": 0.67,
+                    "fill_rate": 0.33,
+                }
+            },
+        )
+
+        execution = next(
+            item for item in root_focus["candidates"] if item["family"] == "EXECUTION_LIFECYCLE"
+        )
+        self.assertEqual(execution["process_loop_streak"], 21)
+        self.assertEqual(execution["confidence"], "HIGH")
+        self.assertIn("PENDING_ENTRY_CANCEL_RATE_HIGH", execution["supporting_codes"])
 
     def test_action_required_for_hidden_open_loss_and_low_market_rr(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

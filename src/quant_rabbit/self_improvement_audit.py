@@ -7561,7 +7561,7 @@ def _root_cause_family_meta(family: str) -> dict[str, str]:
 def _root_cause_confidence(candidate: dict[str, Any]) -> str:
     score = float(candidate.get("score") or 0.0)
     support = candidate.get("supporting_codes") if isinstance(candidate.get("supporting_codes"), list) else []
-    loop = _optional_int(candidate.get("process_loop_streak"))
+    loop = _maybe_float(candidate.get("process_loop_streak"))
     if loop is not None and loop >= REPEATED_REPAIR_LOOP_STREAK_MIN and score >= 100.0:
         return "HIGH"
     if score >= 150.0 and len(support) >= 2:
