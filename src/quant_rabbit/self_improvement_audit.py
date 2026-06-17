@@ -538,6 +538,7 @@ class SelfImprovementAuditor:
                 active_trade_ids=active_trade_ids,
                 gpt_decision=gpt_loaded.payload or {},
                 sidecars=position_sidecars,
+                defer_stale_judgment=external_live_lock is not None,
             )
         )
         findings.extend(
@@ -5304,6 +5305,7 @@ def _sidecar_findings(
     active_trade_ids: set[str],
     gpt_decision: dict[str, Any],
     sidecars: dict[str, tuple[_LoadedJson, Path]],
+    defer_stale_judgment: bool = False,
 ) -> list[dict[str, Any]]:
     out: list[dict[str, Any]] = []
     if not active_trade_ids:
@@ -5325,7 +5327,12 @@ def _sidecar_findings(
         generated_at = _parse_utc(payload.get("generated_at_utc"))
         source_snapshot_at = _parse_utc(payload.get("snapshot_fetched_at_utc"))
         freshness_at = source_snapshot_at or generated_at
-        if snapshot_ts is not None and freshness_at is not None and freshness_at < snapshot_ts:
+        if (
+            not defer_stale_judgment
+            and snapshot_ts is not None
+            and freshness_at is not None
+            and freshness_at < snapshot_ts
+        ):
             out.append(
                 _finding(
                     run_id=run_id,

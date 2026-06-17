@@ -567,6 +567,46 @@ class SelfImprovementAuditorTest(unittest.TestCase):
         self.assertEqual(evidence["started_at_utc"], (_NOW - timedelta(minutes=3)).isoformat())
         self.assertGreaterEqual(evidence["lock_age_seconds"], 0.0)
 
+    def test_external_live_lock_defers_mid_refresh_sidecar_stale_judgment(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root, active_position=True, closed_pls=(100.0, 80.0, -50.0))
+            for key, list_key in (
+                ("position_management", "positions"),
+                ("thesis_evolution", "evolutions"),
+                ("position_thesis", "assessments"),
+                ("forecast_persistence", "verdicts"),
+            ):
+                files[key].write_text(
+                    json.dumps(
+                        {
+                            "generated_at_utc": (_NOW - timedelta(minutes=5)).isoformat(),
+                            "snapshot_fetched_at_utc": (_NOW - timedelta(minutes=5)).isoformat(),
+                            list_key: [],
+                        }
+                    )
+                )
+            lock_dir = root / ".quant_rabbit_live.lock"
+            lock_dir.mkdir()
+            (lock_dir / "pid").write_text(str(os.getpid()), encoding="utf-8")
+            (lock_dir / "command").write_text("cycle-refresh", encoding="utf-8")
+
+            with mock.patch.dict(
+                os.environ,
+                {"QR_AUTOTRADE_LOCK_DIR": str(lock_dir), "QR_AUTOTRADE_LOCK_HELD": ""},
+                clear=False,
+            ):
+                summary = _run(files)
+            payload = json.loads(files["output"].read_text())
+
+        codes = {item["code"] for item in payload["findings"]}
+        self.assertEqual(summary.status, STATUS_BLOCKED)
+        self.assertIn("LIVE_RUNTIME_UPDATE_IN_PROGRESS", codes)
+        self.assertNotIn("POSITION_MANAGEMENT_STALE", codes)
+        self.assertNotIn("THESIS_EVOLUTION_STALE", codes)
+        self.assertNotIn("POSITION_THESIS_STALE", codes)
+        self.assertNotIn("FORECAST_PERSISTENCE_STALE", codes)
+
     def test_external_live_lock_still_surfaces_coverage_perspective_repair(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
