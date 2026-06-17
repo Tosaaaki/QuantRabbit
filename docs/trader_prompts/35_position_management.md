@@ -207,8 +207,10 @@ HOLD-vs-CLOSE-vs-TP-rebalance decision on a WEAKENED position, check which exit
 class has been paying: while status is `NEGATIVE_EXPECTANCY`, exit-quality repair
 (banking TP-reachable winners, expiring decayed theses on time) outranks squeezing
 one more cycle of hope out of a losing hold. Cite `capture:economics` in the
-receipt when it shaped the decision. Advisory per §8 — it never blocks lanes or
-resizes intents.
+receipt when it shaped the decision. Per §8, capture_economics does not grant
+trade permission or pick sides; when it shows `NEGATIVE_EXPECTANCY` plus
+`avg_loss_jpy > avg_win_jpy`, generate-intents/RiskEngine use the observed
+average winner as a temporary loss-asymmetry cap for fresh `NEW` entries.
 
 ## Pending Orders
 

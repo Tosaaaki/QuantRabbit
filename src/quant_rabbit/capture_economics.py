@@ -10,8 +10,12 @@ tagless closes are excluded) and publishes the payoff arithmetic the daily
 - expectancy per trade in JPY and in % of the campaign per-trade budget
 - the same metrics split by exit reason and by ISO week
 
-This is an *audit surface*, not a trade gate: it cannot block lanes or
-resize intents. It exists because the 2026-05-14→06-08 ledger showed 55 wins
+This is first an audit surface: it does not select sides or grant permission.
+When it reports NEGATIVE_EXPECTANCY with average losses larger than average
+wins, intent generation consumes the observed average winner as a temporary
+fresh-entry loss cap. That loss-asymmetry guard is the bounded-risk repair for
+"one loss erases multiple wins"; it still cannot override forecast, spread,
+strategy, margin, or gateway gates. It exists because the 2026-05-14→06-08 ledger showed 55 wins
 averaging +376 JPY against 24 losses averaging -1,437 JPY (payoff 0.26 vs
 breakeven 0.43 at the observed 70% win rate) — an asymmetry no forecast
 hit-rate can outrun. The trader and the operator must see this number move
@@ -322,7 +326,9 @@ def build_capture_economics(
         "note": (
             "Advisory audit (AGENT_CONTRACT §8): payoff_ratio must reach "
             "breakeven_payoff_at_win_rate before the daily 5% floor has an "
-            "arithmetic route. Not a trade gate."
+            "arithmetic route. When status is NEGATIVE_EXPECTANCY and avg_loss_jpy "
+            "exceeds avg_win_jpy, generate-intents caps fresh NEW-entry loss at "
+            "the observed average winner until payoff repair clears."
         ),
     }
     output_path.parent.mkdir(parents=True, exist_ok=True)

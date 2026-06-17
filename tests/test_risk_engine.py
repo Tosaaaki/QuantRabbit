@@ -5,7 +5,7 @@ import unittest
 from datetime import datetime, timedelta, timezone
 
 from quant_rabbit.models import AccountSummary, BrokerOrder, BrokerPosition, BrokerSnapshot, MarketContext, OrderIntent, OrderType, Owner, Quote, Side, TradeMethod
-from quant_rabbit.risk import RiskEngine
+from quant_rabbit.risk import RiskEngine, RiskPolicy
 
 
 def snapshot(
@@ -130,6 +130,67 @@ class RiskEngineTest(unittest.TestCase):
         decision = RiskEngine().validate(intent, snapshot())
         self.assertTrue(decision.allowed, decision.block_reasons)
         self.assertNotIn("MISSING_MARKET_CONTEXT", {issue.code for issue in decision.issues})
+
+    def test_negative_capture_asymmetry_blocks_loss_larger_than_average_winner(self) -> None:
+        intent = OrderIntent(
+            pair="EUR_USD",
+            side=Side.LONG,
+            order_type=OrderType.MARKET,
+            units=3000,
+            tp=1.17600,
+            sl=1.17130,
+            thesis="loss_asymmetry_repair_must_size_down",
+            market_context=MarketContext(
+                regime="TREND-BULL continuation",
+                narrative="candidate has edge but exit payoff is under repair",
+                chart_story="trend staircase",
+                method=TradeMethod.TREND_CONTINUATION,
+                invalidation="1.1713 loses on M5 bodies",
+            ),
+            metadata={
+                "capture_economics_status": "NEGATIVE_EXPECTANCY",
+                "capture_avg_win_jpy": 600.0,
+                "capture_avg_loss_jpy": 1100.0,
+                "loss_asymmetry_guard_active": True,
+                "loss_asymmetry_guard_loss_cap_jpy": 600.0,
+            },
+        )
+
+        decision = RiskEngine(policy=RiskPolicy(max_loss_jpy=1000.0)).validate(intent, snapshot())
+
+        self.assertFalse(decision.allowed)
+        self.assertIn("LOSS_ASYMMETRY_GUARD_EXCEEDED", {issue.code for issue in decision.issues})
+        self.assertNotIn("LOSS_CAP_EXCEEDED", {issue.code for issue in decision.issues})
+
+    def test_negative_capture_asymmetry_allows_loss_inside_average_winner(self) -> None:
+        intent = OrderIntent(
+            pair="EUR_USD",
+            side=Side.LONG,
+            order_type=OrderType.MARKET,
+            units=1000,
+            tp=1.17600,
+            sl=1.17130,
+            thesis="loss_asymmetry_repair_sized_inside_average_winner",
+            market_context=MarketContext(
+                regime="TREND-BULL continuation",
+                narrative="candidate risk is smaller than the observed average winner",
+                chart_story="trend staircase",
+                method=TradeMethod.TREND_CONTINUATION,
+                invalidation="1.1713 loses on M5 bodies",
+            ),
+            metadata={
+                "capture_economics_status": "NEGATIVE_EXPECTANCY",
+                "capture_avg_win_jpy": 600.0,
+                "capture_avg_loss_jpy": 1100.0,
+                "loss_asymmetry_guard_active": True,
+                "loss_asymmetry_guard_loss_cap_jpy": 600.0,
+            },
+        )
+
+        decision = RiskEngine(policy=RiskPolicy(max_loss_jpy=1000.0)).validate(intent, snapshot())
+
+        self.assertTrue(decision.allowed, decision.block_reasons)
+        self.assertNotIn("LOSS_ASYMMETRY_GUARD_EXCEEDED", {issue.code for issue in decision.issues})
 
     def test_forecast_geometry_inside_spread_noise_blocks_live_send(self) -> None:
         intent = OrderIntent(

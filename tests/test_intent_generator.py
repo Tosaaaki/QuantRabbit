@@ -23,6 +23,12 @@ from quant_rabbit.strategy.lane_history_ledger import SameDayLossStreak
 
 class IntentGeneratorTest(unittest.TestCase):
     def setUp(self) -> None:
+        self._default_root_tmp = tempfile.TemporaryDirectory()
+        self._default_root_patch = patch(
+            "quant_rabbit.strategy.intent_generator.ROOT",
+            Path(self._default_root_tmp.name),
+        )
+        self._default_root_patch.start()
         self._prior_require_forecast_for_live = os.environ.pop(
             "QR_REQUIRE_FORECAST_FOR_LIVE",
             None,
@@ -33,6 +39,8 @@ class IntentGeneratorTest(unittest.TestCase):
         )
 
     def tearDown(self) -> None:
+        self._default_root_patch.stop()
+        self._default_root_tmp.cleanup()
         if self._prior_require_forecast_for_live is None:
             os.environ.pop("QR_REQUIRE_FORECAST_FOR_LIVE", None)
         else:
@@ -196,6 +204,46 @@ class IntentGeneratorTest(unittest.TestCase):
             self.assertEqual(market["lane_id"], "trend_trader:EUR_USD:LONG:TREND_CONTINUATION:MARKET")
             self.assertEqual(market["intent"]["metadata"]["parent_lane_id"], "trend_trader:EUR_USD:LONG:TREND_CONTINUATION")
             self.assertEqual(market["intent"]["metadata"]["order_timing"], "NOW_MARKET")
+
+    def test_capture_loss_asymmetry_caps_generated_new_entry_loss(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "capture_economics.json").write_text(
+                json.dumps(
+                    {
+                        "status": "NEGATIVE_EXPECTANCY",
+                        "overall": {
+                            "trades": 30,
+                            "avg_win_jpy": 600.0,
+                            "avg_loss_jpy": 1100.0,
+                            "payoff_ratio": 0.545,
+                            "breakeven_payoff_at_win_rate": 0.7,
+                        },
+                    }
+                )
+            )
+            output = root / "intents.json"
+
+            summary = IntentGenerator(
+                campaign_plan=_campaign(root),
+                strategy_profile=_strategy(root, status="CANDIDATE"),
+                output_path=output,
+                report_path=root / "intents.md",
+                pair_charts_path=_pair_charts(root),
+                data_root=root,
+                max_loss_jpy=1000.0,
+            ).run(snapshot_path=_snapshot(root))
+
+            payload = json.loads(output.read_text())
+            result = next(item for item in payload["results"] if item["intent"]["order_type"] == "STOP-ENTRY")
+            metadata = result["intent"]["metadata"]
+
+            self.assertGreater(summary.generated, 0)
+            self.assertTrue(metadata["loss_asymmetry_guard_active"])
+            self.assertEqual(metadata["capture_economics_status"], "NEGATIVE_EXPECTANCY")
+            self.assertEqual(metadata["loss_asymmetry_guard_loss_cap_jpy"], 600.0)
+            self.assertEqual(metadata["max_loss_jpy"], 600.0)
+            self.assertLessEqual(result["risk_metrics"]["risk_jpy"], 600.0)
 
     def test_min_lot_block_uses_loss_streak_adjusted_budget_in_live_blocker(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

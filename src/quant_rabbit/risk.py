@@ -280,6 +280,61 @@ def _uses_range_reward_floor(intent: OrderIntent, regime_state: str) -> bool:
     return "RANGE" in geometry_model or method_name == TradeMethod.RANGE_ROTATION.value
 
 
+def _truthy_metadata(value: object) -> bool:
+    if isinstance(value, bool):
+        return value
+    return str(value or "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _loss_asymmetry_guard_issues(intent: OrderIntent, metrics: RiskMetrics) -> list[RiskIssue]:
+    """Block fresh entries whose planned loss exceeds the proven average winner.
+
+    The guard activates only from machine-readable capture_economics metadata.
+    It is deliberately JPY-value-free: when recent realized exits are
+    NEGATIVE_EXPECTANCY and the average loss is larger than the average win,
+    the observed average winner becomes the temporary per-entry loss ceiling.
+    """
+    metadata = intent.metadata or {}
+    if str(metadata.get("position_intent") or "NEW").upper() == "HEDGE":
+        return []
+    status = str(metadata.get("capture_economics_status") or "").upper()
+    avg_win = _to_float(metadata.get("capture_avg_win_jpy"))
+    avg_loss = _to_float(metadata.get("capture_avg_loss_jpy"))
+    active = _truthy_metadata(metadata.get("loss_asymmetry_guard_active"))
+    if not active and not (
+        status == "NEGATIVE_EXPECTANCY"
+        and avg_win is not None
+        and avg_win > 0
+        and avg_loss is not None
+        and avg_loss > avg_win
+    ):
+        return []
+    cap = _to_float(metadata.get("loss_asymmetry_guard_loss_cap_jpy"))
+    if cap is None or cap <= 0:
+        cap = avg_win
+    if cap is None or cap <= 0:
+        return [
+            RiskIssue(
+                "LOSS_ASYMMETRY_GUARD_CAP_MISSING",
+                "loss-asymmetry guard is active but capture_avg_win_jpy / "
+                "loss_asymmetry_guard_loss_cap_jpy is missing; refresh capture-economics "
+                "before live send.",
+            )
+        ]
+    if metrics.risk_jpy <= cap + 1e-9:
+        return []
+    loss_text = f"{avg_loss:.0f} JPY" if avg_loss is not None else "unknown"
+    return [
+        RiskIssue(
+            "LOSS_ASYMMETRY_GUARD_EXCEEDED",
+            f"planned worst-case loss {metrics.risk_jpy:.0f} JPY exceeds the "
+            f"observed average winner cap {cap:.0f} JPY while capture_economics "
+            f"status={status or 'UNKNOWN'} and avg_loss={loss_text}; size down "
+            "or repair TP/exit payoff before adding fresh one-way risk.",
+        )
+    ]
+
+
 @dataclass(frozen=True)
 class InstrumentSpec:
     pair: str
@@ -1185,6 +1240,7 @@ class RiskEngine:
                     f"planned worst-case loss {metrics.risk_jpy:.0f} JPY exceeds cap {loss_cap:.0f} JPY",
                 )
             )
+        issues.extend(_loss_asymmetry_guard_issues(intent, metrics))
         # Regime-derived reward/risk floor. RANGE regimes and explicit recovery
         # hedges are allowed below the default min_reward_risk because rotation
         # geometry caps TP at the opposing rail, and recovery hedges monetize a

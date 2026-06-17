@@ -12,6 +12,7 @@ from quant_rabbit.instruments import DEFAULT_TRADER_PAIRS, instrument_pip_factor
 from quant_rabbit.models import BrokerOrder, BrokerPosition, BrokerSnapshot, MarketContext, OrderIntent, OrderType, Owner, Quote, Side, TradeMethod
 from quant_rabbit.paths import (
     DEFAULT_CAMPAIGN_PLAN,
+    DEFAULT_CAPTURE_ECONOMICS,
     DEFAULT_DAILY_TARGET_STATE,
     DEFAULT_LEVELS_SNAPSHOT,
     DEFAULT_MARKET_CONTEXT_MATRIX,
@@ -972,6 +973,48 @@ def _daily_entry_budget_block_issue(state_path: Path = DEFAULT_DAILY_TARGET_STAT
             "broker truth and the daily target ledger reopen risk budget"
         ),
         "severity": "BLOCK",
+    }
+
+
+def _capture_loss_asymmetry_guard(data_root: Path | None = None) -> dict[str, Any]:
+    """Return current loss-asymmetry sizing evidence from capture_economics.
+
+    This is the executable version of the operator's "負けなければいい"
+    constraint without hardcoding a JPY capture target. When realized exits are
+    negative-expectancy and the observed average loss is larger than the
+    observed average winner, fresh NEW-entry risk is capped at that observed
+    average winner until the exit machinery proves a better payoff profile.
+    """
+    path = (data_root / DEFAULT_CAPTURE_ECONOMICS.name) if data_root is not None else DEFAULT_CAPTURE_ECONOMICS
+    if not path.exists():
+        return {}
+    try:
+        payload = json.loads(path.read_text())
+    except (OSError, json.JSONDecodeError, ValueError):
+        return {}
+    if not isinstance(payload, dict):
+        return {}
+    status = str(payload.get("status") or "").upper()
+    if status != "NEGATIVE_EXPECTANCY":
+        return {}
+    overall = payload.get("overall")
+    if not isinstance(overall, dict):
+        return {}
+    avg_win = _optional_float(overall.get("avg_win_jpy"))
+    avg_loss = _optional_float(overall.get("avg_loss_jpy"))
+    trades = _optional_float(overall.get("trades"))
+    if avg_win is None or avg_win <= 0 or avg_loss is None or avg_loss <= avg_win:
+        return {}
+    return {
+        "active": True,
+        "status": status,
+        "trades": int(trades or 0),
+        "loss_cap_jpy": round(avg_win, 4),
+        "avg_win_jpy": round(avg_win, 4),
+        "avg_loss_jpy": round(avg_loss, 4),
+        "payoff_ratio": overall.get("payoff_ratio"),
+        "breakeven_payoff_at_win_rate": overall.get("breakeven_payoff_at_win_rate"),
+        "source": str(path),
     }
 
 
@@ -4391,6 +4434,7 @@ class IntentGenerator:
         self_improvement_profitability_issue = (
             _self_improvement_profitability_p0_issue(self.data_root) if snapshot is not None else None
         )
+        loss_asymmetry_guard = _capture_loss_asymmetry_guard(self.data_root) if snapshot is not None else {}
         results: list[GeneratedIntent] = []
         for lane in lanes[:max_candidates]:
             variants = (None,) if snapshot is None else _order_variants_for(lane)
@@ -4411,6 +4455,7 @@ class IntentGenerator:
                         data_root=self.data_root,
                         loss_streaks=loss_streaks,
                         self_improvement_profitability_issue=self_improvement_profitability_issue,
+                        loss_asymmetry_guard=loss_asymmetry_guard,
                     )
                 )
         generated_at = datetime.now(timezone.utc).isoformat()
@@ -4443,6 +4488,7 @@ class IntentGenerator:
         data_root: Path | None = None,
         loss_streaks: dict[str, SameDayLossStreak] | None = None,
         self_improvement_profitability_issue: dict[str, str] | None = None,
+        loss_asymmetry_guard: dict[str, Any] | None = None,
     ) -> GeneratedIntent:
         parent_lane_id = _lane_id(lane)
         method = TradeMethod.parse(str(lane["method"]))
@@ -4523,6 +4569,7 @@ class IntentGenerator:
             pair_chart=pair_chart,
             market_context_matrix=market_context_matrix,
             data_root=data_root,
+            loss_asymmetry_guard=loss_asymmetry_guard,
         )
         risk_policy = RiskPolicy(
             block_new_entries_with_pending_entry_orders=False,
@@ -5105,6 +5152,46 @@ def _macro_event_size_up_signal(lane: dict[str, Any], *, side: Side) -> dict[str
     return None
 
 
+def _loss_asymmetry_sizing_plan(
+    guard: dict[str, Any] | None,
+    *,
+    base_max_loss_jpy: float,
+    position_metadata: dict[str, Any],
+) -> tuple[float, dict[str, Any]]:
+    """Cap fresh-entry risk at the observed average winner during repair mode.
+
+    The cap is evidence-derived from `capture_economics`; no fixed JPY target
+    is used. HEDGE intents are excluded because they manage existing exposure
+    under the hedge timing contract instead of opening a fresh one-way bet.
+    """
+    if not guard or not guard.get("active"):
+        return base_max_loss_jpy, {}
+    if str(position_metadata.get("position_intent") or "NEW").upper() == "HEDGE":
+        return base_max_loss_jpy, {}
+    cap = _optional_float(guard.get("loss_cap_jpy"))
+    if cap is None or cap <= 0:
+        return base_max_loss_jpy, {}
+    effective = min(base_max_loss_jpy, cap)
+    return effective, {
+        "loss_asymmetry_guard_active": True,
+        "loss_asymmetry_guard_loss_cap_jpy": round(cap, 4),
+        "loss_asymmetry_guard_base_max_loss_jpy": round(base_max_loss_jpy, 4),
+        "loss_asymmetry_guard_effective_max_loss_jpy": round(effective, 4),
+        "loss_asymmetry_guard_basis": (
+            "capture_economics NEGATIVE_EXPECTANCY with observed avg_loss_jpy "
+            "greater than avg_win_jpy; cap NEW-entry worst-case loss at the "
+            "observed average winner until payoff repair clears"
+        ),
+        "capture_economics_status": guard.get("status"),
+        "capture_economics_trades": guard.get("trades"),
+        "capture_avg_win_jpy": guard.get("avg_win_jpy"),
+        "capture_avg_loss_jpy": guard.get("avg_loss_jpy"),
+        "capture_payoff_ratio": guard.get("payoff_ratio"),
+        "capture_breakeven_payoff_at_win_rate": guard.get("breakeven_payoff_at_win_rate"),
+        "capture_economics_source": guard.get("source"),
+    }
+
+
 def _intent_from_lane(
     lane: dict[str, Any],
     quote: Quote,
@@ -5123,6 +5210,7 @@ def _intent_from_lane(
     pair_chart: dict[str, Any] | None = None,
     market_context_matrix: dict[str, Any] | None = None,
     data_root: Path | None = None,
+    loss_asymmetry_guard: dict[str, Any] | None = None,
 ) -> OrderIntent:
     pair = str(lane["pair"])
     side = Side.parse(str(lane["direction"]))
@@ -5168,6 +5256,11 @@ def _intent_from_lane(
         side=side,
         base_max_loss_jpy=max_loss_jpy,
         portfolio_loss_cap=portfolio_loss_cap,
+        position_metadata=position_metadata,
+    )
+    effective_max_loss_jpy, loss_asymmetry_metadata = _loss_asymmetry_sizing_plan(
+        loss_asymmetry_guard,
+        base_max_loss_jpy=effective_max_loss_jpy,
         position_metadata=position_metadata,
     )
     tp, tp_execution_metadata = _take_profit_execution_plan(
@@ -5348,6 +5441,7 @@ def _intent_from_lane(
             ),
             "max_loss_jpy": effective_max_loss_jpy,
             **macro_event_sizing_metadata,
+            **loss_asymmetry_metadata,
             "parent_lane_id": parent_lane_id or _lane_id(lane),
             "order_timing": "NOW_MARKET" if order_type == OrderType.MARKET else "PENDING_TRIGGER",
             **position_metadata,
