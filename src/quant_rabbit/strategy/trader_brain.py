@@ -934,6 +934,11 @@ MEDIUM_RISK_CAP_FRACTION = 0.90
 # spreads, the pending price is no longer the same executable neighborhood.
 PENDING_ENTRY_REPLACE_SPREAD_MULT = 8.0
 PENDING_ENTRY_OPPOSITE_SCORE_MARGIN = 25.0
+# Closed-loop pending cancel guard. `execution_timing_audit.json` already uses
+# a one-week live lookback; keep the runtime regret guard on the same recency
+# contract so stale reports cannot preserve dead orders indefinitely.
+PENDING_CANCEL_REGRET_AUDIT_FILENAME = "execution_timing_audit.json"
+PENDING_CANCEL_REGRET_MAX_AGE_HOURS = 168.0
 PENDING_ENTRY_HARD_CANCEL_KEYWORDS = (
     "BAD_UNITS",
     "DAILY TARGET",
@@ -2522,12 +2527,26 @@ def _contaminated_pending_order_ids(
         pending_thesis = _load_pending_entry_thesis_for_order(order, data_root)
         compatible_scores = scores_by_key.get((order.pair, direction, _normalized_entry_type(order.order_type)), [])
         if not compatible_scores:
-            if _pending_entry_still_has_live_thesis(order, snapshot, scores, compatible_scores, pending_thesis):
+            if _pending_entry_still_has_live_thesis(
+                order,
+                snapshot,
+                scores,
+                compatible_scores,
+                pending_thesis,
+                data_root=data_root,
+            ):
                 continue
             contaminated.append(order.order_id)
             continue
         if not any(_keeps_pending_order(order, score) for score in compatible_scores):
-            if _pending_entry_still_has_live_thesis(order, snapshot, scores, compatible_scores, pending_thesis):
+            if _pending_entry_still_has_live_thesis(
+                order,
+                snapshot,
+                scores,
+                compatible_scores,
+                pending_thesis,
+                data_root=data_root,
+            ):
                 continue
             contaminated.append(order.order_id)
     return tuple(contaminated)
@@ -2548,6 +2567,8 @@ def _pending_entry_still_has_live_thesis(
     scores: tuple[LaneScore, ...],
     compatible_scores: list[LaneScore],
     pending_thesis: PendingEntryThesis | None,
+    *,
+    data_root: Path | None = None,
 ) -> bool:
     """Keep GTC entries while current market evidence has not broken them.
 
@@ -2562,13 +2583,81 @@ def _pending_entry_still_has_live_thesis(
         return False
     if _pending_recovery_hedge_still_has_live_thesis(order, snapshot, compatible_scores):
         return True
-    if _pending_entry_has_opposite_only_pair_thesis(order, scores):
-        return False
     if _pending_entry_has_hard_current_veto(compatible_scores):
         return False
     if _pending_entry_market_has_opposed_thesis(order, scores):
         return False
+    if _pending_entry_has_opposite_only_pair_thesis(order, scores):
+        if _pending_entry_recent_cancel_regret_supports_preservation(order, data_root):
+            return True
+        return False
     return True
+
+
+def _pending_entry_recent_cancel_regret_supports_preservation(
+    order: BrokerOrder,
+    data_root: Path | None,
+) -> bool:
+    """Preserve anchored GTC entries when the same cancel pattern recently paid.
+
+    This guard is deliberately narrow. It only applies after hard invalidation
+    and tradeable opposite-thesis checks have already failed, so it cannot keep
+    an order alive through broker-side SL breach, explicit intervention veto,
+    or a current executable replacement in the other direction.
+    """
+
+    if data_root is None:
+        return False
+    direction = _order_direction(order.units)
+    if not order.pair or direction is None:
+        return False
+    audit_path = data_root / PENDING_CANCEL_REGRET_AUDIT_FILENAME
+    try:
+        payload = json.loads(audit_path.read_text())
+    except (OSError, json.JSONDecodeError, ValueError):
+        return False
+    generated = _parse_iso_utc(payload.get("generated_at_utc"))
+    if generated is not None:
+        age_hours = (datetime.now(timezone.utc) - generated).total_seconds() / 3600.0
+        if age_hours > PENDING_CANCEL_REGRET_MAX_AGE_HOURS:
+            return False
+    wanted_order_type = _normalized_regret_order_type(order.order_type)
+    for row in payload.get("canceled_order_regrets") or []:
+        if not isinstance(row, dict):
+            continue
+        if str(row.get("pair") or "") != order.pair:
+            continue
+        if str(row.get("side") or "").upper() != direction:
+            continue
+        if _normalized_regret_order_type(row.get("order_type")) != wanted_order_type:
+            continue
+        if row.get("sl_touched_after_cancel"):
+            continue
+        if not row.get("entry_touched_after_cancel"):
+            continue
+        if row.get("tp_touched_after_cancel") or (_optional_float(row.get("mfe_pips_after_cancel_entry")) or 0.0) > 0:
+            return True
+    return False
+
+
+def _normalized_regret_order_type(order_type: object) -> str:
+    raw = str(order_type or "").upper().replace("-", "_")
+    if raw.endswith("_ORDER"):
+        raw = raw[: -len("_ORDER")]
+    if raw == "STOP":
+        return "STOP-ENTRY"
+    if raw in {"MARKET_IF_TOUCHED", "MARKET_IF_TOUCHED_ORDER"}:
+        return "MARKET_IF_TOUCHED"
+    return _normalized_entry_type(raw)
+
+
+def _parse_iso_utc(value: object) -> datetime | None:
+    if not isinstance(value, str) or not value.strip():
+        return None
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00")).astimezone(timezone.utc)
+    except ValueError:
+        return None
 
 
 def _pending_recovery_hedge_still_has_live_thesis(

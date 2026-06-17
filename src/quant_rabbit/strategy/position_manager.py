@@ -162,16 +162,13 @@ TEMPORARY_EXTREME_MIN_PROFIT_NOISE_MULT = float(os.environ.get("QR_TEMPORARY_EXT
 # 2026-06-12 USD_CHF local-top harvest while the trade was still +6 pips.
 TEMPORARY_EXTREME_MIN_EVIDENCE = int(os.environ.get("QR_TEMPORARY_EXTREME_MIN_EVIDENCE", "3"))
 TEMPORARY_EXTREME_DISTRIBUTION_PCT = float(os.environ.get("QR_TEMPORARY_EXTREME_DISTRIBUTION_PCT", "0.80"))
-# Giveback guard: once recent M1 bid/ask-executable MFE has given back a
-# majority of its move and the position is still currently profitable, bank it
-# before it becomes the next red MARKET_ORDER_TRADE_CLOSE. The default fraction
-# reuses the existing majority-of-target convention from profit-lock/TP
-# contraction rather than adding a new tuned market number; the signal count is
-# one less than the local-extreme detector because the measured giveback itself
-# is already an independent warning signal.
-MFE_GIVEBACK_TAKE_FRACTION = float(
-    os.environ.get("QR_MFE_GIVEBACK_TAKE_FRACTION", str(PROFIT_BREAK_EVEN_MIN_TP_PROGRESS))
-)
+# Giveback guard: once recent M1 bid/ask-executable MFE has given back at least
+# half of its move and the position is still currently profitable, bank it
+# before it becomes the next red MARKET_ORDER_TRADE_CLOSE. The half-giveback
+# default is intentionally earlier than broker-side profit-lock progress
+# because it is paired with independent reversal evidence; waiting for a fuller
+# giveback has shown up as late loss-close lag in execution_timing_audit.
+MFE_GIVEBACK_TAKE_FRACTION = float(os.environ.get("QR_MFE_GIVEBACK_TAKE_FRACTION", "0.50"))
 MFE_GIVEBACK_MIN_EVIDENCE = int(os.environ.get("QR_MFE_GIVEBACK_MIN_EVIDENCE", "2"))
 
 

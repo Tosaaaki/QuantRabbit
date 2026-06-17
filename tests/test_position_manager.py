@@ -1434,6 +1434,41 @@ class PositionManagerTest(unittest.TestCase):
             self.assertIn("MFE giveback profit-take", report)
             self.assertIn("post-close re-entry discipline", report)
 
+    def test_profitable_long_half_mfe_giveback_takes_profit_before_red(self) -> None:
+        # The audit lag showed that waiting for a deeper giveback lets the next
+        # cycle see the trade only after it has already gone red. Half-giveback
+        # plus reversal evidence is the earliest profit-only harvest point.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            decision = _decision(root, long_score=180, short_score=80)
+            pair_charts = _mfe_giveback_pair_charts(root)
+            snapshot = _snapshot(
+                BrokerPosition(
+                    trade_id="half-mfe-giveback",
+                    pair="EUR_USD",
+                    side=Side.LONG,
+                    units=5000,
+                    entry_price=1.19900,
+                    unrealized_pl_jpy=420,
+                    take_profit=1.20320,
+                    stop_loss=1.19800,
+                ),
+                bid=1.19978,
+                ask=1.19993,
+            )
+
+            result = PositionManager(
+                trader_decision_path=decision,
+                pair_charts_path=pair_charts,
+                output_path=root / "data" / "pm.json",
+                report_path=root / "pm.md",
+                data_root=root,
+            ).run(snapshot)
+
+            self.assertEqual(result.action, ACTION_TAKE_PROFIT_MARKET)
+            self.assertEqual(result.positions[0].action, ACTION_TAKE_PROFIT_MARKET)
+            self.assertIn(">= 0.50× MFE", (root / "pm.md").read_text())
+
     def test_operator_manual_position_without_tp_preserves_no_broker_tp_by_default(self) -> None:
         prior = os.environ.pop("QR_ENABLE_MISSING_TP_REPAIR", None)
         try:

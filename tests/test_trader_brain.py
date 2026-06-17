@@ -524,6 +524,99 @@ class TraderBrainTest(unittest.TestCase):
             ("opposite-only-short-limit",),
         )
 
+    def test_recent_cancel_regret_preserves_anchored_pending_against_weak_opposite_only(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_cancel_regret_audit(root, pair="AUD_CAD", side="SHORT", order_type="LIMIT_ORDER")
+            now = datetime.now(timezone.utc)
+            pending = BrokerOrder(
+                order_id="regret-short-limit",
+                pair="AUD_CAD",
+                order_type="LIMIT",
+                price=0.98980,
+                state="PENDING",
+                units=-8000,
+                owner=Owner.TRADER,
+                raw={
+                    "createTime": now.isoformat(),
+                    "clientExtensions": {"tag": "trader"},
+                    "takeProfitOnFill": {"price": "0.98870"},
+                    "stopLossOnFill": {"price": "0.99501"},
+                },
+            )
+            snapshot = BrokerSnapshot(
+                fetched_at_utc=now,
+                orders=(pending,),
+                quotes={"AUD_CAD": Quote("AUD_CAD", 0.98942, 0.98950, timestamp_utc=now)},
+            )
+            weak_opposite = LaneScore(
+                lane_id="range_trader:AUD_CAD:LONG:RANGE_ROTATION",
+                pair="AUD_CAD",
+                direction="LONG",
+                method="RANGE_ROTATION",
+                order_type="LIMIT",
+                entry=0.98913,
+                tp=0.99023,
+                sl=0.98741,
+                status="DRY_RUN_BLOCKED",
+                score=24.0,
+                action=ACTION_NO_TRADE,
+                blockers=("forecast watch-only", "range location chase"),
+                rationale=("current packet exposes only a weak AUD_CAD LONG candidate",),
+                spread_pips=2.2,
+                estimated_margin_jpy=36_000.0,
+            )
+
+            self.assertEqual(_contaminated_pending_order_ids(snapshot, (weak_opposite,), data_root=root), ())
+
+    def test_recent_cancel_regret_does_not_preserve_against_tradeable_opposite(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_cancel_regret_audit(root, pair="AUD_CAD", side="SHORT", order_type="LIMIT_ORDER")
+            now = datetime.now(timezone.utc)
+            pending = BrokerOrder(
+                order_id="regret-short-limit",
+                pair="AUD_CAD",
+                order_type="LIMIT",
+                price=0.98980,
+                state="PENDING",
+                units=-8000,
+                owner=Owner.TRADER,
+                raw={
+                    "createTime": now.isoformat(),
+                    "clientExtensions": {"tag": "trader"},
+                    "takeProfitOnFill": {"price": "0.98870"},
+                    "stopLossOnFill": {"price": "0.99501"},
+                },
+            )
+            snapshot = BrokerSnapshot(
+                fetched_at_utc=now,
+                orders=(pending,),
+                quotes={"AUD_CAD": Quote("AUD_CAD", 0.98942, 0.98950, timestamp_utc=now)},
+            )
+            tradeable_opposite = LaneScore(
+                lane_id="range_trader:AUD_CAD:LONG:RANGE_ROTATION",
+                pair="AUD_CAD",
+                direction="LONG",
+                method="RANGE_ROTATION",
+                order_type="LIMIT",
+                entry=0.98913,
+                tp=0.99023,
+                sl=0.98741,
+                status="LIVE_READY",
+                score=88.0,
+                action=ACTION_SEND_ENTRY,
+                blockers=(),
+                rationale=("current packet exposes a tradeable AUD_CAD LONG replacement",),
+                spread_pips=2.2,
+                estimated_margin_jpy=36_000.0,
+            )
+
+            self.assertEqual(
+                _contaminated_pending_order_ids(snapshot, (tradeable_opposite,), data_root=root),
+                ("regret-short-limit",),
+            )
+
     def test_keeps_pending_when_current_packet_has_no_pair_scores(self) -> None:
         now = datetime.now(timezone.utc)
         pending = BrokerOrder(
@@ -1823,6 +1916,30 @@ class ForecastLaneGateTest(unittest.TestCase):
                 min_confidence=0.65,
             )
         )
+
+
+def _write_cancel_regret_audit(root: Path, *, pair: str, side: str, order_type: str) -> None:
+    now = datetime.now(timezone.utc)
+    (root / "execution_timing_audit.json").write_text(
+        json.dumps(
+            {
+                "generated_at_utc": now.isoformat(),
+                "status": "OK",
+                "canceled_order_regrets": [
+                    {
+                        "order_id": "prior-cancel-regret",
+                        "pair": pair,
+                        "side": side,
+                        "order_type": order_type,
+                        "entry_touched_after_cancel": True,
+                        "tp_touched_after_cancel": False,
+                        "sl_touched_after_cancel": False,
+                        "mfe_pips_after_cancel_entry": 4.0,
+                    }
+                ],
+            }
+        )
+    )
 
 
 def _snapshot(*, orders=(), positions=(), quotes=None) -> BrokerSnapshot:
