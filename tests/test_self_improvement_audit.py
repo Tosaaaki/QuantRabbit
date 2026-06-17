@@ -534,6 +534,11 @@ class SelfImprovementAuditorTest(unittest.TestCase):
             lock_dir = root / ".quant_rabbit_live.lock"
             lock_dir.mkdir()
             (lock_dir / "pid").write_text(str(os.getpid()), encoding="utf-8")
+            (lock_dir / "command").write_text("cycle-refresh", encoding="utf-8")
+            (lock_dir / "started_at_utc").write_text(
+                (_NOW - timedelta(minutes=3)).isoformat(),
+                encoding="utf-8",
+            )
 
             with mock.patch.dict(
                 os.environ,
@@ -548,7 +553,11 @@ class SelfImprovementAuditorTest(unittest.TestCase):
         self.assertIn("LIVE_RUNTIME_UPDATE_IN_PROGRESS", codes)
         self.assertNotIn("MEMORY_HEALTH_STALE", codes)
         self.assertNotIn("TARGET_OPEN_NO_LIVE_READY_LANES", codes)
-        self.assertEqual(codes["LIVE_RUNTIME_UPDATE_IN_PROGRESS"]["evidence"]["pid"], os.getpid())
+        evidence = codes["LIVE_RUNTIME_UPDATE_IN_PROGRESS"]["evidence"]
+        self.assertEqual(evidence["pid"], os.getpid())
+        self.assertEqual(evidence["command"], "cycle-refresh")
+        self.assertEqual(evidence["started_at_utc"], (_NOW - timedelta(minutes=3)).isoformat())
+        self.assertGreaterEqual(evidence["lock_age_seconds"], 0.0)
 
     def test_external_live_lock_still_surfaces_coverage_perspective_repair(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

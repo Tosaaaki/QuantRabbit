@@ -125,7 +125,33 @@ def _external_live_runtime_lock(snapshot_path: Path) -> dict[str, Any] | None:
         return None
     except PermissionError:
         pass
-    return {"lock_dir": str(lock_dir), "pid": pid}
+
+    evidence: dict[str, Any] = {"lock_dir": str(lock_dir), "pid": pid}
+    command_path = lock_dir / "command"
+    started_path = lock_dir / "started_at_utc"
+    try:
+        command = command_path.read_text(encoding="utf-8").strip()
+    except OSError:
+        command = ""
+    if command:
+        evidence["command"] = command
+    try:
+        started_at = started_path.read_text(encoding="utf-8").strip()
+    except OSError:
+        started_at = ""
+    if started_at:
+        evidence["started_at_utc"] = started_at
+        try:
+            started_dt = datetime.fromisoformat(started_at.replace("Z", "+00:00"))
+            if started_dt.tzinfo is None:
+                started_dt = started_dt.replace(tzinfo=timezone.utc)
+            evidence["lock_age_seconds"] = max(
+                0.0,
+                (datetime.now(timezone.utc) - started_dt.astimezone(timezone.utc)).total_seconds(),
+            )
+        except ValueError:
+            pass
+    return evidence
 
 # Forecast-level calibration is the feedback loop for "why did the final
 # direction call miss?". Ten samples matches the projection-ledger calibration
