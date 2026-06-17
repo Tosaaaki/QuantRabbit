@@ -1396,6 +1396,44 @@ class PositionManagerTest(unittest.TestCase):
             self.assertIn("M1 local swing top", report)
             self.assertIn("M1 rollover", report)
 
+    def test_profitable_long_mfe_giveback_takes_profit_before_red(self) -> None:
+        # Regression from the execution-timing audit: many losing market closes
+        # were positive earlier but had no clean rail/distribution context. If
+        # recent executable MFE has already given back most of its move and the
+        # position is still profitable, bank it instead of waiting for red.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            decision = _decision(root, long_score=180, short_score=80)
+            pair_charts = _mfe_giveback_pair_charts(root)
+            snapshot = _snapshot(
+                BrokerPosition(
+                    trade_id="mfe-giveback",
+                    pair="EUR_USD",
+                    side=Side.LONG,
+                    units=5000,
+                    entry_price=1.19900,
+                    unrealized_pl_jpy=320,
+                    take_profit=1.20320,
+                    stop_loss=1.19800,
+                ),
+                bid=1.19960,
+                ask=1.19975,
+            )
+
+            result = PositionManager(
+                trader_decision_path=decision,
+                pair_charts_path=pair_charts,
+                output_path=root / "data" / "pm.json",
+                report_path=root / "pm.md",
+                data_root=root,
+            ).run(snapshot)
+
+            self.assertEqual(result.action, ACTION_TAKE_PROFIT_MARKET)
+            self.assertEqual(result.positions[0].action, ACTION_TAKE_PROFIT_MARKET)
+            report = (root / "pm.md").read_text()
+            self.assertIn("MFE giveback profit-take", report)
+            self.assertIn("post-close re-entry discipline", report)
+
     def test_operator_manual_position_without_tp_preserves_no_broker_tp_by_default(self) -> None:
         prior = os.environ.pop("QR_ENABLE_MISSING_TP_REPAIR", None)
         try:
@@ -1877,6 +1915,70 @@ def _temporary_top_pair_charts(root: Path) -> Path:
                                 "regime": "TREND_UP",
                                 "indicators": {"atr_pips": 18.0},
                             },
+                        ],
+                    }
+                ],
+            }
+        )
+    )
+    return path
+
+
+def _mfe_giveback_pair_charts(root: Path) -> Path:
+    path = root / "pair_charts_mfe_giveback.json"
+    now = datetime.now(timezone.utc)
+    recent = [
+        {"t": (now - timedelta(minutes=7)).isoformat(), "o": 1.20048, "h": 1.20066, "l": 1.20034, "c": 1.20062, "complete": True},
+        {"t": (now - timedelta(minutes=6)).isoformat(), "o": 1.20062, "h": 1.20075, "l": 1.20042, "c": 1.20070, "complete": True},
+        {"t": (now - timedelta(minutes=5)).isoformat(), "o": 1.20070, "h": 1.20072, "l": 1.20038, "c": 1.20050, "complete": True},
+        {"t": (now - timedelta(minutes=4)).isoformat(), "o": 1.20050, "h": 1.20055, "l": 1.20022, "c": 1.20028, "complete": True},
+        {"t": (now - timedelta(minutes=3)).isoformat(), "o": 1.20028, "h": 1.20032, "l": 1.20006, "c": 1.20012, "complete": True},
+        {"t": (now - timedelta(minutes=2)).isoformat(), "o": 1.20012, "h": 1.20018, "l": 1.19992, "c": 1.20000, "complete": True},
+    ]
+    path.write_text(
+        json.dumps(
+            {
+                "generated_at_utc": now.isoformat(),
+                "charts": [
+                    {
+                        "pair": "EUR_USD",
+                        "chart_story": (
+                            "M1(TREND_DOWN,ADX=25,ST=-,struct=CHOCH_DOWN@1.2002) "
+                            "M5(RANGE,ADX=18,ST=-,struct=CHOCH_UP@1.2008:wick) "
+                            "H1(TREND_UP,ADX=25,ST=+) "
+                            "H4(TREND_UP,ADX=28,ST=+) "
+                            "D(TREND_UP,ADX=33,ST=+)"
+                        ),
+                        "confluence": {
+                            "price_percentile_24h": 0.50,
+                            "price_percentile_7d": 0.52,
+                            "score_balance": "LONG_LEAN",
+                            "score_gap": 0.54,
+                            "tf_agreement_score": 0.67,
+                        },
+                        "session": {"current_tag": "NY_AM_KILLZONE"},
+                        "views": [
+                            {
+                                "granularity": "M1",
+                                "regime": "TREND_DOWN",
+                                "long_bias": 0.30,
+                                "short_bias": 0.70,
+                                "recent_candles": recent,
+                                "indicators": {
+                                    "atr_pips": 8.0,
+                                    "supertrend_dir": -1,
+                                    "psar_dir": -1,
+                                },
+                            },
+                            {
+                                "granularity": "M5",
+                                "regime": "RANGE",
+                                "long_bias": 0.50,
+                                "short_bias": 0.50,
+                                "indicators": {"atr_pips": 4.0},
+                            },
+                            {"granularity": "H1", "regime": "TREND_UP", "indicators": {"atr_pips": 8.0}},
+                            {"granularity": "H4", "regime": "TREND_UP", "indicators": {"atr_pips": 18.0}},
                         ],
                     }
                 ],

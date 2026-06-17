@@ -1170,7 +1170,7 @@ class TraderBrainTest(unittest.TestCase):
             self.assertTrue(any("operating_tf_momentum_opposed" in blocker for blocker in score.blockers))
             self.assertTrue(any("range-rail LIMIT" in item for item in score.rationale))
 
-    def test_cancels_pending_range_limit_when_operating_tfs_strongly_oppose(self) -> None:
+    def test_preserves_pending_range_limit_when_operating_tfs_strongly_oppose_but_thesis_alive(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             path = root / "intents.json"
@@ -1228,12 +1228,15 @@ class TraderBrainTest(unittest.TestCase):
                             "stopLossOnFill": {"price": "1.16280"},
                         },
                     ),
-                )
+                ),
+                quotes={"EUR_USD": Quote("EUR_USD", 1.16155, 1.16165)},
             )
 
             decision = brain.run(snapshot)
 
-            self.assertEqual(decision.pending_cancel_order_ids, ("range-short-limit",))
+            self.assertEqual(decision.pending_cancel_order_ids, ())
+            report = (root / "decision.md").read_text()
+            self.assertIn("operating TF hard block", report)
 
     def test_blocks_short_when_technicals_oppose_even_without_trend_regime(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -1822,17 +1825,20 @@ class ForecastLaneGateTest(unittest.TestCase):
         )
 
 
-def _snapshot(*, orders=(), positions=()) -> BrokerSnapshot:
+def _snapshot(*, orders=(), positions=(), quotes=None) -> BrokerSnapshot:
     now = datetime.now(timezone.utc)
+    default_quotes = {
+        "AUD_JPY": Quote("AUD_JPY", 112.49, 112.50, timestamp_utc=now),
+        "EUR_USD": Quote("EUR_USD", 1.1720, 1.1721, timestamp_utc=now),
+        "USD_JPY": Quote("USD_JPY", 157.00, 157.01, timestamp_utc=now),
+    }
+    if quotes:
+        default_quotes.update(quotes)
     return BrokerSnapshot(
         fetched_at_utc=now,
         positions=tuple(positions),
         orders=tuple(orders),
-        quotes={
-            "AUD_JPY": Quote("AUD_JPY", 112.49, 112.50, timestamp_utc=now),
-            "EUR_USD": Quote("EUR_USD", 1.1720, 1.1721, timestamp_utc=now),
-            "USD_JPY": Quote("USD_JPY", 157.00, 157.01, timestamp_utc=now),
-        },
+        quotes=default_quotes,
     )
 
 

@@ -940,9 +940,6 @@ PENDING_ENTRY_HARD_CANCEL_KEYWORDS = (
     "EXTERNAL",
     "INTERVENTION",
     "MARGIN",
-    "MICRO_STRUCTURE_OPPOSED",
-    "OPERATING_TF_MOMENTUM_OPPOSED",
-    "OPERATING TF MOMENTUM AGAINST",
     "TARGET_REACHED",
     "UNPROTECTED",
     "VISUAL STORY",
@@ -2670,7 +2667,7 @@ def _score_market_text_opposes_pending(score: LaneScore) -> bool:
     text = " ".join(score.blockers + score.rationale).upper()
     if "FORECAST" in text and ("OPPOSES" in text or "→ BLOCK" in text or "-> BLOCK" in text):
         return True
-    return "MICRO_STRUCTURE_OPPOSED" in text
+    return False
 
 
 def _pending_entry_invalidation_breached(

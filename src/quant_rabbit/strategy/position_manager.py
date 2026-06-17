@@ -162,6 +162,17 @@ TEMPORARY_EXTREME_MIN_PROFIT_NOISE_MULT = float(os.environ.get("QR_TEMPORARY_EXT
 # 2026-06-12 USD_CHF local-top harvest while the trade was still +6 pips.
 TEMPORARY_EXTREME_MIN_EVIDENCE = int(os.environ.get("QR_TEMPORARY_EXTREME_MIN_EVIDENCE", "3"))
 TEMPORARY_EXTREME_DISTRIBUTION_PCT = float(os.environ.get("QR_TEMPORARY_EXTREME_DISTRIBUTION_PCT", "0.80"))
+# Giveback guard: once recent M1 bid/ask-executable MFE has given back a
+# majority of its move and the position is still currently profitable, bank it
+# before it becomes the next red MARKET_ORDER_TRADE_CLOSE. The default fraction
+# reuses the existing majority-of-target convention from profit-lock/TP
+# contraction rather than adding a new tuned market number; the signal count is
+# one less than the local-extreme detector because the measured giveback itself
+# is already an independent warning signal.
+MFE_GIVEBACK_TAKE_FRACTION = float(
+    os.environ.get("QR_MFE_GIVEBACK_TAKE_FRACTION", str(PROFIT_BREAK_EVEN_MIN_TP_PROGRESS))
+)
+MFE_GIVEBACK_MIN_EVIDENCE = int(os.environ.get("QR_MFE_GIVEBACK_MIN_EVIDENCE", "2"))
 
 
 @dataclass(frozen=True)
@@ -911,6 +922,16 @@ def _adaptive_tp_action(
     if temporary_profit_take:
         return ACTION_TAKE_PROFIT_MARKET, None, reasons
 
+    mfe_giveback_profit_take, mfe_giveback_reasons = _mfe_giveback_profit_take_signal(
+        position=position,
+        quote=quote,
+        full_pair_charts=full_pair_charts,
+        latest_forecast=latest_forecast,
+    )
+    reasons.extend(mfe_giveback_reasons)
+    if mfe_giveback_profit_take:
+        return ACTION_TAKE_PROFIT_MARKET, None, reasons
+
     # Decision matrix (rows = macro, cols = micro). Profitable positions only.
     # WEAKENING+DEAD demoted from REVIEW_EXIT to HARVEST_TP: MARKET close pays
     # full spread, but a narrow TP fills at the broker's TP price (no spread).
@@ -1186,6 +1207,105 @@ def _temporary_extreme_profit_take_signal(
         "post-close re-entry discipline: refresh broker truth and require a fresh LIVE_READY pullback/retest lane before re-entering"
     )
     return True, reasons
+
+
+def _mfe_giveback_profit_take_signal(
+    *,
+    position: BrokerPosition,
+    quote,
+    full_pair_charts: dict[str, dict[str, Any]] | None,
+    latest_forecast: dict[str, Any] | None = None,
+) -> tuple[bool, list[str]]:
+    """Bank profit when recent executable MFE is being given back.
+
+    This guard handles the audit pattern where a trade was briefly positive,
+    the local top/bottom detector lacked a rail/distribution context, and the
+    later close was red. It is profit-side only: current executable P/L must
+    still be positive, and it never authorizes loss-side CLOSE.
+    """
+
+    if position.unrealized_pl_jpy <= 0:
+        return False, []
+    if quote is None:
+        return False, ["MFE giveback profit-take skipped: quote missing"]
+    pair_chart = (full_pair_charts or {}).get(position.pair)
+    if not isinstance(pair_chart, dict):
+        return False, ["MFE giveback profit-take skipped: pair chart missing"]
+    m1 = _view_by_timeframe(pair_chart, "M1")
+    m5 = _view_by_timeframe(pair_chart, "M5")
+    if not isinstance(m1, dict):
+        return False, ["MFE giveback profit-take skipped: M1 chart missing"]
+
+    side_up = position.side.value.upper()
+    if side_up not in {"LONG", "SHORT"}:
+        return False, []
+    profit_pips = _executable_profit_pips(position, quote)
+    spread_pips = _spread_pips(position.pair, quote)
+    m1_atr = _indicator_float(m1, "atr_pips")
+    if profit_pips is None or profit_pips <= 0:
+        return False, ["MFE giveback profit-take skipped: executable profit is not positive"]
+    if spread_pips is None or spread_pips <= 0:
+        return False, ["MFE giveback profit-take skipped: spread missing"]
+    if m1_atr is None or m1_atr <= 0:
+        return False, ["MFE giveback profit-take skipped: M1 ATR missing"]
+
+    candles = _closed_recent_candles(m1)
+    lookback = max(4, TEMPORARY_EXTREME_LOOKBACK_BARS)
+    recent = candles[-lookback:]
+    if len(recent) < 4:
+        return False, ["MFE giveback profit-take skipped: insufficient M1 closed candles"]
+
+    pip_factor = _pip_factor(position.pair)
+    highs = [_candle_float(candle, "h", "high") for candle in recent]
+    lows = [_candle_float(candle, "l", "low") for candle in recent]
+    if any(value is None for value in highs + lows):
+        return False, ["MFE giveback profit-take skipped: malformed M1 candle prices"]
+    typed_highs = [float(value) for value in highs if value is not None]
+    typed_lows = [float(value) for value in lows if value is not None]
+    if side_up == "LONG":
+        recent_mfe_pips = max(0.0, (max(typed_highs) - position.entry_price) * pip_factor)
+        extreme = max(typed_highs)
+    else:
+        recent_mfe_pips = max(0.0, (position.entry_price - min(typed_lows)) * pip_factor)
+        extreme = min(typed_lows)
+
+    mfe_floor = max(spread_pips, m1_atr)
+    if recent_mfe_pips < mfe_floor:
+        return False, [
+            f"MFE giveback profit-take skipped: recent MFE {recent_mfe_pips:.1f}pip < "
+            f"market noise floor {mfe_floor:.1f}pip"
+        ]
+    giveback_pips = max(0.0, recent_mfe_pips - profit_pips)
+    fraction = max(0.0, min(1.0, MFE_GIVEBACK_TAKE_FRACTION))
+    if giveback_pips < recent_mfe_pips * fraction:
+        return False, [
+            f"MFE giveback profit-take skipped: giveback {giveback_pips:.1f}pip < "
+            f"{fraction:.2f}× recent MFE {recent_mfe_pips:.1f}pip"
+        ]
+
+    evidence = _temporary_extreme_reversal_evidence(
+        side_up=side_up,
+        m1=m1,
+        m5=m5,
+        recent=recent,
+        extreme=extreme,
+        latest_forecast=latest_forecast,
+    )
+    required = max(1, MFE_GIVEBACK_MIN_EVIDENCE)
+    if len(evidence) < required:
+        return False, [
+            f"MFE giveback profit-take skipped: reversal evidence {len(evidence)}/{required}: "
+            + "; ".join(evidence[:4])
+        ]
+
+    return True, [
+        (
+            f"MFE giveback profit-take: recent MFE {recent_mfe_pips:.1f}pip, "
+            f"current profit {profit_pips:.1f}pip, giveback {giveback_pips:.1f}pip "
+            f">= {fraction:.2f}× MFE; " + "; ".join(evidence[:5])
+        ),
+        "post-close re-entry discipline: refresh broker truth and require a fresh LIVE_READY pullback/retest lane before re-entering",
+    ]
 
 
 def _view_by_timeframe(pair_chart: dict[str, Any], timeframe: str) -> dict[str, Any] | None:
