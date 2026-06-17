@@ -23,6 +23,7 @@ from quant_rabbit.self_improvement_audit import (
     _directional_forecast_target_timeout_like,
     _gateway_close_recovery_observation,
     _intent_live_readiness_family_breakdown,
+    _normalized_pending_order_type,
     _profitability_findings,
     _projection_expired,
     _report_perspective_alignment_text,
@@ -68,6 +69,13 @@ class SelfImprovementAuditorTest(unittest.TestCase):
         self.assertEqual(auditor.db_path, DEFAULT_EXECUTION_LEDGER_DB)
         self.assertEqual(auditor.history_db_path, DEFAULT_SELF_IMPROVEMENT_HISTORY_DB)
         self.assertNotEqual(auditor.history_db_path, auditor.db_path)
+
+    def test_pending_order_type_normalization_matches_broker_and_intents(self) -> None:
+        self.assertEqual(_normalized_pending_order_type("LIMIT_ORDER"), "LIMIT")
+        self.assertEqual(_normalized_pending_order_type("STOP"), "STOP-ENTRY")
+        self.assertEqual(_normalized_pending_order_type("STOP_ORDER"), "STOP-ENTRY")
+        self.assertEqual(_normalized_pending_order_type("STOP_ENTRY"), "STOP-ENTRY")
+        self.assertEqual(_normalized_pending_order_type("MARKET_IF_TOUCHED_ORDER"), "MARKET-IF-TOUCHED")
 
     def test_projection_expiry_uses_live_telemetry_grace(self) -> None:
         grace = timedelta(seconds=PROJECTION_PENDING_EXPIRY_GRACE_SECONDS)
@@ -810,6 +818,106 @@ class SelfImprovementAuditorTest(unittest.TestCase):
         replaced = next(item for item in samples if item["order_id"] == "replace-source")
         self.assertEqual(replaced["replaced_with_order_id"], "replace-next")
         self.assertAlmostEqual(replaced["replacement_after_min"], 5.0)
+        groups = lifecycle["canceled_before_fill_orphan_groups"]
+        self.assertEqual(groups[0]["pair"], "CAD_CHF")
+        self.assertEqual(groups[0]["side"], "LONG")
+        self.assertEqual(groups[0]["method"], "RANGE_ROTATION")
+        self.assertEqual(groups[0]["count"], 1)
+
+    def test_current_pending_reconcile_flags_cap_candidate_and_advice_drift(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(
+                root,
+                active_position=False,
+                closed_pls=(100.0, 80.0, 50.0),
+            )
+            snapshot = json.loads(files["snapshot"].read_text())
+            snapshot["home_conversions"] = {"USD": 150.0}
+            snapshot["orders"] = [
+                {
+                    "order_id": "risk-pending",
+                    "pair": "EUR_USD",
+                    "order_type": "STOP",
+                    "state": "PENDING",
+                    "units": 2000,
+                    "price": 1.171,
+                    "owner": "trader",
+                    "trade_id": None,
+                    "raw": {
+                        "createTime": (_NOW - timedelta(minutes=40)).isoformat(),
+                        "clientExtensions": {
+                            "comment": (
+                                "qr-vnext lane=trend_trader:EUR_USD:LONG:TREND_CONTINUATION "
+                                "desk=trend_trader"
+                            ),
+                            "tag": "trader",
+                        },
+                        "stopLossOnFill": {"price": "1.1600"},
+                    },
+                }
+            ]
+            files["snapshot"].write_text(json.dumps(snapshot))
+            files["target"].write_text(
+                json.dumps(
+                    {
+                        "status": "PURSUE_TARGET",
+                        "remaining_target_jpy": 1000.0,
+                        "per_trade_risk_budget_jpy": 100.0,
+                    }
+                )
+            )
+            files["intents"].write_text(
+                json.dumps(
+                    {
+                        "generated_at_utc": _NOW.isoformat(),
+                        "results": [
+                            {
+                                "lane_id": "trend_trader:EUR_USD:LONG:TREND_CONTINUATION",
+                                "status": "DRY_RUN_BLOCKED",
+                                "intent": {
+                                    "pair": "EUR_USD",
+                                    "side": "LONG",
+                                    "order_type": "STOP-ENTRY",
+                                },
+                                "risk_issues": [
+                                    {
+                                        "code": "FORECAST_CONFIDENCE_REQUIRED_FOR_LIVE",
+                                        "severity": "BLOCK",
+                                    }
+                                ],
+                                "live_blockers": ["forecast confidence below entry grade"],
+                            }
+                        ],
+                    }
+                )
+            )
+            files["attack_advice"].write_text(
+                json.dumps(
+                    {
+                        "generated_at_utc": _NOW.isoformat(),
+                        "status": "ATTACK_ADVICE_READY",
+                        "recommended_now_lane_ids": ["trend_trader:EUR_USD:SHORT:TREND_CONTINUATION"],
+                    }
+                )
+            )
+
+            summary = _run(files)
+            payload = json.loads(files["output"].read_text())
+            report = files["report"].read_text()
+
+        codes = {item["code"]: item for item in payload["findings"]}
+        self.assertEqual(summary.status, STATUS_BLOCKED)
+        self.assertIn("PENDING_ENTRY_CANCEL_REVIEW_REQUIRED", codes)
+        review = payload["execution_quality"]["pending_entry_reconcile"]
+        self.assertEqual(review["cancel_review_order_ids"], ["risk-pending"])
+        order_review = review["orders"][0]
+        reason_codes = {item["code"] for item in order_review["review_reasons"]}
+        self.assertIn("PENDING_ATTACHED_SL_RISK_EXCEEDS_CAP", reason_codes)
+        self.assertIn("PENDING_CURRENT_CANDIDATE_NOT_LIVE_READY", reason_codes)
+        self.assertIn("PENDING_ATTACK_ADVICE_NOT_CURRENT", reason_codes)
+        self.assertGreater(order_review["attached_sl_risk_jpy"], 100.0)
+        self.assertIn("Pending entry reconcile", report)
 
     def test_repeated_self_improvement_finding_surfaces_anti_loop_action(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -4706,6 +4814,8 @@ class SelfImprovementAuditorTest(unittest.TestCase):
                         str(files["ai_backtest"]),
                         "--verification-ledger",
                         str(files["verification"]),
+                        "--attack-advice",
+                        str(files["attack_advice"]),
                         "--forecast-history",
                         str(files["forecast_history"]),
                         "--projection-ledger",
@@ -4734,6 +4844,8 @@ class SelfImprovementAuditorTest(unittest.TestCase):
             self.assertEqual(result["status"], STATUS_BLOCKED)
             self.assertTrue(files["output"].exists())
             self.assertTrue(files["report"].exists())
+            payload = json.loads(files["output"].read_text())
+            self.assertEqual(payload["artifact_paths"]["ai_attack_advice"], str(files["attack_advice"]))
 
 
 _NOW = datetime(2026, 6, 5, 0, 0, tzinfo=timezone.utc)
@@ -4765,6 +4877,7 @@ def _run(files: dict[str, Path], *, now: datetime = _NOW):
         position_thesis_path=files["position_thesis"],
         forecast_persistence_path=files["forecast_persistence"],
         coverage_optimization_path=files["coverage"],
+        attack_advice_path=files["attack_advice"],
         now=now,
     )
 
@@ -4805,6 +4918,7 @@ def _fixtures(
         "position_thesis": root / "position_thesis_report.json",
         "forecast_persistence": root / "forecast_persistence_report.json",
         "coverage": root / "coverage_optimization.json",
+        "attack_advice": root / "ai_attack_advice.json",
     }
     positions = []
     if active_position:
@@ -4951,6 +5065,15 @@ def _fixtures(
     ):
         files[key].write_text(json.dumps({"generated_at_utc": _NOW.isoformat(), list_key: []}))
     files["coverage"].write_text(json.dumps({"artifact_diagnostics": {}}))
+    files["attack_advice"].write_text(
+        json.dumps(
+            {
+                "generated_at_utc": _NOW.isoformat(),
+                "status": "NO_ATTACK_ADVICE",
+                "recommended_now_lane_ids": [],
+            }
+        )
+    )
     _write_execution_ledger(files["execution_db"], closed_pls=closed_pls, last_transaction_id="100")
     return files
 

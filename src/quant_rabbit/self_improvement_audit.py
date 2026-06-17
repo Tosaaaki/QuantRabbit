@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from quant_rabbit.paths import (
+    DEFAULT_AI_ATTACK_ADVICE,
     DEFAULT_AI_TEST_BOT_BACKTEST,
     DEFAULT_BROKER_SNAPSHOT,
     DEFAULT_COVERAGE_OPTIMIZATION,
@@ -30,6 +31,7 @@ from quant_rabbit.paths import (
     DEFAULT_TRADER_DECISION,
     DEFAULT_VERIFICATION_LEDGER,
 )
+from quant_rabbit.risk import DEFAULT_SPECS
 
 
 STATUS_OK = "SELF_IMPROVEMENT_OK"
@@ -287,6 +289,7 @@ class SelfImprovementAuditor:
         learning_audit_path: Path = DEFAULT_LEARNING_AUDIT,
         ai_test_bot_backtest_path: Path = DEFAULT_AI_TEST_BOT_BACKTEST,
         verification_ledger_path: Path = DEFAULT_VERIFICATION_LEDGER,
+        attack_advice_path: Path = DEFAULT_AI_ATTACK_ADVICE,
         forecast_history_path: Path = DEFAULT_FORECAST_HISTORY,
         projection_ledger_path: Path = DEFAULT_PROJECTION_LEDGER,
         entry_thesis_ledger_path: Path = DEFAULT_ENTRY_THESIS_LEDGER,
@@ -313,6 +316,7 @@ class SelfImprovementAuditor:
         learning_loaded = _read_json(learning_audit_path)
         ai_backtest_loaded = _read_json(ai_test_bot_backtest_path)
         verification_loaded = _read_json(verification_ledger_path)
+        attack_advice_loaded = _read_json(attack_advice_path)
         gpt_loaded = _read_json(gpt_decision_path)
         trader_loaded = _read_json(trader_decision_path)
         position_management_loaded = _read_json(position_management_path)
@@ -351,6 +355,13 @@ class SelfImprovementAuditor:
             self.db_path,
             window_hours=window_hours,
             now=clock,
+        )
+        pending_entry_reconcile = _pending_entry_reconcile_metrics(
+            snapshot=snapshot,
+            target_state=target_state,
+            intents=intents,
+            attack_advice=attack_advice_loaded.payload or {},
+            target_open=target_open,
         )
 
         findings: list[dict[str, Any]] = []
@@ -419,6 +430,13 @@ class SelfImprovementAuditor:
             _pending_entry_lifecycle_findings(
                 run_id=run_id,
                 metrics=pending_entry_lifecycle,
+                target_open=target_open,
+            )
+        )
+        findings.extend(
+            _pending_entry_reconcile_findings(
+                run_id=run_id,
+                metrics=pending_entry_reconcile,
                 target_open=target_open,
             )
         )
@@ -566,6 +584,7 @@ class SelfImprovementAuditor:
         }
         execution_quality = {
             "pending_entry_lifecycle": pending_entry_lifecycle,
+            "pending_entry_reconcile": pending_entry_reconcile,
         }
         root_cause_focus = _root_cause_focus(
             findings=findings,
@@ -587,6 +606,7 @@ class SelfImprovementAuditor:
                 "broker_snapshot": str(snapshot_path),
                 "daily_target_state": str(target_state_path),
                 "order_intents": str(order_intents_path),
+                "ai_attack_advice": str(attack_advice_path),
                 "market_context_matrix": str(market_context_matrix_path),
                 "memory_health": str(memory_health_path),
                 "learning_audit": str(learning_audit_path),
@@ -706,6 +726,11 @@ class SelfImprovementAuditor:
             if isinstance(payload.get("execution_quality"), dict)
             else {}
         )
+        pending_reconcile = (
+            (payload.get("execution_quality") or {}).get("pending_entry_reconcile")
+            if isinstance(payload.get("execution_quality"), dict)
+            else {}
+        )
         root_focus = payload.get("root_cause_focus") if isinstance(payload.get("root_cause_focus"), dict) else {}
         root_primary = root_focus.get("primary") if isinstance(root_focus.get("primary"), dict) else {}
         lines = [
@@ -754,6 +779,16 @@ class SelfImprovementAuditor:
                         f"cancel_before_fill_rate `{_fmt_optional(pending_lifecycle.get('cancel_before_fill_rate'))}`"
                     ),
                 ]
+            )
+        if isinstance(pending_reconcile, dict) and pending_reconcile:
+            if "## Execution Quality" not in lines:
+                lines.extend(["", "## Execution Quality", ""])
+            cancel_ids = pending_reconcile.get("cancel_review_order_ids") or []
+            lines.append(
+                "- Pending entry reconcile: "
+                f"reviewed `{pending_reconcile.get('reviewed_open_pending_orders', 0)}`, "
+                f"cancel_review `{pending_reconcile.get('cancel_review_orders', 0)}`, "
+                f"ids `{', '.join(str(item) for item in cancel_ids) if cancel_ids else 'none'}`"
             )
         if root_primary:
             lines.extend(
@@ -1643,6 +1678,440 @@ def _pending_entry_lifecycle_findings(
     ]
 
 
+def _pending_entry_reconcile_findings(
+    *,
+    run_id: str,
+    metrics: dict[str, Any],
+    target_open: bool,
+) -> list[dict[str, Any]]:
+    if not target_open or metrics.get("error"):
+        return []
+    cancel_ids = [str(item) for item in metrics.get("cancel_review_order_ids") or [] if str(item)]
+    if not cancel_ids:
+        return []
+    return [
+        _finding(
+            run_id=run_id,
+            priority="P0",
+            layer="execution_quality",
+            code="PENDING_ENTRY_CANCEL_REVIEW_REQUIRED",
+            message=f"{len(cancel_ids)} trader-owned pending entry order(s) need cancel review",
+            next_action=(
+                "Write a CANCEL_PENDING receipt for these order ids when no current LIVE_READY replacement "
+                "exists, or write a TRADE receipt with cancel_order_ids when replacing them with a current "
+                "verified basket. Keep only orders whose attached risk and current thesis still match the packet."
+            ),
+            evidence={
+                "cancel_review_order_ids": cancel_ids,
+                "groups": metrics.get("cancel_review_groups") or [],
+                "orders": metrics.get("orders") or [],
+            },
+        )
+    ]
+
+
+def _pending_entry_reconcile_metrics(
+    *,
+    snapshot: dict[str, Any],
+    target_state: dict[str, Any],
+    intents: dict[str, Any],
+    attack_advice: dict[str, Any],
+    target_open: bool,
+) -> dict[str, Any]:
+    orders = _trader_pending_entry_orders(snapshot) if target_open else []
+    metrics: dict[str, Any] = {
+        "target_open": target_open,
+        "reviewed_open_pending_orders": len(orders),
+        "cancel_review_orders": 0,
+        "cancel_review_order_ids": [],
+        "cancel_review_groups": [],
+        "orders": [],
+        "error": None,
+    }
+    if not target_open or not orders:
+        return metrics
+
+    per_trade_cap = _maybe_float(target_state.get("per_trade_risk_budget_jpy"))
+    intent_index = _pending_reconcile_intent_index(intents)
+    recommended_parents = {
+        _parent_lane_id(str(item))
+        for item in attack_advice.get("recommended_now_lane_ids") or []
+        if str(item).strip()
+    }
+    attack_generated_at = _parse_utc(attack_advice.get("generated_at_utc"))
+
+    reviews: list[dict[str, Any]] = []
+    for order in orders:
+        review = _pending_entry_order_reconcile(
+            order=order,
+            snapshot=snapshot,
+            per_trade_cap=per_trade_cap,
+            intent_index=intent_index,
+            recommended_parent_lanes=recommended_parents,
+            attack_generated_at=attack_generated_at,
+        )
+        if review.get("review_reasons"):
+            reviews.append(review)
+
+    metrics["orders"] = reviews
+    metrics["cancel_review_orders"] = len(reviews)
+    metrics["cancel_review_order_ids"] = [item.get("order_id") for item in reviews if item.get("order_id")]
+    metrics["cancel_review_groups"] = _pending_reconcile_groups(reviews)
+    return metrics
+
+
+def _pending_entry_order_reconcile(
+    *,
+    order: dict[str, Any],
+    snapshot: dict[str, Any],
+    per_trade_cap: float | None,
+    intent_index: dict[str, Any],
+    recommended_parent_lanes: set[str],
+    attack_generated_at: datetime | None,
+) -> dict[str, Any]:
+    pair = str(order.get("pair") or "")
+    side = _pending_order_side(order)
+    lane_id = _pending_order_lane_id(order)
+    parent_lane_id = _parent_lane_id(lane_id) if lane_id else None
+    method = _pending_order_method(order, parent_lane_id)
+    order_type = _normalized_pending_order_type(order.get("order_type"))
+    created_at = _pending_order_create_time(order)
+    risk = _pending_order_attached_sl_risk_jpy(order, snapshot)
+    candidates = _pending_reconcile_candidates(
+        pair=pair,
+        side=side,
+        method=method,
+        order_type=order_type,
+        parent_lane_id=parent_lane_id,
+        intent_index=intent_index,
+    )
+
+    reasons: list[dict[str, Any]] = []
+    if per_trade_cap is not None and per_trade_cap > 0:
+        if risk.get("risk_jpy") is None and risk.get("issue_code"):
+            reasons.append(
+                {
+                    "code": risk["issue_code"],
+                    "message": risk["message"],
+                }
+            )
+        elif _maybe_float(risk.get("risk_jpy")) is not None and float(risk["risk_jpy"]) > per_trade_cap:
+            reasons.append(
+                {
+                    "code": "PENDING_ATTACHED_SL_RISK_EXCEEDS_CAP",
+                    "message": (
+                        f"attached stop risk {float(risk['risk_jpy']):.2f} JPY exceeds "
+                        f"per-trade cap {per_trade_cap:.2f} JPY"
+                    ),
+                }
+            )
+
+    if parent_lane_id and not candidates:
+        reasons.append(
+            {
+                "code": "PENDING_CURRENT_CANDIDATE_MISSING",
+                "message": "pending order parent lane is absent from current order_intents",
+            }
+        )
+    elif candidates and not any(str(item.get("status") or "") == "LIVE_READY" for item in candidates):
+        reasons.append(
+            {
+                "code": "PENDING_CURRENT_CANDIDATE_NOT_LIVE_READY",
+                "message": "pending order parent lane is present but no current candidate is LIVE_READY",
+                "candidate_statuses": sorted({str(item.get("status") or "UNKNOWN") for item in candidates}),
+                "candidate_blockers": _pending_candidate_blockers(candidates),
+            }
+        )
+
+    if (
+        parent_lane_id
+        and recommended_parent_lanes
+        and parent_lane_id not in recommended_parent_lanes
+        and attack_generated_at is not None
+        and (created_at is None or attack_generated_at >= created_at)
+    ):
+        reasons.append(
+            {
+                "code": "PENDING_ATTACK_ADVICE_NOT_CURRENT",
+                "message": "current ai_attack_advice no longer recommends the pending order parent lane",
+            }
+        )
+
+    return {
+        "order_id": order.get("order_id"),
+        "pair": pair or None,
+        "side": side,
+        "method": method,
+        "order_type": order_type,
+        "price": _pending_order_price(order),
+        "units": _maybe_float(order.get("units")),
+        "lane_id": lane_id,
+        "parent_lane_id": parent_lane_id,
+        "created_at_utc": created_at.isoformat() if created_at else None,
+        "risk_cap_jpy": per_trade_cap,
+        "attached_sl": risk.get("stop_loss"),
+        "attached_sl_risk_jpy": risk.get("risk_jpy"),
+        "current_candidate_count": len(candidates),
+        "current_live_ready_candidate_count": sum(1 for item in candidates if str(item.get("status") or "") == "LIVE_READY"),
+        "review_reasons": reasons,
+    }
+
+
+def _pending_reconcile_intent_index(intents: dict[str, Any]) -> dict[str, Any]:
+    by_parent: dict[str, list[dict[str, Any]]] = {}
+    by_shape: dict[tuple[str, str | None, str | None, str], list[dict[str, Any]]] = {}
+    for item in intents.get("results", []) or []:
+        if not isinstance(item, dict):
+            continue
+        lane_id = str(item.get("lane_id") or "")
+        parent = _parent_lane_id(lane_id) if lane_id else ""
+        if parent:
+            by_parent.setdefault(parent, []).append(item)
+        intent = item.get("intent") if isinstance(item.get("intent"), dict) else {}
+        pair = str(intent.get("pair") or "")
+        side = str(intent.get("side") or "").upper() or None
+        method = _method_from_lane_id(parent or lane_id)
+        order_type = _normalized_pending_order_type(intent.get("order_type"))
+        if pair and order_type:
+            by_shape.setdefault((pair, side, method, order_type), []).append(item)
+            by_shape.setdefault((pair, side, None, order_type), []).append(item)
+    return {"by_parent": by_parent, "by_shape": by_shape}
+
+
+def _pending_reconcile_candidates(
+    *,
+    pair: str,
+    side: str | None,
+    method: str | None,
+    order_type: str,
+    parent_lane_id: str | None,
+    intent_index: dict[str, Any],
+) -> list[dict[str, Any]]:
+    by_parent = intent_index.get("by_parent") if isinstance(intent_index.get("by_parent"), dict) else {}
+    if parent_lane_id:
+        parent_candidates = by_parent.get(parent_lane_id)
+        if isinstance(parent_candidates, list):
+            return [item for item in parent_candidates if isinstance(item, dict)]
+    by_shape = intent_index.get("by_shape") if isinstance(intent_index.get("by_shape"), dict) else {}
+    candidates = by_shape.get((pair, side, method, order_type)) or by_shape.get((pair, side, None, order_type)) or []
+    return [item for item in candidates if isinstance(item, dict)]
+
+
+def _pending_candidate_blockers(candidates: list[dict[str, Any]]) -> list[str]:
+    blockers: list[str] = []
+    for item in candidates:
+        for raw in item.get("risk_issues") or []:
+            if isinstance(raw, dict):
+                code = str(raw.get("code") or raw.get("message") or "").strip()
+                severity = str(raw.get("severity") or "").upper()
+                if code and severity in {"", "BLOCK"}:
+                    blockers.append(code)
+        for raw in item.get("live_blockers") or []:
+            text = str(raw or "").strip()
+            if text:
+                blockers.append(text)
+    return blockers[:8]
+
+
+def _pending_reconcile_groups(reviews: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    groups: dict[tuple[str, str, str], dict[str, Any]] = {}
+    for review in reviews:
+        key = (
+            str(review.get("pair") or "UNKNOWN"),
+            str(review.get("side") or "UNKNOWN"),
+            str(review.get("method") or "UNKNOWN"),
+        )
+        item = groups.setdefault(
+            key,
+            {
+                "pair": key[0],
+                "side": key[1],
+                "method": key[2],
+                "count": 0,
+                "order_ids": [],
+                "reason_codes": {},
+            },
+        )
+        item["count"] += 1
+        if review.get("order_id"):
+            item["order_ids"].append(review.get("order_id"))
+        reason_codes = item["reason_codes"]
+        for reason in review.get("review_reasons") or []:
+            if not isinstance(reason, dict):
+                continue
+            code = str(reason.get("code") or "UNKNOWN")
+            reason_codes[code] = int(reason_codes.get(code) or 0) + 1
+    return sorted(groups.values(), key=lambda item: (-int(item["count"]), item["pair"], item["side"], item["method"]))
+
+
+def _pending_order_attached_sl_risk_jpy(order: dict[str, Any], snapshot: dict[str, Any]) -> dict[str, Any]:
+    pair = str(order.get("pair") or "")
+    entry = _pending_order_price(order)
+    units = _maybe_float(order.get("units"))
+    stop = _nested_order_price(order, "stopLossOnFill")
+    if not pair or entry is None or units is None or units == 0:
+        return {
+            "risk_jpy": None,
+            "stop_loss": stop,
+            "issue_code": "PENDING_ATTACHED_SL_RISK_UNKNOWN",
+            "message": "pending order is missing pair, entry price, or units",
+        }
+    if stop is None:
+        return {
+            "risk_jpy": None,
+            "stop_loss": None,
+            "issue_code": "PENDING_ATTACHED_SL_MISSING",
+            "message": "pending order has no broker-attached stopLossOnFill",
+        }
+    spec = DEFAULT_SPECS.get(pair)
+    if spec is None:
+        return {
+            "risk_jpy": None,
+            "stop_loss": stop,
+            "issue_code": "PENDING_ATTACHED_SL_RISK_UNKNOWN",
+            "message": f"pending order pair {pair} is unsupported",
+        }
+    quote_to_jpy = _snapshot_quote_to_jpy(pair, snapshot)
+    if quote_to_jpy is None:
+        return {
+            "risk_jpy": None,
+            "stop_loss": stop,
+            "issue_code": "PENDING_ATTACHED_SL_RISK_UNKNOWN",
+            "message": f"missing conversion quote for pending order pair {pair}",
+        }
+    if units > 0:
+        loss_pips = (entry - stop) * spec.pip_factor
+    else:
+        loss_pips = (stop - entry) * spec.pip_factor
+    if loss_pips <= 0:
+        return {
+            "risk_jpy": None,
+            "stop_loss": stop,
+            "issue_code": "PENDING_ATTACHED_SL_WRONG_SIDE",
+            "message": "pending order stopLossOnFill is not on the loss side of the entry",
+        }
+    jpy_per_pip = (abs(units) / spec.pip_factor) * quote_to_jpy
+    return {
+        "risk_jpy": round(loss_pips * jpy_per_pip, 4),
+        "stop_loss": stop,
+        "loss_pips": round(loss_pips, 4),
+    }
+
+
+def _snapshot_quote_to_jpy(pair: str, snapshot: dict[str, Any]) -> float | None:
+    if pair.endswith("_JPY"):
+        return 1.0
+    quote_ccy = pair.split("_")[-1] if "_" in pair else ""
+    conversions = snapshot.get("home_conversions") if isinstance(snapshot.get("home_conversions"), dict) else {}
+    value = _maybe_float(conversions.get(quote_ccy))
+    if value is not None and value > 0:
+        return value
+    quotes = snapshot.get("quotes") if isinstance(snapshot.get("quotes"), dict) else {}
+    direct = quotes.get(f"{quote_ccy}_JPY")
+    if isinstance(direct, dict):
+        bid = _maybe_float(direct.get("bid"))
+        ask = _maybe_float(direct.get("ask"))
+        if bid is not None and ask is not None and bid > 0 and ask > 0:
+            return (bid + ask) / 2.0
+    inverse = quotes.get(f"JPY_{quote_ccy}")
+    if isinstance(inverse, dict):
+        bid = _maybe_float(inverse.get("bid"))
+        ask = _maybe_float(inverse.get("ask"))
+        if bid is not None and ask is not None and bid > 0 and ask > 0:
+            return 1.0 / ((bid + ask) / 2.0)
+    return None
+
+
+def _pending_order_lane_id(order: dict[str, Any]) -> str | None:
+    raw = order.get("raw") if isinstance(order.get("raw"), dict) else {}
+    for key in ("clientExtensions", "tradeClientExtensions"):
+        extension = raw.get(key)
+        if not isinstance(extension, dict):
+            continue
+        comment = str(extension.get("comment") or "")
+        for token in comment.split():
+            if token.startswith("lane="):
+                lane_id = token[len("lane=") :].strip()
+                return lane_id or None
+    return None
+
+
+def _parent_lane_id(lane_id: str) -> str:
+    return lane_id[: -len(":MARKET")] if lane_id.endswith(":MARKET") else lane_id
+
+
+def _method_from_lane_id(lane_id: str | None) -> str | None:
+    if not lane_id:
+        return None
+    parts = str(lane_id).split(":")
+    if len(parts) >= 4:
+        return parts[3] or None
+    return None
+
+
+def _pending_order_method(order: dict[str, Any], parent_lane_id: str | None) -> str | None:
+    method = _method_from_lane_id(parent_lane_id)
+    if method:
+        return method
+    raw = order.get("raw") if isinstance(order.get("raw"), dict) else {}
+    for key in ("clientExtensions", "tradeClientExtensions"):
+        extension = raw.get(key)
+        if not isinstance(extension, dict):
+            continue
+        comment = str(extension.get("comment") or "")
+        for token in comment.split():
+            if token.startswith("method=") or token.startswith("desk="):
+                value = token.split("=", 1)[1].strip().upper()
+                if value:
+                    return value
+    return None
+
+
+def _pending_order_side(order: dict[str, Any]) -> str | None:
+    side = str(order.get("side") or "").upper()
+    if side in {"LONG", "SHORT"}:
+        return side
+    units = _maybe_float(order.get("units"))
+    if units is None or units == 0:
+        return None
+    return "LONG" if units > 0 else "SHORT"
+
+
+def _pending_order_price(order: dict[str, Any]) -> float | None:
+    value = _maybe_float(order.get("price"))
+    if value is not None:
+        return value
+    raw = order.get("raw") if isinstance(order.get("raw"), dict) else {}
+    return _maybe_float(raw.get("price"))
+
+
+def _pending_order_create_time(order: dict[str, Any]) -> datetime | None:
+    raw = order.get("raw") if isinstance(order.get("raw"), dict) else {}
+    return _parse_utc(raw.get("createTime") or raw.get("time") or order.get("createTime") or order.get("time"))
+
+
+def _nested_order_price(order: dict[str, Any], key: str) -> float | None:
+    raw = order.get("raw") if isinstance(order.get("raw"), dict) else {}
+    nested = raw.get(key)
+    if isinstance(nested, dict):
+        return _maybe_float(nested.get("price"))
+    nested = order.get(key)
+    if isinstance(nested, dict):
+        return _maybe_float(nested.get("price"))
+    return None
+
+
+def _normalized_pending_order_type(value: Any) -> str:
+    text = str(value or "").upper().replace("_", "-")
+    if text == "LIMIT-ORDER":
+        return "LIMIT"
+    if text in {"STOP", "STOP-ORDER", "STOP-ENTRY-ORDER"}:
+        return "STOP-ENTRY"
+    if text == "MARKET-IF-TOUCHED-ORDER":
+        return "MARKET-IF-TOUCHED"
+    return text
+
+
 def _pending_entry_lifecycle_metrics(
     db_path: Path,
     *,
@@ -1662,6 +2131,8 @@ def _pending_entry_lifecycle_metrics(
         "cancel_before_fill_rate": None,
         "cancel_replacement_rate": None,
         "canceled_before_fill_samples": [],
+        "canceled_before_fill_orphan_groups": [],
+        "canceled_before_fill_replaced_groups": [],
         "error": None,
     }
     if not db_path.exists():
@@ -1723,6 +2194,7 @@ def _pending_entry_lifecycle_metrics(
                     "accepted_ts": ts,
                     "order_id": order_id,
                     "lane_id": _row_text(row, "lane_id"),
+                    "method": _method_from_lane_id(_row_text(row, "lane_id")),
                     "pair": _row_text(row, "pair"),
                     "side": _entry_order_side(row),
                     "units": _maybe_float(row["units"]),
@@ -1766,6 +2238,7 @@ def _pending_entry_lifecycle_metrics(
                 {
                     "order_id": order_id,
                     "lane_id": order.get("lane_id"),
+                    "method": order.get("method"),
                     "pair": order.get("pair"),
                     "side": order.get("side"),
                     "units": order.get("units"),
@@ -1804,6 +2277,14 @@ def _pending_entry_lifecycle_metrics(
     )
     canceled_before_fill_samples.sort(key=lambda item: str(item.get("canceled_at_utc") or ""), reverse=True)
     metrics["canceled_before_fill_samples"] = canceled_before_fill_samples[:12]
+    metrics["canceled_before_fill_orphan_groups"] = _pending_lifecycle_cancel_groups(
+        canceled_before_fill_samples,
+        replaced=False,
+    )
+    metrics["canceled_before_fill_replaced_groups"] = _pending_lifecycle_cancel_groups(
+        canceled_before_fill_samples,
+        replaced=True,
+    )
     return metrics
 
 
@@ -1844,6 +2325,27 @@ def _pending_cancel_replacement(
     if not candidates:
         return None
     return min(candidates, key=lambda item: float(item["replacement_after_min"]))
+
+
+def _pending_lifecycle_cancel_groups(samples: list[dict[str, Any]], *, replaced: bool) -> list[dict[str, Any]]:
+    grouped: dict[tuple[str, str, str], dict[str, Any]] = {}
+    for sample in samples:
+        has_replacement = bool(sample.get("replaced_with_order_id"))
+        if has_replacement is not replaced:
+            continue
+        key = (
+            str(sample.get("pair") or "UNKNOWN"),
+            str(sample.get("side") or "UNKNOWN"),
+            str(sample.get("method") or "UNKNOWN"),
+        )
+        item = grouped.setdefault(
+            key,
+            {"pair": key[0], "side": key[1], "method": key[2], "count": 0, "order_ids": []},
+        )
+        item["count"] += 1
+        if sample.get("order_id"):
+            item["order_ids"].append(sample.get("order_id"))
+    return sorted(grouped.values(), key=lambda item: (-int(item["count"]), item["pair"], item["side"], item["method"]))
 
 
 def _execution_event_is_entry_order(row: sqlite3.Row) -> bool:

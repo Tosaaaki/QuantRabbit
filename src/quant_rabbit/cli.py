@@ -2499,6 +2499,7 @@ def main(argv: list[str] | None = None) -> int:
     p_self_audit.add_argument("--learning-audit", type=Path, default=DEFAULT_LEARNING_AUDIT)
     p_self_audit.add_argument("--ai-test-bot-backtest", type=Path, default=DEFAULT_AI_TEST_BOT_BACKTEST)
     p_self_audit.add_argument("--verification-ledger", type=Path, default=DEFAULT_VERIFICATION_LEDGER)
+    p_self_audit.add_argument("--attack-advice", type=Path, default=DEFAULT_AI_ATTACK_ADVICE)
     p_self_audit.add_argument("--forecast-history", type=Path, default=DEFAULT_FORECAST_HISTORY)
     p_self_audit.add_argument("--projection-ledger", type=Path, default=DEFAULT_PROJECTION_LEDGER)
     p_self_audit.add_argument("--entry-thesis-ledger", type=Path, default=DEFAULT_ENTRY_THESIS_LEDGER)
@@ -4522,6 +4523,7 @@ def main(argv: list[str] | None = None) -> int:
                 learning_audit_path=args.learning_audit,
                 ai_test_bot_backtest_path=args.ai_test_bot_backtest,
                 verification_ledger_path=args.verification_ledger,
+                attack_advice_path=args.attack_advice,
                 forecast_history_path=args.forecast_history,
                 projection_ledger_path=args.projection_ledger,
                 entry_thesis_ledger_path=args.entry_thesis_ledger,

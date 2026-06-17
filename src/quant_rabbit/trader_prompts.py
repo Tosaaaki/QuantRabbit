@@ -2125,6 +2125,31 @@ def _self_improvement_repair_reasons(*, self_improvement_audit_path: Path | None
             continue
         if code == "LATEST_GPT_DECISION_STALE":
             continue
+        if code == "PENDING_ENTRY_CANCEL_REVIEW_REQUIRED":
+            order_ids = [
+                str(order_id)
+                for order_id in evidence.get("cancel_review_order_ids") or []
+                if str(order_id)
+            ]
+            reason_codes: list[str] = []
+            for order in evidence.get("orders") or []:
+                if not isinstance(order, dict):
+                    continue
+                for reason in order.get("review_reasons") or []:
+                    if isinstance(reason, dict) and reason.get("code"):
+                        reason_codes.append(str(reason["code"]))
+            details = []
+            if order_ids:
+                details.append(f"ids={','.join(order_ids)}")
+            if reason_codes:
+                details.append("reasons=" + ",".join(dict.fromkeys(reason_codes)))
+            suffix = f" ({'; '.join(details)})" if details else ""
+            reasons.append(
+                "self-improvement pending cancel review blocks fresh risk; write CANCEL_PENDING "
+                "or a TRADE receipt with cancel_order_ids after checking current LIVE_READY replacements"
+                f"{suffix}"
+            )
+            continue
         details = []
         if layer:
             details.append(f"layer={layer}")
