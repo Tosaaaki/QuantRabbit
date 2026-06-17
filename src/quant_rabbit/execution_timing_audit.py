@@ -112,7 +112,12 @@ def build_execution_timing_audit(
         post_cancel_hours=float(post_cancel_hours),
         max_events=max_events,
     )
-    windows = _candidate_windows(canceled, loss_closes, post_cancel_hours=float(post_cancel_hours))
+    windows = _candidate_windows(
+        canceled,
+        loss_closes,
+        post_cancel_hours=float(post_cancel_hours),
+        now_utc=now,
+    )
     candle_cache, fetch_errors = _load_candle_cache(
         windows,
         granularity=granularity,
@@ -125,7 +130,7 @@ def build_execution_timing_audit(
             _candles_between(
                 candle_cache.get(order.pair, ()),
                 _first_complete_candle_start_at_or_after(order.canceled_at_utc, granularity_delta),
-                order.canceled_at_utc + timedelta(hours=float(post_cancel_hours)),
+                min(order.canceled_at_utc + timedelta(hours=float(post_cancel_hours)), now),
             ),
             home_conversions,
         )
@@ -342,12 +347,14 @@ def _candidate_windows(
     loss_closes: Iterable[_LossClose],
     *,
     post_cancel_hours: float,
+    now_utc: datetime,
 ) -> dict[str, list[tuple[datetime, datetime]]]:
     windows: dict[str, list[tuple[datetime, datetime]]] = {}
+    now = _normalize_utc(now_utc)
     for order in canceled:
-        windows.setdefault(order.pair, []).append(
-            (order.canceled_at_utc, order.canceled_at_utc + timedelta(hours=post_cancel_hours))
-        )
+        end = min(order.canceled_at_utc + timedelta(hours=post_cancel_hours), now)
+        if end > order.canceled_at_utc:
+            windows.setdefault(order.pair, []).append((order.canceled_at_utc, end))
     for close in loss_closes:
         windows.setdefault(close.pair, []).append((close.fill_at_utc, close.close_at_utc))
     return windows
@@ -525,12 +532,17 @@ def _summary(canceled_rows: list[dict[str, Any]], loss_rows: list[dict[str, Any]
     return {
         "canceled_orders_audited": len(canceled_rows),
         "canceled_entry_touched_after_cancel": len(canceled_entry),
+        "canceled_entry_touched_after_cancel_rate": _rate(len(canceled_entry), len(canceled_rows)),
         "canceled_positive_after_cancel_entry": len(canceled_positive),
+        "canceled_positive_after_cancel_entry_rate": _rate(len(canceled_positive), len(canceled_rows)),
         "canceled_tp_touched_after_cancel": len(canceled_tp),
+        "canceled_tp_touched_after_cancel_rate": _rate(len(canceled_tp), len(canceled_rows)),
         "canceled_estimated_missed_mfe_jpy": _sum_known(canceled_rows, "estimated_missed_mfe_jpy"),
         "loss_closes_audited": len(loss_rows),
         "loss_closes_had_positive_mfe": len(loss_positive),
+        "loss_closes_had_positive_mfe_rate": _rate(len(loss_positive), len(loss_rows)),
         "loss_closes_tp_touched_before_close": len(loss_tp),
+        "loss_closes_tp_touched_before_close_rate": _rate(len(loss_tp), len(loss_rows)),
         "loss_close_estimated_mfe_jpy": _sum_known(loss_rows, "estimated_mfe_jpy_before_loss_close"),
         "avg_decision_lag_minutes_after_first_positive": round(sum(lag_values) / len(lag_values), 2) if lag_values else None,
         "max_decision_lag_minutes_after_first_positive": round(max(lag_values), 2) if lag_values else None,
@@ -553,12 +565,17 @@ def _write_report(payload: dict[str, Any], report_path: Path) -> None:
     for key in (
         "canceled_orders_audited",
         "canceled_entry_touched_after_cancel",
+        "canceled_entry_touched_after_cancel_rate",
         "canceled_positive_after_cancel_entry",
+        "canceled_positive_after_cancel_entry_rate",
         "canceled_tp_touched_after_cancel",
+        "canceled_tp_touched_after_cancel_rate",
         "canceled_estimated_missed_mfe_jpy",
         "loss_closes_audited",
         "loss_closes_had_positive_mfe",
+        "loss_closes_had_positive_mfe_rate",
         "loss_closes_tp_touched_before_close",
+        "loss_closes_tp_touched_before_close_rate",
         "loss_close_estimated_mfe_jpy",
         "avg_decision_lag_minutes_after_first_positive",
         "max_decision_lag_minutes_after_first_positive",
@@ -792,6 +809,12 @@ def _pip_factor(pair: str) -> int:
 def _sum_known(rows: list[dict[str, Any]], key: str) -> float | None:
     values = [float(row[key]) for row in rows if row.get(key) is not None]
     return round(sum(values), 4) if values else None
+
+
+def _rate(numerator: int, denominator: int) -> float | None:
+    if denominator <= 0:
+        return None
+    return round(numerator / denominator, 4)
 
 
 def _minutes_between(start: datetime | None, end: datetime | None) -> float | None:

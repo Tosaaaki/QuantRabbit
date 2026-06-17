@@ -153,13 +153,78 @@ class ExecutionTimingAuditTest(unittest.TestCase):
             summary = payload["summary"]
             self.assertEqual(summary["canceled_orders_audited"], 1)
             self.assertEqual(summary["canceled_entry_touched_after_cancel"], 1)
+            self.assertEqual(summary["canceled_entry_touched_after_cancel_rate"], 1.0)
             self.assertEqual(summary["canceled_positive_after_cancel_entry"], 1)
+            self.assertEqual(summary["canceled_positive_after_cancel_entry_rate"], 1.0)
             self.assertEqual(summary["canceled_tp_touched_after_cancel"], 1)
+            self.assertEqual(summary["canceled_tp_touched_after_cancel_rate"], 1.0)
             self.assertAlmostEqual(summary["canceled_estimated_missed_mfe_jpy"], 120.0)
             row = payload["canceled_order_regrets"][0]
             self.assertEqual(row["entry_touch_after_cancel_minutes"], 0.5)
             self.assertEqual(row["tp_touch_after_cancel_minutes"], 9.5)
             self.assertEqual(row["mfe_pips_after_cancel_entry"], 12.0)
+
+    def test_canceled_order_window_is_clamped_to_now(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            db = root / "ledger.db"
+            _make_db(db)
+            with sqlite3.connect(db) as conn:
+                _insert_event(
+                    conn,
+                    "accepted-o1",
+                    ts_utc="2026-06-16T23:45:00Z",
+                    event_type="ORDER_ACCEPTED",
+                    lane_id="lane:recent-cancel",
+                    order_id="o1",
+                    pair="USD_JPY",
+                    side="LONG",
+                    units=1000,
+                    price=150.00,
+                    tp=150.10,
+                    sl=149.80,
+                    exit_reason="CLIENT_ORDER",
+                    raw={
+                        "type": "LIMIT_ORDER",
+                        "instrument": "USD_JPY",
+                        "units": "1000",
+                        "price": "150.00",
+                        "takeProfitOnFill": {"price": "150.10"},
+                        "stopLossOnFill": {"price": "149.80"},
+                    },
+                )
+                _insert_event(
+                    conn,
+                    "canceled-o1",
+                    ts_utc="2026-06-16T23:55:30Z",
+                    event_type="ORDER_CANCELED",
+                    order_id="o1",
+                    pair="USD_JPY",
+                )
+                conn.commit()
+
+            now = _dt("2026-06-17T00:00:00Z")
+            requested: list[tuple[datetime, datetime]] = []
+
+            def fetcher(pair: str, start: datetime, end: datetime, granularity: str) -> tuple[BidAskCandle, ...]:
+                requested.append((start, end))
+                self.assertLessEqual(end, now)
+                return (
+                    BidAskCandle(_dt("2026-06-16T23:56:00Z"), 150.02, 149.98, 150.03, 149.99),
+                )
+
+            payload = build_execution_timing_audit(
+                ledger_path=db,
+                snapshot_path=None,
+                output_path=root / "audit.json",
+                report_path=root / "audit.md",
+                now_utc=now,
+                candle_fetcher=fetcher,
+            )
+
+            self.assertTrue(requested)
+            self.assertEqual(payload["status"], "OK")
+            self.assertEqual(payload["summary"]["canceled_orders_audited"], 1)
 
     def test_losing_close_reports_prior_positive_mfe_and_decision_lag(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -228,7 +293,9 @@ class ExecutionTimingAuditTest(unittest.TestCase):
             summary = payload["summary"]
             self.assertEqual(summary["loss_closes_audited"], 1)
             self.assertEqual(summary["loss_closes_had_positive_mfe"], 1)
+            self.assertEqual(summary["loss_closes_had_positive_mfe_rate"], 1.0)
             self.assertEqual(summary["loss_closes_tp_touched_before_close"], 1)
+            self.assertEqual(summary["loss_closes_tp_touched_before_close_rate"], 1.0)
             self.assertAlmostEqual(summary["loss_close_estimated_mfe_jpy"], 110.0)
             self.assertEqual(summary["avg_decision_lag_minutes_after_first_positive"], 5.5)
             row = payload["loss_close_regrets"][0]

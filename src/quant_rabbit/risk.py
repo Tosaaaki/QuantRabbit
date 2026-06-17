@@ -290,6 +290,38 @@ def _uses_range_reward_floor(intent: OrderIntent, regime_state: str) -> bool:
     return "RANGE" in geometry_model or method_name == TradeMethod.RANGE_ROTATION.value
 
 
+def _uses_technical_harvest_reward_floor(intent: OrderIntent) -> bool:
+    """Return true for failed-break scalps with an attached structural TP.
+
+    These entries are not trend runners. The intent generator can explicitly
+    build them with a 1R operating HARVEST target when no better structural
+    anchor exists; RiskEngine must not then reclassify the same receipt under
+    the generic 1.2R runner floor. This exception is deliberately unavailable
+    to TREND_CONTINUATION so weak forecast-first trend chases still need their
+    higher payoff gate.
+    """
+    metadata = intent.metadata or {}
+    context = intent.market_context
+    method = context.method if context is not None else None
+    if method is None:
+        try:
+            method = TradeMethod.parse(str(metadata.get("method") or ""))
+        except ValueError:
+            method = None
+    if method != TradeMethod.BREAKOUT_FAILURE:
+        return False
+    if str(metadata.get("opportunity_mode") or "").upper() != "HARVEST":
+        return False
+    if str(metadata.get("tp_target_intent") or "").upper() != "HARVEST":
+        return False
+    if str(metadata.get("tp_execution_mode") or "").upper() != "ATTACHED_TECHNICAL_TP":
+        return False
+    source = str(metadata.get("tp_target_source") or "").upper()
+    if not source or "FORECAST" in source or "RUNNER" in source:
+        return False
+    return "HARVEST" in source
+
+
 def _truthy_metadata(value: object) -> bool:
     if isinstance(value, bool):
         return value
@@ -988,6 +1020,18 @@ class RiskPolicy:
     # caps TP at the opposing rail (`_range_geometry`), so this floor only
     # gates the loss/reward ratio, not the absolute target distance.
     range_min_reward_risk: float = 0.6
+    # Reward/risk floor for non-trend failed-break HARVEST entries whose broker
+    # TP is explicitly attached to a technical/structural target.
+    # (a) market reality: failed-break and small-wave harvests are short-cycle
+    #     capture trades; forcing the 1.2R runner floor makes the bot skip or
+    #     over-stretch the nearest executable structural take-profit. 1.0R still
+    #     requires winners to pay for one full loser before spread/slippage gates.
+    # (b) constant rather than derived: this is the execution contract that
+    #     matches intent_generator's attached HARVEST fallback. It is narrower
+    #     than range_min_reward_risk and never applies to TREND_CONTINUATION.
+    # (c) replace via: train a method/source-specific expectancy floor from
+    #     post-trade HARVEST outcomes, then wire that distribution into policy.
+    technical_harvest_min_reward_risk: float = 1.0
     max_quote_age_seconds: int = 20
     max_spread_multiple: float = 2.5
     min_target_spread_multiple: float = 5.0
@@ -1316,10 +1360,13 @@ class RiskEngine:
                 )
             )
         issues.extend(_loss_asymmetry_guard_issues(intent, metrics))
-        # Regime-derived reward/risk floor. RANGE regimes and explicit recovery
-        # hedges are allowed below the default min_reward_risk because rotation
-        # geometry caps TP at the opposing rail, and recovery hedges monetize a
-        # trapped opposite leg instead of opening a fresh one-way thesis.
+        # Regime/mode-derived reward/risk floor. RANGE regimes and explicit
+        # recovery hedges are allowed below the default min_reward_risk because
+        # rotation geometry caps TP at the opposing rail, and recovery hedges
+        # monetize a trapped opposite leg instead of opening a fresh one-way
+        # thesis. Failed-break technical HARVEST is a separate short-cycle
+        # capture mode: it may use the 1R HARVEST floor, but trend continuation
+        # keeps the default/higher trend payoff gates.
         # Falls back to default min when regime is missing/unclear so silent
         # data gaps cannot relax the floor (per AGENT_CONTRACT §3.5).
         regime_state = ""
@@ -1329,14 +1376,29 @@ class RiskEngine:
                 regime_state = raw_state.upper()
         if _intent_declares_recovery_hedge(intent) or _uses_range_reward_floor(intent, regime_state):
             active_min_rr = self.policy.range_min_reward_risk
+            floor_label = "range/recovery"
+        elif _uses_technical_harvest_reward_floor(intent):
+            active_min_rr = self.policy.technical_harvest_min_reward_risk
+            floor_label = "technical_harvest"
         else:
             active_min_rr = self.policy.min_reward_risk
+            floor_label = "default"
         if metrics.reward_risk < active_min_rr:
             issues.append(
                 RiskIssue(
                     "REWARD_RISK_TOO_LOW",
                     f"planned reward/risk {metrics.reward_risk:.2f}x is below {active_min_rr:.2f}x"
                     + (f" (regime={regime_state})" if regime_state else ""),
+                )
+            )
+        elif floor_label == "technical_harvest" and metrics.reward_risk < self.policy.min_reward_risk:
+            issues.append(
+                RiskIssue(
+                    "TECHNICAL_HARVEST_REWARD_RISK_FLOOR",
+                    f"technical HARVEST uses {active_min_rr:.2f}x floor instead of "
+                    f"default {self.policy.min_reward_risk:.2f}x; target remains "
+                    f"{metrics.reward_pips:.1f}pip with spread {spread_pips:.1f}pip",
+                    severity="WARN",
                 )
             )
         if metrics.reward_pips < spread_pips * self.policy.min_target_spread_multiple:

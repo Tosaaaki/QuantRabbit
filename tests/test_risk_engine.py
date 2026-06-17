@@ -2424,6 +2424,101 @@ class RiskEngineTest(unittest.TestCase):
         self.assertGreaterEqual(decision.metrics.reward_risk, 0.6)
         self.assertLess(decision.metrics.reward_risk, 1.2)
 
+    def test_failed_break_technical_harvest_uses_one_r_floor(self) -> None:
+        intent = OrderIntent(
+            pair="EUR_USD",
+            side=Side.LONG,
+            order_type=OrderType.MARKET,
+            units=1000,
+            tp=1.17431,
+            sl=1.17230,
+            thesis="failed_break_harvest_1r_should_not_use_runner_floor",
+            market_context=MarketContext(
+                regime="M5 failed break retest",
+                narrative="short-cycle failed-break harvest",
+                chart_story="retest rejection with nearby structural harvest TP",
+                method=TradeMethod.BREAKOUT_FAILURE,
+                invalidation="retest low loses",
+            ),
+            metadata={
+                "opportunity_mode": "HARVEST",
+                "tp_execution_mode": "ATTACHED_TECHNICAL_TP",
+                "tp_target_intent": "HARVEST",
+                "tp_target_source": "OPERATING_HARVEST_FLOOR",
+            },
+        )
+
+        decision = _capped_engine().validate(intent, snapshot())
+
+        codes = {issue.code for issue in decision.issues}
+        self.assertTrue(decision.allowed, decision.block_reasons)
+        self.assertNotIn("REWARD_RISK_TOO_LOW", codes)
+        self.assertIn("TECHNICAL_HARVEST_REWARD_RISK_FLOOR", codes)
+        self.assertIsNotNone(decision.metrics)
+        assert decision.metrics is not None
+        self.assertGreaterEqual(decision.metrics.reward_risk, 1.0)
+        self.assertLess(decision.metrics.reward_risk, 1.2)
+
+    def test_failed_break_technical_harvest_below_one_r_still_blocks(self) -> None:
+        intent = OrderIntent(
+            pair="EUR_USD",
+            side=Side.LONG,
+            order_type=OrderType.MARKET,
+            units=1000,
+            tp=1.17410,
+            sl=1.17230,
+            thesis="failed_break_harvest_below_1r_still_bad_geometry",
+            market_context=MarketContext(
+                regime="M5 failed break retest",
+                narrative="short-cycle failed-break harvest",
+                chart_story="retest rejection but TP too close for stop distance",
+                method=TradeMethod.BREAKOUT_FAILURE,
+                invalidation="retest low loses",
+            ),
+            metadata={
+                "opportunity_mode": "HARVEST",
+                "tp_execution_mode": "ATTACHED_TECHNICAL_TP",
+                "tp_target_intent": "HARVEST",
+                "tp_target_source": "OPERATING_HARVEST_FLOOR",
+            },
+        )
+
+        decision = _capped_engine().validate(intent, snapshot())
+
+        self.assertFalse(decision.allowed)
+        self.assertIn("REWARD_RISK_TOO_LOW", {issue.code for issue in decision.issues})
+
+    def test_trend_continuation_does_not_get_technical_harvest_rr_floor(self) -> None:
+        intent = OrderIntent(
+            pair="EUR_USD",
+            side=Side.LONG,
+            order_type=OrderType.MARKET,
+            units=1000,
+            tp=1.17431,
+            sl=1.17230,
+            thesis="trend_continuation_must_not_use_harvest_floor",
+            market_context=MarketContext(
+                regime="H1 trend continuation",
+                narrative="runner thesis must clear runner floor",
+                chart_story="trend continuation, not a failed-break harvest",
+                method=TradeMethod.TREND_CONTINUATION,
+                invalidation="trend structure fails",
+            ),
+            metadata={
+                "opportunity_mode": "HARVEST",
+                "tp_execution_mode": "ATTACHED_TECHNICAL_TP",
+                "tp_target_intent": "HARVEST",
+                "tp_target_source": "OPERATING_HARVEST_FLOOR",
+            },
+        )
+
+        decision = _capped_engine().validate(intent, snapshot())
+
+        self.assertFalse(decision.allowed)
+        codes = {issue.code for issue in decision.issues}
+        self.assertIn("REWARD_RISK_TOO_LOW", codes)
+        self.assertNotIn("TECHNICAL_HARVEST_REWARD_RISK_FLOOR", codes)
+
     def test_usd_quote_risk_uses_snapshot_usd_jpy_conversion(self) -> None:
         intent = OrderIntent(
             pair="EUR_USD",

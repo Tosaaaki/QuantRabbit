@@ -373,11 +373,10 @@ FORECAST_CONFIDENCE_TELEMETRY_TOLERANCE = _env_float(
     minimum=0.0,
 )
 # Fallback TP construction for fresh entries without a structural HARVEST
-# anchor still asks for at least 1R before expanding the broker TP distance.
-# Live permission itself must come from RiskEngine's regime-derived RR floor;
-# otherwise this intent layer silently reintroduces the fixed-RR veto that
-# range/failure scalps were explicitly designed to avoid.
-FRESH_ENTRY_HARVEST_TP_FALLBACK_MIN_REWARD_RISK = 1.0
+# anchor uses RiskPolicy.technical_harvest_min_reward_risk before expanding the
+# broker TP distance. Live permission itself must come from RiskEngine's
+# regime/mode-derived RR floor; otherwise this intent layer silently
+# reintroduces a fixed-RR veto that range/failure scalps were designed to avoid.
 OPPORTUNITY_MODE_HARVEST_REWARD_RISK_MAX = 1.35
 OPPORTUNITY_MODE_RUNNER_REWARD_RISK_MIN = 2.0
 
@@ -390,7 +389,7 @@ def _broker_price_tick_pips(pair: str) -> float:
 
 def _fresh_entry_live_floor_distance_pips(pair: str, stop_pips: float) -> float:
     """Minimum TP distance for NEW non-recovery entries to clear live RR."""
-    return (FRESH_ENTRY_HARVEST_TP_FALLBACK_MIN_REWARD_RISK * stop_pips) + _broker_price_tick_pips(pair)
+    return (RiskPolicy().technical_harvest_min_reward_risk * stop_pips) + _broker_price_tick_pips(pair)
 
 
 def _market_derived_reward_risk(chart_context: dict[str, Any] | None) -> tuple[float, list[str]]:
