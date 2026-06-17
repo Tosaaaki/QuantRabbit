@@ -22,6 +22,7 @@ from quant_rabbit.analysis.market_status import (
 from quant_rabbit.execution_ledger import ExecutionLedger
 from quant_rabbit.paths import (
     DEFAULT_AI_ATTACK_ADVICE,
+    DEFAULT_AI_ATTACK_ADVICE_REPORT,
     DEFAULT_BROKER_SNAPSHOT,
     DEFAULT_AI_TEST_BOT_BACKTEST,
     DEFAULT_AI_TEST_BOT_BACKTEST_REPORT,
@@ -54,6 +55,7 @@ from quant_rabbit.paths import (
     DEFAULT_POSITION_MANAGEMENT_REPORT,
     DEFAULT_POST_TRADE_LEARNING,
     DEFAULT_RECEIPT_PROMOTION_REPORT,
+    DEFAULT_COVERAGE_OPTIMIZATION,
     DEFAULT_SELF_IMPROVEMENT_AUDIT,
     DEFAULT_STRATEGY_PROFILE,
     DEFAULT_TRADER_DECISION,
@@ -64,6 +66,7 @@ from quant_rabbit.paths import (
     DEFAULT_VERIFICATION_LEDGER_REPORT,
     ROOT,
 )
+from quant_rabbit.attack_advisor import AttackAdvisor
 from quant_rabbit.ai_test_bot import AITestBotBacktester
 from quant_rabbit.gpt_trader import DEFAULT_GPT_MAX_LANES, GPTTraderBrain, TraderModelProvider
 from quant_rabbit.instruments import DEFAULT_TRADER_PAIRS
@@ -3252,6 +3255,7 @@ class AutoTradeCycle:
             return reusable
         try:
             self._run_market_status_for_gpt_handoff()
+            self._run_attack_advice_for_gpt_handoff()
             self._run_learning_audit_for_gpt_handoff()
             self._run_verification_ledger_for_gpt_handoff()
             summary = self._gpt_brain().run(snapshot_path=self.snapshot_path)
@@ -3491,6 +3495,19 @@ class AutoTradeCycle:
         status = compute_market_status()
         write_market_status_snapshot(status, self.gpt_market_status_path)
         write_market_status_report(status, self.gpt_market_status_report_path)
+
+    def _run_attack_advice_for_gpt_handoff(self) -> None:
+        if self.gpt_attack_advice_path != DEFAULT_AI_ATTACK_ADVICE:
+            return
+        AttackAdvisor(
+            intents_path=self.intents_path,
+            target_state_path=self.gpt_target_state_path,
+            ai_backtest_path=self.gpt_ai_backtest_path,
+            outcome_mart_path=self.gpt_outcome_mart_path,
+            coverage_path=DEFAULT_COVERAGE_OPTIMIZATION,
+            output_path=self.gpt_attack_advice_path,
+            report_path=DEFAULT_AI_ATTACK_ADVICE_REPORT,
+        ).run()
 
     def _run_learning_audit_for_gpt_handoff(self) -> None:
         LearningAuditor(

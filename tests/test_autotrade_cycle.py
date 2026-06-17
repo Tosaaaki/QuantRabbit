@@ -3474,6 +3474,89 @@ class AutoTradeCycleTest(unittest.TestCase):
                 rows = conn.execute("SELECT COUNT(*) FROM verification_observations").fetchone()[0]
             self.assertGreater(rows, 0)
 
+    def test_gpt_handoff_refreshes_default_attack_advice_after_intents(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            now = datetime.now(timezone.utc)
+            lane_id = "trend_trader:EUR_USD:LONG:TREND_CONTINUATION"
+            snapshot_path = root / "snapshot.json"
+            snapshot_path.write_text(
+                _snapshot_to_json(
+                    BrokerSnapshot(
+                        fetched_at_utc=now,
+                        quotes={
+                            "EUR_USD": Quote("EUR_USD", 1.17298, 1.17306, timestamp_utc=now),
+                            "USD_JPY": Quote("USD_JPY", 157.0, 157.01, timestamp_utc=now),
+                        },
+                    )
+                )
+                + "\n"
+            )
+            intents_path = root / "intents.json"
+            _write_live_ready_intents(intents_path)
+            target_state = _open_target_state(root)
+            attack_advice_path = root / "ai_attack_advice.json"
+            attack_advice_path.write_text(
+                json.dumps(
+                    {
+                        "generated_at_utc": "2026-06-01T00:00:00+00:00",
+                        "status": "NO_ATTACK_ADVICE",
+                        "recommended_now_lane_ids": [],
+                        "live_ready_lanes": 0,
+                    }
+                )
+                + "\n"
+            )
+            decision = _gpt_trade_decision(lane_id=lane_id)
+            decision["evidence_refs"].extend(["attack:advice", f"attack:lane:{lane_id}"])
+
+            with (
+                mock.patch("quant_rabbit.automation.DEFAULT_AI_ATTACK_ADVICE", attack_advice_path),
+                mock.patch("quant_rabbit.automation.DEFAULT_AI_ATTACK_ADVICE_REPORT", root / "attack.md"),
+                mock.patch("quant_rabbit.automation.DEFAULT_AI_TEST_BOT_BACKTEST", root / "ai_test_bot_backtest.json"),
+                mock.patch("quant_rabbit.automation.DEFAULT_OUTCOME_MART", root / "outcome_mart.json"),
+                mock.patch("quant_rabbit.automation.DEFAULT_COVERAGE_OPTIMIZATION", root / "coverage.json"),
+            ):
+                summary = AutoTradeCycle(
+                    client=FakeCycleClient(BrokerSnapshot(fetched_at_utc=now)),
+                    snapshot_path=snapshot_path,
+                    intents_path=intents_path,
+                    intent_report_path=root / "intents.md",
+                    decision_path=root / "decision.json",
+                    decision_report_path=root / "decision.md",
+                    gpt_decision_path=root / "gpt_decision.json",
+                    gpt_decision_report_path=root / "gpt_decision.md",
+                    gpt_attack_advice_path=attack_advice_path,
+                    gpt_target_state_path=target_state,
+                    gpt_learning_audit_db_path=root / "execution_ledger.db",
+                    position_management_path=root / "pm.json",
+                    position_management_report_path=root / "pm.md",
+                    position_execution_path=root / "pe.json",
+                    position_execution_report_path=root / "pe.md",
+                    live_order_output_path=root / "live_order.json",
+                    live_order_report_path=root / "live_order.md",
+                    report_path=root / "report.md",
+                    campaign_plan_path=_campaign(root),
+                    strategy_profile_path=_candidate_profile(root),
+                    market_story_profile_path=_stories(root),
+                    pair_charts_path=_pair_charts(root),
+                    use_gpt_trader=True,
+                    gpt_provider=StaticTraderProvider(decision),
+                    refresh_market_story=False,
+                    live_enabled=True,
+                )._run_gpt_handoff()
+
+            self.assertEqual(summary.status, "ACCEPTED")
+            attack_payload = json.loads(attack_advice_path.read_text())
+            self.assertEqual(attack_payload["live_ready_lanes"], 1)
+            self.assertEqual(attack_payload["recommended_now_lane_ids"], [lane_id])
+            self.assertNotEqual(attack_payload["status"], "NO_ATTACK_ADVICE")
+            gpt_payload = json.loads((root / "gpt_decision.json").read_text())
+            self.assertEqual(
+                gpt_payload["input_packet"]["artifact_timestamps"]["ai_attack_advice_generated_at_utc"],
+                attack_payload["generated_at_utc"],
+            )
+
     def test_gpt_single_trade_dedupes_prefiltered_parent_variants(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
