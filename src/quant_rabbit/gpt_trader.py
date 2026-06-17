@@ -966,6 +966,8 @@ from quant_rabbit.paths import (
     DEFAULT_MARKET_CONTEXT_MATRIX,
     DEFAULT_MARKET_STATUS,
     DEFAULT_MARKET_STORY_PROFILE,
+    DEFAULT_NEWS_HEALTH,
+    DEFAULT_NEWS_SNAPSHOT,
     DEFAULT_OPTION_SKEW,
     DEFAULT_OPERATOR_PRECEDENT_AUDIT,
     DEFAULT_ORDER_INTENTS,
@@ -1184,6 +1186,8 @@ class GPTTraderBrain:
         operator_precedent_path: Path = DEFAULT_OPERATOR_PRECEDENT_AUDIT,
         manual_market_context_path: Path = DEFAULT_MANUAL_MARKET_CONTEXT_AUDIT,
         predictive_limits_path: Path = DEFAULT_PREDICTIVE_LIMIT_ORDERS,
+        news_items_path: Path = DEFAULT_NEWS_SNAPSHOT,
+        news_health_path: Path = DEFAULT_NEWS_HEALTH,
         output_path: Path = DEFAULT_GPT_TRADER_DECISION,
         report_path: Path = DEFAULT_GPT_TRADER_DECISION_REPORT,
         max_lanes: int = DEFAULT_GPT_MAX_LANES,
@@ -1215,6 +1219,8 @@ class GPTTraderBrain:
         self.operator_precedent_path = operator_precedent_path
         self.manual_market_context_path = manual_market_context_path
         self.predictive_limits_path = predictive_limits_path
+        self.news_items_path = news_items_path
+        self.news_health_path = news_health_path
         self.output_path = output_path
         self.report_path = report_path
         self.max_lanes = max_lanes
@@ -1270,6 +1276,8 @@ class GPTTraderBrain:
         predictive_limits = _load_optional_json(self.predictive_limits_path)
         market_context_matrix = _load_optional_json(self.market_context_matrix_path)
         option_skew = _load_optional_json(self.option_skew_path)
+        news_items = _load_optional_json(self.news_items_path)
+        news_health = _load_optional_json(self.news_health_path)
         pairs = _pairs_from_lanes_and_positions(lanes, snapshot)
         currencies = _currencies_from_pairs(pairs)
         refs = _allowed_refs(
@@ -1288,6 +1296,8 @@ class GPTTraderBrain:
             market_status=market_status,
             market_context_matrix=market_context_matrix,
             option_skew=option_skew,
+            news_items=news_items,
+            news_health=news_health,
         )
         attack_packet = _attack_advice_packet(attack_advice)
         learning_packet = _learning_audit_packet(learning_audit)
@@ -1358,6 +1368,7 @@ class GPTTraderBrain:
             "operator_precedent": _operator_precedent_packet(operator_precedent),
             "manual_market_context": _manual_market_context_packet(manual_market_context),
             "predictive_limits": _predictive_limits_packet(predictive_limits, pairs=pairs),
+            "news": _news_packet(news_items, news_health, pairs=pairs, currencies=currencies),
             "market_status": _market_status_packet(market_status),
             "protection_sidecars": _protection_sidecars_packet(
                 snapshot=snapshot,
@@ -2823,6 +2834,8 @@ def _allowed_refs(
     market_status: dict[str, Any] | None,
     market_context_matrix: dict[str, Any] | None,
     option_skew: dict[str, Any] | None,
+    news_items: dict[str, Any] | None,
+    news_health: dict[str, Any] | None,
 ) -> list[str]:
     # Per docs/SKILL_trader.md the playbook prescribes a richer set of evidence
     # refs than the base broker/target/lane triple — the trader is required to
@@ -3023,6 +3036,15 @@ def _allowed_refs(
             side = str(item.get("side") or "")
             if pair and side:
                 refs.append(f"predictive:limit:{pair}:{side}")
+    refs.extend(["news:items", "news:health"])
+    if news_items:
+        refs.append("news:current")
+    if news_health:
+        refs.append("news:freshness")
+    for pair in pairs:
+        refs.append(f"news:{pair}")
+    for currency in currencies:
+        refs.append(f"news:{currency}")
     return sorted(set(refs))
 
 
@@ -3991,6 +4013,70 @@ def _small_dict(payload: object, keys: tuple[str, ...]) -> dict[str, Any]:
     if not isinstance(payload, dict):
         return {}
     return {key: payload.get(key) for key in keys if key in payload}
+
+
+def _news_packet(
+    news_items: dict[str, Any] | None,
+    news_health: dict[str, Any] | None,
+    *,
+    pairs: set[str] | tuple[str, ...],
+    currencies: set[str] | tuple[str, ...],
+) -> dict[str, Any]:
+    pair_set = {str(pair) for pair in pairs if str(pair)}
+    currency_set = {str(currency) for currency in currencies if str(currency)}
+    health = {
+        "evidence_ref": "news:health",
+        "status": news_health.get("status") if isinstance(news_health, dict) else "missing",
+        "generated_at_utc": news_health.get("generated_at_utc") if isinstance(news_health, dict) else None,
+        "market_window": news_health.get("market_window") if isinstance(news_health, dict) else None,
+        "issues": list(news_health.get("issues", [])[:8]) if isinstance(news_health, dict) else ["MISSING_NEWS_HEALTH"],
+    }
+    if not isinstance(news_items, dict):
+        return {
+            "evidence_ref": "news:items",
+            "status": "missing",
+            "generated_at_utc": None,
+            "health": health,
+            "items_count": 0,
+            "relevant_items": [],
+        }
+    rows = [item for item in news_items.get("items", []) or [] if isinstance(item, dict)]
+    relevant = [item for item in rows if _news_item_relevant(item, pairs=pair_set, currencies=currency_set)]
+    selected = (relevant or rows)[:12]
+    return {
+        "evidence_ref": "news:items",
+        "status": "present",
+        "generated_at_utc": news_items.get("generated_at_utc"),
+        "health": health,
+        "items_count": len(rows),
+        "relevant_items_count": len(relevant),
+        "relevant_items": [_news_item_packet(item) for item in selected],
+    }
+
+
+def _news_item_relevant(item: dict[str, Any], *, pairs: set[str], currencies: set[str]) -> bool:
+    item_pairs = {str(pair) for pair in item.get("pairs", []) or [] if str(pair)}
+    item_currencies = {str(currency) for currency in item.get("currencies", []) or [] if str(currency)}
+    return bool(item_pairs & pairs or item_currencies & currencies)
+
+
+def _news_item_packet(item: dict[str, Any]) -> dict[str, Any]:
+    pairs = [str(pair) for pair in item.get("pairs", []) or [] if str(pair)]
+    currencies = [str(currency) for currency in item.get("currencies", []) or [] if str(currency)]
+    evidence_refs = ["news:items"]
+    evidence_refs.extend(f"news:{pair}" for pair in pairs)
+    evidence_refs.extend(f"news:{currency}" for currency in currencies)
+    return {
+        "evidence_refs": sorted(set(evidence_refs)),
+        "source": item.get("source"),
+        "published_at_utc": item.get("published_at_utc"),
+        "title": item.get("title"),
+        "pairs": pairs,
+        "currencies": currencies,
+        "topics": list(item.get("topics", [])[:8]) if isinstance(item.get("topics"), list) else [],
+        "categories": list(item.get("categories", [])[:8]) if isinstance(item.get("categories"), list) else [],
+        "link": item.get("link"),
+    }
 
 
 def _lane_forecast_packet(metadata: object) -> dict[str, Any]:

@@ -198,7 +198,7 @@ unwind plan is not a time-efficient trade; it is passive loss-freezing.
 - Thesis, method, narrative, chart story, invalidation, TP, SL, units, expected reward, worst-case loss.
 - Rejected alternatives.
 - Risk notes naming `per_trade_risk_budget_jpy`, spread state, calendar state, strength alignment or conflict, and any COT warning.
-- Evidence refs for broker, target, intent, campaign, strategy, story, charts, matrix, cross-asset, strength, flow, levels, calendar, COT, enabled option skew, and attack advice when used.
+- Evidence refs for broker, target, intent, campaign, strategy, story, charts, matrix, cross-asset, strength, flow, levels, calendar, news, COT, enabled option skew, and attack advice when used.
 - `twenty_minute_plan` with packet refs as above.
 
 ## Specialist Reviews

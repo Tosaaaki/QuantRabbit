@@ -77,6 +77,9 @@
   - TRADE receipts should cite `matrix:<PAIR>:<SIDE>` and carry the strongest reject into the 20-minute counterargument.
 - `data/economic_calendar.json`
   - `pair_windows[].in_window=true` means WAIT unless the receipt explicitly records an override reason.
+- `data/news_items.json` and `data/news_health.json`
+  - `news_health.status` tells whether the current news layer is fresh enough for the active market window.
+  - `news_items.items[]` gives current public-news context by pair/currency/topic. Cite it as context for catalysts, macro risk, or missing evidence; it cannot override broker truth, current `LIVE_READY`, spread, event, or risk gates by itself.
 - `data/cot_snapshot.json`
   - Extreme positioning is a warning and must be cited when relevant.
 - `data/option_skew_snapshot.json`

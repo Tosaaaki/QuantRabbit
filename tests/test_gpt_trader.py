@@ -1610,6 +1610,48 @@ class GPTTraderBrainTest(unittest.TestCase):
             self.assertIn("broker:instruments", payload["input_packet"]["allowed_evidence_refs"])
             self.assertIn("cross:WTICO_USD", payload["input_packet"]["allowed_evidence_refs"])
 
+    def test_accepts_and_packets_current_news_evidence_refs(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root)
+            files["news_items"].write_text(
+                json.dumps(
+                    {
+                        "generated_at_utc": datetime.now(timezone.utc).isoformat(),
+                        "issues": [],
+                        "items": [
+                            {
+                                "source": "MarketPulse",
+                                "published_at_utc": "2026-06-17T06:59:00+00:00",
+                                "title": "Fed decision keeps dollar pairs in focus",
+                                "pairs": ["EUR_USD"],
+                                "currencies": ["EUR", "USD"],
+                                "topics": ["central_bank"],
+                                "categories": ["FX_EURUSD", "FX_USD"],
+                                "link": "https://example.test/fed",
+                            }
+                        ],
+                    }
+                )
+            )
+            decision = _trade_decision()
+            decision["evidence_refs"].extend(["news:items", "news:health", "news:EUR_USD", "news:USD"])
+            brain = _brain(root, files, decision)
+
+            summary = brain.run(snapshot_path=files["snapshot"])
+
+            self.assertEqual(summary.status, "ACCEPTED")
+            payload = json.loads((root / "gpt_decision.json").read_text())
+            refs = payload["input_packet"]["allowed_evidence_refs"]
+            self.assertIn("news:items", refs)
+            self.assertIn("news:health", refs)
+            self.assertIn("news:EUR_USD", refs)
+            self.assertIn("news:USD", refs)
+            self.assertEqual(payload["input_packet"]["news"]["health"]["status"], "OK")
+            news_item = payload["input_packet"]["news"]["relevant_items"][0]
+            self.assertEqual(news_item["evidence_refs"], ["news:EUR", "news:EUR_USD", "news:USD", "news:items"])
+            self.assertEqual(news_item["title"], "Fed decision keeps dollar pairs in focus")
+
     def test_accepts_capture_economics_and_named_cross_asset_refs(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -2863,6 +2905,8 @@ def _brain(root: Path, files: dict[str, Path], decision: dict, *, max_lanes: int
         operator_precedent_path=files["operator_precedent"],
         manual_market_context_path=files["manual_market_context"],
         predictive_limits_path=files["predictive_limits"],
+        news_items_path=files["news_items"],
+        news_health_path=files["news_health"],
         **({"max_lanes": max_lanes} if max_lanes is not None else {}),
     )
 
@@ -2920,6 +2964,8 @@ def _fixtures(root: Path, *, positions: list[dict] | None = None, orders: list[d
         "operator_precedent": root / "operator_precedent.json",
         "manual_market_context": root / "manual_market_context.json",
         "predictive_limits": root / "predictive_limits.json",
+        "news_items": root / "news_items.json",
+        "news_health": root / "news_health.json",
     }
     now = datetime.now(timezone.utc).isoformat()
     files["snapshot"].write_text(
@@ -3224,6 +3270,17 @@ def _fixtures(root: Path, *, positions: list[dict] | None = None, orders: list[d
     files["operator_precedent"].write_text(json.dumps({}))
     files["manual_market_context"].write_text(json.dumps({}))
     files["predictive_limits"].write_text(json.dumps({"dry_run": True, "orders": []}))
+    files["news_items"].write_text(json.dumps({"generated_at_utc": now, "issues": [], "items": []}))
+    files["news_health"].write_text(
+        json.dumps(
+            {
+                "generated_at_utc": now,
+                "status": "OK",
+                "market_window": "ACTIVE",
+                "issues": [],
+            }
+        )
+    )
     return files
 
 
