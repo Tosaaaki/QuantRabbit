@@ -1005,6 +1005,11 @@ def _capture_loss_asymmetry_guard(data_root: Path | None = None) -> dict[str, An
     trades = _optional_float(overall.get("trades"))
     if avg_win is None or avg_win <= 0 or avg_loss is None or avg_loss <= avg_win:
         return {}
+    by_exit_reason = payload.get("by_exit_reason") if isinstance(payload.get("by_exit_reason"), dict) else {}
+    tp_exit = by_exit_reason.get("TAKE_PROFIT_ORDER") if isinstance(by_exit_reason, dict) else None
+    tp_exit = tp_exit if isinstance(tp_exit, dict) else {}
+    market_close_exit = by_exit_reason.get("MARKET_ORDER_TRADE_CLOSE") if isinstance(by_exit_reason, dict) else None
+    market_close_exit = market_close_exit if isinstance(market_close_exit, dict) else {}
     return {
         "active": True,
         "status": status,
@@ -1015,6 +1020,11 @@ def _capture_loss_asymmetry_guard(data_root: Path | None = None) -> dict[str, An
         "payoff_ratio": overall.get("payoff_ratio"),
         "breakeven_payoff_at_win_rate": overall.get("breakeven_payoff_at_win_rate"),
         "source": str(path),
+        "take_profit_trades": int(_optional_float(tp_exit.get("trades")) or 0),
+        "take_profit_expectancy_jpy": _optional_float(tp_exit.get("expectancy_jpy_per_trade")),
+        "take_profit_avg_win_jpy": _optional_float(tp_exit.get("avg_win_jpy")),
+        "take_profit_losses": int(_optional_float(tp_exit.get("losses")) or 0),
+        "market_close_expectancy_jpy": _optional_float(market_close_exit.get("expectancy_jpy_per_trade")),
     }
 
 
@@ -5164,13 +5174,21 @@ def _macro_event_size_up_signal(lane: dict[str, Any], *, side: Side) -> dict[str
     return None
 
 
+# Exit-reason payoff needs enough realized outcomes to be more than one noisy
+# campaign burst. Twenty exits is two default 10-trade campaign days, so it is
+# an evidence floor for relaxing a guard, not a market target.
+LOSS_ASYMMETRY_TP_RELAX_MIN_EXIT_TRADES = 20
+
+
 def _loss_asymmetry_sizing_plan(
     guard: dict[str, Any] | None,
     *,
     base_max_loss_jpy: float,
     position_metadata: dict[str, Any],
+    order_type: OrderType,
+    tp_execution_metadata: dict[str, Any],
 ) -> tuple[float, dict[str, Any]]:
-    """Cap fresh-entry risk at the observed average winner during repair mode.
+    """Cap fresh-entry risk unless this exact exit shape has proved payoff.
 
     The cap is evidence-derived from `capture_economics`; no fixed JPY target
     is used. HEDGE intents are excluded because they manage existing exposure
@@ -5183,16 +5201,26 @@ def _loss_asymmetry_sizing_plan(
     cap = _optional_float(guard.get("loss_cap_jpy"))
     if cap is None or cap <= 0:
         return base_max_loss_jpy, {}
-    effective = min(base_max_loss_jpy, cap)
-    return effective, {
+    relaxation_reason = _loss_asymmetry_tp_relaxation_reason(
+        guard,
+        order_type=order_type,
+        tp_execution_metadata=tp_execution_metadata,
+    )
+    effective = base_max_loss_jpy if relaxation_reason else min(base_max_loss_jpy, cap)
+    metadata = {
         "loss_asymmetry_guard_active": True,
+        "loss_asymmetry_guard_mode": "TP_PROVEN_RELAXED" if relaxation_reason else "CAP_AVG_WIN",
+        "loss_asymmetry_guard_relaxed": bool(relaxation_reason),
+        "loss_asymmetry_guard_relaxation_reason": relaxation_reason,
         "loss_asymmetry_guard_loss_cap_jpy": round(cap, 4),
         "loss_asymmetry_guard_base_max_loss_jpy": round(base_max_loss_jpy, 4),
         "loss_asymmetry_guard_effective_max_loss_jpy": round(effective, 4),
         "loss_asymmetry_guard_basis": (
             "capture_economics NEGATIVE_EXPECTANCY with observed avg_loss_jpy "
-            "greater than avg_win_jpy; cap NEW-entry worst-case loss at the "
-            "observed average winner until payoff repair clears"
+            "greater than avg_win_jpy; cap weak/no-TP fresh-entry worst-case loss "
+            "at the observed average winner, but allow broker-TP HARVEST entries "
+            "to use the normal per-trade cap when TAKE_PROFIT_ORDER exits have "
+            "proved positive expectancy"
         ),
         "capture_economics_status": guard.get("status"),
         "capture_economics_trades": guard.get("trades"),
@@ -5200,8 +5228,43 @@ def _loss_asymmetry_sizing_plan(
         "capture_avg_loss_jpy": guard.get("avg_loss_jpy"),
         "capture_payoff_ratio": guard.get("payoff_ratio"),
         "capture_breakeven_payoff_at_win_rate": guard.get("breakeven_payoff_at_win_rate"),
+        "capture_take_profit_trades": guard.get("take_profit_trades"),
+        "capture_take_profit_expectancy_jpy": guard.get("take_profit_expectancy_jpy"),
+        "capture_take_profit_avg_win_jpy": guard.get("take_profit_avg_win_jpy"),
+        "capture_take_profit_losses": guard.get("take_profit_losses"),
+        "capture_market_close_expectancy_jpy": guard.get("market_close_expectancy_jpy"),
         "capture_economics_source": guard.get("source"),
     }
+    return effective, metadata
+
+
+def _loss_asymmetry_tp_relaxation_reason(
+    guard: dict[str, Any],
+    *,
+    order_type: OrderType,
+    tp_execution_metadata: dict[str, Any],
+) -> str | None:
+    if order_type == OrderType.MARKET:
+        return None
+    if not tp_execution_metadata.get("attach_take_profit_on_fill"):
+        return None
+    if str(tp_execution_metadata.get("tp_execution_mode") or "").upper() != "ATTACHED_TECHNICAL_TP":
+        return None
+    if str(tp_execution_metadata.get("tp_target_intent") or "").upper() != "HARVEST":
+        return None
+    tp_trades = int(_optional_float(guard.get("take_profit_trades")) or 0)
+    tp_expectancy = _optional_float(guard.get("take_profit_expectancy_jpy"))
+    tp_avg_win = _optional_float(guard.get("take_profit_avg_win_jpy"))
+    if tp_trades < LOSS_ASYMMETRY_TP_RELAX_MIN_EXIT_TRADES:
+        return None
+    if tp_expectancy is None or tp_expectancy <= 0 or tp_avg_win is None or tp_avg_win <= 0:
+        return None
+    return (
+        "TAKE_PROFIT_ORDER exits are positive-expectancy for this broker-TP "
+        f"HARVEST shape (trades={tp_trades}, expectancy={tp_expectancy:.1f} JPY); "
+        "the negative overall payoff is concentrated in market-close exits, so "
+        "do not throttle this TP-attached entry below the normal per-trade cap"
+    )
 
 
 def _intent_from_lane(
@@ -5270,11 +5333,6 @@ def _intent_from_lane(
         portfolio_loss_cap=portfolio_loss_cap,
         position_metadata=position_metadata,
     )
-    effective_max_loss_jpy, loss_asymmetry_metadata = _loss_asymmetry_sizing_plan(
-        loss_asymmetry_guard,
-        base_max_loss_jpy=effective_max_loss_jpy,
-        position_metadata=position_metadata,
-    )
     tp, tp_execution_metadata = _take_profit_execution_plan(
         pair=pair,
         side=side,
@@ -5293,6 +5351,13 @@ def _intent_from_lane(
         forecast_confidence=_optional_float(lane.get("forecast_confidence")),
         forecast_target_price=_optional_float(lane.get("forecast_target_price")),
         hedge_recovery=_is_hedge_recovery_metadata(position_metadata),
+    )
+    effective_max_loss_jpy, loss_asymmetry_metadata = _loss_asymmetry_sizing_plan(
+        loss_asymmetry_guard,
+        base_max_loss_jpy=effective_max_loss_jpy,
+        position_metadata=position_metadata,
+        order_type=order_type,
+        tp_execution_metadata=tp_execution_metadata,
     )
     geometry_metadata = _geometry_metadata(
         pair,

@@ -339,6 +339,8 @@ def _loss_asymmetry_guard_issues(intent: OrderIntent, metrics: RiskMetrics) -> l
     metadata = intent.metadata or {}
     if str(metadata.get("position_intent") or "NEW").upper() == "HEDGE":
         return []
+    if str(metadata.get("loss_asymmetry_guard_mode") or "").upper() == "TP_PROVEN_RELAXED":
+        return []
     status = str(metadata.get("capture_economics_status") or "").upper()
     avg_win = _to_float(metadata.get("capture_avg_win_jpy"))
     avg_loss = _to_float(metadata.get("capture_avg_loss_jpy"))

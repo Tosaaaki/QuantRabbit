@@ -223,6 +223,42 @@ class RiskEngineTest(unittest.TestCase):
         self.assertTrue(decision.allowed, decision.block_reasons)
         self.assertNotIn("LOSS_ASYMMETRY_GUARD_EXCEEDED", {issue.code for issue in decision.issues})
 
+    def test_tp_proven_relaxed_loss_asymmetry_uses_normal_loss_cap(self) -> None:
+        intent = OrderIntent(
+            pair="EUR_USD",
+            side=Side.LONG,
+            order_type=OrderType.LIMIT,
+            units=3000,
+            entry=1.17300,
+            tp=1.17600,
+            sl=1.17130,
+            thesis="tp_proven_harvest_can_use_normal_cap",
+            market_context=MarketContext(
+                regime="RANGE current; RANGE_ROTATION campaign lane",
+                narrative="broker TP harvest shape has proved payoff while market closes leak",
+                chart_story="range lower rail",
+                method=TradeMethod.RANGE_ROTATION,
+                invalidation="1.1713 loses on M5 bodies",
+            ),
+            metadata={
+                "capture_economics_status": "NEGATIVE_EXPECTANCY",
+                "capture_avg_win_jpy": 600.0,
+                "capture_avg_loss_jpy": 1100.0,
+                "loss_asymmetry_guard_active": True,
+                "loss_asymmetry_guard_mode": "TP_PROVEN_RELAXED",
+                "loss_asymmetry_guard_loss_cap_jpy": 600.0,
+                "loss_asymmetry_guard_effective_max_loss_jpy": 1000.0,
+                "tp_execution_mode": "ATTACHED_TECHNICAL_TP",
+                "attach_take_profit_on_fill": True,
+                "tp_target_intent": "HARVEST",
+            },
+        )
+
+        decision = _capped_engine(policy=RiskPolicy(max_loss_jpy=1000.0)).validate(intent, snapshot())
+
+        self.assertTrue(decision.allowed, decision.block_reasons)
+        self.assertNotIn("LOSS_ASYMMETRY_GUARD_EXCEEDED", {issue.code for issue in decision.issues})
+
     def test_forecast_geometry_inside_spread_noise_blocks_live_send(self) -> None:
         intent = OrderIntent(
             pair="EUR_USD",

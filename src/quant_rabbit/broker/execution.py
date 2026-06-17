@@ -1772,6 +1772,8 @@ def _portfolio_loss_remaining_jpy(
 
 
 def _loss_asymmetry_cap_from_metadata(metadata: dict[str, Any]) -> float | None:
+    if str(metadata.get("loss_asymmetry_guard_mode") or "").upper() == "TP_PROVEN_RELAXED":
+        return None
     status = str(metadata.get("capture_economics_status") or "").upper()
     active = str(metadata.get("loss_asymmetry_guard_active") or "").strip().lower() in {
         "1",
@@ -2086,10 +2088,21 @@ def _sizing_evidence_from_intent(
             ("loss_asymmetry_guard_effective_max_loss_jpy", "loss_asymmetry_guard_effective_max_loss_jpy"),
             ("capture_avg_win_jpy", "capture_avg_win_jpy"),
             ("capture_avg_loss_jpy", "capture_avg_loss_jpy"),
+            ("capture_take_profit_trades", "capture_take_profit_trades"),
+            ("capture_take_profit_expectancy_jpy", "capture_take_profit_expectancy_jpy"),
         ):
             value = _positive_float(metadata.get(source_key))
             if value is not None:
                 out[output_key] = round(value, 4)
+        mode = str(metadata.get("loss_asymmetry_guard_mode") or "").strip()
+        if mode:
+            out["loss_asymmetry_guard_mode"] = mode
+        relaxed = metadata.get("loss_asymmetry_guard_relaxed")
+        if isinstance(relaxed, bool):
+            out["loss_asymmetry_guard_relaxed"] = relaxed
+        reason = str(metadata.get("loss_asymmetry_guard_relaxation_reason") or "").strip()
+        if reason:
+            out["loss_asymmetry_guard_relaxation_reason"] = reason
         status = str(metadata.get("capture_economics_status") or "").strip()
         if status:
             out["capture_economics_status"] = status
@@ -2111,10 +2124,14 @@ def _sizing_evidence_report_lines(value: Any, *, prefix: str) -> list[str]:
         avg_win = value.get("capture_avg_win_jpy")
         avg_loss = value.get("capture_avg_loss_jpy")
         status = value.get("capture_economics_status") or "UNKNOWN"
+        mode = value.get("loss_asymmetry_guard_mode") or "CAP_AVG_WIN"
+        tp_trades = value.get("capture_take_profit_trades")
+        tp_expectancy = value.get("capture_take_profit_expectancy_jpy")
         lines.append(
-            f"{prefix}sizing guard: `LOSS_ASYMMETRY` units=`{units}` status=`{status}` "
+            f"{prefix}sizing guard: `LOSS_ASYMMETRY` mode=`{mode}` units=`{units}` status=`{status}` "
             f"cap=`{_fmt_jpy(cap)}` base_cap=`{_fmt_jpy(base)}` effective_cap=`{_fmt_jpy(effective)}` "
-            f"avg_win/avg_loss=`{_fmt_jpy(avg_win)}`/`{_fmt_jpy(avg_loss)}`"
+            f"avg_win/avg_loss=`{_fmt_jpy(avg_win)}`/`{_fmt_jpy(avg_loss)}` "
+            f"tp_exits=`{_fmt_count(tp_trades)}` tp_expectancy=`{_fmt_jpy(tp_expectancy)}`"
         )
     elif value.get("gateway_max_loss_jpy") is not None:
         lines.append(
@@ -2131,6 +2148,13 @@ def _fmt_units_transition(requested: Any, scaled: Any) -> str:
     if scaled is None or scaled == requested:
         return str(requested)
     return f"{requested}->{scaled}"
+
+
+def _fmt_count(value: Any) -> str:
+    try:
+        return str(int(float(value)))
+    except (TypeError, ValueError):
+        return "n/a"
 
 
 def _fmt_jpy(value: Any) -> str:

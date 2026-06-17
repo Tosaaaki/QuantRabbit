@@ -245,6 +245,71 @@ class IntentGeneratorTest(unittest.TestCase):
             self.assertEqual(metadata["max_loss_jpy"], 600.0)
             self.assertLessEqual(result["risk_metrics"]["risk_jpy"], 600.0)
 
+    def test_capture_loss_asymmetry_relaxes_tp_proven_harvest_entries(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "capture_economics.json").write_text(
+                json.dumps(
+                    {
+                        "status": "NEGATIVE_EXPECTANCY",
+                        "overall": {
+                            "trades": 210,
+                            "avg_win_jpy": 600.0,
+                            "avg_loss_jpy": 1100.0,
+                            "payoff_ratio": 0.545,
+                            "breakeven_payoff_at_win_rate": 0.7,
+                        },
+                        "by_exit_reason": {
+                            "TAKE_PROFIT_ORDER": {
+                                "trades": 93,
+                                "wins": 93,
+                                "losses": 0,
+                                "avg_win_jpy": 504.0,
+                                "avg_loss_jpy": 0.0,
+                                "expectancy_jpy_per_trade": 504.0,
+                            },
+                            "MARKET_ORDER_TRADE_CLOSE": {
+                                "trades": 84,
+                                "wins": 13,
+                                "losses": 71,
+                                "avg_win_jpy": 218.4,
+                                "avg_loss_jpy": 1095.5,
+                                "expectancy_jpy_per_trade": -892.1,
+                            },
+                        },
+                    }
+                )
+            )
+            output = root / "intents.json"
+
+            summary = IntentGenerator(
+                campaign_plan=_range_campaign(root),
+                strategy_profile=_strategy(root, status="CANDIDATE"),
+                output_path=output,
+                report_path=root / "intents.md",
+                pair_charts_path=_pair_charts(root),
+                data_root=root,
+                max_loss_jpy=1000.0,
+            ).run(snapshot_path=_snapshot(root))
+
+            payload = json.loads(output.read_text())
+            result = next(
+                item for item in payload["results"]
+                if item["lane_id"] == "range_trader:EUR_USD:LONG:RANGE_ROTATION"
+            )
+            metadata = result["intent"]["metadata"]
+
+            self.assertGreater(summary.generated, 0)
+            self.assertTrue(metadata["loss_asymmetry_guard_active"])
+            self.assertTrue(metadata["loss_asymmetry_guard_relaxed"])
+            self.assertEqual(metadata["loss_asymmetry_guard_mode"], "TP_PROVEN_RELAXED")
+            self.assertEqual(metadata["loss_asymmetry_guard_loss_cap_jpy"], 600.0)
+            self.assertEqual(metadata["loss_asymmetry_guard_effective_max_loss_jpy"], 1000.0)
+            self.assertEqual(metadata["max_loss_jpy"], 1000.0)
+            self.assertEqual(metadata["tp_execution_mode"], "ATTACHED_TECHNICAL_TP")
+            self.assertEqual(metadata["tp_target_intent"], "HARVEST")
+            self.assertLessEqual(result["risk_metrics"]["risk_jpy"], 1000.0)
+
     def test_min_lot_block_uses_loss_streak_adjusted_budget_in_live_blocker(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
