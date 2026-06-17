@@ -297,6 +297,12 @@ class LiveOrderGateway:
             "lane_id": selected_lane_id,
             "order_request": order_request,
             "context_evidence": _context_evidence_from_intent(intent),
+            "sizing_evidence": _sizing_evidence_from_intent(
+                intent,
+                gateway_max_loss_jpy=max_loss_jpy,
+                requested_units=requested_units,
+                scaled_units=intent.units,
+            ),
             "risk_metrics": asdict(risk.metrics) if risk.metrics else None,
             "attached_stop_risk_metrics": attached_stop_metrics,
             "risk_issues": [
@@ -721,6 +727,12 @@ class LiveOrderGateway:
             "lane_id": selected_lane_id,
             "order_request": order_request,
             "context_evidence": _context_evidence_from_intent(intent),
+            "sizing_evidence": _sizing_evidence_from_intent(
+                intent,
+                gateway_max_loss_jpy=max_loss_jpy,
+                requested_units=requested_units,
+                scaled_units=intent.units,
+            ),
             "risk_metrics": asdict(risk.metrics) if risk.metrics else None,
             "attached_stop_risk_metrics": attached_stop_metrics,
             "risk_issues": [
@@ -1128,6 +1140,7 @@ class LiveOrderGateway:
                         f"  - attached broker SL: `{attached_stop['basis']}` price=`{attached_stop['price']}` "
                         f"loss=`{attached_stop['loss_pips']:.1f}pip` risk=`{attached_stop['risk_jpy']:.1f} JPY`"
                     )
+                lines.extend(_sizing_evidence_report_lines(item.get("sizing_evidence"), prefix="  - "))
         order = None if batch_orders else result.get("order_request")
         if order:
             lines.append(f"- `{order['instrument']}` `{order['type']}` units=`{order['units']}`")
@@ -1158,6 +1171,7 @@ class LiveOrderGateway:
                     f"- attached broker SL: `{attached_stop['basis']}` price=`{attached_stop['price']}` "
                     f"loss=`{attached_stop['loss_pips']:.1f}pip` risk=`{attached_stop['risk_jpy']:.1f} JPY`"
                 )
+            lines.extend(_sizing_evidence_report_lines(result.get("sizing_evidence"), prefix="- "))
         elif not batch_orders:
             lines.append("- none")
         lines.extend(["", "## Issues", ""])
@@ -2044,6 +2058,86 @@ def _context_evidence_from_intent(intent: OrderIntent) -> dict[str, Any]:
     except Exception:
         return {}
     return evidence if isinstance(evidence, dict) else {}
+
+
+def _sizing_evidence_from_intent(
+    intent: OrderIntent,
+    *,
+    gateway_max_loss_jpy: float | None,
+    requested_units: int | None,
+    scaled_units: int | None,
+) -> dict[str, Any]:
+    metadata = dict(intent.metadata or {})
+    out: dict[str, Any] = {
+        "requested_units": requested_units,
+        "scaled_units": scaled_units,
+    }
+    if gateway_max_loss_jpy is not None:
+        out["gateway_max_loss_jpy"] = round(float(gateway_max_loss_jpy), 4)
+
+    active = str(metadata.get("loss_asymmetry_guard_active") or "").strip().lower() in {
+        "1", "true", "yes", "y", "on",
+    }
+    if active:
+        out["loss_asymmetry_guard_active"] = True
+        for source_key, output_key in (
+            ("loss_asymmetry_guard_loss_cap_jpy", "loss_asymmetry_guard_loss_cap_jpy"),
+            ("loss_asymmetry_guard_base_max_loss_jpy", "loss_asymmetry_guard_base_max_loss_jpy"),
+            ("loss_asymmetry_guard_effective_max_loss_jpy", "loss_asymmetry_guard_effective_max_loss_jpy"),
+            ("capture_avg_win_jpy", "capture_avg_win_jpy"),
+            ("capture_avg_loss_jpy", "capture_avg_loss_jpy"),
+        ):
+            value = _positive_float(metadata.get(source_key))
+            if value is not None:
+                out[output_key] = round(value, 4)
+        status = str(metadata.get("capture_economics_status") or "").strip()
+        if status:
+            out["capture_economics_status"] = status
+        basis = str(metadata.get("loss_asymmetry_guard_basis") or "").strip()
+        if basis:
+            out["loss_asymmetry_guard_basis"] = basis
+    return {key: value for key, value in out.items() if value is not None}
+
+
+def _sizing_evidence_report_lines(value: Any, *, prefix: str) -> list[str]:
+    if not isinstance(value, dict) or not value:
+        return []
+    lines: list[str] = []
+    units = _fmt_units_transition(value.get("requested_units"), value.get("scaled_units"))
+    if value.get("loss_asymmetry_guard_active"):
+        cap = value.get("loss_asymmetry_guard_loss_cap_jpy")
+        base = value.get("loss_asymmetry_guard_base_max_loss_jpy")
+        effective = value.get("loss_asymmetry_guard_effective_max_loss_jpy")
+        avg_win = value.get("capture_avg_win_jpy")
+        avg_loss = value.get("capture_avg_loss_jpy")
+        status = value.get("capture_economics_status") or "UNKNOWN"
+        lines.append(
+            f"{prefix}sizing guard: `LOSS_ASYMMETRY` units=`{units}` status=`{status}` "
+            f"cap=`{_fmt_jpy(cap)}` base_cap=`{_fmt_jpy(base)}` effective_cap=`{_fmt_jpy(effective)}` "
+            f"avg_win/avg_loss=`{_fmt_jpy(avg_win)}`/`{_fmt_jpy(avg_loss)}`"
+        )
+    elif value.get("gateway_max_loss_jpy") is not None:
+        lines.append(
+            f"{prefix}sizing cap: units=`{units}` gateway_max_loss=`{_fmt_jpy(value.get('gateway_max_loss_jpy'))}`"
+        )
+    return lines
+
+
+def _fmt_units_transition(requested: Any, scaled: Any) -> str:
+    if requested is None and scaled is None:
+        return "n/a"
+    if requested is None:
+        return str(scaled)
+    if scaled is None or scaled == requested:
+        return str(requested)
+    return f"{requested}->{scaled}"
+
+
+def _fmt_jpy(value: Any) -> str:
+    try:
+        return f"{float(value):.1f} JPY"
+    except (TypeError, ValueError):
+        return "n/a"
 
 
 def _oanda_order_request(intent: OrderIntent) -> dict[str, Any]:

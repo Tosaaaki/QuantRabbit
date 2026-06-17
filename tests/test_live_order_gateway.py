@@ -107,6 +107,43 @@ class LiveOrderGatewayTest(unittest.TestCase):
             order = payload["order_request"]
             self.assertNotIn("takeProfitOnFill", order)
 
+    def test_report_surfaces_loss_asymmetry_sizing_guard(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            client = FakeExecutionClient()
+            summary = LiveOrderGateway(
+                client=client,
+                strategy_profile=_profile(root),
+                output_path=root / "request.json",
+                report_path=root / "report.md",
+                max_loss_jpy=1000.0,
+            ).run(
+                intents_path=_intents(
+                    root,
+                    metadata={
+                        "desk": "trend_trader",
+                        "campaign_role": "NOW",
+                        "capture_economics_status": "NEGATIVE_EXPECTANCY",
+                        "capture_avg_win_jpy": 600.0,
+                        "capture_avg_loss_jpy": 1100.0,
+                        "loss_asymmetry_guard_active": True,
+                        "loss_asymmetry_guard_loss_cap_jpy": 600.0,
+                        "loss_asymmetry_guard_base_max_loss_jpy": 1000.0,
+                        "loss_asymmetry_guard_effective_max_loss_jpy": 600.0,
+                    },
+                ),
+                lane_id="lane:EUR_USD:LONG",
+            )
+
+            self.assertEqual(summary.status, "STAGED")
+            payload = json.loads((root / "request.json").read_text())
+            self.assertEqual(payload["sizing_evidence"]["loss_asymmetry_guard_loss_cap_jpy"], 600.0)
+            report = (root / "report.md").read_text()
+            self.assertIn("sizing guard: `LOSS_ASYMMETRY`", report)
+            self.assertIn("units=`1000`", report)
+            self.assertIn("cap=`600.0 JPY`", report)
+            self.assertIn("avg_win/avg_loss=`600.0 JPY`/`1100.0 JPY`", report)
+
     def test_sl_free_disaster_stop_reports_attached_tail_risk_separately(self) -> None:
         prior_sl_free = os.environ.get("QR_TRADER_DISABLE_SL_REPAIR")
         prior_initial_sl = os.environ.get("QR_NEW_ENTRY_INITIAL_SL")
