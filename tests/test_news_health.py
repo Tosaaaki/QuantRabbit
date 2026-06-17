@@ -132,7 +132,7 @@ class NewsHealthTest(unittest.TestCase):
         self.assertEqual(payload["status"], "OK")
         self.assertEqual(payload["market_window"], "ACTIVE")
 
-    def test_active_market_blocks_raw_rss_digest_without_websearch(self) -> None:
+    def test_active_market_warns_on_raw_rss_digest_when_structured_news_is_fresh(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             files = _write_good_packet(Path(tmp))
             files["digest"].write_text(_digest(websearch=False), encoding="utf-8")
@@ -149,7 +149,7 @@ class NewsHealthTest(unittest.TestCase):
                 now_utc=FRESH_NOW,
             )
 
-        self.assertEqual(payload["status"], "BLOCK")
+        self.assertEqual(payload["status"], "WARN")
         self.assertTrue(any("news_digest_websearch" in issue for issue in payload["issues"]))
 
     def test_active_market_warns_but_does_not_block_when_rss_is_thin(self) -> None:
@@ -255,7 +255,13 @@ class NewsHealthTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             files = _write_good_packet(root)
-            files["digest"].write_text(_digest(websearch=False), encoding="utf-8")
+            files["digest"].write_text(
+                _digest().replace(
+                    "## Pre-Event Nowcast\n- NFP evidence stack: ADP, claims, JOLTS, ISM employment.\n\n",
+                    "",
+                ),
+                encoding="utf-8",
+            )
             stdout = io.StringIO()
 
             with redirect_stdout(stdout):

@@ -1744,6 +1744,7 @@ def _cycle_refresh_steps(daily_risk_pct: str) -> list[dict[str, Any]]:
         {"argv": ["cot-snapshot"], "required": False},
         {"argv": ["option-skew"], "required": False},
         {"argv": ["market-context-matrix"], "required": False},
+        {"argv": ["news-snapshot"], "required": False},
         {"argv": ["mine-market-stories", "--news-dir", "logs", "--profile", "data/market_story_profile.json", "--report", "data/market_story_report.md"], "required": False},
         {"argv": ["news-health", "--strict"], "required": False},
         {"argv": ["daily-review"], "required": False},

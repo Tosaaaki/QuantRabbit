@@ -417,6 +417,7 @@ PYTHONPATH=src python3 -m quant_rabbit.cli economic-calendar      # ForexFactory
 PYTHONPATH=src python3 -m quant_rabbit.cli cot-snapshot           # CFTC TFF leveraged-funds positioning
 PYTHONPATH=src python3 -m quant_rabbit.cli option-skew            # IV/RR adapter; disabled optional artifact until a real provider is configured
 PYTHONPATH=src python3 -m quant_rabbit.cli market-context-matrix  # Advisory pair/side support/reject matrix across all market layers
+PYTHONPATH=src python3 -m quant_rabbit.cli news-snapshot          # Public RSS freshness floor before story mining / news-health
 PYTHONPATH=src python3 -m quant_rabbit.cli mine-market-stories --news-dir logs --profile data/market_story_profile.json --report data/market_story_report.md
 PYTHONPATH=src python3 -m quant_rabbit.cli news-health --strict    # Fresh WebSearch news + market-story sync guard after story refresh
 

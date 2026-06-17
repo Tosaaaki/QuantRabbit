@@ -309,6 +309,12 @@ def render_news_digest(snapshot: NewsSnapshot, *, digest_items: int = DEFAULT_DI
     else:
         lines.append("- No calendar-specific item in RSS cache; use `data/economic_calendar.json` for exact event windows.")
 
+    lines.extend(["", "## 🧭 Pre-Event Nowcast"])
+    if risk_events:
+        lines.extend(f"- {_nowcast_bullet(item)}" for item in risk_events[:4])
+    else:
+        lines.append("- No fresh pre-event headline cluster; check `data/economic_calendar.json` before opening event-sensitive pairs.")
+
     lines.extend(["", "## 🏦 Central Bank Tracker"])
     central_bank_items = _topic_items(ranked, {"central_bank", "intervention"})[:4]
     if central_bank_items:
@@ -586,6 +592,15 @@ def _trader_bullet(item: NewsItem) -> str:
 def _calendar_bullet(item: NewsItem) -> str:
     label = ", ".join(item.currencies) if item.currencies else _item_label(item)
     return f"**{label}** — {item.title}. Consensus/prior: check source and `data/economic_calendar.json`. {item.link}"
+
+
+def _nowcast_bullet(item: NewsItem) -> str:
+    label = _item_label(item)
+    topic_text = ", ".join(item.topics[:4]) if item.topics else "macro"
+    return (
+        f"**{label}** — Pre-event bias cue from {item.source}: {item.title}. "
+        f"Topics: {topic_text}; require chart confirmation and event-window check. {item.link}"
+    )
 
 
 def _pair_bullet(item: NewsItem) -> str:

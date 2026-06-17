@@ -100,7 +100,7 @@ PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli trader-prompt-route
 # `cycle-refresh` runs the full refresh step list (broker-snapshot →
 # daily-target-state → execution-ledger-sync → import-legacy → mine-strategy →
 # pair-charts → cross-asset/context/flow/strength/levels/calendar/COT/skew →
-# market-context-matrix → mine-market-stories → news-health --strict →
+# market-context-matrix → news-snapshot → mine-market-stories → news-health --strict →
 # daily-review → tp-rebalance → verify-projections → broker-snapshot →
 # daily-target-state → generate-intents --reuse-market-artifacts → optimize-coverage → ai-attack-advice →
 # learning/capture/execution-timing/manual-market-context/operator-precedent/verification audits →
@@ -130,9 +130,10 @@ PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli trader-prompt-route
 # with equity (feedback_use_nav_percent.md), and 10% matches the campaign
 # `target_return_pct`.
 #
-# News stays consumer-only: the digest's `news_health` comes from the
-# `qr-news-digest` routine artifacts. Do NOT run `news-snapshot` here — that
-# would replace the curated digest with raw RSS (reference_news_pipeline.md).
+# News has a cycle-local freshness floor: `news-snapshot` refreshes public RSS
+# artifacts before `mine-market-stories` / `news-health`. The richer curated
+# `qr-news-digest` routine may still overwrite or augment these artifacts, but
+# a stale external digest must not leave the trader blind to current news.
 #
 # Failed required steps abort the remaining refresh and exit 2; the digest
 # lists `steps_failed` with stderr tails. Optional-step failures (e.g.

@@ -2446,7 +2446,14 @@ class ConsolidatedCycleCommandTest(unittest.TestCase):
         self.assertLess(post_projection_snapshot[-1], post_projection_target[-1])
         self.assertLess(post_projection_target[-1], intent_index)
         self.assertLess(refresh.index("tp-rebalance"), refresh.index(intent_step))
+        self.assertIn("news-snapshot", refresh)
         self.assertIn("news-health --strict", refresh)
+        story_step = (
+            "mine-market-stories --news-dir logs --profile "
+            "data/market_story_profile.json --report data/market_story_report.md"
+        )
+        self.assertLess(refresh.index("news-snapshot"), refresh.index(story_step))
+        self.assertLess(refresh.index("news-snapshot"), refresh.index("news-health --strict"))
         self.assertLess(refresh.index("capture-economics"), refresh.index("operator-precedent-audit"))
         self.assertLess(refresh.index("capture-economics"), refresh.index("manual-market-context-audit"))
         self.assertLess(refresh.index("manual-market-context-audit"), refresh.index("operator-precedent-audit"))

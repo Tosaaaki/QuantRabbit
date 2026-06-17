@@ -206,6 +206,7 @@ class NewsSnapshotTest(unittest.TestCase):
         flow = render_flow_entry(snap)
 
         self.assertIn("High Impact", digest)
+        self.assertIn("Pre-Event Nowcast", digest)
         self.assertIn("**USD_JPY**", digest)
         self.assertIn("Source: MarketPulse", digest)
         self.assertIn("- HOT:", flow)

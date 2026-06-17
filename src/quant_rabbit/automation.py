@@ -562,9 +562,13 @@ def _filtered_gpt_trade_cancel_order_ids(
     intents_path: Path,
     lane_ids: tuple[str, ...],
     cancel_order_ids: tuple[str, ...],
+    self_improvement_audit_path: Path | None = None,
 ) -> tuple[str, ...]:
     if not cancel_order_ids:
         return ()
+    force_cancel_order_ids = _self_improvement_pending_cancel_review_order_ids(
+        self_improvement_audit_path or (intents_path.parent / DEFAULT_SELF_IMPROVEMENT_AUDIT.name)
+    )
     try:
         intents_payload = json.loads(intents_path.read_text())
     except (OSError, json.JSONDecodeError, ValueError):
@@ -583,6 +587,9 @@ def _filtered_gpt_trade_cancel_order_ids(
     }
     filtered: list[str] = []
     for order_id in cancel_order_ids:
+        if str(order_id) in force_cancel_order_ids:
+            filtered.append(str(order_id))
+            continue
         order = orders_by_id.get(str(order_id))
         if order is not None:
             if _should_preserve_gpt_trade_cancel(
@@ -3607,6 +3614,7 @@ class AutoTradeCycle:
                 intents_path=intents_path,
                 lane_ids=lane_ids,
                 cancel_order_ids=replace_order_ids,
+                self_improvement_audit_path=self.gpt_self_improvement_audit_path,
             )
             if gpt_summary is not None and replace_order_ids != gpt_summary.cancel_order_ids:
                 gpt_summary = replace(gpt_summary, cancel_order_ids=replace_order_ids)
@@ -3770,6 +3778,9 @@ class AutoTradeCycle:
                         self._load_snapshot_artifact(),
                         intents_path=self.intents_path,
                         cancel_order_ids=gpt_summary.cancel_order_ids,
+                        force_cancel_order_ids=_self_improvement_pending_cancel_review_order_ids(
+                            self.gpt_self_improvement_audit_path,
+                        ),
                     )
                 )
             except (OSError, ValueError, json.JSONDecodeError):
@@ -4205,8 +4216,10 @@ def _pending_cancel_ids_with_visible_current_thesis(
     *,
     intents_path: Path,
     cancel_order_ids: tuple[str, ...],
+    force_cancel_order_ids: set[str] | None = None,
 ) -> tuple[str, ...]:
     cancel_set = {str(order_id) for order_id in cancel_order_ids if str(order_id)}
+    cancel_set -= set(force_cancel_order_ids or set())
     if not cancel_set:
         return ()
     try:
@@ -4241,6 +4254,36 @@ def _pending_cancel_ids_with_visible_current_thesis(
         if pair_side in current_pair_sides:
             preserved.append(order_id)
     return tuple(preserved)
+
+
+def _self_improvement_pending_cancel_review_order_ids(path: Path | None) -> set[str]:
+    """Return pending entry order ids already flagged for cancel review."""
+
+    if path is None or not path.exists():
+        return set()
+    try:
+        payload = json.loads(path.read_text())
+    except (OSError, json.JSONDecodeError, ValueError):
+        return set()
+    findings = payload.get("findings") if isinstance(payload, dict) else []
+    if isinstance(findings, dict):
+        items = findings.values()
+    elif isinstance(findings, list):
+        items = findings
+    else:
+        items = []
+    order_ids: set[str] = set()
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        if item.get("code") != "PENDING_ENTRY_CANCEL_REVIEW_REQUIRED":
+            continue
+        evidence = item.get("evidence") if isinstance(item.get("evidence"), dict) else {}
+        for order_id in evidence.get("cancel_review_order_ids") or []:
+            text = str(order_id or "").strip()
+            if text:
+                order_ids.add(text)
+    return order_ids
 
 
 def _campaign_exposure_required(

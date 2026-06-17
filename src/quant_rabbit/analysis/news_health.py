@@ -140,7 +140,19 @@ def build_news_health(
     )
 
     checks.extend(_news_items_checks(news_payload, news_items_path, now, active_market=active_market))
-    checks.extend(_digest_checks(digest_text, digest_path, now, active_market=active_market))
+    checks.extend(
+        _digest_checks(
+            digest_text,
+            digest_path,
+            now,
+            active_market=active_market,
+            structured_news_fallback_ok=_structured_news_fallback_ok(
+                news_payload,
+                now,
+                active_market=active_market,
+            ),
+        )
+    )
     checks.extend(_flow_checks(flow_text, flow_log_path, now, active_market=active_market))
     checks.extend(
         _market_story_checks(
@@ -281,6 +293,7 @@ def _digest_checks(
     now: datetime,
     *,
     active_market: bool,
+    structured_news_fallback_ok: bool = False,
 ) -> list[NewsHealthCheck]:
     if text is None:
         return []
@@ -323,18 +336,41 @@ def _digest_checks(
         checks.append(_ok("news_digest_sections", "curated digest contains all required sections"))
 
     if "WebSearch" not in text:
-        severity = "BLOCK" if active_market else "WARN"
+        severity = "BLOCK" if active_market and not structured_news_fallback_ok else "WARN"
         checks.append(
             _check(
                 "news_digest_websearch",
                 severity,
-                "digest does not cite WebSearch; raw RSS alone is not enough",
+                (
+                    "digest does not cite WebSearch; using fresh structured public RSS fallback"
+                    if structured_news_fallback_ok
+                    else "digest does not cite WebSearch; raw RSS alone is not enough"
+                ),
                 path=str(path),
             )
         )
     else:
         checks.append(_ok("news_digest_websearch", "digest cites WebSearch-curated research"))
     return checks
+
+
+def _structured_news_fallback_ok(
+    payload: dict[str, Any] | None,
+    now: datetime,
+    *,
+    active_market: bool,
+) -> bool:
+    if not active_market or payload is None:
+        return False
+    generated_at = _parse_utc(payload.get("generated_at_utc"))
+    age_minutes = _age_minutes(now, generated_at)
+    if age_minutes is None or age_minutes > ACTIVE_NEWS_MAX_AGE_MINUTES:
+        return False
+    items = payload.get("items") if isinstance(payload.get("items"), list) else []
+    fresh_items = _fresh_news_items(items, now)
+    sources = {str(item.get("source") or "").strip() for item in fresh_items if isinstance(item, dict)}
+    sources.discard("")
+    return len(fresh_items) >= ACTIVE_MIN_STRUCTURED_ITEMS and len(sources) >= ACTIVE_MIN_SOURCE_COUNT
 
 
 def _flow_checks(
