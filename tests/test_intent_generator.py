@@ -6329,6 +6329,78 @@ class IntentGeneratorTest(unittest.TestCase):
                 )
             )
 
+    def test_persistent_pending_churn_blocks_fresh_pending_intents_only(self) -> None:
+        # Regression from qr-self-improvement-watch 2026-06-17: pending entries
+        # were accepted, then repeatedly canceled before fill. Keep MARKET
+        # variants available for separate gates, but stop arming new pending
+        # orders until entry-distance/TTL is separated from thesis invalidation.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            data_root = root / "data"
+            data_root.mkdir()
+            (data_root / "self_improvement_audit.json").write_text(
+                json.dumps(
+                    {
+                        "generated_at_utc": datetime.now(timezone.utc).isoformat(),
+                        "root_cause_focus": {
+                            "primary": {
+                                "family": "DATA_FRESHNESS",
+                                "confidence": "HIGH",
+                                "priority": "P0",
+                                "supporting_codes": ["MEMORY_HEALTH_STALE"],
+                            },
+                            "candidates": [
+                                {
+                                    "family": "EXECUTION_LIFECYCLE",
+                                    "confidence": "HIGH",
+                                    "priority": "P0",
+                                    "process_loop_streak": 14,
+                                    "supporting_codes": [
+                                        "PENDING_ENTRY_CANCEL_REVIEW_REQUIRED",
+                                        "PENDING_ENTRY_CANCEL_RATE_HIGH",
+                                    ],
+                                    "metrics": {
+                                        "pending_cancel_before_fill_rate": 0.656,
+                                        "pending_fill_rate": 0.333,
+                                        "profit_factor": 0.894,
+                                    },
+                                }
+                            ],
+                        },
+                    }
+                )
+            )
+            output = root / "intents.json"
+
+            summary = IntentGenerator(
+                campaign_plan=_campaign(root),
+                strategy_profile=_strategy(root, status="CANDIDATE"),
+                output_path=output,
+                report_path=root / "intents.md",
+                pair_charts_path=_pair_charts(root),
+                data_root=data_root,
+                max_loss_jpy=500.0,
+            ).run(snapshot_path=_snapshot(root))
+
+            payload = json.loads(output.read_text())
+            by_order_type = {
+                item["intent"]["order_type"]: {issue["code"] for issue in item["risk_issues"]}
+                for item in payload["results"]
+                if item.get("intent")
+            }
+
+            self.assertGreaterEqual(summary.live_ready, 1)
+            self.assertIn("STOP-ENTRY", by_order_type)
+            self.assertIn("MARKET", by_order_type)
+            self.assertIn(
+                "SELF_IMPROVEMENT_PENDING_EXECUTION_LIFECYCLE",
+                by_order_type["STOP-ENTRY"],
+            )
+            self.assertNotIn(
+                "SELF_IMPROVEMENT_PENDING_EXECUTION_LIFECYCLE",
+                by_order_type["MARKET"],
+            )
+
     def test_sizes_units_with_percentage_risk_cap(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

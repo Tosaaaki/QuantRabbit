@@ -36,7 +36,10 @@ from quant_rabbit.risk import (
     margin_budget_jpy,
     resolve_max_loss_jpy,
 )
-from quant_rabbit.self_improvement_guards import forecast_adverse_path_new_risk_blocker
+from quant_rabbit.self_improvement_guards import (
+    forecast_adverse_path_new_risk_blocker,
+    pending_execution_lifecycle_new_risk_blocker,
+)
 from quant_rabbit.snapshot_json import snapshot_payload_order_raw
 from quant_rabbit.strategy.lane_history_ledger import (
     LOSS_STREAK_BLOCK_THRESHOLD,
@@ -4447,6 +4450,11 @@ class IntentGenerator:
         self_improvement_forecast_issue = (
             _self_improvement_forecast_adverse_path_issue(self.data_root) if snapshot is not None else None
         )
+        self_improvement_pending_issue = (
+            _self_improvement_pending_execution_lifecycle_issue(self.data_root)
+            if snapshot is not None
+            else None
+        )
         loss_asymmetry_guard = _capture_loss_asymmetry_guard(self.data_root) if snapshot is not None else {}
         results: list[GeneratedIntent] = []
         for lane in lanes[:max_candidates]:
@@ -4469,6 +4477,7 @@ class IntentGenerator:
                         loss_streaks=loss_streaks,
                         self_improvement_profitability_issue=self_improvement_profitability_issue,
                         self_improvement_forecast_issue=self_improvement_forecast_issue,
+                        self_improvement_pending_issue=self_improvement_pending_issue,
                         loss_asymmetry_guard=loss_asymmetry_guard,
                     )
                 )
@@ -4503,6 +4512,7 @@ class IntentGenerator:
         loss_streaks: dict[str, SameDayLossStreak] | None = None,
         self_improvement_profitability_issue: dict[str, str] | None = None,
         self_improvement_forecast_issue: dict[str, str] | None = None,
+        self_improvement_pending_issue: dict[str, str] | None = None,
         loss_asymmetry_guard: dict[str, Any] | None = None,
     ) -> GeneratedIntent:
         parent_lane_id = _lane_id(lane)
@@ -4725,6 +4735,14 @@ class IntentGenerator:
         ):
             risk_issues.append(dict(self_improvement_forecast_issue))
             live_blockers = (*live_blockers, self_improvement_forecast_issue["message"])
+            risk_allowed = False
+        if (
+            self_improvement_pending_issue is not None
+            and intent.order_type != OrderType.MARKET
+            and str(intent.metadata.get("position_intent") or "").upper() != "HEDGE"
+        ):
+            risk_issues.append(dict(self_improvement_pending_issue))
+            live_blockers = (*live_blockers, self_improvement_pending_issue["message"])
             risk_allowed = False
         forecast_live_issue = _forecast_live_readiness_issue(intent, intent.metadata or {}, method)
         if forecast_live_issue is not None:
@@ -5669,6 +5687,24 @@ def _self_improvement_forecast_adverse_path_issue(data_root: Path) -> dict[str, 
     except (OSError, json.JSONDecodeError, ValueError):
         return None
     blocker = forecast_adverse_path_new_risk_blocker(payload)
+    if blocker is None:
+        return None
+    return {
+        "code": str(blocker["code"]),
+        "message": str(blocker["message"]),
+        "severity": "BLOCK",
+    }
+
+
+def _self_improvement_pending_execution_lifecycle_issue(data_root: Path) -> dict[str, str] | None:
+    path = data_root / "self_improvement_audit.json"
+    if not path.exists():
+        return None
+    try:
+        payload = json.loads(path.read_text())
+    except (OSError, json.JSONDecodeError, ValueError):
+        return None
+    blocker = pending_execution_lifecycle_new_risk_blocker(payload)
     if blocker is None:
         return None
     return {
