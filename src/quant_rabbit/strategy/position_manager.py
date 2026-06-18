@@ -1061,6 +1061,15 @@ def _adaptive_tp_action(
             action = ACTION_HOLD_PROTECTED
             reasons.append(f"narrow skipped: anchor {anchor_reason} not closer")
     elif action == ACTION_TAKE_PROFIT_MARKET:
+        noise_blocker = _profit_market_take_noise_blocker(
+            position=position,
+            quote=quote,
+            pair_chart=pair_chart,
+        )
+        if noise_blocker is not None:
+            action = ACTION_HOLD_PROTECTED
+            reasons.append(noise_blocker)
+            return action, new_tp, reasons
         # MARKET close handled by position_execution.py; this is deliberately
         # separate from loss-side REVIEW_EXIT / Gate A/B close discipline.
         reasons.append(
@@ -1303,6 +1312,45 @@ def _mfe_giveback_profit_take_signal(
         ),
         "post-close re-entry discipline: refresh broker truth and require a fresh LIVE_READY pullback/retest lane before re-entering",
     ]
+
+
+def _profit_market_take_noise_blocker(
+    *,
+    position: BrokerPosition,
+    quote,
+    pair_chart: dict[str, Any] | None,
+) -> str | None:
+    """Require macro-reversal profit market takes to clear executable noise.
+
+    Local-top and MFE-giveback market takes already prove their own noise
+    floors before returning. This guard covers the broader macro/micro matrix
+    path, where paying the full spread to bank a tiny positive tick worsens the
+    average-win/average-loss asymmetry that capture-economics audits.
+    """
+
+    if quote is None:
+        return "profit-harvest market close skipped: quote missing for executable noise floor"
+    if not isinstance(pair_chart, dict):
+        return "profit-harvest market close skipped: pair chart missing for executable noise floor"
+    m1 = _view_by_timeframe(pair_chart, "M1")
+    if not isinstance(m1, dict):
+        return "profit-harvest market close skipped: M1 chart missing for executable noise floor"
+    profit_pips = _executable_profit_pips(position, quote)
+    spread_pips = _spread_pips(position.pair, quote)
+    m1_atr = _indicator_float(m1, "atr_pips")
+    if profit_pips is None or profit_pips <= 0:
+        return "profit-harvest market close skipped: executable profit is not positive"
+    if spread_pips is None or spread_pips <= 0:
+        return "profit-harvest market close skipped: spread missing for executable noise floor"
+    if m1_atr is None or m1_atr <= 0:
+        return "profit-harvest market close skipped: M1 ATR missing for executable noise floor"
+    min_profit_pips = max(spread_pips * TEMPORARY_EXTREME_MIN_PROFIT_NOISE_MULT, m1_atr)
+    if profit_pips < min_profit_pips:
+        return (
+            f"profit-harvest market close skipped: executable profit {profit_pips:.1f}pip < "
+            f"market noise floor {min_profit_pips:.1f}pip"
+        )
+    return None
 
 
 def _view_by_timeframe(pair_chart: dict[str, Any], timeframe: str) -> dict[str, Any] | None:

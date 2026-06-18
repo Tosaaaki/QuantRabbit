@@ -1239,6 +1239,57 @@ class PositionManagerTest(unittest.TestCase):
             else:
                 os.environ["QR_TRADER_DISABLE_SL_REPAIR"] = prior_sl
 
+    def test_profitable_macro_reversal_waits_when_executable_profit_is_inside_noise(self) -> None:
+        # 2026-06-18 AUD_NZD repair: the matrix path recorded
+        # "profit < market noise floor" through the local-top signal, then
+        # still closed by the broad REVERSED/DEAD profit-harvest branch for a
+        # tiny win. That keeps average wins too small relative to loss closes.
+        prior_close = os.environ.get("QR_DISABLE_AUTO_CLOSE")
+        prior_sl = os.environ.get("QR_TRADER_DISABLE_SL_REPAIR")
+        os.environ["QR_DISABLE_AUTO_CLOSE"] = "1"
+        os.environ["QR_TRADER_DISABLE_SL_REPAIR"] = "1"
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                decision = _decision(root, long_score=160, short_score=120)
+                pair_charts = _structural_reversal_pair_charts(root)
+                snapshot = _snapshot(
+                    BrokerPosition(
+                        trade_id="thin-profit-reversal",
+                        pair="EUR_USD",
+                        side=Side.LONG,
+                        units=1000,
+                        entry_price=1.2000,
+                        unrealized_pl_jpy=30,
+                        take_profit=1.2020,
+                        stop_loss=None,
+                    ),
+                    bid=1.20008,
+                    ask=1.20028,
+                )
+
+                result = PositionManager(
+                    trader_decision_path=decision,
+                    pair_charts_path=pair_charts,
+                    output_path=root / "data" / "pm.json",
+                    report_path=root / "pm.md",
+                ).run(snapshot)
+
+                self.assertEqual(result.action, ACTION_HOLD_PROTECTED)
+                self.assertEqual(result.positions[0].action, ACTION_HOLD_SL_FREE)
+                report = (root / "pm.md").read_text()
+                self.assertIn("profit-harvest market close skipped", report)
+                self.assertIn("market noise floor", report)
+        finally:
+            if prior_close is None:
+                os.environ.pop("QR_DISABLE_AUTO_CLOSE", None)
+            else:
+                os.environ["QR_DISABLE_AUTO_CLOSE"] = prior_close
+            if prior_sl is None:
+                os.environ.pop("QR_TRADER_DISABLE_SL_REPAIR", None)
+            else:
+                os.environ["QR_TRADER_DISABLE_SL_REPAIR"] = prior_sl
+
     def test_protected_profitable_long_temporary_top_uses_profit_market_take(self) -> None:
         # Regression from 2026-06-12 USD_CAD screenshot: the long swing thesis
         # can still be broadly valid, but a local M1 top followed by lower
@@ -1835,6 +1886,10 @@ def _structural_reversal_pair_charts(root: Path) -> Path:
                         "chart_story": chart_story,
                         "session": {"current_tag": "LONDON_KILLZONE"},
                         "views": [
+                            {
+                                "granularity": "M1",
+                                "indicators": {"atr_pips": 1.0},
+                            },
                             {
                                 "granularity": "M5",
                                 "indicators": {"atr_pips": 1.0},
