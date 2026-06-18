@@ -251,13 +251,14 @@ def _close_same_direction_sidecar_support(
 ) -> tuple[bool, str]:
     """Whether fresh position sidecars still support carrying this position.
 
-    The support floor is a categorical majority across the three independent
-    position-review sidecars: position_thesis, thesis_evolution, and
-    forecast_persistence. This is not a market threshold; it prevents one M15
-    internal structure flip from forcing out an H1/H4 swing while most of the
-    current position stack still says the thesis is alive. Decay-only
-    thesis_evolution closes may opt into accepting one strong HOLD source
-    because that path is forecast/expiry disagreement, not a hard invalidation.
+    The support floor is a categorical majority across independent
+    position-review sidecars: position_thesis, thesis_evolution,
+    position_management, and forecast_persistence. This is not a market
+    threshold; it prevents one M15 internal structure flip from forcing out an
+    H1/H4 swing while most of the current position stack still says the thesis
+    is alive. Decay-only thesis_evolution / forecast-persistence closes may opt
+    into accepting one strong HOLD source because those paths are
+    forecast/expiry disagreement, not hard structural invalidation.
     """
 
     sidecars = packet.get("protection_sidecars")
@@ -286,7 +287,7 @@ def _close_same_direction_sidecar_support(
     if len(sources) < 2:
         if not allow_single_strong or not sources:
             return False, ""
-        strong = {"position_thesis", "forecast_persistence"}
+        strong = {"position_thesis", "position_management", "forecast_persistence"}
         if sources[0] not in strong:
             return False, ""
         summary = ", ".join(
@@ -695,6 +696,9 @@ def _sidecar_hold_support_conflict(
     ):
         conflict_label = f"{source} entry-invalidation evidence"
         allow_single_strong = False
+    elif source == "forecast_persistence":
+        conflict_label = "forecast_persistence close evidence"
+        allow_single_strong = True
     else:
         return None
     return _same_direction_hold_support_conflict(
@@ -726,7 +730,7 @@ def _same_direction_hold_support_conflict(
     if supported:
         return (
             f"{evidence_label} is downgraded to soft Gate A because {support_reason}; "
-            "use HOLD/reprice/TP rebalance unless explicit Gate B authorizes the close"
+            "use HOLD/reprice/TP rebalance unless hard invalidation evidence is present"
         )
     matrix_supported, matrix_reason = _close_same_direction_matrix_support(packet, pair, side)
     h4_supported, h4_reason = _close_same_direction_h4_support(packet, pair, side)
@@ -734,7 +738,7 @@ def _same_direction_hold_support_conflict(
         return None
     return (
         f"{evidence_label} is downgraded to soft Gate A because {matrix_reason}; {h4_reason}; "
-        "use HOLD/reprice/TP rebalance unless explicit Gate B authorizes the close"
+        "use HOLD/reprice/TP rebalance unless hard invalidation evidence is present"
     )
 
 
@@ -957,6 +961,7 @@ from quant_rabbit.paths import (
     DEFAULT_CROSS_ASSET_SNAPSHOT,
     DEFAULT_CURRENCY_STRENGTH,
     DEFAULT_DAILY_TARGET_STATE,
+    DEFAULT_EXECUTION_TIMING_AUDIT,
     DEFAULT_FLOW_SNAPSHOT,
     DEFAULT_GPT_TRADER_DECISION,
     DEFAULT_GPT_TRADER_DECISION_REPORT,
@@ -1179,6 +1184,7 @@ class GPTTraderBrain:
         option_skew_path: Path = DEFAULT_OPTION_SKEW,
         attack_advice_path: Path = DEFAULT_AI_ATTACK_ADVICE,
         capture_economics_path: Path = DEFAULT_CAPTURE_ECONOMICS,
+        execution_timing_audit_path: Path = DEFAULT_EXECUTION_TIMING_AUDIT,
         coverage_optimization_path: Path = DEFAULT_COVERAGE_OPTIMIZATION,
         learning_audit_path: Path = DEFAULT_LEARNING_AUDIT,
         verification_ledger_path: Path = DEFAULT_VERIFICATION_LEDGER,
@@ -1212,6 +1218,7 @@ class GPTTraderBrain:
         self.option_skew_path = option_skew_path
         self.attack_advice_path = attack_advice_path
         self.capture_economics_path = capture_economics_path
+        self.execution_timing_audit_path = execution_timing_audit_path
         self.coverage_optimization_path = coverage_optimization_path
         self.learning_audit_path = learning_audit_path
         self.verification_ledger_path = verification_ledger_path
@@ -1267,6 +1274,7 @@ class GPTTraderBrain:
         lanes = _lane_packet(intents, campaign, strategy, story, max_lanes=self.max_lanes)
         attack_advice = _load_optional_json(self.attack_advice_path)
         capture_economics = _load_optional_json(self.capture_economics_path)
+        execution_timing_audit = _load_optional_json(self.execution_timing_audit_path)
         coverage_optimization = _load_optional_json(self.coverage_optimization_path)
         learning_audit = _load_optional_json(self.learning_audit_path)
         verification_ledger = _load_optional_json(self.verification_ledger_path)
@@ -1286,6 +1294,7 @@ class GPTTraderBrain:
             lanes=lanes,
             attack_advice=attack_advice,
             capture_economics=capture_economics,
+            execution_timing_audit=execution_timing_audit,
             coverage_optimization=coverage_optimization,
             learning_audit=learning_audit,
             verification_ledger=verification_ledger,
@@ -1361,6 +1370,7 @@ class GPTTraderBrain:
             "lanes": lanes,
             "ai_attack_advice": attack_packet,
             "capture_economics": _capture_economics_packet(capture_economics),
+            "execution_timing_audit": _execution_timing_audit_packet(execution_timing_audit),
             "coverage_optimization": _coverage_optimization_packet(coverage_optimization),
             "learning_audit": learning_packet,
             "verification_ledger": _verification_ledger_packet(verification_ledger),
@@ -1440,7 +1450,7 @@ class GPTTraderBrain:
                 "- Any self-improvement P0 blocks new `TRADE` receipts until the named blocker is repaired or the trader route explicitly justifies the exception.",
                 "- The 2025 operator precedent is advisory only. A `TRADE` that cites `operator:precedent` must also cite `manual:market_context`, at least one selected lane must match the current operator-precedent aligned lane set, and that selected lane must not conflict with the bounded manual technical replay buckets; otherwise the receipt must use current deterministic edge instead of precedent-based aggression.",
                 "- Evidence refs must come from the input packet; invented refs reject the decision.",
-                "- `CLOSE` requires Gate A plus the applicable Gate B. Hard Gate A (H4 close-confirmed BOS/CHOCH against side, buffered invalidation_price hit with technical confirmation, fresh thesis_evolution BROKEN/RECOMMEND_CLOSE, structural position_management / position_guardian_management REVIEW_EXIT, or position_thesis invalidation-hit/structural-break evidence with multi-TF confirmation) carries standing loss-cut authorization only when it has not been downgraded by fresh same-direction HOLD/EXTEND sidecars. M15 structure is Gate A evidence but not unattended hard Gate B unless H4 / recorded invalidation / hard sidecar also confirms; M15 internal structure or receipt-level `invalidation_price` cannot harden a matching soft entry-buffer / unrecorded-invalidation sidecar. `protection_sidecars.position_close_recommendations[].blocks_non_close_actions=false` means the sidecar is advisory for entry routing: do not write CLOSE merely to test the verifier; evaluate current LIVE_READY entries unless explicit operator Gate B is present. Softer Gate A still needs `QR_OPERATOR_CLOSE_OVERRIDE=1` or a fresh `data/.operator_close_token` when the trader chooses CLOSE. If the same-direction market stack still supports the open position, treat it as TP rebalance / HOLD / profit-side partial / ADD geometry, not loss-side CLOSE plus same-direction re-entry. `TRADE` must not include `close_trade_ids`; automation ends the close cycle, then the next scheduled cycle must refresh broker truth, reprice intents, and require a separate verified `TRADE` receipt. The receipt's `operator_close_authorized` field is advisory only. See AGENT_CONTRACT §10.",
+                "- `CLOSE` requires Gate A plus the applicable Gate B. Hard Gate A (H4 close-confirmed BOS/CHOCH against side, buffered invalidation_price hit with technical confirmation, fresh thesis_evolution BROKEN/RECOMMEND_CLOSE, structural position_management / position_guardian_management REVIEW_EXIT, or position_thesis invalidation-hit/structural-break evidence with multi-TF confirmation) carries standing loss-cut authorization only when it has not been downgraded by fresh same-direction HOLD/EXTEND sidecars. M15 structure is Gate A evidence but not unattended hard Gate B unless H4 / recorded invalidation / hard sidecar also confirms; M15 internal structure or receipt-level `invalidation_price` cannot harden a matching soft entry-buffer / unrecorded-invalidation sidecar. `protection_sidecars.position_close_recommendations[].blocks_non_close_actions=false` means the sidecar is advisory for entry routing: do not write CLOSE merely to test the verifier; evaluate current LIVE_READY entries unless a current hard close sidecar separately blocks non-close actions. Softer Gate A still needs `QR_OPERATOR_CLOSE_OVERRIDE=1` or a fresh `data/.operator_close_token` when the trader chooses CLOSE, but operator Gate B does not override fresh same-direction HOLD/EXTEND support. If the same-direction market stack still supports the open position, treat it as TP rebalance / HOLD / profit-side partial / ADD geometry, not loss-side CLOSE plus same-direction re-entry. `TRADE` must not include `close_trade_ids`; automation ends the close cycle, then the next scheduled cycle must refresh broker truth, reprice intents, and require a separate verified `TRADE` receipt. The receipt's `operator_close_authorized` field is advisory only. See AGENT_CONTRACT §10.",
             ]
         )
         self.report_path.write_text("\n".join(lines) + "\n")
@@ -2121,12 +2131,25 @@ class DecisionVerifier:
                     f"{tid} ({pair} {side})"
                 )
             elif not standing_authorized:
+                unrealized_pl_jpy = _optional_float(pos.get("unrealized_pl_jpy"))
+                sidecar_conflict = _same_direction_hold_support_conflict(
+                    self.packet,
+                    trade_id=str(tid),
+                    pair=pair,
+                    side=side,
+                    evidence_label="soft close evidence",
+                    allow_single_strong_sidecar=True,
+                )
+                if sidecar_conflict and (unrealized_pl_jpy is None or unrealized_pl_jpy <= 0):
+                    same_direction_supported.append(
+                        f"{tid} ({sidecar_conflict})"
+                    )
+                    continue
                 supported, support_reason = _close_same_direction_matrix_support(
                     self.packet,
                     pair,
                     side,
                 )
-                unrealized_pl_jpy = _optional_float(pos.get("unrealized_pl_jpy"))
                 if supported and (unrealized_pl_jpy is None or unrealized_pl_jpy <= 0):
                     same_direction_supported.append(
                         f"{tid} ({support_reason})"
@@ -2150,7 +2173,7 @@ class DecisionVerifier:
                 VerificationIssue(
                     "CLOSE_SAME_DIRECTION_MARKET_SUPPORT",
                     "CLOSE rejected: softer close evidence conflicts with "
-                    "same-direction directional market_context_matrix support. "
+                    "same-direction sidecar or directional market_context_matrix support. "
                     "Contract §10 requires HOLD/reprice/TP rebalance while the "
                     "market stack still supports a loss-side open position, "
                     "unless hard invalidation evidence is present. Blocked for: "
@@ -2827,6 +2850,7 @@ def _allowed_refs(
     lanes: list[dict[str, Any]],
     attack_advice: dict[str, Any] | None,
     capture_economics: dict[str, Any] | None,
+    execution_timing_audit: dict[str, Any] | None,
     coverage_optimization: dict[str, Any] | None,
     learning_audit: dict[str, Any] | None,
     verification_ledger: dict[str, Any] | None,
@@ -2953,6 +2977,33 @@ def _allowed_refs(
                 reason_key = str(reason or "").strip()
                 if reason_key:
                     refs.append(f"capture:exit_reason:{reason_key}")
+    if execution_timing_audit:
+        refs.extend(
+            [
+                "timing:audit",
+                "timing:canceled_orders",
+                "timing:loss_closes",
+                "timing:market_closes",
+            ]
+        )
+        for row in execution_timing_audit.get("canceled_order_regrets", []) or []:
+            if not isinstance(row, dict):
+                continue
+            order_id = str(row.get("order_id") or "").strip()
+            if order_id:
+                refs.append(f"timing:canceled_order:{order_id}")
+        for row in execution_timing_audit.get("loss_close_regrets", []) or []:
+            if not isinstance(row, dict):
+                continue
+            trade_id = str(row.get("trade_id") or "").strip()
+            if trade_id:
+                refs.append(f"timing:loss_close:{trade_id}")
+        for row in execution_timing_audit.get("market_close_counterfactuals", []) or []:
+            if not isinstance(row, dict):
+                continue
+            trade_id = str(row.get("trade_id") or "").strip()
+            if trade_id:
+                refs.append(f"timing:market_close:{trade_id}")
     if coverage_optimization:
         refs.append("coverage:optimization")
         diagnostics = (
@@ -3163,6 +3214,121 @@ def _capture_economics_packet(payload: dict[str, Any] | None) -> dict[str, Any]:
             ),
         ),
         "action_items": [str(item) for item in (payload.get("action_items") or [])[:6] if str(item).strip()],
+    }
+
+
+def _execution_timing_audit_packet(payload: dict[str, Any] | None) -> dict[str, Any]:
+    if not payload:
+        return {
+            "evidence_ref": "timing:audit",
+            "status": "missing",
+            "summary": {},
+            "canceled_order_regrets": [],
+            "loss_close_regrets": [],
+            "market_close_counterfactuals": [],
+        }
+    return {
+        "evidence_ref": "timing:audit",
+        "generated_at_utc": payload.get("generated_at_utc"),
+        "status": payload.get("status"),
+        "window": _small_dict(
+            payload.get("window"),
+            ("from_utc", "to_utc", "lookback_hours", "post_cancel_hours", "post_close_hours"),
+        ),
+        "summary": _small_dict(
+            payload.get("summary"),
+            (
+                "canceled_orders_audited",
+                "canceled_entry_touched_after_cancel_rate",
+                "canceled_tp_touched_after_cancel_rate",
+                "canceled_estimated_missed_mfe_jpy",
+                "loss_closes_audited",
+                "loss_closes_had_positive_mfe_rate",
+                "loss_closes_tp_touched_before_close_rate",
+                "loss_close_estimated_mfe_jpy",
+                "market_closes_audited",
+                "market_closes_post_close_continued_rate",
+                "market_closes_post_close_adverse_rate",
+                "market_closes_tp_touched_after_close_rate",
+                "market_closes_sl_touched_after_close_rate",
+                "market_close_estimated_followthrough_jpy",
+                "market_close_estimated_avoided_adverse_jpy",
+                "profit_market_closes_left_runner_upside",
+                "profit_market_closes_avoided_giveback",
+                "loss_market_closes_may_have_been_premature",
+                "loss_market_closes_contained_risk",
+            ),
+        ),
+        "canceled_order_regrets": [
+            {
+                "evidence_ref": f"timing:canceled_order:{item.get('order_id')}",
+                **_small_dict(
+                    item,
+                    (
+                        "order_id",
+                        "lane_id",
+                        "pair",
+                        "side",
+                        "order_type",
+                        "entry_touched_after_cancel",
+                        "tp_touched_after_cancel",
+                        "sl_touched_after_cancel",
+                        "mfe_pips_after_cancel_entry",
+                        "estimated_missed_mfe_jpy",
+                    ),
+                ),
+            }
+            for item in (payload.get("canceled_order_regrets") or [])[:12]
+            if isinstance(item, dict)
+        ],
+        "loss_close_regrets": [
+            {
+                "evidence_ref": f"timing:loss_close:{item.get('trade_id')}",
+                **_small_dict(
+                    item,
+                    (
+                        "trade_id",
+                        "lane_id",
+                        "pair",
+                        "side",
+                        "gateway_action",
+                        "realized_pl_jpy",
+                        "had_positive_mfe_before_loss_close",
+                        "tp_touched_before_loss_close",
+                        "mfe_pips_before_loss_close",
+                        "estimated_mfe_jpy_before_loss_close",
+                        "decision_lag_minutes_after_first_positive",
+                    ),
+                ),
+            }
+            for item in (payload.get("loss_close_regrets") or [])[:12]
+            if isinstance(item, dict)
+        ],
+        "market_close_counterfactuals": [
+            {
+                "evidence_ref": f"timing:market_close:{item.get('trade_id')}",
+                **_small_dict(
+                    item,
+                    (
+                        "trade_id",
+                        "lane_id",
+                        "pair",
+                        "side",
+                        "gateway_action",
+                        "realized_pl_jpy",
+                        "post_close_path_label",
+                        "post_close_favorable_pips",
+                        "estimated_post_close_favorable_jpy",
+                        "post_close_adverse_pips",
+                        "estimated_post_close_adverse_jpy",
+                        "tp_touched_after_market_close",
+                        "sl_touched_after_market_close",
+                    ),
+                ),
+            }
+            for item in (payload.get("market_close_counterfactuals") or [])[:12]
+            if isinstance(item, dict)
+        ],
     }
 
 
@@ -4310,9 +4476,9 @@ def _position_close_recommendation_blocks_non_close_action(
     trader chooses CLOSE, but they do not freeze TP-managed exposure and block
     fresh all-horizon entries while authorization is absent.
     """
+    if _sidecar_hold_support_conflict(packet, rec):
+        return False
     if bool(rec.get("gate_b_standing_authorized")):
-        if _sidecar_hold_support_conflict(packet, rec):
-            return _operator_close_gate_authorized()
         return True
     trade_id = str(rec.get("trade_id") or "")
     if trade_id:

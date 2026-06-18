@@ -4,6 +4,8 @@ This module turns two operator questions into machine-readable metrics:
 
 * Did a canceled pending entry later touch its entry / TP and move profitable?
 * Did a losing close have a profitable MFE window before it was closed red?
+* Did a market close leave same-side follow-through behind, or did it avoid
+  adverse giveback after the close?
 
 The first implementation uses OANDA M1 bid/ask candles. Tick JSONL can replace
 the candle fetcher later without changing the output contract.
@@ -32,6 +34,10 @@ from quant_rabbit.paths import (
 # regret lens already mined into strategy reports. It is an audit window, not a
 # live risk threshold.
 DEFAULT_POST_CANCEL_HORIZON_HOURS = 6.0
+
+# Use the same audit horizon as canceled pending regrets so close timing and
+# cancel timing are compared over the same next-cycle opportunity window.
+DEFAULT_POST_CLOSE_HORIZON_HOURS = 6.0
 
 # The live-facing audit should compare the current operating week, not old
 # May-era repairs, by default. Operators can widen this explicitly.
@@ -68,7 +74,7 @@ class _CanceledOrder:
 
 
 @dataclass(frozen=True)
-class _LossClose:
+class _MarketClose:
     trade_id: str
     fill_at_utc: datetime
     close_at_utc: datetime
@@ -79,6 +85,7 @@ class _LossClose:
     close_price: float
     realized_pl_jpy: float
     exit_reason: str | None
+    gateway_action: str | None
     lane_id: str | None
     tp: float | None
     sl: float | None
@@ -96,6 +103,7 @@ def build_execution_timing_audit(
     report_path: Path = DEFAULT_EXECUTION_TIMING_AUDIT_REPORT,
     lookback_hours: float = DEFAULT_LOOKBACK_HOURS,
     post_cancel_hours: float = DEFAULT_POST_CANCEL_HORIZON_HOURS,
+    post_close_hours: float = DEFAULT_POST_CLOSE_HORIZON_HOURS,
     granularity: str = "M1",
     now_utc: datetime | None = None,
     candle_fetcher: CandleFetcher | None = None,
@@ -106,16 +114,16 @@ def build_execution_timing_audit(
     now = _normalize_utc(now_utc or datetime.now(timezone.utc))
     cutoff = now - timedelta(hours=float(lookback_hours))
     home_conversions = _home_conversions_from_snapshot(snapshot_path)
-    canceled, loss_closes = _load_candidates(
+    canceled, market_closes = _load_candidates(
         ledger_path=ledger_path,
         cutoff=cutoff,
-        post_cancel_hours=float(post_cancel_hours),
         max_events=max_events,
     )
     windows = _candidate_windows(
         canceled,
-        loss_closes,
+        market_closes,
         post_cancel_hours=float(post_cancel_hours),
+        post_close_hours=float(post_close_hours),
         now_utc=now,
     )
     candle_cache, fetch_errors = _load_candle_cache(
@@ -146,7 +154,20 @@ def build_execution_timing_audit(
             ),
             home_conversions,
         )
-        for close in loss_closes
+        for close in market_closes
+        if close.realized_pl_jpy < 0.0
+    ]
+    market_close_rows = [
+        _audit_market_close_counterfactual(
+            close,
+            _candles_between(
+                candle_cache.get(close.pair, ()),
+                _first_complete_candle_start_at_or_after(close.close_at_utc, granularity_delta),
+                min(close.close_at_utc + timedelta(hours=float(post_close_hours)), now),
+            ),
+            home_conversions,
+        )
+        for close in market_closes
     ]
     payload = {
         "generated_at_utc": now.isoformat(),
@@ -161,10 +182,12 @@ def build_execution_timing_audit(
             "to_utc": now.isoformat(),
             "lookback_hours": float(lookback_hours),
             "post_cancel_hours": float(post_cancel_hours),
+            "post_close_hours": float(post_close_hours),
         },
-        "summary": _summary(canceled_rows, loss_rows),
+        "summary": _summary(canceled_rows, loss_rows, market_close_rows),
         "canceled_order_regrets": canceled_rows,
         "loss_close_regrets": loss_rows,
+        "market_close_counterfactuals": market_close_rows,
         "fetch_errors": fetch_errors,
     }
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -218,9 +241,8 @@ def _load_candidates(
     *,
     ledger_path: Path,
     cutoff: datetime,
-    post_cancel_hours: float,
     max_events: int | None,
-) -> tuple[list[_CanceledOrder], list[_LossClose]]:
+) -> tuple[list[_CanceledOrder], list[_MarketClose]]:
     if not ledger_path.exists():
         return [], []
     with sqlite3.connect(f"file:{ledger_path}?mode=ro", uri=True) as conn:
@@ -228,8 +250,12 @@ def _load_candidates(
         accepted = [_row_dict(row) for row in conn.execute("SELECT * FROM execution_events WHERE event_type='ORDER_ACCEPTED'")]
         canceled = [_row_dict(row) for row in conn.execute("SELECT * FROM execution_events WHERE event_type='ORDER_CANCELED'")]
         filled = [_row_dict(row) for row in conn.execute("SELECT * FROM execution_events WHERE event_type='ORDER_FILLED'")]
-        closed = [_row_dict(row) for row in conn.execute("SELECT * FROM execution_events WHERE event_type='TRADE_CLOSED' AND realized_pl_jpy < 0")]
+        closed = [_row_dict(row) for row in conn.execute("SELECT * FROM execution_events WHERE event_type='TRADE_CLOSED'")]
         protections = [_row_dict(row) for row in conn.execute("SELECT * FROM execution_events WHERE event_type='PROTECTION_CREATED'")]
+        gateway_closes = [
+            _row_dict(row)
+            for row in conn.execute("SELECT * FROM execution_events WHERE event_type='GATEWAY_TRADE_CLOSE_SENT'")
+        ]
     cancels_by_order: dict[str, dict[str, Any]] = {}
     for row in canceled:
         oid = str(row.get("order_id") or "")
@@ -295,10 +321,13 @@ def _load_candidates(
             )
         )
     protections_by_trade = _protections_by_trade(protections)
-    loss_candidates: list[_LossClose] = []
+    gateway_closes_by_trade = _gateway_closes_by_trade(gateway_closes)
+    market_close_candidates: list[_MarketClose] = []
     for row in closed:
         close_at = _parse_utc(row.get("ts_utc"))
         if close_at is None or close_at < cutoff:
+            continue
+        if str(row.get("exit_reason") or "").upper() != "MARKET_ORDER_TRADE_CLOSE":
             continue
         trade_id = str(row.get("trade_id") or "")
         fill = fills_by_trade.get(trade_id)
@@ -316,8 +345,9 @@ def _load_candidates(
         if not pair or side not in {"LONG", "SHORT"} or entry is None or close_price is None or realized is None:
             continue
         tp, sl = _latest_protection_before(protections_by_trade.get(trade_id, ()), close_at)
-        loss_candidates.append(
-            _LossClose(
+        gateway_action = _latest_gateway_close_action_before(gateway_closes_by_trade.get(trade_id, ()), close_at)
+        market_close_candidates.append(
+            _MarketClose(
                 trade_id=trade_id,
                 fill_at_utc=fill_at,
                 close_at_utc=close_at,
@@ -328,6 +358,7 @@ def _load_candidates(
                 close_price=close_price,
                 realized_pl_jpy=realized,
                 exit_reason=str(row.get("exit_reason") or "") or None,
+                gateway_action=gateway_action,
                 lane_id=str(fill.get("lane_id") or row.get("lane_id") or "") or None,
                 tp=tp,
                 sl=sl,
@@ -335,18 +366,19 @@ def _load_candidates(
             )
         )
     canceled_candidates.sort(key=lambda item: item.canceled_at_utc, reverse=True)
-    loss_candidates.sort(key=lambda item: item.close_at_utc, reverse=True)
+    market_close_candidates.sort(key=lambda item: item.close_at_utc, reverse=True)
     if max_events is not None and max_events > 0:
         canceled_candidates = canceled_candidates[:max_events]
-        loss_candidates = loss_candidates[:max_events]
-    return canceled_candidates, loss_candidates
+        market_close_candidates = market_close_candidates[:max_events]
+    return canceled_candidates, market_close_candidates
 
 
 def _candidate_windows(
     canceled: Iterable[_CanceledOrder],
-    loss_closes: Iterable[_LossClose],
+    market_closes: Iterable[_MarketClose],
     *,
     post_cancel_hours: float,
+    post_close_hours: float,
     now_utc: datetime,
 ) -> dict[str, list[tuple[datetime, datetime]]]:
     windows: dict[str, list[tuple[datetime, datetime]]] = {}
@@ -355,8 +387,12 @@ def _candidate_windows(
         end = min(order.canceled_at_utc + timedelta(hours=post_cancel_hours), now)
         if end > order.canceled_at_utc:
             windows.setdefault(order.pair, []).append((order.canceled_at_utc, end))
-    for close in loss_closes:
-        windows.setdefault(close.pair, []).append((close.fill_at_utc, close.close_at_utc))
+    for close in market_closes:
+        if close.realized_pl_jpy < 0.0:
+            windows.setdefault(close.pair, []).append((close.fill_at_utc, close.close_at_utc))
+        end = min(close.close_at_utc + timedelta(hours=post_close_hours), now)
+        if end > close.close_at_utc:
+            windows.setdefault(close.pair, []).append((close.close_at_utc, end))
     return windows
 
 
@@ -463,7 +499,7 @@ def _audit_canceled_order(
 
 
 def _audit_loss_close(
-    close: _LossClose,
+    close: _MarketClose,
     candles: tuple[BidAskCandle, ...],
     home_conversions: dict[str, float],
 ) -> dict[str, Any]:
@@ -501,6 +537,7 @@ def _audit_loss_close(
         "tp": close.tp,
         "sl": close.sl,
         "exit_reason": close.exit_reason,
+        "gateway_action": close.gateway_action,
         "realized_pl_jpy": round(close.realized_pl_jpy, 4),
         "fill_at_utc": close.fill_at_utc.isoformat(),
         "close_at_utc": close.close_at_utc.isoformat(),
@@ -518,7 +555,88 @@ def _audit_loss_close(
     }
 
 
-def _summary(canceled_rows: list[dict[str, Any]], loss_rows: list[dict[str, Any]]) -> dict[str, Any]:
+def _audit_market_close_counterfactual(
+    close: _MarketClose,
+    candles: tuple[BidAskCandle, ...],
+    home_conversions: dict[str, float],
+) -> dict[str, Any]:
+    favorable_pips = 0.0
+    favorable_at: datetime | None = None
+    first_favorable_at: datetime | None = None
+    adverse_pips = 0.0
+    adverse_at: datetime | None = None
+    first_adverse_at: datetime | None = None
+    tp_touch_at: datetime | None = None
+    sl_touch_at: datetime | None = None
+    for candle in candles:
+        favorable = _favorable_delta_from_price(close.side, close.close_price, candle) * _pip_factor(close.pair)
+        adverse = _adverse_delta_from_price(close.side, close.close_price, candle) * _pip_factor(close.pair)
+        if favorable > 0 and first_favorable_at is None:
+            first_favorable_at = candle.timestamp_utc
+        if adverse > 0 and first_adverse_at is None:
+            first_adverse_at = candle.timestamp_utc
+        if favorable > favorable_pips:
+            favorable_pips = favorable
+            favorable_at = candle.timestamp_utc
+        if adverse > adverse_pips:
+            adverse_pips = adverse
+            adverse_at = candle.timestamp_utc
+        if close.tp is not None and tp_touch_at is None and _tp_touched(close.side, close.tp, candle):
+            tp_touch_at = candle.timestamp_utc
+        if close.sl is not None and sl_touch_at is None and _sl_touched(close.side, close.sl, candle):
+            sl_touch_at = candle.timestamp_utc
+    jpy_per_pip = _jpy_per_pip(
+        close.pair,
+        close.units,
+        home_conversions=home_conversions,
+        raw=close.close_raw,
+    )
+    favorable_jpy = round(favorable_pips * jpy_per_pip, 4) if jpy_per_pip is not None else None
+    adverse_jpy = round(adverse_pips * jpy_per_pip, 4) if jpy_per_pip is not None else None
+    path_label = _market_close_path_label(
+        realized_pl_jpy=close.realized_pl_jpy,
+        favorable_pips=favorable_pips,
+        adverse_pips=adverse_pips,
+        candles_available=len(candles),
+    )
+    return {
+        "trade_id": close.trade_id,
+        "lane_id": close.lane_id,
+        "pair": close.pair,
+        "side": close.side,
+        "units": close.units,
+        "entry": close.entry,
+        "close_price": close.close_price,
+        "tp": close.tp,
+        "sl": close.sl,
+        "exit_reason": close.exit_reason,
+        "gateway_action": close.gateway_action,
+        "realized_pl_jpy": round(close.realized_pl_jpy, 4),
+        "fill_at_utc": close.fill_at_utc.isoformat(),
+        "close_at_utc": close.close_at_utc.isoformat(),
+        "post_close_path_label": path_label,
+        "post_close_favorable_pips": round(favorable_pips, 4),
+        "post_close_favorable_at_utc": favorable_at.isoformat() if favorable_at else None,
+        "first_post_close_favorable_minutes": _minutes_between(close.close_at_utc, first_favorable_at),
+        "estimated_post_close_favorable_jpy": favorable_jpy,
+        "post_close_adverse_pips": round(adverse_pips, 4),
+        "post_close_adverse_at_utc": adverse_at.isoformat() if adverse_at else None,
+        "first_post_close_adverse_minutes": _minutes_between(close.close_at_utc, first_adverse_at),
+        "estimated_post_close_adverse_jpy": adverse_jpy,
+        "tp_touched_after_market_close": tp_touch_at is not None,
+        "tp_touch_minutes_after_market_close": _minutes_between(close.close_at_utc, tp_touch_at),
+        "sl_touched_after_market_close": sl_touch_at is not None,
+        "sl_touch_minutes_after_market_close": _minutes_between(close.close_at_utc, sl_touch_at),
+        "jpy_per_pip_estimate": round(jpy_per_pip, 6) if jpy_per_pip is not None else None,
+        "candles_available": len(candles),
+    }
+
+
+def _summary(
+    canceled_rows: list[dict[str, Any]],
+    loss_rows: list[dict[str, Any]],
+    market_close_rows: list[dict[str, Any]],
+) -> dict[str, Any]:
     canceled_entry = [row for row in canceled_rows if row.get("entry_touched_after_cancel")]
     canceled_positive = [row for row in canceled_rows if float(row.get("mfe_pips_after_cancel_entry") or 0.0) > 0]
     canceled_tp = [row for row in canceled_rows if row.get("tp_touched_after_cancel")]
@@ -529,6 +647,34 @@ def _summary(canceled_rows: list[dict[str, Any]], loss_rows: list[dict[str, Any]
         for row in loss_positive
         if row.get("decision_lag_minutes_after_first_positive") is not None
     ]
+    market_continued = [
+        row
+        for row in market_close_rows
+        if row.get("post_close_path_label")
+        in {"PROFIT_CLOSE_LEFT_RUNNER_UPSIDE", "LOSS_CLOSE_MAY_HAVE_BEEN_PREMATURE"}
+    ]
+    market_adverse = [
+        row
+        for row in market_close_rows
+        if row.get("post_close_path_label")
+        in {"PROFIT_CLOSE_AVOIDED_GIVEBACK", "LOSS_CLOSE_CONTAINED_RISK"}
+    ]
+    profit_market = [row for row in market_close_rows if float(row.get("realized_pl_jpy") or 0.0) >= 0.0]
+    loss_market = [row for row in market_close_rows if float(row.get("realized_pl_jpy") or 0.0) < 0.0]
+    profit_left_runner = [
+        row for row in profit_market if row.get("post_close_path_label") == "PROFIT_CLOSE_LEFT_RUNNER_UPSIDE"
+    ]
+    profit_avoided = [
+        row for row in profit_market if row.get("post_close_path_label") == "PROFIT_CLOSE_AVOIDED_GIVEBACK"
+    ]
+    loss_premature = [
+        row for row in loss_market if row.get("post_close_path_label") == "LOSS_CLOSE_MAY_HAVE_BEEN_PREMATURE"
+    ]
+    loss_contained = [
+        row for row in loss_market if row.get("post_close_path_label") == "LOSS_CLOSE_CONTAINED_RISK"
+    ]
+    market_tp_after = [row for row in market_close_rows if row.get("tp_touched_after_market_close")]
+    market_sl_after = [row for row in market_close_rows if row.get("sl_touched_after_market_close")]
     return {
         "canceled_orders_audited": len(canceled_rows),
         "canceled_entry_touched_after_cancel": len(canceled_entry),
@@ -546,6 +692,29 @@ def _summary(canceled_rows: list[dict[str, Any]], loss_rows: list[dict[str, Any]
         "loss_close_estimated_mfe_jpy": _sum_known(loss_rows, "estimated_mfe_jpy_before_loss_close"),
         "avg_decision_lag_minutes_after_first_positive": round(sum(lag_values) / len(lag_values), 2) if lag_values else None,
         "max_decision_lag_minutes_after_first_positive": round(max(lag_values), 2) if lag_values else None,
+        "market_closes_audited": len(market_close_rows),
+        "market_closes_post_close_continued": len(market_continued),
+        "market_closes_post_close_continued_rate": _rate(len(market_continued), len(market_close_rows)),
+        "market_closes_post_close_adverse": len(market_adverse),
+        "market_closes_post_close_adverse_rate": _rate(len(market_adverse), len(market_close_rows)),
+        "market_closes_tp_touched_after_close": len(market_tp_after),
+        "market_closes_tp_touched_after_close_rate": _rate(len(market_tp_after), len(market_close_rows)),
+        "market_closes_sl_touched_after_close": len(market_sl_after),
+        "market_closes_sl_touched_after_close_rate": _rate(len(market_sl_after), len(market_close_rows)),
+        "market_close_estimated_followthrough_jpy": _sum_known(
+            market_continued,
+            "estimated_post_close_favorable_jpy",
+        ),
+        "market_close_estimated_avoided_adverse_jpy": _sum_known(
+            market_adverse,
+            "estimated_post_close_adverse_jpy",
+        ),
+        "profit_market_closes_audited": len(profit_market),
+        "profit_market_closes_left_runner_upside": len(profit_left_runner),
+        "profit_market_closes_avoided_giveback": len(profit_avoided),
+        "loss_market_closes_audited": len(loss_market),
+        "loss_market_closes_may_have_been_premature": len(loss_premature),
+        "loss_market_closes_contained_risk": len(loss_contained),
     }
 
 
@@ -579,6 +748,23 @@ def _write_report(payload: dict[str, Any], report_path: Path) -> None:
         "loss_close_estimated_mfe_jpy",
         "avg_decision_lag_minutes_after_first_positive",
         "max_decision_lag_minutes_after_first_positive",
+        "market_closes_audited",
+        "market_closes_post_close_continued",
+        "market_closes_post_close_continued_rate",
+        "market_closes_post_close_adverse",
+        "market_closes_post_close_adverse_rate",
+        "market_closes_tp_touched_after_close",
+        "market_closes_tp_touched_after_close_rate",
+        "market_closes_sl_touched_after_close",
+        "market_closes_sl_touched_after_close_rate",
+        "market_close_estimated_followthrough_jpy",
+        "market_close_estimated_avoided_adverse_jpy",
+        "profit_market_closes_audited",
+        "profit_market_closes_left_runner_upside",
+        "profit_market_closes_avoided_giveback",
+        "loss_market_closes_audited",
+        "loss_market_closes_may_have_been_premature",
+        "loss_market_closes_contained_risk",
     ):
         lines.append(f"- `{key}`: `{summary.get(key)}`")
     lines.extend(["", "## Top Canceled Order Regrets", "", "| Order | Lane | Pair | Side | Entry touch min | TP touch min | MFE pips | Est MFE JPY |", "|---|---|---|---|---:|---:|---:|---:|"])
@@ -621,6 +807,41 @@ def _write_report(payload: dict[str, Any], report_path: Path) -> None:
                 tp=row.get("tp_touched_before_loss_close"),
             )
         )
+    lines.extend(
+        [
+            "",
+            "## Top Market Close Counterfactuals",
+            "",
+            "| Trade | Lane | Pair | Side | Gateway | PL JPY | Label | Fav pips | Fav JPY | Adv pips | Adv JPY | TP after | SL after |",
+            "|---|---|---|---|---|---:|---|---:|---:|---:|---:|---|---|",
+        ]
+    )
+    top_market = sorted(
+        payload.get("market_close_counterfactuals") or [],
+        key=lambda row: max(
+            float(row.get("estimated_post_close_favorable_jpy") or 0.0),
+            float(row.get("estimated_post_close_adverse_jpy") or 0.0),
+        ),
+        reverse=True,
+    )[:20]
+    for row in top_market:
+        lines.append(
+            "| `{trade}` | `{lane}` | `{pair}` | `{side}` | `{gateway}` | `{pl}` | `{label}` | `{fav}` | `{fav_jpy}` | `{adv}` | `{adv_jpy}` | `{tp}` | `{sl}` |".format(
+                trade=row.get("trade_id"),
+                lane=row.get("lane_id") or "",
+                pair=row.get("pair"),
+                side=row.get("side"),
+                gateway=row.get("gateway_action") or "",
+                pl=row.get("realized_pl_jpy"),
+                label=row.get("post_close_path_label"),
+                fav=row.get("post_close_favorable_pips"),
+                fav_jpy=row.get("estimated_post_close_favorable_jpy"),
+                adv=row.get("post_close_adverse_pips"),
+                adv_jpy=row.get("estimated_post_close_adverse_jpy"),
+                tp=row.get("tp_touched_after_market_close"),
+                sl=row.get("sl_touched_after_market_close"),
+            )
+        )
     errors = payload.get("fetch_errors") or []
     if errors:
         lines.extend(["", "## Fetch Errors", ""])
@@ -661,6 +882,28 @@ def _latest_protection_before(rows: tuple[dict[str, Any], ...], close_at: dateti
     return tp, sl
 
 
+def _gateway_closes_by_trade(rows: Iterable[dict[str, Any]]) -> dict[str, tuple[dict[str, Any], ...]]:
+    out: dict[str, list[dict[str, Any]]] = {}
+    for row in rows:
+        trade_id = str(row.get("trade_id") or "")
+        if not trade_id:
+            continue
+        out.setdefault(trade_id, []).append(row)
+    return {key: tuple(sorted(value, key=lambda row: _parse_utc(row.get("ts_utc")) or datetime.min.replace(tzinfo=timezone.utc))) for key, value in out.items()}
+
+
+def _latest_gateway_close_action_before(rows: tuple[dict[str, Any], ...], close_at: datetime) -> str | None:
+    action: str | None = None
+    for row in rows:
+        ts = _parse_utc(row.get("ts_utc"))
+        if ts is None or ts > close_at:
+            continue
+        text = str(row.get("exit_reason") or "").strip()
+        if text:
+            action = text
+    return action
+
+
 def _entry_touched(order_type: str, side: str, entry: float, candle: BidAskCandle) -> bool:
     if order_type == "LIMIT_ORDER":
         return candle.ask_low <= entry if side == "LONG" else candle.bid_high >= entry
@@ -670,9 +913,35 @@ def _entry_touched(order_type: str, side: str, entry: float, candle: BidAskCandl
 
 
 def _favorable_delta(side: str, entry: float, candle: BidAskCandle) -> float:
+    return _favorable_delta_from_price(side, entry, candle)
+
+
+def _favorable_delta_from_price(side: str, price: float, candle: BidAskCandle) -> float:
     if side == "LONG":
-        return max(0.0, candle.bid_high - entry)
-    return max(0.0, entry - candle.ask_low)
+        return max(0.0, candle.bid_high - price)
+    return max(0.0, price - candle.ask_low)
+
+
+def _adverse_delta_from_price(side: str, price: float, candle: BidAskCandle) -> float:
+    if side == "LONG":
+        return max(0.0, price - candle.bid_low)
+    return max(0.0, candle.ask_high - price)
+
+
+def _market_close_path_label(
+    *,
+    realized_pl_jpy: float,
+    favorable_pips: float,
+    adverse_pips: float,
+    candles_available: int,
+) -> str:
+    if candles_available <= 0:
+        return "UNMEASURED"
+    if favorable_pips > adverse_pips:
+        return "PROFIT_CLOSE_LEFT_RUNNER_UPSIDE" if realized_pl_jpy >= 0.0 else "LOSS_CLOSE_MAY_HAVE_BEEN_PREMATURE"
+    if adverse_pips > favorable_pips:
+        return "PROFIT_CLOSE_AVOIDED_GIVEBACK" if realized_pl_jpy >= 0.0 else "LOSS_CLOSE_CONTAINED_RISK"
+    return "MIXED_OR_FLAT_AFTER_CLOSE"
 
 
 def _tp_touched(side: str, tp: float, candle: BidAskCandle) -> bool:

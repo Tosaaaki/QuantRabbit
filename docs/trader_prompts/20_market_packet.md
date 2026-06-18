@@ -30,6 +30,17 @@
     artifacts, learning evidence, or recent effect metrics.
   - It is read-only evidence. It cannot grant live permission, override risk
     gates, or suppress broker-truth blockers.
+- `data/execution_timing_audit.json`
+  - Read-only timing-regret evidence from the execution ledger and post-event
+    bid/ask candles.
+  - It reports canceled pending entries that later touched entry/TP, losing
+    market closes that had positive MFE before the red close, and every market
+    close's post-close path: follow-through left behind versus adverse giveback
+    avoided.
+  - Cite `timing:audit`, `timing:canceled_order:<order_id>`,
+    `timing:loss_close:<trade_id>`, or `timing:market_close:<trade_id>` when a
+    HOLD/CLOSE/TP-rebalance/cancel decision uses this evidence. It cannot grant
+    entry or exit permission by itself.
 - `data/execution_ledger.db` and `docs/verification_ledger_report.md`
   - SQL is the durable source for accumulated observations and measured
     outcomes; the MD report is the operator-readable digest.

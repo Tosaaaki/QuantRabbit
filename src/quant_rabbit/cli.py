@@ -2085,6 +2085,19 @@ def _cycle_digest(*, kind: str, step_results: list[dict[str, Any]], aborted: boo
             "loss_closes_tp_touched_before_close_rate": summary.get("loss_closes_tp_touched_before_close_rate"),
             "loss_close_estimated_mfe_jpy": summary.get("loss_close_estimated_mfe_jpy"),
             "avg_decision_lag_minutes_after_first_positive": summary.get("avg_decision_lag_minutes_after_first_positive"),
+            "market_closes_audited": summary.get("market_closes_audited"),
+            "market_closes_post_close_continued": summary.get("market_closes_post_close_continued"),
+            "market_closes_post_close_continued_rate": summary.get("market_closes_post_close_continued_rate"),
+            "market_closes_post_close_adverse": summary.get("market_closes_post_close_adverse"),
+            "market_closes_post_close_adverse_rate": summary.get("market_closes_post_close_adverse_rate"),
+            "market_closes_tp_touched_after_close": summary.get("market_closes_tp_touched_after_close"),
+            "market_closes_sl_touched_after_close": summary.get("market_closes_sl_touched_after_close"),
+            "market_close_estimated_followthrough_jpy": summary.get("market_close_estimated_followthrough_jpy"),
+            "market_close_estimated_avoided_adverse_jpy": summary.get("market_close_estimated_avoided_adverse_jpy"),
+            "profit_market_closes_left_runner_upside": summary.get("profit_market_closes_left_runner_upside"),
+            "profit_market_closes_avoided_giveback": summary.get("profit_market_closes_avoided_giveback"),
+            "loss_market_closes_may_have_been_premature": summary.get("loss_market_closes_may_have_been_premature"),
+            "loss_market_closes_contained_risk": summary.get("loss_market_closes_contained_risk"),
         }
 
     operator_precedent = _read_json_quiet(DEFAULT_OPERATOR_PRECEDENT_AUDIT)
@@ -2879,7 +2892,7 @@ def main(argv: list[str] | None = None) -> int:
 
     p_timing = sub.add_parser(
         "execution-timing-audit",
-        help="Audit canceled-entry and losing-close timing regret from execution ledger plus bid/ask candles.",
+        help="Audit canceled-entry, loss-close, and market-close counterfactual timing from bid/ask candles.",
     )
     p_timing.add_argument("--execution-ledger-db", type=Path, default=DEFAULT_EXECUTION_LEDGER_DB)
     p_timing.add_argument("--snapshot", type=Path, default=DEFAULT_BROKER_SNAPSHOT)
@@ -2887,6 +2900,7 @@ def main(argv: list[str] | None = None) -> int:
     p_timing.add_argument("--report", type=Path, default=DEFAULT_EXECUTION_TIMING_AUDIT_REPORT)
     p_timing.add_argument("--lookback-hours", type=float, default=168.0)
     p_timing.add_argument("--post-cancel-hours", type=float, default=6.0)
+    p_timing.add_argument("--post-close-hours", type=float, default=6.0)
     p_timing.add_argument("--granularity", default="M1")
     p_timing.add_argument("--max-events", type=int, default=None)
 
@@ -3006,6 +3020,7 @@ def main(argv: list[str] | None = None) -> int:
             report_path=args.report,
             lookback_hours=args.lookback_hours,
             post_cancel_hours=args.post_cancel_hours,
+            post_close_hours=args.post_close_hours,
             granularity=args.granularity,
             max_events=args.max_events,
         )

@@ -1767,6 +1767,86 @@ class GPTTraderBrainTest(unittest.TestCase):
             codes = {issue["code"] for issue in payload["verification_issues"]}
             self.assertNotIn("UNKNOWN_EVIDENCE_REF", codes)
 
+    def test_packet_includes_execution_timing_market_close_counterfactuals(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root)
+            files["execution_timing_audit"].write_text(
+                json.dumps(
+                    {
+                        "generated_at_utc": datetime.now(timezone.utc).isoformat(),
+                        "status": "OK",
+                        "window": {"lookback_hours": 24.0, "post_close_hours": 6.0},
+                        "summary": {
+                            "market_closes_audited": 2,
+                            "profit_market_closes_left_runner_upside": 1,
+                            "loss_market_closes_contained_risk": 1,
+                            "market_close_estimated_followthrough_jpy": 420.0,
+                            "market_close_estimated_avoided_adverse_jpy": 900.0,
+                        },
+                        "canceled_order_regrets": [
+                            {
+                                "order_id": "o1",
+                                "pair": "EUR_USD",
+                                "side": "LONG",
+                                "order_type": "LIMIT_ORDER",
+                                "entry_touched_after_cancel": True,
+                                "mfe_pips_after_cancel_entry": 3.1,
+                            }
+                        ],
+                        "loss_close_regrets": [
+                            {
+                                "trade_id": "t2",
+                                "pair": "EUR_USD",
+                                "side": "LONG",
+                                "gateway_action": "GPT_CLOSE",
+                                "realized_pl_jpy": -120.0,
+                                "had_positive_mfe_before_loss_close": True,
+                            }
+                        ],
+                        "market_close_counterfactuals": [
+                            {
+                                "trade_id": "t1",
+                                "pair": "EUR_USD",
+                                "side": "LONG",
+                                "gateway_action": "TAKE_PROFIT_MARKET",
+                                "realized_pl_jpy": 80.0,
+                                "post_close_path_label": "PROFIT_CLOSE_LEFT_RUNNER_UPSIDE",
+                                "post_close_favorable_pips": 4.2,
+                                "estimated_post_close_favorable_jpy": 420.0,
+                            }
+                        ],
+                    }
+                )
+            )
+            decision = _trade_decision()
+            decision["evidence_refs"].extend(
+                [
+                    "timing:audit",
+                    "timing:canceled_order:o1",
+                    "timing:loss_close:t2",
+                    "timing:market_close:t1",
+                ]
+            )
+            brain = _brain(root, files, decision)
+
+            summary = brain.run(snapshot_path=files["snapshot"])
+
+            self.assertEqual(summary.status, "ACCEPTED")
+            payload = json.loads((root / "gpt_decision.json").read_text())
+            refs = payload["input_packet"]["allowed_evidence_refs"]
+            self.assertIn("timing:audit", refs)
+            self.assertIn("timing:market_close:t1", refs)
+            timing = payload["input_packet"]["execution_timing_audit"]
+            self.assertEqual(timing["evidence_ref"], "timing:audit")
+            self.assertEqual(timing["summary"]["market_closes_audited"], 2)
+            self.assertEqual(
+                timing["market_close_counterfactuals"][0]["post_close_path_label"],
+                "PROFIT_CLOSE_LEFT_RUNNER_UPSIDE",
+            )
+            codes = {issue["code"] for issue in payload["verification_issues"]}
+            self.assertNotIn("UNKNOWN_EVIDENCE_REF", codes)
+
     def test_packet_includes_coverage_gap_profitable_bucket_context(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -2947,6 +3027,7 @@ def _brain(root: Path, files: dict[str, Path], decision: dict, *, max_lanes: int
         option_skew_path=files["option_skew"],
         attack_advice_path=files["attack_advice"],
         capture_economics_path=files["capture_economics"],
+        execution_timing_audit_path=files["execution_timing_audit"],
         coverage_optimization_path=files["coverage_optimization"],
         learning_audit_path=files["learning_audit"],
         verification_ledger_path=files["verification_ledger"],
@@ -3006,6 +3087,7 @@ def _fixtures(root: Path, *, positions: list[dict] | None = None, orders: list[d
         "option_skew": root / "option_skew.json",
         "attack_advice": root / "attack_advice.json",
         "capture_economics": root / "capture_economics.json",
+        "execution_timing_audit": root / "execution_timing_audit.json",
         "coverage_optimization": root / "coverage_optimization.json",
         "learning_audit": root / "learning_audit.json",
         "verification_ledger": root / "verification_ledger.json",
@@ -3313,6 +3395,7 @@ def _fixtures(root: Path, *, positions: list[dict] | None = None, orders: list[d
     )
     files["attack_advice"].write_text(json.dumps({}))
     files["capture_economics"].write_text(json.dumps({}))
+    files["execution_timing_audit"].write_text(json.dumps({}))
     files["coverage_optimization"].write_text(json.dumps({"status": "OK"}))
     files["learning_audit"].write_text(json.dumps({}))
     files["self_improvement_audit"].write_text(json.dumps({}))
@@ -4493,6 +4576,44 @@ def _write_recent_position_management_close_recommendation(
     )
 
 
+def _write_recent_position_management_hold_support(
+    root: Path,
+    files: dict[str, Path],
+    *,
+    trade_id: str = "555",
+    pair: str = "EUR_USD",
+    side: str = "SHORT",
+    reasons: list[str] | None = None,
+) -> None:
+    snapshot = json.loads(files["snapshot"].read_text())
+    generated_at = (
+        datetime.fromisoformat(snapshot["fetched_at_utc"]) - timedelta(minutes=20)
+    ).isoformat()
+    if reasons is None:
+        reasons = [
+            "latest forecast RANGE conf=0.78",
+            "TP/SL present and current thesis is not contradicted enough to force exit",
+            "remaining reward about 1235 JPY",
+        ]
+    (root / "position_management.json").write_text(
+        json.dumps(
+            {
+                "generated_at_utc": generated_at,
+                "action": "HOLD_PROTECTED",
+                "positions": [
+                    {
+                        "trade_id": trade_id,
+                        "pair": pair,
+                        "side": side,
+                        "action": "HOLD_PROTECTED",
+                        "reasons": reasons,
+                    }
+                ],
+            }
+        )
+    )
+
+
 class CloseDisciplineTest(unittest.TestCase):
     """Coverage for 2026-05-12 CLOSE two-gate discipline added in
     response to the 2026-05-11 18:17 UTC mass-close regression where the
@@ -4569,6 +4690,7 @@ class CloseDisciplineTest(unittest.TestCase):
             payload = json.loads((root / "gpt_decision.json").read_text())
             codes = {issue["code"] for issue in payload["verification_issues"]}
             self.assertIn("CLOSE_OPERATOR_AUTH_REQUIRED", codes)
+            self.assertNotIn("CLOSE_SAME_DIRECTION_MARKET_SUPPORT", codes)
             self.assertNotIn("CLOSE_THESIS_STILL_VALID", codes)
 
     def test_close_rejected_when_m15_break_conflicts_with_hold_sidecars(self) -> None:
@@ -4904,6 +5026,40 @@ class CloseDisciplineTest(unittest.TestCase):
             self.assertIn("CLOSE_OPERATOR_AUTH_REQUIRED", codes)
             self.assertNotIn("CLOSE_SAME_DIRECTION_MARKET_SUPPORT", codes)
             self.assertNotIn("CLOSE_THESIS_STILL_VALID", codes)
+
+    def test_forecast_persistence_close_rejected_when_position_management_still_holds_loss_side(self) -> None:
+        # Regression for 2026-06-17 AUD_NZD 472632: forecast_persistence
+        # RECOMMEND_CLOSE overrode a fresh PositionManager HOLD_PROTECTED read,
+        # and the trade later touched TP after the red market close.
+        prior = _os.environ.get("QR_OPERATOR_CLOSE_OVERRIDE")
+        _os.environ["QR_OPERATOR_CLOSE_OVERRIDE"] = "1"
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                files = _close_fixtures(root, position_side="SHORT", m15_dir="DOWN", h4_dir="DOWN")
+                _write_fresh_forecast_close_recommendation(root, files)
+                _write_recent_position_management_hold_support(root, files)
+                decision = _close_decision(trade_ids=["555"])
+                decision["evidence_refs"].extend(["position:persistence:555", "position:management:555"])
+                brain = _brain(root, files, decision)
+
+                summary = brain.run(snapshot_path=files["snapshot"])
+
+                self.assertEqual(summary.status, "REJECTED", msg=summary)
+                payload = json.loads((root / "gpt_decision.json").read_text())
+                codes = {issue["code"] for issue in payload["verification_issues"]}
+                self.assertIn("CLOSE_SAME_DIRECTION_MARKET_SUPPORT", codes)
+                self.assertNotIn("CLOSE_OPERATOR_AUTH_REQUIRED", codes)
+                support = payload["input_packet"]["protection_sidecars"]["position_hold_support"]
+                self.assertTrue(any(row.get("source") == "position_management" for row in support))
+                rec = payload["input_packet"]["protection_sidecars"]["position_close_recommendations"][0]
+                self.assertFalse(rec["blocks_non_close_actions"])
+                self.assertIn("position_management", rec.get("non_blocking_reason", ""))
+        finally:
+            if prior is None:
+                _os.environ.pop("QR_OPERATOR_CLOSE_OVERRIDE", None)
+            else:
+                _os.environ["QR_OPERATOR_CLOSE_OVERRIDE"] = prior
 
     def test_close_rejected_without_operator_token_when_only_soft_position_thesis_sidecar(self) -> None:
         # Score-only position_thesis review is Gate A evidence, but not hard
@@ -5299,42 +5455,51 @@ class CloseDisciplineTest(unittest.TestCase):
         # Regression for 2026-06-15 EUR_CHF 472445: the router correctly chose
         # the entry branch, but the model saw a position_thesis REVIEW_CLOSE
         # sidecar and kept returning CLOSE. The packet must expose the
-        # hold-sidecar downgrade in machine-readable form.
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            files = _close_fixtures(root, position_side="LONG", m15_dir="UP", h4_dir="UP")
-            _write_fresh_position_thesis_close_recommendation(
-                root,
-                files,
-                side="LONG",
-                rationale_lines=[
-                    "patterns +4.0",
-                    "forward-proj +6.0",
-                    "chart-tech -18.0",
-                ],
-                context_notes=[
-                    "invalidation hit: current bid 1.17300 <= buffered invalidation 1.17350",
-                    "technical invalidation confirmed against LONG: H1 MACD-; M15 ST-; M30 MACD-; M5 ST-",
-                ],
-            )
-            _write_fresh_evolution_and_persistence_hold_support(root, files, side="LONG")
-            decision = _close_decision(trade_ids=["555"])
-            decision["evidence_refs"].extend(
-                ["position:thesis:555", "position:evolution:555", "position:persistence:555"]
-            )
-            brain = _brain(root, files, decision)
+        # hold-sidecar downgrade in machine-readable form, even if an operator
+        # token/env is present for unrelated discretionary closes.
+        prior = _os.environ.get("QR_OPERATOR_CLOSE_OVERRIDE")
+        _os.environ["QR_OPERATOR_CLOSE_OVERRIDE"] = "1"
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                files = _close_fixtures(root, position_side="LONG", m15_dir="UP", h4_dir="UP")
+                _write_fresh_position_thesis_close_recommendation(
+                    root,
+                    files,
+                    side="LONG",
+                    rationale_lines=[
+                        "patterns +4.0",
+                        "forward-proj +6.0",
+                        "chart-tech -18.0",
+                    ],
+                    context_notes=[
+                        "invalidation hit: current bid 1.17300 <= buffered invalidation 1.17350",
+                        "technical invalidation confirmed against LONG: H1 MACD-; M15 ST-; M30 MACD-; M5 ST-",
+                    ],
+                )
+                _write_fresh_evolution_and_persistence_hold_support(root, files, side="LONG")
+                decision = _close_decision(trade_ids=["555"])
+                decision["evidence_refs"].extend(
+                    ["position:thesis:555", "position:evolution:555", "position:persistence:555"]
+                )
+                brain = _brain(root, files, decision)
 
-            summary = brain.run(snapshot_path=files["snapshot"])
+                summary = brain.run(snapshot_path=files["snapshot"])
 
-            self.assertEqual(summary.status, "REJECTED", msg=summary)
-            payload = json.loads((root / "gpt_decision.json").read_text())
-            recs = payload["input_packet"]["protection_sidecars"]["position_close_recommendations"]
-            thesis_rec = next(item for item in recs if item["source"] == "position_thesis")
-            self.assertTrue(thesis_rec["gate_b_standing_authorized"])
-            self.assertFalse(thesis_rec["blocks_non_close_actions"])
-            self.assertEqual(thesis_rec["routing_effect"], "SOFT_ADVISORY_NON_BLOCKING")
-            self.assertIn("Do not choose CLOSE", thesis_rec["entry_decision_guidance"])
-            self.assertIn("same-direction", thesis_rec["non_blocking_reason"])
+                self.assertEqual(summary.status, "REJECTED", msg=summary)
+                payload = json.loads((root / "gpt_decision.json").read_text())
+                recs = payload["input_packet"]["protection_sidecars"]["position_close_recommendations"]
+                thesis_rec = next(item for item in recs if item["source"] == "position_thesis")
+                self.assertTrue(thesis_rec["gate_b_standing_authorized"])
+                self.assertFalse(thesis_rec["blocks_non_close_actions"])
+                self.assertEqual(thesis_rec["routing_effect"], "SOFT_ADVISORY_NON_BLOCKING")
+                self.assertIn("Do not choose CLOSE", thesis_rec["entry_decision_guidance"])
+                self.assertIn("same-direction", thesis_rec["non_blocking_reason"])
+        finally:
+            if prior is None:
+                _os.environ.pop("QR_OPERATOR_CLOSE_OVERRIDE", None)
+            else:
+                _os.environ["QR_OPERATOR_CLOSE_OVERRIDE"] = prior
 
     def test_close_from_nonblocking_soft_advisory_with_live_ready_lanes_points_back_to_entry(self) -> None:
         # The verifier should not only reject the close; it should identify the
@@ -5373,7 +5538,8 @@ class CloseDisciplineTest(unittest.TestCase):
             payload = json.loads((root / "gpt_decision.json").read_text())
             codes = {issue["code"] for issue in payload["verification_issues"]}
             self.assertIn("SOFT_CLOSE_ADVISORY_DOES_NOT_PREEMPT_ENTRY", codes)
-            self.assertIn("CLOSE_OPERATOR_AUTH_REQUIRED", codes)
+            self.assertIn("CLOSE_SAME_DIRECTION_MARKET_SUPPORT", codes)
+            self.assertNotIn("CLOSE_OPERATOR_AUTH_REQUIRED", codes)
             messages = "\n".join(issue["message"] for issue in payload["verification_issues"])
             self.assertIn("TRADE/CANCEL/WAIT", messages)
             self.assertIn(LANE_ID, messages)

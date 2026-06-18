@@ -55,10 +55,14 @@ Write `data/codex_trader_decision_response.json`.
     "news:health",
     "cot:<currency>",
     "option:skew:<pair>",
+    "timing:audit",
+    "timing:canceled_order:<order_id>",
+    "timing:loss_close:<trade_id>",
+    "timing:market_close:<trade_id>",
     "attack:advice",
     "attack:lane:<lane_id>"
   ],
-  "evidence_ref_note": "Use option:skew refs only when data/option_skew_snapshot.json has enabled=true; omit them for disabled optional skew artifacts.",
+  "evidence_ref_note": "Use option:skew refs only when data/option_skew_snapshot.json has enabled=true; omit them for disabled optional skew artifacts. Use timing:* refs only when data/execution_timing_audit.json shaped cancel, HOLD, CLOSE, TP-rebalance, or profit-take reasoning.",
   "strategy_reviews": [
     {
       "lane_id": "desk:PAIR:SIDE:METHOD",

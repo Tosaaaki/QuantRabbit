@@ -1020,6 +1020,15 @@ def _fresh_position_hold_support(snapshot: dict[str, Any], *, data_root: Path) -
     recs: list[dict[str, Any]] = []
     recs.extend(_position_thesis_hold_support(data_root / "position_thesis_report.json", fetched_at))
     recs.extend(_thesis_evolution_hold_support(data_root / "thesis_evolution_report.json", fetched_at))
+    recs.extend(_position_management_hold_support(data_root / "position_management.json", fetched_at))
+    recs.extend(
+        _position_management_hold_support(
+            data_root / DEFAULT_POSITION_GUARDIAN_MANAGEMENT.name,
+            fetched_at,
+            source="position_guardian_management",
+            evidence_prefix="position:guardian_management",
+        )
+    )
     recs.extend(_forecast_persistence_hold_support(data_root / "forecast_persistence_report.json", fetched_at))
     out: list[dict[str, Any]] = []
     for rec in recs:
@@ -1303,6 +1312,57 @@ def _position_management_recommendations(
                 "gate_b_standing_authorized": standing_authorized,
                 "reason": "; ".join(selected_reason_parts)
                 or "PositionManager REVIEW_EXIT requires GPT CLOSE Gate A/B verification",
+            }
+        )
+    return out
+
+
+def _position_management_hold_support(
+    path: Path,
+    fetched_at: datetime,
+    *,
+    source: str = "position_management",
+    evidence_prefix: str = "position:management",
+) -> list[dict[str, Any]]:
+    payload = _recent_report_payload(
+        path,
+        fetched_at,
+        max_age_seconds=POSITION_MANAGEMENT_REVIEW_EXIT_TTL_SECONDS,
+    )
+    if not payload:
+        return []
+    out: list[dict[str, Any]] = []
+    for item in payload.get("positions", []) or []:
+        if not isinstance(item, dict):
+            continue
+        action = str(item.get("action") or "").upper()
+        close_review_action = str(item.get("close_review_action") or "").upper()
+        if action not in {"HOLD", "HOLD_PROTECTED"} or close_review_action == "REVIEW_EXIT":
+            continue
+        trade_id = str(item.get("trade_id") or "")
+        reason_parts = [str(reason) for reason in item.get("reasons", []) or [] if str(reason)]
+        selected = reason_parts[:3]
+        for reason in reason_parts:
+            lowered = reason.lower()
+            if (
+                "current thesis is not contradicted enough" not in lowered
+                and "tp/sl present" not in lowered
+                and "latest forecast" not in lowered
+            ):
+                continue
+            if reason not in selected:
+                selected.append(reason)
+            if len(selected) >= 5:
+                break
+        out.append(
+            {
+                "source": source,
+                "evidence_ref": f"{evidence_prefix}:{trade_id}",
+                "trade_id": trade_id,
+                "pair": item.get("pair"),
+                "side": item.get("side"),
+                "verdict": action,
+                "reason": "; ".join(selected) or "PositionManager currently supports HOLD_PROTECTED",
             }
         )
     return out

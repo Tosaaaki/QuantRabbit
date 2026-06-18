@@ -303,6 +303,138 @@ class ExecutionTimingAuditTest(unittest.TestCase):
             self.assertEqual(row["decision_lag_minutes_after_first_positive"], 5.5)
             self.assertEqual(row["mfe_pips_before_loss_close"], 11.0)
 
+    def test_market_close_counterfactual_splits_followthrough_from_risk_containment(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            db = root / "ledger.db"
+            _make_db(db)
+            with sqlite3.connect(db) as conn:
+                _insert_event(
+                    conn,
+                    "fill-profit",
+                    ts_utc="2026-06-16T01:00:00Z",
+                    event_type="ORDER_FILLED",
+                    lane_id="lane:profit-runner",
+                    order_id="o-profit",
+                    trade_id="t-profit",
+                    pair="USD_JPY",
+                    side="LONG",
+                    units=1000,
+                    price=150.00,
+                )
+                _insert_event(
+                    conn,
+                    "tp-profit",
+                    ts_utc="2026-06-16T01:00:10Z",
+                    event_type="PROTECTION_CREATED",
+                    trade_id="t-profit",
+                    pair="USD_JPY",
+                    price=150.14,
+                    raw={"type": "TAKE_PROFIT_ORDER", "tradeID": "t-profit", "price": "150.14"},
+                )
+                _insert_event(
+                    conn,
+                    "gateway-profit",
+                    ts_utc="2026-06-16T01:10:00Z",
+                    event_type="GATEWAY_TRADE_CLOSE_SENT",
+                    trade_id="t-profit",
+                    pair="USD_JPY",
+                    exit_reason="TAKE_PROFIT_MARKET",
+                )
+                _insert_event(
+                    conn,
+                    "close-profit",
+                    ts_utc="2026-06-16T01:10:05Z",
+                    event_type="TRADE_CLOSED",
+                    order_id="close-profit",
+                    trade_id="t-profit",
+                    pair="USD_JPY",
+                    side="LONG",
+                    units=1000,
+                    price=150.05,
+                    realized_pl_jpy=50.0,
+                    exit_reason="MARKET_ORDER_TRADE_CLOSE",
+                )
+                _insert_event(
+                    conn,
+                    "fill-loss",
+                    ts_utc="2026-06-16T02:00:00Z",
+                    event_type="ORDER_FILLED",
+                    lane_id="lane:loss-cut",
+                    order_id="o-loss",
+                    trade_id="t-loss",
+                    pair="USD_JPY",
+                    side="SHORT",
+                    units=1000,
+                    price=150.00,
+                )
+                _insert_event(
+                    conn,
+                    "sl-loss",
+                    ts_utc="2026-06-16T02:00:10Z",
+                    event_type="PROTECTION_CREATED",
+                    trade_id="t-loss",
+                    pair="USD_JPY",
+                    price=150.18,
+                    raw={"type": "STOP_LOSS_ORDER", "tradeID": "t-loss", "price": "150.18"},
+                )
+                _insert_event(
+                    conn,
+                    "gateway-loss",
+                    ts_utc="2026-06-16T02:10:00Z",
+                    event_type="GATEWAY_TRADE_CLOSE_SENT",
+                    trade_id="t-loss",
+                    pair="USD_JPY",
+                    exit_reason="GPT_CLOSE",
+                )
+                _insert_event(
+                    conn,
+                    "close-loss",
+                    ts_utc="2026-06-16T02:10:05Z",
+                    event_type="TRADE_CLOSED",
+                    order_id="close-loss",
+                    trade_id="t-loss",
+                    pair="USD_JPY",
+                    side="SHORT",
+                    units=1000,
+                    price=150.08,
+                    realized_pl_jpy=-80.0,
+                    exit_reason="MARKET_ORDER_TRADE_CLOSE",
+                )
+                conn.commit()
+
+            candles = (
+                BidAskCandle(_dt("2026-06-16T01:11:00Z"), 150.16, 150.04, 150.17, 150.05),
+                BidAskCandle(_dt("2026-06-16T02:11:00Z"), 150.19, 150.02, 150.20, 150.03),
+            )
+
+            def fetcher(pair: str, start: datetime, end: datetime, granularity: str) -> tuple[BidAskCandle, ...]:
+                self.assertEqual(pair, "USD_JPY")
+                return tuple(c for c in candles if start <= c.timestamp_utc <= end)
+
+            payload = build_execution_timing_audit(
+                ledger_path=db,
+                snapshot_path=None,
+                output_path=root / "audit.json",
+                report_path=root / "audit.md",
+                now_utc=_dt("2026-06-16T03:00:00Z"),
+                candle_fetcher=fetcher,
+            )
+
+            summary = payload["summary"]
+            self.assertEqual(summary["market_closes_audited"], 2)
+            self.assertEqual(summary["profit_market_closes_left_runner_upside"], 1)
+            self.assertEqual(summary["loss_market_closes_contained_risk"], 1)
+            self.assertEqual(summary["market_close_estimated_followthrough_jpy"], 140.0)
+            self.assertEqual(summary["market_close_estimated_avoided_adverse_jpy"], 120.0)
+            rows = {row["trade_id"]: row for row in payload["market_close_counterfactuals"]}
+            self.assertEqual(rows["t-profit"]["gateway_action"], "TAKE_PROFIT_MARKET")
+            self.assertEqual(rows["t-profit"]["post_close_path_label"], "PROFIT_CLOSE_LEFT_RUNNER_UPSIDE")
+            self.assertTrue(rows["t-profit"]["tp_touched_after_market_close"])
+            self.assertEqual(rows["t-loss"]["gateway_action"], "GPT_CLOSE")
+            self.assertEqual(rows["t-loss"]["post_close_path_label"], "LOSS_CLOSE_CONTAINED_RISK")
+            self.assertTrue(rows["t-loss"]["sl_touched_after_market_close"])
+
 
 if __name__ == "__main__":
     unittest.main()

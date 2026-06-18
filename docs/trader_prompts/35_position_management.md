@@ -90,6 +90,12 @@ TP/profit management active and do not use it as a blanket reason to stop
 separate current `LIVE_READY` entries on other pairs or horizons. If choosing
 `CLOSE` from soft evidence, surface
 `CLOSE_OPERATOR_AUTH_REQUIRED` unless Gate B is present.
+If a fresh `position_management` / `position_guardian_management` /
+`position_thesis` / `thesis_evolution` / `forecast_persistence` hold-support
+sidecar, or same-direction market context, still says the open side has a
+recoverable path, do not let a soft `forecast_persistence` or score-only close
+review override it. That is a current technical/HOLD conflict, not a valid
+loss-side market close; reprice TP, hold, or request fresh evidence instead.
 
 `TAKE_PROFIT_MARKET` is not this loss-side CLOSE path. Use it only for
 currently profitable trader-owned positions when the adaptive TP / macro-micro
@@ -144,7 +150,12 @@ positions.
   invalidation-hit or structural-break evidence plus M5/M15/M30/H1 technical
   confirmation. Adverse-entry-buffer-only or score-only `position_thesis`
   REVIEW_CLOSE and `forecast_persistence` RECOMMEND_CLOSE are softer Gate A
-  and still require explicit env/token Gate B.
+  and still require explicit env/token Gate B. If any fresh same-trade
+  hold-support sidecar, including `position_management` `HOLD` /
+  `HOLD_PROTECTED`, says TP/SL remains valid, the current thesis is not
+  contradicted enough, or the latest forecast is unclear/range instead of
+  invalidated, the close review is conflicted advisory evidence and should not
+  be converted into a loss-side market close.
 
 Macro shock, large unrealized loss, or margin pressure can strengthen the
 reason to review a thesis, but none of them is a standalone Gate A. Convert the
@@ -211,6 +222,15 @@ receipt when it shaped the decision. Per §8, capture_economics does not grant
 trade permission or pick sides; when it shows `NEGATIVE_EXPECTANCY` plus
 `avg_loss_jpy > avg_win_jpy`, generate-intents/RiskEngine use the observed
 average winner as a temporary loss-asymmetry cap for fresh `NEW` entries.
+
+`data/execution_timing_audit.json` adds the timing layer. Use
+`market_close_counterfactuals` to separate three cases: loss closes that would
+have continued toward TP, profit takes that correctly avoided giveback, and
+profit takes that left runner upside. A `LOSS_CLOSE_MAY_HAVE_BEEN_PREMATURE`
+row is not automatic HOLD permission, but it is direct evidence that the
+technical/HOLD stack must be checked before accepting another soft close. Cite
+the relevant `timing:market_close:<trade_id>` or `timing:loss_close:<trade_id>`
+when this changes the decision.
 
 ## Pending Orders
 
