@@ -1213,8 +1213,8 @@ class PositionManagerTest(unittest.TestCase):
                         take_profit=1.2020,
                         stop_loss=None,
                     ),
-                    bid=1.2010,
-                    ask=1.2011,
+                    bid=1.2013,
+                    ask=1.2014,
                 )
 
                 result = PositionManager(
@@ -1308,7 +1308,7 @@ class PositionManagerTest(unittest.TestCase):
                     units=5000,
                     entry_price=1.19980,
                     unrealized_pl_jpy=450,
-                    take_profit=1.20320,
+                    take_profit=1.20075,
                     stop_loss=1.19800,
                 ),
                 bid=1.20040,
@@ -1329,6 +1329,45 @@ class PositionManagerTest(unittest.TestCase):
             self.assertIn("temporary top profit-take", report)
             self.assertIn("fresh LIVE_READY pullback/retest lane", report)
 
+    def test_temporary_top_waits_when_attached_tp_progress_is_too_shallow(self) -> None:
+        # 2026-06-18 GBP_CHF regression: local-top evidence must not turn an
+        # attached-TP runner into a micro-scalp when only a small fraction of
+        # the planned TP has printed.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            decision = _decision(root, long_score=180, short_score=80)
+            pair_charts = _temporary_top_pair_charts(root)
+            _write_latest_forecast(root, direction="UP", confidence=0.39)
+            snapshot = _snapshot(
+                BrokerPosition(
+                    trade_id="temporary-top-shallow-progress",
+                    pair="EUR_USD",
+                    side=Side.LONG,
+                    units=5000,
+                    entry_price=1.19980,
+                    unrealized_pl_jpy=450,
+                    take_profit=1.20320,
+                    stop_loss=1.19800,
+                ),
+                bid=1.20040,
+                ask=1.20060,
+            )
+
+            result = PositionManager(
+                trader_decision_path=decision,
+                pair_charts_path=pair_charts,
+                output_path=root / "data" / "pm.json",
+                report_path=root / "pm.md",
+                data_root=root,
+            ).run(snapshot)
+
+            self.assertEqual(result.action, ACTION_HOLD_PROTECTED)
+            self.assertEqual(result.positions[0].action, ACTION_HOLD_PROTECTED)
+            report = (root / "pm.md").read_text()
+            self.assertIn("temporary top profit-take", report)
+            self.assertIn("TP progress", report)
+            self.assertIn("keep broker TP", report)
+
     def test_profitable_long_local_swing_top_does_not_wait_for_full_spread_pullback(self) -> None:
         # The live 2026-06-12 USD_CAD sidecar saw the local top logic but
         # skipped because pullback was still smaller than the spread/ATR floor.
@@ -1347,7 +1386,7 @@ class PositionManagerTest(unittest.TestCase):
                     units=5000,
                     entry_price=1.19980,
                     unrealized_pl_jpy=650,
-                    take_profit=1.20320,
+                    take_profit=1.20110,
                     stop_loss=1.19800,
                 ),
                 bid=1.20064,
@@ -1387,7 +1426,7 @@ class PositionManagerTest(unittest.TestCase):
                     units=5000,
                     entry_price=1.19980,
                     unrealized_pl_jpy=650,
-                    take_profit=1.20320,
+                    take_profit=1.20110,
                     stop_loss=1.19800,
                 ),
                 bid=1.20064,
@@ -1426,7 +1465,7 @@ class PositionManagerTest(unittest.TestCase):
                     units=5000,
                     entry_price=1.19980,
                     unrealized_pl_jpy=650,
-                    take_profit=1.20320,
+                    take_profit=1.20105,
                     stop_loss=1.19800,
                 ),
                 bid=1.20058,
@@ -1464,11 +1503,11 @@ class PositionManagerTest(unittest.TestCase):
                     units=5000,
                     entry_price=1.19900,
                     unrealized_pl_jpy=320,
-                    take_profit=1.20320,
+                    take_profit=1.19995,
                     stop_loss=1.19800,
                 ),
-                bid=1.19960,
-                ask=1.19975,
+                bid=1.19985,
+                ask=1.20000,
             )
 
             result = PositionManager(
@@ -1484,6 +1523,41 @@ class PositionManagerTest(unittest.TestCase):
             report = (root / "pm.md").read_text()
             self.assertIn("MFE giveback profit-take", report)
             self.assertIn("post-close re-entry discipline", report)
+
+    def test_mfe_giveback_waits_when_attached_tp_progress_is_too_shallow(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            decision = _decision(root, long_score=180, short_score=80)
+            pair_charts = _mfe_giveback_pair_charts(root)
+            snapshot = _snapshot(
+                BrokerPosition(
+                    trade_id="mfe-giveback-shallow-progress",
+                    pair="EUR_USD",
+                    side=Side.LONG,
+                    units=5000,
+                    entry_price=1.19900,
+                    unrealized_pl_jpy=320,
+                    take_profit=1.20320,
+                    stop_loss=1.19800,
+                ),
+                bid=1.19985,
+                ask=1.20000,
+            )
+
+            result = PositionManager(
+                trader_decision_path=decision,
+                pair_charts_path=pair_charts,
+                output_path=root / "data" / "pm.json",
+                report_path=root / "pm.md",
+                data_root=root,
+            ).run(snapshot)
+
+            self.assertEqual(result.action, ACTION_HOLD_PROTECTED)
+            self.assertEqual(result.positions[0].action, ACTION_HOLD_PROTECTED)
+            report = (root / "pm.md").read_text()
+            self.assertIn("MFE giveback profit-take", report)
+            self.assertIn("TP progress", report)
+            self.assertIn("keep broker TP", report)
 
     def test_profitable_long_half_mfe_giveback_takes_profit_before_red(self) -> None:
         # The audit lag showed that waiting for a deeper giveback lets the next
@@ -1501,11 +1575,11 @@ class PositionManagerTest(unittest.TestCase):
                     units=5000,
                     entry_price=1.19900,
                     unrealized_pl_jpy=420,
-                    take_profit=1.20320,
+                    take_profit=1.20020,
                     stop_loss=1.19800,
                 ),
-                bid=1.19978,
-                ask=1.19993,
+                bid=1.19985,
+                ask=1.20000,
             )
 
             result = PositionManager(

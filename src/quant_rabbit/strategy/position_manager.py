@@ -917,6 +917,14 @@ def _adaptive_tp_action(
     )
     reasons.extend(temporary_profit_reasons)
     if temporary_profit_take:
+        profit_take_blocker = _profit_market_take_noise_blocker(
+            position=position,
+            quote=quote,
+            pair_chart=pair_chart,
+        )
+        if profit_take_blocker is not None:
+            reasons.append(profit_take_blocker)
+            return ACTION_HOLD_PROTECTED, None, reasons
         return ACTION_TAKE_PROFIT_MARKET, None, reasons
 
     mfe_giveback_profit_take, mfe_giveback_reasons = _mfe_giveback_profit_take_signal(
@@ -927,6 +935,14 @@ def _adaptive_tp_action(
     )
     reasons.extend(mfe_giveback_reasons)
     if mfe_giveback_profit_take:
+        profit_take_blocker = _profit_market_take_noise_blocker(
+            position=position,
+            quote=quote,
+            pair_chart=pair_chart,
+        )
+        if profit_take_blocker is not None:
+            reasons.append(profit_take_blocker)
+            return ACTION_HOLD_PROTECTED, None, reasons
         return ACTION_TAKE_PROFIT_MARKET, None, reasons
 
     # Decision matrix (rows = macro, cols = micro). Profitable positions only.
@@ -1320,12 +1336,12 @@ def _profit_market_take_noise_blocker(
     quote,
     pair_chart: dict[str, Any] | None,
 ) -> str | None:
-    """Require macro-reversal profit market takes to clear executable noise.
+    """Require profit market takes to clear executable noise and TP progress.
 
-    Local-top and MFE-giveback market takes already prove their own noise
-    floors before returning. This guard covers the broader macro/micro matrix
-    path, where paying the full spread to bank a tiny positive tick worsens the
-    average-win/average-loss asymmetry that capture-economics audits.
+    Paying the full spread to bank a tiny positive tick worsens the average
+    win/average-loss asymmetry that capture-economics audits. A broker TP that
+    is still mostly ahead should remain the harvest mechanism unless the
+    executable move has captured most of the planned reward.
     """
 
     if quote is None:
@@ -1350,7 +1366,28 @@ def _profit_market_take_noise_blocker(
             f"profit-harvest market close skipped: executable profit {profit_pips:.1f}pip < "
             f"market noise floor {min_profit_pips:.1f}pip"
         )
+    progress_blocker = _profit_market_take_tp_progress_blocker(position, profit_pips)
+    if progress_blocker is not None:
+        return progress_blocker
     return None
+
+
+def _profit_market_take_tp_progress_blocker(
+    position: BrokerPosition,
+    profit_pips: float,
+) -> str | None:
+    tp_pips = _position_tp_pips(position)
+    if tp_pips is None or tp_pips <= 0:
+        return None
+    progress_gate = tp_pips * PROFIT_BREAK_EVEN_MIN_TP_PROGRESS
+    if profit_pips >= progress_gate:
+        return None
+    progress = max(0.0, profit_pips / tp_pips)
+    return (
+        f"profit-harvest market close skipped: TP progress {progress:.0%} "
+        f"({profit_pips:.1f}/{tp_pips:.1f}pip) < {PROFIT_BREAK_EVEN_MIN_TP_PROGRESS:.0%}; "
+        "keep broker TP instead of micro-scalping attached-TP harvest"
+    )
 
 
 def _view_by_timeframe(pair_chart: dict[str, Any], timeframe: str) -> dict[str, Any] | None:
