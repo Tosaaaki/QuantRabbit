@@ -34,6 +34,7 @@ PENDING_ENTRY_ORDER_TYPES = frozenset({"LIMIT", "STOP-ENTRY"})
 DIRECTIONAL_ENTRY_METHODS = frozenset({"BREAKOUT_FAILURE", "TREND_CONTINUATION"})
 RANGE_ENTRY_METHOD = "RANGE_ROTATION"
 RANGE_FORECAST_METHOD_MISMATCH_CODE = "RANGE_FORECAST_REQUIRES_RANGE_ROTATION"
+SELF_IMPROVEMENT_P0_SHADOW_METADATA_KEY = "self_improvement_p0_shadow_live_ready"
 
 
 @dataclass(frozen=True)
@@ -783,10 +784,24 @@ def _action_items(
     items: list[str] = []
     promotion_candidates = [lane for lane in lanes if lane.counts_after_promotion]
     evidence_refresh_required = bool(artifact_diagnostics.get("requires_market_evidence_refresh"))
+    p0_shadow = (
+        artifact_diagnostics.get("self_improvement_p0_shadow_live_ready")
+        if isinstance(artifact_diagnostics.get("self_improvement_p0_shadow_live_ready"), dict)
+        else {}
+    )
+    p0_shadow_count = int(p0_shadow.get("count") or 0)
     if artifact_diagnostics.get("market_context_matrix_missing"):
         items.append("run market-context-matrix so gold/oil/SPX/DXY/rates/news context reaches coverage and GPT packets")
     if evidence_refresh_required:
         items.append("refresh broker-snapshot and generate-intents after quotes and spreads are tradable; recompute coverage before adding new strategy lanes")
+    if p0_shadow_count:
+        reward = float(p0_shadow.get("reward_jpy") or 0.0)
+        lanes_text = ", ".join(str(lane) for lane in (p0_shadow.get("lane_ids") or [])[:3])
+        items.append(
+            f"preserve {p0_shadow_count} otherwise-live-ready P0-gated receipt(s) "
+            f"({reward:.0f} JPY reward) for the first post-recovery basket; "
+            f"send remains blocked by profitability P0: {lanes_text}"
+        )
     if duplicate_live_ready_lanes:
         items.append("dedupe same entry/tp/sl receipts before considering multi-entry execution")
     if promotion_candidates:
@@ -953,6 +968,7 @@ def _artifact_diagnostics(
     strategy_block_issue_counts = _issue_code_counts(results, "strategy_issues", block_only=True)
     spread_normalized = _spread_normalized_candidate_summary(results)
     quote_normalized = _quote_stale_candidate_summary(results)
+    p0_shadow = _self_improvement_p0_shadow_candidate_summary(results)
     all_lanes_spread_blocked = bool(results) and all(
         _result_has_block_issue_code(result, "risk_issues", "SPREAD_TOO_WIDE") for result in results
     )
@@ -979,6 +995,10 @@ def _artifact_diagnostics(
         "status_counts": _status_counts(results),
         "risk_block_issue_counts": risk_block_issue_counts,
         "strategy_block_issue_counts": strategy_block_issue_counts,
+        "self_improvement_p0_shadow_live_ready": p0_shadow,
+        "self_improvement_p0_shadow_live_ready_count": p0_shadow["count"],
+        "self_improvement_p0_shadow_live_ready_reward_jpy": p0_shadow["reward_jpy"],
+        "self_improvement_p0_shadow_live_ready_risk_jpy": p0_shadow["risk_jpy"],
         "profitable_bucket_coverage": _profitable_bucket_coverage_summary(
             ai_backtest=ai_backtest,
             ai_backtest_path=ai_backtest_path,
@@ -1042,6 +1062,39 @@ def _spread_normalized_candidate_summary(results: tuple[dict[str, Any], ...]) ->
         "spread_normalized_top_lane_ids": [str(item["lane_id"]) for item in top],
         "spread_normalized_top_candidates": top,
         "spread_normalized_live_blocker_counts": dict(live_blocker_counts.most_common(12)),
+    }
+
+
+def _self_improvement_p0_shadow_candidate_summary(results: tuple[dict[str, Any], ...]) -> dict[str, Any]:
+    candidates: list[dict[str, Any]] = []
+    for result in results:
+        intent = result.get("intent") if isinstance(result.get("intent"), dict) else {}
+        metadata = intent.get("metadata") if isinstance(intent.get("metadata"), dict) else {}
+        if metadata.get(SELF_IMPROVEMENT_P0_SHADOW_METADATA_KEY) is not True:
+            continue
+        metrics = result.get("risk_metrics") if isinstance(result.get("risk_metrics"), dict) else {}
+        candidates.append(
+            {
+                "lane_id": str(result.get("lane_id") or ""),
+                "pair": str(intent.get("pair") or metadata.get("pair") or ""),
+                "side": str(intent.get("side") or ""),
+                "method": str(intent.get("method") or metadata.get("method") or ""),
+                "order_type": str(intent.get("order_type") or ""),
+                "reward_jpy": _round(_optional_float(metrics.get("reward_jpy")) or 0.0),
+                "risk_jpy": _round(_optional_float(metrics.get("risk_jpy")) or 0.0),
+                "reward_risk": _round(_optional_float(metrics.get("reward_risk")) or 0.0),
+                "forecast_direction": str(metadata.get("forecast_direction") or ""),
+                "forecast_confidence": _optional_float(metadata.get("forecast_confidence")),
+            }
+        )
+    return {
+        "count": len(candidates),
+        "reward_jpy": _round(sum(float(item["reward_jpy"]) for item in candidates)),
+        "risk_jpy": _round(sum(float(item["risk_jpy"]) for item in candidates)),
+        "lane_ids": [str(item["lane_id"]) for item in candidates],
+        "candidates": candidates[:8],
+        "send_blocked": bool(candidates),
+        "blocker_code": "SELF_IMPROVEMENT_P0_PROFITABILITY_DISCIPLINE" if candidates else None,
     }
 
 

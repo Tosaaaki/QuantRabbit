@@ -113,6 +113,7 @@ class AttackAdvisor:
         ai_backtest = _load_optional_json(self.ai_backtest_path)
         outcome_mart = _load_optional_json(self.outcome_mart_path)
         coverage = _load_optional_json(self.coverage_path)
+        p0_shadow = _coverage_p0_shadow_live_ready(coverage or {})
         edge_index = _edge_index(ai_backtest or {})
         outcome_index = _outcome_index(outcome_mart or {})
         condition_index = _condition_index(outcome_mart or {})
@@ -205,6 +206,7 @@ class AttackAdvisor:
             "recommended_now_coverage_pct": recommended_coverage_pct,
             "watchlist_lane_ids": [lane.lane_id for lane in watchlist],
             "matrix_supported_repair_queue": matrix_supported_repair_queue,
+            "self_improvement_p0_shadow_live_ready": p0_shadow,
             "required_additional_reward_jpy": _round(max((remaining_target or 0.0) - live_ready_reward, 0.0)),
             "required_additional_live_ready_lanes": _required_additional_lanes(
                 remaining_target=remaining_target,
@@ -850,6 +852,13 @@ def _action_items(
         yield "run build-outcome-mart before advice so archive condition history is grounded"
     if condition_index and live_ready and not any(lane.archive_condition_key for lane in live_ready):
         yield "current LIVE_READY lanes lack usable session/regime condition keys; archive condition edges are report-only until intents carry current market buckets"
+    p0_shadow = _coverage_p0_shadow_live_ready(coverage)
+    if p0_shadow.get("count"):
+        lanes = ", ".join(str(lane) for lane in (p0_shadow.get("lane_ids") or [])[:3])
+        yield (
+            f"preserve {int(p0_shadow.get('count') or 0)} otherwise-live-ready P0-gated receipt(s) "
+            f"for the first post-recovery basket; send remains blocked by profitability P0: {lanes}"
+        )
     matrix_queue = _matrix_supported_repair_queue(coverage)
     if matrix_queue:
         preview = "; ".join(
@@ -900,6 +909,28 @@ def _matrix_supported_repair_queue(coverage: dict[str, Any]) -> list[dict[str, A
             }
         )
     return out[:REPORT_LANE_LIMIT]
+
+
+def _coverage_p0_shadow_live_ready(coverage: dict[str, Any]) -> dict[str, Any]:
+    diagnostics = (
+        coverage.get("artifact_diagnostics")
+        if isinstance(coverage.get("artifact_diagnostics"), dict)
+        else {}
+    )
+    shadow = diagnostics.get("self_improvement_p0_shadow_live_ready")
+    if not isinstance(shadow, dict):
+        return {"count": 0, "lane_ids": (), "reward_jpy": 0.0, "risk_jpy": 0.0}
+    return {
+        "count": int(shadow.get("count") or 0),
+        "lane_ids": tuple(str(item) for item in shadow.get("lane_ids", ()) or ()),
+        "reward_jpy": _round(float(shadow.get("reward_jpy") or 0.0)),
+        "risk_jpy": _round(float(shadow.get("risk_jpy") or 0.0)),
+        "send_blocked": bool(shadow.get("send_blocked")),
+        "blocker_code": str(shadow.get("blocker_code") or ""),
+        "candidates": tuple(
+            item for item in shadow.get("candidates", ()) or () if isinstance(item, dict)
+        )[:REPORT_LANE_LIMIT],
+    }
 
 
 def _string_list(value: object) -> list[str]:

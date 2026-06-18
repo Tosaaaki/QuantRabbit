@@ -1636,6 +1636,59 @@ class CoverageOptimizerTest(unittest.TestCase):
             payload = json.loads((root / "coverage.json").read_text())
             self.assertEqual(payload["lanes"][0]["blockers"].count("quote snapshot is stale"), 1)
 
+    def test_names_self_improvement_p0_shadow_live_ready_candidates(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            intents = root / "intents.json"
+            target = root / "target.json"
+            p0_message = "self-improvement profitability P0 blocks LIVE_READY intent generation"
+            p0_issue = {
+                "severity": "BLOCK",
+                "code": "SELF_IMPROVEMENT_P0_PROFITABILITY_DISCIPLINE",
+                "message": p0_message,
+            }
+            lane = _result(
+                "DRY_RUN_BLOCKED",
+                lane_id="range_trader:AUD_CHF:SHORT:RANGE_ROTATION",
+                pair="AUD_CHF",
+                side="SHORT",
+                order_type="LIMIT",
+                method="RANGE_ROTATION",
+                live_blocker=p0_message,
+                risk_issues=[p0_issue],
+            )
+            lane["intent"]["metadata"] = {
+                "self_improvement_p0_shadow_live_ready": True,
+                "forecast_direction": "RANGE",
+                "forecast_confidence": 0.94,
+            }
+            intents.write_text(json.dumps({"results": [lane]}))
+            target.write_text(
+                json.dumps(
+                    {
+                        "status": "PURSUE_TARGET",
+                        "remaining_target_jpy": 500.0,
+                        "remaining_risk_budget_jpy": 500.0,
+                    }
+                )
+            )
+
+            CoverageOptimizer(
+                intents_path=intents,
+                target_state_path=target,
+                replay_path=root / "missing_replay.json",
+                market_context_matrix_path=_matrix(root),
+                output_path=root / "coverage.json",
+                report_path=root / "coverage.md",
+            ).run()
+
+            payload = json.loads((root / "coverage.json").read_text())
+            diagnostics = payload["artifact_diagnostics"]
+            self.assertEqual(diagnostics["self_improvement_p0_shadow_live_ready_count"], 1)
+            self.assertTrue(
+                any("otherwise-live-ready P0-gated" in item for item in payload["action_items"])
+            )
+
 
 def _result(
     status: str,

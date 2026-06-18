@@ -6274,6 +6274,16 @@ class IntentGeneratorTest(unittest.TestCase):
                     for blocker in item["live_blockers"]
                 )
             )
+            shadow = payload["self_improvement_p0_shadow_live_ready"]
+            self.assertGreaterEqual(shadow["count"], 1)
+            self.assertTrue(shadow["send_blocked"])
+            self.assertTrue(
+                any(
+                    (item["intent"]["metadata"] or {}).get("self_improvement_p0_shadow_live_ready") is True
+                    for item in payload["results"]
+                    if item.get("intent")
+                )
+            )
 
     def test_self_improvement_forecast_adverse_path_blocks_fresh_live_ready_generation(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

@@ -4265,6 +4265,7 @@ def _direction_to_side(direction: str) -> Side | None:
 
 
 PIP_FACTORS = {pair: instrument_pip_factor(pair) for pair in DEFAULT_TRADER_PAIRS}
+SELF_IMPROVEMENT_PROFITABILITY_P0_CODE = "SELF_IMPROVEMENT_P0_PROFITABILITY_DISCIPLINE"
 
 
 @dataclass(frozen=True)
@@ -4789,6 +4790,19 @@ class IntentGenerator:
             strategy_issues=strategy_issues,
             live_strategy_issues=live_strategy_issues,
         )
+        if _self_improvement_p0_shadow_live_ready(
+            risk_issues=risk_issues,
+            live_blockers=live_blockers,
+            p0_issue=self_improvement_profitability_issue,
+        ):
+            intent.metadata["self_improvement_p0_shadow_live_ready"] = True
+            intent.metadata["self_improvement_p0_shadow_blocker_code"] = (
+                SELF_IMPROVEMENT_PROFITABILITY_P0_CODE
+            )
+            intent.metadata["self_improvement_p0_shadow_reason"] = (
+                "all non-P0 live-readiness gates passed; send remains blocked until "
+                "self_improvement_audit proves profitability recovery"
+            )
         risk_issues = tuple(risk_issues)
         if risk_allowed and not live_blockers:
             status = "LIVE_READY"
@@ -4822,6 +4836,7 @@ class IntentGenerator:
             "campaign_plan": str(self.campaign_plan),
             "strategy_profile": str(self.strategy_profile),
             "snapshot_path": str(snapshot_path) if snapshot_path else None,
+            "self_improvement_p0_shadow_live_ready": _self_improvement_p0_shadow_summary(results),
             "results": [asdict(item) for item in results],
         }
         self.output_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n")
@@ -4849,17 +4864,30 @@ class IntentGenerator:
             counts[item.status] = counts.get(item.status, 0) + 1
         for status, count in sorted(counts.items()):
             lines.append(f"- `{status}`: `{count}`")
+        shadow = _self_improvement_p0_shadow_summary(results)
+        if shadow["count"]:
+            lines.extend(
+                [
+                    f"- `SELF_IMPROVEMENT_P0_SHADOW_LIVE_READY`: `{shadow['count']}`",
+                    f"  - reward: `{shadow['reward_jpy']:.1f} JPY` risk: `{shadow['risk_jpy']:.1f} JPY`",
+                    f"  - lanes: {', '.join(f'`{lane}`' for lane in shadow['lane_ids'])}",
+                ]
+            )
         lines.extend(["", "## Candidates", ""])
         for item in results:
             lines.append(f"- `{item.lane_id}` status=`{item.status}`")
             lines.append(f"  - note: {item.note}")
             if item.intent:
                 intent = item.intent
+                metadata = intent.get("metadata") or {}
                 lines.append(
                     f"  - intent: `{intent['pair']} {intent['side']} {intent['order_type']}` "
                     f"units={intent['units']} entry={intent.get('entry')} tp={intent['tp']} sl={intent['sl']}"
                 )
-                metadata = intent.get("metadata") or {}
+                if metadata.get("self_improvement_p0_shadow_live_ready"):
+                    lines.append(
+                        "  - p0 shadow: `would be LIVE_READY without SELF_IMPROVEMENT_P0_PROFITABILITY_DISCIPLINE`"
+                    )
                 forecast_direction = str(metadata.get("forecast_direction") or "")
                 if forecast_direction or metadata.get("forecast_horizon_min") is not None:
                     confidence = _optional_float(metadata.get("forecast_confidence"))
@@ -4907,6 +4935,29 @@ class IntentGenerator:
             ]
         )
         self.report_path.write_text("\n".join(lines) + "\n")
+
+
+def _self_improvement_p0_shadow_summary(results: list[GeneratedIntent]) -> dict[str, Any]:
+    shadow_results: list[GeneratedIntent] = []
+    for item in results:
+        intent = item.intent if isinstance(item.intent, dict) else {}
+        metadata = intent.get("metadata") if isinstance(intent.get("metadata"), dict) else {}
+        if metadata.get("self_improvement_p0_shadow_live_ready") is True:
+            shadow_results.append(item)
+    return {
+        "count": len(shadow_results),
+        "lane_ids": [item.lane_id for item in shadow_results],
+        "reward_jpy": round(
+            sum(float((item.risk_metrics or {}).get("reward_jpy") or 0.0) for item in shadow_results),
+            4,
+        ),
+        "risk_jpy": round(
+            sum(float((item.risk_metrics or {}).get("risk_jpy") or 0.0) for item in shadow_results),
+            4,
+        ),
+        "send_blocked": bool(shadow_results),
+        "blocker_code": SELF_IMPROVEMENT_PROFITABILITY_P0_CODE if shadow_results else None,
+    }
 
 
 def _live_send_preview_policy(policy: RiskPolicy) -> RiskPolicy:
@@ -5680,7 +5731,7 @@ def _self_improvement_profitability_p0_issue(data_root: Path) -> dict[str, str] 
                 details.append(f"24h_gateway_net={gateway_bleed.get('gateway_net_jpy')}")
         suffix = f" ({', '.join(details)})" if details else ""
         return {
-            "code": "SELF_IMPROVEMENT_P0_PROFITABILITY_DISCIPLINE",
+            "code": SELF_IMPROVEMENT_PROFITABILITY_P0_CODE,
             "message": (
                 "self-improvement profitability P0 blocks LIVE_READY intent generation; "
                 "repair close discipline before new risk"
@@ -5689,6 +5740,45 @@ def _self_improvement_profitability_p0_issue(data_root: Path) -> dict[str, str] 
             "severity": "BLOCK",
         }
     return None
+
+
+def _self_improvement_p0_shadow_live_ready(
+    *,
+    risk_issues: list[dict[str, Any]],
+    live_blockers: tuple[str, ...],
+    p0_issue: dict[str, str] | None,
+) -> bool:
+    """True when only the profitability P0 prevents LIVE_READY classification.
+
+    This deliberately does not change the executable status. GPT verification
+    and the live gateway still reject new risk under the active P0. The marker
+    preserves entry-discovery signal so coverage/attack diagnostics can tell
+    the difference between "no good entries" and "entries exist but the
+    profitability circuit breaker is still active."
+    """
+
+    if p0_issue is None:
+        return False
+    p0_message = str(p0_issue.get("message") or "")
+    has_p0_issue = any(
+        str(issue.get("code") or "") == SELF_IMPROVEMENT_PROFITABILITY_P0_CODE
+        for issue in risk_issues
+        if isinstance(issue, dict)
+    )
+    if not has_p0_issue:
+        return False
+    for issue in risk_issues:
+        if not isinstance(issue, dict):
+            continue
+        if str(issue.get("code") or "") == SELF_IMPROVEMENT_PROFITABILITY_P0_CODE:
+            continue
+        if str(issue.get("severity") or "").upper() == "BLOCK":
+            return False
+    for blocker in live_blockers:
+        if p0_message and str(blocker) == p0_message:
+            continue
+        return False
+    return True
 
 
 def _self_improvement_forecast_adverse_path_issue(data_root: Path) -> dict[str, str] | None:

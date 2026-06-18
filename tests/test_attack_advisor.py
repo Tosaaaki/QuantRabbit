@@ -80,6 +80,61 @@ class AttackAdvisorTest(unittest.TestCase):
             self.assertIn("do_not_raise_loss_cap", payload["settings_advice"])
             self.assertIn("AI Attack Advice Report", (root / "advice.md").read_text())
 
+    def test_surfaces_self_improvement_p0_shadow_candidates_from_coverage(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            intents = root / "intents.json"
+            target = root / "target.json"
+            backtest = root / "ai_backtest.json"
+            coverage = root / "coverage.json"
+            intents.write_text(json.dumps({"results": []}))
+            target.write_text(
+                json.dumps(
+                    {
+                        "status": "PURSUE_TARGET",
+                        "remaining_target_jpy": 1500.0,
+                        "remaining_risk_budget_jpy": 800.0,
+                    }
+                )
+            )
+            backtest.write_text(json.dumps({"status": "TARGET_COVERAGE_GAP", "bucket_contributions": []}))
+            coverage.write_text(
+                json.dumps(
+                    {
+                        "status": "COVERAGE_GAP",
+                        "artifact_diagnostics": {
+                            "self_improvement_p0_shadow_live_ready": {
+                                "count": 2,
+                                "lane_ids": [
+                                    "range_trader:AUD_CHF:SHORT:RANGE_ROTATION",
+                                    "failure_trader:CAD_JPY:SHORT:BREAKOUT_FAILURE:LIMIT",
+                                ],
+                                "reward_jpy": 2200.0,
+                                "risk_jpy": 1100.0,
+                                "send_blocked": True,
+                                "blocker_code": "SELF_IMPROVEMENT_P0_PROFITABILITY_DISCIPLINE",
+                            }
+                        },
+                    }
+                )
+            )
+
+            AttackAdvisor(
+                intents_path=intents,
+                target_state_path=target,
+                ai_backtest_path=backtest,
+                outcome_mart_path=root / "missing_outcome_mart.json",
+                coverage_path=coverage,
+                output_path=root / "advice.json",
+                report_path=root / "advice.md",
+            ).run()
+
+            payload = json.loads((root / "advice.json").read_text())
+            self.assertEqual(payload["self_improvement_p0_shadow_live_ready"]["count"], 2)
+            self.assertTrue(
+                any("otherwise-live-ready P0-gated" in item for item in payload["action_items"])
+            )
+
     def test_ignores_blocked_ai_backtest_edges_for_ranking(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
