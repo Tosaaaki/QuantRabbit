@@ -4821,6 +4821,63 @@ class CloseDisciplineTest(unittest.TestCase):
             payload = json.loads((root / "gpt_decision.json").read_text())
             self.assertEqual(payload["verification_issues"], [])
 
+    def test_loss_close_requires_timing_audit_after_premature_close_regrets(self) -> None:
+        # Regression for 2026-06-18: recent GPT_CLOSE losses later touched TP
+        # or continued favorably, but a new hard-close receipt could ignore
+        # execution_timing_audit entirely. Hard invalidation may still close,
+        # but the receipt must show it weighed the timing-regret evidence.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _close_fixtures(root, position_side="SHORT", m15_dir="UP", h4_dir="UP")
+            files["execution_timing_audit"].write_text(
+                json.dumps(
+                    {
+                        "generated_at_utc": datetime.now(timezone.utc).isoformat(),
+                        "status": "OK",
+                        "summary": {
+                            "loss_market_closes_may_have_been_premature": 2,
+                            "market_close_estimated_followthrough_jpy": 3027.25,
+                        },
+                    }
+                )
+            )
+            decision = _close_decision(trade_ids=["555"], operator_close_authorized=False)
+            brain = _brain(root, files, decision)
+
+            summary = brain.run(snapshot_path=files["snapshot"])
+
+            self.assertEqual(summary.status, "REJECTED")
+            payload = json.loads((root / "gpt_decision.json").read_text())
+            codes = {issue["code"] for issue in payload["verification_issues"]}
+            self.assertIn("CLOSE_TIMING_AUDIT_REQUIRED", codes)
+
+    def test_loss_close_with_timing_audit_ref_uses_normal_close_gates(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _close_fixtures(root, position_side="SHORT", m15_dir="UP", h4_dir="UP")
+            files["execution_timing_audit"].write_text(
+                json.dumps(
+                    {
+                        "generated_at_utc": datetime.now(timezone.utc).isoformat(),
+                        "status": "OK",
+                        "summary": {
+                            "loss_market_closes_may_have_been_premature": 2,
+                            "market_close_estimated_followthrough_jpy": 3027.25,
+                        },
+                    }
+                )
+            )
+            decision = _close_decision(trade_ids=["555"], operator_close_authorized=False)
+            decision["evidence_refs"].append("timing:audit")
+            brain = _brain(root, files, decision)
+
+            summary = brain.run(snapshot_path=files["snapshot"])
+
+            self.assertEqual(summary.status, "ACCEPTED", msg=summary)
+            payload = json.loads((root / "gpt_decision.json").read_text())
+            codes = {issue["code"] for issue in payload["verification_issues"]}
+            self.assertNotIn("CLOSE_TIMING_AUDIT_REQUIRED", codes)
+
     def test_close_spread_cap_uses_pair_chart_session_tag(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

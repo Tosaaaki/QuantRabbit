@@ -6225,7 +6225,9 @@ class IntentGeneratorTest(unittest.TestCase):
                                         "profit_factor": 0.971,
                                         "expectancy_jpy": -7.22,
                                         "gateway_close_bleed_observation": {
-                                            "gateway_net_jpy": -783.03,
+                                            "gateway_bleed_basis": "contained_loss_erased_wins",
+                                            "gateway_raw_net_jpy": -239.9306,
+                                            "gateway_net_jpy": 96.157,
                                         },
                                     },
                                 },
@@ -6260,6 +6262,14 @@ class IntentGeneratorTest(unittest.TestCase):
             self.assertTrue(
                 any(
                     "self-improvement profitability P0 blocks LIVE_READY" in blocker
+                    for item in payload["results"]
+                    for blocker in item["live_blockers"]
+                )
+            )
+            self.assertTrue(
+                any(
+                    "24h_gateway_raw_net=-239.9306" in blocker
+                    and "24h_gateway_net_ex_containment=96.157" in blocker
                     for item in payload["results"]
                     for blocker in item["live_blockers"]
                 )

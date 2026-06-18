@@ -109,6 +109,58 @@ def _operator_close_gate_authorized() -> bool:
     return _operator_close_override_active() or _operator_close_token_fresh()
 
 
+def _decision_cites_close_timing_evidence(evidence_refs: tuple[str, ...]) -> bool:
+    for ref in evidence_refs:
+        text = str(ref or "").strip()
+        if text in {"timing:audit", "timing:loss_closes", "timing:market_closes"}:
+            return True
+        if text.startswith("timing:loss_close:") or text.startswith("timing:market_close:"):
+            return True
+    return False
+
+
+def _loss_close_timing_audit_required_trades(
+    packet: dict[str, Any],
+    decision: "GPTTraderDecision",
+    position_by_tid: dict[str, dict[str, Any]],
+) -> tuple[str, ...]:
+    """Require timing-regret evidence after recent premature loss-close proof.
+
+    This is not an automatic HOLD veto. It forces the trader to acknowledge the
+    latest execution-timing counterfactual before another underwater market
+    close can pass, so H4/sidecar hard evidence can still close a broken thesis
+    when the receipt explicitly weighs that timing risk.
+    """
+
+    audit = packet.get("execution_timing_audit")
+    if not isinstance(audit, dict):
+        return ()
+    summary = audit.get("summary")
+    if not isinstance(summary, dict):
+        return ()
+    premature = _optional_int(summary.get("loss_market_closes_may_have_been_premature")) or 0
+    if premature <= 0:
+        return ()
+    if _decision_cites_close_timing_evidence(decision.evidence_refs):
+        return ()
+
+    blocked: list[str] = []
+    for tid in decision.close_trade_ids:
+        pos = position_by_tid.get(str(tid))
+        if pos is None:
+            continue
+        unrealized = _optional_float(pos.get("unrealized_pl_jpy"))
+        if unrealized is not None and unrealized > 0.0:
+            continue
+        pair = str(pos.get("pair") or "")
+        side = str(pos.get("side") or "")
+        label = f"{tid}"
+        if pair or side:
+            label += f" ({pair} {side})".rstrip()
+        blocked.append(label)
+    return tuple(blocked)
+
+
 # Matches a single per-timeframe segment in chart_reader's chart_story format.
 # Example tokens captured:
 #   "M15(RANGE, ADX=15.4 ... struct=CHOCH_UP@113.9900)"        (close confirmed)
@@ -2103,6 +2155,11 @@ class DecisionVerifier:
             return
 
         position_by_tid = _trader_position_lookup(self.packet)
+        timing_required = _loss_close_timing_audit_required_trades(
+            self.packet,
+            decision,
+            position_by_tid,
+        )
 
         # Gate A: thesis-still-valid check, applied to every named trade.
         # Hard Gate A also carries the operator's standing authorization for a
@@ -2178,6 +2235,32 @@ class DecisionVerifier:
                     "market stack still supports a loss-side open position, "
                     "unless hard invalidation evidence is present. Blocked for: "
                     + ", ".join(same_direction_supported),
+                )
+            )
+
+        if timing_required:
+            summary = self.packet.get("execution_timing_audit", {}).get("summary", {})
+            premature = _optional_int(
+                summary.get("loss_market_closes_may_have_been_premature")
+            ) or len(timing_required)
+            followthrough = _optional_float(
+                summary.get("market_close_estimated_followthrough_jpy")
+            )
+            tail = (
+                f"; estimated follow-through left behind {followthrough:.2f} JPY"
+                if followthrough is not None
+                else ""
+            )
+            issues.append(
+                VerificationIssue(
+                    "CLOSE_TIMING_AUDIT_REQUIRED",
+                    "CLOSE rejected: recent execution-timing audit marks "
+                    f"{premature} loss-side market close(s) as potentially premature{tail}. "
+                    "An underwater CLOSE must cite timing:audit, timing:loss_closes, "
+                    "timing:market_closes, or the relevant timing:loss_close/market_close ref "
+                    "and explain why current invalidation beats HOLD/reprice/TP evidence. "
+                    "Missing timing evidence for: "
+                    + ", ".join(timing_required),
                 )
             )
 

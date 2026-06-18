@@ -5668,7 +5668,16 @@ def _self_improvement_profitability_p0_issue(data_root: Path) -> dict[str, str] 
         if expectancy is not None:
             details.append(f"expectancy={expectancy}")
         if isinstance(gateway_bleed, dict) and gateway_bleed.get("gateway_net_jpy") is not None:
-            details.append(f"24h_gateway_net={gateway_bleed.get('gateway_net_jpy')}")
+            if gateway_bleed.get("gateway_bleed_basis") == "contained_loss_erased_wins":
+                raw_net = gateway_bleed.get("gateway_raw_net_jpy")
+                if raw_net is not None:
+                    details.append(f"24h_gateway_raw_net={raw_net}")
+                details.append(
+                    "24h_gateway_net_ex_containment="
+                    f"{gateway_bleed.get('gateway_net_jpy')}"
+                )
+            else:
+                details.append(f"24h_gateway_net={gateway_bleed.get('gateway_net_jpy')}")
         suffix = f" ({', '.join(details)})" if details else ""
         return {
             "code": "SELF_IMPROVEMENT_P0_PROFITABILITY_DISCIPLINE",
