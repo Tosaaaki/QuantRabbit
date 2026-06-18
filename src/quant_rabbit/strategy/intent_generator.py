@@ -5903,7 +5903,8 @@ def _self_improvement_profitability_p0_repair_allowed(
         return False
     if str(metadata.get("position_intent") or "").upper() == "HEDGE":
         return False
-    direction_bias = str(metadata.get("chart_direction_bias") or "").upper()
+    method = intent.market_context.method if intent.market_context is not None else None
+    direction_bias = _method_direction_bias(metadata, method)
     if direction_bias in {Side.LONG.value, Side.SHORT.value} and direction_bias != intent.side.value:
         return False
     if metadata.get("attach_take_profit_on_fill") is not True:
@@ -8067,9 +8068,10 @@ EXHAUSTION_RANGE_SIGMA_MULTIPLE = 2.0
 
 def _method_direction_bias(metadata: dict[str, Any], method: TradeMethod | None) -> str:
     if method == TradeMethod.RANGE_ROTATION:
-        m5_bias = _direction_bias_from_m5(metadata)
-        if m5_bias:
-            return m5_bias
+        long_bias = _optional_float(metadata.get("m5_long_bias"))
+        short_bias = _optional_float(metadata.get("m5_short_bias"))
+        if long_bias is not None and short_bias is not None:
+            return _direction_bias_from_m5(metadata) or ""
     return str(metadata.get("chart_direction_bias") or "").upper()
 
 

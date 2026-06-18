@@ -5198,6 +5198,45 @@ class IntentGeneratorTest(unittest.TestCase):
             self.assertIsNone(metadata["chart_direction_bias"])
             self.assertNotIn("CHART_DIRECTION_CONFLICT", issue_codes)
 
+    def test_range_rotation_m5_tie_does_not_fallback_to_broader_chart_lean(self) -> None:
+        # Live 2026-06-18 GBP_CHF: the broader confluence packet leaned SHORT,
+        # but the operating M5 range read was exactly tied. RANGE_ROTATION
+        # direction conflict must use the operating M5 bias; a tie is neutral,
+        # not a reason to inherit the broader lean and starve the retest lane.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            output = root / "intents.json"
+
+            IntentGenerator(
+                campaign_plan=_range_campaign(root),
+                strategy_profile=_strategy(root, status="CANDIDATE", direction="LONG"),
+                pair_charts_path=_pair_charts_with_direction(
+                    root,
+                    long_score=0.3049,
+                    short_score=0.5771,
+                    dominant_regime="RANGE",
+                    m5_regime="RANGE",
+                    m5_long_bias=0.4286,
+                    m5_short_bias=0.4286,
+                ),
+                output_path=output,
+                report_path=root / "intents.md",
+                max_loss_jpy=500.0,
+            ).run(snapshot_path=_snapshot(root))
+
+            payload = json.loads(output.read_text())
+            result = next(
+                item for item in payload["results"]
+                if item["lane_id"] == "range_trader:EUR_USD:LONG:RANGE_ROTATION"
+            )
+            issue_codes = {issue["code"] for issue in result["risk_issues"]}
+            metadata = result["intent"]["metadata"]
+
+            self.assertEqual(metadata["chart_direction_bias"], "SHORT")
+            self.assertEqual(metadata["m5_long_bias"], 0.4286)
+            self.assertEqual(metadata["m5_short_bias"], 0.4286)
+            self.assertNotIn("CHART_DIRECTION_CONFLICT", issue_codes)
+
     def test_sl_free_still_blocks_decisive_trend_continuation_conflict(self) -> None:
         import os
 
@@ -6369,6 +6408,111 @@ class IntentGeneratorTest(unittest.TestCase):
             self.assertIn("SELF_IMPROVEMENT_P0_PROFITABILITY_REPAIR_MODE", issue_codes)
             self.assertNotIn("SELF_IMPROVEMENT_P0_PROFITABILITY_DISCIPLINE", issue_codes)
             self.assertEqual(result["live_blockers"], [])
+
+    def test_self_improvement_profitability_p0_repair_allows_range_m5_tie_against_broader_lean(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "self_improvement_audit.json").write_text(
+                json.dumps(
+                    {
+                        "generated_at_utc": datetime.now(timezone.utc).isoformat(),
+                        "findings": [
+                            {
+                                "priority": "P0",
+                                "layer": "profitability",
+                                "code": "PERSISTENT_PROFITABILITY_DISCIPLINE_BLOCKED",
+                                "message": "market-close leakage is still negative",
+                                "evidence": {
+                                    "current_streak": 65,
+                                    "system_defect_evidence": {
+                                        "profit_factor": 0.788,
+                                        "expectancy_jpy": -54.04,
+                                        "worst_segments": [
+                                            {
+                                                "pair": "NZD_CAD",
+                                                "side": "SHORT",
+                                                "method": "RANGE_ROTATION",
+                                                "trades": 2,
+                                                "net_jpy": -2044.45,
+                                                "trade_ids": ["472312", "472380"],
+                                            }
+                                        ],
+                                    },
+                                },
+                            }
+                        ],
+                    }
+                )
+            )
+            (root / "capture_economics.json").write_text(
+                json.dumps(
+                    {
+                        "status": "NEGATIVE_EXPECTANCY",
+                        "overall": {
+                            "trades": 210,
+                            "avg_win_jpy": 600.0,
+                            "avg_loss_jpy": 1100.0,
+                            "payoff_ratio": 0.545,
+                            "breakeven_payoff_at_win_rate": 0.7,
+                        },
+                        "by_exit_reason": {
+                            "TAKE_PROFIT_ORDER": {
+                                "trades": 93,
+                                "wins": 93,
+                                "losses": 0,
+                                "avg_win_jpy": 504.0,
+                                "avg_loss_jpy": 0.0,
+                                "expectancy_jpy_per_trade": 504.0,
+                            },
+                            "MARKET_ORDER_TRADE_CLOSE": {
+                                "trades": 84,
+                                "wins": 13,
+                                "losses": 71,
+                                "avg_win_jpy": 218.4,
+                                "avg_loss_jpy": 1095.5,
+                                "expectancy_jpy_per_trade": -892.1,
+                            },
+                        },
+                    }
+                )
+            )
+            output = root / "intents.json"
+
+            summary = IntentGenerator(
+                campaign_plan=_range_campaign(root),
+                strategy_profile=_strategy(root, status="CANDIDATE"),
+                output_path=output,
+                report_path=root / "intents.md",
+                pair_charts_path=_pair_charts_with_direction(
+                    root,
+                    long_score=0.3049,
+                    short_score=0.5771,
+                    dominant_regime="RANGE",
+                    m5_regime="RANGE",
+                    m5_long_bias=0.4286,
+                    m5_short_bias=0.4286,
+                ),
+                data_root=root,
+                max_loss_jpy=1000.0,
+            ).run(snapshot_path=_snapshot(root))
+
+            payload = json.loads(output.read_text())
+            result = next(
+                item for item in payload["results"]
+                if item["lane_id"] == "range_trader:EUR_USD:LONG:RANGE_ROTATION"
+            )
+            metadata = result["intent"]["metadata"]
+            issue_codes = {issue["code"] for issue in result["risk_issues"]}
+
+            self.assertGreaterEqual(summary.live_ready, 1)
+            self.assertEqual(result["status"], "LIVE_READY")
+            self.assertEqual(metadata["chart_direction_bias"], "SHORT")
+            self.assertEqual(metadata["m5_long_bias"], 0.4286)
+            self.assertEqual(metadata["m5_short_bias"], 0.4286)
+            self.assertTrue(metadata["self_improvement_p0_repair_live_ready"])
+            self.assertNotIn("CHART_DIRECTION_CONFLICT", issue_codes)
+            self.assertNotIn("SELF_IMPROVEMENT_P0_PROFITABILITY_DISCIPLINE", issue_codes)
+            self.assertIn("SELF_IMPROVEMENT_P0_PROFITABILITY_REPAIR_MODE", issue_codes)
 
     def test_self_improvement_profitability_p0_blocks_harvest_repair_on_named_worst_segment(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
