@@ -462,7 +462,7 @@ def route_trader_prompts(
                         "blocker if rejecting it: "
                         + ", ".join(p0_repair_live_ready_lanes[:3])
                     ),
-                    *self_improvement_repair_reasons,
+                    *_self_improvement_p0_repair_context_reasons(self_improvement_repair_reasons),
                 ),
                 include_content=include_content,
             )
@@ -1709,6 +1709,25 @@ def _self_improvement_p0_repair_live_ready_lane_ids(intents: dict[str, Any]) -> 
         if lane_id:
             lane_ids.append(lane_id)
     return tuple(dict.fromkeys(lane_ids))
+
+
+def _self_improvement_p0_repair_context_reasons(reasons: Sequence[str]) -> tuple[str, ...]:
+    out: list[str] = []
+    blocked_prefix = (
+        "self-improvement profitability P0 blocks entry routing; "
+        "repair the named close-discipline segment before new risk"
+    )
+    repair_prefix = (
+        "self-improvement profitability P0 remains active as repair context; "
+        "restrict any TRADE to repair-mode attached-TP HARVEST lanes"
+    )
+    for reason in reasons:
+        text = str(reason)
+        if text.startswith(blocked_prefix):
+            out.append(repair_prefix + text[len(blocked_prefix) :])
+        else:
+            out.append(text)
+    return tuple(out)
 
 
 def _pending_entry_order_reasons(snapshot: dict[str, Any]) -> tuple[str, ...]:

@@ -140,6 +140,8 @@ class TraderPromptRouteTest(unittest.TestCase):
         self.assertEqual(route.branch, BRANCH_ENTRY)
         self.assertTrue(any("repair-mode LIVE_READY" in reason for reason in route.reasons))
         self.assertTrue(any("trend_trader:EUR_USD:LONG:TREND_CONTINUATION" in reason for reason in route.reasons))
+        self.assertFalse(any("profitability P0 blocks entry routing" in reason for reason in route.reasons))
+        self.assertTrue(any("profitability P0 remains active as repair context" in reason for reason in route.reasons))
 
     def test_projection_p0_routes_to_learning_repair_before_entry(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
