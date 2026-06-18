@@ -3658,7 +3658,7 @@ class SelfImprovementAuditorTest(unittest.TestCase):
         self.assertEqual(observation["loss_containment_trades"], 1)
         self.assertGreater(observation["loss_containment_avoided_loss_jpy"], 1323.0)
 
-    def test_persistent_profitability_recovers_when_gateway_loss_close_contained_sl_risk(self) -> None:
+    def test_persistent_profitability_stays_p0_when_contained_loss_erases_tp_win(self) -> None:
         effect_24h = {
             "closed_trades": 2,
             "net_jpy": -200.0,
@@ -3701,15 +3701,79 @@ class SelfImprovementAuditorTest(unittest.TestCase):
         )
 
         codes = {item["code"]: item for item in findings}
-        self.assertNotIn("PERSISTENT_PROFITABILITY_DISCIPLINE_BLOCKED", codes)
-        recovery = codes["PERSISTENT_PROFITABILITY_DISCIPLINE_RECOVERY"]
-        observation = recovery["evidence"]["recovery_observation"]
-        self.assertEqual(recovery["priority"], "P1")
-        self.assertEqual(observation["recovery_basis"], "winning_close_window")
+        self.assertIn("PERSISTENT_PROFITABILITY_DISCIPLINE_BLOCKED", codes)
+        self.assertNotIn("PERSISTENT_PROFITABILITY_DISCIPLINE_RECOVERY", codes)
+        blocked = codes["PERSISTENT_PROFITABILITY_DISCIPLINE_BLOCKED"]
+        self.assertEqual(blocked["priority"], "P0")
+        self.assertIn("24h_gateway_raw_net=-200.00 JPY", blocked["message"])
+        observation = blocked["evidence"]["system_defect_evidence"]["gateway_close_bleed_observation"]
+        self.assertEqual(observation["gateway_bleed_basis"], "contained_loss_erased_wins")
         self.assertEqual(observation["gateway_raw_net_jpy"], -200.0)
         self.assertEqual(observation["gateway_net_jpy"], 800.0)
         self.assertEqual(observation["gateway_loss_trades"], 0)
         self.assertEqual(observation["loss_containment_trades"], 1)
+
+    def test_persistent_profitability_stays_p0_when_containment_window_is_still_net_negative(
+        self,
+    ) -> None:
+        effect_24h = {
+            "closed_trades": 5,
+            "net_jpy": -239.93,
+            "gross_profit_jpy": 96.16,
+            "gross_loss_jpy": 336.09,
+            "profit_factor": 0.286,
+            "expectancy_jpy": -47.99,
+            "close_provenance_metrics": {
+                "GATEWAY_TRADE_CLOSE_SENT": {
+                    "trades": 5,
+                    "net_jpy": -239.93,
+                    "gross_profit_jpy": 96.16,
+                    "gross_loss_jpy": 336.09,
+                    "win_trades": 3,
+                    "loss_trades": 2,
+                    "loss_containment_trades": 2,
+                    "loss_containment_net_jpy": -336.09,
+                    "loss_containment_avoided_loss_jpy": 6204.61,
+                },
+            },
+            "market_order_trade_close_loss_provenance_metrics": {
+                "GATEWAY_TRADE_CLOSE_SENT": {
+                    "trades": 2,
+                    "net_jpy": -336.09,
+                    "gross_profit_jpy": 0.0,
+                    "gross_loss_jpy": 336.09,
+                    "win_trades": 0,
+                    "loss_trades": 2,
+                }
+            },
+        }
+
+        findings = _profitability_findings(
+            run_id="run-contained-but-negative",
+            effect={
+                **self._failed_trailing_effect(),
+                "profit_factor": 0.789,
+                "expectancy_jpy": -51.76,
+                "avg_win_jpy": 411.02,
+                "avg_loss_jpy_abs": 463.12,
+            },
+            effect_24h=effect_24h,
+            snapshot={},
+            min_sample=3,
+            close_gate_loss_evidence=None,
+            previous_discipline_streak=53,
+        )
+
+        codes = {item["code"]: item for item in findings}
+        self.assertIn("NEGATIVE_RECENT_EXPECTANCY", codes)
+        self.assertIn("PERSISTENT_PROFITABILITY_DISCIPLINE_BLOCKED", codes)
+        self.assertNotIn("PERSISTENT_PROFITABILITY_DISCIPLINE_RECOVERY", codes)
+        blocked = codes["PERSISTENT_PROFITABILITY_DISCIPLINE_BLOCKED"]
+        self.assertEqual(blocked["priority"], "P0")
+        bleed = blocked["evidence"]["system_defect_evidence"]["gateway_close_bleed_observation"]
+        self.assertAlmostEqual(bleed["gateway_raw_net_jpy"], -239.93, places=2)
+        self.assertEqual(bleed["gateway_loss_trades"], 0)
+        self.assertEqual(bleed["loss_containment_trades"], 2)
 
     def test_persistent_profitability_escalates_when_gateway_close_bleeds_without_loss_asymmetry(
         self,

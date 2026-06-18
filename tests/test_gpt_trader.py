@@ -1019,6 +1019,55 @@ class GPTTraderBrainTest(unittest.TestCase):
             payload = json.loads((root / "gpt_decision.json").read_text())
             self.assertEqual(payload["verification_issues"], [])
 
+    def test_accepts_trade_replacing_self_improvement_pending_cancel_review(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root, orders=[_pending_order()])
+            files["self_improvement_audit"].write_text(
+                json.dumps(_self_improvement_pending_cancel_review_p0())
+            )
+            decision = _trade_decision()
+            decision["cancel_order_ids"] = ["pending-1"]
+            decision["evidence_refs"].extend(
+                [
+                    "self_improvement:audit",
+                    "self_improvement:execution_quality",
+                    "self_improvement:finding:PENDING_ENTRY_CANCEL_REVIEW_REQUIRED",
+                ]
+            )
+            brain = _brain(root, files, decision)
+
+            summary = brain.run(snapshot_path=files["snapshot"])
+
+            self.assertEqual(summary.status, "ACCEPTED")
+            self.assertEqual(summary.cancel_order_ids, ("pending-1",))
+            payload = json.loads((root / "gpt_decision.json").read_text())
+            self.assertEqual(payload["verification_issues"], [])
+
+    def test_rejects_trade_when_self_improvement_cancel_review_not_resolved(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root, orders=[_pending_order()])
+            files["self_improvement_audit"].write_text(
+                json.dumps(_self_improvement_pending_cancel_review_p0())
+            )
+            decision = _trade_decision()
+            decision["evidence_refs"].extend(
+                [
+                    "self_improvement:audit",
+                    "self_improvement:execution_quality",
+                    "self_improvement:finding:PENDING_ENTRY_CANCEL_REVIEW_REQUIRED",
+                ]
+            )
+            brain = _brain(root, files, decision)
+
+            summary = brain.run(snapshot_path=files["snapshot"])
+
+            self.assertEqual(summary.status, "REJECTED")
+            payload = json.loads((root / "gpt_decision.json").read_text())
+            codes = {issue["code"] for issue in payload["verification_issues"]}
+            self.assertIn("SELF_IMPROVEMENT_P0_BLOCKS_TRADE", codes)
+
     def test_accepts_cancel_order_id_for_trader_pending_entry_beyond_order_preview(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

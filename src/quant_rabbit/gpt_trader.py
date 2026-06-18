@@ -1482,6 +1482,9 @@ class DecisionVerifier:
         self_improvement_trade_blockers = _self_improvement_trade_blockers(
             self.packet,
             decision_generated_at_utc=decision.generated_at_utc,
+            resolved_pending_cancel_order_ids=decision.cancel_order_ids
+            if decision.action == "TRADE"
+            else (),
         )
         self_improvement_entry_blockers = _self_improvement_trade_blockers(
             self.packet,
@@ -4657,6 +4660,7 @@ def _self_improvement_trade_blockers(
     *,
     decision_generated_at_utc: str | None = None,
     include_decision_history_stale: bool = True,
+    resolved_pending_cancel_order_ids: Sequence[str] = (),
 ) -> list[str]:
     audit = packet.get("self_improvement_audit")
     if not isinstance(audit, dict):
@@ -4691,6 +4695,19 @@ def _self_improvement_trade_blockers(
             continue
         if _self_improvement_non_trade_blocker(code, blocker):
             continue
+        if code == "PENDING_ENTRY_CANCEL_REVIEW_REQUIRED":
+            required_cancel_ids = {
+                str(order_id or "").strip()
+                for order_id in blocker.get("cancel_review_order_ids", []) or []
+                if str(order_id or "").strip()
+            }
+            receipt_cancel_ids = {
+                str(order_id or "").strip()
+                for order_id in resolved_pending_cancel_order_ids
+                if str(order_id or "").strip()
+            }
+            if required_cancel_ids and required_cancel_ids <= receipt_cancel_ids:
+                continue
         layer = str(blocker.get("layer") or "").strip()
         message = str(blocker.get("message") or "").strip()
         streak = blocker.get("current_streak")

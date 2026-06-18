@@ -3897,6 +3897,19 @@ def _profitability_findings(
                 )
             )
         else:
+            gateway_bleed_suffix = ""
+            if gateway_close_bleed is not None:
+                contained_erased_wins = (
+                    gateway_close_bleed.get("gateway_bleed_basis") == "contained_loss_erased_wins"
+                )
+                gateway_bleed_label = "24h_gateway_raw_net" if contained_erased_wins else "24h_gateway_net"
+                gateway_bleed_value = (
+                    gateway_close_bleed.get("gateway_raw_net_jpy")
+                    if contained_erased_wins
+                    else gateway_close_bleed.get("gateway_net_jpy")
+                )
+                if gateway_bleed_value is not None:
+                    gateway_bleed_suffix = f", {gateway_bleed_label}={float(gateway_bleed_value):.2f} JPY"
             out.append(
                 _finding(
                     run_id=run_id,
@@ -3907,11 +3920,7 @@ def _profitability_findings(
                         f"profitability discipline has failed for {current_discipline_streak} consecutive audit run(s): "
                         f"PF={_fmt_optional(pf)}, expectancy={_fmt_optional(expectancy)}, "
                         f"avg_loss={_fmt_optional(avg_loss)} JPY vs avg_win={_fmt_optional(avg_win)} JPY"
-                        + (
-                            f", 24h_gateway_net={gateway_close_bleed['gateway_net_jpy']:.2f} JPY"
-                            if gateway_close_bleed is not None
-                            else ""
-                        )
+                        + gateway_bleed_suffix
                     ),
                     next_action=(
                         "Block new-risk confidence until execution_ledger.db worst segments prove repaired "
@@ -4082,6 +4091,8 @@ def _gateway_close_recovery_observation(effect_24h: dict[str, Any]) -> dict[str,
         and loss_containment_avoided
         >= abs(loss_containment_net) * LOSS_CONTAINMENT_RECOVERY_MIN_AVOIDED_MULT
     )
+    if win_trades > 0 and net < 0.0:
+        return None
     if close_discipline_net < 0.0 or (win_trades < 1 and not material_loss_containment):
         return None
     avg_win = gross_profit / win_trades if win_trades else None
@@ -4151,12 +4162,14 @@ def _gateway_close_bleed_observation(effect_24h: dict[str, Any]) -> dict[str, An
     close_discipline_net = net - loss_containment_net
     active_loss_trades = max(0, loss_trades - loss_containment_trades)
     active_gross_loss = max(0.0, gross_loss - abs(loss_containment_net))
-    if active_loss_trades < 1 or close_discipline_net >= 0.0:
+    contained_loss_erased_wins = win_trades > 0 and loss_containment_trades > 0 and net < 0.0
+    if not contained_loss_erased_wins and (active_loss_trades < 1 or close_discipline_net >= 0.0):
         return None
     observation = {
         "window_hours": 24.0,
         "gateway_net_jpy": close_discipline_net,
         "gateway_raw_net_jpy": net,
+        "gateway_bleed_basis": "contained_loss_erased_wins" if contained_loss_erased_wins else "active_close_loss",
         "gateway_trades": trades,
         "gateway_win_trades": win_trades,
         "gateway_loss_trades": active_loss_trades,
