@@ -99,6 +99,48 @@ class TraderPromptRouteTest(unittest.TestCase):
         self.assertTrue(any("pair=NZD_CAD" in reason for reason in route.reasons))
         self.assertTrue(any("trade_ids=472312,472380" in reason for reason in route.reasons))
 
+    def test_profitability_p0_with_repair_live_ready_lane_routes_to_entry(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root)
+            intents = json.loads(files["intents"].read_text())
+            intents["results"][0]["intent"] = {
+                "pair": "EUR_USD",
+                "side": "LONG",
+                "order_type": "STOP-ENTRY",
+                "metadata": {
+                    "self_improvement_p0_repair_live_ready": True,
+                    "self_improvement_p0_repair_mode": "TP_HARVEST_REPAIR",
+                },
+            }
+            files["intents"].write_text(json.dumps(intents))
+            files["self_improvement_audit"].write_text(
+                json.dumps(
+                    {
+                        "generated_at_utc": datetime.now(timezone.utc).isoformat(),
+                        "status": "SELF_IMPROVEMENT_BLOCKED",
+                        "findings": [
+                            {
+                                "priority": "P0",
+                                "layer": "profitability",
+                                "code": "PERSISTENT_PROFITABILITY_DISCIPLINE_BLOCKED",
+                                "message": "profitability discipline has failed for 27 consecutive audit run(s)",
+                                "evidence": {
+                                    "current_streak": 27,
+                                    "system_defect_evidence": {"profit_factor": 0.258},
+                                },
+                            }
+                        ],
+                    }
+                )
+            )
+
+            route = route_trader_prompts(**_route_paths(files), decision_response_path=None)
+
+        self.assertEqual(route.branch, BRANCH_ENTRY)
+        self.assertTrue(any("repair-mode LIVE_READY" in reason for reason in route.reasons))
+        self.assertTrue(any("trend_trader:EUR_USD:LONG:TREND_CONTINUATION" in reason for reason in route.reasons))
+
     def test_projection_p0_routes_to_learning_repair_before_entry(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

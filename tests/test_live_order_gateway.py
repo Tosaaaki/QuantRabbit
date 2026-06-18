@@ -576,6 +576,47 @@ class LiveOrderGatewayTest(unittest.TestCase):
             codes = {issue["code"] for issue in payload["risk_issues"]}
             self.assertIn("SELF_IMPROVEMENT_P0_BLOCKS_LIVE_ORDER", codes)
 
+    def test_self_improvement_p0_allows_verified_repair_lane_staging(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            audit = root / "self_improvement.json"
+            audit.write_text(
+                json.dumps(
+                    {
+                        "findings": [
+                            {
+                                "priority": "P0",
+                                "code": "PERSISTENT_PROFITABILITY_DISCIPLINE_BLOCKED",
+                                "message": "profitability discipline has failed for 50 consecutive audit runs",
+                            }
+                        ]
+                    }
+                )
+            )
+            intents = _intents(
+                root,
+                metadata={
+                    "desk": "range_trader",
+                    "campaign_role": "NOW",
+                    "self_improvement_p0_repair_live_ready": True,
+                    "self_improvement_p0_repair_mode": "TP_HARVEST_REPAIR",
+                },
+            )
+            client = FakeExecutionClient()
+            summary = LiveOrderGateway(
+                client=client,
+                strategy_profile=_profile(root),
+                output_path=root / "request.json",
+                report_path=root / "report.md",
+                self_improvement_audit=audit,
+            ).run(intents_path=intents, lane_id="lane:EUR_USD:LONG")
+
+            self.assertEqual(summary.status, "STAGED")
+            self.assertFalse(summary.sent)
+            payload = json.loads((root / "request.json").read_text())
+            codes = {issue["code"] for issue in payload["risk_issues"]}
+            self.assertNotIn("SELF_IMPROVEMENT_P0_BLOCKS_LIVE_ORDER", codes)
+
     def test_forecast_adverse_path_blocks_live_order_staging(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

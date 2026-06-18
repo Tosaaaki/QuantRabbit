@@ -6285,6 +6285,91 @@ class IntentGeneratorTest(unittest.TestCase):
                 )
             )
 
+    def test_self_improvement_profitability_p0_allows_tp_proven_harvest_repair_entry(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "self_improvement_audit.json").write_text(
+                json.dumps(
+                    {
+                        "generated_at_utc": datetime.now(timezone.utc).isoformat(),
+                        "findings": [
+                            {
+                                "priority": "P0",
+                                "layer": "profitability",
+                                "code": "PERSISTENT_PROFITABILITY_DISCIPLINE_BLOCKED",
+                                "message": "market-close leakage is still negative",
+                                "evidence": {
+                                    "current_streak": 65,
+                                    "system_defect_evidence": {
+                                        "profit_factor": 0.788,
+                                        "expectancy_jpy": -54.04,
+                                    },
+                                },
+                            }
+                        ],
+                    }
+                )
+            )
+            (root / "capture_economics.json").write_text(
+                json.dumps(
+                    {
+                        "status": "NEGATIVE_EXPECTANCY",
+                        "overall": {
+                            "trades": 210,
+                            "avg_win_jpy": 600.0,
+                            "avg_loss_jpy": 1100.0,
+                            "payoff_ratio": 0.545,
+                            "breakeven_payoff_at_win_rate": 0.7,
+                        },
+                        "by_exit_reason": {
+                            "TAKE_PROFIT_ORDER": {
+                                "trades": 93,
+                                "wins": 93,
+                                "losses": 0,
+                                "avg_win_jpy": 504.0,
+                                "avg_loss_jpy": 0.0,
+                                "expectancy_jpy_per_trade": 504.0,
+                            },
+                            "MARKET_ORDER_TRADE_CLOSE": {
+                                "trades": 84,
+                                "wins": 13,
+                                "losses": 71,
+                                "avg_win_jpy": 218.4,
+                                "avg_loss_jpy": 1095.5,
+                                "expectancy_jpy_per_trade": -892.1,
+                            },
+                        },
+                    }
+                )
+            )
+            output = root / "intents.json"
+
+            summary = IntentGenerator(
+                campaign_plan=_range_campaign(root),
+                strategy_profile=_strategy(root, status="CANDIDATE"),
+                output_path=output,
+                report_path=root / "intents.md",
+                pair_charts_path=_pair_charts(root),
+                data_root=root,
+                max_loss_jpy=1000.0,
+            ).run(snapshot_path=_snapshot(root))
+
+            payload = json.loads(output.read_text())
+            result = next(
+                item for item in payload["results"]
+                if item["lane_id"] == "range_trader:EUR_USD:LONG:RANGE_ROTATION"
+            )
+            metadata = result["intent"]["metadata"]
+            issue_codes = {issue["code"] for issue in result["risk_issues"]}
+
+            self.assertGreaterEqual(summary.live_ready, 1)
+            self.assertEqual(result["status"], "LIVE_READY")
+            self.assertTrue(metadata["self_improvement_p0_repair_live_ready"])
+            self.assertEqual(metadata["self_improvement_p0_repair_mode"], "TP_HARVEST_REPAIR")
+            self.assertIn("SELF_IMPROVEMENT_P0_PROFITABILITY_REPAIR_MODE", issue_codes)
+            self.assertNotIn("SELF_IMPROVEMENT_P0_PROFITABILITY_DISCIPLINE", issue_codes)
+            self.assertEqual(result["live_blockers"], [])
+
     def test_self_improvement_forecast_adverse_path_blocks_fresh_live_ready_generation(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

@@ -1379,7 +1379,7 @@ class GPTTraderBrain:
                 "entry_thesis_blocker_blocks_trade_and_wait": True,
                 "learning_audit_blocks_unsafe_learning_influence": True,
                 "verification_ledger_is_read_only_structured_evidence": True,
-                "self_improvement_p0_blocks_trade": True,
+                "self_improvement_p0_blocks_trade_except_verified_repair_lanes": True,
                 "market_status_is_authoritative_calendar_evidence": True,
                 "coverage_optimization_is_read_only_gap_evidence": True,
                 "operator_precedent_is_advisory_only": True,
@@ -1547,11 +1547,13 @@ class DecisionVerifier:
             resolved_pending_cancel_order_ids=decision.cancel_order_ids
             if decision.action == "TRADE"
             else (),
+            selected_lane_ids=selected_lane_ids,
         )
         self_improvement_entry_blockers = _self_improvement_trade_blockers(
             self.packet,
             decision_generated_at_utc=decision.generated_at_utc,
             include_decision_history_stale=False,
+            selected_lane_ids=tradeable_lanes,
         )
 
         if decision.action == "TRADE":
@@ -2607,6 +2609,15 @@ def _lane_packet(
                         "tp_execution_mode",
                         "tp_target_intent",
                         "tp_target_source",
+                    ),
+                ),
+                "self_improvement": _small_dict(
+                    metadata,
+                    (
+                        "self_improvement_p0_repair_live_ready",
+                        "self_improvement_p0_repair_mode",
+                        "self_improvement_p0_repair_blocker_code",
+                        "self_improvement_p0_repair_reason",
                     ),
                 ),
                 "position_building": _small_dict(
@@ -4910,6 +4921,7 @@ def _self_improvement_trade_blockers(
     decision_generated_at_utc: str | None = None,
     include_decision_history_stale: bool = True,
     resolved_pending_cancel_order_ids: Sequence[str] = (),
+    selected_lane_ids: Sequence[str] = (),
 ) -> list[str]:
     audit = packet.get("self_improvement_audit")
     if not isinstance(audit, dict):
@@ -4924,10 +4936,16 @@ def _self_improvement_trade_blockers(
         + list(audit.get("profitability_blockers", []) or [])
         + list(audit.get("new_risk_blockers", []) or [])
     )
+    p0_repair_selected = _all_selected_lanes_are_self_improvement_profitability_repair(
+        packet,
+        selected_lane_ids,
+    )
     for blocker in blockers:
         if not isinstance(blocker, dict):
             continue
         code = str(blocker.get("code") or "SELF_IMPROVEMENT_P0")
+        if code == "PERSISTENT_PROFITABILITY_DISCIPLINE_BLOCKED" and p0_repair_selected:
+            continue
         if code == "LATEST_GPT_DECISION_STALE" and not include_decision_history_stale:
             continue
         if (
@@ -4981,6 +4999,30 @@ def _self_improvement_trade_blockers(
         suffix = f" ({', '.join(details)})" if details else ""
         out.append(f"{code}{suffix}: {message or 'self-improvement P0 blocks new risk'}")
     return out
+
+
+def _all_selected_lanes_are_self_improvement_profitability_repair(
+    packet: dict[str, Any],
+    selected_lane_ids: Sequence[str],
+) -> bool:
+    lane_ids = tuple(dict.fromkeys(str(item) for item in selected_lane_ids if str(item)))
+    if not lane_ids:
+        return False
+    lane_map = {
+        str(lane.get("lane_id") or ""): lane
+        for lane in packet.get("lanes", []) or []
+        if isinstance(lane, dict) and str(lane.get("lane_id") or "")
+    }
+    for lane_id in lane_ids:
+        lane = lane_map.get(lane_id)
+        if not isinstance(lane, dict):
+            return False
+        repair = lane.get("self_improvement") if isinstance(lane.get("self_improvement"), dict) else {}
+        if repair.get("self_improvement_p0_repair_live_ready") is not True:
+            return False
+        if str(repair.get("self_improvement_p0_repair_mode") or "") != "TP_HARVEST_REPAIR":
+            return False
+    return True
 
 
 def _self_improvement_pending_cancel_review_reasons(packet: dict[str, Any]) -> list[str]:

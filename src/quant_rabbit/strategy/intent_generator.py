@@ -4266,6 +4266,10 @@ def _direction_to_side(direction: str) -> Side | None:
 
 PIP_FACTORS = {pair: instrument_pip_factor(pair) for pair in DEFAULT_TRADER_PAIRS}
 SELF_IMPROVEMENT_PROFITABILITY_P0_CODE = "SELF_IMPROVEMENT_P0_PROFITABILITY_DISCIPLINE"
+SELF_IMPROVEMENT_PROFITABILITY_P0_REPAIR_CODE = (
+    "SELF_IMPROVEMENT_P0_PROFITABILITY_REPAIR_MODE"
+)
+SELF_IMPROVEMENT_PROFITABILITY_P0_REPAIR_MODE = "TP_HARVEST_REPAIR"
 
 
 @dataclass(frozen=True)
@@ -4731,9 +4735,34 @@ class IntentGenerator:
             self_improvement_profitability_issue is not None
             and str(intent.metadata.get("position_intent") or "").upper() != "HEDGE"
         ):
-            risk_issues.append(dict(self_improvement_profitability_issue))
-            live_blockers = (*live_blockers, self_improvement_profitability_issue["message"])
-            risk_allowed = False
+            if _self_improvement_profitability_p0_repair_allowed(intent):
+                intent.metadata["self_improvement_p0_repair_live_ready"] = True
+                intent.metadata["self_improvement_p0_repair_mode"] = (
+                    SELF_IMPROVEMENT_PROFITABILITY_P0_REPAIR_MODE
+                )
+                intent.metadata["self_improvement_p0_repair_blocker_code"] = (
+                    SELF_IMPROVEMENT_PROFITABILITY_P0_CODE
+                )
+                intent.metadata["self_improvement_p0_repair_reason"] = (
+                    "profitability P0 is concentrated in MARKET_ORDER_TRADE_CLOSE, "
+                    "while TAKE_PROFIT_ORDER has positive expectancy; allow only this "
+                    "non-market attached-TP HARVEST receipt to collect repair evidence"
+                )
+                risk_issues.append(
+                    {
+                        "code": SELF_IMPROVEMENT_PROFITABILITY_P0_REPAIR_CODE,
+                        "message": (
+                            "self-improvement profitability P0 downgraded to repair mode "
+                            "for this non-market attached-TP HARVEST intent; all normal "
+                            "forecast, strategy, spread, risk, and gateway gates still apply"
+                        ),
+                        "severity": "WARN",
+                    }
+                )
+            else:
+                risk_issues.append(dict(self_improvement_profitability_issue))
+                live_blockers = (*live_blockers, self_improvement_profitability_issue["message"])
+                risk_allowed = False
         if (
             self_improvement_forecast_issue is not None
             and str(intent.metadata.get("position_intent") or "").upper() != "HEDGE"
@@ -5777,6 +5806,41 @@ def _self_improvement_p0_shadow_live_ready(
     for blocker in live_blockers:
         if p0_message and str(blocker) == p0_message:
             continue
+        return False
+    return True
+
+
+def _self_improvement_profitability_p0_repair_allowed(intent: OrderIntent) -> bool:
+    """Allow only TP-proven, non-market HARVEST receipts to repair a P0 deadlock.
+
+    The profitability P0 is caused by market-close leakage, while
+    capture_economics can prove broker TP exits are positive. This escape path
+    therefore stays narrow: no MARKET entries, no TP-less runners, no weak/no-TP
+    loss-asymmetry relaxation, and no bypass of any other live-readiness gate.
+    """
+
+    metadata = intent.metadata or {}
+    if intent.order_type == OrderType.MARKET:
+        return False
+    if str(metadata.get("position_intent") or "").upper() == "HEDGE":
+        return False
+    if metadata.get("attach_take_profit_on_fill") is not True:
+        return False
+    if str(metadata.get("tp_execution_mode") or "").upper() != "ATTACHED_TECHNICAL_TP":
+        return False
+    if str(metadata.get("tp_target_intent") or "").upper() != "HARVEST":
+        return False
+    if str(metadata.get("opportunity_mode") or "").upper() != "HARVEST":
+        return False
+    if str(metadata.get("loss_asymmetry_guard_mode") or "").upper() != "TP_PROVEN_RELAXED":
+        return False
+    if metadata.get("loss_asymmetry_guard_relaxed") is not True:
+        return False
+    tp_losses = _optional_float(metadata.get("capture_take_profit_losses"))
+    if tp_losses is None or tp_losses > 0:
+        return False
+    market_close_expectancy = _optional_float(metadata.get("capture_market_close_expectancy_jpy"))
+    if market_close_expectancy is None or market_close_expectancy >= 0:
         return False
     return True
 

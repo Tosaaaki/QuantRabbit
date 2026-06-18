@@ -448,6 +448,24 @@ def route_trader_prompts(
                 ),
                 include_content=include_content,
             )
+        p0_repair_live_ready_lanes = _self_improvement_p0_repair_live_ready_lane_ids(intents)
+        if p0_repair_live_ready_lanes:
+            return _build_route(
+                BRANCH_ENTRY,
+                (
+                    *carry_reasons,
+                    *advisory_close_review_reasons,
+                    *pending_entry_reasons,
+                    (
+                        "self-improvement profitability P0 has current repair-mode LIVE_READY lane(s); "
+                        "write TRADE only for the attached-TP HARVEST repair basket, or cite a fresh hard "
+                        "blocker if rejecting it: "
+                        + ", ".join(p0_repair_live_ready_lanes[:3])
+                    ),
+                    *self_improvement_repair_reasons,
+                ),
+                include_content=include_content,
+            )
         return _build_route(
             BRANCH_LEARNING,
             (*carry_reasons, *advisory_close_review_reasons, *pending_entry_reasons, *self_improvement_repair_reasons),
@@ -1661,6 +1679,29 @@ def _live_ready_lane_ids(intents: dict[str, Any]) -> tuple[str, ...]:
         if _block_issues(result.get("risk_issues")):
             continue
         if _block_issues(result.get("strategy_issues")):
+            continue
+        if result.get("live_blockers"):
+            continue
+        lane_id = str(result.get("lane_id") or "")
+        if lane_id:
+            lane_ids.append(lane_id)
+    return tuple(dict.fromkeys(lane_ids))
+
+
+def _self_improvement_p0_repair_live_ready_lane_ids(intents: dict[str, Any]) -> tuple[str, ...]:
+    lane_ids: list[str] = []
+    for result in intents.get("results", []) or []:
+        if not isinstance(result, dict):
+            continue
+        if result.get("status") != "LIVE_READY":
+            continue
+        intent = result.get("intent") if isinstance(result.get("intent"), dict) else {}
+        metadata = intent.get("metadata") if isinstance(intent.get("metadata"), dict) else {}
+        if metadata.get("self_improvement_p0_repair_live_ready") is not True:
+            continue
+        if str(metadata.get("self_improvement_p0_repair_mode") or "") != "TP_HARVEST_REPAIR":
+            continue
+        if _block_issues(result.get("risk_issues")) or _block_issues(result.get("strategy_issues")):
             continue
         if result.get("live_blockers"):
             continue

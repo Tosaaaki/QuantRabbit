@@ -235,6 +235,7 @@ class LiveOrderGateway:
         self_improvement_issues = _self_improvement_gateway_issues(
             self.self_improvement_audit,
             verified_decision_path=self.verified_decision_path,
+            selected=selected,
         )
         send_issues = _send_guard_issues(send=send, confirm_live=confirm_live, lane_id=lane_id)
         all_blocked = (
@@ -670,6 +671,7 @@ class LiveOrderGateway:
         self_improvement_issues = _self_improvement_gateway_issues(
             self.self_improvement_audit,
             verified_decision_path=self.verified_decision_path,
+            selected=selected,
         )
         send_issues = _send_guard_issues(send=send, confirm_live=confirm_live, lane_id=lane_id_arg)
         all_blocked = (
@@ -1926,6 +1928,7 @@ def _self_improvement_gateway_issues(
     path: Path | None,
     *,
     verified_decision_path: Path | None = None,
+    selected: dict[str, Any] | None = None,
 ) -> list[dict[str, str]]:
     """Block fresh entry staging when self-improvement has an active P0 gate."""
     if path is None or not path.exists():
@@ -1943,6 +1946,7 @@ def _self_improvement_gateway_issues(
         verified_decision_path,
         audit_generated_at=payload.get("generated_at_utc"),
     )
+    p0_repair_selected = _selected_intent_is_self_improvement_profitability_repair(selected)
     blockers: list[str] = []
     for item in payload.get("findings", []) or []:
         if not isinstance(item, dict):
@@ -1950,6 +1954,8 @@ def _self_improvement_gateway_issues(
         if str(item.get("priority") or "").upper() != "P0":
             continue
         code = str(item.get("code") or "SELF_IMPROVEMENT_P0")
+        if code == "PERSISTENT_PROFITABILITY_DISCIPLINE_BLOCKED" and p0_repair_selected:
+            continue
         if code == "LATEST_GPT_DECISION_STALE" and verification_postdates_audit:
             # The decision being staged was verified ACCEPTED after this audit
             # ran, so the audit's stale-decision verdict is about an older
@@ -1974,6 +1980,18 @@ def _self_improvement_gateway_issues(
             "self-improvement blocks new live entry risk: " + "; ".join(blockers[:3]),
         ).__dict__
     ]
+
+
+def _selected_intent_is_self_improvement_profitability_repair(
+    selected: dict[str, Any] | None,
+) -> bool:
+    if not isinstance(selected, dict):
+        return False
+    intent = selected.get("intent") if isinstance(selected.get("intent"), dict) else {}
+    metadata = intent.get("metadata") if isinstance(intent.get("metadata"), dict) else {}
+    if metadata.get("self_improvement_p0_repair_live_ready") is not True:
+        return False
+    return str(metadata.get("self_improvement_p0_repair_mode") or "") == "TP_HARVEST_REPAIR"
 
 
 def _accepted_verification_postdates(
