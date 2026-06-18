@@ -35,6 +35,8 @@ PENDING_EXECUTION_LIFECYCLE_SUPPORT_CODES = frozenset(
     }
 )
 
+PROFITABILITY_DISCIPLINE_BLOCKED_CODE = "PERSISTENT_PROFITABILITY_DISCIPLINE_BLOCKED"
+
 
 def forecast_adverse_path_new_risk_blocker(payload: dict[str, Any] | None) -> dict[str, Any] | None:
     """Return a fresh-entry blocker for a persistent forecast adverse path.
@@ -161,6 +163,64 @@ def pending_execution_lifecycle_new_risk_blocker(payload: dict[str, Any] | None)
     return None
 
 
+def profitability_p0_worst_segment(payload: dict[str, Any] | None) -> dict[str, str] | None:
+    """Return the current profitability-P0 worst segment, if the audit names one."""
+
+    if not isinstance(payload, dict):
+        return None
+    candidates: list[dict[str, Any]] = []
+    for finding in payload.get("findings", []) or []:
+        if not isinstance(finding, dict):
+            continue
+        if str(finding.get("priority") or "").upper() != "P0":
+            continue
+        if str(finding.get("code") or "") != PROFITABILITY_DISCIPLINE_BLOCKED_CODE:
+            continue
+        if str(finding.get("layer") or "") not in {"", "profitability"}:
+            continue
+        evidence = finding.get("evidence") if isinstance(finding.get("evidence"), dict) else {}
+        system = (
+            evidence.get("system_defect_evidence")
+            if isinstance(evidence.get("system_defect_evidence"), dict)
+            else {}
+        )
+        candidates.extend(item for item in system.get("worst_segments", []) or [] if isinstance(item, dict))
+    for blocker in payload.get("profitability_blockers", []) or []:
+        if not isinstance(blocker, dict):
+            continue
+        if str(blocker.get("code") or "") != PROFITABILITY_DISCIPLINE_BLOCKED_CODE:
+            continue
+        candidates.extend(item for item in blocker.get("worst_segments", []) or [] if isinstance(item, dict))
+    for segment in candidates:
+        normalized = _normalize_profitability_segment(segment)
+        if normalized is not None:
+            return normalized
+    return None
+
+
+def intent_matches_profitability_worst_segment(
+    intent_or_lane: dict[str, Any] | None,
+    worst_segment: dict[str, str] | None,
+) -> bool:
+    """True when an intent/lane targets the audit's named bad pair/side/method."""
+
+    if not isinstance(intent_or_lane, dict) or not isinstance(worst_segment, dict):
+        return False
+    pair = str(intent_or_lane.get("pair") or "").strip()
+    side = str(intent_or_lane.get("side") or intent_or_lane.get("direction") or "").strip().upper()
+    method = str(intent_or_lane.get("method") or "").strip().upper()
+    context = intent_or_lane.get("market_context")
+    if not method and isinstance(context, dict):
+        method = str(context.get("method") or "").strip().upper()
+    if not pair or not side or not method:
+        return False
+    return (
+        pair == worst_segment.get("pair")
+        and side == worst_segment.get("side")
+        and method == worst_segment.get("method")
+    )
+
+
 def _optional_int(value: Any) -> int | None:
     if value is None or value == "":
         return None
@@ -168,6 +228,27 @@ def _optional_int(value: Any) -> int | None:
         return int(value)
     except (TypeError, ValueError):
         return None
+
+
+def _normalize_profitability_segment(segment: dict[str, Any]) -> dict[str, str] | None:
+    pair = str(segment.get("pair") or "").strip()
+    side = str(segment.get("side") or "").strip().upper()
+    method = str(segment.get("method") or "").strip().upper()
+    if not pair or not side or not method:
+        return None
+    out = {"pair": pair, "side": side, "method": method}
+    label_parts = [f"pair={pair}", f"side={side}", f"method={method}"]
+    trades = segment.get("trades")
+    if trades is not None:
+        label_parts.append(f"trades={trades}")
+    net = _optional_float(segment.get("net_jpy"))
+    if net is not None:
+        label_parts.append(f"net={net:.2f} JPY")
+    trade_ids = [str(item) for item in segment.get("trade_ids", []) or [] if str(item)]
+    if trade_ids:
+        label_parts.append(f"trade_ids={','.join(trade_ids[:5])}")
+    out["label"] = "data/execution_ledger.db worst_segment[" + ", ".join(label_parts) + "]"
+    return out
 
 
 def _optional_float(value: Any) -> float | None:

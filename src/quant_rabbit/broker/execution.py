@@ -42,7 +42,11 @@ from quant_rabbit.risk import (
     resolve_max_loss_jpy,
 )
 from quant_rabbit.risk import DEFAULT_SPECS, estimate_required_margin_jpy, margin_budget_jpy
-from quant_rabbit.self_improvement_guards import forecast_adverse_path_new_risk_blocker
+from quant_rabbit.self_improvement_guards import (
+    forecast_adverse_path_new_risk_blocker,
+    intent_matches_profitability_worst_segment,
+    profitability_p0_worst_segment,
+)
 from quant_rabbit.strategy.intent_generator import (
     _daily_risk_budget_from_state,
     _expired_pending_projection_count,
@@ -1946,7 +1950,11 @@ def _self_improvement_gateway_issues(
         verified_decision_path,
         audit_generated_at=payload.get("generated_at_utc"),
     )
-    p0_repair_selected = _selected_intent_is_self_improvement_profitability_repair(selected)
+    worst_segment = profitability_p0_worst_segment(payload)
+    p0_repair_selected = _selected_intent_is_self_improvement_profitability_repair(
+        selected,
+        worst_segment=worst_segment,
+    )
     blockers: list[str] = []
     for item in payload.get("findings", []) or []:
         if not isinstance(item, dict):
@@ -1984,6 +1992,8 @@ def _self_improvement_gateway_issues(
 
 def _selected_intent_is_self_improvement_profitability_repair(
     selected: dict[str, Any] | None,
+    *,
+    worst_segment: dict[str, str] | None = None,
 ) -> bool:
     if not isinstance(selected, dict):
         return False
@@ -1991,7 +2001,11 @@ def _selected_intent_is_self_improvement_profitability_repair(
     metadata = intent.get("metadata") if isinstance(intent.get("metadata"), dict) else {}
     if metadata.get("self_improvement_p0_repair_live_ready") is not True:
         return False
-    return str(metadata.get("self_improvement_p0_repair_mode") or "") == "TP_HARVEST_REPAIR"
+    if str(metadata.get("self_improvement_p0_repair_mode") or "") != "TP_HARVEST_REPAIR":
+        return False
+    if intent_matches_profitability_worst_segment(intent, worst_segment):
+        return False
+    return True
 
 
 def _accepted_verification_postdates(

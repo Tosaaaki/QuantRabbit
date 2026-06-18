@@ -1040,7 +1040,11 @@ from quant_rabbit.instruments import (
     instrument_pip_factor,
 )
 from quant_rabbit.risk import RiskPolicy, _spread_session_multiplier_from_tag
-from quant_rabbit.self_improvement_guards import forecast_adverse_path_new_risk_blocker
+from quant_rabbit.self_improvement_guards import (
+    forecast_adverse_path_new_risk_blocker,
+    intent_matches_profitability_worst_segment,
+    profitability_p0_worst_segment,
+)
 from quant_rabbit.strategy.entry_thesis_ledger import (
     invalidation_price_hit_reason,
     technical_invalidation_confirmation_reason,
@@ -5008,6 +5012,7 @@ def _all_selected_lanes_are_self_improvement_profitability_repair(
     lane_ids = tuple(dict.fromkeys(str(item) for item in selected_lane_ids if str(item)))
     if not lane_ids:
         return False
+    worst_segment = profitability_p0_worst_segment(packet.get("self_improvement_audit"))
     lane_map = {
         str(lane.get("lane_id") or ""): lane
         for lane in packet.get("lanes", []) or []
@@ -5021,6 +5026,8 @@ def _all_selected_lanes_are_self_improvement_profitability_repair(
         if repair.get("self_improvement_p0_repair_live_ready") is not True:
             return False
         if str(repair.get("self_improvement_p0_repair_mode") or "") != "TP_HARVEST_REPAIR":
+            return False
+        if intent_matches_profitability_worst_segment(lane, worst_segment):
             return False
     return True
 
