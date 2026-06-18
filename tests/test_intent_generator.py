@@ -6370,6 +6370,204 @@ class IntentGeneratorTest(unittest.TestCase):
             self.assertNotIn("SELF_IMPROVEMENT_P0_PROFITABILITY_DISCIPLINE", issue_codes)
             self.assertEqual(result["live_blockers"], [])
 
+    def test_self_improvement_profitability_p0_blocks_harvest_repair_on_named_worst_segment(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "self_improvement_audit.json").write_text(
+                json.dumps(
+                    {
+                        "generated_at_utc": datetime.now(timezone.utc).isoformat(),
+                        "findings": [
+                            {
+                                "priority": "P0",
+                                "layer": "profitability",
+                                "code": "PERSISTENT_PROFITABILITY_DISCIPLINE_BLOCKED",
+                                "message": "market-close leakage is still negative",
+                                "evidence": {
+                                    "current_streak": 60,
+                                    "system_defect_evidence": {
+                                        "profit_factor": 0.833,
+                                        "expectancy_jpy": -40.10,
+                                        "worst_segments": [
+                                            {
+                                                "pair": "EUR_USD",
+                                                "side": "LONG",
+                                                "method": "RANGE_ROTATION",
+                                                "trades": 2,
+                                                "net_jpy": -2044.45,
+                                                "trade_ids": ["472312", "472380"],
+                                            }
+                                        ],
+                                    },
+                                },
+                            }
+                        ],
+                    }
+                )
+            )
+            (root / "capture_economics.json").write_text(
+                json.dumps(
+                    {
+                        "status": "NEGATIVE_EXPECTANCY",
+                        "overall": {
+                            "trades": 210,
+                            "avg_win_jpy": 600.0,
+                            "avg_loss_jpy": 1100.0,
+                            "payoff_ratio": 0.545,
+                            "breakeven_payoff_at_win_rate": 0.7,
+                        },
+                        "by_exit_reason": {
+                            "TAKE_PROFIT_ORDER": {
+                                "trades": 93,
+                                "wins": 93,
+                                "losses": 0,
+                                "avg_win_jpy": 504.0,
+                                "avg_loss_jpy": 0.0,
+                                "expectancy_jpy_per_trade": 504.0,
+                            },
+                            "MARKET_ORDER_TRADE_CLOSE": {
+                                "trades": 84,
+                                "wins": 13,
+                                "losses": 71,
+                                "avg_win_jpy": 218.4,
+                                "avg_loss_jpy": 1095.5,
+                                "expectancy_jpy_per_trade": -892.1,
+                            },
+                        },
+                    }
+                )
+            )
+            output = root / "intents.json"
+
+            summary = IntentGenerator(
+                campaign_plan=_range_campaign(root),
+                strategy_profile=_strategy(root, status="CANDIDATE"),
+                output_path=output,
+                report_path=root / "intents.md",
+                pair_charts_path=_pair_charts(root),
+                data_root=root,
+                max_loss_jpy=1000.0,
+            ).run(snapshot_path=_snapshot(root))
+
+            payload = json.loads(output.read_text())
+            result = next(
+                item for item in payload["results"]
+                if item["lane_id"] == "range_trader:EUR_USD:LONG:RANGE_ROTATION"
+            )
+            metadata = result["intent"]["metadata"]
+            issue_codes = {issue["code"] for issue in result["risk_issues"]}
+
+            self.assertEqual(summary.live_ready, 0)
+            self.assertEqual(result["status"], "DRY_RUN_BLOCKED")
+            self.assertNotIn("self_improvement_p0_repair_live_ready", metadata)
+            self.assertIn("SELF_IMPROVEMENT_P0_PROFITABILITY_DISCIPLINE", issue_codes)
+            self.assertTrue(
+                any(
+                    "inspect=data/execution_ledger.db worst_segment[pair=EUR_USD" in blocker
+                    for blocker in result["live_blockers"]
+                )
+            )
+
+    def test_self_improvement_profitability_p0_repair_requires_direction_alignment(self) -> None:
+        import os
+
+        prior = os.environ.get("QR_TRADER_DISABLE_SL_REPAIR")
+        os.environ["QR_TRADER_DISABLE_SL_REPAIR"] = "1"
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                (root / "self_improvement_audit.json").write_text(
+                    json.dumps(
+                        {
+                            "generated_at_utc": datetime.now(timezone.utc).isoformat(),
+                            "findings": [
+                                {
+                                    "priority": "P0",
+                                    "layer": "profitability",
+                                    "code": "PERSISTENT_PROFITABILITY_DISCIPLINE_BLOCKED",
+                                    "message": "market-close leakage is still negative",
+                                    "evidence": {
+                                        "current_streak": 65,
+                                        "system_defect_evidence": {
+                                            "profit_factor": 0.788,
+                                            "expectancy_jpy": -54.04,
+                                        },
+                                    },
+                                }
+                            ],
+                        }
+                    )
+                )
+                (root / "capture_economics.json").write_text(
+                    json.dumps(
+                        {
+                            "status": "NEGATIVE_EXPECTANCY",
+                            "overall": {
+                                "trades": 210,
+                                "avg_win_jpy": 600.0,
+                                "avg_loss_jpy": 1100.0,
+                                "payoff_ratio": 0.545,
+                                "breakeven_payoff_at_win_rate": 0.7,
+                            },
+                            "by_exit_reason": {
+                                "TAKE_PROFIT_ORDER": {
+                                    "trades": 93,
+                                    "wins": 93,
+                                    "losses": 0,
+                                    "avg_win_jpy": 504.0,
+                                    "avg_loss_jpy": 0.0,
+                                    "expectancy_jpy_per_trade": 504.0,
+                                },
+                                "MARKET_ORDER_TRADE_CLOSE": {
+                                    "trades": 84,
+                                    "wins": 13,
+                                    "losses": 71,
+                                    "avg_win_jpy": 218.4,
+                                    "avg_loss_jpy": 1095.5,
+                                    "expectancy_jpy_per_trade": -892.1,
+                                },
+                            },
+                        }
+                    )
+                )
+                output = root / "intents.json"
+
+                IntentGenerator(
+                    campaign_plan=_range_campaign(root),
+                    strategy_profile=_strategy(root, status="CANDIDATE"),
+                    output_path=output,
+                    report_path=root / "intents.md",
+                    pair_charts_path=_pair_charts_with_direction(
+                        root,
+                        long_score=0.15,
+                        short_score=0.85,
+                        dominant_regime="RANGE",
+                        m5_regime="RANGE",
+                        m5_long_bias=0.15,
+                        m5_short_bias=0.85,
+                    ),
+                    data_root=root,
+                    max_loss_jpy=1000.0,
+                ).run(snapshot_path=_snapshot(root))
+
+                payload = json.loads(output.read_text())
+                result = next(
+                    item for item in payload["results"]
+                    if item["lane_id"] == "range_trader:EUR_USD:LONG:RANGE_ROTATION"
+                )
+                metadata = result["intent"]["metadata"]
+                issue_codes = {issue["code"] for issue in result["risk_issues"]}
+
+                self.assertEqual(result["status"], "DRY_RUN_BLOCKED")
+                self.assertNotIn("self_improvement_p0_repair_live_ready", metadata)
+                self.assertIn("CHART_DIRECTION_CONFLICT", issue_codes)
+                self.assertIn("SELF_IMPROVEMENT_P0_PROFITABILITY_DISCIPLINE", issue_codes)
+        finally:
+            if prior is None:
+                os.environ.pop("QR_TRADER_DISABLE_SL_REPAIR", None)
+            else:
+                os.environ["QR_TRADER_DISABLE_SL_REPAIR"] = prior
+
     def test_self_improvement_forecast_adverse_path_blocks_fresh_live_ready_generation(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

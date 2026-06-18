@@ -4738,7 +4738,10 @@ class IntentGenerator:
             self_improvement_profitability_issue is not None
             and str(intent.metadata.get("position_intent") or "").upper() != "HEDGE"
         ):
-            if _self_improvement_profitability_p0_repair_allowed(intent):
+            if _self_improvement_profitability_p0_repair_allowed(
+                intent,
+                self_improvement_profitability_issue,
+            ):
                 intent.metadata["self_improvement_p0_repair_live_ready"] = True
                 intent.metadata["self_improvement_p0_repair_mode"] = (
                     SELF_IMPROVEMENT_PROFITABILITY_P0_REPAIR_MODE
@@ -5786,6 +5789,9 @@ def _self_improvement_profitability_p0_issue(data_root: Path) -> dict[str, str] 
                 )
             else:
                 details.append(f"24h_gateway_net={gateway_bleed.get('gateway_net_jpy')}")
+        fields = _self_improvement_worst_segment_fields(system)
+        if fields.get("worst_segment_label"):
+            details.append(f"inspect={fields['worst_segment_label']}")
         suffix = f" ({', '.join(details)})" if details else ""
         return {
             "code": SELF_IMPROVEMENT_PROFITABILITY_P0_CODE,
@@ -5795,8 +5801,49 @@ def _self_improvement_profitability_p0_issue(data_root: Path) -> dict[str, str] 
                 f"{suffix}"
             ),
             "severity": "BLOCK",
+            **fields,
         }
     return None
+
+
+def _self_improvement_worst_segment_fields(system: dict[str, Any]) -> dict[str, str]:
+    segments = system.get("worst_segments")
+    if not isinstance(segments, list) or not segments:
+        return {}
+    segment = segments[0]
+    if not isinstance(segment, dict):
+        return {}
+    fields: dict[str, str] = {}
+    pair = str(segment.get("pair") or "").strip()
+    side = str(segment.get("side") or "").strip().upper()
+    method = str(segment.get("method") or "").strip().upper()
+    if pair:
+        fields["worst_segment_pair"] = pair
+    if side:
+        fields["worst_segment_side"] = side
+    if method:
+        fields["worst_segment_method"] = method
+    label_parts: list[str] = []
+    if pair:
+        label_parts.append(f"pair={pair}")
+    if side:
+        label_parts.append(f"side={side}")
+    if method:
+        label_parts.append(f"method={method}")
+    trades = segment.get("trades")
+    if trades is not None:
+        label_parts.append(f"trades={trades}")
+    net = _optional_float(segment.get("net_jpy"))
+    if net is not None:
+        label_parts.append(f"net={net:.2f} JPY")
+    trade_ids = [str(item) for item in segment.get("trade_ids", []) or [] if str(item)]
+    if trade_ids:
+        label_parts.append(f"trade_ids={','.join(trade_ids[:5])}")
+    if label_parts:
+        fields["worst_segment_label"] = (
+            "data/execution_ledger.db worst_segment[" + ", ".join(label_parts) + "]"
+        )
+    return fields
 
 
 def _self_improvement_p0_shadow_live_ready(
@@ -5838,19 +5885,26 @@ def _self_improvement_p0_shadow_live_ready(
     return True
 
 
-def _self_improvement_profitability_p0_repair_allowed(intent: OrderIntent) -> bool:
+def _self_improvement_profitability_p0_repair_allowed(
+    intent: OrderIntent,
+    p0_issue: dict[str, str] | None = None,
+) -> bool:
     """Allow only TP-proven, non-market HARVEST receipts to repair a P0 deadlock.
 
     The profitability P0 is caused by market-close leakage, while
     capture_economics can prove broker TP exits are positive. This escape path
     therefore stays narrow: no MARKET entries, no TP-less runners, no weak/no-TP
-    loss-asymmetry relaxation, and no bypass of any other live-readiness gate.
+    loss-asymmetry relaxation, no entries against current direction bias, and
+    no bypass of any other live-readiness gate.
     """
 
     metadata = intent.metadata or {}
     if intent.order_type == OrderType.MARKET:
         return False
     if str(metadata.get("position_intent") or "").upper() == "HEDGE":
+        return False
+    direction_bias = str(metadata.get("chart_direction_bias") or "").upper()
+    if direction_bias in {Side.LONG.value, Side.SHORT.value} and direction_bias != intent.side.value:
         return False
     if metadata.get("attach_take_profit_on_fill") is not True:
         return False
@@ -5870,7 +5924,29 @@ def _self_improvement_profitability_p0_repair_allowed(intent: OrderIntent) -> bo
     market_close_expectancy = _optional_float(metadata.get("capture_market_close_expectancy_jpy"))
     if market_close_expectancy is None or market_close_expectancy >= 0:
         return False
+    if _self_improvement_intent_matches_worst_segment(intent, p0_issue):
+        return False
     return True
+
+
+def _self_improvement_intent_matches_worst_segment(
+    intent: OrderIntent,
+    p0_issue: dict[str, str] | None,
+) -> bool:
+    if not isinstance(p0_issue, dict):
+        return False
+    pair = str(p0_issue.get("worst_segment_pair") or "").strip()
+    side = str(p0_issue.get("worst_segment_side") or "").strip().upper()
+    method = str(p0_issue.get("worst_segment_method") or "").strip().upper()
+    if not pair or not side or not method:
+        return False
+    intent_method = intent.market_context.method if intent.market_context is not None else None
+    intent_method_value = str(getattr(intent_method, "value", intent_method) or "").upper()
+    return (
+        intent.pair == pair
+        and intent.side.value.upper() == side
+        and intent_method_value == method
+    )
 
 
 def _self_improvement_pending_execution_repair_allowed(intent: OrderIntent) -> bool:
