@@ -1604,7 +1604,21 @@ class AutoTradeCycle:
                         and gpt_summary.allowed
                         and gpt_summary.action == "CANCEL_PENDING"
                     ):
-                        allowed_cancel_ids = tuple(decision.pending_cancel_order_ids)
+                        force_cancel_ids = _self_improvement_pending_cancel_review_order_ids(
+                            self.gpt_self_improvement_audit_path,
+                        )
+                        allowed_cancel_ids = tuple(
+                            dict.fromkeys(
+                                (
+                                    *decision.pending_cancel_order_ids,
+                                    *(
+                                        order_id
+                                        for order_id in gpt_summary.cancel_order_ids
+                                        if order_id in force_cancel_ids
+                                    ),
+                                )
+                            )
+                        )
                         canceled_orders.extend(
                             self._cancel_gpt_pending_orders(
                                 gpt_summary,
