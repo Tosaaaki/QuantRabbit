@@ -72,6 +72,16 @@ class TraderPromptRouteTest(unittest.TestCase):
                                         "expectancy_jpy": -534.167,
                                         "avg_win_jpy": 442.207,
                                         "avg_loss_jpy_abs": 1244.257,
+                                        "worst_segments": [
+                                            {
+                                                "pair": "NZD_CAD",
+                                                "side": "SHORT",
+                                                "method": "RANGE_ROTATION",
+                                                "trades": 2,
+                                                "net_jpy": -2044.4543,
+                                                "trade_ids": ["472312", "472380"],
+                                            }
+                                        ],
                                     },
                                 },
                             }
@@ -85,6 +95,9 @@ class TraderPromptRouteTest(unittest.TestCase):
         self.assertEqual(route.branch, BRANCH_LEARNING)
         self.assertTrue(any("self-improvement profitability P0 blocks entry routing" in reason for reason in route.reasons))
         self.assertTrue(any("streak=27" in reason for reason in route.reasons))
+        self.assertTrue(any("data/execution_ledger.db" in reason for reason in route.reasons))
+        self.assertTrue(any("pair=NZD_CAD" in reason for reason in route.reasons))
+        self.assertTrue(any("trade_ids=472312,472380" in reason for reason in route.reasons))
 
     def test_projection_p0_routes_to_learning_repair_before_entry(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

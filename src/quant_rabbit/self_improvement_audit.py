@@ -3910,6 +3910,17 @@ def _profitability_findings(
                 )
                 if gateway_bleed_value is not None:
                     gateway_bleed_suffix = f", {gateway_bleed_label}={float(gateway_bleed_value):.2f} JPY"
+            repair_target = _worst_segment_repair_target(effect)
+            repair_target_suffix = f", inspect={repair_target}" if repair_target else ""
+            repair_next = (
+                f"Inspect {repair_target}, then block new-risk confidence until that segment proves "
+                "repaired close discipline or the trader route explicitly justifies the exception."
+                if repair_target
+                else (
+                    "Block new-risk confidence until execution_ledger.db worst segments prove repaired "
+                    "close discipline or the trader route explicitly justifies the exception."
+                )
+            )
             out.append(
                 _finding(
                     run_id=run_id,
@@ -3921,11 +3932,9 @@ def _profitability_findings(
                         f"PF={_fmt_optional(pf)}, expectancy={_fmt_optional(expectancy)}, "
                         f"avg_loss={_fmt_optional(avg_loss)} JPY vs avg_win={_fmt_optional(avg_win)} JPY"
                         + gateway_bleed_suffix
+                        + repair_target_suffix
                     ),
-                    next_action=(
-                        "Block new-risk confidence until execution_ledger.db worst segments prove repaired "
-                        "close discipline or the trader route explicitly justifies the exception."
-                    ),
+                    next_action=repair_next,
                     evidence={
                         "current_streak": current_discipline_streak,
                         "previous_streak": previous_discipline_streak,
@@ -3955,6 +3964,37 @@ def _profitability_findings(
             )
         )
     return out
+
+
+def _worst_segment_repair_target(effect: dict[str, Any]) -> str:
+    segments = effect.get("worst_segments")
+    if not isinstance(segments, list) or not segments:
+        return ""
+    segment = segments[0]
+    if not isinstance(segment, dict):
+        return ""
+    parts: list[str] = []
+    pair = str(segment.get("pair") or "").strip()
+    side = str(segment.get("side") or "").strip()
+    method = str(segment.get("method") or "").strip()
+    if pair:
+        parts.append(f"pair={pair}")
+    if side:
+        parts.append(f"side={side}")
+    if method:
+        parts.append(f"method={method}")
+    trades = segment.get("trades")
+    if trades is not None:
+        parts.append(f"trades={trades}")
+    net = _maybe_float(segment.get("net_jpy"))
+    if net is not None:
+        parts.append(f"net={net:.2f} JPY")
+    ids = [str(item) for item in segment.get("trade_ids", []) or [] if str(item)]
+    if ids:
+        parts.append(f"trade_ids={','.join(ids[:5])}")
+    if not parts:
+        return ""
+    return "data/execution_ledger.db worst_segment[" + ", ".join(parts) + "]"
 
 
 def _direct_or_manual_close_repair_evidence(

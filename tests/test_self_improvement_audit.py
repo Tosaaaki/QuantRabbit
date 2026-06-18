@@ -3756,6 +3756,16 @@ class SelfImprovementAuditorTest(unittest.TestCase):
                 "expectancy_jpy": -51.76,
                 "avg_win_jpy": 411.02,
                 "avg_loss_jpy_abs": 463.12,
+                "worst_segments": [
+                    {
+                        "pair": "AUD_NZD",
+                        "side": "SHORT",
+                        "method": "RANGE_ROTATION",
+                        "trades": 2,
+                        "net_jpy": -169.0777,
+                        "trade_ids": ["472632", "472655"],
+                    }
+                ],
             },
             effect_24h=effect_24h,
             snapshot={},
@@ -3770,6 +3780,10 @@ class SelfImprovementAuditorTest(unittest.TestCase):
         self.assertNotIn("PERSISTENT_PROFITABILITY_DISCIPLINE_RECOVERY", codes)
         blocked = codes["PERSISTENT_PROFITABILITY_DISCIPLINE_BLOCKED"]
         self.assertEqual(blocked["priority"], "P0")
+        self.assertIn("data/execution_ledger.db", blocked["message"])
+        self.assertIn("pair=AUD_NZD", blocked["message"])
+        self.assertIn("trade_ids=472632,472655", blocked["message"])
+        self.assertIn("Inspect data/execution_ledger.db", blocked["next_action"])
         bleed = blocked["evidence"]["system_defect_evidence"]["gateway_close_bleed_observation"]
         self.assertAlmostEqual(bleed["gateway_raw_net_jpy"], -239.93, places=2)
         self.assertEqual(bleed["gateway_loss_trades"], 0)

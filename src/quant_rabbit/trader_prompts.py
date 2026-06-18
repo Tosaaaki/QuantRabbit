@@ -23,6 +23,37 @@ def _optional_float(value: Any) -> float | None:
         return None
 
 
+def _self_improvement_worst_segment_target(system: dict[str, Any]) -> str:
+    segments = system.get("worst_segments")
+    if not isinstance(segments, list) or not segments:
+        return ""
+    segment = segments[0]
+    if not isinstance(segment, dict):
+        return ""
+    parts: list[str] = []
+    pair = str(segment.get("pair") or "").strip()
+    side = str(segment.get("side") or "").strip()
+    method = str(segment.get("method") or "").strip()
+    if pair:
+        parts.append(f"pair={pair}")
+    if side:
+        parts.append(f"side={side}")
+    if method:
+        parts.append(f"method={method}")
+    trades = segment.get("trades")
+    if trades is not None:
+        parts.append(f"trades={trades}")
+    net = _optional_float(segment.get("net_jpy"))
+    if net is not None:
+        parts.append(f"net={net:.2f} JPY")
+    ids = [str(item) for item in segment.get("trade_ids", []) or [] if str(item)]
+    if ids:
+        parts.append(f"trade_ids={','.join(ids[:5])}")
+    if not parts:
+        return ""
+    return "data/execution_ledger.db worst_segment[" + ", ".join(parts) + "]"
+
+
 # Operational carry-forward window for PositionManager REVIEW_EXIT evidence.
 # The live trader normally cycles about every 20 minutes; this keeps one
 # structural loss-cut review alive across several scheduler / refresh handoffs
@@ -2202,9 +2233,12 @@ def _self_improvement_repair_reasons(*, self_improvement_audit_path: Path | None
                 details.append(f"expectancy={expectancy}")
             if avg_loss is not None and avg_win is not None:
                 details.append(f"avg_loss={avg_loss} vs avg_win={avg_win}")
+            target = _self_improvement_worst_segment_target(system)
+            if target:
+                details.append(f"inspect={target}")
             suffix = f" ({', '.join(details)})" if details else ""
             reasons.append(
-                "self-improvement profitability P0 blocks entry routing; use learning/gap repair before new risk"
+                "self-improvement profitability P0 blocks entry routing; repair the named close-discipline segment before new risk"
                 f"{suffix}"
             )
             continue
