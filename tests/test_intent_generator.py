@@ -9052,6 +9052,32 @@ class ExhaustionRangeChaseTest(unittest.TestCase):
 
         self.assertNotIn("EXHAUSTION_RANGE_CHASE", codes)
 
+    def test_failed_break_short_limit_at_broader_extreme_still_chases(self) -> None:
+        from quant_rabbit.strategy.intent_generator import _method_context_issues
+
+        intent = self._intent(
+            side="SHORT",
+            sigma_mult=12.7,
+            price_pct_24h=0.022,
+            method="BREAKOUT_FAILURE",
+            order_type="LIMIT",
+            entry=1.14672,
+            metadata_extra={
+                "price_percentile_7d": 0.0,
+                "entry_price_percentile_24h": 0.0531,
+                "entry_price_percentile_7d": 0.0288,
+                "tf_regime_map": {
+                    "M5": {"nearest_support": 1.14610, "nearest_resistance": 1.14677},
+                    "M15": {"nearest_support": 1.14612, "nearest_resistance": 1.14669},
+                },
+            },
+        )
+        issues = _method_context_issues(intent)
+        issue = next(issue for issue in issues if issue["code"] == "EXHAUSTION_RANGE_CHASE")
+
+        self.assertEqual(issue["severity"], "BLOCK")
+        self.assertIn("p7d=0.03", issue["message"])
+
     def test_range_rotation_short_at_tiny_upper_rail_but_broader_discount_still_chases(self) -> None:
         from quant_rabbit.strategy.intent_generator import _method_context_issues
 

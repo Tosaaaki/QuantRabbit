@@ -6156,23 +6156,33 @@ def _method_context_issues(intent: OrderIntent) -> list[dict[str, str]]:
     # 2026-05-12T15:33 UTC drove the operator to demand killing.
     sigma_mult = _optional_float(metadata.get("range_24h_sigma_multiple"))
     ppct_24h = _gate_location_percentile(intent, metadata, "24h")
+    ppct_7d = _gate_location_percentile(intent, metadata, "7d")
     if sigma_mult is not None and sigma_mult >= EXHAUSTION_RANGE_SIGMA_MULTIPLE:
         chasing = False
         if intent.side == Side.LONG and ppct_24h is not None and ppct_24h >= 0.5:
             chasing = True
         if intent.side == Side.SHORT and ppct_24h is not None and ppct_24h <= 0.5:
             chasing = True
-        if chasing and _is_structural_retest_entry(intent, metadata, method):
+        if (
+            chasing
+            and _is_structural_retest_entry(intent, metadata, method)
+            and not _structural_retest_entry_at_broader_extreme(intent, metadata)
+        ):
             chasing = False
         if chasing:
             severity = _same_side_chase_severity(intent, hedge_recovery=hedge_recovery)
+            location_bits = []
+            if ppct_24h is not None:
+                location_bits.append(f"p24h={ppct_24h:.2f}")
+            if ppct_7d is not None:
+                location_bits.append(f"p7d={ppct_7d:.2f}")
             issues.append(
                 {
                     "code": "EXHAUSTION_RANGE_CHASE",
                     "message": (
                         f"{intent.pair} {intent.side.value} chases a move already "
                         f"{sigma_mult:.2f}× typical hourly range over 24h "
-                        f"(p24h={ppct_24h:.2f}); "
+                        f"({', '.join(location_bits) or 'location percentile unavailable'}); "
                         + _same_side_chase_tail(intent, hedge_recovery=hedge_recovery)
                     ),
                     "severity": severity,
@@ -6206,6 +6216,8 @@ def _same_side_chase_tail(intent: OrderIntent, *, hedge_recovery: bool) -> str:
 # A support/resistance box midpoint is the geometry boundary between "at the
 # lower half" and "at the upper half"; it is not a tuned strategy threshold.
 BREAKOUT_FAILURE_RETEST_MIDPOINT = 0.5
+STRUCTURAL_RETEST_EXTREME_LOW = 0.05
+STRUCTURAL_RETEST_EXTREME_HIGH = 0.95
 
 
 def _breakout_failure_market_retest_issue(
@@ -6341,6 +6353,23 @@ def _is_structural_retest_entry(
     if intent.side == Side.SHORT:
         return all(position >= BREAKOUT_FAILURE_RETEST_MIDPOINT for position in positions)
     return all(position <= BREAKOUT_FAILURE_RETEST_MIDPOINT for position in positions)
+
+
+def _structural_retest_entry_at_broader_extreme(intent: OrderIntent, metadata: dict[str, Any]) -> bool:
+    """True when a local retest still sits at an exhausted 24h/7d extreme."""
+    percentiles = [
+        value
+        for value in (
+            _gate_location_percentile(intent, metadata, "24h"),
+            _gate_location_percentile(intent, metadata, "7d"),
+        )
+        if value is not None
+    ]
+    if not percentiles:
+        return False
+    if intent.side == Side.SHORT:
+        return any(value <= STRUCTURAL_RETEST_EXTREME_LOW for value in percentiles)
+    return any(value >= STRUCTURAL_RETEST_EXTREME_HIGH for value in percentiles)
 
 
 def _range_rotation_chases_broader_location(intent: OrderIntent, metadata: dict[str, Any]) -> bool:

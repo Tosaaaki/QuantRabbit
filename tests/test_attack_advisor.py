@@ -521,6 +521,116 @@ class AttackAdvisorTest(unittest.TestCase):
             self.assertEqual(payload["precision_filtered_lane_ids"], [])
             self.assertEqual(payload["recommended_now_lane_ids"], [lane_id])
 
+    def test_limit_precision_filter_uses_planned_entry_percentiles(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            intents = root / "intents.json"
+            target = root / "target.json"
+            lane_id = "failure_trader:EUR_USD:SHORT:BREAKOUT_FAILURE:LIMIT"
+            intents.write_text(
+                json.dumps(
+                    {
+                        "results": [
+                            _result(
+                                lane_id=lane_id,
+                                pair="EUR_USD",
+                                side="SHORT",
+                                method="BREAKOUT_FAILURE",
+                                order_type="LIMIT",
+                                reward_jpy=1200.0,
+                                risk_jpy=300.0,
+                                rr=4.0,
+                                metadata={
+                                    "price_percentile_24h": 0.02,
+                                    "price_percentile_7d": 0.0,
+                                    "entry_price_percentile_24h": 0.30,
+                                    "entry_price_percentile_7d": 0.24,
+                                },
+                            )
+                        ]
+                    }
+                )
+            )
+            target.write_text(
+                json.dumps(
+                    {
+                        "status": "PURSUE_TARGET",
+                        "remaining_target_jpy": 1500.0,
+                        "remaining_risk_budget_jpy": 1000.0,
+                    }
+                )
+            )
+
+            summary = AttackAdvisor(
+                intents_path=intents,
+                target_state_path=target,
+                ai_backtest_path=root / "missing_backtest.json",
+                outcome_mart_path=root / "missing_outcome_mart.json",
+                coverage_path=root / "missing_coverage.json",
+                output_path=root / "advice.json",
+                report_path=root / "advice.md",
+            ).run()
+
+            payload = json.loads((root / "advice.json").read_text())
+            self.assertEqual(summary.status, "ATTACK_PARTIAL")
+            self.assertEqual(payload["precision_filtered_lane_ids"], [])
+            self.assertEqual(payload["recommended_now_lane_ids"], [lane_id])
+
+    def test_limit_precision_filter_blocks_entry_still_at_broader_extreme(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            intents = root / "intents.json"
+            target = root / "target.json"
+            lane_id = "failure_trader:EUR_USD:SHORT:BREAKOUT_FAILURE:LIMIT"
+            intents.write_text(
+                json.dumps(
+                    {
+                        "results": [
+                            _result(
+                                lane_id=lane_id,
+                                pair="EUR_USD",
+                                side="SHORT",
+                                method="BREAKOUT_FAILURE",
+                                order_type="LIMIT",
+                                reward_jpy=1200.0,
+                                risk_jpy=300.0,
+                                rr=4.0,
+                                metadata={
+                                    "price_percentile_24h": 0.02,
+                                    "price_percentile_7d": 0.0,
+                                    "entry_price_percentile_24h": 0.0531,
+                                    "entry_price_percentile_7d": 0.0288,
+                                },
+                            )
+                        ]
+                    }
+                )
+            )
+            target.write_text(
+                json.dumps(
+                    {
+                        "status": "PURSUE_TARGET",
+                        "remaining_target_jpy": 1500.0,
+                        "remaining_risk_budget_jpy": 1000.0,
+                    }
+                )
+            )
+
+            summary = AttackAdvisor(
+                intents_path=intents,
+                target_state_path=target,
+                ai_backtest_path=root / "missing_backtest.json",
+                outcome_mart_path=root / "missing_outcome_mart.json",
+                coverage_path=root / "missing_coverage.json",
+                output_path=root / "advice.json",
+                report_path=root / "advice.md",
+            ).run()
+
+            payload = json.loads((root / "advice.json").read_text())
+            self.assertEqual(summary.status, "NO_ATTACK_ADVICE")
+            self.assertEqual(payload["precision_filtered_lane_ids"], [lane_id])
+            self.assertIn("7d entry price percentile", payload["precision_filtered_reasons"][lane_id])
+
     def test_live_ready_lanes_that_pass_precision_but_exceed_budget_keep_budget_blocker(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

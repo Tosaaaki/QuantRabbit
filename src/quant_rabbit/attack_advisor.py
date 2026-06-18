@@ -1040,6 +1040,9 @@ def _precision_index_from_intents(intents: dict[str, Any]) -> dict[str, dict[str
         metadata = intent_doc.get("metadata") if isinstance(intent_doc.get("metadata"), dict) else {}
         out[lane_id] = {
             "price_percentile_24h": _optional_float(metadata.get("price_percentile_24h")),
+            "price_percentile_7d": _optional_float(metadata.get("price_percentile_7d")),
+            "entry_price_percentile_24h": _optional_float(metadata.get("entry_price_percentile_24h")),
+            "entry_price_percentile_7d": _optional_float(metadata.get("entry_price_percentile_7d")),
             "tf_agreement_score": _optional_float(metadata.get("tf_agreement_score")),
             "range_24h_sigma_multiple": _optional_float(metadata.get("range_24h_sigma_multiple")),
             "direction": (intent_doc.get("side") or "").upper(),
@@ -1066,16 +1069,16 @@ def _precision_lane_blocker(lane: AttackLaneAdvice, idx: dict[str, dict[str, Any
     if ctx is None:
         return None
     direction = (lane.direction or "").upper()
-    ppct = ctx.get("price_percentile_24h")
-    if ppct is not None and direction in {"LONG", "SHORT"}:
+    percentiles = _precision_location_percentiles(ctx)
+    for label, ppct in percentiles:
         if direction == "LONG" and ppct >= ATTACK_PRECISION_EXTREME_HIGH:
             return (
-                f"LONG at 24h price percentile {ppct:.2f} >= "
+                f"LONG at {label} price percentile {ppct:.2f} >= "
                 f"{ATTACK_PRECISION_EXTREME_HIGH:.2f}"
             )
         if direction == "SHORT" and ppct <= ATTACK_PRECISION_EXTREME_LOW:
             return (
-                f"SHORT at 24h price percentile {ppct:.2f} <= "
+                f"SHORT at {label} price percentile {ppct:.2f} <= "
                 f"{ATTACK_PRECISION_EXTREME_LOW:.2f}"
             )
     tf_agree = ctx.get("tf_agreement_score")
@@ -1099,3 +1102,19 @@ def _precision_lane_blocker(lane: AttackLaneAdvice, idx: dict[str, dict[str, Any
             f"{ATTACK_PRECISION_TF_AGREEMENT_MIN:.2f}"
         )
     return None
+
+
+def _precision_location_percentiles(ctx: dict[str, Any]) -> tuple[tuple[str, float], ...]:
+    """Return the location points the advice precision filter should use."""
+    use_entry = ctx.get("order_type") in {"LIMIT", "LIMIT_ORDER"}
+    points: list[tuple[str, float]] = []
+    for horizon in ("24h", "7d"):
+        key = f"price_percentile_{horizon}"
+        label = horizon
+        if use_entry and ctx.get(f"entry_price_percentile_{horizon}") is not None:
+            key = f"entry_price_percentile_{horizon}"
+            label = f"{horizon} entry"
+        value = ctx.get(key)
+        if value is not None:
+            points.append((label, float(value)))
+    return tuple(points)
