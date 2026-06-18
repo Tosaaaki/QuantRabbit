@@ -4270,6 +4270,9 @@ SELF_IMPROVEMENT_PROFITABILITY_P0_REPAIR_CODE = (
     "SELF_IMPROVEMENT_P0_PROFITABILITY_REPAIR_MODE"
 )
 SELF_IMPROVEMENT_PROFITABILITY_P0_REPAIR_MODE = "TP_HARVEST_REPAIR"
+SELF_IMPROVEMENT_PENDING_EXECUTION_REPAIR_CODE = (
+    "SELF_IMPROVEMENT_PENDING_EXECUTION_REPAIR_MODE"
+)
 
 
 @dataclass(frozen=True)
@@ -4775,9 +4778,34 @@ class IntentGenerator:
             and intent.order_type != OrderType.MARKET
             and str(intent.metadata.get("position_intent") or "").upper() != "HEDGE"
         ):
-            risk_issues.append(dict(self_improvement_pending_issue))
-            live_blockers = (*live_blockers, self_improvement_pending_issue["message"])
-            risk_allowed = False
+            if _self_improvement_pending_execution_repair_allowed(intent):
+                intent.metadata["self_improvement_pending_execution_repair_live_ready"] = True
+                intent.metadata["self_improvement_pending_execution_repair_mode"] = (
+                    SELF_IMPROVEMENT_PROFITABILITY_P0_REPAIR_MODE
+                )
+                intent.metadata["self_improvement_pending_execution_repair_blocker_code"] = (
+                    str(self_improvement_pending_issue["code"])
+                )
+                intent.metadata["self_improvement_pending_execution_repair_reason"] = (
+                    "pending-entry churn blocks generic pending orders, but this receipt is "
+                    "a non-market attached-TP HARVEST repair lane; allow it only when all "
+                    "other forecast, strategy, spread, risk, and gateway gates pass"
+                )
+                risk_issues.append(
+                    {
+                        "code": SELF_IMPROVEMENT_PENDING_EXECUTION_REPAIR_CODE,
+                        "message": (
+                            "self-improvement pending-entry lifecycle downgraded to repair mode "
+                            "for this non-market attached-TP HARVEST intent; generic pending "
+                            "orders remain blocked"
+                        ),
+                        "severity": "WARN",
+                    }
+                )
+            else:
+                risk_issues.append(dict(self_improvement_pending_issue))
+                live_blockers = (*live_blockers, self_improvement_pending_issue["message"])
+                risk_allowed = False
         forecast_live_issue = _forecast_live_readiness_issue(intent, intent.metadata or {}, method)
         if forecast_live_issue is not None:
             risk_issues.append(forecast_live_issue)
@@ -5843,6 +5871,10 @@ def _self_improvement_profitability_p0_repair_allowed(intent: OrderIntent) -> bo
     if market_close_expectancy is None or market_close_expectancy >= 0:
         return False
     return True
+
+
+def _self_improvement_pending_execution_repair_allowed(intent: OrderIntent) -> bool:
+    return _self_improvement_profitability_p0_repair_allowed(intent)
 
 
 def _self_improvement_forecast_adverse_path_issue(data_root: Path) -> dict[str, str] | None:
