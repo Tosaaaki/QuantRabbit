@@ -101,6 +101,12 @@ HEDGE_TIMING_CLASSES = {"LOCK_GAIN", "REVERSAL", "CONTINUATION", "OPPOSITE_EXPOS
 # replayed receipts without importing strategy code.
 HEDGE_CONTINUATION_MAX_SCALE = 0.35
 
+# Exit-reason payoff relaxation needs enough realized broker-TP outcomes to
+# distinguish a real capture shape from one lucky burst. This mirrors the
+# strategy generator evidence floor so RiskEngine can defend hand-written or
+# replayed receipts without importing strategy code.
+LOSS_ASYMMETRY_TP_RELAX_MIN_EXIT_TRADES = 20
+
 
 def _min_lot_test_override_active() -> bool:
     """Whether the production minimum-lot gate is disabled for the current
@@ -339,7 +345,10 @@ def _loss_asymmetry_guard_issues(intent: OrderIntent, metrics: RiskMetrics) -> l
     metadata = intent.metadata or {}
     if str(metadata.get("position_intent") or "NEW").upper() == "HEDGE":
         return []
-    if str(metadata.get("loss_asymmetry_guard_mode") or "").upper() == "TP_PROVEN_RELAXED":
+    if (
+        str(metadata.get("loss_asymmetry_guard_mode") or "").upper() == "TP_PROVEN_RELAXED"
+        and _loss_asymmetry_tp_relaxation_shape_allowed(intent, metadata)
+    ):
         return []
     status = str(metadata.get("capture_economics_status") or "").upper()
     avg_win = _to_float(metadata.get("capture_avg_win_jpy"))
@@ -377,6 +386,33 @@ def _loss_asymmetry_guard_issues(intent: OrderIntent, metrics: RiskMetrics) -> l
             "or repair TP/exit payoff before adding fresh one-way risk.",
         )
     ]
+
+
+def _loss_asymmetry_tp_relaxation_shape_allowed(
+    intent: OrderIntent,
+    metadata: dict,
+) -> bool:
+    """Validate the only exit shape allowed to bypass the average-winner cap."""
+
+    if intent.order_type == OrderType.MARKET:
+        return False
+    if metadata.get("attach_take_profit_on_fill") is not True:
+        return False
+    if str(metadata.get("tp_execution_mode") or "").upper() != "ATTACHED_TECHNICAL_TP":
+        return False
+    if str(metadata.get("tp_target_intent") or "").upper() != "HARVEST":
+        return False
+    tp_trades = _to_float(metadata.get("capture_take_profit_trades"))
+    tp_expectancy = _to_float(metadata.get("capture_take_profit_expectancy_jpy"))
+    tp_losses = _to_float(metadata.get("capture_take_profit_losses"))
+    return (
+        tp_trades is not None
+        and tp_trades >= LOSS_ASYMMETRY_TP_RELAX_MIN_EXIT_TRADES
+        and tp_expectancy is not None
+        and tp_expectancy > 0
+        and tp_losses is not None
+        and tp_losses <= 0
+    )
 
 
 @dataclass(frozen=True)
