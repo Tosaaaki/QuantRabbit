@@ -17,6 +17,7 @@ from quant_rabbit.strategy.intent_generator import (
     _forecast_context_payload,
     _minimum_range_target_pips,
     _same_day_loss_streak_issues,
+    _session_bucket_from_tag,
 )
 from quant_rabbit.strategy.lane_history_ledger import SameDayLossStreak
 
@@ -49,6 +50,9 @@ class IntentGeneratorTest(unittest.TestCase):
             os.environ.pop("QR_REQUIRE_TELEMETRY_FOR_LIVE", None)
         else:
             os.environ["QR_REQUIRE_TELEMETRY_FOR_LIVE"] = self._prior_require_telemetry_for_live
+
+    def test_session_bucket_maps_judas_window_to_london_context(self) -> None:
+        self.assertEqual(_session_bucket_from_tag("JUDAS_WINDOW"), "LONDON")
 
     def test_requires_snapshot_before_pricing_intents(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

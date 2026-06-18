@@ -1795,6 +1795,10 @@ def _session_bucket_from_tag(value: object) -> str | None:
         return None
     if "LONDON" in text:
         return "LONDON"
+    if "JUDAS" in text:
+        # The session tagger emits JUDAS_WINDOW only for the pre-London
+        # liquidity sweep window; LONDON_KILLZONE owns the later overlap.
+        return "LONDON"
     if text.startswith("NY") or "NEWYORK" in text or "NEW_YORK" in text or "SILVER_BULLET" in text:
         return "NY"
     if "ASIA" in text or "TOKYO" in text:
