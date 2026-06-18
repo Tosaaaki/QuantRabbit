@@ -249,6 +249,96 @@ class StrategyProfileTest(unittest.TestCase):
         self.assertEqual(issues[0].code, "STRATEGY_NOT_ELIGIBLE")
         self.assertEqual(issues[0].severity, "BLOCK")
 
+    def test_block_until_new_evidence_failed_break_limit_scout_is_advisory_under_sl_free(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "profile.json"
+            path.write_text(
+                json.dumps(
+                    {
+                        "profiles": [
+                            {
+                                "pair": "EUR_USD",
+                                "direction": "SHORT",
+                                "status": "BLOCK_UNTIL_NEW_EVIDENCE",
+                                "required_fix": "require a new vehicle or market-structure proof",
+                                "positive_evidence_n": 3,
+                                "positive_tail_jpy": 401.0,
+                                "live_net_jpy": -908.0,
+                                "live_n": 4,
+                            }
+                        ]
+                    }
+                )
+            )
+            profile = StrategyProfile.load(path)
+            prior = os.environ.get("QR_TRADER_DISABLE_SL_REPAIR")
+            os.environ["QR_TRADER_DISABLE_SL_REPAIR"] = "1"
+            try:
+                issues = profile.validate(
+                    _intent(
+                        "EUR_USD",
+                        side=Side.SHORT,
+                        method=TradeMethod.BREAKOUT_FAILURE,
+                        order_type=OrderType.LIMIT,
+                        metadata={
+                            "forecast_seed": True,
+                            "forecast_direction": "DOWN",
+                            "forecast_confidence": 0.23,
+                            "chart_direction_bias": "SHORT",
+                            "tp_execution_mode": "ATTACHED_TECHNICAL_TP",
+                            "tp_target_intent": "HARVEST",
+                            "opportunity_mode": "HARVEST",
+                            "forecast_market_support": {
+                                "ok": True,
+                                "direction": "DOWN",
+                                "aligned_projection_count": 1,
+                            },
+                        },
+                    ),
+                    for_live_send=True,
+                )
+            finally:
+                _restore_env("QR_TRADER_DISABLE_SL_REPAIR", prior)
+
+        self.assertEqual(len(issues), 1)
+        self.assertEqual(issues[0].code, "STRATEGY_NOT_ELIGIBLE")
+        self.assertEqual(issues[0].severity, "WARN")
+
+    def test_block_until_new_evidence_failed_break_market_still_blocks_under_sl_free(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            profile = StrategyProfile.load(_pair_side_profile(Path(tmp), status="BLOCK_UNTIL_NEW_EVIDENCE"))
+            prior = os.environ.get("QR_TRADER_DISABLE_SL_REPAIR")
+            os.environ["QR_TRADER_DISABLE_SL_REPAIR"] = "1"
+            try:
+                issues = profile.validate(
+                    _intent(
+                        "EUR_USD",
+                        method=TradeMethod.BREAKOUT_FAILURE,
+                        order_type=OrderType.MARKET,
+                        metadata={
+                            "forecast_seed": True,
+                            "forecast_direction": "UP",
+                            "forecast_confidence": 0.72,
+                            "chart_direction_bias": "LONG",
+                            "tp_execution_mode": "ATTACHED_TECHNICAL_TP",
+                            "tp_target_intent": "HARVEST",
+                            "opportunity_mode": "HARVEST",
+                            "forecast_market_support": {
+                                "ok": True,
+                                "direction": "UP",
+                                "aligned_projection_count": 1,
+                            },
+                        },
+                    ),
+                    for_live_send=True,
+                )
+            finally:
+                _restore_env("QR_TRADER_DISABLE_SL_REPAIR", prior)
+
+        self.assertEqual(len(issues), 1)
+        self.assertEqual(issues[0].code, "STRATEGY_NOT_ELIGIBLE")
+        self.assertEqual(issues[0].severity, "BLOCK")
+
     def test_watch_only_blocks_live_send_under_sl_free(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             profile = StrategyProfile.load(_profile(Path(tmp), status="WATCH_ONLY"))

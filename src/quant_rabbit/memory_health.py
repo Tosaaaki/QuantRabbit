@@ -982,6 +982,10 @@ def _audit_intent_memory_blockers(
         structured_advisory: set[str] = set()
         for container_name in ("risk_issues", "strategy_issues", "live_strategy_issues"):
             for item in result.get(container_name) or []:
+                if _is_self_improvement_intent_blocker(item):
+                    structured_advisory.add(_issue_text(item))
+                    advisory_memory_blockers += 1
+                    continue
                 text = _issue_text(item).upper()
                 if not any(token in text for token in _MEMORY_BLOCKER_TOKENS):
                     continue
@@ -1008,6 +1012,9 @@ def _audit_intent_memory_blockers(
         for item in result.get("live_blockers") or []:
             issue_text = _issue_text(item)
             text = issue_text.upper()
+            if _is_self_improvement_intent_blocker(item):
+                advisory_memory_blockers += 1
+                continue
             if any(token in text for token in _MEMORY_BLOCKER_TOKENS):
                 if issue_text in structured_blockers:
                     continue
@@ -1216,6 +1223,16 @@ def _is_strategy_profile_gap(item: Any) -> bool:
         if code in _STRATEGY_PROFILE_GAP_CODES:
             return True
     return text in _STRATEGY_PROFILE_GAP_CODES
+
+
+def _is_self_improvement_intent_blocker(item: Any) -> bool:
+    """Self-improvement gates may cite ledgers without being memory defects."""
+
+    if isinstance(item, dict):
+        code = str(item.get("code") or "").upper()
+        message = str(item.get("message") or "").upper()
+        return code.startswith("SELF_IMPROVEMENT") or "SELF-IMPROVEMENT" in message
+    return "SELF-IMPROVEMENT" in str(item).upper()
 
 
 def _parse_utc(value: Any) -> datetime | None:

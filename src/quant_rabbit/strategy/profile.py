@@ -428,11 +428,11 @@ def _blocked_profile_market_structure_scout_severity(
     `BLOCK_UNTIL_NEW_EVIDENCE` says a lane needs a new vehicle or market-
     structure proof. Treating that status as a permanent veto is the exact
     anti-pattern AGENT_CONTRACT §3.1 calls out. The escape hatch is intentionally
-    narrow: only SL-free, non-market, range-rail forecast seeds with attached
-    HARVEST TP, TP inside the box, SL outside the box, and at least some
-    positive historical evidence can collect a new live sample. Method-specific
-    rejected profiles stay hard blocks; this only applies to broad pair/side
-    memory that may not match the current rail-limit vehicle.
+    narrow: only SL-free, non-market, forecast-seed rail/HARVEST vehicles with
+    attached technical TP and at least some positive historical evidence can
+    collect a new live sample. Method-specific rejected profiles stay hard
+    blocks; this only applies to broad pair/side memory that may not match the
+    current passive vehicle.
     """
 
     if not sl_free:
@@ -444,33 +444,73 @@ def _blocked_profile_market_structure_scout_severity(
     metadata = intent.metadata or {}
     if not metadata.get("forecast_seed"):
         return None
-    side = str(intent.side.value).upper()
-    if not _range_rotation_rail_side_matches(intent, metadata, side=side):
-        return None
-    if str(metadata.get("tp_execution_mode") or "").upper() != "ATTACHED_TECHNICAL_TP":
-        return None
-    if str(metadata.get("opportunity_mode") or "").upper() != "HARVEST":
-        return None
-    if not metadata.get("range_tp_is_inside_box") or not metadata.get("range_sl_outside_box"):
-        return None
-    confidence = _optional_float(metadata.get("forecast_confidence"))
-    if confidence is None:
-        return None
-    range_min_confidence = _forecast_seed_missing_profile_range_min_confidence()
-    supported = confidence >= range_min_confidence
+    supported = _blocked_profile_range_rail_scout_supported(intent, metadata)
     if not supported:
-        supported = _forecast_range_unselected_projection_support_allows_side(
-            intent,
-            metadata,
-            _forecast_market_support(metadata),
-            confidence=confidence,
-            min_confidence=range_min_confidence,
-        )
+        supported = _blocked_profile_breakout_failure_limit_scout_supported(intent, metadata)
     if not supported:
         return None
     if (entry.positive_evidence_n or 0) <= 0 and (entry.pretrade_net_jpy or 0.0) <= 0:
         return None
     return "WARN"
+
+
+def _blocked_profile_range_rail_scout_supported(intent: OrderIntent, metadata: dict[str, Any]) -> bool:
+    side = str(intent.side.value).upper()
+    if not _range_rotation_rail_side_matches(intent, metadata, side=side):
+        return False
+    if str(metadata.get("tp_execution_mode") or "").upper() != "ATTACHED_TECHNICAL_TP":
+        return False
+    if str(metadata.get("opportunity_mode") or "").upper() != "HARVEST":
+        return False
+    if not metadata.get("range_tp_is_inside_box") or not metadata.get("range_sl_outside_box"):
+        return False
+    confidence = _optional_float(metadata.get("forecast_confidence"))
+    if confidence is None:
+        return False
+    range_min_confidence = _forecast_seed_missing_profile_range_min_confidence()
+    if confidence >= range_min_confidence:
+        return True
+    return _forecast_range_unselected_projection_support_allows_side(
+        intent,
+        metadata,
+        _forecast_market_support(metadata),
+        confidence=confidence,
+        min_confidence=range_min_confidence,
+    )
+
+
+def _blocked_profile_breakout_failure_limit_scout_supported(
+    intent: OrderIntent,
+    metadata: dict[str, Any],
+) -> bool:
+    if _intent_method(intent) != "BREAKOUT_FAILURE":
+        return False
+    if intent.order_type != OrderType.LIMIT:
+        return False
+    if str(metadata.get("tp_execution_mode") or "").upper() != "ATTACHED_TECHNICAL_TP":
+        return False
+    if str(metadata.get("tp_target_intent") or "").upper() != "HARVEST":
+        return False
+    if str(metadata.get("opportunity_mode") or "").upper() != "HARVEST":
+        return False
+    if not _forecast_seed_side_aligned(intent, metadata):
+        return False
+    confidence = _optional_float(metadata.get("forecast_confidence"))
+    if confidence is None:
+        return False
+    if confidence >= _forecast_seed_missing_profile_min_confidence():
+        return True
+    support = _forecast_market_support(metadata)
+    if not bool(support.get("ok")):
+        return False
+    direction = str(metadata.get("forecast_direction") or "").upper()
+    expected_direction = "UP" if intent.side.value == "LONG" else "DOWN"
+    if direction != expected_direction:
+        return False
+    support_direction = str(support.get("direction") or "").upper()
+    if support_direction and support_direction != direction:
+        return False
+    return (_optional_int(support.get("aligned_projection_count")) or 0) > 0
 
 
 def _forecast_seed_missing_profile_range_min_confidence() -> float:

@@ -10,7 +10,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from quant_rabbit.models import OrderIntent, OrderType, Side
+from quant_rabbit.models import OrderIntent, OrderType, Side, TradeMethod
 from quant_rabbit.strategy.intent_generator import (
     IntentGenerator,
     RANGE_TARGET_SPREAD_CUSHION_MULT,
@@ -9551,12 +9551,17 @@ class TimingEvidenceBreakoutStopTest(unittest.TestCase):
         *,
         side: str = "LONG",
         order_type: OrderType | None = OrderType.STOP_ENTRY,
+        method: TradeMethod | None = None,
         min_confidence: float = 0.55,
     ) -> bool:
         from quant_rabbit.strategy.intent_generator import _forecast_market_support_allows_side
 
         return _forecast_market_support_allows_side(
-            side, metadata, min_confidence=min_confidence, order_type=order_type
+            side,
+            metadata,
+            min_confidence=min_confidence,
+            order_type=order_type,
+            method=method,
         )
 
     def test_stop_entry_with_timing_evidence_and_lean_bypasses_floor(self) -> None:
@@ -9769,6 +9774,78 @@ class TimingEvidenceBreakoutStopTest(unittest.TestCase):
 
     def test_limit_order_keeps_confidence_floor(self) -> None:
         self.assertFalse(self._allows(self._metadata(), order_type=OrderType.LIMIT))
+
+    def test_failed_break_limit_with_strong_directional_support_bypasses_weak_floor(self) -> None:
+        metadata = self._strong_directional_metadata(
+            confidence=0.23,
+            raw_confidence=0.53,
+        )
+        metadata.update(
+            {
+                "chart_direction_bias": "SHORT",
+                "tp_execution_mode": "ATTACHED_TECHNICAL_TP",
+                "tp_target_intent": "HARVEST",
+                "opportunity_mode": "HARVEST",
+            }
+        )
+
+        self.assertTrue(
+            self._allows(
+                metadata,
+                side="SHORT",
+                order_type=OrderType.LIMIT,
+                method=TradeMethod.BREAKOUT_FAILURE,
+                min_confidence=0.65,
+            )
+        )
+
+    def test_failed_break_limit_requires_raw_directional_edge(self) -> None:
+        metadata = self._strong_directional_metadata(
+            confidence=0.23,
+            raw_confidence=0.51,
+        )
+        metadata.update(
+            {
+                "chart_direction_bias": "SHORT",
+                "tp_execution_mode": "ATTACHED_TECHNICAL_TP",
+                "tp_target_intent": "HARVEST",
+                "opportunity_mode": "HARVEST",
+            }
+        )
+
+        self.assertFalse(
+            self._allows(
+                metadata,
+                side="SHORT",
+                order_type=OrderType.LIMIT,
+                method=TradeMethod.BREAKOUT_FAILURE,
+                min_confidence=0.65,
+            )
+        )
+
+    def test_failed_break_market_still_keeps_confidence_floor(self) -> None:
+        metadata = self._strong_directional_metadata(
+            confidence=0.23,
+            raw_confidence=0.53,
+        )
+        metadata.update(
+            {
+                "chart_direction_bias": "SHORT",
+                "tp_execution_mode": "ATTACHED_TECHNICAL_TP",
+                "tp_target_intent": "HARVEST",
+                "opportunity_mode": "HARVEST",
+            }
+        )
+
+        self.assertFalse(
+            self._allows(
+                metadata,
+                side="SHORT",
+                order_type=OrderType.MARKET,
+                method=TradeMethod.BREAKOUT_FAILURE,
+                min_confidence=0.65,
+            )
+        )
 
     def test_missing_structural_lean_fails_closed(self) -> None:
         self.assertFalse(self._allows(self._metadata(bias="")))

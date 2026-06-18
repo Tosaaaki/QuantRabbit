@@ -835,6 +835,24 @@ FORECAST_STRONG_DIRECTIONAL_MIN_SAMPLES = _env_int(
     max(30, FORECAST_MARKET_SUPPORT_MIN_SAMPLES),
     minimum=FORECAST_MARKET_SUPPORT_MIN_SAMPLES,
 )
+# Failed-break LIMITs are not breakout-proof like STOP entries, but they are
+# also not market chases: the order waits for a retest and the attached TP is
+# harvested from current structure. Let strong audited macro/technical
+# projection evidence replace a weak final calibration only for that narrow
+# passive vehicle, and only when the raw pair forecast still leans with the
+# side. Lowering these floors should be justified by tagged execution-ledger
+# expectancy for `breakout_failure_limit_projection_support`, not by a need for
+# more volume.
+FORECAST_BREAKOUT_FAILURE_LIMIT_RAW_CONFIDENCE_MIN = _env_float(
+    "QR_FORECAST_BREAKOUT_FAILURE_LIMIT_RAW_CONFIDENCE_MIN",
+    0.52,
+    minimum=0.50,
+)
+FORECAST_BREAKOUT_FAILURE_LIMIT_CALIBRATED_FLOOR = _env_float(
+    "QR_FORECAST_BREAKOUT_FAILURE_LIMIT_CALIBRATED_FLOOR",
+    0.20,
+    minimum=0.0,
+)
 # Forecast-first trend continuation must pay for being wrong. RANGE-side
 # breakout STOPs can be useful, but the 2026-06-15 EUR_CHF loss showed that
 # a weak calibrated forecast + one higher-TF trend hint + ~1.2R geometry spends
@@ -6935,12 +6953,17 @@ def _forecast_market_support_override(
     metadata: dict[str, Any],
     *,
     min_confidence: float,
+    method: TradeMethod | None = None,
 ) -> bool:
+    resolved_method = method
+    if resolved_method is None and intent.market_context is not None:
+        resolved_method = intent.market_context.method
     return _forecast_market_support_allows_side(
         intent.side.value,
         metadata,
         min_confidence=min_confidence,
         order_type=intent.order_type,
+        method=resolved_method,
     )
 
 
@@ -7108,6 +7131,7 @@ def _forecast_market_support_allows_side(
     *,
     min_confidence: float,
     order_type: OrderType | None = None,
+    method: TradeMethod | None = None,
 ) -> bool:
     if side not in {Side.LONG.value, Side.SHORT.value}:
         return False
@@ -7214,6 +7238,19 @@ def _forecast_market_support_allows_side(
         order_type=order_type,
     ):
         return False
+    if _forecast_breakout_failure_limit_support_allows_side(
+        side,
+        source,
+        direction=direction,
+        confidence=confidence,
+        raw_confidence=raw_confidence,
+        support=support,
+        forecast_horizon_min=forecast_horizon_min,
+        order_type=order_type,
+        method=method,
+        known_weak_direction_bucket=known_weak_direction_bucket,
+    ):
+        return True
     if breakout_proof and timing_evidence and confidence >= support_floor and not known_weak_direction_bucket:
         return True
     strong_directional_floor = max(
@@ -7262,6 +7299,54 @@ def _forecast_market_support_allows_side(
         and raw_confidence >= min_confidence
         and (timing_samples or 0) >= FORECAST_MARKET_SUPPORT_MIN_SAMPLES
         and (timing_hit_rate or 0.0) >= FORECAST_MARKET_SUPPORT_MIN_TIMING_HIT_RATE
+    )
+
+
+def _forecast_breakout_failure_limit_support_allows_side(
+    side: str | None,
+    source: Any,
+    *,
+    direction: str,
+    confidence: float | None,
+    raw_confidence: float | None,
+    support: dict[str, Any],
+    forecast_horizon_min: float | None,
+    order_type: OrderType | None,
+    method: TradeMethod | None,
+    known_weak_direction_bucket: bool,
+) -> bool:
+    """Allow passive failed-break retests to use strong current projection proof."""
+
+    if not isinstance(source, dict):
+        return False
+    if method != TradeMethod.BREAKOUT_FAILURE:
+        return False
+    if order_type != OrderType.LIMIT:
+        return False
+    if side not in {Side.LONG.value, Side.SHORT.value}:
+        return False
+    expected_side = Side.LONG.value if direction == "UP" else Side.SHORT.value if direction == "DOWN" else None
+    if expected_side != side:
+        return False
+    if confidence is None or confidence < FORECAST_BREAKOUT_FAILURE_LIMIT_CALIBRATED_FLOOR:
+        return False
+    if raw_confidence is None or raw_confidence < FORECAST_BREAKOUT_FAILURE_LIMIT_RAW_CONFIDENCE_MIN:
+        return False
+    if known_weak_direction_bucket:
+        return False
+    chart_direction_bias = str(source.get("chart_direction_bias") or "").upper()
+    if chart_direction_bias and chart_direction_bias != side:
+        return False
+    if str(source.get("tp_execution_mode") or "").upper() != "ATTACHED_TECHNICAL_TP":
+        return False
+    if str(source.get("tp_target_intent") or "").upper() != "HARVEST":
+        return False
+    if str(source.get("opportunity_mode") or "").upper() != "HARVEST":
+        return False
+    return _forecast_market_support_has_strong_directional_signal(
+        support,
+        direction=direction,
+        forecast_horizon_min=forecast_horizon_min,
     )
 
 

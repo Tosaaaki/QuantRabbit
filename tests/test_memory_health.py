@@ -538,6 +538,47 @@ class MemoryHealthAuditorTest(unittest.TestCase):
         self.assertEqual(summary.layers["short_term"], "BLOCK")
         self.assertTrue(any(issue["code"] == "SHORT_ORDER_INTENTS_MEMORY_BLOCKERS" for issue in payload["issues"]))
 
+    def test_self_improvement_execution_ledger_reference_is_advisory_for_memory_health(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root)
+            message = (
+                "self-improvement profitability P0 blocks LIVE_READY intent generation; "
+                "repair close discipline before new risk "
+                "(inspect=data/execution_ledger.db worst_segment[pair=NZD_CAD, side=SHORT])"
+            )
+            files["intents"].write_text(
+                json.dumps(
+                    {
+                        "results": [
+                            {
+                                "lane_id": "range_trader:NZD_CAD:SHORT:RANGE_ROTATION",
+                                "status": "DRY_RUN_BLOCKED",
+                                "intent": {"pair": "NZD_CAD"},
+                                "risk_issues": [
+                                    {
+                                        "code": "SELF_IMPROVEMENT_P0_PROFITABILITY_DISCIPLINE",
+                                        "message": message,
+                                        "severity": "BLOCK",
+                                    }
+                                ],
+                                "strategy_issues": [],
+                                "live_blockers": [message],
+                            }
+                        ]
+                    }
+                )
+            )
+
+            summary = _run(files)
+            payload = json.loads(files["output"].read_text())
+
+        self.assertEqual(summary.status, STATUS_PASS)
+        self.assertEqual(summary.layers["short_term"], "PASS")
+        self.assertEqual(payload["metrics"]["order_intents"]["memory_blockers"], 0)
+        self.assertGreater(payload["metrics"]["order_intents"]["advisory_memory_blockers"], 0)
+        self.assertFalse(any(issue["code"] == "SHORT_ORDER_INTENTS_MEMORY_BLOCKERS" for issue in payload["issues"]))
+
     def test_stale_quote_live_blocker_is_advisory_for_memory_health(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
