@@ -119,6 +119,35 @@ def _decision_cites_close_timing_evidence(evidence_refs: tuple[str, ...]) -> boo
     return False
 
 
+def _decision_cites_profitability_p0(evidence_refs: tuple[str, ...]) -> bool:
+    for ref in evidence_refs:
+        text = str(ref or "").strip()
+        if text in {
+            "self_improvement:audit",
+            "self_improvement:profitability",
+            "self_improvement:finding:PERSISTENT_PROFITABILITY_DISCIPLINE_BLOCKED",
+        }:
+            return True
+    return False
+
+
+def _profitability_p0_soft_close_blocker(packet: dict[str, Any]) -> dict[str, Any] | None:
+    """Return the active profitability-P0 blocker that makes soft closes higher risk."""
+
+    audit = packet.get("self_improvement_audit")
+    if not isinstance(audit, dict):
+        return None
+    blockers = list(audit.get("profitability_blockers", []) or []) + list(
+        audit.get("p0_blockers", []) or []
+    )
+    for blocker in blockers:
+        if not isinstance(blocker, dict):
+            continue
+        if str(blocker.get("code") or "") == "PERSISTENT_PROFITABILITY_DISCIPLINE_BLOCKED":
+            return blocker
+    return None
+
+
 def _loss_close_timing_audit_required_trades(
     packet: dict[str, Any],
     decision: "GPTTraderDecision",
@@ -572,6 +601,14 @@ def _close_thesis_invalidation(
                 # own. The structural high/low was tagged but the move
                 # was rejected.
                 continue
+            if tf == "H4" and not _counter_structure_reaches_reward_target(
+                packet,
+                trade_id=trade_id,
+                pair=pair,
+                side=side_upper,
+                structure_price=price,
+            ):
+                continue
             if tf == "M15":
                 supported, support_reason = _close_same_direction_sidecar_support(
                     packet,
@@ -668,6 +705,45 @@ def _close_thesis_invalidation(
         return True, m15_soft_structural_reason, False
 
     return False, "", False
+
+
+def _counter_structure_reaches_reward_target(
+    packet: dict[str, Any],
+    *,
+    trade_id: str | None,
+    pair: str,
+    side: str,
+    structure_price: float,
+) -> bool:
+    """Whether a counter-structure event is beyond the current reward target.
+
+    A TP-managed position should not be loss-closed from an old higher-timeframe
+    break that sits on the reward side of its still-reachable broker TP. For a
+    LONG, a DOWN break above the TP has not invalidated the TP path; for a
+    SHORT, an UP break below the TP has not invalidated the TP path. Missing TP
+    data falls back to the legacy structural gate because runners have no
+    machine-checkable reward-side boundary here.
+    """
+
+    pos: dict[str, Any] | None = None
+    if trade_id is not None:
+        pos = _trader_position_lookup(packet).get(str(trade_id))
+    if pos is None:
+        for candidate in _trader_position_lookup(packet).values():
+            if str(candidate.get("pair") or "") == pair and str(candidate.get("side") or "").upper() == side:
+                pos = candidate
+                break
+    if pos is None:
+        return True
+    tp = _optional_float(pos.get("take_profit"))
+    if tp is None:
+        return True
+    side_upper = str(side or "").upper()
+    if side_upper == "LONG":
+        return structure_price < tp
+    if side_upper == "SHORT":
+        return structure_price > tp
+    return True
 
 
 def _position_sidecar_close_recommended(
@@ -2173,6 +2249,9 @@ class DecisionVerifier:
         still_valid: list[str] = []
         same_direction_supported: list[str] = []
         needs_explicit_gate_b: list[str] = []
+        needs_profitability_p0_context: list[str] = []
+        profitability_p0_blocker = _profitability_p0_soft_close_blocker(self.packet)
+        cites_profitability_p0 = _decision_cites_profitability_p0(decision.evidence_refs)
         for tid in decision.close_trade_ids:
             pos = position_by_tid.get(str(tid))
             if pos is None:
@@ -2195,6 +2274,12 @@ class DecisionVerifier:
                 )
             elif not standing_authorized:
                 unrealized_pl_jpy = _optional_float(pos.get("unrealized_pl_jpy"))
+                if (
+                    profitability_p0_blocker is not None
+                    and (unrealized_pl_jpy is None or unrealized_pl_jpy <= 0)
+                    and not cites_profitability_p0
+                ):
+                    needs_profitability_p0_context.append(f"{tid} ({pair} {side})")
                 sidecar_conflict = _same_direction_hold_support_conflict(
                     self.packet,
                     trade_id=str(tid),
@@ -2241,6 +2326,31 @@ class DecisionVerifier:
                     "market stack still supports a loss-side open position, "
                     "unless hard invalidation evidence is present. Blocked for: "
                     + ", ".join(same_direction_supported),
+                )
+            )
+
+        if needs_profitability_p0_context:
+            streak = profitability_p0_blocker.get("current_streak") if profitability_p0_blocker else None
+            pf = profitability_p0_blocker.get("profit_factor") if profitability_p0_blocker else None
+            expectancy = profitability_p0_blocker.get("expectancy_jpy") if profitability_p0_blocker else None
+            details = []
+            if streak is not None:
+                details.append(f"streak={streak}")
+            if pf is not None:
+                details.append(f"PF={pf}")
+            if expectancy is not None:
+                details.append(f"expectancy={expectancy}")
+            suffix = f" ({', '.join(details)})" if details else ""
+            issues.append(
+                VerificationIssue(
+                    "CLOSE_PROFITABILITY_P0_CONTEXT_REQUIRED",
+                    "CLOSE rejected: profitability discipline P0 is active"
+                    f"{suffix}, and this underwater CLOSE relies on softer Gate A evidence. "
+                    "The receipt must cite self_improvement:audit, self_improvement:profitability, "
+                    "or self_improvement:finding:PERSISTENT_PROFITABILITY_DISCIPLINE_BLOCKED and explain why "
+                    "this loss-side market close repairs rather than repeats the MARKET_ORDER_TRADE_CLOSE leak. "
+                    "Missing self-improvement P0 context for: "
+                    + ", ".join(needs_profitability_p0_context),
                 )
             )
 

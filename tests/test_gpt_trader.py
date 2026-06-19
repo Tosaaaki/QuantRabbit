@@ -4802,11 +4802,12 @@ class CloseDisciplineTest(unittest.TestCase):
 
     def test_h4_break_still_closes_even_when_m15_has_hold_sidecars(self) -> None:
         # The support veto is intentionally scoped to M15 internal pullbacks.
-        # H4 close-confirmed structure against the side remains a hard close.
+        # H4 close-confirmed structure beyond the current reward target remains
+        # a hard close.
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            files = _close_fixtures(root, position_side="LONG", m15_dir="DOWN", h4_dir="DOWN")
-            _write_fresh_position_hold_support(root, files, side="LONG")
+            files = _close_fixtures(root, position_side="SHORT", m15_dir="DOWN", h4_dir="UP")
+            _write_fresh_position_hold_support(root, files, side="SHORT")
             decision = _close_decision(trade_ids=["555"])
             brain = _brain(root, files, decision)
 
@@ -5147,6 +5148,32 @@ class CloseDisciplineTest(unittest.TestCase):
             self.assertIn("CLOSE_SAME_DIRECTION_MARKET_SUPPORT", codes)
             self.assertNotIn("CLOSE_THESIS_STILL_VALID", codes)
 
+    def test_h4_counter_structure_above_long_tp_does_not_hard_authorize_loss_close(self) -> None:
+        # Regression for 2026-06-19 NZD_USD 472743: a LONG range-harvest
+        # position with TP still below an H4 CHOCH_DOWN price was loss-closed
+        # as if that old overhead structure invalidated the still-reachable TP.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _close_fixtures(
+                root,
+                position_side="LONG",
+                m15_dir="UP",
+                h4_dir="DOWN",
+                quote_bid=1.17600,
+                quote_ask=1.17610,
+            )
+            decision = _close_decision(trade_ids=["555"])
+            decision["evidence_refs"].extend(["chart:EUR_USD:H4", "position:management:555"])
+            brain = _brain(root, files, decision)
+
+            summary = brain.run(snapshot_path=files["snapshot"])
+
+            self.assertEqual(summary.status, "REJECTED", msg=summary)
+            payload = json.loads((root / "gpt_decision.json").read_text())
+            codes = {issue["code"] for issue in payload["verification_issues"]}
+            self.assertIn("CLOSE_THESIS_STILL_VALID", codes)
+            self.assertNotIn("CLOSE_OPERATOR_AUTH_REQUIRED", codes)
+
     def test_close_rejected_without_operator_token_when_only_forecast_persistence_sidecar(self) -> None:
         # Forecast persistence is useful Gate A evidence, but it is softer than
         # structural invalidation / thesis_evolution BROKEN. It still needs
@@ -5223,6 +5250,66 @@ class CloseDisciplineTest(unittest.TestCase):
             self.assertNotIn("CLOSE_THESIS_STILL_VALID", codes)
             recs = payload["input_packet"]["protection_sidecars"]["position_close_recommendations"]
             self.assertFalse(recs[0]["gate_b_standing_authorized"])
+
+    def test_soft_loss_close_under_profitability_p0_must_cite_self_improvement_context(self) -> None:
+        # Regression for 2026-06-19 NZD_USD 472743: a soft position_thesis
+        # REVIEW_CLOSE during persistent MARKET_ORDER_TRADE_CLOSE leakage must
+        # explicitly account for the active profitability P0 instead of
+        # laundering another red market close through generic operator Gate B.
+        prior = _os.environ.get("QR_OPERATOR_CLOSE_OVERRIDE")
+        _os.environ["QR_OPERATOR_CLOSE_OVERRIDE"] = "1"
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                files = _close_fixtures(root, position_side="SHORT", m15_dir="DOWN", h4_dir="DOWN")
+                files["self_improvement_audit"].write_text(json.dumps(_self_improvement_profitability_p0()))
+                _write_fresh_position_thesis_close_recommendation(root, files)
+                decision = _close_decision(trade_ids=["555"])
+                decision["evidence_refs"].append("position:thesis:555")
+                brain = _brain(root, files, decision)
+
+                summary = brain.run(snapshot_path=files["snapshot"])
+
+                self.assertEqual(summary.status, "REJECTED")
+                payload = json.loads((root / "gpt_decision.json").read_text())
+                codes = {issue["code"] for issue in payload["verification_issues"]}
+                self.assertIn("CLOSE_PROFITABILITY_P0_CONTEXT_REQUIRED", codes)
+                self.assertNotIn("CLOSE_OPERATOR_AUTH_REQUIRED", codes)
+        finally:
+            if prior is None:
+                _os.environ.pop("QR_OPERATOR_CLOSE_OVERRIDE", None)
+            else:
+                _os.environ["QR_OPERATOR_CLOSE_OVERRIDE"] = prior
+
+    def test_soft_loss_close_under_profitability_p0_accepts_explicit_repair_context(self) -> None:
+        prior = _os.environ.get("QR_OPERATOR_CLOSE_OVERRIDE")
+        _os.environ["QR_OPERATOR_CLOSE_OVERRIDE"] = "1"
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                files = _close_fixtures(root, position_side="SHORT", m15_dir="DOWN", h4_dir="DOWN")
+                files["self_improvement_audit"].write_text(json.dumps(_self_improvement_profitability_p0()))
+                _write_fresh_position_thesis_close_recommendation(root, files)
+                decision = _close_decision(trade_ids=["555"])
+                decision["evidence_refs"].extend(
+                    [
+                        "position:thesis:555",
+                        "self_improvement:finding:PERSISTENT_PROFITABILITY_DISCIPLINE_BLOCKED",
+                    ]
+                )
+                brain = _brain(root, files, decision)
+
+                summary = brain.run(snapshot_path=files["snapshot"])
+
+                self.assertEqual(summary.status, "ACCEPTED", msg=summary)
+                payload = json.loads((root / "gpt_decision.json").read_text())
+                codes = {issue["code"] for issue in payload["verification_issues"]}
+                self.assertNotIn("CLOSE_PROFITABILITY_P0_CONTEXT_REQUIRED", codes)
+        finally:
+            if prior is None:
+                _os.environ.pop("QR_OPERATOR_CLOSE_OVERRIDE", None)
+            else:
+                _os.environ["QR_OPERATOR_CLOSE_OVERRIDE"] = prior
 
     def test_close_rejected_when_soft_sidecar_conflicts_with_same_direction_context_asset_matrix(self) -> None:
         # A soft position_thesis review plus operator Gate B is still not enough
