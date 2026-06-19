@@ -1323,6 +1323,9 @@ class SelfImprovementAuditorTest(unittest.TestCase):
         self.assertEqual(execution["process_loop_streak"], 21)
         self.assertEqual(execution["confidence"], "HIGH")
         self.assertIn("PENDING_ENTRY_CANCEL_RATE_HIGH", execution["supporting_codes"])
+        self.assertEqual(execution["metrics"]["pending_cancel_before_fill_rate"], 0.67)
+        self.assertEqual(execution["metrics"]["pending_fill_rate"], 0.33)
+        self.assertIn("pending_cancel_before_fill_rate=0.670", execution["why"])
 
     def test_action_required_for_hidden_open_loss_and_low_market_rr(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

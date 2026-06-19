@@ -506,6 +506,7 @@ from quant_rabbit.strategy.forecast_persistence_tracker import (
 )
 from quant_rabbit.strategy.entry_thesis_ledger import (
     PendingEntryThesis,
+    invalidation_price_hit_reason,
     load_pending_entry_thesis,
     technical_invalidation_confirmation_reason,
 )
@@ -2766,11 +2767,14 @@ def _pending_entry_invalidation_breached(
     direction = _order_direction(order.units)
     if stop_loss is None or direction is None:
         return False
-    if direction == Side.LONG.value:
-        return quote.bid <= stop_loss
-    if direction == Side.SHORT.value:
-        return quote.ask >= stop_loss
-    return False
+    current_price = quote.bid if direction == Side.LONG.value else quote.ask
+    return invalidation_price_hit_reason(
+        pair=pair,
+        side=direction,
+        current_price=current_price,
+        invalidation_price=stop_loss,
+        price_label="bid" if direction == Side.LONG.value else "ask",
+    ) is not None
 
 
 def _order_direction(units: int | None) -> str | None:

@@ -7591,16 +7591,22 @@ def _root_cause_merge_metrics(
         metrics["target_coverage_pct"] = finding_evidence.get("target_coverage_pct")
         metrics["remaining_target_jpy"] = finding_evidence.get("remaining_target_jpy")
     elif code in {"PENDING_ENTRY_FILL_RATE_WEAK", "PENDING_ENTRY_CANCEL_RATE_HIGH"}:
-        metrics["pending_fill_rate"] = finding_evidence.get("fill_rate")
-        metrics["pending_cancel_before_fill_rate"] = finding_evidence.get("cancel_before_fill_rate")
+        fill_rate = finding_evidence.get("fill_rate")
+        cancel_rate = finding_evidence.get("cancel_before_fill_rate")
+        if fill_rate is not None:
+            metrics["pending_fill_rate"] = fill_rate
+        if cancel_rate is not None:
+            metrics["pending_cancel_before_fill_rate"] = cancel_rate
     pending_lifecycle = (
         execution_quality.get("pending_entry_lifecycle")
         if isinstance(execution_quality.get("pending_entry_lifecycle"), dict)
         else {}
     )
     if pending_lifecycle and candidate.get("family") == "EXECUTION_LIFECYCLE":
-        metrics.setdefault("pending_fill_rate", pending_lifecycle.get("fill_rate"))
-        metrics.setdefault("pending_cancel_before_fill_rate", pending_lifecycle.get("cancel_before_fill_rate"))
+        if metrics.get("pending_fill_rate") is None:
+            metrics["pending_fill_rate"] = pending_lifecycle.get("fill_rate")
+        if metrics.get("pending_cancel_before_fill_rate") is None:
+            metrics["pending_cancel_before_fill_rate"] = pending_lifecycle.get("cancel_before_fill_rate")
 
 
 def _root_cause_finalize_candidate(candidate: dict[str, Any]) -> dict[str, Any]:

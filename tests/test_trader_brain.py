@@ -479,6 +479,89 @@ class TraderBrainTest(unittest.TestCase):
 
             self.assertEqual(_contaminated_pending_order_ids(snapshot, (score,), data_root=root), ())
 
+    def test_keeps_pending_when_invalidation_only_wicks_inside_buffer(self) -> None:
+        now = datetime.now(timezone.utc)
+        pending = BrokerOrder(
+            order_id="buffered-long-stop",
+            pair="EUR_USD",
+            order_type="STOP",
+            price=1.18000,
+            state="PENDING",
+            units=1000,
+            owner=Owner.TRADER,
+            raw={
+                "createTime": now.isoformat(),
+                "stopLossOnFill": {"price": "1.17200"},
+            },
+        )
+        snapshot = BrokerSnapshot(
+            fetched_at_utc=now,
+            orders=(pending,),
+            quotes={"EUR_USD": Quote("EUR_USD", 1.17190, 1.17202, timestamp_utc=now)},
+        )
+        score = LaneScore(
+            lane_id="trend_trader:EUR_USD:LONG:TREND_CONTINUATION",
+            pair="EUR_USD",
+            direction="LONG",
+            method="TREND_CONTINUATION",
+            order_type="STOP-ENTRY",
+            entry=1.18000,
+            tp=1.18400,
+            sl=1.17200,
+            status="DRY_RUN_PASSED",
+            score=18.0,
+            action=ACTION_NO_TRADE,
+            blockers=("forecast confidence 0.48 < 0.55 threshold",),
+            rationale=("same-side thesis remains represented",),
+            spread_pips=1.2,
+            estimated_margin_jpy=10_000.0,
+        )
+
+        self.assertEqual(_contaminated_pending_order_ids(snapshot, (score,)), ())
+
+    def test_cancels_pending_when_invalidation_clears_buffer(self) -> None:
+        now = datetime.now(timezone.utc)
+        pending = BrokerOrder(
+            order_id="buffer-breached-long-stop",
+            pair="EUR_USD",
+            order_type="STOP",
+            price=1.18000,
+            state="PENDING",
+            units=1000,
+            owner=Owner.TRADER,
+            raw={
+                "createTime": now.isoformat(),
+                "stopLossOnFill": {"price": "1.17200"},
+            },
+        )
+        snapshot = BrokerSnapshot(
+            fetched_at_utc=now,
+            orders=(pending,),
+            quotes={"EUR_USD": Quote("EUR_USD", 1.17175, 1.17187, timestamp_utc=now)},
+        )
+        score = LaneScore(
+            lane_id="trend_trader:EUR_USD:LONG:TREND_CONTINUATION",
+            pair="EUR_USD",
+            direction="LONG",
+            method="TREND_CONTINUATION",
+            order_type="STOP-ENTRY",
+            entry=1.18000,
+            tp=1.18400,
+            sl=1.17200,
+            status="DRY_RUN_PASSED",
+            score=18.0,
+            action=ACTION_NO_TRADE,
+            blockers=("forecast confidence 0.48 < 0.55 threshold",),
+            rationale=("same-side thesis remains represented",),
+            spread_pips=1.2,
+            estimated_margin_jpy=10_000.0,
+        )
+
+        self.assertEqual(
+            _contaminated_pending_order_ids(snapshot, (score,)),
+            ("buffer-breached-long-stop",),
+        )
+
     def test_cancels_pending_when_current_pair_scores_only_opposite_side(self) -> None:
         now = datetime.now(timezone.utc)
         pending = BrokerOrder(
@@ -693,7 +776,7 @@ class TraderBrainTest(unittest.TestCase):
             snapshot = BrokerSnapshot(
                 fetched_at_utc=now,
                 orders=(pending,),
-                quotes={"GBP_CAD": Quote("GBP_CAD", 1.86640, 1.86650, timestamp_utc=now)},
+                quotes={"GBP_CAD": Quote("GBP_CAD", 1.86620, 1.86630, timestamp_utc=now)},
             )
             score = LaneScore(
                 lane_id="trend_trader:GBP_CAD:LONG:TREND_CONTINUATION",
