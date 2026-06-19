@@ -1239,6 +1239,57 @@ class PositionManagerTest(unittest.TestCase):
             else:
                 os.environ["QR_TRADER_DISABLE_SL_REPAIR"] = prior_sl
 
+    def test_profitable_macro_reversal_keeps_reachable_broker_tp(self) -> None:
+        # 2026-06-19 CAD_JPY: broad macro/micro reversal closed a profitable
+        # attached-TP trade, then broker TP was touched minutes later. When the
+        # remaining TP is inside the current M5 ATR plus spread, let the TP work
+        # instead of paying the market-close spread.
+        prior_close = os.environ.get("QR_DISABLE_AUTO_CLOSE")
+        prior_sl = os.environ.get("QR_TRADER_DISABLE_SL_REPAIR")
+        os.environ["QR_DISABLE_AUTO_CLOSE"] = "1"
+        os.environ["QR_TRADER_DISABLE_SL_REPAIR"] = "1"
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                decision = _decision(root, long_score=160, short_score=120)
+                pair_charts = _structural_reversal_pair_charts(root)
+                snapshot = _snapshot(
+                    BrokerPosition(
+                        trade_id="profit-reversal-near-tp",
+                        pair="EUR_USD",
+                        side=Side.LONG,
+                        units=1000,
+                        entry_price=1.2000,
+                        unrealized_pl_jpy=250,
+                        take_profit=1.20150,
+                        stop_loss=None,
+                    ),
+                    bid=1.2013,
+                    ask=1.2014,
+                )
+
+                result = PositionManager(
+                    trader_decision_path=decision,
+                    pair_charts_path=pair_charts,
+                    output_path=root / "data" / "pm.json",
+                    report_path=root / "pm.md",
+                ).run(snapshot)
+
+                self.assertEqual(result.action, ACTION_HOLD_PROTECTED)
+                self.assertEqual(result.positions[0].action, ACTION_HOLD_SL_FREE)
+                report = (root / "pm.md").read_text()
+                self.assertIn("broker TP is reachable within", report)
+                self.assertIn("keep broker TP", report)
+        finally:
+            if prior_close is None:
+                os.environ.pop("QR_DISABLE_AUTO_CLOSE", None)
+            else:
+                os.environ["QR_DISABLE_AUTO_CLOSE"] = prior_close
+            if prior_sl is None:
+                os.environ.pop("QR_TRADER_DISABLE_SL_REPAIR", None)
+            else:
+                os.environ["QR_TRADER_DISABLE_SL_REPAIR"] = prior_sl
+
     def test_profitable_macro_reversal_waits_when_executable_profit_is_inside_noise(self) -> None:
         # 2026-06-18 AUD_NZD repair: the matrix path recorded
         # "profit < market noise floor" through the local-top signal, then

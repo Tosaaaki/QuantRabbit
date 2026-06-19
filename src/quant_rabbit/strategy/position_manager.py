@@ -1081,6 +1081,7 @@ def _adaptive_tp_action(
             position=position,
             quote=quote,
             pair_chart=pair_chart,
+            protect_reachable_tp=True,
         )
         if noise_blocker is not None:
             action = ACTION_HOLD_PROTECTED
@@ -1335,6 +1336,7 @@ def _profit_market_take_noise_blocker(
     position: BrokerPosition,
     quote,
     pair_chart: dict[str, Any] | None,
+    protect_reachable_tp: bool = False,
 ) -> str | None:
     """Require profit market takes to clear executable noise and TP progress.
 
@@ -1369,6 +1371,15 @@ def _profit_market_take_noise_blocker(
     progress_blocker = _profit_market_take_tp_progress_blocker(position, profit_pips)
     if progress_blocker is not None:
         return progress_blocker
+    if protect_reachable_tp:
+        reachable_tp_blocker = _profit_market_take_reachable_tp_blocker(
+            position=position,
+            quote=quote,
+            pair_chart=pair_chart,
+            spread_pips=spread_pips,
+        )
+        if reachable_tp_blocker is not None:
+            return reachable_tp_blocker
     return None
 
 
@@ -1387,6 +1398,33 @@ def _profit_market_take_tp_progress_blocker(
         f"profit-harvest market close skipped: TP progress {progress:.0%} "
         f"({profit_pips:.1f}/{tp_pips:.1f}pip) < {PROFIT_BREAK_EVEN_MIN_TP_PROGRESS:.0%}; "
         "keep broker TP instead of micro-scalping attached-TP harvest"
+    )
+
+
+def _profit_market_take_reachable_tp_blocker(
+    *,
+    position: BrokerPosition,
+    quote,
+    pair_chart: dict[str, Any],
+    spread_pips: float,
+) -> str | None:
+    remaining_pips = _tp_remaining_pips(position, quote)
+    if remaining_pips is None or remaining_pips <= 0:
+        return None
+    m5 = _view_by_timeframe(pair_chart, PROFIT_BREAK_EVEN_ATR_TIMEFRAME)
+    if not isinstance(m5, dict):
+        return None
+    m5_atr = _indicator_float(m5, "atr_pips")
+    if m5_atr is None or m5_atr <= 0:
+        return None
+    reachable_window = m5_atr + spread_pips
+    if remaining_pips > reachable_window:
+        return None
+    return (
+        f"profit-harvest market close skipped: broker TP is reachable within "
+        f"{PROFIT_BREAK_EVEN_ATR_TIMEFRAME} ATR + spread "
+        f"({remaining_pips:.1f}pip <= {m5_atr:.1f}+{spread_pips:.1f}pip); "
+        "keep broker TP instead of replacing a near fill with a spread-paid market close"
     )
 
 
@@ -2514,6 +2552,16 @@ def _position_tp_pips(position: BrokerPosition) -> float | None:
     if position.take_profit is None:
         return None
     distance = position.take_profit - position.entry_price if position.side == Side.LONG else position.entry_price - position.take_profit
+    return max(0.0, distance * _pip_factor(position.pair))
+
+
+def _tp_remaining_pips(position: BrokerPosition, quote) -> float | None:
+    if position.take_profit is None or quote is None:
+        return None
+    if position.side == Side.LONG:
+        distance = position.take_profit - quote.bid
+    else:
+        distance = quote.ask - position.take_profit
     return max(0.0, distance * _pip_factor(position.pair))
 
 
