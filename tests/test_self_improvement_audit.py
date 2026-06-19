@@ -872,6 +872,70 @@ class SelfImprovementAuditorTest(unittest.TestCase):
         self.assertIn(("NZD_JPY", "LONG", "RANGE_ROTATION"), orphan_group_keys)
         self.assertEqual(payload["root_cause_focus"]["primary"]["family"], "EXECUTION_LIFECYCLE")
 
+    def test_pending_entry_lifecycle_includes_cancel_timing_regret(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(
+                root,
+                active_position=False,
+                live_ready_market_rr=1.4,
+                closed_pls=(100.0, 80.0, 50.0),
+            )
+            _write_pending_mixed_cancel_churn_ledger(files["execution_db"])
+            files["coverage"].write_text(
+                json.dumps(
+                    {
+                        "status": "COVERAGE_OK",
+                        "remaining_target_jpy": 1000.0,
+                        "live_ready_reward_jpy": 1000.0,
+                        "artifact_diagnostics": {},
+                    }
+                )
+            )
+            files["execution_timing"].write_text(
+                json.dumps(
+                    {
+                        "generated_at_utc": _NOW.isoformat(),
+                        "status": "OK",
+                        "summary": {
+                            "canceled_orders_audited": 3,
+                            "canceled_entry_touched_after_cancel": 2,
+                            "canceled_entry_touched_after_cancel_rate": 0.667,
+                            "canceled_positive_after_cancel_entry": 2,
+                            "canceled_tp_touched_after_cancel": 1,
+                            "canceled_estimated_missed_mfe_jpy": 815.5,
+                        },
+                        "canceled_order_regrets": [
+                            {
+                                "order_id": "O-mixed-3",
+                                "lane_id": "range_trader:EUR_CAD:LONG:RANGE_ROTATION",
+                                "pair": "EUR_CAD",
+                                "side": "LONG",
+                                "order_type": "LIMIT_ORDER",
+                                "entry_touched_after_cancel": True,
+                                "tp_touched_after_cancel": True,
+                                "sl_touched_after_cancel": False,
+                                "entry_touch_after_cancel_minutes": 68.5,
+                                "mfe_pips_after_cancel_entry": 12.4,
+                                "estimated_missed_mfe_jpy": 815.5,
+                            }
+                        ],
+                    }
+                )
+            )
+
+            _run(files)
+            payload = json.loads(files["output"].read_text())
+            report = files["report"].read_text()
+
+        codes = {item["code"]: item for item in payload["findings"]}
+        timing_regret = codes["PENDING_ENTRY_CANCEL_RATE_HIGH"]["evidence"]["timing_regret"]
+        self.assertEqual(timing_regret["canceled_entry_touched_after_cancel"], 2)
+        self.assertEqual(timing_regret["canceled_tp_touched_after_cancel"], 1)
+        self.assertAlmostEqual(timing_regret["canceled_estimated_missed_mfe_jpy"], 815.5)
+        self.assertEqual(timing_regret["top_regretted_cancels"][0]["order_id"], "O-mixed-3")
+        self.assertIn("Pending cancel timing regret", report)
+
     def test_pending_entry_lifecycle_distinguishes_replaced_from_orphan_cancels(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -5346,6 +5410,7 @@ def _run(files: dict[str, Path], *, now: datetime = _NOW):
         learning_audit_path=files["learning"],
         ai_test_bot_backtest_path=files["ai_backtest"],
         verification_ledger_path=files["verification"],
+        execution_timing_audit_path=files["execution_timing"],
         forecast_history_path=files["forecast_history"],
         projection_ledger_path=files["projection_ledger"],
         entry_thesis_ledger_path=files["entry_thesis"],
@@ -5387,6 +5452,7 @@ def _fixtures(
         "learning": root / "learning_audit.json",
         "ai_backtest": root / "ai_test_bot_backtest.json",
         "verification": root / "verification_ledger.json",
+        "execution_timing": root / "execution_timing_audit.json",
         "forecast_history": root / "forecast_history.jsonl",
         "projection_ledger": root / "projection_ledger.jsonl",
         "entry_thesis": root / "entry_thesis_ledger.jsonl",
@@ -5513,6 +5579,23 @@ def _fixtures(
             ],
         }
     files["verification"].write_text(json.dumps(verification_payload))
+    files["execution_timing"].write_text(
+        json.dumps(
+            {
+                "generated_at_utc": _NOW.isoformat(),
+                "status": "OK",
+                "summary": {
+                    "canceled_orders_audited": 0,
+                    "canceled_entry_touched_after_cancel": 0,
+                    "canceled_entry_touched_after_cancel_rate": None,
+                    "canceled_positive_after_cancel_entry": 0,
+                    "canceled_tp_touched_after_cancel": 0,
+                    "canceled_estimated_missed_mfe_jpy": 0.0,
+                },
+                "canceled_order_regrets": [],
+            }
+        )
+    )
     files["forecast_history"].write_text(
         json.dumps({"timestamp_utc": _NOW.isoformat(), "cycle_id": "cycle-1", "pair": "EUR_USD", "direction": "UP"})
         + "\n"

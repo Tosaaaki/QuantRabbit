@@ -16,6 +16,7 @@ from quant_rabbit.paths import (
     DEFAULT_DAILY_TARGET_STATE,
     DEFAULT_ENTRY_THESIS_LEDGER,
     DEFAULT_EXECUTION_LEDGER_DB,
+    DEFAULT_EXECUTION_TIMING_AUDIT,
     DEFAULT_FORECAST_HISTORY,
     DEFAULT_GPT_TRADER_DECISION,
     DEFAULT_LEARNING_AUDIT,
@@ -92,6 +93,13 @@ PENDING_ENTRY_CANCEL_RATE_WARN_ABOVE = min(
 PENDING_ENTRY_CANCEL_REPLACEMENT_WINDOW_MIN = _env_nonnegative_float(
     "QR_SELF_IMPROVEMENT_PENDING_CANCEL_REPLACEMENT_WINDOW_MIN",
     30.0,
+)
+# `execution_timing_audit` scores canceled-order regret over the same weekly
+# evidence window used by this self-improvement audit. Older regret rows are
+# stale process evidence and must not preserve current pending-thesis decisions.
+PENDING_CANCEL_REGRET_MAX_AGE_HOURS = _env_nonnegative_float(
+    "QR_SELF_IMPROVEMENT_PENDING_CANCEL_REGRET_MAX_AGE_HOURS",
+    168.0,
 )
 
 # A loss-containment close is positive close-discipline evidence only when it
@@ -293,6 +301,7 @@ class SelfImprovementAuditor:
         ai_test_bot_backtest_path: Path = DEFAULT_AI_TEST_BOT_BACKTEST,
         verification_ledger_path: Path = DEFAULT_VERIFICATION_LEDGER,
         attack_advice_path: Path = DEFAULT_AI_ATTACK_ADVICE,
+        execution_timing_audit_path: Path = DEFAULT_EXECUTION_TIMING_AUDIT,
         forecast_history_path: Path = DEFAULT_FORECAST_HISTORY,
         projection_ledger_path: Path = DEFAULT_PROJECTION_LEDGER,
         entry_thesis_ledger_path: Path = DEFAULT_ENTRY_THESIS_LEDGER,
@@ -320,6 +329,7 @@ class SelfImprovementAuditor:
         ai_backtest_loaded = _read_json(ai_test_bot_backtest_path)
         verification_loaded = _read_json(verification_ledger_path)
         attack_advice_loaded = _read_json(attack_advice_path)
+        execution_timing_loaded = _read_json(execution_timing_audit_path)
         gpt_loaded = _read_json(gpt_decision_path)
         trader_loaded = _read_json(trader_decision_path)
         position_management_loaded = _read_json(position_management_path)
@@ -357,6 +367,11 @@ class SelfImprovementAuditor:
         pending_entry_lifecycle = _pending_entry_lifecycle_metrics(
             self.db_path,
             window_hours=window_hours,
+            now=clock,
+        )
+        _merge_pending_cancel_timing_regret(
+            pending_entry_lifecycle,
+            execution_timing_loaded.payload,
             now=clock,
         )
         pending_entry_reconcile = _pending_entry_reconcile_metrics(
@@ -611,6 +626,7 @@ class SelfImprovementAuditor:
                 "daily_target_state": str(target_state_path),
                 "order_intents": str(order_intents_path),
                 "ai_attack_advice": str(attack_advice_path),
+                "execution_timing_audit": str(execution_timing_audit_path),
                 "market_context_matrix": str(market_context_matrix_path),
                 "memory_health": str(memory_health_path),
                 "learning_audit": str(learning_audit_path),
@@ -784,6 +800,19 @@ class SelfImprovementAuditor:
                     ),
                 ]
             )
+            timing_regret = (
+                pending_lifecycle.get("timing_regret")
+                if isinstance(pending_lifecycle.get("timing_regret"), dict)
+                else {}
+            )
+            if timing_regret:
+                lines.append(
+                    "- Pending cancel timing regret: "
+                    f"audited `{timing_regret.get('canceled_orders_audited', 0)}`, "
+                    f"entry_touched `{timing_regret.get('canceled_entry_touched_after_cancel', 0)}`, "
+                    f"tp_touched `{timing_regret.get('canceled_tp_touched_after_cancel', 0)}`, "
+                    f"missed_mfe_jpy `{_fmt_optional(timing_regret.get('canceled_estimated_missed_mfe_jpy'))}`"
+                )
         if isinstance(pending_reconcile, dict) and pending_reconcile:
             if "## Execution Quality" not in lines:
                 lines.extend(["", "## Execution Quality", ""])
@@ -1682,6 +1711,7 @@ def _pending_entry_lifecycle_findings(
                     "cancel_before_fill_rate": cancel_rate,
                     "cancel_replacement_rate": metrics.get("cancel_replacement_rate"),
                     "fill_rate": fill_rate,
+                    "timing_regret": metrics.get("timing_regret") or {},
                     "samples": metrics.get("canceled_before_fill_samples", [])[:8],
                     "canceled_before_fill_orphan_groups": metrics.get(
                         "canceled_before_fill_orphan_groups", []
@@ -1720,6 +1750,7 @@ def _pending_entry_lifecycle_findings(
                 "cancel_before_fill_rate": cancel_rate,
                 "cancel_replacement_rate": metrics.get("cancel_replacement_rate"),
                 "fill_rate": fill_rate,
+                "timing_regret": metrics.get("timing_regret") or {},
                 "samples": metrics.get("canceled_before_fill_samples", [])[:8],
             },
         )
@@ -2410,6 +2441,67 @@ def _pending_entry_lifecycle_metrics(
         replaced=True,
     )
     return metrics
+
+
+def _merge_pending_cancel_timing_regret(
+    metrics: dict[str, Any],
+    timing_payload: dict[str, Any] | None,
+    *,
+    now: datetime,
+) -> None:
+    """Attach cancel-regret context from execution-timing audit.
+
+    `execution_timing_audit` is the measured feedback loop for pending orders
+    that were canceled before fill. Linking it here keeps self-improvement from
+    treating all client-request cancels as identical churn when recent post-
+    cancel tape shows entry or TP would have touched.
+    """
+
+    if not isinstance(timing_payload, dict):
+        return
+    generated = _parse_utc(timing_payload.get("generated_at_utc"))
+    age_hours: float | None = None
+    if generated is not None:
+        age_hours = (now - generated).total_seconds() / 3600.0
+        if age_hours < 0:
+            age_hours = 0.0
+        if age_hours > PENDING_CANCEL_REGRET_MAX_AGE_HOURS:
+            return
+    summary = timing_payload.get("summary") if isinstance(timing_payload.get("summary"), dict) else {}
+    rows = [row for row in timing_payload.get("canceled_order_regrets", []) or [] if isinstance(row, dict)]
+    regretted_rows = [
+        row
+        for row in rows
+        if row.get("entry_touched_after_cancel")
+        and not row.get("sl_touched_after_cancel")
+        and (row.get("tp_touched_after_cancel") or (_maybe_float(row.get("mfe_pips_after_cancel_entry")) or 0.0) > 0)
+    ]
+    regretted_rows.sort(key=lambda row: float(row.get("estimated_missed_mfe_jpy") or 0.0), reverse=True)
+    metrics["timing_regret"] = {
+        "generated_at_utc": generated.isoformat() if generated else timing_payload.get("generated_at_utc"),
+        "age_hours": round(age_hours, 3) if age_hours is not None else None,
+        "canceled_orders_audited": int(summary.get("canceled_orders_audited") or len(rows)),
+        "canceled_entry_touched_after_cancel": int(summary.get("canceled_entry_touched_after_cancel") or 0),
+        "canceled_entry_touched_after_cancel_rate": _maybe_float(
+            summary.get("canceled_entry_touched_after_cancel_rate")
+        ),
+        "canceled_positive_after_cancel_entry": int(summary.get("canceled_positive_after_cancel_entry") or 0),
+        "canceled_tp_touched_after_cancel": int(summary.get("canceled_tp_touched_after_cancel") or 0),
+        "canceled_estimated_missed_mfe_jpy": _maybe_float(summary.get("canceled_estimated_missed_mfe_jpy")),
+        "top_regretted_cancels": [
+            {
+                "order_id": str(row.get("order_id") or ""),
+                "lane_id": str(row.get("lane_id") or ""),
+                "pair": str(row.get("pair") or ""),
+                "side": str(row.get("side") or ""),
+                "entry_touch_after_cancel_minutes": _maybe_float(row.get("entry_touch_after_cancel_minutes")),
+                "tp_touched_after_cancel": bool(row.get("tp_touched_after_cancel")),
+                "mfe_pips_after_cancel_entry": _maybe_float(row.get("mfe_pips_after_cancel_entry")),
+                "estimated_missed_mfe_jpy": _maybe_float(row.get("estimated_missed_mfe_jpy")),
+            }
+            for row in regretted_rows[:8]
+        ],
+    }
 
 
 def _pending_cancel_replacement(
