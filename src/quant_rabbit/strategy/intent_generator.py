@@ -6260,6 +6260,8 @@ def _range_forming_higher_tf_trend_conflict_issue(
             opposing_tfs.append(f"{timeframe} {classification} ADX={adx:.1f}")
     if not opposing_tfs:
         return None
+    if _range_forming_predictive_range_thesis_is_strong(intent, metadata):
+        return None
     side = intent.side.value
     chart_bias = str(metadata.get("chart_direction_bias") or "").upper()
     matrix_reject_count = _optional_int(metadata.get("matrix_reject_count")) or 0
@@ -6282,6 +6284,53 @@ def _range_forming_higher_tf_trend_conflict_issue(
         ),
         "severity": "BLOCK",
     }
+
+
+def _range_forming_predictive_range_thesis_is_strong(
+    intent: OrderIntent,
+    metadata: dict[str, Any],
+) -> bool:
+    """True when RANGE_FORMING has enough leading box evidence to trade.
+
+    RANGE_FORMING is predictive by design: indicators lag, so a forming box can
+    become the tradeable range before H1/H4 labels stop saying TREND. This
+    exception keeps that path open only when the forecast packet itself proves
+    range strength, not merely a weak/damped directional forecast.
+    """
+    if str(metadata.get("forecast_direction") or "").upper() != "RANGE":
+        return False
+    confidence = _optional_float(metadata.get("forecast_confidence"))
+    raw_confidence = _optional_float(metadata.get("forecast_raw_confidence"))
+    min_confidence = _forecast_live_min_confidence(metadata)
+    predictive_floor = min(1.0, min_confidence + FORECAST_MARKET_SUPPORT_MAX_CONFIDENCE_SHORTFALL)
+    if confidence is None or confidence < predictive_floor:
+        return False
+    if raw_confidence is not None and raw_confidence < predictive_floor:
+        return False
+
+    component_scores = metadata.get("forecast_component_scores")
+    if not isinstance(component_scores, dict):
+        return False
+    range_score = _optional_float(component_scores.get("RANGE"))
+    up_score = _optional_float(component_scores.get("UP"))
+    down_score = _optional_float(component_scores.get("DOWN"))
+    if range_score is None or up_score is None or down_score is None:
+        return False
+    directional_margin = abs(up_score - down_score)
+    if range_score < directional_margin:
+        return False
+
+    if not _range_forecast_box_present(metadata):
+        return False
+    if not _range_rotation_rail_side_matches_metadata(side=intent.side, metadata=metadata):
+        return False
+    if metadata.get("range_tp_is_inside_box") is not True:
+        return False
+    if metadata.get("range_sl_outside_box") is not True:
+        return False
+    if str(metadata.get("range_breakout_direction") or "").upper() in {"UP", "DOWN"}:
+        return False
+    return True
 
 
 # A support/resistance box midpoint is the geometry boundary between "at the
