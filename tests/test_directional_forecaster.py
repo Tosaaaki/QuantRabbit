@@ -231,7 +231,7 @@ class ForecastGeometryTest(unittest.TestCase):
         self.assertLess(forecast.confidence, forecast.raw_confidence)
         self.assertIn("robust forecast geometry missing target/invalidation", forecast.rationale_summary)
 
-    def test_strong_htf_downtrend_prevents_micro_up_signal_from_owning_forecast(self) -> None:
+    def test_lagging_htf_downtrend_dampens_micro_up_signal_to_unclear(self) -> None:
         pair_chart = {
             "confluence": {
                 "score_balance": "SHORT_LEAN",
@@ -275,9 +275,11 @@ class ForecastGeometryTest(unittest.TestCase):
             paths=[],
         )
 
-        self.assertNotEqual(forecast.direction, "UP")
-        self.assertGreater(forecast.down_score, forecast.up_score)
-        self.assertIn("SHORT_LEAN", " ".join(forecast.drivers_for))
+        self.assertEqual(forecast.direction, "UNCLEAR")
+        self.assertEqual(forecast.up_score, 0.0)
+        self.assertEqual(forecast.down_score, 0.0)
+        self.assertIn("lagging indicator bias requires M15/H1 close-confirmed reversal", forecast.rationale_summary)
+        self.assertIn("SHORT_LEAN", forecast.rationale_summary)
 
     def test_countertrend_confirmation_ignores_stale_m15_h1_structure(self) -> None:
         pair_chart = {
@@ -332,7 +334,7 @@ class ForecastGeometryTest(unittest.TestCase):
         self.assertNotEqual(forecast.direction, "UP")
         self.assertLess(forecast.up_score, 90.0)
 
-    def test_countertrend_dampens_decisive_score_gap_even_when_tf_agreement_is_mixed(self) -> None:
+    def test_countertrend_score_gap_damps_to_unclear_without_structure(self) -> None:
         pair_chart = {
             "confluence": {
                 "score_balance": "LONG_LEAN",
@@ -366,8 +368,9 @@ class ForecastGeometryTest(unittest.TestCase):
             paths=[],
         )
 
-        self.assertEqual(forecast.direction, "UP")
-        self.assertGreater(forecast.up_score, forecast.down_score)
+        self.assertEqual(forecast.direction, "UNCLEAR")
+        self.assertEqual(forecast.up_score, 0.0)
+        self.assertEqual(forecast.down_score, 0.0)
         self.assertIn("countertrend DOWN damped", forecast.rationale_summary)
 
     def test_countertrend_confirmation_accepts_latest_h1_reversal(self) -> None:
@@ -412,7 +415,7 @@ class ForecastGeometryTest(unittest.TestCase):
         self.assertEqual(forecast.direction, "UP")
         self.assertIn("countertrend UP allowed", forecast.rationale_summary)
 
-    def test_score_momentum_and_market_location_allow_early_turn_forecast(self) -> None:
+    def test_score_momentum_does_not_confirm_early_turn_without_structure(self) -> None:
         pair_chart = {
             "confluence": {
                 "score_balance": "SHORT_LEAN",
@@ -458,13 +461,15 @@ class ForecastGeometryTest(unittest.TestCase):
             paths=[],
         )
 
-        self.assertEqual(forecast.direction, "UP")
-        self.assertGreater(forecast.up_score, forecast.down_score)
-        self.assertIn("score momentum", " ".join(forecast.drivers_for))
+        self.assertEqual(forecast.direction, "UNCLEAR")
+        self.assertEqual(forecast.up_score, 0.0)
+        self.assertEqual(forecast.down_score, 0.0)
         self.assertIn("market location", " ".join(forecast.drivers_for))
-        self.assertIn("score momentum gap", forecast.rationale_summary)
+        self.assertNotIn("score momentum", " ".join(forecast.drivers_for))
+        self.assertNotIn("score momentum", forecast.rationale_summary)
+        self.assertIn("lagging indicator bias requires M15/H1 close-confirmed reversal", forecast.rationale_summary)
 
-    def test_technical_family_scores_feed_forecast_before_flat_score_gap(self) -> None:
+    def test_technical_family_scores_do_not_create_forecast_before_structure(self) -> None:
         pair_chart = {
             "confluence": {
                 "score_balance": "TIED",
@@ -507,9 +512,10 @@ class ForecastGeometryTest(unittest.TestCase):
             paths=[],
         )
 
-        self.assertEqual(forecast.direction, "UP")
-        self.assertGreater(forecast.up_score, 0.0)
-        self.assertIn("technical trend family", " ".join(forecast.drivers_for))
+        self.assertEqual(forecast.direction, "UNCLEAR")
+        self.assertEqual(forecast.up_score, 0.0)
+        self.assertEqual(forecast.down_score, 0.0)
+        self.assertNotIn("technical trend family", " ".join(forecast.drivers_for))
 
     def test_stable_range_phase_forecasts_range(self) -> None:
         pair_chart = {

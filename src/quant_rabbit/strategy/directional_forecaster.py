@@ -64,28 +64,15 @@ FLIP_PERSISTENCE_CYCLES = int(os.environ.get("QR_FORECAST_FLIP_PERSISTENCE", "3"
 # Cycles a RANGE/UNCLEAR forecast must persist before triggering CLOSE.
 RANGE_PERSISTENCE_CYCLES = int(os.environ.get("QR_FORECAST_RANGE_PERSISTENCE", "5"))
 
-# Pair-chart prior used by the pair-level forecast, not by risk validation.
-# A large MTF score gap means the indicator panel is not "just noise"; it
-# should be a prior that reversal/short-term patterns must overcome.
+# Pair-chart indicator constants are retained for diagnostic/risk-context
+# helpers. Smoothed indicator panels are lagging evidence: they may damp an
+# unconfirmed countertrend story, but they must not create the forecast side.
 FORECAST_SCORE_GAP_PRIOR_GAIN = float(os.environ.get("QR_FORECAST_SCORE_GAP_PRIOR_GAIN", "35.0"))
 FORECAST_SCORE_GAP_PRIOR_CAP = float(os.environ.get("QR_FORECAST_SCORE_GAP_PRIOR_CAP", "30.0"))
-FORECAST_SCORE_MOMENTUM_MIN_DELTA = float(os.environ.get("QR_FORECAST_SCORE_MOMENTUM_MIN_DELTA", "0.08"))
-FORECAST_SCORE_MOMENTUM_PRIOR_GAIN = float(os.environ.get("QR_FORECAST_SCORE_MOMENTUM_PRIOR_GAIN", "50.0"))
-FORECAST_SCORE_MOMENTUM_PRIOR_CAP = float(os.environ.get("QR_FORECAST_SCORE_MOMENTUM_PRIOR_CAP", "24.0"))
 FORECAST_MARKET_LOCATION_EXTREME = float(os.environ.get("QR_FORECAST_MARKET_LOCATION_EXTREME", "0.15"))
 FORECAST_MARKET_LOCATION_PRIOR_BASE = float(os.environ.get("QR_FORECAST_MARKET_LOCATION_PRIOR_BASE", "5.0"))
 FORECAST_MARKET_LOCATION_PRIOR_CAP = float(os.environ.get("QR_FORECAST_MARKET_LOCATION_PRIOR_CAP", "12.0"))
 FORECAST_TECH_FAMILY_MIN_SCORE = float(os.environ.get("QR_FORECAST_TECH_FAMILY_MIN_SCORE", "0.35"))
-FORECAST_TECH_TREND_PRIOR_GAIN = float(os.environ.get("QR_FORECAST_TECH_TREND_PRIOR_GAIN", "14.0"))
-FORECAST_TECH_TREND_PRIOR_CAP = float(os.environ.get("QR_FORECAST_TECH_TREND_PRIOR_CAP", "20.0"))
-FORECAST_TECH_MEAN_REV_MIN_SCORE = float(os.environ.get("QR_FORECAST_TECH_MEAN_REV_MIN_SCORE", "0.55"))
-FORECAST_TECH_MEAN_REV_PRIOR_GAIN = float(os.environ.get("QR_FORECAST_TECH_MEAN_REV_PRIOR_GAIN", "10.0"))
-FORECAST_TECH_MEAN_REV_PRIOR_CAP = float(os.environ.get("QR_FORECAST_TECH_MEAN_REV_PRIOR_CAP", "16.0"))
-FORECAST_TECH_BREAKOUT_MIN_SCORE = float(os.environ.get("QR_FORECAST_TECH_BREAKOUT_MIN_SCORE", "0.60"))
-FORECAST_TECH_BREAKOUT_PRIOR_GAIN = float(os.environ.get("QR_FORECAST_TECH_BREAKOUT_PRIOR_GAIN", "8.0"))
-FORECAST_TECH_BREAKOUT_PRIOR_CAP = float(os.environ.get("QR_FORECAST_TECH_BREAKOUT_PRIOR_CAP", "12.0"))
-FORECAST_TECH_DISAGREEMENT_RANGE_MIN = float(os.environ.get("QR_FORECAST_TECH_DISAGREEMENT_RANGE_MIN", "0.75"))
-FORECAST_TECH_DISAGREEMENT_RANGE_PRIOR = float(os.environ.get("QR_FORECAST_TECH_DISAGREEMENT_RANGE_PRIOR", "10.0"))
 # Range-phase priors are forecast-score magnitudes, not risk limits. They
 # encode market structure reality: a stable low-ADX/high-Chop box is tradeable
 # only as rail rotation; a low-volatility squeeze is a two-sided breakout risk;
@@ -101,7 +88,6 @@ FORECAST_RANGE_BREAKOUT_DIRECTION_PRIOR = float(os.environ.get("QR_FORECAST_RANG
 FORECAST_RANGE_PHASE_MIN_EVIDENCE = float(os.environ.get("QR_FORECAST_RANGE_PHASE_MIN_EVIDENCE", "2.0"))
 FORECAST_RANGE_FORMING_MIN_EVIDENCE = float(os.environ.get("QR_FORECAST_RANGE_FORMING_MIN_EVIDENCE", "1.5"))
 FORECAST_RANGE_BREAKOUT_MIN_EVIDENCE = float(os.environ.get("QR_FORECAST_RANGE_BREAKOUT_MIN_EVIDENCE", "1.3"))
-FORECAST_HTF_TREND_PRIOR_PER_TF = float(os.environ.get("QR_FORECAST_HTF_TREND_PRIOR_PER_TF", "12.0"))
 FORECAST_STRONG_ADX = float(os.environ.get("QR_FORECAST_STRONG_ADX", "25.0"))
 FORECAST_COUNTERTREND_UNCONFIRMED_MULT = float(
     os.environ.get("QR_FORECAST_COUNTERTREND_UNCONFIRMED_MULT", "0.55")
@@ -953,158 +939,6 @@ def _range_rail_reversion_priors(pair_chart: Dict[str, Any], phase: _RangePhase)
     ]
 
 
-def _family_average(
-    pair_chart: Dict[str, Any],
-    key: str,
-    *,
-    allowed_tfs: set[str] | None = None,
-) -> tuple[Optional[float], tuple[str, ...], Optional[float]]:
-    numerator = 0.0
-    denominator = 0.0
-    disagreement_num = 0.0
-    evidence: list[tuple[float, str, float]] = []
-    for view in pair_chart.get("views") or []:
-        if not isinstance(view, dict):
-            continue
-        tf = str(view.get("granularity") or "").upper()
-        if allowed_tfs is not None and tf not in allowed_tfs:
-            continue
-        families = view.get("family_scores") if isinstance(view.get("family_scores"), dict) else {}
-        score = _to_float((families or {}).get(key))
-        if score is None:
-            continue
-        disagreement = _to_float((families or {}).get("disagreement")) or 0.0
-        quality = max(0.45, 1.0 - min(abs(disagreement), 1.0) * 0.35)
-        weight = _tf_weight(tf) * quality
-        numerator += score * weight
-        denominator += weight
-        disagreement_num += disagreement * weight
-        evidence.append((abs(score) * weight, tf, score))
-    if denominator <= 0:
-        return None, (), None
-    evidence.sort(key=lambda item: item[0], reverse=True)
-    labels = tuple(f"{tf}={score:+.2f}" for _rank, tf, score in evidence[:3])
-    return numerator / denominator, labels, disagreement_num / denominator
-
-
-def _technical_family_priors(pair_chart: Dict[str, Any]) -> list[tuple[str, float, str]]:
-    """Use grouped technical composites without letting collinear indicators over-vote.
-
-    The chart reader already computes RSI/Stoch/MACD/EMA/ADX/Aroon/SuperTrend/
-    BB/VWAP/ATR/Donchian as family scores. Forecasts should consume those
-    families directly instead of reducing the whole chart to one current
-    long/short number.
-    """
-    confluence = pair_chart.get("confluence") if isinstance(pair_chart.get("confluence"), dict) else {}
-    priors: list[tuple[str, float, str]] = []
-
-    trend_avg, trend_labels, trend_disagreement = _family_average(pair_chart, "trend_score")
-    if trend_avg is not None and abs(trend_avg) >= FORECAST_TECH_FAMILY_MIN_SCORE:
-        direction = "UP" if trend_avg > 0 else "DOWN"
-        magnitude = min(FORECAST_TECH_TREND_PRIOR_CAP, abs(trend_avg) * FORECAST_TECH_TREND_PRIOR_GAIN)
-        priors.append(
-            (
-                direction,
-                magnitude,
-                f"technical trend family avg={trend_avg:+.2f} {' '.join(trend_labels)} → {direction} prior {magnitude:.1f}",
-            )
-        )
-
-    mean_rev_avg, mean_rev_labels, mean_rev_disagreement = _family_average(
-        pair_chart,
-        "mean_rev_score",
-        allowed_tfs={"M1", "M5", "M15", "M30", "H1"},
-    )
-    if mean_rev_avg is not None and abs(mean_rev_avg) >= FORECAST_TECH_MEAN_REV_MIN_SCORE:
-        direction = "UP" if mean_rev_avg > 0 else "DOWN"
-        location_ok = _market_location_supports_direction(confluence, direction)
-        range_ok = _has_range_context(pair_chart)
-        if location_ok or range_ok or abs(mean_rev_avg) >= 0.9:
-            magnitude = min(
-                FORECAST_TECH_MEAN_REV_PRIOR_CAP,
-                abs(mean_rev_avg) * FORECAST_TECH_MEAN_REV_PRIOR_GAIN,
-            )
-            if not location_ok and range_ok:
-                magnitude *= 0.75
-            priors.append(
-                (
-                    direction,
-                    magnitude,
-                    f"technical mean-reversion family avg={mean_rev_avg:+.2f} {' '.join(mean_rev_labels)} → {direction} prior {magnitude:.1f}",
-                )
-            )
-
-    breakout_avg, breakout_labels, breakout_disagreement = _family_average(pair_chart, "breakout_score")
-    if (
-        breakout_avg is not None
-        and trend_avg is not None
-        and abs(breakout_avg) >= FORECAST_TECH_BREAKOUT_MIN_SCORE
-        and abs(trend_avg) >= FORECAST_TECH_FAMILY_MIN_SCORE
-    ):
-        direction = "UP" if trend_avg > 0 else "DOWN"
-        magnitude = min(
-            FORECAST_TECH_BREAKOUT_PRIOR_CAP,
-            abs(breakout_avg) * FORECAST_TECH_BREAKOUT_PRIOR_GAIN,
-        )
-        priors.append(
-            (
-                direction,
-                magnitude,
-                f"technical breakout family avg={breakout_avg:+.2f} with trend_avg={trend_avg:+.2f} {' '.join(breakout_labels)} → {direction} prior {magnitude:.1f}",
-            )
-        )
-
-    disagreements = [d for d in (trend_disagreement, mean_rev_disagreement, breakout_disagreement) if d is not None]
-    avg_disagreement = sum(disagreements) / len(disagreements) if disagreements else None
-    if (
-        avg_disagreement is not None
-        and avg_disagreement >= FORECAST_TECH_DISAGREEMENT_RANGE_MIN
-        and (trend_avg is None or abs(trend_avg) < 0.65)
-    ):
-        magnitude = min(
-            FORECAST_TECH_DISAGREEMENT_RANGE_PRIOR,
-            FORECAST_TECH_DISAGREEMENT_RANGE_PRIOR * avg_disagreement,
-        )
-        priors.append(
-            (
-                "RANGE",
-                magnitude,
-                f"technical family disagreement={avg_disagreement:.2f} → RANGE/stand-aside prior {magnitude:.1f}",
-            )
-        )
-
-    return priors
-
-
-def _score_momentum_prior(confluence: Dict[str, Any]) -> tuple[str, float, str] | None:
-    momentum = confluence.get("score_momentum")
-    if not isinstance(momentum, dict):
-        return None
-    gap_delta = _to_float(momentum.get("score_gap_delta"))
-    if gap_delta is None or abs(gap_delta) < FORECAST_SCORE_MOMENTUM_MIN_DELTA:
-        return None
-    direction = "UP" if gap_delta > 0 else "DOWN"
-    magnitude = min(FORECAST_SCORE_MOMENTUM_PRIOR_CAP, abs(gap_delta) * FORECAST_SCORE_MOMENTUM_PRIOR_GAIN)
-    if magnitude <= 0:
-        return None
-    long_delta = _to_float(momentum.get("long_score_delta"))
-    short_delta = _to_float(momentum.get("short_score_delta"))
-    slope = _to_float(momentum.get("score_gap_slope_per_hour"))
-    elapsed = _to_float(momentum.get("elapsed_min"))
-    details: list[str] = [f"gapΔ={gap_delta:+.3f}"]
-    if long_delta is not None and short_delta is not None:
-        details.append(f"longΔ={long_delta:+.3f} shortΔ={short_delta:+.3f}")
-    if slope is not None:
-        details.append(f"slope/h={slope:+.3f}")
-    if elapsed is not None:
-        details.append(f"{elapsed:.0f}m")
-    return (
-        direction,
-        magnitude,
-        f"pair_chart score momentum {' '.join(details)} → {direction} turn prior {magnitude:.1f}",
-    )
-
-
 def _market_location_priors(confluence: Dict[str, Any]) -> list[tuple[str, float, str]]:
     """Convert broad chart location into a small directional prior.
 
@@ -1163,48 +997,19 @@ def _market_location_priors(confluence: Dict[str, Any]) -> list[tuple[str, float
 
 
 def _pair_chart_prior(pair_chart: Dict[str, Any]) -> list[tuple[str, float, str]]:
-    """Turn the multi-timeframe indicator panel into forecast priors.
+    """Return path/location priors that are not lagging-indicator direction.
 
-    This does not add a new trading gate. It makes the existing indicator stack
-    count as first-class forecast evidence, so a few micro reversal patterns do
-    not overpower H1/H4/D agreement without confirmation.
+    RSI/MACD/ADX/EMA/BB-family composites describe the tape that already
+    printed. They are useful context for noise, exhaustion, and countertrend
+    skepticism, but letting them add UP/DOWN forecast score turns a lagging
+    panel into a leading predictor. Directional forecast score must therefore
+    come from detector/projection/path/structure evidence, while this helper
+    keeps only broad market-location priors.
     """
     confluence = pair_chart.get("confluence") or {}
     priors: list[tuple[str, float, str]] = []
 
-    score_gap = _to_float(confluence.get("score_gap"))
-    balance = str(confluence.get("score_balance") or "").upper()
-    if score_gap is not None and balance in {"LONG_LEAN", "SHORT_LEAN"}:
-        direction = "UP" if balance == "LONG_LEAN" else "DOWN"
-        magnitude = min(FORECAST_SCORE_GAP_PRIOR_CAP, abs(score_gap) * FORECAST_SCORE_GAP_PRIOR_GAIN)
-        if magnitude > 0:
-            priors.append(
-                (
-                    direction,
-                    magnitude,
-                    f"pair_chart {balance} score_gap={score_gap:.3f} → {direction} prior {magnitude:.1f}",
-                )
-            )
-
-    momentum_prior = _score_momentum_prior(confluence)
-    if momentum_prior is not None:
-        priors.append(momentum_prior)
-
     priors.extend(_market_location_priors(confluence))
-    priors.extend(_technical_family_priors(pair_chart))
-
-    for tf in ("H1", "H4"):
-        view = _view_by_tf(pair_chart, tf)
-        direction = _regime_direction((view or {}).get("regime") if view else None)
-        adx = _view_adx(view)
-        if direction is not None and adx is not None and adx >= FORECAST_STRONG_ADX:
-            priors.append(
-                (
-                    direction,
-                    FORECAST_HTF_TREND_PRIOR_PER_TF,
-                    f"{tf} {direction} trend ADX={adx:.1f} → HTF prior {FORECAST_HTF_TREND_PRIOR_PER_TF:.1f}",
-                )
-            )
     return priors
 
 
@@ -1244,41 +1049,11 @@ def _latest_close_confirmed_structure_direction(view: Dict[str, Any] | None) -> 
     return latest[1] if latest is not None else None
 
 
-def _score_reversal_location_confirmation(pair_chart: Dict[str, Any], direction: str) -> str | None:
-    confluence = pair_chart.get("confluence") if isinstance(pair_chart.get("confluence"), dict) else {}
-    momentum = (confluence or {}).get("score_momentum") if isinstance((confluence or {}).get("score_momentum"), dict) else {}
-    gap_delta = _to_float((momentum or {}).get("score_gap_delta"))
-    if gap_delta is None:
-        return None
-
-    p24 = _to_float((confluence or {}).get("price_percentile_24h"))
-    p7 = _to_float((confluence or {}).get("price_percentile_7d"))
-    lower_extreme = (
-        (p24 is not None and p24 <= FORECAST_MARKET_LOCATION_EXTREME)
-        or (p7 is not None and p7 <= FORECAST_MARKET_LOCATION_EXTREME)
-    )
-    upper_extreme = (
-        (p24 is not None and p24 >= 1.0 - FORECAST_MARKET_LOCATION_EXTREME)
-        or (p7 is not None and p7 >= 1.0 - FORECAST_MARKET_LOCATION_EXTREME)
-    )
-    min_confirmation_delta = max(FORECAST_SCORE_MOMENTUM_MIN_DELTA * 2.5, 0.2)
-    if direction == "UP" and gap_delta >= min_confirmation_delta and lower_extreme:
-        return (
-            f"countertrend UP allowed: score momentum gapΔ={gap_delta:+.3f} from lower market location "
-            f"24h_pct={p24} 7d_pct={p7}"
-        )
-    if direction == "DOWN" and gap_delta <= -min_confirmation_delta and upper_extreme:
-        return (
-            f"countertrend DOWN allowed: score momentum gapΔ={gap_delta:+.3f} from upper market location "
-            f"24h_pct={p24} 7d_pct={p7}"
-        )
-    return None
-
-
 def _countertrend_adjustment(
     pair_chart: Dict[str, Any],
     winner: str,
     winner_score: float,
+    runner_up_score: float,
 ) -> tuple[float, str | None]:
     if winner not in {"UP", "DOWN"}:
         return winner_score, None
@@ -1300,14 +1075,11 @@ def _countertrend_adjustment(
             f"countertrend {winner} allowed: M15/H1 close-confirmed structure offsets "
             f"{balance} score_gap={score_gap:.3f}"
         )
-    score_reversal_reason = _score_reversal_location_confirmation(pair_chart, winner)
-    if score_reversal_reason:
-        return winner_score, score_reversal_reason
-    adjusted = winner_score * FORECAST_COUNTERTREND_UNCONFIRMED_MULT
+    adjusted = min(winner_score * FORECAST_COUNTERTREND_UNCONFIRMED_MULT, max(runner_up_score, 0.0))
     return adjusted, (
         f"countertrend {winner} damped {winner_score:.1f}→{adjusted:.1f}: "
         f"{balance} score_gap={score_gap:.3f}, tf_agreement={tf_agree}, "
-        "no M15/H1 close-confirmed reversal"
+        "lagging indicator bias requires M15/H1 close-confirmed reversal"
     )
 
 
@@ -1614,7 +1386,13 @@ def synthesize_forecast(
     candidates = [("UP", up_score), ("DOWN", down_score), ("RANGE", range_score)]
     candidates.sort(key=lambda x: -x[1])
     winner, winner_score = candidates[0]
-    adjusted_winner_score, adjustment_reason = _countertrend_adjustment(pair_chart, winner, winner_score)
+    runner_up_score = candidates[1][1]
+    adjusted_winner_score, adjustment_reason = _countertrend_adjustment(
+        pair_chart,
+        winner,
+        winner_score,
+        runner_up_score,
+    )
     if adjusted_winner_score != winner_score:
         if winner == "UP":
             up_score = adjusted_winner_score
@@ -1627,6 +1405,24 @@ def synthesize_forecast(
         winner, winner_score = candidates[0]
     elif adjustment_reason:
         contributions.append((winner, 0.1, adjustment_reason))
+    if up_score + down_score + range_score <= 0:
+        return DirectionalForecast(
+            pair=pair,
+            direction="UNCLEAR",
+            confidence=0.0,
+            invalidation_price=None,
+            target_price=None,
+            horizon_min=0,
+            drivers_for=_top_reasons(contributions, direction=winner),
+            drivers_against=((adjustment_reason,) if adjustment_reason else ()),
+            rationale_summary=adjustment_reason or "no forward forecast evidence after lagging-indicator dampening",
+            current_price=current_price,
+            up_score=up_score,
+            down_score=down_score,
+            range_score=range_score,
+            raw_confidence=0.0,
+            component_scores={"UP": up_score, "DOWN": down_score, "RANGE": range_score, "EITHER": either_score},
+        )
     runner_up_score = candidates[1][1]
 
     if range_phase.phase == "BREAKOUT_PENDING" and winner == "RANGE":
