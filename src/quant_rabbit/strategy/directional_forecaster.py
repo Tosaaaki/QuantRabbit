@@ -115,6 +115,18 @@ FORECAST_GEOMETRY_SPREAD_NOISE_MULT = float(
 FORECAST_INCOMPLETE_GEOMETRY_CONFIDENCE_MULT = float(
     os.environ.get("QR_FORECAST_INCOMPLETE_GEOMETRY_CONFIDENCE_MULT", "0.75")
 )
+# A detector with a large, audited sub-random hit rate is not just "lower
+# confidence"; it is a bad direction voter. Calibration still handles ordinary
+# noise and small samples. This hard exclusion is reserved for enough resolved
+# HIT/MISS samples that a poor detector should not create the final forecast
+# side at all.
+FORECAST_PROJECTION_WEAK_BLOCK_HIT_RATE = float(
+    os.environ.get("QR_FORECAST_PROJECTION_WEAK_BLOCK_HIT_RATE", "0.45")
+)
+FORECAST_PROJECTION_WEAK_BLOCK_MIN_SAMPLES = max(
+    1,
+    int(os.environ.get("QR_FORECAST_PROJECTION_WEAK_BLOCK_MIN_SAMPLES", "30")),
+)
 
 # Forecast horizons are timeframe definitions, not entry gates. They let the
 # trader distinguish an execution scalp from an operating swing or H4/D anchor
@@ -206,6 +218,15 @@ def _to_float(v: Any) -> Optional[float]:
         return None
     try:
         return float(v)
+    except (TypeError, ValueError):
+        return None
+
+
+def _to_int(v: Any) -> Optional[int]:
+    if v is None:
+        return None
+    try:
+        return int(v)
     except (TypeError, ValueError):
         return None
 
@@ -1237,6 +1258,65 @@ def _projection_signal_calibration_multiplier(
     )
 
 
+def _projection_signal_known_weak_reason(
+    *,
+    signal: Any,
+    pair: str,
+    hit_rates: Dict[str, Dict[str, Any]] | None,
+    regime: Optional[str],
+) -> str | None:
+    """Return a rejection reason for audited sub-random directional signals."""
+    if hit_rates is None:
+        return None
+    name = str(getattr(signal, "name", "") or "").strip()
+    direction = str(getattr(signal, "direction", "UNCLEAR") or "UNCLEAR").upper()
+    if not name or direction not in {"UP", "DOWN"}:
+        return None
+    try:
+        from quant_rabbit.strategy.projection_ledger import select_calibration_signal_name
+    except Exception:
+        return None
+
+    pair_key = pair.upper()
+    cal_signal_name = select_calibration_signal_name(
+        name,
+        direction,
+        pair_key,
+        hit_rates=hit_rates,
+        regime=regime,
+    )
+    by_key = hit_rates.get(cal_signal_name) or {}
+    if not isinstance(by_key, dict):
+        return None
+
+    candidates: list[tuple[str, Any]] = []
+    if regime is not None:
+        candidates.append((f"{pair_key}:{regime}", by_key.get(f"{pair_key}:{regime}")))
+    candidates.append((f"{pair_key}:_all_regimes", by_key.get(f"{pair_key}:_all_regimes")))
+    if regime is not None:
+        candidates.append((f"_all_pairs:{regime}", by_key.get(f"_all_pairs:{regime}")))
+    candidates.append(("_all_pairs:_all_regimes", by_key.get("_all_pairs:_all_regimes")))
+    candidates.append((pair_key, by_key.get(pair_key)))
+    candidates.append(("_all_pairs", by_key.get("_all_pairs")))
+
+    for key, bucket in candidates:
+        if not isinstance(bucket, dict):
+            continue
+        samples = _to_int(bucket.get("samples"))
+        hit_rate = _to_float(bucket.get("hit_rate"))
+        if samples is None or hit_rate is None:
+            continue
+        if samples < FORECAST_PROJECTION_WEAK_BLOCK_MIN_SAMPLES:
+            continue
+        if hit_rate < FORECAST_PROJECTION_WEAK_BLOCK_HIT_RATE:
+            return (
+                f"ignored known-weak projection {cal_signal_name} via {key}: "
+                f"hit_rate={hit_rate:.2f} samples={samples}"
+            )
+        return None
+    return None
+
+
 def synthesize_forecast(
     *,
     pair: str,
@@ -1316,6 +1396,15 @@ def synthesize_forecast(
     for s in projection_signals or []:
         # News-catalyst signals have NEGATIVE bonus → treat as RANGE
         # (don't bet directionally before high-impact event)
+        known_weak_reason = _projection_signal_known_weak_reason(
+            signal=s,
+            pair=pair,
+            hit_rates=hit_rates,
+            regime=regime,
+        )
+        if known_weak_reason is not None:
+            contributions.append(("IGNORED", 0.0, known_weak_reason))
+            continue
         cal_mult = _projection_signal_calibration_multiplier(
             signal=s,
             pair=pair,

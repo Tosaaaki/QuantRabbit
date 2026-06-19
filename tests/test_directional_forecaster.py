@@ -953,7 +953,7 @@ class ForecastGeometryTest(unittest.TestCase):
     def test_projection_signal_calibration_happens_before_forecast_selection(self) -> None:
         hit_rates = {
             "liquidity_sweep_low_up": {
-                "EUR_USD:TREND": {"hit_rate": 0.0, "samples": 100},
+                "EUR_USD:TREND": {"hit_rate": 0.46, "samples": 100},
             },
         }
 
@@ -961,14 +961,14 @@ class ForecastGeometryTest(unittest.TestCase):
             pair="EUR_USD",
             pair_chart={"views": [{"granularity": "M15", "indicators": {"pip_size": 0.0001}}]},
             current_price=1.1000,
-            pattern_signals=[_Sig("DOWN", 40.0, 1.0, "down setup")],
+            pattern_signals=[_Sig("DOWN", 60.0, 1.0, "down setup")],
             projection_signals=[
                 _NamedSig(
                     "liquidity_sweep_low",
                     "UP",
-                    100.0,
+                    45.0,
                     1.0,
-                    "bad historical sweep-low UP detector",
+                    "weak historical sweep-low UP detector",
                 )
             ],
             correlation_signals=[],
@@ -980,6 +980,67 @@ class ForecastGeometryTest(unittest.TestCase):
         self.assertEqual(forecast.direction, "DOWN")
         self.assertGreater(forecast.down_score, forecast.up_score)
         self.assertIn("[cal×", " ".join(forecast.drivers_against))
+
+    def test_audited_subrandom_projection_signal_cannot_create_forecast_side(self) -> None:
+        hit_rates = {
+            "news_theme_followthrough_up": {
+                "_all_pairs:_all_regimes": {"hit_rate": 0.39, "samples": 1000},
+            },
+        }
+
+        forecast = synthesize_forecast(
+            pair="EUR_USD",
+            pair_chart={"views": [{"granularity": "M15", "indicators": {"pip_size": 0.0001}}]},
+            current_price=1.1000,
+            pattern_signals=[],
+            projection_signals=[
+                _NamedSig(
+                    "news_theme_followthrough",
+                    "UP",
+                    100.0,
+                    1.0,
+                    "bad audited news follow-through",
+                )
+            ],
+            correlation_signals=[],
+            paths=[],
+            hit_rates=hit_rates,
+            regime="TREND",
+        )
+
+        self.assertEqual(forecast.direction, "UNCLEAR")
+        self.assertEqual(forecast.up_score, 0.0)
+        self.assertEqual(forecast.down_score, 0.0)
+
+    def test_thin_bad_projection_sample_does_not_hard_exclude_signal(self) -> None:
+        hit_rates = {
+            "news_theme_followthrough_up": {
+                "EUR_USD:TREND": {"hit_rate": 0.0, "samples": 2},
+            },
+        }
+
+        forecast = synthesize_forecast(
+            pair="EUR_USD",
+            pair_chart={"views": [{"granularity": "M15", "indicators": {"pip_size": 0.0001}}]},
+            current_price=1.1000,
+            pattern_signals=[],
+            projection_signals=[
+                _NamedSig(
+                    "news_theme_followthrough",
+                    "UP",
+                    100.0,
+                    1.0,
+                    "thin news sample",
+                )
+            ],
+            correlation_signals=[],
+            paths=[],
+            hit_rates=hit_rates,
+            regime="TREND",
+        )
+
+        self.assertEqual(forecast.direction, "UP")
+        self.assertGreater(forecast.up_score, 0.0)
 
     def test_d_h4_anchor_extends_directional_forecast_horizon(self) -> None:
         pair_chart = {

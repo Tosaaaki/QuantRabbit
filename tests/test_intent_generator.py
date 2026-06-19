@@ -7048,6 +7048,113 @@ class IntentGeneratorTest(unittest.TestCase):
             self.assertNotIn("SELF_IMPROVEMENT_PENDING_EXECUTION_REPAIR_MODE", issue_codes)
             self.assertNotIn("self_improvement_pending_execution_repair_live_ready", metadata)
 
+    def test_pending_churn_group_with_thin_pair_sample_allows_repair_entry(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "self_improvement_audit.json").write_text(
+                json.dumps(
+                    {
+                        "generated_at_utc": datetime.now(timezone.utc).isoformat(),
+                        "root_cause_focus": {
+                            "primary": {
+                                "family": "EXECUTION_LIFECYCLE",
+                                "confidence": "HIGH",
+                                "priority": "P0",
+                                "process_loop_streak": 7,
+                                "supporting_codes": [
+                                    "PENDING_ENTRY_CANCEL_RATE_HIGH",
+                                    "PENDING_ENTRY_FILL_RATE_WEAK",
+                                ],
+                                "metrics": {
+                                    "pending_cancel_before_fill_rate": 0.687,
+                                    "pending_fill_rate": 0.313,
+                                    "profit_factor": 0.813,
+                                },
+                            },
+                        },
+                        "findings": [
+                            {
+                                "priority": "P1",
+                                "layer": "execution_quality",
+                                "code": "PENDING_ENTRY_CANCEL_RATE_HIGH",
+                                "message": "pending entries are canceled before fill",
+                                "next_action": (
+                                    "separate thesis invalidation from entry-distance/TTL failures"
+                                ),
+                                "evidence": {
+                                    "canceled_before_fill_orphan_groups": [
+                                        {
+                                            "pair": "EUR_USD",
+                                            "side": "LONG",
+                                            "method": "RANGE_ROTATION",
+                                            "count": 2,
+                                            "order_ids": ["472100", "472101"],
+                                        }
+                                    ]
+                                },
+                            }
+                        ],
+                    }
+                )
+            )
+            (root / "capture_economics.json").write_text(
+                json.dumps(
+                    {
+                        "status": "NEGATIVE_EXPECTANCY",
+                        "overall": {
+                            "trades": 210,
+                            "avg_win_jpy": 600.0,
+                            "avg_loss_jpy": 1100.0,
+                            "payoff_ratio": 0.545,
+                            "breakeven_payoff_at_win_rate": 0.7,
+                        },
+                        "by_exit_reason": {
+                            "TAKE_PROFIT_ORDER": {
+                                "trades": 93,
+                                "wins": 93,
+                                "losses": 0,
+                                "avg_win_jpy": 504.0,
+                                "avg_loss_jpy": 0.0,
+                                "expectancy_jpy_per_trade": 504.0,
+                            },
+                            "MARKET_ORDER_TRADE_CLOSE": {
+                                "trades": 84,
+                                "wins": 13,
+                                "losses": 71,
+                                "avg_win_jpy": 218.4,
+                                "avg_loss_jpy": 1095.5,
+                                "expectancy_jpy_per_trade": -892.1,
+                            },
+                        },
+                    }
+                )
+            )
+            output = root / "intents.json"
+
+            summary = IntentGenerator(
+                campaign_plan=_range_campaign(root),
+                strategy_profile=_strategy(root, status="CANDIDATE"),
+                output_path=output,
+                report_path=root / "intents.md",
+                pair_charts_path=_pair_charts(root),
+                data_root=root,
+                max_loss_jpy=1000.0,
+            ).run(snapshot_path=_snapshot(root))
+
+            payload = json.loads(output.read_text())
+            result = next(
+                item for item in payload["results"]
+                if item["lane_id"] == "range_trader:EUR_USD:LONG:RANGE_ROTATION"
+            )
+            metadata = result["intent"]["metadata"]
+            issue_codes = {issue["code"] for issue in result["risk_issues"]}
+
+            self.assertGreaterEqual(summary.live_ready, 1)
+            self.assertEqual(result["status"], "LIVE_READY")
+            self.assertTrue(metadata["self_improvement_pending_execution_repair_live_ready"])
+            self.assertIn("SELF_IMPROVEMENT_PENDING_EXECUTION_REPAIR_MODE", issue_codes)
+            self.assertNotIn("SELF_IMPROVEMENT_PENDING_EXECUTION_LIFECYCLE", issue_codes)
+
     def test_sizes_units_with_percentage_risk_cap(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

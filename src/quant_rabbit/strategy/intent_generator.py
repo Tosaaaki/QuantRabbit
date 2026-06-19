@@ -4291,6 +4291,11 @@ SELF_IMPROVEMENT_PROFITABILITY_P0_REPAIR_MODE = "TP_HARVEST_REPAIR"
 SELF_IMPROVEMENT_PENDING_EXECUTION_REPAIR_CODE = (
     "SELF_IMPROVEMENT_PENDING_EXECUTION_REPAIR_MODE"
 )
+PENDING_CHURN_GROUP_HARD_BLOCK_MIN_COUNT = _env_int(
+    "QR_PENDING_CHURN_GROUP_HARD_BLOCK_MIN_COUNT",
+    3,
+    minimum=1,
+)
 
 
 @dataclass(frozen=True)
@@ -5996,6 +6001,9 @@ def _self_improvement_intent_matches_pending_churn_group(
         pair = str(group.get("pair") or "").strip()
         side = str(group.get("side") or "").strip().upper()
         method = str(group.get("method") or "").strip().upper()
+        count = _optional_int(group.get("count"))
+        if count is not None and count < PENDING_CHURN_GROUP_HARD_BLOCK_MIN_COUNT:
+            continue
         if pair == intent.pair and side == intent.side.value.upper() and method == intent_method_value:
             return True
     return False
