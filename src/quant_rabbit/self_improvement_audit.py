@@ -1217,10 +1217,19 @@ def _history_normalized_message(code: str, message: str) -> str:
 def _history_normalized_evidence(code: str, evidence: Any) -> Any:
     if code not in HISTORY_VOLATILE_STREAK_CODES or not isinstance(evidence, dict):
         return evidence
-    normalized = dict(evidence)
-    normalized.pop("current_streak", None)
-    normalized.pop("previous_streak", None)
-    return normalized
+    return _history_strip_volatile_streak_fields(evidence)
+
+
+def _history_strip_volatile_streak_fields(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {
+            key: _history_strip_volatile_streak_fields(item)
+            for key, item in value.items()
+            if key not in {"current_streak", "previous_streak"}
+        }
+    if isinstance(value, list):
+        return [_history_strip_volatile_streak_fields(item) for item in value]
+    return value
 
 
 HISTORY_VOLATILE_STREAK_CODES = frozenset(

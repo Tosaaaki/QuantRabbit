@@ -765,6 +765,38 @@ class SelfImprovementAuditorTest(unittest.TestCase):
             self.assertEqual(finding_count, first.findings)
             self.assertEqual(stale_streaks, [1])
 
+    def test_history_dedupes_repeated_loop_retry_ignoring_nested_streak_fields(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(
+                root,
+                active_position=False,
+                closed_pls=(100.0, 80.0, 50.0),
+            )
+
+            _run(files, now=_NOW)
+            _run(files, now=_NOW + timedelta(minutes=3))
+            third = _run(files, now=_NOW + timedelta(minutes=6))
+            retry = _run(files, now=_NOW + timedelta(minutes=6, seconds=30))
+
+            self.assertEqual(third.status, STATUS_BLOCKED)
+            self.assertEqual(retry.status, STATUS_BLOCKED)
+            with sqlite3.connect(files["history_db"]) as conn:
+                run_count = conn.execute("SELECT COUNT(*) FROM self_improvement_audit_runs").fetchone()[0]
+                loop_streaks = [
+                    json.loads(row[0]).get("current_streak")
+                    for row in conn.execute(
+                        """
+                        SELECT evidence_json
+                        FROM self_improvement_findings
+                        WHERE code = 'REPEATED_SELF_IMPROVEMENT_LOOP'
+                        ORDER BY ts_utc
+                        """
+                    )
+                ]
+            self.assertEqual(run_count, 3)
+            self.assertEqual(loop_streaks, [3])
+
     def test_pending_entry_lifecycle_flags_cancel_before_fill_churn(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
