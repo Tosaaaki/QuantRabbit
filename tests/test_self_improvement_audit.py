@@ -862,6 +862,14 @@ class SelfImprovementAuditorTest(unittest.TestCase):
         self.assertEqual(lifecycle["canceled_before_fill_orphan_orders"], 3)
         self.assertAlmostEqual(lifecycle["cancel_before_fill_rate"], 0.6)
         self.assertEqual(lifecycle["cancel_replacement_rate"], 0.0)
+        evidence = codes["PENDING_ENTRY_CANCEL_RATE_HIGH"]["evidence"]
+        orphan_group_keys = {
+            (item["pair"], item["side"], item["method"])
+            for item in evidence["canceled_before_fill_orphan_groups"]
+        }
+        self.assertIn(("EUR_CAD", "LONG", "RANGE_ROTATION"), orphan_group_keys)
+        self.assertIn(("NZD_CHF", "LONG", "RANGE_ROTATION"), orphan_group_keys)
+        self.assertIn(("NZD_JPY", "LONG", "RANGE_ROTATION"), orphan_group_keys)
         self.assertEqual(payload["root_cause_focus"]["primary"]["family"], "EXECUTION_LIFECYCLE")
 
     def test_pending_entry_lifecycle_distinguishes_replaced_from_orphan_cancels(self) -> None:

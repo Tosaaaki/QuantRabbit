@@ -497,6 +497,47 @@ def _replacement_materially_improves_fill(
     return improvement >= spread_pips * GPT_PENDING_REPLACEMENT_MIN_FILL_IMPROVEMENT_SPREAD_MULT
 
 
+def _geometry_reward_risk(
+    *,
+    side: str,
+    entry: float | None,
+    tp: float | None,
+    sl: float | None,
+) -> float | None:
+    if entry is None or tp is None or sl is None:
+        return None
+    if side == "LONG":
+        reward = tp - entry
+        risk = entry - sl
+    elif side == "SHORT":
+        reward = entry - tp
+        risk = sl - entry
+    else:
+        return None
+    if reward <= 0 or risk <= 0:
+        return None
+    return reward / risk
+
+
+def _replacement_degrades_reward_risk(*, order: object, candidate: dict[str, Any]) -> bool:
+    side = str(candidate.get("side") or "").upper()
+    current_rr = _geometry_reward_risk(
+        side=side,
+        entry=_optional_float(getattr(order, "price", None)),
+        tp=_raw_dependent_order_price(order, "takeProfitOnFill"),
+        sl=_raw_dependent_order_price(order, "stopLossOnFill"),
+    )
+    replacement_rr = _geometry_reward_risk(
+        side=side,
+        entry=_optional_float(candidate.get("entry")),
+        tp=_optional_float(candidate.get("tp")),
+        sl=_optional_float(candidate.get("attached_sl")) or _optional_float(candidate.get("sl")),
+    )
+    if current_rr is None or replacement_rr is None:
+        return False
+    return replacement_rr < current_rr
+
+
 def _replacement_geometry_drift_exceeds_tolerance(
     *,
     order: object,
@@ -550,6 +591,8 @@ def _should_preserve_gpt_trade_cancel(
         if candidate.get("order_type") != order_type:
             continue
         if _replacement_materially_improves_fill(order=order, candidate=candidate, snapshot=snapshot):
+            if _replacement_degrades_reward_risk(order=order, candidate=candidate):
+                return True
             return False
         if _replacement_geometry_drift_exceeds_tolerance(order=order, candidate=candidate):
             return False

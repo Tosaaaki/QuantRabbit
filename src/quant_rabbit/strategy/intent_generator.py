@@ -4799,7 +4799,10 @@ class IntentGenerator:
             and intent.order_type != OrderType.MARKET
             and str(intent.metadata.get("position_intent") or "").upper() != "HEDGE"
         ):
-            if _self_improvement_pending_execution_repair_allowed(intent):
+            if _self_improvement_pending_execution_repair_allowed(
+                intent,
+                self_improvement_pending_issue,
+            ):
                 intent.metadata["self_improvement_pending_execution_repair_live_ready"] = True
                 intent.metadata["self_improvement_pending_execution_repair_mode"] = (
                     SELF_IMPROVEMENT_PROFITABILITY_P0_REPAIR_MODE
@@ -5968,8 +5971,34 @@ def _self_improvement_intent_matches_worst_segment(
     )
 
 
-def _self_improvement_pending_execution_repair_allowed(intent: OrderIntent) -> bool:
+def _self_improvement_pending_execution_repair_allowed(
+    intent: OrderIntent,
+    issue: dict[str, Any] | None = None,
+) -> bool:
+    if _self_improvement_intent_matches_pending_churn_group(intent, issue):
+        return False
     return _self_improvement_profitability_p0_repair_allowed(intent)
+
+
+def _self_improvement_intent_matches_pending_churn_group(
+    intent: OrderIntent,
+    issue: dict[str, Any] | None,
+) -> bool:
+    if not isinstance(issue, dict):
+        return False
+    intent_method = intent.market_context.method if intent.market_context is not None else None
+    intent_method_value = str(getattr(intent_method, "value", intent_method) or "").upper()
+    if not intent.pair or not intent_method_value:
+        return False
+    for group in issue.get("cancel_churn_lane_keys", []) or []:
+        if not isinstance(group, dict):
+            continue
+        pair = str(group.get("pair") or "").strip()
+        side = str(group.get("side") or "").strip().upper()
+        method = str(group.get("method") or "").strip().upper()
+        if pair == intent.pair and side == intent.side.value.upper() and method == intent_method_value:
+            return True
+    return False
 
 
 def _self_improvement_forecast_adverse_path_issue(data_root: Path) -> dict[str, str] | None:
@@ -5990,7 +6019,7 @@ def _self_improvement_forecast_adverse_path_issue(data_root: Path) -> dict[str, 
     }
 
 
-def _self_improvement_pending_execution_lifecycle_issue(data_root: Path) -> dict[str, str] | None:
+def _self_improvement_pending_execution_lifecycle_issue(data_root: Path) -> dict[str, Any] | None:
     path = data_root / "self_improvement_audit.json"
     if not path.exists():
         return None
@@ -6005,6 +6034,7 @@ def _self_improvement_pending_execution_lifecycle_issue(data_root: Path) -> dict
         "code": str(blocker["code"]),
         "message": str(blocker["message"]),
         "severity": "BLOCK",
+        "cancel_churn_lane_keys": list(blocker.get("cancel_churn_lane_keys") or []),
     }
 
 

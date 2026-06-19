@@ -2350,6 +2350,87 @@ class AutoTradeCycleTest(unittest.TestCase):
 
             self.assertEqual(filtered, ())
 
+    def test_gpt_trade_preserves_same_lane_pending_when_closer_replacement_degrades_reward_risk(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            now = datetime.now(timezone.utc)
+            lane_id = "range_trader:EUR_JPY:LONG:RANGE_ROTATION"
+            pending = BrokerOrder(
+                order_id="better-rail-pending",
+                pair="EUR_JPY",
+                order_type="LIMIT",
+                price=184.554,
+                state="PENDING",
+                units=6300,
+                owner=Owner.TRADER,
+                raw={
+                    "clientExtensions": {
+                        "comment": f"qr-vnext lane={lane_id} desk=range_trader role=FORECAST_WATCH"
+                    },
+                    "createTime": now.isoformat(),
+                    "takeProfitOnFill": {"price": "184.656"},
+                    "stopLossOnFill": {"price": "183.506"},
+                },
+            )
+            intents_path = root / "intents.json"
+            intents_path.write_text(
+                json.dumps(
+                    {
+                        "results": [
+                            {
+                                "lane_id": lane_id,
+                                "status": "LIVE_READY",
+                                "intent": {
+                                    "pair": "EUR_JPY",
+                                    "side": "LONG",
+                                    "order_type": "LIMIT",
+                                    "units": 6300,
+                                    "entry": 184.819,
+                                    "tp": 184.923,
+                                    "sl": 184.687,
+                                    "metadata": {"disaster_sl": 183.370},
+                                },
+                                "risk_metrics": {"spread_pips": 1.2},
+                            }
+                        ]
+                    }
+                )
+                + "\n"
+            )
+            client = FakeCycleClient(
+                BrokerSnapshot(
+                    fetched_at_utc=now,
+                    orders=(pending,),
+                    quotes={
+                        "EUR_JPY": Quote("EUR_JPY", 184.880, 184.895, timestamp_utc=now),
+                        "USD_JPY": Quote("USD_JPY", 157.0, 157.01, timestamp_utc=now),
+                    },
+                )
+            )
+
+            prior_sl_free = os.environ.get("QR_TRADER_DISABLE_SL_REPAIR")
+            prior_initial_sl = os.environ.get("QR_NEW_ENTRY_INITIAL_SL")
+            os.environ["QR_TRADER_DISABLE_SL_REPAIR"] = "1"
+            os.environ["QR_NEW_ENTRY_INITIAL_SL"] = "0"
+            try:
+                filtered = _filtered_gpt_trade_cancel_order_ids(
+                    client=client,
+                    intents_path=intents_path,
+                    lane_ids=(lane_id,),
+                    cancel_order_ids=(pending.order_id,),
+                )
+            finally:
+                if prior_sl_free is None:
+                    os.environ.pop("QR_TRADER_DISABLE_SL_REPAIR", None)
+                else:
+                    os.environ["QR_TRADER_DISABLE_SL_REPAIR"] = prior_sl_free
+                if prior_initial_sl is None:
+                    os.environ.pop("QR_NEW_ENTRY_INITIAL_SL", None)
+                else:
+                    os.environ["QR_NEW_ENTRY_INITIAL_SL"] = prior_initial_sl
+
+            self.assertEqual(filtered, ())
+
     def test_gpt_trade_preserves_recent_cancel_regret_pending_for_other_lane(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

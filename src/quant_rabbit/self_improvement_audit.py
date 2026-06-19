@@ -1683,6 +1683,12 @@ def _pending_entry_lifecycle_findings(
                     "cancel_replacement_rate": metrics.get("cancel_replacement_rate"),
                     "fill_rate": fill_rate,
                     "samples": metrics.get("canceled_before_fill_samples", [])[:8],
+                    "canceled_before_fill_orphan_groups": metrics.get(
+                        "canceled_before_fill_orphan_groups", []
+                    )[:12],
+                    "canceled_before_fill_replaced_groups": metrics.get(
+                        "canceled_before_fill_replaced_groups", []
+                    )[:12],
                 },
             )
         ]

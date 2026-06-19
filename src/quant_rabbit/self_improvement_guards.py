@@ -144,6 +144,7 @@ def pending_execution_lifecycle_new_risk_blocker(payload: dict[str, Any] | None)
             details.append(f"PF={profit_factor:.3f}")
         suffix = f" ({', '.join(details)})"
         next_action = str(candidate.get("next_action") or "").strip()
+        churn_lane_keys = _pending_churn_lane_keys(payload)
         return {
             "code": PENDING_EXECUTION_LIFECYCLE_BLOCKER_CODE,
             "layer": "execution_quality",
@@ -158,6 +159,7 @@ def pending_execution_lifecycle_new_risk_blocker(payload: dict[str, Any] | None)
             "pending_fill_rate": fill_rate,
             "profit_factor": profit_factor,
             "supporting_codes": matched_codes,
+            "cancel_churn_lane_keys": churn_lane_keys,
             "evidence_ref": f"self_improvement:root_cause:{PENDING_EXECUTION_LIFECYCLE_FAMILY}",
         }
     return None
@@ -219,6 +221,43 @@ def intent_matches_profitability_worst_segment(
         and side == worst_segment.get("side")
         and method == worst_segment.get("method")
     )
+
+
+def _pending_churn_lane_keys(payload: dict[str, Any]) -> list[dict[str, Any]]:
+    keys: list[dict[str, Any]] = []
+    seen: set[tuple[str, str, str]] = set()
+    for finding in payload.get("findings", []) or []:
+        if not isinstance(finding, dict):
+            continue
+        if str(finding.get("code") or "") not in PENDING_EXECUTION_LIFECYCLE_SUPPORT_CODES:
+            continue
+        evidence = finding.get("evidence") if isinstance(finding.get("evidence"), dict) else {}
+        for group_name in (
+            "canceled_before_fill_orphan_groups",
+            "canceled_before_fill_replaced_groups",
+        ):
+            for group in evidence.get(group_name, []) or []:
+                if not isinstance(group, dict):
+                    continue
+                pair = str(group.get("pair") or "").strip()
+                side = str(group.get("side") or "").strip().upper()
+                method = str(group.get("method") or "").strip().upper()
+                if not pair or not side or not method:
+                    continue
+                key = (pair, side, method)
+                if key in seen:
+                    continue
+                seen.add(key)
+                keys.append(
+                    {
+                        "pair": pair,
+                        "side": side,
+                        "method": method,
+                        "count": _optional_int(group.get("count")),
+                        "source": group_name,
+                    }
+                )
+    return keys
 
 
 def _optional_int(value: Any) -> int | None:
