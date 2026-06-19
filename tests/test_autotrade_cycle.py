@@ -1636,7 +1636,7 @@ class AutoTradeCycleTest(unittest.TestCase):
             self.assertEqual(canceled, ())
             self.assertEqual(client.orders_canceled, [])
 
-    def test_gpt_cancel_helper_obeys_self_improvement_cancel_review(self) -> None:
+    def test_gpt_cancel_helper_preserves_current_thesis_despite_self_improvement_review(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             now = datetime.now(timezone.utc)
@@ -1699,8 +1699,8 @@ class AutoTradeCycleTest(unittest.TestCase):
 
             canceled = cycle._cancel_gpt_pending_orders(gpt_summary, send=True)
 
-            self.assertEqual(canceled, ("current-thesis-pending",))
-            self.assertEqual(client.orders_canceled, ["current-thesis-pending"])
+            self.assertEqual(canceled, ())
+            self.assertEqual(client.orders_canceled, [])
 
     def test_trader_pending_order_can_add_verified_basket_when_risk_is_known(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

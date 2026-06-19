@@ -587,9 +587,6 @@ def _filtered_gpt_trade_cancel_order_ids(
     }
     filtered: list[str] = []
     for order_id in cancel_order_ids:
-        if str(order_id) in force_cancel_order_ids:
-            filtered.append(str(order_id))
-            continue
         order = orders_by_id.get(str(order_id))
         if order is not None:
             if _should_preserve_gpt_trade_cancel(
@@ -605,6 +602,11 @@ def _filtered_gpt_trade_cancel_order_ids(
                     candidates=candidates,
                     snapshot=snapshot,
                 )
+            ):
+                continue
+            if str(order_id) in force_cancel_order_ids and _pending_order_has_current_pair_side(
+                order,
+                intents_payload,
             ):
                 continue
         filtered.append(str(order_id))
@@ -3792,9 +3794,6 @@ class AutoTradeCycle:
                         self._load_snapshot_artifact(),
                         intents_path=self.intents_path,
                         cancel_order_ids=gpt_summary.cancel_order_ids,
-                        force_cancel_order_ids=_self_improvement_pending_cancel_review_order_ids(
-                            self.gpt_self_improvement_audit_path,
-                        ),
                     )
                 )
             except (OSError, ValueError, json.JSONDecodeError):
@@ -4230,10 +4229,8 @@ def _pending_cancel_ids_with_visible_current_thesis(
     *,
     intents_path: Path,
     cancel_order_ids: tuple[str, ...],
-    force_cancel_order_ids: set[str] | None = None,
 ) -> tuple[str, ...]:
     cancel_set = {str(order_id) for order_id in cancel_order_ids if str(order_id)}
-    cancel_set -= set(force_cancel_order_ids or set())
     if not cancel_set:
         return ()
     try:
@@ -4268,6 +4265,28 @@ def _pending_cancel_ids_with_visible_current_thesis(
         if pair_side in current_pair_sides:
             preserved.append(order_id)
     return tuple(preserved)
+
+
+def _pending_order_has_current_pair_side(order: object, intents_payload: dict[str, Any]) -> bool:
+    pair_side = (
+        str(getattr(order, "pair", "") or ""),
+        str(_order_side_from_units(order) or "").upper(),
+    )
+    if not pair_side[0] or not pair_side[1]:
+        return False
+    for item in intents_payload.get("results", []) or []:
+        if not isinstance(item, dict):
+            continue
+        intent = item.get("intent")
+        if not isinstance(intent, dict):
+            continue
+        candidate = (
+            str(intent.get("pair") or ""),
+            str(intent.get("side") or "").upper(),
+        )
+        if candidate == pair_side:
+            return True
+    return False
 
 
 def _self_improvement_pending_cancel_review_order_ids(path: Path | None) -> set[str]:
