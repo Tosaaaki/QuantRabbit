@@ -614,6 +614,34 @@ def _filtered_gpt_trade_cancel_order_ids(
     return tuple(filtered)
 
 
+def _lane_ids_excluding_preserved_pending_parents(
+    *,
+    snapshot: object,
+    lane_ids: tuple[str, ...],
+    preserved_order_ids: tuple[str, ...],
+) -> tuple[str, ...]:
+    if not lane_ids or not preserved_order_ids:
+        return lane_ids
+    preserved_ids = {str(order_id) for order_id in preserved_order_ids if str(order_id)}
+    if not preserved_ids:
+        return lane_ids
+    preserved_parents: set[str] = set()
+    for order in getattr(snapshot, "orders", ()) or ():
+        order_id = str(getattr(order, "order_id", "") or "")
+        if order_id not in preserved_ids:
+            continue
+        parent = _pending_order_lane_parent(order)
+        if parent:
+            preserved_parents.add(parent)
+    if not preserved_parents:
+        return lane_ids
+    return tuple(
+        lane_id
+        for lane_id in lane_ids
+        if _basket_parent_lane_id(lane_id) not in preserved_parents
+    )
+
+
 def _gpt_cancel_has_material_same_parent_replacement(
     *,
     order: object,
@@ -3637,6 +3665,31 @@ class AutoTradeCycle:
                 gpt_summary = replace(gpt_summary, cancel_order_ids=replace_order_ids)
         if not replace_order_ids:
             if requested_replace_order_ids:
+                remaining_lane_ids = lane_ids
+                try:
+                    remaining_lane_ids = _lane_ids_excluding_preserved_pending_parents(
+                        snapshot=self._load_snapshot_artifact(),
+                        lane_ids=lane_ids,
+                        preserved_order_ids=requested_replace_order_ids,
+                    )
+                except (OSError, ValueError, json.JSONDecodeError):
+                    remaining_lane_ids = lane_ids
+                if remaining_lane_ids:
+                    remaining_size_multiples = {
+                        lane_id: size_multiples[lane_id]
+                        for lane_id in remaining_lane_ids
+                        if lane_id in size_multiples
+                    }
+                    return (
+                        order_gateway.run_batch(
+                            intents_path=intents_path,
+                            lane_ids=remaining_lane_ids,
+                            size_multiples=remaining_size_multiples,
+                            send=send,
+                            confirm_live=send,
+                        ),
+                        (),
+                    )
                 return (
                     self._write_preserved_pending_entry_no_action(
                         lane_ids=lane_ids,

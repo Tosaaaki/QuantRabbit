@@ -6073,6 +6073,9 @@ def _method_context_issues(intent: OrderIntent) -> list[dict[str, str]]:
                 "severity": "BLOCK",
             }
         )
+    range_forming_trend_issue = _range_forming_higher_tf_trend_conflict_issue(intent, metadata, method)
+    if range_forming_trend_issue is not None:
+        issues.append(range_forming_trend_issue)
     if method == TradeMethod.RANGE_ROTATION and _range_rotation_chases_broader_location(intent, metadata):
         pct_24h = _optional_float(metadata.get("price_percentile_24h"))
         pct_7d = _optional_float(metadata.get("price_percentile_7d"))
@@ -6229,6 +6232,56 @@ def _same_side_chase_tail(intent: OrderIntent, *, hedge_recovery: bool) -> str:
             "instead of buying/selling the already extended price."
         )
     return "allowing as recovery hedge against trapped opposite exposure."
+
+
+def _range_forming_higher_tf_trend_conflict_issue(
+    intent: OrderIntent,
+    metadata: dict[str, Any],
+    method: TradeMethod | None,
+) -> dict[str, str] | None:
+    if method != TradeMethod.RANGE_ROTATION:
+        return None
+    if str(metadata.get("range_phase") or "").upper() != "RANGE_FORMING":
+        return None
+    tf_map = metadata.get("tf_regime_map")
+    if not isinstance(tf_map, dict):
+        return None
+    expected_opposite = "TREND_DOWN" if intent.side == Side.LONG else "TREND_UP"
+    opposing_tfs: list[str] = []
+    for timeframe in ("H1", "H4"):
+        tf_data = tf_map.get(timeframe)
+        if not isinstance(tf_data, dict):
+            continue
+        classification = str(
+            tf_data.get("classification") or tf_data.get("regime") or tf_data.get("state") or ""
+        ).upper()
+        adx = _optional_float(tf_data.get("adx"))
+        if classification == expected_opposite and adx is not None and adx >= DYNAMIC_RR_ADX_TREND_THRESHOLD:
+            opposing_tfs.append(f"{timeframe} {classification} ADX={adx:.1f}")
+    if not opposing_tfs:
+        return None
+    side = intent.side.value
+    chart_bias = str(metadata.get("chart_direction_bias") or "").upper()
+    matrix_reject_count = _optional_int(metadata.get("matrix_reject_count")) or 0
+    has_context_reject = bool(chart_bias and chart_bias != side) or matrix_reject_count > 0
+    if len(opposing_tfs) < 2 and not has_context_reject:
+        return None
+    reject_tail = []
+    if chart_bias and chart_bias != side:
+        reject_tail.append(f"chart_bias={chart_bias}")
+    if matrix_reject_count > 0:
+        reject_tail.append(f"matrix_rejects={matrix_reject_count}")
+    return {
+        "code": "RANGE_FORMING_HTF_TREND_CONFLICT",
+        "message": (
+            f"{intent.pair} {side} RANGE_ROTATION is only RANGE_FORMING while higher timeframes "
+            f"oppose the rail ({'; '.join(opposing_tfs)}"
+            f"{'; ' + ', '.join(reject_tail) if reject_tail else ''}); "
+            "wait for a confirmed in-range box or use the trend-aligned lane instead of catching "
+            "a still-forming range against active volatility."
+        ),
+        "severity": "BLOCK",
+    }
 
 
 # A support/resistance box midpoint is the geometry boundary between "at the

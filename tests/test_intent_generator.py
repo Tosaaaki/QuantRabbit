@@ -9171,6 +9171,87 @@ class ExhaustionRangeChaseTest(unittest.TestCase):
 
         self.assertNotIn("EXHAUSTION_RANGE_CHASE", codes)
 
+    def test_range_forming_long_against_strong_higher_tf_downtrend_blocks(self) -> None:
+        from quant_rabbit.strategy.intent_generator import _method_context_issues
+
+        intent = self._intent(
+            side="LONG",
+            sigma_mult=None,
+            price_pct_24h=0.24,
+            method="RANGE_ROTATION",
+            order_type="LIMIT",
+            entry=1.16030,
+            metadata_extra={
+                "range_phase": "RANGE_FORMING",
+                "chart_direction_bias": "SHORT",
+                "matrix_reject_count": 3,
+                "tf_regime_map": {
+                    "H1": {"classification": "TREND_DOWN", "adx": 37.3},
+                    "H4": {"classification": "TREND_DOWN", "adx": 26.8},
+                    "M5": {"nearest_support": 1.16010, "nearest_resistance": 1.16110},
+                    "M15": {"nearest_support": 1.15980, "nearest_resistance": 1.16150},
+                },
+            },
+        )
+        issue = next(
+            issue for issue in _method_context_issues(intent) if issue["code"] == "RANGE_FORMING_HTF_TREND_CONFLICT"
+        )
+
+        self.assertEqual(issue["severity"], "BLOCK")
+        self.assertIn("H1 TREND_DOWN", issue["message"])
+
+    def test_range_forming_trend_aligned_rotation_passes_htf_conflict_guard(self) -> None:
+        from quant_rabbit.strategy.intent_generator import _method_context_issues
+
+        intent = self._intent(
+            side="SHORT",
+            sigma_mult=None,
+            price_pct_24h=0.72,
+            method="RANGE_ROTATION",
+            order_type="LIMIT",
+            entry=1.16100,
+            metadata_extra={
+                "range_phase": "RANGE_FORMING",
+                "chart_direction_bias": "SHORT",
+                "matrix_reject_count": 0,
+                "tf_regime_map": {
+                    "H1": {"classification": "TREND_DOWN", "adx": 37.3},
+                    "H4": {"classification": "TREND_DOWN", "adx": 26.8},
+                    "M5": {"nearest_support": 1.16010, "nearest_resistance": 1.16110},
+                    "M15": {"nearest_support": 1.15980, "nearest_resistance": 1.16150},
+                },
+            },
+        )
+        codes = {issue["code"] for issue in _method_context_issues(intent)}
+
+        self.assertNotIn("RANGE_FORMING_HTF_TREND_CONFLICT", codes)
+
+    def test_stable_range_keeps_rotation_despite_higher_tf_trend(self) -> None:
+        from quant_rabbit.strategy.intent_generator import _method_context_issues
+
+        intent = self._intent(
+            side="LONG",
+            sigma_mult=None,
+            price_pct_24h=0.24,
+            method="RANGE_ROTATION",
+            order_type="LIMIT",
+            entry=1.16030,
+            metadata_extra={
+                "range_phase": "IN_RANGE",
+                "chart_direction_bias": "SHORT",
+                "matrix_reject_count": 3,
+                "tf_regime_map": {
+                    "H1": {"classification": "TREND_DOWN", "adx": 37.3},
+                    "H4": {"classification": "TREND_DOWN", "adx": 26.8},
+                    "M5": {"nearest_support": 1.16010, "nearest_resistance": 1.16110},
+                    "M15": {"nearest_support": 1.15980, "nearest_resistance": 1.16150},
+                },
+            },
+        )
+        codes = {issue["code"] for issue in _method_context_issues(intent)}
+
+        self.assertNotIn("RANGE_FORMING_HTF_TREND_CONFLICT", codes)
+
     def test_geometry_metadata_publishes_limit_entry_percentiles(self) -> None:
         from quant_rabbit.models import OrderType, Quote, Side
         from quant_rabbit.strategy.intent_generator import _geometry_metadata
