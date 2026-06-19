@@ -188,6 +188,17 @@ class LiveOrderGateway:
             allow_basket_pending=False,
             portfolio_position_cap=portfolio_position_cap,
         )
+        intent, risk, passive_reprice_issues = self._reprice_crossed_passive_limit(
+            intent=intent,
+            risk=risk,
+            snapshot=snapshot,
+            max_loss_jpy=max_loss_jpy,
+            portfolio_loss_cap=portfolio_loss_cap,
+            validate_live_enabled=validate_live_enabled,
+            allow_basket_pending=False,
+            portfolio_position_cap=portfolio_position_cap,
+        )
+        scale_issues.extend(passive_reprice_issues)
         intent, risk, size_multiple, loss_cap_scale_issues = self._clip_intent_to_loss_cap(
             intent=intent,
             risk=risk,
@@ -581,6 +592,17 @@ class LiveOrderGateway:
             portfolio_position_cap=portfolio_position_cap or _portfolio_position_cap_from_state(),
             ignore_pending_order_ids=ignore_pending_order_ids,
         )
+        intent, risk, passive_reprice_issues = self._reprice_crossed_passive_limit(
+            intent=intent,
+            risk=risk,
+            snapshot=snapshot,
+            max_loss_jpy=max_loss_jpy,
+            portfolio_loss_cap=portfolio_loss_cap,
+            validate_live_enabled=validate_live_enabled,
+            allow_basket_pending=allow_basket_pending,
+            portfolio_position_cap=portfolio_position_cap or _portfolio_position_cap_from_state(),
+        )
+        scale_issues.extend(passive_reprice_issues)
         intent, risk, size_multiple, loss_cap_scale_issues = self._clip_intent_to_loss_cap(
             intent=intent,
             risk=risk,
@@ -808,6 +830,36 @@ class LiveOrderGateway:
             ),
             live_enabled=validate_live_enabled,
         ).validate(intent, snapshot, for_live_send=True)
+
+    def _reprice_crossed_passive_limit(
+        self,
+        *,
+        intent: OrderIntent,
+        risk,
+        snapshot: BrokerSnapshot,
+        max_loss_jpy: float,
+        portfolio_loss_cap: float | None,
+        validate_live_enabled: bool,
+        allow_basket_pending: bool,
+        portfolio_position_cap: int,
+    ):
+        repriced_intent, issue = _repriced_crossed_passive_limit_intent(
+            intent=intent,
+            snapshot=snapshot,
+            risk=risk,
+        )
+        if issue is None:
+            return intent, risk, []
+        repriced_risk = self._validate_intent(
+            intent=repriced_intent,
+            snapshot=snapshot,
+            max_loss_jpy=max_loss_jpy,
+            portfolio_loss_cap=portfolio_loss_cap,
+            validate_live_enabled=validate_live_enabled,
+            allow_basket_pending=allow_basket_pending,
+            portfolio_position_cap=portfolio_position_cap,
+        )
+        return repriced_intent, repriced_risk, [issue]
 
     def _clip_intent_to_loss_cap(
         self,
@@ -1444,7 +1496,11 @@ def _basket_issues(
 ) -> list[RiskIssue]:
     issues: list[RiskIssue] = []
     geometry = _intent_geometry_key(intent)
-    if geometry in seen_geometry:
+    geometry_keys = {geometry}
+    original_entry = _positive_float((intent.metadata or {}).get("gateway_passive_limit_original_entry"))
+    if original_entry is not None:
+        geometry_keys.add(_intent_geometry_key(intent, entry=original_entry))
+    if any(key in seen_geometry for key in geometry_keys):
         issues.append(
             RiskIssue(
                 "BASKET_DUPLICATE_GEOMETRY",
@@ -1644,12 +1700,12 @@ def _lane_id_from_extension_comment(comment: Any) -> str | None:
     return None
 
 
-def _intent_geometry_key(intent: OrderIntent) -> tuple[object, ...]:
+def _intent_geometry_key(intent: OrderIntent, *, entry: float | None = None) -> tuple[object, ...]:
     return (
         intent.pair,
         intent.side.value,
         intent.order_type.value,
-        _price_key(intent.pair, intent.entry),
+        _price_key(intent.pair, intent.entry if entry is None else entry),
         _price_key(intent.pair, intent.tp if _attach_take_profit_on_fill(intent) else None),
         _price_key(intent.pair, _attached_stop_loss_price(intent)),
     )
@@ -1845,8 +1901,69 @@ def _quote_to_jpy(pair: str, snapshot: BrokerSnapshot) -> float | None:
 def _price_key(pair: str, value: float | None) -> float | None:
     if value is None:
         return None
-    precision = 3 if pair.endswith("_JPY") else 5
-    return round(float(value), precision)
+    return round(float(value), _price_precision(pair))
+
+
+def _repriced_crossed_passive_limit_intent(
+    *,
+    intent: OrderIntent,
+    snapshot: BrokerSnapshot,
+    risk,
+) -> tuple[OrderIntent, RiskIssue | None]:
+    if intent.order_type != OrderType.LIMIT or intent.entry is None:
+        return intent, None
+    issue_codes = {issue.code for issue in getattr(risk, "issues", ())}
+    quote = snapshot.quotes.get(intent.pair)
+    if quote is None:
+        return intent, None
+
+    precision = _price_precision(intent.pair)
+    tick = _price_tick(intent.pair)
+    original_entry = float(intent.entry)
+    candidate: float | None = None
+    message: str | None = None
+
+    if (
+        intent.side == Side.LONG
+        and "LIMIT_ENTRY_NOT_BELOW_MARKET" in issue_codes
+        and original_entry >= quote.ask
+    ):
+        candidate = float(_price(intent.pair, quote.ask - tick))
+        if candidate <= 0.0 or candidate >= quote.ask or candidate >= original_entry:
+            return intent, None
+        message = (
+            f"LONG limit repriced passively from {original_entry:.{precision}f} to "
+            f"{candidate:.{precision}f} below ask={quote.ask:.{precision}f}; no MARKET conversion"
+        )
+    elif (
+        intent.side == Side.SHORT
+        and "LIMIT_ENTRY_NOT_ABOVE_MARKET" in issue_codes
+        and original_entry <= quote.bid
+    ):
+        candidate = float(_price(intent.pair, quote.bid + tick))
+        if candidate <= quote.bid or candidate <= original_entry:
+            return intent, None
+        message = (
+            f"SHORT limit repriced passively from {original_entry:.{precision}f} to "
+            f"{candidate:.{precision}f} above bid={quote.bid:.{precision}f}; no MARKET conversion"
+        )
+    if candidate is None or message is None:
+        return intent, None
+
+    metadata = dict(intent.metadata or {})
+    metadata.update(
+        {
+            "gateway_passive_limit_repriced": True,
+            "gateway_passive_limit_original_entry": round(original_entry, precision),
+            "gateway_passive_limit_repriced_entry": round(candidate, precision),
+            "gateway_passive_limit_quote_bid": round(float(quote.bid), precision),
+            "gateway_passive_limit_quote_ask": round(float(quote.ask), precision),
+        }
+    )
+    return (
+        replace(intent, entry=candidate, metadata=metadata),
+        RiskIssue("LIMIT_ENTRY_REPRICED_PASSIVE", message, "WARN"),
+    )
 
 
 def _send_guard_issues(*, send: bool, confirm_live: bool, lane_id: str | None) -> list[dict[str, str]]:
@@ -2273,8 +2390,15 @@ def _position_fill(intent: OrderIntent) -> str:
 
 
 def _price(pair: str, value: float) -> str:
-    precision = 3 if pair.endswith("_JPY") else 5
-    return f"{value:.{precision}f}"
+    return f"{value:.{_price_precision(pair)}f}"
+
+
+def _price_precision(pair: str) -> int:
+    return 3 if pair.endswith("_JPY") else 5
+
+
+def _price_tick(pair: str) -> float:
+    return 10 ** -_price_precision(pair)
 
 
 def _intent_with_gateway_metadata(intent: OrderIntent, lane_id: str) -> OrderIntent:

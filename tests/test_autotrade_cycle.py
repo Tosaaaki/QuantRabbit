@@ -2408,7 +2408,10 @@ class AutoTradeCycleTest(unittest.TestCase):
             self.assertEqual(client.orders_canceled, [])
             self.assertEqual(client.orders_sent, [])
             result = json.loads((root / "live_order.json").read_text())
-            self.assertIn("LIMIT_ENTRY_NOT_ABOVE_MARKET", {issue["code"] for issue in result["risk_issues"]})
+            issue_codes = {issue["code"] for issue in result["risk_issues"]}
+            self.assertIn("LIMIT_ENTRY_REPRICED_PASSIVE", issue_codes)
+            self.assertIn("REWARD_RISK_TOO_LOW", issue_codes)
+            self.assertNotIn("LIMIT_ENTRY_NOT_ABOVE_MARKET", issue_codes)
 
     def test_gpt_trade_not_prefiltered_preserves_named_pending_orders(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

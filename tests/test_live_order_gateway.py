@@ -80,6 +80,65 @@ class LiveOrderGatewayTest(unittest.TestCase):
             self.assertEqual(order["timeInForce"], "FOK")
             self.assertNotIn("price", order)
 
+    def test_long_limit_crossed_favorably_reprices_passive_instead_of_blocking(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            client = FakeExecutionClient()
+
+            summary = LiveOrderGateway(
+                client=client,
+                strategy_profile=_profile(root),
+                output_path=root / "request.json",
+                report_path=root / "report.md",
+            ).run(intents_path=_intents(root, order_type="LIMIT"), lane_id="lane:EUR_USD:LONG")
+
+            self.assertEqual(summary.status, "STAGED")
+            payload = json.loads((root / "request.json").read_text())
+            self.assertEqual(payload["order_request"]["type"], "LIMIT")
+            self.assertEqual(payload["order_request"]["price"], "1.17305")
+            issue_codes = {issue["code"] for issue in payload["risk_issues"]}
+            self.assertIn("LIMIT_ENTRY_REPRICED_PASSIVE", issue_codes)
+            self.assertNotIn("LIMIT_ENTRY_NOT_BELOW_MARKET", issue_codes)
+
+    def test_short_limit_crossed_favorably_reprices_passive_instead_of_blocking(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            client = FakeExecutionClient()
+            intents = _intents(root, order_type="LIMIT")
+            payload = json.loads(intents.read_text())
+            result = payload["results"][0]
+            result["lane_id"] = "lane:EUR_USD:SHORT"
+            intent = result["intent"]
+            intent["side"] = "SHORT"
+            intent["entry"] = 1.17290
+            intent["tp"] = 1.17140
+            intent["sl"] = 1.17380
+            intent["thesis"] = "bear trend continuation"
+            intent["market_context"] = {
+                "regime": "TREND_CONTINUATION campaign lane",
+                "narrative": "downtrend continuation pressure",
+                "chart_story": "lower highs and continuation pressure",
+                "method": "TREND_CONTINUATION",
+                "invalidation": "SL trades",
+            }
+            intents.write_text(json.dumps(payload))
+
+            summary = LiveOrderGateway(
+                client=client,
+                strategy_profile=_profile(root, direction="SHORT"),
+                output_path=root / "request.json",
+                report_path=root / "report.md",
+            ).run(intents_path=intents, lane_id="lane:EUR_USD:SHORT")
+
+            self.assertEqual(summary.status, "STAGED")
+            payload = json.loads((root / "request.json").read_text())
+            self.assertEqual(payload["order_request"]["type"], "LIMIT")
+            self.assertEqual(payload["order_request"]["units"], "-1000")
+            self.assertEqual(payload["order_request"]["price"], "1.17299")
+            issue_codes = {issue["code"] for issue in payload["risk_issues"]}
+            self.assertIn("LIMIT_ENTRY_REPRICED_PASSIVE", issue_codes)
+            self.assertNotIn("LIMIT_ENTRY_NOT_ABOVE_MARKET", issue_codes)
+
     def test_runner_intent_omits_broker_take_profit_on_fill(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
