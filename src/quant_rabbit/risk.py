@@ -296,6 +296,68 @@ def _uses_range_reward_floor(intent: OrderIntent, regime_state: str) -> bool:
     return "RANGE" in geometry_model or method_name == TradeMethod.RANGE_ROTATION.value
 
 
+def _range_countertrend_low_rr_issue(
+    intent: OrderIntent,
+    metrics: RiskMetrics,
+    policy: RiskPolicy,
+) -> RiskIssue | None:
+    if metrics.reward_risk >= policy.technical_harvest_min_reward_risk:
+        return None
+    context = intent.market_context
+    method = context.method if context is not None else None
+    metadata = intent.metadata or {}
+    method_name = str(metadata.get("method") or "").upper()
+    geometry_model = str(metadata.get("geometry_model") or "").upper()
+    if (
+        method != TradeMethod.RANGE_ROTATION
+        and method_name != TradeMethod.RANGE_ROTATION.value
+        and "RANGE" not in geometry_model
+    ):
+        return None
+    evidence_text = _range_countertrend_evidence_text(intent)
+    if intent.side == Side.LONG:
+        adverse_lean = "SHORT_LEAN" in evidence_text or "SCORE_BALANCE=SHORT" in evidence_text
+        adverse_regime = "TREND_DOWN" in evidence_text or "DOMINANT_REGIME=TREND_DOWN" in evidence_text
+        adverse_side = "SHORT"
+    else:
+        adverse_lean = "LONG_LEAN" in evidence_text or "SCORE_BALANCE=LONG" in evidence_text
+        adverse_regime = "TREND_UP" in evidence_text or "DOMINANT_REGIME=TREND_UP" in evidence_text
+        adverse_side = "LONG"
+    if not (adverse_lean and adverse_regime):
+        return None
+    return RiskIssue(
+        "RANGE_COUNTERTREND_RR_TOO_LOW",
+        f"{intent.pair} {intent.side.value} RANGE_ROTATION is counter to {adverse_side}-leaning "
+        f"matrix/higher-timeframe evidence with reward/risk {metrics.reward_risk:.2f}x below "
+        f"{policy.technical_harvest_min_reward_risk:.2f}x; wait for alignment or demand at least 1R.",
+    )
+
+
+def _range_countertrend_evidence_text(intent: OrderIntent) -> str:
+    context = intent.market_context
+    metadata = intent.metadata or {}
+    parts: list[str] = []
+    if context is not None:
+        parts.extend((context.regime, context.chart_story, context.narrative))
+    for key in (
+        "strongest_matrix_reject",
+        "strongest_matrix_warning",
+        "strongest_matrix_support",
+        "regime_state",
+        "dominant_regime",
+    ):
+        value = metadata.get(key)
+        if value is not None:
+            parts.append(str(value))
+    for key in ("matrix_warning_context", "matrix_reject_context", "matrix_support_context"):
+        value = metadata.get(key)
+        if isinstance(value, list):
+            parts.extend(str(item) for item in value)
+        elif value is not None:
+            parts.append(str(value))
+    return " ".join(parts).upper()
+
+
 def _uses_technical_harvest_reward_floor(intent: OrderIntent) -> bool:
     """Return true for failed-break scalps with an attached structural TP.
 
@@ -1439,6 +1501,9 @@ class RiskEngine:
                     severity="WARN",
                 )
             )
+        countertrend_low_rr_issue = _range_countertrend_low_rr_issue(intent, metrics, self.policy)
+        if countertrend_low_rr_issue is not None:
+            issues.append(countertrend_low_rr_issue)
         if metrics.reward_pips < spread_pips * self.policy.min_target_spread_multiple:
             issues.append(
                 RiskIssue(

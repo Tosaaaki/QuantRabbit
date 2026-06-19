@@ -2501,6 +2501,44 @@ class RiskEngineTest(unittest.TestCase):
         self.assertGreaterEqual(decision.metrics.reward_risk, 0.6)
         self.assertLess(decision.metrics.reward_risk, 1.2)
 
+    def test_countertrend_range_rotation_below_one_r_blocks_when_matrix_leans_opposite(self) -> None:
+        intent = OrderIntent(
+            pair="EUR_USD",
+            side=Side.LONG,
+            order_type=OrderType.MARKET,
+            units=1000,
+            tp=1.17410,
+            sl=1.17220,
+            thesis="countertrend_range_rotation_needs_one_r",
+            market_context=MarketContext(
+                regime="TREND_DOWN current; RANGE_ROTATION campaign lane",
+                narrative="local lower-rail reclaim but higher-timeframe sellers still dominate",
+                chart_story=(
+                    "M5 RANGE lower rail reclaim; M15 TREND_DOWN; H1 TREND_DOWN; "
+                    "H4 TREND_DOWN; matrix confluence score_balance=SHORT_LEAN"
+                ),
+                method=TradeMethod.RANGE_ROTATION,
+                invalidation="M5 lower rail loses",
+            ),
+            metadata={
+                "regime_state": "TREND_DOWN",
+                "geometry_model": "RANGE_RAIL_LIMIT",
+                "strongest_matrix_reject": "EUR_USD confluence score_balance=SHORT_LEAN",
+                "strongest_matrix_warning": "EUR_USD dominant_regime=TREND_DOWN",
+            },
+        )
+
+        decision = _capped_engine(live_enabled=True).validate(intent, snapshot(), for_live_send=True)
+
+        codes = {issue.code for issue in decision.issues}
+        self.assertFalse(decision.allowed)
+        self.assertIn("RANGE_COUNTERTREND_RR_TOO_LOW", codes)
+        self.assertNotIn("REWARD_RISK_TOO_LOW", codes)
+        self.assertIsNotNone(decision.metrics)
+        assert decision.metrics is not None
+        self.assertGreaterEqual(decision.metrics.reward_risk, 0.6)
+        self.assertLess(decision.metrics.reward_risk, 1.0)
+
     def test_failed_break_technical_harvest_uses_one_r_floor(self) -> None:
         intent = OrderIntent(
             pair="EUR_USD",
