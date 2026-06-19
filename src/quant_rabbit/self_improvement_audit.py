@@ -1244,6 +1244,10 @@ def _history_normalized_message(code: str, message: str) -> str:
 
 
 def _history_normalized_evidence(code: str, evidence: Any) -> Any:
+    if code == "LIVE_RUNTIME_UPDATE_IN_PROGRESS" and isinstance(evidence, dict):
+        normalized = dict(evidence)
+        normalized.pop("lock_age_seconds", None)
+        return normalized
     if code not in HISTORY_VOLATILE_STREAK_CODES or not isinstance(evidence, dict):
         return evidence
     return _history_strip_volatile_streak_fields(evidence)
