@@ -2589,10 +2589,65 @@ def _pending_entry_still_has_live_thesis(
     if _pending_entry_market_has_opposed_thesis(order, scores):
         return False
     if _pending_entry_has_opposite_only_pair_thesis(order, scores):
+        if _pending_entry_thesis_horizon_active(pending_thesis, now=snapshot.fetched_at_utc):
+            return True
         if _pending_entry_recent_cancel_regret_supports_preservation(order, data_root):
             return True
         return False
     return True
+
+
+def _pending_entry_recorded_thesis_horizon_active(
+    order: BrokerOrder,
+    snapshot: BrokerSnapshot,
+    data_root: Path | None,
+) -> bool:
+    pending_thesis = _load_pending_entry_thesis_for_order(order, data_root)
+    if pending_thesis is None:
+        return False
+    if not _pending_entry_thesis_matches_order(order, pending_thesis):
+        return False
+    if not _pending_entry_has_broker_thesis_anchor(order, pending_thesis):
+        return False
+    if _pending_entry_invalidation_breached(order, snapshot, pending_thesis):
+        return False
+    return _pending_entry_thesis_horizon_active(
+        pending_thesis,
+        now=getattr(snapshot, "fetched_at_utc", None),
+    )
+
+
+def _pending_entry_thesis_matches_order(
+    order: BrokerOrder,
+    pending_thesis: PendingEntryThesis,
+) -> bool:
+    order_id = str(getattr(order, "order_id", "") or "")
+    if pending_thesis.order_id and str(pending_thesis.order_id) != order_id:
+        return False
+    pair = str(getattr(order, "pair", "") or "")
+    if pending_thesis.pair and str(pending_thesis.pair) != pair:
+        return False
+    direction = _order_direction(getattr(order, "units", None))
+    if pending_thesis.side and direction and str(pending_thesis.side).upper() != direction:
+        return False
+    return True
+
+
+def _pending_entry_thesis_horizon_active(
+    pending_thesis: PendingEntryThesis | None,
+    *,
+    now: datetime | None,
+) -> bool:
+    if pending_thesis is None or pending_thesis.horizon_hours is None or pending_thesis.horizon_hours <= 0:
+        return False
+    started = _parse_iso_utc(pending_thesis.timestamp_utc)
+    if started is None:
+        return False
+    checked_at = now if isinstance(now, datetime) else datetime.now(timezone.utc)
+    if checked_at.tzinfo is None:
+        checked_at = checked_at.replace(tzinfo=timezone.utc)
+    age_hours = (checked_at.astimezone(timezone.utc) - started).total_seconds() / 3600.0
+    return 0.0 <= age_hours <= pending_thesis.horizon_hours
 
 
 def _pending_entry_recent_cancel_regret_supports_preservation(

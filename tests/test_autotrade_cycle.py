@@ -24,6 +24,7 @@ from quant_rabbit.automation import (
 from quant_rabbit.broker.position_execution import PositionExecutionSummary
 from quant_rabbit.gpt_trader import StaticTraderProvider
 from quant_rabbit.models import AccountSummary, BrokerOrder, BrokerPosition, BrokerSnapshot, Owner, Quote, Side
+from quant_rabbit.strategy.entry_thesis_ledger import PendingEntryThesis, record_pending_entry_thesis
 from quant_rabbit.strategy.trader_brain import ACTION_NO_TRADE, ACTION_SEND_ENTRY, LaneScore, TraderDecision
 
 
@@ -1695,6 +1696,107 @@ class AutoTradeCycleTest(unittest.TestCase):
                 allowed=True,
                 issues=0,
                 cancel_order_ids=("current-thesis-pending",),
+            )
+
+            canceled = cycle._cancel_gpt_pending_orders(gpt_summary, send=True)
+
+            self.assertEqual(canceled, ())
+            self.assertEqual(client.orders_canceled, [])
+
+    def test_gpt_cancel_helper_preserves_pending_inside_recorded_thesis_horizon(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            now = datetime.now(timezone.utc)
+            record_pending_entry_thesis(
+                PendingEntryThesis(
+                    timestamp_utc=(now - timedelta(minutes=10)).isoformat(),
+                    order_id="horizon-pending",
+                    pair="EUR_JPY",
+                    side="LONG",
+                    entry_price=184.555,
+                    forecast_direction="RANGE",
+                    forecast_confidence=0.82,
+                    regime="TREND_DOWN",
+                    invalidation_price=183.208,
+                    target_price=184.724,
+                    lane_id="range_trader:EUR_JPY:LONG:RANGE_ROTATION",
+                    horizon_hours=6.0,
+                ),
+                root,
+            )
+            pending = BrokerOrder(
+                order_id="horizon-pending",
+                pair="EUR_JPY",
+                order_type="LIMIT",
+                price=184.555,
+                state="PENDING",
+                units=6300,
+                owner=Owner.TRADER,
+                raw={
+                    "createTime": (now - timedelta(minutes=10)).isoformat(),
+                    "clientExtensions": {"tag": "trader"},
+                    "takeProfitOnFill": {"price": "184.724"},
+                    "stopLossOnFill": {"price": "183.208"},
+                },
+            )
+            snapshot = BrokerSnapshot(
+                fetched_at_utc=now,
+                orders=(pending,),
+                quotes={"EUR_JPY": Quote("EUR_JPY", 184.650, 184.660, timestamp_utc=now)},
+            )
+            snapshot_path = root / "snapshot.json"
+            snapshot_path.write_text(_snapshot_to_json(snapshot) + "\n")
+            intents_path = root / "intents.json"
+            intents_path.write_text(
+                json.dumps(
+                    {
+                        "results": [
+                            {
+                                "lane_id": "range_trader:GBP_JPY:LONG:RANGE_ROTATION",
+                                "status": "DRY_RUN_BLOCKED",
+                                "intent": {
+                                    "pair": "GBP_JPY",
+                                    "side": "LONG",
+                                    "order_type": "LIMIT",
+                                    "entry": 212.754,
+                                    "tp": 212.992,
+                                    "sl": 212.535,
+                                },
+                            }
+                        ]
+                    }
+                )
+                + "\n"
+            )
+            self_improvement_path = root / "self_improvement_audit.json"
+            self_improvement_path.write_text(
+                json.dumps(
+                    {
+                        "findings": [
+                            {
+                                "code": "PENDING_ENTRY_CANCEL_REVIEW_REQUIRED",
+                                "evidence": {"cancel_review_order_ids": ["horizon-pending"]},
+                            }
+                        ]
+                    }
+                )
+                + "\n"
+            )
+            client = FakeCycleClient(snapshot)
+            cycle = AutoTradeCycle(
+                client=client,
+                snapshot_path=snapshot_path,
+                intents_path=intents_path,
+                live_enabled=True,
+                gpt_self_improvement_audit_path=self_improvement_path,
+            )
+            gpt_summary = GptHandoffSummary(
+                status="ACCEPTED",
+                action="CANCEL_PENDING",
+                selected_lane_id=None,
+                allowed=True,
+                issues=0,
+                cancel_order_ids=("horizon-pending",),
             )
 
             canceled = cycle._cancel_gpt_pending_orders(gpt_summary, send=True)

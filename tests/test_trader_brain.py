@@ -652,6 +652,67 @@ class TraderBrainTest(unittest.TestCase):
 
             self.assertEqual(_contaminated_pending_order_ids(snapshot, (weak_opposite,), data_root=root), ())
 
+    def test_pending_thesis_horizon_preserves_against_weak_opposite_only(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            now = datetime.now(timezone.utc)
+            record_pending_entry_thesis(
+                PendingEntryThesis(
+                    timestamp_utc=(now - timedelta(minutes=12)).isoformat(),
+                    order_id="horizon-short-limit",
+                    pair="AUD_CAD",
+                    side="SHORT",
+                    entry_price=0.98980,
+                    forecast_direction="RANGE",
+                    forecast_confidence=0.81,
+                    regime="RANGE",
+                    invalidation_price=0.99501,
+                    target_price=0.98870,
+                    lane_id="range_trader:AUD_CAD:SHORT:RANGE_ROTATION",
+                    horizon_hours=1.0,
+                ),
+                root,
+            )
+            pending = BrokerOrder(
+                order_id="horizon-short-limit",
+                pair="AUD_CAD",
+                order_type="LIMIT",
+                price=0.98980,
+                state="PENDING",
+                units=-8000,
+                owner=Owner.TRADER,
+                raw={
+                    "createTime": now.isoformat(),
+                    "clientExtensions": {"tag": "trader"},
+                    "takeProfitOnFill": {"price": "0.98870"},
+                    "stopLossOnFill": {"price": "0.99501"},
+                },
+            )
+            snapshot = BrokerSnapshot(
+                fetched_at_utc=now,
+                orders=(pending,),
+                quotes={"AUD_CAD": Quote("AUD_CAD", 0.98942, 0.98950, timestamp_utc=now)},
+            )
+            weak_opposite = LaneScore(
+                lane_id="range_trader:AUD_CAD:LONG:RANGE_ROTATION",
+                pair="AUD_CAD",
+                direction="LONG",
+                method="RANGE_ROTATION",
+                order_type="LIMIT",
+                entry=0.98913,
+                tp=0.99023,
+                sl=0.98741,
+                status="DRY_RUN_BLOCKED",
+                score=24.0,
+                action=ACTION_NO_TRADE,
+                blockers=("forecast watch-only", "range location chase"),
+                rationale=("current packet exposes only a weak AUD_CAD LONG candidate",),
+                spread_pips=2.2,
+                estimated_margin_jpy=36_000.0,
+            )
+
+            self.assertEqual(_contaminated_pending_order_ids(snapshot, (weak_opposite,), data_root=root), ())
+
     def test_recent_cancel_regret_does_not_preserve_against_tradeable_opposite(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

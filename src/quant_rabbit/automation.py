@@ -88,6 +88,7 @@ from quant_rabbit.strategy.trader_brain import (
     TraderDecision,
     load_trader_settings,
     _pending_entry_recent_cancel_regret_supports_preservation,
+    _pending_entry_recorded_thesis_horizon_active,
 )
 from quant_rabbit.verification_ledger import VerificationLedger
 
@@ -3787,23 +3788,33 @@ class AutoTradeCycle:
         already = set(already_canceled)
         allowed = set(allowed_order_ids) if allowed_order_ids is not None else None
         preserved_current_thesis_ids: set[str] = set()
+        preserved_active_recorded_thesis_ids: set[str] = set()
         if gpt_summary.action == "CANCEL_PENDING" and self.intents_path.exists():
             try:
+                snapshot = self._load_snapshot_artifact()
                 preserved_current_thesis_ids = set(
                     _pending_cancel_ids_with_visible_current_thesis(
-                        self._load_snapshot_artifact(),
+                        snapshot,
                         intents_path=self.intents_path,
+                        cancel_order_ids=gpt_summary.cancel_order_ids,
+                    )
+                )
+                preserved_active_recorded_thesis_ids = set(
+                    _pending_cancel_ids_with_active_recorded_thesis(
+                        snapshot,
+                        data_root=self.intents_path.parent,
                         cancel_order_ids=gpt_summary.cancel_order_ids,
                     )
                 )
             except (OSError, ValueError, json.JSONDecodeError):
                 preserved_current_thesis_ids = set()
+                preserved_active_recorded_thesis_ids = set()
         for order_id in gpt_summary.cancel_order_ids:
             if order_id in already:
                 continue
             if allowed is not None and order_id not in allowed:
                 continue
-            if order_id in preserved_current_thesis_ids:
+            if order_id in preserved_current_thesis_ids or order_id in preserved_active_recorded_thesis_ids:
                 continue
             self.client.cancel_order(order_id)
             canceled.append(order_id)
@@ -4263,6 +4274,33 @@ def _pending_cancel_ids_with_visible_current_thesis(
             str(_order_side_from_units(order) or "").upper(),
         )
         if pair_side in current_pair_sides:
+            preserved.append(order_id)
+    return tuple(preserved)
+
+
+def _pending_cancel_ids_with_active_recorded_thesis(
+    snapshot,
+    *,
+    data_root: Path | None,
+    cancel_order_ids: tuple[str, ...],
+) -> tuple[str, ...]:
+    if data_root is None:
+        return ()
+    cancel_set = {str(order_id) for order_id in cancel_order_ids if str(order_id)}
+    if not cancel_set:
+        return ()
+    preserved: list[str] = []
+    for order in snapshot.orders:
+        order_id = str(getattr(order, "order_id", "") or "")
+        if order_id not in cancel_set:
+            continue
+        if getattr(order, "trade_id", None):
+            continue
+        if str(getattr(order, "order_type", "") or "").upper() not in PENDING_ENTRY_TYPES:
+            continue
+        if _order_owner_value(order) != "trader":
+            continue
+        if _pending_entry_recorded_thesis_horizon_active(order, snapshot, data_root):
             preserved.append(order_id)
     return tuple(preserved)
 
