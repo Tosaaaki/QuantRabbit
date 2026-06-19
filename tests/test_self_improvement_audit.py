@@ -840,6 +840,58 @@ class SelfImprovementAuditorTest(unittest.TestCase):
             self.assertEqual(run_count, 1)
             self.assertEqual(len(lock_ages), 1)
 
+    def test_history_dedupes_live_lock_retry_while_downstream_artifacts_move(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(
+                root,
+                active_position=False,
+                live_ready_market_rr=1.4,
+                closed_pls=(100.0, 80.0, -50.0),
+            )
+            lock_dir = root / ".quant_rabbit_live.lock"
+            lock_dir.mkdir()
+            (lock_dir / "pid").write_text(str(os.getpid()), encoding="utf-8")
+            (lock_dir / "command").write_text("run-autotrade-live", encoding="utf-8")
+            (lock_dir / "started_at_utc").write_text(
+                (_NOW - timedelta(minutes=3)).isoformat(),
+                encoding="utf-8",
+            )
+
+            with mock.patch.dict(
+                os.environ,
+                {"QR_AUTOTRADE_LOCK_DIR": str(lock_dir), "QR_AUTOTRADE_LOCK_HELD": ""},
+                clear=False,
+            ):
+                first = _run(files, now=_NOW)
+                files["forecast_history"].write_text(
+                    "\n".join(
+                        json.dumps(
+                            {
+                                "timestamp_utc": _NOW.isoformat(),
+                                "pair": "EUR_USD",
+                                "direction": "UP",
+                                "confidence": 0.62,
+                            }
+                        )
+                        for _idx in range(3)
+                    )
+                    + "\n"
+                )
+                second = _run(files, now=_NOW + timedelta(seconds=30))
+
+            self.assertEqual(first.status, STATUS_BLOCKED)
+            self.assertEqual(second.status, STATUS_BLOCKED)
+            payload = json.loads(files["output"].read_text())
+            self.assertIn("FORECAST_HISTORY_LEGACY_PHANTOM_CLUSTERS", {item["code"] for item in payload["findings"]})
+            with sqlite3.connect(files["history_db"]) as conn:
+                run_count = conn.execute("SELECT COUNT(*) FROM self_improvement_audit_runs").fetchone()[0]
+                lock_count = conn.execute(
+                    "SELECT COUNT(*) FROM self_improvement_findings WHERE code = 'LIVE_RUNTIME_UPDATE_IN_PROGRESS'"
+                ).fetchone()[0]
+            self.assertEqual(run_count, 1)
+            self.assertEqual(lock_count, 1)
+
     def test_pending_entry_lifecycle_flags_cancel_before_fill_churn(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

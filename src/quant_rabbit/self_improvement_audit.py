@@ -1093,6 +1093,8 @@ def _history_has_recent_duplicate(
     if generated_at is None:
         return False
     window_start = generated_at - timedelta(seconds=AUDIT_HISTORY_DUPLICATE_WINDOW_SECONDS)
+    if _history_has_recent_live_lock_duplicate(conn, payload=payload, window_start=window_start, generated_at=generated_at):
+        return True
     expected_run = _history_run_signature(payload, output_path=output_path, report_path=report_path)
     expected_findings = _history_findings_signature(payload.get("findings") or [])
     rows = conn.execute(
@@ -1122,6 +1124,56 @@ def _history_has_recent_duplicate(
         if _history_db_findings_signature(finding_rows) == expected_findings:
             return True
     return False
+
+
+def _history_has_recent_live_lock_duplicate(
+    conn: sqlite3.Connection,
+    *,
+    payload: dict[str, Any],
+    window_start: datetime,
+    generated_at: datetime,
+) -> bool:
+    """Collapse short retries while the same live wrapper lock is still active.
+
+    A live wrapper lock means broker/order/memory artifacts may be mutating under
+    the audit. Those downstream volatile findings must not become extra trend
+    samples for the same lock holder inside the operational retry window.
+    """
+    current_lock = _history_live_lock_evidence(payload.get("findings") or [])
+    if current_lock is None:
+        return False
+    rows = conn.execute(
+        """
+        SELECT run_uid
+        FROM self_improvement_audit_runs
+        WHERE ts_utc >= ? AND ts_utc <= ?
+        ORDER BY ts_utc DESC
+        LIMIT 12
+        """,
+        (window_start.isoformat(), generated_at.isoformat()),
+    ).fetchall()
+    for row in rows:
+        finding_rows = conn.execute(
+            """
+            SELECT code, evidence_json
+            FROM self_improvement_findings
+            WHERE run_uid = ? AND code = 'LIVE_RUNTIME_UPDATE_IN_PROGRESS'
+            """,
+            (row["run_uid"],),
+        ).fetchall()
+        for finding in finding_rows:
+            evidence = _history_evidence_from_json(str(finding["evidence_json"] or "{}"))
+            if _history_normalized_evidence("LIVE_RUNTIME_UPDATE_IN_PROGRESS", evidence) == current_lock:
+                return True
+    return False
+
+
+def _history_live_lock_evidence(findings: list[dict[str, Any]]) -> Any | None:
+    for item in findings:
+        if str(item.get("code") or "") != "LIVE_RUNTIME_UPDATE_IN_PROGRESS":
+            continue
+        return _history_normalized_evidence("LIVE_RUNTIME_UPDATE_IN_PROGRESS", item.get("evidence") or {})
+    return None
 
 
 def _history_run_signature(
