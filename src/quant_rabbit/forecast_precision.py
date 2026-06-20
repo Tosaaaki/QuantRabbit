@@ -26,6 +26,8 @@ TECHNICAL_HARVEST_PRECISION_EXTRA_MATCH_BONUS = 6.0
 TECHNICAL_HARVEST_ROTATION_SCORE_BONUS = 12.0
 TECHNICAL_HARVEST_ROTATION_EXTRA_MATCH_BONUS = 3.0
 TECHNICAL_HARVEST_NEGATIVE_SCORE_PENALTY = 35.0
+BIDASK_REPLAY_EDGE_SCORE_BONUS = 18.0
+BIDASK_REPLAY_NEGATIVE_SCORE_PENALTY = 70.0
 
 
 TECHNICAL_HARVEST_PRECISION_RULES: tuple[dict[str, Any], ...] = (
@@ -372,6 +374,55 @@ TECHNICAL_HARVEST_NEGATIVE_RULES: tuple[dict[str, Any], ...] = (
         "max_stop_pips": 4.2,
         "blocks_live_support": False,
         "audit_report": "logs/reports/forecast_improvement/technical_entry_mining_latest.json",
+    },
+)
+
+
+# Directional forecast history replayed on local OANDA S5 bid/ask candles.
+# This layer is deliberately pair/direction scoped: the full S5 surface was
+# negative, while EUR_USD DOWN survived spread with attached TP harvest exits
+# and AUD_JPY UP was a repeated high-confidence loss bucket.
+BIDASK_REPLAY_EDGE_RULES: tuple[dict[str, Any], ...] = (
+    {
+        "name": "EUR_USD_DOWN_S5_BIDASK_HARVEST_TP5_SL7",
+        "pair": "EUR_USD",
+        "side": "SHORT",
+        "direction": "DOWN",
+        "granularity": "S5",
+        "samples": 222,
+        "directional_hit_rate": 0.7432,
+        "avg_final_pips": 2.3225,
+        "median_final_pips": 3.7000,
+        "avg_mfe_pips": 5.1239,
+        "avg_mae_pips": 4.2622,
+        "optimized_take_profit_pips": 5.0,
+        "optimized_stop_loss_pips": 7.0,
+        "optimized_avg_realized_pips": 2.7440,
+        "optimized_win_rate": 0.7520,
+        "optimized_profit_factor": 3.7170,
+        "min_target_pips": 4.8,
+        "max_target_pips": 5.5,
+        "max_stop_pips": 7.2,
+        "audit_report": "logs/reports/forecast_improvement/oanda_history_replay_validate_20260620T155821Z.json",
+    },
+)
+
+BIDASK_REPLAY_NEGATIVE_RULES: tuple[dict[str, Any], ...] = (
+    {
+        "name": "AUD_JPY_UP_S5_BIDASK_NEGATIVE_EXPECTANCY",
+        "pair": "AUD_JPY",
+        "side": "LONG",
+        "direction": "UP",
+        "granularity": "S5",
+        "samples": 124,
+        "directional_hit_rate": 0.2016,
+        "avg_final_pips": -6.7589,
+        "median_final_pips": -4.7000,
+        "avg_mfe_pips": 3.7556,
+        "avg_mae_pips": 14.3710,
+        "reward_side_target_rate": 0.0089,
+        "blocks_live_support": True,
+        "audit_report": "logs/reports/forecast_improvement/oanda_history_replay_validate_20260620T155821Z.json",
     },
 )
 
@@ -756,6 +807,213 @@ def technical_harvest_negative_precision_issue(
     if isinstance(blockers, list) and blockers:
         return blockers[0]
     return None
+
+
+def bidask_replay_precision_support(
+    metadata: dict[str, Any],
+    *,
+    pair: str,
+    side: str,
+    order_type: str | None,
+    method: str | None,
+    entry: float | None,
+    take_profit: float | None,
+    stop_loss: float | None,
+) -> dict[str, Any] | None:
+    """Return S5 bid/ask replay support for an executable harvest shape."""
+
+    assessment = bidask_replay_precision_assessment(
+        metadata,
+        pair=pair,
+        side=side,
+        order_type=order_type,
+        method=method,
+        entry=entry,
+        take_profit=take_profit,
+        stop_loss=stop_loss,
+    )
+    support = assessment.get("primary_support")
+    return support if isinstance(support, dict) else None
+
+
+def bidask_replay_negative_precision_issue(
+    metadata: dict[str, Any],
+    *,
+    pair: str,
+    side: str,
+    order_type: str | None,
+    method: str | None,
+    entry: float | None,
+    take_profit: float | None,
+    stop_loss: float | None,
+) -> dict[str, Any] | None:
+    """Return the first live-blocking S5 bid/ask negative replay bucket."""
+
+    assessment = bidask_replay_precision_assessment(
+        metadata,
+        pair=pair,
+        side=side,
+        order_type=order_type,
+        method=method,
+        entry=entry,
+        take_profit=take_profit,
+        stop_loss=stop_loss,
+    )
+    blockers = assessment.get("blocking_negative_matches")
+    if isinstance(blockers, list) and blockers:
+        return blockers[0]
+    return None
+
+
+def bidask_replay_precision_assessment(
+    metadata: dict[str, Any],
+    *,
+    pair: str,
+    side: str,
+    order_type: str | None,
+    method: str | None,
+    entry: float | None,
+    take_profit: float | None,
+    stop_loss: float | None,
+) -> dict[str, Any]:
+    """Return S5 bid/ask replay evidence for the current pair/direction.
+
+    Positive support is intentionally stricter than the negative block: it
+    requires a non-market attached-TP HARVEST shape with TP/SL geometry close to
+    the replayed profitable exit grid. Negative evidence blocks the same
+    pair/direction forecast vehicle even if geometry later tries to paper over
+    the direction-level loss.
+    """
+
+    if not isinstance(metadata, dict):
+        return _empty_bidask_replay_assessment()
+    normalized_pair = str(pair or "").upper()
+    normalized_side = str(side or "").upper()
+    normalized_direction = str(metadata.get("forecast_direction") or "").upper()
+    chart_bias = str(metadata.get("chart_direction_bias") or "").upper()
+    if chart_bias and chart_bias != normalized_side:
+        return _empty_bidask_replay_assessment()
+
+    negative_matches: list[dict[str, Any]] = []
+    for rule in BIDASK_REPLAY_NEGATIVE_RULES:
+        if not _bidask_replay_rule_matches(rule, normalized_pair, normalized_side, normalized_direction):
+            continue
+        match = _bidask_replay_rule_payload(rule)
+        match["blocks_live_support"] = bool(rule.get("blocks_live_support"))
+        negative_matches.append(match)
+
+    target_pips = _signed_reward_pips(
+        normalized_pair,
+        normalized_side,
+        entry=entry,
+        take_profit=take_profit,
+    )
+    stop_pips = _signed_stop_pips(
+        normalized_pair,
+        normalized_side,
+        entry=entry,
+        stop_loss=stop_loss,
+    )
+    positive_supports: list[dict[str, Any]] = []
+    if (
+        target_pips is not None
+        and stop_pips is not None
+        and stop_pips > 0.0
+        and str(order_type or "").upper() != "MARKET"
+        and str(metadata.get("tp_execution_mode") or "").upper() == "ATTACHED_TECHNICAL_TP"
+        and str(metadata.get("tp_target_intent") or "").upper() == "HARVEST"
+        and str(metadata.get("opportunity_mode") or "").upper() in {"", "HARVEST"}
+    ):
+        for rule in BIDASK_REPLAY_EDGE_RULES:
+            if not _bidask_replay_rule_matches(rule, normalized_pair, normalized_side, normalized_direction):
+                continue
+            if target_pips < float(rule["min_target_pips"]) or target_pips > float(rule["max_target_pips"]):
+                continue
+            if stop_pips > float(rule["max_stop_pips"]):
+                continue
+            support = _bidask_replay_rule_payload(rule)
+            support.update(
+                {
+                    "current_target_pips": round(target_pips, 4),
+                    "current_stop_pips": round(stop_pips, 4),
+                }
+            )
+            positive_supports.append(support)
+
+    blocking_negative_matches = [
+        item for item in negative_matches if bool(item.get("blocks_live_support"))
+    ]
+    primary_support = None
+    if positive_supports and not blocking_negative_matches:
+        primary_support = max(
+            positive_supports,
+            key=lambda item: (
+                float(item.get("optimized_profit_factor") or 0.0),
+                float(item.get("avg_final_pips") or 0.0),
+                int(item.get("samples") or 0),
+            ),
+        )
+    score_delta = 0.0
+    if positive_supports and not blocking_negative_matches:
+        score_delta += BIDASK_REPLAY_EDGE_SCORE_BONUS
+    if negative_matches:
+        score_delta -= len(negative_matches) * BIDASK_REPLAY_NEGATIVE_SCORE_PENALTY
+    return {
+        "eligible_shape": bool(positive_supports or negative_matches),
+        "primary_support": primary_support,
+        "positive_supports": positive_supports,
+        "negative_matches": negative_matches,
+        "blocking_negative_matches": blocking_negative_matches,
+        "score_delta": round(score_delta, 4),
+    }
+
+
+def _empty_bidask_replay_assessment() -> dict[str, Any]:
+    return {
+        "eligible_shape": False,
+        "primary_support": None,
+        "positive_supports": [],
+        "negative_matches": [],
+        "blocking_negative_matches": [],
+        "score_delta": 0.0,
+    }
+
+
+def _bidask_replay_rule_matches(
+    rule: dict[str, Any],
+    pair: str,
+    side: str,
+    direction: str,
+) -> bool:
+    return (
+        pair == str(rule.get("pair") or "").upper()
+        and side == str(rule.get("side") or "").upper()
+        and direction == str(rule.get("direction") or "").upper()
+    )
+
+
+def _bidask_replay_rule_payload(rule: dict[str, Any]) -> dict[str, Any]:
+    keys = (
+        "name",
+        "pair",
+        "side",
+        "direction",
+        "granularity",
+        "samples",
+        "directional_hit_rate",
+        "avg_final_pips",
+        "median_final_pips",
+        "avg_mfe_pips",
+        "avg_mae_pips",
+        "reward_side_target_rate",
+        "optimized_take_profit_pips",
+        "optimized_stop_loss_pips",
+        "optimized_avg_realized_pips",
+        "optimized_win_rate",
+        "optimized_profit_factor",
+        "audit_report",
+    )
+    return {key: rule[key] for key in keys if key in rule}
 
 
 def _technical_rule_feature_values(

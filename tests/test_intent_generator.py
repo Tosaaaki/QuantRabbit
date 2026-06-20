@@ -4684,7 +4684,7 @@ class IntentGeneratorTest(unittest.TestCase):
         stale_metadata = {**metadata, "m1_atr_percentile_100": 0.50}
         stale_metadata.pop("technical_harvest_precision_live_ready", None)
         stale_metadata.pop("technical_harvest_precision_support", None)
-        stale_intent = replace(intent, metadata=stale_metadata)
+        stale_intent = replace(intent, tp=1.17265, metadata=stale_metadata)
 
         blocked = _forecast_live_readiness_issue(
             stale_intent,
@@ -4709,6 +4709,92 @@ class IntentGeneratorTest(unittest.TestCase):
         self.assertEqual(
             negative_metadata["technical_harvest_precision_negative"]["name"],
             "EUR_USD_DOWN_M5_EMA_SLOPE5_OPPOSED_TP5_SL4",
+        )
+
+    def test_bidask_replay_support_allows_eurusd_down_harvest_but_blocks_audjpy_up(self) -> None:
+        from quant_rabbit.models import MarketContext, OrderIntent, OrderType, Side, TradeMethod
+        from quant_rabbit.strategy.intent_generator import _forecast_live_readiness_issue
+
+        os.environ["QR_REQUIRE_FORECAST_FOR_LIVE"] = "1"
+        support_metadata = {
+            "forecast_direction": "DOWN",
+            "forecast_confidence": 0.23,
+            "chart_direction_bias": "SHORT",
+            "tp_execution_mode": "ATTACHED_TECHNICAL_TP",
+            "tp_target_intent": "HARVEST",
+            "opportunity_mode": "HARVEST",
+            "forecast_market_support": {
+                "ok": False,
+                "direction": "DOWN",
+                "aligned_projection_count": 0,
+            },
+        }
+        support_intent = OrderIntent(
+            pair="EUR_USD",
+            side=Side.SHORT,
+            order_type=OrderType.LIMIT,
+            units=1000,
+            entry=1.17330,
+            tp=1.17280,
+            sl=1.17400,
+            thesis="S5 bid/ask replay-backed EUR_USD short harvest",
+            market_context=MarketContext(
+                regime="BREAKOUT_FAILURE rejection retest",
+                narrative="S5 bid/ask replay supports EUR_USD DOWN attached harvest",
+                chart_story="retest below resistance",
+                method=TradeMethod.BREAKOUT_FAILURE,
+                invalidation="7 pip stop",
+            ),
+            metadata=support_metadata,
+        )
+
+        self.assertIsNone(
+            _forecast_live_readiness_issue(
+                support_intent,
+                support_metadata,
+                TradeMethod.BREAKOUT_FAILURE,
+            )
+        )
+        self.assertTrue(support_metadata["bidask_replay_precision_live_ready"])
+        self.assertEqual(
+            support_metadata["bidask_replay_precision_support"]["name"],
+            "EUR_USD_DOWN_S5_BIDASK_HARVEST_TP5_SL7",
+        )
+
+        block_metadata = {
+            "forecast_direction": "UP",
+            "forecast_confidence": 0.87,
+            "chart_direction_bias": "LONG",
+        }
+        block_intent = OrderIntent(
+            pair="AUD_JPY",
+            side=Side.LONG,
+            order_type=OrderType.MARKET,
+            units=1000,
+            entry=114.289,
+            tp=114.338,
+            sl=114.250,
+            thesis="AUD_JPY high-confidence long must not replay the losing bucket",
+            market_context=MarketContext(
+                regime="TREND_CONTINUATION campaign lane",
+                narrative="forecast points up",
+                chart_story="old high-confidence AUD_JPY UP bucket",
+                method=TradeMethod.TREND_CONTINUATION,
+                invalidation="forecast invalidation",
+            ),
+            metadata=block_metadata,
+        )
+
+        blocked = _forecast_live_readiness_issue(
+            block_intent,
+            block_metadata,
+            TradeMethod.TREND_CONTINUATION,
+        )
+
+        self.assertEqual(blocked["code"], "BIDASK_REPLAY_NEGATIVE_EXPECTANCY_FOR_LIVE")
+        self.assertEqual(
+            block_metadata["bidask_replay_precision_negative"]["name"],
+            "AUD_JPY_UP_S5_BIDASK_NEGATIVE_EXPECTANCY",
         )
 
     def test_directional_forecast_weak_hit_rate_blocks_live_readiness(self) -> None:

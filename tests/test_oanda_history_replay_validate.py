@@ -97,6 +97,36 @@ class OandaHistoryReplayValidateTest(unittest.TestCase):
 
         self.assertEqual(result, {"pips": -2.0, "reason": "SL"})
 
+    def test_segment_exit_grids_keep_pair_direction_best_exit(self) -> None:
+        row = {
+            "pair": "EUR_USD",
+            "direction": "DOWN",
+            "entry_price": 1.1000,
+            "final_pips": 3.0,
+            "final_direction_hit": True,
+            "mfe_pips": 5.5,
+            "mae_pips": 1.0,
+            "_window": [
+                _candle("2026-06-19T00:00:00", bid_o=1.1000, bid_h=1.1001, bid_l=1.0999, bid_c=1.1000, ask_o=1.1002, ask_h=1.1003, ask_l=1.1001, ask_c=1.1002),
+                _candle("2026-06-19T00:00:05", bid_o=1.0995, bid_h=1.0996, bid_l=1.0993, bid_c=1.0995, ask_o=1.0997, ask_h=1.0998, ask_l=1.0995, ask_c=1.0997),
+            ],
+        }
+
+        segments = replay._segment_exit_grids(
+            [row],
+            ("pair", "direction"),
+            tp_grid=(5.0,),
+            sl_grid=(7.0,),
+            min_n=1,
+        )
+
+        self.assertEqual(len(segments), 1)
+        self.assertEqual(segments[0]["pair"], "EUR_USD")
+        self.assertEqual(segments[0]["direction"], "DOWN")
+        self.assertEqual(segments[0]["best_exit"]["take_profit_pips"], 5.0)
+        self.assertEqual(segments[0]["best_exit"]["stop_loss_pips"], 7.0)
+        self.assertEqual(segments[0]["best_exit"]["avg_realized_pips"], 5.0)
+
     def test_target_not_on_reward_side_is_not_counted_as_touch(self) -> None:
         row = replay.ForecastRow(
             source_index=1,

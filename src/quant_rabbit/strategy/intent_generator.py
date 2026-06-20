@@ -12,6 +12,8 @@ from typing import Any, Sequence
 
 from quant_rabbit.instruments import DEFAULT_TRADER_PAIRS, instrument_pip_factor
 from quant_rabbit.forecast_precision import (
+    bidask_replay_negative_precision_issue,
+    bidask_replay_precision_support,
     hit_rate_wilson_lower,
     support_signal_clears_live_precision,
     target_pips_from_text,
@@ -7190,7 +7192,12 @@ def _forecast_live_readiness_issue(
     negative_technical_issue = _technical_harvest_negative_precision_issue_for_intent(intent, metadata, method)
     if negative_technical_issue is not None:
         return negative_technical_issue
+    negative_bidask_issue = _bidask_replay_negative_precision_issue_for_intent(intent, metadata, method)
+    if negative_bidask_issue is not None:
+        return negative_bidask_issue
     if _technical_harvest_precision_support_for_intent(intent, metadata, method):
+        return None
+    if _bidask_replay_precision_support_for_intent(intent, metadata, method):
         return None
     if direction not in {"UP", "DOWN", "RANGE"}:
         if recovery_reversal_override:
@@ -7370,6 +7377,12 @@ def _forecast_watch_only_issue(intent: OrderIntent, metadata: dict[str, Any]) ->
         return None
     if _range_rail_limit_watch_only_can_trade(intent, metadata):
         return None
+    if _bidask_replay_precision_support_for_intent(
+        intent,
+        metadata,
+        intent.market_context.method if intent.market_context is not None else None,
+    ):
+        return None
     if _technical_harvest_precision_support_for_intent(
         intent,
         metadata,
@@ -7516,6 +7529,62 @@ def _forecast_market_support_override(
         order_type=intent.order_type,
         method=resolved_method,
     )
+
+
+def _bidask_replay_precision_support_for_intent(
+    intent: OrderIntent,
+    metadata: dict[str, Any],
+    method: TradeMethod | None,
+) -> dict[str, Any] | None:
+    support = bidask_replay_precision_support(
+        metadata,
+        pair=intent.pair,
+        side=intent.side.value,
+        order_type=intent.order_type.value,
+        method=method.value if isinstance(method, TradeMethod) else str(method or ""),
+        entry=_optional_float(intent.entry),
+        take_profit=_optional_float(intent.tp),
+        stop_loss=_optional_float(intent.sl),
+    )
+    if support is not None:
+        metadata["bidask_replay_precision_live_ready"] = True
+        metadata["bidask_replay_precision_support"] = support
+    return support
+
+
+def _bidask_replay_negative_precision_issue_for_intent(
+    intent: OrderIntent,
+    metadata: dict[str, Any],
+    method: TradeMethod | None,
+) -> dict[str, str] | None:
+    if str(metadata.get("position_intent") or "").upper() == "HEDGE":
+        return None
+    issue = bidask_replay_negative_precision_issue(
+        metadata,
+        pair=intent.pair,
+        side=intent.side.value,
+        order_type=intent.order_type.value,
+        method=method.value if isinstance(method, TradeMethod) else str(method or ""),
+        entry=_optional_float(intent.entry),
+        take_profit=_optional_float(intent.tp),
+        stop_loss=_optional_float(intent.sl),
+    )
+    if issue is None:
+        return None
+    metadata["bidask_replay_precision_negative"] = issue
+    return {
+        "code": "BIDASK_REPLAY_NEGATIVE_EXPECTANCY_FOR_LIVE",
+        "message": (
+            f"{intent.pair} {intent.side.value} forecast {issue['direction']} matches S5 bid/ask "
+            f"negative replay bucket {issue['name']}: hit_rate="
+            f"{float(issue.get('directional_hit_rate') or 0.0):.2f}, avg_final="
+            f"{float(issue.get('avg_final_pips') or 0.0):.2f}pip, avg_MAE="
+            f"{float(issue.get('avg_mae_pips') or 0.0):.2f}pip over "
+            f"{int(issue.get('samples') or 0)} sample(s). Do not increase entry frequency "
+            "inside a proven bid/ask losing pair-direction."
+        ),
+        "severity": "BLOCK",
+    }
 
 
 def _technical_harvest_precision_support_for_intent(

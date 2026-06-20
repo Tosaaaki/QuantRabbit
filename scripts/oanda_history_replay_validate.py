@@ -64,6 +64,15 @@ def main() -> int:
     rows, load_stats = _load_forecasts(args.forecast_history)
     results, score_stats = _score_forecasts(rows, candles_by_pair)
     exit_grid = _exit_grid(results, tp_grid=args.tp_grid_pips, sl_grid=args.sl_grid_pips)
+    segment_exit_grids = {
+        "by_pair_direction": _segment_exit_grids(
+            results,
+            ("pair", "direction"),
+            tp_grid=args.tp_grid_pips,
+            sl_grid=args.sl_grid_pips,
+            min_n=args.min_group_samples,
+        ),
+    }
     split = _train_validation_exit_selection(
         results,
         tp_grid=args.tp_grid_pips,
@@ -109,6 +118,7 @@ def main() -> int:
             "by_confidence": _group(results, ("confidence_bucket",), min_n=args.min_group_samples),
         },
         "exit_grid": exit_grid,
+        "segment_exit_grids": segment_exit_grids,
         "train_validation_exit_selection": split,
     }
     json_out.write_text(json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True), encoding="utf-8")
@@ -591,6 +601,42 @@ def _group(
     return out
 
 
+def _segment_exit_grids(
+    rows: Sequence[dict[str, Any]],
+    fields: Sequence[str],
+    *,
+    tp_grid: Sequence[float],
+    sl_grid: Sequence[float],
+    min_n: int = 1,
+) -> list[dict[str, Any]]:
+    buckets: dict[tuple[Any, ...], list[dict[str, Any]]] = collections.defaultdict(list)
+    for row in rows:
+        buckets[tuple(row.get(field) for field in fields)].append(row)
+    out: list[dict[str, Any]] = []
+    for key, items in buckets.items():
+        if len(items) < min_n:
+            continue
+        grid = _exit_grid(items, tp_grid=tp_grid, sl_grid=sl_grid)
+        payload = {field: value for field, value in zip(fields, key)}
+        payload.update(
+            {
+                "n": len(items),
+                "summary": _summary(items),
+                "best_exit": grid[0] if grid else None,
+                "exit_grid": grid,
+            }
+        )
+        out.append(payload)
+    out.sort(
+        key=lambda item: (
+            float((item.get("best_exit") or {}).get("avg_realized_pips") or -999.0),
+            int(item.get("n") or 0),
+        ),
+        reverse=True,
+    )
+    return out
+
+
 def _markdown(report: dict[str, Any]) -> str:
     summary = report["summary"]
     split = report["train_validation_exit_selection"]
@@ -633,6 +679,22 @@ def _markdown(report: dict[str, Any]) -> str:
             f"n={item['n']} avg={_fmt(item['avg_realized_pips'])} "
             f"win={_pct(item['win_rate'])} PF={_fmt(item['profit_factor'])} timeout={_pct(item['timeout_rate'])}"
         )
+    lines.extend(["", "## Segment Exit Grids", ""])
+    for name, rows in report.get("segment_exit_grids", {}).items():
+        lines.append(f"### {name}")
+        if not rows:
+            lines.append("- no segment cleared sample floor")
+        for row in rows[:12]:
+            best = row.get("best_exit") or {}
+            keys = ", ".join(str(row.get(k)) for k in row if k not in {"summary", "best_exit", "exit_grid", "n"})
+            lines.append(
+                f"- {keys} n={row.get('n')}: "
+                f"best TP={best.get('take_profit_pips')} SL={best.get('stop_loss_pips')} "
+                f"avg={_fmt(best.get('avg_realized_pips'))} win={_pct(best.get('win_rate'))} "
+                f"PF={_fmt(best.get('profit_factor'))} timeout={_pct(best.get('timeout_rate'))}; "
+                f"{_summary_line(row.get('summary') or {})}"
+            )
+        lines.append("")
     lines.extend(["", "## Segments", ""])
     for name, rows in report["segments"].items():
         lines.append(f"### {name}")

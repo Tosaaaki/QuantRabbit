@@ -195,6 +195,77 @@ class TraderBrainTest(unittest.TestCase):
             self.assertTrue(any("technical_harvest_negative_bucket" in item for item in bad_score.blockers))
             self.assertEqual(decision.selected_lane_id, good_score.lane_id)
 
+    def test_bidask_replay_scores_positive_segment_and_blocks_negative_pair_direction(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            good = _result(
+                "failure_trader:EUR_USD:SHORT:BREAKOUT_FAILURE",
+                "EUR_USD",
+                "SHORT",
+                "BREAKOUT_FAILURE",
+            )
+            bad = _result(
+                "failure_trader:AUD_JPY:LONG:BREAKOUT_FAILURE:bad",
+                "AUD_JPY",
+                "LONG",
+                "BREAKOUT_FAILURE",
+            )
+            good["intent"]["order_type"] = "LIMIT"
+            good["intent"]["entry"] = 1.17330
+            good["intent"]["tp"] = 1.17280
+            good["intent"]["sl"] = 1.17400
+            good["intent"]["metadata"] = {
+                "forecast_direction": "DOWN",
+                "forecast_confidence": 0.23,
+                "chart_direction_bias": "SHORT",
+                "tp_execution_mode": "ATTACHED_TECHNICAL_TP",
+                "tp_target_intent": "HARVEST",
+                "opportunity_mode": "HARVEST",
+            }
+            bad["intent"]["metadata"] = {
+                "forecast_direction": "UP",
+                "forecast_confidence": 0.87,
+                "chart_direction_bias": "LONG",
+            }
+            intents = root / "bidask_precision_intents.json"
+            intents.write_text(json.dumps({"results": [bad, good]}))
+            campaign = root / "bidask_precision_campaign.json"
+            campaign.write_text(
+                json.dumps(
+                    {
+                        "lanes": [
+                            _lane("failure_trader", "EUR_USD", "SHORT", "BREAKOUT_FAILURE"),
+                            _lane("failure_trader", "AUD_JPY", "LONG", "BREAKOUT_FAILURE"),
+                        ]
+                    }
+                )
+            )
+            brain = TraderBrain(
+                intents_path=intents,
+                campaign_plan_path=campaign,
+                strategy_profile_path=_opposite_market_strategy(root),
+                market_story_profile_path=_stories(root),
+                target_state_path=root / "missing_target.json",
+                trader_settings_path=root / "settings.json",
+                attack_advice_path=root / "missing_attack_advice.json",
+                pair_charts_path=root / "missing_pair_charts.json",
+                output_path=root / "decision.json",
+                report_path=root / "decision.md",
+            )
+
+            decision = brain.run(_snapshot())
+
+            good_score = next(
+                item for item in decision.scores
+                if item.lane_id == "failure_trader:EUR_USD:SHORT:BREAKOUT_FAILURE"
+            )
+            bad_score = next(item for item in decision.scores if item.lane_id.endswith(":bad"))
+            self.assertEqual(good_score.action, ACTION_SEND_ENTRY)
+            self.assertEqual(bad_score.action, ACTION_NO_TRADE)
+            self.assertTrue(any("bid/ask replay edge +18.0" in item for item in good_score.rationale))
+            self.assertTrue(any("bidask_replay_negative_bucket" in item for item in bad_score.blockers))
+            self.assertEqual(decision.selected_lane_id, good_score.lane_id)
+
     def test_technical_rotation_scores_high_frequency_bucket_without_live_override(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

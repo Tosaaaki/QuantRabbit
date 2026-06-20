@@ -600,8 +600,8 @@ class RiskEngineTest(unittest.TestCase):
             "EUR_USD_DOWN_M5_EMA_SLOPE5_OPPOSED_TP5_SL4",
         )
 
-    def test_technical_harvest_rotation_does_not_clear_low_confidence_live_send(self) -> None:
-        intent = OrderIntent(
+    def test_bidask_replay_support_and_negative_bucket_apply_at_live_send(self) -> None:
+        support_intent = OrderIntent(
             pair="EUR_USD",
             side=Side.SHORT,
             order_type=OrderType.LIMIT,
@@ -609,7 +609,117 @@ class RiskEngineTest(unittest.TestCase):
             entry=1.17330,
             tp=1.17280,
             sl=1.17370,
-            thesis="audited EUR_USD short rotation bucket still needs forecast live support",
+            thesis="S5 bid/ask replay-backed EUR_USD short harvest",
+            market_context=MarketContext(
+                regime="BREAKOUT_FAILURE rejection retest",
+                narrative="selected side matches a positive S5 bid/ask replay segment",
+                chart_story="retest below resistance",
+                method=TradeMethod.BREAKOUT_FAILURE,
+                invalidation="4 pip stop",
+            ),
+            metadata={
+                "forecast_direction": "DOWN",
+                "forecast_confidence": 0.23,
+                "chart_direction_bias": "SHORT",
+                "tp_execution_mode": "ATTACHED_TECHNICAL_TP",
+                "tp_target_intent": "HARVEST",
+                "opportunity_mode": "HARVEST",
+                "forecast_market_support": {
+                    "ok": False,
+                    "direction": "DOWN",
+                    "aligned_projection_count": 0,
+                },
+            },
+        )
+        base_snapshot = snapshot()
+        narrow_spread_snapshot = replace(
+            base_snapshot,
+            quotes={
+                **base_snapshot.quotes,
+                "EUR_USD": Quote(
+                    "EUR_USD",
+                    bid=1.17326,
+                    ask=1.17330,
+                    timestamp_utc=base_snapshot.fetched_at_utc,
+                ),
+            },
+        )
+
+        support_decision = _capped_engine(live_enabled=True).validate(
+            support_intent,
+            narrow_spread_snapshot,
+            for_live_send=True,
+        )
+
+        support_codes = {issue.code for issue in support_decision.issues}
+        self.assertTrue(support_decision.allowed, support_decision.block_reasons)
+        self.assertNotIn("FORECAST_CONFIDENCE_REQUIRED_FOR_LIVE", support_codes)
+        self.assertTrue(support_intent.metadata["bidask_replay_precision_live_ready"])
+        self.assertEqual(
+            support_intent.metadata["bidask_replay_precision_support"]["name"],
+            "EUR_USD_DOWN_S5_BIDASK_HARVEST_TP5_SL7",
+        )
+
+        block_intent = OrderIntent(
+            pair="AUD_JPY",
+            side=Side.LONG,
+            order_type=OrderType.MARKET,
+            units=1000,
+            entry=114.289,
+            tp=114.338,
+            sl=114.250,
+            thesis="AUD_JPY high-confidence long must not replay the losing bucket",
+            market_context=MarketContext(
+                regime="TREND_CONTINUATION campaign lane",
+                narrative="forecast points up",
+                chart_story="S5 replay says this pair-direction lost after spread",
+                method=TradeMethod.TREND_CONTINUATION,
+                invalidation="forecast invalidation",
+            ),
+            metadata={
+                "forecast_direction": "UP",
+                "forecast_confidence": 0.87,
+                "chart_direction_bias": "LONG",
+            },
+        )
+
+        aud_snapshot = snapshot()
+        aud_snapshot = replace(
+            aud_snapshot,
+            quotes={
+                **aud_snapshot.quotes,
+                "AUD_JPY": Quote(
+                    "AUD_JPY",
+                    bid=114.286,
+                    ask=114.289,
+                    timestamp_utc=aud_snapshot.fetched_at_utc,
+                ),
+            },
+        )
+        block_decision = _capped_engine(live_enabled=True).validate(
+            block_intent,
+            aud_snapshot,
+            for_live_send=True,
+        )
+
+        block_codes = {issue.code for issue in block_decision.issues}
+        self.assertFalse(block_decision.allowed)
+        self.assertIn("BIDASK_REPLAY_NEGATIVE_EXPECTANCY_FOR_LIVE", block_codes)
+        self.assertEqual(
+            block_intent.metadata["bidask_replay_precision_negative"]["name"],
+            "AUD_JPY_UP_S5_BIDASK_NEGATIVE_EXPECTANCY",
+        )
+
+    def test_technical_harvest_rotation_does_not_clear_low_confidence_live_send(self) -> None:
+        intent = OrderIntent(
+            pair="GBP_USD",
+            side=Side.SHORT,
+            order_type=OrderType.LIMIT,
+            units=1000,
+            entry=1.27330,
+            tp=1.27280,
+            sl=1.27370,
+            thesis="audited short rotation bucket still needs forecast live support",
             market_context=MarketContext(
                 regime="BREAKOUT_FAILURE rejection retest",
                 narrative="M5 momentum bucket is high-rotation evidence but not a live exception",
@@ -639,10 +749,10 @@ class RiskEngineTest(unittest.TestCase):
             base_snapshot,
             quotes={
                 **base_snapshot.quotes,
-                "EUR_USD": Quote(
-                    "EUR_USD",
-                    bid=1.17326,
-                    ask=1.17330,
+                "GBP_USD": Quote(
+                    "GBP_USD",
+                    bid=1.27326,
+                    ask=1.27330,
                     timestamp_utc=base_snapshot.fetched_at_utc,
                 ),
             },

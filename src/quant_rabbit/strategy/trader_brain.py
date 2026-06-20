@@ -502,10 +502,13 @@ from quant_rabbit.strategy.directional_forecaster import (
     synthesize_forecast,
 )
 from quant_rabbit.forecast_precision import (
+    BIDASK_REPLAY_EDGE_SCORE_BONUS,
+    BIDASK_REPLAY_NEGATIVE_SCORE_PENALTY,
     TECHNICAL_HARVEST_PRECISION_EXTRA_MATCH_BONUS,
     TECHNICAL_HARVEST_PRECISION_SCORE_BONUS,
     TECHNICAL_HARVEST_ROTATION_EXTRA_MATCH_BONUS,
     TECHNICAL_HARVEST_ROTATION_SCORE_BONUS,
+    bidask_replay_precision_assessment,
     technical_harvest_precision_assessment,
 )
 from quant_rabbit.strategy.forecast_persistence_tracker import (
@@ -1387,6 +1390,19 @@ class TraderBrain:
         score += _direction_conflict_penalty(result, rationale)
         score += _mtf_confluence_score(intent, rationale, blockers)
         score += _technical_harvest_precision_score(
+            intent=intent,
+            pair=pair,
+            direction=direction,
+            order_type=order_type,
+            method=method,
+            entry=entry,
+            tp=tp,
+            sl=sl,
+            status=status,
+            rationale=rationale,
+            blockers=blockers,
+        )
+        score += _bidask_replay_precision_score(
             intent=intent,
             pair=pair,
             direction=direction,
@@ -3456,6 +3472,89 @@ def _forecast_market_support_allows_low_confidence_live_ready(
         min_confidence=min_confidence,
         order_type=order_type,
     )
+
+
+def _bidask_replay_precision_score(
+    *,
+    intent: dict[str, Any],
+    pair: str,
+    direction: str,
+    order_type: str,
+    method: str,
+    entry: float | None,
+    tp: float | None,
+    sl: float | None,
+    status: str,
+    rationale: list[str],
+    blockers: list[str],
+) -> float:
+    metadata = intent.get("metadata") if isinstance(intent.get("metadata"), dict) else {}
+    assessment = bidask_replay_precision_assessment(
+        metadata,
+        pair=pair,
+        side=direction,
+        order_type=order_type,
+        method=method,
+        entry=entry,
+        take_profit=tp,
+        stop_loss=sl,
+    )
+    positive = [
+        item for item in assessment.get("positive_supports", [])
+        if isinstance(item, dict)
+    ]
+    negative = [
+        item for item in assessment.get("negative_matches", [])
+        if isinstance(item, dict)
+    ]
+    blocking = [
+        item for item in assessment.get("blocking_negative_matches", [])
+        if isinstance(item, dict)
+    ]
+    if not positive and not negative:
+        return 0.0
+    metadata["bidask_replay_precision_assessment"] = assessment
+    score_delta = _optional_float(assessment.get("score_delta")) or 0.0
+    if positive and not blocking:
+        best = max(
+            positive,
+            key=lambda item: (
+                float(item.get("optimized_profit_factor") or 0.0),
+                float(item.get("avg_final_pips") or 0.0),
+                int(item.get("samples") or 0),
+            ),
+        )
+        rationale.insert(
+            0,
+            "bid/ask replay edge "
+            f"+{BIDASK_REPLAY_EDGE_SCORE_BONUS:.1f}: {best.get('name')} "
+            f"n={int(best.get('samples') or 0)} hit="
+            f"{float(best.get('directional_hit_rate') or 0.0):.2f} "
+            f"avg_final={float(best.get('avg_final_pips') or 0.0):.2f}pip "
+            f"exit=TP{float(best.get('optimized_take_profit_pips') or 0.0):.1f}/"
+            f"SL{float(best.get('optimized_stop_loss_pips') or 0.0):.1f} "
+            f"PF={float(best.get('optimized_profit_factor') or 0.0):.2f}",
+        )
+    if negative:
+        names = ", ".join(str(item.get("name") or item.get("feature")) for item in negative[:3])
+        rationale.insert(
+            0,
+            f"bid/ask replay penalty {score_delta:.1f}: audited losing pair-direction bucket(s) {names}",
+        )
+    if blocking and status == "LIVE_READY":
+        top = blocking[0]
+        blockers.append(
+            "bidask_replay_negative_bucket: "
+            f"{top.get('name')} hit={float(top.get('directional_hit_rate') or 0.0):.2f} "
+            f"avg_final={float(top.get('avg_final_pips') or 0.0):.2f}pip "
+            f"samples={int(top.get('samples') or 0)}"
+        )
+        rationale.insert(
+            0,
+            f"bid/ask replay hard block: {top.get('pair')} {top.get('direction')} lost after spread",
+        )
+        score_delta -= BIDASK_REPLAY_NEGATIVE_SCORE_PENALTY
+    return score_delta
 
 
 def _technical_harvest_precision_score(

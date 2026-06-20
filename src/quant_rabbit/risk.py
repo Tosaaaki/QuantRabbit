@@ -53,6 +53,8 @@ from .models import (
     TradeMethod,
 )
 from .forecast_precision import (
+    bidask_replay_negative_precision_issue,
+    bidask_replay_precision_support,
     hit_rate_wilson_lower,
     support_signal_clears_live_precision,
     technical_harvest_negative_precision_issue,
@@ -687,6 +689,8 @@ def _forecast_unselected_projection_conflict_issues(
             return []
         if _technical_harvest_precision_support_for_intent(intent) is not None:
             return []
+        if _bidask_replay_precision_support_for_intent(intent) is not None:
+            return []
         if _forecast_selected_direction_has_audited_support(
             metadata,
             support,
@@ -724,6 +728,58 @@ def _forecast_unselected_projection_conflict_issues(
 def _forecast_market_support(metadata: dict) -> dict:
     support = metadata.get("forecast_market_support")
     return support if isinstance(support, dict) else {}
+
+
+def _bidask_replay_precision_support_for_intent(intent: OrderIntent) -> dict | None:
+    metadata = intent.metadata or {}
+    method = intent.market_context.method if intent.market_context is not None else None
+    support = bidask_replay_precision_support(
+        metadata,
+        pair=intent.pair,
+        side=intent.side.value,
+        order_type=intent.order_type.value,
+        method=method.value if isinstance(method, TradeMethod) else str(method or ""),
+        entry=_to_float(intent.entry),
+        take_profit=_to_float(intent.tp),
+        stop_loss=_to_float(intent.sl),
+    )
+    if support is not None:
+        metadata["bidask_replay_precision_live_ready"] = True
+        metadata["bidask_replay_precision_support"] = support
+    return support
+
+
+def _bidask_replay_negative_precision_issue_for_intent(intent: OrderIntent) -> RiskIssue | None:
+    metadata = intent.metadata or {}
+    if str(metadata.get("position_intent") or "").upper() == "HEDGE":
+        return None
+    method = intent.market_context.method if intent.market_context is not None else None
+    issue = bidask_replay_negative_precision_issue(
+        metadata,
+        pair=intent.pair,
+        side=intent.side.value,
+        order_type=intent.order_type.value,
+        method=method.value if isinstance(method, TradeMethod) else str(method or ""),
+        entry=_to_float(intent.entry),
+        take_profit=_to_float(intent.tp),
+        stop_loss=_to_float(intent.sl),
+    )
+    if issue is None:
+        return None
+    metadata["bidask_replay_precision_negative"] = issue
+    return RiskIssue(
+        "BIDASK_REPLAY_NEGATIVE_EXPECTANCY_FOR_LIVE",
+        (
+            f"{intent.pair} {intent.side.value} forecast {issue['direction']} matches S5 bid/ask "
+            f"negative replay bucket {issue['name']}: hit_rate="
+            f"{float(issue.get('directional_hit_rate') or 0.0):.2f}, avg_final="
+            f"{float(issue.get('avg_final_pips') or 0.0):.2f}pip, avg_MAE="
+            f"{float(issue.get('avg_mae_pips') or 0.0):.2f}pip over "
+            f"{int(issue.get('samples') or 0)} sample(s). Do not send inside a proven "
+            "bid/ask losing pair-direction."
+        ),
+        severity="BLOCK",
+    )
 
 
 def _technical_harvest_precision_support_for_intent(intent: OrderIntent) -> dict | None:
@@ -2105,7 +2161,12 @@ class RiskEngine:
         negative_issue = _technical_harvest_negative_precision_issue_for_intent(intent)
         if negative_issue is not None:
             return [negative_issue]
+        negative_issue = _bidask_replay_negative_precision_issue_for_intent(intent)
+        if negative_issue is not None:
+            return [negative_issue]
         if _technical_harvest_precision_support_for_intent(intent) is not None:
+            return []
+        if _bidask_replay_precision_support_for_intent(intent) is not None:
             return []
         if _forecast_selected_direction_has_audited_support(
             metadata,
