@@ -641,9 +641,10 @@ class StrategyProfileTest(unittest.TestCase):
                                         "name": "liquidity_sweep_low",
                                         "direction": "UP",
                                         "confidence": 0.65,
-                                        "hit_rate": 0.92,
-                                        "samples": 41,
+                                        "hit_rate": 1.0,
+                                        "samples": 40,
                                         "lead_time_min": 15.0,
+                                        "target_pips": 6.0,
                                     }
                                 ],
                             },
