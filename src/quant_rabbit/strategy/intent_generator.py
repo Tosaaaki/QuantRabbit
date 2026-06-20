@@ -7,9 +7,15 @@ import sqlite3
 from dataclasses import asdict, dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, Sequence
 
 from quant_rabbit.instruments import DEFAULT_TRADER_PAIRS, instrument_pip_factor
+from quant_rabbit.forecast_precision import (
+    hit_rate_wilson_lower,
+    support_signal_clears_live_precision,
+    target_pips_from_text,
+)
 from quant_rabbit.models import BrokerOrder, BrokerPosition, BrokerSnapshot, MarketContext, OrderIntent, OrderType, Owner, Quote, Side, TradeMethod
 from quant_rabbit.paths import (
     DEFAULT_CAMPAIGN_PLAN,
@@ -835,6 +841,31 @@ FORECAST_STRONG_DIRECTIONAL_MIN_SAMPLES = _env_int(
     "QR_FORECAST_STRONG_DIRECTIONAL_MIN_SAMPLES",
     max(30, FORECAST_MARKET_SUPPORT_MIN_SAMPLES),
     minimum=FORECAST_MARKET_SUPPORT_MIN_SAMPLES,
+)
+# Live precision proof (2026-06-20).
+#
+# Current ledger audit found the root failure in the user's "90% accuracy"
+# request: some projection buckets touch their target >90% of the time only
+# because the target is sub-pip and cannot pay spread. Live support must
+# therefore prove both (a) a Wilson lower-bound hit rate at or above the
+# operator's 90% target and (b) a non-micro target width for target-bearing
+# signals such as liquidity sweeps. These constants are policy floors over
+# current projection-ledger truth; replace them only after realized execution
+# expectancy shows a different break-even precision/target-width surface.
+FORECAST_LIVE_PRECISION_MIN_WILSON_LOWER = _env_float(
+    "QR_FORECAST_LIVE_PRECISION_MIN_WILSON_LOWER",
+    0.90,
+    minimum=0.50,
+)
+FORECAST_LIVE_PRECISION_MIN_SAMPLES = _env_int(
+    "QR_FORECAST_LIVE_PRECISION_MIN_SAMPLES",
+    max(30, FORECAST_STRONG_DIRECTIONAL_MIN_SAMPLES),
+    minimum=FORECAST_MARKET_SUPPORT_MIN_SAMPLES,
+)
+FORECAST_LIVE_PRECISION_MIN_TARGET_PIPS = _env_float(
+    "QR_FORECAST_LIVE_PRECISION_MIN_TARGET_PIPS",
+    2.0,
+    minimum=0.0,
 )
 # Failed-break LIMITs are not breakout-proof like STOP entries, but they are
 # also not market chases: the order waits for a retest and the attached TP is
@@ -2700,7 +2731,7 @@ def _record_forecast_seed_telemetry(
             cycle_id=cycle_id,
             now=emission_time,
         )
-        projection_signals = list(getattr(forecast_record, "projection_signals", ()) or ())
+        projection_signals = _forecast_projection_signals_for_telemetry(forecast_record)
         if projection_signals:
             record_projections(
                 projection_signals,
@@ -2713,6 +2744,45 @@ def _record_forecast_seed_telemetry(
             )
     except Exception:
         return
+
+
+def _forecast_projection_signals_for_telemetry(forecast: Any) -> list[Any]:
+    signals = list(getattr(forecast, "projection_signals", ()) or ())
+    seen = {
+        (
+            str(getattr(signal, "name", "") or ""),
+            str(getattr(signal, "direction", "") or ""),
+        )
+        for signal in signals
+    }
+    support = _forecast_market_support_payload(getattr(forecast, "market_support", None))
+    support_reason = str(support.get("reason") or "")
+    forecast_horizon_min = _optional_float(getattr(forecast, "horizon_min", None))
+    for raw in support.get("signals") or []:
+        if not isinstance(raw, dict):
+            continue
+        name = str(raw.get("name") or "").strip()
+        direction = str(raw.get("direction") or "").strip()
+        if not name or not direction:
+            continue
+        key = (name, direction)
+        if key in seen:
+            continue
+        lead_time = _optional_float(raw.get("lead_time_min"))
+        if lead_time is None:
+            lead_time = forecast_horizon_min or 0.0
+        signals.append(
+            SimpleNamespace(
+                name=name,
+                timeframe=str(raw.get("timeframe") or ""),
+                direction=direction,
+                lead_time_min=lead_time,
+                confidence=_optional_float(raw.get("confidence")) or 0.0,
+                rationale=str(raw.get("rationale") or support_reason),
+            )
+        )
+        seen.add(key)
+    return signals
 
 
 def _quote_fresh_for_forecast_seed_telemetry(
@@ -3068,6 +3138,37 @@ def _forecast_projection_support_sort_key(item: dict[str, Any]) -> tuple[float, 
     )
 
 
+def _projection_signal_target_pips_payload(signal: Any) -> float | None:
+    direct = _optional_float(getattr(signal, "target_pips", None))
+    if direct is not None and direct >= 0.0:
+        return round(direct, 4)
+    return_target = target_pips_from_text(str(getattr(signal, "rationale", "") or ""))
+    return round(return_target, 4) if return_target is not None else None
+
+
+def _enrich_projection_support_precision(item: dict[str, Any], signal: Any | None = None) -> dict[str, Any]:
+    target_pips = _projection_signal_target_pips_payload(signal) if signal is not None else None
+    if target_pips is not None:
+        item["target_pips"] = target_pips
+    lower = hit_rate_wilson_lower(
+        _optional_float(item.get("hit_rate")),
+        _optional_int(item.get("samples")),
+    )
+    if lower is not None:
+        item["hit_rate_wilson_lower"] = round(lower, 4)
+    item["live_precision_ok"] = _forecast_support_signal_clears_live_precision(item)
+    return item
+
+
+def _forecast_support_signal_clears_live_precision(signal: dict[str, Any]) -> bool:
+    return support_signal_clears_live_precision(
+        signal,
+        min_wilson_lower=FORECAST_LIVE_PRECISION_MIN_WILSON_LOWER,
+        min_samples=FORECAST_LIVE_PRECISION_MIN_SAMPLES,
+        min_target_pips=FORECAST_LIVE_PRECISION_MIN_TARGET_PIPS,
+    )
+
+
 def _dedupe_forecast_projection_support(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
     # A calibration bucket is one learned edge. Repeated macro events or
     # duplicate same-timeframe signals must not inflate the support count.
@@ -3245,12 +3346,21 @@ def _forecast_market_support_for_forecast(
             "lead_time_min": _projection_signal_lead_time_payload(signal),
             "rationale": str(getattr(signal, "rationale", "") or "")[:180],
         }
+        item = _enrich_projection_support_precision(item, signal)
         considered.append(item)
         if samples < FORECAST_MARKET_SUPPORT_MIN_SAMPLES:
             continue
-        if signal_direction == direction and hit_rate >= FORECAST_MARKET_SUPPORT_MIN_DIRECTIONAL_HIT_RATE:
+        if (
+            signal_direction == direction
+            and hit_rate >= FORECAST_MARKET_SUPPORT_MIN_DIRECTIONAL_HIT_RATE
+            and _forecast_support_signal_clears_live_precision(item)
+        ):
             aligned.append(item)
-        elif signal_direction == "EITHER" and hit_rate >= FORECAST_MARKET_SUPPORT_MIN_TIMING_HIT_RATE:
+        elif (
+            signal_direction == "EITHER"
+            and hit_rate >= FORECAST_MARKET_SUPPORT_MIN_TIMING_HIT_RATE
+            and _forecast_support_signal_clears_live_precision(item)
+        ):
             timing.append(item)
 
     aligned = _dedupe_forecast_projection_support(aligned)
@@ -3258,6 +3368,7 @@ def _forecast_market_support_for_forecast(
     considered = _dedupe_forecast_projection_support(considered)
     entry_min = _forecast_seed_min_confidence_for_direction(direction)
     timing_with_raw_direction = bool(timing) and raw_confidence is not None and raw_confidence >= entry_min
+    bootstrap = [item for item in bootstrap if _forecast_support_signal_clears_live_precision(item)]
     ok = bool(aligned) or timing_with_raw_direction or bool(bootstrap)
     display_support = (aligned + timing) if (aligned or timing) else bootstrap
     best_aligned = aligned[0] if aligned else None
@@ -3432,7 +3543,8 @@ def _forecast_unselected_projection_support(
         if hit_rate < FORECAST_MARKET_SUPPORT_MIN_DIRECTIONAL_HIT_RATE:
             continue
         out.append(
-            {
+            _enrich_projection_support_precision(
+                {
                 "name": name,
                 "calibration_name": calibration_name,
                 "direction": signal_direction,
@@ -3442,7 +3554,9 @@ def _forecast_unselected_projection_support(
                 "timeframe": getattr(signal, "timeframe", None),
                 "lead_time_min": _projection_signal_lead_time_payload(signal),
                 "rationale": str(getattr(signal, "rationale", "") or "")[:180],
-            }
+                },
+                signal,
+            )
         )
     return _dedupe_forecast_projection_support(out)
 
@@ -3501,6 +3615,8 @@ def _forecast_bootstrap_projection_support(
             and audit_hit_rate < FORECAST_MARKET_SUPPORT_MIN_DIRECTIONAL_HIT_RATE
         ):
             continue
+        if audit_hit_rate is None or audit_samples < FORECAST_LIVE_PRECISION_MIN_SAMPLES:
+            continue
         if audit_hit_rate is not None and audit_samples >= FORECAST_MARKET_SUPPORT_MIN_SAMPLES:
             audit_text = f"audited hit_rate={audit_hit_rate:.2f} samples={audit_samples}"
         elif audit_samples > 0:
@@ -3511,7 +3627,8 @@ def _forecast_bootstrap_projection_support(
         else:
             audit_text = "ledger samples pending"
         out.append(
-            {
+            _enrich_projection_support_precision(
+                {
                 "name": name,
                 "calibration_name": calibration_name,
                 "direction": signal_direction,
@@ -3527,7 +3644,9 @@ def _forecast_bootstrap_projection_support(
                     f"raw_forecast_conf={raw_confidence:.2f}, calibrated_conf={confidence:.2f}; "
                     f"{audit_text}"
                 ),
-            }
+                },
+                signal,
+            )
         )
     return sorted(out, key=lambda item: item["confidence"], reverse=True)
 
@@ -6869,10 +6988,18 @@ def _forecast_direction_conflict_issue(intent: OrderIntent, metadata: dict[str, 
         return None
     min_confidence = _forecast_live_min_confidence(metadata)
     support = _forecast_market_support_payload(metadata.get("forecast_market_support"))
+    recovery_reversal_hedge = (
+        _is_hedge_recovery_metadata(metadata)
+        and str(metadata.get("hedge_timing_class") or "").upper() == "REVERSAL"
+    )
     if (
-        confidence is None
-        or confidence < min_confidence
-        or _forecast_directional_bucket_is_known_weak(metadata, support)
+        not recovery_reversal_hedge
+        and (
+            confidence is None
+            or confidence < min_confidence
+            or _forecast_directional_bucket_is_known_weak(metadata, support)
+            or not _forecast_directional_bucket_clears_live_precision(metadata, support)
+        )
     ):
         if not _forecast_supported_opposite_side_blocks(
             metadata,
@@ -6939,7 +7066,13 @@ def _forecast_supported_opposite_side_blocks(
     if samples < FORECAST_MARKET_SUPPORT_MIN_SAMPLES:
         return False
     hit_rate = _optional_float(support.get("best_hit_rate")) or 0.0
-    return hit_rate >= FORECAST_MARKET_SUPPORT_MIN_DIRECTIONAL_HIT_RATE
+    if hit_rate < FORECAST_MARKET_SUPPORT_MIN_DIRECTIONAL_HIT_RATE:
+        return False
+    return _forecast_market_support_has_current_directional_signal(
+        support,
+        direction=direction,
+        forecast_horizon_min=_optional_float(metadata.get("forecast_horizon_min")),
+    )
 
 
 def _trend_timeframe_support_count(metadata: dict[str, Any], side: Side) -> int:
@@ -7017,6 +7150,10 @@ def _forecast_live_readiness_issue(
     confidence = _optional_float(metadata.get("forecast_confidence"))
     min_confidence = _forecast_live_min_confidence(metadata)
     recovery_reversal_override = _reversal_recovery_chart_forecast_override(intent, metadata)
+    recovery_reversal_hedge = (
+        _is_hedge_recovery_metadata(metadata)
+        and str(metadata.get("hedge_timing_class") or "").upper() == "REVERSAL"
+    )
     if direction not in {"UP", "DOWN", "RANGE"}:
         if recovery_reversal_override:
             return None
@@ -7082,6 +7219,8 @@ def _forecast_live_readiness_issue(
     adverse_path_issue = _forecast_directional_invalidation_first_issue(intent, metadata, direction=direction)
     if adverse_path_issue is not None:
         return adverse_path_issue
+    if recovery_reversal_hedge:
+        return None
     weak_calibration_issue = _forecast_directional_hit_rate_issue(intent, metadata, direction=direction)
     if weak_calibration_issue is not None:
         return weak_calibration_issue
@@ -7100,15 +7239,25 @@ def _forecast_directional_hit_rate_issue(
     if intent.side.value != expected_side:
         return None
     support = _forecast_market_support_payload(metadata.get("forecast_market_support"))
+    if _forecast_market_support_override(
+        intent,
+        metadata,
+        min_confidence=_forecast_live_min_confidence(metadata),
+    ):
+        return None
     hit_rate = _optional_float(metadata.get("forecast_directional_hit_rate"))
     if hit_rate is None:
         hit_rate = _optional_float(support.get("directional_hit_rate"))
     samples = _optional_int(metadata.get("forecast_directional_samples")) or 0
     if samples <= 0:
         samples = _optional_int(support.get("directional_samples")) or 0
-    if hit_rate is None or samples < FORECAST_DIRECTIONAL_LIVE_MIN_SAMPLES:
-        return None
-    if hit_rate >= FORECAST_DIRECTIONAL_LIVE_MIN_HIT_RATE:
+    lower = hit_rate_wilson_lower(hit_rate, samples)
+    if (
+        hit_rate is not None
+        and samples >= FORECAST_LIVE_PRECISION_MIN_SAMPLES
+        and lower is not None
+        and lower >= FORECAST_LIVE_PRECISION_MIN_WILSON_LOWER
+    ):
         return None
     calibration_name = str(
         metadata.get("forecast_directional_calibration_name")
@@ -7119,9 +7268,11 @@ def _forecast_directional_hit_rate_issue(
         "code": "FORECAST_DIRECTIONAL_HIT_RATE_WEAK_FOR_LIVE",
         "message": (
             f"{intent.pair} {intent.side.value} forecast {direction} bucket "
-            f"{calibration_name} hit_rate={hit_rate:.2f} over {samples} sample(s) is below "
-            f"{FORECAST_DIRECTIONAL_LIVE_MIN_HIT_RATE:.2f}; keep this forecast as dry-run "
-            "until the calibrated direction recovers or independent live evidence replaces it."
+            f"{calibration_name} hit_rate={0.0 if hit_rate is None else hit_rate:.2f}, "
+            f"Wilson95_lower={0.0 if lower is None else lower:.2f} over {samples} sample(s); "
+            f"live requires Wilson95_lower>={FORECAST_LIVE_PRECISION_MIN_WILSON_LOWER:.2f} "
+            f"and samples>={FORECAST_LIVE_PRECISION_MIN_SAMPLES}. Keep this forecast dry-run "
+            "until the calibrated direction proves 90%+ precision or independent live evidence replaces it."
         ),
         "severity": "WARN",
     }
@@ -7407,6 +7558,7 @@ def _forecast_market_support_has_strong_directional_signal(
             confidence >= FORECAST_STRONG_DIRECTIONAL_MIN_SIGNAL_CONFIDENCE
             and hit_rate >= FORECAST_STRONG_DIRECTIONAL_MIN_HIT_RATE
             and samples >= FORECAST_STRONG_DIRECTIONAL_MIN_SAMPLES
+            and _forecast_support_signal_clears_live_precision(signal)
         ):
             return True
     return False
@@ -7424,14 +7576,34 @@ def _forecast_market_support_has_current_directional_signal(
         if isinstance(signal, dict) and str(signal.get("direction") or "").upper() == direction
     ]
     if not directional_signals:
-        # Legacy/unit payloads may expose only aggregate aligned counts.
-        return True
+        return False
     return any(
         _support_signal_within_forecast_horizon(
             signal,
             forecast_horizon_min=forecast_horizon_min,
         )
+        and _forecast_support_signal_clears_live_precision(signal)
         for signal in directional_signals
+    )
+
+
+def _forecast_market_support_has_current_timing_signal(
+    support: dict[str, Any],
+    *,
+    forecast_horizon_min: float | None = None,
+) -> bool:
+    timing_signals = [
+        signal
+        for signal in support.get("signals") or []
+        if isinstance(signal, dict) and str(signal.get("direction") or "").upper() == "EITHER"
+    ]
+    return any(
+        _support_signal_within_forecast_horizon(
+            signal,
+            forecast_horizon_min=forecast_horizon_min,
+        )
+        and _forecast_support_signal_clears_live_precision(signal)
+        for signal in timing_signals
     )
 
 
@@ -7479,6 +7651,25 @@ def _forecast_directional_bucket_is_known_weak(
         and invalidation_first_rate >= FORECAST_DIRECTIONAL_LIVE_MAX_INVALIDATION_FIRST_RATE
     )
     return weak_hit_rate or adverse_path
+
+
+def _forecast_directional_bucket_clears_live_precision(
+    metadata: dict[str, Any],
+    support: dict[str, Any],
+) -> bool:
+    hit_rate = _optional_float(metadata.get("forecast_directional_hit_rate"))
+    if hit_rate is None:
+        hit_rate = _optional_float(support.get("directional_hit_rate"))
+    samples = _optional_int(metadata.get("forecast_directional_samples")) or 0
+    if samples <= 0:
+        samples = _optional_int(support.get("directional_samples")) or 0
+    lower = hit_rate_wilson_lower(hit_rate, samples)
+    return (
+        hit_rate is not None
+        and samples >= FORECAST_LIVE_PRECISION_MIN_SAMPLES
+        and lower is not None
+        and lower >= FORECAST_LIVE_PRECISION_MIN_WILSON_LOWER
+    )
 
 
 def _forecast_market_support_allows_side(
@@ -7582,6 +7773,10 @@ def _forecast_market_support_allows_side(
         timing_count > 0
         and (timing_samples or 0) >= FORECAST_MARKET_SUPPORT_MIN_SAMPLES
         and (timing_hit_rate or 0.0) >= FORECAST_MARKET_SUPPORT_MIN_TIMING_HIT_RATE
+        and _forecast_market_support_has_current_timing_signal(
+            support,
+            forecast_horizon_min=forecast_horizon_min,
+        )
     )
     known_weak_direction_bucket = _forecast_directional_bucket_is_known_weak(
         source if isinstance(source, dict) else {},
@@ -7655,6 +7850,10 @@ def _forecast_market_support_allows_side(
         and raw_confidence >= min_confidence
         and (timing_samples or 0) >= FORECAST_MARKET_SUPPORT_MIN_SAMPLES
         and (timing_hit_rate or 0.0) >= FORECAST_MARKET_SUPPORT_MIN_TIMING_HIT_RATE
+        and _forecast_market_support_has_current_timing_signal(
+            support,
+            forecast_horizon_min=forecast_horizon_min,
+        )
     )
 
 
@@ -7756,6 +7955,7 @@ def _forecast_range_unselected_projection_support_allows_side(
             signal_confidence >= FORECAST_MARKET_SUPPORT_MIN_SIGNAL_CONFIDENCE
             and hit_rate >= FORECAST_MARKET_SUPPORT_MIN_DIRECTIONAL_HIT_RATE
             and samples >= FORECAST_MARKET_SUPPORT_MIN_SAMPLES
+            and _forecast_support_signal_clears_live_precision(signal)
         ):
             return True
     return False
@@ -7807,6 +8007,7 @@ def _forecast_unclear_unselected_projection_support_allows_side(
             signal_confidence >= FORECAST_MARKET_SUPPORT_MIN_SIGNAL_CONFIDENCE
             and hit_rate >= FORECAST_MARKET_SUPPORT_MIN_DIRECTIONAL_HIT_RATE
             and samples >= FORECAST_MARKET_SUPPORT_MIN_SAMPLES
+            and _forecast_support_signal_clears_live_precision(signal)
         )
         if not strong_enough:
             continue

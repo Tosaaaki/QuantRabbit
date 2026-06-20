@@ -52,6 +52,7 @@ from .models import (
     Side,
     TradeMethod,
 )
+from .forecast_precision import hit_rate_wilson_lower, support_signal_clears_live_precision
 from .instruments import DEFAULT_TRADER_PAIRS, NORMAL_SPREAD_PIPS, instrument_pip_factor
 
 # OANDA Japan retail FX margin in the current account is 25:1 leverage, i.e.
@@ -227,6 +228,21 @@ FORECAST_DIRECTIONAL_LIVE_MIN_SAMPLES = max(
 FORECAST_DIRECTIONAL_LIVE_MAX_INVALIDATION_FIRST_RATE = _env_float_or(
     "QR_FORECAST_DIRECTIONAL_LIVE_MAX_INVALIDATION_FIRST_RATE",
     0.60,
+    minimum=0.0,
+)
+FORECAST_LIVE_PRECISION_MIN_WILSON_LOWER = _env_float_or(
+    "QR_FORECAST_LIVE_PRECISION_MIN_WILSON_LOWER",
+    0.90,
+    minimum=0.50,
+)
+FORECAST_LIVE_PRECISION_MIN_SAMPLES = max(
+    FORECAST_MARKET_SUPPORT_MIN_SAMPLES,
+    _env_optional_int("QR_FORECAST_LIVE_PRECISION_MIN_SAMPLES", None)
+    or max(30, FORECAST_DIRECTIONAL_LIVE_MIN_SAMPLES),
+)
+FORECAST_LIVE_PRECISION_MIN_TARGET_PIPS = _env_float_or(
+    "QR_FORECAST_LIVE_PRECISION_MIN_TARGET_PIPS",
+    2.0,
     minimum=0.0,
 )
 
@@ -703,6 +719,30 @@ def _forecast_market_support(metadata: dict) -> dict:
     return support if isinstance(support, dict) else {}
 
 
+def _forecast_support_signal_clears_live_precision(signal: dict) -> bool:
+    return support_signal_clears_live_precision(
+        signal,
+        min_wilson_lower=FORECAST_LIVE_PRECISION_MIN_WILSON_LOWER,
+        min_samples=FORECAST_LIVE_PRECISION_MIN_SAMPLES,
+        min_target_pips=FORECAST_LIVE_PRECISION_MIN_TARGET_PIPS,
+    )
+
+
+def _forecast_market_support_has_current_directional_signal(
+    support: dict,
+    *,
+    direction: str,
+) -> bool:
+    for signal in support.get("signals") or []:
+        if not isinstance(signal, dict):
+            continue
+        if str(signal.get("direction") or "").upper() != direction:
+            continue
+        if _forecast_support_signal_clears_live_precision(signal):
+            return True
+    return False
+
+
 def _forecast_selected_direction_has_audited_support(
     metadata: dict,
     support: dict,
@@ -730,7 +770,12 @@ def _forecast_selected_direction_has_audited_support(
     hit_rate = _to_float(support.get("best_aligned_hit_rate"))
     if hit_rate is None:
         hit_rate = _to_float(support.get("best_hit_rate"))
-    return hit_rate is not None and hit_rate >= FORECAST_MARKET_SUPPORT_MIN_DIRECTIONAL_HIT_RATE
+    if hit_rate is None or hit_rate < FORECAST_MARKET_SUPPORT_MIN_DIRECTIONAL_HIT_RATE:
+        return False
+    return _forecast_market_support_has_current_directional_signal(
+        support,
+        direction=direction,
+    )
 
 
 def _forecast_directional_hit_rate(metadata: dict, support: dict) -> tuple[float | None, int, str]:
@@ -746,6 +791,17 @@ def _forecast_directional_hit_rate(metadata: dict, support: dict) -> tuple[float
         or "directional_forecast"
     )
     return hit_rate, samples, calibration_name
+
+
+def _forecast_directional_bucket_clears_live_precision(metadata: dict, support: dict) -> bool:
+    hit_rate, samples, _ = _forecast_directional_hit_rate(metadata, support)
+    lower = hit_rate_wilson_lower(hit_rate, samples)
+    return (
+        hit_rate is not None
+        and samples >= FORECAST_LIVE_PRECISION_MIN_SAMPLES
+        and lower is not None
+        and lower >= FORECAST_LIVE_PRECISION_MIN_WILSON_LOWER
+    )
 
 
 def _forecast_directional_bucket_is_known_weak(metadata: dict, support: dict) -> bool:
@@ -943,6 +999,7 @@ def _forecast_range_unselected_projection_support_allows_side(
             signal_confidence >= FORECAST_MARKET_SUPPORT_MIN_SIGNAL_CONFIDENCE
             and hit_rate >= FORECAST_MARKET_SUPPORT_MIN_DIRECTIONAL_HIT_RATE
             and samples >= FORECAST_MARKET_SUPPORT_MIN_SAMPLES
+            and _forecast_support_signal_clears_live_precision(signal)
         ):
             return True
     return False
@@ -1024,14 +1081,16 @@ def _forecast_directional_hit_rate_weak_issue(
     support: dict,
 ) -> RiskIssue:
     hit_rate, samples, calibration_name = _forecast_directional_hit_rate(metadata, support)
+    lower = hit_rate_wilson_lower(hit_rate, samples)
     return RiskIssue(
         "FORECAST_DIRECTIONAL_HIT_RATE_WEAK_FOR_LIVE",
         (
             f"{intent.pair} {intent.side.value} forecast {direction} bucket "
-            f"{calibration_name} hit_rate={0.0 if hit_rate is None else hit_rate:.2f} "
-            f"over {samples} sample(s) is below {FORECAST_DIRECTIONAL_LIVE_MIN_HIT_RATE:.2f}; "
-            "this weak bucket cannot veto the opposite side or authorize live send without "
-            "independent audited projection support."
+            f"{calibration_name} hit_rate={0.0 if hit_rate is None else hit_rate:.2f}, "
+            f"Wilson95_lower={0.0 if lower is None else lower:.2f} over {samples} sample(s); "
+            f"live requires Wilson95_lower>={FORECAST_LIVE_PRECISION_MIN_WILSON_LOWER:.2f} "
+            f"and samples>={FORECAST_LIVE_PRECISION_MIN_SAMPLES}. This bucket cannot "
+            "authorize live send without independent audited projection support."
         ),
         severity="BLOCK",
     )
@@ -1922,6 +1981,7 @@ class RiskEngine:
             confidence is None
             or confidence < min_confidence
             or _forecast_directional_bucket_is_known_weak(metadata, support)
+            or not _forecast_directional_bucket_clears_live_precision(metadata, support)
         )
         if unsupported_weak_forecast and not _forecast_supported_opposite_side_blocks(
             metadata,
@@ -1930,7 +1990,10 @@ class RiskEngine:
         ):
             if not for_live_send:
                 return []
-            if _forecast_directional_bucket_is_known_weak(metadata, support):
+            if (
+                _forecast_directional_bucket_is_known_weak(metadata, support)
+                or not _forecast_directional_bucket_clears_live_precision(metadata, support)
+            ):
                 return [
                     _forecast_directional_bucket_issue(
                         intent,
@@ -1989,7 +2052,18 @@ class RiskEngine:
             direction=direction,
         ):
             return []
-        if _forecast_directional_bucket_is_known_weak(metadata, support):
+        confidence = _to_float(metadata.get("forecast_confidence"))
+        min_confidence = FORECAST_DIRECTIONAL_LIVE_MIN_CONFIDENCE
+        if confidence is None or confidence < min_confidence:
+            return [
+                _forecast_confidence_required_issue(
+                    intent,
+                    direction=direction,
+                    confidence=confidence,
+                    min_confidence=min_confidence,
+                )
+            ]
+        if not _forecast_directional_bucket_clears_live_precision(metadata, support):
             return [
                 _forecast_directional_bucket_issue(
                     intent,
@@ -1998,18 +2072,7 @@ class RiskEngine:
                     support=support,
                 )
             ]
-        confidence = _to_float(metadata.get("forecast_confidence"))
-        min_confidence = FORECAST_DIRECTIONAL_LIVE_MIN_CONFIDENCE
-        if confidence is not None and confidence >= min_confidence:
-            return []
-        return [
-            _forecast_confidence_required_issue(
-                intent,
-                direction=direction,
-                confidence=confidence,
-                min_confidence=min_confidence,
-            )
-        ]
+        return []
 
     def _forecast_geometry_issues(
         self,

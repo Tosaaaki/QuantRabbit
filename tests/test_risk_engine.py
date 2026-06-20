@@ -356,6 +356,9 @@ class RiskEngineTest(unittest.TestCase):
                 "forecast_confidence": 0.82,
                 "forecast_target_price": 1.17400,
                 "forecast_invalidation_price": 1.17270,
+                "forecast_directional_calibration_name": "directional_forecast_up",
+                "forecast_directional_hit_rate": 1.0,
+                "forecast_directional_samples": 40,
             },
         )
 
@@ -387,6 +390,9 @@ class RiskEngineTest(unittest.TestCase):
                 "forecast_confidence": 0.83,
                 "forecast_target_price": 1.17180,
                 "forecast_invalidation_price": 1.17420,
+                "forecast_directional_calibration_name": "directional_forecast_down",
+                "forecast_directional_hit_rate": 1.0,
+                "forecast_directional_samples": 40,
             },
         )
 
@@ -790,7 +796,7 @@ class RiskEngineTest(unittest.TestCase):
                             "direction": "DOWN",
                             "confidence": 0.8,
                             "hit_rate": 1.0,
-                            "samples": 12,
+                            "samples": 40,
                             "lead_time_min": 20.0,
                         }
                     ]
@@ -836,7 +842,7 @@ class RiskEngineTest(unittest.TestCase):
                             "direction": "DOWN",
                             "confidence": 0.8,
                             "hit_rate": 1.0,
-                            "samples": 12,
+                            "samples": 40,
                             "lead_time_min": 20.0,
                         }
                     ]
@@ -917,8 +923,17 @@ class RiskEngineTest(unittest.TestCase):
                     "ok": True,
                     "direction": "DOWN",
                     "aligned_projection_count": 1,
-                    "best_hit_rate": 0.74,
-                    "best_samples": 35,
+                    "best_hit_rate": 1.0,
+                    "best_samples": 40,
+                    "signals": [
+                        {
+                            "name": "macro_event_nowcast_central_bank",
+                            "direction": "DOWN",
+                            "confidence": 0.9,
+                            "hit_rate": 1.0,
+                            "samples": 40,
+                        }
+                    ],
                     "unselected_signals": [
                         {
                             "name": "liquidity_sweep_low",

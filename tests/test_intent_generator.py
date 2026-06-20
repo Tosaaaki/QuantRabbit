@@ -24,6 +24,32 @@ from quant_rabbit.strategy.intent_generator import (
 from quant_rabbit.strategy.lane_history_ledger import SameDayLossStreak
 
 
+def _high_precision_market_support(direction: str) -> dict:
+    return {
+        "ok": True,
+        "direction": direction,
+        "aligned_projection_count": 1,
+        "timing_projection_count": 0,
+        "best_hit_rate": 1.0,
+        "best_samples": 40,
+        "best_aligned_hit_rate": 1.0,
+        "best_aligned_samples": 40,
+        "directional_calibration_name": f"directional_forecast_{direction.lower()}",
+        "directional_hit_rate": 1.0,
+        "directional_samples": 40,
+        "reason": f"macro_event_nowcast_central_bank {direction} hit_rate=1.00 samples=40 supports forecast",
+        "signals": [
+            {
+                "name": "macro_event_nowcast_central_bank",
+                "direction": direction,
+                "confidence": 0.9,
+                "hit_rate": 1.0,
+                "samples": 40,
+            }
+        ],
+    }
+
+
 class IntentGeneratorTest(unittest.TestCase):
     def setUp(self) -> None:
         self._default_root_tmp = tempfile.TemporaryDirectory()
@@ -1348,6 +1374,7 @@ class IntentGeneratorTest(unittest.TestCase):
                     rationale_summary="DOWN forecast from current tape",
                     drivers_for=("pair_chart SHORT_LEAN",),
                     drivers_against=("range bounce risk",),
+                    market_support=_high_precision_market_support("DOWN"),
                 )
 
                 with (
@@ -1422,6 +1449,7 @@ class IntentGeneratorTest(unittest.TestCase):
                     drivers_for=("pair_chart SHORT_LEAN",),
                     drivers_against=("range bounce risk",),
                     projection_signals=(projection_signal,),
+                    market_support=_high_precision_market_support("DOWN"),
                 )
 
                 with (
@@ -1527,6 +1555,7 @@ class IntentGeneratorTest(unittest.TestCase):
                     rationale_summary="DOWN forecast from current tape",
                     drivers_for=("pair_chart SHORT_LEAN",),
                     drivers_against=("range bounce risk",),
+                    market_support=_high_precision_market_support("DOWN"),
                 )
 
                 with (
@@ -1670,6 +1699,7 @@ class IntentGeneratorTest(unittest.TestCase):
                     rationale_summary="DOWN forecast from current tape",
                     drivers_for=("pair_chart SHORT_LEAN",),
                     drivers_against=("range bounce risk",),
+                    market_support=_high_precision_market_support("DOWN"),
                 )
 
                 with (
@@ -1737,6 +1767,7 @@ class IntentGeneratorTest(unittest.TestCase):
                     rationale_summary="DOWN forecast from current tape",
                     drivers_for=("pair_chart SHORT_LEAN",),
                     drivers_against=("range bounce risk",),
+                    market_support=_high_precision_market_support("DOWN"),
                 )
 
                 with (
@@ -1807,6 +1838,7 @@ class IntentGeneratorTest(unittest.TestCase):
                     rationale_summary="DOWN forecast from current tape",
                     drivers_for=("pair_chart SHORT_LEAN",),
                     drivers_against=("range bounce risk",),
+                    market_support=_high_precision_market_support("DOWN"),
                 )
 
                 with (
@@ -1882,6 +1914,7 @@ class IntentGeneratorTest(unittest.TestCase):
                     rationale_summary="DOWN forecast from current tape",
                     drivers_for=("pair_chart SHORT_LEAN",),
                     drivers_against=("range bounce risk",),
+                    market_support=_high_precision_market_support("DOWN"),
                 )
 
                 with (
@@ -1994,6 +2027,7 @@ class IntentGeneratorTest(unittest.TestCase):
                     rationale_summary="UP forecast from current tape",
                     drivers_for=("sell-side sweep fade",),
                     drivers_against=("old profile is watch-only",),
+                    market_support=_high_precision_market_support("UP"),
                 )
 
                 with patch(
@@ -2183,6 +2217,7 @@ class IntentGeneratorTest(unittest.TestCase):
                     rationale_summary="DOWN forecast from current tape",
                     drivers_for=("pair_chart SHORT_LEAN",),
                     drivers_against=("range bounce risk",),
+                    market_support=_high_precision_market_support("DOWN"),
                 )
 
                 with patch(
@@ -2251,6 +2286,7 @@ class IntentGeneratorTest(unittest.TestCase):
                     rationale_summary="DOWN forecast from current tape",
                     drivers_for=("pair_chart SHORT_LEAN",),
                     drivers_against=("range bounce risk",),
+                    market_support=_high_precision_market_support("DOWN"),
                 )
 
                 with patch(
@@ -2437,19 +2473,22 @@ class IntentGeneratorTest(unittest.TestCase):
                     "direction": "UP",
                     "aligned_projection_count": 1,
                     "timing_projection_count": 0,
-                    "best_hit_rate": 0.62,
-                    "best_samples": 48,
+                    "best_hit_rate": 1.0,
+                    "best_samples": 40,
+                    "best_aligned_hit_rate": 1.0,
+                    "best_aligned_samples": 40,
                     "directional_calibration_name": "directional_forecast_up",
-                    "directional_hit_rate": 0.62,
-                    "directional_samples": 48,
-                    "reason": "liquidity_sweep_low UP hit_rate=0.62 samples=48 supports weak calibrated forecast",
+                    "directional_hit_rate": 1.0,
+                    "directional_samples": 40,
+                    "reason": "liquidity_sweep_low UP hit_rate=1.00 samples=40 supports weak calibrated forecast",
                     "signals": [
                         {
                             "name": "liquidity_sweep_low",
                             "direction": "UP",
                             "confidence": 0.88,
-                            "hit_rate": 0.62,
-                            "samples": 48,
+                            "hit_rate": 1.0,
+                            "samples": 40,
+                            "target_pips": 6.0,
                         }
                     ],
                 },
@@ -2487,8 +2526,8 @@ class IntentGeneratorTest(unittest.TestCase):
             all(
                 item["intent"]["metadata"]["forecast_directional_calibration_name"]
                 == "directional_forecast_up"
-                and item["intent"]["metadata"]["forecast_directional_hit_rate"] == 0.62
-                and item["intent"]["metadata"]["forecast_directional_samples"] == 48
+                and item["intent"]["metadata"]["forecast_directional_hit_rate"] == 1.0
+                and item["intent"]["metadata"]["forecast_directional_samples"] == 40
                 for item in live_ready
             )
         )
@@ -2518,23 +2557,23 @@ class IntentGeneratorTest(unittest.TestCase):
                     "direction": "UP",
                     "aligned_projection_count": 1,
                     "timing_projection_count": 1,
-                    "best_hit_rate": 0.86,
-                    "best_samples": 37,
-                    "reason": "macro_event_nowcast_central_bank UP hit_rate=0.86 samples=37 supports weak calibrated forecast",
+                    "best_hit_rate": 1.0,
+                    "best_samples": 40,
+                    "reason": "macro_event_nowcast_central_bank UP hit_rate=1.00 samples=40 supports weak calibrated forecast",
                     "signals": [
                         {
                             "name": "macro_event_nowcast_central_bank",
                             "direction": "UP",
                             "confidence": 0.79,
-                            "hit_rate": 0.86,
-                            "samples": 37,
+                            "hit_rate": 1.0,
+                            "samples": 40,
                         },
                         {
                             "name": "bb_squeeze_expansion_imminent",
                             "direction": "EITHER",
                             "confidence": 0.63,
-                            "hit_rate": 0.92,
-                            "samples": 100,
+                            "hit_rate": 1.0,
+                            "samples": 40,
                         },
                     ],
                 },
@@ -2796,8 +2835,8 @@ class IntentGeneratorTest(unittest.TestCase):
                         "name": "macro_event_nowcast_central_bank",
                         "direction": "UP",
                         "confidence": 0.74,
-                        "hit_rate": 0.562,
-                        "samples": 16,
+                        "hit_rate": 1.0,
+                        "samples": 40,
                     }
                 ],
             },
@@ -2939,7 +2978,7 @@ class IntentGeneratorTest(unittest.TestCase):
         metadata = {
             "forecast_seed": True,
             "forecast_direction": "DOWN",
-            "forecast_confidence": 0.53,
+            "forecast_confidence": 0.56,
             "forecast_raw_confidence": 0.80,
             "chart_direction_bias": "SHORT",
             "trend_timeframes": ["H4:TREND_DOWN", "D:TREND_DOWN"],
@@ -2948,16 +2987,16 @@ class IntentGeneratorTest(unittest.TestCase):
                 "direction": "DOWN",
                 "aligned_projection_count": 1,
                 "timing_projection_count": 0,
-                "best_hit_rate": 0.88,
-                "best_samples": 75,
+                "best_hit_rate": 1.0,
+                "best_samples": 40,
                 "reason": "macro_event_nowcast_central_bank DOWN supports weak calibrated forecast",
                 "signals": [
                     {
                         "name": "macro_event_nowcast_central_bank",
                         "direction": "DOWN",
                         "confidence": 0.79,
-                        "hit_rate": 0.88,
-                        "samples": 75,
+                        "hit_rate": 1.0,
+                        "samples": 40,
                     }
                 ],
             },
@@ -3010,10 +3049,10 @@ class IntentGeneratorTest(unittest.TestCase):
             regime="TREND",
         )
 
-        self.assertTrue(support["ok"])
-        self.assertTrue(support["bootstrap_projection_support"])
+        self.assertFalse(support["ok"])
+        self.assertFalse(support["bootstrap_projection_support"])
         self.assertEqual(support["best_samples"], 0)
-        self.assertIn("ledger samples pending", support["reason"])
+        self.assertEqual(support["reason"], "no directional audited projection support")
 
     def test_same_cycle_projection_bootstrap_rejects_audited_bad_signal(self) -> None:
         from quant_rabbit.strategy.intent_generator import _forecast_market_support_for_forecast
@@ -3092,12 +3131,12 @@ class IntentGeneratorTest(unittest.TestCase):
                 direction="UP",
                 confidence=0.86,
                 bonus_magnitude=8.0,
-                rationale="sweep low fade",
+                rationale="M5 equal-lows 6.0pip sweep low fade",
             )
             hit_rates = {
                 "liquidity_sweep_low_up": {
-                    "EUR_USD:TREND": {"hit_rate": 0.62, "samples": 32},
-                    "EUR_USD:_all_regimes": {"hit_rate": 0.62, "samples": 32},
+                    "EUR_USD:TREND": {"hit_rate": 1.0, "samples": 40},
+                    "EUR_USD:_all_regimes": {"hit_rate": 1.0, "samples": 40},
                 }
             }
 
@@ -4546,7 +4585,8 @@ class IntentGeneratorTest(unittest.TestCase):
                         "direction": "DOWN",
                         "confidence": 0.7034,
                         "hit_rate": 1.0,
-                        "samples": 22,
+                        "samples": 40,
+                        "target_pips": 6.0,
                         "lead_time_min": 15.0,
                     }
                 ],
@@ -4778,9 +4818,9 @@ class IntentGeneratorTest(unittest.TestCase):
             regime="RANGE",
         )
 
-        self.assertTrue(support["ok"])
-        self.assertEqual(support["best_samples"], 48)
-        self.assertAlmostEqual(support["best_hit_rate"], 0.62)
+        self.assertFalse(support["ok"])
+        self.assertEqual(support["signals"][0]["samples"], 48)
+        self.assertFalse(support["signals"][0]["live_precision_ok"])
 
     def test_forecast_market_support_exposes_directional_forecast_calibration(self) -> None:
         from quant_rabbit.strategy.intent_generator import _forecast_market_support_for_forecast
@@ -4884,7 +4924,7 @@ class IntentGeneratorTest(unittest.TestCase):
                 "_all_pairs:_all_regimes": {"hit_rate": 0.66, "samples": 100},
             },
             "macro_event_nowcast_central_bank_up": {
-                "_all_pairs:_all_regimes": {"hit_rate": 1.0, "samples": 34},
+                "_all_pairs:_all_regimes": {"hit_rate": 1.0, "samples": 40},
             },
         }
 
@@ -4897,8 +4937,8 @@ class IntentGeneratorTest(unittest.TestCase):
         )
 
         self.assertTrue(support["ok"])
-        self.assertEqual(support["aligned_projection_count"], 2)
-        self.assertEqual(support["best_samples"], 34)
+        self.assertEqual(support["aligned_projection_count"], 1)
+        self.assertEqual(support["best_samples"], 40)
         self.assertAlmostEqual(support["best_hit_rate"], 1.0)
         self.assertEqual(support["signals"][0]["name"], "macro_event_nowcast_central_bank")
         self.assertEqual(
@@ -4909,7 +4949,7 @@ class IntentGeneratorTest(unittest.TestCase):
             ),
             1,
         )
-        self.assertIn("macro_event_nowcast_central_bank UP hit_rate=1.00 samples=34", support["reason"])
+        self.assertIn("macro_event_nowcast_central_bank UP hit_rate=1.00 samples=40", support["reason"])
 
     def test_projection_support_ignores_macro_event_beyond_forecast_horizon(self) -> None:
         from quant_rabbit.strategy.intent_generator import _forecast_market_support_for_forecast
@@ -4964,15 +5004,15 @@ class IntentGeneratorTest(unittest.TestCase):
                 confidence=0.93,
                 bonus_magnitude=12.0,
                 timeframe="M5",
-                rationale="M5 equal-lows sweep target, fade LONG",
+                rationale="M5 equal-lows 6.0pip sweep target, fade LONG",
             ),
         ]
         hit_rates = {
             "bb_squeeze_expansion_imminent": {
-                "_all_pairs:_all_regimes": {"hit_rate": 0.90, "samples": 100},
+                "_all_pairs:_all_regimes": {"hit_rate": 1.0, "samples": 40},
             },
             "liquidity_sweep_low_up": {
-                "_all_pairs:_all_regimes": {"hit_rate": 0.61, "samples": 100},
+                "_all_pairs:_all_regimes": {"hit_rate": 1.0, "samples": 40},
             },
         }
 
@@ -4987,12 +5027,12 @@ class IntentGeneratorTest(unittest.TestCase):
         self.assertTrue(support["ok"])
         self.assertEqual(support["aligned_projection_count"], 1)
         self.assertEqual(support["timing_projection_count"], 1)
-        self.assertAlmostEqual(support["best_aligned_hit_rate"], 0.61)
-        self.assertEqual(support["best_aligned_samples"], 100)
-        self.assertAlmostEqual(support["best_timing_hit_rate"], 0.90)
-        self.assertEqual(support["best_timing_samples"], 100)
-        self.assertAlmostEqual(support["best_hit_rate"], 0.61)
-        self.assertIn("liquidity_sweep_low UP hit_rate=0.61 samples=100", support["reason"])
+        self.assertAlmostEqual(support["best_aligned_hit_rate"], 1.0)
+        self.assertEqual(support["best_aligned_samples"], 40)
+        self.assertAlmostEqual(support["best_timing_hit_rate"], 1.0)
+        self.assertEqual(support["best_timing_samples"], 40)
+        self.assertAlmostEqual(support["best_hit_rate"], 1.0)
+        self.assertIn("liquidity_sweep_low UP hit_rate=1.00 samples=40", support["reason"])
         self.assertEqual(support["signals"][0]["direction"], "UP")
 
     def test_supported_weak_opposite_forecast_blocks_this_side(self) -> None:
@@ -5025,19 +5065,19 @@ class IntentGeneratorTest(unittest.TestCase):
                     "direction": "DOWN",
                     "aligned_projection_count": 1,
                     "timing_projection_count": 0,
-                    "best_hit_rate": 0.77,
-                    "best_samples": 13,
+                    "best_hit_rate": 1.0,
+                    "best_samples": 40,
                     "reason": (
-                        "news_theme_followthrough DOWN hit_rate=0.77 "
-                        "samples=13 supports weak calibrated forecast"
+                        "news_theme_followthrough DOWN hit_rate=1.00 "
+                        "samples=40 supports weak calibrated forecast"
                     ),
                     "signals": [
                         {
                             "name": "news_theme_followthrough",
                             "direction": "DOWN",
                             "confidence": 0.8,
-                            "hit_rate": 0.77,
-                            "samples": 13,
+                            "hit_rate": 1.0,
+                            "samples": 40,
                         }
                     ],
                 },
@@ -10037,8 +10077,8 @@ class TimingEvidenceBreakoutStopTest(unittest.TestCase):
         raw_confidence: float | None = None,
         bias: str = "LONG",
         timing_count: int = 1,
-        hit_rate: float = 0.85,
-        samples: int = 500,
+        hit_rate: float = 1.0,
+        samples: int = 40,
         support_ok: bool = False,
     ) -> dict:
         return {
@@ -10053,7 +10093,15 @@ class TimingEvidenceBreakoutStopTest(unittest.TestCase):
                 "best_hit_rate": hit_rate,
                 "best_samples": samples,
                 "bootstrap_projection_support": False,
-                "signals": [],
+                "signals": [
+                    {
+                        "name": "session_expansion_london",
+                        "direction": "EITHER",
+                        "confidence": 0.91,
+                        "hit_rate": hit_rate,
+                        "samples": samples,
+                    }
+                ],
             },
         }
 
@@ -10422,12 +10470,12 @@ class TimingEvidenceBreakoutStopTest(unittest.TestCase):
         self.assertFalse(self._allows(self._metadata(timing_count=0)))
 
     def test_near_miss_path_unchanged_for_market_orders(self) -> None:
-        # Existing behavior: near-miss confidence (0.47 vs 0.55) + support.ok
-        # + aligned directional signal still passes for any order type.
+        # Live support now requires signal-level Wilson>=90% proof; aggregate
+        # support.ok alone must not rescue MARKET orders.
         metadata = self._metadata(confidence=0.47, support_ok=True, timing_count=0)
         metadata["forecast_market_support"]["aligned_projection_count"] = 1
         metadata["forecast_market_support"]["best_hit_rate"] = 0.62
-        self.assertTrue(self._allows(metadata, order_type=OrderType.MARKET))
+        self.assertFalse(self._allows(metadata, order_type=OrderType.MARKET))
 
 
 class DisasterSlMetadataTest(unittest.TestCase):
