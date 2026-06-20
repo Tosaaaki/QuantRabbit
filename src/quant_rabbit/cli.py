@@ -30,6 +30,15 @@ from quant_rabbit.analysis.market_status import (
 from quant_rabbit.broker.execution import LiveOrderGateway
 from quant_rabbit.broker.oanda import OandaReadOnlyClient
 from quant_rabbit.broker.oanda import OandaExecutionClient
+from quant_rabbit.broker.webull import (
+    WebullConfig,
+    WebullOpenAPIClient,
+    WebullStockOrder,
+    WebullStockOrderGateway,
+    account_snapshot_stdout,
+    write_webull_account_report,
+    write_webull_env_report,
+)
 from quant_rabbit.certification import DryRunCertifier
 from quant_rabbit.completion import CompletionAuditor
 from quant_rabbit.coverage import CoverageOptimizer
@@ -54,6 +63,12 @@ from quant_rabbit.paths import (
     DEFAULT_COMPLETION_STATUS_REPORT,
     DEFAULT_BROKER_INSTRUMENTS,
     DEFAULT_BROKER_INSTRUMENTS_REPORT,
+    DEFAULT_WEBULL_ACCOUNT_SNAPSHOT,
+    DEFAULT_WEBULL_ACCOUNT_SNAPSHOT_REPORT,
+    DEFAULT_WEBULL_ENV_CHECK,
+    DEFAULT_WEBULL_ENV_CHECK_REPORT,
+    DEFAULT_WEBULL_STOCK_ORDER_REQUEST,
+    DEFAULT_WEBULL_STOCK_ORDER_STAGE_REPORT,
     DEFAULT_PAIR_CHARTS,
     DEFAULT_PAIR_CHARTS_REPORT,
     DEFAULT_CONTEXT_ASSET_CHARTS,
@@ -2201,6 +2216,42 @@ def main(argv: list[str] | None = None) -> int:
     p_snapshot.add_argument("--pairs", default=DEFAULT_TRADER_PAIRS_ARG)
     p_snapshot.add_argument("--output", type=Path, default=None)
 
+    p_webull_env = sub.add_parser(
+        "webull-env-check",
+        help="Validate Webull OpenAPI SDK/env setup without printing secrets.",
+    )
+    p_webull_env.add_argument("--output", type=Path, default=DEFAULT_WEBULL_ENV_CHECK)
+    p_webull_env.add_argument("--report", type=Path, default=DEFAULT_WEBULL_ENV_CHECK_REPORT)
+    p_webull_env.add_argument("--strict", action="store_true", help="Return non-zero when credentials or SDK are missing.")
+
+    p_webull_snapshot = sub.add_parser(
+        "webull-account-snapshot",
+        help="Read Webull account list, balance, and positions via official OpenAPI SDK.",
+    )
+    p_webull_snapshot.add_argument("--account-id", default=None)
+    p_webull_snapshot.add_argument("--output", type=Path, default=DEFAULT_WEBULL_ACCOUNT_SNAPSHOT)
+    p_webull_snapshot.add_argument("--report", type=Path, default=DEFAULT_WEBULL_ACCOUNT_SNAPSHOT_REPORT)
+
+    p_webull_order = sub.add_parser(
+        "webull-stage-stock-order",
+        help="Stage or explicitly send one Webull US stock/ETF order. Stages by default.",
+    )
+    p_webull_order.add_argument("--account-id", default=None)
+    p_webull_order.add_argument("--symbol", required=True)
+    p_webull_order.add_argument("--side", required=True, choices=("BUY", "SELL", "SHORT"))
+    p_webull_order.add_argument("--quantity", required=True)
+    p_webull_order.add_argument("--order-type", default="LIMIT")
+    p_webull_order.add_argument("--limit-price", default=None)
+    p_webull_order.add_argument("--stop-price", default=None)
+    p_webull_order.add_argument("--time-in-force", default="DAY")
+    p_webull_order.add_argument("--session", default="CORE", choices=("CORE", "ALL", "NIGHT"))
+    p_webull_order.add_argument("--client-order-id", default=None)
+    p_webull_order.add_argument("--preview", action="store_true", help="Call Webull order preview before staging.")
+    p_webull_order.add_argument("--send", action="store_true", help="Place the order after preview and all live gates pass.")
+    p_webull_order.add_argument("--confirm-live", action="store_true", help="Required with --send.")
+    p_webull_order.add_argument("--output", type=Path, default=DEFAULT_WEBULL_STOCK_ORDER_REQUEST)
+    p_webull_order.add_argument("--report", type=Path, default=DEFAULT_WEBULL_STOCK_ORDER_STAGE_REPORT)
+
     p_charts = sub.add_parser("pair-charts", help="Compute multi-timeframe indicator scores per pair.")
     p_charts.add_argument("--pairs", default=DEFAULT_TRADER_PAIRS_ARG)
     p_charts.add_argument("--timeframes", default=",".join(DEFAULT_PAIR_CHART_TIMEFRAMES))
@@ -3148,6 +3199,91 @@ def main(argv: list[str] | None = None) -> int:
             )
         )
         return 0
+    if args.command == "webull-env-check":
+        config = WebullConfig.from_env()
+        payload = config.safe_status()
+        _write_json(args.output, payload)
+        write_webull_env_report(args.report, payload)
+        print(
+            json.dumps(
+                {
+                    "status": payload["status"],
+                    "output_path": str(args.output),
+                    "report_path": str(args.report),
+                    "environment": payload["environment"],
+                    "endpoint": payload["endpoint"],
+                    "credentials": payload["credentials"],
+                    "sdk_installed": bool((payload.get("sdk") or {}).get("installed")),
+                    "live_enabled": payload["live_enabled"],
+                    "issues": payload["issues"],
+                },
+                ensure_ascii=False,
+                indent=2,
+                sort_keys=True,
+            )
+        )
+        return 2 if args.strict and payload["status"] != "READY" else 0
+    if args.command == "webull-account-snapshot":
+        try:
+            client = WebullOpenAPIClient()
+            payload = client.account_snapshot(account_id=args.account_id)
+            _write_json(args.output, payload)
+            write_webull_account_report(args.report, payload)
+        except (RuntimeError, OSError, ValueError, AttributeError) as exc:
+            print(json.dumps({"error": str(exc)}, ensure_ascii=False, indent=2, sort_keys=True))
+            return 2
+        print(
+            json.dumps(
+                account_snapshot_stdout(payload, output_path=args.output, report_path=args.report),
+                ensure_ascii=False,
+                indent=2,
+                sort_keys=True,
+            )
+        )
+        return 0
+    if args.command == "webull-stage-stock-order":
+        order = WebullStockOrder(
+            symbol=args.symbol,
+            side=args.side,
+            quantity=args.quantity,
+            order_type=args.order_type,
+            limit_price=args.limit_price,
+            stop_price=args.stop_price,
+            time_in_force=args.time_in_force,
+            support_trading_session=args.session,
+            client_order_id=args.client_order_id,
+        )
+        try:
+            summary = WebullStockOrderGateway(
+                output_path=args.output,
+                report_path=args.report,
+            ).run(
+                order=order,
+                account_id=args.account_id,
+                preview=args.preview,
+                send=args.send,
+                confirm_live=args.confirm_live,
+            )
+        except (RuntimeError, OSError, ValueError, AttributeError) as exc:
+            print(json.dumps({"error": str(exc)}, ensure_ascii=False, indent=2, sort_keys=True))
+            return 2
+        print(
+            json.dumps(
+                {
+                    "status": summary.status,
+                    "output_path": str(summary.output_path),
+                    "report_path": str(summary.report_path),
+                    "sent": summary.sent,
+                    "issues": list(summary.issues),
+                    "preview_status_code": summary.preview_status_code,
+                    "place_status_code": summary.place_status_code,
+                },
+                ensure_ascii=False,
+                indent=2,
+                sort_keys=True,
+            )
+        )
+        return 0 if summary.status in {"STAGED", "SENT"} else 2
     if args.command == "generate-intents":
         market_evidence_kwargs: dict[str, Any] = {
             "label": "generate-intents",
