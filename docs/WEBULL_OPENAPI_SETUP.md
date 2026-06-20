@@ -10,18 +10,44 @@ As of 2026-06-20, Webull publishes an official OpenAPI for US market trading, ac
 
 Do not use Webull login passwords, phone numbers, browser cookies, or unofficial reverse-engineered APIs in QuantRabbit. This integration uses only official OpenAPI credentials.
 
-## Credential Flow
+## OpenAPI Application Flow
 
 1. Apply for Webull OpenAPI access from Webull's OpenAPI management page.
 2. Wait for approval. Webull's guide says this typically takes 1-2 business days.
-3. Generate an App Key and App Secret in Webull OpenAPI Management.
+3. Generate an App Key and App Secret in Webull OpenAPI Management. Webull's application flow requires SMS/MFA verification during key generation.
 4. Install the official SDK:
 
 ```bash
 pip3 install --upgrade webull-openapi-python-sdk
 ```
 
-5. Put credentials in `.env.local`:
+## Secret Storage
+
+Do not put Webull login passwords, phone numbers, browser cookies, or MFA codes in `.env.local`. If an operator needs to keep the Webull login phone/password locally for reference, store it in macOS Keychain:
+
+```bash
+scripts/webull-keychain.sh store-login
+scripts/webull-keychain.sh status
+```
+
+After Webull approves OpenAPI access and you generate App Key/App Secret, store the OpenAPI credentials in Keychain:
+
+```bash
+scripts/webull-keychain.sh store-openapi
+scripts/webull-keychain.sh status
+```
+
+Run QuantRabbit with Keychain-backed OpenAPI env vars:
+
+```bash
+scripts/webull-keychain.sh run -- env \
+  QR_WEBULL_ENV=test \
+  QR_WEBULL_REGION=us \
+  PYTHONPATH=src \
+  python3 -m quant_rabbit.cli webull-env-check
+```
+
+`.env.local` is still supported for local automation, but it should contain only official OpenAPI values, never the Webull account password:
 
 ```bash
 QR_WEBULL_ENV=test
@@ -45,6 +71,8 @@ PYTHONPATH=src python3 -m quant_rabbit.cli webull-stage-stock-order \
   --order-type LIMIT \
   --limit-price 180
 ```
+
+If credentials are stored only in Keychain, prefix the same commands with `scripts/webull-keychain.sh run --`.
 
 The stock-order command stages by default and writes:
 
