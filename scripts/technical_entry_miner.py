@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import argparse
 import collections
+import itertools
 import json
 import math
 import statistics
@@ -51,6 +52,32 @@ ATR_QUIET_PCTL = 0.25
 ATR_HOT_PCTL = 0.75
 CHOP_RANGE = 61.8
 CHOP_TREND = 38.2
+
+# Chronological 70/30 is the default audit split: enough history to discover
+# conditions, while reserving the newest rows to expose over-fit buckets.
+CONFLUENCE_TRAIN_FRACTION = 0.70
+# This miner creates combinations, so cap per-row feature breadth by default to
+# keep the audit executable during routine improvement cycles.
+CONFLUENCE_FEATURE_LIMIT_PER_ROW = 32
+# The validation filter is an evidence threshold for MFE harvestability, not a
+# live-send permission or a guaranteed profit claim.
+CONFLUENCE_MIN_VALIDATION_MFE2_RATE = 0.75
+CONFLUENCE_DEFAULT_MAX_SIZE = 2
+CONFLUENCE_DEFAULT_MIN_TRAIN_SAMPLES = 30
+CONFLUENCE_DEFAULT_MIN_VALIDATION_SAMPLES = 12
+CONFLUENCE_IDENTITY_PREFIXES = ("pair:", "direction:", "confidence:", "horizon:")
+CONFLUENCE_SUMMARY_KEYS = (
+    "n",
+    "final_hit_rate",
+    "final_wilson95_lower",
+    "mfe_ge_2pip_rate",
+    "mfe_ge_2pip_wilson95_lower",
+    "scalp_tp_first_rate",
+    "scalp_tp_first_wilson95_lower",
+    "target_first_rate",
+    "target_first_wilson95_lower",
+    "avg_final_pips",
+)
 
 
 @dataclass(frozen=True)
@@ -106,6 +133,15 @@ def main() -> int:
         min_samples=args.min_samples,
         min_touch_samples=args.min_touch_samples,
     )
+    confluence_rows = _mine_confluence_buckets(
+        scored_rows,
+        min_train_samples=args.confluence_min_train_samples,
+        min_validation_samples=args.confluence_min_validation_samples,
+        max_size=args.confluence_max_size,
+        train_fraction=args.confluence_train_fraction,
+        min_validation_mfe2_rate=args.confluence_min_validation_mfe2_rate,
+        feature_limit_per_row=args.confluence_feature_limit_per_row,
+    )
     strict = [
         row
         for row in feature_rows
@@ -143,10 +179,19 @@ def main() -> int:
         "lookback_minutes": args.lookback_minutes,
         "scalp_tp_pips": args.scalp_tp_pips,
         "scalp_stop_pips": args.scalp_stop_pips,
+        "technical_confluence_config": {
+            "train_fraction": args.confluence_train_fraction,
+            "max_size": args.confluence_max_size,
+            "min_train_samples": args.confluence_min_train_samples,
+            "min_validation_samples": args.confluence_min_validation_samples,
+            "min_validation_mfe2_rate": args.confluence_min_validation_mfe2_rate,
+            "feature_limit_per_row": args.confluence_feature_limit_per_row,
+        },
         **load_stats,
         **fetch_stats,
         **score_stats,
         "summary": _summarize(scored_rows),
+        "technical_confluence_candidates": confluence_rows[:80],
         "strict_target_first_candidates": strict[:50],
         "strict_scalp_candidates": scalp[:50],
         "positive_mfe2_candidates": positive[:50],
@@ -199,6 +244,42 @@ def _parse_args() -> argparse.Namespace:
         type=int,
         default=0,
         help="score only the most recent N deduped directional rows after filtering",
+    )
+    parser.add_argument(
+        "--confluence-max-size",
+        type=int,
+        default=CONFLUENCE_DEFAULT_MAX_SIZE,
+        help="largest number of technical features to combine per confluence bucket",
+    )
+    parser.add_argument(
+        "--confluence-min-train-samples",
+        type=int,
+        default=CONFLUENCE_DEFAULT_MIN_TRAIN_SAMPLES,
+        help="minimum discovery-period rows before a confluence bucket can be reported",
+    )
+    parser.add_argument(
+        "--confluence-min-validation-samples",
+        type=int,
+        default=CONFLUENCE_DEFAULT_MIN_VALIDATION_SAMPLES,
+        help="minimum holdout rows before a confluence bucket can be reported",
+    )
+    parser.add_argument(
+        "--confluence-min-validation-mfe2-rate",
+        type=float,
+        default=CONFLUENCE_MIN_VALIDATION_MFE2_RATE,
+        help="minimum holdout rate for MFE>=2pip in the forecast direction",
+    )
+    parser.add_argument(
+        "--confluence-feature-limit-per-row",
+        type=int,
+        default=CONFLUENCE_FEATURE_LIMIT_PER_ROW,
+        help="maximum technical feature labels retained per row before combinations",
+    )
+    parser.add_argument(
+        "--confluence-train-fraction",
+        type=float,
+        default=CONFLUENCE_TRAIN_FRACTION,
+        help="chronological discovery fraction; the newest remainder is validation",
     )
     return parser.parse_args()
 
@@ -688,6 +769,151 @@ def _mine_feature_buckets(
     return out
 
 
+def _mine_confluence_buckets(
+    rows: list[dict[str, Any]],
+    *,
+    min_train_samples: int,
+    min_validation_samples: int,
+    max_size: int,
+    train_fraction: float,
+    min_validation_mfe2_rate: float,
+    feature_limit_per_row: int,
+) -> list[dict[str, Any]]:
+    ordered = sorted(rows, key=_row_sort_key)
+    if len(ordered) < max(2, min_train_samples + min_validation_samples):
+        return []
+    bounded_fraction = min(max(train_fraction, 0.10), 0.90)
+    split_index = int(len(ordered) * bounded_fraction)
+    split_index = min(max(split_index, 1), len(ordered) - 1)
+    train_rows = ordered[:split_index]
+    validation_rows = ordered[split_index:]
+    train_buckets = _build_confluence_buckets(
+        train_rows,
+        max_size=max_size,
+        feature_limit_per_row=feature_limit_per_row,
+    )
+    validation_buckets = _build_confluence_buckets(
+        validation_rows,
+        max_size=max_size,
+        feature_limit_per_row=feature_limit_per_row,
+    )
+    split_at_utc = validation_rows[0].get("timestamp_utc") if validation_rows else None
+    out: list[dict[str, Any]] = []
+    for key, train_values in train_buckets.items():
+        validation_values = validation_buckets.get(key, [])
+        if len(train_values) < min_train_samples or len(validation_values) < min_validation_samples:
+            continue
+        train_summary = _summarize(train_values)
+        validation_summary = _summarize(validation_values)
+        validation_mfe2_rate = validation_summary.get("mfe_ge_2pip_rate") or 0.0
+        if validation_mfe2_rate < min_validation_mfe2_rate:
+            continue
+        if (validation_summary.get("avg_final_pips") or 0.0) <= 0.0:
+            continue
+        all_values = train_values + validation_values
+        all_summary = _summarize(all_values)
+        confluence_features = list(key)
+        row = {
+            "confluence": " + ".join(confluence_features),
+            "features": confluence_features,
+            "technical_feature_count": sum(
+                1 for item in confluence_features if not item.startswith(CONFLUENCE_IDENTITY_PREFIXES)
+            ),
+            "prediction": "forecast-direction MFE>=2pip before horizon",
+            "verification": "chronological holdout candle truth",
+            "split_at_utc": split_at_utc,
+        }
+        row.update(_prefixed_summary("train", train_summary))
+        row.update(_prefixed_summary("validation", validation_summary))
+        row.update(_prefixed_summary("all", all_summary))
+        out.append(row)
+    out.sort(
+        key=lambda row: (
+            -(row.get("validation_mfe_ge_2pip_wilson95_lower") or 0.0),
+            -(row.get("validation_scalp_tp_first_wilson95_lower") or 0.0),
+            -(row.get("train_mfe_ge_2pip_wilson95_lower") or 0.0),
+            -(row.get("validation_avg_final_pips") or 0.0),
+            -row.get("validation_n", 0),
+            row.get("technical_feature_count", 99),
+            row.get("confluence", ""),
+        )
+    )
+    return out
+
+
+def _build_confluence_buckets(
+    rows: list[dict[str, Any]],
+    *,
+    max_size: int,
+    feature_limit_per_row: int,
+) -> dict[tuple[str, ...], list[dict[str, Any]]]:
+    buckets: dict[tuple[str, ...], list[dict[str, Any]]] = collections.defaultdict(list)
+    bounded_max_size = max(2, min(max_size, 3))
+    for row in rows:
+        technicals = _confluence_features(row.get("features", ()), limit=feature_limit_per_row)
+        if len(technicals) < 2:
+            continue
+        max_combo_size = min(bounded_max_size, len(technicals))
+        contexts = [
+            (f"direction:{row['direction']}",),
+            (f"pair:{row['pair']}", f"direction:{row['direction']}"),
+        ]
+        for size in range(2, max_combo_size + 1):
+            for combo in itertools.combinations(technicals, size):
+                for context in contexts:
+                    buckets[(*context, *combo)].append(row)
+    return buckets
+
+
+def _confluence_features(features: Iterable[str], *, limit: int) -> list[str]:
+    technicals = {
+        feature
+        for feature in features
+        if isinstance(feature, str) and _is_confluence_technical_feature(feature)
+    }
+    ordered = sorted(technicals, key=lambda feature: (_confluence_feature_rank(feature), feature))
+    return ordered[: max(2, limit)]
+
+
+def _is_confluence_technical_feature(feature: str) -> bool:
+    return ":" in feature and not feature.startswith(CONFLUENCE_IDENTITY_PREFIXES)
+
+
+def _confluence_feature_rank(feature: str) -> int:
+    if feature.startswith("cross:"):
+        return 0
+    if ":family_" in feature:
+        return 1
+    if any(
+        token in feature
+        for token in (
+            "supertrend",
+            "macd",
+            "ema",
+            "di_",
+            "aroon",
+            "bb_",
+            "rsi",
+            "stoch",
+            "vwap",
+            "donchian",
+        )
+    ):
+        return 2
+    return 3
+
+
+def _prefixed_summary(prefix: str, summary: dict[str, Any]) -> dict[str, Any]:
+    return {f"{prefix}_{key}": summary.get(key) for key in CONFLUENCE_SUMMARY_KEYS}
+
+
+def _row_sort_key(row: dict[str, Any]) -> tuple[datetime, int]:
+    timestamp = _parse_time(row.get("timestamp_utc"))
+    fallback = datetime.min.replace(tzinfo=timezone.utc)
+    source_index = int(row.get("source_index") or 0)
+    return (timestamp or fallback, source_index)
+
+
 def _summarize(items: list[dict[str, Any]]) -> dict[str, Any]:
     n = len(items)
     final_hits = sum(1 for item in items if item["final_direction_hit"])
@@ -924,6 +1150,9 @@ def _markdown(report: dict[str, Any]) -> str:
         "",
     ]
     lines.extend(_table([report["summary"]], _metric_cols()))
+    lines.extend(["", "## Technical Confluence Candidates", ""])
+    confluence = report["technical_confluence_candidates"]
+    lines.extend(_table(confluence, _confluence_cols(), limit=40) if confluence else ["None."])
     lines.extend(["", "## Strict Target-First Candidates", ""])
     strict = report["strict_target_first_candidates"]
     lines.extend(_table(strict, _feature_cols(), limit=30) if strict else ["None."])
@@ -959,6 +1188,21 @@ def _metric_cols() -> list[tuple[str, str]]:
 
 def _feature_cols() -> list[tuple[str, str]]:
     return [("feature", "feature"), *_metric_cols()]
+
+
+def _confluence_cols() -> list[tuple[str, str]]:
+    return [
+        ("confluence", "confluence"),
+        ("train n", "train_n"),
+        ("valid n", "validation_n"),
+        ("valid MFE>=2", "validation_mfe_ge_2pip_rate"),
+        ("valid MFE2 Wilson95L", "validation_mfe_ge_2pip_wilson95_lower"),
+        ("valid scalp TP-first", "validation_scalp_tp_first_rate"),
+        ("valid scalp Wilson95L", "validation_scalp_tp_first_wilson95_lower"),
+        ("valid final hit", "validation_final_hit_rate"),
+        ("valid avg pips", "validation_avg_final_pips"),
+        ("all n", "all_n"),
+    ]
 
 
 def _table(rows: list[dict[str, Any]], cols: list[tuple[str, str]], limit: int = 12) -> list[str]:

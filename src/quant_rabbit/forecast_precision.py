@@ -93,6 +93,30 @@ TECHNICAL_HARVEST_PRECISION_RULES: tuple[dict[str, Any], ...] = (
 # report row as live permission.
 TECHNICAL_HARVEST_ROTATION_RULES: tuple[dict[str, Any], ...] = (
     {
+        "name": "UP_M5_DISAGREE_M15_BB_REVERSION_HOLDOUT_ROTATION_TP5_SL4",
+        "side": "LONG",
+        "direction": "UP",
+        "timeframe": "M5/M15",
+        "feature": "direction:UP + M5:family_disagreement_high + M15:bb_reversion_not_aligned",
+        "samples": 36,
+        "validation_samples": 36,
+        "train_samples": 77,
+        "all_samples": 113,
+        "scalp_tp_pips": 5.0,
+        "scalp_stop_pips": 4.0,
+        "scalp_tp_first_hit_rate": 0.5833,
+        "scalp_tp_first_wilson95_lower": 0.4220,
+        "mfe_ge_2pip_hit_rate": 1.0,
+        "mfe_ge_2pip_wilson95_lower": 0.9036,
+        "avg_final_pips": 11.21,
+        "min_m5_family_disagreement": 0.75,
+        "min_exclusive_m15_bb_pct_b": 0.20,
+        "min_target_pips": 4.8,
+        "max_target_pips": 5.5,
+        "max_stop_pips": 4.2,
+        "audit_report": "logs/reports/forecast_improvement/technical_entry_mining_latest.json",
+    },
+    {
         "name": "EUR_USD_DOWN_M5_BB_WIDTH_LOW_ROTATION_TP5_SL4",
         "pair": "EUR_USD",
         "side": "SHORT",
@@ -751,6 +775,11 @@ def _technical_rule_feature_values(
         if value is None or value > float(rule["max_m5_bb_pct_b"]):
             return None
         out["current_m5_bb_pct_b"] = round(value, 4)
+    if "min_m5_family_disagreement" in rule:
+        value = _safe_float(metadata.get("m5_family_disagreement"))
+        if value is None or value < float(rule["min_m5_family_disagreement"]):
+            return None
+        out["current_m5_family_disagreement"] = round(value, 4)
     if "max_m15_bb_width_percentile_100" in rule:
         value = _percentile_0_1(
             metadata.get("m15_bb_width_percentile_100"),
@@ -762,6 +791,11 @@ def _technical_rule_feature_values(
     if "max_m15_bb_pct_b" in rule:
         value = _bb_pct_b_0_1(metadata, "m15")
         if value is None or value > float(rule["max_m15_bb_pct_b"]):
+            return None
+        out["current_m15_bb_pct_b"] = round(value, 4)
+    if "min_exclusive_m15_bb_pct_b" in rule:
+        value = _bb_pct_b_0_1(metadata, "m15")
+        if value is None or value <= float(rule["min_exclusive_m15_bb_pct_b"]):
             return None
         out["current_m15_bb_pct_b"] = round(value, 4)
     if "max_m15_choppiness_14" in rule:
