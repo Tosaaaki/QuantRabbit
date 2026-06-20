@@ -52,7 +52,11 @@ from .models import (
     Side,
     TradeMethod,
 )
-from .forecast_precision import hit_rate_wilson_lower, support_signal_clears_live_precision
+from .forecast_precision import (
+    hit_rate_wilson_lower,
+    support_signal_clears_live_precision,
+    technical_harvest_precision_support,
+)
 from .instruments import DEFAULT_TRADER_PAIRS, NORMAL_SPREAD_PIPS, instrument_pip_factor
 
 # OANDA Japan retail FX margin in the current account is 25:1 leverage, i.e.
@@ -680,6 +684,8 @@ def _forecast_unselected_projection_conflict_issues(
         forecast_side = Side.LONG if direction == "UP" else Side.SHORT
         if intent.side != forecast_side:
             return []
+        if _technical_harvest_precision_support_for_intent(intent) is not None:
+            return []
         if _forecast_selected_direction_has_audited_support(
             metadata,
             support,
@@ -717,6 +723,25 @@ def _forecast_unselected_projection_conflict_issues(
 def _forecast_market_support(metadata: dict) -> dict:
     support = metadata.get("forecast_market_support")
     return support if isinstance(support, dict) else {}
+
+
+def _technical_harvest_precision_support_for_intent(intent: OrderIntent) -> dict | None:
+    metadata = intent.metadata or {}
+    method = intent.market_context.method if intent.market_context is not None else None
+    support = technical_harvest_precision_support(
+        metadata,
+        pair=intent.pair,
+        side=intent.side.value,
+        order_type=intent.order_type.value,
+        method=method.value if isinstance(method, TradeMethod) else str(method or ""),
+        entry=_to_float(intent.entry),
+        take_profit=_to_float(intent.tp),
+        stop_loss=_to_float(intent.sl),
+    )
+    if support is not None:
+        metadata["technical_harvest_precision_live_ready"] = True
+        metadata["technical_harvest_precision_support"] = support
+    return support
 
 
 def _forecast_support_signal_clears_live_precision(signal: dict) -> bool:
@@ -2046,6 +2071,8 @@ class RiskEngine:
         if intent.side != forecast_side:
             return []
         support = _forecast_market_support(metadata)
+        if _technical_harvest_precision_support_for_intent(intent) is not None:
+            return []
         if _forecast_selected_direction_has_audited_support(
             metadata,
             support,

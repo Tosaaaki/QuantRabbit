@@ -476,6 +476,68 @@ class RiskEngineTest(unittest.TestCase):
         self.assertFalse(live.allowed)
         self.assertEqual(live_codes["FORECAST_CONFIDENCE_REQUIRED_FOR_LIVE"], "BLOCK")
 
+    def test_technical_harvest_precision_supports_low_confidence_short_scalp_live_send(self) -> None:
+        intent = OrderIntent(
+            pair="EUR_USD",
+            side=Side.SHORT,
+            order_type=OrderType.LIMIT,
+            units=1000,
+            entry=1.17330,
+            tp=1.17280,
+            sl=1.17370,
+            thesis="audited EUR_USD short low-ATR scalp",
+            market_context=MarketContext(
+                regime="BREAKOUT_FAILURE rejection retest",
+                narrative="selected side matches the forecast, but confidence is below live floor",
+                chart_story="M1 ATR low",
+                method=TradeMethod.BREAKOUT_FAILURE,
+                invalidation="4 pip stop",
+            ),
+            metadata={
+                "forecast_direction": "DOWN",
+                "forecast_confidence": 0.23,
+                "chart_direction_bias": "SHORT",
+                "m1_atr_percentile_100": 0.10,
+                "tp_execution_mode": "ATTACHED_TECHNICAL_TP",
+                "tp_target_intent": "HARVEST",
+                "opportunity_mode": "HARVEST",
+                "forecast_market_support": {
+                    "ok": False,
+                    "direction": "DOWN",
+                    "aligned_projection_count": 0,
+                },
+            },
+        )
+
+        base_snapshot = snapshot()
+        narrow_spread_snapshot = replace(
+            base_snapshot,
+            quotes={
+                **base_snapshot.quotes,
+                "EUR_USD": Quote(
+                    "EUR_USD",
+                    bid=1.17326,
+                    ask=1.17330,
+                    timestamp_utc=base_snapshot.fetched_at_utc,
+                ),
+            },
+        )
+
+        decision = _capped_engine(live_enabled=True).validate(
+            intent,
+            narrow_spread_snapshot,
+            for_live_send=True,
+        )
+
+        codes = {issue.code for issue in decision.issues}
+        self.assertTrue(decision.allowed, decision.block_reasons)
+        self.assertNotIn("FORECAST_CONFIDENCE_REQUIRED_FOR_LIVE", codes)
+        self.assertTrue(intent.metadata["technical_harvest_precision_live_ready"])
+        self.assertEqual(
+            intent.metadata["technical_harvest_precision_support"]["name"],
+            "EUR_USD_DOWN_M1_ATR_LOW_TP5_SL4",
+        )
+
     def test_low_confidence_opposite_forecast_does_not_become_direction_veto(self) -> None:
         intent = OrderIntent(
             pair="EUR_USD",

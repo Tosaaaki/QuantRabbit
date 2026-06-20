@@ -5,6 +5,7 @@ import os
 import sqlite3
 import tempfile
 import unittest
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
@@ -4632,6 +4633,66 @@ class IntentGeneratorTest(unittest.TestCase):
         )
 
         self.assertEqual(market_issue["code"], "FORECAST_CONFIDENCE_REQUIRED_FOR_LIVE")
+
+    def test_technical_harvest_precision_allows_only_audited_short_scalp_shape(self) -> None:
+        from quant_rabbit.models import MarketContext, OrderIntent, OrderType, Side, TradeMethod
+        from quant_rabbit.strategy.intent_generator import _forecast_live_readiness_issue
+
+        os.environ["QR_REQUIRE_FORECAST_FOR_LIVE"] = "1"
+        metadata = {
+            "forecast_direction": "DOWN",
+            "forecast_confidence": 0.23,
+            "chart_direction_bias": "SHORT",
+            "m1_atr_percentile_100": 0.10,
+            "tp_execution_mode": "ATTACHED_TECHNICAL_TP",
+            "tp_target_intent": "HARVEST",
+            "opportunity_mode": "HARVEST",
+            "forecast_market_support": {
+                "ok": False,
+                "direction": "DOWN",
+                "aligned_projection_count": 0,
+            },
+        }
+        intent = OrderIntent(
+            pair="EUR_USD",
+            side=Side.SHORT,
+            order_type=OrderType.LIMIT,
+            units=1000,
+            entry=1.17330,
+            tp=1.17280,
+            sl=1.17370,
+            thesis="audited EUR_USD short low-ATR scalp",
+            market_context=MarketContext(
+                regime="BREAKOUT_FAILURE rejection retest",
+                narrative="low-ATR M1 short harvest",
+                chart_story="M1 ATR low",
+                method=TradeMethod.BREAKOUT_FAILURE,
+                invalidation="4 pip stop",
+            ),
+            metadata=metadata,
+        )
+
+        issue = _forecast_live_readiness_issue(intent, metadata, TradeMethod.BREAKOUT_FAILURE)
+
+        self.assertIsNone(issue)
+        self.assertTrue(metadata["technical_harvest_precision_live_ready"])
+        self.assertEqual(
+            metadata["technical_harvest_precision_support"]["name"],
+            "EUR_USD_DOWN_M1_ATR_LOW_TP5_SL4",
+        )
+
+        stale_metadata = {**metadata, "m1_atr_percentile_100": 0.50}
+        stale_metadata.pop("technical_harvest_precision_live_ready", None)
+        stale_metadata.pop("technical_harvest_precision_support", None)
+        stale_intent = replace(intent, metadata=stale_metadata)
+
+        blocked = _forecast_live_readiness_issue(
+            stale_intent,
+            stale_metadata,
+            TradeMethod.BREAKOUT_FAILURE,
+        )
+
+        self.assertEqual(blocked["code"], "FORECAST_CONFIDENCE_REQUIRED_FOR_LIVE")
 
     def test_directional_forecast_weak_hit_rate_blocks_live_readiness(self) -> None:
         from quant_rabbit.models import MarketContext, OrderIntent, OrderType, Side, TradeMethod

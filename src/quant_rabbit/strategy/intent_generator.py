@@ -15,6 +15,7 @@ from quant_rabbit.forecast_precision import (
     hit_rate_wilson_lower,
     support_signal_clears_live_precision,
     target_pips_from_text,
+    technical_harvest_precision_support,
 )
 from quant_rabbit.models import BrokerOrder, BrokerPosition, BrokerSnapshot, MarketContext, OrderIntent, OrderType, Owner, Quote, Side, TradeMethod
 from quant_rabbit.paths import (
@@ -1411,6 +1412,8 @@ def _chart_context_for(pair: str, charts: dict[str, dict[str, Any]] | None) -> d
     ):
         bias = Side.LONG.value if long_score > short_score else Side.SHORT.value
     m5_indicators = per_tf.get("M5") if isinstance(per_tf.get("M5"), dict) else {}
+    m1_indicators = per_tf.get("M1") if isinstance(per_tf.get("M1"), dict) else {}
+    m15_indicators = per_tf.get("M15") if isinstance(per_tf.get("M15"), dict) else {}
     h1_indicators = per_tf.get("H1") if isinstance(per_tf.get("H1"), dict) else {}
     h4_indicators = per_tf.get("H4") if isinstance(per_tf.get("H4"), dict) else {}
     m5_family = per_tf.get("M5__family_scores") if isinstance(per_tf.get("M5__family_scores"), dict) else {}
@@ -1426,6 +1429,13 @@ def _chart_context_for(pair: str, charts: dict[str, dict[str, Any]] | None) -> d
         "m15_long_bias": _optional_float(per_tf.get("M15__long_bias")),
         "m15_short_bias": _optional_float(per_tf.get("M15__short_bias")),
         "m5_regime_quantile": _text_or_none(m5_indicators.get("regime_quantile")),
+        "m1_atr_pips": _optional_float(m1_indicators.get("atr_pips")),
+        "m1_atr_percentile_100": _optional_float(m1_indicators.get("atr_percentile_100")),
+        "m1_bb_width_percentile_100": _optional_float(m1_indicators.get("bb_width_percentile_100")),
+        "m1_regime_quantile": _text_or_none(m1_indicators.get("regime_quantile")),
+        "m15_choppiness_14": _optional_float(m15_indicators.get("choppiness_14")),
+        "m15_bb_width_percentile_100": _optional_float(m15_indicators.get("bb_width_percentile_100")),
+        "m15_atr_percentile_100": _optional_float(m15_indicators.get("atr_percentile_100")),
         "m5_mean_rev_score": _optional_float(m5_family.get("mean_rev_score")),
         "m5_trend_score": _optional_float(m5_family.get("trend_score")),
         "m5_breakout_score": _optional_float(m5_family.get("breakout_score")),
@@ -7154,6 +7164,8 @@ def _forecast_live_readiness_issue(
         _is_hedge_recovery_metadata(metadata)
         and str(metadata.get("hedge_timing_class") or "").upper() == "REVERSAL"
     )
+    if _technical_harvest_precision_support_for_intent(intent, metadata, method):
+        return None
     if direction not in {"UP", "DOWN", "RANGE"}:
         if recovery_reversal_override:
             return None
@@ -7332,6 +7344,12 @@ def _forecast_watch_only_issue(intent: OrderIntent, metadata: dict[str, Any]) ->
         return None
     if _range_rail_limit_watch_only_can_trade(intent, metadata):
         return None
+    if _technical_harvest_precision_support_for_intent(
+        intent,
+        metadata,
+        intent.market_context.method if intent.market_context is not None else None,
+    ):
+        return None
     if _forecast_market_support_override(
         intent,
         metadata,
@@ -7472,6 +7490,27 @@ def _forecast_market_support_override(
         order_type=intent.order_type,
         method=resolved_method,
     )
+
+
+def _technical_harvest_precision_support_for_intent(
+    intent: OrderIntent,
+    metadata: dict[str, Any],
+    method: TradeMethod | None,
+) -> dict[str, Any] | None:
+    support = technical_harvest_precision_support(
+        metadata,
+        pair=intent.pair,
+        side=intent.side.value,
+        order_type=intent.order_type.value,
+        method=method.value if isinstance(method, TradeMethod) else str(method or ""),
+        entry=_optional_float(intent.entry),
+        take_profit=_optional_float(intent.tp),
+        stop_loss=_optional_float(intent.sl),
+    )
+    if support is not None:
+        metadata["technical_harvest_precision_live_ready"] = True
+        metadata["technical_harvest_precision_support"] = support
+    return support
 
 
 def _forecast_watch_live_override_receipt(
