@@ -4773,6 +4773,14 @@ class IntentGenerator:
             risk_issues.append(positive_rotation_issue)
             live_blockers = (*live_blockers, positive_rotation_issue["message"])
             risk_allowed = False
+        positive_rotation_firepower_issue = _positive_rotation_daily_firepower_issue(
+            intent,
+            data_root=data_root or self.data_root,
+        )
+        if positive_rotation_firepower_issue is not None:
+            risk_issues.append(positive_rotation_firepower_issue)
+            live_blockers = (*live_blockers, positive_rotation_firepower_issue["message"])
+            risk_allowed = False
         if (
             self_improvement_profitability_issue is not None
             and str(intent.metadata.get("position_intent") or "").upper() != "HEDGE"
@@ -5354,6 +5362,7 @@ def _macro_event_size_up_signal(lane: dict[str, Any], *, side: Side) -> dict[str
 # an evidence floor for relaxing a guard, not a market target.
 LOSS_ASYMMETRY_TP_RELAX_MIN_EXIT_TRADES = 20
 POSITIVE_ROTATION_LIVE_BLOCK_CODE = "NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION"
+POSITIVE_ROTATION_FIREPOWER_BLOCK_CODE = "POSITIVE_ROTATION_DAILY_FIREPOWER_INSUFFICIENT"
 # Standard normal 1.96 is the textbook 95% Wilson lower-bound confidence
 # constant. It is a statistical confidence convention, not a market parameter;
 # replace it with a named risk-policy input if the operator changes the desired
@@ -5536,6 +5545,86 @@ def _positive_rotation_confidence_metrics(metadata: dict[str, Any]) -> dict[str,
         "positive_rotation_loss_proxy_jpy": round(loss_proxy, 4),
         "positive_rotation_pessimistic_expectancy_jpy": round(pessimistic_expectancy, 4),
     }
+
+
+def _positive_rotation_daily_firepower_issue(
+    intent: OrderIntent,
+    *,
+    data_root: Path | None,
+) -> dict[str, str] | None:
+    """Require the statistically stressed edge to cover the daily 5% floor."""
+
+    metadata = intent.metadata or {}
+    if metadata.get("positive_rotation_live_ready") is not True:
+        return None
+    root = data_root or (ROOT / "data")
+    path = root / "daily_target_state.json"
+    if not path.exists():
+        return None
+    try:
+        payload = json.loads(path.read_text())
+    except (OSError, json.JSONDecodeError, ValueError):
+        return None
+    if not isinstance(payload, dict):
+        return None
+    pessimistic_expectancy = _optional_float(
+        metadata.get("positive_rotation_pessimistic_expectancy_jpy")
+    )
+    target_trades = int(_optional_float(payload.get("target_trades_per_day")) or 0)
+    remaining_minimum = _optional_float(payload.get("remaining_minimum_jpy"))
+    remaining_target = _optional_float(payload.get("remaining_target_jpy"))
+    tp_trades = int(_optional_float(metadata.get("positive_rotation_tp_trades")) or 0)
+    if pessimistic_expectancy is None or pessimistic_expectancy <= 0 or target_trades <= 0:
+        return None
+    minimum_needed = max(0.0, remaining_minimum or 0.0)
+    target_needed = max(0.0, remaining_target or 0.0)
+    daily_lower_bound = pessimistic_expectancy * target_trades
+    required_minimum_trades = (
+        math.ceil(minimum_needed / pessimistic_expectancy) if minimum_needed > 0 else 0
+    )
+    required_target_trades = (
+        math.ceil(target_needed / pessimistic_expectancy) if target_needed > 0 else 0
+    )
+    metadata.update(
+        {
+            "positive_rotation_daily_firepower_source": str(path),
+            "positive_rotation_daily_firepower_target_trades": target_trades,
+            "positive_rotation_daily_firepower_lower_bound_jpy": round(daily_lower_bound, 4),
+            "positive_rotation_remaining_minimum_jpy": round(minimum_needed, 4),
+            "positive_rotation_remaining_target_jpy": round(target_needed, 4),
+            "positive_rotation_required_minimum_trades": required_minimum_trades,
+            "positive_rotation_required_target_trades": required_target_trades,
+            "positive_rotation_minimum_floor_reachable": (
+                required_minimum_trades <= target_trades if required_minimum_trades else True
+            ),
+            "positive_rotation_target_reachable": (
+                required_target_trades <= target_trades if required_target_trades else True
+            ),
+        }
+    )
+    if tp_trades < target_trades:
+        return {
+            "code": POSITIVE_ROTATION_FIREPOWER_BLOCK_CODE,
+            "message": (
+                "positive-rotation evidence sample is below today's target pace "
+                f"(tp_trades={tp_trades}, target_trades_per_day={target_trades}); "
+                "do not scale to a full 5-10% daily rotation until realized TP "
+                "samples cover at least one planned trading day"
+            ),
+            "severity": "BLOCK",
+        }
+    if minimum_needed > 0 and daily_lower_bound < minimum_needed:
+        return {
+            "code": POSITIVE_ROTATION_FIREPOWER_BLOCK_CODE,
+            "message": (
+                "positive-rotation lower-bound firepower cannot cover the daily "
+                f"minimum target: lower_bound={daily_lower_bound:.2f} JPY at "
+                f"{target_trades} trades, remaining_minimum={minimum_needed:.2f} JPY; "
+                f"requires {required_minimum_trades} trades at the stressed expectancy"
+            ),
+            "severity": "BLOCK",
+        }
+    return None
 
 
 def _capture_positive_rotation_live_issue(intent: OrderIntent) -> dict[str, str] | None:

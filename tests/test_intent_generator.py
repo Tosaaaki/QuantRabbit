@@ -13,6 +13,7 @@ from unittest.mock import patch
 from quant_rabbit.models import OrderIntent, OrderType, Side, TradeMethod
 from quant_rabbit.strategy.intent_generator import (
     IntentGenerator,
+    POSITIVE_ROTATION_FIREPOWER_BLOCK_CODE,
     POSITIVE_ROTATION_LIVE_BLOCK_CODE,
     RANGE_TARGET_SPREAD_CUSHION_MULT,
     _forecast_context_payload,
@@ -257,6 +258,17 @@ class IntentGeneratorTest(unittest.TestCase):
     def test_capture_loss_asymmetry_relaxes_tp_proven_harvest_entries(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
+            (root / "daily_target_state.json").write_text(
+                json.dumps(
+                    {
+                        "status": "PURSUE_TARGET",
+                        "remaining_risk_budget_jpy": 100000.0,
+                        "remaining_minimum_jpy": 8000.0,
+                        "remaining_target_jpy": 17000.0,
+                        "target_trades_per_day": 30,
+                    }
+                )
+            )
             (root / "capture_economics.json").write_text(
                 json.dumps(
                     {
@@ -292,7 +304,7 @@ class IntentGeneratorTest(unittest.TestCase):
             output = root / "intents.json"
 
             summary = IntentGenerator(
-                campaign_plan=_range_campaign(root),
+                campaign_plan=_stamp_campaign_generated_at(_range_campaign(root)),
                 strategy_profile=_strategy(root, status="CANDIDATE"),
                 output_path=output,
                 report_path=root / "intents.md",
@@ -326,7 +338,84 @@ class IntentGeneratorTest(unittest.TestCase):
             self.assertGreater(metadata["positive_rotation_pessimistic_expectancy_jpy"], 0.0)
             self.assertEqual(result["status"], "LIVE_READY")
             self.assertNotIn(POSITIVE_ROTATION_LIVE_BLOCK_CODE, issue_codes)
+            self.assertNotIn(POSITIVE_ROTATION_FIREPOWER_BLOCK_CODE, issue_codes)
+            self.assertTrue(metadata["positive_rotation_minimum_floor_reachable"])
+            self.assertLessEqual(metadata["positive_rotation_required_minimum_trades"], 30)
             self.assertLessEqual(result["risk_metrics"]["risk_jpy"], 1000.0)
+
+    def test_capture_tp_proven_but_daily_firepower_short_blocks_live_rotation(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "daily_target_state.json").write_text(
+                json.dumps(
+                    {
+                        "status": "PURSUE_TARGET",
+                        "remaining_risk_budget_jpy": 100000.0,
+                        "remaining_minimum_jpy": 20000.0,
+                        "remaining_target_jpy": 30000.0,
+                        "target_trades_per_day": 30,
+                    }
+                )
+            )
+            (root / "capture_economics.json").write_text(
+                json.dumps(
+                    {
+                        "status": "NEGATIVE_EXPECTANCY",
+                        "overall": {
+                            "trades": 210,
+                            "avg_win_jpy": 600.0,
+                            "avg_loss_jpy": 1100.0,
+                            "payoff_ratio": 0.545,
+                            "breakeven_payoff_at_win_rate": 0.7,
+                        },
+                        "by_exit_reason": {
+                            "TAKE_PROFIT_ORDER": {
+                                "trades": 93,
+                                "wins": 93,
+                                "losses": 0,
+                                "avg_win_jpy": 504.0,
+                                "avg_loss_jpy": 0.0,
+                                "expectancy_jpy_per_trade": 504.0,
+                            },
+                            "MARKET_ORDER_TRADE_CLOSE": {
+                                "trades": 84,
+                                "wins": 13,
+                                "losses": 71,
+                                "avg_win_jpy": 218.4,
+                                "avg_loss_jpy": 1095.5,
+                                "expectancy_jpy_per_trade": -892.1,
+                            },
+                        },
+                    }
+                )
+            )
+            output = root / "intents.json"
+
+            summary = IntentGenerator(
+                campaign_plan=_stamp_campaign_generated_at(_range_campaign(root)),
+                strategy_profile=_strategy(root, status="CANDIDATE"),
+                output_path=output,
+                report_path=root / "intents.md",
+                pair_charts_path=_pair_charts(root),
+                data_root=root,
+                max_loss_jpy=1000.0,
+            ).run(snapshot_path=_snapshot(root))
+
+            payload = json.loads(output.read_text())
+            result = next(
+                item for item in payload["results"]
+                if item["lane_id"] == "range_trader:EUR_USD:LONG:RANGE_ROTATION"
+            )
+            metadata = result["intent"]["metadata"]
+            issue_codes = {issue["code"] for issue in result["risk_issues"]}
+
+            self.assertGreater(summary.generated, 0)
+            self.assertEqual(metadata["positive_rotation_mode"], "TP_PROVEN_HARVEST")
+            self.assertFalse(metadata["positive_rotation_minimum_floor_reachable"])
+            self.assertGreater(metadata["positive_rotation_required_minimum_trades"], 30)
+            self.assertEqual(result["status"], "DRY_RUN_BLOCKED")
+            self.assertIn(POSITIVE_ROTATION_FIREPOWER_BLOCK_CODE, issue_codes)
+            self.assertIn(POSITIVE_ROTATION_FIREPOWER_BLOCK_CODE, result["live_blocker_codes"])
 
     def test_capture_tp_positive_but_stress_negative_blocks_live_rotation(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -7636,6 +7725,13 @@ def _range_campaign(root: Path, *, direction: str = "LONG") -> Path:
             }
         )
     )
+    return path
+
+
+def _stamp_campaign_generated_at(path: Path) -> Path:
+    payload = json.loads(path.read_text())
+    payload["generated_at_utc"] = datetime.now(timezone.utc).isoformat()
+    path.write_text(json.dumps(payload))
     return path
 
 
