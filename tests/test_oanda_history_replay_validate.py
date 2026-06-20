@@ -127,6 +127,133 @@ class OandaHistoryReplayValidateTest(unittest.TestCase):
         self.assertEqual(segments[0]["best_exit"]["stop_loss_pips"], 7.0)
         self.assertEqual(segments[0]["best_exit"]["avg_realized_pips"], 5.0)
 
+    def test_precision_rules_are_selected_from_pair_direction_segments(self) -> None:
+        rules = replay._bidask_precision_rules(
+            [
+                {
+                    "pair": "GBP_USD",
+                    "direction": "DOWN",
+                    "n": 48,
+                    "summary": {
+                        "hit_rate": 0.72,
+                        "avg_final_pips": 1.8,
+                        "median_final_pips": 1.2,
+                        "avg_mfe_pips": 5.3,
+                        "avg_mae_pips": 3.9,
+                    },
+                    "best_exit": {
+                        "take_profit_pips": 5.0,
+                        "stop_loss_pips": 7.0,
+                        "avg_realized_pips": 2.1,
+                        "win_rate": 0.69,
+                        "profit_factor": 2.4,
+                    },
+                },
+                {
+                    "pair": "AUD_JPY",
+                    "direction": "UP",
+                    "n": 124,
+                    "summary": {
+                        "hit_rate": 0.20,
+                        "avg_final_pips": -6.7,
+                        "median_final_pips": -4.7,
+                        "avg_mfe_pips": 3.8,
+                        "avg_mae_pips": 14.4,
+                    },
+                    "best_exit": {
+                        "take_profit_pips": 2.0,
+                        "stop_loss_pips": 2.0,
+                        "avg_realized_pips": -2.0,
+                        "win_rate": 0.0,
+                        "profit_factor": 0.0,
+                    },
+                },
+                {
+                    "pair": "EUR_JPY",
+                    "direction": "DOWN",
+                    "n": 7,
+                    "summary": {
+                        "hit_rate": 0.86,
+                        "avg_final_pips": 8.0,
+                        "median_final_pips": 7.0,
+                        "avg_mfe_pips": 10.0,
+                        "avg_mae_pips": 2.0,
+                    },
+                    "best_exit": {
+                        "take_profit_pips": 5.0,
+                        "stop_loss_pips": 7.0,
+                        "avg_realized_pips": 3.0,
+                        "win_rate": 0.86,
+                        "profit_factor": 4.0,
+                    },
+                },
+            ],
+            granularity="S5",
+            audit_report="unit.json",
+            edge_min_samples=30,
+            edge_min_directional_hit_rate=0.60,
+            edge_min_avg_final_pips=0.0,
+            edge_min_avg_realized_pips=0.5,
+            edge_min_win_rate=0.55,
+            edge_min_profit_factor=1.5,
+            negative_min_samples=30,
+            negative_max_directional_hit_rate=0.45,
+            negative_max_avg_final_pips=0.0,
+            negative_max_avg_realized_pips=-0.5,
+            negative_max_win_rate=0.40,
+            negative_max_profit_factor=0.75,
+        )
+
+        self.assertEqual(
+            [rule["name"] for rule in rules["edge_rules"]],
+            ["GBP_USD_DOWN_S5_BIDASK_HARVEST_TP5_SL7"],
+        )
+        self.assertEqual(rules["edge_rules"][0]["min_target_pips"], 4.8)
+        self.assertEqual(
+            [rule["name"] for rule in rules["negative_rules"]],
+            ["AUD_JPY_UP_S5_BIDASK_NEGATIVE_EXPECTANCY"],
+        )
+        self.assertEqual(rules["negative_rules"][0]["side"], "LONG")
+        self.assertEqual(rules["rejected_sampled_segments"], [])
+
+    def test_missing_price_window_groups_publish_fetch_windows(self) -> None:
+        rows = [
+            replay.ForecastRow(
+                source_index=1,
+                timestamp_utc=datetime(2026, 6, 17, 7, 21, tzinfo=timezone.utc),
+                pair="AUD_JPY",
+                direction="UP",
+                confidence=0.7,
+                current_price=None,
+                target_price=None,
+                invalidation_price=None,
+                horizon_min=60,
+                cycle_id=None,
+            ),
+            replay.ForecastRow(
+                source_index=2,
+                timestamp_utc=datetime(2026, 6, 17, 14, 4, tzinfo=timezone.utc),
+                pair="EUR_USD",
+                direction="DOWN",
+                confidence=0.8,
+                current_price=None,
+                target_price=None,
+                invalidation_price=None,
+                horizon_min=240,
+                cycle_id=None,
+            ),
+        ]
+
+        groups = replay._missing_price_window_groups(rows)
+
+        self.assertEqual(len(groups), 1)
+        self.assertEqual(groups[0]["date"], "2026-06-17")
+        self.assertEqual(groups[0]["count"], 2)
+        self.assertEqual(groups[0]["needed_from_utc"], "2026-06-17T07:16:00Z")
+        self.assertEqual(groups[0]["needed_to_utc"], "2026-06-17T18:09:00Z")
+        self.assertEqual(groups[0]["pairs"], ["AUD_JPY", "EUR_USD"])
+        self.assertEqual(groups[0]["pair_directions"], ["AUD_JPY:UP", "EUR_USD:DOWN"])
+
     def test_target_not_on_reward_side_is_not_counted_as_touch(self) -> None:
         row = replay.ForecastRow(
             source_index=1,

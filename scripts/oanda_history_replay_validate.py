@@ -25,6 +25,18 @@ from quant_rabbit.instruments import instrument_pip_factor
 DIRECTIONAL = {"UP", "DOWN"}
 DEFAULT_TP_GRID_PIPS = (2.0, 5.0, 10.0)
 DEFAULT_SL_GRID_PIPS = (2.0, 4.0, 7.0)
+DEFAULT_EDGE_MIN_SAMPLES = 30
+DEFAULT_EDGE_MIN_DIRECTIONAL_HIT_RATE = 0.60
+DEFAULT_EDGE_MIN_AVG_FINAL_PIPS = 0.0
+DEFAULT_EDGE_MIN_AVG_REALIZED_PIPS = 0.5
+DEFAULT_EDGE_MIN_WIN_RATE = 0.55
+DEFAULT_EDGE_MIN_PROFIT_FACTOR = 1.5
+DEFAULT_NEGATIVE_MIN_SAMPLES = 30
+DEFAULT_NEGATIVE_MAX_DIRECTIONAL_HIT_RATE = 0.45
+DEFAULT_NEGATIVE_MAX_AVG_FINAL_PIPS = 0.0
+DEFAULT_NEGATIVE_MAX_AVG_REALIZED_PIPS = -0.5
+DEFAULT_NEGATIVE_MAX_WIN_RATE = 0.40
+DEFAULT_NEGATIVE_MAX_PROFIT_FACTOR = 0.75
 
 
 @dataclass(frozen=True)
@@ -89,6 +101,23 @@ def main() -> int:
     md_out = out_dir / f"oanda_history_replay_validate_{run_ts}.md"
     latest_json = out_dir / "oanda_history_replay_validate_latest.json"
     latest_md = out_dir / "oanda_history_replay_validate_latest.md"
+    precision_rules = _bidask_precision_rules(
+        segment_exit_grids["by_pair_direction"],
+        granularity=args.granularity,
+        audit_report=str(json_out),
+        edge_min_samples=args.edge_min_samples,
+        edge_min_directional_hit_rate=args.edge_min_directional_hit_rate,
+        edge_min_avg_final_pips=args.edge_min_avg_final_pips,
+        edge_min_avg_realized_pips=args.edge_min_avg_realized_pips,
+        edge_min_win_rate=args.edge_min_win_rate,
+        edge_min_profit_factor=args.edge_min_profit_factor,
+        negative_min_samples=args.negative_min_samples,
+        negative_max_directional_hit_rate=args.negative_max_directional_hit_rate,
+        negative_max_avg_final_pips=args.negative_max_avg_final_pips,
+        negative_max_avg_realized_pips=args.negative_max_avg_realized_pips,
+        negative_max_win_rate=args.negative_max_win_rate,
+        negative_max_profit_factor=args.negative_max_profit_factor,
+    )
 
     report = {
         "generated_at_utc": _iso(datetime.now(timezone.utc)),
@@ -119,6 +148,7 @@ def main() -> int:
         },
         "exit_grid": exit_grid,
         "segment_exit_grids": segment_exit_grids,
+        "precision_rules": precision_rules,
         "train_validation_exit_selection": split,
     }
     json_out.write_text(json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True), encoding="utf-8")
@@ -142,6 +172,26 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--min-train-samples", type=int, default=20)
     parser.add_argument("--min-validation-samples", type=int, default=10)
     parser.add_argument("--min-group-samples", type=int, default=5)
+    parser.add_argument("--edge-min-samples", type=int, default=DEFAULT_EDGE_MIN_SAMPLES)
+    parser.add_argument(
+        "--edge-min-directional-hit-rate",
+        type=float,
+        default=DEFAULT_EDGE_MIN_DIRECTIONAL_HIT_RATE,
+    )
+    parser.add_argument("--edge-min-avg-final-pips", type=float, default=DEFAULT_EDGE_MIN_AVG_FINAL_PIPS)
+    parser.add_argument("--edge-min-avg-realized-pips", type=float, default=DEFAULT_EDGE_MIN_AVG_REALIZED_PIPS)
+    parser.add_argument("--edge-min-win-rate", type=float, default=DEFAULT_EDGE_MIN_WIN_RATE)
+    parser.add_argument("--edge-min-profit-factor", type=float, default=DEFAULT_EDGE_MIN_PROFIT_FACTOR)
+    parser.add_argument("--negative-min-samples", type=int, default=DEFAULT_NEGATIVE_MIN_SAMPLES)
+    parser.add_argument(
+        "--negative-max-directional-hit-rate",
+        type=float,
+        default=DEFAULT_NEGATIVE_MAX_DIRECTIONAL_HIT_RATE,
+    )
+    parser.add_argument("--negative-max-avg-final-pips", type=float, default=DEFAULT_NEGATIVE_MAX_AVG_FINAL_PIPS)
+    parser.add_argument("--negative-max-avg-realized-pips", type=float, default=DEFAULT_NEGATIVE_MAX_AVG_REALIZED_PIPS)
+    parser.add_argument("--negative-max-win-rate", type=float, default=DEFAULT_NEGATIVE_MAX_WIN_RATE)
+    parser.add_argument("--negative-max-profit-factor", type=float, default=DEFAULT_NEGATIVE_MAX_PROFIT_FACTOR)
     return parser.parse_args()
 
 
@@ -320,16 +370,19 @@ def _score_forecasts(
     results: list[dict[str, Any]] = []
     skipped_no_pair = 0
     skipped_no_window = 0
+    missing_windows: list[ForecastRow] = []
     for row in rows:
         candles = candles_by_pair.get(row.pair)
         if not candles:
             skipped_no_pair += 1
+            missing_windows.append(row)
             continue
         times = [c.timestamp_utc for c in candles]
         start = bisect.bisect_left(times, row.timestamp_utc)
         end = bisect.bisect_right(times, row.timestamp_utc + timedelta(minutes=row.horizon_min))
         if start >= len(candles) or end <= start:
             skipped_no_window += 1
+            missing_windows.append(row)
             continue
         window = candles[start:end]
         scored = _score_one(row, window)
@@ -339,7 +392,32 @@ def _score_forecasts(
         "evaluated_rows": len(results),
         "skipped_no_pair_candles": skipped_no_pair,
         "skipped_no_price_window": skipped_no_window,
+        "missing_price_window_groups": _missing_price_window_groups(missing_windows),
     }
+
+
+def _missing_price_window_groups(rows: Sequence[ForecastRow]) -> list[dict[str, Any]]:
+    buckets: dict[str, list[ForecastRow]] = collections.defaultdict(list)
+    for row in rows:
+        buckets[row.timestamp_utc.date().isoformat()].append(row)
+    out: list[dict[str, Any]] = []
+    for date, items in buckets.items():
+        needed_from = min(row.timestamp_utc for row in items) - timedelta(minutes=5)
+        needed_to = max(row.timestamp_utc + timedelta(minutes=row.horizon_min) for row in items) + timedelta(minutes=5)
+        pairs = sorted({row.pair for row in items})
+        pair_directions = sorted({f"{row.pair}:{row.direction}" for row in items})
+        out.append(
+            {
+                "date": date,
+                "count": len(items),
+                "needed_from_utc": _iso(needed_from),
+                "needed_to_utc": _iso(needed_to),
+                "pairs": pairs,
+                "pair_directions": pair_directions,
+            }
+        )
+    out.sort(key=lambda item: item["date"])
+    return out
 
 
 def _score_one(row: ForecastRow, window: Sequence[QuoteCandle]) -> dict[str, Any] | None:
@@ -637,6 +715,189 @@ def _segment_exit_grids(
     return out
 
 
+def _bidask_precision_rules(
+    segment_rows: Sequence[dict[str, Any]],
+    *,
+    granularity: str,
+    audit_report: str,
+    edge_min_samples: int,
+    edge_min_directional_hit_rate: float,
+    edge_min_avg_final_pips: float,
+    edge_min_avg_realized_pips: float,
+    edge_min_win_rate: float,
+    edge_min_profit_factor: float,
+    negative_min_samples: int,
+    negative_max_directional_hit_rate: float,
+    negative_max_avg_final_pips: float,
+    negative_max_avg_realized_pips: float,
+    negative_max_win_rate: float,
+    negative_max_profit_factor: float,
+) -> dict[str, Any]:
+    selection = {
+        "edge_min_samples": edge_min_samples,
+        "edge_min_directional_hit_rate": edge_min_directional_hit_rate,
+        "edge_min_avg_final_pips": edge_min_avg_final_pips,
+        "edge_min_avg_realized_pips": edge_min_avg_realized_pips,
+        "edge_min_win_rate": edge_min_win_rate,
+        "edge_min_profit_factor": edge_min_profit_factor,
+        "negative_min_samples": negative_min_samples,
+        "negative_max_directional_hit_rate": negative_max_directional_hit_rate,
+        "negative_max_avg_final_pips": negative_max_avg_final_pips,
+        "negative_max_avg_realized_pips": negative_max_avg_realized_pips,
+        "negative_max_win_rate": negative_max_win_rate,
+        "negative_max_profit_factor": negative_max_profit_factor,
+    }
+    edge_rules: list[dict[str, Any]] = []
+    negative_rules: list[dict[str, Any]] = []
+    rejected: list[dict[str, Any]] = []
+    for row in segment_rows:
+        summary = row.get("summary") or {}
+        best = row.get("best_exit") or {}
+        pair = str(row.get("pair") or "").upper()
+        direction = str(row.get("direction") or "").upper()
+        n = int(row.get("n") or 0)
+        hit_rate = _safe_metric(summary.get("hit_rate"))
+        avg_final = _safe_metric(summary.get("avg_final_pips"))
+        avg_mfe = _safe_metric(summary.get("avg_mfe_pips"))
+        avg_mae = _safe_metric(summary.get("avg_mae_pips"))
+        median_final = _safe_metric(summary.get("median_final_pips"))
+        avg_realized = _safe_metric(best.get("avg_realized_pips"))
+        win_rate = _safe_metric(best.get("win_rate"))
+        profit_factor = _safe_metric(best.get("profit_factor"))
+        take_profit = _safe_metric(best.get("take_profit_pips"))
+        stop_loss = _safe_metric(best.get("stop_loss_pips"))
+        if not pair or direction not in DIRECTIONAL or take_profit is None or stop_loss is None:
+            continue
+        common = {
+            "pair": pair,
+            "side": _side_for_direction(direction),
+            "direction": direction,
+            "granularity": granularity,
+            "samples": n,
+            "directional_hit_rate": _round(hit_rate),
+            "avg_final_pips": _round(avg_final),
+            "median_final_pips": _round(median_final),
+            "avg_mfe_pips": _round(avg_mfe),
+            "avg_mae_pips": _round(avg_mae),
+            "optimized_take_profit_pips": _round(take_profit),
+            "optimized_stop_loss_pips": _round(stop_loss),
+            "optimized_avg_realized_pips": _round(avg_realized),
+            "optimized_win_rate": _round(win_rate),
+            "optimized_profit_factor": _round(profit_factor),
+            "audit_report": audit_report,
+        }
+        if (
+            n >= edge_min_samples
+            and hit_rate is not None
+            and hit_rate >= edge_min_directional_hit_rate
+            and avg_final is not None
+            and avg_final > edge_min_avg_final_pips
+            and avg_realized is not None
+            and avg_realized >= edge_min_avg_realized_pips
+            and win_rate is not None
+            and win_rate >= edge_min_win_rate
+            and profit_factor is not None
+            and profit_factor >= edge_min_profit_factor
+        ):
+            min_target, max_target = _target_bounds(take_profit)
+            edge_rules.append(
+                {
+                    "name": (
+                        f"{pair}_{direction}_{granularity}_BIDASK_HARVEST_"
+                        f"TP{_rule_number(take_profit)}_SL{_rule_number(stop_loss)}"
+                    ),
+                    **common,
+                    "min_target_pips": min_target,
+                    "max_target_pips": max_target,
+                    "max_stop_pips": _round(stop_loss + 0.2),
+                }
+            )
+            continue
+        if (
+            n >= negative_min_samples
+            and hit_rate is not None
+            and hit_rate <= negative_max_directional_hit_rate
+            and avg_final is not None
+            and avg_final <= negative_max_avg_final_pips
+            and avg_realized is not None
+            and avg_realized <= negative_max_avg_realized_pips
+            and win_rate is not None
+            and win_rate <= negative_max_win_rate
+            and profit_factor is not None
+            and profit_factor <= negative_max_profit_factor
+        ):
+            negative_rules.append(
+                {
+                    "name": f"{pair}_{direction}_{granularity}_BIDASK_NEGATIVE_EXPECTANCY",
+                    **common,
+                    "blocks_live_support": True,
+                }
+            )
+            continue
+        if n >= min(edge_min_samples, negative_min_samples):
+            rejected.append(
+                {
+                    "pair": pair,
+                    "direction": direction,
+                    "samples": n,
+                    "directional_hit_rate": _round(hit_rate),
+                    "avg_final_pips": _round(avg_final),
+                    "optimized_avg_realized_pips": _round(avg_realized),
+                    "optimized_win_rate": _round(win_rate),
+                    "optimized_profit_factor": _round(profit_factor),
+                }
+            )
+    edge_rules.sort(
+        key=lambda item: (
+            item["optimized_profit_factor"],
+            item["optimized_avg_realized_pips"],
+            item["samples"],
+        ),
+        reverse=True,
+    )
+    negative_rules.sort(
+        key=lambda item: (
+            item["samples"],
+            -float(item["optimized_avg_realized_pips"] or 0.0),
+        ),
+        reverse=True,
+    )
+    return {
+        "selection": selection,
+        "edge_rules": edge_rules,
+        "negative_rules": negative_rules,
+        "rejected_sampled_segments": rejected,
+    }
+
+
+def _target_bounds(take_profit_pips: float) -> tuple[float, float]:
+    return (
+        _round(max(0.1, float(take_profit_pips) - 0.2)),
+        _round(float(take_profit_pips) + max(0.5, float(take_profit_pips) * 0.1)),
+    )
+
+
+def _side_for_direction(direction: str) -> str:
+    return "LONG" if direction == "UP" else "SHORT"
+
+
+def _rule_number(value: float) -> str:
+    numeric = float(value)
+    return str(int(numeric)) if numeric.is_integer() else str(numeric).replace(".", "p")
+
+
+def _safe_metric(value: object) -> float | None:
+    try:
+        numeric = float(value)
+    except (TypeError, ValueError):
+        return None
+    return numeric if math.isfinite(numeric) else None
+
+
+def _round(value: float | None) -> float | None:
+    return None if value is None else round(float(value), 4)
+
+
 def _markdown(report: dict[str, Any]) -> str:
     summary = report["summary"]
     split = report["train_validation_exit_selection"]
@@ -678,6 +939,38 @@ def _markdown(report: dict[str, Any]) -> str:
             f"- TP={item['take_profit_pips']} SL={item['stop_loss_pips']} "
             f"n={item['n']} avg={_fmt(item['avg_realized_pips'])} "
             f"win={_pct(item['win_rate'])} PF={_fmt(item['profit_factor'])} timeout={_pct(item['timeout_rate'])}"
+        )
+    precision = report.get("precision_rules") or {}
+    lines.extend(["", "## Precision Rule Candidates", ""])
+    edge_rules = precision.get("edge_rules") or []
+    negative_rules = precision.get("negative_rules") or []
+    lines.append(f"- edge_rules: {len(edge_rules)}")
+    for rule in edge_rules[:12]:
+        lines.append(
+            f"  - {rule['name']}: n={rule['samples']} hit={_pct(rule.get('directional_hit_rate'))} "
+            f"avg_final={_fmt(rule.get('avg_final_pips'))} "
+            f"TP={rule.get('optimized_take_profit_pips')} SL={rule.get('optimized_stop_loss_pips')} "
+            f"realized={_fmt(rule.get('optimized_avg_realized_pips'))} "
+            f"win={_pct(rule.get('optimized_win_rate'))} PF={_fmt(rule.get('optimized_profit_factor'))}"
+        )
+    lines.append(f"- negative_rules: {len(negative_rules)}")
+    for rule in negative_rules[:12]:
+        lines.append(
+            f"  - {rule['name']}: n={rule['samples']} hit={_pct(rule.get('directional_hit_rate'))} "
+            f"avg_final={_fmt(rule.get('avg_final_pips'))} "
+            f"best_realized={_fmt(rule.get('optimized_avg_realized_pips'))} "
+            f"win={_pct(rule.get('optimized_win_rate'))} PF={_fmt(rule.get('optimized_profit_factor'))}"
+        )
+    lines.extend(["", "## Missing Price Windows", ""])
+    missing_groups = report.get("missing_price_window_groups") or []
+    if not missing_groups:
+        lines.append("- none")
+    for group in missing_groups[:12]:
+        pairs = ",".join(group.get("pairs") or [])
+        lines.append(
+            f"- {group.get('date')}: count={group.get('count')} "
+            f"from={group.get('needed_from_utc')} to={group.get('needed_to_utc')} "
+            f"pairs={pairs}"
         )
     lines.extend(["", "## Segment Exit Grids", ""])
     for name, rows in report.get("segment_exit_grids", {}).items():

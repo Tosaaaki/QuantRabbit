@@ -14,3 +14,6 @@ qr-vnext = "quant_rabbit.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+quant_rabbit = ["*.json"]

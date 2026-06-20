@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import json
+import tempfile
 import unittest
+from pathlib import Path
 
 from quant_rabbit.forecast_precision import (
     bidask_replay_negative_precision_issue,
@@ -12,6 +15,71 @@ from quant_rabbit.forecast_precision import (
 
 
 class ForecastPrecisionConfluenceTest(unittest.TestCase):
+    def test_bidask_replay_rules_are_data_driven_across_pairs(self) -> None:
+        metadata = {
+            "forecast_direction": "DOWN",
+            "chart_direction_bias": "SHORT",
+            "tp_execution_mode": "ATTACHED_TECHNICAL_TP",
+            "tp_target_intent": "HARVEST",
+            "opportunity_mode": "HARVEST",
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            rules_path = Path(tmp) / "rules.json"
+            rules_path.write_text(
+                json.dumps(
+                    {
+                        "schema_version": 1,
+                        "generated_at_utc": "2026-06-20T00:00:00Z",
+                        "generated_from": "unit-test",
+                        "edge_rules": [
+                            {
+                                "name": "GBP_USD_DOWN_S5_BIDASK_HARVEST_TP5_SL7",
+                                "pair": "GBP_USD",
+                                "side": "SHORT",
+                                "direction": "DOWN",
+                                "granularity": "S5",
+                                "samples": 48,
+                                "directional_hit_rate": 0.72,
+                                "avg_final_pips": 1.8,
+                                "avg_mfe_pips": 5.4,
+                                "avg_mae_pips": 3.7,
+                                "optimized_take_profit_pips": 5.0,
+                                "optimized_stop_loss_pips": 7.0,
+                                "optimized_avg_realized_pips": 2.1,
+                                "optimized_win_rate": 0.69,
+                                "optimized_profit_factor": 2.4,
+                                "min_target_pips": 4.8,
+                                "max_target_pips": 5.5,
+                                "max_stop_pips": 7.2,
+                                "audit_report": "unit-test.json",
+                            }
+                        ],
+                        "negative_rules": [],
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            assessment = bidask_replay_precision_assessment(
+                metadata,
+                pair="GBP_USD",
+                side="SHORT",
+                order_type="LIMIT",
+                method="BREAKOUT_FAILURE",
+                entry=1.3000,
+                take_profit=1.2995,
+                stop_loss=1.3007,
+                rules_path=rules_path,
+            )
+
+        self.assertEqual(
+            assessment["primary_support"]["name"],
+            "GBP_USD_DOWN_S5_BIDASK_HARVEST_TP5_SL7",
+        )
+        self.assertEqual(assessment["primary_support"]["pair"], "GBP_USD")
+        self.assertEqual(assessment["score_delta"], 18.0)
+        self.assertEqual(assessment["rule_source"]["generated_from"], "unit-test")
+
     def test_bidask_replay_supports_eurusd_down_harvest_shape(self) -> None:
         metadata = {
             "forecast_direction": "DOWN",
@@ -50,7 +118,7 @@ class ForecastPrecisionConfluenceTest(unittest.TestCase):
                 take_profit=1.17280,
                 stop_loss=1.17400,
             )["optimized_profit_factor"],
-            3.7170,
+            3.7168,
         )
 
     def test_bidask_replay_blocks_audjpy_up_negative_pair_direction(self) -> None:

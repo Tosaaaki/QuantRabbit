@@ -1,0 +1,72 @@
+{
+  "schema_version": 1,
+  "generated_at_utc": "2026-06-20T23:43:15.581205Z",
+  "generated_from": "logs/reports/forecast_improvement/oanda_history_replay_validate_20260620T234315Z.json",
+  "truth_source": "local OANDA S5 bid/ask candles; UP entry=ask/exit=bid, DOWN entry=bid/exit=ask; same-candle TP+SL ambiguity counts as stop-first loss",
+  "selection": {
+    "edge_min_samples": 30,
+    "edge_min_directional_hit_rate": 0.6,
+    "edge_min_avg_final_pips": 0.0,
+    "edge_min_avg_realized_pips": 0.5,
+    "edge_min_win_rate": 0.55,
+    "edge_min_profit_factor": 1.5,
+    "negative_min_samples": 30,
+    "negative_max_directional_hit_rate": 0.45,
+    "negative_max_avg_final_pips": 0.0,
+    "negative_max_avg_realized_pips": -0.5,
+    "negative_max_win_rate": 0.4,
+    "negative_max_profit_factor": 0.75
+  },
+  "coverage": {
+    "raw_directional_rows": 1294,
+    "deduped_directional_rows": 629,
+    "evaluated_rows": 478,
+    "history_candles": 1398882
+  },
+  "edge_rules": [
+    {
+      "name": "EUR_USD_DOWN_S5_BIDASK_HARVEST_TP5_SL7",
+      "pair": "EUR_USD",
+      "side": "SHORT",
+      "direction": "DOWN",
+      "granularity": "S5",
+      "samples": 222,
+      "directional_hit_rate": 0.7432,
+      "avg_final_pips": 2.3225,
+      "median_final_pips": 3.7,
+      "avg_mfe_pips": 5.1239,
+      "avg_mae_pips": 4.2622,
+      "optimized_take_profit_pips": 5.0,
+      "optimized_stop_loss_pips": 7.0,
+      "optimized_avg_realized_pips": 2.7437,
+      "optimized_win_rate": 0.7523,
+      "optimized_profit_factor": 3.7168,
+      "min_target_pips": 4.8,
+      "max_target_pips": 5.5,
+      "max_stop_pips": 7.2,
+      "audit_report": "logs/reports/forecast_improvement/oanda_history_replay_validate_20260620T234315Z.json"
+    }
+  ],
+  "negative_rules": [
+    {
+      "name": "AUD_JPY_UP_S5_BIDASK_NEGATIVE_EXPECTANCY",
+      "pair": "AUD_JPY",
+      "side": "LONG",
+      "direction": "UP",
+      "granularity": "S5",
+      "samples": 124,
+      "directional_hit_rate": 0.2016,
+      "avg_final_pips": -6.7589,
+      "median_final_pips": -4.7,
+      "avg_mfe_pips": 3.7556,
+      "avg_mae_pips": 14.371,
+      "optimized_take_profit_pips": 2.0,
+      "optimized_stop_loss_pips": 2.0,
+      "optimized_avg_realized_pips": -2.0,
+      "optimized_win_rate": 0.0,
+      "optimized_profit_factor": 0.0,
+      "blocks_live_support": true,
+      "audit_report": "logs/reports/forecast_improvement/oanda_history_replay_validate_20260620T234315Z.json"
+    }
+  ]
+}
