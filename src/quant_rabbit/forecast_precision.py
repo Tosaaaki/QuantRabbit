@@ -16,6 +16,16 @@ from quant_rabbit.instruments import instrument_pip_factor
 
 _PIP_RE = re.compile(r"(?P<pips>\d+(?:\.\d+)?)\s*pip", re.IGNORECASE)
 
+# Ranking weights are advisory only; RiskEngine and LiveOrderGateway remain
+# executable authorities. Values are anchored to the 2026-06-20 TP5/SL4 audit:
+# a 90%+ Wilson lower-bound bucket gets enough score to outrank ordinary
+# history noise, while extra confluence is additive but bounded by the small
+# number of audited positive buckets.
+TECHNICAL_HARVEST_PRECISION_SCORE_BONUS = 24.0
+TECHNICAL_HARVEST_PRECISION_EXTRA_MATCH_BONUS = 6.0
+TECHNICAL_HARVEST_NEGATIVE_SCORE_PENALTY = 35.0
+
+
 TECHNICAL_HARVEST_PRECISION_RULES: tuple[dict[str, Any], ...] = (
     {
         "name": "EUR_USD_DOWN_M1_ATR_LOW_TP5_SL4",
@@ -69,6 +79,90 @@ TECHNICAL_HARVEST_PRECISION_RULES: tuple[dict[str, Any], ...] = (
         "min_target_pips": 4.8,
         "max_target_pips": 5.5,
         "max_stop_pips": 4.2,
+        "audit_report": "logs/reports/forecast_improvement/technical_entry_mining_latest.json",
+    },
+)
+
+TECHNICAL_HARVEST_NEGATIVE_RULES: tuple[dict[str, Any], ...] = (
+    {
+        "name": "EUR_USD_DOWN_M5_EMA_SLOPE5_OPPOSED_TP5_SL4",
+        "pair": "EUR_USD",
+        "side": "SHORT",
+        "direction": "DOWN",
+        "timeframe": "M5",
+        "feature": "EUR_USD|DOWN|M5:ema_slope5_opposed",
+        "samples": 31,
+        "scalp_tp_pips": 5.0,
+        "scalp_stop_pips": 4.0,
+        "scalp_tp_first_hit_rate": 0.0,
+        "scalp_tp_first_wilson95_lower": 0.0,
+        "final_hit_rate": 0.0323,
+        "avg_final_pips": -0.40,
+        "min_m5_ema_slope_5": 0.0,
+        "min_target_pips": 4.8,
+        "max_target_pips": 5.5,
+        "max_stop_pips": 4.2,
+        "blocks_live_support": True,
+        "audit_report": "logs/reports/forecast_improvement/technical_entry_mining_latest.json",
+    },
+    {
+        "name": "DOWN_M15_ATR_HIGH_TP5_SL4",
+        "side": "SHORT",
+        "direction": "DOWN",
+        "timeframe": "M15",
+        "feature": "DOWN|M15:atr_high",
+        "samples": 67,
+        "scalp_tp_pips": 5.0,
+        "scalp_stop_pips": 4.0,
+        "scalp_tp_first_hit_rate": 0.4030,
+        "scalp_tp_first_wilson95_lower": 0.2939,
+        "final_hit_rate": 0.4030,
+        "avg_final_pips": -2.41,
+        "min_m15_atr_percentile_100": 0.75,
+        "min_target_pips": 4.8,
+        "max_target_pips": 5.5,
+        "max_stop_pips": 4.2,
+        "blocks_live_support": False,
+        "audit_report": "logs/reports/forecast_improvement/technical_entry_mining_latest.json",
+    },
+    {
+        "name": "DOWN_M15_BB_WIDTH_HIGH_TP5_SL4",
+        "side": "SHORT",
+        "direction": "DOWN",
+        "timeframe": "M15",
+        "feature": "DOWN|M15:bb_width_high",
+        "samples": 75,
+        "scalp_tp_pips": 5.0,
+        "scalp_stop_pips": 4.0,
+        "scalp_tp_first_hit_rate": 0.3067,
+        "scalp_tp_first_wilson95_lower": 0.2139,
+        "final_hit_rate": 0.3867,
+        "avg_final_pips": -0.45,
+        "min_m15_bb_width_percentile_100": 0.75,
+        "min_target_pips": 4.8,
+        "max_target_pips": 5.5,
+        "max_stop_pips": 4.2,
+        "blocks_live_support": False,
+        "audit_report": "logs/reports/forecast_improvement/technical_entry_mining_latest.json",
+    },
+    {
+        "name": "DOWN_M5_FAMILY_TREND_OPPOSED_TP5_SL4",
+        "side": "SHORT",
+        "direction": "DOWN",
+        "timeframe": "M5",
+        "feature": "DOWN|M5:family_trend_opposed",
+        "samples": 75,
+        "scalp_tp_pips": 5.0,
+        "scalp_stop_pips": 4.0,
+        "scalp_tp_first_hit_rate": 0.2933,
+        "scalp_tp_first_wilson95_lower": 0.2024,
+        "final_hit_rate": 0.4933,
+        "avg_final_pips": -1.25,
+        "min_m5_trend_score": 0.0,
+        "min_target_pips": 4.8,
+        "max_target_pips": 5.5,
+        "max_stop_pips": 4.2,
+        "blocks_live_support": False,
         "audit_report": "logs/reports/forecast_improvement/technical_entry_mining_latest.json",
     },
 )
@@ -188,23 +282,70 @@ def technical_harvest_precision_support(
     recognizes backtested TP-first scalp shapes whose current chart features,
     pair, side, TP width, and stop width match the audit rule.
     """
+    assessment = technical_harvest_precision_assessment(
+        metadata,
+        pair=pair,
+        side=side,
+        order_type=order_type,
+        method=method,
+        entry=entry,
+        take_profit=take_profit,
+        stop_loss=stop_loss,
+    )
+    support = assessment.get("primary_support")
+    return support if isinstance(support, dict) else None
+
+
+def technical_harvest_precision_assessment(
+    metadata: dict[str, Any],
+    *,
+    pair: str,
+    side: str,
+    order_type: str | None,
+    method: str | None,
+    entry: float | None,
+    take_profit: float | None,
+    stop_loss: float | None,
+) -> dict[str, Any]:
+    """Return positive and negative audited TP5/SL4 technical evidence.
+
+    The previous live gate used only the winning buckets. Accuracy improves
+    only when the same mined surface is also used to reject conditions that
+    repeatedly failed the same TP-before-stop audit.
+    """
 
     if not isinstance(metadata, dict):
-        return None
+        return {"eligible_shape": False, "primary_support": None, "positive_supports": [], "negative_matches": []}
     if str(order_type or "").upper() == "MARKET":
-        return None
+        return {"eligible_shape": False, "primary_support": None, "positive_supports": [], "negative_matches": []}
     if str(metadata.get("tp_execution_mode") or "").upper() != "ATTACHED_TECHNICAL_TP":
-        return None
+        return {"eligible_shape": False, "primary_support": None, "positive_supports": [], "negative_matches": []}
     if str(metadata.get("tp_target_intent") or "").upper() != "HARVEST":
-        return None
+        return {"eligible_shape": False, "primary_support": None, "positive_supports": [], "negative_matches": []}
     if str(metadata.get("opportunity_mode") or "").upper() not in {"", "HARVEST"}:
-        return None
+        return {"eligible_shape": False, "primary_support": None, "positive_supports": [], "negative_matches": []}
     normalized_pair = str(pair or "").upper()
     normalized_side = str(side or "").upper()
     normalized_direction = str(metadata.get("forecast_direction") or "").upper()
     chart_bias = str(metadata.get("chart_direction_bias") or "").upper()
     if chart_bias and chart_bias != normalized_side:
-        return None
+        return {"eligible_shape": False, "primary_support": None, "positive_supports": [], "negative_matches": []}
+    target_pips = _signed_reward_pips(
+        normalized_pair,
+        normalized_side,
+        entry=entry,
+        take_profit=take_profit,
+    )
+    stop_pips = _signed_stop_pips(
+        normalized_pair,
+        normalized_side,
+        entry=entry,
+        stop_loss=stop_loss,
+    )
+    if target_pips is None or stop_pips is None or stop_pips <= 0.0:
+        return {"eligible_shape": False, "primary_support": None, "positive_supports": [], "negative_matches": []}
+
+    positive_supports: list[dict[str, Any]] = []
     for rule in TECHNICAL_HARVEST_PRECISION_RULES:
         if normalized_pair != rule["pair"]:
             continue
@@ -212,23 +353,9 @@ def technical_harvest_precision_support(
             continue
         if normalized_direction != rule["direction"]:
             continue
-        target_pips = _signed_reward_pips(
-            normalized_pair,
-            normalized_side,
-            entry=entry,
-            take_profit=take_profit,
-        )
-        stop_pips = _signed_stop_pips(
-            normalized_pair,
-            normalized_side,
-            entry=entry,
-            stop_loss=stop_loss,
-        )
-        if target_pips is None or stop_pips is None:
-            continue
         if target_pips < float(rule["min_target_pips"]) or target_pips > float(rule["max_target_pips"]):
             continue
-        if stop_pips <= 0.0 or stop_pips > float(rule["max_stop_pips"]):
+        if stop_pips > float(rule["max_stop_pips"]):
             continue
         feature_values = _technical_rule_feature_values(metadata, rule)
         if feature_values is None:
@@ -250,7 +377,99 @@ def technical_harvest_precision_support(
             "audit_report": rule["audit_report"],
         }
         support.update(feature_values)
-        return support
+        positive_supports.append(support)
+
+    negative_matches: list[dict[str, Any]] = []
+    for rule in TECHNICAL_HARVEST_NEGATIVE_RULES:
+        if rule.get("pair") and normalized_pair != str(rule["pair"]).upper():
+            continue
+        if normalized_side != rule["side"]:
+            continue
+        if normalized_direction != rule["direction"]:
+            continue
+        if target_pips < float(rule["min_target_pips"]) or target_pips > float(rule["max_target_pips"]):
+            continue
+        if stop_pips > float(rule["max_stop_pips"]):
+            continue
+        feature_values = _technical_negative_rule_feature_values(metadata, rule)
+        if feature_values is None:
+            continue
+        match = {
+            "name": rule["name"],
+            "pair": rule.get("pair") or normalized_pair,
+            "side": rule["side"],
+            "direction": rule["direction"],
+            "feature": rule["feature"],
+            "timeframe": rule["timeframe"],
+            "samples": rule["samples"],
+            "scalp_tp_first_hit_rate": rule["scalp_tp_first_hit_rate"],
+            "scalp_tp_first_wilson95_lower": rule["scalp_tp_first_wilson95_lower"],
+            "final_hit_rate": rule["final_hit_rate"],
+            "avg_final_pips": rule["avg_final_pips"],
+            "scalp_tp_pips": rule["scalp_tp_pips"],
+            "scalp_stop_pips": rule["scalp_stop_pips"],
+            "current_target_pips": round(target_pips, 4),
+            "current_stop_pips": round(stop_pips, 4),
+            "blocks_live_support": bool(rule.get("blocks_live_support")),
+            "audit_report": rule["audit_report"],
+        }
+        match.update(feature_values)
+        negative_matches.append(match)
+
+    blocking_negative_matches = [
+        item for item in negative_matches if bool(item.get("blocks_live_support"))
+    ]
+    primary_support = None
+    if positive_supports and not blocking_negative_matches:
+        primary_support = max(
+            positive_supports,
+            key=lambda item: (
+                float(item.get("scalp_tp_first_wilson95_lower") or 0.0),
+                int(item.get("samples") or 0),
+            ),
+        )
+    score_delta = 0.0
+    if positive_supports:
+        score_delta += TECHNICAL_HARVEST_PRECISION_SCORE_BONUS
+        score_delta += max(0, len(positive_supports) - 1) * TECHNICAL_HARVEST_PRECISION_EXTRA_MATCH_BONUS
+    if negative_matches:
+        score_delta -= len(negative_matches) * TECHNICAL_HARVEST_NEGATIVE_SCORE_PENALTY
+    return {
+        "eligible_shape": True,
+        "primary_support": primary_support,
+        "positive_supports": positive_supports,
+        "negative_matches": negative_matches,
+        "blocking_negative_matches": blocking_negative_matches,
+        "score_delta": round(score_delta, 4),
+    }
+
+
+def technical_harvest_negative_precision_issue(
+    metadata: dict[str, Any],
+    *,
+    pair: str,
+    side: str,
+    order_type: str | None,
+    method: str | None,
+    entry: float | None,
+    take_profit: float | None,
+    stop_loss: float | None,
+) -> dict[str, Any] | None:
+    """Return the first live-blocking negative technical precision bucket."""
+
+    assessment = technical_harvest_precision_assessment(
+        metadata,
+        pair=pair,
+        side=side,
+        order_type=order_type,
+        method=method,
+        entry=entry,
+        take_profit=take_profit,
+        stop_loss=stop_loss,
+    )
+    blockers = assessment.get("blocking_negative_matches")
+    if isinstance(blockers, list) and blockers:
+        return blockers[0]
     return None
 
 
@@ -280,14 +499,45 @@ def _technical_rule_feature_values(
     return out or None
 
 
+def _technical_negative_rule_feature_values(
+    metadata: dict[str, Any],
+    rule: dict[str, Any],
+) -> dict[str, Any] | None:
+    out: dict[str, Any] = {}
+    if "min_m5_ema_slope_5" in rule:
+        value = _safe_float(metadata.get("m5_ema_slope_5"))
+        if value is None or value <= float(rule["min_m5_ema_slope_5"]):
+            return None
+        out["current_m5_ema_slope_5"] = round(value, 4)
+    if "min_m15_atr_percentile_100" in rule:
+        value = _percentile_0_1(metadata.get("m15_atr_percentile_100"), metadata.get("m15_atr_percentile"))
+        if value is None or value < float(rule["min_m15_atr_percentile_100"]):
+            return None
+        out["current_m15_atr_percentile_100"] = round(value, 4)
+    if "min_m15_bb_width_percentile_100" in rule:
+        value = _percentile_0_1(
+            metadata.get("m15_bb_width_percentile_100"),
+            metadata.get("m15_bb_width_percentile"),
+        )
+        if value is None or value < float(rule["min_m15_bb_width_percentile_100"]):
+            return None
+        out["current_m15_bb_width_percentile_100"] = round(value, 4)
+    if "min_m5_trend_score" in rule:
+        value = _safe_float(metadata.get("m5_trend_score"))
+        if value is None or value <= float(rule["min_m5_trend_score"]):
+            return None
+        out["current_m5_trend_score"] = round(value, 4)
+    return out or None
+
+
 def _percentile_0_1(primary: Any, secondary: Any = None) -> float | None:
     value = _safe_float(primary)
     if value is None:
         value = _safe_float(secondary)
-        if value is not None and value > 1.0:
-            value /= 100.0
     if value is None:
         return None
+    if value > 1.0:
+        value /= 100.0
     return max(0.0, min(1.0, value))
 
 

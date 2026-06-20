@@ -4694,6 +4694,23 @@ class IntentGeneratorTest(unittest.TestCase):
 
         self.assertEqual(blocked["code"], "FORECAST_CONFIDENCE_REQUIRED_FOR_LIVE")
 
+        negative_metadata = {**metadata, "m5_ema_slope_5": 0.20}
+        negative_metadata.pop("technical_harvest_precision_live_ready", None)
+        negative_metadata.pop("technical_harvest_precision_support", None)
+        negative_intent = replace(intent, metadata=negative_metadata)
+
+        negative = _forecast_live_readiness_issue(
+            negative_intent,
+            negative_metadata,
+            TradeMethod.BREAKOUT_FAILURE,
+        )
+
+        self.assertEqual(negative["code"], "TECHNICAL_HARVEST_NEGATIVE_BUCKET_FOR_LIVE")
+        self.assertEqual(
+            negative_metadata["technical_harvest_precision_negative"]["name"],
+            "EUR_USD_DOWN_M5_EMA_SLOPE5_OPPOSED_TP5_SL4",
+        )
+
     def test_directional_forecast_weak_hit_rate_blocks_live_readiness(self) -> None:
         from quant_rabbit.models import MarketContext, OrderIntent, OrderType, Side, TradeMethod
         from quant_rabbit.strategy.intent_generator import _forecast_live_readiness_issue

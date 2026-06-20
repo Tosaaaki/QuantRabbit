@@ -15,6 +15,7 @@ from quant_rabbit.forecast_precision import (
     hit_rate_wilson_lower,
     support_signal_clears_live_precision,
     target_pips_from_text,
+    technical_harvest_negative_precision_issue,
     technical_harvest_precision_support,
 )
 from quant_rabbit.models import BrokerOrder, BrokerPosition, BrokerSnapshot, MarketContext, OrderIntent, OrderType, Owner, Quote, Side, TradeMethod
@@ -1429,10 +1430,16 @@ def _chart_context_for(pair: str, charts: dict[str, dict[str, Any]] | None) -> d
         "m15_long_bias": _optional_float(per_tf.get("M15__long_bias")),
         "m15_short_bias": _optional_float(per_tf.get("M15__short_bias")),
         "m5_regime_quantile": _text_or_none(m5_indicators.get("regime_quantile")),
+        "m5_adx_14": _optional_float(m5_indicators.get("adx_14") or m5_indicators.get("adx")),
+        "m5_atr_percentile_100": _optional_float(m5_indicators.get("atr_percentile_100")),
+        "m5_bb_width_percentile_100": _optional_float(m5_indicators.get("bb_width_percentile_100")),
+        "m5_choppiness_14": _optional_float(m5_indicators.get("choppiness_14")),
+        "m5_ema_slope_5": _optional_float(m5_indicators.get("ema_slope_5")),
         "m1_atr_pips": _optional_float(m1_indicators.get("atr_pips")),
         "m1_atr_percentile_100": _optional_float(m1_indicators.get("atr_percentile_100")),
         "m1_bb_width_percentile_100": _optional_float(m1_indicators.get("bb_width_percentile_100")),
         "m1_regime_quantile": _text_or_none(m1_indicators.get("regime_quantile")),
+        "m15_adx_14": _optional_float(m15_indicators.get("adx_14") or m15_indicators.get("adx")),
         "m15_choppiness_14": _optional_float(m15_indicators.get("choppiness_14")),
         "m15_bb_width_percentile_100": _optional_float(m15_indicators.get("bb_width_percentile_100")),
         "m15_atr_percentile_100": _optional_float(m15_indicators.get("atr_percentile_100")),
@@ -7164,6 +7171,9 @@ def _forecast_live_readiness_issue(
         _is_hedge_recovery_metadata(metadata)
         and str(metadata.get("hedge_timing_class") or "").upper() == "REVERSAL"
     )
+    negative_technical_issue = _technical_harvest_negative_precision_issue_for_intent(intent, metadata, method)
+    if negative_technical_issue is not None:
+        return negative_technical_issue
     if _technical_harvest_precision_support_for_intent(intent, metadata, method):
         return None
     if direction not in {"UP", "DOWN", "RANGE"}:
@@ -7511,6 +7521,38 @@ def _technical_harvest_precision_support_for_intent(
         metadata["technical_harvest_precision_live_ready"] = True
         metadata["technical_harvest_precision_support"] = support
     return support
+
+
+def _technical_harvest_negative_precision_issue_for_intent(
+    intent: OrderIntent,
+    metadata: dict[str, Any],
+    method: TradeMethod | None,
+) -> dict[str, str] | None:
+    issue = technical_harvest_negative_precision_issue(
+        metadata,
+        pair=intent.pair,
+        side=intent.side.value,
+        order_type=intent.order_type.value,
+        method=method.value if isinstance(method, TradeMethod) else str(method or ""),
+        entry=_optional_float(intent.entry),
+        take_profit=_optional_float(intent.tp),
+        stop_loss=_optional_float(intent.sl),
+    )
+    if issue is None:
+        return None
+    metadata["technical_harvest_precision_negative"] = issue
+    return {
+        "code": "TECHNICAL_HARVEST_NEGATIVE_BUCKET_FOR_LIVE",
+        "message": (
+            f"{intent.pair} {intent.side.value} attached HARVEST TP matches audited negative "
+            f"technical bucket {issue['name']} ({issue['feature']}): TP-first "
+            f"{float(issue.get('scalp_tp_first_hit_rate') or 0.0):.2f}, Wilson95_lower="
+            f"{float(issue.get('scalp_tp_first_wilson95_lower') or 0.0):.2f} over "
+            f"{int(issue.get('samples') or 0)} sample(s). Do not increase entry frequency "
+            "inside a proven losing technical state."
+        ),
+        "severity": "BLOCK",
+    }
 
 
 def _forecast_watch_live_override_receipt(

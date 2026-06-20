@@ -501,6 +501,11 @@ from quant_rabbit.strategy.directional_forecaster import (
     ENTRY_CONFIDENCE_MIN,
     synthesize_forecast,
 )
+from quant_rabbit.forecast_precision import (
+    TECHNICAL_HARVEST_PRECISION_EXTRA_MATCH_BONUS,
+    TECHNICAL_HARVEST_PRECISION_SCORE_BONUS,
+    technical_harvest_precision_assessment,
+)
 from quant_rabbit.strategy.forecast_persistence_tracker import (
     record_forecast,
 )
@@ -1379,6 +1384,19 @@ class TraderBrain:
         )
         score += _direction_conflict_penalty(result, rationale)
         score += _mtf_confluence_score(intent, rationale, blockers)
+        score += _technical_harvest_precision_score(
+            intent=intent,
+            pair=pair,
+            direction=direction,
+            order_type=order_type,
+            method=method,
+            entry=entry,
+            tp=tp,
+            sl=sl,
+            status=status,
+            rationale=rationale,
+            blockers=blockers,
+        )
 
         # Micro override: M1+M5 struct opposite to lane direction trumps the
         # historical-bias score. User 2026-05-08「ミクロのグラデーションでしょ？
@@ -3436,6 +3454,88 @@ def _forecast_market_support_allows_low_confidence_live_ready(
         min_confidence=min_confidence,
         order_type=order_type,
     )
+
+
+def _technical_harvest_precision_score(
+    *,
+    intent: dict[str, Any],
+    pair: str,
+    direction: str,
+    order_type: str,
+    method: str,
+    entry: float | None,
+    tp: float | None,
+    sl: float | None,
+    status: str,
+    rationale: list[str],
+    blockers: list[str],
+) -> float:
+    metadata = intent.get("metadata") if isinstance(intent.get("metadata"), dict) else {}
+    assessment = technical_harvest_precision_assessment(
+        metadata,
+        pair=pair,
+        side=direction,
+        order_type=order_type,
+        method=method,
+        entry=entry,
+        take_profit=tp,
+        stop_loss=sl,
+    )
+    positive = [
+        item for item in assessment.get("positive_supports", [])
+        if isinstance(item, dict)
+    ]
+    negative = [
+        item for item in assessment.get("negative_matches", [])
+        if isinstance(item, dict)
+    ]
+    blocking = [
+        item for item in assessment.get("blocking_negative_matches", [])
+        if isinstance(item, dict)
+    ]
+    if not positive and not negative:
+        return 0.0
+    metadata["technical_harvest_precision_assessment"] = assessment
+    score_delta = _optional_float(assessment.get("score_delta")) or 0.0
+    if positive:
+        positive_delta = TECHNICAL_HARVEST_PRECISION_SCORE_BONUS + (
+            max(0, len(positive) - 1) * TECHNICAL_HARVEST_PRECISION_EXTRA_MATCH_BONUS
+        )
+        names = ", ".join(str(item.get("name") or item.get("feature")) for item in positive[:3])
+        best = max(
+            positive,
+            key=lambda item: (
+                float(item.get("scalp_tp_first_wilson95_lower") or 0.0),
+                int(item.get("samples") or 0),
+            ),
+        )
+        rationale.insert(
+            0,
+            "technical precision "
+            f"+{positive_delta:.1f}: {names}; "
+            f"best TP-first={float(best.get('scalp_tp_first_hit_rate') or 0.0):.2f} "
+            f"Wilson95_lower={float(best.get('scalp_tp_first_wilson95_lower') or 0.0):.2f}",
+        )
+    if negative:
+        names = ", ".join(str(item.get("name") or item.get("feature")) for item in negative[:3])
+        rationale.insert(
+            0,
+            f"technical precision penalty {score_delta:.1f}: audited weak TP5/SL4 bucket(s) {names}",
+        )
+    if blocking and status == "LIVE_READY":
+        top = blocking[0]
+        blockers.append(
+            "technical_harvest_negative_bucket: "
+            f"{top.get('name')} TP-first={float(top.get('scalp_tp_first_hit_rate') or 0.0):.2f} "
+            f"Wilson95_lower={float(top.get('scalp_tp_first_wilson95_lower') or 0.0):.2f} "
+            f"samples={int(top.get('samples') or 0)}"
+        )
+        rationale.insert(
+            0,
+            f"technical precision hard block: {top.get('feature')} failed the same TP-before-stop audit",
+        )
+        score_delta -= 80.0
+    return score_delta
 
 
 def _intent_order_type_for_forecast_support(intent: dict[str, Any]) -> OrderType | None:

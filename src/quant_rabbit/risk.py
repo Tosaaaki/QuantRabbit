@@ -55,6 +55,7 @@ from .models import (
 from .forecast_precision import (
     hit_rate_wilson_lower,
     support_signal_clears_live_precision,
+    technical_harvest_negative_precision_issue,
     technical_harvest_precision_support,
 )
 from .instruments import DEFAULT_TRADER_PAIRS, NORMAL_SPREAD_PIPS, instrument_pip_factor
@@ -742,6 +743,36 @@ def _technical_harvest_precision_support_for_intent(intent: OrderIntent) -> dict
         metadata["technical_harvest_precision_live_ready"] = True
         metadata["technical_harvest_precision_support"] = support
     return support
+
+
+def _technical_harvest_negative_precision_issue_for_intent(intent: OrderIntent) -> RiskIssue | None:
+    metadata = intent.metadata or {}
+    method = intent.market_context.method if intent.market_context is not None else None
+    issue = technical_harvest_negative_precision_issue(
+        metadata,
+        pair=intent.pair,
+        side=intent.side.value,
+        order_type=intent.order_type.value,
+        method=method.value if isinstance(method, TradeMethod) else str(method or ""),
+        entry=_to_float(intent.entry),
+        take_profit=_to_float(intent.tp),
+        stop_loss=_to_float(intent.sl),
+    )
+    if issue is None:
+        return None
+    metadata["technical_harvest_precision_negative"] = issue
+    return RiskIssue(
+        "TECHNICAL_HARVEST_NEGATIVE_BUCKET_FOR_LIVE",
+        (
+            f"{intent.pair} {intent.side.value} attached HARVEST TP matches audited negative "
+            f"technical bucket {issue['name']} ({issue['feature']}): TP-first "
+            f"{float(issue.get('scalp_tp_first_hit_rate') or 0.0):.2f}, Wilson95_lower="
+            f"{float(issue.get('scalp_tp_first_wilson95_lower') or 0.0):.2f} over "
+            f"{int(issue.get('samples') or 0)} sample(s). Do not send inside a proven losing "
+            "technical state."
+        ),
+        severity="BLOCK",
+    )
 
 
 def _forecast_support_signal_clears_live_precision(signal: dict) -> bool:
@@ -2071,6 +2102,9 @@ class RiskEngine:
         if intent.side != forecast_side:
             return []
         support = _forecast_market_support(metadata)
+        negative_issue = _technical_harvest_negative_precision_issue_for_intent(intent)
+        if negative_issue is not None:
+            return [negative_issue]
         if _technical_harvest_precision_support_for_intent(intent) is not None:
             return []
         if _forecast_selected_direction_has_audited_support(
