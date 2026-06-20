@@ -55,6 +55,40 @@ class PositionManagerTest(unittest.TestCase):
             self.assertIn(f"Broker snapshot fetched at UTC: `{snapshot.fetched_at_utc.isoformat()}`", report)
             self.assertIn("remaining risk", report)
 
+    def test_rollover_spread_impaired_loser_routes_close_review_without_market_close(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            decision = _decision(root, long_score=120, short_score=160)
+            pair_charts = _pair_charts(root, atr_pips=2.9, session_tag="ROLLOVER")
+            snapshot = _snapshot(
+                BrokerPosition(
+                    trade_id="rollover-spread-trap",
+                    pair="EUR_USD",
+                    side=Side.SHORT,
+                    units=6000,
+                    entry_price=1.1000,
+                    unrealized_pl_jpy=-565,
+                    take_profit=1.0992,
+                    stop_loss=1.1025,
+                ),
+                bid=1.0990,
+                ask=1.1007,
+            )
+
+            result = PositionManager(
+                trader_decision_path=decision,
+                pair_charts_path=pair_charts,
+                output_path=root / "pm.json",
+                report_path=root / "pm.md",
+            ).run(snapshot)
+
+            self.assertEqual(result.action, ACTION_HOLD_PROTECTED)
+            self.assertEqual(result.positions[0].action, ACTION_HOLD_PROTECTED)
+            self.assertEqual(result.positions[0].close_review_action, ACTION_REVIEW_EXIT)
+            report = (root / "pm.md").read_text()
+            self.assertIn("close-review: ROLLOVER spread", report)
+            self.assertIn("loss-side market close still requires GPT CLOSE Gate A/B", report)
+
     def test_missing_stop_requires_protection_repair(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -1828,6 +1862,7 @@ def _pair_charts(
     root: Path,
     *,
     atr_pips: float,
+    session_tag: str = "LONDON_KILLZONE",
     generated_at: datetime | None = None,
     recent_m1_candles: list[dict[str, object]] | None = None,
 ) -> Path:
@@ -1855,7 +1890,7 @@ def _pair_charts(
                 "charts": [
                     {
                         "pair": "EUR_USD",
-                        "session": {"current_tag": "LONDON_KILLZONE"},
+                        "session": {"current_tag": session_tag},
                         "views": views,
                     }
                 ]

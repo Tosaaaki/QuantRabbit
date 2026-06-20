@@ -321,6 +321,7 @@ class PositionManager:
         quote = snapshot.quotes.get(position.pair)
         recommended_stop_loss: float | None = None
         recommended_take_profit: float | None = None
+        close_review_action: str | None = None
         reasons.extend(_session_protection_notes(position, quote, pair_charts))
         latest_forecast = _latest_forecast_for_position(position.pair, self.data_root)
         if latest_forecast:
@@ -477,7 +478,22 @@ class PositionManager:
                     reasons.append(f"opposite thesis score {opposite_score:.1f} materially exceeds same-direction {same_score:.1f}")
                     action = ACTION_REVIEW_EXIT
                 else:
-                    reasons.append("TP/SL present and current thesis is not contradicted enough to force exit")
+                    rollover_review_reason = _rollover_spread_impaired_close_review_reason(
+                        position,
+                        quote,
+                        pair_charts,
+                        remaining_risk=remaining_risk,
+                        remaining_reward=remaining_reward,
+                    )
+                    if rollover_review_reason is not None:
+                        reasons.append(rollover_review_reason)
+                        reasons.append(
+                            "loss-side market close still requires GPT CLOSE Gate A/B; "
+                            "keep broker TP/SL live while close review is pending"
+                        )
+                        close_review_action = ACTION_REVIEW_EXIT
+                    else:
+                        reasons.append("TP/SL present and current thesis is not contradicted enough to force exit")
                     action = ACTION_HOLD_PROTECTED
 
         if remaining_risk is not None:
@@ -508,6 +524,7 @@ class PositionManager:
             else None,
             reasons=tuple(reasons),
             owner=position.owner.value,
+            close_review_action=close_review_action,
         )
 
     def _manage_manual_take_profit_position(
@@ -2531,6 +2548,40 @@ def _session_protection_notes(
         else:
             notes.append(f"TP distance {tp_pips:.1f}pip")
     return tuple(notes)
+
+
+def _rollover_spread_impaired_close_review_reason(
+    position: BrokerPosition,
+    quote,
+    pair_charts: dict[str, dict[str, Any]] | None,
+    *,
+    remaining_risk: float | None,
+    remaining_reward: float | None,
+) -> str | None:
+    if position.unrealized_pl_jpy >= 0:
+        return None
+    if position.take_profit is None or position.stop_loss is None or quote is None:
+        return None
+    if _session_bucket_for(position.pair, pair_charts) != "ROLLOVER":
+        return None
+    spread_pips = _spread_pips(position.pair, quote)
+    tp_pips = _position_tp_pips(position)
+    if spread_pips is None or tp_pips is None or tp_pips <= 0:
+        return None
+    if spread_pips < tp_pips:
+        return None
+    if (
+        remaining_risk is None
+        or remaining_reward is None
+        or remaining_reward <= 0
+        or remaining_risk <= remaining_reward
+    ):
+        return None
+    return (
+        f"close-review: ROLLOVER spread {spread_pips:.1f}pip >= planned TP distance "
+        f"{tp_pips:.1f}pip; short-horizon reward is inside closeout spread while "
+        f"remaining risk {remaining_risk:.0f} JPY > remaining reward {remaining_reward:.0f} JPY"
+    )
 
 
 def _stop_is_break_even_or_better(position: BrokerPosition) -> bool:
