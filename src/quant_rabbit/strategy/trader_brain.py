@@ -504,6 +504,8 @@ from quant_rabbit.strategy.directional_forecaster import (
 from quant_rabbit.forecast_precision import (
     TECHNICAL_HARVEST_PRECISION_EXTRA_MATCH_BONUS,
     TECHNICAL_HARVEST_PRECISION_SCORE_BONUS,
+    TECHNICAL_HARVEST_ROTATION_EXTRA_MATCH_BONUS,
+    TECHNICAL_HARVEST_ROTATION_SCORE_BONUS,
     technical_harvest_precision_assessment,
 )
 from quant_rabbit.strategy.forecast_persistence_tracker import (
@@ -3485,6 +3487,10 @@ def _technical_harvest_precision_score(
         item for item in assessment.get("positive_supports", [])
         if isinstance(item, dict)
     ]
+    rotation = [
+        item for item in assessment.get("rotation_supports", [])
+        if isinstance(item, dict)
+    ]
     negative = [
         item for item in assessment.get("negative_matches", [])
         if isinstance(item, dict)
@@ -3493,11 +3499,11 @@ def _technical_harvest_precision_score(
         item for item in assessment.get("blocking_negative_matches", [])
         if isinstance(item, dict)
     ]
-    if not positive and not negative:
+    if not positive and not rotation and not negative:
         return 0.0
     metadata["technical_harvest_precision_assessment"] = assessment
     score_delta = _optional_float(assessment.get("score_delta")) or 0.0
-    if positive:
+    if positive and not blocking:
         positive_delta = TECHNICAL_HARVEST_PRECISION_SCORE_BONUS + (
             max(0, len(positive) - 1) * TECHNICAL_HARVEST_PRECISION_EXTRA_MATCH_BONUS
         )
@@ -3515,6 +3521,27 @@ def _technical_harvest_precision_score(
             f"+{positive_delta:.1f}: {names}; "
             f"best TP-first={float(best.get('scalp_tp_first_hit_rate') or 0.0):.2f} "
             f"Wilson95_lower={float(best.get('scalp_tp_first_wilson95_lower') or 0.0):.2f}",
+        )
+    if rotation and not blocking:
+        rotation_delta = TECHNICAL_HARVEST_ROTATION_SCORE_BONUS + (
+            max(0, len(rotation) - 1) * TECHNICAL_HARVEST_ROTATION_EXTRA_MATCH_BONUS
+        )
+        names = ", ".join(str(item.get("name") or item.get("feature")) for item in rotation[:3])
+        best = max(
+            rotation,
+            key=lambda item: (
+                float(item.get("mfe_ge_2pip_wilson95_lower") or 0.0),
+                float(item.get("scalp_tp_first_wilson95_lower") or 0.0),
+                int(item.get("samples") or 0),
+            ),
+        )
+        rationale.insert(
+            0,
+            "technical rotation "
+            f"+{rotation_delta:.1f}: {names}; "
+            f"MFE>=2={float(best.get('mfe_ge_2pip_hit_rate') or 0.0):.2f} "
+            f"Wilson95_lower={float(best.get('mfe_ge_2pip_wilson95_lower') or 0.0):.2f} "
+            f"TP5-first={float(best.get('scalp_tp_first_hit_rate') or 0.0):.2f}",
         )
     if negative:
         names = ", ".join(str(item.get("name") or item.get("feature")) for item in negative[:3])

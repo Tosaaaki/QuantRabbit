@@ -600,6 +600,66 @@ class RiskEngineTest(unittest.TestCase):
             "EUR_USD_DOWN_M5_EMA_SLOPE5_OPPOSED_TP5_SL4",
         )
 
+    def test_technical_harvest_rotation_does_not_clear_low_confidence_live_send(self) -> None:
+        intent = OrderIntent(
+            pair="EUR_USD",
+            side=Side.SHORT,
+            order_type=OrderType.LIMIT,
+            units=1000,
+            entry=1.17330,
+            tp=1.17280,
+            sl=1.17370,
+            thesis="audited EUR_USD short rotation bucket still needs forecast live support",
+            market_context=MarketContext(
+                regime="BREAKOUT_FAILURE rejection retest",
+                narrative="M5 momentum bucket is high-rotation evidence but not a live exception",
+                chart_story="M5 Bollinger momentum and hot M5 ATR",
+                method=TradeMethod.BREAKOUT_FAILURE,
+                invalidation="4 pip stop",
+            ),
+            metadata={
+                "forecast_direction": "DOWN",
+                "forecast_confidence": 0.23,
+                "chart_direction_bias": "SHORT",
+                "m5_bb_pct_b": 0.40,
+                "m5_atr_percentile_100": 0.80,
+                "tp_execution_mode": "ATTACHED_TECHNICAL_TP",
+                "tp_target_intent": "HARVEST",
+                "opportunity_mode": "HARVEST",
+                "forecast_market_support": {
+                    "ok": False,
+                    "direction": "DOWN",
+                    "aligned_projection_count": 0,
+                },
+            },
+        )
+
+        base_snapshot = snapshot()
+        narrow_spread_snapshot = replace(
+            base_snapshot,
+            quotes={
+                **base_snapshot.quotes,
+                "EUR_USD": Quote(
+                    "EUR_USD",
+                    bid=1.17326,
+                    ask=1.17330,
+                    timestamp_utc=base_snapshot.fetched_at_utc,
+                ),
+            },
+        )
+
+        decision = _capped_engine(live_enabled=True).validate(
+            intent,
+            narrow_spread_snapshot,
+            for_live_send=True,
+        )
+
+        codes = {issue.code for issue in decision.issues}
+        self.assertFalse(decision.allowed)
+        self.assertIn("FORECAST_CONFIDENCE_REQUIRED_FOR_LIVE", codes)
+        self.assertNotIn("TECHNICAL_HARVEST_NEGATIVE_BUCKET_FOR_LIVE", codes)
+        self.assertNotIn("technical_harvest_precision_live_ready", intent.metadata)
+
     def test_low_confidence_opposite_forecast_does_not_become_direction_veto(self) -> None:
         intent = OrderIntent(
             pair="EUR_USD",

@@ -195,6 +195,77 @@ class TraderBrainTest(unittest.TestCase):
             self.assertTrue(any("technical_harvest_negative_bucket" in item for item in bad_score.blockers))
             self.assertEqual(decision.selected_lane_id, good_score.lane_id)
 
+    def test_technical_rotation_scores_high_frequency_bucket_without_live_override(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            rotation = _result(
+                "failure_trader:EUR_USD:SHORT:BREAKOUT_FAILURE",
+                "EUR_USD",
+                "SHORT",
+                "BREAKOUT_FAILURE",
+            )
+            plain = _result(
+                "failure_trader:EUR_USD:SHORT:BREAKOUT_FAILURE:plain",
+                "EUR_USD",
+                "SHORT",
+                "BREAKOUT_FAILURE",
+            )
+            for lane in (rotation, plain):
+                lane["intent"]["order_type"] = "LIMIT"
+                lane["intent"]["entry"] = 1.17330
+                lane["intent"]["tp"] = 1.17280
+                lane["intent"]["sl"] = 1.17370
+                lane["intent"]["metadata"] = {
+                    "forecast_direction": "DOWN",
+                    "forecast_confidence": 0.63,
+                    "chart_direction_bias": "SHORT",
+                    "tp_execution_mode": "ATTACHED_TECHNICAL_TP",
+                    "tp_target_intent": "HARVEST",
+                    "opportunity_mode": "HARVEST",
+                }
+            rotation["intent"]["metadata"].update(
+                {
+                    "m5_bb_pct_b": 0.40,
+                    "m5_atr_percentile_100": 0.80,
+                }
+            )
+            intents = root / "technical_rotation_intents.json"
+            intents.write_text(json.dumps({"results": [plain, rotation]}))
+            campaign = root / "technical_rotation_campaign.json"
+            campaign.write_text(
+                json.dumps(
+                    {
+                        "lanes": [
+                            _lane("failure_trader", "EUR_USD", "SHORT", "BREAKOUT_FAILURE"),
+                        ]
+                    }
+                )
+            )
+            brain = TraderBrain(
+                intents_path=intents,
+                campaign_plan_path=campaign,
+                strategy_profile_path=_opposite_market_strategy(root),
+                market_story_profile_path=_stories(root),
+                target_state_path=root / "missing_target.json",
+                trader_settings_path=root / "settings.json",
+                attack_advice_path=root / "missing_attack_advice.json",
+                pair_charts_path=root / "missing_pair_charts.json",
+                output_path=root / "decision.json",
+                report_path=root / "decision.md",
+            )
+
+            decision = brain.run(_snapshot())
+
+            rotation_score = next(
+                item for item in decision.scores
+                if item.lane_id == "failure_trader:EUR_USD:SHORT:BREAKOUT_FAILURE"
+            )
+            plain_score = next(item for item in decision.scores if item.lane_id.endswith(":plain"))
+            self.assertEqual(rotation_score.action, ACTION_SEND_ENTRY)
+            self.assertGreater(rotation_score.score, plain_score.score)
+            self.assertTrue(any("technical rotation +18.0" in item for item in rotation_score.rationale))
+            self.assertEqual(decision.selected_lane_id, rotation_score.lane_id)
+
     def test_cycle_level_projection_and_correlation_context_is_built_once_per_run(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

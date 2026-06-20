@@ -1383,6 +1383,15 @@ def _session_bucket_for(pair: str, charts: dict[str, dict[str, Any]] | None) -> 
     return _session_bucket_from_tag(session.get("current_tag"))
 
 
+def _bb_pct_b_from_indicators(indicators: dict[str, Any]) -> float | None:
+    close = _optional_float(indicators.get("close"))
+    lower = _optional_float(indicators.get("bb_lower"))
+    upper = _optional_float(indicators.get("bb_upper"))
+    if close is None or lower is None or upper is None or upper <= lower:
+        return None
+    return max(0.0, min(1.0, (close - lower) / (upper - lower)))
+
+
 def _chart_context_for(pair: str, charts: dict[str, dict[str, Any]] | None) -> dict[str, Any]:
     """Return current pair-chart direction/method context for executable gates.
 
@@ -1431,17 +1440,24 @@ def _chart_context_for(pair: str, charts: dict[str, dict[str, Any]] | None) -> d
         "m15_short_bias": _optional_float(per_tf.get("M15__short_bias")),
         "m5_regime_quantile": _text_or_none(m5_indicators.get("regime_quantile")),
         "m5_adx_14": _optional_float(m5_indicators.get("adx_14") or m5_indicators.get("adx")),
+        "m5_macd_hist": _optional_float(m5_indicators.get("macd_hist")),
         "m5_atr_percentile_100": _optional_float(m5_indicators.get("atr_percentile_100")),
         "m5_bb_width_percentile_100": _optional_float(m5_indicators.get("bb_width_percentile_100")),
+        "m5_bb_pct_b": _bb_pct_b_from_indicators(m5_indicators),
         "m5_choppiness_14": _optional_float(m5_indicators.get("choppiness_14")),
         "m5_ema_slope_5": _optional_float(m5_indicators.get("ema_slope_5")),
+        "m5_supertrend_dir": _optional_float(m5_indicators.get("supertrend_dir")),
+        "m1_choppiness_14": _optional_float(m1_indicators.get("choppiness_14")),
         "m1_atr_pips": _optional_float(m1_indicators.get("atr_pips")),
         "m1_atr_percentile_100": _optional_float(m1_indicators.get("atr_percentile_100")),
         "m1_bb_width_percentile_100": _optional_float(m1_indicators.get("bb_width_percentile_100")),
         "m1_regime_quantile": _text_or_none(m1_indicators.get("regime_quantile")),
         "m15_adx_14": _optional_float(m15_indicators.get("adx_14") or m15_indicators.get("adx")),
+        "m15_macd_hist": _optional_float(m15_indicators.get("macd_hist")),
+        "m15_rsi_14": _optional_float(m15_indicators.get("rsi_14")),
         "m15_choppiness_14": _optional_float(m15_indicators.get("choppiness_14")),
         "m15_bb_width_percentile_100": _optional_float(m15_indicators.get("bb_width_percentile_100")),
+        "m15_bb_pct_b": _bb_pct_b_from_indicators(m15_indicators),
         "m15_atr_percentile_100": _optional_float(m15_indicators.get("atr_percentile_100")),
         "m5_mean_rev_score": _optional_float(m5_family.get("mean_rev_score")),
         "m5_trend_score": _optional_float(m5_family.get("trend_score")),
