@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 import sqlite3
 from dataclasses import asdict, dataclass, replace
@@ -1031,6 +1032,14 @@ def _capture_loss_asymmetry_guard(data_root: Path | None = None) -> dict[str, An
     tp_exit = tp_exit if isinstance(tp_exit, dict) else {}
     market_close_exit = by_exit_reason.get("MARKET_ORDER_TRADE_CLOSE") if isinstance(by_exit_reason, dict) else None
     market_close_exit = market_close_exit if isinstance(market_close_exit, dict) else {}
+    take_profit_trades = int(_optional_float(tp_exit.get("trades")) or 0)
+    take_profit_losses = int(_optional_float(tp_exit.get("losses")) or 0)
+    take_profit_wins_raw = _optional_float(tp_exit.get("wins"))
+    take_profit_wins = (
+        int(take_profit_wins_raw)
+        if take_profit_wins_raw is not None
+        else max(take_profit_trades - take_profit_losses, 0)
+    )
     return {
         "active": True,
         "status": status,
@@ -1041,10 +1050,12 @@ def _capture_loss_asymmetry_guard(data_root: Path | None = None) -> dict[str, An
         "payoff_ratio": overall.get("payoff_ratio"),
         "breakeven_payoff_at_win_rate": overall.get("breakeven_payoff_at_win_rate"),
         "source": str(path),
-        "take_profit_trades": int(_optional_float(tp_exit.get("trades")) or 0),
+        "take_profit_trades": take_profit_trades,
+        "take_profit_wins": take_profit_wins,
         "take_profit_expectancy_jpy": _optional_float(tp_exit.get("expectancy_jpy_per_trade")),
         "take_profit_avg_win_jpy": _optional_float(tp_exit.get("avg_win_jpy")),
-        "take_profit_losses": int(_optional_float(tp_exit.get("losses")) or 0),
+        "take_profit_avg_loss_jpy": _optional_float(tp_exit.get("avg_loss_jpy")),
+        "take_profit_losses": take_profit_losses,
         "market_close_expectancy_jpy": _optional_float(market_close_exit.get("expectancy_jpy_per_trade")),
     }
 
@@ -5343,6 +5354,11 @@ def _macro_event_size_up_signal(lane: dict[str, Any], *, side: Side) -> dict[str
 # an evidence floor for relaxing a guard, not a market target.
 LOSS_ASYMMETRY_TP_RELAX_MIN_EXIT_TRADES = 20
 POSITIVE_ROTATION_LIVE_BLOCK_CODE = "NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION"
+# Standard normal 1.96 is the textbook 95% Wilson lower-bound confidence
+# constant. It is a statistical confidence convention, not a market parameter;
+# replace it with a named risk-policy input if the operator changes the desired
+# certainty level.
+POSITIVE_ROTATION_CONFIDENCE_Z = 1.96
 
 
 def _loss_asymmetry_sizing_plan(
@@ -5394,8 +5410,10 @@ def _loss_asymmetry_sizing_plan(
         "capture_payoff_ratio": guard.get("payoff_ratio"),
         "capture_breakeven_payoff_at_win_rate": guard.get("breakeven_payoff_at_win_rate"),
         "capture_take_profit_trades": guard.get("take_profit_trades"),
+        "capture_take_profit_wins": guard.get("take_profit_wins"),
         "capture_take_profit_expectancy_jpy": guard.get("take_profit_expectancy_jpy"),
         "capture_take_profit_avg_win_jpy": guard.get("take_profit_avg_win_jpy"),
+        "capture_take_profit_avg_loss_jpy": guard.get("take_profit_avg_loss_jpy"),
         "capture_take_profit_losses": guard.get("take_profit_losses"),
         "capture_market_close_expectancy_jpy": guard.get("market_close_expectancy_jpy"),
         "capture_economics_source": guard.get("source"),
@@ -5469,7 +5487,55 @@ def _tp_proven_harvest_rotation_allowed(intent: OrderIntent) -> bool:
     market_close_expectancy = _optional_float(metadata.get("capture_market_close_expectancy_jpy"))
     if market_close_expectancy is None or market_close_expectancy >= 0:
         return False
+    confidence = _positive_rotation_confidence_metrics(metadata)
+    if confidence is None:
+        return False
+    metadata.update(confidence)
+    if confidence["positive_rotation_pessimistic_expectancy_jpy"] <= 0:
+        return False
     return True
+
+
+def _wilson_lower_bound(successes: int, trials: int, *, z: float = POSITIVE_ROTATION_CONFIDENCE_Z) -> float:
+    if trials <= 0:
+        return 0.0
+    successes = max(0, min(successes, trials))
+    phat = successes / trials
+    z2 = z * z
+    denominator = 1.0 + z2 / trials
+    center = phat + z2 / (2.0 * trials)
+    radius = z * math.sqrt((phat * (1.0 - phat) + z2 / (4.0 * trials)) / trials)
+    return max(0.0, min(1.0, (center - radius) / denominator))
+
+
+def _positive_rotation_confidence_metrics(metadata: dict[str, Any]) -> dict[str, Any] | None:
+    tp_trades = int(_optional_float(metadata.get("capture_take_profit_trades")) or 0)
+    if tp_trades <= 0:
+        return None
+    tp_losses = int(_optional_float(metadata.get("capture_take_profit_losses")) or 0)
+    tp_wins_raw = _optional_float(metadata.get("capture_take_profit_wins"))
+    tp_wins = int(tp_wins_raw) if tp_wins_raw is not None else max(tp_trades - tp_losses, 0)
+    tp_avg_win = _optional_float(metadata.get("capture_take_profit_avg_win_jpy"))
+    if tp_avg_win is None or tp_avg_win <= 0:
+        return None
+    loss_candidates = [
+        _optional_float(metadata.get("capture_take_profit_avg_loss_jpy")),
+        _optional_float(metadata.get("capture_avg_loss_jpy")),
+    ]
+    loss_proxy = max((value for value in loss_candidates if value is not None and value > 0), default=None)
+    if loss_proxy is None:
+        return None
+    win_rate_lower = _wilson_lower_bound(tp_wins, tp_trades)
+    pessimistic_expectancy = (win_rate_lower * tp_avg_win) - ((1.0 - win_rate_lower) * loss_proxy)
+    return {
+        "positive_rotation_confidence_method": "WILSON_LOWER_BOUND_STRESS_EXPECTANCY",
+        "positive_rotation_confidence_z": POSITIVE_ROTATION_CONFIDENCE_Z,
+        "positive_rotation_tp_wins": tp_wins,
+        "positive_rotation_tp_trades": tp_trades,
+        "positive_rotation_tp_win_rate_lower": round(win_rate_lower, 6),
+        "positive_rotation_loss_proxy_jpy": round(loss_proxy, 4),
+        "positive_rotation_pessimistic_expectancy_jpy": round(pessimistic_expectancy, 4),
+    }
 
 
 def _capture_positive_rotation_live_issue(intent: OrderIntent) -> dict[str, str] | None:
@@ -5494,7 +5560,9 @@ def _capture_positive_rotation_live_issue(intent: OrderIntent) -> dict[str, str]
         metadata["positive_rotation_basis"] = (
             "capture_economics is negative overall, but TAKE_PROFIT_ORDER exits "
             "for this non-market attached-TP HARVEST shape have positive "
-            "realized expectancy while market-close exits are negative"
+            "realized expectancy while market-close exits are negative; the "
+            "Wilson lower-bound win rate stressed against the observed average "
+            "loss proxy still leaves positive pessimistic expectancy"
         )
         return None
     return {
@@ -5502,8 +5570,9 @@ def _capture_positive_rotation_live_issue(intent: OrderIntent) -> dict[str, str]
         "message": (
             "capture_economics is NEGATIVE_EXPECTANCY; fresh live rotation is "
             "limited to non-market attached-TP HARVEST receipts with positive "
-            "TAKE_PROFIT_ORDER expectancy and zero TP losses until realized "
-            "PF/expectancy recover"
+            "TAKE_PROFIT_ORDER expectancy, zero TP losses, and positive "
+            "Wilson-lower-bound stress expectancy until realized PF/expectancy "
+            "recover"
         ),
         "severity": "BLOCK",
     }

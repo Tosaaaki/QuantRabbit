@@ -319,9 +319,77 @@ class IntentGeneratorTest(unittest.TestCase):
             self.assertEqual(metadata["tp_execution_mode"], "ATTACHED_TECHNICAL_TP")
             self.assertEqual(metadata["tp_target_intent"], "HARVEST")
             self.assertEqual(metadata["positive_rotation_mode"], "TP_PROVEN_HARVEST")
+            self.assertEqual(
+                metadata["positive_rotation_confidence_method"],
+                "WILSON_LOWER_BOUND_STRESS_EXPECTANCY",
+            )
+            self.assertGreater(metadata["positive_rotation_pessimistic_expectancy_jpy"], 0.0)
             self.assertEqual(result["status"], "LIVE_READY")
             self.assertNotIn(POSITIVE_ROTATION_LIVE_BLOCK_CODE, issue_codes)
             self.assertLessEqual(result["risk_metrics"]["risk_jpy"], 1000.0)
+
+    def test_capture_tp_positive_but_stress_negative_blocks_live_rotation(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "capture_economics.json").write_text(
+                json.dumps(
+                    {
+                        "status": "NEGATIVE_EXPECTANCY",
+                        "overall": {
+                            "trades": 210,
+                            "avg_win_jpy": 600.0,
+                            "avg_loss_jpy": 1100.0,
+                            "payoff_ratio": 0.545,
+                            "breakeven_payoff_at_win_rate": 0.7,
+                        },
+                        "by_exit_reason": {
+                            "TAKE_PROFIT_ORDER": {
+                                "trades": 20,
+                                "wins": 20,
+                                "losses": 0,
+                                "avg_win_jpy": 20.0,
+                                "avg_loss_jpy": 0.0,
+                                "expectancy_jpy_per_trade": 20.0,
+                            },
+                            "MARKET_ORDER_TRADE_CLOSE": {
+                                "trades": 84,
+                                "wins": 13,
+                                "losses": 71,
+                                "avg_win_jpy": 218.4,
+                                "avg_loss_jpy": 1095.5,
+                                "expectancy_jpy_per_trade": -892.1,
+                            },
+                        },
+                    }
+                )
+            )
+            output = root / "intents.json"
+
+            summary = IntentGenerator(
+                campaign_plan=_range_campaign(root),
+                strategy_profile=_strategy(root, status="CANDIDATE"),
+                output_path=output,
+                report_path=root / "intents.md",
+                pair_charts_path=_pair_charts(root),
+                data_root=root,
+                max_loss_jpy=1000.0,
+            ).run(snapshot_path=_snapshot(root))
+
+            payload = json.loads(output.read_text())
+            result = next(
+                item for item in payload["results"]
+                if item["lane_id"] == "range_trader:EUR_USD:LONG:RANGE_ROTATION"
+            )
+            metadata = result["intent"]["metadata"]
+            issue_codes = {issue["code"] for issue in result["risk_issues"]}
+
+            self.assertGreater(summary.generated, 0)
+            self.assertTrue(metadata["loss_asymmetry_guard_relaxed"])
+            self.assertEqual(metadata["loss_asymmetry_guard_mode"], "TP_PROVEN_RELAXED")
+            self.assertLess(metadata["positive_rotation_pessimistic_expectancy_jpy"], 0.0)
+            self.assertEqual(result["status"], "DRY_RUN_BLOCKED")
+            self.assertIn(POSITIVE_ROTATION_LIVE_BLOCK_CODE, issue_codes)
+            self.assertIn(POSITIVE_ROTATION_LIVE_BLOCK_CODE, result["live_blocker_codes"])
 
     def test_min_lot_block_uses_loss_streak_adjusted_budget_in_live_blocker(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
