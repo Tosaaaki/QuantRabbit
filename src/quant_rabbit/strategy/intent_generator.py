@@ -4757,6 +4757,11 @@ class IntentGenerator:
             risk_issues.extend(loss_streak_issues)
             if any(issue.get("severity") == "BLOCK" for issue in loss_streak_issues):
                 risk_allowed = False
+        positive_rotation_issue = _capture_positive_rotation_live_issue(intent)
+        if positive_rotation_issue is not None:
+            risk_issues.append(positive_rotation_issue)
+            live_blockers = (*live_blockers, positive_rotation_issue["message"])
+            risk_allowed = False
         if (
             self_improvement_profitability_issue is not None
             and str(intent.metadata.get("position_intent") or "").upper() != "HEDGE"
@@ -5337,6 +5342,7 @@ def _macro_event_size_up_signal(lane: dict[str, Any], *, side: Side) -> dict[str
 # campaign burst. Twenty exits is two default 10-trade campaign days, so it is
 # an evidence floor for relaxing a guard, not a market target.
 LOSS_ASYMMETRY_TP_RELAX_MIN_EXIT_TRADES = 20
+POSITIVE_ROTATION_LIVE_BLOCK_CODE = "NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION"
 
 
 def _loss_asymmetry_sizing_plan(
@@ -5424,6 +5430,83 @@ def _loss_asymmetry_tp_relaxation_reason(
         "the negative overall payoff is concentrated in market-close exits, so "
         "do not throttle this TP-attached entry below the normal per-trade cap"
     )
+
+
+def _tp_proven_harvest_rotation_allowed(intent: OrderIntent) -> bool:
+    """Return true only for the realized-positive exit shape we can rotate."""
+
+    metadata = intent.metadata or {}
+    if intent.order_type == OrderType.MARKET:
+        return False
+    if str(metadata.get("position_intent") or "").upper() == "HEDGE":
+        return False
+    method = intent.market_context.method if intent.market_context is not None else None
+    direction_bias = _method_direction_bias(metadata, method)
+    if direction_bias in {Side.LONG.value, Side.SHORT.value} and direction_bias != intent.side.value:
+        return False
+    if metadata.get("attach_take_profit_on_fill") is not True:
+        return False
+    if str(metadata.get("tp_execution_mode") or "").upper() != "ATTACHED_TECHNICAL_TP":
+        return False
+    if str(metadata.get("tp_target_intent") or "").upper() != "HARVEST":
+        return False
+    if str(metadata.get("opportunity_mode") or "").upper() != "HARVEST":
+        return False
+    if str(metadata.get("loss_asymmetry_guard_mode") or "").upper() != "TP_PROVEN_RELAXED":
+        return False
+    if metadata.get("loss_asymmetry_guard_relaxed") is not True:
+        return False
+    tp_trades = int(_optional_float(metadata.get("capture_take_profit_trades")) or 0)
+    if tp_trades < LOSS_ASYMMETRY_TP_RELAX_MIN_EXIT_TRADES:
+        return False
+    tp_expectancy = _optional_float(metadata.get("capture_take_profit_expectancy_jpy"))
+    tp_avg_win = _optional_float(metadata.get("capture_take_profit_avg_win_jpy"))
+    if tp_expectancy is None or tp_expectancy <= 0 or tp_avg_win is None or tp_avg_win <= 0:
+        return False
+    tp_losses = _optional_float(metadata.get("capture_take_profit_losses"))
+    if tp_losses is None or tp_losses > 0:
+        return False
+    market_close_expectancy = _optional_float(metadata.get("capture_market_close_expectancy_jpy"))
+    if market_close_expectancy is None or market_close_expectancy >= 0:
+        return False
+    return True
+
+
+def _capture_positive_rotation_live_issue(intent: OrderIntent) -> dict[str, str] | None:
+    """Block fresh live rotation when realized capture economics are negative.
+
+    This keeps throughput tied to broker-realized positive expectancy: under a
+    negative overall capture profile, only the TP-proven HARVEST shape is
+    allowed to reach LIVE_READY. If capture_economics recovers, this gate is
+    inactive because the loss-asymmetry guard metadata is absent.
+    """
+
+    metadata = intent.metadata or {}
+    if metadata.get("loss_asymmetry_guard_active") is not True:
+        return None
+    if str(metadata.get("capture_economics_status") or "").upper() != "NEGATIVE_EXPECTANCY":
+        return None
+    if str(metadata.get("position_intent") or "").upper() == "HEDGE":
+        return None
+    if _tp_proven_harvest_rotation_allowed(intent):
+        metadata["positive_rotation_live_ready"] = True
+        metadata["positive_rotation_mode"] = "TP_PROVEN_HARVEST"
+        metadata["positive_rotation_basis"] = (
+            "capture_economics is negative overall, but TAKE_PROFIT_ORDER exits "
+            "for this non-market attached-TP HARVEST shape have positive "
+            "realized expectancy while market-close exits are negative"
+        )
+        return None
+    return {
+        "code": POSITIVE_ROTATION_LIVE_BLOCK_CODE,
+        "message": (
+            "capture_economics is NEGATIVE_EXPECTANCY; fresh live rotation is "
+            "limited to non-market attached-TP HARVEST receipts with positive "
+            "TAKE_PROFIT_ORDER expectancy and zero TP losses until realized "
+            "PF/expectancy recover"
+        ),
+        "severity": "BLOCK",
+    }
 
 
 def _intent_from_lane(
@@ -5924,32 +6007,7 @@ def _self_improvement_profitability_p0_repair_allowed(
     no bypass of any other live-readiness gate.
     """
 
-    metadata = intent.metadata or {}
-    if intent.order_type == OrderType.MARKET:
-        return False
-    if str(metadata.get("position_intent") or "").upper() == "HEDGE":
-        return False
-    method = intent.market_context.method if intent.market_context is not None else None
-    direction_bias = _method_direction_bias(metadata, method)
-    if direction_bias in {Side.LONG.value, Side.SHORT.value} and direction_bias != intent.side.value:
-        return False
-    if metadata.get("attach_take_profit_on_fill") is not True:
-        return False
-    if str(metadata.get("tp_execution_mode") or "").upper() != "ATTACHED_TECHNICAL_TP":
-        return False
-    if str(metadata.get("tp_target_intent") or "").upper() != "HARVEST":
-        return False
-    if str(metadata.get("opportunity_mode") or "").upper() != "HARVEST":
-        return False
-    if str(metadata.get("loss_asymmetry_guard_mode") or "").upper() != "TP_PROVEN_RELAXED":
-        return False
-    if metadata.get("loss_asymmetry_guard_relaxed") is not True:
-        return False
-    tp_losses = _optional_float(metadata.get("capture_take_profit_losses"))
-    if tp_losses is None or tp_losses > 0:
-        return False
-    market_close_expectancy = _optional_float(metadata.get("capture_market_close_expectancy_jpy"))
-    if market_close_expectancy is None or market_close_expectancy >= 0:
+    if not _tp_proven_harvest_rotation_allowed(intent):
         return False
     if _self_improvement_intent_matches_worst_segment(intent, p0_issue):
         return False

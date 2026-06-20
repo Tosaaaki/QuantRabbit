@@ -13,6 +13,7 @@ from unittest.mock import patch
 from quant_rabbit.models import OrderIntent, OrderType, Side, TradeMethod
 from quant_rabbit.strategy.intent_generator import (
     IntentGenerator,
+    POSITIVE_ROTATION_LIVE_BLOCK_CODE,
     RANGE_TARGET_SPREAD_CUSHION_MULT,
     _forecast_context_payload,
     _minimum_range_target_pips,
@@ -241,6 +242,7 @@ class IntentGeneratorTest(unittest.TestCase):
             payload = json.loads(output.read_text())
             result = next(item for item in payload["results"] if item["intent"]["order_type"] == "STOP-ENTRY")
             metadata = result["intent"]["metadata"]
+            issue_codes = {issue["code"] for issue in result["risk_issues"]}
 
             self.assertGreater(summary.generated, 0)
             self.assertTrue(metadata["loss_asymmetry_guard_active"])
@@ -248,6 +250,9 @@ class IntentGeneratorTest(unittest.TestCase):
             self.assertEqual(metadata["loss_asymmetry_guard_loss_cap_jpy"], 600.0)
             self.assertEqual(metadata["max_loss_jpy"], 600.0)
             self.assertLessEqual(result["risk_metrics"]["risk_jpy"], 600.0)
+            self.assertEqual(result["status"], "DRY_RUN_BLOCKED")
+            self.assertIn(POSITIVE_ROTATION_LIVE_BLOCK_CODE, issue_codes)
+            self.assertIn(POSITIVE_ROTATION_LIVE_BLOCK_CODE, result["live_blocker_codes"])
 
     def test_capture_loss_asymmetry_relaxes_tp_proven_harvest_entries(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -302,6 +307,7 @@ class IntentGeneratorTest(unittest.TestCase):
                 if item["lane_id"] == "range_trader:EUR_USD:LONG:RANGE_ROTATION"
             )
             metadata = result["intent"]["metadata"]
+            issue_codes = {issue["code"] for issue in result["risk_issues"]}
 
             self.assertGreater(summary.generated, 0)
             self.assertTrue(metadata["loss_asymmetry_guard_active"])
@@ -312,6 +318,9 @@ class IntentGeneratorTest(unittest.TestCase):
             self.assertEqual(metadata["max_loss_jpy"], 1000.0)
             self.assertEqual(metadata["tp_execution_mode"], "ATTACHED_TECHNICAL_TP")
             self.assertEqual(metadata["tp_target_intent"], "HARVEST")
+            self.assertEqual(metadata["positive_rotation_mode"], "TP_PROVEN_HARVEST")
+            self.assertEqual(result["status"], "LIVE_READY")
+            self.assertNotIn(POSITIVE_ROTATION_LIVE_BLOCK_CODE, issue_codes)
             self.assertLessEqual(result["risk_metrics"]["risk_jpy"], 1000.0)
 
     def test_min_lot_block_uses_loss_streak_adjusted_budget_in_live_blocker(self) -> None:
