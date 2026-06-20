@@ -986,6 +986,36 @@ def _forecast_range_confidence_issues(
     ]
 
 
+def _forecast_executable_live_readiness_issues(
+    intent: OrderIntent,
+    *,
+    for_live_send: bool,
+) -> list[RiskIssue]:
+    if not for_live_send:
+        return []
+    metadata = intent.metadata or {}
+    direction = str(metadata.get("forecast_direction") or "").upper()
+    if not direction or direction in {"UP", "DOWN", "RANGE"}:
+        return []
+    if (
+        _intent_declares_recovery_hedge(intent)
+        and str(metadata.get("hedge_timing_class") or "").upper() == "REVERSAL"
+    ):
+        return []
+    confidence = _to_float(metadata.get("forecast_confidence"))
+    return [
+        RiskIssue(
+            "FORECAST_NOT_EXECUTABLE_FOR_LIVE",
+            (
+                f"{intent.pair} {intent.side.value} current pair forecast is {direction} "
+                f"conf={0.0 if confidence is None else confidence:.2f}; fresh live entries need "
+                "an executable UP/DOWN/RANGE prediction before gateway send."
+            ),
+            severity="BLOCK",
+        )
+    ]
+
+
 def _forecast_directional_hit_rate_weak_issue(
     intent: OrderIntent,
     *,
@@ -1288,6 +1318,7 @@ class RiskEngine:
         issues.extend(_hedge_metadata_issues(intent))
         issues.extend(_hedge_balance_issues(intent, snapshot))
         issues.extend(_forecast_unselected_projection_conflict_issues(intent, for_live_send=for_live_send))
+        issues.extend(_forecast_executable_live_readiness_issues(intent, for_live_send=for_live_send))
         issues.extend(_forecast_range_method_issues(intent, for_live_send=for_live_send))
         issues.extend(_forecast_range_confidence_issues(intent, for_live_send=for_live_send))
         issues.extend(self._market_context_issues(intent, for_live_send=for_live_send))
@@ -1952,20 +1983,31 @@ class RiskEngine:
         if intent.side != forecast_side:
             return []
         support = _forecast_market_support(metadata)
-        if not _forecast_directional_bucket_is_known_weak(metadata, support):
-            return []
         if _forecast_selected_direction_has_audited_support(
             metadata,
             support,
             direction=direction,
         ):
             return []
+        if _forecast_directional_bucket_is_known_weak(metadata, support):
+            return [
+                _forecast_directional_bucket_issue(
+                    intent,
+                    direction=direction,
+                    metadata=metadata,
+                    support=support,
+                )
+            ]
+        confidence = _to_float(metadata.get("forecast_confidence"))
+        min_confidence = FORECAST_DIRECTIONAL_LIVE_MIN_CONFIDENCE
+        if confidence is not None and confidence >= min_confidence:
+            return []
         return [
-            _forecast_directional_bucket_issue(
+            _forecast_confidence_required_issue(
                 intent,
                 direction=direction,
-                metadata=metadata,
-                support=support,
+                confidence=confidence,
+                min_confidence=min_confidence,
             )
         ]
 

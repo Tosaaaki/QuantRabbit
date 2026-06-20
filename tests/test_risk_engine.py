@@ -353,6 +353,7 @@ class RiskEngineTest(unittest.TestCase):
             ),
             metadata={
                 "forecast_direction": "UP",
+                "forecast_confidence": 0.82,
                 "forecast_target_price": 1.17400,
                 "forecast_invalidation_price": 1.17270,
             },
@@ -398,6 +399,76 @@ class RiskEngineTest(unittest.TestCase):
         self.assertEqual(dry_codes["FORECAST_DIRECTION_CONFLICT"], "WARN")
         self.assertFalse(live.allowed)
         self.assertEqual(live_codes["FORECAST_DIRECTION_CONFLICT"], "BLOCK")
+
+    def test_unclear_forecast_blocks_fresh_breakout_failure_limit_live_send(self) -> None:
+        intent = OrderIntent(
+            pair="EUR_USD",
+            side=Side.SHORT,
+            order_type=OrderType.LIMIT,
+            units=1000,
+            entry=1.17400,
+            tp=1.17330,
+            sl=1.17450,
+            thesis="do_not_send_unclear_forecast_to_live",
+            market_context=MarketContext(
+                regime="BREAKOUT_FAILURE rejection retest",
+                narrative="failed upside break rejects, but pair forecast is not executable",
+                chart_story="seller response near resistance",
+                method=TradeMethod.BREAKOUT_FAILURE,
+                invalidation="resistance recaptures on M5 bodies",
+            ),
+            metadata={
+                "forecast_direction": "UNCLEAR",
+                "forecast_confidence": 0.22,
+            },
+        )
+
+        dry_run = _capped_engine(live_enabled=True).validate(intent, snapshot(), for_live_send=False)
+        live = _capped_engine(live_enabled=True).validate(intent, snapshot(), for_live_send=True)
+
+        dry_codes = {issue.code for issue in dry_run.issues}
+        live_codes = {issue.code: issue.severity for issue in live.issues}
+        self.assertNotIn("FORECAST_NOT_EXECUTABLE_FOR_LIVE", dry_codes)
+        self.assertFalse(live.allowed)
+        self.assertEqual(live_codes["FORECAST_NOT_EXECUTABLE_FOR_LIVE"], "BLOCK")
+
+    def test_low_confidence_same_side_directional_forecast_blocks_live_send_without_support(self) -> None:
+        intent = OrderIntent(
+            pair="EUR_USD",
+            side=Side.SHORT,
+            order_type=OrderType.LIMIT,
+            units=1000,
+            entry=1.17400,
+            tp=1.17330,
+            sl=1.17450,
+            thesis="do_not_send_low_confidence_same_side_forecast_to_live",
+            market_context=MarketContext(
+                regime="BREAKOUT_FAILURE rejection retest",
+                narrative="selected side matches the forecast, but confidence is below live floor",
+                chart_story="seller response near resistance",
+                method=TradeMethod.BREAKOUT_FAILURE,
+                invalidation="resistance recaptures on M5 bodies",
+            ),
+            metadata={
+                "forecast_direction": "DOWN",
+                "forecast_confidence": 0.23,
+                "forecast_market_support": {
+                    "ok": False,
+                    "direction": "DOWN",
+                    "aligned_projection_count": 0,
+                },
+            },
+        )
+
+        dry_run = _capped_engine(live_enabled=True).validate(intent, snapshot(), for_live_send=False)
+        live = _capped_engine(live_enabled=True).validate(intent, snapshot(), for_live_send=True)
+
+        dry_codes = {issue.code for issue in dry_run.issues}
+        live_codes = {issue.code: issue.severity for issue in live.issues}
+        self.assertTrue(dry_run.allowed, dry_run.block_reasons)
+        self.assertNotIn("FORECAST_CONFIDENCE_REQUIRED_FOR_LIVE", dry_codes)
+        self.assertFalse(live.allowed)
+        self.assertEqual(live_codes["FORECAST_CONFIDENCE_REQUIRED_FOR_LIVE"], "BLOCK")
 
     def test_low_confidence_opposite_forecast_does_not_become_direction_veto(self) -> None:
         intent = OrderIntent(
