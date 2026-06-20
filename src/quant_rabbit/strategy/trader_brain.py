@@ -3535,13 +3535,21 @@ def _technical_harvest_precision_score(
                 int(item.get("samples") or 0),
             ),
         )
+        exit_hint = ""
+        if best.get("optimized_take_profit_pips") is not None and best.get("optimized_stop_loss_pips") is not None:
+            exit_hint = (
+                f" exit_opt=TP{float(best.get('optimized_take_profit_pips') or 0.0):.1f}/"
+                f"SL{float(best.get('optimized_stop_loss_pips') or 0.0):.1f} "
+                f"valid_avg={float(best.get('optimized_validation_avg_realized_pips') or 0.0):.2f}pip "
+                f"PF={float(best.get('optimized_validation_profit_factor') or 0.0):.2f}"
+            )
         rationale.insert(
             0,
             "technical rotation "
             f"+{rotation_delta:.1f}: {names}; "
             f"MFE>=2={float(best.get('mfe_ge_2pip_hit_rate') or 0.0):.2f} "
             f"Wilson95_lower={float(best.get('mfe_ge_2pip_wilson95_lower') or 0.0):.2f} "
-            f"TP5-first={float(best.get('scalp_tp_first_hit_rate') or 0.0):.2f}",
+            f"TP5-first={float(best.get('scalp_tp_first_hit_rate') or 0.0):.2f}{exit_hint}",
         )
     if negative:
         names = ", ".join(str(item.get("name") or item.get("feature")) for item in negative[:3])

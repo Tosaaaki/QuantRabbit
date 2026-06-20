@@ -109,6 +109,14 @@ TECHNICAL_HARVEST_ROTATION_RULES: tuple[dict[str, Any], ...] = (
         "mfe_ge_2pip_hit_rate": 1.0,
         "mfe_ge_2pip_wilson95_lower": 0.9036,
         "avg_final_pips": 11.21,
+        "optimized_take_profit_pips": 10.0,
+        "optimized_stop_loss_pips": 2.0,
+        "optimized_validation_samples": 34,
+        "optimized_validation_win_rate": 0.5588,
+        "optimized_validation_win_wilson95_lower": 0.3945,
+        "optimized_validation_avg_realized_pips": 3.13,
+        "optimized_validation_profit_factor": 4.59,
+        "optimized_validation_timeout_rate": 0.2647,
         "min_m5_family_disagreement": 0.75,
         "min_exclusive_m15_bb_pct_b": 0.20,
         "min_target_pips": 4.8,
@@ -613,6 +621,18 @@ def technical_harvest_precision_assessment(
             "current_stop_pips": round(stop_pips, 4),
             "audit_report": rule["audit_report"],
         }
+        for optional_key in (
+            "optimized_take_profit_pips",
+            "optimized_stop_loss_pips",
+            "optimized_validation_samples",
+            "optimized_validation_win_rate",
+            "optimized_validation_win_wilson95_lower",
+            "optimized_validation_avg_realized_pips",
+            "optimized_validation_profit_factor",
+            "optimized_validation_timeout_rate",
+        ):
+            if optional_key in rule:
+                support[optional_key] = rule[optional_key]
         support.update(feature_values)
         rotation_supports.append(support)
 

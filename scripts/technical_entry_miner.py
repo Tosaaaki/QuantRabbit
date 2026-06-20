@@ -78,6 +78,27 @@ CONFLUENCE_SUMMARY_KEYS = (
     "target_first_wilson95_lower",
     "avg_final_pips",
 )
+# Exit grids are audit search ranges, not production literals. They bracket the
+# current TP5/SL4 HARVEST shape with smaller quick-capture exits and wider
+# hold exits so MFE-rich confluence buckets can be tested for monetization.
+EXIT_OPTIMIZATION_TP_GRID_PIPS = (2.0, 3.0, 4.0, 5.0, 7.0, 10.0)
+EXIT_OPTIMIZATION_STOP_GRID_PIPS = (2.0, 3.0, 4.0, 5.0, 7.0)
+EXIT_OPTIMIZATION_TOP_CONFLUENCES = 40
+EXIT_OPTIMIZATION_MIN_TRAIN_EXPECTANCY_PIPS = 0.0
+EXIT_OPTIMIZATION_MIN_VALIDATION_EXPECTANCY_PIPS = 0.0
+EXIT_SUMMARY_KEYS = (
+    "n",
+    "win_rate",
+    "win_wilson95_lower",
+    "avg_realized_pips",
+    "median_realized_pips",
+    "profit_factor",
+    "tp_first_rate",
+    "stop_first_rate",
+    "timeout_rate",
+    "ambiguous_rate",
+    "total_realized_pips",
+)
 
 
 @dataclass(frozen=True)
@@ -142,6 +163,26 @@ def main() -> int:
         min_validation_mfe2_rate=args.confluence_min_validation_mfe2_rate,
         feature_limit_per_row=args.confluence_feature_limit_per_row,
     )
+    exit_tp_grid = _parse_pips_grid(
+        args.exit_tp_grid_pips,
+        default=EXIT_OPTIMIZATION_TP_GRID_PIPS,
+    )
+    exit_stop_grid = _parse_pips_grid(
+        args.exit_stop_grid_pips,
+        default=EXIT_OPTIMIZATION_STOP_GRID_PIPS,
+    )
+    exit_rows = _optimize_confluence_exits(
+        scored_rows,
+        confluence_rows,
+        tp_grid=exit_tp_grid,
+        stop_grid=exit_stop_grid,
+        train_fraction=args.confluence_train_fraction,
+        min_train_samples=args.confluence_min_train_samples,
+        min_validation_samples=args.confluence_min_validation_samples,
+        top_confluences=args.exit_optimization_top_confluences,
+        min_train_expectancy_pips=args.exit_min_train_expectancy_pips,
+        min_validation_expectancy_pips=args.exit_min_validation_expectancy_pips,
+    )
     strict = [
         row
         for row in feature_rows
@@ -187,11 +228,21 @@ def main() -> int:
             "min_validation_mfe2_rate": args.confluence_min_validation_mfe2_rate,
             "feature_limit_per_row": args.confluence_feature_limit_per_row,
         },
+        "technical_exit_optimization_config": {
+            "tp_grid_pips": list(exit_tp_grid),
+            "stop_grid_pips": list(exit_stop_grid),
+            "top_confluences": args.exit_optimization_top_confluences,
+            "selection_basis": "best train avg_realized_pips, then holdout verification",
+            "min_train_expectancy_pips": args.exit_min_train_expectancy_pips,
+            "min_validation_expectancy_pips": args.exit_min_validation_expectancy_pips,
+            "same_m1_tp_and_stop_policy": "counted as stop-first loss",
+        },
         **load_stats,
         **fetch_stats,
         **score_stats,
         "summary": _summarize(scored_rows),
         "technical_confluence_candidates": confluence_rows[:80],
+        "technical_confluence_exit_optimizations": exit_rows[:80],
         "strict_target_first_candidates": strict[:50],
         "strict_scalp_candidates": scalp[:50],
         "positive_mfe2_candidates": positive[:50],
@@ -281,12 +332,55 @@ def _parse_args() -> argparse.Namespace:
         default=CONFLUENCE_TRAIN_FRACTION,
         help="chronological discovery fraction; the newest remainder is validation",
     )
+    parser.add_argument(
+        "--exit-tp-grid-pips",
+        default=",".join(str(item) for item in EXIT_OPTIMIZATION_TP_GRID_PIPS),
+        help="comma-separated take-profit pips to test for confluence exit optimization",
+    )
+    parser.add_argument(
+        "--exit-stop-grid-pips",
+        default=",".join(str(item) for item in EXIT_OPTIMIZATION_STOP_GRID_PIPS),
+        help="comma-separated stop-loss pips to test for confluence exit optimization",
+    )
+    parser.add_argument(
+        "--exit-optimization-top-confluences",
+        type=int,
+        default=EXIT_OPTIMIZATION_TOP_CONFLUENCES,
+        help="number of mined confluence buckets to run through exit-grid optimization",
+    )
+    parser.add_argument(
+        "--exit-min-train-expectancy-pips",
+        type=float,
+        default=EXIT_OPTIMIZATION_MIN_TRAIN_EXPECTANCY_PIPS,
+        help="minimum train average realized pips before an exit shape can be selected",
+    )
+    parser.add_argument(
+        "--exit-min-validation-expectancy-pips",
+        type=float,
+        default=EXIT_OPTIMIZATION_MIN_VALIDATION_EXPECTANCY_PIPS,
+        help="minimum holdout average realized pips for validation_pass=true",
+    )
     return parser.parse_args()
 
 
 def _parse_pair_filter(value: str) -> set[str] | None:
     pairs = {item.strip().upper() for item in str(value or "").split(",") if item.strip()}
     return pairs or None
+
+
+def _parse_pips_grid(value: str, *, default: tuple[float, ...]) -> tuple[float, ...]:
+    parsed: set[float] = set()
+    for raw in str(value or "").split(","):
+        item = raw.strip()
+        if not item:
+            continue
+        try:
+            pips = float(item)
+        except ValueError:
+            continue
+        if math.isfinite(pips) and pips > 0.0:
+            parsed.add(round(pips, 4))
+    return tuple(sorted(parsed)) or default
 
 
 def _load_rows(
@@ -580,6 +674,7 @@ def _score_one(
         stop_loss_pips=scalp_stop_pips,
     )
     features = _technical_features(row, indicators_by_tf, families_by_tf)
+    exit_path_pips = _directional_exit_path_pips(row.direction, truth, entry=entry, factor=factor)
     return {
         "source_index": row.source_index,
         "timestamp_utc": _iso(row.timestamp),
@@ -601,8 +696,28 @@ def _score_one(
         "target_before_invalidation_hit": target_first,
         "scalp_first_touch": scalp_first_touch,
         "scalp_take_profit_before_stop_hit": scalp_tp_first,
+        "_exit_path_pips": exit_path_pips,
         "features": sorted(features),
     }
+
+
+def _directional_exit_path_pips(
+    direction: str,
+    truth: list[Candle],
+    *,
+    entry: float,
+    factor: float,
+) -> list[tuple[float, float]]:
+    path: list[tuple[float, float]] = []
+    for candle in truth:
+        if direction == "UP":
+            favorable = (candle.high - entry) * factor
+            adverse = (entry - candle.low) * factor
+        else:
+            favorable = (entry - candle.low) * factor
+            adverse = (candle.high - entry) * factor
+        path.append((round(max(0.0, favorable), 6), round(max(0.0, adverse), 6)))
+    return path
 
 
 def _technical_features(
@@ -839,6 +954,218 @@ def _mine_confluence_buckets(
         )
     )
     return out
+
+
+def _optimize_confluence_exits(
+    rows: list[dict[str, Any]],
+    confluence_candidates: list[dict[str, Any]],
+    *,
+    tp_grid: tuple[float, ...],
+    stop_grid: tuple[float, ...],
+    train_fraction: float,
+    min_train_samples: int,
+    min_validation_samples: int,
+    top_confluences: int,
+    min_train_expectancy_pips: float,
+    min_validation_expectancy_pips: float,
+) -> list[dict[str, Any]]:
+    if not rows or not confluence_candidates or not tp_grid or not stop_grid:
+        return []
+    out: list[dict[str, Any]] = []
+    for candidate in confluence_candidates[: max(0, top_confluences)]:
+        features = candidate.get("features")
+        if not isinstance(features, list):
+            continue
+        matched = [
+            row for row in sorted(rows, key=_row_sort_key)
+            if row.get("_exit_path_pips") and _row_matches_confluence(row, features)
+        ]
+        train_rows, validation_rows = _chronological_split(matched, train_fraction=train_fraction)
+        if len(train_rows) < min_train_samples or len(validation_rows) < min_validation_samples:
+            continue
+        grid_rows: list[dict[str, Any]] = []
+        for take_profit_pips in tp_grid:
+            for stop_loss_pips in stop_grid:
+                train_summary = _summarize_exit_results(
+                    _score_exit_results(
+                        train_rows,
+                        take_profit_pips=take_profit_pips,
+                        stop_loss_pips=stop_loss_pips,
+                    )
+                )
+                if (train_summary.get("avg_realized_pips") or 0.0) <= min_train_expectancy_pips:
+                    continue
+                validation_summary = _summarize_exit_results(
+                    _score_exit_results(
+                        validation_rows,
+                        take_profit_pips=take_profit_pips,
+                        stop_loss_pips=stop_loss_pips,
+                    )
+                )
+                validation_avg = validation_summary.get("avg_realized_pips") or 0.0
+                validation_pass = (
+                    validation_avg > min_validation_expectancy_pips
+                    and (validation_summary.get("win_rate") or 0.0) >= 0.50
+                )
+                row = {
+                    "confluence": candidate.get("confluence"),
+                    "features": features,
+                    "selected_take_profit_pips": take_profit_pips,
+                    "selected_stop_loss_pips": stop_loss_pips,
+                    "selection_basis": "train_exit_expectancy",
+                    "validation_pass": validation_pass,
+                    "prediction": "selected TP/SL monetizes the confluence before horizon",
+                    "verification": "same TP/SL replayed on chronological holdout candles",
+                    "split_at_utc": validation_rows[0].get("timestamp_utc") if validation_rows else None,
+                }
+                row.update(_prefixed_exit_summary("train_exit", train_summary))
+                row.update(_prefixed_exit_summary("validation_exit", validation_summary))
+                grid_rows.append(row)
+        if not grid_rows:
+            continue
+        grid_rows.sort(
+            key=lambda row: (
+                -(row.get("train_exit_avg_realized_pips") or 0.0),
+                -(row.get("train_exit_win_wilson95_lower") or 0.0),
+                -_profit_factor_sort_value(row.get("train_exit_profit_factor")),
+                row.get("selected_stop_loss_pips") or 999.0,
+                row.get("selected_take_profit_pips") or 999.0,
+            )
+        )
+        selected = grid_rows[0]
+        out.append(selected)
+    out.sort(
+        key=lambda row: (
+            not bool(row.get("validation_pass")),
+            -(row.get("validation_exit_avg_realized_pips") or 0.0),
+            -(row.get("validation_exit_win_wilson95_lower") or 0.0),
+            -int(row.get("validation_exit_n") or 0),
+            row.get("confluence") or "",
+        )
+    )
+    return out
+
+
+def _chronological_split(
+    rows: list[dict[str, Any]],
+    *,
+    train_fraction: float,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    ordered = sorted(rows, key=_row_sort_key)
+    if len(ordered) < 2:
+        return ordered, []
+    bounded_fraction = min(max(train_fraction, 0.10), 0.90)
+    split_index = int(len(ordered) * bounded_fraction)
+    split_index = min(max(split_index, 1), len(ordered) - 1)
+    return ordered[:split_index], ordered[split_index:]
+
+
+def _row_matches_confluence(row: dict[str, Any], features: list[Any]) -> bool:
+    row_features = set(row.get("features") or ())
+    for feature in features:
+        if not isinstance(feature, str):
+            return False
+        if feature.startswith("direction:"):
+            if feature.split(":", 1)[1] != str(row.get("direction") or ""):
+                return False
+            continue
+        if feature.startswith("pair:"):
+            if feature.split(":", 1)[1] != str(row.get("pair") or ""):
+                return False
+            continue
+        if feature not in row_features:
+            return False
+    return True
+
+
+def _score_exit_results(
+    rows: list[dict[str, Any]],
+    *,
+    take_profit_pips: float,
+    stop_loss_pips: float,
+) -> list[dict[str, Any]]:
+    return [
+        _score_param_exit(
+            row,
+            take_profit_pips=take_profit_pips,
+            stop_loss_pips=stop_loss_pips,
+        )
+        for row in rows
+    ]
+
+
+def _score_param_exit(
+    row: dict[str, Any],
+    *,
+    take_profit_pips: float,
+    stop_loss_pips: float,
+) -> dict[str, Any]:
+    for favorable_pips, adverse_pips in row.get("_exit_path_pips") or ():
+        take_profit_hit = float(favorable_pips) >= take_profit_pips
+        stop_loss_hit = float(adverse_pips) >= stop_loss_pips
+        if take_profit_hit and stop_loss_hit:
+            return {
+                "outcome": "AMBIGUOUS_SAME_M1",
+                "win": False,
+                "realized_pips": -stop_loss_pips,
+            }
+        if take_profit_hit:
+            return {
+                "outcome": "TAKE_PROFIT_FIRST",
+                "win": True,
+                "realized_pips": take_profit_pips,
+            }
+        if stop_loss_hit:
+            return {
+                "outcome": "STOP_FIRST",
+                "win": False,
+                "realized_pips": -stop_loss_pips,
+            }
+    final_pips = float(row.get("final_pips") or 0.0)
+    return {
+        "outcome": "TIMEOUT",
+        "win": final_pips > 0.0,
+        "realized_pips": final_pips,
+    }
+
+
+def _summarize_exit_results(items: list[dict[str, Any]]) -> dict[str, Any]:
+    n = len(items)
+    wins = sum(1 for item in items if bool(item.get("win")))
+    pips = [float(item.get("realized_pips") or 0.0) for item in items]
+    outcomes = collections.Counter(str(item.get("outcome") or "") for item in items)
+    return {
+        "n": n,
+        "win_rate": wins / n if n else None,
+        "win_wilson95_lower": _wilson_lower(wins, n),
+        "avg_realized_pips": statistics.fmean(pips) if pips else None,
+        "median_realized_pips": statistics.median(pips) if pips else None,
+        "profit_factor": _profit_factor(pips),
+        "tp_first_rate": outcomes["TAKE_PROFIT_FIRST"] / n if n else None,
+        "stop_first_rate": outcomes["STOP_FIRST"] / n if n else None,
+        "timeout_rate": outcomes["TIMEOUT"] / n if n else None,
+        "ambiguous_rate": outcomes["AMBIGUOUS_SAME_M1"] / n if n else None,
+        "total_realized_pips": sum(pips) if pips else None,
+    }
+
+
+def _prefixed_exit_summary(prefix: str, summary: dict[str, Any]) -> dict[str, Any]:
+    return {f"{prefix}_{key}": summary.get(key) for key in EXIT_SUMMARY_KEYS}
+
+
+def _profit_factor(pips: list[float]) -> float | None:
+    gains = sum(value for value in pips if value > 0.0)
+    losses = -sum(value for value in pips if value < 0.0)
+    if losses <= 0.0:
+        return None
+    return gains / losses
+
+
+def _profit_factor_sort_value(value: Any) -> float:
+    parsed = _safe_float(value)
+    if parsed is None:
+        return 1_000_000.0
+    return parsed
 
 
 def _build_confluence_buckets(
@@ -1153,6 +1480,9 @@ def _markdown(report: dict[str, Any]) -> str:
     lines.extend(["", "## Technical Confluence Candidates", ""])
     confluence = report["technical_confluence_candidates"]
     lines.extend(_table(confluence, _confluence_cols(), limit=40) if confluence else ["None."])
+    lines.extend(["", "## Technical Confluence Exit Optimization", ""])
+    exit_rows = report["technical_confluence_exit_optimizations"]
+    lines.extend(_table(exit_rows, _exit_optimization_cols(), limit=40) if exit_rows else ["None."])
     lines.extend(["", "## Strict Target-First Candidates", ""])
     strict = report["strict_target_first_candidates"]
     lines.extend(_table(strict, _feature_cols(), limit=30) if strict else ["None."])
@@ -1202,6 +1532,24 @@ def _confluence_cols() -> list[tuple[str, str]]:
         ("valid final hit", "validation_final_hit_rate"),
         ("valid avg pips", "validation_avg_final_pips"),
         ("all n", "all_n"),
+    ]
+
+
+def _exit_optimization_cols() -> list[tuple[str, str]]:
+    return [
+        ("confluence", "confluence"),
+        ("TP", "selected_take_profit_pips"),
+        ("SL", "selected_stop_loss_pips"),
+        ("valid pass", "validation_pass"),
+        ("train n", "train_exit_n"),
+        ("train avg", "train_exit_avg_realized_pips"),
+        ("train win", "train_exit_win_rate"),
+        ("valid n", "validation_exit_n"),
+        ("valid avg", "validation_exit_avg_realized_pips"),
+        ("valid win", "validation_exit_win_rate"),
+        ("valid Wilson95L", "validation_exit_win_wilson95_lower"),
+        ("valid PF", "validation_exit_profit_factor"),
+        ("valid timeout", "validation_exit_timeout_rate"),
     ]
 
 

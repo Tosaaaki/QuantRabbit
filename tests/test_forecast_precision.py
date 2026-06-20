@@ -36,6 +36,12 @@ class ForecastPrecisionConfluenceTest(unittest.TestCase):
             assessment["primary_rotation_support"]["name"],
             "UP_M5_DISAGREE_M15_BB_REVERSION_HOLDOUT_ROTATION_TP5_SL4",
         )
+        self.assertEqual(assessment["primary_rotation_support"]["optimized_take_profit_pips"], 10.0)
+        self.assertEqual(assessment["primary_rotation_support"]["optimized_stop_loss_pips"], 2.0)
+        self.assertEqual(
+            assessment["primary_rotation_support"]["optimized_validation_avg_realized_pips"],
+            3.13,
+        )
         self.assertEqual(assessment["score_delta"], 12.0)
         self.assertIsNone(
             technical_harvest_precision_support(

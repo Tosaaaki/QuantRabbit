@@ -31,6 +31,7 @@ def _row(
     features: set[str],
     hit: bool,
     final_pips: float,
+    exit_path: list[tuple[float, float]] | None = None,
 ) -> dict:
     timestamp = datetime(2026, 6, 1, tzinfo=timezone.utc) + timedelta(minutes=index)
     return {
@@ -46,6 +47,7 @@ def _row(
         "target_touch_hit": hit,
         "target_before_invalidation_hit": hit,
         "scalp_take_profit_before_stop_hit": hit,
+        "_exit_path_pips": exit_path or ([(2.5, 0.5)] if hit else [(0.5, 2.5)]),
     }
 
 
@@ -105,6 +107,92 @@ class TechnicalEntryMinerConfluenceTest(unittest.TestCase):
         )
 
         self.assertEqual(features, ["cross:M1M5:macd_all_aligned", "M1:ema20_aligned"])
+
+    def test_exit_optimizer_selects_train_exit_and_verifies_holdout(self) -> None:
+        features = {"M1:macd_hist_aligned", "M5:ema50_aligned"}
+        rows = [
+            _row(
+                index,
+                features=features,
+                hit=True,
+                final_pips=0.2,
+                exit_path=[(2.4, 0.2)],
+            )
+            for index in range(16)
+        ]
+        candidates = [
+            {
+                "confluence": "direction:UP + M1:macd_hist_aligned + M5:ema50_aligned",
+                "features": ["direction:UP", "M1:macd_hist_aligned", "M5:ema50_aligned"],
+            }
+        ]
+
+        exits = miner._optimize_confluence_exits(
+            rows,
+            candidates,
+            tp_grid=(2.0, 3.0),
+            stop_grid=(2.0,),
+            train_fraction=0.50,
+            min_train_samples=8,
+            min_validation_samples=8,
+            top_confluences=1,
+            min_train_expectancy_pips=0.0,
+            min_validation_expectancy_pips=0.0,
+        )
+
+        self.assertEqual(len(exits), 1)
+        self.assertEqual(exits[0]["selected_take_profit_pips"], 2.0)
+        self.assertEqual(exits[0]["selected_stop_loss_pips"], 2.0)
+        self.assertTrue(exits[0]["validation_pass"])
+        self.assertEqual(exits[0]["validation_exit_avg_realized_pips"], 2.0)
+        self.assertEqual(exits[0]["validation_exit_win_rate"], 1.0)
+
+    def test_exit_optimizer_reports_holdout_failure_for_train_overfit(self) -> None:
+        features = {"M1:rsi_low", "M5:stoch_low"}
+        rows = [
+            _row(
+                index,
+                features=features,
+                hit=True,
+                final_pips=0.1,
+                exit_path=[(2.2, 0.1)],
+            )
+            for index in range(8)
+        ]
+        rows.extend(
+            _row(
+                index,
+                features=features,
+                hit=False,
+                final_pips=-0.1,
+                exit_path=[(0.1, 2.2)],
+            )
+            for index in range(8, 16)
+        )
+        candidates = [
+            {
+                "confluence": "direction:UP + M1:rsi_low + M5:stoch_low",
+                "features": ["direction:UP", "M1:rsi_low", "M5:stoch_low"],
+            }
+        ]
+
+        exits = miner._optimize_confluence_exits(
+            rows,
+            candidates,
+            tp_grid=(2.0,),
+            stop_grid=(2.0,),
+            train_fraction=0.50,
+            min_train_samples=8,
+            min_validation_samples=8,
+            top_confluences=1,
+            min_train_expectancy_pips=0.0,
+            min_validation_expectancy_pips=0.0,
+        )
+
+        self.assertEqual(len(exits), 1)
+        self.assertFalse(exits[0]["validation_pass"])
+        self.assertEqual(exits[0]["validation_exit_avg_realized_pips"], -2.0)
+        self.assertEqual(exits[0]["validation_exit_win_rate"], 0.0)
 
 
 if __name__ == "__main__":
