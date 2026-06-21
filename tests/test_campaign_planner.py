@@ -8,6 +8,54 @@ from pathlib import Path
 from quant_rabbit.strategy.ensemble import CampaignPlanner
 
 
+def _write_oanda_firepower_report(root: Path, *, status: str = "VERIFIED_TARGET_10_ROUTE_ESTIMATED") -> Path:
+    path = root / "oanda_universal_rotation_mining_latest.json"
+    path.write_text(
+        json.dumps(
+            {
+                "generated_at_utc": "2026-06-21T00:00:00Z",
+                "campaign_firepower": {
+                    "status": status,
+                    "high_precision": {
+                        "unique_vehicle_count": 2,
+                        "pair_count": 2,
+                        "estimated_return_pct_per_active_day_at_observed_frequency": 11.0,
+                        "top_vehicles": [
+                            {
+                                "vehicle_key": "GBP_USD|SHORT|range_reversion|tp1_sl1",
+                                "pair": "GBP_USD",
+                                "shape": "range_reversion",
+                                "firepower_side": "SHORT",
+                                "exit_shape": "tp1_sl1",
+                                "validation_n": 30,
+                                "validation_win_rate": 0.70,
+                                "validation_win_wilson95_lower": 0.52,
+                                "validation_profit_factor": 2.46,
+                                "estimated_return_pct_per_active_day_at_observed_frequency": 1.43,
+                                "live_permission": False,
+                            },
+                            {
+                                "vehicle_key": "USD_JPY|LONG|range_reversion|tp1.25_sl1",
+                                "pair": "USD_JPY",
+                                "shape": "range_reversion",
+                                "firepower_side": "LONG",
+                                "exit_shape": "tp1.25_sl1",
+                                "validation_n": 14,
+                                "validation_win_rate": 0.86,
+                                "validation_win_wilson95_lower": 0.60,
+                                "validation_profit_factor": 8.89,
+                                "estimated_return_pct_per_active_day_at_observed_frequency": 1.62,
+                                "live_permission": False,
+                            },
+                        ],
+                    },
+                },
+            }
+        )
+    )
+    return path
+
+
 class CampaignPlannerTest(unittest.TestCase):
     def test_builds_multi_desk_plan_without_live_guarantee(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -141,6 +189,60 @@ class CampaignPlannerTest(unittest.TestCase):
             self.assertEqual(first["direction"], "SHORT")
             self.assertEqual(first["seat_missed"], 94)
             self.assertGreater(first["missed_reward_pressure_jpy"], 114000)
+
+    def test_seeds_verified_oanda_firepower_lanes_ahead_of_story_candidates(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            strategy = root / "strategy.json"
+            story = root / "story.json"
+            plan_path = root / "campaign.json"
+            oanda = _write_oanda_firepower_report(root)
+            strategy.write_text(
+                json.dumps(
+                    {
+                        "profiles": [
+                            {
+                                "pair": "EUR_USD",
+                                "direction": "SHORT",
+                                "status": "CANDIDATE",
+                                "required_fix": "ready",
+                                "positive_best_jpy": 2992.49,
+                                "positive_tail_jpy": 1213.22,
+                                "seat_missed": 94,
+                            }
+                        ]
+                    }
+                )
+            )
+            story.write_text(
+                json.dumps(
+                    {
+                        "pair_profiles": [
+                            {"pair": "EUR_USD", "methods": {"TREND_CONTINUATION": 2}, "themes": {}, "examples": []}
+                        ]
+                    }
+                )
+            )
+
+            CampaignPlanner(
+                strategy_profile=strategy,
+                market_story_profile=story,
+                report_path=root / "campaign.md",
+                plan_path=plan_path,
+                oanda_rotation_mining=oanda,
+            ).run(start_balance_jpy=200_000)
+
+            lanes = json.loads(plan_path.read_text())["lanes"]
+            first = lanes[0]
+            self.assertTrue(first["oanda_campaign_firepower_seed"])
+            self.assertEqual(first["pair"], "USD_JPY")
+            self.assertEqual(first["direction"], "LONG")
+            self.assertEqual(first["desk"], "range_trader")
+            self.assertEqual(first["method"], "RANGE_ROTATION")
+            self.assertEqual(first["campaign_role"], "OANDA_FIREPOWER_ROUTE")
+            self.assertEqual(first["target_reward_risk"], 1.25)
+            self.assertFalse(first["oanda_campaign_live_permission"])
+            self.assertTrue(any(lane["pair"] == "GBP_USD" for lane in lanes))
 
 
 if __name__ == "__main__":

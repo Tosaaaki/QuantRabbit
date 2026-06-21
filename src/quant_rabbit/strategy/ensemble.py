@@ -12,6 +12,7 @@ from quant_rabbit.paths import (
     DEFAULT_CAMPAIGN_REPORT,
     DEFAULT_DAILY_TARGET_STATE,
     DEFAULT_MARKET_STORY_PROFILE,
+    DEFAULT_OANDA_UNIVERSAL_ROTATION_MINING,
     DEFAULT_STRATEGY_PROFILE,
 )
 
@@ -71,6 +72,12 @@ class DeskLane:
     missed_reward_pressure_jpy: float = 0.0
     blockers: tuple[str, ...] = ()
     story_examples: tuple[str, ...] = ()
+    oanda_campaign_firepower_seed: bool = False
+    oanda_campaign_vehicle_key: str | None = None
+    oanda_campaign_firepower_status: str | None = None
+    oanda_campaign_exit_shape: str | None = None
+    oanda_campaign_estimated_return_pct_per_active_day: float | None = None
+    oanda_campaign_live_permission: bool = False
 
 
 @dataclass(frozen=True)
@@ -106,18 +113,29 @@ class CampaignPlanner:
         report_path: Path = DEFAULT_CAMPAIGN_REPORT,
         plan_path: Path = DEFAULT_CAMPAIGN_PLAN,
         target_state_path: Path = DEFAULT_DAILY_TARGET_STATE,
+        oanda_rotation_mining: Path | None = None,
     ) -> None:
         self.strategy_profile = strategy_profile
         self.market_story_profile = market_story_profile
         self.report_path = report_path
         self.plan_path = plan_path
         self.target_state_path = target_state_path
+        self.oanda_rotation_mining = oanda_rotation_mining
 
     def run(self, *, start_balance_jpy: float, target_return_pct: float = 10.0) -> CampaignSummary:
         strategies = _load_strategy_profile(self.strategy_profile)
         loss_cap_jpy, loss_cap_source = _load_strategy_loss_cap(self.strategy_profile, self.target_state_path)
         stories = _load_market_story_profile(self.market_story_profile)
-        lanes = tuple(self._build_lanes(strategies, stories, loss_cap_jpy=loss_cap_jpy))
+        oanda_path = self._oanda_rotation_mining_path()
+        lanes = tuple(
+            self._build_lanes(
+                strategies,
+                stories,
+                loss_cap_jpy=loss_cap_jpy,
+                start_balance_jpy=start_balance_jpy,
+                oanda_rotation_mining=oanda_path,
+            )
+        )
         target_jpy = round(start_balance_jpy * (target_return_pct / 100.0), 2)
         plan = DailyCampaignPlan(
             generated_at_utc=datetime.now(timezone.utc).isoformat(),
@@ -145,14 +163,29 @@ class CampaignPlanner:
             rejected_lanes=sum(1 for lane in lanes if lane.adoption == "REJECTED"),
         )
 
+    def _oanda_rotation_mining_path(self) -> Path | None:
+        if self.oanda_rotation_mining is not None:
+            return self.oanda_rotation_mining
+        if _paths_equivalent(self.plan_path, DEFAULT_CAMPAIGN_PLAN):
+            return DEFAULT_OANDA_UNIVERSAL_ROTATION_MINING
+        return None
+
     def _build_lanes(
         self,
         strategies: dict[str, list[StrategyEvidence]],
         stories: dict[str, MarketStoryEvidence],
         *,
         loss_cap_jpy: float,
+        start_balance_jpy: float,
+        oanda_rotation_mining: Path | None,
     ) -> list[DeskLane]:
         lanes: list[DeskLane] = []
+        lanes.extend(
+            _oanda_campaign_firepower_lanes(
+                oanda_rotation_mining,
+                start_balance_jpy=start_balance_jpy,
+            )
+        )
         for desk, method in DESK_METHODS.items():
             for pair, story in sorted(stories.items()):
                 method_count = story.methods.get(method.value, 0)
@@ -200,6 +233,14 @@ class CampaignPlanner:
             lines.append(f"  - receipt: {lane.required_receipt}")
             for blocker in lane.blockers:
                 lines.append(f"  - blocker: {blocker}")
+            if lane.oanda_campaign_firepower_seed:
+                lines.append(
+                    "  - oanda_firepower: "
+                    f"status={lane.oanda_campaign_firepower_status} "
+                    f"vehicle={lane.oanda_campaign_vehicle_key} "
+                    f"estimated_daily_return_pct={lane.oanda_campaign_estimated_return_pct_per_active_day} "
+                    "live_permission=false"
+                )
             for example in lane.story_examples[:2]:
                 lines.append(f"  - story: {example}")
         lines.extend(
@@ -268,6 +309,165 @@ def _overlay_lane(desk: str, pair: str, method: TradeMethod, story: MarketStoryE
         target_reward_risk=1.0,
         story_examples=story.examples[:2],
     )
+
+
+OANDA_CAMPAIGN_FIREPOWER_TARGET_OK_STATUSES = {
+    "VERIFIED_MINIMUM_5_ROUTE_ESTIMATED",
+    "VERIFIED_TARGET_10_ROUTE_ESTIMATED",
+}
+
+
+def _oanda_campaign_firepower_lanes(
+    path: Path | None,
+    *,
+    start_balance_jpy: float,
+) -> list[DeskLane]:
+    if path is None or not path.exists():
+        return []
+    try:
+        payload = json.loads(path.read_text())
+    except (OSError, json.JSONDecodeError, ValueError):
+        return []
+    if not isinstance(payload, dict):
+        return []
+    firepower = payload.get("campaign_firepower")
+    if not isinstance(firepower, dict):
+        return []
+    status = str(firepower.get("status") or "").strip().upper()
+    if status not in OANDA_CAMPAIGN_FIREPOWER_TARGET_OK_STATUSES:
+        return []
+    high_precision = firepower.get("high_precision")
+    if not isinstance(high_precision, dict):
+        return []
+    lanes: list[DeskLane] = []
+    seen: set[tuple[str, str, str]] = set()
+    for vehicle in high_precision.get("top_vehicles", []) or []:
+        if not isinstance(vehicle, dict):
+            continue
+        lane = _oanda_campaign_firepower_lane(
+            vehicle,
+            status=status,
+            start_balance_jpy=start_balance_jpy,
+        )
+        if lane is None:
+            continue
+        key = (lane.pair, lane.direction, lane.method)
+        if key in seen:
+            continue
+        seen.add(key)
+        lanes.append(lane)
+    return lanes
+
+
+def _oanda_campaign_firepower_lane(
+    vehicle: dict[str, Any],
+    *,
+    status: str,
+    start_balance_jpy: float,
+) -> DeskLane | None:
+    pair = str(vehicle.get("pair") or "").strip().upper()
+    direction = _oanda_campaign_vehicle_side(vehicle)
+    method = _oanda_campaign_shape_method(vehicle.get("shape"))
+    if not pair or direction not in {"LONG", "SHORT"} or method is None:
+        return None
+    estimated_return_pct = _optional_float(
+        vehicle.get("estimated_return_pct_per_active_day_at_observed_frequency")
+    )
+    estimated_return_jpy = (
+        round(start_balance_jpy * (estimated_return_pct / 100.0), 4)
+        if estimated_return_pct is not None
+        else 0.0
+    )
+    target_rr = _oanda_exit_shape_reward_risk(vehicle.get("exit_shape"))
+    vehicle_key = str(vehicle.get("vehicle_key") or f"{pair}|{direction}|{vehicle.get('shape') or ''}")
+    return DeskLane(
+        desk=_desk_for_method(method),
+        pair=pair,
+        direction=direction,
+        method=method.value,
+        adoption="ORDER_INTENT_REQUIRED",
+        campaign_role="OANDA_FIREPOWER_ROUTE",
+        reason=(
+            "OANDA campaign_firepower high-precision vehicle; "
+            f"status={status}, vehicle={vehicle_key}, "
+            f"valid_n={vehicle.get('validation_n')}, "
+            f"win={vehicle.get('validation_win_rate')}, "
+            f"Wilson95_lower={vehicle.get('validation_win_wilson95_lower')}, "
+            f"PF={vehicle.get('validation_profit_factor')}, "
+            f"estimated_daily_return_pct={estimated_return_pct}"
+        ),
+        required_receipt=(
+            "Build a current non-market order intent for this OANDA-verified "
+            "firepower vehicle; historical firepower is audit-only and live "
+            "gateway, spread, forecast, strategy-profile, and risk gates still decide."
+        ),
+        target_reward_risk=target_rr,
+        evidence_tail_jpy=estimated_return_jpy,
+        evidence_best_jpy=estimated_return_jpy,
+        missed_reward_pressure_jpy=estimated_return_jpy,
+        oanda_campaign_firepower_seed=True,
+        oanda_campaign_vehicle_key=vehicle_key,
+        oanda_campaign_firepower_status=status,
+        oanda_campaign_exit_shape=str(vehicle.get("exit_shape") or ""),
+        oanda_campaign_estimated_return_pct_per_active_day=estimated_return_pct,
+        oanda_campaign_live_permission=False,
+    )
+
+
+def _oanda_campaign_vehicle_side(vehicle: dict[str, Any]) -> str:
+    for key in ("firepower_side", "selected_side", "side", "source_side"):
+        value = str(vehicle.get(key) or "").strip().upper()
+        if value in {"LONG", "SHORT"}:
+            return value
+    return ""
+
+
+def _oanda_campaign_shape_method(shape: object) -> TradeMethod | None:
+    shape_value = str(shape or "").strip().upper()
+    if shape_value in {"RANGE_REVERSION", "RANGE_RECLAIM", "RANGE_ROTATION"}:
+        return TradeMethod.RANGE_ROTATION
+    if shape_value in {"BREAKOUT_FAILURE", "FAILED_BREAK", "FAILED_BREAKOUT"}:
+        return TradeMethod.BREAKOUT_FAILURE
+    if shape_value in {"PULLBACK_CONTINUATION", "TREND_CONTINUATION", "BREAKOUT_CONTINUATION"}:
+        return TradeMethod.TREND_CONTINUATION
+    return None
+
+
+def _desk_for_method(method: TradeMethod) -> str:
+    for desk, desk_method in DESK_METHODS.items():
+        if desk_method == method:
+            return desk
+    return "trend_trader"
+
+
+def _oanda_exit_shape_reward_risk(exit_shape: object) -> float:
+    text = str(exit_shape or "").strip().lower()
+    tp = _exit_shape_leg(text, "tp")
+    sl = _exit_shape_leg(text, "sl")
+    if tp is None or sl is None or sl <= 0:
+        return 1.0
+    return round(max(1.0, tp / sl), 2)
+
+
+def _exit_shape_leg(text: str, prefix: str) -> float | None:
+    marker = f"{prefix}"
+    index = text.find(marker)
+    if index < 0:
+        return None
+    cursor = index + len(marker)
+    chars: list[str] = []
+    while cursor < len(text):
+        char = text[cursor]
+        if not (char.isdigit() or char == "."):
+            break
+        chars.append(char)
+        cursor += 1
+    if not chars:
+        return None
+    try:
+        return float("".join(chars))
+    except ValueError:
+        return None
 
 
 def _adoption_for_strategy(
@@ -340,7 +540,7 @@ def _coverage_gap(lanes: tuple[DeskLane, ...], target_jpy: float) -> str:
     return f"Target {target_jpy:.0f} JPY has no evidence-backed coverage yet."
 
 
-def _lane_sort_key(lane: DeskLane) -> tuple[int, float, float, float, int, str, str, str]:
+def _lane_sort_key(lane: DeskLane) -> tuple[int, int, float, float, float, int, str, str, str]:
     rank = {
         "ORDER_INTENT_REQUIRED": 0,
         "RISK_REPAIR_DRY_RUN": 1,
@@ -349,8 +549,10 @@ def _lane_sort_key(lane: DeskLane) -> tuple[int, float, float, float, int, str, 
         "WATCH_ONLY": 4,
         "REJECTED": 5,
     }.get(lane.adoption, 9)
+    oanda_priority = 0 if lane.oanda_campaign_firepower_seed else 1
     return (
         rank,
+        oanda_priority,
         -lane.missed_reward_pressure_jpy,
         -lane.evidence_tail_jpy,
         -lane.evidence_best_jpy,
@@ -467,6 +669,13 @@ def _optional_float(value: object) -> float | None:
         return float(value)
     except (TypeError, ValueError):
         return None
+
+
+def _paths_equivalent(left: Path, right: Path) -> bool:
+    try:
+        return left.resolve() == right.resolve()
+    except OSError:
+        return False
 
 
 def _lane_target_reward_risk(strategy: StrategyEvidence, adoption: str, *, loss_cap_jpy: float) -> float:

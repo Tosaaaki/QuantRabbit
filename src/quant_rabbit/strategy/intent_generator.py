@@ -580,6 +580,14 @@ RANGE_AUTOLANE_SQUEEZE_PCT_MAX = 25.0
 RANGE_AUTOLANE_FORMING_ADX_MAX = 25.0
 RANGE_AUTOLANE_FORMING_CHOP_MIN = 45.0
 RANGE_AUTOLANE_FORMING_BB_WIDTH_PCT_MAX = 35.0
+OANDA_CAMPAIGN_FIREPOWER_LANE_KEYS = (
+    "oanda_campaign_firepower_seed",
+    "oanda_campaign_vehicle_key",
+    "oanda_campaign_firepower_status",
+    "oanda_campaign_exit_shape",
+    "oanda_campaign_estimated_return_pct_per_active_day",
+    "oanda_campaign_live_permission",
+)
 
 # Market-location map: the trader must know which timeframe is boxed, which
 # timeframe is trending, and which nearby levels form the actual battlefield.
@@ -2262,6 +2270,8 @@ def _append_current_range_phase_lanes(
     out = list(lanes)
     seen = {(lane.get("desk"), lane.get("pair"), lane.get("direction"), lane.get("method")) for lane in out}
     for lane in lanes:
+        if lane.get("oanda_campaign_firepower_seed"):
+            continue
         pair = str(lane.get("pair") or "")
         source_direction = str(lane.get("direction") or "")
         if source_direction not in {Side.LONG.value, Side.SHORT.value}:
@@ -4194,7 +4204,7 @@ def _forecast_seed_lane(
     forecast: Any,
     cycle_id: str | None,
 ) -> dict[str, Any]:
-    lane = dict(source or {})
+    lane = _without_oanda_campaign_firepower_identity(source or {})
     confidence = _optional_float(getattr(forecast, "confidence", None)) or 0.0
     target = getattr(forecast, "target_price", None)
     invalidation = getattr(forecast, "invalidation_price", None)
@@ -4234,6 +4244,19 @@ def _forecast_seed_lane(
         }
     )
     return lane
+
+
+def _without_oanda_campaign_firepower_identity(lane: dict[str, Any]) -> dict[str, Any]:
+    """Return a lane copy with route-specific OANDA firepower identity removed.
+
+    OANDA firepower evidence validates one exact pair/side/method/exit-shape
+    vehicle. Synthetic forecast/range/mirror lanes may reuse ordinary context,
+    but they must not inherit that vehicle identity after changing the route.
+    """
+    out = dict(lane)
+    for key in OANDA_CAMPAIGN_FIREPOWER_LANE_KEYS:
+        out.pop(key, None)
+    return out
 
 
 def _lane_with_forecast_context(
@@ -4858,7 +4881,12 @@ class IntentGenerator:
             seen_keys = {(l.get("desk"), l.get("pair"), l.get("direction"), l.get("method")) for l in lanes}
             mirrors: list[dict[str, Any]] = []
             for lane in lanes:
-                if lane.get("forecast_seed") or lane.get("matrix_repair_seed") or lane.get("post_harvest_reentry_seed"):
+                if (
+                    lane.get("forecast_seed")
+                    or lane.get("matrix_repair_seed")
+                    or lane.get("post_harvest_reentry_seed")
+                    or lane.get("oanda_campaign_firepower_seed")
+                ):
                     continue
                 m = _mirror_lane(lane)
                 key = (m.get("desk"), m.get("pair"), m.get("direction"), m.get("method"))
@@ -5604,7 +5632,7 @@ def _mirror_lane(lane: dict[str, Any]) -> dict[str, Any]:
     and pick the side the structural lens actually favors right now.
     """
     flipped_direction = "SHORT" if lane.get("direction") == "LONG" else "LONG"
-    mirror = dict(lane)
+    mirror = _without_oanda_campaign_firepower_identity(lane)
     mirror["direction"] = flipped_direction
     # Mark synthesised mirrors so downstream layers can recognise them
     # in audit / report output. The lane_id changes naturally because
@@ -6926,6 +6954,14 @@ def _intent_from_lane(
             "post_harvest_trade_id": lane.get("post_harvest_trade_id"),
             "post_harvest_closed_at_utc": lane.get("post_harvest_closed_at_utc"),
             "post_harvest_age_minutes": lane.get("post_harvest_age_minutes"),
+            "oanda_campaign_firepower_seed": bool(lane.get("oanda_campaign_firepower_seed")),
+            "oanda_campaign_vehicle_key": lane.get("oanda_campaign_vehicle_key"),
+            "oanda_campaign_firepower_status": lane.get("oanda_campaign_firepower_status"),
+            "oanda_campaign_exit_shape": lane.get("oanda_campaign_exit_shape"),
+            "oanda_campaign_estimated_return_pct_per_active_day": (
+                lane.get("oanda_campaign_estimated_return_pct_per_active_day")
+            ),
+            "oanda_campaign_live_permission": bool(lane.get("oanda_campaign_live_permission")),
             "forecast_cycle_id": lane.get("forecast_cycle_id"),
             "forecast_direction": lane.get("forecast_direction"),
             "forecast_confidence": lane.get("forecast_confidence"),

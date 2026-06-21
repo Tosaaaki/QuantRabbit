@@ -18,7 +18,9 @@ from quant_rabbit.strategy.intent_generator import (
     POSITIVE_ROTATION_LIVE_BLOCK_CODE,
     POSITIVE_ROTATION_PROOF_COLLECTION_WARN_CODE,
     RANGE_TARGET_SPREAD_CUSHION_MULT,
+    _append_current_range_phase_lanes,
     _forecast_context_payload,
+    _forecast_seed_lane,
     _minimum_range_target_pips,
     _oanda_m5_rotation_state_for,
     _same_day_loss_streak_issues,
@@ -1818,6 +1820,162 @@ class IntentGeneratorTest(unittest.TestCase):
             self.assertEqual(metadata["base_target_reward_risk"], 2.4)
             self.assertGreaterEqual(metadata["target_reward_risk"], 2.4)
             self.assertTrue(any("BLOCK_UNTIL_NEW_EVIDENCE" in blocker for row in usd_rows for blocker in row["live_blockers"]))
+
+    def test_oanda_firepower_seed_is_not_mirrored_to_opposite_direction(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            campaign = root / "campaign.json"
+            campaign.write_text(
+                json.dumps(
+                    {
+                        "generated_at_utc": datetime.now(timezone.utc).isoformat(),
+                        "lanes": [
+                            {
+                                "desk": "range_trader",
+                                "pair": "EUR_USD",
+                                "direction": "SHORT",
+                                "method": "RANGE_ROTATION",
+                                "adoption": "ORDER_INTENT_REQUIRED",
+                                "campaign_role": "OANDA_FIREPOWER_ROUTE",
+                                "reason": "OANDA high precision SHORT range vehicle",
+                                "required_receipt": "Build current non-market order intent.",
+                                "target_reward_risk": 1.0,
+                                "oanda_campaign_firepower_seed": True,
+                                "oanda_campaign_vehicle_key": "EUR_USD|SHORT|range_reversion|tp1_sl1",
+                                "oanda_campaign_firepower_status": "VERIFIED_TARGET_10_ROUTE_ESTIMATED",
+                                "oanda_campaign_exit_shape": "tp1_sl1",
+                                "oanda_campaign_estimated_return_pct_per_active_day": 1.4,
+                                "oanda_campaign_live_permission": False,
+                            }
+                        ],
+                    }
+                )
+            )
+            output = root / "intents.json"
+            prior_sl_free = os.environ.get("QR_TRADER_DISABLE_SL_REPAIR")
+            os.environ["QR_TRADER_DISABLE_SL_REPAIR"] = "1"
+            try:
+                IntentGenerator(
+                    campaign_plan=campaign,
+                    strategy_profile=_strategy(root, status="CANDIDATE", direction="SHORT"),
+                    output_path=output,
+                    report_path=root / "intents.md",
+                    pair_charts_path=_pair_charts(root),
+                    max_loss_jpy=500.0,
+                ).run(snapshot_path=_snapshot(root))
+            finally:
+                if prior_sl_free is None:
+                    os.environ.pop("QR_TRADER_DISABLE_SL_REPAIR", None)
+                else:
+                    os.environ["QR_TRADER_DISABLE_SL_REPAIR"] = prior_sl_free
+
+            payload = json.loads(output.read_text())
+            oanda_rows = [
+                item
+                for item in payload["results"]
+                if ((item.get("intent") or {}).get("metadata") or {}).get("oanda_campaign_firepower_seed")
+            ]
+
+            self.assertGreaterEqual(len(oanda_rows), 1)
+            self.assertTrue(all(row["intent"]["side"] == "SHORT" for row in oanda_rows))
+            self.assertFalse(
+                any(
+                    row["intent"]["side"] == "LONG"
+                    and row["intent"]["metadata"].get("oanda_campaign_vehicle_key")
+                    for row in payload["results"]
+                )
+            )
+
+    def test_oanda_firepower_seed_does_not_spawn_current_range_derivative(self) -> None:
+        source = {
+            "desk": "trend_trader",
+            "pair": "EUR_USD",
+            "direction": "SHORT",
+            "method": "TREND_CONTINUATION",
+            "adoption": "ORDER_INTENT_REQUIRED",
+            "campaign_role": "OANDA_FIREPOWER_ROUTE",
+            "reason": "OANDA high precision SHORT pullback vehicle",
+            "required_receipt": "Build current non-market order intent.",
+            "target_reward_risk": 1.25,
+            "oanda_campaign_firepower_seed": True,
+            "oanda_campaign_vehicle_key": "EUR_USD|SHORT|pullback_continuation|tp1.25_sl1",
+            "oanda_campaign_firepower_status": "VERIFIED_TARGET_10_ROUTE_ESTIMATED",
+            "oanda_campaign_exit_shape": "tp1.25_sl1",
+            "oanda_campaign_estimated_return_pct_per_active_day": 1.8,
+            "oanda_campaign_live_permission": False,
+        }
+        charts = {
+            "EUR_USD": {
+                "dominant_regime": "RANGE",
+                "M5__regime_reading": {"state": "RANGE"},
+                "M5__regime": "RANGE",
+                "M5": {
+                    "bb_lower": 1.1710,
+                    "bb_upper": 1.1760,
+                    "donchian_low": 1.1707,
+                    "donchian_high": 1.1764,
+                    "adx_14": 15.0,
+                    "choppiness_14": 70.0,
+                },
+            }
+        }
+
+        lanes = _append_current_range_phase_lanes([source], charts)
+
+        self.assertEqual(len(lanes), 1)
+        self.assertTrue(lanes[0]["oanda_campaign_firepower_seed"])
+        self.assertEqual(lanes[0]["method"], "TREND_CONTINUATION")
+
+    def test_forecast_seed_lane_strips_oanda_firepower_identity_from_source(self) -> None:
+        source = {
+            "desk": "range_trader",
+            "pair": "EUR_USD",
+            "direction": "SHORT",
+            "method": "RANGE_ROTATION",
+            "adoption": "ORDER_INTENT_REQUIRED",
+            "campaign_role": "OANDA_FIREPOWER_ROUTE",
+            "reason": "OANDA high precision SHORT range vehicle",
+            "required_receipt": "Build current non-market order intent.",
+            "target_reward_risk": 1.0,
+            "oanda_campaign_firepower_seed": True,
+            "oanda_campaign_vehicle_key": "EUR_USD|SHORT|range_reversion|tp1_sl1",
+            "oanda_campaign_firepower_status": "VERIFIED_TARGET_10_ROUTE_ESTIMATED",
+            "oanda_campaign_exit_shape": "tp1_sl1",
+            "oanda_campaign_estimated_return_pct_per_active_day": 1.4,
+            "oanda_campaign_live_permission": False,
+        }
+        forecast = SimpleNamespace(
+            direction="UP",
+            confidence=0.92,
+            raw_confidence=0.92,
+            calibration_multiplier=1.0,
+            current_price=1.1730,
+            target_price=1.1810,
+            invalidation_price=1.1680,
+            range_low_price=None,
+            range_high_price=None,
+            range_width_pips=None,
+            horizon_min=60,
+            rationale_summary="fresh forecast supports long continuation",
+            drivers_for=("projection support",),
+            drivers_against=(),
+            component_scores={},
+            market_support=None,
+        )
+
+        lane = _forecast_seed_lane(
+            source,
+            pair="EUR_USD",
+            side="LONG",
+            method=TradeMethod.TREND_CONTINUATION.value,
+            forecast=forecast,
+            cycle_id="cycle-1",
+        )
+
+        self.assertTrue(lane["forecast_seed"])
+        self.assertEqual(lane["direction"], "LONG")
+        self.assertNotIn("oanda_campaign_firepower_seed", lane)
+        self.assertNotIn("oanda_campaign_vehicle_key", lane)
 
     def test_matrix_supported_watch_only_edge_gets_diagnostic_dry_run_lanes(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

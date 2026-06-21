@@ -2543,6 +2543,7 @@ def main(argv: list[str] | None = None) -> int:
     p_campaign.add_argument("--market-story-profile", type=Path, default=DEFAULT_MARKET_STORY_PROFILE)
     p_campaign.add_argument("--report", type=Path, default=DEFAULT_CAMPAIGN_REPORT)
     p_campaign.add_argument("--plan", type=Path, default=DEFAULT_CAMPAIGN_PLAN)
+    p_campaign.add_argument("--oanda-rotation-mining", type=Path, default=DEFAULT_OANDA_UNIVERSAL_ROTATION_MINING)
 
     p_target = sub.add_parser("daily-target-state", help="Record daily 10%% target progress from broker truth.")
     p_target.add_argument("--start-balance", type=float, default=None)
@@ -3711,6 +3712,7 @@ def main(argv: list[str] | None = None) -> int:
             market_story_profile=args.market_story_profile,
             report_path=args.report,
             plan_path=args.plan,
+            oanda_rotation_mining=args.oanda_rotation_mining,
         ).run(start_balance_jpy=args.start_balance, target_return_pct=args.target_return_pct)
         print(
             json.dumps(
