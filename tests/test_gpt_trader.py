@@ -4963,6 +4963,43 @@ class CloseDisciplineTest(unittest.TestCase):
             codes = {issue["code"] for issue in payload["verification_issues"]}
             self.assertNotIn("CLOSE_TIMING_AUDIT_REQUIRED", codes)
 
+    def test_soft_loss_close_with_timing_ref_still_requires_hard_gate_when_premature_leak_active(self) -> None:
+        # A generic timing:audit citation must not launder another soft
+        # operator-token market close while the timing audit says recent
+        # loss-side MARKET_ORDER_TRADE_CLOSE exits were premature. M15-only
+        # structure remains Gate A evidence, but it needs either no active
+        # premature-loss timing guard or hard Gate A confirmation.
+        _os.environ["QR_OPERATOR_CLOSE_OVERRIDE"] = "1"
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _close_fixtures(root, position_side="SHORT", m15_dir="UP", h4_dir="DOWN")
+            files["execution_timing_audit"].write_text(
+                json.dumps(
+                    {
+                        "generated_at_utc": datetime.now(timezone.utc).isoformat(),
+                        "status": "OK",
+                        "summary": {
+                            "loss_market_closes_audited": 6,
+                            "loss_market_closes_may_have_been_premature": 3,
+                            "loss_market_closes_contained_risk": 3,
+                            "market_close_estimated_followthrough_jpy": 8236.17,
+                        },
+                    }
+                )
+            )
+            decision = _close_decision(trade_ids=["555"])
+            decision["evidence_refs"].append("timing:audit")
+            brain = _brain(root, files, decision)
+
+            summary = brain.run(snapshot_path=files["snapshot"])
+
+            self.assertEqual(summary.status, "REJECTED")
+            payload = json.loads((root / "gpt_decision.json").read_text())
+            codes = {issue["code"] for issue in payload["verification_issues"]}
+            self.assertIn("CLOSE_PREMATURE_TIMING_HARD_GATE_REQUIRED", codes)
+            self.assertNotIn("CLOSE_TIMING_AUDIT_REQUIRED", codes)
+            self.assertNotIn("CLOSE_OPERATOR_AUTH_REQUIRED", codes)
+
     def test_close_spread_cap_uses_pair_chart_session_tag(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

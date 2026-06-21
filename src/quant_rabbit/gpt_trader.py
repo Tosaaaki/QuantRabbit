@@ -190,6 +190,28 @@ def _loss_close_timing_audit_required_trades(
     return tuple(blocked)
 
 
+def _premature_loss_close_timing_guard(packet: dict[str, Any]) -> dict[str, Any] | None:
+    """Return timing-regret proof that soft underwater CLOSE must not ignore."""
+
+    audit = packet.get("execution_timing_audit")
+    if not isinstance(audit, dict):
+        return None
+    summary = audit.get("summary")
+    if not isinstance(summary, dict):
+        return None
+    premature = _optional_int(summary.get("loss_market_closes_may_have_been_premature")) or 0
+    if premature <= 0:
+        return None
+    return {
+        "premature": premature,
+        "contained": _optional_int(summary.get("loss_market_closes_contained_risk")),
+        "audited": _optional_int(summary.get("loss_market_closes_audited")),
+        "followthrough_jpy": _optional_float(
+            summary.get("market_close_estimated_followthrough_jpy")
+        ),
+    }
+
+
 # Matches a single per-timeframe segment in chart_reader's chart_story format.
 # Example tokens captured:
 #   "M15(RANGE, ADX=15.4 ... struct=CHOCH_UP@113.9900)"        (close confirmed)
@@ -2250,7 +2272,9 @@ class DecisionVerifier:
         same_direction_supported: list[str] = []
         needs_explicit_gate_b: list[str] = []
         needs_profitability_p0_context: list[str] = []
+        needs_hard_timing_gate: list[str] = []
         profitability_p0_blocker = _profitability_p0_soft_close_blocker(self.packet)
+        premature_timing_guard = _premature_loss_close_timing_guard(self.packet)
         cites_profitability_p0 = _decision_cites_profitability_p0(decision.evidence_refs)
         for tid in decision.close_trade_ids:
             pos = position_by_tid.get(str(tid))
@@ -2303,6 +2327,10 @@ class DecisionVerifier:
                         f"{tid} ({support_reason})"
                     )
                     continue
+                if premature_timing_guard is not None and (
+                    unrealized_pl_jpy is None or unrealized_pl_jpy <= 0
+                ):
+                    needs_hard_timing_gate.append(f"{tid} ({pair} {side})")
                 needs_explicit_gate_b.append(f"{tid} ({pair} {side})")
 
         if still_valid:
@@ -2377,6 +2405,35 @@ class DecisionVerifier:
                     "and explain why current invalidation beats HOLD/reprice/TP evidence. "
                     "Missing timing evidence for: "
                     + ", ".join(timing_required),
+                )
+            )
+
+        if needs_hard_timing_gate:
+            details = []
+            if premature_timing_guard is not None:
+                premature = premature_timing_guard.get("premature")
+                contained = premature_timing_guard.get("contained")
+                audited = premature_timing_guard.get("audited")
+                followthrough = premature_timing_guard.get("followthrough_jpy")
+                if audited is not None:
+                    details.append(f"audited={audited}")
+                if premature is not None:
+                    details.append(f"premature={premature}")
+                if contained is not None:
+                    details.append(f"contained={contained}")
+                if followthrough is not None:
+                    details.append(f"followthrough_left={followthrough:.2f} JPY")
+            suffix = f" ({', '.join(details)})" if details else ""
+            issues.append(
+                VerificationIssue(
+                    "CLOSE_PREMATURE_TIMING_HARD_GATE_REQUIRED",
+                    "CLOSE rejected: execution-timing audit still shows premature loss-side "
+                    f"MARKET_ORDER_TRADE_CLOSE leakage{suffix}. A timing reference acknowledges "
+                    "that evidence, but softer Gate A plus operator token is not enough for another "
+                    "underwater market close while this guard is active. Use HOLD/reprice/TP rebalance "
+                    "or provide hard Gate A standing authorization (H4 structure, recorded invalidation, "
+                    "or a hard structural sidecar). Blocked for: "
+                    + ", ".join(needs_hard_timing_gate),
                 )
             )
 

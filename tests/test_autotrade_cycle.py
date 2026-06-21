@@ -3735,6 +3735,8 @@ class AutoTradeCycleTest(unittest.TestCase):
                     json.dumps({"size_by_score": {"enabled": False}}) + "\n"
                 )
 
+                close_decision = _gpt_close_decision(["close-me"])
+                close_decision["evidence_refs"].append("timing:audit")
                 summary = AutoTradeCycle(
                     client=client,
                     snapshot_path=root / "snapshot.json",
@@ -3763,7 +3765,7 @@ class AutoTradeCycleTest(unittest.TestCase):
                     gpt_target_state_path=target_state,
                     use_gpt_trader=True,
                     gpt_provider=SequenceTraderProvider(
-                        _gpt_close_decision(["close-me"]),
+                        close_decision,
                         _gpt_trade_decision(),
                     ),
                     refresh_market_story=False,
