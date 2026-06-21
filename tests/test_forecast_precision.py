@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 import json
+import os
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
+import quant_rabbit.forecast_precision as forecast_precision
 from quant_rabbit.forecast_precision import (
     bidask_replay_negative_precision_issue,
     bidask_replay_precision_assessment,
@@ -590,6 +593,159 @@ class ForecastPrecisionConfluenceTest(unittest.TestCase):
         self.assertEqual(assessment["score_delta"], 4.0)
         self.assertIsNone(trend_assessment["primary_rank_support"])
         self.assertEqual(trend_assessment["rank_only_supports"], [])
+
+    def test_oanda_universal_rotation_loads_multi_feature_report_confluence(self) -> None:
+        metadata = {
+            "forecast_direction": "UP",
+            "chart_direction_bias": "LONG",
+            "oanda_m5_bar_range": "wide",
+            "oanda_m5_wick_reject_long": False,
+            "oanda_m5_fast_mom_atr": 0.35,
+            "tp_execution_mode": "ATTACHED_TECHNICAL_TP",
+            "tp_target_intent": "HARVEST",
+            "opportunity_mode": "HARVEST",
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            rules_path = Path(tmp) / "oanda_universal_rotation_mining_latest.json"
+            rules_path.write_text(
+                json.dumps(
+                    {
+                        "generated_at_utc": "2026-06-21T01:00:00Z",
+                        "high_precision_multi_confluences": [
+                            {
+                                "pair": "CAD_CHF",
+                                "shape": "trend_continuation",
+                                "side": "LONG",
+                                "exit_shape": "tp1_sl1",
+                                "feature_a": "bar_range:wide",
+                                "feature_b": "wick_reject:0",
+                                "feature_c": "fast_mom:aligned",
+                                "qualification": "PASS",
+                                "train_n": 40,
+                                "train_win_rate": 0.72,
+                                "validation_n": 12,
+                                "validation_win_rate": 0.916667,
+                                "validation_win_wilson95_lower": 0.64612,
+                                "validation_avg_realized_pips": 2.8,
+                                "validation_avg_realized_atr": 0.55,
+                                "validation_profit_factor": 5.1,
+                                "active_days": 5,
+                                "positive_day_rate": 0.8,
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            assessment = oanda_universal_rotation_precision_assessment(
+                metadata,
+                pair="CAD_CHF",
+                side="LONG",
+                order_type="LIMIT",
+                method="TREND_CONTINUATION",
+                entry=0.66000,
+                take_profit=0.66050,
+                stop_loss=0.65940,
+                rules_path=rules_path,
+            )
+
+        support = assessment["primary_rank_support"]
+        self.assertEqual(
+            support["name"],
+            "CAD_CHF_LONG_M5_TREND_CONTINUATION_BAR_RANGE_WIDE_WICK_REJECT_0_FAST_MOM_ALIGNED_TP1_SL1",
+        )
+        self.assertEqual(support["current_oanda_bar_range"], "WIDE")
+        self.assertEqual(support["current_oanda_wick_reject"], "0")
+        self.assertEqual(support["current_oanda_fast_mom"], "ALIGNED")
+        self.assertEqual(support["rule_source_section"], "high_precision_multi_confluences")
+        self.assertEqual(support["rank_score_bonus"], 7.0)
+        self.assertEqual(assessment["score_delta"], 7.0)
+
+    def test_oanda_universal_rotation_uses_packaged_report_when_latest_missing(self) -> None:
+        metadata = {
+            "forecast_direction": "UP",
+            "chart_direction_bias": "LONG",
+            "oanda_m5_bar_range": "wide",
+            "oanda_m5_fast_mom_atr": 0.35,
+            "session_bucket": "TOKYO",
+            "tp_execution_mode": "ATTACHED_TECHNICAL_TP",
+            "tp_target_intent": "HARVEST",
+            "opportunity_mode": "HARVEST",
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            missing_latest_path = Path(tmp) / "logs_missing.json"
+            packaged_path = Path(tmp) / "packaged_oanda_rules.json"
+            packaged_path.write_text(
+                json.dumps(
+                    {
+                        "schema_version": 1,
+                        "generated_at_utc": "2026-06-21T02:00:00Z",
+                        "high_precision_multi_confluences": [
+                            {
+                                "pair": "CAD_CHF",
+                                "shape": "trend_continuation",
+                                "side": "LONG",
+                                "exit_shape": "tp1_sl1",
+                                "feature_a": "bar_range:wide",
+                                "feature_b": "fast_mom:aligned",
+                                "feature_c": "session:asia",
+                                "qualification": "PASS",
+                                "train_n": 44,
+                                "train_win_rate": 0.72,
+                                "validation_n": 13,
+                                "validation_win_rate": 0.923077,
+                                "validation_win_wilson95_lower": 0.66612,
+                                "validation_avg_realized_pips": 3.1,
+                                "validation_avg_realized_atr": 0.57,
+                                "validation_profit_factor": 5.4,
+                                "active_days": 6,
+                                "positive_day_rate": 0.833333,
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            with (
+                mock.patch.dict(
+                    os.environ,
+                    {forecast_precision.OANDA_UNIVERSAL_ROTATION_RULES_ENV: ""},
+                    clear=False,
+                ),
+                mock.patch.object(
+                    forecast_precision,
+                    "OANDA_UNIVERSAL_ROTATION_AUDIT_REPORT",
+                    str(missing_latest_path),
+                ),
+                mock.patch.object(
+                    forecast_precision,
+                    "PACKAGED_OANDA_UNIVERSAL_ROTATION_RULES_PATH",
+                    packaged_path,
+                ),
+            ):
+                assessment = oanda_universal_rotation_precision_assessment(
+                    metadata,
+                    pair="CAD_CHF",
+                    side="LONG",
+                    order_type="LIMIT",
+                    method="TREND_CONTINUATION",
+                    entry=0.66000,
+                    take_profit=0.66050,
+                    stop_loss=0.65940,
+                )
+
+        support = assessment["primary_rank_support"]
+        self.assertEqual(
+            support["name"],
+            "CAD_CHF_LONG_M5_TREND_CONTINUATION_BAR_RANGE_WIDE_FAST_MOM_ALIGNED_SESSION_ASIA_TP1_SL1",
+        )
+        self.assertEqual(assessment["rule_source"]["loaded_report_path"], str(packaged_path))
+        self.assertEqual(assessment["rule_source"]["latest_report_path"], str(missing_latest_path))
+        self.assertEqual(assessment["rule_source"]["source"], "dynamic_report_with_static_fallback")
+        self.assertEqual(support["rule_source_section"], "high_precision_multi_confluences")
+        self.assertEqual(assessment["score_delta"], 7.0)
 
     def test_oanda_universal_rotation_requires_current_session_and_atr_bucket(self) -> None:
         metadata = {

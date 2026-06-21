@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import argparse
 import collections
+import itertools
 import json
 import math
 import statistics
@@ -712,6 +713,19 @@ def _build_report(
         min_validation_samples=min_validation_samples,
         min_profit_factor=min_profit_factor,
     )
+    multi_confluence_rows = _summarize_pair_multi_confluence_buckets(
+        rows,
+        confluence_size=3,
+        train_fraction=train_fraction,
+        min_samples=max(24, min_samples // 10),
+        min_active_days=max(5, min_active_days // 3),
+        max_daily_sample_share=max(0.35, max_daily_sample_share),
+        min_positive_day_rate=min_positive_day_rate,
+        min_validation_expectancy_atr=min_validation_expectancy_atr,
+        min_validation_win_rate=min_validation_win_rate,
+        min_validation_samples=min_validation_samples,
+        min_profit_factor=min_profit_factor,
+    )
     directional_selector_rows = _summarize_directional_selector_buckets(
         rows,
         train_fraction=train_fraction,
@@ -729,12 +743,19 @@ def _build_report(
     qualified_features = [row for row in feature_rows if row["qualification"] == "PASS"]
     qualified_pair_features = [row for row in pair_feature_rows if row["qualification"] == "PASS"]
     qualified_pair_confluences = [row for row in pair_confluence_rows if row["qualification"] == "PASS"]
+    qualified_multi_confluences = [row for row in multi_confluence_rows if row["qualification"] == "PASS"]
     qualified_directional_selectors = [
         row for row in directional_selector_rows if row["qualification"] == "PASS"
     ]
     high_precision_pair_confluences = [
         row
         for row in qualified_pair_confluences
+        if (row.get("validation_win_rate") or 0.0) >= high_precision_min_win_rate
+        and (row.get("validation_win_wilson95_lower") or 0.0) >= high_precision_min_wilson_lower
+    ]
+    high_precision_multi_confluences = [
+        row
+        for row in qualified_multi_confluences
         if (row.get("validation_win_rate") or 0.0) >= high_precision_min_win_rate
         and (row.get("validation_win_wilson95_lower") or 0.0) >= high_precision_min_wilson_lower
     ]
@@ -779,6 +800,8 @@ def _build_report(
             "min_profit_factor": min_profit_factor,
             "high_precision_min_win_rate": high_precision_min_win_rate,
             "high_precision_min_wilson_lower": high_precision_min_wilson_lower,
+            "multi_confluence_size": 3,
+            "multi_confluence_min_samples": max(24, min_samples // 10),
             "directional_selector_min_samples": max(
                 DEFAULT_DIRECTIONAL_SELECTOR_MIN_SAMPLES,
                 min_samples // 4,
@@ -794,6 +817,8 @@ def _build_report(
         "qualified_pair_feature_count": len(qualified_pair_features),
         "qualified_pair_confluence_count": len(qualified_pair_confluences),
         "high_precision_pair_confluence_count": len(high_precision_pair_confluences),
+        "qualified_multi_confluence_count": len(qualified_multi_confluences),
+        "high_precision_multi_confluence_count": len(high_precision_multi_confluences),
         "qualified_directional_selector_count": len(qualified_directional_selectors),
         "high_precision_directional_selector_count": len(high_precision_directional_selectors),
         "qualified_shapes": qualified_shapes[:top],
@@ -802,6 +827,8 @@ def _build_report(
         "qualified_pair_features": qualified_pair_features[:top],
         "qualified_pair_confluences": qualified_pair_confluences[:top],
         "high_precision_pair_confluences": high_precision_pair_confluences[:top],
+        "qualified_multi_confluences": qualified_multi_confluences[:top],
+        "high_precision_multi_confluences": high_precision_multi_confluences[:top],
         "qualified_directional_selectors": qualified_directional_selectors[:top],
         "high_precision_directional_selectors": high_precision_directional_selectors[:top],
         "top_shapes": shape_rows[:top],
@@ -809,6 +836,7 @@ def _build_report(
         "top_features": feature_rows[:top],
         "top_pair_features": pair_feature_rows[:top],
         "top_pair_confluences": pair_confluence_rows[:top],
+        "top_multi_confluences": multi_confluence_rows[:top],
         "top_directional_selectors": directional_selector_rows[:top],
     }
 
@@ -1005,6 +1033,68 @@ def _summarize_pair_confluence_buckets(
             "feature_b": second,
             "confluence": f"{first} + {second}",
         }
+        row.update(
+            _bucket_summary(
+                values,
+                train_fraction=train_fraction,
+                min_active_days=min_active_days,
+                min_pair_count=1,
+                max_pair_sample_share=1.0,
+                max_daily_sample_share=max_daily_sample_share,
+                min_positive_day_rate=min_positive_day_rate,
+                min_validation_expectancy_atr=min_validation_expectancy_atr,
+                min_validation_win_rate=min_validation_win_rate,
+                min_validation_samples=min_validation_samples,
+                min_profit_factor=min_profit_factor,
+            )
+        )
+        out.append(row)
+    out.sort(key=_bucket_sort_key)
+    return out
+
+
+def _summarize_pair_multi_confluence_buckets(
+    rows: list[dict[str, Any]],
+    *,
+    confluence_size: int,
+    train_fraction: float,
+    min_samples: int,
+    min_active_days: int,
+    max_daily_sample_share: float,
+    min_positive_day_rate: float,
+    min_validation_expectancy_atr: float,
+    min_validation_win_rate: float,
+    min_validation_samples: int,
+    min_profit_factor: float,
+) -> list[dict[str, Any]]:
+    buckets: dict[tuple[str, str, str, str, tuple[str, ...]], list[dict[str, Any]]] = collections.defaultdict(list)
+    for row in rows:
+        features = _pair_confluence_features(row.get("features") or ())
+        for feature_group in itertools.combinations(features, confluence_size):
+            buckets[
+                (
+                    str(row.get("pair")),
+                    str(row.get("shape")),
+                    str(row.get("side")),
+                    str(row.get("exit_shape")),
+                    feature_group,
+                )
+            ].append(row)
+    out: list[dict[str, Any]] = []
+    for key, values in buckets.items():
+        if len(values) < min_samples:
+            continue
+        pair, shape, side, exit_shape, feature_group = key
+        row = {
+            "pair": pair,
+            "shape": shape,
+            "side": side,
+            "exit_shape": exit_shape,
+            "confluence_size": len(feature_group),
+            "confluence": " + ".join(feature_group),
+        }
+        for index, feature in enumerate(feature_group):
+            row[f"feature_{chr(ord('a') + index)}"] = feature
         row.update(
             _bucket_summary(
                 values,
@@ -1494,6 +1584,8 @@ def _markdown(report: dict[str, Any]) -> str:
         f"- qualified_pair_feature_count: `{report.get('qualified_pair_feature_count')}`",
         f"- qualified_pair_confluence_count: `{report.get('qualified_pair_confluence_count')}`",
         f"- high_precision_pair_confluence_count: `{report.get('high_precision_pair_confluence_count')}`",
+        f"- qualified_multi_confluence_count: `{report.get('qualified_multi_confluence_count')}`",
+        f"- high_precision_multi_confluence_count: `{report.get('high_precision_multi_confluence_count')}`",
         f"- qualified_directional_selector_count: `{report.get('qualified_directional_selector_count')}`",
         f"- high_precision_directional_selector_count: `{report.get('high_precision_directional_selector_count')}`",
         "",
@@ -1507,10 +1599,14 @@ def _markdown(report: dict[str, Any]) -> str:
     lines.extend(_table(report.get("qualified_pair_features") or []))
     lines.extend(["", "## High Precision Pair Confluences", ""])
     lines.extend(_table(report.get("high_precision_pair_confluences") or []))
+    lines.extend(["", "## High Precision Multi Confluences", ""])
+    lines.extend(_table(report.get("high_precision_multi_confluences") or []))
     lines.extend(["", "## High Precision Directional Selectors", ""])
     lines.extend(_table(report.get("high_precision_directional_selectors") or []))
     lines.extend(["", "## Qualified Pair Confluences", ""])
     lines.extend(_table(report.get("qualified_pair_confluences") or []))
+    lines.extend(["", "## Qualified Multi Confluences", ""])
+    lines.extend(_table(report.get("qualified_multi_confluences") or []))
     lines.extend(["", "## Qualified Directional Selectors", ""])
     lines.extend(_table(report.get("qualified_directional_selectors") or []))
     lines.extend(["", "## Top Shapes", ""])
@@ -1519,6 +1615,8 @@ def _markdown(report: dict[str, Any]) -> str:
     lines.extend(_table(report.get("top_pair_features") or []))
     lines.extend(["", "## Top Pair Confluences", ""])
     lines.extend(_table(report.get("top_pair_confluences") or []))
+    lines.extend(["", "## Top Multi Confluences", ""])
+    lines.extend(_table(report.get("top_multi_confluences") or []))
     lines.extend(["", "## Top Directional Selectors", ""])
     lines.extend(_table(report.get("top_directional_selectors") or []))
     lines.append("")
@@ -1538,6 +1636,8 @@ def _table(rows: Sequence[dict[str, Any]]) -> list[str]:
         "confluence",
         "feature_a",
         "feature_b",
+        "feature_c",
+        "feature_d",
         "qualification",
         "validation_n",
         "validation_win_rate",

@@ -13,7 +13,7 @@ import math
 import os
 import re
 from pathlib import Path
-from typing import Any
+from typing import Any, Sequence
 
 from quant_rabbit.instruments import instrument_pip_factor
 
@@ -46,6 +46,9 @@ OANDA_UNIVERSAL_LIVE_MIN_POSITIVE_DAY_RATE = 0.90
 BIDASK_REPLAY_RULES_ENV = "QR_BIDASK_REPLAY_PRECISION_RULES"
 DEFAULT_BIDASK_REPLAY_RULES_PATH = Path(__file__).with_name("bidask_replay_precision_rules.json")
 OANDA_UNIVERSAL_ROTATION_RULES_ENV = "QR_OANDA_UNIVERSAL_ROTATION_RULES"
+PACKAGED_OANDA_UNIVERSAL_ROTATION_RULES_PATH = Path(__file__).with_name(
+    "oanda_universal_rotation_precision_rules.json"
+)
 
 
 TECHNICAL_HARVEST_PRECISION_RULES: tuple[dict[str, Any], ...] = (
@@ -458,8 +461,7 @@ def _oanda_universal_rotation_rule_name(
     pair: str,
     side: str,
     shape: str,
-    feature_a: str,
-    feature_b: str,
+    features: Sequence[str],
     exit_shape: str,
 ) -> str:
     slug = "_".join(
@@ -468,8 +470,7 @@ def _oanda_universal_rotation_rule_name(
             side,
             "M5",
             shape,
-            feature_a.replace(":", "_"),
-            feature_b.replace(":", "_"),
+            *(feature.replace(":", "_") for feature in features),
             exit_shape.replace(".", "P"),
         )
     )
@@ -494,18 +495,24 @@ def _oanda_universal_rotation_rule(
     active_days: int,
     positive_day_rate: float,
     rank_score_bonus: float,
+    extra_features: Sequence[str] = (),
 ) -> dict[str, Any]:
+    features = tuple(feature for feature in (feature_a, feature_b, *extra_features) if feature)
+    feature_values = {
+        f"feature_{chr(ord('a') + index)}": feature
+        for index, feature in enumerate(features)
+    }
     return {
-        "name": _oanda_universal_rotation_rule_name(pair, side, shape, feature_a, feature_b, exit_shape),
+        "name": _oanda_universal_rotation_rule_name(pair, side, shape, features, exit_shape),
         "pair": pair,
         "side": side,
         "direction": "UP" if side == "LONG" else "DOWN",
         "shape": shape,
         "timeframe": "M5",
         "exit_shape": exit_shape,
-        "confluence": f"{feature_a} + {feature_b}",
-        "feature_a": feature_a,
-        "feature_b": feature_b,
+        "confluence": " + ".join(features),
+        "features": list(features),
+        **feature_values,
         "train_samples": train_samples,
         "train_win_rate": train_win_rate,
         "validation_samples": validation_samples,
@@ -560,12 +567,21 @@ OANDA_UNIVERSAL_ROTATION_RULES: tuple[dict[str, Any], ...] = tuple(
 def _oanda_universal_rotation_rule_set(
     rules_path: str | Path | None = None,
 ) -> tuple[tuple[dict[str, Any], ...], dict[str, Any]]:
-    path_value = (
-        str(rules_path)
-        if rules_path is not None
-        else os.environ.get(OANDA_UNIVERSAL_ROTATION_RULES_ENV, OANDA_UNIVERSAL_ROTATION_AUDIT_REPORT)
-    )
+    env_rules_path = os.environ.get(OANDA_UNIVERSAL_ROTATION_RULES_ENV)
+    if rules_path is not None:
+        path_value = str(rules_path)
+    elif env_rules_path:
+        path_value = env_rules_path
+    else:
+        path_value = str(_default_oanda_universal_rotation_rules_path())
     return _load_oanda_universal_rotation_rule_set(str(path_value))
+
+
+def _default_oanda_universal_rotation_rules_path() -> Path:
+    latest_report_path = Path(OANDA_UNIVERSAL_ROTATION_AUDIT_REPORT)
+    if latest_report_path.exists():
+        return latest_report_path
+    return PACKAGED_OANDA_UNIVERSAL_ROTATION_RULES_PATH
 
 
 @functools.lru_cache(maxsize=8)
@@ -575,6 +591,8 @@ def _load_oanda_universal_rotation_rule_set(
     report_path = Path(path_value)
     source: dict[str, Any] = {
         "configured_report_path": str(report_path),
+        "latest_report_path": OANDA_UNIVERSAL_ROTATION_AUDIT_REPORT,
+        "packaged_report_path": str(PACKAGED_OANDA_UNIVERSAL_ROTATION_RULES_PATH),
         "fallback_rule_count": len(OANDA_UNIVERSAL_ROTATION_RULES),
     }
     if not report_path.exists():
@@ -639,6 +657,8 @@ def _oanda_universal_rotation_rules_from_report(
     sections: tuple[tuple[str, str, float], ...] = (
         ("high_precision_directional_selectors", "selected_side", 10.0),
         ("qualified_directional_selectors", "selected_side", 8.0),
+        ("high_precision_multi_confluences", "side", 7.0),
+        ("qualified_multi_confluences", "side", 5.0),
         ("high_precision_pair_confluences", "side", 6.0),
         ("qualified_pair_confluences", "side", 4.0),
     )
@@ -678,11 +698,14 @@ def _oanda_universal_rotation_rule_from_report_row(
     side = str(row.get(side_key) or row.get("side") or "").upper()
     shape = str(row.get("shape") or "").lower()
     exit_shape = str(row.get("exit_shape") or "").lower()
-    feature_a = str(row.get("feature_a") or "").lower()
-    feature_b = str(row.get("feature_b") or "").lower()
+    features = tuple(
+        str(row.get(f"feature_{chr(ord('a') + index)}") or "").lower()
+        for index in range(8)
+        if row.get(f"feature_{chr(ord('a') + index)}")
+    )
     if not pair or side not in {"LONG", "SHORT"} or not shape or not exit_shape:
         return None
-    if ":" not in feature_a or ":" not in feature_b:
+    if len(features) < 2 or any(":" not in feature for feature in features):
         return None
 
     train_samples = _safe_int(row.get("train_n"))
@@ -714,8 +737,8 @@ def _oanda_universal_rotation_rule_from_report_row(
         side,
         shape,
         exit_shape,
-        feature_a,
-        feature_b,
+        features[0],
+        features[1],
         train_samples,
         train_win_rate,
         validation_samples,
@@ -727,6 +750,7 @@ def _oanda_universal_rotation_rule_from_report_row(
         active_days,
         positive_day_rate,
         rank_score_bonus,
+        extra_features=features[2:],
     )
     rule["audit_report"] = report_path
     rule["rule_set_source"] = report_path
@@ -1887,8 +1911,16 @@ def _oanda_universal_rotation_feature_values(
 ) -> dict[str, Any] | None:
     out: dict[str, Any] = {}
     side = str(rule.get("side") or "").upper()
-    for key in ("feature_a", "feature_b"):
-        raw_feature = str(rule.get(key) or "")
+    raw_features = rule.get("features")
+    if isinstance(raw_features, list):
+        features = tuple(str(item or "") for item in raw_features)
+    else:
+        features = tuple(
+            str(rule.get(f"feature_{chr(ord('a') + index)}") or "")
+            for index in range(8)
+            if rule.get(f"feature_{chr(ord('a') + index)}")
+        )
+    for raw_feature in features:
         feature_values = _oanda_universal_rotation_feature_value(metadata, raw_feature, side=side)
         if feature_values is None:
             return None
