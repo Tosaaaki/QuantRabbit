@@ -18,6 +18,7 @@ from quant_rabbit.forecast_precision import (
     support_signal_clears_live_precision,
     target_pips_from_text,
     technical_harvest_negative_precision_issue,
+    technical_harvest_precision_geometry_candidate,
     technical_harvest_precision_support,
 )
 from quant_rabbit.models import BrokerOrder, BrokerPosition, BrokerSnapshot, MarketContext, OrderIntent, OrderType, Owner, Quote, Side, TradeMethod
@@ -6533,6 +6534,20 @@ def _intent_from_lane(
         forecast_target_price=_optional_float(lane.get("forecast_target_price")),
         hedge_recovery=_is_hedge_recovery_metadata(position_metadata),
     )
+    tp, sl, precision_geometry_metadata = _technical_harvest_precision_geometry_plan(
+        pair=pair,
+        side=side,
+        method=method,
+        order_type=order_type,
+        entry=entry,
+        tp=tp,
+        sl=sl,
+        chart_context=chart_context,
+        tp_execution_metadata=tp_execution_metadata,
+        forecast_direction=lane.get("forecast_direction"),
+    )
+    if precision_geometry_metadata:
+        tp_execution_metadata.update(precision_geometry_metadata)
     effective_max_loss_jpy, loss_asymmetry_metadata = _loss_asymmetry_sizing_plan(
         loss_asymmetry_guard,
         pair=pair,
@@ -9854,6 +9869,105 @@ def _take_profit_execution_plan(
         "tp_atr_pips": atr_pips,
     }
     return _round_price(pair, effective_tp), metadata
+
+
+def _technical_harvest_precision_geometry_plan(
+    *,
+    pair: str,
+    side: Side,
+    method: TradeMethod,
+    order_type: OrderType,
+    entry: float,
+    tp: float,
+    sl: float,
+    chart_context: dict[str, Any] | None,
+    tp_execution_metadata: dict[str, Any],
+    forecast_direction: object | None,
+) -> tuple[float, float, dict[str, Any]]:
+    metadata = {
+        **(chart_context or {}),
+        **tp_execution_metadata,
+    }
+    if forecast_direction is not None:
+        metadata["forecast_direction"] = forecast_direction
+    candidate = technical_harvest_precision_geometry_candidate(
+        metadata,
+        pair=pair,
+        side=side.value,
+        order_type=order_type.value,
+        method=method.value,
+    )
+    if candidate is None:
+        return tp, sl, {}
+
+    pip_factor = PIP_FACTORS[pair]
+    pip = 1.0 / pip_factor
+    target_pips = float(candidate["scalp_tp_pips"])
+    stop_pips = float(candidate["scalp_stop_pips"])
+    direction = 1.0 if side == Side.LONG else -1.0
+    new_tp = _round_price(pair, entry + direction * target_pips * pip)
+    new_sl = _round_price(pair, entry - direction * stop_pips * pip)
+
+    target_distance_pips = abs(new_tp - entry) * pip_factor
+    min_target_pips = float(candidate.get("min_target_pips") or target_pips)
+    if target_distance_pips < min_target_pips:
+        tick = _broker_price_tick_pips(pair) / pip_factor
+        new_tp = _round_price(pair, new_tp + direction * tick)
+        target_distance_pips = abs(new_tp - entry) * pip_factor
+    stop_distance_pips = abs(new_sl - entry) * pip_factor
+    max_target_pips = float(candidate.get("max_target_pips") or target_pips)
+    max_stop_pips = float(candidate.get("max_stop_pips") or stop_pips)
+    if (
+        target_distance_pips < min_target_pips
+        or target_distance_pips > max_target_pips
+        or stop_distance_pips <= 0.0
+        or stop_distance_pips > max_stop_pips
+    ):
+        return tp, sl, {}
+
+    reward_risk = target_distance_pips / stop_distance_pips if stop_distance_pips > 0 else 0.0
+    previous_target_pips = abs(tp - entry) * pip_factor
+    previous_stop_pips = abs(sl - entry) * pip_factor
+    prior_reason = str(tp_execution_metadata.get("tp_target_reason") or "").strip()
+    precision_reason = (
+        f"audited precision rule {candidate['name']} ({candidate['feature']}) "
+        f"TP-first hit_rate={float(candidate.get('scalp_tp_first_hit_rate') or 0.0):.4f}, "
+        f"Wilson95_lower={float(candidate.get('scalp_tp_first_wilson95_lower') or 0.0):.4f}, "
+        f"samples={int(candidate.get('samples') or 0)}; generated HARVEST geometry "
+        f"{previous_target_pips:.1f}pip target/{previous_stop_pips:.1f}pip stop overridden to "
+        f"{target_distance_pips:.1f}pip target/{stop_distance_pips:.1f}pip stop"
+    )
+    if prior_reason:
+        precision_reason = f"{prior_reason}; {precision_reason}"
+
+    support_payload = dict(candidate)
+    return new_tp, new_sl, {
+        "technical_harvest_precision_geometry": True,
+        "technical_harvest_precision_geometry_rule": candidate["name"],
+        "technical_harvest_precision_geometry_support": support_payload,
+        "technical_harvest_precision_geometry_tp_pips": round(target_distance_pips, 3),
+        "technical_harvest_precision_geometry_stop_pips": round(stop_distance_pips, 3),
+        "technical_harvest_precision_geometry_previous_target_pips": round(previous_target_pips, 3),
+        "technical_harvest_precision_geometry_previous_stop_pips": round(previous_stop_pips, 3),
+        "technical_harvest_precision_geometry_wilson95_lower": round(
+            float(candidate.get("scalp_tp_first_wilson95_lower") or 0.0),
+            4,
+        ),
+        "technical_harvest_precision_geometry_hit_rate": round(
+            float(candidate.get("scalp_tp_first_hit_rate") or 0.0),
+            4,
+        ),
+        "technical_harvest_precision_geometry_samples": int(candidate.get("samples") or 0),
+        "technical_harvest_precision_geometry_audit_report": candidate.get("audit_report"),
+        "tp_target_source": "TECHNICAL_HARVEST_PRECISION",
+        "tp_target_reason": precision_reason,
+        "opportunity_mode": "HARVEST",
+        "opportunity_mode_reason": f"technical_harvest_precision={candidate['name']}",
+        "opportunity_mode_reward_risk": round(reward_risk, 3),
+        "virtual_take_profit": new_tp,
+        "virtual_take_profit_reward_risk": round(reward_risk, 3),
+        "tp_target_distance_pips": round(target_distance_pips, 3),
+    }
 
 
 def _opportunity_mode_from_execution_plan(

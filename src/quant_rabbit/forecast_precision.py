@@ -1155,6 +1155,82 @@ def technical_harvest_precision_support(
     return support if isinstance(support, dict) else None
 
 
+def technical_harvest_precision_geometry_candidate(
+    metadata: dict[str, Any],
+    *,
+    pair: str,
+    side: str,
+    order_type: str | None,
+    method: str | None,
+) -> dict[str, Any] | None:
+    """Return the audited TP/SL scalp geometry that the generator should emit.
+
+    `technical_harvest_precision_support` validates an already-built order.
+    This helper is narrower: it ignores the current TP/SL and only answers
+    whether the current pair/side/features justify constructing that audited
+    TP-first HARVEST shape in the first place.
+    """
+
+    if not isinstance(metadata, dict):
+        return None
+    if str(order_type or "").upper() == "MARKET":
+        return None
+    if str(metadata.get("tp_execution_mode") or "").upper() != "ATTACHED_TECHNICAL_TP":
+        return None
+    if str(metadata.get("tp_target_intent") or "").upper() != "HARVEST":
+        return None
+    if str(metadata.get("opportunity_mode") or "").upper() not in {"", "HARVEST"}:
+        return None
+    normalized_pair = str(pair or "").upper()
+    normalized_side = str(side or "").upper()
+    normalized_direction = str(metadata.get("forecast_direction") or "").upper()
+    chart_bias = str(metadata.get("chart_direction_bias") or "").upper()
+    if chart_bias and chart_bias != normalized_side:
+        return None
+
+    matches: list[dict[str, Any]] = []
+    for rule in TECHNICAL_HARVEST_PRECISION_RULES:
+        if normalized_pair != rule["pair"]:
+            continue
+        if normalized_side != rule["side"]:
+            continue
+        if normalized_direction != rule["direction"]:
+            continue
+        feature_values = _technical_rule_feature_values(metadata, rule)
+        if feature_values is None:
+            continue
+        support = {
+            "name": rule["name"],
+            "pair": rule["pair"],
+            "side": rule["side"],
+            "direction": rule["direction"],
+            "feature": rule["feature"],
+            "timeframe": rule["timeframe"],
+            "samples": rule["samples"],
+            "scalp_tp_first_hit_rate": rule["scalp_tp_first_hit_rate"],
+            "scalp_tp_first_wilson95_lower": rule["scalp_tp_first_wilson95_lower"],
+            "scalp_tp_pips": rule["scalp_tp_pips"],
+            "scalp_stop_pips": rule["scalp_stop_pips"],
+            "min_target_pips": rule["min_target_pips"],
+            "max_target_pips": rule["max_target_pips"],
+            "max_stop_pips": rule["max_stop_pips"],
+            "audit_report": rule["audit_report"],
+        }
+        support.update(feature_values)
+        matches.append(support)
+    if not matches:
+        return None
+    candidate = max(
+        matches,
+        key=lambda item: (
+            float(item.get("scalp_tp_first_wilson95_lower") or 0.0),
+            int(item.get("samples") or 0),
+        ),
+    )
+    candidate["matched_precision_rule_count"] = len(matches)
+    return candidate
+
+
 def technical_harvest_precision_assessment(
     metadata: dict[str, Any],
     *,

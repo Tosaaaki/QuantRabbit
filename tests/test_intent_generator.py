@@ -5513,6 +5513,82 @@ class IntentGeneratorTest(unittest.TestCase):
             "EUR_USD_DOWN_M5_EMA_SLOPE5_OPPOSED_TP5_SL4",
         )
 
+    def test_intent_generation_emits_audited_technical_harvest_scalp_geometry(self) -> None:
+        from quant_rabbit.models import AccountSummary, BrokerSnapshot, OrderType, Quote, TradeMethod
+        from quant_rabbit.strategy.intent_generator import (
+            _forecast_live_readiness_issue,
+            _intent_from_lane,
+            _method_context_issues,
+        )
+
+        os.environ["QR_REQUIRE_FORECAST_FOR_LIVE"] = "1"
+        now = datetime.now(timezone.utc)
+        quote = Quote(pair="EUR_USD", bid=1.16264, ask=1.16272, timestamp_utc=now)
+        snapshot = BrokerSnapshot(
+            fetched_at_utc=now,
+            positions=(),
+            orders=(),
+            quotes={
+                "EUR_USD": quote,
+                "USD_JPY": Quote(pair="USD_JPY", bid=156.64, ask=156.648, timestamp_utc=now),
+            },
+            account=AccountSummary(
+                nav_jpy=200_000.0,
+                balance_jpy=200_000.0,
+                margin_used_jpy=0.0,
+                margin_available_jpy=200_000.0,
+                hedging_enabled=True,
+                fetched_at_utc=now,
+            ),
+            home_conversions={"USD": 156.64},
+        )
+
+        intent = _intent_from_lane(
+            {
+                "desk": "failure_trader",
+                "pair": "EUR_USD",
+                "direction": "SHORT",
+                "method": "BREAKOUT_FAILURE",
+                "adoption": "RISK_REPAIR_DRY_RUN",
+                "campaign_role": "NOW_IF_REPAIRED",
+                "reason": "audited low-ATR short harvest",
+                "required_receipt": "dry-run under loss cap",
+                "forecast_direction": "DOWN",
+                "forecast_confidence": 0.23,
+                "forecast_target_price": 1.15500,
+            },
+            quote,
+            snapshot,
+            max_loss_jpy=1000.0,
+            atr_pips=2.0,
+            order_type_override=OrderType.LIMIT,
+            chart_context={
+                "chart_direction_bias": "SHORT",
+                "m1_atr_percentile_100": 0.10,
+            },
+            pair_chart={
+                "pair": "EUR_USD",
+                "views": [{"granularity": "M1", "indicators": {"atr_pips": 2.0}}],
+            },
+        )
+
+        self.assertAlmostEqual((intent.entry - intent.tp) * 10000, 5.0, places=3)
+        self.assertAlmostEqual((intent.sl - intent.entry) * 10000, 4.0, places=3)
+        self.assertEqual(intent.metadata["tp_target_source"], "TECHNICAL_HARVEST_PRECISION")
+        self.assertEqual(
+            intent.metadata["technical_harvest_precision_geometry_rule"],
+            "EUR_USD_DOWN_M1_ATR_LOW_TP5_SL4",
+        )
+        self.assertNotIn(
+            "HARVEST_TP_STRUCTURE_MISSING",
+            {issue["code"] for issue in _method_context_issues(intent)},
+        )
+
+        self.assertIsNone(
+            _forecast_live_readiness_issue(intent, intent.metadata, TradeMethod.BREAKOUT_FAILURE)
+        )
+        self.assertTrue(intent.metadata["technical_harvest_precision_live_ready"])
+
     def test_bidask_replay_rank_only_does_not_clear_live_forecast_gates(self) -> None:
         from quant_rabbit.models import MarketContext, OrderIntent, OrderType, Side, TradeMethod
         from quant_rabbit.strategy.intent_generator import _forecast_live_readiness_issue

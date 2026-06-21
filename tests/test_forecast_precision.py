@@ -16,6 +16,7 @@ from quant_rabbit.forecast_precision import (
     projection_precision_edge_summary,
     projection_precision_gap_summary,
     support_signal_clears_live_precision,
+    technical_harvest_precision_geometry_candidate,
     technical_harvest_precision_assessment,
     technical_harvest_precision_support,
 )
@@ -448,6 +449,49 @@ class ForecastPrecisionConfluenceTest(unittest.TestCase):
                 entry=1.10000,
                 take_profit=1.10050,
                 stop_loss=1.09960,
+            )
+        )
+
+    def test_technical_harvest_geometry_candidate_selects_audited_scalp_shape(self) -> None:
+        metadata = {
+            "forecast_direction": "DOWN",
+            "chart_direction_bias": "SHORT",
+            "m1_atr_percentile_100": 0.10,
+            "tp_execution_mode": "ATTACHED_TECHNICAL_TP",
+            "tp_target_intent": "HARVEST",
+            "opportunity_mode": "HARVEST",
+        }
+
+        candidate = technical_harvest_precision_geometry_candidate(
+            metadata,
+            pair="EUR_USD",
+            side="SHORT",
+            order_type="LIMIT",
+            method="BREAKOUT_FAILURE",
+        )
+
+        self.assertIsNotNone(candidate)
+        assert candidate is not None
+        self.assertEqual(candidate["name"], "EUR_USD_DOWN_M1_ATR_LOW_TP5_SL4")
+        self.assertEqual(candidate["scalp_tp_pips"], 5.0)
+        self.assertEqual(candidate["scalp_stop_pips"], 4.0)
+        self.assertGreaterEqual(candidate["scalp_tp_first_wilson95_lower"], 0.90)
+        self.assertIsNone(
+            technical_harvest_precision_geometry_candidate(
+                metadata,
+                pair="EUR_USD",
+                side="SHORT",
+                order_type="MARKET",
+                method="BREAKOUT_FAILURE",
+            )
+        )
+        self.assertIsNone(
+            technical_harvest_precision_geometry_candidate(
+                {**metadata, "m1_atr_percentile_100": 0.50},
+                pair="EUR_USD",
+                side="SHORT",
+                order_type="LIMIT",
+                method="BREAKOUT_FAILURE",
             )
         )
 
