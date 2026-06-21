@@ -3616,6 +3616,14 @@ class ConsolidatedCycleCommandTest(unittest.TestCase):
         self.assertLess(refresh.index("news-snapshot"), refresh.index("news-health --strict"))
         self.assertLess(refresh.index("capture-economics"), refresh.index("operator-precedent-audit"))
         self.assertLess(refresh.index("capture-economics"), refresh.index("manual-market-context-audit"))
+        self.assertIn("execution-timing-audit --max-events 80", refresh)
+        self.assertFalse(
+            any(
+                step.startswith("execution-timing-audit --lookback-hours 24")
+                for step in refresh
+            )
+        )
+        self.assertLess(refresh.index("execution-timing-audit --max-events 80"), refresh.index("self-improvement-audit"))
         self.assertLess(refresh.index("manual-market-context-audit"), refresh.index("operator-precedent-audit"))
         self.assertLess(refresh.index("operator-precedent-audit"), refresh.index("verification-ledger-audit"))
         self.assertLess(refresh.index("memory-health"), refresh.index("self-improvement-audit"))

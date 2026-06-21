@@ -1888,7 +1888,10 @@ def _cycle_refresh_steps(daily_risk_pct: str) -> list[dict[str, Any]]:
         {"argv": ["optimize-coverage"], "required": False},
         {"argv": ["ai-attack-advice"], "required": False},
         {"argv": ["learning-audit"], "required": False},
-        {"argv": ["execution-timing-audit", "--lookback-hours", "24", "--max-events", "80"], "required": False},
+        # Keep the module default 168h operating-week lookback. A 24h override
+        # loses Friday MARKET_ORDER_TRADE_CLOSE leakage after the weekend while
+        # profitability/self-improvement P0s can still cite that exact close.
+        {"argv": ["execution-timing-audit", "--max-events", "80"], "required": False},
         {"argv": ["manual-market-context-audit"], "required": False},
         {"argv": ["operator-precedent-audit"], "required": False},
         {"argv": ["verification-ledger-audit"], "required": False},
