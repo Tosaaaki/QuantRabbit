@@ -5,7 +5,7 @@ import os
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Sequence
 
 
 def _trader_sl_repair_disabled() -> bool:
@@ -92,6 +92,7 @@ from quant_rabbit.paths import (
     DEFAULT_POSITION_GUARDIAN_MANAGEMENT,
     DEFAULT_POSITION_MANAGEMENT,
     DEFAULT_POSITION_EXECUTION,
+    DEFAULT_PROFITABILITY_ACCEPTANCE,
     DEFAULT_SELF_IMPROVEMENT_AUDIT,
     DEFAULT_STRATEGY_PROFILE,
     DEFAULT_TRADER_OVERRIDES,
@@ -196,6 +197,7 @@ def route_trader_prompts(
     campaign_plan_path: Path | None = DEFAULT_CAMPAIGN_PLAN,
     memory_health_path: Path | None = DEFAULT_MEMORY_HEALTH,
     self_improvement_audit_path: Path | None = DEFAULT_SELF_IMPROVEMENT_AUDIT,
+    profitability_acceptance_path: Path | None = DEFAULT_PROFITABILITY_ACCEPTANCE,
     coverage_optimization_path: Path | None = DEFAULT_COVERAGE_OPTIMIZATION,
     strategy_profile_path: Path | None = DEFAULT_STRATEGY_PROFILE,
     trader_overrides_path: Path | None = DEFAULT_TRADER_OVERRIDES,
@@ -371,6 +373,12 @@ def route_trader_prompts(
         intents,
         self_improvement_audit_path=self_improvement_audit_path,
     )
+    profitability_acceptance_refresh_reasons = _profitability_acceptance_refresh_reasons(
+        target_state,
+        intents,
+        profitability_acceptance_path=profitability_acceptance_path,
+        capture_economics_path=capture_economics_path,
+    )
     evidence_refresh_reasons = (
         *trader_overrides_refresh_reasons,
         *strategy_profile_refresh_reasons,
@@ -381,6 +389,7 @@ def route_trader_prompts(
         *memory_health_refresh_reasons,
         *coverage_market_evidence_refresh_reasons,
         *self_improvement_audit_refresh_reasons,
+        *profitability_acceptance_refresh_reasons,
     )
     if evidence_refresh_reasons:
         return _build_route(
@@ -472,6 +481,51 @@ def route_trader_prompts(
         return _build_route(
             BRANCH_LEARNING,
             (*carry_reasons, *advisory_close_review_reasons, *pending_entry_reasons, *self_improvement_repair_reasons),
+            include_content=include_content,
+        )
+
+    profitability_acceptance_repair_reasons = _profitability_acceptance_repair_reasons(
+        profitability_acceptance_path=profitability_acceptance_path,
+    )
+    if _target_open(target_state) and profitability_acceptance_repair_reasons:
+        if pending_entry_reasons:
+            return _build_route(
+                BRANCH_POSITION,
+                (
+                    *carry_reasons,
+                    *advisory_close_review_reasons,
+                    *pending_entry_reasons,
+                    "profitability acceptance P0 blocks fresh risk while trader-owned pending entry risk remains fillable; "
+                    "write CANCEL_PENDING or explicitly justify keeping the current pending order before learning/gap work",
+                    *profitability_acceptance_repair_reasons,
+                ),
+                include_content=include_content,
+            )
+        p0_repair_live_ready_lanes = _self_improvement_p0_repair_live_ready_lane_ids(intents)
+        if p0_repair_live_ready_lanes:
+            return _build_route(
+                BRANCH_ENTRY,
+                (
+                    *carry_reasons,
+                    *advisory_close_review_reasons,
+                    *pending_entry_reasons,
+                    (
+                        "profitability acceptance P0 remains active; write TRADE only for the attached-TP "
+                        "HARVEST repair basket, or cite a fresh hard blocker if rejecting it: "
+                        + ", ".join(p0_repair_live_ready_lanes[:3])
+                    ),
+                    *_profitability_acceptance_p0_context_reasons(profitability_acceptance_repair_reasons),
+                ),
+                include_content=include_content,
+            )
+        return _build_route(
+            BRANCH_LEARNING,
+            (
+                *carry_reasons,
+                *advisory_close_review_reasons,
+                *pending_entry_reasons,
+                *profitability_acceptance_repair_reasons,
+            ),
             include_content=include_content,
         )
 
@@ -2270,6 +2324,92 @@ def _coverage_market_evidence_refresh_reasons(
     )
 
 
+def _profitability_acceptance_refresh_reasons(
+    target_state: dict[str, Any],
+    intents: dict[str, Any],
+    *,
+    profitability_acceptance_path: Path | None,
+    capture_economics_path: Path | None,
+) -> tuple[str, ...]:
+    """Require the red/green profit invariant gate to cover the routed packet."""
+    if profitability_acceptance_path is None or not _target_open(target_state):
+        return ()
+    if not profitability_acceptance_path.exists():
+        return (
+            f"profitability acceptance missing while target is open: {profitability_acceptance_path}; "
+            "run profitability-acceptance after self-improvement-audit before entry/verify routing",
+        )
+    try:
+        payload = _load_json(profitability_acceptance_path)
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        return (
+            f"profitability acceptance unreadable while target is open: {profitability_acceptance_path}: {exc}; "
+            "run profitability-acceptance after self-improvement-audit before entry/verify routing",
+        )
+    generated_at = _parse_utc(payload.get("generated_at_utc"))
+    if generated_at is None:
+        return (
+            f"profitability acceptance lacks generated_at_utc while target is open: {profitability_acceptance_path}; "
+            "run profitability-acceptance after self-improvement-audit before entry/verify routing",
+        )
+
+    refs: list[tuple[str, datetime]] = []
+    intents_ts = _parse_utc(intents.get("generated_at_utc"))
+    if intents_ts is not None:
+        refs.append(("order intents", intents_ts))
+    for label, path in (("capture economics", capture_economics_path),):
+        if path is None:
+            continue
+        if not path.exists():
+            return (
+                f"{label} missing while target is open: {path}; "
+                "run refresh sidecars before profitability-acceptance and entry/verify routing",
+            )
+        try:
+            ref_payload = _load_json(path)
+        except (OSError, ValueError, json.JSONDecodeError) as exc:
+            return (
+                f"{label} unreadable while target is open: {path}: {exc}; "
+                "run refresh sidecars before profitability-acceptance and entry/verify routing",
+            )
+        ref_ts = _parse_utc(ref_payload.get("generated_at_utc"))
+        if ref_ts is None:
+            return (
+                f"{label} lacks generated_at_utc while target is open: {path}; "
+                "run refresh sidecars before profitability-acceptance and entry/verify routing",
+            )
+        refs.append((label, ref_ts))
+
+    metrics = payload.get("metrics") if isinstance(payload.get("metrics"), dict) else {}
+    audited_intents = (
+        metrics.get("order_intents").get("generated_at_utc")
+        if isinstance(metrics.get("order_intents"), dict)
+        else None
+    )
+    audited_intents_ts = _parse_utc(audited_intents)
+    if intents_ts is not None and audited_intents_ts is None:
+        return (
+            "profitability acceptance stale while target is open: acceptance output does not record "
+            f"order intents {intents_ts.isoformat()}; rerun profitability-acceptance before entry/verify routing",
+        )
+    if intents_ts is not None and audited_intents_ts is not None and audited_intents_ts < intents_ts:
+        return (
+            "profitability acceptance stale while target is open: acceptance audited "
+            f"order intents {audited_intents_ts.isoformat()} before current order intents {intents_ts.isoformat()}; "
+            "rerun profitability-acceptance before entry/verify routing",
+        )
+
+    reasons: list[str] = []
+    for label, ref_ts in refs:
+        if generated_at < ref_ts:
+            reasons.append(
+                "profitability acceptance stale while target is open: "
+                f"acceptance generated at {generated_at.isoformat()} predates {label} {ref_ts.isoformat()}; "
+                "rerun profitability-acceptance before entry/verify routing"
+            )
+    return tuple(reasons)
+
+
 def _self_improvement_audit_staleness_reasons(
     *,
     generated_at: datetime,
@@ -2383,6 +2523,78 @@ def _self_improvement_repair_reasons(*, self_improvement_audit_path: Path | None
             f"{suffix}: {message}"
         )
     return tuple(reasons)
+
+
+def _profitability_acceptance_repair_reasons(
+    *,
+    profitability_acceptance_path: Path | None,
+) -> tuple[str, ...]:
+    if profitability_acceptance_path is None or not profitability_acceptance_path.exists():
+        return ()
+    try:
+        payload = _load_json(profitability_acceptance_path)
+    except (OSError, ValueError, json.JSONDecodeError):
+        return ()
+    if str(payload.get("status") or "") == "PROFITABILITY_ACCEPTANCE_PASSED":
+        return ()
+    findings = [item for item in payload.get("findings") or [] if isinstance(item, dict)]
+    p0_items = [item for item in findings if str(item.get("priority") or "").upper() == "P0"]
+    reasons: list[str] = []
+    for item in p0_items:
+        code = str(item.get("code") or "P0").strip() or "P0"
+        message = str(item.get("message") or code).strip()
+        evidence = item.get("evidence") if isinstance(item.get("evidence"), dict) else {}
+        details: list[str] = []
+        if code == "NEGATIVE_EXPECTANCY_ACTIVE":
+            expectancy = _optional_float(evidence.get("expectancy_jpy_per_trade"))
+            payoff = _optional_float(evidence.get("payoff_ratio"))
+            trades = evidence.get("trades")
+            if trades is not None:
+                details.append(f"trades={trades}")
+            if expectancy is not None:
+                details.append(f"expectancy={expectancy}")
+            if payoff is not None:
+                details.append(f"payoff={payoff}")
+        elif code == "MARKET_CLOSE_LEAK_DOMINATES_TP_EDGE":
+            segments = evidence.get("segments") if isinstance(evidence.get("segments"), list) else []
+            if segments and isinstance(segments[0], dict):
+                segment = segments[0]
+                seg_parts = [
+                    str(segment.get("pair") or "").strip(),
+                    str(segment.get("side") or "").strip(),
+                    str(segment.get("method") or "").strip(),
+                ]
+                details.append("segment=" + ":".join(part for part in seg_parts if part))
+                market_net = _optional_float(segment.get("market_close_net_jpy"))
+                tp_exp = _optional_float(segment.get("take_profit_expectancy_jpy"))
+                if market_net is not None:
+                    details.append(f"market_close_net={market_net:.1f}")
+                if tp_exp is not None:
+                    details.append(f"tp_expectancy={tp_exp:.1f}")
+        else:
+            count = evidence.get("recent_unverified_loss_closes") or evidence.get("recent_loss_closes")
+            if count is not None:
+                details.append(f"count={count}")
+            status = evidence.get("status")
+            if status is not None:
+                details.append(f"status={status}")
+        suffix = f" ({', '.join(details)})" if details else ""
+        reasons.append(
+            f"profitability acceptance {code} blocks high-turn entry routing; repair before new risk"
+            f"{suffix}: {message}"
+        )
+    return tuple(reasons)
+
+
+def _profitability_acceptance_p0_context_reasons(reasons: Sequence[str]) -> tuple[str, ...]:
+    return tuple(
+        reason.replace(
+            "blocks high-turn entry routing; repair before new risk",
+            "remains active as repair context",
+            1,
+        )
+        for reason in reasons
+    )
 
 
 def _self_improvement_decision_refresh_reasons(*, self_improvement_audit_path: Path | None) -> tuple[str, ...]:

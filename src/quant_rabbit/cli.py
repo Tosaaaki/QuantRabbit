@@ -2504,6 +2504,7 @@ def main(argv: list[str] | None = None) -> int:
     p_prompt.add_argument("--campaign-plan", type=Path, default=DEFAULT_CAMPAIGN_PLAN)
     p_prompt.add_argument("--memory-health", type=Path, default=DEFAULT_MEMORY_HEALTH)
     p_prompt.add_argument("--self-improvement-audit", type=Path, default=DEFAULT_SELF_IMPROVEMENT_AUDIT)
+    p_prompt.add_argument("--profitability-acceptance", type=Path, default=DEFAULT_PROFITABILITY_ACCEPTANCE)
     p_prompt.add_argument("--coverage-optimization", type=Path, default=DEFAULT_COVERAGE_OPTIMIZATION)
     p_prompt.add_argument("--strategy-profile", type=Path, default=DEFAULT_STRATEGY_PROFILE)
     p_prompt.add_argument("--trader-overrides", type=Path, default=DEFAULT_TRADER_OVERRIDES)
@@ -4281,6 +4282,7 @@ def main(argv: list[str] | None = None) -> int:
                 campaign_plan_path=args.campaign_plan,
                 memory_health_path=args.memory_health,
                 self_improvement_audit_path=args.self_improvement_audit,
+                profitability_acceptance_path=args.profitability_acceptance,
                 coverage_optimization_path=args.coverage_optimization,
                 strategy_profile_path=args.strategy_profile,
                 trader_overrides_path=args.trader_overrides,

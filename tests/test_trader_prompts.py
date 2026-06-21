@@ -143,6 +143,135 @@ class TraderPromptRouteTest(unittest.TestCase):
         self.assertFalse(any("profitability P0 blocks entry routing" in reason for reason in route.reasons))
         self.assertTrue(any("profitability P0 remains active as repair context" in reason for reason in route.reasons))
 
+    def test_missing_profitability_acceptance_routes_to_refresh_branch(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root)
+            files["profitability_acceptance"].unlink()
+
+            route = route_trader_prompts(**_route_paths(files), decision_response_path=None)
+
+        self.assertEqual(route.branch, BRANCH_REFRESH)
+        self.assertTrue(any("profitability acceptance missing while target is open" in reason for reason in route.reasons))
+
+    def test_stale_profitability_acceptance_routes_to_refresh_branch(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root)
+            old = (datetime.now(timezone.utc) - timedelta(minutes=5)).isoformat()
+            files["profitability_acceptance"].write_text(
+                json.dumps(
+                    {
+                        "generated_at_utc": old,
+                        "status": "PROFITABILITY_ACCEPTANCE_PASSED",
+                        "findings": [],
+                        "metrics": {
+                            "order_intents": {
+                                "generated_at_utc": old,
+                            }
+                        },
+                    }
+                )
+            )
+
+            route = route_trader_prompts(**_route_paths(files), decision_response_path=None)
+
+        self.assertEqual(route.branch, BRANCH_REFRESH)
+        self.assertTrue(any("profitability acceptance stale while target is open" in reason for reason in route.reasons))
+        self.assertTrue(any("order intents" in reason for reason in route.reasons))
+
+    def test_profitability_acceptance_p0_routes_to_learning_before_entry(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root)
+            now = datetime.now(timezone.utc).isoformat()
+            files["profitability_acceptance"].write_text(
+                json.dumps(
+                    {
+                        "generated_at_utc": now,
+                        "status": "PROFITABILITY_ACCEPTANCE_BLOCKED",
+                        "findings": [
+                            {
+                                "priority": "P0",
+                                "code": "NEGATIVE_EXPECTANCY_ACTIVE",
+                                "message": "capture economics is still NEGATIVE_EXPECTANCY",
+                                "evidence": {
+                                    "trades": 215,
+                                    "expectancy_jpy_per_trade": -168.9,
+                                    "payoff_ratio": 0.392,
+                                },
+                            }
+                        ],
+                        "metrics": {
+                            "order_intents": {
+                                "generated_at_utc": json.loads(files["intents"].read_text())["generated_at_utc"],
+                            }
+                        },
+                    }
+                )
+            )
+
+            route = route_trader_prompts(**_route_paths(files), decision_response_path=None)
+
+        self.assertEqual(route.branch, BRANCH_LEARNING)
+        self.assertTrue(any("profitability acceptance NEGATIVE_EXPECTANCY_ACTIVE blocks high-turn entry routing" in reason for reason in route.reasons))
+        self.assertTrue(any("expectancy=-168.9" in reason for reason in route.reasons))
+
+    def test_profitability_acceptance_p0_with_repair_live_ready_lane_routes_to_entry(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root)
+            intents = json.loads(files["intents"].read_text())
+            intents["results"][0]["intent"] = {
+                "pair": "EUR_USD",
+                "side": "LONG",
+                "order_type": "STOP-ENTRY",
+                "metadata": {
+                    "self_improvement_p0_repair_live_ready": True,
+                    "self_improvement_p0_repair_mode": "TP_HARVEST_REPAIR",
+                },
+            }
+            files["intents"].write_text(json.dumps(intents))
+            now = datetime.now(timezone.utc).isoformat()
+            files["profitability_acceptance"].write_text(
+                json.dumps(
+                    {
+                        "generated_at_utc": now,
+                        "status": "PROFITABILITY_ACCEPTANCE_BLOCKED",
+                        "findings": [
+                            {
+                                "priority": "P0",
+                                "code": "MARKET_CLOSE_LEAK_DOMINATES_TP_EDGE",
+                                "message": "1 TP-proven segment remains net-damaged by market-close leakage",
+                                "evidence": {
+                                    "segments": [
+                                        {
+                                            "pair": "EUR_USD",
+                                            "side": "LONG",
+                                            "method": "BREAKOUT_FAILURE",
+                                            "market_close_net_jpy": -15091.7,
+                                            "take_profit_expectancy_jpy": 591.5,
+                                        }
+                                    ]
+                                },
+                            }
+                        ],
+                        "metrics": {
+                            "order_intents": {
+                                "generated_at_utc": intents["generated_at_utc"],
+                            }
+                        },
+                    }
+                )
+            )
+
+            route = route_trader_prompts(**_route_paths(files), decision_response_path=None)
+
+        self.assertEqual(route.branch, BRANCH_ENTRY)
+        self.assertTrue(any("profitability acceptance P0 remains active" in reason for reason in route.reasons))
+        self.assertTrue(any("attached-TP HARVEST repair basket" in reason for reason in route.reasons))
+        self.assertTrue(any("MARKET_CLOSE_LEAK_DOMINATES_TP_EDGE remains active as repair context" in reason for reason in route.reasons))
+
     def test_projection_p0_routes_to_learning_repair_before_entry(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -3128,6 +3257,8 @@ class TraderPromptRouteTest(unittest.TestCase):
                         str(files["memory_health"]),
                         "--self-improvement-audit",
                         str(files["self_improvement_audit"]),
+                        "--profitability-acceptance",
+                        str(files["profitability_acceptance"]),
                         "--coverage-optimization",
                         str(files["coverage_optimization"]),
                         "--strategy-profile",
@@ -3172,6 +3303,7 @@ def _route_paths(files: dict[str, Path]) -> dict[str, Path]:
         "campaign_plan_path": files["campaign_plan"],
         "memory_health_path": files["memory_health"],
         "self_improvement_audit_path": files["self_improvement_audit"],
+        "profitability_acceptance_path": files["profitability_acceptance"],
         "coverage_optimization_path": files["coverage_optimization"],
         "strategy_profile_path": files["strategy_profile"],
         "trader_overrides_path": files["trader_overrides"],
@@ -3208,6 +3340,7 @@ def _fixtures(root: Path, *, positions: list[dict] | None = None) -> dict[str, P
         "campaign_plan": root / "daily_campaign_plan.json",
         "memory_health": root / "memory_health.json",
         "self_improvement_audit": root / "self_improvement_audit.json",
+        "profitability_acceptance": root / "profitability_acceptance.json",
         "coverage_optimization": root / "coverage_optimization.json",
         "strategy_profile": root / "strategy_profile.json",
         "history_db": root / "legacy_history.db",
@@ -3347,6 +3480,30 @@ def _fixtures(root: Path, *, positions: list[dict] | None = None) -> dict[str, P
                 "p1_findings": 0,
                 "p2_findings": 0,
                 "findings": [],
+            }
+        )
+    )
+    files["profitability_acceptance"].write_text(
+        json.dumps(
+            {
+                "generated_at_utc": now,
+                "status": "PROFITABILITY_ACCEPTANCE_PASSED",
+                "findings": [],
+                "blockers": [],
+                "metrics": {
+                    "order_intents": {
+                        "generated_at_utc": now,
+                        "candidate_count": 1,
+                        "live_ready_lanes": 1,
+                    },
+                    "self_improvement": {
+                        "status": "SELF_IMPROVEMENT_OK",
+                        "p0_findings": 0,
+                    },
+                    "capture_economics": {
+                        "status": "CAPTURE_ECONOMICS_PASS",
+                    },
+                },
             }
         )
     )

@@ -329,8 +329,11 @@ QR_LIVE_ENABLED=1 ./scripts/run-autotrade-live.sh \
 #   fact from a trader entry lane is not proved close discipline; loss-side
 #   closes need durable `GATEWAY_GPT_CLOSE_ACCEPTED` and/or
 #   `GATEWAY_TRADE_CLOSE_SENT` provenance before the system can count them as
-#   verified structural exits. A non-passing result is diagnostic but must
-#   keep high-turn scaling blocked until the named evidence clears.
+#   verified structural exits. A missing, stale, or unreadable acceptance file
+#   routes back to refresh; P0 findings route to learning/repair and keep
+#   high-turn scaling blocked until the named evidence clears. The only entry
+#   exception is an attached-TP HARVEST repair lane that explicitly carries the
+#   self-improvement P0 repair metadata.
 # Manual recovery only:
 # QR_RUN_POST_GATEWAY_SIDECARS=0 QR_LIVE_ENABLED=1 ./scripts/run-autotrade-live.sh ...
 # QR_LIVE_ENABLED=1 PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli cycle-sidecars
