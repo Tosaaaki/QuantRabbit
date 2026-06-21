@@ -74,6 +74,7 @@ from quant_rabbit.paths import (
     DEFAULT_CODEX_TRADER_DECISION_RESPONSE,
     DEFAULT_COVERAGE_OPTIMIZATION,
     DEFAULT_COT_SNAPSHOT,
+    DEFAULT_CAPTURE_ECONOMICS,
     DEFAULT_CROSS_ASSET_SNAPSHOT,
     DEFAULT_CURRENCY_STRENGTH,
     DEFAULT_DAILY_TARGET_STATE,
@@ -190,6 +191,7 @@ def route_trader_prompts(
     option_skew_path: Path = DEFAULT_OPTION_SKEW,
     attack_advice_path: Path = DEFAULT_AI_ATTACK_ADVICE,
     learning_audit_path: Path = DEFAULT_LEARNING_AUDIT,
+    capture_economics_path: Path | None = DEFAULT_CAPTURE_ECONOMICS,
     forecast_history_path: Path | None = DEFAULT_FORECAST_HISTORY,
     campaign_plan_path: Path | None = DEFAULT_CAMPAIGN_PLAN,
     memory_health_path: Path | None = DEFAULT_MEMORY_HEALTH,
@@ -358,6 +360,7 @@ def route_trader_prompts(
         snapshot,
         intents,
         memory_health_path=memory_health_path,
+        capture_economics_path=capture_economics_path,
     )
     coverage_market_evidence_refresh_reasons = _coverage_market_evidence_refresh_reasons(
         coverage_optimization_path=coverage_optimization_path,
@@ -2062,6 +2065,7 @@ def _memory_health_refresh_reasons(
     intents: dict[str, Any],
     *,
     memory_health_path: Path | None,
+    capture_economics_path: Path | None,
 ) -> tuple[str, ...]:
     """Require a passing memory health audit before target-open entry work."""
     if memory_health_path is None or not _target_open(target_state):
@@ -2090,6 +2094,7 @@ def _memory_health_refresh_reasons(
         snapshot=snapshot,
         target_state=target_state,
         intents=intents,
+        capture_economics_path=capture_economics_path,
     )
     if stale_reasons:
         return stale_reasons
@@ -2112,6 +2117,7 @@ def _memory_health_staleness_reasons(
     snapshot: dict[str, Any],
     target_state: dict[str, Any],
     intents: dict[str, Any],
+    capture_economics_path: Path | None,
 ) -> tuple[str, ...]:
     """Return refresh reasons when memory-health predates its audited packet.
 
@@ -2123,18 +2129,45 @@ def _memory_health_staleness_reasons(
     and treating that timestamp as new evidence forces the next cycle back to
     refresh even when the market packet is already coherent.
     """
-    refs: list[tuple[str, datetime]] = []
+    refs: list[tuple[str, datetime, bool]] = []
     account = snapshot.get("account") if isinstance(snapshot.get("account"), dict) else {}
     snapshot_ts = _parse_utc(snapshot.get("fetched_at_utc") or account.get("fetched_at_utc"))
     intents_ts = _parse_utc(intents.get("generated_at_utc"))
     if snapshot_ts is not None:
-        refs.append(("broker snapshot", snapshot_ts))
+        refs.append(("broker snapshot", snapshot_ts, False))
     if intents_ts is not None:
-        refs.append(("order intents", intents_ts))
+        refs.append(("order intents", intents_ts, False))
+    if capture_economics_path is not None:
+        if not capture_economics_path.exists():
+            return (
+                f"capture_economics missing while target is open: {capture_economics_path}; "
+                "run capture-economics before memory-health and entry/verify routing",
+            )
+        try:
+            capture_payload = _load_json(capture_economics_path)
+        except (OSError, ValueError, json.JSONDecodeError) as exc:
+            return (
+                f"capture_economics unreadable while target is open: {capture_economics_path}: {exc}; "
+                "run capture-economics before memory-health and entry/verify routing",
+            )
+        capture_ts = _parse_utc(capture_payload.get("generated_at_utc"))
+        if capture_ts is None:
+            return (
+                f"capture_economics lacks generated_at_utc while target is open: {capture_economics_path}; "
+                "run capture-economics before memory-health and entry/verify routing",
+            )
+        refs.append(("capture economics", capture_ts, True))
 
     reasons: list[str] = []
-    for label, ref_ts in refs:
+    for label, ref_ts, requires_audited_ts in refs:
         audited_ts = _memory_health_audited_ref_ts(payload, label)
+        if requires_audited_ts and audited_ts is None:
+            reasons.append(
+                "memory health audit stale while target is open: "
+                f"memory_health generated at {generated_at.isoformat()} does not record "
+                f"{label} {ref_ts.isoformat()}; run memory-health before entry/verify routing"
+            )
+            continue
         effective_ts = audited_ts or generated_at
         if effective_ts < ref_ts:
             reasons.append(
@@ -2155,6 +2188,12 @@ def _memory_health_audited_ref_ts(payload: dict[str, Any], label: str) -> dateti
         return _parse_utc(
             runtime.get("order_intents_generated_at_utc")
             or order_metrics.get("generated_at_utc")
+        )
+    if label == "capture economics":
+        capture_metrics = metrics.get("capture_economics") if isinstance(metrics.get("capture_economics"), dict) else {}
+        return _parse_utc(
+            runtime.get("capture_economics_generated_at_utc")
+            or capture_metrics.get("generated_at_utc")
         )
     return None
 

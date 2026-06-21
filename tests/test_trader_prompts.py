@@ -715,23 +715,23 @@ class TraderPromptRouteTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             files = _fixtures(root)
-            files["memory_health"].write_text(
-                json.dumps(
-                    {
-                        "generated_at_utc": datetime.now(timezone.utc).isoformat(),
-                        "status": "MEMORY_HEALTH_BLOCKED",
-                        "blockers": ["strategy_profile has zero mined profiles"],
-                        "issues": [
-                            {
-                                "severity": "BLOCK",
-                                "layer": "long_term",
-                                "code": "LONG_STRATEGY_PROFILE_EMPTY",
-                                "message": "strategy_profile has zero mined profiles",
-                            }
-                        ],
-                    }
-                )
+            memory = json.loads(files["memory_health"].read_text())
+            memory.update(
+                {
+                    "generated_at_utc": datetime.now(timezone.utc).isoformat(),
+                    "status": "MEMORY_HEALTH_BLOCKED",
+                    "blockers": ["strategy_profile has zero mined profiles"],
+                    "issues": [
+                        {
+                            "severity": "BLOCK",
+                            "layer": "long_term",
+                            "code": "LONG_STRATEGY_PROFILE_EMPTY",
+                            "message": "strategy_profile has zero mined profiles",
+                        }
+                    ],
+                }
             )
+            files["memory_health"].write_text(json.dumps(memory))
 
             route = route_trader_prompts(**_route_paths(files), decision_response_path=None)
 
@@ -792,9 +792,19 @@ class TraderPromptRouteTest(unittest.TestCase):
             intents = json.loads(files["intents"].read_text())
             intents["generated_at_utc"] = intents_ts
             files["intents"].write_text(json.dumps(intents))
+            capture = json.loads(files["capture_economics"].read_text())
+            capture["generated_at_utc"] = memory_ts
+            files["capture_economics"].write_text(json.dumps(capture))
 
             memory = json.loads(files["memory_health"].read_text())
             memory["generated_at_utc"] = memory_ts
+            memory["metrics"] = {
+                "runtime": {
+                    "snapshot_fetched_at_utc": snapshot_ts,
+                    "order_intents_generated_at_utc": memory_ts,
+                    "capture_economics_generated_at_utc": memory_ts,
+                }
+            }
             files["memory_health"].write_text(json.dumps(memory))
 
             route = route_trader_prompts(**_route_paths(files), decision_response_path=None)
@@ -811,6 +821,7 @@ class TraderPromptRouteTest(unittest.TestCase):
             base = datetime(2026, 1, 1, tzinfo=timezone.utc)
             snapshot_ts = (base + timedelta(minutes=2)).isoformat()
             intents_ts = (base + timedelta(minutes=1)).isoformat()
+            capture_ts = intents_ts
 
             snapshot = json.loads(files["snapshot"].read_text())
             snapshot["fetched_at_utc"] = snapshot_ts
@@ -819,9 +830,47 @@ class TraderPromptRouteTest(unittest.TestCase):
             intents = json.loads(files["intents"].read_text())
             intents["generated_at_utc"] = intents_ts
             files["intents"].write_text(json.dumps(intents))
+            capture = json.loads(files["capture_economics"].read_text())
+            capture["generated_at_utc"] = capture_ts
+            files["capture_economics"].write_text(json.dumps(capture))
 
             memory = json.loads(files["memory_health"].read_text())
             memory["generated_at_utc"] = base.isoformat()
+            memory["metrics"] = {
+                "runtime": {
+                    "snapshot_fetched_at_utc": snapshot_ts,
+                    "order_intents_generated_at_utc": intents_ts,
+                    "capture_economics_generated_at_utc": capture_ts,
+                }
+            }
+            files["memory_health"].write_text(json.dumps(memory))
+
+            route = route_trader_prompts(**_route_paths(files), decision_response_path=None)
+
+        self.assertEqual(route.branch, BRANCH_ENTRY)
+        self.assertFalse(any("memory health audit stale" in reason for reason in route.reasons))
+
+    def test_memory_health_without_capture_audit_routes_open_target_to_refresh_branch(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root)
+            base = datetime(2026, 1, 1, tzinfo=timezone.utc)
+            snapshot_ts = (base + timedelta(minutes=1)).isoformat()
+            intents_ts = (base + timedelta(minutes=2)).isoformat()
+            capture_ts = (base + timedelta(minutes=3)).isoformat()
+            memory_ts = (base + timedelta(minutes=4)).isoformat()
+
+            snapshot = json.loads(files["snapshot"].read_text())
+            snapshot["fetched_at_utc"] = snapshot_ts
+            files["snapshot"].write_text(json.dumps(snapshot))
+            intents = json.loads(files["intents"].read_text())
+            intents["generated_at_utc"] = intents_ts
+            files["intents"].write_text(json.dumps(intents))
+            capture = json.loads(files["capture_economics"].read_text())
+            capture["generated_at_utc"] = capture_ts
+            files["capture_economics"].write_text(json.dumps(capture))
+            memory = json.loads(files["memory_health"].read_text())
+            memory["generated_at_utc"] = memory_ts
             memory["metrics"] = {
                 "runtime": {
                     "snapshot_fetched_at_utc": snapshot_ts,
@@ -832,8 +881,44 @@ class TraderPromptRouteTest(unittest.TestCase):
 
             route = route_trader_prompts(**_route_paths(files), decision_response_path=None)
 
-        self.assertEqual(route.branch, BRANCH_ENTRY)
-        self.assertFalse(any("memory health audit stale" in reason for reason in route.reasons))
+        self.assertEqual(route.branch, BRANCH_REFRESH)
+        self.assertTrue(any("does not record capture economics" in reason for reason in route.reasons))
+
+    def test_memory_health_stale_capture_audit_routes_open_target_to_refresh_branch(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root)
+            base = datetime(2026, 1, 1, tzinfo=timezone.utc)
+            snapshot_ts = (base + timedelta(minutes=1)).isoformat()
+            intents_ts = (base + timedelta(minutes=2)).isoformat()
+            audited_capture_ts = (base + timedelta(minutes=2)).isoformat()
+            current_capture_ts = (base + timedelta(minutes=5)).isoformat()
+            memory_ts = (base + timedelta(minutes=6)).isoformat()
+
+            snapshot = json.loads(files["snapshot"].read_text())
+            snapshot["fetched_at_utc"] = snapshot_ts
+            files["snapshot"].write_text(json.dumps(snapshot))
+            intents = json.loads(files["intents"].read_text())
+            intents["generated_at_utc"] = intents_ts
+            files["intents"].write_text(json.dumps(intents))
+            capture = json.loads(files["capture_economics"].read_text())
+            capture["generated_at_utc"] = current_capture_ts
+            files["capture_economics"].write_text(json.dumps(capture))
+            memory = json.loads(files["memory_health"].read_text())
+            memory["generated_at_utc"] = memory_ts
+            memory["metrics"] = {
+                "runtime": {
+                    "snapshot_fetched_at_utc": snapshot_ts,
+                    "order_intents_generated_at_utc": intents_ts,
+                    "capture_economics_generated_at_utc": audited_capture_ts,
+                }
+            }
+            files["memory_health"].write_text(json.dumps(memory))
+
+            route = route_trader_prompts(**_route_paths(files), decision_response_path=None)
+
+        self.assertEqual(route.branch, BRANCH_REFRESH)
+        self.assertTrue(any("capture economics" in reason for reason in route.reasons))
 
     def test_stale_self_improvement_audit_routes_open_target_to_refresh_branch(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -3082,6 +3167,7 @@ def _route_paths(files: dict[str, Path]) -> dict[str, Path]:
         "option_skew_path": files["option_skew"],
         "attack_advice_path": files["attack_advice"],
         "learning_audit_path": files["learning_audit"],
+        "capture_economics_path": files["capture_economics"],
         "forecast_history_path": files["forecast_history"],
         "campaign_plan_path": files["campaign_plan"],
         "memory_health_path": files["memory_health"],
@@ -3117,6 +3203,7 @@ def _fixtures(root: Path, *, positions: list[dict] | None = None) -> dict[str, P
         "option_skew": root / "option_skew_snapshot.json",
         "attack_advice": root / "ai_attack_advice.json",
         "learning_audit": root / "learning_audit.json",
+        "capture_economics": root / "capture_economics.json",
         "forecast_history": root / "forecast_history.jsonl",
         "campaign_plan": root / "daily_campaign_plan.json",
         "memory_health": root / "memory_health.json",
@@ -3200,6 +3287,15 @@ def _fixtures(root: Path, *, positions: list[dict] | None = None) -> dict[str, P
         "learning_audit",
     ):
         files[key].write_text(json.dumps({}))
+    files["capture_economics"].write_text(
+        json.dumps(
+            {
+                "generated_at_utc": now,
+                "status": "CAPTURE_ECONOMICS_PASS",
+                "overall": {"trades": 42},
+            }
+        )
+    )
     files["forecast_history"].write_text("")
     files["market_context_matrix"].write_text(
         json.dumps(
@@ -3228,6 +3324,17 @@ def _fixtures(root: Path, *, positions: list[dict] | None = None) -> dict[str, P
                 "issues": [],
                 "blockers": [],
                 "warnings": [],
+                "metrics": {
+                    "runtime": {
+                        "snapshot_fetched_at_utc": now,
+                        "order_intents_generated_at_utc": now,
+                        "capture_economics_generated_at_utc": now,
+                    },
+                    "capture_economics": {
+                        "generated_at_utc": now,
+                        "trades": 42,
+                    },
+                },
             }
         )
     )

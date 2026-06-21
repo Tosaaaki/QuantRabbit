@@ -2500,6 +2500,7 @@ def main(argv: list[str] | None = None) -> int:
     p_prompt.add_argument("--option-skew", type=Path, default=DEFAULT_OPTION_SKEW)
     p_prompt.add_argument("--attack-advice", type=Path, default=DEFAULT_AI_ATTACK_ADVICE)
     p_prompt.add_argument("--learning-audit", type=Path, default=DEFAULT_LEARNING_AUDIT)
+    p_prompt.add_argument("--capture-economics", type=Path, default=DEFAULT_CAPTURE_ECONOMICS)
     p_prompt.add_argument("--campaign-plan", type=Path, default=DEFAULT_CAMPAIGN_PLAN)
     p_prompt.add_argument("--memory-health", type=Path, default=DEFAULT_MEMORY_HEALTH)
     p_prompt.add_argument("--self-improvement-audit", type=Path, default=DEFAULT_SELF_IMPROVEMENT_AUDIT)
@@ -2655,6 +2656,7 @@ def main(argv: list[str] | None = None) -> int:
     p_mhealth.add_argument("--snapshot", type=Path, default=DEFAULT_BROKER_SNAPSHOT)
     p_mhealth.add_argument("--target-state", type=Path, default=DEFAULT_DAILY_TARGET_STATE)
     p_mhealth.add_argument("--order-intents", type=Path, default=DEFAULT_ORDER_INTENTS)
+    p_mhealth.add_argument("--capture-economics", type=Path, default=DEFAULT_CAPTURE_ECONOMICS)
     p_mhealth.add_argument("--strategy-profile", type=Path, default=DEFAULT_STRATEGY_PROFILE)
     p_mhealth.add_argument("--forecast-history", type=Path, default=DEFAULT_FORECAST_HISTORY)
     p_mhealth.add_argument("--projection-ledger", type=Path, default=DEFAULT_PROJECTION_LEDGER)
@@ -4275,6 +4277,7 @@ def main(argv: list[str] | None = None) -> int:
                 option_skew_path=args.option_skew,
                 attack_advice_path=args.attack_advice,
                 learning_audit_path=args.learning_audit,
+                capture_economics_path=args.capture_economics,
                 campaign_plan_path=args.campaign_plan,
                 memory_health_path=args.memory_health,
                 self_improvement_audit_path=args.self_improvement_audit,
@@ -4826,6 +4829,7 @@ def main(argv: list[str] | None = None) -> int:
                 snapshot_path=args.snapshot,
                 target_state_path=args.target_state,
                 order_intents_path=args.order_intents,
+                capture_economics_path=args.capture_economics,
                 strategy_profile_path=args.strategy_profile,
                 forecast_history_path=args.forecast_history,
                 projection_ledger_path=args.projection_ledger,

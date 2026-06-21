@@ -32,6 +32,46 @@ class MemoryHealthAuditorTest(unittest.TestCase):
         self.assertEqual(summary.layers["long_term"], "PASS")
         self.assertEqual(summary.layers["position_memory"], "PASS")
 
+    def test_blocks_order_intents_when_capture_economics_is_newer(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root)
+            older = (_NOW - timedelta(minutes=5)).isoformat()
+            newer = _NOW.isoformat()
+            intents = json.loads(files["intents"].read_text())
+            intents["generated_at_utc"] = older
+            files["intents"].write_text(json.dumps(intents))
+            capture = json.loads(files["capture_economics"].read_text())
+            capture["generated_at_utc"] = newer
+            files["capture_economics"].write_text(json.dumps(capture))
+
+            summary = _run(files)
+            payload = json.loads(files["output"].read_text())
+
+        self.assertEqual(summary.status, STATUS_BLOCKED)
+        self.assertEqual(summary.layers["short_term"], "BLOCK")
+        self.assertTrue(
+            any(issue["code"] == "SHORT_ORDER_INTENTS_CAPTURE_ECONOMICS_STALE" for issue in payload["issues"])
+        )
+
+    def test_blocks_order_intents_when_capture_trade_count_metadata_is_stale(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root)
+            intents = json.loads(files["intents"].read_text())
+            intents["results"][0]["intent"]["metadata"] = {"capture_economics_trades": 41}
+            files["intents"].write_text(json.dumps(intents))
+
+            summary = _run(files)
+            payload = json.loads(files["output"].read_text())
+
+        self.assertEqual(summary.status, STATUS_BLOCKED)
+        self.assertEqual(summary.layers["short_term"], "BLOCK")
+        self.assertTrue(
+            any(issue["code"] == "SHORT_ORDER_INTENTS_CAPTURE_ECONOMICS_STALE" for issue in payload["issues"])
+        )
+        self.assertTrue(payload["metrics"]["capture_economics"]["metadata_trade_count_mismatch"])
+
     def test_learning_audit_quarantines_influenced_lanes_without_global_block(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -723,6 +763,7 @@ def _run(files: dict[str, Path]):
         snapshot_path=files["snapshot"],
         target_state_path=files["target"],
         order_intents_path=files["intents"],
+        capture_economics_path=files["capture_economics"],
         strategy_profile_path=files["strategy_profile"],
         forecast_history_path=files["forecast_history"],
         projection_ledger_path=files["projection_ledger"],
@@ -744,6 +785,7 @@ def _fixtures(
         "snapshot": root / "broker_snapshot.json",
         "target": root / "daily_target_state.json",
         "intents": root / "order_intents.json",
+        "capture_economics": root / "capture_economics.json",
         "strategy_profile": root / "strategy_profile.json",
         "history_db": root / "legacy_history.db",
         "forecast_history": root / "forecast_history.jsonl",
@@ -782,6 +824,7 @@ def _fixtures(
     files["intents"].write_text(
         json.dumps(
             {
+                "generated_at_utc": _NOW.isoformat(),
                 "results": [
                     {
                         "lane_id": "trend_trader:EUR_USD:LONG:TREND_CONTINUATION",
@@ -792,6 +835,15 @@ def _fixtures(
                         "live_blockers": [],
                     }
                 ]
+            }
+        )
+    )
+    files["capture_economics"].write_text(
+        json.dumps(
+            {
+                "generated_at_utc": _NOW.isoformat(),
+                "status": "CAPTURE_ECONOMICS_PASS",
+                "overall": {"trades": 42},
             }
         )
     )

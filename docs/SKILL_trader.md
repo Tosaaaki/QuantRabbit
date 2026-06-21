@@ -149,6 +149,10 @@ PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli cycle-refresh --daily-risk-pct 1
 # after `cycle-refresh` leaves fresh evidence unused and is treated as
 # incomplete. The digest's `route` field is the re-route result; only run
 # `trader-prompt-route` again if you changed an artifact after the digest.
+# `memory-health` must audit the same `capture_economics` packet used by
+# `generate-intents`. If capture-economics is refreshed after order_intents, or
+# memory-health does not record the current capture timestamp, route back to
+# refresh before entry/verify work.
 #
 # Position close sidecars inside the digest are read-only prediction/thesis
 # evidence. Read `protection_sidecars.position_close_recommendations[]`

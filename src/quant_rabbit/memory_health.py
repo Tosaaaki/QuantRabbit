@@ -10,6 +10,7 @@ from typing import Any
 
 from quant_rabbit.paths import (
     DEFAULT_BROKER_SNAPSHOT,
+    DEFAULT_CAPTURE_ECONOMICS,
     DEFAULT_DAILY_TARGET_STATE,
     DEFAULT_ENTRY_THESIS_LEDGER,
     DEFAULT_EXECUTION_LEDGER_DB,
@@ -40,6 +41,7 @@ _MEMORY_BLOCKER_TOKENS = (
     "EXECUTION_LEDGER",
     "ENTRY_THESIS",
     "LEARNING_AUDIT",
+    "CAPTURE_ECONOMICS",
 )
 
 _STRATEGY_PROFILE_GAP_CODES = (
@@ -103,6 +105,7 @@ class MemoryHealthAuditor:
         snapshot_path: Path = DEFAULT_BROKER_SNAPSHOT,
         target_state_path: Path = DEFAULT_DAILY_TARGET_STATE,
         order_intents_path: Path = DEFAULT_ORDER_INTENTS,
+        capture_economics_path: Path = DEFAULT_CAPTURE_ECONOMICS,
         strategy_profile_path: Path = DEFAULT_STRATEGY_PROFILE,
         forecast_history_path: Path = DEFAULT_FORECAST_HISTORY,
         projection_ledger_path: Path = DEFAULT_PROJECTION_LEDGER,
@@ -118,17 +121,20 @@ class MemoryHealthAuditor:
         snapshot_loaded = _read_json(snapshot_path)
         target_loaded = _read_json(target_state_path)
         intents_loaded = _read_json(order_intents_path)
+        capture_loaded = _read_json(capture_economics_path)
         strategy_loaded = _read_json(strategy_profile_path)
         learning_loaded = _read_json(learning_audit_path)
 
         snapshot = snapshot_loaded.payload or {}
         target_state = target_loaded.payload or {}
         intents = intents_loaded.payload or {}
+        capture = capture_loaded.payload or {}
         target_open = _target_open(target_state)
         snapshot_ts = _parse_utc(snapshot.get("fetched_at_utc") or (snapshot.get("account") or {}).get("fetched_at_utc"))
         quote_timestamps = _quote_timestamps(snapshot)
         latest_quote_ts = max(quote_timestamps.values()) if quote_timestamps else None
         intents_ts = _parse_utc(intents.get("generated_at_utc"))
+        capture_ts = _parse_utc(capture.get("generated_at_utc"))
         active_positions = _active_trader_positions(snapshot)
         live_ready_pairs = _live_ready_pairs(intents)
         intent_pairs = _intent_pairs(intents)
@@ -138,6 +144,7 @@ class MemoryHealthAuditor:
             "target_open": target_open,
             "snapshot_fetched_at_utc": snapshot_ts.isoformat() if snapshot_ts else None,
             "order_intents_generated_at_utc": intents_ts.isoformat() if intents_ts else None,
+            "capture_economics_generated_at_utc": capture_ts.isoformat() if capture_ts else None,
             "active_trader_positions": len(active_positions),
             "live_ready_pairs": list(live_ready_pairs),
             "intent_pairs": list(intent_pairs),
@@ -167,6 +174,15 @@ class MemoryHealthAuditor:
             layer=LAYER_SHORT,
             code="SHORT_ORDER_INTENTS_UNREADABLE",
             label="order_intents",
+        )
+        _audit_capture_economics(
+            issues,
+            metrics,
+            loaded=capture_loaded,
+            path=capture_economics_path,
+            intents=intents,
+            intents_ts=intents_ts,
+            target_open=target_open,
         )
 
         forecast_rows, forecast_malformed, forecast_error = _read_jsonl(forecast_history_path)
@@ -246,6 +262,7 @@ class MemoryHealthAuditor:
             "broker_snapshot": str(snapshot_path),
             "daily_target_state": str(target_state_path),
             "order_intents": str(order_intents_path),
+            "capture_economics": str(capture_economics_path),
             "strategy_profile": str(strategy_profile_path),
             "forecast_history": str(forecast_history_path),
             "projection_ledger": str(projection_ledger_path),
@@ -263,7 +280,7 @@ class MemoryHealthAuditor:
             "metrics": metrics,
             "artifact_paths": paths,
             "contract": {
-                "short_term": "broker snapshot, order intents, and current forecast history must describe the same executable cycle",
+                "short_term": "broker snapshot, capture economics, order intents, and current forecast history must describe the same executable cycle",
                 "medium_term": "projection and execution ledgers must be reconcilable before new live exposure",
                 "long_term": "strategy_profile must contain mined evidence before target-open entry routing",
                 "position_memory": "open trader-owned positions must retain an entry_thesis row for machine-checkable management",
@@ -387,6 +404,119 @@ def _check_required_json(
             message=f"{label} is unreadable: {path}: {loaded.error}",
         )
     )
+
+
+def _audit_capture_economics(
+    issues: list[dict[str, Any]],
+    metrics: dict[str, Any],
+    *,
+    loaded: _LoadedJson,
+    path: Path,
+    intents: dict[str, Any],
+    intents_ts: datetime | None,
+    target_open: bool,
+) -> None:
+    payload = loaded.payload or {}
+    overall = payload.get("overall") if isinstance(payload.get("overall"), dict) else {}
+    capture_trades = int(_float_value(overall.get("trades") or payload.get("trades")) or 0)
+    generated_at = _parse_utc(payload.get("generated_at_utc"))
+    embedded_values, embedded_examples = _capture_trade_counts_in_intents(intents, capture_trades)
+    timestamp_stale = bool(
+        intents_ts is not None
+        and generated_at is not None
+        and generated_at > intents_ts
+    )
+    metadata_mismatch = bool(
+        capture_trades > 0
+        and embedded_values
+        and any(value != capture_trades for value in embedded_values)
+    )
+    metrics["capture_economics"] = {
+        "path": str(path),
+        "generated_at_utc": generated_at.isoformat() if generated_at else None,
+        "status": payload.get("status"),
+        "trades": capture_trades,
+        "error": loaded.error,
+        "capture_generated_after_order_intents": timestamp_stale,
+        "intent_capture_economics_trades": sorted(set(embedded_values)),
+        "metadata_trade_count_mismatch": metadata_mismatch,
+        "mismatch_examples": embedded_examples,
+    }
+    if not target_open:
+        return
+    if loaded.error is not None:
+        issues.append(
+            _issue(
+                layer=LAYER_SHORT,
+                severity="BLOCK",
+                code="SHORT_CAPTURE_ECONOMICS_UNREADABLE",
+                message=f"capture_economics is unreadable while target is open: {path}: {loaded.error}",
+            )
+        )
+        return
+    if generated_at is None:
+        issues.append(
+            _issue(
+                layer=LAYER_SHORT,
+                severity="BLOCK",
+                code="SHORT_CAPTURE_ECONOMICS_TIMESTAMP_MISSING",
+                message=f"capture_economics lacks generated_at_utc while target is open: {path}",
+            )
+        )
+    if not timestamp_stale and not metadata_mismatch:
+        return
+    reasons: list[str] = []
+    if timestamp_stale:
+        reasons.append("capture_economics generated after order_intents")
+    if metadata_mismatch:
+        reasons.append("intent metadata embeds stale capture_economics trade count")
+    issues.append(
+        _issue(
+            layer=LAYER_SHORT,
+            severity="BLOCK",
+            code="SHORT_ORDER_INTENTS_CAPTURE_ECONOMICS_STALE",
+            message=(
+                "order_intents were priced from stale capture_economics evidence; "
+                "run capture-economics before generate-intents"
+            ),
+            evidence={
+                "order_intents_generated_at_utc": intents_ts.isoformat() if intents_ts else None,
+                "capture_economics_generated_at_utc": generated_at.isoformat() if generated_at else None,
+                "capture_trades": capture_trades,
+                "intent_capture_economics_trades": sorted(set(embedded_values)),
+                "reasons": reasons,
+                "mismatch_examples": embedded_examples,
+            },
+        )
+    )
+
+
+def _capture_trade_counts_in_intents(
+    intents: dict[str, Any],
+    capture_trades: int,
+) -> tuple[list[int], list[dict[str, Any]]]:
+    values: list[int] = []
+    examples: list[dict[str, Any]] = []
+    results = intents.get("results") if isinstance(intents.get("results"), list) else []
+    for item in results:
+        if not isinstance(item, dict):
+            continue
+        intent = item.get("intent") if isinstance(item.get("intent"), dict) else {}
+        metadata = intent.get("metadata") if isinstance(intent.get("metadata"), dict) else {}
+        embedded = _float_value(metadata.get("capture_economics_trades"))
+        if embedded is None:
+            continue
+        embedded_int = int(embedded)
+        values.append(embedded_int)
+        if capture_trades > 0 and embedded_int != capture_trades and len(examples) < 5:
+            examples.append(
+                {
+                    "lane_id": item.get("lane_id"),
+                    "status": item.get("status"),
+                    "intent_capture_economics_trades": embedded_int,
+                }
+            )
+    return values, examples
 
 
 def _audit_forecast_history(
