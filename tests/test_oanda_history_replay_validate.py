@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
 import sys
 import tempfile
 import unittest
@@ -32,6 +33,107 @@ def _candle(ts: str, *, bid_o: float, bid_h: float, bid_l: float, bid_c: float, 
 
 
 class OandaHistoryReplayValidateTest(unittest.TestCase):
+    def test_history_dirs_prefers_multi_month_suite_over_short_latest(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            history = root / "logs" / "replay" / "oanda_history"
+            short_run = history / "20260620T153021Z"
+            long_run = history / "months_g1" / "20260621T020921Z"
+            short_run.mkdir(parents=True)
+            long_run.mkdir(parents=True)
+            (history / "latest_summary.json").write_text(
+                json.dumps(
+                    {
+                        "output_dir": str(short_run),
+                        "granularities": ["S5"],
+                        "window": {
+                            "from": "2026-06-08T00:00:00Z",
+                            "to": "2026-06-09T00:00:00Z",
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (short_run / "summary.json").write_text(
+                json.dumps(
+                    {
+                        "output_dir": str(short_run),
+                        "granularities": ["S5"],
+                        "window": {
+                            "from": "2026-06-08T00:00:00Z",
+                            "to": "2026-06-09T00:00:00Z",
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (long_run / "summary.json").write_text(
+                json.dumps(
+                    {
+                        "output_dir": str(long_run),
+                        "granularities": ["S5", "M5"],
+                        "window": {
+                            "from": "2026-03-16T00:00:00Z",
+                            "to": "2026-06-20T00:00:00Z",
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+            previous = Path.cwd()
+            os.chdir(root)
+            try:
+                dirs = replay._history_dirs(None, granularity="S5", auto_min_days=30.0)
+            finally:
+                os.chdir(previous)
+
+        self.assertEqual(dirs, [long_run])
+
+    def test_history_dirs_discovers_orphan_multi_month_run_from_filenames(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            history = root / "logs" / "replay" / "oanda_history"
+            short_run = history / "20260620T153021Z"
+            orphan_run = history / "20260621T015218Z"
+            candle_dir = orphan_run / "GBP_USD"
+            short_run.mkdir(parents=True)
+            candle_dir.mkdir(parents=True)
+            (history / "latest_summary.json").write_text(
+                json.dumps({"output_dir": str(short_run), "granularities": ["S5"]}),
+                encoding="utf-8",
+            )
+            (candle_dir / "GBP_USD_S5_BA_20260316T000000Z_20260620T000000Z.jsonl").write_text(
+                "",
+                encoding="utf-8",
+            )
+            previous = Path.cwd()
+            os.chdir(root)
+            try:
+                dirs = [path.resolve() for path in replay._history_dirs(None, granularity="S5", auto_min_days=30.0)]
+            finally:
+                os.chdir(previous)
+
+        self.assertEqual(dirs, [orphan_run.resolve()])
+
+    def test_history_dirs_falls_back_to_latest_when_no_multi_month_suite_exists(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            history = root / "logs" / "replay" / "oanda_history"
+            short_run = history / "20260620T153021Z"
+            short_run.mkdir(parents=True)
+            (history / "latest_summary.json").write_text(
+                json.dumps({"output_dir": str(short_run), "granularities": ["S5"]}),
+                encoding="utf-8",
+            )
+            previous = Path.cwd()
+            os.chdir(root)
+            try:
+                dirs = replay._history_dirs(None, granularity="S5", auto_min_days=30.0)
+            finally:
+                os.chdir(previous)
+
+        self.assertEqual(dirs, [short_run])
+
     def test_up_forecast_uses_ask_entry_and_bid_exit(self) -> None:
         row = replay.ForecastRow(
             source_index=1,

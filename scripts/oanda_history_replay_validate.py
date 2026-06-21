@@ -13,6 +13,7 @@ import bisect
 import collections
 import json
 import math
+import re
 import statistics
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta, timezone
@@ -43,7 +44,14 @@ DEFAULT_NEGATIVE_MAX_PROFIT_FACTOR = 0.75
 DEFAULT_STABLE_MIN_ACTIVE_DAYS = 3
 DEFAULT_STABLE_MAX_DAILY_SAMPLE_SHARE = 0.70
 DEFAULT_STABLE_MIN_POSITIVE_DAY_RATE = 2.0 / 3.0
+# Auto history discovery should prefer multi-week/month replay datasets when
+# they exist. The value is an audit coverage floor, not a market edge threshold.
+DEFAULT_AUTO_HISTORY_MIN_DAYS = 30.0
 JST = timezone(timedelta(hours=9), "JST")
+_HISTORY_FILE_WINDOW_RE = re.compile(
+    r"_(?P<granularity>[A-Z0-9]+)_BA_"
+    r"(?P<start>\d{8}T\d{6}Z)_(?P<end>\d{8}T\d{6}Z)\.jsonl$"
+)
 
 
 @dataclass(frozen=True)
@@ -78,7 +86,11 @@ class ForecastRow:
 
 def main() -> int:
     args = _parse_args()
-    history_dirs = _history_dirs(args.history_dir)
+    history_dirs = _history_dirs(
+        args.history_dir,
+        granularity=args.granularity,
+        auto_min_days=args.auto_history_min_days,
+    )
     rows, load_stats = _load_forecasts(args.forecast_history)
     candles_by_pair, candle_stats = _load_candles(
         history_dirs,
@@ -229,6 +241,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--history-dir", type=Path, action="append")
     parser.add_argument("--granularity", default="S5")
     parser.add_argument("--output-dir", type=Path, default=Path("logs/reports/forecast_improvement"))
+    parser.add_argument("--auto-history-min-days", type=float, default=DEFAULT_AUTO_HISTORY_MIN_DAYS)
     parser.add_argument("--tp-grid-pips", type=_parse_float_csv, default=DEFAULT_TP_GRID_PIPS)
     parser.add_argument("--sl-grid-pips", type=_parse_float_csv, default=DEFAULT_SL_GRID_PIPS)
     parser.add_argument("--train-fraction", type=float, default=0.60)
@@ -261,9 +274,22 @@ def _parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def _history_dirs(explicit: Sequence[Path] | None) -> list[Path]:
+def _history_dirs(
+    explicit: Sequence[Path] | None,
+    *,
+    granularity: str = "S5",
+    auto_min_days: float = DEFAULT_AUTO_HISTORY_MIN_DAYS,
+) -> list[Path]:
     if explicit:
         return list(explicit)
+    root = Path("logs/replay/oanda_history")
+    multi_month = _discover_multi_month_history_dirs(
+        root,
+        granularity=str(granularity or "").upper(),
+        min_days=float(auto_min_days),
+    )
+    if multi_month:
+        return multi_month
     latest = Path("logs/replay/oanda_history/latest_summary.json")
     if not latest.exists():
         raise FileNotFoundError("missing logs/replay/oanda_history/latest_summary.json; pass --history-dir")
@@ -272,6 +298,67 @@ def _history_dirs(explicit: Sequence[Path] | None) -> list[Path]:
     if not output_dir:
         raise RuntimeError("latest_summary.json has no output_dir; pass --history-dir")
     return [Path(str(output_dir))]
+
+
+def _discover_multi_month_history_dirs(
+    root: Path,
+    *,
+    granularity: str,
+    min_days: float,
+) -> list[Path]:
+    selected: list[Path] = []
+    seen: set[Path] = set()
+    if not root.exists():
+        return selected
+    for summary_path in sorted(root.glob("**/summary.json")):
+        try:
+            payload = json.loads(summary_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        granularities = {str(item).upper() for item in payload.get("granularities") or []}
+        if granularity not in granularities:
+            continue
+        window = payload.get("window") or {}
+        start = _parse_time(str(window.get("from") or "")) if window.get("from") else None
+        end = _parse_time(str(window.get("to") or "")) if window.get("to") else None
+        if start is None or end is None:
+            continue
+        if (end - start).total_seconds() / 86400.0 < min_days:
+            continue
+        output_dir = Path(str(payload.get("output_dir") or summary_path.parent))
+        if not output_dir.exists():
+            continue
+        resolved = output_dir.resolve()
+        if resolved in seen:
+            continue
+        seen.add(resolved)
+        selected.append(output_dir)
+    for candle_path in sorted(root.glob(f"**/*_{granularity}_BA_*.jsonl")):
+        days = _history_file_window_days(candle_path, granularity=granularity)
+        if days is None or days < min_days:
+            continue
+        output_dir = candle_path.parent.parent
+        if not output_dir.exists():
+            continue
+        resolved = output_dir.resolve()
+        if resolved in seen:
+            continue
+        seen.add(resolved)
+        selected.append(output_dir)
+    return sorted(selected, key=lambda path: str(path))
+
+
+def _history_file_window_days(path: Path, *, granularity: str) -> float | None:
+    match = _HISTORY_FILE_WINDOW_RE.search(path.name)
+    if not match:
+        return None
+    if match.group("granularity").upper() != granularity.upper():
+        return None
+    start = datetime.strptime(match.group("start"), "%Y%m%dT%H%M%SZ").replace(tzinfo=timezone.utc)
+    end = datetime.strptime(match.group("end"), "%Y%m%dT%H%M%SZ").replace(tzinfo=timezone.utc)
+    if end <= start:
+        return None
+    return (end - start).total_seconds() / 86400.0
 
 
 def _parse_float_csv(value: str | Sequence[float]) -> tuple[float, ...]:
