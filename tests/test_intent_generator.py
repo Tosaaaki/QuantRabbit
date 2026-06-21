@@ -7189,8 +7189,10 @@ class IntentGeneratorTest(unittest.TestCase):
                             "name": "news_theme_followthrough",
                             "direction": "DOWN",
                             "confidence": 0.741,
-                            "hit_rate": 0.56,
-                            "samples": 27,
+                            "economic_hit_rate": 1.0,
+                            "economic_samples": 40,
+                            "hit_rate": 1.0,
+                            "samples": 40,
                         }
                     ],
                 },

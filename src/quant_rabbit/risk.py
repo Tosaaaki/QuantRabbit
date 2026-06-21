@@ -820,9 +820,7 @@ def _forecast_unselected_projection_conflict_issues(
         samples = _to_int(signal.get("samples"))
         if hit_rate is None or samples is None:
             continue
-        if samples < FORECAST_MARKET_SUPPORT_MIN_SAMPLES:
-            continue
-        if hit_rate < FORECAST_MARKET_SUPPORT_MIN_DIRECTIONAL_HIT_RATE:
+        if not _forecast_support_signal_clears_live_precision(signal):
             continue
         conflicts.append(signal)
 
@@ -1198,11 +1196,10 @@ def _forecast_supported_opposite_side_blocks(
     aligned_count = _to_int(support.get("aligned_projection_count")) or 0
     if aligned_count <= 0:
         return False
-    samples = _to_int(support.get("best_samples")) or 0
-    if samples < FORECAST_MARKET_SUPPORT_MIN_SAMPLES:
-        return False
-    hit_rate = _to_float(support.get("best_hit_rate")) or 0.0
-    return hit_rate >= FORECAST_MARKET_SUPPORT_MIN_DIRECTIONAL_HIT_RATE
+    return _forecast_market_support_has_current_directional_signal(
+        support,
+        direction=direction,
+    )
 
 
 def _forecast_confidence_required_issue(

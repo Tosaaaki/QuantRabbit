@@ -1306,9 +1306,20 @@ class RiskEngineTest(unittest.TestCase):
                     "ok": True,
                     "direction": "UP",
                     "aligned_projection_count": 1,
-                    "best_hit_rate": 0.77,
-                    "best_samples": 13,
+                    "best_hit_rate": 1.0,
+                    "best_samples": 40,
                     "reason": "news_theme_followthrough UP supports weak calibrated forecast",
+                    "signals": [
+                        {
+                            "name": "news_theme_followthrough",
+                            "direction": "UP",
+                            "confidence": 0.8,
+                            "economic_hit_rate": 1.0,
+                            "economic_samples": 40,
+                            "hit_rate": 1.0,
+                            "samples": 40,
+                        }
+                    ],
                 },
             },
         )
@@ -1387,8 +1398,10 @@ class RiskEngineTest(unittest.TestCase):
                         {
                             "name": "news_theme_followthrough",
                             "direction": "DOWN",
+                            "economic_hit_rate": 1.0,
+                            "economic_samples": 40,
                             "hit_rate": 1.0,
-                            "samples": 12,
+                            "samples": 40,
                         }
                     ]
                 },
@@ -1399,6 +1412,47 @@ class RiskEngineTest(unittest.TestCase):
 
         self.assertFalse(decision.allowed)
         self.assertIn(
+            "FORECAST_RANGE_UNSELECTED_DIRECTION_CONFLICT",
+            {issue.code for issue in decision.issues},
+        )
+
+    def test_range_forecast_ignores_headline_only_opposite_unselected_projection_for_live_send(self) -> None:
+        intent = OrderIntent(
+            pair="EUR_USD",
+            side=Side.LONG,
+            order_type=OrderType.MARKET,
+            units=1000,
+            tp=1.17500,
+            sl=1.17230,
+            thesis="do_not_let_timeout_drag_signal_veto_range_side",
+            market_context=MarketContext(
+                regime="RANGE current; RANGE_ROTATION campaign lane",
+                narrative="headline projection looks perfect but times out too often",
+                chart_story="range rail geometry with two-way structure",
+                method=TradeMethod.RANGE_ROTATION,
+                invalidation="SL trades",
+            ),
+            metadata={
+                "forecast_direction": "RANGE",
+                "forecast_market_support": {
+                    "unselected_signals": [
+                        {
+                            "name": "news_theme_followthrough",
+                            "direction": "DOWN",
+                            "economic_hit_rate": 0.40,
+                            "economic_samples": 100,
+                            "hit_rate": 1.0,
+                            "samples": 40,
+                            "timeout_rate": 0.60,
+                        }
+                    ]
+                },
+            },
+        )
+
+        decision = _capped_engine(live_enabled=True).validate(intent, snapshot(), for_live_send=True)
+
+        self.assertNotIn(
             "FORECAST_RANGE_UNSELECTED_DIRECTION_CONFLICT",
             {issue.code for issue in decision.issues},
         )
@@ -1433,6 +1487,8 @@ class RiskEngineTest(unittest.TestCase):
                             "name": "news_theme_followthrough",
                             "direction": "DOWN",
                             "confidence": 0.8,
+                            "economic_hit_rate": 1.0,
+                            "economic_samples": 40,
                             "hit_rate": 1.0,
                             "samples": 40,
                             "lead_time_min": 20.0,
@@ -1479,6 +1535,8 @@ class RiskEngineTest(unittest.TestCase):
                             "name": "news_theme_followthrough",
                             "direction": "DOWN",
                             "confidence": 0.8,
+                            "economic_hit_rate": 1.0,
+                            "economic_samples": 40,
                             "hit_rate": 1.0,
                             "samples": 40,
                             "lead_time_min": 20.0,
@@ -1521,8 +1579,11 @@ class RiskEngineTest(unittest.TestCase):
                         {
                             "name": "liquidity_sweep_low",
                             "direction": "UP",
-                            "hit_rate": 0.69,
-                            "samples": 100,
+                            "economic_hit_rate": 1.0,
+                            "economic_samples": 40,
+                            "hit_rate": 1.0,
+                            "samples": 40,
+                            "target_pips": 6.0,
                         }
                     ],
                 },
@@ -1533,6 +1594,56 @@ class RiskEngineTest(unittest.TestCase):
 
         self.assertFalse(decision.allowed)
         self.assertIn(
+            "FORECAST_UNSELECTED_OPPOSITE_PROJECTION",
+            {issue.code for issue in decision.issues},
+        )
+
+    def test_directional_forecast_ignores_headline_only_opposite_unselected_projection(self) -> None:
+        intent = OrderIntent(
+            pair="EUR_USD",
+            side=Side.SHORT,
+            order_type=OrderType.MARKET,
+            units=1000,
+            tp=1.17130,
+            sl=1.17430,
+            thesis="do_not_let_timeout_drag_projection_veto_selected_side",
+            market_context=MarketContext(
+                regime="TREND_DOWN continuation candidate",
+                narrative="opposite sweep bucket times out too often to veto the entry",
+                chart_story="breakdown attempt near lower liquidity",
+                method=TradeMethod.BREAKOUT_FAILURE,
+                invalidation="reclaims range low",
+            ),
+            metadata={
+                "forecast_direction": "DOWN",
+                "forecast_confidence": 0.72,
+                "forecast_raw_confidence": 0.78,
+                "forecast_directional_calibration_name": "directional_forecast_down",
+                "forecast_directional_hit_rate": 1.0,
+                "forecast_directional_samples": 40,
+                "forecast_market_support": {
+                    "ok": False,
+                    "direction": "DOWN",
+                    "aligned_projection_count": 0,
+                    "unselected_signals": [
+                        {
+                            "name": "liquidity_sweep_low",
+                            "direction": "UP",
+                            "economic_hit_rate": 0.40,
+                            "economic_samples": 100,
+                            "hit_rate": 1.0,
+                            "samples": 40,
+                            "target_pips": 6.0,
+                            "timeout_rate": 0.60,
+                        }
+                    ],
+                },
+            },
+        )
+
+        decision = _capped_engine(live_enabled=True).validate(intent, snapshot(), for_live_send=True)
+
+        self.assertNotIn(
             "FORECAST_UNSELECTED_OPPOSITE_PROJECTION",
             {issue.code for issue in decision.issues},
         )
