@@ -47,6 +47,10 @@ DEFAULT_LOOKBACK_HOURS = 168.0
 # below that cap while preserving enough resolution for timing lag metrics.
 DEFAULT_CANDLE_CHUNK_HOURS = 6.0
 
+# Shape rollups are compact routing hints for the next cycle digest/GPT packet;
+# individual rows remain in `canceled_order_regrets` for full audit detail.
+TIMING_SHAPE_ROLLUP_LIMIT = 12
+
 
 @dataclass(frozen=True)
 class BidAskCandle:
@@ -185,6 +189,7 @@ def build_execution_timing_audit(
             "post_close_hours": float(post_close_hours),
         },
         "summary": _summary(canceled_rows, loss_rows, market_close_rows),
+        "canceled_order_regret_by_shape": _canceled_order_regret_by_shape(canceled_rows),
         "canceled_order_regrets": canceled_rows,
         "loss_close_regrets": loss_rows,
         "market_close_counterfactuals": market_close_rows,
@@ -718,6 +723,105 @@ def _summary(
     }
 
 
+def _canceled_order_regret_by_shape(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    groups: dict[tuple[str, str, str, str], list[dict[str, Any]]] = {}
+    for row in rows:
+        pair = str(row.get("pair") or "UNKNOWN")
+        side = str(row.get("side") or "UNKNOWN")
+        method = _lane_method(str(row.get("lane_id") or ""))
+        order_type = str(row.get("order_type") or "UNKNOWN")
+        groups.setdefault((pair, side, method, order_type), []).append(row)
+
+    items: list[dict[str, Any]] = []
+    for (pair, side, method, order_type), bucket in groups.items():
+        orders = len(bucket)
+        entry_touched = [row for row in bucket if row.get("entry_touched_after_cancel")]
+        positive = [
+            row
+            for row in bucket
+            if float(row.get("mfe_pips_after_cancel_entry") or 0.0) > 0.0
+        ]
+        tp_touched = [row for row in bucket if row.get("tp_touched_after_cancel")]
+        missed_mfe_jpy = _sum_known(bucket, "estimated_missed_mfe_jpy")
+        avg_entry_touch = _avg_known(entry_touched, "entry_touch_after_cancel_minutes")
+        avg_tp_touch = _avg_known(tp_touched, "tp_touch_after_cancel_minutes")
+        if tp_touched:
+            priority_class = "PRESERVE_PENDING_THESIS_TP_TOUCHED"
+            rank = 0
+            next_action = (
+                "review cancel rule/TTL before canceling this pending shape; canceled orders later "
+                "reached broker TP in the audit window"
+            )
+        elif entry_touched and positive:
+            priority_class = "REPRICE_OR_EXTEND_TTL_ENTRY_TOUCHED"
+            rank = 1
+            next_action = (
+                "repair pending TTL/reprice logic; canceled orders later touched entry and produced "
+                "positive MFE"
+            )
+        elif entry_touched:
+            priority_class = "ENTRY_TOUCHED_NO_POSITIVE_MFE"
+            rank = 2
+            next_action = "inspect fill economics before preserving this pending shape"
+        else:
+            priority_class = "LOW_CANCEL_REGRET"
+            rank = 3
+            next_action = "current cancel behavior has no post-cancel entry touch evidence in this window"
+        items.append(
+            {
+                "evidence_ref": f"timing:canceled_shape:{pair}:{side}:{method}:{order_type}",
+                "pair": pair,
+                "side": side,
+                "method": method,
+                "order_type": order_type,
+                "priority_class": priority_class,
+                "next_action": next_action,
+                "orders": orders,
+                "entry_touched_after_cancel": len(entry_touched),
+                "entry_touch_after_cancel_rate": _rate(len(entry_touched), orders),
+                "positive_after_cancel_entry": len(positive),
+                "positive_after_cancel_entry_rate": _rate(len(positive), orders),
+                "tp_touched_after_cancel": len(tp_touched),
+                "tp_touched_after_cancel_rate": _rate(len(tp_touched), orders),
+                "estimated_missed_mfe_jpy": missed_mfe_jpy,
+                "avg_entry_touch_after_cancel_minutes": avg_entry_touch,
+                "avg_tp_touch_after_cancel_minutes": avg_tp_touch,
+                "_sort_rank": rank,
+            }
+        )
+
+    sorted_items = sorted(
+        items,
+        key=lambda item: (
+            int(item.get("_sort_rank") or 0),
+            -float(item.get("estimated_missed_mfe_jpy") or 0.0),
+            str(item.get("pair") or ""),
+            str(item.get("side") or ""),
+            str(item.get("method") or ""),
+            str(item.get("order_type") or ""),
+        ),
+    )
+    for item in sorted_items:
+        item.pop("_sort_rank", None)
+    return {
+        "basis": "canceled pending orders grouped by pair|side|method|order_type",
+        "total_shapes": len(sorted_items),
+        "items": sorted_items[:TIMING_SHAPE_ROLLUP_LIMIT],
+    }
+
+
+def _avg_known(rows: list[dict[str, Any]], key: str) -> float | None:
+    values = [float(row[key]) for row in rows if row.get(key) is not None]
+    return round(sum(values) / len(values), 2) if values else None
+
+
+def _lane_method(lane_id: str) -> str:
+    parts = [part for part in str(lane_id or "").split(":") if part]
+    if len(parts) >= 4:
+        return parts[3]
+    return "UNKNOWN"
+
+
 def _write_report(payload: dict[str, Any], report_path: Path) -> None:
     summary = payload.get("summary") or {}
     lines = [
@@ -767,6 +871,36 @@ def _write_report(payload: dict[str, Any], report_path: Path) -> None:
         "loss_market_closes_contained_risk",
     ):
         lines.append(f"- `{key}`: `{summary.get(key)}`")
+    shape_rollup = payload.get("canceled_order_regret_by_shape")
+    shape_items = (
+        shape_rollup.get("items")
+        if isinstance(shape_rollup, dict)
+        else []
+    )
+    if shape_items:
+        lines.extend(
+            [
+                "",
+                "## Canceled Order Regret By Shape",
+                "",
+                "| pair | side | method | type | priority | orders | entry touch | TP touch | missed MFE JPY |",
+                "|---|---|---|---|---|---:|---:|---:|---:|",
+            ]
+        )
+        for row in shape_items:
+            lines.append(
+                "| `{pair}` | `{side}` | `{method}` | `{order_type}` | `{priority}` | {orders} | {entry} | {tp} | {mfe} |".format(
+                    pair=row.get("pair"),
+                    side=row.get("side"),
+                    method=row.get("method"),
+                    order_type=row.get("order_type"),
+                    priority=row.get("priority_class"),
+                    orders=row.get("orders"),
+                    entry=row.get("entry_touched_after_cancel"),
+                    tp=row.get("tp_touched_after_cancel"),
+                    mfe=row.get("estimated_missed_mfe_jpy"),
+                )
+            )
     lines.extend(["", "## Top Canceled Order Regrets", "", "| Order | Lane | Pair | Side | Entry touch min | TP touch min | MFE pips | Est MFE JPY |", "|---|---|---|---|---:|---:|---:|---:|"])
     top_canceled = sorted(
         payload.get("canceled_order_regrets") or [],

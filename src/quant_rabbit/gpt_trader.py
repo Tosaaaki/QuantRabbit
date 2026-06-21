@@ -3472,6 +3472,18 @@ def _allowed_refs(
                 reason_key = str(reason or "").strip()
                 if reason_key:
                     refs.append(f"capture:exit_reason:{reason_key}")
+        segment_priorities = capture_economics.get("segment_repair_priorities")
+        segment_items = (
+            segment_priorities.get("items")
+            if isinstance(segment_priorities, dict)
+            else []
+        )
+        for item in segment_items or []:
+            if not isinstance(item, dict):
+                continue
+            ref = str(item.get("evidence_ref") or "").strip()
+            if ref:
+                refs.append(ref)
     if execution_timing_audit:
         refs.extend(
             [
@@ -3487,6 +3499,18 @@ def _allowed_refs(
             order_id = str(row.get("order_id") or "").strip()
             if order_id:
                 refs.append(f"timing:canceled_order:{order_id}")
+        shape_rollup = execution_timing_audit.get("canceled_order_regret_by_shape")
+        shape_items = (
+            shape_rollup.get("items")
+            if isinstance(shape_rollup, dict)
+            else []
+        )
+        for row in shape_items or []:
+            if not isinstance(row, dict):
+                continue
+            ref = str(row.get("evidence_ref") or "").strip()
+            if ref:
+                refs.append(ref)
         for row in execution_timing_audit.get("loss_close_regrets", []) or []:
             if not isinstance(row, dict):
                 continue
@@ -3688,6 +3712,43 @@ def _capture_economics_packet(payload: dict[str, Any] | None) -> dict[str, Any]:
                     ),
                 ),
             }
+    segment_repair_items: list[dict[str, Any]] = []
+    raw_segment_priorities = payload.get("segment_repair_priorities")
+    raw_segment_items = (
+        raw_segment_priorities.get("items")
+        if isinstance(raw_segment_priorities, dict)
+        else []
+    )
+    for item in raw_segment_items or []:
+        if not isinstance(item, dict):
+            continue
+        segment_repair_items.append(
+            {
+                "evidence_ref": str(item.get("evidence_ref") or ""),
+                **_small_dict(
+                    item,
+                    (
+                        "pair",
+                        "side",
+                        "method",
+                        "priority_class",
+                        "next_action",
+                        "trades",
+                        "win_rate",
+                        "expectancy_jpy_per_trade",
+                        "net_jpy",
+                        "take_profit_trades",
+                        "take_profit_proof_gap_trades",
+                        "take_profit_proven",
+                        "take_profit_expectancy_jpy",
+                        "market_close_trades",
+                        "market_close_losses",
+                        "market_close_expectancy_jpy",
+                        "market_close_net_jpy",
+                    ),
+                ),
+            }
+        )
     return {
         "evidence_ref": "capture:economics",
         "generated_at_utc": payload.get("generated_at_utc"),
@@ -3722,6 +3783,19 @@ def _capture_economics_packet(payload: dict[str, Any] | None) -> dict[str, Any]:
                 "top_positive_exit_reasons",
             ),
         ),
+        "segment_repair_priorities": {
+            "basis": (
+                raw_segment_priorities.get("basis")
+                if isinstance(raw_segment_priorities, dict)
+                else None
+            ),
+            "scoped_tp_proof_min_exit_trades": (
+                raw_segment_priorities.get("scoped_tp_proof_min_exit_trades")
+                if isinstance(raw_segment_priorities, dict)
+                else None
+            ),
+            "items": segment_repair_items[:8],
+        },
         "action_items": [str(item) for item in (payload.get("action_items") or [])[:6] if str(item).strip()],
     }
 
@@ -3788,6 +3862,38 @@ def _execution_timing_audit_packet(payload: dict[str, Any] | None) -> dict[str, 
                 ),
             }
             for item in (payload.get("canceled_order_regrets") or [])[:12]
+            if isinstance(item, dict)
+        ],
+        "canceled_order_regret_by_shape": [
+            {
+                "evidence_ref": str(item.get("evidence_ref") or ""),
+                **_small_dict(
+                    item,
+                    (
+                        "pair",
+                        "side",
+                        "method",
+                        "order_type",
+                        "priority_class",
+                        "next_action",
+                        "orders",
+                        "entry_touched_after_cancel",
+                        "entry_touch_after_cancel_rate",
+                        "positive_after_cancel_entry",
+                        "positive_after_cancel_entry_rate",
+                        "tp_touched_after_cancel",
+                        "tp_touched_after_cancel_rate",
+                        "estimated_missed_mfe_jpy",
+                        "avg_entry_touch_after_cancel_minutes",
+                        "avg_tp_touch_after_cancel_minutes",
+                    ),
+                ),
+            }
+            for item in (
+                ((payload.get("canceled_order_regret_by_shape") or {}).get("items") or [])
+                if isinstance(payload.get("canceled_order_regret_by_shape"), dict)
+                else []
+            )[:8]
             if isinstance(item, dict)
         ],
         "loss_close_regrets": [

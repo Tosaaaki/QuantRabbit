@@ -9,6 +9,9 @@ tagless closes are excluded) and publishes the payoff arithmetic the daily
 - the breakeven payoff requirement `(1 - p) / p` at the observed win rate
 - expectancy per trade in JPY and in % of the campaign per-trade budget
 - the same metrics split by exit reason and by ISO week
+- pair/side/method repair priorities that separate scoped broker-TP proof from
+  MARKET_ORDER_TRADE_CLOSE leakage, so high rotation preserves the paying
+  capture shape instead of scaling the lossy close path
 
 This is first an audit surface: it does not select sides or grant permission.
 When it reports NEGATIVE_EXPECTANCY with average losses larger than average
@@ -48,6 +51,19 @@ MIN_SAMPLE_FOR_VERDICT = 20
 # current broker/intent evidence; this is an engineering display cap, not a
 # market threshold.
 EXIT_REPAIR_ITEM_LIMIT = 4
+
+# Pair/side/method repair rows are compact operator routing evidence, not a
+# live-entry permission list. The cap keeps the prompt packet focused while the
+# nested metrics above still retain the full realized bucket details.
+SEGMENT_REPAIR_PRIORITY_LIMIT = 12
+
+TAKE_PROFIT_EXIT_REASON = "TAKE_PROFIT_ORDER"
+MARKET_CLOSE_EXIT_REASON = "MARKET_ORDER_TRADE_CLOSE"
+
+# Use the same statistical floor as the audit verdict for "scoped TP proof";
+# RiskEngine and IntentGenerator mirror the live relaxation floor independently
+# so manual/replayed receipts remain defended without importing this module.
+SCOPED_TP_PROOF_MIN_EXIT_TRADES = MIN_SAMPLE_FOR_VERDICT
 
 _ATTRIBUTED_REALIZED_SQL = """
 WITH gateway_entries AS (
@@ -261,6 +277,165 @@ def _capture_repair_summary(
     return summary
 
 
+def _segment_repair_priorities(rows: list[RealizedOutcome]) -> dict[str, Any]:
+    groups: dict[tuple[str, str, str], list[RealizedOutcome]] = {}
+    for row in rows:
+        key = (row.pair or "UNKNOWN", row.side or "UNKNOWN", row.method or "UNKNOWN")
+        groups.setdefault(key, []).append(row)
+
+    items: list[dict[str, Any]] = []
+    for (pair, side, method), bucket in groups.items():
+        overall = _bucket_metrics(bucket)
+        tp_metrics = _bucket_metrics(
+            [row for row in bucket if row.exit_reason == TAKE_PROFIT_EXIT_REASON]
+        )
+        market_close_metrics = _bucket_metrics(
+            [row for row in bucket if row.exit_reason == MARKET_CLOSE_EXIT_REASON]
+        )
+        market_close_loss_rows = [
+            row
+            for row in bucket
+            if row.exit_reason == MARKET_CLOSE_EXIT_REASON and row.realized_pl_jpy < 0
+        ]
+
+        tp_trades = int(tp_metrics.get("trades") or 0)
+        tp_losses = int(tp_metrics.get("losses") or 0)
+        tp_expectancy = _optional_float(tp_metrics.get("expectancy_jpy_per_trade"))
+        tp_avg_win = _optional_float(tp_metrics.get("avg_win_jpy"))
+        tp_proven = (
+            tp_trades >= SCOPED_TP_PROOF_MIN_EXIT_TRADES
+            and tp_expectancy is not None
+            and tp_expectancy > 0
+            and tp_avg_win is not None
+            and tp_avg_win > 0
+            and tp_losses <= 0
+        )
+        tp_positive_thin = (
+            tp_trades > 0
+            and not tp_proven
+            and tp_expectancy is not None
+            and tp_expectancy > 0
+            and tp_avg_win is not None
+            and tp_avg_win > 0
+            and tp_losses <= 0
+        )
+        proof_gap = max(0, SCOPED_TP_PROOF_MIN_EXIT_TRADES - tp_trades)
+
+        segment_net = _optional_float(overall.get("net_jpy"))
+        market_close_net = _optional_float(market_close_metrics.get("net_jpy"))
+        market_close_negative = market_close_net is not None and market_close_net < 0
+        segment_negative = segment_net is not None and segment_net < 0
+
+        if tp_proven and market_close_negative:
+            priority_class = "PRESERVE_TP_PROVEN_REPAIR_MARKET_CLOSE_LEAK"
+            rank = 0
+            next_action = (
+                "preserve attached-TP HARVEST entries for this exact shape, but repair "
+                "or avoid its MARKET_ORDER_TRADE_CLOSE path before increasing exposure"
+            )
+        elif market_close_negative and tp_positive_thin:
+            priority_class = "COLLECT_TP_PROOF_REPAIR_MARKET_CLOSE_LEAK"
+            rank = 1
+            next_action = (
+                "collect more scoped broker-TP outcomes and repair MARKET_ORDER_TRADE_CLOSE "
+                "leakage before treating this as high-rotation proof"
+            )
+        elif market_close_negative:
+            priority_class = "REPAIR_MARKET_CLOSE_LEAK"
+            rank = 2
+            next_action = (
+                "rank the close provenance for this segment; do not widen fresh risk until "
+                "loss-side MARKET_ORDER_TRADE_CLOSE evidence is repaired or explicitly justified"
+            )
+        elif tp_proven:
+            priority_class = "PRESERVE_TP_PROVEN_SHAPE"
+            rank = 3
+            next_action = (
+                "preserve this attached-TP capture shape while keeping forecast, spread, "
+                "strategy-profile, margin, and gateway checks active"
+            )
+        elif tp_positive_thin:
+            priority_class = "COLLECT_SCOPED_TP_PROOF"
+            rank = 4
+            next_action = (
+                "treat as evidence-collection candidate: positive broker-TP outcomes exist "
+                "but the scoped sample is below the proof floor"
+            )
+        elif segment_negative:
+            priority_class = "AVOID_OR_REPRICE_SEGMENT"
+            rank = 5
+            next_action = (
+                "avoid or reprice this segment until entry/exit geometry produces positive "
+                "realized expectancy"
+            )
+        else:
+            priority_class = "MONITOR_LOW_SAMPLE" if int(overall.get("trades") or 0) < MIN_SAMPLE_FOR_VERDICT else "MONITOR"
+            rank = 6
+            next_action = "monitor; no realized TP proof or market-close repair priority dominates yet"
+
+        items.append(
+            {
+                "evidence_ref": f"capture:segment:{pair}:{side}:{method}",
+                "pair": pair,
+                "side": side,
+                "method": method,
+                "priority_class": priority_class,
+                "next_action": next_action,
+                "trades": int(overall.get("trades") or 0),
+                "wins": int(overall.get("wins") or 0),
+                "losses": int(overall.get("losses") or 0),
+                "win_rate": overall.get("win_rate"),
+                "expectancy_jpy_per_trade": overall.get("expectancy_jpy_per_trade"),
+                "net_jpy": overall.get("net_jpy"),
+                "take_profit_trades": tp_trades,
+                "take_profit_wins": int(tp_metrics.get("wins") or 0),
+                "take_profit_losses": tp_losses,
+                "take_profit_expectancy_jpy": tp_metrics.get("expectancy_jpy_per_trade"),
+                "take_profit_net_jpy": tp_metrics.get("net_jpy"),
+                "take_profit_proof_floor": SCOPED_TP_PROOF_MIN_EXIT_TRADES,
+                "take_profit_proof_gap_trades": proof_gap,
+                "take_profit_proven": tp_proven,
+                "market_close_trades": int(market_close_metrics.get("trades") or 0),
+                "market_close_losses": int(market_close_metrics.get("losses") or 0),
+                "market_close_loss_net_jpy": round(
+                    sum(row.realized_pl_jpy for row in market_close_loss_rows),
+                    1,
+                ),
+                "market_close_expectancy_jpy": market_close_metrics.get(
+                    "expectancy_jpy_per_trade"
+                ),
+                "market_close_net_jpy": market_close_metrics.get("net_jpy"),
+                "_sort_rank": rank,
+            }
+        )
+
+    def _sort_key(item: dict[str, Any]) -> tuple[float, float, float, int, str, str, str]:
+        market_close_net = _optional_float(item.get("market_close_net_jpy"))
+        segment_net = _optional_float(item.get("net_jpy"))
+        proof_gap = int(item.get("take_profit_proof_gap_trades") or 0)
+        return (
+            float(item.get("_sort_rank") or 0),
+            market_close_net if market_close_net is not None else 0.0,
+            segment_net if segment_net is not None else 0.0,
+            proof_gap,
+            str(item.get("pair") or ""),
+            str(item.get("side") or ""),
+            str(item.get("method") or ""),
+        )
+
+    sorted_items = sorted(items, key=_sort_key)
+    for item in sorted_items:
+        item.pop("_sort_rank", None)
+    return {
+        "basis": "trader-attributed realized outcomes grouped by pair|side|method",
+        "take_profit_exit_reason": TAKE_PROFIT_EXIT_REASON,
+        "market_close_exit_reason": MARKET_CLOSE_EXIT_REASON,
+        "scoped_tp_proof_min_exit_trades": SCOPED_TP_PROOF_MIN_EXIT_TRADES,
+        "total_segments": len(sorted_items),
+        "items": sorted_items[:SEGMENT_REPAIR_PRIORITY_LIMIT],
+    }
+
+
 def _capture_action_items(
     *,
     status: str,
@@ -357,6 +532,7 @@ def build_capture_economics(
     else:
         status = "NEGATIVE_EXPECTANCY"
     repair_summary = _capture_repair_summary(status=status, overall=overall, by_exit=by_exit)
+    segment_repair_priorities = _segment_repair_priorities(rows)
     action_items = _capture_action_items(
         status=status,
         overall=overall,
@@ -375,6 +551,7 @@ def build_capture_economics(
         "by_pair_side_method_exit_reason": by_pair_side_method_exit,
         "by_iso_week": by_week,
         "repair_summary": repair_summary,
+        "segment_repair_priorities": segment_repair_priorities,
         "action_items": action_items,
         "note": (
             "Advisory audit (AGENT_CONTRACT §8): payoff_ratio must reach "
@@ -408,6 +585,20 @@ def build_capture_economics(
             f"- Strongest positive exit: `{repair_summary.get('strongest_positive_exit_reason') or 'none'}` "
             f"net `{repair_summary.get('strongest_positive_exit_net_jpy')}` JPY",
             f"- Payoff gap to breakeven: `{repair_summary.get('payoff_gap_to_breakeven')}`",
+            "",
+            "## Segment Repair Priorities",
+            "",
+            "| pair | side | method | priority | n | TP n/gap | market-close net | net |",
+            "|---|---|---|---|---|---|---|---|",
+            *[
+                (
+                    f"| `{item.get('pair')}` | `{item.get('side')}` | `{item.get('method')}` "
+                    f"| `{item.get('priority_class')}` | {item.get('trades')} "
+                    f"| {item.get('take_profit_trades')}/{item.get('take_profit_proof_gap_trades')} "
+                    f"| {item.get('market_close_net_jpy')} | {item.get('net_jpy')} |"
+                )
+                for item in segment_repair_priorities.get("items", [])
+            ],
             "",
             "## Action Items",
             "",

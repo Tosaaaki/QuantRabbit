@@ -164,6 +164,83 @@ class ExecutionTimingAuditTest(unittest.TestCase):
             self.assertEqual(row["tp_touch_after_cancel_minutes"], 9.5)
             self.assertEqual(row["mfe_pips_after_cancel_entry"], 12.0)
 
+    def test_canceled_order_regret_rolls_up_by_pair_side_method(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            db = root / "ledger.db"
+            _make_db(db)
+            with sqlite3.connect(db) as conn:
+                for idx, cancel_minute in enumerate((10, 12), start=1):
+                    order_id = f"o{idx}"
+                    _insert_event(
+                        conn,
+                        f"accepted-{order_id}",
+                        ts_utc=f"2026-06-16T00:0{idx}:00Z",
+                        event_type="ORDER_ACCEPTED",
+                        lane_id="failure_trader:USD_JPY:LONG:BREAKOUT_FAILURE",
+                        order_id=order_id,
+                        pair="USD_JPY",
+                        side="LONG",
+                        units=1000,
+                        price=150.00,
+                        tp=150.10,
+                        sl=149.80,
+                        exit_reason="CLIENT_ORDER",
+                        raw={
+                            "type": "LIMIT_ORDER",
+                            "instrument": "USD_JPY",
+                            "units": "1000",
+                            "price": "150.00",
+                            "takeProfitOnFill": {"price": "150.10"},
+                            "stopLossOnFill": {"price": "149.80"},
+                        },
+                    )
+                    _insert_event(
+                        conn,
+                        f"canceled-{order_id}",
+                        ts_utc=f"2026-06-16T00:{cancel_minute}:30Z",
+                        event_type="ORDER_CANCELED",
+                        order_id=order_id,
+                        pair="USD_JPY",
+                    )
+                conn.commit()
+
+            candles = (
+                BidAskCandle(_dt("2026-06-16T00:13:00Z"), 150.02, 149.98, 150.03, 149.99),
+                BidAskCandle(_dt("2026-06-16T00:20:00Z"), 150.12, 150.05, 150.13, 150.06),
+            )
+
+            def fetcher(pair: str, start: datetime, end: datetime, granularity: str) -> tuple[BidAskCandle, ...]:
+                self.assertEqual(pair, "USD_JPY")
+                return tuple(c for c in candles if start <= c.timestamp_utc <= end)
+
+            payload = build_execution_timing_audit(
+                ledger_path=db,
+                snapshot_path=None,
+                output_path=root / "audit.json",
+                report_path=root / "audit.md",
+                now_utc=_dt("2026-06-17T00:00:00Z"),
+                candle_fetcher=fetcher,
+            )
+
+            rollup = payload["canceled_order_regret_by_shape"]
+            self.assertEqual(rollup["total_shapes"], 1)
+            item = rollup["items"][0]
+            self.assertEqual(
+                item["evidence_ref"],
+                "timing:canceled_shape:USD_JPY:LONG:BREAKOUT_FAILURE:LIMIT_ORDER",
+            )
+            self.assertEqual(item["priority_class"], "PRESERVE_PENDING_THESIS_TP_TOUCHED")
+            self.assertEqual(item["orders"], 2)
+            self.assertEqual(item["entry_touched_after_cancel"], 2)
+            self.assertEqual(item["tp_touched_after_cancel"], 2)
+            self.assertEqual(item["entry_touch_after_cancel_rate"], 1.0)
+            self.assertEqual(item["tp_touched_after_cancel_rate"], 1.0)
+            self.assertAlmostEqual(item["estimated_missed_mfe_jpy"], 240.0)
+            report = (root / "audit.md").read_text()
+            self.assertIn("## Canceled Order Regret By Shape", report)
+            self.assertIn("PRESERVE_PENDING_THESIS_TP_TOUCHED", report)
+
     def test_canceled_order_window_is_clamped_to_now(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

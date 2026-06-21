@@ -145,6 +145,95 @@ class CaptureEconomicsTest(unittest.TestCase):
                 1,
             )
 
+    def test_segment_repair_priorities_split_tp_proof_from_market_close_leak(self) -> None:
+        """High-rotation candidates must be scoped to the exact TP shape.
+
+        A segment can have enough broker-TP proof to preserve its attached-TP
+        path while still needing close-discipline repair for MARKET_ORDER_TRADE_CLOSE.
+        Thin positive TP buckets are evidence-collection candidates, not proof.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            closes = []
+            for i in range(20):
+                closes.append(
+                    {
+                        "ts_utc": f"2026-06-02T10:{i:02d}:00Z",
+                        "pair": "EUR_USD",
+                        "side": "LONG",
+                        "method": "BREAKOUT_FAILURE",
+                        "pl": 500.0,
+                    }
+                )
+            for i in range(3):
+                closes.append(
+                    {
+                        "ts_utc": f"2026-06-02T11:{i:02d}:00Z",
+                        "pair": "EUR_USD",
+                        "side": "LONG",
+                        "method": "BREAKOUT_FAILURE",
+                        "pl": -1000.0,
+                        "exit_reason": "MARKET_ORDER_TRADE_CLOSE",
+                    }
+                )
+            for i in range(8):
+                closes.append(
+                    {
+                        "ts_utc": f"2026-06-02T12:{i:02d}:00Z",
+                        "pair": "GBP_USD",
+                        "side": "SHORT",
+                        "method": "BREAKOUT_FAILURE",
+                        "pl": 450.0,
+                    }
+                )
+            for i in range(3):
+                closes.append(
+                    {
+                        "ts_utc": f"2026-06-02T13:{i:02d}:00Z",
+                        "pair": "AUD_JPY",
+                        "side": "LONG",
+                        "method": "TREND_CONTINUATION",
+                        "pl": -700.0,
+                        "exit_reason": "MARKET_ORDER_TRADE_CLOSE",
+                    }
+                )
+            db = root / "ledger.db"
+            _make_db(db, closes)
+            build_capture_economics(
+                ledger_path=db, output_path=root / "out.json", report_path=root / "report.md"
+            )
+            payload = json.loads((root / "out.json").read_text())
+            priorities = payload["segment_repair_priorities"]
+            items = {
+                (item["pair"], item["side"], item["method"]): item
+                for item in priorities["items"]
+            }
+
+            eur = items[("EUR_USD", "LONG", "BREAKOUT_FAILURE")]
+            self.assertEqual(
+                eur["priority_class"],
+                "PRESERVE_TP_PROVEN_REPAIR_MARKET_CLOSE_LEAK",
+            )
+            self.assertTrue(eur["take_profit_proven"])
+            self.assertEqual(eur["take_profit_trades"], 20)
+            self.assertEqual(eur["take_profit_proof_gap_trades"], 0)
+            self.assertEqual(eur["market_close_losses"], 3)
+            self.assertEqual(eur["market_close_net_jpy"], -3000.0)
+
+            gbp = items[("GBP_USD", "SHORT", "BREAKOUT_FAILURE")]
+            self.assertEqual(gbp["priority_class"], "COLLECT_SCOPED_TP_PROOF")
+            self.assertFalse(gbp["take_profit_proven"])
+            self.assertEqual(gbp["take_profit_trades"], 8)
+            self.assertEqual(gbp["take_profit_proof_gap_trades"], 12)
+
+            aud = items[("AUD_JPY", "LONG", "TREND_CONTINUATION")]
+            self.assertEqual(aud["priority_class"], "REPAIR_MARKET_CLOSE_LEAK")
+            self.assertEqual(aud["take_profit_trades"], 0)
+            self.assertEqual(aud["market_close_net_jpy"], -2100.0)
+            report = (root / "report.md").read_text()
+            self.assertIn("## Segment Repair Priorities", report)
+            self.assertIn("PRESERVE_TP_PROVEN_REPAIR_MARKET_CLOSE_LEAK", report)
+
     def test_all_wins_sample_reports_positive_expectancy(self) -> None:
         """Zero losses leaves payoff undefined; the verdict must still be
         POSITIVE_EXPECTANCY, not a fall-through NEGATIVE (audit finding)."""

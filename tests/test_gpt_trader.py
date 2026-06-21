@@ -1903,6 +1903,32 @@ class GPTTraderBrainTest(unittest.TestCase):
                             "strongest_positive_exit_reason": "TAKE_PROFIT_ORDER",
                             "strongest_positive_exit_net_jpy": 46874.8,
                         },
+                        "segment_repair_priorities": {
+                            "basis": "trader-attributed realized outcomes grouped by pair|side|method",
+                            "scoped_tp_proof_min_exit_trades": 20,
+                            "items": [
+                                {
+                                    "evidence_ref": "capture:segment:EUR_USD:LONG:BREAKOUT_FAILURE",
+                                    "pair": "EUR_USD",
+                                    "side": "LONG",
+                                    "method": "BREAKOUT_FAILURE",
+                                    "priority_class": "PRESERVE_TP_PROVEN_REPAIR_MARKET_CLOSE_LEAK",
+                                    "next_action": "preserve broker TP and repair market-close leakage",
+                                    "trades": 23,
+                                    "win_rate": 0.87,
+                                    "expectancy_jpy_per_trade": 304.3,
+                                    "net_jpy": 7000.0,
+                                    "take_profit_trades": 20,
+                                    "take_profit_proof_gap_trades": 0,
+                                    "take_profit_proven": True,
+                                    "take_profit_expectancy_jpy": 500.0,
+                                    "market_close_trades": 3,
+                                    "market_close_losses": 3,
+                                    "market_close_expectancy_jpy": -1000.0,
+                                    "market_close_net_jpy": -3000.0,
+                                }
+                            ],
+                        },
                         "action_items": [
                             "contain MARKET_ORDER_TRADE_CLOSE drag: prefer TP and hard Gate A/B closes"
                         ],
@@ -1910,7 +1936,13 @@ class GPTTraderBrainTest(unittest.TestCase):
                 )
             )
             decision = _trade_decision()
-            decision["evidence_refs"].extend(["capture:economics", "cross:WTICO_USD"])
+            decision["evidence_refs"].extend(
+                [
+                    "capture:economics",
+                    "capture:segment:EUR_USD:LONG:BREAKOUT_FAILURE",
+                    "cross:WTICO_USD",
+                ]
+            )
             brain = _brain(root, files, decision)
 
             summary = brain.run(snapshot_path=files["snapshot"])
@@ -1920,6 +1952,7 @@ class GPTTraderBrainTest(unittest.TestCase):
             refs = payload["input_packet"]["allowed_evidence_refs"]
             self.assertIn("capture:economics", refs)
             self.assertIn("capture:exit_reason:MARKET_ORDER_TRADE_CLOSE", refs)
+            self.assertIn("capture:segment:EUR_USD:LONG:BREAKOUT_FAILURE", refs)
             self.assertIn("cross:WTICO_USD", refs)
             capture = payload["input_packet"]["capture_economics"]
             self.assertEqual(capture["evidence_ref"], "capture:economics")
@@ -1931,6 +1964,13 @@ class GPTTraderBrainTest(unittest.TestCase):
             self.assertEqual(
                 capture["repair_summary"]["dominant_loss_exit_reason"],
                 "MARKET_ORDER_TRADE_CLOSE",
+            )
+            self.assertEqual(
+                capture["segment_repair_priorities"]["items"][0]["priority_class"],
+                "PRESERVE_TP_PROVEN_REPAIR_MARKET_CLOSE_LEAK",
+            )
+            self.assertTrue(
+                capture["segment_repair_priorities"]["items"][0]["take_profit_proven"]
             )
             self.assertIn("MARKET_ORDER_TRADE_CLOSE drag", capture["action_items"][0])
             codes = {issue["code"] for issue in payload["verification_issues"]}
@@ -1963,6 +2003,27 @@ class GPTTraderBrainTest(unittest.TestCase):
                                 "mfe_pips_after_cancel_entry": 3.1,
                             }
                         ],
+                        "canceled_order_regret_by_shape": {
+                            "items": [
+                                {
+                                    "evidence_ref": "timing:canceled_shape:EUR_USD:LONG:BREAKOUT_FAILURE:LIMIT_ORDER",
+                                    "pair": "EUR_USD",
+                                    "side": "LONG",
+                                    "method": "BREAKOUT_FAILURE",
+                                    "order_type": "LIMIT_ORDER",
+                                    "priority_class": "PRESERVE_PENDING_THESIS_TP_TOUCHED",
+                                    "next_action": "review cancel rule/TTL before canceling this pending shape",
+                                    "orders": 2,
+                                    "entry_touched_after_cancel": 2,
+                                    "entry_touch_after_cancel_rate": 1.0,
+                                    "positive_after_cancel_entry": 2,
+                                    "positive_after_cancel_entry_rate": 1.0,
+                                    "tp_touched_after_cancel": 2,
+                                    "tp_touched_after_cancel_rate": 1.0,
+                                    "estimated_missed_mfe_jpy": 240.0,
+                                }
+                            ]
+                        },
                         "loss_close_regrets": [
                             {
                                 "trade_id": "t2",
@@ -1993,6 +2054,7 @@ class GPTTraderBrainTest(unittest.TestCase):
                 [
                     "timing:audit",
                     "timing:canceled_order:o1",
+                    "timing:canceled_shape:EUR_USD:LONG:BREAKOUT_FAILURE:LIMIT_ORDER",
                     "timing:loss_close:t2",
                     "timing:market_close:t1",
                 ]
@@ -2005,10 +2067,18 @@ class GPTTraderBrainTest(unittest.TestCase):
             payload = json.loads((root / "gpt_decision.json").read_text())
             refs = payload["input_packet"]["allowed_evidence_refs"]
             self.assertIn("timing:audit", refs)
+            self.assertIn(
+                "timing:canceled_shape:EUR_USD:LONG:BREAKOUT_FAILURE:LIMIT_ORDER",
+                refs,
+            )
             self.assertIn("timing:market_close:t1", refs)
             timing = payload["input_packet"]["execution_timing_audit"]
             self.assertEqual(timing["evidence_ref"], "timing:audit")
             self.assertEqual(timing["summary"]["market_closes_audited"], 2)
+            self.assertEqual(
+                timing["canceled_order_regret_by_shape"][0]["priority_class"],
+                "PRESERVE_PENDING_THESIS_TP_TOUCHED",
+            )
             self.assertEqual(
                 timing["market_close_counterfactuals"][0]["post_close_path_label"],
                 "PROFIT_CLOSE_LEFT_RUNNER_UPSIDE",

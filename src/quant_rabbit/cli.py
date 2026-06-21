@@ -2071,6 +2071,12 @@ def _cycle_digest(*, kind: str, step_results: list[dict[str, Any]], aborted: boo
     capture = _read_json_quiet(ROOT / "data" / "capture_economics.json")
     if isinstance(capture, dict):
         overall = capture.get("overall") or {}
+        segment_priorities = capture.get("segment_repair_priorities")
+        segment_items = (
+            segment_priorities.get("items")
+            if isinstance(segment_priorities, dict)
+            else []
+        )
         digest["capture_economics"] = {
             "status": capture.get("status"),
             "trades": overall.get("trades"),
@@ -2078,11 +2084,34 @@ def _cycle_digest(*, kind: str, step_results: list[dict[str, Any]], aborted: boo
             "payoff_ratio": overall.get("payoff_ratio"),
             "breakeven_payoff_at_win_rate": overall.get("breakeven_payoff_at_win_rate"),
             "expectancy_jpy_per_trade": overall.get("expectancy_jpy_per_trade"),
+            "segment_repair_priorities": [
+                {
+                    "evidence_ref": item.get("evidence_ref"),
+                    "pair": item.get("pair"),
+                    "side": item.get("side"),
+                    "method": item.get("method"),
+                    "priority_class": item.get("priority_class"),
+                    "take_profit_trades": item.get("take_profit_trades"),
+                    "take_profit_proof_gap_trades": item.get(
+                        "take_profit_proof_gap_trades"
+                    ),
+                    "market_close_net_jpy": item.get("market_close_net_jpy"),
+                    "net_jpy": item.get("net_jpy"),
+                }
+                for item in (segment_items or [])[:4]
+                if isinstance(item, dict)
+            ],
         }
 
     timing = _read_json_quiet(DEFAULT_EXECUTION_TIMING_AUDIT)
     if isinstance(timing, dict):
         summary = timing.get("summary") or {}
+        shape_rollup = timing.get("canceled_order_regret_by_shape")
+        shape_items = (
+            shape_rollup.get("items")
+            if isinstance(shape_rollup, dict)
+            else []
+        )
         digest["execution_timing_audit"] = {
             "status": timing.get("status"),
             "canceled_orders_audited": summary.get("canceled_orders_audited"),
@@ -2113,6 +2142,22 @@ def _cycle_digest(*, kind: str, step_results: list[dict[str, Any]], aborted: boo
             "profit_market_closes_avoided_giveback": summary.get("profit_market_closes_avoided_giveback"),
             "loss_market_closes_may_have_been_premature": summary.get("loss_market_closes_may_have_been_premature"),
             "loss_market_closes_contained_risk": summary.get("loss_market_closes_contained_risk"),
+            "canceled_order_regret_by_shape": [
+                {
+                    "evidence_ref": item.get("evidence_ref"),
+                    "pair": item.get("pair"),
+                    "side": item.get("side"),
+                    "method": item.get("method"),
+                    "order_type": item.get("order_type"),
+                    "priority_class": item.get("priority_class"),
+                    "orders": item.get("orders"),
+                    "entry_touch_rate": item.get("entry_touch_after_cancel_rate"),
+                    "tp_touch_rate": item.get("tp_touched_after_cancel_rate"),
+                    "estimated_missed_mfe_jpy": item.get("estimated_missed_mfe_jpy"),
+                }
+                for item in (shape_items or [])[:4]
+                if isinstance(item, dict)
+            ],
         }
 
     operator_precedent = _read_json_quiet(DEFAULT_OPERATOR_PRECEDENT_AUDIT)
