@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import math
 import os
+import re
 import sqlite3
 from dataclasses import asdict, dataclass, replace
 from datetime import datetime, timezone
@@ -5832,6 +5833,12 @@ POSITIVE_ROTATION_FIREPOWER_BLOCK_CODE = "POSITIVE_ROTATION_DAILY_FIREPOWER_INSU
 POSITIVE_ROTATION_OANDA_CAMPAIGN_FIREPOWER_MODE = "OANDA_CAMPAIGN_FIREPOWER_HARVEST"
 LOSS_ASYMMETRY_OANDA_CAMPAIGN_FIREPOWER_MIN_LOT_MODE = "OANDA_CAMPAIGN_FIREPOWER_MIN_LOT"
 LOSS_ASYMMETRY_TP_PROOF_COLLECTION_MIN_LOT_MODE = "TP_PROOF_COLLECTION_MIN_LOT"
+# OANDA firepower vehicle keys encode their validated exit geometry as
+# `tpX_slY`. Current intent geometry may be rounded to broker ticks and
+# structural rails, so a small tolerance is allowed; a larger mismatch means
+# the historical vehicle's win rate/PF does not apply to the current receipt.
+OANDA_CAMPAIGN_EXIT_SHAPE_RR_REL_TOLERANCE = 0.10
+OANDA_CAMPAIGN_EXIT_SHAPE_RR_ABS_TOLERANCE = 0.05
 OANDA_CAMPAIGN_FIREPOWER_TARGET_OK_STATUSES = {
     "VERIFIED_MINIMUM_5_ROUTE_ESTIMATED",
     "VERIFIED_TARGET_10_ROUTE_ESTIMATED",
@@ -6025,6 +6032,7 @@ def _loss_asymmetry_oanda_campaign_firepower_min_lot_plan(
     position_metadata: dict[str, Any],
     tp_execution_metadata: dict[str, Any],
     entry: float,
+    tp: float,
     sl: float,
     snapshot: BrokerSnapshot,
     data_root: Path | None,
@@ -6063,6 +6071,9 @@ def _loss_asymmetry_oanda_campaign_firepower_min_lot_plan(
         pair=pair,
         side=side,
         method=method,
+        current_reward_risk=_geometry_reward_risk(entry=entry, tp=tp, sl=sl),
+        allowed_vehicle_keys=_oanda_campaign_source_vehicle_keys(lane),
+        allowed_exit_shapes=_oanda_campaign_source_exit_shapes(lane),
         data_root=data_root,
     )
     if oanda_firepower is None:
@@ -6475,10 +6486,14 @@ def _oanda_campaign_firepower_evidence(
     data_root: Path | None,
 ) -> dict[str, Any] | None:
     method = intent.market_context.method if intent.market_context is not None else None
+    metadata = intent.metadata or {}
     return _oanda_campaign_firepower_evidence_for_values(
         pair=intent.pair,
         side=intent.side,
         method=method,
+        current_reward_risk=_intent_geometry_reward_risk(intent),
+        allowed_vehicle_keys=_oanda_campaign_source_vehicle_keys(metadata),
+        allowed_exit_shapes=_oanda_campaign_source_exit_shapes(metadata),
         data_root=data_root,
     )
 
@@ -6488,7 +6503,10 @@ def _oanda_campaign_firepower_evidence_for_values(
     pair: str,
     side: Side,
     method: TradeMethod | None,
-    data_root: Path | None,
+    current_reward_risk: float | None,
+    data_root: Path | None = None,
+    allowed_vehicle_keys: tuple[str, ...] = (),
+    allowed_exit_shapes: tuple[str, ...] = (),
 ) -> dict[str, Any] | None:
     path = _oanda_campaign_firepower_path_for_data_root(data_root)
     if path is None:
@@ -6522,16 +6540,41 @@ def _oanda_campaign_firepower_evidence_for_values(
         for item in high_precision.get("top_vehicles", []) or []
         if isinstance(item, dict)
     ]
-    matches = [
+    shape_matches_all = [
         item for item in top_vehicles
-        if _oanda_campaign_firepower_vehicle_matches_values(
+        if _oanda_campaign_firepower_vehicle_shape_matches_values(
             item,
             pair=pair,
             side=side,
             method=method,
         )
     ]
+    shape_matches = [
+        item for item in shape_matches_all
+        if _oanda_campaign_firepower_vehicle_identity_allowed(
+            item,
+            allowed_vehicle_keys=allowed_vehicle_keys,
+            allowed_exit_shapes=allowed_exit_shapes,
+        )
+    ]
+    matches = [
+        item for item in shape_matches
+        if _oanda_campaign_exit_shape_matches_current_geometry(
+            item,
+            current_reward_risk=current_reward_risk,
+        )
+    ]
     match = matches[0] if matches else None
+    closest_vehicle = match or _oanda_campaign_closest_exit_shape_vehicle(
+        shape_matches or shape_matches_all,
+        current_reward_risk=current_reward_risk,
+    )
+    closest_vehicle_identity_allowed = (
+        closest_vehicle is not None
+        and any(item is closest_vehicle for item in shape_matches)
+    )
+    closest_exit_shape = _oanda_campaign_firepower_exit_shape(closest_vehicle)
+    closest_expected_rr = _oanda_campaign_exit_shape_reward_risk(closest_exit_shape)
     return {
         "source": str(path),
         "generated_at_utc": payload.get("generated_at_utc"),
@@ -6562,6 +6605,38 @@ def _oanda_campaign_firepower_evidence_for_values(
         "vehicle_match": bool(match),
         "matching_vehicle_count": len(matches),
         "matching_vehicle_key": str(match.get("vehicle_key") or "") if match else None,
+        "matching_vehicle_exit_shape": (
+            _oanda_campaign_firepower_exit_shape(match) if match else None
+        ),
+        "matching_vehicle_expected_reward_risk": (
+            _oanda_campaign_exit_shape_reward_risk(_oanda_campaign_firepower_exit_shape(match))
+            if match
+            else None
+        ),
+        "current_reward_risk": (
+            round(current_reward_risk, 6) if current_reward_risk is not None else None
+        ),
+        "candidate_vehicle_count": len(shape_matches),
+        "available_vehicle_count": len(shape_matches_all),
+        "closest_vehicle_key": (
+            str(closest_vehicle.get("vehicle_key") or "") if closest_vehicle else None
+        ),
+        "closest_vehicle_exit_shape": closest_exit_shape if closest_vehicle else None,
+        "closest_vehicle_expected_reward_risk": (
+            round(closest_expected_rr, 6) if closest_expected_rr is not None else None
+        ),
+        "closest_vehicle_identity_allowed": closest_vehicle_identity_allowed,
+        "vehicle_mismatch_reason": (
+            _oanda_campaign_vehicle_mismatch_reason(
+                closest_vehicle=closest_vehicle,
+                current_reward_risk=current_reward_risk,
+                closest_vehicle_identity_allowed=closest_vehicle_identity_allowed,
+                allowed_vehicle_keys=allowed_vehicle_keys,
+                allowed_exit_shapes=allowed_exit_shapes,
+            )
+            if closest_vehicle and match is None
+            else None
+        ),
         "matching_vehicle_estimated_return_pct_per_active_day": (
             _optional_float(match.get("estimated_return_pct_per_active_day_at_observed_frequency"))
             if match
@@ -6580,15 +6655,48 @@ def _oanda_campaign_firepower_vehicle_matches(
     vehicle: dict[str, Any],
 ) -> bool:
     method = intent.market_context.method if intent.market_context is not None else None
+    metadata = intent.metadata or {}
     return _oanda_campaign_firepower_vehicle_matches_values(
         vehicle,
         pair=intent.pair,
         side=intent.side,
         method=method,
+        current_reward_risk=_intent_geometry_reward_risk(intent),
+        allowed_vehicle_keys=_oanda_campaign_source_vehicle_keys(metadata),
+        allowed_exit_shapes=_oanda_campaign_source_exit_shapes(metadata),
     )
 
 
 def _oanda_campaign_firepower_vehicle_matches_values(
+    vehicle: dict[str, Any],
+    *,
+    pair: str,
+    side: Side,
+    method: TradeMethod | None,
+    current_reward_risk: float | None,
+    allowed_vehicle_keys: tuple[str, ...] = (),
+    allowed_exit_shapes: tuple[str, ...] = (),
+) -> bool:
+    if not _oanda_campaign_firepower_vehicle_shape_matches_values(
+        vehicle,
+        pair=pair,
+        side=side,
+        method=method,
+    ):
+        return False
+    if not _oanda_campaign_firepower_vehicle_identity_allowed(
+        vehicle,
+        allowed_vehicle_keys=allowed_vehicle_keys,
+        allowed_exit_shapes=allowed_exit_shapes,
+    ):
+        return False
+    return _oanda_campaign_exit_shape_matches_current_geometry(
+        vehicle,
+        current_reward_risk=current_reward_risk,
+    )
+
+
+def _oanda_campaign_firepower_vehicle_shape_matches_values(
     vehicle: dict[str, Any],
     *,
     pair: str,
@@ -6602,6 +6710,185 @@ def _oanda_campaign_firepower_vehicle_matches_values(
     if vehicle_side != side.value:
         return False
     return _oanda_campaign_firepower_shape_matches_method(vehicle.get("shape"), method)
+
+
+def _intent_geometry_reward_risk(intent: OrderIntent) -> float | None:
+    entry = _optional_float(intent.entry)
+    tp = _optional_float(intent.tp)
+    sl = _optional_float(intent.sl)
+    return _geometry_reward_risk(entry=entry, tp=tp, sl=sl)
+
+
+def _geometry_reward_risk(
+    *,
+    entry: float | None,
+    tp: float | None,
+    sl: float | None,
+) -> float | None:
+    if entry is None or tp is None or sl is None:
+        return None
+    risk = abs(entry - sl)
+    reward = abs(tp - entry)
+    if risk <= 0 or reward <= 0:
+        return None
+    return reward / risk
+
+
+def _oanda_campaign_firepower_exit_shape(vehicle: dict[str, Any] | None) -> str:
+    if not isinstance(vehicle, dict):
+        return ""
+    for key in ("exit_shape", "vehicle_key"):
+        value = str(vehicle.get(key) or "").strip()
+        if not value:
+            continue
+        if key == "vehicle_key":
+            value = value.rsplit("|", 1)[-1]
+        if value:
+            return value
+    return ""
+
+
+def _oanda_campaign_source_vehicle_keys(source: dict[str, Any] | None) -> tuple[str, ...]:
+    if not isinstance(source, dict):
+        return ()
+    raw_values: list[object] = []
+    raw_values.append(source.get("oanda_campaign_vehicle_key"))
+    raw_values.extend(source.get("oanda_campaign_vehicle_keys") or [])
+    return tuple(
+        dict.fromkeys(
+            value.strip().upper()
+            for value in (str(item or "") for item in raw_values)
+            if value.strip()
+        )
+    )
+
+
+def _oanda_campaign_source_exit_shapes(source: dict[str, Any] | None) -> tuple[str, ...]:
+    if not isinstance(source, dict):
+        return ()
+    raw_values: list[object] = []
+    raw_values.append(source.get("oanda_campaign_exit_shape"))
+    raw_values.extend(source.get("oanda_campaign_exit_shapes") or [])
+    return tuple(
+        dict.fromkeys(
+            value.strip().lower()
+            for value in (str(item or "") for item in raw_values)
+            if value.strip()
+        )
+    )
+
+
+def _oanda_campaign_firepower_vehicle_identity_allowed(
+    vehicle: dict[str, Any],
+    *,
+    allowed_vehicle_keys: tuple[str, ...],
+    allowed_exit_shapes: tuple[str, ...],
+) -> bool:
+    vehicle_key = str(vehicle.get("vehicle_key") or "").strip().upper()
+    exit_shape = _oanda_campaign_firepower_exit_shape(vehicle).strip().lower()
+    if allowed_vehicle_keys:
+        if vehicle_key:
+            return vehicle_key in allowed_vehicle_keys
+        return bool(exit_shape and exit_shape in allowed_exit_shapes)
+    if allowed_exit_shapes:
+        return bool(exit_shape and exit_shape in allowed_exit_shapes)
+    return True
+
+
+def _oanda_campaign_exit_shape_reward_risk(exit_shape: object) -> float | None:
+    value = str(exit_shape or "").strip().lower()
+    match = re.fullmatch(r"tp([0-9]+(?:\.[0-9]+)?)_sl([0-9]+(?:\.[0-9]+)?)", value)
+    if match is None:
+        return None
+    tp_mult = _optional_float(match.group(1))
+    sl_mult = _optional_float(match.group(2))
+    if tp_mult is None or sl_mult is None or tp_mult <= 0 or sl_mult <= 0:
+        return None
+    return tp_mult / sl_mult
+
+
+def _oanda_campaign_exit_shape_matches_current_geometry(
+    vehicle: dict[str, Any],
+    *,
+    current_reward_risk: float | None,
+) -> bool:
+    expected = _oanda_campaign_exit_shape_reward_risk(
+        _oanda_campaign_firepower_exit_shape(vehicle)
+    )
+    if expected is None or current_reward_risk is None or current_reward_risk <= 0:
+        return False
+    tolerance = max(
+        OANDA_CAMPAIGN_EXIT_SHAPE_RR_ABS_TOLERANCE,
+        expected * OANDA_CAMPAIGN_EXIT_SHAPE_RR_REL_TOLERANCE,
+    )
+    return abs(current_reward_risk - expected) <= tolerance
+
+
+def _oanda_campaign_closest_exit_shape_vehicle(
+    vehicles: list[dict[str, Any]],
+    *,
+    current_reward_risk: float | None,
+) -> dict[str, Any] | None:
+    if not vehicles:
+        return None
+    if current_reward_risk is None or current_reward_risk <= 0:
+        return vehicles[0]
+
+    def score(vehicle: dict[str, Any]) -> float:
+        expected = _oanda_campaign_exit_shape_reward_risk(
+            _oanda_campaign_firepower_exit_shape(vehicle)
+        )
+        if expected is None:
+            return float("inf")
+        return abs(current_reward_risk - expected)
+
+    return min(vehicles, key=score)
+
+
+def _oanda_campaign_exit_shape_mismatch_reason(
+    vehicle: dict[str, Any],
+    *,
+    current_reward_risk: float | None,
+) -> str:
+    exit_shape = _oanda_campaign_firepower_exit_shape(vehicle)
+    expected = _oanda_campaign_exit_shape_reward_risk(exit_shape)
+    if expected is None:
+        return f"OANDA campaign vehicle exit_shape={exit_shape or 'missing'} is not parseable"
+    if current_reward_risk is None or current_reward_risk <= 0:
+        return "current intent reward/risk is missing, so OANDA vehicle exit shape cannot be verified"
+    tolerance = max(
+        OANDA_CAMPAIGN_EXIT_SHAPE_RR_ABS_TOLERANCE,
+        expected * OANDA_CAMPAIGN_EXIT_SHAPE_RR_REL_TOLERANCE,
+    )
+    diff = abs(current_reward_risk - expected)
+    return (
+        f"OANDA campaign vehicle exit_shape={exit_shape} expects "
+        f"{expected:.3f}R but current intent is {current_reward_risk:.3f}R "
+        f"(diff={diff:.3f}, tolerance={tolerance:.3f})"
+    )
+
+
+def _oanda_campaign_vehicle_mismatch_reason(
+    *,
+    closest_vehicle: dict[str, Any],
+    current_reward_risk: float | None,
+    closest_vehicle_identity_allowed: bool,
+    allowed_vehicle_keys: tuple[str, ...],
+    allowed_exit_shapes: tuple[str, ...],
+) -> str:
+    if not closest_vehicle_identity_allowed and (allowed_vehicle_keys or allowed_exit_shapes):
+        vehicle_key = str(closest_vehicle.get("vehicle_key") or "").strip()
+        exit_shape = _oanda_campaign_firepower_exit_shape(closest_vehicle)
+        return (
+            "OANDA campaign vehicle is not allowed by the lane vehicle identity "
+            f"(vehicle_key={vehicle_key or 'missing'}, exit_shape={exit_shape or 'missing'}, "
+            f"allowed_vehicle_keys={list(allowed_vehicle_keys)}, "
+            f"allowed_exit_shapes={list(allowed_exit_shapes)})"
+        )
+    return _oanda_campaign_exit_shape_mismatch_reason(
+        closest_vehicle,
+        current_reward_risk=current_reward_risk,
+    )
 
 
 def _oanda_campaign_firepower_vehicle_side(vehicle: dict[str, Any]) -> str:
@@ -6689,6 +6976,36 @@ def _annotate_oanda_campaign_firepower_metadata(
             ),
             "positive_rotation_oanda_campaign_matching_vehicle_key": (
                 oanda_firepower["matching_vehicle_key"]
+            ),
+            "positive_rotation_oanda_campaign_matching_vehicle_exit_shape": (
+                oanda_firepower["matching_vehicle_exit_shape"]
+            ),
+            "positive_rotation_oanda_campaign_matching_vehicle_expected_reward_risk": (
+                oanda_firepower["matching_vehicle_expected_reward_risk"]
+            ),
+            "positive_rotation_oanda_campaign_current_reward_risk": (
+                oanda_firepower["current_reward_risk"]
+            ),
+            "positive_rotation_oanda_campaign_candidate_vehicle_count": (
+                oanda_firepower["candidate_vehicle_count"]
+            ),
+            "positive_rotation_oanda_campaign_available_vehicle_count": (
+                oanda_firepower["available_vehicle_count"]
+            ),
+            "positive_rotation_oanda_campaign_closest_vehicle_key": (
+                oanda_firepower["closest_vehicle_key"]
+            ),
+            "positive_rotation_oanda_campaign_closest_vehicle_exit_shape": (
+                oanda_firepower["closest_vehicle_exit_shape"]
+            ),
+            "positive_rotation_oanda_campaign_closest_vehicle_expected_reward_risk": (
+                oanda_firepower["closest_vehicle_expected_reward_risk"]
+            ),
+            "positive_rotation_oanda_campaign_closest_vehicle_identity_allowed": (
+                oanda_firepower["closest_vehicle_identity_allowed"]
+            ),
+            "positive_rotation_oanda_campaign_vehicle_mismatch_reason": (
+                oanda_firepower["vehicle_mismatch_reason"]
             ),
             "positive_rotation_oanda_campaign_matching_vehicle_estimated_return_pct_per_active_day": (
                 oanda_firepower["matching_vehicle_estimated_return_pct_per_active_day"]
@@ -7084,6 +7401,7 @@ def _intent_from_lane(
             position_metadata=position_metadata,
             tp_execution_metadata=tp_execution_metadata,
             entry=entry,
+            tp=tp,
             sl=sl,
             snapshot=snapshot,
             data_root=data_root,

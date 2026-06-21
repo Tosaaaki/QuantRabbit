@@ -105,6 +105,7 @@ def _write_oanda_campaign_firepower_report(
     pair: str = "EUR_USD",
     side: str = "LONG",
     shape: str = "range_reversion",
+    exit_shape: str = "tp1_sl1",
 ) -> Path:
     path = (
         root
@@ -134,7 +135,8 @@ def _write_oanda_campaign_firepower_report(
                         "trades_needed_for_target_10pct_at_weighted_expectancy": 16,
                         "top_vehicles": [
                             {
-                                "vehicle_key": f"{pair}|{side}|{shape}|tp1_sl1",
+                                "vehicle_key": f"{pair}|{side}|{shape}|{exit_shape}",
+                                "exit_shape": exit_shape,
                                 "evidence_status": "HIGH_PRECISION_VALIDATED",
                                 "pair": pair,
                                 "shape": shape,
@@ -239,12 +241,12 @@ def _oanda_seed_range_campaign(root: Path, *, side: str = "LONG") -> Path:
                         "blockers": [],
                         "story_examples": ["OANDA campaign firepower fixture"],
                         "oanda_campaign_firepower_seed": True,
-                        "oanda_campaign_vehicle_key": f"EUR_USD|{side}|range_reversion|tp1_sl1",
+                        "oanda_campaign_vehicle_key": f"EUR_USD|{side}|range_reversion|tp2_sl1",
                         "oanda_campaign_vehicle_count": 1,
-                        "oanda_campaign_vehicle_keys": [f"EUR_USD|{side}|range_reversion|tp1_sl1"],
+                        "oanda_campaign_vehicle_keys": [f"EUR_USD|{side}|range_reversion|tp2_sl1"],
                         "oanda_campaign_firepower_status": "VERIFIED_TARGET_10_ROUTE_ESTIMATED",
-                        "oanda_campaign_exit_shape": "tp1_sl1",
-                        "oanda_campaign_exit_shapes": ["tp1_sl1"],
+                        "oanda_campaign_exit_shape": "tp2_sl1",
+                        "oanda_campaign_exit_shapes": ["tp2_sl1"],
                         "oanda_campaign_estimated_return_pct_per_active_day": 2.8,
                         "oanda_campaign_live_permission": False,
                     }
@@ -990,7 +992,7 @@ class IntentGeneratorTest(unittest.TestCase):
     def test_capture_tp_proven_uses_matching_oanda_campaign_firepower_route(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            _write_oanda_campaign_firepower_report(root)
+            _write_oanda_campaign_firepower_report(root, exit_shape="tp2_sl1")
             (root / "daily_target_state.json").write_text(
                 json.dumps(
                     {
@@ -1075,7 +1077,7 @@ class IntentGeneratorTest(unittest.TestCase):
     def test_matching_oanda_campaign_firepower_can_lift_avg_win_cap_to_min_lot(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            _write_oanda_campaign_firepower_report(root)
+            _write_oanda_campaign_firepower_report(root, exit_shape="tp2_sl1")
             (root / "capture_economics.json").write_text(
                 json.dumps(
                     {
@@ -1186,6 +1188,126 @@ class IntentGeneratorTest(unittest.TestCase):
 
             self.assertEqual(result["intent"]["units"], 0)
             self.assertEqual(metadata["loss_asymmetry_guard_mode"], "CAP_AVG_WIN")
+            self.assertNotIn("positive_rotation_oanda_campaign_min_lot_sizing", metadata)
+            self.assertIn("LOSS_BUDGET_TOO_THIN_FOR_MIN_LOT", issue_codes)
+            self.assertIn(POSITIVE_ROTATION_LIVE_BLOCK_CODE, issue_codes)
+
+    def test_oanda_campaign_firepower_requires_current_exit_shape_match(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_oanda_campaign_firepower_report(root, exit_shape="tp1_sl1")
+            (root / "capture_economics.json").write_text(
+                json.dumps(
+                    {
+                        "status": "NEGATIVE_EXPECTANCY",
+                        "overall": {
+                            "trades": 210,
+                            "avg_win_jpy": 50.0,
+                            "avg_loss_jpy": 1100.0,
+                            "payoff_ratio": 0.045,
+                            "breakeven_payoff_at_win_rate": 0.7,
+                        },
+                    }
+                )
+            )
+            output = root / "intents.json"
+            campaign = _oanda_seed_range_campaign(root)
+            campaign_payload = json.loads(campaign.read_text())
+            campaign_payload["lanes"][0].update(
+                {
+                    "oanda_campaign_vehicle_key": "EUR_USD|LONG|range_reversion|tp1_sl1",
+                    "oanda_campaign_vehicle_keys": ["EUR_USD|LONG|range_reversion|tp1_sl1"],
+                    "oanda_campaign_exit_shape": "tp1_sl1",
+                    "oanda_campaign_exit_shapes": ["tp1_sl1"],
+                }
+            )
+            campaign.write_text(json.dumps(campaign_payload))
+
+            IntentGenerator(
+                campaign_plan=_stamp_campaign_generated_at(campaign),
+                strategy_profile=_strategy(root, status="CANDIDATE"),
+                output_path=output,
+                report_path=root / "intents.md",
+                pair_charts_path=_pair_charts(root),
+                data_root=root,
+                max_loss_jpy=1000.0,
+            ).run(snapshot_path=_snapshot(root))
+
+            payload = json.loads(output.read_text())
+            result = next(
+                item for item in payload["results"]
+                if item["lane_id"] == "range_trader:EUR_USD:LONG:RANGE_ROTATION"
+            )
+            metadata = result["intent"]["metadata"]
+            issue_codes = {issue["code"] for issue in result["risk_issues"]}
+
+            self.assertEqual(result["intent"]["units"], 0)
+            self.assertEqual(metadata["oanda_campaign_exit_shape"], "tp1_sl1")
+            self.assertFalse(metadata["positive_rotation_oanda_campaign_firepower_vehicle_match"])
+            self.assertEqual(metadata["positive_rotation_oanda_campaign_current_reward_risk"], 2.0)
+            self.assertEqual(metadata["positive_rotation_oanda_campaign_candidate_vehicle_count"], 1)
+            self.assertEqual(metadata["positive_rotation_oanda_campaign_available_vehicle_count"], 1)
+            self.assertEqual(metadata["positive_rotation_oanda_campaign_closest_vehicle_exit_shape"], "tp1_sl1")
+            self.assertEqual(
+                metadata["positive_rotation_oanda_campaign_closest_vehicle_expected_reward_risk"],
+                1.0,
+            )
+            self.assertTrue(metadata["positive_rotation_oanda_campaign_closest_vehicle_identity_allowed"])
+            self.assertIn(
+                "expects 1.000R but current intent is 2.000R",
+                metadata["positive_rotation_oanda_campaign_vehicle_mismatch_reason"],
+            )
+            self.assertNotIn("positive_rotation_oanda_campaign_min_lot_sizing", metadata)
+            self.assertIn("LOSS_BUDGET_TOO_THIN_FOR_MIN_LOT", issue_codes)
+            self.assertIn(POSITIVE_ROTATION_LIVE_BLOCK_CODE, issue_codes)
+
+    def test_oanda_campaign_firepower_requires_lane_vehicle_identity(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_oanda_campaign_firepower_report(root, exit_shape="tp1_sl1")
+            (root / "capture_economics.json").write_text(
+                json.dumps(
+                    {
+                        "status": "NEGATIVE_EXPECTANCY",
+                        "overall": {
+                            "trades": 210,
+                            "avg_win_jpy": 50.0,
+                            "avg_loss_jpy": 1100.0,
+                            "payoff_ratio": 0.045,
+                            "breakeven_payoff_at_win_rate": 0.7,
+                        },
+                    }
+                )
+            )
+            output = root / "intents.json"
+
+            IntentGenerator(
+                campaign_plan=_stamp_campaign_generated_at(_oanda_seed_range_campaign(root)),
+                strategy_profile=_strategy(root, status="CANDIDATE"),
+                output_path=output,
+                report_path=root / "intents.md",
+                pair_charts_path=_pair_charts(root),
+                data_root=root,
+                max_loss_jpy=1000.0,
+            ).run(snapshot_path=_snapshot(root))
+
+            payload = json.loads(output.read_text())
+            result = next(
+                item for item in payload["results"]
+                if item["lane_id"] == "range_trader:EUR_USD:LONG:RANGE_ROTATION"
+            )
+            metadata = result["intent"]["metadata"]
+            issue_codes = {issue["code"] for issue in result["risk_issues"]}
+
+            self.assertEqual(metadata["oanda_campaign_exit_shape"], "tp2_sl1")
+            self.assertFalse(metadata["positive_rotation_oanda_campaign_firepower_vehicle_match"])
+            self.assertEqual(metadata["positive_rotation_oanda_campaign_candidate_vehicle_count"], 0)
+            self.assertEqual(metadata["positive_rotation_oanda_campaign_available_vehicle_count"], 1)
+            self.assertFalse(metadata["positive_rotation_oanda_campaign_closest_vehicle_identity_allowed"])
+            self.assertIn(
+                "not allowed by the lane vehicle identity",
+                metadata["positive_rotation_oanda_campaign_vehicle_mismatch_reason"],
+            )
             self.assertNotIn("positive_rotation_oanda_campaign_min_lot_sizing", metadata)
             self.assertIn("LOSS_BUDGET_TOO_THIN_FOR_MIN_LOT", issue_codes)
             self.assertIn(POSITIVE_ROTATION_LIVE_BLOCK_CODE, issue_codes)
@@ -8364,7 +8486,12 @@ class IntentGeneratorTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             _write_profitability_p0_and_negative_capture(root)
-            _write_oanda_campaign_firepower_report(root, pair="EUR_USD", side="LONG")
+            _write_oanda_campaign_firepower_report(
+                root,
+                pair="EUR_USD",
+                side="LONG",
+                exit_shape="tp2_sl1",
+            )
             output = root / "intents.json"
 
             summary = IntentGenerator(
