@@ -27,7 +27,11 @@ from quant_rabbit.cli import (
 )
 from quant_rabbit.models import AccountSummary, BrokerOrder, BrokerSnapshot, Owner, Quote
 from quant_rabbit.paths import DEFAULT_CAPTURE_ECONOMICS, DEFAULT_EXECUTION_LEDGER_DB, DEFAULT_MARKET_CONTEXT_MATRIX
-from quant_rabbit.profitability_acceptance import _execution_ledger_close_findings, _order_intent_metrics
+from quant_rabbit.profitability_acceptance import (
+    ProfitabilityAcceptanceAuditor,
+    _execution_ledger_close_findings,
+    _order_intent_metrics,
+)
 from quant_rabbit.strategy.intent_generator import _snapshot_from_json as _intent_snapshot_from_json
 
 
@@ -888,6 +892,122 @@ class CliHelpTest(unittest.TestCase):
             firepower["evidence_queue"]["estimated_return_pct_per_active_day_at_observed_frequency"],
             8.0,
         )
+
+    def test_profitability_acceptance_uses_packaged_oanda_firepower_when_latest_log_missing(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            target = root / "target.json"
+            intents = root / "intents.json"
+            self_audit = root / "self_improvement.json"
+            capture = root / "capture.json"
+            ledger = root / "execution_ledger.db"
+            projection = root / "projection_ledger.jsonl"
+            bidask = root / "bidask_rules.json"
+            missing_latest = root / "logs" / "reports" / "forecast_improvement" / "missing_latest.json"
+            packaged = root / "src" / "quant_rabbit" / "oanda_universal_rotation_precision_rules.json"
+            output = root / "acceptance.json"
+            report = root / "acceptance.md"
+
+            target.write_text(json.dumps({"status": "PURSUE_TARGET", "remaining_target_jpy": 5000.0}))
+            intents.write_text(
+                json.dumps(
+                    {
+                        "generated_at_utc": "2026-06-21T00:05:00+00:00",
+                        "results": [
+                            {
+                                "lane_id": "range_trader:EUR_USD:LONG:RANGE_ROTATION",
+                                "status": "LIVE_READY",
+                                "risk_issues": [],
+                                "live_blockers": [],
+                            }
+                        ],
+                    }
+                )
+            )
+            self_audit.write_text(json.dumps({"status": "SELF_IMPROVEMENT_OK", "findings": []}))
+            capture.write_text(
+                json.dumps(
+                    {
+                        "generated_at_utc": "2026-06-21T00:04:00+00:00",
+                        "status": "POSITIVE_EXPECTANCY",
+                        "overall": {
+                            "trades": 40,
+                            "net_jpy": 12000.0,
+                            "expectancy_jpy_per_trade": 300.0,
+                            "win_rate": 0.7,
+                            "payoff_ratio": 1.2,
+                        },
+                        "by_exit_reason": {},
+                        "segment_repair_priorities": {"items": []},
+                    }
+                )
+            )
+            bidask.write_text(json.dumps({"contrarian_edge_rules": []}))
+            packaged.parent.mkdir(parents=True, exist_ok=True)
+            self._write_oanda_firepower_report(
+                packaged,
+                status="VERIFIED_TARGET_10_ROUTE_ESTIMATED",
+                high_precision_count=3,
+                high_precision_daily_return_pct=11.0,
+            )
+            with sqlite3.connect(ledger) as conn:
+                conn.execute(
+                    """
+                    CREATE TABLE execution_events (
+                        ts_utc TEXT,
+                        event_type TEXT,
+                        trade_id TEXT,
+                        order_id TEXT,
+                        lane_id TEXT,
+                        pair TEXT,
+                        side TEXT,
+                        realized_pl_jpy REAL,
+                        exit_reason TEXT
+                    )
+                    """
+                )
+            projection.write_text("")
+
+            with mock.patch(
+                "quant_rabbit.profitability_acceptance.DEFAULT_OANDA_UNIVERSAL_ROTATION_MINING",
+                missing_latest,
+            ), mock.patch(
+                "quant_rabbit.profitability_acceptance.DEFAULT_OANDA_UNIVERSAL_ROTATION_PACKAGED_RULES",
+                packaged,
+            ), mock.patch(
+                "quant_rabbit.profitability_acceptance.compute_hit_rates",
+                return_value={
+                    "session_expansion_london": {
+                        "EUR_USD:TREND": {
+                            "hit_rate": 0.98,
+                            "samples": 100,
+                            "economic_hit_rate": 0.96,
+                            "economic_samples": 100,
+                        }
+                    }
+                },
+            ):
+                summary = ProfitabilityAcceptanceAuditor(
+                    output_path=output,
+                    report_path=report,
+                ).run(
+                    order_intents_path=intents,
+                    target_state_path=target,
+                    self_improvement_path=self_audit,
+                    capture_economics_path=capture,
+                    execution_ledger_path=ledger,
+                    projection_ledger_path=projection,
+                    bidask_rules_path=bidask,
+                    oanda_rotation_mining_path=missing_latest,
+                )
+
+            payload = json.loads(output.read_text())
+            codes = {item["code"] for item in payload["findings"]}
+            self.assertEqual(summary.status, "PROFITABILITY_ACCEPTANCE_PASSED")
+            self.assertNotIn("OANDA_CAMPAIGN_FIREPOWER_REPORT_MISSING", codes)
+            firepower = payload["metrics"]["oanda_campaign_firepower"]
+            self.assertEqual(firepower["path"], str(packaged))
+            self.assertEqual(firepower["status"], "VERIFIED_TARGET_10_ROUTE_ESTIMATED")
 
     def test_profitability_acceptance_order_metrics_prefers_live_blocker_codes(self) -> None:
         metrics = _order_intent_metrics(

@@ -4,6 +4,7 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from quant_rabbit.strategy.ensemble import CampaignPlanner
 
@@ -266,6 +267,39 @@ class CampaignPlannerTest(unittest.TestCase):
             self.assertAlmostEqual(first["oanda_campaign_estimated_return_pct_per_active_day"], 2.42)
             self.assertFalse(first["oanda_campaign_live_permission"])
             self.assertTrue(any(lane["pair"] == "GBP_USD" for lane in lanes))
+
+    def test_default_plan_uses_packaged_oanda_firepower_when_latest_log_missing(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            strategy = root / "strategy.json"
+            story = root / "story.json"
+            plan_path = root / "daily_campaign_plan.json"
+            missing_latest = root / "logs" / "missing_oanda_latest.json"
+            packaged = _write_oanda_firepower_report(root)
+            strategy.write_text(json.dumps({"profiles": []}))
+            story.write_text(json.dumps({"pair_profiles": []}))
+
+            with mock.patch(
+                "quant_rabbit.strategy.ensemble.DEFAULT_CAMPAIGN_PLAN",
+                plan_path,
+            ), mock.patch(
+                "quant_rabbit.strategy.ensemble.DEFAULT_OANDA_UNIVERSAL_ROTATION_MINING",
+                missing_latest,
+            ), mock.patch(
+                "quant_rabbit.strategy.ensemble.DEFAULT_OANDA_UNIVERSAL_ROTATION_PACKAGED_RULES",
+                packaged,
+            ):
+                CampaignPlanner(
+                    strategy_profile=strategy,
+                    market_story_profile=story,
+                    report_path=root / "campaign.md",
+                    plan_path=plan_path,
+                ).run(start_balance_jpy=200_000)
+
+            first = json.loads(plan_path.read_text())["lanes"][0]
+            self.assertTrue(first["oanda_campaign_firepower_seed"])
+            self.assertEqual(first["pair"], "USD_JPY")
+            self.assertEqual(first["direction"], "LONG")
 
 
 if __name__ == "__main__":

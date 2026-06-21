@@ -2,8 +2,12 @@
 """Package mined OANDA rotation report rows for runtime fallback.
 
 The full mining report lives under ``logs/`` and is intentionally not tracked.
-Live runtime therefore needs a compact tracked fallback that preserves only the
-rank-only rule sections consumed by ``forecast_precision``.
+Live runtime therefore needs a compact tracked fallback that preserves the
+rank-only rule sections consumed by ``forecast_precision`` plus the compact
+campaign firepower summary consumed by the profitability and campaign gates.
+When a latest report only contains a smaller top-N excerpt while its summary
+still proves a broader qualified universe, existing packaged rule rows are kept
+so a firepower refresh cannot silently shrink runtime forecast coverage.
 """
 
 from __future__ import annotations
@@ -96,6 +100,13 @@ def main() -> int:
     args = _parse_args()
     payload = json.loads(args.source_report.read_text(encoding="utf-8"))
     packaged = package_payload(payload, source_report=args.source_report)
+    if args.output.exists():
+        try:
+            existing = json.loads(args.output.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError, ValueError):
+            existing = {}
+        if isinstance(existing, dict):
+            preserve_existing_rule_rows(packaged, existing)
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(
         json.dumps(packaged, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
@@ -123,9 +134,31 @@ def package_payload(payload: dict[str, Any], *, source_report: Path) -> dict[str
         "summary": _summary(payload),
         "config": {key: config[key] for key in CONFIG_KEYS if key in config},
     }
+    campaign_firepower = payload.get("campaign_firepower")
+    if isinstance(campaign_firepower, dict):
+        packaged["campaign_firepower"] = campaign_firepower
     for section in RULE_SECTIONS:
         packaged[section] = [_package_row(row) for row in payload.get(section) or []]
     return packaged
+
+
+def preserve_existing_rule_rows(packaged: dict[str, Any], existing: dict[str, Any]) -> None:
+    """Avoid shrinking packaged forecast rules when the source is a top-N excerpt."""
+
+    summary = packaged.get("summary")
+    if not isinstance(summary, dict):
+        return
+    for section in RULE_SECTIONS:
+        current_rows = packaged.get(section)
+        existing_rows = existing.get(section)
+        if not isinstance(current_rows, list) or not isinstance(existing_rows, list):
+            continue
+        if len(current_rows) >= len(existing_rows):
+            continue
+        available_count = _optional_int(summary.get(_count_key_for_section(section)))
+        if available_count is None or available_count < len(existing_rows):
+            continue
+        packaged[section] = existing_rows
 
 
 def _summary(payload: dict[str, Any]) -> dict[str, Any]:
@@ -144,6 +177,17 @@ def _section_for_count_key(key: str) -> str:
     section = section.replace("selector", "selectors")
     section = section.replace("confluence", "confluences")
     return section
+
+
+def _count_key_for_section(section: str) -> str:
+    return f"{section.removesuffix('s')}_count"
+
+
+def _optional_int(value: Any) -> int | None:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
 
 
 def _package_row(row: Any) -> dict[str, Any]:

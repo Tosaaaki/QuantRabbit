@@ -30,6 +30,7 @@ from quant_rabbit.paths import (
     DEFAULT_LEVELS_SNAPSHOT,
     DEFAULT_MARKET_CONTEXT_MATRIX,
     DEFAULT_OANDA_UNIVERSAL_ROTATION_MINING,
+    DEFAULT_OANDA_UNIVERSAL_ROTATION_PACKAGED_RULES,
     DEFAULT_ORDER_INTENT_REPORT,
     DEFAULT_ORDER_INTENTS,
     DEFAULT_PAIR_CHARTS,
@@ -6464,7 +6465,13 @@ def _positive_rotation_confidence_metrics(metadata: dict[str, Any]) -> dict[str,
 
 def _oanda_campaign_firepower_path_for_data_root(data_root: Path | None) -> Path | None:
     if data_root is None:
-        return DEFAULT_OANDA_UNIVERSAL_ROTATION_MINING if DEFAULT_OANDA_UNIVERSAL_ROTATION_MINING.exists() else None
+        if DEFAULT_OANDA_UNIVERSAL_ROTATION_MINING.exists():
+            return DEFAULT_OANDA_UNIVERSAL_ROTATION_MINING
+        return (
+            DEFAULT_OANDA_UNIVERSAL_ROTATION_PACKAGED_RULES
+            if DEFAULT_OANDA_UNIVERSAL_ROTATION_PACKAGED_RULES.exists()
+            else None
+        )
     repo_root = data_root.parent if data_root.name == "data" else data_root
     candidates = (
         data_root / DEFAULT_OANDA_UNIVERSAL_ROTATION_MINING.name,
@@ -6473,6 +6480,7 @@ def _oanda_campaign_firepower_path_for_data_root(data_root: Path | None) -> Path
         / "reports"
         / "forecast_improvement"
         / DEFAULT_OANDA_UNIVERSAL_ROTATION_MINING.name,
+        repo_root / "src" / "quant_rabbit" / DEFAULT_OANDA_UNIVERSAL_ROTATION_PACKAGED_RULES.name,
     )
     for candidate in candidates:
         if candidate.exists():

@@ -69,6 +69,9 @@ DEFAULT_PROFITABILITY_ACCEPTANCE_REPORT = ROOT / "docs" / "profitability_accepta
 DEFAULT_OANDA_UNIVERSAL_ROTATION_MINING = (
     ROOT / "logs" / "reports" / "forecast_improvement" / "oanda_universal_rotation_mining_latest.json"
 )
+DEFAULT_OANDA_UNIVERSAL_ROTATION_PACKAGED_RULES = (
+    ROOT / "src" / "quant_rabbit" / "oanda_universal_rotation_precision_rules.json"
+)
 DEFAULT_EXECUTION_TIMING_AUDIT = ROOT / "data" / "execution_timing_audit.json"
 DEFAULT_EXECUTION_TIMING_AUDIT_REPORT = ROOT / "docs" / "execution_timing_audit_report.md"
 DEFAULT_MANUAL_HISTORY_2025 = ROOT / "data" / "manual_history_2025_mining.json"

@@ -17,6 +17,7 @@ from quant_rabbit.paths import (
     DEFAULT_DAILY_TARGET_STATE,
     DEFAULT_EXECUTION_LEDGER_DB,
     DEFAULT_OANDA_UNIVERSAL_ROTATION_MINING,
+    DEFAULT_OANDA_UNIVERSAL_ROTATION_PACKAGED_RULES,
     DEFAULT_ORDER_INTENTS,
     DEFAULT_PROFITABILITY_ACCEPTANCE,
     DEFAULT_PROFITABILITY_ACCEPTANCE_REPORT,
@@ -88,6 +89,7 @@ class ProfitabilityAcceptanceAuditor:
         self_improvement = _load_json(self_improvement_path)
         capture = _load_json(capture_economics_path)
         bidask_rules = _load_json(bidask_rules_path)
+        oanda_rotation_mining_path = _oanda_rotation_mining_effective_path(oanda_rotation_mining_path)
         oanda_rotation_mining = _load_json(oanda_rotation_mining_path)
 
         order_metrics = _order_intent_metrics(intents)
@@ -190,6 +192,26 @@ def _load_json(path: Path) -> dict[str, Any]:
         return {}
     payload = json.loads(path.read_text())
     return payload if isinstance(payload, dict) else {}
+
+
+def _paths_equivalent(left: Path, right: Path) -> bool:
+    try:
+        return left.resolve(strict=False) == right.resolve(strict=False)
+    except OSError:
+        return left == right
+
+
+def _oanda_rotation_mining_effective_path(path: Path) -> Path:
+    """Use the tracked packaged OANDA audit when the non-tracked latest is absent."""
+
+    if path.exists():
+        return path
+    if (
+        _paths_equivalent(path, DEFAULT_OANDA_UNIVERSAL_ROTATION_MINING)
+        and DEFAULT_OANDA_UNIVERSAL_ROTATION_PACKAGED_RULES.exists()
+    ):
+        return DEFAULT_OANDA_UNIVERSAL_ROTATION_PACKAGED_RULES
+    return path
 
 
 def _finding(

@@ -32,6 +32,12 @@ class OandaUniversalRotationPackagerTest(unittest.TestCase):
                 "inversion_selector_confluence_sizes": [2, 3],
                 "unused": "drop",
             },
+            "campaign_firepower": {
+                "status": "VERIFIED_TARGET_10_ROUTE_ESTIMATED",
+                "minimum_return_pct": 5.0,
+                "target_return_pct": 10.0,
+                "high_precision": {"unique_vehicle_count": 3, "top_vehicles": []},
+            },
             "qualified_inversion_selectors": [
                 {
                     "pair": "USD_JPY",
@@ -67,12 +73,73 @@ class OandaUniversalRotationPackagerTest(unittest.TestCase):
         self.assertEqual(packaged["summary"]["qualified_inversion_selector_count"], 1)
         self.assertEqual(packaged["summary"]["high_precision_inversion_selector_count"], 0)
         self.assertEqual(packaged["config"]["inversion_selector_confluence_sizes"], [2, 3])
+        self.assertEqual(
+            packaged["campaign_firepower"]["status"],
+            "VERIFIED_TARGET_10_ROUTE_ESTIMATED",
+        )
+        self.assertEqual(packaged["campaign_firepower"]["high_precision"]["unique_vehicle_count"], 3)
         self.assertEqual(row["source_side"], "SHORT")
         self.assertEqual(row["selected_side"], "LONG")
         self.assertEqual(row["validation_inversion_edge_atr"], 1.221626)
         self.assertEqual(row["source_validation_avg_realized_atr"], -0.9)
         self.assertNotIn("blockers", row)
         self.assertNotIn("all_n", row)
+
+    def test_preserves_existing_rule_rows_when_latest_report_is_top_n_excerpt(self) -> None:
+        packaged = packager.package_payload(
+            {
+                "high_precision_multi_confluence_count": 126,
+                "high_precision_multi_confluences": [
+                    {
+                        "pair": "USD_JPY",
+                        "side": "LONG",
+                        "shape": "trend_continuation",
+                        "validation_n": 50,
+                    }
+                ],
+            },
+            source_report=Path("latest.json"),
+        )
+        existing = {
+            "high_precision_multi_confluences": [
+                {"pair": "USD_JPY", "side": "LONG", "shape": "trend_continuation"},
+                {"pair": "GBP_JPY", "side": "SHORT", "shape": "range_rotation"},
+            ]
+        }
+
+        packager.preserve_existing_rule_rows(packaged, existing)
+
+        rows = packaged["high_precision_multi_confluences"]
+        self.assertEqual(len(rows), 2)
+        self.assertEqual(rows[1]["pair"], "GBP_JPY")
+
+    def test_does_not_preserve_existing_rule_rows_when_summary_confirms_smaller_universe(self) -> None:
+        packaged = packager.package_payload(
+            {
+                "high_precision_multi_confluence_count": 1,
+                "high_precision_multi_confluences": [
+                    {
+                        "pair": "USD_JPY",
+                        "side": "LONG",
+                        "shape": "trend_continuation",
+                        "validation_n": 50,
+                    }
+                ],
+            },
+            source_report=Path("latest.json"),
+        )
+        existing = {
+            "high_precision_multi_confluences": [
+                {"pair": "USD_JPY", "side": "LONG", "shape": "trend_continuation"},
+                {"pair": "GBP_JPY", "side": "SHORT", "shape": "range_rotation"},
+            ]
+        }
+
+        packager.preserve_existing_rule_rows(packaged, existing)
+
+        rows = packaged["high_precision_multi_confluences"]
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["pair"], "USD_JPY")
 
 
 if __name__ == "__main__":

@@ -24,6 +24,7 @@ from quant_rabbit.strategy.intent_generator import (
     _forecast_context_payload,
     _forecast_seed_lane,
     _minimum_range_target_pips,
+    _oanda_campaign_firepower_path_for_data_root,
     _oanda_campaign_firepower_shape_matches_method,
     _oanda_campaign_vehicle_shape_reprice_metadata,
     _oanda_m5_rotation_state_for,
@@ -1074,6 +1075,17 @@ class IntentGeneratorTest(unittest.TestCase):
             )
             self.assertFalse(metadata["positive_rotation_oanda_campaign_live_permission"])
             self.assertNotIn(POSITIVE_ROTATION_FIREPOWER_BLOCK_CODE, issue_codes)
+
+    def test_oanda_campaign_firepower_path_falls_back_to_packaged_runtime_artifact(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            packaged = root / "src" / "quant_rabbit" / "oanda_universal_rotation_precision_rules.json"
+            packaged.parent.mkdir(parents=True, exist_ok=True)
+            packaged.write_text(json.dumps({"campaign_firepower": {"status": "VERIFIED_TARGET_10_ROUTE_ESTIMATED"}}))
+
+            path = _oanda_campaign_firepower_path_for_data_root(root)
+
+            self.assertEqual(path, packaged)
 
     def test_matching_oanda_campaign_firepower_can_lift_avg_win_cap_to_min_lot(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
