@@ -311,6 +311,106 @@ class RiskEngineTest(unittest.TestCase):
         self.assertTrue(decision.allowed, decision.block_reasons)
         self.assertNotIn("LOSS_ASYMMETRY_GUARD_EXCEEDED", {issue.code for issue in decision.issues})
 
+    def test_oanda_firepower_min_lot_mode_defends_matching_harvest_receipts(self) -> None:
+        intent = OrderIntent(
+            pair="EUR_USD",
+            side=Side.LONG,
+            order_type=OrderType.LIMIT,
+            units=1000,
+            entry=1.17300,
+            tp=1.17600,
+            sl=1.17130,
+            thesis="matching_oanda_firepower_can_fund_min_lot_without_bypassing_normal_cap",
+            market_context=MarketContext(
+                regime="RANGE current; RANGE_ROTATION campaign lane",
+                narrative="OANDA firepower vehicle matches this attached TP harvest shape",
+                chart_story="range lower rail",
+                method=TradeMethod.RANGE_ROTATION,
+                invalidation="1.1713 loses on M5 bodies",
+            ),
+            metadata={
+                "capture_economics_status": "NEGATIVE_EXPECTANCY",
+                "capture_avg_win_jpy": 50.0,
+                "capture_avg_loss_jpy": 1100.0,
+                "loss_asymmetry_guard_active": True,
+                "loss_asymmetry_guard_mode": "OANDA_CAMPAIGN_FIREPOWER_MIN_LOT",
+                "loss_asymmetry_guard_loss_cap_jpy": 50.0,
+                "loss_asymmetry_guard_base_max_loss_jpy": 1000.0,
+                "loss_asymmetry_guard_effective_max_loss_jpy": 266.4,
+                "tp_execution_mode": "ATTACHED_TECHNICAL_TP",
+                "attach_take_profit_on_fill": True,
+                "tp_target_intent": "HARVEST",
+                "opportunity_mode": "HARVEST",
+                "positive_rotation_oanda_campaign_min_lot_sizing": True,
+                "positive_rotation_oanda_campaign_min_lot_units": 1000,
+                "positive_rotation_oanda_campaign_min_lot_loss_jpy": 266.4,
+                "positive_rotation_oanda_campaign_firepower_status": (
+                    "VERIFIED_TARGET_10_ROUTE_ESTIMATED"
+                ),
+                "positive_rotation_oanda_campaign_firepower_vehicle_match": True,
+                "positive_rotation_oanda_campaign_minimum_floor_reachable": True,
+                "positive_rotation_oanda_campaign_estimated_return_pct_per_active_day": 20.0,
+                "positive_rotation_oanda_campaign_matching_vehicle_estimated_return_pct_per_active_day": (
+                    8.0
+                ),
+            },
+        )
+
+        decision = _capped_engine(policy=RiskPolicy(max_loss_jpy=1000.0)).validate(intent, snapshot())
+
+        self.assertTrue(decision.allowed, decision.block_reasons)
+        self.assertNotIn("LOSS_ASYMMETRY_GUARD_EXCEEDED", {issue.code for issue in decision.issues})
+
+    def test_oanda_firepower_min_lot_mode_requires_matching_vehicle(self) -> None:
+        intent = OrderIntent(
+            pair="EUR_USD",
+            side=Side.LONG,
+            order_type=OrderType.LIMIT,
+            units=1000,
+            entry=1.17300,
+            tp=1.17600,
+            sl=1.17130,
+            thesis="firepower_label_without_vehicle_match_cannot_bypass_avg_win_cap",
+            market_context=MarketContext(
+                regime="RANGE current; RANGE_ROTATION campaign lane",
+                narrative="metadata must prove the exact OANDA vehicle match",
+                chart_story="range lower rail",
+                method=TradeMethod.RANGE_ROTATION,
+                invalidation="1.1713 loses on M5 bodies",
+            ),
+            metadata={
+                "capture_economics_status": "NEGATIVE_EXPECTANCY",
+                "capture_avg_win_jpy": 50.0,
+                "capture_avg_loss_jpy": 1100.0,
+                "loss_asymmetry_guard_active": True,
+                "loss_asymmetry_guard_mode": "OANDA_CAMPAIGN_FIREPOWER_MIN_LOT",
+                "loss_asymmetry_guard_loss_cap_jpy": 50.0,
+                "loss_asymmetry_guard_base_max_loss_jpy": 1000.0,
+                "loss_asymmetry_guard_effective_max_loss_jpy": 266.4,
+                "tp_execution_mode": "ATTACHED_TECHNICAL_TP",
+                "attach_take_profit_on_fill": True,
+                "tp_target_intent": "HARVEST",
+                "opportunity_mode": "HARVEST",
+                "positive_rotation_oanda_campaign_min_lot_sizing": True,
+                "positive_rotation_oanda_campaign_min_lot_units": 1000,
+                "positive_rotation_oanda_campaign_min_lot_loss_jpy": 266.4,
+                "positive_rotation_oanda_campaign_firepower_status": (
+                    "VERIFIED_TARGET_10_ROUTE_ESTIMATED"
+                ),
+                "positive_rotation_oanda_campaign_firepower_vehicle_match": False,
+                "positive_rotation_oanda_campaign_minimum_floor_reachable": True,
+                "positive_rotation_oanda_campaign_estimated_return_pct_per_active_day": 20.0,
+                "positive_rotation_oanda_campaign_matching_vehicle_estimated_return_pct_per_active_day": (
+                    8.0
+                ),
+            },
+        )
+
+        decision = _capped_engine(policy=RiskPolicy(max_loss_jpy=1000.0)).validate(intent, snapshot())
+
+        self.assertFalse(decision.allowed)
+        self.assertIn("LOSS_ASYMMETRY_GUARD_EXCEEDED", {issue.code for issue in decision.issues})
+
     def test_tp_proven_relaxed_requires_scoped_capture_proof(self) -> None:
         intent = OrderIntent(
             pair="EUR_USD",

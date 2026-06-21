@@ -5830,6 +5830,7 @@ POSITIVE_ROTATION_PROOF_COLLECTION_WARN_CODE = (
 )
 POSITIVE_ROTATION_FIREPOWER_BLOCK_CODE = "POSITIVE_ROTATION_DAILY_FIREPOWER_INSUFFICIENT"
 POSITIVE_ROTATION_OANDA_CAMPAIGN_FIREPOWER_MODE = "OANDA_CAMPAIGN_FIREPOWER_HARVEST"
+LOSS_ASYMMETRY_OANDA_CAMPAIGN_FIREPOWER_MIN_LOT_MODE = "OANDA_CAMPAIGN_FIREPOWER_MIN_LOT"
 LOSS_ASYMMETRY_TP_PROOF_COLLECTION_MIN_LOT_MODE = "TP_PROOF_COLLECTION_MIN_LOT"
 OANDA_CAMPAIGN_FIREPOWER_TARGET_OK_STATUSES = {
     "VERIFIED_MINIMUM_5_ROUTE_ESTIMATED",
@@ -6010,6 +6011,93 @@ def _loss_asymmetry_tp_proof_collection_min_lot_plan(
     if evidence["direction_bias_conflict"]:
         out["positive_rotation_proof_collection_direction_bias_conflict_observed"] = True
         out["positive_rotation_direction_bias"] = evidence["direction_bias"]
+    return effective, out
+
+
+def _loss_asymmetry_oanda_campaign_firepower_min_lot_plan(
+    *,
+    lane: dict[str, Any],
+    metadata: dict[str, Any],
+    pair: str,
+    side: Side,
+    method: TradeMethod,
+    order_type: OrderType,
+    position_metadata: dict[str, Any],
+    tp_execution_metadata: dict[str, Any],
+    entry: float,
+    sl: float,
+    snapshot: BrokerSnapshot,
+    data_root: Path | None,
+) -> tuple[float | None, dict[str, Any]]:
+    """Let audited OANDA firepower seeds reach the production lot floor.
+
+    This mirrors the thin exact-TP proof collection path, but only for matching
+    high-precision OANDA firepower vehicles. It never raises risk above the
+    normal equity-derived per-trade cap and does not grant live permission.
+    """
+
+    if str(metadata.get("loss_asymmetry_guard_mode") or "").upper() != "CAP_AVG_WIN":
+        return None, {}
+    if lane.get("oanda_campaign_firepower_seed") is not True:
+        return None, {}
+    if order_type == OrderType.MARKET:
+        return None, {}
+    if str(position_metadata.get("position_intent") or "").upper() == "HEDGE":
+        return None, {}
+    if tp_execution_metadata.get("attach_take_profit_on_fill") is not True:
+        return None, {}
+    if str(tp_execution_metadata.get("tp_execution_mode") or "").upper() != "ATTACHED_TECHNICAL_TP":
+        return None, {}
+    if str(tp_execution_metadata.get("tp_target_intent") or "").upper() != "HARVEST":
+        return None, {}
+    if str(tp_execution_metadata.get("opportunity_mode") or "").upper() != "HARVEST":
+        return None, {}
+    current_cap = _optional_float(metadata.get("loss_asymmetry_guard_effective_max_loss_jpy"))
+    normal_cap = _optional_float(metadata.get("loss_asymmetry_guard_base_max_loss_jpy"))
+    min_lot_loss = _min_lot_loss_budget_jpy(pair=pair, entry=entry, sl=sl, snapshot=snapshot)
+    if current_cap is None or normal_cap is None or min_lot_loss is None:
+        return None, {}
+    if min_lot_loss <= current_cap or min_lot_loss > normal_cap:
+        return None, {}
+    oanda_firepower = _oanda_campaign_firepower_evidence_for_values(
+        pair=pair,
+        side=side,
+        method=method,
+        data_root=data_root,
+    )
+    if oanda_firepower is None:
+        return None, {}
+    if oanda_firepower["vehicle_match"] is not True:
+        return None, {}
+    if oanda_firepower["minimum_floor_reachable"] is not True:
+        return None, {}
+    matching_return = _optional_float(
+        oanda_firepower.get("matching_vehicle_estimated_return_pct_per_active_day")
+    )
+    aggregate_return = _optional_float(
+        lane.get("oanda_campaign_estimated_return_pct_per_active_day")
+    )
+    if (matching_return is None or matching_return <= 0) and (
+        aggregate_return is None or aggregate_return <= 0
+    ):
+        return None, {}
+    effective = math.ceil(min_lot_loss * 10_000.0) / 10_000.0
+    out: dict[str, Any] = {
+        "loss_asymmetry_guard_mode": LOSS_ASYMMETRY_OANDA_CAMPAIGN_FIREPOWER_MIN_LOT_MODE,
+        "loss_asymmetry_guard_relaxed": False,
+        "loss_asymmetry_guard_relaxation_reason": (
+            "matching OANDA high-precision non-market attached-TP HARVEST firepower "
+            "vehicle cannot fund production lot under the average-winner cap; lift "
+            "only to the minimum lot loss budget inside the normal per-trade cap"
+        ),
+        "loss_asymmetry_guard_effective_max_loss_jpy": round(effective, 4),
+        "positive_rotation_oanda_campaign_min_lot_sizing": True,
+        "positive_rotation_oanda_campaign_min_lot_units": MIN_PRODUCTION_LOT_UNITS,
+        "positive_rotation_oanda_campaign_min_lot_loss_jpy": round(effective, 4),
+        "positive_rotation_oanda_campaign_original_cap_jpy": round(current_cap, 4),
+        "positive_rotation_oanda_campaign_normal_cap_jpy": round(normal_cap, 4),
+    }
+    _annotate_oanda_campaign_firepower_metadata(out, oanda_firepower)
     return effective, out
 
 
@@ -6386,6 +6474,22 @@ def _oanda_campaign_firepower_evidence(
     *,
     data_root: Path | None,
 ) -> dict[str, Any] | None:
+    method = intent.market_context.method if intent.market_context is not None else None
+    return _oanda_campaign_firepower_evidence_for_values(
+        pair=intent.pair,
+        side=intent.side,
+        method=method,
+        data_root=data_root,
+    )
+
+
+def _oanda_campaign_firepower_evidence_for_values(
+    *,
+    pair: str,
+    side: Side,
+    method: TradeMethod | None,
+    data_root: Path | None,
+) -> dict[str, Any] | None:
     path = _oanda_campaign_firepower_path_for_data_root(data_root)
     if path is None:
         return None
@@ -6420,7 +6524,12 @@ def _oanda_campaign_firepower_evidence(
     ]
     matches = [
         item for item in top_vehicles
-        if _oanda_campaign_firepower_vehicle_matches(intent, item)
+        if _oanda_campaign_firepower_vehicle_matches_values(
+            item,
+            pair=pair,
+            side=side,
+            method=method,
+        )
     ]
     match = matches[0] if matches else None
     return {
@@ -6470,13 +6579,28 @@ def _oanda_campaign_firepower_vehicle_matches(
     intent: OrderIntent,
     vehicle: dict[str, Any],
 ) -> bool:
-    pair = str(vehicle.get("pair") or "").strip().upper()
-    if pair != intent.pair.upper():
-        return False
-    side = _oanda_campaign_firepower_vehicle_side(vehicle)
-    if side != intent.side.value:
-        return False
     method = intent.market_context.method if intent.market_context is not None else None
+    return _oanda_campaign_firepower_vehicle_matches_values(
+        vehicle,
+        pair=intent.pair,
+        side=intent.side,
+        method=method,
+    )
+
+
+def _oanda_campaign_firepower_vehicle_matches_values(
+    vehicle: dict[str, Any],
+    *,
+    pair: str,
+    side: Side,
+    method: TradeMethod | None,
+) -> bool:
+    vehicle_pair = str(vehicle.get("pair") or "").strip().upper()
+    if vehicle_pair != pair.upper():
+        return False
+    vehicle_side = _oanda_campaign_firepower_vehicle_side(vehicle)
+    if vehicle_side != side.value:
+        return False
     return _oanda_campaign_firepower_shape_matches_method(vehicle.get("shape"), method)
 
 
@@ -6949,6 +7073,25 @@ def _intent_from_lane(
     if proof_collection_loss_cap is not None:
         effective_max_loss_jpy = proof_collection_loss_cap
         loss_asymmetry_metadata.update(proof_collection_metadata)
+    oanda_firepower_loss_cap, oanda_firepower_metadata = (
+        _loss_asymmetry_oanda_campaign_firepower_min_lot_plan(
+            lane=lane,
+            metadata={**loss_asymmetry_metadata, **tp_execution_metadata},
+            pair=pair,
+            side=side,
+            method=method,
+            order_type=order_type,
+            position_metadata=position_metadata,
+            tp_execution_metadata=tp_execution_metadata,
+            entry=entry,
+            sl=sl,
+            snapshot=snapshot,
+            data_root=data_root,
+        )
+    )
+    if oanda_firepower_loss_cap is not None:
+        effective_max_loss_jpy = oanda_firepower_loss_cap
+        loss_asymmetry_metadata.update(oanda_firepower_metadata)
     geometry_metadata = _geometry_metadata(
         pair,
         side,

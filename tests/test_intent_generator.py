@@ -14,6 +14,7 @@ from unittest.mock import patch
 from quant_rabbit.models import OrderIntent, OrderType, Side, TradeMethod
 from quant_rabbit.strategy.intent_generator import (
     IntentGenerator,
+    LOSS_ASYMMETRY_OANDA_CAMPAIGN_FIREPOWER_MIN_LOT_MODE,
     POSITIVE_ROTATION_OANDA_CAMPAIGN_FIREPOWER_MODE,
     POSITIVE_ROTATION_FIREPOWER_BLOCK_CODE,
     POSITIVE_ROTATION_LIVE_BLOCK_CODE,
@@ -1070,6 +1071,124 @@ class IntentGeneratorTest(unittest.TestCase):
             )
             self.assertFalse(metadata["positive_rotation_oanda_campaign_live_permission"])
             self.assertNotIn(POSITIVE_ROTATION_FIREPOWER_BLOCK_CODE, issue_codes)
+
+    def test_matching_oanda_campaign_firepower_can_lift_avg_win_cap_to_min_lot(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_oanda_campaign_firepower_report(root)
+            (root / "capture_economics.json").write_text(
+                json.dumps(
+                    {
+                        "status": "NEGATIVE_EXPECTANCY",
+                        "overall": {
+                            "trades": 210,
+                            "avg_win_jpy": 50.0,
+                            "avg_loss_jpy": 1100.0,
+                            "payoff_ratio": 0.045,
+                            "breakeven_payoff_at_win_rate": 0.7,
+                        },
+                        "by_exit_reason": {
+                            "TAKE_PROFIT_ORDER": {
+                                "trades": 93,
+                                "wins": 93,
+                                "losses": 0,
+                                "avg_win_jpy": 504.0,
+                                "avg_loss_jpy": 0.0,
+                                "expectancy_jpy_per_trade": 504.0,
+                            },
+                            "MARKET_ORDER_TRADE_CLOSE": {
+                                "trades": 84,
+                                "wins": 13,
+                                "losses": 71,
+                                "avg_win_jpy": 218.4,
+                                "avg_loss_jpy": 1095.5,
+                                "expectancy_jpy_per_trade": -892.1,
+                            },
+                        },
+                    }
+                )
+            )
+            output = root / "intents.json"
+
+            IntentGenerator(
+                campaign_plan=_stamp_campaign_generated_at(_oanda_seed_range_campaign(root)),
+                strategy_profile=_strategy(root, status="CANDIDATE"),
+                output_path=output,
+                report_path=root / "intents.md",
+                pair_charts_path=_pair_charts(root),
+                data_root=root,
+                max_loss_jpy=1000.0,
+            ).run(snapshot_path=_snapshot(root))
+
+            payload = json.loads(output.read_text())
+            result = next(
+                item for item in payload["results"]
+                if item["lane_id"] == "range_trader:EUR_USD:LONG:RANGE_ROTATION"
+            )
+            metadata = result["intent"]["metadata"]
+            issue_codes = {issue["code"] for issue in result["risk_issues"]}
+
+            self.assertEqual(result["status"], "LIVE_READY")
+            self.assertEqual(result["intent"]["units"], 1000)
+            self.assertEqual(metadata["loss_asymmetry_guard_loss_cap_jpy"], 50.0)
+            self.assertEqual(
+                metadata["loss_asymmetry_guard_mode"],
+                LOSS_ASYMMETRY_OANDA_CAMPAIGN_FIREPOWER_MIN_LOT_MODE,
+            )
+            self.assertGreater(metadata["loss_asymmetry_guard_effective_max_loss_jpy"], 50.0)
+            self.assertLessEqual(metadata["loss_asymmetry_guard_effective_max_loss_jpy"], 1000.0)
+            self.assertTrue(metadata["positive_rotation_oanda_campaign_min_lot_sizing"])
+            self.assertEqual(
+                metadata["positive_rotation_mode"],
+                POSITIVE_ROTATION_OANDA_CAMPAIGN_FIREPOWER_MODE,
+            )
+            self.assertTrue(metadata["positive_rotation_oanda_campaign_firepower_vehicle_match"])
+            self.assertNotIn("LOSS_BUDGET_TOO_THIN_FOR_MIN_LOT", issue_codes)
+            self.assertNotIn(POSITIVE_ROTATION_LIVE_BLOCK_CODE, issue_codes)
+
+    def test_non_matching_oanda_campaign_firepower_does_not_lift_min_lot(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_oanda_campaign_firepower_report(root, pair="GBP_USD", side="SHORT")
+            (root / "capture_economics.json").write_text(
+                json.dumps(
+                    {
+                        "status": "NEGATIVE_EXPECTANCY",
+                        "overall": {
+                            "trades": 210,
+                            "avg_win_jpy": 50.0,
+                            "avg_loss_jpy": 1100.0,
+                            "payoff_ratio": 0.045,
+                            "breakeven_payoff_at_win_rate": 0.7,
+                        },
+                    }
+                )
+            )
+            output = root / "intents.json"
+
+            IntentGenerator(
+                campaign_plan=_stamp_campaign_generated_at(_oanda_seed_range_campaign(root)),
+                strategy_profile=_strategy(root, status="CANDIDATE"),
+                output_path=output,
+                report_path=root / "intents.md",
+                pair_charts_path=_pair_charts(root),
+                data_root=root,
+                max_loss_jpy=1000.0,
+            ).run(snapshot_path=_snapshot(root))
+
+            payload = json.loads(output.read_text())
+            result = next(
+                item for item in payload["results"]
+                if item["lane_id"] == "range_trader:EUR_USD:LONG:RANGE_ROTATION"
+            )
+            metadata = result["intent"]["metadata"]
+            issue_codes = {issue["code"] for issue in result["risk_issues"]}
+
+            self.assertEqual(result["intent"]["units"], 0)
+            self.assertEqual(metadata["loss_asymmetry_guard_mode"], "CAP_AVG_WIN")
+            self.assertNotIn("positive_rotation_oanda_campaign_min_lot_sizing", metadata)
+            self.assertIn("LOSS_BUDGET_TOO_THIN_FOR_MIN_LOT", issue_codes)
+            self.assertIn(POSITIVE_ROTATION_LIVE_BLOCK_CODE, issue_codes)
 
     def test_capture_tp_proven_keeps_firepower_warn_for_non_matching_oanda_route(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

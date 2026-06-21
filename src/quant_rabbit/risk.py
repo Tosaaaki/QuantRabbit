@@ -116,6 +116,11 @@ HEDGE_CONTINUATION_MAX_SCALE = 0.35
 LOSS_ASYMMETRY_TP_RELAX_MIN_EXIT_TRADES = 20
 LOSS_ASYMMETRY_TP_PROOF_COLLECTION_MIN_EXIT_TRADES = 5
 LOSS_ASYMMETRY_TP_PROOF_COLLECTION_MIN_LOT_MODE = "TP_PROOF_COLLECTION_MIN_LOT"
+LOSS_ASYMMETRY_OANDA_CAMPAIGN_FIREPOWER_MIN_LOT_MODE = "OANDA_CAMPAIGN_FIREPOWER_MIN_LOT"
+OANDA_CAMPAIGN_FIREPOWER_TARGET_OK_STATUSES = {
+    "VERIFIED_MINIMUM_5_ROUTE_ESTIMATED",
+    "VERIFIED_TARGET_10_ROUTE_ESTIMATED",
+}
 CAPTURE_ECONOMICS_STALE_BLOCK_CODE = "CAPTURE_ECONOMICS_STALE"
 
 
@@ -465,6 +470,19 @@ def _loss_asymmetry_guard_issues(intent: OrderIntent, metrics: RiskMetrics) -> l
             and _loss_asymmetry_tp_proof_collection_shape_allowed(intent, metadata)
         ):
             return []
+    if mode == LOSS_ASYMMETRY_OANDA_CAMPAIGN_FIREPOWER_MIN_LOT_MODE:
+        proof_cap = _to_float(metadata.get("loss_asymmetry_guard_effective_max_loss_jpy"))
+        normal_cap = _to_float(metadata.get("loss_asymmetry_guard_base_max_loss_jpy"))
+        original_cap = _to_float(metadata.get("loss_asymmetry_guard_loss_cap_jpy"))
+        if (
+            proof_cap is not None
+            and normal_cap is not None
+            and original_cap is not None
+            and original_cap < proof_cap <= normal_cap
+            and metrics.risk_jpy <= proof_cap + 1e-9
+            and _loss_asymmetry_oanda_campaign_firepower_min_lot_shape_allowed(intent, metadata)
+        ):
+            return []
     status = str(metadata.get("capture_economics_status") or "").upper()
     avg_win = _to_float(metadata.get("capture_avg_win_jpy"))
     avg_loss = _to_float(metadata.get("capture_avg_loss_jpy"))
@@ -584,6 +602,53 @@ def _loss_asymmetry_tp_proof_collection_shape_allowed(
         return False
     pessimistic_expectancy = (lower * tp_avg_win) - ((1.0 - lower) * loss_proxy)
     return pessimistic_expectancy > 0
+
+
+def _loss_asymmetry_oanda_campaign_firepower_min_lot_shape_allowed(
+    intent: OrderIntent,
+    metadata: dict,
+) -> bool:
+    """Validate OANDA firepower min-lot metadata before accepting the cap lift."""
+
+    if intent.order_type == OrderType.MARKET:
+        return False
+    if str(metadata.get("position_intent") or "").upper() == "HEDGE":
+        return False
+    if metadata.get("attach_take_profit_on_fill") is not True:
+        return False
+    if str(metadata.get("tp_execution_mode") or "").upper() != "ATTACHED_TECHNICAL_TP":
+        return False
+    if str(metadata.get("tp_target_intent") or "").upper() != "HARVEST":
+        return False
+    if str(metadata.get("opportunity_mode") or "").upper() != "HARVEST":
+        return False
+    if metadata.get("positive_rotation_oanda_campaign_min_lot_sizing") is not True:
+        return False
+    if metadata.get("positive_rotation_oanda_campaign_firepower_vehicle_match") is not True:
+        return False
+    if metadata.get("positive_rotation_oanda_campaign_minimum_floor_reachable") is not True:
+        return False
+    status = str(metadata.get("positive_rotation_oanda_campaign_firepower_status") or "").upper()
+    if status not in OANDA_CAMPAIGN_FIREPOWER_TARGET_OK_STATUSES:
+        return False
+    matching_return = _to_float(
+        metadata.get(
+            "positive_rotation_oanda_campaign_matching_vehicle_estimated_return_pct_per_active_day"
+        )
+    )
+    aggregate_return = _to_float(
+        metadata.get("positive_rotation_oanda_campaign_estimated_return_pct_per_active_day")
+    )
+    if (matching_return is None or matching_return <= 0) and (
+        aggregate_return is None or aggregate_return <= 0
+    ):
+        return False
+    min_lot_loss = _to_float(metadata.get("positive_rotation_oanda_campaign_min_lot_loss_jpy"))
+    effective_cap = _to_float(metadata.get("loss_asymmetry_guard_effective_max_loss_jpy"))
+    min_lot_units = _to_int(metadata.get("positive_rotation_oanda_campaign_min_lot_units"))
+    if min_lot_loss is None or effective_cap is None or min_lot_loss > effective_cap + 1e-9:
+        return False
+    return min_lot_units == MIN_PRODUCTION_LOT_UNITS
 
 
 @dataclass(frozen=True)
