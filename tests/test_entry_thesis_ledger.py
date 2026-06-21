@@ -7,6 +7,7 @@ import tempfile
 import unittest
 from datetime import datetime, timezone
 from pathlib import Path
+import sqlite3
 
 from quant_rabbit.strategy.entry_thesis_ledger import (
     THESIS_EVOLUTION_HISTORY_FILENAME,
@@ -15,10 +16,12 @@ from quant_rabbit.strategy.entry_thesis_ledger import (
     REQUIRE_THESIS_REPAIR_VERDICT,
     UNVERIFIABLE_STATUS,
     _thesis_horizon_hours_from_forecast,
+    backfill_entry_theses_from_execution_ledger,
     evaluate_all_open_positions,
     evaluate_thesis_evolution,
     load_entry_thesis,
     load_latest_forecast,
+    load_latest_forecast_before,
     load_pending_entry_thesis,
     record_entry_thesis,
     record_entry_thesis_from_order_fill,
@@ -173,6 +176,157 @@ class EntryThesisLedgerTest(unittest.TestCase):
             self.assertEqual(latest, entries[2])
             self.assertEqual(load_latest_forecast("USD_JPY", root), entries[1])
             self.assertIsNone(load_latest_forecast("GBP_USD", root))
+
+    def test_load_latest_forecast_before_rejects_post_fill_rows(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            rows = [
+                {
+                    "timestamp_utc": "2026-06-19T07:50:00Z",
+                    "pair": "EUR_USD",
+                    "direction": "DOWN",
+                    "confidence": 0.61,
+                },
+                {
+                    "timestamp_utc": "2026-06-19T08:10:00Z",
+                    "pair": "EUR_USD",
+                    "direction": "UP",
+                    "confidence": 0.99,
+                },
+            ]
+            (root / "forecast_history.jsonl").write_text("\n".join(json.dumps(row) for row in rows) + "\n")
+
+            latest = load_latest_forecast_before("EUR_USD", root, "2026-06-19T08:01:32Z")
+
+            self.assertIsNotNone(latest)
+            assert latest is not None
+            self.assertEqual(latest["direction"], "DOWN")
+            self.assertAlmostEqual(latest["confidence"], 0.61)
+
+    def test_backfills_missing_entry_thesis_from_execution_ledger_broker_truth(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            (root / "forecast_history.jsonl").write_text(
+                json.dumps(
+                    {
+                        "timestamp_utc": "2026-06-19T07:50:00Z",
+                        "cycle_id": "cycle-before-fill",
+                        "pair": "EUR_USD",
+                        "direction": "DOWN",
+                        "confidence": 0.61,
+                        "target_price": 1.1441,
+                        "invalidation_price": 1.1518,
+                        "horizon_min": 60,
+                    }
+                )
+                + "\n"
+                + json.dumps(
+                    {
+                        "timestamp_utc": "2026-06-19T08:10:00Z",
+                        "cycle_id": "cycle-after-fill",
+                        "pair": "EUR_USD",
+                        "direction": "UP",
+                        "confidence": 0.99,
+                    }
+                )
+                + "\n"
+            )
+            db = root / "execution_ledger.db"
+            fill = {
+                "id": "472732",
+                "type": "ORDER_FILL",
+                "time": "2026-06-19T08:01:32.903433014Z",
+                "orderID": "472730",
+                "instrument": "EUR_USD",
+                "units": "-6300",
+                "price": "1.14486",
+                "reason": "LIMIT_ORDER",
+                "clientOrderID": "qrv1-EURUSD-S-81b9490de070",
+                "tradeOpened": {
+                    "tradeID": "472732",
+                    "units": "-6300",
+                    "price": "1.14486",
+                    "clientExtensions": {
+                        "id": "qrv1-EURUSD-S-d0dda4b89776",
+                        "tag": "trader",
+                        "comment": (
+                            "qr-vnext lane=failure_trader:EUR_USD:SHORT:BREAKOUT_FAILURE:LIMIT "
+                            "desk=failure_trader"
+                        ),
+                    },
+                },
+            }
+            tp = {
+                "id": "472733",
+                "type": "TAKE_PROFIT_ORDER",
+                "batchID": "472732",
+                "time": "2026-06-19T08:01:32.903433014Z",
+                "tradeID": "472732",
+                "price": "1.14414",
+            }
+            sl = {
+                "id": "472734",
+                "type": "STOP_LOSS_ORDER",
+                "batchID": "472732",
+                "time": "2026-06-19T08:01:32.903433014Z",
+                "tradeID": "472732",
+                "price": "1.15171",
+            }
+            with sqlite3.connect(db) as conn:
+                conn.executescript(
+                    """
+                    CREATE TABLE oanda_transactions (
+                        transaction_id TEXT PRIMARY KEY,
+                        type TEXT NOT NULL,
+                        time_utc TEXT,
+                        batch_id TEXT,
+                        request_id TEXT,
+                        raw_json TEXT NOT NULL,
+                        inserted_at_utc TEXT NOT NULL
+                    );
+                    """
+                )
+                for payload in (fill, tp, sl):
+                    conn.execute(
+                        """
+                        INSERT INTO oanda_transactions(
+                            transaction_id, type, time_utc, batch_id, request_id, raw_json, inserted_at_utc
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            payload["id"],
+                            payload["type"],
+                            payload.get("time"),
+                            payload.get("batchID"),
+                            None,
+                            json.dumps(payload),
+                            "2026-06-19T08:02:00Z",
+                        ),
+                    )
+
+            result = backfill_entry_theses_from_execution_ledger(
+                db_path=db,
+                data_root=root,
+                trade_ids=["472732"],
+            )
+            thesis = load_entry_thesis("472732", root)
+
+            self.assertEqual(result.status, "BACKFILLED")
+            self.assertEqual(result.backfilled_trade_ids, ("472732",))
+            self.assertIsNotNone(thesis)
+            assert thesis is not None
+            self.assertEqual(thesis.side, "SHORT")
+            self.assertEqual(thesis.forecast_direction, "DOWN")
+            self.assertAlmostEqual(thesis.forecast_confidence, 0.61)
+            self.assertAlmostEqual(thesis.entry_price, 1.14486)
+            self.assertAlmostEqual(thesis.target_price or 0.0, 1.14414)
+            self.assertAlmostEqual(thesis.invalidation_price or 0.0, 1.15171)
+            self.assertEqual(
+                thesis.context_evidence["lane_id"],
+                "failure_trader:EUR_USD:SHORT:BREAKOUT_FAILURE:LIMIT",
+            )
+            self.assertEqual(thesis.context_evidence["forecast_cycle_id"], "cycle-before-fill")
+            self.assertTrue(thesis.context_evidence["broker_backfill_from_execution_ledger"])
 
     def test_record_from_send_response_extracts_trade_id(self) -> None:
         with tempfile.TemporaryDirectory() as td:

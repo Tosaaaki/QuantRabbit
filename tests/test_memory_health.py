@@ -153,6 +153,31 @@ class MemoryHealthAuditorTest(unittest.TestCase):
             any(issue["code"] == "POSITION_ENTRY_THESIS_MISSING_FOR_OPEN_TRADE" for issue in payload["issues"])
         )
 
+    def test_backfills_open_position_entry_thesis_from_execution_ledger(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root, write_entry_thesis=False)
+            _write_backfillable_execution_ledger(files["execution_ledger"])
+
+            summary = _run(files)
+            payload = json.loads(files["output"].read_text())
+            thesis_rows = [
+                json.loads(line)
+                for line in files["entry_thesis"].read_text().splitlines()
+                if line.strip()
+            ]
+
+        self.assertEqual(summary.status, STATUS_PASS)
+        self.assertEqual(summary.layers["position_memory"], "PASS")
+        self.assertEqual(payload["metrics"]["entry_thesis_backfill"]["status"], "BACKFILLED")
+        self.assertEqual(payload["metrics"]["entry_thesis_ledger"]["missing_active_trade_ids"], [])
+        self.assertFalse(
+            any(issue["code"] == "POSITION_ENTRY_THESIS_MISSING_FOR_OPEN_TRADE" for issue in payload["issues"])
+        )
+        self.assertEqual(thesis_rows[0]["trade_id"], "T1")
+        self.assertEqual(thesis_rows[0]["forecast_direction"], "UP")
+        self.assertAlmostEqual(thesis_rows[0]["target_price"], 1.18)
+
     def test_missing_entry_thesis_ledger_without_open_positions_is_not_warning(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -846,4 +871,87 @@ def _write_execution_ledger(path: Path, *, last_transaction_id: str) -> None:
             ("last_oanda_transaction_id", last_transaction_id, _NOW.isoformat()),
         )
         conn.execute("insert into oanda_transactions(transaction_id) values (?)", ("99",))
+        conn.execute("insert into execution_events(event_uid) values (?)", ("evt-1",))
+
+
+def _write_backfillable_execution_ledger(path: Path) -> None:
+    fill = {
+        "id": "100",
+        "time": _NOW.isoformat(),
+        "type": "ORDER_FILL",
+        "orderID": "99",
+        "instrument": "EUR_USD",
+        "units": "1000",
+        "price": "1.17000",
+        "reason": "LIMIT_ORDER",
+        "clientOrderID": "qrv1-EURUSD-L-test",
+        "tradeOpened": {
+            "tradeID": "T1",
+            "units": "1000",
+            "price": "1.17000",
+            "clientExtensions": {
+                "id": "qrv1-EURUSD-L-test",
+                "tag": "trader",
+                "comment": "qr-vnext lane=trend_trader:EUR_USD:LONG:TREND_CONTINUATION",
+            },
+        },
+    }
+    tp = {
+        "id": "101",
+        "time": _NOW.isoformat(),
+        "type": "TAKE_PROFIT_ORDER",
+        "batchID": "100",
+        "tradeID": "T1",
+        "price": "1.18000",
+        "reason": "ON_FILL",
+    }
+    sl = {
+        "id": "102",
+        "time": _NOW.isoformat(),
+        "type": "STOP_LOSS_ORDER",
+        "batchID": "100",
+        "tradeID": "T1",
+        "price": "1.16000",
+        "reason": "ON_FILL",
+    }
+    with sqlite3.connect(path) as conn:
+        conn.executescript(
+            """
+            DROP TABLE IF EXISTS sync_state;
+            DROP TABLE IF EXISTS oanda_transactions;
+            DROP TABLE IF EXISTS execution_events;
+            CREATE TABLE sync_state (key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at_utc TEXT NOT NULL);
+            CREATE TABLE oanda_transactions (
+                transaction_id TEXT PRIMARY KEY,
+                type TEXT NOT NULL,
+                time_utc TEXT,
+                batch_id TEXT,
+                request_id TEXT,
+                raw_json TEXT NOT NULL,
+                inserted_at_utc TEXT NOT NULL
+            );
+            CREATE TABLE execution_events (event_uid TEXT PRIMARY KEY);
+            """
+        )
+        conn.execute(
+            "insert into sync_state(key, value, updated_at_utc) values (?, ?, ?)",
+            ("last_oanda_transaction_id", "100", _NOW.isoformat()),
+        )
+        for payload in (fill, tp, sl):
+            conn.execute(
+                """
+                INSERT INTO oanda_transactions(
+                    transaction_id, type, time_utc, batch_id, request_id, raw_json, inserted_at_utc
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    payload["id"],
+                    payload["type"],
+                    payload.get("time"),
+                    payload.get("batchID"),
+                    None,
+                    json.dumps(payload),
+                    _NOW.isoformat(),
+                ),
+            )
         conn.execute("insert into execution_events(event_uid) values (?)", ("evt-1",))

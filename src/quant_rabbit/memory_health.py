@@ -216,6 +216,12 @@ class MemoryHealthAuditor:
             path=strategy_profile_path,
         )
 
+        _maybe_backfill_active_entry_theses(
+            metrics,
+            active_positions=active_positions,
+            entry_thesis_ledger_path=entry_thesis_ledger_path,
+            execution_ledger_db_path=execution_ledger_db_path,
+        )
         entry_rows, entry_malformed, entry_error = _read_jsonl(entry_thesis_ledger_path)
         _audit_entry_thesis(
             issues,
@@ -963,6 +969,34 @@ def _audit_entry_thesis(
                 evidence={"trade_ids": missing_trade_ids},
             )
         )
+
+
+def _maybe_backfill_active_entry_theses(
+    metrics: dict[str, Any],
+    *,
+    active_positions: list[dict[str, str]],
+    entry_thesis_ledger_path: Path,
+    execution_ledger_db_path: Path,
+) -> None:
+    active_trade_ids = [position["trade_id"] for position in active_positions if position.get("trade_id")]
+    if not active_trade_ids:
+        metrics["entry_thesis_backfill"] = {"status": "NO_ACTIVE_TRADES"}
+        return
+    try:
+        from quant_rabbit.strategy.entry_thesis_ledger import backfill_entry_theses_from_execution_ledger
+
+        result = backfill_entry_theses_from_execution_ledger(
+            db_path=execution_ledger_db_path,
+            data_root=entry_thesis_ledger_path.parent,
+            trade_ids=active_trade_ids,
+        )
+        metrics["entry_thesis_backfill"] = result.to_dict()
+    except Exception as exc:
+        metrics["entry_thesis_backfill"] = {
+            "status": "ERROR",
+            "requested_trade_ids": active_trade_ids,
+            "issue": str(exc),
+        }
 
 
 def _audit_intent_memory_blockers(

@@ -523,6 +523,37 @@ class ExecutionLedgerTest(unittest.TestCase):
             self.assertEqual(thesis.forecast_direction, "UP")
             self.assertAlmostEqual(thesis.entry_price, 1.1751)
 
+    def test_sync_backfills_entry_thesis_when_pending_sidecar_is_missing(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "forecast_history.jsonl").write_text(
+                json.dumps(
+                    {
+                        "timestamp_utc": "2026-06-19T07:50:00Z",
+                        "cycle_id": "cycle-before-fill",
+                        "pair": "EUR_USD",
+                        "direction": "DOWN",
+                        "confidence": 0.61,
+                        "horizon_min": 60,
+                    }
+                )
+                + "\n"
+            )
+            ledger = ExecutionLedger(db_path=root / "ledger.db", report_path=root / "ledger.md")
+
+            summary = ledger.sync_oanda_transactions(FakeBackfillFillClient(), since_transaction_id="472729")
+            thesis = load_entry_thesis("472732", root)
+
+            self.assertEqual(summary.status, "SYNCED")
+            self.assertIsNotNone(thesis)
+            assert thesis is not None
+            self.assertEqual(thesis.pair, "EUR_USD")
+            self.assertEqual(thesis.side, "SHORT")
+            self.assertEqual(thesis.forecast_direction, "DOWN")
+            self.assertAlmostEqual(thesis.target_price or 0.0, 1.14414)
+            self.assertAlmostEqual(thesis.invalidation_price or 0.0, 1.15171)
+            self.assertTrue(thesis.context_evidence["broker_backfill_from_execution_ledger"])
+
     def test_closed_short_trade_records_original_trade_side(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -809,6 +840,65 @@ class FakeProtectionClient:
                     "type": "STOP_LOSS_ORDER",
                     "tradeID": "300",
                     "price": "1.16100",
+                    "reason": "ON_FILL",
+                },
+            ],
+        }
+
+
+class FakeBackfillFillClient:
+    def account_summary(self, *, now_utc: datetime | None = None) -> AccountSummary:
+        return AccountSummary(
+            nav_jpy=200_000.0,
+            balance_jpy=200_000.0,
+            last_transaction_id="472729",
+            fetched_at_utc=now_utc or datetime.now(timezone.utc),
+        )
+
+    def transactions_since_id(self, transaction_id: str) -> dict:
+        return {
+            "lastTransactionID": "472734",
+            "transactions": [
+                {
+                    "id": "472732",
+                    "time": "2026-06-19T08:01:32.903433014Z",
+                    "type": "ORDER_FILL",
+                    "orderID": "472730",
+                    "instrument": "EUR_USD",
+                    "units": "-6300",
+                    "price": "1.14486",
+                    "reason": "LIMIT_ORDER",
+                    "clientOrderID": "qrv1-EURUSD-S-81b9490de070",
+                    "tradeOpened": {
+                        "tradeID": "472732",
+                        "units": "-6300",
+                        "price": "1.14486",
+                        "clientExtensions": {
+                            "id": "qrv1-EURUSD-S-d0dda4b89776",
+                            "tag": "trader",
+                            "comment": (
+                                "qr-vnext lane=failure_trader:EUR_USD:SHORT:BREAKOUT_FAILURE:LIMIT "
+                                "desk=failure_trader"
+                            ),
+                        },
+                    },
+                },
+                {
+                    "id": "472733",
+                    "time": "2026-06-19T08:01:32.903433014Z",
+                    "type": "TAKE_PROFIT_ORDER",
+                    "batchID": "472732",
+                    "tradeID": "472732",
+                    "price": "1.14414",
+                    "reason": "ON_FILL",
+                },
+                {
+                    "id": "472734",
+                    "time": "2026-06-19T08:01:32.903433014Z",
+                    "type": "STOP_LOSS_ORDER",
+                    "batchID": "472732",
+                    "tradeID": "472732",
+                    "price": "1.15171",
                     "reason": "ON_FILL",
                 },
             ],

@@ -92,6 +92,7 @@ class ExecutionLedger:
             transactions = [tx for tx in payload.get("transactions", []) or [] if isinstance(tx, dict)]
             inserted_transactions = 0
             inserted_events = 0
+            opened_trade_ids: list[str] = []
             for transaction in transactions:
                 if _insert_transaction(conn, transaction, now):
                     inserted_transactions += 1
@@ -99,9 +100,20 @@ class ExecutionLedger:
                     if _insert_event(conn, event):
                         inserted_events += 1
                 _record_entry_thesis_for_fill(transaction, data_root=self.db_path.parent)
+                opened = transaction.get("tradeOpened")
+                if str(transaction.get("type") or "") == "ORDER_FILL" and isinstance(opened, dict):
+                    trade_id = str(opened.get("tradeID") or "").strip()
+                    if trade_id:
+                        opened_trade_ids.append(trade_id)
             last_transaction_id = str(payload.get("lastTransactionID") or start_id)
             _set_state(conn, "last_oanda_transaction_id", last_transaction_id, now)
             reconciled_events = _reconcile_gateway_trade_close_broker_accepts(conn, now=now)
+
+        _backfill_entry_thesis_for_opened_trades(
+            db_path=self.db_path,
+            data_root=self.db_path.parent,
+            trade_ids=opened_trade_ids,
+        )
 
         summary = ExecutionLedgerSummary(
             db_path=self.db_path,
@@ -353,6 +365,26 @@ def _record_entry_thesis_for_fill(transaction: dict[str, Any], *, data_root: Pat
         from quant_rabbit.strategy.entry_thesis_ledger import record_entry_thesis_from_order_fill
 
         record_entry_thesis_from_order_fill(transaction=transaction, data_root=data_root)
+    except Exception:
+        return
+
+
+def _backfill_entry_thesis_for_opened_trades(
+    *,
+    db_path: Path,
+    data_root: Path,
+    trade_ids: list[str],
+) -> None:
+    if not trade_ids:
+        return
+    try:
+        from quant_rabbit.strategy.entry_thesis_ledger import backfill_entry_theses_from_execution_ledger
+
+        backfill_entry_theses_from_execution_ledger(
+            db_path=db_path,
+            data_root=data_root,
+            trade_ids=trade_ids,
+        )
     except Exception:
         return
 

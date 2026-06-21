@@ -56,10 +56,11 @@ from __future__ import annotations
 import json
 import os
 import re
+import sqlite3
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Iterable, List, Optional
 
 from quant_rabbit.strategy.directional_forecaster import ENTRY_CONFIDENCE_MIN
 
@@ -698,6 +699,30 @@ class EntryThesisRecordResult:
 
 
 @dataclass(frozen=True)
+class EntryThesisBackfillResult:
+    status: str
+    requested_trade_ids: tuple[str, ...] = ()
+    scanned_fills: int = 0
+    backfilled_trade_ids: tuple[str, ...] = ()
+    already_recorded_trade_ids: tuple[str, ...] = ()
+    missing_trade_ids: tuple[str, ...] = ()
+    issue: Optional[str] = None
+
+    def to_dict(self) -> dict[str, Any]:
+        payload: dict[str, Any] = {
+            "status": self.status,
+            "requested_trade_ids": list(self.requested_trade_ids),
+            "scanned_fills": self.scanned_fills,
+            "backfilled_trade_ids": list(self.backfilled_trade_ids),
+            "already_recorded_trade_ids": list(self.already_recorded_trade_ids),
+            "missing_trade_ids": list(self.missing_trade_ids),
+        }
+        if self.issue:
+            payload["issue"] = self.issue
+        return payload
+
+
+@dataclass(frozen=True)
 class ThesisEvolution:
     trade_id: str
     pair: str
@@ -857,6 +882,337 @@ def load_latest_forecast(pair: str, data_root: Path) -> Optional[Dict[str, Any]]
     except OSError:
         return None
     return latest
+
+
+def load_latest_forecast_before(
+    pair: str,
+    data_root: Path,
+    timestamp_utc: Any,
+) -> Optional[Dict[str, Any]]:
+    """Read the latest forecast for `pair` emitted no later than timestamp.
+
+    Backfills must not use a forecast emitted after the broker fill; doing so
+    would convert later evidence into an entry-time thesis and poison the
+    HIT/MISS audit loop.
+    """
+
+    path = data_root / FORECAST_HISTORY_FILENAME
+    if not path.exists():
+        return None
+    cutoff = _parse_utc_timestamp(timestamp_utc)
+    latest: Optional[Dict[str, Any]] = None
+    latest_ts: Optional[datetime] = None
+    try:
+        for line in path.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                d = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if str(d.get("pair", "")) != pair:
+                continue
+            row_ts = _parse_utc_timestamp(d.get("timestamp_utc") or d.get("time_utc") or d.get("time"))
+            if cutoff is not None and row_ts is not None and row_ts > cutoff:
+                continue
+            if latest_ts is None or (row_ts is not None and row_ts >= latest_ts):
+                latest = d
+                latest_ts = row_ts
+    except OSError:
+        return None
+    return latest
+
+
+def backfill_entry_theses_from_execution_ledger(
+    *,
+    db_path: Path,
+    data_root: Path,
+    trade_ids: Iterable[str],
+) -> EntryThesisBackfillResult:
+    """Reconstruct missing active entry theses from durable broker truth.
+
+    This is intentionally narrow: it writes only for requested trade ids and
+    only from OANDA `ORDER_FILL` / protection transactions plus forecast rows
+    that predate the fill. If broker truth cannot prove the entry, the missing
+    ledger blocker remains.
+    """
+
+    requested = tuple(dict.fromkeys(str(item).strip() for item in trade_ids if str(item).strip()))
+    if _is_disabled():
+        return EntryThesisBackfillResult(
+            status="DISABLED",
+            requested_trade_ids=requested,
+            missing_trade_ids=requested,
+            issue="QR_DISABLE_ENTRY_THESIS_LEDGER is active",
+        )
+    if not requested:
+        return EntryThesisBackfillResult(status="NO_REQUESTED_TRADES")
+
+    already_initial = tuple(trade_id for trade_id in requested if load_entry_thesis(trade_id, data_root) is not None)
+    remaining = tuple(trade_id for trade_id in requested if trade_id not in set(already_initial))
+    if not remaining:
+        return EntryThesisBackfillResult(
+            status="NO_MISSING_TRADES",
+            requested_trade_ids=requested,
+            already_recorded_trade_ids=already_initial,
+        )
+    if not db_path.exists():
+        return EntryThesisBackfillResult(
+            status="UNAVAILABLE",
+            requested_trade_ids=requested,
+            already_recorded_trade_ids=already_initial,
+            missing_trade_ids=remaining,
+            issue=f"execution ledger DB missing: {db_path}",
+        )
+
+    target = set(remaining)
+    backfilled: list[str] = []
+    already = list(already_initial)
+    scanned_fills = 0
+    try:
+        with sqlite3.connect(db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            protection_prices = _execution_ledger_protection_prices(conn)
+            rows = conn.execute(
+                """
+                SELECT raw_json
+                FROM oanda_transactions
+                WHERE type = 'ORDER_FILL'
+                ORDER BY CAST(transaction_id AS INTEGER), transaction_id
+                """
+            ).fetchall()
+            for row in rows:
+                try:
+                    transaction = json.loads(str(row["raw_json"]))
+                except (KeyError, TypeError, json.JSONDecodeError):
+                    continue
+                opened = transaction.get("tradeOpened")
+                if not isinstance(opened, dict):
+                    continue
+                trade_id = str(opened.get("tradeID") or "").strip()
+                if trade_id not in target:
+                    continue
+                scanned_fills += 1
+                if load_entry_thesis(trade_id, data_root) is not None:
+                    already.append(trade_id)
+                    continue
+                pending_promoted = record_entry_thesis_from_order_fill(
+                    transaction=transaction,
+                    data_root=data_root,
+                )
+                if pending_promoted is not None:
+                    backfilled.append(trade_id)
+                    continue
+                reconstructed = _entry_thesis_from_broker_fill(
+                    transaction=transaction,
+                    protection_prices=protection_prices.get(trade_id, {}),
+                    data_root=data_root,
+                )
+                if reconstructed is None:
+                    continue
+                record_entry_thesis(reconstructed, data_root)
+                if load_entry_thesis(trade_id, data_root) is not None:
+                    backfilled.append(trade_id)
+    except sqlite3.Error as exc:
+        return EntryThesisBackfillResult(
+            status="UNAVAILABLE",
+            requested_trade_ids=requested,
+            scanned_fills=scanned_fills,
+            backfilled_trade_ids=tuple(backfilled),
+            already_recorded_trade_ids=tuple(dict.fromkeys(already)),
+            missing_trade_ids=tuple(trade_id for trade_id in requested if load_entry_thesis(trade_id, data_root) is None),
+            issue=str(exc),
+        )
+
+    recorded = set(backfilled) | set(already)
+    missing = tuple(trade_id for trade_id in requested if trade_id not in recorded and load_entry_thesis(trade_id, data_root) is None)
+    status = "BACKFILLED" if backfilled else ("NO_MISSING_TRADES" if not missing else "INCOMPLETE")
+    return EntryThesisBackfillResult(
+        status=status,
+        requested_trade_ids=requested,
+        scanned_fills=scanned_fills,
+        backfilled_trade_ids=tuple(dict.fromkeys(backfilled)),
+        already_recorded_trade_ids=tuple(dict.fromkeys(already)),
+        missing_trade_ids=missing,
+    )
+
+
+def _execution_ledger_protection_prices(conn: sqlite3.Connection) -> dict[str, dict[str, float]]:
+    prices: dict[str, dict[str, float]] = {}
+    rows = conn.execute(
+        """
+        SELECT type, raw_json
+        FROM oanda_transactions
+        WHERE type IN ('TAKE_PROFIT_ORDER', 'STOP_LOSS_ORDER')
+        """
+    ).fetchall()
+    for row in rows:
+        try:
+            payload = json.loads(str(row["raw_json"]))
+        except (KeyError, TypeError, json.JSONDecodeError):
+            continue
+        trade_id = str(payload.get("tradeID") or "").strip()
+        if not trade_id:
+            continue
+        price = _safe_float(payload.get("price"))
+        if price is None or price <= 0:
+            continue
+        slot = prices.setdefault(trade_id, {})
+        tx_type = str(payload.get("type") or row["type"] or "").upper()
+        if tx_type == "TAKE_PROFIT_ORDER":
+            slot["tp"] = price
+        elif tx_type == "STOP_LOSS_ORDER":
+            slot["sl"] = price
+    return prices
+
+
+def _entry_thesis_from_broker_fill(
+    *,
+    transaction: Dict[str, Any],
+    protection_prices: Dict[str, float],
+    data_root: Path,
+) -> Optional[EntryThesis]:
+    opened = transaction.get("tradeOpened")
+    if not isinstance(opened, dict):
+        return None
+    trade_id = str(opened.get("tradeID") or "").strip()
+    pair = str(transaction.get("instrument") or "").strip()
+    units = _safe_int(opened.get("units")) or _safe_int(transaction.get("units"))
+    side = _side_from_units(units)
+    price = _safe_float(opened.get("price")) or _safe_float(transaction.get("price"))
+    if not trade_id or not pair or side not in ("LONG", "SHORT") or price is None or price <= 0:
+        return None
+
+    forecast = load_latest_forecast_before(pair, data_root, transaction.get("time")) or {}
+    lane_id = _broker_fill_lane_id(transaction=transaction, pair=pair, side=side)
+    client_order_id = _broker_fill_client_order_id(transaction)
+    comment = _broker_fill_comment(transaction)
+    forecast_ts = forecast.get("timestamp_utc") or forecast.get("time_utc") or forecast.get("time")
+    context_evidence = {
+        "broker_backfill_from_execution_ledger": True,
+        "oanda_transaction_id": str(transaction.get("id") or ""),
+        "order_id": str(transaction.get("orderID") or ""),
+        "fill_reason": str(transaction.get("reason") or ""),
+    }
+    if lane_id:
+        context_evidence["lane_id"] = lane_id
+    if client_order_id:
+        context_evidence["client_order_id"] = client_order_id
+    if comment:
+        context_evidence["trade_client_comment"] = comment[:_CONTEXT_TEXT_LIMIT]
+    if forecast_ts:
+        context_evidence["forecast_timestamp_utc"] = str(forecast_ts)
+    if forecast.get("cycle_id"):
+        context_evidence["forecast_cycle_id"] = str(forecast.get("cycle_id"))
+
+    key_drivers: list[str] = []
+    if forecast.get("direction"):
+        key_drivers.append(
+            f"forecast={forecast.get('direction')}@conf={float(forecast.get('confidence', 0)):.2f}"
+        )
+    if lane_id:
+        key_drivers.append(f"lane_id={lane_id}")
+    if transaction.get("reason"):
+        key_drivers.append(f"fill_reason={transaction.get('reason')}")
+    key_drivers.append("broker_backfill=execution_ledger")
+    if comment:
+        key_drivers.append(comment[:120])
+
+    return EntryThesis(
+        timestamp_utc=str(transaction.get("time") or datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")),
+        trade_id=trade_id,
+        pair=pair,
+        side=side,
+        entry_price=float(price),
+        forecast_direction=str(forecast.get("direction") or "UNCLEAR"),
+        forecast_confidence=float(forecast.get("confidence") or 0.0),
+        horizon_hours=_thesis_horizon_hours_from_forecast(forecast),
+        regime=str(forecast.get("regime") or "") or None,
+        invalidation_price=_first_directional_price(
+            side=side,
+            entry_price=price,
+            role="INVALIDATION",
+            values=(
+                protection_prices.get("sl"),
+                forecast.get("invalidation_price"),
+            ),
+        ),
+        target_price=_first_directional_price(
+            side=side,
+            entry_price=price,
+            role="TARGET",
+            values=(
+                protection_prices.get("tp"),
+                forecast.get("target_price"),
+            ),
+        ),
+        key_drivers=key_drivers[:6],
+        context_evidence=context_evidence,
+    )
+
+
+def _broker_fill_extension_payloads(transaction: Dict[str, Any]) -> tuple[Dict[str, Any], ...]:
+    payloads: list[Dict[str, Any]] = []
+    for key in ("clientExtensions", "tradeClientExtensions"):
+        value = transaction.get(key)
+        if isinstance(value, dict):
+            payloads.append(value)
+    opened = transaction.get("tradeOpened")
+    if isinstance(opened, dict):
+        for key in ("clientExtensions", "tradeClientExtensions"):
+            value = opened.get(key)
+            if isinstance(value, dict):
+                payloads.append(value)
+    return tuple(payloads)
+
+
+def _broker_fill_comment(transaction: Dict[str, Any]) -> str:
+    for payload in (transaction, *_broker_fill_extension_payloads(transaction)):
+        text = str(payload.get("comment") or "").strip()
+        if text:
+            return text
+    return ""
+
+
+def _broker_fill_lane_id(*, transaction: Dict[str, Any], pair: str, side: str) -> Optional[str]:
+    for payload in (transaction, *_broker_fill_extension_payloads(transaction)):
+        for key in ("lane_id", "laneId"):
+            value = str(payload.get(key) or "").strip()
+            if value:
+                return value
+        comment = str(payload.get("comment") or "").strip()
+        if comment:
+            for token in comment.split():
+                for prefix in ("lane=", "lane_id=", "laneId="):
+                    if token.startswith(prefix):
+                        lane = token[len(prefix) :].strip()
+                        if lane:
+                            return lane
+    comment = _broker_fill_comment(transaction)
+    if comment.startswith("qr-vnext"):
+        desk_method = {
+            "trend_trader": "TREND_CONTINUATION",
+            "range_trader": "RANGE_ROTATION",
+            "failure_trader": "BREAKOUT_FAILURE",
+        }
+        for token in comment.split():
+            method = desk_method.get(token.strip())
+            if method:
+                return f"{token.strip()}:{pair}:{side}:{method}"
+    return None
+
+
+def _broker_fill_client_order_id(transaction: Dict[str, Any]) -> Optional[str]:
+    for value in (transaction.get("clientOrderID"),):
+        text = str(value or "").strip()
+        if text:
+            return text
+    for payload in _broker_fill_extension_payloads(transaction):
+        text = str(payload.get("id") or "").strip()
+        if text:
+            return text
+    return None
 
 
 def _response_order_create(response: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
