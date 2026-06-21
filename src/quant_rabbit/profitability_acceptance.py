@@ -198,17 +198,7 @@ def _order_intent_metrics(payload: dict[str, Any]) -> dict[str, Any]:
     live_ready = [item for item in results if str(item.get("status") or "") == "LIVE_READY"]
     blockers: dict[str, int] = {}
     for item in results:
-        for issue in item.get("risk_issues") or item.get("issues") or []:
-            if not isinstance(issue, dict):
-                continue
-            code = str(issue.get("code") or "").strip()
-            if code:
-                blockers[code] = blockers.get(code, 0) + 1
-        for code in item.get("live_blockers") or []:
-            text = str(code or "").strip()
-            if not text:
-                continue
-            key = text.split(":", 1)[0][:80]
+        for key in _order_intent_blocker_codes(item):
             blockers[key] = blockers.get(key, 0) + 1
     return {
         "generated_at_utc": payload.get("generated_at_utc"),
@@ -222,6 +212,51 @@ def _order_intent_metrics(payload: dict[str, Any]) -> dict[str, Any]:
             for code, count in sorted(blockers.items(), key=lambda item: (-item[1], item[0]))[:10]
         ],
     }
+
+
+def _order_intent_blocker_codes(item: dict[str, Any]) -> tuple[str, ...]:
+    """Return one canonical blocker-code set for an intent result.
+
+    Current `order_intents.json` publishes `live_blocker_codes` exactly to avoid
+    ranking prose fragments as separate blocker categories. Older artifacts did
+    not have that field, so the fallback still extracts issue codes and finally
+    a bounded legacy label from `live_blockers`.
+    """
+
+    if not isinstance(item, dict):
+        return ()
+    live_codes: list[str] = []
+    for raw in item.get("live_blocker_codes") or []:
+        if isinstance(raw, dict):
+            code = str(raw.get("code") or "").strip()
+        else:
+            code = str(raw or "").strip()
+        if code:
+            live_codes.append(code)
+    if live_codes:
+        return tuple(dict.fromkeys(live_codes))
+
+    fallback: list[str] = []
+    for issue in item.get("risk_issues") or item.get("issues") or []:
+        if not isinstance(issue, dict):
+            continue
+        severity = str(issue.get("severity") or "").strip().upper()
+        if severity and severity != "BLOCK":
+            continue
+        code = str(issue.get("code") or "").strip()
+        if code:
+            fallback.append(code)
+    if fallback:
+        return tuple(dict.fromkeys(fallback))
+
+    for raw in item.get("live_blockers") or []:
+        if isinstance(raw, dict):
+            text = str(raw.get("code") or raw.get("message") or "").strip()
+        else:
+            text = str(raw or "").strip()
+        if text:
+            fallback.append(text.split(":", 1)[0][:80])
+    return tuple(dict.fromkeys(fallback))
 
 
 def _target_metrics(payload: dict[str, Any]) -> dict[str, Any]:

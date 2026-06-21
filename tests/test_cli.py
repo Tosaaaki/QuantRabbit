@@ -27,7 +27,7 @@ from quant_rabbit.cli import (
 )
 from quant_rabbit.models import AccountSummary, BrokerOrder, BrokerSnapshot, Owner, Quote
 from quant_rabbit.paths import DEFAULT_CAPTURE_ECONOMICS, DEFAULT_EXECUTION_LEDGER_DB, DEFAULT_MARKET_CONTEXT_MATRIX
-from quant_rabbit.profitability_acceptance import _execution_ledger_close_findings
+from quant_rabbit.profitability_acceptance import _execution_ledger_close_findings, _order_intent_metrics
 from quant_rabbit.strategy.intent_generator import _snapshot_from_json as _intent_snapshot_from_json
 
 
@@ -527,6 +527,65 @@ class CliHelpTest(unittest.TestCase):
             metrics["recent_loss_examples"][0]["close_provenance"],
             "GATEWAY_GPT_CLOSE_RECONCILED",
         )
+
+    def test_profitability_acceptance_order_metrics_prefers_live_blocker_codes(self) -> None:
+        metrics = _order_intent_metrics(
+            {
+                "generated_at_utc": "2026-06-21T12:00:00+00:00",
+                "results": [
+                    {
+                        "status": "DRY_RUN_BLOCKED",
+                        "risk_issues": [
+                            {
+                                "code": "FORECAST_CONFIDENCE_REQUIRED_FOR_LIVE",
+                                "message": "EUR_USD LONG forecast confidence is below live floor",
+                                "severity": "BLOCK",
+                            }
+                        ],
+                        "live_blocker_codes": ["FORECAST_CONFIDENCE_REQUIRED_FOR_LIVE"],
+                        "live_blockers": [
+                            "EUR_USD LONG forecast confidence 0.44 < 0.65 for live send",
+                        ],
+                    },
+                    {
+                        "status": "DRY_RUN_BLOCKED",
+                        "risk_issues": [
+                            {
+                                "code": "SPREAD_TOO_WIDE",
+                                "message": "spread is wider than session cap",
+                                "severity": "BLOCK",
+                            }
+                        ],
+                        "live_blocker_codes": ["SPREAD_TOO_WIDE"],
+                        "live_blockers": ["spread too wide: current spread exceeds cap"],
+                    },
+                    {
+                        "status": "DRY_RUN_BLOCKED",
+                        "risk_issues": [],
+                        "live_blockers": [
+                            {"code": "LEGACY_BLOCKER", "message": "legacy blocker detail"},
+                        ],
+                    },
+                    {
+                        "status": "DRY_RUN_BLOCKED",
+                        "risk_issues": [
+                            {"code": "WARN_ONLY_DIAGNOSTIC", "severity": "WARN"},
+                            {"code": "LEGACY_RISK_BLOCK", "severity": "BLOCK"},
+                        ],
+                        "live_blockers": ["legacy risk detail"],
+                    },
+                ],
+            }
+        )
+
+        blockers = {item["code"]: item["count"] for item in metrics["top_blockers"]}
+        self.assertEqual(blockers["FORECAST_CONFIDENCE_REQUIRED_FOR_LIVE"], 1)
+        self.assertEqual(blockers["SPREAD_TOO_WIDE"], 1)
+        self.assertEqual(blockers["LEGACY_BLOCKER"], 1)
+        self.assertEqual(blockers["LEGACY_RISK_BLOCK"], 1)
+        self.assertNotIn("WARN_ONLY_DIAGNOSTIC", blockers)
+        self.assertNotIn("EUR_USD LONG forecast confidence 0.44 < 0.65 for live send", blockers)
+        self.assertNotIn("spread too wide", blockers)
 
     def test_profitability_acceptance_passes_when_profit_invariants_are_clear(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
