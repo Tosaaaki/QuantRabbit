@@ -27,6 +27,7 @@ from quant_rabbit.cli import (
 )
 from quant_rabbit.models import AccountSummary, BrokerOrder, BrokerSnapshot, Owner, Quote
 from quant_rabbit.paths import DEFAULT_CAPTURE_ECONOMICS, DEFAULT_EXECUTION_LEDGER_DB, DEFAULT_MARKET_CONTEXT_MATRIX
+from quant_rabbit.profitability_acceptance import _execution_ledger_close_findings
 from quant_rabbit.strategy.intent_generator import _snapshot_from_json as _intent_snapshot_from_json
 
 
@@ -437,11 +438,95 @@ class CliHelpTest(unittest.TestCase):
         self.assertIn("ORDER_INTENTS_CAPTURE_ECONOMICS_STALE", codes)
         self.assertIn("MARKET_CLOSE_LEAK_DOMINATES_TP_EDGE", codes)
         self.assertIn("RECENT_GATEWAY_LOSS_MARKET_CLOSE_LEAK", codes)
+        self.assertIn("UNVERIFIED_LOSS_SIDE_MARKET_CLOSE_RECONCILED", codes)
         self.assertIn("PROJECTION_HEADLINE_PRECISION_ECONOMIC_GAP", codes)
         self.assertIn("BIDASK_CONTRARIAN_EDGE_NOT_DAILY_STABLE", codes)
         self.assertIn("NO_LIVE_READY_TARGET_COVERAGE", codes)
+        self.assertEqual(
+            payload["metrics"]["execution_ledger_close_leak"]["recent_unverified_loss_closes"],
+            1,
+        )
         self.assertTrue(output_exists)
         self.assertTrue(report_exists)
+
+    def test_profitability_acceptance_does_not_call_gpt_reconciled_loss_close_unverified(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            ledger = Path(tmp) / "execution_ledger.db"
+            with sqlite3.connect(ledger) as conn:
+                conn.execute(
+                    """
+                    CREATE TABLE execution_events (
+                        ts_utc TEXT,
+                        event_type TEXT,
+                        trade_id TEXT,
+                        order_id TEXT,
+                        lane_id TEXT,
+                        pair TEXT,
+                        side TEXT,
+                        realized_pl_jpy REAL,
+                        exit_reason TEXT,
+                        raw_json TEXT
+                    )
+                    """
+                )
+                conn.executemany(
+                    """
+                    INSERT INTO execution_events (
+                        ts_utc, event_type, trade_id, order_id, lane_id, pair, side,
+                        realized_pl_jpy, exit_reason, raw_json
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    [
+                        (
+                            "2026-06-21T00:00:00+00:00",
+                            "GATEWAY_GPT_CLOSE_ACCEPTED",
+                            "T-gpt",
+                            None,
+                            None,
+                            "EUR_USD",
+                            None,
+                            None,
+                            "GPT_CLOSE_ACCEPTED",
+                            json.dumps({"decision": {"action": "CLOSE", "close_trade_ids": ["T-gpt"]}}),
+                        ),
+                        (
+                            "2026-06-21T00:00:10+00:00",
+                            "GATEWAY_TRADE_CLOSE_RECONCILED",
+                            "T-gpt",
+                            "O-gpt",
+                            None,
+                            "EUR_USD",
+                            None,
+                            None,
+                            "GPT_CLOSE_RECONCILED",
+                            json.dumps({"reconciled_from": ["GATEWAY_GPT_CLOSE_ACCEPTED"]}),
+                        ),
+                        (
+                            "2026-06-21T00:00:10+00:00",
+                            "TRADE_CLOSED",
+                            "T-gpt",
+                            "O-gpt",
+                            None,
+                            "EUR_USD",
+                            "LONG",
+                            -250.0,
+                            "MARKET_ORDER_TRADE_CLOSE",
+                            "{}",
+                        ),
+                    ],
+                )
+
+            metrics, findings = _execution_ledger_close_findings(ledger)
+
+        codes = {item["code"] for item in findings}
+        self.assertIn("RECENT_GATEWAY_LOSS_MARKET_CLOSE_LEAK", codes)
+        self.assertNotIn("UNVERIFIED_LOSS_SIDE_MARKET_CLOSE_RECONCILED", codes)
+        self.assertEqual(metrics["recent_unverified_loss_closes"], 0)
+        self.assertEqual(
+            metrics["recent_loss_examples"][0]["close_provenance"],
+            "GATEWAY_GPT_CLOSE_RECONCILED",
+        )
 
     def test_profitability_acceptance_passes_when_profit_invariants_are_clear(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

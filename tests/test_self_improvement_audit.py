@@ -4661,7 +4661,7 @@ class SelfImprovementAuditorTest(unittest.TestCase):
         self.assertNotIn("UNATTRIBUTED_MARKET_ORDER_CLOSES", codes)
         self.assertEqual(
             effect["market_order_trade_close_loss_provenance_metrics"][
-                "GATEWAY_TRADE_CLOSE_RECONCILED"
+                "GATEWAY_GPT_CLOSE_ACCEPTED"
             ]["trades"],
             1,
         )

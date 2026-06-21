@@ -318,9 +318,14 @@ QR_LIVE_ENABLED=1 ./scripts/run-autotrade-live.sh \
 #   of the pre-gateway refresh audit.
 # - profitability-acceptance is the single red/green profit invariant gate:
 #   it aggregates self-improvement P0s, negative capture expectancy, TP-proven
-#   market-close leakage, projection headline-vs-economic precision gaps, and
-#   rank-only contrarian replay edges. A non-passing result is diagnostic but
-#   must keep high-turn scaling blocked until the named evidence clears.
+#   market-close leakage, unverified loss-side broker-close reconciliation,
+#   projection headline-vs-economic precision gaps, and rank-only contrarian
+#   replay edges. A broker `TRADE_CLOSE` that was only reconciled after the
+#   fact from a trader entry lane is not proved close discipline; loss-side
+#   closes need durable `GATEWAY_GPT_CLOSE_ACCEPTED` and/or
+#   `GATEWAY_TRADE_CLOSE_SENT` provenance before the system can count them as
+#   verified structural exits. A non-passing result is diagnostic but must
+#   keep high-turn scaling blocked until the named evidence clears.
 # Manual recovery only:
 # QR_RUN_POST_GATEWAY_SIDECARS=0 QR_LIVE_ENABLED=1 ./scripts/run-autotrade-live.sh ...
 # QR_LIVE_ENABLED=1 PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli cycle-sidecars

@@ -438,17 +438,32 @@ def _execution_ledger_close_findings(path: Path) -> tuple[dict[str, Any], list[d
         "recent_gateway_market_closes": 0,
         "recent_loss_closes": 0,
         "recent_loss_net_jpy": 0.0,
+        "recent_unverified_loss_closes": 0,
+        "recent_unverified_loss_net_jpy": 0.0,
         "latest_gateway_market_close_ts_utc": None,
         "latest_loss_close_ts_utc": None,
         "recent_loss_examples": [],
+        "recent_unverified_loss_examples": [],
     }
     if not path.exists():
         return metrics, []
     try:
         with sqlite3.connect(path) as conn:
             conn.row_factory = sqlite3.Row
+            columns = {
+                str(row[1])
+                for row in conn.execute("PRAGMA table_info(execution_events)").fetchall()
+            }
+            gateway_exit_reason_select = (
+                "g.exit_reason AS gateway_exit_reason"
+                if "exit_reason" in columns
+                else "NULL AS gateway_exit_reason"
+            )
+            gateway_raw_json_select = (
+                "g.raw_json AS gateway_raw_json" if "raw_json" in columns else "NULL AS gateway_raw_json"
+            )
             rows = conn.execute(
-                """
+                f"""
                 SELECT
                     g.ts_utc AS gateway_ts_utc,
                     g.trade_id AS trade_id,
@@ -458,7 +473,25 @@ def _execution_ledger_close_findings(path: Path) -> tuple[dict[str, Any], list[d
                     COALESCE(g.side, c.side) AS side,
                     c.ts_utc AS close_ts_utc,
                     c.realized_pl_jpy AS realized_pl_jpy,
-                    c.exit_reason AS exit_reason
+                    c.exit_reason AS exit_reason,
+                    {gateway_exit_reason_select},
+                    {gateway_raw_json_select},
+                    EXISTS (
+                        SELECT 1
+                        FROM execution_events sent
+                        WHERE sent.event_type = 'GATEWAY_TRADE_CLOSE_SENT'
+                          AND (
+                              (COALESCE(sent.trade_id, '') != '' AND sent.trade_id = g.trade_id)
+                              OR (COALESCE(sent.order_id, '') != '' AND sent.order_id = g.order_id)
+                          )
+                    ) AS has_gateway_close_sent,
+                    EXISTS (
+                        SELECT 1
+                        FROM execution_events accepted
+                        WHERE accepted.event_type = 'GATEWAY_GPT_CLOSE_ACCEPTED'
+                          AND COALESCE(accepted.trade_id, '') != ''
+                          AND accepted.trade_id = g.trade_id
+                    ) AS has_gpt_close_accepted
                 FROM execution_events g
                 INNER JOIN execution_events c
                   ON c.event_type = 'TRADE_CLOSED'
@@ -496,6 +529,12 @@ def _execution_ledger_close_findings(path: Path) -> tuple[dict[str, Any], list[d
         if ts is None:
             continue
         latest_ts = ts if latest_ts is None or ts > latest_ts else latest_ts
+        close_provenance = _reconciled_close_provenance(
+            gateway_exit_reason=row["gateway_exit_reason"],
+            gateway_raw_json=row["gateway_raw_json"],
+            has_gateway_close_sent=bool(row["has_gateway_close_sent"]),
+            has_gpt_close_accepted=bool(row["has_gpt_close_accepted"]),
+        )
         parsed.append(
             {
                 "ts": ts,
@@ -507,6 +546,8 @@ def _execution_ledger_close_findings(path: Path) -> tuple[dict[str, Any], list[d
                 "side": row["side"],
                 "realized_pl_jpy": _optional_float(row["realized_pl_jpy"]),
                 "exit_reason": row["exit_reason"],
+                "gateway_exit_reason": row["gateway_exit_reason"],
+                "close_provenance": close_provenance,
             }
         )
     metrics["gateway_market_closes"] = len(parsed)
@@ -520,10 +561,20 @@ def _execution_ledger_close_findings(path: Path) -> tuple[dict[str, Any], list[d
     recent_losses = [
         row for row in recent if (_optional_float(row.get("realized_pl_jpy")) or 0.0) < 0.0
     ]
+    recent_unverified_losses = [
+        row
+        for row in recent_losses
+        if row.get("close_provenance") == "GATEWAY_TRADE_CLOSE_RECONCILED_UNVERIFIED"
+    ]
     metrics["recent_gateway_market_closes"] = len(recent)
     metrics["recent_loss_closes"] = len(recent_losses)
     metrics["recent_loss_net_jpy"] = round(
         sum(float(row.get("realized_pl_jpy") or 0.0) for row in recent_losses),
+        4,
+    )
+    metrics["recent_unverified_loss_closes"] = len(recent_unverified_losses)
+    metrics["recent_unverified_loss_net_jpy"] = round(
+        sum(float(row.get("realized_pl_jpy") or 0.0) for row in recent_unverified_losses),
         4,
     )
     if recent_losses:
@@ -538,15 +589,33 @@ def _execution_ledger_close_findings(path: Path) -> tuple[dict[str, Any], list[d
             "side": row.get("side"),
             "lane_id": row.get("lane_id"),
             "realized_pl_jpy": row.get("realized_pl_jpy"),
+            "close_provenance": row.get("close_provenance"),
         }
         for row in sorted(
             recent_losses,
             key=lambda row: float(row.get("realized_pl_jpy") or 0.0),
         )[:5]
     ]
+    metrics["recent_unverified_loss_examples"] = [
+        {
+            "ts_utc": row.get("ts_utc"),
+            "trade_id": row.get("trade_id"),
+            "order_id": row.get("order_id"),
+            "pair": row.get("pair"),
+            "side": row.get("side"),
+            "lane_id": row.get("lane_id"),
+            "realized_pl_jpy": row.get("realized_pl_jpy"),
+            "gateway_exit_reason": row.get("gateway_exit_reason"),
+            "close_provenance": row.get("close_provenance"),
+        }
+        for row in sorted(
+            recent_unverified_losses,
+            key=lambda row: float(row.get("realized_pl_jpy") or 0.0),
+        )[:5]
+    ]
     if not recent_losses:
         return metrics, []
-    return metrics, [
+    findings = [
         _finding(
             priority="P0",
             code="RECENT_GATEWAY_LOSS_MARKET_CLOSE_LEAK",
@@ -567,6 +636,64 @@ def _execution_ledger_close_findings(path: Path) -> tuple[dict[str, Any], list[d
             },
         )
     ]
+    if recent_unverified_losses:
+        findings.append(
+            _finding(
+                priority="P0",
+                code="UNVERIFIED_LOSS_SIDE_MARKET_CLOSE_RECONCILED",
+                message=(
+                    f"{len(recent_unverified_losses)} recent loss-side market close(s) were only "
+                    "reconciled from broker trade-close truth, without a durable GPT Gate A/B or "
+                    "PositionProtectionGateway send receipt"
+                ),
+                next_action=(
+                    "Do not treat these closes as proved loss-cut discipline. Future loss-side market closes "
+                    "must persist GATEWAY_GPT_CLOSE_ACCEPTED and/or GATEWAY_TRADE_CLOSE_SENT before the "
+                    "broker TRADE_CLOSE, otherwise profitability acceptance stays red."
+                ),
+                evidence={
+                    "recent_unverified_loss_closes": metrics["recent_unverified_loss_closes"],
+                    "recent_unverified_loss_net_jpy": metrics["recent_unverified_loss_net_jpy"],
+                    "examples": metrics["recent_unverified_loss_examples"],
+                },
+            )
+        )
+    return metrics, findings
+
+
+def _reconciled_close_provenance(
+    *,
+    gateway_exit_reason: Any,
+    gateway_raw_json: Any,
+    has_gateway_close_sent: bool,
+    has_gpt_close_accepted: bool,
+) -> str:
+    if has_gateway_close_sent:
+        return "GATEWAY_TRADE_CLOSE_SENT"
+    raw = _json_dict(gateway_raw_json)
+    reconciled_from = {
+        str(item or "").strip().upper()
+        for item in raw.get("reconciled_from", []) or []
+        if str(item or "").strip()
+    }
+    reason = str(gateway_exit_reason or "").strip().upper()
+    if (
+        has_gpt_close_accepted
+        or reason == "GPT_CLOSE_RECONCILED"
+        or "GATEWAY_GPT_CLOSE_ACCEPTED" in reconciled_from
+    ):
+        return "GATEWAY_GPT_CLOSE_RECONCILED"
+    return "GATEWAY_TRADE_CLOSE_RECONCILED_UNVERIFIED"
+
+
+def _json_dict(value: Any) -> dict[str, Any]:
+    if isinstance(value, dict):
+        return value
+    try:
+        payload = json.loads(str(value or "{}"))
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return {}
+    return payload if isinstance(payload, dict) else {}
 
 
 def _projection_precision_findings(path: Path) -> tuple[dict[str, Any], list[dict[str, Any]]]:

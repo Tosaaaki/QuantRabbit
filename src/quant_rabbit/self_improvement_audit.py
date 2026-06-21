@@ -6485,14 +6485,14 @@ def _close_provenance_for_effect_row(
     order_id = str(_row_text(row, "order_id") or "").strip()
     if (trade_id and trade_id in gateway_close_trade_ids) or (order_id and order_id in gateway_close_order_ids):
         return "GATEWAY_TRADE_CLOSE_SENT"
-    if (trade_id and trade_id in reconciled_close_trade_ids) or (
-        order_id and order_id in reconciled_close_order_ids
-    ):
-        return "GATEWAY_TRADE_CLOSE_RECONCILED"
     if trade_id and trade_id in stale_close_satisfied_trade_ids:
         return "STALE_GPT_CLOSE_SATISFIED"
     if trade_id and trade_id in gpt_close_trade_ids:
         return "GATEWAY_GPT_CLOSE_ACCEPTED"
+    if (trade_id and trade_id in reconciled_close_trade_ids) or (
+        order_id and order_id in reconciled_close_order_ids
+    ):
+        return "GATEWAY_TRADE_CLOSE_RECONCILED_UNVERIFIED"
     sources = _broker_trade_close_accept_sources(
         accepted_close_rows,
         trade_id=trade_id,
@@ -6516,7 +6516,6 @@ def _close_provenance_for_effect_row(
 _LOSS_CONTAINMENT_CLOSE_PROVENANCES = frozenset(
     {
         "GATEWAY_TRADE_CLOSE_SENT",
-        "GATEWAY_TRADE_CLOSE_RECONCILED",
         "GATEWAY_GPT_CLOSE_ACCEPTED",
     }
 )
