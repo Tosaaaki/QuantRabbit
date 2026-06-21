@@ -15,6 +15,7 @@ from quant_rabbit.paths import (
     DEFAULT_AI_ATTACK_ADVICE,
     DEFAULT_AI_ATTACK_ADVICE_REPORT,
     DEFAULT_AI_TEST_BOT_BACKTEST,
+    DEFAULT_CAPTURE_ECONOMICS,
     DEFAULT_COVERAGE_OPTIMIZATION,
     DEFAULT_DAILY_TARGET_STATE,
     DEFAULT_OUTCOME_MART,
@@ -41,6 +42,18 @@ ADVISORY_MARKET_PARTICIPATION_SCORE = 5.0
 # certified AI backtests so it ranks already-LIVE_READY lanes without implying
 # live permission or a solved daily guarantee.
 ADVISORY_PROJECTION_ECONOMIC_EDGE_SCORE = 14.0
+# Capture segment priorities come from broker-realized TP capture by exact
+# pair/side/method. This boost is rank-only and mirrors the TraderBrain
+# capture-segment tie-breaker: it can surface already-LIVE_READY attached-TP
+# HARVEST lanes, but it cannot create permission, resize risk, or penalize
+# negative segments.
+ADVISORY_CAPTURE_TP_PROVEN_SEGMENT_SCORE = 10.0
+ADVISORY_CAPTURE_TP_PROVEN_PRIORITY_CLASSES = frozenset(
+    {
+        "PRESERVE_TP_PROVEN_REPAIR_MARKET_CLOSE_LEAK",
+        "PRESERVE_TP_PROVEN_SHAPE",
+    }
+)
 REPORT_LANE_LIMIT = 12
 
 
@@ -107,6 +120,7 @@ class AttackAdvisor:
         outcome_mart_path: Path = DEFAULT_OUTCOME_MART,
         coverage_path: Path = DEFAULT_COVERAGE_OPTIMIZATION,
         projection_ledger_path: Path = DEFAULT_PROJECTION_LEDGER,
+        capture_economics_path: Path = DEFAULT_CAPTURE_ECONOMICS,
         output_path: Path = DEFAULT_AI_ATTACK_ADVICE,
         report_path: Path = DEFAULT_AI_ATTACK_ADVICE_REPORT,
     ) -> None:
@@ -116,6 +130,14 @@ class AttackAdvisor:
         self.outcome_mart_path = outcome_mart_path
         self.coverage_path = coverage_path
         self.projection_ledger_path = projection_ledger_path
+        self.capture_economics_path = (
+            intents_path.parent / DEFAULT_CAPTURE_ECONOMICS.name
+            if (
+                capture_economics_path == DEFAULT_CAPTURE_ECONOMICS
+                and intents_path != DEFAULT_ORDER_INTENTS
+            )
+            else capture_economics_path
+        )
         self.output_path = output_path
         self.report_path = report_path
 
@@ -126,12 +148,14 @@ class AttackAdvisor:
         ai_backtest = _load_optional_json(self.ai_backtest_path)
         outcome_mart = _load_optional_json(self.outcome_mart_path)
         coverage = _load_optional_json(self.coverage_path)
+        capture_economics = _load_optional_json(self.capture_economics_path)
         p0_shadow = _coverage_p0_shadow_live_ready(coverage or {})
         edge_index = _edge_index(ai_backtest or {})
         outcome_index = _outcome_index(outcome_mart or {})
         condition_index = _condition_index(outcome_mart or {})
         condition_validation_index = _condition_validation_index(outcome_mart or {})
         projection_edge_index = _projection_economic_edge_index(self.projection_ledger_path)
+        capture_segment_priorities = _capture_segment_priority_index(capture_economics or {})
         intent_session_bucket = _session_bucket_from_timestamp(intents.get("generated_at_utc"))
         remaining_target = _positive_float(target.get("remaining_target_jpy"))
         remaining_risk = _positive_float(target.get("remaining_risk_budget_jpy"))
@@ -143,6 +167,7 @@ class AttackAdvisor:
                 condition_index=condition_index,
                 condition_validation_index=condition_validation_index,
                 projection_edge_index=projection_edge_index,
+                capture_segment_priorities=capture_segment_priorities,
                 intent_session_bucket=intent_session_bucket,
                 remaining_target_jpy=remaining_target,
             )
@@ -212,6 +237,8 @@ class AttackAdvisor:
             "coverage_path": str(self.coverage_path) if self.coverage_path.exists() else None,
             "projection_ledger_path": str(self.projection_ledger_path) if self.projection_ledger_path.exists() else None,
             "projection_economic_precision_edges": len(projection_edge_index),
+            "capture_economics_path": str(self.capture_economics_path) if self.capture_economics_path.exists() else None,
+            "capture_segment_priority_edges": len(capture_segment_priorities),
             "remaining_target_jpy": remaining_target,
             "remaining_risk_budget_jpy": remaining_risk,
             "live_ready_lanes": len(live_ready),
@@ -272,6 +299,7 @@ class AttackAdvisor:
             f"- Required additional reward: `{payload['required_additional_reward_jpy']:.0f} JPY`",
             f"- Required additional live-ready lanes: `{payload['required_additional_live_ready_lanes']}`",
             f"- Projection economic precision edges: `{payload['projection_economic_precision_edges']}`",
+            f"- Capture segment priority edges: `{payload['capture_segment_priority_edges']}`",
             "",
             "## Recommended Now",
             "",
@@ -367,6 +395,7 @@ def _attack_lane(
     condition_index: dict[tuple[str, str, str, str], dict[str, Any]],
     condition_validation_index: dict[tuple[str, str], dict[str, Any]],
     projection_edge_index: dict[tuple[str, str, str], dict[str, Any]],
+    capture_segment_priorities: dict[tuple[str, str, str], dict[str, Any]],
     intent_session_bucket: str,
     remaining_target_jpy: float | None,
 ) -> AttackLaneAdvice:
@@ -566,6 +595,20 @@ def _attack_lane(
         learning_score_delta += projection_delta
         learning_influences.append("projection_economic_precision_rank_edge")
         learning_details.append(projection_detail)
+    capture_delta, capture_rationale = _capture_segment_rank_edge(
+        intent=intent,
+        metadata=metadata,
+        pair=pair,
+        direction=direction,
+        method=method,
+        order_type=order_type,
+        status=status,
+        capture_segment_priorities=capture_segment_priorities,
+    )
+    if capture_rationale:
+        rationale.append(capture_rationale)
+    if capture_delta > 0.0:
+        score += capture_delta
     if order_type == "MARKET":
         score += ADVISORY_MARKET_PARTICIPATION_SCORE
         rationale.append("immediate market participation")
@@ -680,6 +723,97 @@ def _projection_economic_rank_edge(
         f"n={int(best.get('economic_samples') or 0)} rank-only"
     )
     return ADVISORY_PROJECTION_ECONOMIC_EDGE_SCORE, detail, rationale
+
+
+def _capture_segment_priority_index(payload: dict[str, Any]) -> dict[tuple[str, str, str], dict[str, Any]]:
+    """Map realized TP-proven capture segments by exact pair/side/method."""
+    if not isinstance(payload, dict):
+        return {}
+    priorities = payload.get("segment_repair_priorities")
+    if not isinstance(priorities, dict):
+        return {}
+    items = priorities.get("items")
+    if not isinstance(items, list):
+        return {}
+    out: dict[tuple[str, str, str], dict[str, Any]] = {}
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        priority_class = str(item.get("priority_class") or "").upper()
+        if priority_class not in ADVISORY_CAPTURE_TP_PROVEN_PRIORITY_CLASSES:
+            continue
+        if item.get("take_profit_proven") is not True:
+            continue
+        pair = str(item.get("pair") or "").upper()
+        side = str(item.get("side") or "").upper()
+        method = str(item.get("method") or "").upper()
+        if not pair or side not in {"LONG", "SHORT"} or not method:
+            continue
+        out.setdefault((pair, side, method), item)
+    return out
+
+
+def _capture_segment_rank_edge(
+    *,
+    intent: dict[str, Any],
+    metadata: dict[str, Any],
+    pair: str,
+    direction: str,
+    method: str,
+    order_type: str,
+    status: str,
+    capture_segment_priorities: dict[tuple[str, str, str], dict[str, Any]],
+) -> tuple[float, str | None]:
+    if status != "LIVE_READY":
+        return 0.0, None
+    if not capture_segment_priorities:
+        return 0.0, None
+    if not _capture_segment_current_shape_can_use_tp(intent, metadata, order_type=order_type):
+        return 0.0, None
+    if metadata.get("capture_economics_stale") is True:
+        return 0.0, None
+    item = capture_segment_priorities.get((pair.upper(), direction.upper(), method.upper()))
+    if not item:
+        return 0.0, None
+    priority_class = str(item.get("priority_class") or "").upper()
+    tp_trades = int(_optional_float(item.get("take_profit_trades")) or 0)
+    tp_expectancy = _optional_float(item.get("take_profit_expectancy_jpy"))
+    market_close_net = _optional_float(item.get("market_close_net_jpy"))
+    details = [
+        f"capture segment rank edge (+{ADVISORY_CAPTURE_TP_PROVEN_SEGMENT_SCORE:.1f})",
+        priority_class,
+        f"TP-proven trades={tp_trades}",
+    ]
+    if tp_expectancy is not None:
+        details.append(f"TP expectancy={tp_expectancy:.0f} JPY")
+    if market_close_net is not None and market_close_net < 0:
+        details.append(f"market-close leak={market_close_net:.0f} JPY")
+    evidence_ref = str(item.get("evidence_ref") or "")
+    if evidence_ref:
+        details.append(evidence_ref)
+    details.append("rank-only")
+    return ADVISORY_CAPTURE_TP_PROVEN_SEGMENT_SCORE, "; ".join(details)
+
+
+def _capture_segment_current_shape_can_use_tp(
+    intent: dict[str, Any],
+    metadata: dict[str, Any],
+    *,
+    order_type: str,
+) -> bool:
+    if order_type.upper() == "MARKET":
+        return False
+    if str(metadata.get("position_intent") or "NEW").upper() == "HEDGE":
+        return False
+    if metadata.get("attach_take_profit_on_fill") is not True:
+        return False
+    if str(metadata.get("tp_execution_mode") or "").upper() != "ATTACHED_TECHNICAL_TP":
+        return False
+    if str(metadata.get("tp_target_intent") or "").upper() != "HARVEST":
+        return False
+    if str(metadata.get("opportunity_mode") or "").upper() != "HARVEST":
+        return False
+    return True
 
 
 def _projection_edge_matches_for_signal(

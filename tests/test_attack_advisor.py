@@ -451,6 +451,249 @@ class AttackAdvisorTest(unittest.TestCase):
             self.assertEqual(lane["learning_influences"], [])
             self.assertTrue(any("OANDA rank-only rotation edge is size-neutral" in item for item in lane["rationale"]))
 
+    def test_capture_tp_proven_segment_boosts_rank_without_learning_gate(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            intents = root / "intents.json"
+            target = root / "target.json"
+            backtest = root / "ai_backtest.json"
+            coverage = root / "coverage.json"
+            capture = root / "capture_economics.json"
+            capture_lane_id = "failure_trader:EUR_USD:LONG:BREAKOUT_FAILURE"
+            plain_lane_id = "failure_trader:AUD_JPY:LONG:BREAKOUT_FAILURE"
+            harvest_metadata = {
+                "attach_take_profit_on_fill": True,
+                "tp_execution_mode": "ATTACHED_TECHNICAL_TP",
+                "tp_target_intent": "HARVEST",
+                "opportunity_mode": "HARVEST",
+            }
+            intents.write_text(
+                json.dumps(
+                    {
+                        "results": [
+                            _result(
+                                lane_id=plain_lane_id,
+                                pair="AUD_JPY",
+                                side="LONG",
+                                method="BREAKOUT_FAILURE",
+                                order_type="LIMIT",
+                                reward_jpy=500.0,
+                                risk_jpy=200.0,
+                                rr=2.0,
+                                metadata=harvest_metadata,
+                            ),
+                            _result(
+                                lane_id=capture_lane_id,
+                                pair="EUR_USD",
+                                side="LONG",
+                                method="BREAKOUT_FAILURE",
+                                order_type="LIMIT",
+                                reward_jpy=500.0,
+                                risk_jpy=200.0,
+                                rr=2.0,
+                                metadata=harvest_metadata,
+                            ),
+                        ]
+                    }
+                )
+            )
+            target.write_text(json.dumps({"status": "PURSUE_TARGET", "remaining_target_jpy": 1000.0, "remaining_risk_budget_jpy": 1000.0}))
+            backtest.write_text(json.dumps({"status": "TARGET_COVERAGE_GAP", "bucket_contributions": []}))
+            coverage.write_text(json.dumps({"status": "LIVE_READY_COVERAGE_READY"}))
+            capture.write_text(
+                json.dumps(
+                    {
+                        "segment_repair_priorities": {
+                            "items": [
+                                {
+                                    "evidence_ref": "capture:segment:EUR_USD:LONG:BREAKOUT_FAILURE",
+                                    "pair": "EUR_USD",
+                                    "side": "LONG",
+                                    "method": "BREAKOUT_FAILURE",
+                                    "priority_class": "PRESERVE_TP_PROVEN_REPAIR_MARKET_CLOSE_LEAK",
+                                    "take_profit_proven": True,
+                                    "take_profit_trades": 24,
+                                    "take_profit_expectancy_jpy": 420.0,
+                                    "market_close_net_jpy": -2100.0,
+                                }
+                            ]
+                        }
+                    }
+                )
+            )
+
+            AttackAdvisor(
+                intents_path=intents,
+                target_state_path=target,
+                ai_backtest_path=backtest,
+                outcome_mart_path=root / "missing_outcome_mart.json",
+                coverage_path=coverage,
+                output_path=root / "advice.json",
+                report_path=root / "advice.md",
+            ).run()
+
+            payload = json.loads((root / "advice.json").read_text())
+            self.assertEqual(payload["capture_segment_priority_edges"], 1)
+            self.assertEqual(payload["recommended_now_lane_ids"][0], capture_lane_id)
+            lane = next(item for item in payload["lanes"] if item["lane_id"] == capture_lane_id)
+            plain = next(item for item in payload["lanes"] if item["lane_id"] == plain_lane_id)
+            self.assertGreater(lane["score"], plain["score"])
+            self.assertEqual(lane["learning_influences"], [])
+            self.assertEqual(lane["learning_score_delta"], 0.0)
+            self.assertTrue(any("capture segment rank edge" in item for item in lane["rationale"]))
+
+    def test_capture_negative_segment_priority_is_advisory_only(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            intents = root / "intents.json"
+            target = root / "target.json"
+            backtest = root / "ai_backtest.json"
+            coverage = root / "coverage.json"
+            capture = root / "capture_economics.json"
+            lane_id = "failure_trader:EUR_USD:LONG:BREAKOUT_FAILURE"
+            metadata = {
+                "attach_take_profit_on_fill": True,
+                "tp_execution_mode": "ATTACHED_TECHNICAL_TP",
+                "tp_target_intent": "HARVEST",
+                "opportunity_mode": "HARVEST",
+            }
+            intents.write_text(
+                json.dumps(
+                    {
+                        "results": [
+                            _result(
+                                lane_id=lane_id,
+                                pair="EUR_USD",
+                                side="LONG",
+                                method="BREAKOUT_FAILURE",
+                                order_type="LIMIT",
+                                reward_jpy=500.0,
+                                risk_jpy=200.0,
+                                rr=2.0,
+                                metadata=metadata,
+                            )
+                        ]
+                    }
+                )
+            )
+            target.write_text(json.dumps({"status": "PURSUE_TARGET", "remaining_target_jpy": 1000.0, "remaining_risk_budget_jpy": 1000.0}))
+            backtest.write_text(json.dumps({"status": "TARGET_COVERAGE_GAP", "bucket_contributions": []}))
+            coverage.write_text(json.dumps({"status": "LIVE_READY_COVERAGE_READY"}))
+            capture.write_text(
+                json.dumps(
+                    {
+                        "segment_repair_priorities": {
+                            "items": [
+                                {
+                                    "pair": "EUR_USD",
+                                    "side": "LONG",
+                                    "method": "BREAKOUT_FAILURE",
+                                    "priority_class": "AVOID_OR_REPRICE_SEGMENT",
+                                    "take_profit_proven": True,
+                                    "take_profit_trades": 24,
+                                }
+                            ]
+                        }
+                    }
+                )
+            )
+
+            AttackAdvisor(
+                intents_path=intents,
+                target_state_path=target,
+                ai_backtest_path=backtest,
+                outcome_mart_path=root / "missing_outcome_mart.json",
+                coverage_path=coverage,
+                output_path=root / "advice.json",
+                report_path=root / "advice.md",
+            ).run()
+
+            payload = json.loads((root / "advice.json").read_text())
+            lane = payload["lanes"][0]
+            self.assertEqual(payload["capture_segment_priority_edges"], 0)
+            self.assertEqual(payload["recommended_now_lane_ids"], [lane_id])
+            self.assertEqual(lane["score"], 52.0)
+            self.assertEqual(lane["learning_influences"], [])
+            self.assertFalse(any("capture segment rank edge" in item for item in lane["rationale"]))
+
+    def test_capture_segment_priority_does_not_boost_non_live_ready_lane(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            intents = root / "intents.json"
+            target = root / "target.json"
+            backtest = root / "ai_backtest.json"
+            coverage = root / "coverage.json"
+            capture = root / "capture_economics.json"
+            lane_id = "failure_trader:EUR_USD:LONG:BREAKOUT_FAILURE"
+            metadata = {
+                "attach_take_profit_on_fill": True,
+                "tp_execution_mode": "ATTACHED_TECHNICAL_TP",
+                "tp_target_intent": "HARVEST",
+                "opportunity_mode": "HARVEST",
+            }
+            intents.write_text(
+                json.dumps(
+                    {
+                        "results": [
+                            _result(
+                                status="DRY_RUN_BLOCKED",
+                                live_blockers=["FORECAST_CONFIDENCE_REQUIRED_FOR_LIVE"],
+                                lane_id=lane_id,
+                                pair="EUR_USD",
+                                side="LONG",
+                                method="BREAKOUT_FAILURE",
+                                order_type="LIMIT",
+                                reward_jpy=500.0,
+                                risk_jpy=200.0,
+                                rr=2.0,
+                                metadata=metadata,
+                            )
+                        ]
+                    }
+                )
+            )
+            target.write_text(json.dumps({"status": "PURSUE_TARGET", "remaining_target_jpy": 1000.0, "remaining_risk_budget_jpy": 1000.0}))
+            backtest.write_text(json.dumps({"status": "TARGET_COVERAGE_GAP", "bucket_contributions": []}))
+            coverage.write_text(json.dumps({"status": "LIVE_READY_COVERAGE_READY"}))
+            capture.write_text(
+                json.dumps(
+                    {
+                        "segment_repair_priorities": {
+                            "items": [
+                                {
+                                    "pair": "EUR_USD",
+                                    "side": "LONG",
+                                    "method": "BREAKOUT_FAILURE",
+                                    "priority_class": "PRESERVE_TP_PROVEN_REPAIR_MARKET_CLOSE_LEAK",
+                                    "take_profit_proven": True,
+                                    "take_profit_trades": 24,
+                                    "take_profit_expectancy_jpy": 420.0,
+                                }
+                            ]
+                        }
+                    }
+                )
+            )
+
+            AttackAdvisor(
+                intents_path=intents,
+                target_state_path=target,
+                ai_backtest_path=backtest,
+                outcome_mart_path=root / "missing_outcome_mart.json",
+                coverage_path=coverage,
+                output_path=root / "advice.json",
+                report_path=root / "advice.md",
+            ).run()
+
+            payload = json.loads((root / "advice.json").read_text())
+            lane = payload["blocked_lanes"][0]
+            self.assertEqual(payload["capture_segment_priority_edges"], 1)
+            self.assertEqual(payload["lanes"], [])
+            self.assertEqual(payload["recommended_now_lane_ids"], [])
+            self.assertEqual(lane["score"], 52.0)
+            self.assertEqual(lane["blockers"], ["status is DRY_RUN_BLOCKED"])
+            self.assertFalse(any("capture segment rank edge" in item for item in lane["rationale"]))
+
     def test_projection_economic_precision_edge_boosts_matching_live_ready_lane(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
