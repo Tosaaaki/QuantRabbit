@@ -249,6 +249,62 @@ class StrategyProfileTest(unittest.TestCase):
         self.assertEqual(issues[0].code, "STRATEGY_NOT_ELIGIBLE")
         self.assertEqual(issues[0].severity, "BLOCK")
 
+    def test_block_until_new_evidence_oanda_firepower_vehicle_is_advisory_under_sl_free(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            profile = StrategyProfile.load(_pair_side_profile(Path(tmp), status="BLOCK_UNTIL_NEW_EVIDENCE"))
+            prior = os.environ.get("QR_TRADER_DISABLE_SL_REPAIR")
+            os.environ["QR_TRADER_DISABLE_SL_REPAIR"] = "1"
+            try:
+                issues = profile.validate(
+                    _intent(
+                        "EUR_USD",
+                        method=TradeMethod.RANGE_ROTATION,
+                        order_type=OrderType.LIMIT,
+                        metadata=_oanda_firepower_metadata(),
+                    ),
+                    for_live_send=True,
+                )
+                market_issues = profile.validate(
+                    _intent(
+                        "EUR_USD",
+                        method=TradeMethod.RANGE_ROTATION,
+                        order_type=OrderType.MARKET,
+                        metadata=_oanda_firepower_metadata(),
+                    ),
+                    for_live_send=True,
+                )
+            finally:
+                _restore_env("QR_TRADER_DISABLE_SL_REPAIR", prior)
+
+        self.assertEqual(len(issues), 1)
+        self.assertEqual(issues[0].code, "STRATEGY_NOT_ELIGIBLE")
+        self.assertEqual(issues[0].severity, "WARN")
+        self.assertEqual(len(market_issues), 1)
+        self.assertEqual(market_issues[0].code, "STRATEGY_NOT_ELIGIBLE")
+        self.assertEqual(market_issues[0].severity, "BLOCK")
+
+    def test_block_until_new_evidence_incomplete_oanda_firepower_still_blocks(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            profile = StrategyProfile.load(_pair_side_profile(Path(tmp), status="BLOCK_UNTIL_NEW_EVIDENCE"))
+            prior = os.environ.get("QR_TRADER_DISABLE_SL_REPAIR")
+            os.environ["QR_TRADER_DISABLE_SL_REPAIR"] = "1"
+            try:
+                issues = profile.validate(
+                    _intent(
+                        "EUR_USD",
+                        method=TradeMethod.RANGE_ROTATION,
+                        order_type=OrderType.LIMIT,
+                        metadata=_oanda_firepower_metadata(vehicle_count=0),
+                    ),
+                    for_live_send=True,
+                )
+            finally:
+                _restore_env("QR_TRADER_DISABLE_SL_REPAIR", prior)
+
+        self.assertEqual(len(issues), 1)
+        self.assertEqual(issues[0].code, "STRATEGY_NOT_ELIGIBLE")
+        self.assertEqual(issues[0].severity, "BLOCK")
+
     def test_block_until_new_evidence_failed_break_limit_scout_is_advisory_under_sl_free(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "profile.json"
@@ -518,6 +574,29 @@ class StrategyProfileTest(unittest.TestCase):
         self.assertEqual(len(issues), 1)
         self.assertEqual(issues[0].code, "STRATEGY_PROFILE_MISSING")
         self.assertEqual(issues[0].severity, "BLOCK")
+
+    def test_missing_profile_oanda_firepower_vehicle_is_advisory_under_sl_free(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            profile = StrategyProfile.load(_profile(Path(tmp), status="CANDIDATE"))
+            prior = os.environ.get("QR_TRADER_DISABLE_SL_REPAIR")
+            os.environ["QR_TRADER_DISABLE_SL_REPAIR"] = "1"
+            try:
+                issues = profile.validate(
+                    _intent(
+                        "GBP_CHF",
+                        side=Side.SHORT,
+                        method=TradeMethod.RANGE_ROTATION,
+                        order_type=OrderType.LIMIT,
+                        metadata=_oanda_firepower_metadata(pair="GBP_CHF", side="SHORT"),
+                    ),
+                    for_live_send=True,
+                )
+            finally:
+                _restore_env("QR_TRADER_DISABLE_SL_REPAIR", prior)
+
+        self.assertEqual(len(issues), 1)
+        self.assertEqual(issues[0].code, "STRATEGY_PROFILE_MISSING")
+        self.assertEqual(issues[0].severity, "WARN")
 
     def test_high_confidence_forecast_seed_missing_profile_is_advisory_under_sl_free(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -870,6 +949,30 @@ def _pair_side_profile(root: Path, *, status: str, direction: str = "LONG") -> P
         )
     )
     return path
+
+
+def _oanda_firepower_metadata(
+    *,
+    pair: str = "EUR_USD",
+    side: str = "LONG",
+    status: str = "VERIFIED_TARGET_10_ROUTE_ESTIMATED",
+    vehicle_count: int = 1,
+    estimated_return_pct: float = 2.8,
+) -> dict:
+    return {
+        "oanda_campaign_firepower_seed": True,
+        "oanda_campaign_vehicle_key": f"{pair}|{side}|range_reversion|tp1_sl1",
+        "oanda_campaign_vehicle_count": vehicle_count,
+        "oanda_campaign_vehicle_keys": [f"{pair}|{side}|range_reversion|tp1_sl1"],
+        "oanda_campaign_firepower_status": status,
+        "oanda_campaign_exit_shape": "tp1_sl1",
+        "oanda_campaign_exit_shapes": ["tp1_sl1"],
+        "oanda_campaign_estimated_return_pct_per_active_day": estimated_return_pct,
+        "oanda_campaign_live_permission": False,
+        "tp_execution_mode": "ATTACHED_TECHNICAL_TP",
+        "tp_target_intent": "HARVEST",
+        "opportunity_mode": "HARVEST",
+    }
 
 
 def _intent(

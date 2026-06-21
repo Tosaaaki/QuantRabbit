@@ -5218,7 +5218,10 @@ class IntentGenerator:
             risk_issues.extend(loss_streak_issues)
             if any(issue.get("severity") == "BLOCK" for issue in loss_streak_issues):
                 risk_allowed = False
-        positive_rotation_issue = _capture_positive_rotation_live_issue(intent)
+        positive_rotation_issue = _capture_positive_rotation_live_issue(
+            intent,
+            data_root=data_root or self.data_root,
+        )
         if positive_rotation_issue is not None:
             risk_issues.append(positive_rotation_issue)
             if positive_rotation_issue.get("severity") == "BLOCK":
@@ -5826,6 +5829,7 @@ POSITIVE_ROTATION_PROOF_COLLECTION_WARN_CODE = (
     "TP_PROOF_COLLECTION_HARVEST_UNDER_NEGATIVE_EXPECTANCY"
 )
 POSITIVE_ROTATION_FIREPOWER_BLOCK_CODE = "POSITIVE_ROTATION_DAILY_FIREPOWER_INSUFFICIENT"
+POSITIVE_ROTATION_OANDA_CAMPAIGN_FIREPOWER_MODE = "OANDA_CAMPAIGN_FIREPOWER_HARVEST"
 LOSS_ASYMMETRY_TP_PROOF_COLLECTION_MIN_LOT_MODE = "TP_PROOF_COLLECTION_MIN_LOT"
 OANDA_CAMPAIGN_FIREPOWER_TARGET_OK_STATUSES = {
     "VERIFIED_MINIMUM_5_ROUTE_ESTIMATED",
@@ -6200,6 +6204,23 @@ def _tp_proof_collection_harvest_rotation_allowed(intent: OrderIntent) -> bool:
     return True
 
 
+def _non_market_attached_harvest_shape(intent: OrderIntent) -> bool:
+    metadata = intent.metadata or {}
+    if intent.order_type == OrderType.MARKET:
+        return False
+    if str(metadata.get("position_intent") or "").upper() == "HEDGE":
+        return False
+    if metadata.get("attach_take_profit_on_fill") is not True:
+        return False
+    if str(metadata.get("tp_execution_mode") or "").upper() != "ATTACHED_TECHNICAL_TP":
+        return False
+    if str(metadata.get("tp_target_intent") or "").upper() != "HARVEST":
+        return False
+    if str(metadata.get("opportunity_mode") or "").upper() != "HARVEST":
+        return False
+    return True
+
+
 def _capture_take_profit_scope_matches_intent(
     intent: OrderIntent,
     metadata: dict[str, Any],
@@ -6479,9 +6500,138 @@ def _oanda_campaign_firepower_shape_matches_method(
         "RANGE_ROTATION": {"RANGE_ROTATION", "RANGE_REVERSION", "RANGE_RECLAIM"},
         "BREAKOUT_FAILURE": {"BREAKOUT_FAILURE", "FAILED_BREAK", "FAILED_BREAKOUT"},
         "PULLBACK_CONTINUATION": {"PULLBACK_CONTINUATION"},
-        "TREND_CONTINUATION": {"TREND_CONTINUATION", "BREAKOUT_CONTINUATION"},
+        "TREND_CONTINUATION": {
+            "TREND_CONTINUATION",
+            "BREAKOUT_CONTINUATION",
+            "PULLBACK_CONTINUATION",
+        },
     }
     return shape_value in aliases.get(method_value, {method_value})
+
+
+def _annotate_oanda_campaign_firepower_metadata(
+    metadata: dict[str, Any],
+    oanda_firepower: dict[str, Any],
+) -> None:
+    metadata.update(
+        {
+            "positive_rotation_oanda_campaign_firepower_source": oanda_firepower["source"],
+            "positive_rotation_oanda_campaign_firepower_generated_at_utc": (
+                oanda_firepower["generated_at_utc"]
+            ),
+            "positive_rotation_oanda_campaign_firepower_status": oanda_firepower["status"],
+            "positive_rotation_oanda_campaign_firepower_contract": oanda_firepower["contract"],
+            "positive_rotation_oanda_campaign_per_trade_risk_pct_lens": (
+                oanda_firepower["per_trade_risk_pct_lens"]
+            ),
+            "positive_rotation_oanda_campaign_minimum_return_pct": (
+                oanda_firepower["minimum_return_pct"]
+            ),
+            "positive_rotation_oanda_campaign_target_return_pct": (
+                oanda_firepower["target_return_pct"]
+            ),
+            "positive_rotation_oanda_campaign_high_precision_unique_vehicles": (
+                oanda_firepower["high_precision_unique_vehicle_count"]
+            ),
+            "positive_rotation_oanda_campaign_high_precision_pair_count": (
+                oanda_firepower["high_precision_pair_count"]
+            ),
+            "positive_rotation_oanda_campaign_observed_attempts_per_active_day": (
+                oanda_firepower["high_precision_observed_attempts_per_active_day"]
+            ),
+            "positive_rotation_oanda_campaign_weighted_return_pct_per_trade_at_risk_lens": (
+                oanda_firepower["high_precision_weighted_return_pct_per_trade_at_risk_lens"]
+            ),
+            "positive_rotation_oanda_campaign_estimated_return_pct_per_active_day": (
+                oanda_firepower["high_precision_estimated_return_pct_per_active_day"]
+            ),
+            "positive_rotation_oanda_campaign_trades_needed_for_minimum_5pct": (
+                oanda_firepower["trades_needed_for_minimum_5pct_at_weighted_expectancy"]
+            ),
+            "positive_rotation_oanda_campaign_trades_needed_for_target_10pct": (
+                oanda_firepower["trades_needed_for_target_10pct_at_weighted_expectancy"]
+            ),
+            "positive_rotation_oanda_campaign_minimum_floor_reachable": (
+                oanda_firepower["minimum_floor_reachable"]
+            ),
+            "positive_rotation_oanda_campaign_target_reachable": (
+                oanda_firepower["target_reachable"]
+            ),
+            "positive_rotation_oanda_campaign_firepower_vehicle_match": (
+                oanda_firepower["vehicle_match"]
+            ),
+            "positive_rotation_oanda_campaign_matching_vehicle_count": (
+                oanda_firepower["matching_vehicle_count"]
+            ),
+            "positive_rotation_oanda_campaign_matching_vehicle_key": (
+                oanda_firepower["matching_vehicle_key"]
+            ),
+            "positive_rotation_oanda_campaign_matching_vehicle_estimated_return_pct_per_active_day": (
+                oanda_firepower["matching_vehicle_estimated_return_pct_per_active_day"]
+            ),
+            "positive_rotation_oanda_campaign_live_permission": (
+                oanda_firepower["live_permission"]
+            ),
+            "positive_rotation_oanda_campaign_live_permission_reason": (
+                oanda_firepower["live_permission_reason"]
+            ),
+        }
+    )
+
+
+def _oanda_campaign_firepower_harvest_rotation_allowed(
+    intent: OrderIntent,
+    *,
+    data_root: Path | None,
+) -> bool:
+    """Allow a verified OANDA firepower seed to repair capture/P0 deadlock.
+
+    This is intentionally not a live-permission grant. It only says the
+    negative-expectancy repair gate may treat the current attached-TP HARVEST
+    receipt as a statistically audited rotation candidate. Forecast, spread,
+    strategy-profile, risk, broker truth, and gateway checks still decide.
+    """
+
+    metadata = intent.metadata or {}
+    if metadata.get("oanda_campaign_firepower_seed") is not True:
+        return False
+    if not _non_market_attached_harvest_shape(intent):
+        return False
+    oanda_firepower = _oanda_campaign_firepower_evidence(intent, data_root=data_root)
+    if oanda_firepower is None:
+        return False
+    _annotate_oanda_campaign_firepower_metadata(metadata, oanda_firepower)
+    if oanda_firepower["vehicle_match"] is not True:
+        return False
+    if oanda_firepower["minimum_floor_reachable"] is not True:
+        return False
+    matching_return = _optional_float(
+        oanda_firepower.get("matching_vehicle_estimated_return_pct_per_active_day")
+    )
+    aggregate_return = _optional_float(metadata.get("oanda_campaign_estimated_return_pct_per_active_day"))
+    if (matching_return is None or matching_return <= 0) and (
+        aggregate_return is None or aggregate_return <= 0
+    ):
+        return False
+    return True
+
+
+def _oanda_campaign_firepower_positive_rotation_allowed(intent: OrderIntent) -> bool:
+    metadata = intent.metadata or {}
+    if not _non_market_attached_harvest_shape(intent):
+        return False
+    if metadata.get("positive_rotation_live_ready") is not True:
+        return False
+    if (
+        str(metadata.get("positive_rotation_mode") or "").upper()
+        != POSITIVE_ROTATION_OANDA_CAMPAIGN_FIREPOWER_MODE
+    ):
+        return False
+    if metadata.get("positive_rotation_oanda_campaign_firepower_vehicle_match") is not True:
+        return False
+    if metadata.get("positive_rotation_oanda_campaign_minimum_floor_reachable") is not True:
+        return False
+    return True
 
 
 def _positive_rotation_daily_firepower_issue(
@@ -6548,70 +6698,7 @@ def _positive_rotation_daily_firepower_issue(
     oanda_firepower = _oanda_campaign_firepower_evidence(intent, data_root=data_root)
     oanda_vehicle_covers_minimum = False
     if oanda_firepower is not None:
-        metadata.update(
-            {
-                "positive_rotation_oanda_campaign_firepower_source": oanda_firepower["source"],
-                "positive_rotation_oanda_campaign_firepower_generated_at_utc": (
-                    oanda_firepower["generated_at_utc"]
-                ),
-                "positive_rotation_oanda_campaign_firepower_status": oanda_firepower["status"],
-                "positive_rotation_oanda_campaign_firepower_contract": oanda_firepower["contract"],
-                "positive_rotation_oanda_campaign_per_trade_risk_pct_lens": (
-                    oanda_firepower["per_trade_risk_pct_lens"]
-                ),
-                "positive_rotation_oanda_campaign_minimum_return_pct": (
-                    oanda_firepower["minimum_return_pct"]
-                ),
-                "positive_rotation_oanda_campaign_target_return_pct": (
-                    oanda_firepower["target_return_pct"]
-                ),
-                "positive_rotation_oanda_campaign_high_precision_unique_vehicles": (
-                    oanda_firepower["high_precision_unique_vehicle_count"]
-                ),
-                "positive_rotation_oanda_campaign_high_precision_pair_count": (
-                    oanda_firepower["high_precision_pair_count"]
-                ),
-                "positive_rotation_oanda_campaign_observed_attempts_per_active_day": (
-                    oanda_firepower["high_precision_observed_attempts_per_active_day"]
-                ),
-                "positive_rotation_oanda_campaign_weighted_return_pct_per_trade_at_risk_lens": (
-                    oanda_firepower["high_precision_weighted_return_pct_per_trade_at_risk_lens"]
-                ),
-                "positive_rotation_oanda_campaign_estimated_return_pct_per_active_day": (
-                    oanda_firepower["high_precision_estimated_return_pct_per_active_day"]
-                ),
-                "positive_rotation_oanda_campaign_trades_needed_for_minimum_5pct": (
-                    oanda_firepower["trades_needed_for_minimum_5pct_at_weighted_expectancy"]
-                ),
-                "positive_rotation_oanda_campaign_trades_needed_for_target_10pct": (
-                    oanda_firepower["trades_needed_for_target_10pct_at_weighted_expectancy"]
-                ),
-                "positive_rotation_oanda_campaign_minimum_floor_reachable": (
-                    oanda_firepower["minimum_floor_reachable"]
-                ),
-                "positive_rotation_oanda_campaign_target_reachable": (
-                    oanda_firepower["target_reachable"]
-                ),
-                "positive_rotation_oanda_campaign_firepower_vehicle_match": (
-                    oanda_firepower["vehicle_match"]
-                ),
-                "positive_rotation_oanda_campaign_matching_vehicle_count": (
-                    oanda_firepower["matching_vehicle_count"]
-                ),
-                "positive_rotation_oanda_campaign_matching_vehicle_key": (
-                    oanda_firepower["matching_vehicle_key"]
-                ),
-                "positive_rotation_oanda_campaign_matching_vehicle_estimated_return_pct_per_active_day": (
-                    oanda_firepower["matching_vehicle_estimated_return_pct_per_active_day"]
-                ),
-                "positive_rotation_oanda_campaign_live_permission": (
-                    oanda_firepower["live_permission"]
-                ),
-                "positive_rotation_oanda_campaign_live_permission_reason": (
-                    oanda_firepower["live_permission_reason"]
-                ),
-            }
-        )
+        _annotate_oanda_campaign_firepower_metadata(metadata, oanda_firepower)
         oanda_vehicle_covers_minimum = (
             oanda_firepower["vehicle_match"] is True
             and oanda_firepower["minimum_floor_reachable"] is True
@@ -6654,7 +6741,11 @@ def _positive_rotation_daily_firepower_issue(
     return None
 
 
-def _capture_positive_rotation_live_issue(intent: OrderIntent) -> dict[str, str] | None:
+def _capture_positive_rotation_live_issue(
+    intent: OrderIntent,
+    *,
+    data_root: Path | None = None,
+) -> dict[str, str] | None:
     """Block fresh live rotation when realized capture economics are negative.
 
     This keeps throughput tied to broker-realized positive expectancy: under a
@@ -6701,6 +6792,27 @@ def _capture_positive_rotation_live_issue(intent: OrderIntent) -> dict[str, str]
             ),
             "severity": "WARN",
         }
+    if _oanda_campaign_firepower_harvest_rotation_allowed(intent, data_root=data_root):
+        metadata["positive_rotation_live_ready"] = True
+        metadata["positive_rotation_mode"] = POSITIVE_ROTATION_OANDA_CAMPAIGN_FIREPOWER_MODE
+        metadata["positive_rotation_basis"] = (
+            "capture_economics is negative overall and local broker-TP scope is "
+            "missing, but this non-market attached-TP HARVEST receipt matches an "
+            "OANDA campaign_firepower high-precision vehicle whose aggregate "
+            "firepower reaches the daily 5% floor. Historical firepower remains "
+            "audit-only; all current forecast, spread, strategy, risk, broker-truth, "
+            "and gateway gates still apply."
+        )
+        metadata["positive_rotation_minimum_floor_reachable"] = True
+        metadata["positive_rotation_minimum_floor_reach_basis"] = (
+            "OANDA_CAMPAIGN_FIREPOWER_MATCHING_VEHICLE"
+        )
+        if metadata.get("positive_rotation_oanda_campaign_target_reachable") is True:
+            metadata["positive_rotation_target_reachable"] = True
+            metadata["positive_rotation_target_reach_basis"] = (
+                "OANDA_CAMPAIGN_FIREPOWER_MATCHING_VEHICLE"
+            )
+        return None
     return {
         "code": POSITIVE_ROTATION_LIVE_BLOCK_CODE,
         "message": (
@@ -7261,6 +7373,7 @@ def _self_improvement_profitability_p0_repair_allowed(
     if not (
         _tp_proven_harvest_rotation_allowed(intent)
         or _tp_proof_collection_harvest_rotation_allowed(intent)
+        or _oanda_campaign_firepower_positive_rotation_allowed(intent)
     ):
         return False
     if _self_improvement_intent_matches_worst_segment(intent, p0_issue):

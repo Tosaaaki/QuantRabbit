@@ -10,6 +10,14 @@ from quant_rabbit.models import OrderIntent, OrderType, RiskIssue
 from quant_rabbit.risk import _forecast_range_unselected_projection_support_allows_side
 
 
+OANDA_CAMPAIGN_FIREPOWER_TARGET_OK_STATUSES = frozenset(
+    {
+        "VERIFIED_MINIMUM_5_ROUTE_ESTIMATED",
+        "VERIFIED_TARGET_10_ROUTE_ESTIMATED",
+    }
+)
+
+
 def _sl_free_active() -> bool:
     """SL-free runtime gate (`QR_TRADER_DISABLE_SL_REPAIR=1`).
 
@@ -362,6 +370,8 @@ def _synthetic_missing_profile_severity(
         return "WARN"
     if metadata.get("forecast_seed"):
         return _forecast_seed_missing_profile_severity(intent)
+    if _oanda_campaign_firepower_new_vehicle_supported(intent):
+        return "WARN"
     mirror_of = str(metadata.get("mirror_of") or "").strip().upper()
     if mirror_of not in {"LONG", "SHORT"}:
         return None
@@ -442,6 +452,8 @@ def _blocked_profile_market_structure_scout_severity(
     if intent.order_type == OrderType.MARKET:
         return None
     metadata = intent.metadata or {}
+    if _oanda_campaign_firepower_new_vehicle_supported(intent):
+        return "WARN"
     if not metadata.get("forecast_seed"):
         return None
     supported = _blocked_profile_range_rail_scout_supported(intent, metadata)
@@ -452,6 +464,38 @@ def _blocked_profile_market_structure_scout_severity(
     if (entry.positive_evidence_n or 0) <= 0 and (entry.pretrade_net_jpy or 0.0) <= 0:
         return None
     return "WARN"
+
+
+def _oanda_campaign_firepower_new_vehicle_supported(intent: OrderIntent) -> bool:
+    """Return true when an OANDA seed satisfies the profile escape condition.
+
+    Strategy profile blocks are pair/side memory. OANDA campaign firepower is
+    a method/vehicle-level audit. This does not grant live permission; it only
+    prevents stale pair/side memory from being a permanent veto when the current
+    non-market attached-TP HARVEST vehicle is verified elsewhere.
+    """
+
+    metadata = intent.metadata or {}
+    if intent.order_type == OrderType.MARKET:
+        return False
+    if metadata.get("oanda_campaign_firepower_seed") is not True:
+        return False
+    status = str(metadata.get("oanda_campaign_firepower_status") or "").strip().upper()
+    if status not in OANDA_CAMPAIGN_FIREPOWER_TARGET_OK_STATUSES:
+        return False
+    vehicle_count = _optional_int(metadata.get("oanda_campaign_vehicle_count")) or 0
+    estimated_return = _optional_float(
+        metadata.get("oanda_campaign_estimated_return_pct_per_active_day")
+    )
+    if vehicle_count <= 0 or estimated_return is None or estimated_return <= 0.0:
+        return False
+    if str(metadata.get("tp_execution_mode") or "").upper() != "ATTACHED_TECHNICAL_TP":
+        return False
+    if str(metadata.get("tp_target_intent") or "").upper() != "HARVEST":
+        return False
+    if str(metadata.get("opportunity_mode") or "").upper() != "HARVEST":
+        return False
+    return True
 
 
 def _blocked_profile_range_rail_scout_supported(intent: OrderIntent, metadata: dict[str, Any]) -> bool:
