@@ -440,6 +440,46 @@ class TraderBrainTest(unittest.TestCase):
         self.assertEqual(assessment["raw_score_delta_before_capture_rotation_scale"], 8.0)
         self.assertEqual(assessment["capture_rotation_score_scale"], 0.0)
 
+    def test_oanda_universal_rotation_scores_tp_proven_even_when_daily_floor_unproved(self) -> None:
+        intent = {
+            "metadata": {
+                "forecast_direction": "DOWN",
+                "chart_direction_bias": "SHORT",
+                "m5_atr_pips": 5.0,
+                "session_bucket": "LONDON_NY_OVERLAP",
+                "tp_execution_mode": "ATTACHED_TECHNICAL_TP",
+                "tp_target_intent": "HARVEST",
+                "opportunity_mode": "HARVEST",
+                "capture_economics_status": "NEGATIVE_EXPECTANCY",
+                "positive_rotation_live_ready": True,
+                "positive_rotation_minimum_floor_reachable": False,
+            }
+        }
+        rationale: list[str] = []
+
+        score = _oanda_universal_rotation_precision_score(
+            intent=intent,
+            pair="EUR_USD",
+            direction="SHORT",
+            order_type="LIMIT",
+            method="PULLBACK_CONTINUATION",
+            entry=1.10000,
+            tp=1.09950,
+            sl=1.10070,
+            spread_pips=1.0,
+            rationale=rationale,
+        )
+
+        self.assertEqual(score, 8.0)
+        self.assertTrue(any("do not treat the daily floor as solved" in item for item in rationale))
+        assessment = intent["metadata"]["oanda_universal_rotation_precision_assessment"]
+        self.assertEqual(
+            assessment["capture_rotation_rationale"],
+            "positive rotation lacks daily 5% floor firepower proof; keep OANDA rank-only ordering active "
+            "but do not treat the daily floor as solved",
+        )
+        self.assertNotIn("capture_rotation_score_scale", assessment)
+
     def test_oanda_universal_rotation_scores_when_positive_rotation_firepower_is_proved(self) -> None:
         intent = {
             "metadata": {

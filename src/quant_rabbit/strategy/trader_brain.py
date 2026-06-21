@@ -3667,8 +3667,9 @@ def _oanda_capture_rotation_scale(metadata: dict[str, Any]) -> tuple[float, str 
         )
     if metadata.get("positive_rotation_minimum_floor_reachable") is not True:
         return (
-            0.0,
-            "positive rotation lacks daily 5% floor firepower proof; OANDA rank-only edge stays size-neutral",
+            1.0,
+            "positive rotation lacks daily 5% floor firepower proof; keep OANDA rank-only ordering active "
+            "but do not treat the daily floor as solved",
         )
     return 1.0, None
 
@@ -3718,11 +3719,15 @@ def _oanda_universal_rotation_precision_score(
         method=method,
     )
     score_delta = round(raw_score_delta * capture_scale * recent_scale, 4)
+    if capture_scale_rationale:
+        assessment["capture_rotation_rationale"] = capture_scale_rationale
     if capture_scale < 1.0:
         assessment["raw_score_delta_before_capture_rotation_scale"] = raw_score_delta
         assessment["capture_rotation_score_scale"] = round(capture_scale, 4)
         if capture_scale_rationale:
             rationale.insert(0, capture_scale_rationale)
+    elif capture_scale_rationale:
+        rationale.insert(0, capture_scale_rationale)
     if recent_scale < 1.0:
         assessment["raw_score_delta_before_recent_history_scale"] = raw_score_delta
         assessment["recent_history_score_scale"] = round(recent_scale, 4)

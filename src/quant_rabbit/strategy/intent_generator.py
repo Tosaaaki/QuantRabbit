@@ -5008,8 +5008,9 @@ class IntentGenerator:
         )
         if positive_rotation_firepower_issue is not None:
             risk_issues.append(positive_rotation_firepower_issue)
-            live_blockers = (*live_blockers, positive_rotation_firepower_issue["message"])
-            risk_allowed = False
+            if positive_rotation_firepower_issue.get("severity") == "BLOCK":
+                live_blockers = (*live_blockers, positive_rotation_firepower_issue["message"])
+                risk_allowed = False
         if (
             self_improvement_profitability_issue is not None
             and str(intent.metadata.get("position_intent") or "").upper() != "HEDGE"
@@ -5837,10 +5838,11 @@ def _positive_rotation_daily_firepower_issue(
             "message": (
                 "positive-rotation evidence sample is below today's target pace "
                 f"(tp_trades={tp_trades}, target_trades_per_day={target_trades}); "
-                "do not scale to a full 5-10% daily rotation until realized TP "
-                "samples cover at least one planned trading day"
+                "keep trading only the TP-proven HARVEST shape while treating "
+                "the 5-10% daily target as unproven firepower, not as a reason "
+                "to block the positive edge"
             ),
-            "severity": "BLOCK",
+            "severity": "WARN",
         }
     if minimum_needed > 0 and daily_lower_bound < minimum_needed:
         return {
@@ -5849,9 +5851,11 @@ def _positive_rotation_daily_firepower_issue(
                 "positive-rotation lower-bound firepower cannot cover the daily "
                 f"minimum target: lower_bound={daily_lower_bound:.2f} JPY at "
                 f"{target_trades} trades, remaining_minimum={minimum_needed:.2f} JPY; "
-                f"requires {required_minimum_trades} trades at the stressed expectancy"
+                f"requires {required_minimum_trades} trades at the stressed expectancy. "
+                "Do not claim the daily floor is solved, but do not block this "
+                "TP-proven non-market HARVEST rotation solely for being underpowered."
             ),
-            "severity": "BLOCK",
+            "severity": "WARN",
         }
     return None
 

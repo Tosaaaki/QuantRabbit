@@ -370,7 +370,7 @@ class IntentGeneratorTest(unittest.TestCase):
             self.assertLessEqual(metadata["positive_rotation_required_minimum_trades"], 30)
             self.assertLessEqual(result["risk_metrics"]["risk_jpy"], 1000.0)
 
-    def test_capture_tp_proven_but_daily_firepower_short_blocks_live_rotation(self) -> None:
+    def test_capture_tp_proven_but_daily_firepower_short_warns_live_rotation(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             (root / "daily_target_state.json").write_text(
@@ -440,9 +440,15 @@ class IntentGeneratorTest(unittest.TestCase):
             self.assertEqual(metadata["positive_rotation_mode"], "TP_PROVEN_HARVEST")
             self.assertFalse(metadata["positive_rotation_minimum_floor_reachable"])
             self.assertGreater(metadata["positive_rotation_required_minimum_trades"], 30)
-            self.assertEqual(result["status"], "DRY_RUN_BLOCKED")
+            self.assertEqual(result["status"], "LIVE_READY")
             self.assertIn(POSITIVE_ROTATION_FIREPOWER_BLOCK_CODE, issue_codes)
-            self.assertIn(POSITIVE_ROTATION_FIREPOWER_BLOCK_CODE, result["live_blocker_codes"])
+            firepower_issue = next(
+                issue
+                for issue in result["risk_issues"]
+                if issue["code"] == POSITIVE_ROTATION_FIREPOWER_BLOCK_CODE
+            )
+            self.assertEqual(firepower_issue["severity"], "WARN")
+            self.assertNotIn(POSITIVE_ROTATION_FIREPOWER_BLOCK_CODE, result["live_blocker_codes"])
 
     def test_capture_tp_positive_but_stress_negative_blocks_live_rotation(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
