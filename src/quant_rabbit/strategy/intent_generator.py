@@ -5123,6 +5123,7 @@ class IntentGenerator:
         # EUR_USD, 322u AUD_JPY, 2u GBP_USD entries whose spread cost
         # dominated any pip target; this gate stops the same pattern.
         if int(intent.units) == 0 and not _min_lot_test_override_active():
+            intent_max_loss_jpy = _optional_float((intent.metadata or {}).get("max_loss_jpy"))
             min_lot_issue = _min_lot_block_issue(
                 pair=pair,
                 entry=(
@@ -5131,7 +5132,7 @@ class IntentGenerator:
                     else (quote.ask if intent.side == Side.LONG else quote.bid)
                 ),
                 sl=intent.sl,
-                max_loss_jpy=effective_max_loss_jpy,
+                max_loss_jpy=intent_max_loss_jpy if intent_max_loss_jpy is not None else effective_max_loss_jpy,
                 snapshot=snapshot,
                 side=intent.side,
                 position_intent=str(intent.metadata.get("position_intent") or ""),
@@ -5551,6 +5552,7 @@ def _live_blocker_codes_from_issues(
     """
 
     blocker_messages = {str(item).strip() for item in live_blockers if str(item).strip()}
+    has_specific_min_lot_issue = _has_specific_min_lot_issue(list(risk_issues or ()))
     codes: list[str] = []
     seen: set[str] = set()
     for issue_group in (risk_issues, strategy_issues, live_strategy_issues):
@@ -5562,6 +5564,8 @@ def _live_blocker_codes_from_issues(
             if severity != "BLOCK" and message not in blocker_messages:
                 continue
             code = str(issue.get("code") or message or "").strip()
+            if code == "BAD_UNITS" and has_specific_min_lot_issue:
+                continue
             if not code or code in seen:
                 continue
             seen.add(code)

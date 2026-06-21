@@ -355,6 +355,46 @@ class IntentGeneratorTest(unittest.TestCase):
             self.assertIn(POSITIVE_ROTATION_LIVE_BLOCK_CODE, issue_codes)
             self.assertIn(POSITIVE_ROTATION_LIVE_BLOCK_CODE, result["live_blocker_codes"])
 
+    def test_min_lot_diagnostic_uses_loss_asymmetry_effective_cap(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "capture_economics.json").write_text(
+                json.dumps(
+                    {
+                        "status": "NEGATIVE_EXPECTANCY",
+                        "overall": {
+                            "trades": 30,
+                            "avg_win_jpy": 50.0,
+                            "avg_loss_jpy": 1100.0,
+                            "payoff_ratio": 0.045,
+                            "breakeven_payoff_at_win_rate": 0.7,
+                        },
+                    }
+                )
+            )
+            output = root / "intents.json"
+
+            IntentGenerator(
+                campaign_plan=_campaign(root),
+                strategy_profile=_strategy(root, status="CANDIDATE"),
+                output_path=output,
+                report_path=root / "intents.md",
+                pair_charts_path=_pair_charts(root),
+                data_root=root,
+                max_loss_jpy=1000.0,
+            ).run(snapshot_path=_snapshot(root), max_candidates=1)
+
+            result = json.loads(output.read_text())["results"][0]
+            metadata = result["intent"]["metadata"]
+            issue_codes = {issue["code"] for issue in result["risk_issues"]}
+
+        self.assertEqual(result["intent"]["units"], 0)
+        self.assertEqual(metadata["max_loss_jpy"], 50.0)
+        self.assertIn("LOSS_BUDGET_TOO_THIN_FOR_MIN_LOT", issue_codes)
+        self.assertNotIn("MIN_LOT_SIZE_UNAVAILABLE", issue_codes)
+        self.assertIn("LOSS_BUDGET_TOO_THIN_FOR_MIN_LOT", result["live_blocker_codes"])
+        self.assertNotIn("BAD_UNITS", result["live_blocker_codes"])
+
     def test_capture_loss_asymmetry_relaxes_tp_proven_harvest_entries(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -1212,6 +1252,8 @@ class IntentGeneratorTest(unittest.TestCase):
         self.assertEqual(result["intent"]["units"], 0)
         self.assertIn("LOSS_BUDGET_TOO_THIN_FOR_MIN_LOT", issue_codes)
         self.assertNotIn("MIN_LOT_SIZE_UNAVAILABLE", issue_codes)
+        self.assertIn("LOSS_BUDGET_TOO_THIN_FOR_MIN_LOT", result["live_blocker_codes"])
+        self.assertNotIn("BAD_UNITS", result["live_blocker_codes"])
         self.assertTrue(any("loss budget can only fund" in blocker for blocker in result["live_blockers"]))
         self.assertFalse(any("units must be positive" in blocker for blocker in result["live_blockers"]))
 
