@@ -710,6 +710,103 @@ class CliHelpTest(unittest.TestCase):
             "GATEWAY_TRADE_CLOSE_SENT",
         )
 
+    def test_profitability_acceptance_backfills_close_leak_lane_from_entry_fill(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            ledger = Path(tmp) / "execution_ledger.db"
+            with sqlite3.connect(ledger) as conn:
+                conn.execute(
+                    """
+                    CREATE TABLE execution_events (
+                        ts_utc TEXT,
+                        event_type TEXT,
+                        trade_id TEXT,
+                        order_id TEXT,
+                        lane_id TEXT,
+                        pair TEXT,
+                        side TEXT,
+                        realized_pl_jpy REAL,
+                        exit_reason TEXT,
+                        raw_json TEXT
+                    )
+                    """
+                )
+                conn.executemany(
+                    """
+                    INSERT INTO execution_events (
+                        ts_utc, event_type, trade_id, order_id, lane_id, pair, side,
+                        realized_pl_jpy, exit_reason, raw_json
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    [
+                        (
+                            "2026-06-21T00:00:00+00:00",
+                            "ORDER_FILLED",
+                            "T-loss",
+                            "O-entry",
+                            "range_trader:NZD_USD:LONG:RANGE_ROTATION",
+                            "NZD_USD",
+                            "LONG",
+                            0.0,
+                            "LIMIT_ORDER",
+                            "{}",
+                        ),
+                        (
+                            "2026-06-21T00:30:00+00:00",
+                            "GATEWAY_TRADE_CLOSE_SENT",
+                            "T-loss",
+                            "O-close",
+                            "",
+                            "NZD_USD",
+                            "",
+                            None,
+                            "GPT_CLOSE",
+                            "{}",
+                        ),
+                        (
+                            "2026-06-21T00:30:01+00:00",
+                            "TRADE_CLOSED",
+                            "T-loss",
+                            "O-close",
+                            "",
+                            "NZD_USD",
+                            "LONG",
+                            -1380.8,
+                            "MARKET_ORDER_TRADE_CLOSE",
+                            "{}",
+                        ),
+                    ],
+                )
+
+            metrics, findings = _execution_ledger_close_findings(ledger)
+
+        self.assertEqual(metrics["recent_loss_closes"], 1)
+        self.assertEqual(
+            metrics["recent_loss_examples"][0]["lane_id"],
+            "range_trader:NZD_USD:LONG:RANGE_ROTATION",
+        )
+        self.assertEqual(
+            metrics["recent_loss_examples"][0]["close_provenance"],
+            "GATEWAY_TRADE_CLOSE_SENT",
+        )
+        self.assertEqual(
+            metrics["recent_loss_by_lane"][0],
+            {
+                "lane_id": "range_trader:NZD_USD:LONG:RANGE_ROTATION",
+                "pair": "NZD_USD",
+                "side": "LONG",
+                "method": "RANGE_ROTATION",
+                "loss_closes": 1,
+                "net_jpy": -1380.8,
+            },
+        )
+        leak = next(
+            finding
+            for finding in findings
+            if finding["code"] == "RECENT_GATEWAY_LOSS_MARKET_CLOSE_LEAK"
+        )
+        self.assertEqual(leak["evidence"]["by_lane"], metrics["recent_loss_by_lane"])
+
     def test_profitability_acceptance_does_not_call_gpt_reconciled_loss_close_unverified(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             ledger = Path(tmp) / "execution_ledger.db"

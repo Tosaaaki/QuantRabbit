@@ -624,6 +624,7 @@ def _execution_ledger_close_findings(path: Path) -> tuple[dict[str, Any], list[d
         "recent_loss_net_jpy": 0.0,
         "recent_unverified_loss_closes": 0,
         "recent_unverified_loss_net_jpy": 0.0,
+        "recent_loss_by_lane": [],
         "latest_gateway_market_close_ts_utc": None,
         "latest_loss_close_ts_utc": None,
         "gateway_event_stream_events": 0,
@@ -669,14 +670,25 @@ def _execution_ledger_close_findings(path: Path) -> tuple[dict[str, Any], list[d
                     SELECT *
                     FROM execution_events
                     WHERE event_type IN ('GATEWAY_TRADE_CLOSE_SENT', 'GATEWAY_TRADE_CLOSE_RECONCILED')
+                ),
+                entry_lanes AS (
+                    SELECT
+                        trade_id,
+                        MAX(NULLIF(lane_id, '')) AS entry_lane_id,
+                        MAX(NULLIF(pair, '')) AS entry_pair,
+                        MAX(NULLIF(side, '')) AS entry_side
+                    FROM execution_events
+                    WHERE event_type IN ('GATEWAY_ORDER_SENT', 'ORDER_FILLED')
+                      AND COALESCE(trade_id, '') != ''
+                    GROUP BY trade_id
                 )
                 SELECT
                     g.ts_utc AS gateway_ts_utc,
                     g.trade_id AS trade_id,
                     g.order_id AS order_id,
-                    COALESCE(g.lane_id, c.lane_id) AS lane_id,
-                    COALESCE(g.pair, c.pair) AS pair,
-                    COALESCE(g.side, c.side) AS side,
+                    COALESCE(NULLIF(g.lane_id, ''), NULLIF(c.lane_id, ''), entry.entry_lane_id) AS lane_id,
+                    COALESCE(NULLIF(g.pair, ''), NULLIF(c.pair, ''), entry.entry_pair) AS pair,
+                    COALESCE(NULLIF(g.side, ''), NULLIF(c.side, ''), entry.entry_side) AS side,
                     c.ts_utc AS close_ts_utc,
                     c.realized_pl_jpy AS realized_pl_jpy,
                     c.exit_reason AS exit_reason,
@@ -707,6 +719,8 @@ def _execution_ledger_close_findings(path: Path) -> tuple[dict[str, Any], list[d
                      OR COALESCE(c.order_id, '') = ''
                      OR c.order_id = g.order_id
                  )
+                LEFT JOIN entry_lanes entry
+                  ON entry.trade_id = g.trade_id
                 WHERE c.exit_reason = 'MARKET_ORDER_TRADE_CLOSE'
                   AND NOT (
                       g.event_type = 'GATEWAY_TRADE_CLOSE_RECONCILED'
@@ -717,7 +731,7 @@ def _execution_ledger_close_findings(path: Path) -> tuple[dict[str, Any], list[d
                             AND (
                                 (COALESCE(direct.trade_id, '') != '' AND direct.trade_id = g.trade_id)
                                 OR (COALESCE(direct.order_id, '') != '' AND direct.order_id = g.order_id)
-                            )
+                        )
                       )
                   )
                 ORDER BY g.ts_utc ASC
@@ -802,6 +816,35 @@ def _execution_ledger_close_findings(path: Path) -> tuple[dict[str, Any], list[d
         sum(float(row.get("realized_pl_jpy") or 0.0) for row in recent_unverified_losses),
         4,
     )
+    by_lane: dict[str, dict[str, Any]] = {}
+    for row in recent_losses:
+        lane_id = str(row.get("lane_id") or "").strip()
+        key = lane_id or f"UNKNOWN:{row.get('pair') or ''}:{row.get('side') or ''}"
+        item = by_lane.setdefault(
+            key,
+            {
+                "lane_id": lane_id or None,
+                "pair": row.get("pair"),
+                "side": row.get("side"),
+                "method": _method_from_lane_id(lane_id),
+                "loss_closes": 0,
+                "net_jpy": 0.0,
+            },
+        )
+        item["loss_closes"] = int(item.get("loss_closes") or 0) + 1
+        item["net_jpy"] = float(item.get("net_jpy") or 0.0) + float(
+            row.get("realized_pl_jpy") or 0.0
+        )
+    metrics["recent_loss_by_lane"] = [
+        {**item, "net_jpy": round(float(item.get("net_jpy") or 0.0), 4)}
+        for item in sorted(
+            by_lane.values(),
+            key=lambda item: (
+                float(item.get("net_jpy") or 0.0),
+                str(item.get("lane_id") or ""),
+            ),
+        )[:10]
+    ]
     if recent_losses:
         latest_loss = max(recent_losses, key=lambda row: row["ts"])
         metrics["latest_loss_close_ts_utc"] = latest_loss["ts"].isoformat()
@@ -857,6 +900,7 @@ def _execution_ledger_close_findings(path: Path) -> tuple[dict[str, Any], list[d
                 "recent_loss_closes": metrics["recent_loss_closes"],
                 "recent_loss_net_jpy": metrics["recent_loss_net_jpy"],
                 "latest_loss_close_ts_utc": metrics["latest_loss_close_ts_utc"],
+                "by_lane": metrics["recent_loss_by_lane"],
                 "examples": metrics["recent_loss_examples"],
             },
         )
@@ -932,6 +976,13 @@ def _reconciled_close_provenance(
     ):
         return "GATEWAY_GPT_CLOSE_RECONCILED"
     return "GATEWAY_TRADE_CLOSE_RECONCILED_UNVERIFIED"
+
+
+def _method_from_lane_id(lane_id: str | None) -> str | None:
+    parts = [part.strip() for part in str(lane_id or "").split(":") if part.strip()]
+    if len(parts) >= 4:
+        return parts[3]
+    return None
 
 
 def _json_dict(value: Any) -> dict[str, Any]:
