@@ -156,7 +156,7 @@ class ApplyPartialClosesTest(unittest.TestCase):
         self.assertFalse(results[0]["sent"])
         self.assertEqual(client.calls, [])
 
-    def test_apply_calls_broker_with_units(self) -> None:
+    def test_apply_blocks_raw_close_fallback(self) -> None:
         action = PartialCloseAction(
             trade_id="t2", pair="USD_JPY", side="SHORT",
             original_units=13000, close_units=6500, remaining_units=6500,
@@ -171,9 +171,10 @@ class ApplyPartialClosesTest(unittest.TestCase):
 
         client = MockClient()
         results = apply_partial_closes([action], client, dry_run=False)
-        self.assertTrue(results[0]["sent"])
-        self.assertEqual(client.calls[0], ("t2", "6500"))
+        self.assertFalse(results[0]["sent"])
+        self.assertEqual(client.calls, [])
         self.assertEqual(results[0]["provenance"], "adverse_partial_close")
+        self.assertIn("close_trade_with_provenance", results[0]["error"])
 
     def test_apply_uses_provenance_method_when_supported(self) -> None:
         action = PartialCloseAction(

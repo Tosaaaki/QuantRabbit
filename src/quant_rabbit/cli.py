@@ -2941,7 +2941,10 @@ def main(argv: list[str] | None = None) -> int:
     p_advpart.add_argument(
         "--dry-run",
         action="store_true",
-        help="Compute actions but do not call broker.close_trade(). This is the default unless --send is set.",
+        help=(
+            "Compute actions but do not call broker.close_trade_with_provenance(). "
+            "This is the default unless --send is set."
+        ),
     )
     p_advpart.add_argument("--send", action="store_true", help="Send partial-close requests to OANDA.")
     p_advpart.add_argument(
@@ -5539,7 +5542,13 @@ def main(argv: list[str] | None = None) -> int:
             def replace_trade_dependent_orders(self, trade_id: str, order_request: dict[str, Any]) -> dict[str, Any]:
                 raise RuntimeError(f"dry-run position-execution cannot replace orders for {trade_id}")
 
-            def close_trade(self, trade_id: str, units: str = "ALL") -> dict[str, Any]:
+            def close_trade_with_provenance(
+                self,
+                trade_id: str,
+                units: str = "ALL",
+                *,
+                provenance: str,
+            ) -> dict[str, Any]:
                 raise RuntimeError(f"dry-run position-execution cannot close trade {trade_id}")
 
         client = OandaExecutionClient() if args.send else _DryRunPositionClient()

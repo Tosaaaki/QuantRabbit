@@ -118,6 +118,25 @@ class PositionProtectionGatewayTest(unittest.TestCase):
             payload = json.loads((root / "exec.json").read_text())
             self.assertEqual(payload["actions"][0]["request"]["provenance"], "position_protection_gateway")
 
+    def test_close_blocks_raw_close_fallback_when_provenance_method_missing(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp, patch.dict("os.environ", {"QR_DISABLE_AUTO_CLOSE": ""}, clear=False):
+            root = Path(tmp)
+            client = RawOnlyPositionClient()
+            summary = PositionProtectionGateway(
+                client=client,
+                output_path=root / "exec.json",
+                report_path=root / "exec.md",
+                live_enabled=True,
+            ).run(decision=_decision(ACTION_REVIEW_EXIT, stop=None), snapshot=_snapshot(), send=True)
+
+            payload = json.loads((root / "exec.json").read_text())
+
+        self.assertEqual(summary.status, "BLOCKED")
+        self.assertFalse(summary.sent)
+        self.assertEqual(client.closed, [])
+        self.assertEqual(payload["actions"][0]["issues"][0]["code"], "POSITION_CLOSE_SEND_FAILED")
+        self.assertIn("close_trade_with_provenance", payload["actions"][0]["issues"][0]["message"])
+
     def test_blocks_plain_review_exit_when_auto_close_disabled(self) -> None:
         with tempfile.TemporaryDirectory() as tmp, patch.dict(
             "os.environ",
@@ -535,6 +554,10 @@ class FakePositionClient:
         self.closed.append((trade_id, units))
         return {"relatedTransactionIDs": ["20"]}
 
+    def close_trade_with_provenance(self, trade_id: str, units: str = "ALL", *, provenance: str) -> dict[str, Any]:
+        self.closed.append((trade_id, units))
+        return {"relatedTransactionIDs": ["20"], "provenance": provenance}
+
 
 class ProvenancePositionClient(FakePositionClient):
     def __init__(self) -> None:
@@ -546,6 +569,20 @@ class ProvenancePositionClient(FakePositionClient):
 
     def close_trade_with_provenance(self, trade_id: str, units: str = "ALL", *, provenance: str) -> dict[str, Any]:
         self.closed_with_provenance.append((trade_id, units, provenance))
+        return {"relatedTransactionIDs": ["20"]}
+
+
+class RawOnlyPositionClient:
+    def __init__(self) -> None:
+        self.dependent_orders: list[tuple[str, dict[str, Any]]] = []
+        self.closed: list[tuple[str, str]] = []
+
+    def replace_trade_dependent_orders(self, trade_id: str, order_request: dict[str, Any]) -> dict[str, Any]:
+        self.dependent_orders.append((trade_id, order_request))
+        return {"relatedTransactionIDs": ["10"]}
+
+    def close_trade(self, trade_id: str, units: str = "ALL") -> dict[str, Any]:
+        self.closed.append((trade_id, units))
         return {"relatedTransactionIDs": ["20"]}
 
 

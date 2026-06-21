@@ -275,7 +275,10 @@ def _close_trade_with_supported_provenance(
     class_method = getattr(type(broker_client), "close_trade_with_provenance", None)
     if callable(close_with_provenance) and callable(class_method):
         return close_with_provenance(trade_id, units, provenance=provenance)
-    return broker_client.close_trade(trade_id, units=units)
+    raise RuntimeError(
+        "profit partial close requires close_trade_with_provenance; "
+        "raw close_trade fallback is disabled by the position execution contract"
+    )
 
 
 def load_profit_partial_state(path: Path = DEFAULT_PROFIT_PARTIAL_CLOSE_STATE) -> dict[str, Any]:

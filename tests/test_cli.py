@@ -1099,7 +1099,13 @@ class CliHelpTest(unittest.TestCase):
             def __init__(self) -> None:
                 self.closed: list[tuple[str, str]] = []
 
-            def close_trade(self, trade_id: str, units: str = "ALL") -> dict:
+            def close_trade_with_provenance(
+                self,
+                trade_id: str,
+                units: str = "ALL",
+                *,
+                provenance: str,
+            ) -> dict:
                 self.closed.append((trade_id, units))
                 return {
                     "orderCreateTransaction": {
@@ -1672,8 +1678,22 @@ class CliHelpTest(unittest.TestCase):
             root = Path(tmp)
             snapshot, pair_charts = self._adverse_partial_close_files(root)
             stdout = io.StringIO()
-            client = mock.Mock()
-            client.close_trade.return_value = {"ok": True}
+
+            class CloseClient:
+                def __init__(self) -> None:
+                    self.close_calls: list[tuple[str, str, str]] = []
+
+                def close_trade_with_provenance(
+                    self,
+                    trade_id: str,
+                    units: str = "ALL",
+                    *,
+                    provenance: str,
+                ) -> dict:
+                    self.close_calls.append((trade_id, units, provenance))
+                    return {"ok": True}
+
+            client = CloseClient()
 
             with mock.patch("quant_rabbit.cli.OandaExecutionClient", return_value=client), redirect_stdout(stdout):
                 code = main([
@@ -1692,7 +1712,7 @@ class CliHelpTest(unittest.TestCase):
             self.assertFalse(payload["dry_run"])
             self.assertTrue(payload["send"])
             self.assertTrue(payload["results"][0]["sent"])
-            client.close_trade.assert_called_once_with("t-adverse", units="5000")
+            self.assertEqual(client.close_calls, [("t-adverse", "5000", "adverse_partial_close")])
             self.assertEqual(payload["execution_ledger"]["status"], "RECORDED")
             with sqlite3.connect(root / "execution_ledger.db") as conn:
                 event = conn.execute(
@@ -1713,7 +1733,13 @@ class CliHelpTest(unittest.TestCase):
             def account_summary(self, *, now_utc=None) -> AccountSummary:
                 return AccountSummary(nav_jpy=100000.0, balance_jpy=100000.0, last_transaction_id="100")
 
-            def close_trade(self, trade_id: str, units: str = "ALL") -> dict:
+            def close_trade_with_provenance(
+                self,
+                trade_id: str,
+                units: str = "ALL",
+                *,
+                provenance: str,
+            ) -> dict:
                 self.close_calls.append((trade_id, units))
                 return {
                     "orderCreateTransaction": {

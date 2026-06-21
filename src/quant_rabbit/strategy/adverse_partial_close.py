@@ -225,7 +225,7 @@ def apply_partial_closes(
     *,
     dry_run: bool = False,
 ) -> list[dict]:
-    """Send partial-close requests via broker_client.close_trade(trade_id, units=<n>).
+    """Send partial-close requests through provenance-aware broker close calls.
 
     Exceptions are captured per-action so one failure doesn't block
     the others.
@@ -275,4 +275,7 @@ def _close_trade_with_supported_provenance(
     class_method = getattr(type(broker_client), "close_trade_with_provenance", None)
     if callable(close_with_provenance) and callable(class_method):
         return close_with_provenance(trade_id, units, provenance=provenance)
-    return broker_client.close_trade(trade_id, units=units)
+    raise RuntimeError(
+        "adverse partial close requires close_trade_with_provenance; "
+        "raw close_trade fallback is disabled by the position execution contract"
+    )

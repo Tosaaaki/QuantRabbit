@@ -34,7 +34,13 @@ POSITION_PROTECTION_CLOSE_PROVENANCE = "position_protection_gateway"
 class PositionExecutionClient(Protocol):
     def replace_trade_dependent_orders(self, trade_id: str, order_request: dict[str, Any]) -> dict[str, Any]: ...
 
-    def close_trade(self, trade_id: str, units: str = "ALL") -> dict[str, Any]: ...
+    def close_trade_with_provenance(
+        self,
+        trade_id: str,
+        units: str = "ALL",
+        *,
+        provenance: str,
+    ) -> dict[str, Any]: ...
 
 
 @dataclass(frozen=True)
@@ -374,7 +380,10 @@ def _close_trade_with_supported_provenance(
     class_method = getattr(type(client), "close_trade_with_provenance", None)
     if callable(close_with_provenance) and callable(class_method):
         return close_with_provenance(trade_id, units, provenance=provenance)
-    return client.close_trade(trade_id, units)
+    raise RuntimeError(
+        "position close requires close_trade_with_provenance; "
+        "raw close_trade fallback is disabled by the position execution contract"
+    )
 
 
 def _has_block(action: dict[str, Any]) -> bool:

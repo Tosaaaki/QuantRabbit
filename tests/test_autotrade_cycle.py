@@ -775,7 +775,13 @@ class AutoTradeCycleTest(unittest.TestCase):
             def __init__(self) -> None:
                 self.closed: list[tuple[str, str]] = []
 
-            def close_trade(self, trade_id: str, units: str = "ALL") -> dict[str, Any]:
+            def close_trade_with_provenance(
+                self,
+                trade_id: str,
+                units: str = "ALL",
+                *,
+                provenance: str,
+            ) -> dict[str, Any]:
                 self.closed.append((trade_id, units))
                 return {"ok": True}
 
@@ -810,7 +816,13 @@ class AutoTradeCycleTest(unittest.TestCase):
                     raise AssertionError("missing snapshot payload")
                 return self.snapshot_payload
 
-            def close_trade(self, trade_id: str, units: str = "ALL") -> dict[str, Any]:
+            def close_trade_with_provenance(
+                self,
+                trade_id: str,
+                units: str = "ALL",
+                *,
+                provenance: str,
+            ) -> dict[str, Any]:
                 self.closed.append((trade_id, units))
                 return {"relatedTransactionIDs": ["20"]}
 
@@ -877,7 +889,13 @@ class AutoTradeCycleTest(unittest.TestCase):
             def snapshot(self, pairs: tuple[str, ...]) -> BrokerSnapshot:
                 return self.snapshot_payload
 
-            def close_trade(self, trade_id: str, units: str = "ALL") -> dict[str, Any]:
+            def close_trade_with_provenance(
+                self,
+                trade_id: str,
+                units: str = "ALL",
+                *,
+                provenance: str,
+            ) -> dict[str, Any]:
                 self.closed.append((trade_id, units))
                 return {"relatedTransactionIDs": ["20"], "closedTradeID": trade_id}
 
@@ -996,7 +1014,13 @@ class AutoTradeCycleTest(unittest.TestCase):
                 self.snapshot_calls.append(pairs)
                 return self.snapshot_payload
 
-            def close_trade(self, trade_id: str, units: str = "ALL") -> dict[str, Any]:
+            def close_trade_with_provenance(
+                self,
+                trade_id: str,
+                units: str = "ALL",
+                *,
+                provenance: str,
+            ) -> dict[str, Any]:
                 self.closed.append((trade_id, units))
                 return {"relatedTransactionIDs": ["20"]}
 
@@ -5994,7 +6018,13 @@ class FakeCycleClient:
         )
         return {"orderCancelTransaction": {"id": "2", "orderID": order_id}}
 
-    def close_trade(self, trade_id: str, units: str = "ALL") -> dict[str, Any]:
+    def close_trade_with_provenance(
+        self,
+        trade_id: str,
+        units: str = "ALL",
+        *,
+        provenance: str,
+    ) -> dict[str, Any]:
         self.trades_closed.append((trade_id, units))
         self.snapshot_value = replace(
             self.snapshot_value,

@@ -130,7 +130,7 @@ class ApplyProfitPartialCloseTest(unittest.TestCase):
         self.assertFalse(results[0]["sent"])
         self.assertIn("LIVE_DISABLED", results[0]["error"])
 
-    def test_live_send_calls_broker_with_partial_units(self) -> None:
+    def test_live_send_blocks_raw_close_fallback(self) -> None:
         class Client:
             def __init__(self) -> None:
                 self.calls = []
@@ -148,9 +148,10 @@ class ApplyProfitPartialCloseTest(unittest.TestCase):
             confirm_live=True,
         )
 
-        self.assertTrue(results[0]["sent"])
-        self.assertEqual(client.calls, [("t4", "2500")])
+        self.assertFalse(results[0]["sent"])
+        self.assertEqual(client.calls, [])
         self.assertEqual(results[0]["provenance"], "profit_partial_close")
+        self.assertIn("close_trade_with_provenance", results[0]["error"])
 
     def test_live_send_uses_provenance_method_when_supported(self) -> None:
         class Client:
