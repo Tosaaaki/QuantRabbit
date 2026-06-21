@@ -905,15 +905,43 @@ def _forecast_directional_hit_rate(metadata: dict, support: dict) -> tuple[float
     return hit_rate, samples, calibration_name
 
 
+def _forecast_directional_economic_hit_rate(metadata: dict, support: dict) -> tuple[float | None, int]:
+    hit_rate = _to_float(metadata.get("forecast_directional_economic_hit_rate"))
+    if hit_rate is None:
+        hit_rate = _to_float(support.get("directional_economic_hit_rate"))
+    samples = _to_int(metadata.get("forecast_directional_economic_samples")) or 0
+    if samples <= 0:
+        samples = _to_int(support.get("directional_economic_samples")) or 0
+    return hit_rate, samples
+
+
 def _forecast_directional_bucket_clears_live_precision(metadata: dict, support: dict) -> bool:
     hit_rate, samples, _ = _forecast_directional_hit_rate(metadata, support)
     lower = hit_rate_wilson_lower(hit_rate, samples)
-    return (
+    headline_ok = (
         hit_rate is not None
         and samples >= FORECAST_LIVE_PRECISION_MIN_SAMPLES
         and lower is not None
         and lower >= FORECAST_LIVE_PRECISION_MIN_WILSON_LOWER
     )
+    if not headline_ok:
+        return False
+    economic_hit_rate, economic_samples = _forecast_directional_economic_hit_rate(metadata, support)
+    if economic_hit_rate is None:
+        return _forecast_directional_timeout_rate(metadata, support) <= 0.0
+    economic_lower = hit_rate_wilson_lower(economic_hit_rate, economic_samples)
+    return (
+        economic_samples >= FORECAST_LIVE_PRECISION_MIN_SAMPLES
+        and economic_lower is not None
+        and economic_lower >= FORECAST_LIVE_PRECISION_MIN_WILSON_LOWER
+    )
+
+
+def _forecast_directional_timeout_rate(metadata: dict, support: dict) -> float:
+    rate = _to_float(metadata.get("forecast_directional_timeout_rate"))
+    if rate is None:
+        rate = _to_float(support.get("directional_timeout_rate"))
+    return max(0.0, min(1.0, rate or 0.0))
 
 
 def _forecast_directional_bucket_is_known_weak(metadata: dict, support: dict) -> bool:
@@ -1194,12 +1222,17 @@ def _forecast_directional_hit_rate_weak_issue(
 ) -> RiskIssue:
     hit_rate, samples, calibration_name = _forecast_directional_hit_rate(metadata, support)
     lower = hit_rate_wilson_lower(hit_rate, samples)
+    economic_hit_rate, economic_samples = _forecast_directional_economic_hit_rate(metadata, support)
+    economic_lower = hit_rate_wilson_lower(economic_hit_rate, economic_samples)
     return RiskIssue(
         "FORECAST_DIRECTIONAL_HIT_RATE_WEAK_FOR_LIVE",
         (
             f"{intent.pair} {intent.side.value} forecast {direction} bucket "
             f"{calibration_name} hit_rate={0.0 if hit_rate is None else hit_rate:.2f}, "
             f"Wilson95_lower={0.0 if lower is None else lower:.2f} over {samples} sample(s); "
+            f"economic_hit_rate={0.0 if economic_hit_rate is None else economic_hit_rate:.2f}, "
+            f"economic_Wilson95_lower={0.0 if economic_lower is None else economic_lower:.2f} "
+            f"over {economic_samples} economic sample(s); "
             f"live requires Wilson95_lower>={FORECAST_LIVE_PRECISION_MIN_WILSON_LOWER:.2f} "
             f"and samples>={FORECAST_LIVE_PRECISION_MIN_SAMPLES}. This bucket cannot "
             "authorize live send without independent audited projection support."

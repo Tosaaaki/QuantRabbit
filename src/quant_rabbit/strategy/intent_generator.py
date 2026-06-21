@@ -3298,6 +3298,30 @@ def _projection_signal_target_pips_payload(signal: Any) -> float | None:
     return round(return_target, 4) if return_target is not None else None
 
 
+def _projection_bucket_precision_payload(bucket: dict[str, Any] | None) -> dict[str, Any]:
+    if not isinstance(bucket, dict):
+        return {}
+    payload: dict[str, Any] = {}
+    for key in (
+        "calibration_samples",
+        "economic_hit_rate",
+        "economic_samples",
+        "target_timeout_count",
+        "target_timeout_rate",
+        "timeout_count",
+        "timeout_rate",
+    ):
+        if key not in bucket:
+            continue
+        if key.endswith("_rate"):
+            value = _optional_float(bucket.get(key))
+        else:
+            value = _optional_int(bucket.get(key))
+        if value is not None:
+            payload[key] = round(value, 4) if isinstance(value, float) else value
+    return payload
+
+
 def _enrich_projection_support_precision(item: dict[str, Any], signal: Any | None = None) -> dict[str, Any]:
     target_pips = _projection_signal_target_pips_payload(signal) if signal is not None else None
     if target_pips is not None:
@@ -3308,6 +3332,13 @@ def _enrich_projection_support_precision(item: dict[str, Any], signal: Any | Non
     )
     if lower is not None:
         item["hit_rate_wilson_lower"] = round(lower, 4)
+    economic_hit_rate = _optional_float(item.get("economic_hit_rate"))
+    economic_samples = _optional_int(item.get("economic_samples"))
+    if economic_samples is None:
+        economic_samples = _optional_int(item.get("calibration_samples"))
+    economic_lower = hit_rate_wilson_lower(economic_hit_rate, economic_samples)
+    if economic_lower is not None:
+        item["economic_hit_rate_wilson_lower"] = round(economic_lower, 4)
     item["live_precision_ok"] = _forecast_support_signal_clears_live_precision(item)
     return item
 
@@ -3498,6 +3529,7 @@ def _forecast_market_support_for_forecast(
             "lead_time_min": _projection_signal_lead_time_payload(signal),
             "rationale": str(getattr(signal, "rationale", "") or "")[:180],
         }
+        item.update(_projection_bucket_precision_payload(bucket))
         item = _enrich_projection_support_precision(item, signal)
         considered.append(item)
         if samples < FORECAST_MARKET_SUPPORT_MIN_SAMPLES:
@@ -3589,6 +3621,10 @@ def _forecast_directional_calibration_for_forecast(
         "directional_calibration_name": None,
         "directional_hit_rate": None,
         "directional_samples": 0,
+        "directional_economic_hit_rate": None,
+        "directional_economic_samples": 0,
+        "directional_timeout_rate": None,
+        "directional_timeout_count": 0,
         "directional_invalidation_first_rate": None,
         "directional_invalidation_first_count": 0,
     }
@@ -3617,6 +3653,17 @@ def _forecast_directional_calibration_for_forecast(
         return payload
     hit_rate = _optional_float(bucket.get("hit_rate"))
     samples = _optional_int(bucket.get("samples")) or 0
+    economic_hit_rate = _optional_float(bucket.get("economic_hit_rate"))
+    economic_samples = _optional_int(bucket.get("economic_samples")) or 0
+    if economic_samples <= 0:
+        economic_samples = _optional_int(bucket.get("calibration_samples")) or 0
+    timeout_rate = _optional_float(bucket.get("timeout_rate"))
+    if timeout_rate is None:
+        timeout_rate = _optional_float(bucket.get("target_timeout_rate"))
+    timeout_count = _optional_int(bucket.get("timeout_count"))
+    if timeout_count is None:
+        timeout_count = _optional_int(bucket.get("target_timeout_count"))
+    timeout_count = timeout_count or 0
     invalidation_first_rate = _optional_float(bucket.get("invalidation_first_rate"))
     invalidation_first_count = _optional_int(bucket.get("invalidation_first_count")) or 0
     if hit_rate is None:
@@ -3626,6 +3673,18 @@ def _forecast_directional_calibration_for_forecast(
             "directional_calibration_name": calibration_name,
             "directional_hit_rate": round(hit_rate, 4),
             "directional_samples": samples,
+            "directional_economic_hit_rate": (
+                round(economic_hit_rate, 4)
+                if economic_hit_rate is not None
+                else None
+            ),
+            "directional_economic_samples": economic_samples,
+            "directional_timeout_rate": (
+                round(timeout_rate, 4)
+                if timeout_rate is not None
+                else None
+            ),
+            "directional_timeout_count": timeout_count,
             "directional_invalidation_first_rate": (
                 round(invalidation_first_rate, 4)
                 if invalidation_first_rate is not None
@@ -3694,22 +3753,19 @@ def _forecast_unselected_projection_support(
             continue
         if hit_rate < FORECAST_MARKET_SUPPORT_MIN_DIRECTIONAL_HIT_RATE:
             continue
-        out.append(
-            _enrich_projection_support_precision(
-                {
-                "name": name,
-                "calibration_name": calibration_name,
-                "direction": signal_direction,
-                "confidence": round(confidence, 4),
-                "hit_rate": round(hit_rate, 4),
-                "samples": samples,
-                "timeframe": getattr(signal, "timeframe", None),
-                "lead_time_min": _projection_signal_lead_time_payload(signal),
-                "rationale": str(getattr(signal, "rationale", "") or "")[:180],
-                },
-                signal,
-            )
-        )
+        item = {
+            "name": name,
+            "calibration_name": calibration_name,
+            "direction": signal_direction,
+            "confidence": round(confidence, 4),
+            "hit_rate": round(hit_rate, 4),
+            "samples": samples,
+            "timeframe": getattr(signal, "timeframe", None),
+            "lead_time_min": _projection_signal_lead_time_payload(signal),
+            "rationale": str(getattr(signal, "rationale", "") or "")[:180],
+        }
+        item.update(_projection_bucket_precision_payload(bucket))
+        out.append(_enrich_projection_support_precision(item, signal))
     return _dedupe_forecast_projection_support(out)
 
 
@@ -3778,28 +3834,25 @@ def _forecast_bootstrap_projection_support(
             )
         else:
             audit_text = "ledger samples pending"
-        out.append(
-            _enrich_projection_support_precision(
-                {
-                "name": name,
-                "calibration_name": calibration_name,
-                "direction": signal_direction,
-                "confidence": round(confidence_value, 4),
-                "hit_rate": round(audit_hit_rate, 4) if audit_hit_rate is not None else None,
-                "samples": audit_samples,
-                "bootstrap_projection_support": True,
-                "timeframe": getattr(signal, "timeframe", None),
-                "lead_time_min": _projection_signal_lead_time_payload(signal),
-                "rationale": str(getattr(signal, "rationale", "") or "")[:180],
-                "reason": (
-                    f"{name} {signal_direction} same-cycle bootstrap: signal_conf={confidence_value:.2f}, "
-                    f"raw_forecast_conf={raw_confidence:.2f}, calibrated_conf={confidence:.2f}; "
-                    f"{audit_text}"
-                ),
-                },
-                signal,
-            )
-        )
+        item = {
+            "name": name,
+            "calibration_name": calibration_name,
+            "direction": signal_direction,
+            "confidence": round(confidence_value, 4),
+            "hit_rate": round(audit_hit_rate, 4) if audit_hit_rate is not None else None,
+            "samples": audit_samples,
+            "bootstrap_projection_support": True,
+            "timeframe": getattr(signal, "timeframe", None),
+            "lead_time_min": _projection_signal_lead_time_payload(signal),
+            "rationale": str(getattr(signal, "rationale", "") or "")[:180],
+            "reason": (
+                f"{name} {signal_direction} same-cycle bootstrap: signal_conf={confidence_value:.2f}, "
+                f"raw_forecast_conf={raw_confidence:.2f}, calibrated_conf={confidence:.2f}; "
+                f"{audit_text}"
+            ),
+        }
+        item.update(_projection_bucket_precision_payload(audit_bucket))
+        out.append(_enrich_projection_support_precision(item, signal))
     return sorted(out, key=lambda item: item["confidence"], reverse=True)
 
 
@@ -4143,6 +4196,10 @@ def _forecast_context_payload(forecast: Any, *, cycle_id: str | None = None) -> 
         "forecast_directional_calibration_name": market_support.get("directional_calibration_name"),
         "forecast_directional_hit_rate": market_support.get("directional_hit_rate"),
         "forecast_directional_samples": market_support.get("directional_samples"),
+        "forecast_directional_economic_hit_rate": market_support.get("directional_economic_hit_rate"),
+        "forecast_directional_economic_samples": market_support.get("directional_economic_samples"),
+        "forecast_directional_timeout_rate": market_support.get("directional_timeout_rate"),
+        "forecast_directional_timeout_count": market_support.get("directional_timeout_count"),
         "forecast_directional_invalidation_first_rate": market_support.get("directional_invalidation_first_rate"),
         "forecast_directional_invalidation_first_count": market_support.get(
             "directional_invalidation_first_count"
@@ -4208,6 +4265,10 @@ def _forecast_market_support_payload(value: object) -> dict[str, Any]:
         ),
         "directional_hit_rate": _optional_float(value.get("directional_hit_rate")),
         "directional_samples": _optional_int(value.get("directional_samples")) or 0,
+        "directional_economic_hit_rate": _optional_float(value.get("directional_economic_hit_rate")),
+        "directional_economic_samples": _optional_int(value.get("directional_economic_samples")) or 0,
+        "directional_timeout_rate": _optional_float(value.get("directional_timeout_rate")),
+        "directional_timeout_count": _optional_int(value.get("directional_timeout_count")) or 0,
         "directional_invalidation_first_rate": _optional_float(value.get("directional_invalidation_first_rate")),
         "directional_invalidation_first_count": _optional_int(value.get("directional_invalidation_first_count")) or 0,
         "bootstrap_projection_support": bool(value.get("bootstrap_projection_support")),
@@ -6176,6 +6237,10 @@ def _intent_from_lane(
             "forecast_directional_calibration_name": lane.get("forecast_directional_calibration_name"),
             "forecast_directional_hit_rate": lane.get("forecast_directional_hit_rate"),
             "forecast_directional_samples": lane.get("forecast_directional_samples"),
+            "forecast_directional_economic_hit_rate": lane.get("forecast_directional_economic_hit_rate"),
+            "forecast_directional_economic_samples": lane.get("forecast_directional_economic_samples"),
+            "forecast_directional_timeout_rate": lane.get("forecast_directional_timeout_rate"),
+            "forecast_directional_timeout_count": lane.get("forecast_directional_timeout_count"),
             "mirror_of": lane.get("mirror_of"),
             "target_reward_risk": target_reward_risk,
             "base_target_reward_risk": base_reward_risk,
@@ -7421,11 +7486,21 @@ def _forecast_directional_hit_rate_issue(
     if samples <= 0:
         samples = _optional_int(support.get("directional_samples")) or 0
     lower = hit_rate_wilson_lower(hit_rate, samples)
+    economic_hit_rate, economic_samples = _forecast_directional_economic_hit_rate(metadata, support)
+    economic_lower = hit_rate_wilson_lower(economic_hit_rate, economic_samples)
     if (
         hit_rate is not None
         and samples >= FORECAST_LIVE_PRECISION_MIN_SAMPLES
         and lower is not None
         and lower >= FORECAST_LIVE_PRECISION_MIN_WILSON_LOWER
+        and (
+            economic_hit_rate is None
+            or (
+                economic_samples >= FORECAST_LIVE_PRECISION_MIN_SAMPLES
+                and economic_lower is not None
+                and economic_lower >= FORECAST_LIVE_PRECISION_MIN_WILSON_LOWER
+            )
+        )
     ):
         return None
     calibration_name = str(
@@ -7439,6 +7514,9 @@ def _forecast_directional_hit_rate_issue(
             f"{intent.pair} {intent.side.value} forecast {direction} bucket "
             f"{calibration_name} hit_rate={0.0 if hit_rate is None else hit_rate:.2f}, "
             f"Wilson95_lower={0.0 if lower is None else lower:.2f} over {samples} sample(s); "
+            f"economic_hit_rate={0.0 if economic_hit_rate is None else economic_hit_rate:.2f}, "
+            f"economic_Wilson95_lower={0.0 if economic_lower is None else economic_lower:.2f} "
+            f"over {economic_samples} economic sample(s); "
             f"live requires Wilson95_lower>={FORECAST_LIVE_PRECISION_MIN_WILSON_LOWER:.2f} "
             f"and samples>={FORECAST_LIVE_PRECISION_MIN_SAMPLES}. Keep this forecast dry-run "
             "until the calibrated direction proves 90%+ precision or independent live evidence replaces it."
@@ -7954,12 +8032,46 @@ def _forecast_directional_bucket_clears_live_precision(
     if samples <= 0:
         samples = _optional_int(support.get("directional_samples")) or 0
     lower = hit_rate_wilson_lower(hit_rate, samples)
-    return (
+    headline_ok = (
         hit_rate is not None
         and samples >= FORECAST_LIVE_PRECISION_MIN_SAMPLES
         and lower is not None
         and lower >= FORECAST_LIVE_PRECISION_MIN_WILSON_LOWER
     )
+    if not headline_ok:
+        return False
+    economic_hit_rate, economic_samples = _forecast_directional_economic_hit_rate(metadata, support)
+    if economic_hit_rate is None:
+        return _forecast_directional_timeout_rate(metadata, support) <= 0.0
+    economic_lower = hit_rate_wilson_lower(economic_hit_rate, economic_samples)
+    return (
+        economic_samples >= FORECAST_LIVE_PRECISION_MIN_SAMPLES
+        and economic_lower is not None
+        and economic_lower >= FORECAST_LIVE_PRECISION_MIN_WILSON_LOWER
+    )
+
+
+def _forecast_directional_economic_hit_rate(
+    metadata: dict[str, Any],
+    support: dict[str, Any],
+) -> tuple[float | None, int]:
+    hit_rate = _optional_float(metadata.get("forecast_directional_economic_hit_rate"))
+    if hit_rate is None:
+        hit_rate = _optional_float(support.get("directional_economic_hit_rate"))
+    samples = _optional_int(metadata.get("forecast_directional_economic_samples")) or 0
+    if samples <= 0:
+        samples = _optional_int(support.get("directional_economic_samples")) or 0
+    return hit_rate, samples
+
+
+def _forecast_directional_timeout_rate(
+    metadata: dict[str, Any],
+    support: dict[str, Any],
+) -> float:
+    rate = _optional_float(metadata.get("forecast_directional_timeout_rate"))
+    if rate is None:
+        rate = _optional_float(support.get("directional_timeout_rate"))
+    return max(0.0, min(1.0, rate or 0.0))
 
 
 def _forecast_market_support_allows_side(

@@ -894,6 +894,21 @@ def support_signal_clears_live_precision(
     lower = hit_rate_wilson_lower(hit_rate, samples)
     if lower is None or lower < float(min_wilson_lower):
         return False
+    economic_hit_rate = _optional_payload_float(payload.get("economic_hit_rate"))
+    economic_samples = _optional_payload_int(payload.get("economic_samples"))
+    if economic_samples is None:
+        economic_samples = _optional_payload_int(payload.get("calibration_samples"))
+    timeout_rate = _optional_payload_float(payload.get("timeout_rate"))
+    if timeout_rate is None:
+        timeout_rate = _optional_payload_float(payload.get("target_timeout_rate"))
+    if economic_hit_rate is None and timeout_rate is not None and timeout_rate > 0.0:
+        return False
+    if economic_hit_rate is not None:
+        if economic_samples is None or economic_samples < int(min_samples):
+            return False
+        economic_lower = hit_rate_wilson_lower(economic_hit_rate, economic_samples)
+        if economic_lower is None or economic_lower < float(min_wilson_lower):
+            return False
     name = str(payload.get("name") or payload.get("calibration_name") or "").lower()
     target_pips = target_pips_from_payload(payload)
     if "liquidity_sweep" in name:
@@ -903,6 +918,22 @@ def support_signal_clears_live_precision(
     if target_pips is not None and target_pips < float(min_target_pips):
         return False
     return True
+
+
+def _optional_payload_float(value: object) -> float | None:
+    try:
+        parsed = float(value) if value is not None else None
+    except (TypeError, ValueError):
+        return None
+    return parsed
+
+
+def _optional_payload_int(value: object) -> int | None:
+    try:
+        parsed = int(value) if value is not None else None
+    except (TypeError, ValueError):
+        return None
+    return parsed
 
 
 def technical_harvest_precision_support(

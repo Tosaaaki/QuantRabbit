@@ -2715,6 +2715,10 @@ class IntentGeneratorTest(unittest.TestCase):
                 "directional_calibration_name": "directional_forecast_up",
                 "directional_hit_rate": 0.1,
                 "directional_samples": 12,
+                "directional_economic_hit_rate": 0.08,
+                "directional_economic_samples": 20,
+                "directional_timeout_rate": 0.4,
+                "directional_timeout_count": 8,
                 "reason": "directional forecast bucket is weak",
             },
         )
@@ -2727,10 +2731,18 @@ class IntentGeneratorTest(unittest.TestCase):
         )
         self.assertAlmostEqual(metadata["forecast_directional_hit_rate"], 0.1)
         self.assertEqual(metadata["forecast_directional_samples"], 12)
+        self.assertAlmostEqual(metadata["forecast_directional_economic_hit_rate"], 0.08)
+        self.assertEqual(metadata["forecast_directional_economic_samples"], 20)
+        self.assertAlmostEqual(metadata["forecast_directional_timeout_rate"], 0.4)
+        self.assertEqual(metadata["forecast_directional_timeout_count"], 8)
         support = metadata["forecast_market_support"]
         self.assertEqual(support["directional_calibration_name"], "directional_forecast_up")
         self.assertAlmostEqual(support["directional_hit_rate"], 0.1)
         self.assertEqual(support["directional_samples"], 12)
+        self.assertAlmostEqual(support["directional_economic_hit_rate"], 0.08)
+        self.assertEqual(support["directional_economic_samples"], 20)
+        self.assertAlmostEqual(support["directional_timeout_rate"], 0.4)
+        self.assertEqual(support["directional_timeout_count"], 8)
 
     def test_same_cycle_projection_bootstrap_can_clear_near_miss_forecast_floor(self) -> None:
         os.environ["QR_REQUIRE_FORECAST_FOR_LIVE"] = "1"

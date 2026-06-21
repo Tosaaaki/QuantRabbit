@@ -1206,11 +1206,11 @@ def _compute_hit_rates_uncached(
             e.resolution_status in ("HIT", "MISS")
             and _calibration_entry_eligible(e)
         )
-        or _directional_forecast_timing_penalty_eligible(e)
+        or _projection_timing_penalty_eligible(e)
     ])
     grouped: Dict[str, Dict[str, List[tuple[bool | None, bool, bool]]]] = {}
     for e in resolved:
-        is_timeout_penalty = _directional_forecast_timing_penalty_eligible(e)
+        is_timeout_penalty = _projection_timing_penalty_eligible(e)
         hit = None if is_timeout_penalty else e.resolution_status == "HIT"
         invalidation_first = _calibration_invalidation_first_like(e)
         for signal_name in _calibration_signal_names(e):
@@ -1236,18 +1236,26 @@ def _compute_hit_rates_uncached(
             target_timeout_count = sum(1 for _hit, _invalidation_first, timeout in recent if timeout)
             calibration_samples = sample_count + target_timeout_count
             hr = hits / float(sample_count) if sample_count else 0.0
+            economic_hr = hits / float(calibration_samples) if calibration_samples else 0.0
+            timeout_rate = (
+                target_timeout_count / float(calibration_samples)
+                if calibration_samples
+                else 0.0
+            )
             out[sig][key] = {
                 "hit_rate": round(hr, 3),
                 "samples": sample_count,
                 "calibration_samples": calibration_samples,
+                "economic_hit_rate": round(economic_hr, 3),
+                "economic_samples": calibration_samples,
                 "invalidation_first_count": invalidation_first_count,
                 "invalidation_first_rate": round(invalidation_first_count / float(sample_count), 4)
                 if sample_count
                 else 0.0,
                 "target_timeout_count": target_timeout_count,
-                "target_timeout_rate": round(target_timeout_count / float(calibration_samples), 4)
-                if calibration_samples
-                else 0.0,
+                "target_timeout_rate": round(timeout_rate, 4),
+                "timeout_count": target_timeout_count,
+                "timeout_rate": round(timeout_rate, 4),
             }
     return out
 
@@ -1283,6 +1291,26 @@ def _directional_forecast_timing_penalty_eligible(entry: LedgerEntry) -> bool:
     if entry.resolution_status == "TIMEOUT":
         return True
     return _directional_forecast_target_timeout_like(entry)
+
+
+def _projection_timing_penalty_eligible(entry: LedgerEntry) -> bool:
+    """Count unresolved execution-window outcomes as economic penalties.
+
+    The headline hit-rate remains HIT/(HIT+MISS) so directional calibration
+    keeps adverse moves separate from no-move timing failures. For live
+    rotation, however, a signal that often fails to produce a tradable move
+    inside its window cannot support "high turn" entries. Keep those rows in
+    calibration_samples/economic_hit_rate while excluding explicitly
+    non-tradable market-closed emissions from learning.
+    """
+    if _directional_forecast_timing_penalty_eligible(entry):
+        return True
+    if str(entry.resolution_status or "").upper() != "TIMEOUT":
+        return False
+    evidence = str(entry.resolution_evidence or "").lower()
+    if "excluded from calibration" in evidence:
+        return False
+    return True
 
 
 def _copy_hit_rates(
@@ -1439,10 +1467,7 @@ def has_confidence_calibration_samples(
     for key, candidate in _calibration_candidate_items(by_key, pair=pair, regime=regime):
         if not isinstance(candidate, dict):
             continue
-        try:
-            samples = int(candidate.get("samples", 0) or 0)
-        except (TypeError, ValueError):
-            continue
+        samples = _effective_calibration_samples(candidate)
         if samples >= _confidence_min_samples_for_bucket(key):
             return True
     return False

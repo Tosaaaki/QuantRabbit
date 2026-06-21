@@ -13,12 +13,64 @@ from quant_rabbit.forecast_precision import (
     bidask_replay_precision_assessment,
     bidask_replay_precision_support,
     oanda_universal_rotation_precision_assessment,
+    support_signal_clears_live_precision,
     technical_harvest_precision_assessment,
     technical_harvest_precision_support,
 )
 
 
 class ForecastPrecisionConfluenceTest(unittest.TestCase):
+    def test_support_signal_rejects_high_headline_low_economic_precision(self) -> None:
+        self.assertFalse(
+            support_signal_clears_live_precision(
+                {
+                    "name": "liquidity_sweep_low",
+                    "hit_rate": 1.0,
+                    "samples": 100,
+                    "economic_hit_rate": 0.50,
+                    "economic_samples": 200,
+                    "timeout_rate": 0.50,
+                    "target_pips": 6.0,
+                },
+                min_wilson_lower=0.90,
+                min_samples=30,
+                min_target_pips=2.0,
+            )
+        )
+
+    def test_support_signal_rejects_timeout_rate_without_economic_precision(self) -> None:
+        self.assertFalse(
+            support_signal_clears_live_precision(
+                {
+                    "name": "bb_squeeze_expansion_imminent",
+                    "hit_rate": 0.98,
+                    "samples": 200,
+                    "timeout_rate": 0.20,
+                },
+                min_wilson_lower=0.90,
+                min_samples=30,
+                min_target_pips=2.0,
+            )
+        )
+
+    def test_support_signal_allows_high_economic_precision(self) -> None:
+        self.assertTrue(
+            support_signal_clears_live_precision(
+                {
+                    "name": "liquidity_sweep_low",
+                    "hit_rate": 0.98,
+                    "samples": 200,
+                    "economic_hit_rate": 0.96,
+                    "economic_samples": 200,
+                    "timeout_rate": 0.02,
+                    "target_pips": 6.0,
+                },
+                min_wilson_lower=0.90,
+                min_samples=30,
+                min_target_pips=2.0,
+            )
+        )
+
     def test_bidask_replay_rules_are_data_driven_across_pairs(self) -> None:
         metadata = {
             "forecast_direction": "DOWN",

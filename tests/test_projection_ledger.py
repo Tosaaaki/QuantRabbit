@@ -1083,6 +1083,60 @@ class HitRatesTest(unittest.TestCase):
             self.assertIn("EUR_USD:_all_regimes", hr["bb_squeeze"])
             self.assertIn("_all_pairs:_all_regimes", hr["bb_squeeze"])
 
+    def test_compute_hit_rates_tracks_timeouts_as_economic_samples(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            from quant_rabbit.strategy.projection_ledger import write_ledger
+
+            entries = []
+            for idx, status in enumerate(["HIT"] * 9 + ["MISS"] + ["TIMEOUT"] * 10):
+                entries.append(LedgerEntry(
+                    timestamp_emitted_utc=f"2026-05-14T00:{idx:02d}:00Z",
+                    pair="EUR_USD",
+                    signal_name="session_expansion_ny",
+                    direction="EITHER",
+                    lead_time_min=10,
+                    confidence=0.7,
+                    entry_price=1.0,
+                    predicted_target_price=None,
+                    resolution_window_min=20,
+                    resolution_status=status,
+                    resolution_evidence=(
+                        "window expired before tradable expansion"
+                        if status == "TIMEOUT"
+                        else f"resolved {status}"
+                    ),
+                    regime_at_emission="TREND",
+                    cycle_id=f"cycle-{idx}",
+                ))
+            entries.append(LedgerEntry(
+                timestamp_emitted_utc="2026-05-14T02:00:00Z",
+                pair="EUR_USD",
+                signal_name="session_expansion_ny",
+                direction="EITHER",
+                lead_time_min=10,
+                confidence=0.7,
+                entry_price=1.0,
+                predicted_target_price=None,
+                resolution_window_min=20,
+                resolution_status="TIMEOUT",
+                resolution_evidence="market closed at projection emission; excluded from calibration",
+                regime_at_emission="TREND",
+                cycle_id="market-closed",
+            ))
+            write_ledger(entries, root)
+
+            hr = compute_hit_rates(root)
+            bucket = hr["session_expansion_ny"]["EUR_USD:TREND"]
+
+            self.assertEqual(bucket["samples"], 10)
+            self.assertAlmostEqual(bucket["hit_rate"], 0.9)
+            self.assertEqual(bucket["calibration_samples"], 20)
+            self.assertEqual(bucket["economic_samples"], 20)
+            self.assertAlmostEqual(bucket["economic_hit_rate"], 0.45)
+            self.assertEqual(bucket["timeout_count"], 10)
+            self.assertAlmostEqual(bucket["timeout_rate"], 0.5)
+
     def test_range_directional_forecast_gets_direction_specific_calibration(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -1661,6 +1715,29 @@ class CalibrationTest(unittest.TestCase):
         )
 
         self.assertEqual(selected, "sig_x")
+
+    def test_select_calibration_signal_name_uses_directional_timeout_evidence(self) -> None:
+        hr = {
+            "sig_x": {"EUR_USD:TREND": {"hit_rate": 0.8, "samples": 100}},
+            "sig_x_up": {
+                "EUR_USD:TREND": {
+                    "hit_rate": 0.0,
+                    "samples": 0,
+                    "calibration_samples": 30,
+                    "target_timeout_rate": 1.0,
+                }
+            },
+        }
+
+        selected = select_calibration_signal_name(
+            "sig_x", "UP", "EUR_USD", hit_rates=hr, regime="TREND",
+        )
+
+        self.assertEqual(selected, "sig_x_up")
+        self.assertLess(
+            confidence_calibration(selected, "EUR_USD", hit_rates=hr, regime="TREND"),
+            1.0,
+        )
 
     def test_select_calibration_signal_name_keeps_directional_forecast_alias_even_when_thin(self) -> None:
         hr = {

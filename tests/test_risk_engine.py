@@ -369,6 +369,78 @@ class RiskEngineTest(unittest.TestCase):
         self.assertNotIn("FORECAST_TARGET_TOO_THIN_FOR_SPREAD", codes)
         self.assertNotIn("FORECAST_INVALIDATION_TOO_THIN_FOR_SPREAD", codes)
 
+    def test_high_headline_forecast_timeout_drag_blocks_live_send(self) -> None:
+        intent = OrderIntent(
+            pair="EUR_USD",
+            side=Side.LONG,
+            order_type=OrderType.MARKET,
+            units=3000,
+            tp=1.17554,
+            sl=1.17234,
+            thesis="headline_hit_rate_ignores_timeout_drag",
+            market_context=MarketContext(
+                regime="TREND-BULL continuation",
+                narrative="headline forecast looks perfect but rarely arrives in time",
+                chart_story="trend setup with stale projection timing",
+                method=TradeMethod.TREND_CONTINUATION,
+                invalidation="forecast invalidation clears spread noise",
+            ),
+            metadata={
+                "forecast_direction": "UP",
+                "forecast_confidence": 0.82,
+                "forecast_target_price": 1.17400,
+                "forecast_invalidation_price": 1.17270,
+                "forecast_directional_calibration_name": "directional_forecast_up",
+                "forecast_directional_hit_rate": 1.0,
+                "forecast_directional_samples": 80,
+                "forecast_directional_economic_hit_rate": 0.50,
+                "forecast_directional_economic_samples": 160,
+                "forecast_directional_timeout_rate": 0.50,
+                "forecast_directional_timeout_count": 80,
+            },
+        )
+
+        decision = _capped_engine(live_enabled=True).validate(intent, snapshot(), for_live_send=True)
+
+        codes = {issue.code: issue for issue in decision.issues}
+        self.assertFalse(decision.allowed)
+        self.assertIn("FORECAST_DIRECTIONAL_HIT_RATE_WEAK_FOR_LIVE", codes)
+        self.assertIn("economic_hit_rate=0.50", codes["FORECAST_DIRECTIONAL_HIT_RATE_WEAK_FOR_LIVE"].message)
+
+    def test_directional_timeout_rate_without_economic_rate_blocks_live_send(self) -> None:
+        intent = OrderIntent(
+            pair="EUR_USD",
+            side=Side.LONG,
+            order_type=OrderType.MARKET,
+            units=3000,
+            tp=1.17554,
+            sl=1.17234,
+            thesis="timeout_rate_without_economic_rate_is_unproved",
+            market_context=MarketContext(
+                regime="TREND-BULL continuation",
+                narrative="headline bucket is high but timeout accounting is incomplete",
+                chart_story="trend setup with incomplete economic calibration",
+                method=TradeMethod.TREND_CONTINUATION,
+                invalidation="forecast invalidation clears spread noise",
+            ),
+            metadata={
+                "forecast_direction": "UP",
+                "forecast_confidence": 0.82,
+                "forecast_target_price": 1.17400,
+                "forecast_invalidation_price": 1.17270,
+                "forecast_directional_calibration_name": "directional_forecast_up",
+                "forecast_directional_hit_rate": 1.0,
+                "forecast_directional_samples": 80,
+                "forecast_directional_timeout_rate": 0.20,
+                "forecast_directional_timeout_count": 20,
+            },
+        )
+
+        decision = _capped_engine(live_enabled=True).validate(intent, snapshot(), for_live_send=True)
+
+        self.assertFalse(decision.allowed)
+        self.assertIn("FORECAST_DIRECTIONAL_HIT_RATE_WEAK_FOR_LIVE", {issue.code for issue in decision.issues})
+
     def test_opposite_direction_forecast_blocks_live_send(self) -> None:
         intent = OrderIntent(
             pair="EUR_USD",
