@@ -210,6 +210,12 @@ class TraderBrainTest(unittest.TestCase):
                 "LONG",
                 "BREAKOUT_FAILURE",
             )
+            contrarian = _result(
+                "failure_trader:AUD_JPY:SHORT:BREAKOUT_FAILURE:contrarian",
+                "AUD_JPY",
+                "SHORT",
+                "BREAKOUT_FAILURE",
+            )
             good["intent"]["order_type"] = "LIMIT"
             good["intent"]["entry"] = 1.17330
             good["intent"]["tp"] = 1.17280
@@ -227,8 +233,21 @@ class TraderBrainTest(unittest.TestCase):
                 "forecast_confidence": 0.87,
                 "chart_direction_bias": "LONG",
             }
+            contrarian["intent"]["order_type"] = "LIMIT"
+            contrarian["intent"]["entry"] = 114.289
+            contrarian["intent"]["tp"] = 114.189
+            contrarian["intent"]["sl"] = 114.359
+            contrarian["intent"]["metadata"] = {
+                "forecast_direction": "UP",
+                "forecast_confidence": 0.80,
+                "forecast_horizon_min": 60,
+                "chart_direction_bias": "LONG",
+                "tp_execution_mode": "ATTACHED_TECHNICAL_TP",
+                "tp_target_intent": "HARVEST",
+                "opportunity_mode": "HARVEST",
+            }
             intents = root / "bidask_precision_intents.json"
-            intents.write_text(json.dumps({"results": [bad, good]}))
+            intents.write_text(json.dumps({"results": [bad, good, contrarian]}))
             campaign = root / "bidask_precision_campaign.json"
             campaign.write_text(
                 json.dumps(
@@ -236,6 +255,7 @@ class TraderBrainTest(unittest.TestCase):
                         "lanes": [
                             _lane("failure_trader", "EUR_USD", "SHORT", "BREAKOUT_FAILURE"),
                             _lane("failure_trader", "AUD_JPY", "LONG", "BREAKOUT_FAILURE"),
+                            _lane("failure_trader", "AUD_JPY", "SHORT", "BREAKOUT_FAILURE"),
                         ]
                     }
                 )
@@ -260,9 +280,13 @@ class TraderBrainTest(unittest.TestCase):
                 if item.lane_id == "failure_trader:EUR_USD:SHORT:BREAKOUT_FAILURE"
             )
             bad_score = next(item for item in decision.scores if item.lane_id.endswith(":bad"))
+            contrarian_score = next(item for item in decision.scores if item.lane_id.endswith(":contrarian"))
             self.assertEqual(good_score.action, ACTION_SEND_ENTRY)
             self.assertEqual(bad_score.action, ACTION_NO_TRADE)
             self.assertTrue(any("bid/ask replay edge +18.0" in item for item in good_score.rationale))
+            self.assertTrue(
+                any("bid/ask replay contrarian edge +18.0" in item for item in contrarian_score.rationale)
+            )
             self.assertTrue(any("bidask_replay_negative_bucket" in item for item in bad_score.blockers))
             self.assertEqual(decision.selected_lane_id, good_score.lane_id)
 

@@ -7021,6 +7021,9 @@ def _forecast_direction_conflict_issue(intent: OrderIntent, metadata: dict[str, 
     forecast_side = Side.LONG.value if direction == "UP" else Side.SHORT.value
     if forecast_side == intent.side.value:
         return None
+    method = intent.market_context.method if intent.market_context is not None else None
+    if _bidask_replay_precision_support_for_intent(intent, metadata, method):
+        return None
     min_confidence = _forecast_live_min_confidence(metadata)
     support = _forecast_market_support_payload(metadata.get("forecast_market_support"))
     recovery_reversal_hedge = (

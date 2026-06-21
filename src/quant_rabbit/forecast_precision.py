@@ -31,6 +31,7 @@ TECHNICAL_HARVEST_ROTATION_SCORE_BONUS = 12.0
 TECHNICAL_HARVEST_ROTATION_EXTRA_MATCH_BONUS = 3.0
 TECHNICAL_HARVEST_NEGATIVE_SCORE_PENALTY = 35.0
 BIDASK_REPLAY_EDGE_SCORE_BONUS = 18.0
+BIDASK_REPLAY_CONTRARIAN_SCORE_BONUS = 18.0
 BIDASK_REPLAY_NEGATIVE_SCORE_PENALTY = 70.0
 BIDASK_REPLAY_RULES_ENV = "QR_BIDASK_REPLAY_PRECISION_RULES"
 DEFAULT_BIDASK_REPLAY_RULES_PATH = Path(__file__).with_name("bidask_replay_precision_rules.json")
@@ -902,9 +903,7 @@ def bidask_replay_precision_assessment(
     normalized_side = str(side or "").upper()
     normalized_direction = str(metadata.get("forecast_direction") or "").upper()
     chart_bias = str(metadata.get("chart_direction_bias") or "").upper()
-    if chart_bias and chart_bias != normalized_side:
-        return _empty_bidask_replay_assessment()
-    edge_rules, negative_rules, rule_source = _bidask_replay_rule_sets(rules_path)
+    edge_rules, negative_rules, contrarian_rules, rule_source = _bidask_replay_rule_sets(rules_path)
 
     negative_matches: list[dict[str, Any]] = []
     for rule in negative_rules:
@@ -927,6 +926,7 @@ def bidask_replay_precision_assessment(
         stop_loss=stop_loss,
     )
     positive_supports: list[dict[str, Any]] = []
+    contrarian_supports: list[dict[str, Any]] = []
     if (
         target_pips is not None
         and stop_pips is not None
@@ -936,8 +936,30 @@ def bidask_replay_precision_assessment(
         and str(metadata.get("tp_target_intent") or "").upper() == "HARVEST"
         and str(metadata.get("opportunity_mode") or "").upper() in {"", "HARVEST"}
     ):
-        for rule in edge_rules:
-            if not _bidask_replay_rule_matches(rule, normalized_pair, normalized_side, normalized_direction):
+        if not chart_bias or chart_bias == normalized_side:
+            for rule in edge_rules:
+                if not _bidask_replay_rule_matches(rule, normalized_pair, normalized_side, normalized_direction):
+                    continue
+                if target_pips < float(rule["min_target_pips"]) or target_pips > float(rule["max_target_pips"]):
+                    continue
+                if stop_pips > float(rule["max_stop_pips"]):
+                    continue
+                support = _bidask_replay_rule_payload(rule)
+                support.update(
+                    {
+                        "current_target_pips": round(target_pips, 4),
+                        "current_stop_pips": round(stop_pips, 4),
+                    }
+                )
+                positive_supports.append(support)
+        for rule in contrarian_rules:
+            if not _bidask_replay_contrarian_rule_matches(
+                rule,
+                normalized_pair,
+                normalized_side,
+                normalized_direction,
+                metadata,
+            ):
                 continue
             if target_pips < float(rule["min_target_pips"]) or target_pips > float(rule["max_target_pips"]):
                 continue
@@ -950,30 +972,38 @@ def bidask_replay_precision_assessment(
                     "current_stop_pips": round(stop_pips, 4),
                 }
             )
-            positive_supports.append(support)
+            contrarian_supports.append(support)
 
     blocking_negative_matches = [
         item for item in negative_matches if bool(item.get("blocks_live_support"))
     ]
     primary_support = None
-    if positive_supports and not blocking_negative_matches:
+    supported_matches = [*positive_supports, *contrarian_supports]
+    if supported_matches and not blocking_negative_matches:
         primary_support = max(
-            positive_supports,
+            supported_matches,
             key=lambda item: (
                 float(item.get("optimized_profit_factor") or 0.0),
                 float(item.get("avg_final_pips") or 0.0),
                 int(item.get("samples") or 0),
+                int(bool(item.get("horizon_bucket"))) + int(bool(item.get("confidence_bucket"))),
             ),
         )
     score_delta = 0.0
-    if positive_supports and not blocking_negative_matches:
-        score_delta += BIDASK_REPLAY_EDGE_SCORE_BONUS
+    if supported_matches and not blocking_negative_matches:
+        primary_is_contrarian = bool(primary_support and primary_support.get("contrarian_edge"))
+        score_delta += (
+            BIDASK_REPLAY_CONTRARIAN_SCORE_BONUS
+            if primary_is_contrarian
+            else BIDASK_REPLAY_EDGE_SCORE_BONUS
+        )
     if negative_matches:
         score_delta -= len(negative_matches) * BIDASK_REPLAY_NEGATIVE_SCORE_PENALTY
     return {
-        "eligible_shape": bool(positive_supports or negative_matches),
+        "eligible_shape": bool(supported_matches or negative_matches),
         "primary_support": primary_support,
         "positive_supports": positive_supports,
+        "contrarian_supports": contrarian_supports,
         "negative_matches": negative_matches,
         "blocking_negative_matches": blocking_negative_matches,
         "rule_source": rule_source,
@@ -986,6 +1016,7 @@ def _empty_bidask_replay_assessment() -> dict[str, Any]:
         "eligible_shape": False,
         "primary_support": None,
         "positive_supports": [],
+        "contrarian_supports": [],
         "negative_matches": [],
         "blocking_negative_matches": [],
         "rule_source": None,
@@ -995,15 +1026,21 @@ def _empty_bidask_replay_assessment() -> dict[str, Any]:
 
 def _bidask_replay_rule_sets(
     rules_path: str | Path | None = None,
-) -> tuple[tuple[dict[str, Any], ...], tuple[dict[str, Any], ...], dict[str, Any]]:
+) -> tuple[
+    tuple[dict[str, Any], ...],
+    tuple[dict[str, Any], ...],
+    tuple[dict[str, Any], ...],
+    dict[str, Any],
+]:
     explicit = str(rules_path) if rules_path is not None else os.environ.get(BIDASK_REPLAY_RULES_ENV)
     path = Path(explicit).expanduser() if explicit else DEFAULT_BIDASK_REPLAY_RULES_PATH
-    loaded_edge, loaded_negative, source = _load_bidask_replay_rule_sets(str(path))
-    if loaded_edge or loaded_negative:
-        return loaded_edge, loaded_negative, source
+    loaded_edge, loaded_negative, loaded_contrarian, source = _load_bidask_replay_rule_sets(str(path))
+    if loaded_edge or loaded_negative or loaded_contrarian:
+        return loaded_edge, loaded_negative, loaded_contrarian, source
     return (
         BIDASK_REPLAY_EDGE_RULES,
         BIDASK_REPLAY_NEGATIVE_RULES,
+        (),
         {
             "type": "builtin_fallback",
             "path": str(path),
@@ -1015,16 +1052,21 @@ def _bidask_replay_rule_sets(
 @functools.lru_cache(maxsize=8)
 def _load_bidask_replay_rule_sets(
     path_text: str,
-) -> tuple[tuple[dict[str, Any], ...], tuple[dict[str, Any], ...], dict[str, Any]]:
+) -> tuple[
+    tuple[dict[str, Any], ...],
+    tuple[dict[str, Any], ...],
+    tuple[dict[str, Any], ...],
+    dict[str, Any],
+]:
     path = Path(path_text)
     if not path.exists():
-        return (), (), {"type": "missing_file", "path": str(path)}
+        return (), (), (), {"type": "missing_file", "path": str(path)}
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
-        return (), (), {"type": "unreadable_file", "path": str(path)}
+        return (), (), (), {"type": "unreadable_file", "path": str(path)}
     if not isinstance(payload, dict):
-        return (), (), {"type": "invalid_schema", "path": str(path)}
+        return (), (), (), {"type": "invalid_schema", "path": str(path)}
     source = {
         "type": "json_file",
         "path": str(path),
@@ -1042,7 +1084,12 @@ def _load_bidask_replay_rule_sets(
         source=source,
         require_geometry=False,
     )
-    return edge, negative, source
+    contrarian = _normalize_bidask_replay_rules(
+        payload.get("contrarian_edge_rules"),
+        source=source,
+        require_geometry=True,
+    )
+    return edge, negative, contrarian, source
 
 
 def _normalize_bidask_replay_rules(
@@ -1063,6 +1110,13 @@ def _normalize_bidask_replay_rules(
         side = str(rule.get("side") or "").upper().strip() or _side_for_direction(direction)
         if not pair or direction not in {"UP", "DOWN"} or side not in {"LONG", "SHORT"}:
             continue
+        faded_direction = str(rule.get("faded_direction") or rule.get("forecast_direction") or "").upper().strip()
+        if bool(rule.get("contrarian_edge")) or faded_direction:
+            if faded_direction not in {"UP", "DOWN"} or faded_direction == direction:
+                continue
+            rule["forecast_direction"] = faded_direction
+            rule["faded_direction"] = faded_direction
+            rule["contrarian_edge"] = True
         try:
             samples = int(rule.get("samples") or 0)
         except (TypeError, ValueError):
@@ -1113,14 +1167,84 @@ def _bidask_replay_rule_matches(
     )
 
 
+def _bidask_replay_contrarian_rule_matches(
+    rule: dict[str, Any],
+    pair: str,
+    side: str,
+    forecast_direction: str,
+    metadata: dict[str, Any],
+) -> bool:
+    if not (
+        bool(rule.get("contrarian_edge"))
+        and pair == str(rule.get("pair") or "").upper()
+        and side == str(rule.get("side") or "").upper()
+        and forecast_direction == str(rule.get("faded_direction") or rule.get("forecast_direction") or "").upper()
+    ):
+        return False
+    confidence_bucket = str(rule.get("confidence_bucket") or "").strip()
+    if confidence_bucket and confidence_bucket != _forecast_confidence_bucket(metadata):
+        return False
+    horizon_bucket = str(rule.get("horizon_bucket") or "").strip()
+    if horizon_bucket and horizon_bucket != _forecast_horizon_bucket(metadata):
+        return False
+    return True
+
+
+def _forecast_confidence_bucket(metadata: dict[str, Any]) -> str | None:
+    value = _safe_float(
+        metadata.get("forecast_confidence")
+        if metadata.get("forecast_confidence") is not None
+        else metadata.get("confidence")
+    )
+    if value is None:
+        return "missing"
+    if value < 0.50:
+        return "<0.50"
+    if value < 0.65:
+        return "0.50-0.65"
+    if value < 0.75:
+        return "0.65-0.75"
+    if value < 0.90:
+        return "0.75-0.90"
+    return ">=0.90"
+
+
+def _forecast_horizon_bucket(metadata: dict[str, Any]) -> str | None:
+    value = _safe_float(
+        metadata.get("forecast_horizon_min")
+        if metadata.get("forecast_horizon_min") is not None
+        else metadata.get("horizon_min")
+    )
+    if value is None:
+        return None
+    if value <= 15:
+        return "<=15m"
+    if value <= 30:
+        return "16-30m"
+    if value <= 60:
+        return "31-60m"
+    if value <= 240:
+        return "61-240m"
+    return ">240m"
+
+
 def _bidask_replay_rule_payload(rule: dict[str, Any]) -> dict[str, Any]:
     keys = (
         "name",
         "pair",
         "side",
         "direction",
+        "forecast_direction",
+        "faded_direction",
+        "contrarian_edge",
+        "horizon_bucket",
+        "confidence_bucket",
         "granularity",
         "samples",
+        "source_directional_hit_rate",
+        "source_avg_final_pips",
+        "source_avg_mfe_pips",
+        "source_avg_mae_pips",
         "directional_hit_rate",
         "avg_final_pips",
         "median_final_pips",

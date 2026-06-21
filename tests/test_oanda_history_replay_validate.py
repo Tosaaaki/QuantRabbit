@@ -82,6 +82,37 @@ class OandaHistoryReplayValidateTest(unittest.TestCase):
         self.assertAlmostEqual(result["final_pips"], 2.0)
         self.assertTrue(result["final_direction_hit"])
 
+    def test_contrarian_row_replays_opposite_bidask_entry_and_exit(self) -> None:
+        row = replay.ForecastRow(
+            source_index=1,
+            timestamp_utc=datetime(2026, 6, 19, tzinfo=timezone.utc),
+            pair="EUR_USD",
+            direction="UP",
+            confidence=0.7,
+            current_price=None,
+            target_price=None,
+            invalidation_price=None,
+            horizon_min=1,
+            cycle_id=None,
+        )
+        scored = replay._score_one(
+            row,
+            [
+                _candle("2026-06-19T00:00:00", bid_o=1.1000, bid_h=1.1001, bid_l=1.0999, bid_c=1.1000, ask_o=1.1002, ask_h=1.1003, ask_l=1.1001, ask_c=1.1002),
+                _candle("2026-06-19T00:00:05", bid_o=1.0997, bid_h=1.0998, bid_l=1.0995, bid_c=1.0996, ask_o=1.0999, ask_h=1.1000, ask_l=1.0997, ask_c=1.0998),
+            ],
+        )
+
+        contrarian = replay._contrarian_row(scored)
+
+        self.assertIsNotNone(contrarian)
+        self.assertEqual(contrarian["forecast_direction"], "UP")
+        self.assertEqual(contrarian["direction"], "DOWN")
+        self.assertTrue(contrarian["contrarian"])
+        self.assertAlmostEqual(contrarian["entry_price"], 1.1000)
+        self.assertAlmostEqual(contrarian["final_pips"], 2.0)
+        self.assertTrue(contrarian["final_direction_hit"])
+
     def test_same_candle_tp_and_sl_counts_as_stop_first(self) -> None:
         row = {
             "pair": "EUR_USD",
@@ -215,6 +246,64 @@ class OandaHistoryReplayValidateTest(unittest.TestCase):
         )
         self.assertEqual(rules["negative_rules"][0]["side"], "LONG")
         self.assertEqual(rules["rejected_sampled_segments"], [])
+
+    def test_precision_rules_select_contrarian_edge_from_losing_forecast_bucket(self) -> None:
+        rules = replay._bidask_precision_rules(
+            [],
+            contrarian_segment_rows=[
+                {
+                    "pair": "AUD_JPY",
+                    "forecast_direction": "UP",
+                    "direction": "DOWN",
+                    "n": 124,
+                    "source_summary": {
+                        "hit_rate": 0.20,
+                        "avg_final_pips": -6.7,
+                        "avg_mfe_pips": 3.8,
+                        "avg_mae_pips": 14.4,
+                    },
+                    "summary": {
+                        "hit_rate": 0.76,
+                        "avg_final_pips": 5.8,
+                        "median_final_pips": 4.1,
+                        "avg_mfe_pips": 12.0,
+                        "avg_mae_pips": 4.5,
+                    },
+                    "best_exit": {
+                        "take_profit_pips": 5.0,
+                        "stop_loss_pips": 7.0,
+                        "avg_realized_pips": 2.4,
+                        "win_rate": 0.70,
+                        "profit_factor": 2.5,
+                    },
+                }
+            ],
+            granularity="S5",
+            audit_report="unit.json",
+            edge_min_samples=30,
+            edge_min_directional_hit_rate=0.60,
+            edge_min_avg_final_pips=0.0,
+            edge_min_avg_realized_pips=0.5,
+            edge_min_win_rate=0.55,
+            edge_min_profit_factor=1.5,
+            negative_min_samples=30,
+            negative_max_directional_hit_rate=0.45,
+            negative_max_avg_final_pips=0.0,
+            negative_max_avg_realized_pips=-0.5,
+            negative_max_win_rate=0.40,
+            negative_max_profit_factor=0.75,
+        )
+
+        self.assertEqual(
+            [rule["name"] for rule in rules["contrarian_edge_rules"]],
+            ["AUD_JPY_UP_FADE_TO_DOWN_S5_BIDASK_CONTRARIAN_HARVEST_TP5_SL7"],
+        )
+        rule = rules["contrarian_edge_rules"][0]
+        self.assertEqual(rule["side"], "SHORT")
+        self.assertEqual(rule["faded_direction"], "UP")
+        self.assertEqual(rule["direction"], "DOWN")
+        self.assertEqual(rule["source_directional_hit_rate"], 0.2)
+        self.assertTrue(rule["contrarian_edge"])
 
     def test_missing_price_window_groups_publish_fetch_windows(self) -> None:
         rows = [

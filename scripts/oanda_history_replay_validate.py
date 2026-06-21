@@ -14,7 +14,7 @@ import collections
 import json
 import math
 import statistics
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Iterable, Sequence
@@ -75,11 +75,43 @@ def main() -> int:
     candles_by_pair, candle_stats = _load_candles(history_dirs, granularity=args.granularity)
     rows, load_stats = _load_forecasts(args.forecast_history)
     results, score_stats = _score_forecasts(rows, candles_by_pair)
+    contrarian_results = [
+        item for item in (_contrarian_row(row) for row in results)
+        if item is not None
+    ]
     exit_grid = _exit_grid(results, tp_grid=args.tp_grid_pips, sl_grid=args.sl_grid_pips)
     segment_exit_grids = {
         "by_pair_direction": _segment_exit_grids(
             results,
             ("pair", "direction"),
+            tp_grid=args.tp_grid_pips,
+            sl_grid=args.sl_grid_pips,
+            min_n=args.min_group_samples,
+        ),
+        "by_pair_forecast_direction_trade_direction": _segment_exit_grids(
+            contrarian_results,
+            ("pair", "forecast_direction", "direction"),
+            tp_grid=args.tp_grid_pips,
+            sl_grid=args.sl_grid_pips,
+            min_n=args.min_group_samples,
+        ),
+        "by_pair_forecast_direction_trade_direction_horizon": _segment_exit_grids(
+            contrarian_results,
+            ("pair", "forecast_direction", "direction", "horizon_bucket"),
+            tp_grid=args.tp_grid_pips,
+            sl_grid=args.sl_grid_pips,
+            min_n=args.min_group_samples,
+        ),
+        "by_pair_forecast_direction_trade_direction_confidence": _segment_exit_grids(
+            contrarian_results,
+            ("pair", "forecast_direction", "direction", "confidence_bucket"),
+            tp_grid=args.tp_grid_pips,
+            sl_grid=args.sl_grid_pips,
+            min_n=args.min_group_samples,
+        ),
+        "by_pair_forecast_direction_trade_direction_horizon_confidence": _segment_exit_grids(
+            contrarian_results,
+            ("pair", "forecast_direction", "direction", "horizon_bucket", "confidence_bucket"),
             tp_grid=args.tp_grid_pips,
             sl_grid=args.sl_grid_pips,
             min_n=args.min_group_samples,
@@ -103,6 +135,16 @@ def main() -> int:
     latest_md = out_dir / "oanda_history_replay_validate_latest.md"
     precision_rules = _bidask_precision_rules(
         segment_exit_grids["by_pair_direction"],
+        contrarian_segment_rows=[
+            row
+            for name in (
+                "by_pair_forecast_direction_trade_direction",
+                "by_pair_forecast_direction_trade_direction_horizon",
+                "by_pair_forecast_direction_trade_direction_confidence",
+                "by_pair_forecast_direction_trade_direction_horizon_confidence",
+            )
+            for row in segment_exit_grids[name]
+        ],
         granularity=args.granularity,
         audit_report=str(json_out),
         edge_min_samples=args.edge_min_samples,
@@ -421,12 +463,26 @@ def _missing_price_window_groups(rows: Sequence[ForecastRow]) -> list[dict[str, 
 
 
 def _score_one(row: ForecastRow, window: Sequence[QuoteCandle]) -> dict[str, Any] | None:
+    return _score_direction(row, window, direction=row.direction, forecast_direction=row.direction)
+
+
+def _score_direction(
+    row: ForecastRow,
+    window: Sequence[QuoteCandle],
+    *,
+    direction: str,
+    forecast_direction: str,
+) -> dict[str, Any] | None:
     if not window:
+        return None
+    direction = str(direction or "").upper()
+    forecast_direction = str(forecast_direction or "").upper()
+    if direction not in DIRECTIONAL or forecast_direction not in DIRECTIONAL:
         return None
     pip_factor = instrument_pip_factor(row.pair)
     first = window[0]
     last = window[-1]
-    if row.direction == "UP":
+    if direction == "UP":
         entry = first.ask.o
         final_pips = (last.bid.c - entry) * pip_factor
         mfe_pips = max(0.0, (max(c.bid.h for c in window) - entry) * pip_factor)
@@ -436,10 +492,16 @@ def _score_one(row: ForecastRow, window: Sequence[QuoteCandle]) -> dict[str, Any
         final_pips = (entry - last.ask.c) * pip_factor
         mfe_pips = max(0.0, (entry - min(c.ask.l for c in window)) * pip_factor)
         mae_pips = max(0.0, (max(c.ask.h for c in window) - entry) * pip_factor)
-    target_reward_side = _target_is_reward_side(row, entry)
-    invalidation_adverse_side = _invalidation_is_adverse_side(row, entry)
-    target_touch, invalidation_touch, target_first = _target_invalidation_order(
+    geometry_row = row if direction == row.direction else replace(
         row,
+        direction=direction,
+        target_price=None,
+        invalidation_price=None,
+    )
+    target_reward_side = _target_is_reward_side(geometry_row, entry)
+    invalidation_adverse_side = _invalidation_is_adverse_side(geometry_row, entry)
+    target_touch, invalidation_touch, target_first = _target_invalidation_order(
+        geometry_row,
         window,
         target_reward_side=target_reward_side,
         invalidation_adverse_side=invalidation_adverse_side,
@@ -450,7 +512,9 @@ def _score_one(row: ForecastRow, window: Sequence[QuoteCandle]) -> dict[str, Any
         "entry_timestamp_utc": _iso(first.timestamp_utc),
         "last_timestamp_utc": _iso(last.timestamp_utc),
         "pair": row.pair,
-        "direction": row.direction,
+        "direction": direction,
+        "forecast_direction": forecast_direction,
+        "contrarian": direction != forecast_direction,
         "confidence": row.confidence,
         "confidence_bucket": _confidence_bucket(row.confidence),
         "horizon_min": row.horizon_min,
@@ -467,6 +531,64 @@ def _score_one(row: ForecastRow, window: Sequence[QuoteCandle]) -> dict[str, Any
         "invalidation_adverse_side": invalidation_adverse_side,
         "_window": window,
     }
+
+
+def _contrarian_row(row: dict[str, Any]) -> dict[str, Any] | None:
+    """Re-score the same bid/ask window as a trade fading the forecast side."""
+
+    window = row.get("_window")
+    if not isinstance(window, (list, tuple)) or not window:
+        return None
+    forecast_direction = str(row.get("forecast_direction") or row.get("direction") or "").upper()
+    trade_direction = _opposite_direction(forecast_direction)
+    pair = str(row.get("pair") or "").upper()
+    if not pair or trade_direction is None:
+        return None
+    pip_factor = instrument_pip_factor(pair)
+    first = window[0]
+    last = window[-1]
+    if trade_direction == "UP":
+        entry = first.ask.o
+        final_pips = (last.bid.c - entry) * pip_factor
+        mfe_pips = max(0.0, (max(c.bid.h for c in window) - entry) * pip_factor)
+        mae_pips = max(0.0, (entry - min(c.bid.l for c in window)) * pip_factor)
+    else:
+        entry = first.bid.o
+        final_pips = (entry - last.ask.c) * pip_factor
+        mfe_pips = max(0.0, (entry - min(c.ask.l for c in window)) * pip_factor)
+        mae_pips = max(0.0, (max(c.ask.h for c in window) - entry) * pip_factor)
+    out = dict(row)
+    out.update(
+        {
+            "direction": trade_direction,
+            "forecast_direction": forecast_direction,
+            "contrarian": True,
+            "entry_price": entry,
+            "final_pips": final_pips,
+            "final_direction_hit": final_pips > 0.0,
+            "mfe_pips": mfe_pips,
+            "mae_pips": mae_pips,
+            "target_touch": None,
+            "invalidation_touch": None,
+            "target_before_invalidation": None,
+            "target_reward_side": None,
+            "invalidation_adverse_side": None,
+            "source_direction": forecast_direction,
+            "source_final_pips": row.get("final_pips"),
+            "source_direction_hit": row.get("final_direction_hit"),
+            "source_mfe_pips": row.get("mfe_pips"),
+            "source_mae_pips": row.get("mae_pips"),
+        }
+    )
+    return out
+
+
+def _opposite_direction(direction: str) -> str | None:
+    if direction == "UP":
+        return "DOWN"
+    if direction == "DOWN":
+        return "UP"
+    return None
 
 
 def _target_is_reward_side(row: ForecastRow, entry: float) -> bool | None:
@@ -704,6 +826,9 @@ def _segment_exit_grids(
                 "exit_grid": grid,
             }
         )
+        source_summary = _source_summary(items)
+        if source_summary is not None:
+            payload["source_summary"] = source_summary
         out.append(payload)
     out.sort(
         key=lambda item: (
@@ -718,6 +843,7 @@ def _segment_exit_grids(
 def _bidask_precision_rules(
     segment_rows: Sequence[dict[str, Any]],
     *,
+    contrarian_segment_rows: Sequence[dict[str, Any]] | None = None,
     granularity: str,
     audit_report: str,
     edge_min_samples: int,
@@ -749,7 +875,9 @@ def _bidask_precision_rules(
     }
     edge_rules: list[dict[str, Any]] = []
     negative_rules: list[dict[str, Any]] = []
+    contrarian_edge_rules: list[dict[str, Any]] = []
     rejected: list[dict[str, Any]] = []
+    rejected_contrarian: list[dict[str, Any]] = []
     for row in segment_rows:
         summary = row.get("summary") or {}
         best = row.get("best_exit") or {}
@@ -847,6 +975,123 @@ def _bidask_precision_rules(
                     "optimized_profit_factor": _round(profit_factor),
                 }
             )
+    for row in contrarian_segment_rows or ():
+        summary = row.get("summary") or {}
+        source_summary = row.get("source_summary") or {}
+        best = row.get("best_exit") or {}
+        pair = str(row.get("pair") or "").upper()
+        forecast_direction = str(row.get("forecast_direction") or "").upper()
+        direction = str(row.get("direction") or "").upper()
+        horizon_bucket = str(row.get("horizon_bucket") or "").strip()
+        confidence_bucket = str(row.get("confidence_bucket") or "").strip()
+        if _opposite_direction(forecast_direction) != direction:
+            continue
+        n = int(row.get("n") or 0)
+        hit_rate = _safe_metric(summary.get("hit_rate"))
+        avg_final = _safe_metric(summary.get("avg_final_pips"))
+        avg_mfe = _safe_metric(summary.get("avg_mfe_pips"))
+        avg_mae = _safe_metric(summary.get("avg_mae_pips"))
+        median_final = _safe_metric(summary.get("median_final_pips"))
+        source_hit_rate = _safe_metric(source_summary.get("hit_rate"))
+        source_avg_final = _safe_metric(source_summary.get("avg_final_pips"))
+        source_avg_mfe = _safe_metric(source_summary.get("avg_mfe_pips"))
+        source_avg_mae = _safe_metric(source_summary.get("avg_mae_pips"))
+        avg_realized = _safe_metric(best.get("avg_realized_pips"))
+        win_rate = _safe_metric(best.get("win_rate"))
+        profit_factor = _safe_metric(best.get("profit_factor"))
+        take_profit = _safe_metric(best.get("take_profit_pips"))
+        stop_loss = _safe_metric(best.get("stop_loss_pips"))
+        if not pair or direction not in DIRECTIONAL or take_profit is None or stop_loss is None:
+            continue
+        clears = (
+            n >= edge_min_samples
+            and source_hit_rate is not None
+            and source_hit_rate <= negative_max_directional_hit_rate
+            and source_avg_final is not None
+            and source_avg_final <= negative_max_avg_final_pips
+            and hit_rate is not None
+            and hit_rate >= edge_min_directional_hit_rate
+            and avg_final is not None
+            and avg_final > edge_min_avg_final_pips
+            and avg_realized is not None
+            and avg_realized >= edge_min_avg_realized_pips
+            and win_rate is not None
+            and win_rate >= edge_min_win_rate
+            and profit_factor is not None
+            and profit_factor >= edge_min_profit_factor
+        )
+        if clears:
+            min_target, max_target = _target_bounds(take_profit)
+            bucket_fields = {
+                key: value
+                for key, value in (
+                    ("horizon_bucket", horizon_bucket),
+                    ("confidence_bucket", confidence_bucket),
+                )
+                if value
+            }
+            bucket_name = _contrarian_bucket_name(bucket_fields)
+            contrarian_edge_rules.append(
+                {
+                    "name": (
+                        f"{pair}_{forecast_direction}{bucket_name}_FADE_TO_{direction}_{granularity}_"
+                        f"BIDASK_CONTRARIAN_HARVEST_TP{_rule_number(take_profit)}_"
+                        f"SL{_rule_number(stop_loss)}"
+                    ),
+                    "pair": pair,
+                    "side": _side_for_direction(direction),
+                    "direction": direction,
+                    "forecast_direction": forecast_direction,
+                    "faded_direction": forecast_direction,
+                    "contrarian_edge": True,
+                    **bucket_fields,
+                    "granularity": granularity,
+                    "samples": n,
+                    "source_directional_hit_rate": _round(source_hit_rate),
+                    "source_avg_final_pips": _round(source_avg_final),
+                    "source_avg_mfe_pips": _round(source_avg_mfe),
+                    "source_avg_mae_pips": _round(source_avg_mae),
+                    "directional_hit_rate": _round(hit_rate),
+                    "avg_final_pips": _round(avg_final),
+                    "median_final_pips": _round(median_final),
+                    "avg_mfe_pips": _round(avg_mfe),
+                    "avg_mae_pips": _round(avg_mae),
+                    "optimized_take_profit_pips": _round(take_profit),
+                    "optimized_stop_loss_pips": _round(stop_loss),
+                    "optimized_avg_realized_pips": _round(avg_realized),
+                    "optimized_win_rate": _round(win_rate),
+                    "optimized_profit_factor": _round(profit_factor),
+                    "min_target_pips": min_target,
+                    "max_target_pips": max_target,
+                    "max_stop_pips": _round(stop_loss + 0.2),
+                    "audit_report": audit_report,
+                }
+            )
+            continue
+        if n >= edge_min_samples:
+            rejected_contrarian.append(
+                {
+                    "pair": pair,
+                    "forecast_direction": forecast_direction,
+                    "direction": direction,
+                    **{
+                        key: value
+                        for key, value in (
+                            ("horizon_bucket", horizon_bucket),
+                            ("confidence_bucket", confidence_bucket),
+                        )
+                        if value
+                    },
+                    "samples": n,
+                    "source_directional_hit_rate": _round(source_hit_rate),
+                    "source_avg_final_pips": _round(source_avg_final),
+                    "directional_hit_rate": _round(hit_rate),
+                    "avg_final_pips": _round(avg_final),
+                    "optimized_avg_realized_pips": _round(avg_realized),
+                    "optimized_win_rate": _round(win_rate),
+                    "optimized_profit_factor": _round(profit_factor),
+                }
+            )
     edge_rules.sort(
         key=lambda item: (
             item["optimized_profit_factor"],
@@ -862,11 +1107,76 @@ def _bidask_precision_rules(
         ),
         reverse=True,
     )
+    contrarian_edge_rules.sort(
+        key=lambda item: (
+            item["optimized_profit_factor"],
+            item["optimized_avg_realized_pips"],
+            item["samples"],
+            int(bool(item.get("horizon_bucket"))) + int(bool(item.get("confidence_bucket"))),
+        ),
+        reverse=True,
+    )
     return {
         "selection": selection,
         "edge_rules": edge_rules,
+        "contrarian_edge_rules": contrarian_edge_rules,
         "negative_rules": negative_rules,
         "rejected_sampled_segments": rejected,
+        "rejected_contrarian_segments": rejected_contrarian,
+    }
+
+
+def _contrarian_bucket_name(fields: dict[str, str]) -> str:
+    parts: list[str] = []
+    horizon = fields.get("horizon_bucket")
+    if horizon:
+        parts.append(f"H{_rule_text_token(horizon)}")
+    confidence = fields.get("confidence_bucket")
+    if confidence:
+        parts.append(f"C{_rule_text_token(confidence)}")
+    return "" if not parts else "_" + "_".join(parts)
+
+
+def _rule_text_token(value: str) -> str:
+    return (
+        str(value)
+        .replace(">=", "GE")
+        .replace("<=", "LE")
+        .replace(">", "GT")
+        .replace("<", "LT")
+        .replace(".", "p")
+        .replace("-", "_")
+        .replace(" ", "")
+    )
+
+
+def _source_summary(rows: Sequence[dict[str, Any]]) -> dict[str, Any] | None:
+    sourced = [row for row in rows if "source_final_pips" in row]
+    if not sourced:
+        return None
+    return {
+        "n": len(sourced),
+        "hit_rate": _rate(row.get("source_direction_hit") for row in sourced),
+        "avg_final_pips": _mean(
+            float(row["source_final_pips"])
+            for row in sourced
+            if row.get("source_final_pips") is not None
+        ),
+        "median_final_pips": _median(
+            float(row["source_final_pips"])
+            for row in sourced
+            if row.get("source_final_pips") is not None
+        ),
+        "avg_mfe_pips": _mean(
+            float(row["source_mfe_pips"])
+            for row in sourced
+            if row.get("source_mfe_pips") is not None
+        ),
+        "avg_mae_pips": _mean(
+            float(row["source_mae_pips"])
+            for row in sourced
+            if row.get("source_mae_pips") is not None
+        ),
     }
 
 
@@ -943,11 +1253,23 @@ def _markdown(report: dict[str, Any]) -> str:
     precision = report.get("precision_rules") or {}
     lines.extend(["", "## Precision Rule Candidates", ""])
     edge_rules = precision.get("edge_rules") or []
+    contrarian_rules = precision.get("contrarian_edge_rules") or []
     negative_rules = precision.get("negative_rules") or []
     lines.append(f"- edge_rules: {len(edge_rules)}")
     for rule in edge_rules[:12]:
         lines.append(
             f"  - {rule['name']}: n={rule['samples']} hit={_pct(rule.get('directional_hit_rate'))} "
+            f"avg_final={_fmt(rule.get('avg_final_pips'))} "
+            f"TP={rule.get('optimized_take_profit_pips')} SL={rule.get('optimized_stop_loss_pips')} "
+            f"realized={_fmt(rule.get('optimized_avg_realized_pips'))} "
+            f"win={_pct(rule.get('optimized_win_rate'))} PF={_fmt(rule.get('optimized_profit_factor'))}"
+        )
+    lines.append(f"- contrarian_edge_rules: {len(contrarian_rules)}")
+    for rule in contrarian_rules[:12]:
+        lines.append(
+            f"  - {rule['name']}: fade={rule.get('faded_direction')} trade={rule.get('direction')} "
+            f"n={rule['samples']} source_hit={_pct(rule.get('source_directional_hit_rate'))} "
+            f"hit={_pct(rule.get('directional_hit_rate'))} "
             f"avg_final={_fmt(rule.get('avg_final_pips'))} "
             f"TP={rule.get('optimized_take_profit_pips')} SL={rule.get('optimized_stop_loss_pips')} "
             f"realized={_fmt(rule.get('optimized_avg_realized_pips'))} "

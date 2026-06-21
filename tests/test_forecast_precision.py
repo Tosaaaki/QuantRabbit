@@ -121,6 +121,113 @@ class ForecastPrecisionConfluenceTest(unittest.TestCase):
             3.7168,
         )
 
+    def test_bidask_replay_contrarian_support_fades_losing_forecast_bucket(self) -> None:
+        metadata = {
+            "forecast_direction": "UP",
+            "forecast_confidence": 0.87,
+            "chart_direction_bias": "LONG",
+            "tp_execution_mode": "ATTACHED_TECHNICAL_TP",
+            "tp_target_intent": "HARVEST",
+            "opportunity_mode": "HARVEST",
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            rules_path = Path(tmp) / "rules.json"
+            rules_path.write_text(
+                json.dumps(
+                    {
+                        "schema_version": 1,
+                        "generated_at_utc": "2026-06-20T00:00:00Z",
+                        "generated_from": "unit-test",
+                        "edge_rules": [],
+                        "contrarian_edge_rules": [
+                            {
+                                "name": "AUD_JPY_UP_FADE_TO_DOWN_S5_BIDASK_CONTRARIAN_HARVEST_TP5_SL7",
+                                "pair": "AUD_JPY",
+                                "side": "SHORT",
+                                "direction": "DOWN",
+                                "forecast_direction": "UP",
+                                "faded_direction": "UP",
+                                "contrarian_edge": True,
+                                "confidence_bucket": "0.75-0.90",
+                                "granularity": "S5",
+                                "samples": 124,
+                                "source_directional_hit_rate": 0.2016,
+                                "source_avg_final_pips": -6.7589,
+                                "directional_hit_rate": 0.76,
+                                "avg_final_pips": 5.8,
+                                "avg_mfe_pips": 12.0,
+                                "avg_mae_pips": 4.5,
+                                "optimized_take_profit_pips": 5.0,
+                                "optimized_stop_loss_pips": 7.0,
+                                "optimized_avg_realized_pips": 2.4,
+                                "optimized_win_rate": 0.70,
+                                "optimized_profit_factor": 2.5,
+                                "min_target_pips": 4.8,
+                                "max_target_pips": 5.5,
+                                "max_stop_pips": 7.2,
+                                "audit_report": "unit-test.json",
+                            }
+                        ],
+                        "negative_rules": [
+                            {
+                                "name": "AUD_JPY_UP_S5_BIDASK_NEGATIVE_EXPECTANCY",
+                                "pair": "AUD_JPY",
+                                "side": "LONG",
+                                "direction": "UP",
+                                "granularity": "S5",
+                                "samples": 124,
+                                "directional_hit_rate": 0.2016,
+                                "avg_final_pips": -6.7589,
+                                "avg_mfe_pips": 3.7556,
+                                "avg_mae_pips": 14.371,
+                                "optimized_take_profit_pips": 2.0,
+                                "optimized_stop_loss_pips": 2.0,
+                                "optimized_avg_realized_pips": -2.0,
+                                "optimized_win_rate": 0.0,
+                                "optimized_profit_factor": 0.0,
+                                "blocks_live_support": True,
+                                "audit_report": "unit-test.json",
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            assessment = bidask_replay_precision_assessment(
+                metadata,
+                pair="AUD_JPY",
+                side="SHORT",
+                order_type="LIMIT",
+                method="BREAKOUT_FAILURE",
+                entry=114.289,
+                take_profit=114.239,
+                stop_loss=114.359,
+                rules_path=rules_path,
+            )
+
+            long_issue = bidask_replay_negative_precision_issue(
+                metadata,
+                pair="AUD_JPY",
+                side="LONG",
+                order_type="MARKET",
+                method="TREND_CONTINUATION",
+                entry=114.289,
+                take_profit=114.338,
+                stop_loss=114.250,
+                rules_path=rules_path,
+            )
+
+        self.assertEqual(
+            assessment["primary_support"]["name"],
+            "AUD_JPY_UP_FADE_TO_DOWN_S5_BIDASK_CONTRARIAN_HARVEST_TP5_SL7",
+        )
+        self.assertTrue(assessment["primary_support"]["contrarian_edge"])
+        self.assertEqual(assessment["primary_support"]["faded_direction"], "UP")
+        self.assertEqual(assessment["primary_support"]["direction"], "DOWN")
+        self.assertEqual(assessment["score_delta"], 18.0)
+        self.assertEqual(long_issue["name"], "AUD_JPY_UP_S5_BIDASK_NEGATIVE_EXPECTANCY")
+
     def test_bidask_replay_blocks_audjpy_up_negative_pair_direction(self) -> None:
         metadata = {
             "forecast_direction": "UP",

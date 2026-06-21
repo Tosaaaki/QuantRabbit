@@ -2086,6 +2086,8 @@ class RiskEngine:
         forecast_side = Side.LONG if direction == "UP" else Side.SHORT
         if intent.side == forecast_side:
             return []
+        if _bidask_replay_precision_support_for_intent(intent) is not None:
+            return []
         confidence = _to_float(metadata.get("forecast_confidence"))
         min_confidence = FORECAST_DIRECTIONAL_LIVE_MIN_CONFIDENCE
         support = _forecast_market_support(metadata)

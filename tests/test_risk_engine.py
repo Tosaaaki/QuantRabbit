@@ -710,6 +710,53 @@ class RiskEngineTest(unittest.TestCase):
             "AUD_JPY_UP_S5_BIDASK_NEGATIVE_EXPECTANCY",
         )
 
+        contrarian_intent = OrderIntent(
+            pair="AUD_JPY",
+            side=Side.SHORT,
+            order_type=OrderType.LIMIT,
+            units=1000,
+            entry=114.289,
+            tp=114.189,
+            sl=114.359,
+            thesis="AUD_JPY UP S5 0.75-0.90 bucket is faded only when bid/ask replay supports SHORT",
+            market_context=MarketContext(
+                regime="BREAKOUT_FAILURE rejection retest",
+                narrative="forecast UP bucket has audited contrarian S5 bid/ask edge",
+                chart_story="wait for retest, then fade the weak UP forecast bucket",
+                method=TradeMethod.BREAKOUT_FAILURE,
+                invalidation="7 pip stop",
+            ),
+            metadata={
+                "forecast_direction": "UP",
+                "forecast_confidence": 0.80,
+                "forecast_horizon_min": 60,
+                "chart_direction_bias": "LONG",
+                "tp_execution_mode": "ATTACHED_TECHNICAL_TP",
+                "tp_target_intent": "HARVEST",
+                "opportunity_mode": "HARVEST",
+                "forecast_market_support": {
+                    "ok": False,
+                    "direction": "UP",
+                    "aligned_projection_count": 0,
+                },
+            },
+        )
+
+        contrarian_decision = _capped_engine(live_enabled=True).validate(
+            contrarian_intent,
+            aud_snapshot,
+            for_live_send=True,
+        )
+
+        contrarian_codes = {issue.code for issue in contrarian_decision.issues}
+        self.assertTrue(contrarian_decision.allowed, contrarian_decision.block_reasons)
+        self.assertNotIn("FORECAST_DIRECTION_CONFLICT", contrarian_codes)
+        self.assertTrue(contrarian_intent.metadata["bidask_replay_precision_live_ready"])
+        self.assertEqual(
+            contrarian_intent.metadata["bidask_replay_precision_support"]["name"],
+            "AUD_JPY_UP_H31_60m_C0p75_0p90_FADE_TO_DOWN_S5_BIDASK_CONTRARIAN_HARVEST_TP10_SL7",
+        )
+
     def test_technical_harvest_rotation_does_not_clear_low_confidence_live_send(self) -> None:
         intent = OrderIntent(
             pair="GBP_USD",

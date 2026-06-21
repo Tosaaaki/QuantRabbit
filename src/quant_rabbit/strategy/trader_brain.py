@@ -502,6 +502,7 @@ from quant_rabbit.strategy.directional_forecaster import (
     synthesize_forecast,
 )
 from quant_rabbit.forecast_precision import (
+    BIDASK_REPLAY_CONTRARIAN_SCORE_BONUS,
     BIDASK_REPLAY_EDGE_SCORE_BONUS,
     BIDASK_REPLAY_NEGATIVE_SCORE_PENALTY,
     TECHNICAL_HARVEST_PRECISION_EXTRA_MATCH_BONUS,
@@ -3503,6 +3504,10 @@ def _bidask_replay_precision_score(
         item for item in assessment.get("positive_supports", [])
         if isinstance(item, dict)
     ]
+    contrarian = [
+        item for item in assessment.get("contrarian_supports", [])
+        if isinstance(item, dict)
+    ]
     negative = [
         item for item in assessment.get("negative_matches", [])
         if isinstance(item, dict)
@@ -3511,23 +3516,32 @@ def _bidask_replay_precision_score(
         item for item in assessment.get("blocking_negative_matches", [])
         if isinstance(item, dict)
     ]
-    if not positive and not negative:
+    supported = [*positive, *contrarian]
+    if not supported and not negative:
         return 0.0
     metadata["bidask_replay_precision_assessment"] = assessment
     score_delta = _optional_float(assessment.get("score_delta")) or 0.0
-    if positive and not blocking:
+    if supported and not blocking:
         best = max(
-            positive,
+            supported,
             key=lambda item: (
                 float(item.get("optimized_profit_factor") or 0.0),
                 float(item.get("avg_final_pips") or 0.0),
                 int(item.get("samples") or 0),
+                int(bool(item.get("horizon_bucket"))) + int(bool(item.get("confidence_bucket"))),
             ),
+        )
+        label = "bid/ask replay contrarian edge" if best.get("contrarian_edge") else "bid/ask replay edge"
+        bonus = BIDASK_REPLAY_CONTRARIAN_SCORE_BONUS if best.get("contrarian_edge") else BIDASK_REPLAY_EDGE_SCORE_BONUS
+        fade = (
+            f" fade={best.get('faded_direction')} trade={best.get('direction')}"
+            if best.get("contrarian_edge")
+            else ""
         )
         rationale.insert(
             0,
-            "bid/ask replay edge "
-            f"+{BIDASK_REPLAY_EDGE_SCORE_BONUS:.1f}: {best.get('name')} "
+            f"{label} "
+            f"+{bonus:.1f}: {best.get('name')}{fade} "
             f"n={int(best.get('samples') or 0)} hit="
             f"{float(best.get('directional_hit_rate') or 0.0):.2f} "
             f"avg_final={float(best.get('avg_final_pips') or 0.0):.2f}pip "

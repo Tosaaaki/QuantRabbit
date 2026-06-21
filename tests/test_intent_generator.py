@@ -4797,6 +4797,52 @@ class IntentGeneratorTest(unittest.TestCase):
             "AUD_JPY_UP_S5_BIDASK_NEGATIVE_EXPECTANCY",
         )
 
+        contrarian_metadata = {
+            "forecast_direction": "UP",
+            "forecast_confidence": 0.80,
+            "forecast_horizon_min": 60,
+            "chart_direction_bias": "LONG",
+            "tp_execution_mode": "ATTACHED_TECHNICAL_TP",
+            "tp_target_intent": "HARVEST",
+            "opportunity_mode": "HARVEST",
+            "forecast_market_support": {
+                "ok": False,
+                "direction": "UP",
+                "aligned_projection_count": 0,
+            },
+        }
+        contrarian_intent = OrderIntent(
+            pair="AUD_JPY",
+            side=Side.SHORT,
+            order_type=OrderType.LIMIT,
+            units=1000,
+            entry=114.289,
+            tp=114.189,
+            sl=114.359,
+            thesis="AUD_JPY UP 0.75-0.90 forecast bucket is faded by S5 bid/ask replay",
+            market_context=MarketContext(
+                regime="BREAKOUT_FAILURE rejection retest",
+                narrative="audited contrarian replay supports SHORT",
+                chart_story="fade only after retest geometry",
+                method=TradeMethod.BREAKOUT_FAILURE,
+                invalidation="7 pip stop",
+            ),
+            metadata=contrarian_metadata,
+        )
+
+        self.assertIsNone(
+            _forecast_live_readiness_issue(
+                contrarian_intent,
+                contrarian_metadata,
+                TradeMethod.BREAKOUT_FAILURE,
+            )
+        )
+        self.assertTrue(contrarian_metadata["bidask_replay_precision_live_ready"])
+        self.assertEqual(
+            contrarian_metadata["bidask_replay_precision_support"]["name"],
+            "AUD_JPY_UP_H31_60m_C0p75_0p90_FADE_TO_DOWN_S5_BIDASK_CONTRARIAN_HARVEST_TP10_SL7",
+        )
+
     def test_directional_forecast_weak_hit_rate_blocks_live_readiness(self) -> None:
         from quant_rabbit.models import MarketContext, OrderIntent, OrderType, Side, TradeMethod
         from quant_rabbit.strategy.intent_generator import _forecast_live_readiness_issue
