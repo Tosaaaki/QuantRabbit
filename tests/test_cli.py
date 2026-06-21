@@ -306,12 +306,24 @@ class CliHelpTest(unittest.TestCase):
                             {
                                 "lane_id": "range_trader:EUR_USD:LONG:RANGE_ROTATION",
                                 "status": "DRY_RUN_BLOCKED",
+                                "risk_allowed": False,
                                 "intent": {
+                                    "pair": "EUR_USD",
+                                    "side": "LONG",
+                                    "order_type": "LIMIT",
+                                    "market_context": {"method": "RANGE_ROTATION"},
                                     "metadata": {
                                         "capture_economics_trades": 29,
+                                        "positive_rotation_mode": "TP_PROOF_COLLECTION_HARVEST",
+                                        "self_improvement_p0_repair_live_ready": True,
+                                        "self_improvement_p0_repair_mode": "TP_HARVEST_REPAIR",
                                     }
                                 },
                                 "risk_issues": [{"code": "STALE_QUOTE"}, {"code": "SPREAD_TOO_WIDE"}],
+                                "live_blocker_codes": [
+                                    "FORECAST_CONFIDENCE_REQUIRED_FOR_LIVE",
+                                    "RANGE_ROTATION_BROADER_LOCATION_CHASE",
+                                ],
                                 "live_blockers": ["SELF_IMPROVEMENT_P0_PROFITABILITY_DISCIPLINE"],
                             }
                         ],
@@ -513,6 +525,18 @@ class CliHelpTest(unittest.TestCase):
         self.assertIn("PROJECTION_HEADLINE_PRECISION_ECONOMIC_GAP", codes)
         self.assertIn("BIDASK_CONTRARIAN_EDGE_NOT_DAILY_STABLE", codes)
         self.assertIn("NO_LIVE_READY_TARGET_COVERAGE", codes)
+        self.assertIn("REPAIR_FRONTIER_BLOCKED", codes)
+        frontier = payload["metrics"]["order_intents"]["repair_frontier"]
+        self.assertEqual(frontier["candidate_count"], 1)
+        self.assertEqual(frontier["live_ready_count"], 0)
+        self.assertEqual(
+            frontier["top_remaining_blockers"][0],
+            {"code": "FORECAST_CONFIDENCE_REQUIRED_FOR_LIVE", "count": 1},
+        )
+        self.assertEqual(
+            frontier["examples"][0]["blocker_codes"],
+            ["FORECAST_CONFIDENCE_REQUIRED_FOR_LIVE", "RANGE_ROTATION_BROADER_LOCATION_CHASE"],
+        )
         self.assertEqual(
             payload["metrics"]["execution_ledger_close_leak"]["recent_unverified_loss_closes"],
             1,
@@ -1067,6 +1091,86 @@ class CliHelpTest(unittest.TestCase):
         self.assertNotIn("WARN_ONLY_DIAGNOSTIC", blockers)
         self.assertNotIn("EUR_USD LONG forecast confidence 0.44 < 0.65 for live send", blockers)
         self.assertNotIn("spread too wide", blockers)
+
+    def test_profitability_acceptance_order_metrics_reports_repair_frontier(self) -> None:
+        metrics = _order_intent_metrics(
+            {
+                "generated_at_utc": "2026-06-21T12:00:00+00:00",
+                "results": [
+                    {
+                        "lane_id": "range_trader:USD_JPY:LONG:RANGE_ROTATION",
+                        "status": "DRY_RUN_BLOCKED",
+                        "risk_allowed": False,
+                        "intent": {
+                            "pair": "USD_JPY",
+                            "side": "LONG",
+                            "order_type": "LIMIT",
+                            "market_context": {"method": "RANGE_ROTATION"},
+                            "metadata": {
+                                "positive_rotation_mode": "OANDA_CAMPAIGN_FIREPOWER_HARVEST",
+                                "self_improvement_p0_repair_live_ready": True,
+                                "self_improvement_p0_repair_mode": "TP_HARVEST_REPAIR",
+                                "positive_rotation_oanda_campaign_matching_vehicle_key": (
+                                    "USD_JPY|LONG|range_reversion|tp1_sl1"
+                                ),
+                            },
+                        },
+                        "live_blocker_codes": [
+                            "FORECAST_CONFIDENCE_REQUIRED_FOR_LIVE",
+                            "RANGE_PHASE_NOT_ROTATION",
+                        ],
+                    },
+                    {
+                        "lane_id": "trend_trader:EUR_USD:SHORT:TREND_CONTINUATION",
+                        "status": "DRY_RUN_BLOCKED",
+                        "intent": {
+                            "pair": "EUR_USD",
+                            "side": "SHORT",
+                            "order_type": "MARKET",
+                            "market_context": {"method": "TREND_CONTINUATION"},
+                            "metadata": {},
+                        },
+                        "live_blocker_codes": ["FORECAST_CONFIDENCE_REQUIRED_FOR_LIVE"],
+                    },
+                    {
+                        "lane_id": "failure_trader:AUD_JPY:SHORT:BREAKOUT_FAILURE:LIMIT",
+                        "status": "LIVE_READY",
+                        "risk_allowed": True,
+                        "intent": {
+                            "pair": "AUD_JPY",
+                            "side": "SHORT",
+                            "order_type": "LIMIT",
+                            "market_context": {"method": "BREAKOUT_FAILURE"},
+                            "metadata": {
+                                "positive_rotation_mode": "TP_PROOF_COLLECTION_HARVEST",
+                                "self_improvement_p0_repair_live_ready": True,
+                                "self_improvement_p0_repair_mode": "TP_HARVEST_REPAIR",
+                            },
+                        },
+                        "live_blocker_codes": [],
+                    },
+                ],
+            }
+        )
+
+        frontier = metrics["repair_frontier"]
+        self.assertEqual(frontier["candidate_count"], 2)
+        self.assertEqual(frontier["live_ready_count"], 1)
+        self.assertEqual(frontier["blocked_count"], 1)
+        self.assertEqual(
+            frontier["top_remaining_blockers"],
+            [
+                {"code": "FORECAST_CONFIDENCE_REQUIRED_FOR_LIVE", "count": 1},
+                {"code": "RANGE_PHASE_NOT_ROTATION", "count": 1},
+            ],
+        )
+        self.assertEqual(frontier["examples"][0]["pair"], "AUD_JPY")
+        self.assertEqual(frontier["examples"][0]["status"], "LIVE_READY")
+        self.assertEqual(frontier["examples"][1]["pair"], "USD_JPY")
+        self.assertEqual(
+            frontier["examples"][1]["blocker_codes"],
+            ["FORECAST_CONFIDENCE_REQUIRED_FOR_LIVE", "RANGE_PHASE_NOT_ROTATION"],
+        )
 
     def test_profitability_acceptance_passes_when_profit_invariants_are_clear(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

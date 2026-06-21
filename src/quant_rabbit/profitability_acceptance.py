@@ -135,6 +135,24 @@ class ProfitabilityAcceptanceAuditor:
                     },
                 )
             )
+            repair_frontier = order_metrics.get("repair_frontier")
+            if isinstance(repair_frontier, dict) and int(repair_frontier.get("candidate_count") or 0) > 0:
+                findings.append(
+                    _finding(
+                        priority="P1",
+                        code="REPAIR_FRONTIER_BLOCKED",
+                        message=(
+                            f"{repair_frontier.get('candidate_count')} repair-mode candidate(s) exist, "
+                            "but none currently clear live gates"
+                        ),
+                        next_action=(
+                            "Work the repair frontier's top remaining blockers before adding new "
+                            "indicators or loosening unrelated gates. A repair candidate must clear "
+                            "forecast, spread, strategy, risk, broker-truth, and gateway checks together."
+                        ),
+                        evidence=repair_frontier,
+                    )
+                )
 
         p0_findings = [item for item in findings if item.get("priority") == "P0"]
         if p0_findings:
@@ -238,6 +256,7 @@ def _order_intent_metrics(payload: dict[str, Any]) -> dict[str, Any]:
     for item in results:
         for key in _order_intent_blocker_codes(item):
             blockers[key] = blockers.get(key, 0) + 1
+    repair_frontier = _order_intent_repair_frontier(results)
     return {
         "generated_at_utc": payload.get("generated_at_utc"),
         "candidate_count": len(results),
@@ -249,6 +268,7 @@ def _order_intent_metrics(payload: dict[str, Any]) -> dict[str, Any]:
             {"code": code, "count": count}
             for code, count in sorted(blockers.items(), key=lambda item: (-item[1], item[0]))[:10]
         ],
+        "repair_frontier": repair_frontier,
     }
 
 
@@ -295,6 +315,97 @@ def _order_intent_blocker_codes(item: dict[str, Any]) -> tuple[str, ...]:
         if text:
             fallback.append(text.split(":", 1)[0][:80])
     return tuple(dict.fromkeys(fallback))
+
+
+_REPAIR_ROTATION_MODES = {
+    "TP_PROVEN_HARVEST",
+    "TP_PROOF_COLLECTION_HARVEST",
+    "OANDA_CAMPAIGN_FIREPOWER_HARVEST",
+}
+
+
+def _order_intent_repair_frontier(results: list[Any]) -> dict[str, Any]:
+    """Summarize repair candidates and the blockers still preventing live use.
+
+    This is a debugging invariant, not a live-permission grant. It prevents a
+    red acceptance packet from saying only "NO_LIVE_READY" when the actionable
+    truth is "repair candidates exist, but these exact gates still stop them".
+    """
+
+    candidates: list[dict[str, Any]] = []
+    remaining_blockers: dict[str, int] = {}
+    live_ready_count = 0
+    for item in results:
+        if not isinstance(item, dict):
+            continue
+        intent = item.get("intent") if isinstance(item.get("intent"), dict) else {}
+        metadata = intent.get("metadata") if isinstance(intent.get("metadata"), dict) else {}
+        repair_mode = _order_intent_repair_mode(metadata)
+        if repair_mode is None:
+            continue
+        blocker_codes = _order_intent_blocker_codes(item)
+        status = str(item.get("status") or "")
+        is_live_ready = status == "LIVE_READY" and not blocker_codes
+        if is_live_ready:
+            live_ready_count += 1
+        else:
+            for code in blocker_codes:
+                remaining_blockers[code] = remaining_blockers.get(code, 0) + 1
+        market_context = intent.get("market_context") if isinstance(intent.get("market_context"), dict) else {}
+        candidates.append(
+            {
+                "lane_id": item.get("lane_id"),
+                "status": status or None,
+                "risk_allowed": item.get("risk_allowed"),
+                "pair": intent.get("pair"),
+                "side": intent.get("side"),
+                "method": market_context.get("method") or metadata.get("method"),
+                "order_type": intent.get("order_type"),
+                "repair_mode": repair_mode,
+                "blocker_count": len(blocker_codes),
+                "blocker_codes": list(blocker_codes[:8]),
+                "positive_rotation_pessimistic_expectancy_jpy": metadata.get(
+                    "positive_rotation_pessimistic_expectancy_jpy"
+                ),
+                "oanda_campaign_matching_vehicle_key": metadata.get(
+                    "positive_rotation_oanda_campaign_matching_vehicle_key"
+                ),
+            }
+        )
+
+    examples = sorted(candidates, key=_repair_frontier_example_sort_key)[:8]
+    return {
+        "candidate_count": len(candidates),
+        "live_ready_count": live_ready_count,
+        "blocked_count": len(candidates) - live_ready_count,
+        "top_remaining_blockers": [
+            {"code": code, "count": count}
+            for code, count in sorted(
+                remaining_blockers.items(),
+                key=lambda item: (-item[1], item[0]),
+            )[:10]
+        ],
+        "examples": examples,
+    }
+
+
+def _order_intent_repair_mode(metadata: dict[str, Any]) -> str | None:
+    mode = str(metadata.get("positive_rotation_mode") or "").strip().upper()
+    if mode in _REPAIR_ROTATION_MODES:
+        return mode
+    if metadata.get("self_improvement_p0_repair_live_ready") is True:
+        repair_mode = str(metadata.get("self_improvement_p0_repair_mode") or "").strip().upper()
+        return repair_mode or "TP_HARVEST_REPAIR"
+    if metadata.get("self_improvement_pending_execution_repair_live_ready") is True:
+        repair_mode = str(metadata.get("self_improvement_pending_execution_repair_mode") or "").strip().upper()
+        return repair_mode or "PENDING_EXECUTION_TP_HARVEST_REPAIR"
+    return None
+
+
+def _repair_frontier_example_sort_key(item: dict[str, Any]) -> tuple[int, int, str]:
+    status_rank = 0 if item.get("status") == "LIVE_READY" else 1
+    blocker_count = int(item.get("blocker_count") or 0)
+    return status_rank, blocker_count, str(item.get("lane_id") or "")
 
 
 def _target_metrics(payload: dict[str, Any]) -> dict[str, Any]:
