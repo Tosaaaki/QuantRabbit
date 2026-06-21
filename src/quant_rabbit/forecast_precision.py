@@ -45,6 +45,7 @@ OANDA_UNIVERSAL_LIVE_MIN_ACTIVE_DAYS = 15
 OANDA_UNIVERSAL_LIVE_MIN_POSITIVE_DAY_RATE = 0.90
 BIDASK_REPLAY_RULES_ENV = "QR_BIDASK_REPLAY_PRECISION_RULES"
 DEFAULT_BIDASK_REPLAY_RULES_PATH = Path(__file__).with_name("bidask_replay_precision_rules.json")
+OANDA_UNIVERSAL_ROTATION_RULES_ENV = "QR_OANDA_UNIVERSAL_ROTATION_RULES"
 
 
 TECHNICAL_HARVEST_PRECISION_RULES: tuple[dict[str, Any], ...] = (
@@ -533,6 +534,7 @@ _OANDA_UNIVERSAL_ROTATION_RULE_ROWS: tuple[tuple[Any, ...], ...] = (
     ("USD_CHF", "SHORT", "pullback_continuation", "tp1.25_sl1", "body_abs:down", "spread_regime:mid", 17, 0.529412, 14, 0.571429, 0.325903, 2.569388, 0.396696, 2.648985, 10, 0.700000, 8.0),
     ("EUR_USD", "SHORT", "range_reclaim", "tp1.25_sl1", "session:london_ny_overlap", "spread_regime:high", 39, 0.487179, 15, 0.666667, 0.417131, 1.480774, 0.391563, 1.931444, 13, 0.615385, 6.0),
     ("GBP_USD", "SHORT", "range_reversion", "tp1_sl1", "atr_regime:high", "session:asia", 37, 0.567568, 30, 0.700000, 0.521239, 2.854048, 0.333729, 2.459160, 7, 0.571429, 10.0),
+    ("GBP_JPY", "LONG", "pullback_continuation", "tp1_sl1", "bar_range:normal", "spread_regime:mid", 43, 0.186047, 19, 0.736842, 0.512080, 6.371241, 0.417306, 2.969838, 9, 0.777778, 6.0),
     ("USD_JPY", "LONG", "range_reclaim", "tp1_sl1", "atr_regime:high", "session:london_ny_overlap", 47, 0.510638, 15, 0.666667, 0.417131, 2.343571, 0.333333, 2.009953, 9, 0.666667, 8.0),
     ("EUR_USD", "SHORT", "pullback_continuation", "tp1.25_sl1", "session:london_ny_overlap", "spread_regime:mid", 52, 0.480769, 21, 0.571429, 0.365462, 2.138350, 0.330952, 2.111322, 9, 0.666667, 8.0),
     ("GBP_USD", "SHORT", "range_reversion", "tp1.25_sl1", "atr_regime:high", "session:asia", 37, 0.567568, 30, 0.633333, 0.455132, 2.510000, 0.325273, 2.058806, 7, 0.857143, 8.0),
@@ -553,6 +555,219 @@ _OANDA_UNIVERSAL_ROTATION_RULE_ROWS: tuple[tuple[Any, ...], ...] = (
 OANDA_UNIVERSAL_ROTATION_RULES: tuple[dict[str, Any], ...] = tuple(
     _oanda_universal_rotation_rule(*row) for row in _OANDA_UNIVERSAL_ROTATION_RULE_ROWS
 )
+
+
+def _oanda_universal_rotation_rule_set(
+    rules_path: str | Path | None = None,
+) -> tuple[tuple[dict[str, Any], ...], dict[str, Any]]:
+    path_value = (
+        str(rules_path)
+        if rules_path is not None
+        else os.environ.get(OANDA_UNIVERSAL_ROTATION_RULES_ENV, OANDA_UNIVERSAL_ROTATION_AUDIT_REPORT)
+    )
+    return _load_oanda_universal_rotation_rule_set(str(path_value))
+
+
+@functools.lru_cache(maxsize=8)
+def _load_oanda_universal_rotation_rule_set(
+    path_value: str,
+) -> tuple[tuple[dict[str, Any], ...], dict[str, Any]]:
+    report_path = Path(path_value)
+    source: dict[str, Any] = {
+        "configured_report_path": str(report_path),
+        "fallback_rule_count": len(OANDA_UNIVERSAL_ROTATION_RULES),
+    }
+    if not report_path.exists():
+        source.update(
+            {
+                "source": "built_in_static",
+                "missing_report": str(report_path),
+                "dynamic_rule_count": 0,
+                "rule_count": len(OANDA_UNIVERSAL_ROTATION_RULES),
+            }
+        )
+        return OANDA_UNIVERSAL_ROTATION_RULES, source
+    try:
+        payload = json.loads(report_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        source.update(
+            {
+                "source": "built_in_static",
+                "load_error": f"{type(exc).__name__}: {exc}",
+                "dynamic_rule_count": 0,
+                "rule_count": len(OANDA_UNIVERSAL_ROTATION_RULES),
+            }
+        )
+        return OANDA_UNIVERSAL_ROTATION_RULES, source
+
+    dynamic_rules = _oanda_universal_rotation_rules_from_report(
+        payload,
+        report_path=str(report_path),
+    )
+    if not dynamic_rules:
+        source.update(
+            {
+                "source": "built_in_static",
+                "empty_dynamic_report": str(report_path),
+                "dynamic_rule_count": 0,
+                "rule_count": len(OANDA_UNIVERSAL_ROTATION_RULES),
+            }
+        )
+        return OANDA_UNIVERSAL_ROTATION_RULES, source
+
+    merged_rules = _merge_oanda_universal_rotation_rules(dynamic_rules, OANDA_UNIVERSAL_ROTATION_RULES)
+    source.update(
+        {
+            "source": "dynamic_report_with_static_fallback",
+            "loaded_report_path": str(report_path),
+            "generated_at_utc": payload.get("generated_at_utc"),
+            "dynamic_rule_count": len(dynamic_rules),
+            "rule_count": len(merged_rules),
+        }
+    )
+    return merged_rules, source
+
+
+def _oanda_universal_rotation_rules_from_report(
+    payload: dict[str, Any],
+    *,
+    report_path: str,
+) -> tuple[dict[str, Any], ...]:
+    if not isinstance(payload, dict):
+        return ()
+    generated_at = payload.get("generated_at_utc")
+    sections: tuple[tuple[str, str, float], ...] = (
+        ("high_precision_directional_selectors", "selected_side", 10.0),
+        ("qualified_directional_selectors", "selected_side", 8.0),
+        ("high_precision_pair_confluences", "side", 6.0),
+        ("qualified_pair_confluences", "side", 4.0),
+    )
+    rules: list[dict[str, Any]] = []
+    for section, side_key, rank_score_bonus in sections:
+        rows = payload.get(section) or ()
+        if not isinstance(rows, list):
+            continue
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            if str(row.get("qualification") or "").upper() != "PASS":
+                continue
+            rule = _oanda_universal_rotation_rule_from_report_row(
+                row,
+                side_key=side_key,
+                rank_score_bonus=rank_score_bonus,
+                report_path=report_path,
+                generated_at=generated_at,
+                source_section=section,
+            )
+            if rule is not None:
+                rules.append(rule)
+    return _merge_oanda_universal_rotation_rules(tuple(rules))
+
+
+def _oanda_universal_rotation_rule_from_report_row(
+    row: dict[str, Any],
+    *,
+    side_key: str,
+    rank_score_bonus: float,
+    report_path: str,
+    generated_at: Any,
+    source_section: str,
+) -> dict[str, Any] | None:
+    pair = str(row.get("pair") or "").upper()
+    side = str(row.get(side_key) or row.get("side") or "").upper()
+    shape = str(row.get("shape") or "").lower()
+    exit_shape = str(row.get("exit_shape") or "").lower()
+    feature_a = str(row.get("feature_a") or "").lower()
+    feature_b = str(row.get("feature_b") or "").lower()
+    if not pair or side not in {"LONG", "SHORT"} or not shape or not exit_shape:
+        return None
+    if ":" not in feature_a or ":" not in feature_b:
+        return None
+
+    train_samples = _safe_int(row.get("train_n"))
+    validation_samples = _safe_int(row.get("validation_n"))
+    active_days = _safe_int(row.get("active_days"))
+    train_win_rate = _safe_float(row.get("train_win_rate"))
+    validation_win_rate = _safe_float(row.get("validation_win_rate"))
+    validation_wilson = _safe_float(row.get("validation_win_wilson95_lower"))
+    validation_avg_pips = _safe_float(row.get("validation_avg_realized_pips"))
+    validation_avg_atr = _safe_float(row.get("validation_avg_realized_atr"))
+    validation_pf = _safe_float(row.get("validation_profit_factor"))
+    positive_day_rate = _safe_float(row.get("positive_day_rate"))
+    if (
+        train_samples is None
+        or validation_samples is None
+        or active_days is None
+        or train_win_rate is None
+        or validation_win_rate is None
+        or validation_wilson is None
+        or validation_avg_pips is None
+        or validation_avg_atr is None
+        or validation_pf is None
+        or positive_day_rate is None
+    ):
+        return None
+
+    rule = _oanda_universal_rotation_rule(
+        pair,
+        side,
+        shape,
+        exit_shape,
+        feature_a,
+        feature_b,
+        train_samples,
+        train_win_rate,
+        validation_samples,
+        validation_win_rate,
+        validation_wilson,
+        validation_avg_pips,
+        validation_avg_atr,
+        validation_pf,
+        active_days,
+        positive_day_rate,
+        rank_score_bonus,
+    )
+    rule["audit_report"] = report_path
+    rule["rule_set_source"] = report_path
+    rule["rule_set_generated_at_utc"] = generated_at
+    rule["rule_source_section"] = source_section
+    return rule
+
+
+def _merge_oanda_universal_rotation_rules(
+    *rule_groups: tuple[dict[str, Any], ...],
+) -> tuple[dict[str, Any], ...]:
+    by_name: dict[str, dict[str, Any]] = {}
+    for group in rule_groups:
+        for rule in group:
+            name = str(rule.get("name") or "")
+            if not name:
+                continue
+            current = by_name.get(name)
+            if current is None or (
+                _oanda_universal_rotation_rule_sort_key(rule)
+                > _oanda_universal_rotation_rule_sort_key(current)
+            ):
+                by_name[name] = rule
+    return tuple(
+        sorted(
+            by_name.values(),
+            key=_oanda_universal_rotation_rule_sort_key,
+            reverse=True,
+        )
+    )
+
+
+def _oanda_universal_rotation_rule_sort_key(rule: dict[str, Any]) -> tuple[int, float, float, float, float, int]:
+    return (
+        1 if rule.get("rule_set_source") else 0,
+        float(rule.get("rank_score_bonus") or 0.0),
+        float(rule.get("capital_efficiency_score") or 0.0),
+        float(rule.get("validation_win_wilson95_lower") or 0.0),
+        float(rule.get("validation_profit_factor") or 0.0),
+        int(rule.get("validation_samples") or 0),
+    )
 
 
 def wilson_lower_bound(successes: int, trials: int, *, z: float = 1.96) -> float:
@@ -1183,6 +1398,7 @@ def oanda_universal_rotation_precision_assessment(
     entry: float | None,
     take_profit: float | None,
     stop_loss: float | None,
+    rules_path: str | Path | None = None,
 ) -> dict[str, Any]:
     """Return rank-only OANDA M5 candle-mined rotation evidence.
 
@@ -1225,8 +1441,10 @@ def oanda_universal_rotation_precision_assessment(
     if target_pips is None or stop_pips is None or stop_pips <= 0.0:
         return _empty_oanda_universal_rotation_assessment()
 
+    rules, rule_source = _oanda_universal_rotation_rule_set(rules_path)
+
     matches: list[dict[str, Any]] = []
-    for rule in OANDA_UNIVERSAL_ROTATION_RULES:
+    for rule in rules:
         if normalized_pair != str(rule.get("pair") or "").upper():
             continue
         if normalized_side != str(rule.get("side") or "").upper():
@@ -1271,6 +1489,13 @@ def oanda_universal_rotation_precision_assessment(
             "current_session_bucket": session,
             "audit_report": rule["audit_report"],
         }
+        for optional_key in (
+            "rule_set_source",
+            "rule_set_generated_at_utc",
+            "rule_source_section",
+        ):
+            if optional_key in rule:
+                support[optional_key] = rule[optional_key]
         support.update(_oanda_universal_rotation_live_gap(rule))
         support.update(feature_values)
         matches.append(support)
@@ -1305,6 +1530,7 @@ def oanda_universal_rotation_precision_assessment(
             if isinstance(primary_rank_support, dict)
             else None
         ),
+        "rule_source": rule_source,
         "score_delta": round(score_delta, 4),
     }
 
@@ -1316,6 +1542,7 @@ def _empty_oanda_universal_rotation_assessment() -> dict[str, Any]:
         "primary_rank_support": None,
         "rank_only_supports": [],
         "live_gap": None,
+        "rule_source": None,
         "score_delta": 0.0,
     }
 
@@ -1635,9 +1862,10 @@ def _oanda_universal_rotation_feature_values(
     rule: dict[str, Any],
 ) -> dict[str, Any] | None:
     out: dict[str, Any] = {}
+    side = str(rule.get("side") or "").upper()
     for key in ("feature_a", "feature_b"):
         raw_feature = str(rule.get(key) or "")
-        feature_values = _oanda_universal_rotation_feature_value(metadata, raw_feature)
+        feature_values = _oanda_universal_rotation_feature_value(metadata, raw_feature, side=side)
         if feature_values is None:
             return None
         out.update(feature_values)
@@ -1647,6 +1875,8 @@ def _oanda_universal_rotation_feature_values(
 def _oanda_universal_rotation_feature_value(
     metadata: dict[str, Any],
     feature: str,
+    *,
+    side: str,
 ) -> dict[str, Any] | None:
     name, separator, expected = feature.partition(":")
     if not separator:
@@ -1661,8 +1891,16 @@ def _oanda_universal_rotation_feature_value(
         current = _metadata_oanda_spread_regime(metadata)
     elif feature_name == "range_pos":
         current = _metadata_oanda_range_pos_bucket(metadata)
+    elif feature_name == "bar_range":
+        current = _metadata_oanda_bar_range_bucket(metadata)
+    elif feature_name in {"body", "fast_mom", "slow_mom"}:
+        current = _metadata_oanda_side_signed_bucket(metadata, feature_name, side)
     elif feature_name in {"body_abs", "fast_mom_abs", "slow_mom_abs"}:
         current = _metadata_oanda_signed_bucket(metadata, feature_name)
+    elif feature_name == "wick_reject":
+        current = _metadata_oanda_wick_reject_bucket(metadata, side)
+    elif feature_name == "failed_break":
+        current = _metadata_oanda_binary_bucket(metadata, "failed_break")
     else:
         return None
     if current != expected_bucket:
@@ -1732,6 +1970,24 @@ def _metadata_oanda_range_pos_bucket(metadata: dict[str, Any]) -> str | None:
     return "MID"
 
 
+def _metadata_oanda_bar_range_bucket(metadata: dict[str, Any]) -> str | None:
+    text = _bucket_text(
+        metadata.get("oanda_m5_bar_range")
+        or metadata.get("m5_bar_range")
+        or metadata.get("bar_range")
+    )
+    if text is not None:
+        return text
+    value = _safe_float(
+        metadata.get("oanda_m5_bar_range_atr")
+        or metadata.get("m5_bar_range_atr")
+        or metadata.get("bar_range_atr")
+    )
+    if value is None:
+        return None
+    return "WIDE" if value >= 1.2 else "NORMAL"
+
+
 def _metadata_oanda_signed_bucket(metadata: dict[str, Any], feature_name: str) -> str | None:
     stem = feature_name.removesuffix("_abs")
     text = _bucket_text(
@@ -1755,11 +2011,106 @@ def _metadata_oanda_signed_bucket(metadata: dict[str, Any], feature_name: str) -
     return "FLAT"
 
 
+def _metadata_oanda_side_signed_bucket(metadata: dict[str, Any], feature_name: str, side: str) -> str | None:
+    text = _bucket_text(
+        metadata.get(f"oanda_m5_{feature_name}")
+        or metadata.get(f"m5_{feature_name}")
+        or metadata.get(feature_name)
+    )
+    if text in {"ALIGNED", "OPPOSED", "FLAT"}:
+        return text
+    if text in {"UP", "DOWN"}:
+        return _direction_bucket_relative_to_side(text, side)
+    value = _safe_float(
+        metadata.get(f"oanda_m5_{feature_name}_atr")
+        or metadata.get(f"m5_{feature_name}_atr")
+        or metadata.get(feature_name)
+    )
+    if value is None:
+        return None
+    if abs(value) < 0.15:
+        return "FLAT"
+    raw_direction = "UP" if value > 0.0 else "DOWN"
+    return _direction_bucket_relative_to_side(raw_direction, side)
+
+
+def _direction_bucket_relative_to_side(direction: str, side: str) -> str | None:
+    normalized_direction = str(direction or "").upper()
+    normalized_side = str(side or "").upper()
+    if normalized_side == "LONG":
+        return "ALIGNED" if normalized_direction == "UP" else "OPPOSED"
+    if normalized_side == "SHORT":
+        return "ALIGNED" if normalized_direction == "DOWN" else "OPPOSED"
+    return None
+
+
+def _metadata_oanda_wick_reject_bucket(metadata: dict[str, Any], side: str) -> str | None:
+    direct = _metadata_oanda_binary_bucket(metadata, "wick_reject")
+    if direct is not None:
+        return direct
+    if str(side or "").upper() == "LONG":
+        wick_ratio = _safe_float(
+            metadata.get("oanda_m5_lower_wick")
+            or metadata.get("m5_lower_wick")
+            or metadata.get("lower_wick")
+        )
+    elif str(side or "").upper() == "SHORT":
+        wick_ratio = _safe_float(
+            metadata.get("oanda_m5_upper_wick")
+            or metadata.get("m5_upper_wick")
+            or metadata.get("upper_wick")
+        )
+    else:
+        wick_ratio = None
+    if wick_ratio is None:
+        return None
+    return "1" if wick_ratio >= 0.45 else "0"
+
+
+def _metadata_oanda_binary_bucket(metadata: dict[str, Any], feature_name: str) -> str | None:
+    oanda_key = f"oanda_m5_{feature_name}"
+    m5_key = f"m5_{feature_name}"
+    if oanda_key in metadata:
+        value = metadata.get(oanda_key)
+    elif m5_key in metadata:
+        value = metadata.get(m5_key)
+    else:
+        value = metadata.get(feature_name)
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return "1" if value else "0"
+    text = str(value).strip().upper()
+    if text in {"1", "TRUE", "YES", "Y"}:
+        return "1"
+    if text in {"0", "FALSE", "NO", "N"}:
+        return "0"
+    numeric = _safe_float(value)
+    if numeric is None:
+        return None
+    return "1" if numeric >= 0.5 else "0"
+
+
 def _bucket_text(value: Any) -> str | None:
     if value is None:
         return None
     text = str(value).strip().upper().replace("-", "_").replace(" ", "_")
-    if text in {"LOW", "MID", "HIGH", "UP", "DOWN", "FLAT", "ASIA", "LONDON_NY_OVERLAP"}:
+    if text in {
+        "LOW",
+        "MID",
+        "HIGH",
+        "UP",
+        "DOWN",
+        "FLAT",
+        "ASIA",
+        "LONDON_NY_OVERLAP",
+        "NORMAL",
+        "WIDE",
+        "ALIGNED",
+        "OPPOSED",
+        "1",
+        "0",
+    }:
         return text
     return None
 
@@ -1968,3 +2319,10 @@ def _safe_float(value: Any) -> float | None:
     except (TypeError, ValueError):
         return None
     return parsed if math.isfinite(parsed) else None
+
+
+def _safe_int(value: Any) -> int | None:
+    parsed = _safe_float(value)
+    if parsed is None:
+        return None
+    return int(parsed)

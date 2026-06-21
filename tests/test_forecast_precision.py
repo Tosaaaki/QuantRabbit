@@ -380,6 +380,142 @@ class ForecastPrecisionConfluenceTest(unittest.TestCase):
         )
         self.assertEqual(assessment["score_delta"], 10.0)
 
+    def test_oanda_universal_rotation_loads_latest_mining_report_pair_confluence(self) -> None:
+        metadata = {
+            "forecast_direction": "UP",
+            "chart_direction_bias": "LONG",
+            "oanda_m5_bar_range": "normal",
+            "oanda_m5_spread_regime": "mid",
+            "tp_execution_mode": "ATTACHED_TECHNICAL_TP",
+            "tp_target_intent": "HARVEST",
+            "opportunity_mode": "HARVEST",
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            rules_path = Path(tmp) / "oanda_universal_rotation_mining_latest.json"
+            rules_path.write_text(
+                json.dumps(
+                    {
+                        "generated_at_utc": "2026-06-21T00:00:00Z",
+                        "high_precision_pair_confluences": [
+                            {
+                                "pair": "GBP_JPY",
+                                "shape": "pullback_continuation",
+                                "side": "LONG",
+                                "exit_shape": "tp1_sl1",
+                                "feature_a": "bar_range:normal",
+                                "feature_b": "spread_regime:mid",
+                                "qualification": "PASS",
+                                "train_n": 43,
+                                "train_win_rate": 0.186047,
+                                "validation_n": 19,
+                                "validation_win_rate": 0.736842,
+                                "validation_win_wilson95_lower": 0.51208,
+                                "validation_avg_realized_pips": 6.371241,
+                                "validation_avg_realized_atr": 0.417306,
+                                "validation_profit_factor": 2.969838,
+                                "active_days": 9,
+                                "positive_day_rate": 0.777777,
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            assessment = oanda_universal_rotation_precision_assessment(
+                metadata,
+                pair="GBP_JPY",
+                side="LONG",
+                order_type="LIMIT",
+                method="PULLBACK_CONTINUATION",
+                entry=200.00,
+                take_profit=200.10,
+                stop_loss=199.85,
+                rules_path=rules_path,
+            )
+
+        self.assertIsNone(assessment["primary_support"])
+        self.assertEqual(
+            assessment["primary_rank_support"]["name"],
+            "GBP_JPY_LONG_M5_PULLBACK_CONTINUATION_BAR_RANGE_NORMAL_SPREAD_REGIME_MID_TP1_SL1",
+        )
+        self.assertEqual(assessment["primary_rank_support"]["validation_samples"], 19)
+        self.assertEqual(assessment["primary_rank_support"]["rank_score_bonus"], 6.0)
+        self.assertEqual(
+            assessment["primary_rank_support"]["rule_source_section"],
+            "high_precision_pair_confluences",
+        )
+        self.assertFalse(assessment["primary_rank_support"]["live_grade_ready"])
+        self.assertIn(
+            "VALIDATION_WIN_RATE_BELOW_90_PERCENT",
+            assessment["primary_rank_support"]["live_gap_reasons"],
+        )
+        self.assertEqual(assessment["rule_source"]["dynamic_rule_count"], 1)
+        self.assertEqual(assessment["score_delta"], 6.0)
+
+    def test_oanda_universal_rotation_matches_side_relative_report_features(self) -> None:
+        metadata = {
+            "forecast_direction": "DOWN",
+            "chart_direction_bias": "SHORT",
+            "m5_body_atr": -0.20,
+            "m5_failed_break": True,
+            "tp_execution_mode": "ATTACHED_TECHNICAL_TP",
+            "tp_target_intent": "HARVEST",
+            "opportunity_mode": "HARVEST",
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            rules_path = Path(tmp) / "oanda_universal_rotation_mining_latest.json"
+            rules_path.write_text(
+                json.dumps(
+                    {
+                        "generated_at_utc": "2026-06-21T00:00:00Z",
+                        "qualified_pair_confluences": [
+                            {
+                                "pair": "CAD_CHF",
+                                "shape": "failed_break_fade",
+                                "side": "SHORT",
+                                "exit_shape": "tp1_sl1",
+                                "feature_a": "body:aligned",
+                                "feature_b": "failed_break:1",
+                                "qualification": "PASS",
+                                "train_n": 25,
+                                "train_win_rate": 0.52,
+                                "validation_n": 12,
+                                "validation_win_rate": 0.75,
+                                "validation_win_wilson95_lower": 0.46769,
+                                "validation_avg_realized_pips": 3.2,
+                                "validation_avg_realized_atr": 0.44,
+                                "validation_profit_factor": 2.2,
+                                "active_days": 6,
+                                "positive_day_rate": 0.833333,
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            assessment = oanda_universal_rotation_precision_assessment(
+                metadata,
+                pair="CAD_CHF",
+                side="SHORT",
+                order_type="LIMIT",
+                method="BREAKOUT_FAILURE",
+                entry=0.66000,
+                take_profit=0.65950,
+                stop_loss=0.66070,
+                rules_path=rules_path,
+            )
+
+        self.assertEqual(
+            assessment["primary_rank_support"]["name"],
+            "CAD_CHF_SHORT_M5_FAILED_BREAK_FADE_BODY_ALIGNED_FAILED_BREAK_1_TP1_SL1",
+        )
+        self.assertEqual(assessment["primary_rank_support"]["current_oanda_body"], "ALIGNED")
+        self.assertEqual(assessment["primary_rank_support"]["current_oanda_failed_break"], "1")
+        self.assertEqual(assessment["primary_rank_support"]["rank_score_bonus"], 4.0)
+        self.assertEqual(assessment["score_delta"], 4.0)
+
     def test_oanda_universal_rotation_requires_current_session_and_atr_bucket(self) -> None:
         metadata = {
             "forecast_direction": "DOWN",
