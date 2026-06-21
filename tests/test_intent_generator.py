@@ -16,6 +16,7 @@ from quant_rabbit.strategy.intent_generator import (
     IntentGenerator,
     POSITIVE_ROTATION_FIREPOWER_BLOCK_CODE,
     POSITIVE_ROTATION_LIVE_BLOCK_CODE,
+    POSITIVE_ROTATION_PROOF_COLLECTION_WARN_CODE,
     RANGE_TARGET_SPREAD_CUSHION_MULT,
     _forecast_context_payload,
     _minimum_range_target_pips,
@@ -769,6 +770,268 @@ class IntentGeneratorTest(unittest.TestCase):
             )
             self.assertEqual(firepower_issue["severity"], "WARN")
             self.assertNotIn(POSITIVE_ROTATION_FIREPOWER_BLOCK_CODE, result["live_blocker_codes"])
+
+    def test_thin_exact_tp_collection_warns_without_claiming_tp_proven_rotation(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "capture_economics.json").write_text(
+                json.dumps(
+                    {
+                        "status": "NEGATIVE_EXPECTANCY",
+                        "overall": {
+                            "trades": 210,
+                            "avg_win_jpy": 600.0,
+                            "avg_loss_jpy": 1100.0,
+                            "payoff_ratio": 0.545,
+                            "breakeven_payoff_at_win_rate": 0.7,
+                        },
+                        "by_exit_reason": {
+                            "TAKE_PROFIT_ORDER": {
+                                "trades": 93,
+                                "wins": 93,
+                                "losses": 0,
+                                "avg_win_jpy": 504.0,
+                                "avg_loss_jpy": 0.0,
+                                "expectancy_jpy_per_trade": 504.0,
+                            },
+                            "MARKET_ORDER_TRADE_CLOSE": {
+                                "trades": 84,
+                                "wins": 13,
+                                "losses": 71,
+                                "avg_win_jpy": 218.4,
+                                "avg_loss_jpy": 1100.0,
+                                "expectancy_jpy_per_trade": -892.1,
+                            },
+                        },
+                        **_capture_scoped_tp_payload(
+                            trades=10,
+                            wins=10,
+                            losses=0,
+                            avg_win_jpy=600.0,
+                            avg_loss_jpy=0.0,
+                            expectancy_jpy_per_trade=600.0,
+                        ),
+                    }
+                )
+            )
+            output = root / "intents.json"
+
+            summary = IntentGenerator(
+                campaign_plan=_range_campaign(root),
+                strategy_profile=_strategy(root, status="CANDIDATE"),
+                output_path=output,
+                report_path=root / "intents.md",
+                pair_charts_path=_pair_charts(root),
+                data_root=root,
+                max_loss_jpy=1000.0,
+            ).run(snapshot_path=_snapshot(root))
+
+            payload = json.loads(output.read_text())
+            result = next(
+                item for item in payload["results"]
+                if item["lane_id"] == "range_trader:EUR_USD:LONG:RANGE_ROTATION"
+            )
+            metadata = result["intent"]["metadata"]
+            issue_by_code = {issue["code"]: issue for issue in result["risk_issues"]}
+
+            self.assertGreaterEqual(summary.live_ready, 1)
+            self.assertEqual(result["status"], "LIVE_READY")
+            self.assertEqual(metadata["loss_asymmetry_guard_mode"], "CAP_AVG_WIN")
+            self.assertFalse(metadata["loss_asymmetry_guard_relaxed"])
+            self.assertEqual(metadata["loss_asymmetry_guard_effective_max_loss_jpy"], 600.0)
+            self.assertEqual(metadata["max_loss_jpy"], 600.0)
+            self.assertEqual(metadata["positive_rotation_mode"], "TP_PROOF_COLLECTION_HARVEST")
+            self.assertTrue(metadata["positive_rotation_proof_collection_ready"])
+            self.assertEqual(metadata["positive_rotation_proof_collection_gap_trades"], 10)
+            self.assertNotIn("positive_rotation_live_ready", metadata)
+            self.assertGreater(metadata["positive_rotation_pessimistic_expectancy_jpy"], 0.0)
+            self.assertIn(POSITIVE_ROTATION_PROOF_COLLECTION_WARN_CODE, issue_by_code)
+            self.assertEqual(
+                issue_by_code[POSITIVE_ROTATION_PROOF_COLLECTION_WARN_CODE]["severity"],
+                "WARN",
+            )
+            self.assertNotIn(POSITIVE_ROTATION_LIVE_BLOCK_CODE, issue_by_code)
+            self.assertNotIn(POSITIVE_ROTATION_PROOF_COLLECTION_WARN_CODE, result["live_blocker_codes"])
+
+    def test_thin_exact_tp_collection_survives_stale_chart_bias_as_separate_blocker(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "capture_economics.json").write_text(
+                json.dumps(
+                    {
+                        "status": "NEGATIVE_EXPECTANCY",
+                        "overall": {
+                            "trades": 210,
+                            "avg_win_jpy": 600.0,
+                            "avg_loss_jpy": 1100.0,
+                            "payoff_ratio": 0.545,
+                            "breakeven_payoff_at_win_rate": 0.7,
+                        },
+                        "by_exit_reason": {
+                            "TAKE_PROFIT_ORDER": {
+                                "trades": 93,
+                                "wins": 93,
+                                "losses": 0,
+                                "avg_win_jpy": 504.0,
+                                "avg_loss_jpy": 0.0,
+                                "expectancy_jpy_per_trade": 504.0,
+                            },
+                            "MARKET_ORDER_TRADE_CLOSE": {
+                                "trades": 84,
+                                "wins": 13,
+                                "losses": 71,
+                                "avg_win_jpy": 218.4,
+                                "avg_loss_jpy": 1100.0,
+                                "expectancy_jpy_per_trade": -892.1,
+                            },
+                        },
+                        **_capture_scoped_tp_payload(
+                            method="BREAKOUT_FAILURE",
+                            trades=10,
+                            wins=10,
+                            losses=0,
+                            avg_win_jpy=600.0,
+                            avg_loss_jpy=0.0,
+                            expectancy_jpy_per_trade=600.0,
+                        ),
+                    }
+                )
+            )
+            output = root / "intents.json"
+
+            IntentGenerator(
+                campaign_plan=_breakout_failure_campaign(root),
+                strategy_profile=_strategy(root, status="CANDIDATE"),
+                output_path=output,
+                report_path=root / "intents.md",
+                pair_charts_path=_pair_charts_with_direction(
+                    root,
+                    long_score=0.30,
+                    short_score=0.70,
+                    dominant_regime="BREAKOUT_FAILURE",
+                    m5_regime="BREAKOUT_FAILURE",
+                ),
+                data_root=root,
+                max_loss_jpy=1000.0,
+            ).run(snapshot_path=_snapshot(root))
+
+            payload = json.loads(output.read_text())
+            result = next(
+                item for item in payload["results"]
+                if item["lane_id"] == "failure_trader:EUR_USD:LONG:BREAKOUT_FAILURE:LIMIT"
+            )
+            metadata = result["intent"]["metadata"]
+            issue_codes = {issue["code"] for issue in result["risk_issues"]}
+
+            self.assertEqual(metadata["chart_direction_bias"], "SHORT")
+            self.assertEqual(metadata["positive_rotation_mode"], "TP_PROOF_COLLECTION_HARVEST")
+            self.assertTrue(metadata["positive_rotation_proof_collection_ready"])
+            self.assertTrue(
+                metadata["positive_rotation_proof_collection_direction_bias_conflict_observed"]
+            )
+            self.assertIn(POSITIVE_ROTATION_PROOF_COLLECTION_WARN_CODE, issue_codes)
+            self.assertNotIn(POSITIVE_ROTATION_LIVE_BLOCK_CODE, issue_codes)
+            self.assertIn("CHART_DIRECTION_CONFLICT", issue_codes)
+            self.assertNotEqual(result["status"], "LIVE_READY")
+
+    def test_thin_tp_collection_allows_self_improvement_p0_repair_lane(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "self_improvement_audit.json").write_text(
+                json.dumps(
+                    {
+                        "generated_at_utc": datetime.now(timezone.utc).isoformat(),
+                        "findings": [
+                            {
+                                "priority": "P0",
+                                "layer": "profitability",
+                                "code": "PERSISTENT_PROFITABILITY_DISCIPLINE_BLOCKED",
+                                "message": "market-close leakage is still negative",
+                                "evidence": {
+                                    "current_streak": 65,
+                                    "system_defect_evidence": {
+                                        "profit_factor": 0.788,
+                                        "expectancy_jpy": -54.04,
+                                        "gateway_close_bleed_observation": {
+                                            "gateway_net_jpy": -1200.0,
+                                        },
+                                    },
+                                },
+                            }
+                        ],
+                    }
+                )
+            )
+            (root / "capture_economics.json").write_text(
+                json.dumps(
+                    {
+                        "status": "NEGATIVE_EXPECTANCY",
+                        "overall": {
+                            "trades": 210,
+                            "avg_win_jpy": 600.0,
+                            "avg_loss_jpy": 1100.0,
+                            "payoff_ratio": 0.545,
+                            "breakeven_payoff_at_win_rate": 0.7,
+                        },
+                        "by_exit_reason": {
+                            "TAKE_PROFIT_ORDER": {
+                                "trades": 93,
+                                "wins": 93,
+                                "losses": 0,
+                                "avg_win_jpy": 504.0,
+                                "avg_loss_jpy": 0.0,
+                                "expectancy_jpy_per_trade": 504.0,
+                            },
+                            "MARKET_ORDER_TRADE_CLOSE": {
+                                "trades": 84,
+                                "wins": 13,
+                                "losses": 71,
+                                "avg_win_jpy": 218.4,
+                                "avg_loss_jpy": 1100.0,
+                                "expectancy_jpy_per_trade": -892.1,
+                            },
+                        },
+                        **_capture_scoped_tp_payload(
+                            trades=10,
+                            wins=10,
+                            losses=0,
+                            avg_win_jpy=600.0,
+                            avg_loss_jpy=0.0,
+                            expectancy_jpy_per_trade=600.0,
+                        ),
+                    }
+                )
+            )
+            output = root / "intents.json"
+
+            summary = IntentGenerator(
+                campaign_plan=_range_campaign(root),
+                strategy_profile=_strategy(root, status="CANDIDATE"),
+                output_path=output,
+                report_path=root / "intents.md",
+                pair_charts_path=_pair_charts(root),
+                data_root=root,
+                max_loss_jpy=1000.0,
+            ).run(snapshot_path=_snapshot(root))
+
+            payload = json.loads(output.read_text())
+            result = next(
+                item for item in payload["results"]
+                if item["lane_id"] == "range_trader:EUR_USD:LONG:RANGE_ROTATION"
+            )
+            metadata = result["intent"]["metadata"]
+            issue_codes = {issue["code"] for issue in result["risk_issues"]}
+
+            self.assertGreaterEqual(summary.live_ready, 1)
+            self.assertEqual(result["status"], "LIVE_READY")
+            self.assertEqual(metadata["positive_rotation_mode"], "TP_PROOF_COLLECTION_HARVEST")
+            self.assertTrue(metadata["positive_rotation_proof_collection_ready"])
+            self.assertTrue(metadata["self_improvement_p0_repair_live_ready"])
+            self.assertEqual(metadata["self_improvement_p0_repair_mode"], "TP_HARVEST_REPAIR")
+            self.assertIn(POSITIVE_ROTATION_PROOF_COLLECTION_WARN_CODE, issue_codes)
+            self.assertIn("SELF_IMPROVEMENT_P0_PROFITABILITY_REPAIR_MODE", issue_codes)
+            self.assertNotIn("SELF_IMPROVEMENT_P0_PROFITABILITY_DISCIPLINE", issue_codes)
+            self.assertEqual(result["live_blockers"], [])
 
     def test_tp_proven_pair_side_method_rotation_survives_stale_chart_bias(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

@@ -5187,8 +5187,9 @@ class IntentGenerator:
         positive_rotation_issue = _capture_positive_rotation_live_issue(intent)
         if positive_rotation_issue is not None:
             risk_issues.append(positive_rotation_issue)
-            live_blockers = (*live_blockers, positive_rotation_issue["message"])
-            risk_allowed = False
+            if positive_rotation_issue.get("severity") == "BLOCK":
+                live_blockers = (*live_blockers, positive_rotation_issue["message"])
+                risk_allowed = False
         positive_rotation_firepower_issue = _positive_rotation_daily_firepower_issue(
             intent,
             data_root=data_root or self.data_root,
@@ -5778,7 +5779,15 @@ def _macro_event_size_up_signal(lane: dict[str, Any], *, side: Side) -> dict[str
 # campaign burst. Twenty exits is two default 10-trade campaign days, so it is
 # an evidence floor for relaxing a guard, not a market target.
 LOSS_ASYMMETRY_TP_RELAX_MIN_EXIT_TRADES = 20
+# This is an evidence-collection floor, not a market parameter: fewer than five
+# exact broker-TP exits is too easy to explain as one lucky micro-sequence. The
+# Wilson stress check and zero-TP-loss requirement below still decide whether a
+# thin sample is usable.
+LOSS_ASYMMETRY_TP_PROOF_COLLECTION_MIN_EXIT_TRADES = 5
 POSITIVE_ROTATION_LIVE_BLOCK_CODE = "NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION"
+POSITIVE_ROTATION_PROOF_COLLECTION_WARN_CODE = (
+    "TP_PROOF_COLLECTION_HARVEST_UNDER_NEGATIVE_EXPECTANCY"
+)
 POSITIVE_ROTATION_FIREPOWER_BLOCK_CODE = "POSITIVE_ROTATION_DAILY_FIREPOWER_INSUFFICIENT"
 # Standard normal 1.96 is the textbook 95% Wilson lower-bound confidence
 # constant. It is a statistical confidence convention, not a market parameter;
@@ -6025,6 +6034,98 @@ def _tp_proven_harvest_rotation_allowed(intent: OrderIntent) -> bool:
     return True
 
 
+def _tp_proof_collection_harvest_rotation_allowed(intent: OrderIntent) -> bool:
+    """Return true for a bounded thin-proof TP shape that can collect evidence.
+
+    This is deliberately weaker than TP_PROVEN_HARVEST: it never claims the
+    daily target is solved, never relaxes the loss-asymmetry cap, and requires
+    exact pair/side/method TP receipts plus positive Wilson-stressed expectancy.
+    """
+
+    metadata = intent.metadata
+    if intent.order_type == OrderType.MARKET:
+        return False
+    if str(metadata.get("position_intent") or "").upper() == "HEDGE":
+        return False
+    method = intent.market_context.method if intent.market_context is not None else None
+    direction_bias = _method_direction_bias(metadata, method)
+    direction_bias_conflict = (
+        direction_bias in {Side.LONG.value, Side.SHORT.value}
+        and direction_bias != intent.side.value
+    )
+    exact_tp_scope = _capture_take_profit_scope_matches_intent(intent, metadata, method)
+    if direction_bias_conflict and not exact_tp_scope:
+        return False
+    if metadata.get("attach_take_profit_on_fill") is not True:
+        return False
+    if str(metadata.get("tp_execution_mode") or "").upper() != "ATTACHED_TECHNICAL_TP":
+        return False
+    if str(metadata.get("tp_target_intent") or "").upper() != "HARVEST":
+        return False
+    if str(metadata.get("opportunity_mode") or "").upper() != "HARVEST":
+        return False
+    if str(metadata.get("loss_asymmetry_guard_mode") or "").upper() != "CAP_AVG_WIN":
+        return False
+    if metadata.get("loss_asymmetry_guard_relaxed") is True:
+        return False
+    if str(metadata.get("capture_take_profit_scope") or "").upper() != "PAIR_SIDE_METHOD":
+        return False
+    if not exact_tp_scope:
+        return False
+    tp_trades = int(_optional_float(metadata.get("capture_take_profit_trades")) or 0)
+    if tp_trades < LOSS_ASYMMETRY_TP_PROOF_COLLECTION_MIN_EXIT_TRADES:
+        return False
+    if tp_trades >= LOSS_ASYMMETRY_TP_RELAX_MIN_EXIT_TRADES:
+        return False
+    tp_expectancy = _optional_float(metadata.get("capture_take_profit_expectancy_jpy"))
+    tp_avg_win = _optional_float(metadata.get("capture_take_profit_avg_win_jpy"))
+    if tp_expectancy is None or tp_expectancy <= 0 or tp_avg_win is None or tp_avg_win <= 0:
+        return False
+    tp_losses = _optional_float(metadata.get("capture_take_profit_losses"))
+    if tp_losses is None or tp_losses > 0:
+        return False
+    market_close_expectancy = _optional_float(metadata.get("capture_market_close_expectancy_jpy"))
+    if market_close_expectancy is None or market_close_expectancy >= 0:
+        return False
+    confidence = _positive_rotation_confidence_metrics(metadata)
+    if confidence is None:
+        return False
+    metadata.update(confidence)
+    if confidence["positive_rotation_pessimistic_expectancy_jpy"] <= 0:
+        return False
+    metadata.update(
+        {
+            "positive_rotation_proof_collection_ready": True,
+            "positive_rotation_proof_collection_mode": "TP_PROOF_COLLECTION_HARVEST",
+            "positive_rotation_proof_collection_min_trades": (
+                LOSS_ASYMMETRY_TP_PROOF_COLLECTION_MIN_EXIT_TRADES
+            ),
+            "positive_rotation_proof_collection_target_trades": (
+                LOSS_ASYMMETRY_TP_RELAX_MIN_EXIT_TRADES
+            ),
+            "positive_rotation_proof_collection_gap_trades": max(
+                0,
+                LOSS_ASYMMETRY_TP_RELAX_MIN_EXIT_TRADES - tp_trades,
+            ),
+        }
+    )
+    if direction_bias_conflict:
+        metadata.update(
+            {
+                "positive_rotation_proof_collection_direction_bias_conflict_observed": True,
+                "positive_rotation_direction_bias": direction_bias,
+                "positive_rotation_direction_bias_override_basis": (
+                    "PAIR_SIDE_METHOD TAKE_PROFIT_ORDER receipts match this "
+                    "pair/side/method exactly; the negative-expectancy repair "
+                    "gate may not discard the bounded proof-collection shape, "
+                    "but chart, forecast, matrix, spread, and gateway gates "
+                    "remain authoritative for live readiness"
+                ),
+            }
+        )
+    return True
+
+
 def _capture_take_profit_scope_matches_intent(
     intent: OrderIntent,
     metadata: dict[str, Any],
@@ -6194,6 +6295,26 @@ def _capture_positive_rotation_live_issue(intent: OrderIntent) -> dict[str, str]
             "loss proxy still leaves positive pessimistic expectancy"
         )
         return None
+    if _tp_proof_collection_harvest_rotation_allowed(intent):
+        metadata["positive_rotation_mode"] = "TP_PROOF_COLLECTION_HARVEST"
+        metadata["positive_rotation_basis"] = (
+            "capture_economics is negative overall, but this exact non-market "
+            "attached-TP HARVEST pair/side/method has thin positive TP receipts, "
+            "zero TP losses, and positive Wilson-stressed expectancy while risk "
+            "remains capped by the loss-asymmetry guard; treat this as evidence "
+            "collection, not as TP-proven daily firepower"
+        )
+        return {
+            "code": POSITIVE_ROTATION_PROOF_COLLECTION_WARN_CODE,
+            "message": (
+                "capture_economics is NEGATIVE_EXPECTANCY, but this exact "
+                "non-market attached-TP HARVEST pair/side/method has a thin "
+                "positive TP sample with zero TP losses and positive Wilson-stressed "
+                "expectancy; allow bounded proof collection under the capped "
+                "loss-asymmetry budget, without claiming the 5-10% daily target is solved"
+            ),
+            "severity": "WARN",
+        }
     return {
         "code": POSITIVE_ROTATION_LIVE_BLOCK_CODE,
         "message": (
@@ -6703,16 +6824,19 @@ def _self_improvement_profitability_p0_repair_allowed(
     intent: OrderIntent,
     p0_issue: dict[str, str] | None = None,
 ) -> bool:
-    """Allow only TP-proven, non-market HARVEST receipts to repair a P0 deadlock.
+    """Allow only TP-backed, non-market HARVEST receipts to repair a P0 deadlock.
 
     The profitability P0 is caused by market-close leakage, while
     capture_economics can prove broker TP exits are positive. This escape path
-    therefore stays narrow: no MARKET entries, no TP-less runners, no weak/no-TP
-    loss-asymmetry relaxation, no entries against current direction bias, and
-    no bypass of any other live-readiness gate.
+    therefore stays narrow: no MARKET entries, no TP-less runners, no uncapped
+    weak/no-TP risk, no entries against current direction bias for thin-proof
+    collection, and no bypass of any other live-readiness gate.
     """
 
-    if not _tp_proven_harvest_rotation_allowed(intent):
+    if not (
+        _tp_proven_harvest_rotation_allowed(intent)
+        or _tp_proof_collection_harvest_rotation_allowed(intent)
+    ):
         return False
     if _self_improvement_intent_matches_worst_segment(intent, p0_issue):
         return False
