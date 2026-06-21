@@ -439,35 +439,112 @@ BIDASK_REPLAY_NEGATIVE_RULES: tuple[dict[str, Any], ...] = (
 
 # Train-selected direction selectors mined directly from local multi-month
 # OANDA M5 bid/ask candles, not from forecast_history. These are rank-only:
-# the active-days count and Wilson lower bound improve selection priority, but
-# do not waive live forecast/risk gates.
-OANDA_UNIVERSAL_ROTATION_RULES: tuple[dict[str, Any], ...] = (
-    {
-        "name": "GBP_USD_SHORT_M5_RANGE_REVERSION_ATR_HIGH_ASIA_TP1_SL1",
-        "pair": "GBP_USD",
-        "side": "SHORT",
-        "direction": "DOWN",
-        "shape": "range_reversion",
+# the active-days count, Wilson lower bound, PF, and realized ATR improve
+# capital ordering, but do not waive live forecast/risk gates.
+OANDA_UNIVERSAL_ROTATION_AUDIT_REPORT = (
+    "logs/reports/forecast_improvement/oanda_universal_rotation_mining_latest.json"
+)
+
+
+def _oanda_universal_rotation_rule_name(
+    pair: str,
+    side: str,
+    shape: str,
+    feature_a: str,
+    feature_b: str,
+    exit_shape: str,
+) -> str:
+    slug = "_".join(
+        (
+            pair,
+            side,
+            "M5",
+            shape,
+            feature_a.replace(":", "_"),
+            feature_b.replace(":", "_"),
+            exit_shape.replace(".", "P"),
+        )
+    )
+    return re.sub(r"[^A-Z0-9_]+", "_", slug.upper())
+
+
+def _oanda_universal_rotation_rule(
+    pair: str,
+    side: str,
+    shape: str,
+    exit_shape: str,
+    feature_a: str,
+    feature_b: str,
+    train_samples: int,
+    train_win_rate: float,
+    validation_samples: int,
+    validation_win_rate: float,
+    validation_win_wilson95_lower: float,
+    validation_avg_realized_pips: float,
+    validation_avg_realized_atr: float,
+    validation_profit_factor: float,
+    active_days: int,
+    positive_day_rate: float,
+    rank_score_bonus: float,
+) -> dict[str, Any]:
+    return {
+        "name": _oanda_universal_rotation_rule_name(pair, side, shape, feature_a, feature_b, exit_shape),
+        "pair": pair,
+        "side": side,
+        "direction": "UP" if side == "LONG" else "DOWN",
+        "shape": shape,
         "timeframe": "M5",
-        "exit_shape": "tp1_sl1",
-        "confluence": "atr_regime:high + session:asia",
-        "train_samples": 37,
-        "train_win_rate": 0.567568,
-        "validation_samples": 30,
-        "validation_win_rate": 0.70,
-        "validation_win_wilson95_lower": 0.521239,
-        "validation_avg_realized_pips": 2.854048,
-        "validation_avg_realized_atr": 0.333729,
-        "validation_profit_factor": 2.459160,
-        "active_days": 7,
-        "positive_day_rate": 0.5714285714,
-        "min_m5_atr_percentile_100": 0.75,
-        "session_bucket": "ASIA",
+        "exit_shape": exit_shape,
+        "confluence": f"{feature_a} + {feature_b}",
+        "feature_a": feature_a,
+        "feature_b": feature_b,
+        "train_samples": train_samples,
+        "train_win_rate": train_win_rate,
+        "validation_samples": validation_samples,
+        "validation_win_rate": validation_win_rate,
+        "validation_win_wilson95_lower": validation_win_wilson95_lower,
+        "validation_avg_realized_pips": validation_avg_realized_pips,
+        "validation_avg_realized_atr": validation_avg_realized_atr,
+        "validation_profit_factor": validation_profit_factor,
+        "active_days": active_days,
+        "positive_day_rate": positive_day_rate,
+        "capital_efficiency_score": round(
+            max(0.0, validation_avg_realized_atr)
+            * max(0.0, validation_profit_factor)
+            * max(0.0, positive_day_rate),
+            6,
+        ),
+        "rank_score_bonus": rank_score_bonus,
         "min_target_pips": 2.5,
         "max_stop_pips": 20.0,
         "rank_only": True,
-        "audit_report": "logs/reports/forecast_improvement/oanda_universal_rotation_mining_latest.json",
-    },
+        "audit_report": OANDA_UNIVERSAL_ROTATION_AUDIT_REPORT,
+    }
+
+
+_OANDA_UNIVERSAL_ROTATION_RULE_ROWS: tuple[tuple[Any, ...], ...] = (
+    ("USD_CHF", "SHORT", "pullback_continuation", "tp1.25_sl1", "body_abs:down", "spread_regime:mid", 17, 0.529412, 14, 0.571429, 0.325903, 2.569388, 0.396696, 2.648985, 10, 0.700000, 8.0),
+    ("EUR_USD", "SHORT", "range_reclaim", "tp1.25_sl1", "session:london_ny_overlap", "spread_regime:high", 39, 0.487179, 15, 0.666667, 0.417131, 1.480774, 0.391563, 1.931444, 13, 0.615385, 6.0),
+    ("GBP_USD", "SHORT", "range_reversion", "tp1_sl1", "atr_regime:high", "session:asia", 37, 0.567568, 30, 0.700000, 0.521239, 2.854048, 0.333729, 2.459160, 7, 0.571429, 10.0),
+    ("USD_JPY", "LONG", "range_reclaim", "tp1_sl1", "atr_regime:high", "session:london_ny_overlap", 47, 0.510638, 15, 0.666667, 0.417131, 2.343571, 0.333333, 2.009953, 9, 0.666667, 8.0),
+    ("EUR_USD", "SHORT", "pullback_continuation", "tp1.25_sl1", "session:london_ny_overlap", "spread_regime:mid", 52, 0.480769, 21, 0.571429, 0.365462, 2.138350, 0.330952, 2.111322, 9, 0.666667, 8.0),
+    ("GBP_USD", "SHORT", "range_reversion", "tp1.25_sl1", "atr_regime:high", "session:asia", 37, 0.567568, 30, 0.633333, 0.455132, 2.510000, 0.325273, 2.058806, 7, 0.857143, 8.0),
+    ("EUR_USD", "SHORT", "pullback_continuation", "tp1_sl1", "session:london_ny_overlap", "spread_regime:mid", 52, 0.519231, 21, 0.619048, 0.408783, 1.935884, 0.285714, 2.034254, 9, 0.555556, 8.0),
+    ("EUR_USD", "SHORT", "range_reclaim", "tp1_sl1", "session:london_ny_overlap", "spread_regime:high", 39, 0.538462, 15, 0.666667, 0.417131, 0.983095, 0.275273, 1.618391, 13, 0.615385, 4.0),
+    ("USD_JPY", "LONG", "range_reversion", "tp1.25_sl1", "body_abs:up", "session:london_ny_overlap", 63, 0.476190, 15, 0.533333, 0.301166, 1.165952, 0.265869, 1.468702, 11, 0.636364, 6.0),
+    ("NZD_USD", "LONG", "pullback_continuation", "tp1.25_sl1", "session:london_ny_overlap", "spread_regime:mid", 32, 0.500000, 19, 0.578947, 0.362756, 1.521429, 0.265752, 1.740057, 9, 0.555556, 6.0),
+    ("USD_CHF", "SHORT", "pullback_continuation", "tp1_sl1", "body_abs:down", "spread_regime:mid", 17, 0.529412, 14, 0.571429, 0.325903, 1.743878, 0.253839, 2.119188, 10, 0.600000, 8.0),
+    ("NZD_USD", "LONG", "pullback_continuation", "tp1_sl1", "session:london_ny_overlap", "spread_regime:mid", 32, 0.562500, 19, 0.631579, 0.410392, 1.300564, 0.239436, 1.718708, 9, 0.555556, 6.0),
+    ("USD_JPY", "LONG", "range_reversion", "tp1_sl1", "body_abs:up", "session:london_ny_overlap", 63, 0.539683, 15, 0.600000, 0.357464, 1.034524, 0.210647, 1.416987, 11, 0.727273, 6.0),
+    ("AUD_USD", "SHORT", "failed_break_fade", "tp1.25_sl1", "atr_regime:high", "body_abs:down", 36, 0.444444, 20, 0.550000, 0.342082, 0.580804, 0.176138, 1.245694, 15, 0.600000, 4.0),
+    ("AUD_JPY", "LONG", "failed_break_fade", "tp1_sl1", "atr_regime:high", "session:london_ny_overlap", 32, 0.531250, 19, 0.578947, 0.362756, 1.084211, 0.164252, 1.350894, 9, 0.555556, 6.0),
+    ("USD_CHF", "LONG", "range_reclaim", "tp1_sl1", "fast_mom_abs:down", "session:london_ny_overlap", 54, 0.500000, 22, 0.545455, 0.346595, 0.412013, 0.103142, 1.209579, 16, 0.562500, 4.0),
+    ("EUR_USD", "SHORT", "failed_break_fade", "tp1_sl1", "range_pos:high", "session:london_ny_overlap", 54, 0.500000, 24, 0.541667, 0.350746, 0.467708, 0.090124, 1.210502, 16, 0.562500, 4.0),
+    ("EUR_USD", "SHORT", "failed_break_fade", "tp1_sl1", "session:london_ny_overlap", "slow_mom_abs:up", 54, 0.500000, 24, 0.541667, 0.350746, 0.467708, 0.090124, 1.210502, 16, 0.562500, 4.0),
+    ("GBP_JPY", "SHORT", "range_reversion", "tp1_sl0.75", "session:london_ny_overlap", "spread_regime:mid", 48, 0.437500, 27, 0.555556, 0.373127, 1.524173, 0.080572, 1.391381, 9, 0.555556, 6.0),
+)
+OANDA_UNIVERSAL_ROTATION_RULES: tuple[dict[str, Any], ...] = tuple(
+    _oanda_universal_rotation_rule(*row) for row in _OANDA_UNIVERSAL_ROTATION_RULE_ROWS
 )
 
 
@@ -1155,9 +1232,9 @@ def oanda_universal_rotation_precision_assessment(
         if stop_pips > float(rule["max_stop_pips"]):
             continue
         session = _metadata_session_bucket(metadata)
-        if session != str(rule.get("session_bucket") or "").upper():
+        if "session_bucket" in rule and session != str(rule.get("session_bucket") or "").upper():
             continue
-        feature_values = _technical_rule_feature_values(metadata, rule)
+        feature_values = _oanda_universal_rotation_feature_values(metadata, rule)
         if feature_values is None:
             continue
         support = {
@@ -1179,6 +1256,8 @@ def oanda_universal_rotation_precision_assessment(
             "validation_profit_factor": rule["validation_profit_factor"],
             "active_days": rule["active_days"],
             "positive_day_rate": rule["positive_day_rate"],
+            "capital_efficiency_score": rule["capital_efficiency_score"],
+            "rank_score_bonus": rule["rank_score_bonus"],
             "rank_only": True,
             "current_target_pips": round(target_pips, 4),
             "current_stop_pips": round(stop_pips, 4),
@@ -1193,6 +1272,8 @@ def oanda_universal_rotation_precision_assessment(
         primary_rank_support = max(
             matches,
             key=lambda item: (
+                float(item.get("rank_score_bonus") or 0.0),
+                float(item.get("capital_efficiency_score") or 0.0),
                 float(item.get("validation_win_wilson95_lower") or 0.0),
                 float(item.get("validation_profit_factor") or 0.0),
                 int(item.get("validation_samples") or 0),
@@ -1200,8 +1281,12 @@ def oanda_universal_rotation_precision_assessment(
         )
     score_delta = 0.0
     if matches:
-        score_delta += OANDA_UNIVERSAL_ROTATION_SCORE_BONUS
-        score_delta += max(0, len(matches) - 1) * OANDA_UNIVERSAL_ROTATION_EXTRA_MATCH_BONUS
+        score_delta += max(float(item.get("rank_score_bonus") or 0.0) for item in matches)
+        distinct_confluences = {
+            (str(item.get("shape") or ""), str(item.get("confluence") or ""))
+            for item in matches
+        }
+        score_delta += max(0, len(distinct_confluences) - 1) * OANDA_UNIVERSAL_ROTATION_EXTRA_MATCH_BONUS
     return {
         "eligible_shape": bool(matches),
         "primary_support": None,
@@ -1486,6 +1571,140 @@ def _bidask_replay_rule_payload(rule: dict[str, Any]) -> dict[str, Any]:
         "rule_set_source",
     )
     return {key: rule[key] for key in keys if key in rule}
+
+
+def _oanda_universal_rotation_feature_values(
+    metadata: dict[str, Any],
+    rule: dict[str, Any],
+) -> dict[str, Any] | None:
+    out: dict[str, Any] = {}
+    for key in ("feature_a", "feature_b"):
+        raw_feature = str(rule.get(key) or "")
+        feature_values = _oanda_universal_rotation_feature_value(metadata, raw_feature)
+        if feature_values is None:
+            return None
+        out.update(feature_values)
+    return out or None
+
+
+def _oanda_universal_rotation_feature_value(
+    metadata: dict[str, Any],
+    feature: str,
+) -> dict[str, Any] | None:
+    name, separator, expected = feature.partition(":")
+    if not separator:
+        return None
+    feature_name = name.strip().lower()
+    expected_bucket = expected.strip().upper()
+    if feature_name == "session":
+        current = _metadata_session_bucket(metadata)
+    elif feature_name == "atr_regime":
+        current = _metadata_oanda_atr_regime(metadata)
+    elif feature_name == "spread_regime":
+        current = _metadata_oanda_spread_regime(metadata)
+    elif feature_name == "range_pos":
+        current = _metadata_oanda_range_pos_bucket(metadata)
+    elif feature_name in {"body_abs", "fast_mom_abs", "slow_mom_abs"}:
+        current = _metadata_oanda_signed_bucket(metadata, feature_name)
+    else:
+        return None
+    if current != expected_bucket:
+        return None
+    return {f"current_oanda_{feature_name}": current}
+
+
+def _metadata_oanda_atr_regime(metadata: dict[str, Any]) -> str | None:
+    text = _bucket_text(
+        metadata.get("oanda_m5_atr_regime")
+        or metadata.get("m5_atr_regime")
+        or metadata.get("atr_regime")
+    )
+    if text is not None:
+        return text
+    value = _percentile_0_1(metadata.get("m5_atr_percentile_100"), metadata.get("m5_atr_percentile"))
+    if value is None:
+        return None
+    if value <= 0.25:
+        return "LOW"
+    if value >= 0.75:
+        return "HIGH"
+    return "MID"
+
+
+def _metadata_oanda_spread_regime(metadata: dict[str, Any]) -> str | None:
+    text = _bucket_text(
+        metadata.get("oanda_m5_spread_regime")
+        or metadata.get("m5_spread_regime")
+        or metadata.get("spread_regime")
+    )
+    if text is not None:
+        return text
+    spread_atr = _safe_float(
+        metadata.get("oanda_m5_spread_atr")
+        or metadata.get("m5_spread_atr")
+        or metadata.get("spread_atr")
+    )
+    if spread_atr is None:
+        return None
+    if spread_atr <= 0.15:
+        return "LOW"
+    if spread_atr >= 0.30:
+        return "HIGH"
+    return "MID"
+
+
+def _metadata_oanda_range_pos_bucket(metadata: dict[str, Any]) -> str | None:
+    text = _bucket_text(
+        metadata.get("oanda_m5_range_pos_bucket")
+        or metadata.get("m5_range_pos_bucket")
+        or metadata.get("range_pos_bucket")
+    )
+    if text is not None:
+        return text
+    position = _safe_float(
+        metadata.get("oanda_m5_range_pos")
+        or metadata.get("m5_range_position")
+        or metadata.get("range_position")
+    )
+    if position is None:
+        return None
+    if position <= 0.25:
+        return "LOW"
+    if position >= 0.75:
+        return "HIGH"
+    return "MID"
+
+
+def _metadata_oanda_signed_bucket(metadata: dict[str, Any], feature_name: str) -> str | None:
+    stem = feature_name.removesuffix("_abs")
+    text = _bucket_text(
+        metadata.get(f"oanda_m5_{feature_name}")
+        or metadata.get(f"m5_{feature_name}")
+        or metadata.get(feature_name)
+    )
+    if text is not None:
+        return text
+    value = _safe_float(
+        metadata.get(f"oanda_m5_{stem}_atr")
+        or metadata.get(f"m5_{stem}_atr")
+        or metadata.get(stem)
+    )
+    if value is None:
+        return None
+    if value >= 0.15:
+        return "UP"
+    if value <= -0.15:
+        return "DOWN"
+    return "FLAT"
+
+
+def _bucket_text(value: Any) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip().upper().replace("-", "_").replace(" ", "_")
+    if text in {"LOW", "MID", "HIGH", "UP", "DOWN", "FLAT", "ASIA", "LONDON_NY_OVERLAP"}:
+        return text
+    return None
 
 
 def _technical_rule_feature_values(

@@ -1394,6 +1394,80 @@ def _bb_pct_b_from_indicators(indicators: dict[str, Any]) -> float | None:
     return max(0.0, min(1.0, (close - lower) / (upper - lower)))
 
 
+def _oanda_rotation_bucket(value: float) -> str:
+    if value >= 0.15:
+        return "up"
+    if value <= -0.15:
+        return "down"
+    return "flat"
+
+
+def _oanda_range_pos_bucket(value: float) -> str:
+    if value <= 0.25:
+        return "low"
+    if value >= 0.75:
+        return "high"
+    return "mid"
+
+
+def _oanda_m5_rotation_state_for(pair: str, per_tf: dict[str, Any]) -> dict[str, Any]:
+    """Expose the M5 candle buckets used by the OANDA rotation miner."""
+
+    indicators = per_tf.get("M5") if isinstance(per_tf.get("M5"), dict) else {}
+    atr_pips = _optional_float(indicators.get("atr_pips"))
+    if atr_pips is None or atr_pips <= 0.0:
+        return {}
+    raw_candles = per_tf.get("M5__recent_candles")
+    if not isinstance(raw_candles, list):
+        return {"m5_atr_pips": atr_pips, "oanda_m5_atr_pips": atr_pips}
+    candles = [
+        candle for candle in raw_candles
+        if isinstance(candle, dict) and candle.get("complete") is not False
+    ]
+    if len(candles) < 20:
+        candles = [candle for candle in raw_candles if isinstance(candle, dict)]
+    if len(candles) < 20:
+        return {"m5_atr_pips": atr_pips, "oanda_m5_atr_pips": atr_pips}
+
+    current = candles[-1]
+    prev_fast = candles[-4] if len(candles) >= 4 else None
+    prev_slow = candles[-13] if len(candles) >= 13 else None
+    try:
+        close = float(current["c"])
+        open_ = float(current["o"])
+        window = candles[-20:]
+        range_high = max(float(candle["h"]) for candle in window)
+        range_low = min(float(candle["l"]) for candle in window)
+    except (KeyError, TypeError, ValueError):
+        return {"m5_atr_pips": atr_pips, "oanda_m5_atr_pips": atr_pips}
+
+    width = max(range_high - range_low, 1e-12)
+    range_pos = max(0.0, min(1.0, (close - range_low) / width))
+    factor = instrument_pip_factor(pair)
+    body_atr = ((close - open_) * factor) / atr_pips
+    out: dict[str, Any] = {
+        "m5_atr_pips": atr_pips,
+        "oanda_m5_atr_pips": atr_pips,
+        "oanda_m5_range_pos": round(range_pos, 6),
+        "oanda_m5_range_pos_bucket": _oanda_range_pos_bucket(range_pos),
+        "oanda_m5_body_atr": round(body_atr, 6),
+        "oanda_m5_body_abs": _oanda_rotation_bucket(body_atr),
+    }
+    if isinstance(prev_fast, dict):
+        prev_fast_close = _optional_float(prev_fast.get("c"))
+        if prev_fast_close is not None:
+            fast_mom = ((close - prev_fast_close) * factor) / atr_pips
+            out["oanda_m5_fast_mom_atr"] = round(fast_mom, 6)
+            out["oanda_m5_fast_mom_abs"] = _oanda_rotation_bucket(fast_mom)
+    if isinstance(prev_slow, dict):
+        prev_slow_close = _optional_float(prev_slow.get("c"))
+        if prev_slow_close is not None:
+            slow_mom = ((close - prev_slow_close) * factor) / atr_pips
+            out["oanda_m5_slow_mom_atr"] = round(slow_mom, 6)
+            out["oanda_m5_slow_mom_abs"] = _oanda_rotation_bucket(slow_mom)
+    return out
+
+
 def _chart_context_for(pair: str, charts: dict[str, dict[str, Any]] | None) -> dict[str, Any]:
     """Return current pair-chart direction/method context for executable gates.
 
@@ -1512,6 +1586,7 @@ def _chart_context_for(pair: str, charts: dict[str, dict[str, Any]] | None) -> d
             (per_tf.get("session") if isinstance(per_tf.get("session"), dict) else {}).get("current_tag")
         ),
     }
+    context.update(_oanda_m5_rotation_state_for(pair, per_tf))
     context.update(_pattern_context_for(per_tf.get("__raw_chart")))
     return context
 

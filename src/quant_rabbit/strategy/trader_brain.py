@@ -506,7 +506,6 @@ from quant_rabbit.forecast_precision import (
     BIDASK_REPLAY_EDGE_SCORE_BONUS,
     BIDASK_REPLAY_NEGATIVE_SCORE_PENALTY,
     BIDASK_REPLAY_RANK_ONLY_SCORE_BONUS,
-    OANDA_UNIVERSAL_ROTATION_SCORE_BONUS,
     TECHNICAL_HARVEST_PRECISION_EXTRA_MATCH_BONUS,
     TECHNICAL_HARVEST_PRECISION_SCORE_BONUS,
     TECHNICAL_HARVEST_ROTATION_EXTRA_MATCH_BONUS,
@@ -1428,6 +1427,7 @@ class TraderBrain:
             entry=entry,
             tp=tp,
             sl=sl,
+            spread_pips=spread_pips,
             rationale=rationale,
         )
 
@@ -3606,6 +3606,33 @@ def _bidask_replay_precision_score(
     return score_delta
 
 
+def _oanda_spread_regime(spread_atr: float) -> str:
+    if spread_atr <= 0.15:
+        return "low"
+    if spread_atr >= 0.30:
+        return "high"
+    return "mid"
+
+
+def _oanda_metadata_with_execution_costs(
+    metadata: dict[str, Any],
+    *,
+    spread_pips: float | None,
+) -> dict[str, Any]:
+    out = dict(metadata)
+    current_spread = _optional_float(spread_pips)
+    atr_pips = _optional_float(
+        out.get("oanda_m5_atr_pips")
+        if out.get("oanda_m5_atr_pips") is not None
+        else out.get("m5_atr_pips")
+    )
+    if current_spread is not None and current_spread > 0.0 and atr_pips is not None and atr_pips > 0.0:
+        spread_atr = current_spread / atr_pips
+        out["oanda_m5_spread_atr"] = round(spread_atr, 6)
+        out["oanda_m5_spread_regime"] = _oanda_spread_regime(spread_atr)
+    return out
+
+
 def _oanda_universal_rotation_precision_score(
     *,
     intent: dict[str, Any],
@@ -3616,11 +3643,13 @@ def _oanda_universal_rotation_precision_score(
     entry: float | None,
     tp: float | None,
     sl: float | None,
+    spread_pips: float | None = None,
     rationale: list[str],
 ) -> float:
     metadata = intent.get("metadata") if isinstance(intent.get("metadata"), dict) else {}
+    assessment_metadata = _oanda_metadata_with_execution_costs(metadata, spread_pips=spread_pips)
     assessment = oanda_universal_rotation_precision_assessment(
-        metadata,
+        assessment_metadata,
         pair=pair,
         side=direction,
         order_type=order_type,
@@ -3635,6 +3664,9 @@ def _oanda_universal_rotation_precision_score(
     ]
     if not supports:
         return 0.0
+    for key in ("oanda_m5_spread_atr", "oanda_m5_spread_regime"):
+        if key in assessment_metadata:
+            metadata[key] = assessment_metadata[key]
     metadata["oanda_universal_rotation_precision_assessment"] = assessment
     score_delta = _optional_float(assessment.get("score_delta")) or 0.0
     best = (
@@ -3652,7 +3684,7 @@ def _oanda_universal_rotation_precision_score(
     rationale.insert(
         0,
         "oanda universal rotation "
-        f"+{OANDA_UNIVERSAL_ROTATION_SCORE_BONUS:.1f}: {best.get('name')} "
+        f"+{score_delta:.1f}: {best.get('name')} "
         f"valid_n={int(best.get('validation_samples') or 0)} "
         f"win={float(best.get('validation_win_rate') or 0.0):.2f} "
         f"Wilson95_lower={float(best.get('validation_win_wilson95_lower') or 0.0):.2f} "

@@ -323,6 +323,42 @@ class TraderBrainTest(unittest.TestCase):
         self.assertIsNone(assessment["primary_support"])
         self.assertTrue(assessment["primary_rank_support"]["rank_only"])
 
+    def test_oanda_universal_rotation_derives_spread_regime_for_all_pair_selector(self) -> None:
+        intent = {
+            "metadata": {
+                "forecast_direction": "DOWN",
+                "chart_direction_bias": "SHORT",
+                "m5_atr_pips": 5.0,
+                "session_bucket": "LONDON_NY_OVERLAP",
+                "tp_execution_mode": "ATTACHED_TECHNICAL_TP",
+                "tp_target_intent": "HARVEST",
+                "opportunity_mode": "HARVEST",
+            }
+        }
+        rationale: list[str] = []
+
+        score = _oanda_universal_rotation_precision_score(
+            intent=intent,
+            pair="EUR_USD",
+            direction="SHORT",
+            order_type="LIMIT",
+            method="PULLBACK_CONTINUATION",
+            entry=1.10000,
+            tp=1.09950,
+            sl=1.10070,
+            spread_pips=1.0,
+            rationale=rationale,
+        )
+
+        self.assertEqual(score, 8.0)
+        self.assertEqual(intent["metadata"]["oanda_m5_spread_regime"], "mid")
+        self.assertTrue(any("oanda universal rotation +8.0" in item for item in rationale))
+        assessment = intent["metadata"]["oanda_universal_rotation_precision_assessment"]
+        self.assertEqual(
+            assessment["primary_rank_support"]["name"],
+            "EUR_USD_SHORT_M5_PULLBACK_CONTINUATION_SESSION_LONDON_NY_OVERLAP_SPREAD_REGIME_MID_TP1P25_SL1",
+        )
+
     def test_technical_rotation_scores_high_frequency_bucket_without_live_override(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
