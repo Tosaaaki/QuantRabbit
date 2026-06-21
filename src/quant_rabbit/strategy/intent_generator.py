@@ -1052,6 +1052,24 @@ def _capture_loss_asymmetry_guard(data_root: Path | None = None) -> dict[str, An
     if not isinstance(payload, dict):
         return {}
     status = str(payload.get("status") or "").upper()
+    staleness = _capture_economics_staleness(payload, data_root=data_root, path=path)
+    if staleness is not None:
+        overall = payload.get("overall") if isinstance(payload.get("overall"), dict) else {}
+        avg_win = _optional_float(overall.get("avg_win_jpy"))
+        avg_loss = _optional_float(overall.get("avg_loss_jpy"))
+        trades = _optional_float(overall.get("trades"))
+        return {
+            "active": True,
+            "stale": True,
+            "status": status or "UNKNOWN",
+            "trades": int(trades or 0),
+            "avg_win_jpy": round(avg_win, 4) if avg_win is not None else None,
+            "avg_loss_jpy": round(avg_loss, 4) if avg_loss is not None else None,
+            "payoff_ratio": overall.get("payoff_ratio"),
+            "breakeven_payoff_at_win_rate": overall.get("breakeven_payoff_at_win_rate"),
+            "source": str(path),
+            **staleness,
+        }
     if status != "NEGATIVE_EXPECTANCY":
         return {}
     overall = payload.get("overall")
@@ -1093,6 +1111,60 @@ def _capture_loss_asymmetry_guard(data_root: Path | None = None) -> dict[str, An
         "take_profit_losses": take_profit_losses,
         "market_close_expectancy_jpy": _optional_float(market_close_exit.get("expectancy_jpy_per_trade")),
     }
+
+
+def _capture_economics_staleness(
+    payload: dict[str, Any],
+    *,
+    data_root: Path | None,
+    path: Path,
+) -> dict[str, str] | None:
+    latest_realized = _latest_execution_ledger_realized_close_time(data_root)
+    if latest_realized is None:
+        return None
+    generated_at_raw = payload.get("generated_at_utc")
+    generated_at = _parse_telemetry_time(generated_at_raw)
+    if generated_at is None:
+        return {
+            "generated_at_utc": str(generated_at_raw or ""),
+            "latest_realized_ts_utc": latest_realized.isoformat(),
+            "stale_reason": (
+                f"{path} lacks generated_at_utc while execution_ledger.db has "
+                f"realized closes through {latest_realized.isoformat()}"
+            ),
+        }
+    if generated_at >= latest_realized:
+        return None
+    return {
+        "generated_at_utc": generated_at.isoformat(),
+        "latest_realized_ts_utc": latest_realized.isoformat(),
+        "stale_reason": (
+            f"{path} generated_at_utc={generated_at.isoformat()} predates "
+            f"execution_ledger.db latest realized close {latest_realized.isoformat()}"
+        ),
+    }
+
+
+def _latest_execution_ledger_realized_close_time(data_root: Path | None) -> datetime | None:
+    ledger_root = data_root if data_root is not None else DEFAULT_CAPTURE_ECONOMICS.parent
+    ledger = ledger_root / "execution_ledger.db"
+    if not ledger.exists():
+        return None
+    try:
+        with sqlite3.connect(f"file:{ledger}?mode=ro", uri=True) as conn:
+            row = conn.execute(
+                """
+                SELECT MAX(ts_utc)
+                FROM execution_events
+                WHERE event_type IN ('TRADE_CLOSED', 'TRADE_REDUCED')
+                  AND realized_pl_jpy IS NOT NULL
+                """
+            ).fetchone()
+    except sqlite3.Error:
+        return None
+    if not row:
+        return None
+    return _parse_telemetry_time(row[0])
 
 
 def _state_field(state_path: Path, key: str) -> float | None:
@@ -5721,6 +5793,32 @@ def _loss_asymmetry_sizing_plan(
         return base_max_loss_jpy, {}
     if str(position_metadata.get("position_intent") or "NEW").upper() == "HEDGE":
         return base_max_loss_jpy, {}
+    if guard.get("stale"):
+        metadata = {
+            "loss_asymmetry_guard_active": True,
+            "loss_asymmetry_guard_mode": "CAPTURE_ECONOMICS_STALE",
+            "loss_asymmetry_guard_relaxed": False,
+            "loss_asymmetry_guard_relaxation_reason": None,
+            "loss_asymmetry_guard_base_max_loss_jpy": round(base_max_loss_jpy, 4),
+            "loss_asymmetry_guard_effective_max_loss_jpy": round(base_max_loss_jpy, 4),
+            "loss_asymmetry_guard_basis": (
+                "capture_economics is older than execution_ledger realized closes; "
+                "fresh NEW-entry rotation cannot claim positive TP proof or negative-expectancy "
+                "repair sizing until capture-economics is rebuilt from the current ledger"
+            ),
+            "capture_economics_status": guard.get("status"),
+            "capture_economics_trades": guard.get("trades"),
+            "capture_economics_stale": True,
+            "capture_economics_stale_reason": guard.get("stale_reason"),
+            "capture_economics_generated_at_utc": guard.get("generated_at_utc"),
+            "capture_economics_latest_realized_ts_utc": guard.get("latest_realized_ts_utc"),
+            "capture_avg_win_jpy": guard.get("avg_win_jpy"),
+            "capture_avg_loss_jpy": guard.get("avg_loss_jpy"),
+            "capture_payoff_ratio": guard.get("payoff_ratio"),
+            "capture_breakeven_payoff_at_win_rate": guard.get("breakeven_payoff_at_win_rate"),
+            "capture_economics_source": guard.get("source"),
+        }
+        return base_max_loss_jpy, metadata
     cap = _optional_float(guard.get("loss_cap_jpy"))
     if cap is None or cap <= 0:
         return base_max_loss_jpy, {}
@@ -9102,11 +9200,30 @@ def _iter_jsonl_dicts(path: Path) -> tuple[dict[str, Any], ...]:
 def _parse_telemetry_time(value: object) -> datetime | None:
     if not isinstance(value, str) or not value:
         return None
+    text = value.replace("Z", "+00:00")
     try:
-        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        parsed = datetime.fromisoformat(text)
     except ValueError:
-        return None
+        normalized = _truncate_iso_fraction_to_microseconds(text)
+        if normalized == text:
+            return None
+        try:
+            parsed = datetime.fromisoformat(normalized)
+        except ValueError:
+            return None
     return _ensure_utc(parsed)
+
+
+def _truncate_iso_fraction_to_microseconds(value: str) -> str:
+    dot = value.find(".")
+    if dot < 0:
+        return value
+    end = dot + 1
+    while end < len(value) and value[end].isdigit():
+        end += 1
+    if end - dot - 1 <= 6:
+        return value
+    return value[: dot + 7] + value[end:]
 
 
 def _ensure_utc(value: object) -> datetime | None:

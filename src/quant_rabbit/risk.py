@@ -114,6 +114,7 @@ HEDGE_CONTINUATION_MAX_SCALE = 0.35
 # strategy generator evidence floor so RiskEngine can defend hand-written or
 # replayed receipts without importing strategy code.
 LOSS_ASYMMETRY_TP_RELAX_MIN_EXIT_TRADES = 20
+CAPTURE_ECONOMICS_STALE_BLOCK_CODE = "CAPTURE_ECONOMICS_STALE"
 
 
 def _min_lot_test_override_active() -> bool:
@@ -430,8 +431,22 @@ def _loss_asymmetry_guard_issues(intent: OrderIntent, metrics: RiskMetrics) -> l
     metadata = intent.metadata or {}
     if str(metadata.get("position_intent") or "NEW").upper() == "HEDGE":
         return []
+    mode = str(metadata.get("loss_asymmetry_guard_mode") or "").upper()
+    if _truthy_metadata(metadata.get("capture_economics_stale")) or mode == CAPTURE_ECONOMICS_STALE_BLOCK_CODE:
+        generated_at = str(metadata.get("capture_economics_generated_at_utc") or "unknown")
+        latest_close = str(metadata.get("capture_economics_latest_realized_ts_utc") or "unknown")
+        reason = str(metadata.get("capture_economics_stale_reason") or "").strip()
+        detail = f" ({reason})" if reason else ""
+        return [
+            RiskIssue(
+                CAPTURE_ECONOMICS_STALE_BLOCK_CODE,
+                "capture_economics is stale relative to execution_ledger realized closes: "
+                f"generated_at_utc={generated_at}, latest_realized_ts_utc={latest_close}{detail}; "
+                "refresh capture-economics before adding fresh one-way risk.",
+            )
+        ]
     if (
-        str(metadata.get("loss_asymmetry_guard_mode") or "").upper() == "TP_PROVEN_RELAXED"
+        mode == "TP_PROVEN_RELAXED"
         and _loss_asymmetry_tp_relaxation_shape_allowed(intent, metadata)
     ):
         return []

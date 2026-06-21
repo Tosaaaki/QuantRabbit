@@ -402,6 +402,102 @@ class IntentGeneratorTest(unittest.TestCase):
             self.assertLessEqual(metadata["positive_rotation_required_minimum_trades"], 30)
             self.assertLessEqual(result["risk_metrics"]["risk_jpy"], 1000.0)
 
+    def test_stale_capture_economics_blocks_tp_proven_rotation_claim(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "daily_target_state.json").write_text(
+                json.dumps(
+                    {
+                        "status": "PURSUE_TARGET",
+                        "remaining_risk_budget_jpy": 100000.0,
+                        "remaining_minimum_jpy": 8000.0,
+                        "remaining_target_jpy": 17000.0,
+                        "target_trades_per_day": 30,
+                    }
+                )
+            )
+            (root / "capture_economics.json").write_text(
+                json.dumps(
+                    {
+                        "generated_at_utc": "2026-06-17T14:05:31+00:00",
+                        "status": "NEGATIVE_EXPECTANCY",
+                        "overall": {
+                            "trades": 210,
+                            "avg_win_jpy": 600.0,
+                            "avg_loss_jpy": 1100.0,
+                            "payoff_ratio": 0.545,
+                            "breakeven_payoff_at_win_rate": 0.7,
+                        },
+                        "by_exit_reason": {
+                            "TAKE_PROFIT_ORDER": {
+                                "trades": 93,
+                                "wins": 93,
+                                "losses": 0,
+                                "avg_win_jpy": 504.0,
+                                "avg_loss_jpy": 0.0,
+                                "expectancy_jpy_per_trade": 504.0,
+                            },
+                            "MARKET_ORDER_TRADE_CLOSE": {
+                                "trades": 84,
+                                "wins": 13,
+                                "losses": 71,
+                                "avg_win_jpy": 218.4,
+                                "avg_loss_jpy": 1095.5,
+                                "expectancy_jpy_per_trade": -892.1,
+                            },
+                        },
+                    }
+                )
+            )
+            with sqlite3.connect(root / "execution_ledger.db") as conn:
+                conn.execute(
+                    """
+                    CREATE TABLE execution_events (
+                        ts_utc TEXT NOT NULL,
+                        event_type TEXT NOT NULL,
+                        realized_pl_jpy REAL
+                    )
+                    """
+                )
+                conn.execute(
+                    """
+                    INSERT INTO execution_events(ts_utc, event_type, realized_pl_jpy)
+                    VALUES ('2026-06-19T01:02:03.123456789Z', 'TRADE_CLOSED', -900.0)
+                    """
+                )
+            output = root / "intents.json"
+
+            summary = IntentGenerator(
+                campaign_plan=_stamp_campaign_generated_at(_range_campaign(root)),
+                strategy_profile=_strategy(root, status="CANDIDATE"),
+                output_path=output,
+                report_path=root / "intents.md",
+                pair_charts_path=_pair_charts(root),
+                data_root=root,
+                max_loss_jpy=1000.0,
+            ).run(snapshot_path=_snapshot(root))
+
+            payload = json.loads(output.read_text())
+            result = next(
+                item for item in payload["results"]
+                if item["lane_id"] == "range_trader:EUR_USD:LONG:RANGE_ROTATION"
+            )
+            metadata = result["intent"]["metadata"]
+            issue_codes = {issue["code"] for issue in result["risk_issues"]}
+
+            self.assertGreater(summary.generated, 0)
+            self.assertTrue(metadata["loss_asymmetry_guard_active"])
+            self.assertEqual(metadata["loss_asymmetry_guard_mode"], "CAPTURE_ECONOMICS_STALE")
+            self.assertTrue(metadata["capture_economics_stale"])
+            self.assertEqual(
+                metadata["capture_economics_latest_realized_ts_utc"],
+                "2026-06-19T01:02:03.123456+00:00",
+            )
+            self.assertEqual(result["status"], "DRY_RUN_BLOCKED")
+            self.assertIn("CAPTURE_ECONOMICS_STALE", issue_codes)
+            self.assertIn("CAPTURE_ECONOMICS_STALE", result["live_blocker_codes"])
+            self.assertNotEqual(metadata.get("positive_rotation_mode"), "TP_PROVEN_HARVEST")
+
     def test_capture_tp_proven_but_daily_firepower_short_warns_live_rotation(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
