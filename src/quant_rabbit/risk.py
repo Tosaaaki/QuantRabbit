@@ -114,6 +114,8 @@ HEDGE_CONTINUATION_MAX_SCALE = 0.35
 # strategy generator evidence floor so RiskEngine can defend hand-written or
 # replayed receipts without importing strategy code.
 LOSS_ASYMMETRY_TP_RELAX_MIN_EXIT_TRADES = 20
+LOSS_ASYMMETRY_TP_PROOF_COLLECTION_MIN_EXIT_TRADES = 5
+LOSS_ASYMMETRY_TP_PROOF_COLLECTION_MIN_LOT_MODE = "TP_PROOF_COLLECTION_MIN_LOT"
 CAPTURE_ECONOMICS_STALE_BLOCK_CODE = "CAPTURE_ECONOMICS_STALE"
 
 
@@ -450,6 +452,19 @@ def _loss_asymmetry_guard_issues(intent: OrderIntent, metrics: RiskMetrics) -> l
         and _loss_asymmetry_tp_relaxation_shape_allowed(intent, metadata)
     ):
         return []
+    if mode == LOSS_ASYMMETRY_TP_PROOF_COLLECTION_MIN_LOT_MODE:
+        proof_cap = _to_float(metadata.get("loss_asymmetry_guard_effective_max_loss_jpy"))
+        normal_cap = _to_float(metadata.get("loss_asymmetry_guard_base_max_loss_jpy"))
+        original_cap = _to_float(metadata.get("loss_asymmetry_guard_loss_cap_jpy"))
+        if (
+            proof_cap is not None
+            and normal_cap is not None
+            and original_cap is not None
+            and original_cap < proof_cap <= normal_cap
+            and metrics.risk_jpy <= proof_cap + 1e-9
+            and _loss_asymmetry_tp_proof_collection_shape_allowed(intent, metadata)
+        ):
+            return []
     status = str(metadata.get("capture_economics_status") or "").upper()
     avg_win = _to_float(metadata.get("capture_avg_win_jpy"))
     avg_loss = _to_float(metadata.get("capture_avg_loss_jpy"))
@@ -515,6 +530,60 @@ def _loss_asymmetry_tp_relaxation_shape_allowed(
         and tp_losses is not None
         and tp_losses <= 0
     )
+
+
+def _loss_asymmetry_tp_proof_collection_shape_allowed(
+    intent: OrderIntent,
+    metadata: dict,
+) -> bool:
+    """Validate thin exact TP proof before allowing min-lot evidence collection."""
+
+    if intent.order_type == OrderType.MARKET:
+        return False
+    if str(metadata.get("position_intent") or "").upper() == "HEDGE":
+        return False
+    if metadata.get("attach_take_profit_on_fill") is not True:
+        return False
+    if str(metadata.get("tp_execution_mode") or "").upper() != "ATTACHED_TECHNICAL_TP":
+        return False
+    if str(metadata.get("tp_target_intent") or "").upper() != "HARVEST":
+        return False
+    if str(metadata.get("opportunity_mode") or "").upper() != "HARVEST":
+        return False
+    if str(metadata.get("capture_take_profit_scope") or "").upper() != "PAIR_SIDE_METHOD":
+        return False
+    tp_trades = _to_int(metadata.get("capture_take_profit_trades"))
+    tp_wins = _to_int(metadata.get("capture_take_profit_wins"))
+    tp_expectancy = _to_float(metadata.get("capture_take_profit_expectancy_jpy"))
+    tp_avg_win = _to_float(metadata.get("capture_take_profit_avg_win_jpy"))
+    tp_avg_loss = _to_float(metadata.get("capture_take_profit_avg_loss_jpy"))
+    tp_losses = _to_int(metadata.get("capture_take_profit_losses"))
+    market_close_expectancy = _to_float(metadata.get("capture_market_close_expectancy_jpy"))
+    avg_loss = _to_float(metadata.get("capture_avg_loss_jpy"))
+    if tp_trades is None or not (
+        LOSS_ASYMMETRY_TP_PROOF_COLLECTION_MIN_EXIT_TRADES
+        <= tp_trades
+        < LOSS_ASYMMETRY_TP_RELAX_MIN_EXIT_TRADES
+    ):
+        return False
+    if tp_expectancy is None or tp_expectancy <= 0 or tp_avg_win is None or tp_avg_win <= 0:
+        return False
+    if tp_losses is None or tp_losses > 0:
+        return False
+    if market_close_expectancy is None or market_close_expectancy >= 0:
+        return False
+    wins = tp_wins if tp_wins is not None else max(tp_trades - tp_losses, 0)
+    hit_rate = wins / tp_trades if tp_trades > 0 else 0.0
+    lower = hit_rate_wilson_lower(hit_rate, tp_trades)
+    loss_proxy_candidates = (tp_avg_loss, avg_loss)
+    loss_proxy = max(
+        (value for value in loss_proxy_candidates if value is not None and value > 0),
+        default=None,
+    )
+    if lower is None or loss_proxy is None:
+        return False
+    pessimistic_expectancy = (lower * tp_avg_win) - ((1.0 - lower) * loss_proxy)
+    return pessimistic_expectancy > 0
 
 
 @dataclass(frozen=True)

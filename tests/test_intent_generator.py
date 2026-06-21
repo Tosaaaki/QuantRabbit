@@ -893,6 +893,82 @@ class IntentGeneratorTest(unittest.TestCase):
             self.assertNotIn(POSITIVE_ROTATION_LIVE_BLOCK_CODE, issue_by_code)
             self.assertNotIn(POSITIVE_ROTATION_PROOF_COLLECTION_WARN_CODE, result["live_blocker_codes"])
 
+    def test_thin_tp_collection_lifts_only_to_min_lot_when_cap_blocks_evidence(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "capture_economics.json").write_text(
+                json.dumps(
+                    {
+                        "status": "NEGATIVE_EXPECTANCY",
+                        "overall": {
+                            "trades": 210,
+                            "avg_win_jpy": 50.0,
+                            "avg_loss_jpy": 1100.0,
+                            "payoff_ratio": 0.045,
+                            "breakeven_payoff_at_win_rate": 0.7,
+                        },
+                        "by_exit_reason": {
+                            "TAKE_PROFIT_ORDER": {
+                                "trades": 93,
+                                "wins": 93,
+                                "losses": 0,
+                                "avg_win_jpy": 504.0,
+                                "avg_loss_jpy": 0.0,
+                                "expectancy_jpy_per_trade": 504.0,
+                            },
+                            "MARKET_ORDER_TRADE_CLOSE": {
+                                "trades": 84,
+                                "wins": 13,
+                                "losses": 71,
+                                "avg_win_jpy": 218.4,
+                                "avg_loss_jpy": 1100.0,
+                                "expectancy_jpy_per_trade": -892.1,
+                            },
+                        },
+                        **_capture_scoped_tp_payload(
+                            trades=10,
+                            wins=10,
+                            losses=0,
+                            avg_win_jpy=600.0,
+                            avg_loss_jpy=0.0,
+                            expectancy_jpy_per_trade=600.0,
+                        ),
+                    }
+                )
+            )
+            output = root / "intents.json"
+
+            IntentGenerator(
+                campaign_plan=_range_campaign(root),
+                strategy_profile=_strategy(root, status="CANDIDATE"),
+                output_path=output,
+                report_path=root / "intents.md",
+                pair_charts_path=_pair_charts(root),
+                data_root=root,
+                max_loss_jpy=1000.0,
+            ).run(snapshot_path=_snapshot(root))
+
+            payload = json.loads(output.read_text())
+            result = next(
+                item for item in payload["results"]
+                if item["lane_id"] == "range_trader:EUR_USD:LONG:RANGE_ROTATION"
+            )
+            metadata = result["intent"]["metadata"]
+            issue_by_code = {issue["code"]: issue for issue in result["risk_issues"]}
+
+            self.assertEqual(result["intent"]["units"], 1000)
+            self.assertEqual(metadata["loss_asymmetry_guard_loss_cap_jpy"], 50.0)
+            self.assertEqual(metadata["loss_asymmetry_guard_mode"], "TP_PROOF_COLLECTION_MIN_LOT")
+            self.assertFalse(metadata["loss_asymmetry_guard_relaxed"])
+            self.assertGreater(metadata["loss_asymmetry_guard_effective_max_loss_jpy"], 50.0)
+            self.assertLessEqual(metadata["loss_asymmetry_guard_effective_max_loss_jpy"], 1000.0)
+            self.assertTrue(metadata["positive_rotation_proof_collection_min_lot_sizing"])
+            self.assertEqual(metadata["positive_rotation_mode"], "TP_PROOF_COLLECTION_HARVEST")
+            self.assertTrue(metadata["positive_rotation_proof_collection_ready"])
+            self.assertNotIn("LOSS_BUDGET_TOO_THIN_FOR_MIN_LOT", issue_by_code)
+            self.assertNotIn("LOSS_ASYMMETRY_GUARD_EXCEEDED", issue_by_code)
+            self.assertNotIn(POSITIVE_ROTATION_LIVE_BLOCK_CODE, issue_by_code)
+
     def test_thin_exact_tp_collection_survives_stale_chart_bias_as_separate_blocker(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -6769,6 +6845,56 @@ class IntentGeneratorTest(unittest.TestCase):
         self.assertGreater(metadata["virtual_take_profit_reward_risk"], 1.0)
         self.assertIn("structural anchor missing", metadata["tp_target_reason"])
         self.assertIn("fresh_live_rr_floor", metadata["tp_target_reason"])
+
+    def test_attached_harvest_fallback_skip_reason_surfaces_when_spread_floor_exceeds_atr_cap(self) -> None:
+        from quant_rabbit.models import MarketContext, OrderIntent, OrderType, Quote, Side, TradeMethod
+        from quant_rabbit.strategy.intent_generator import _method_context_issues, _take_profit_execution_plan
+
+        tp, metadata = _take_profit_execution_plan(
+            pair="EUR_USD",
+            side=Side.SHORT,
+            method=TradeMethod.BREAKOUT_FAILURE,
+            order_type=OrderType.LIMIT,
+            quote=Quote(pair="EUR_USD", bid=1.16250, ask=1.16550),
+            entry=1.16400,
+            tp=1.15000,
+            sl=1.16900,
+            reward_risk=2.8,
+            execution_regime="UNCLEAR",
+            chart_context={"range_24h_sigma_multiple": 4.0},
+            pair_chart={"pair": "EUR_USD", "views": [{"granularity": "M5", "indicators": {"atr_pips": 6.0}}]},
+            atr_pips=6.0,
+        )
+
+        self.assertEqual(tp, 1.15)
+        self.assertEqual(metadata["tp_target_source"], "ATR_RR")
+        self.assertIn("attached HARVEST fallback skipped", metadata["tp_target_reason"])
+        self.assertIn("exceeds", metadata["tp_target_reason"])
+
+        intent = OrderIntent(
+            pair="EUR_USD",
+            side=Side.SHORT,
+            order_type=OrderType.LIMIT,
+            units=1000,
+            entry=1.16400,
+            tp=tp,
+            sl=1.16900,
+            thesis="fallback skip reason must be actionable",
+            market_context=MarketContext(
+                regime="UNCLEAR current; BREAKOUT_FAILURE campaign lane",
+                narrative="",
+                chart_story="",
+                method=TradeMethod.BREAKOUT_FAILURE,
+                invalidation="",
+            ),
+            metadata=metadata,
+        )
+        issue = next(
+            issue
+            for issue in _method_context_issues(intent)
+            if issue["code"] == "HARVEST_TP_STRUCTURE_MISSING"
+        )
+        self.assertIn("fallback skipped", issue["message"])
 
     def test_range_rotation_far_rail_uses_operating_harvest_floor_tp(self) -> None:
         from quant_rabbit.models import OrderType, Quote, Side, TradeMethod

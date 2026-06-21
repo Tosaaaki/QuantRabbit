@@ -5793,6 +5793,7 @@ POSITIVE_ROTATION_PROOF_COLLECTION_WARN_CODE = (
     "TP_PROOF_COLLECTION_HARVEST_UNDER_NEGATIVE_EXPECTANCY"
 )
 POSITIVE_ROTATION_FIREPOWER_BLOCK_CODE = "POSITIVE_ROTATION_DAILY_FIREPOWER_INSUFFICIENT"
+LOSS_ASYMMETRY_TP_PROOF_COLLECTION_MIN_LOT_MODE = "TP_PROOF_COLLECTION_MIN_LOT"
 # Standard normal 1.96 is the textbook 95% Wilson lower-bound confidence
 # constant. It is a statistical confidence convention, not a market parameter;
 # replace it with a named risk-policy input if the operator changes the desired
@@ -5900,6 +5901,75 @@ def _loss_asymmetry_sizing_plan(
         "capture_economics_source": guard.get("source"),
     }
     return effective, metadata
+
+
+def _loss_asymmetry_tp_proof_collection_min_lot_plan(
+    *,
+    metadata: dict[str, Any],
+    pair: str,
+    side: Side,
+    method: TradeMethod,
+    order_type: OrderType,
+    position_metadata: dict[str, Any],
+    entry: float,
+    sl: float,
+    snapshot: BrokerSnapshot,
+) -> tuple[float | None, dict[str, Any]]:
+    """Raise thin TP-proof collection to the broker lot floor when bounded.
+
+    A 5-19 trade exact TP sample is not "proved" enough to use the normal
+    TP_PROVEN_RELAXED cap. But if Wilson-stressed expectancy is positive and the
+    current loss-asymmetry cap cannot even fund 1000u, the stated proof
+    collection path is otherwise unreachable. This helper permits only the
+    minimum loss budget required for the production lot, and only while that
+    budget remains inside the normal equity-derived per-trade cap.
+    """
+
+    if str(metadata.get("loss_asymmetry_guard_mode") or "").upper() != "CAP_AVG_WIN":
+        return None, {}
+    evidence = _tp_proof_collection_evidence(
+        pair=pair,
+        side=side,
+        method=method,
+        order_type=order_type,
+        metadata=metadata,
+        position_metadata=position_metadata,
+    )
+    if evidence is None:
+        return None, {}
+    current_cap = _optional_float(metadata.get("loss_asymmetry_guard_effective_max_loss_jpy"))
+    normal_cap = _optional_float(metadata.get("loss_asymmetry_guard_base_max_loss_jpy"))
+    min_lot_loss = _min_lot_loss_budget_jpy(pair=pair, entry=entry, sl=sl, snapshot=snapshot)
+    if current_cap is None or normal_cap is None or min_lot_loss is None:
+        return None, {}
+    if min_lot_loss <= current_cap or min_lot_loss > normal_cap:
+        return None, {}
+    # Keep the published JPY cap concise while never rounding below the exact
+    # production-lot risk boundary.
+    effective = math.ceil(min_lot_loss * 10_000.0) / 10_000.0
+    tp_trades = int(_optional_float(metadata.get("capture_take_profit_trades")) or 0)
+    out = {
+        "loss_asymmetry_guard_mode": LOSS_ASYMMETRY_TP_PROOF_COLLECTION_MIN_LOT_MODE,
+        "loss_asymmetry_guard_relaxed": False,
+        "loss_asymmetry_guard_relaxation_reason": (
+            "exact non-market attached-TP HARVEST proof collection has positive "
+            "Wilson-stressed expectancy, but the average-winner cap cannot fund "
+            f"{MIN_PRODUCTION_LOT_UNITS}u; lift only to the minimum lot loss "
+            "budget inside the normal per-trade cap"
+        ),
+        "loss_asymmetry_guard_effective_max_loss_jpy": round(effective, 4),
+        "positive_rotation_proof_collection_min_lot_sizing": True,
+        "positive_rotation_proof_collection_min_lot_units": MIN_PRODUCTION_LOT_UNITS,
+        "positive_rotation_proof_collection_min_lot_loss_jpy": round(effective, 4),
+        "positive_rotation_proof_collection_original_cap_jpy": round(current_cap, 4),
+        "positive_rotation_proof_collection_normal_cap_jpy": round(normal_cap, 4),
+        "positive_rotation_proof_collection_sample_trades": tp_trades,
+        **evidence["confidence"],
+    }
+    if evidence["direction_bias_conflict"]:
+        out["positive_rotation_proof_collection_direction_bias_conflict_observed"] = True
+        out["positive_rotation_direction_bias"] = evidence["direction_bias"]
+    return effective, out
 
 
 def _loss_asymmetry_tp_relaxation(
@@ -6047,56 +6117,19 @@ def _tp_proof_collection_harvest_rotation_allowed(intent: OrderIntent) -> bool:
     """
 
     metadata = intent.metadata
-    if intent.order_type == OrderType.MARKET:
-        return False
-    if str(metadata.get("position_intent") or "").upper() == "HEDGE":
-        return False
     method = intent.market_context.method if intent.market_context is not None else None
-    direction_bias = _method_direction_bias(metadata, method)
-    direction_bias_conflict = (
-        direction_bias in {Side.LONG.value, Side.SHORT.value}
-        and direction_bias != intent.side.value
+    evidence = _tp_proof_collection_evidence(
+        pair=intent.pair,
+        side=intent.side,
+        method=method,
+        order_type=intent.order_type,
+        metadata=metadata,
+        position_metadata=metadata,
     )
-    exact_tp_scope = _capture_take_profit_scope_matches_intent(intent, metadata, method)
-    if direction_bias_conflict and not exact_tp_scope:
+    if evidence is None:
         return False
-    if metadata.get("attach_take_profit_on_fill") is not True:
-        return False
-    if str(metadata.get("tp_execution_mode") or "").upper() != "ATTACHED_TECHNICAL_TP":
-        return False
-    if str(metadata.get("tp_target_intent") or "").upper() != "HARVEST":
-        return False
-    if str(metadata.get("opportunity_mode") or "").upper() != "HARVEST":
-        return False
-    if str(metadata.get("loss_asymmetry_guard_mode") or "").upper() != "CAP_AVG_WIN":
-        return False
-    if metadata.get("loss_asymmetry_guard_relaxed") is True:
-        return False
-    if str(metadata.get("capture_take_profit_scope") or "").upper() != "PAIR_SIDE_METHOD":
-        return False
-    if not exact_tp_scope:
-        return False
+    metadata.update(evidence["confidence"])
     tp_trades = int(_optional_float(metadata.get("capture_take_profit_trades")) or 0)
-    if tp_trades < LOSS_ASYMMETRY_TP_PROOF_COLLECTION_MIN_EXIT_TRADES:
-        return False
-    if tp_trades >= LOSS_ASYMMETRY_TP_RELAX_MIN_EXIT_TRADES:
-        return False
-    tp_expectancy = _optional_float(metadata.get("capture_take_profit_expectancy_jpy"))
-    tp_avg_win = _optional_float(metadata.get("capture_take_profit_avg_win_jpy"))
-    if tp_expectancy is None or tp_expectancy <= 0 or tp_avg_win is None or tp_avg_win <= 0:
-        return False
-    tp_losses = _optional_float(metadata.get("capture_take_profit_losses"))
-    if tp_losses is None or tp_losses > 0:
-        return False
-    market_close_expectancy = _optional_float(metadata.get("capture_market_close_expectancy_jpy"))
-    if market_close_expectancy is None or market_close_expectancy >= 0:
-        return False
-    confidence = _positive_rotation_confidence_metrics(metadata)
-    if confidence is None:
-        return False
-    metadata.update(confidence)
-    if confidence["positive_rotation_pessimistic_expectancy_jpy"] <= 0:
-        return False
     metadata.update(
         {
             "positive_rotation_proof_collection_ready": True,
@@ -6113,11 +6146,11 @@ def _tp_proof_collection_harvest_rotation_allowed(intent: OrderIntent) -> bool:
             ),
         }
     )
-    if direction_bias_conflict:
+    if evidence["direction_bias_conflict"]:
         metadata.update(
             {
                 "positive_rotation_proof_collection_direction_bias_conflict_observed": True,
-                "positive_rotation_direction_bias": direction_bias,
+                "positive_rotation_direction_bias": evidence["direction_bias"],
                 "positive_rotation_direction_bias_override_basis": (
                     "PAIR_SIDE_METHOD TAKE_PROFIT_ORDER receipts match this "
                     "pair/side/method exactly; the negative-expectancy repair "
@@ -6135,16 +6168,99 @@ def _capture_take_profit_scope_matches_intent(
     metadata: dict[str, Any],
     method: TradeMethod | None,
 ) -> bool:
+    return _capture_take_profit_scope_matches_values(
+        pair=intent.pair,
+        side=intent.side,
+        method=method,
+        metadata=metadata,
+    )
+
+
+def _capture_take_profit_scope_matches_values(
+    *,
+    pair: str,
+    side: Side,
+    method: TradeMethod | None,
+    metadata: dict[str, Any],
+) -> bool:
     if str(metadata.get("capture_take_profit_scope") or "").upper() != "PAIR_SIDE_METHOD":
         return False
     method_value = str(getattr(method, "value", method) or "").upper()
     if not method_value:
         return False
     expected_key = (
-        f"{intent.pair}|{intent.side.value}|{method_value}|TAKE_PROFIT_ORDER"
+        f"{pair}|{side.value}|{method_value}|TAKE_PROFIT_ORDER"
     ).upper()
     scope_key = str(metadata.get("capture_take_profit_scope_key") or "").upper()
     return scope_key == expected_key
+
+
+def _tp_proof_collection_evidence(
+    *,
+    pair: str,
+    side: Side,
+    method: TradeMethod | None,
+    order_type: OrderType,
+    metadata: dict[str, Any],
+    position_metadata: dict[str, Any],
+) -> dict[str, Any] | None:
+    if order_type == OrderType.MARKET:
+        return None
+    if str(position_metadata.get("position_intent") or metadata.get("position_intent") or "").upper() == "HEDGE":
+        return None
+    direction_bias = _method_direction_bias(metadata, method)
+    direction_bias_conflict = (
+        direction_bias in {Side.LONG.value, Side.SHORT.value}
+        and direction_bias != side.value
+    )
+    exact_tp_scope = _capture_take_profit_scope_matches_values(
+        pair=pair,
+        side=side,
+        method=method,
+        metadata=metadata,
+    )
+    if direction_bias_conflict and not exact_tp_scope:
+        return None
+    if metadata.get("attach_take_profit_on_fill") is not True:
+        return None
+    if str(metadata.get("tp_execution_mode") or "").upper() != "ATTACHED_TECHNICAL_TP":
+        return None
+    if str(metadata.get("tp_target_intent") or "").upper() != "HARVEST":
+        return None
+    if str(metadata.get("opportunity_mode") or "").upper() != "HARVEST":
+        return None
+    mode = str(metadata.get("loss_asymmetry_guard_mode") or "").upper()
+    if mode not in {"CAP_AVG_WIN", LOSS_ASYMMETRY_TP_PROOF_COLLECTION_MIN_LOT_MODE}:
+        return None
+    if metadata.get("loss_asymmetry_guard_relaxed") is True:
+        return None
+    if str(metadata.get("capture_take_profit_scope") or "").upper() != "PAIR_SIDE_METHOD":
+        return None
+    if not exact_tp_scope:
+        return None
+    tp_trades = int(_optional_float(metadata.get("capture_take_profit_trades")) or 0)
+    if tp_trades < LOSS_ASYMMETRY_TP_PROOF_COLLECTION_MIN_EXIT_TRADES:
+        return None
+    if tp_trades >= LOSS_ASYMMETRY_TP_RELAX_MIN_EXIT_TRADES:
+        return None
+    tp_expectancy = _optional_float(metadata.get("capture_take_profit_expectancy_jpy"))
+    tp_avg_win = _optional_float(metadata.get("capture_take_profit_avg_win_jpy"))
+    if tp_expectancy is None or tp_expectancy <= 0 or tp_avg_win is None or tp_avg_win <= 0:
+        return None
+    tp_losses = _optional_float(metadata.get("capture_take_profit_losses"))
+    if tp_losses is None or tp_losses > 0:
+        return None
+    market_close_expectancy = _optional_float(metadata.get("capture_market_close_expectancy_jpy"))
+    if market_close_expectancy is None or market_close_expectancy >= 0:
+        return None
+    confidence = _positive_rotation_confidence_metrics(metadata)
+    if confidence is None or confidence["positive_rotation_pessimistic_expectancy_jpy"] <= 0:
+        return None
+    return {
+        "confidence": confidence,
+        "direction_bias": direction_bias,
+        "direction_bias_conflict": direction_bias_conflict,
+    }
 
 
 def _wilson_lower_bound(successes: int, trials: int, *, z: float = POSITIVE_ROTATION_CONFIDENCE_Z) -> float:
@@ -6427,6 +6543,20 @@ def _intent_from_lane(
         order_type=order_type,
         tp_execution_metadata=tp_execution_metadata,
     )
+    proof_collection_loss_cap, proof_collection_metadata = _loss_asymmetry_tp_proof_collection_min_lot_plan(
+        metadata={**loss_asymmetry_metadata, **tp_execution_metadata},
+        pair=pair,
+        side=side,
+        method=method,
+        order_type=order_type,
+        position_metadata=position_metadata,
+        entry=entry,
+        sl=sl,
+        snapshot=snapshot,
+    )
+    if proof_collection_loss_cap is not None:
+        effective_max_loss_jpy = proof_collection_loss_cap
+        loss_asymmetry_metadata.update(proof_collection_metadata)
     geometry_metadata = _geometry_metadata(
         pair,
         side,
@@ -7084,13 +7214,15 @@ def _method_context_issues(intent: OrderIntent) -> list[dict[str, str]]:
         and "ATR_RR" in tp_source
         and (hedge_recovery or (method == TradeMethod.BREAKOUT_FAILURE and harvest_tp_too_far))
     ):
+        tp_reason = str(metadata.get("tp_target_reason") or "").strip()
+        reason_suffix = f" TP plan: {tp_reason}" if tp_reason else ""
         issues.append(
             {
                 "code": "HARVEST_TP_STRUCTURE_MISSING",
                 "message": (
                     f"{intent.pair} {intent.side.value} {method.value if method else 'UNKNOWN'} needs a usable "
                     "nearby structural HARVEST TP; refusing to fall back to a distant ATR/RR target for a "
-                    "failed-break or recovery-hedge trade."
+                    f"failed-break or recovery-hedge trade.{reason_suffix}"
                 ),
                 "severity": "BLOCK",
             }
@@ -9645,6 +9777,8 @@ def _take_profit_execution_plan(
             effective_tp = fallback_tp
             target_source = "OPERATING_RANGE_HARVEST_FLOOR"
             target_reason = f"{target_reason}; {fallback_reason}" if target_reason else fallback_reason
+        elif fallback_reason:
+            target_reason = f"{target_reason}; {fallback_reason}" if target_reason else fallback_reason
     if (
         attach_tp
         and target_intent == "HARVEST"
@@ -9664,6 +9798,8 @@ def _take_profit_execution_plan(
         if fallback_tp is not None:
             effective_tp = fallback_tp
             target_source = "OPERATING_HARVEST_FLOOR"
+            target_reason = f"{target_reason}; {fallback_reason}" if target_reason else fallback_reason
+        elif fallback_reason:
             target_reason = f"{target_reason}; {fallback_reason}" if target_reason else fallback_reason
     forecast_tp, forecast_reason = _forecast_tp_candidate(
         pair=pair,
@@ -10752,6 +10888,23 @@ def _target_reward_risk(lane: dict[str, Any]) -> float:
 
 def _round_price(pair: str, value: float) -> float:
     return round(value, 3 if pair.endswith("_JPY") else 5)
+
+
+def _min_lot_loss_budget_jpy(
+    *,
+    pair: str,
+    entry: float,
+    sl: float,
+    snapshot: BrokerSnapshot,
+) -> float | None:
+    pip_factor = PIP_FACTORS[pair]
+    stop_pips = abs(entry - sl) * pip_factor
+    if stop_pips <= 0:
+        return None
+    quote_to_jpy = _quote_to_jpy(pair, snapshot)
+    if quote_to_jpy is None:
+        return None
+    return MIN_PRODUCTION_LOT_UNITS * stop_pips * quote_to_jpy / pip_factor
 
 
 def _risk_budgeted_units(
