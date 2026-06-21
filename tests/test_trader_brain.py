@@ -404,6 +404,76 @@ class TraderBrainTest(unittest.TestCase):
         self.assertEqual(assessment["raw_score_delta_before_recent_history_scale"], 8.0)
         self.assertEqual(assessment["recent_history_score_scale"], 0.0)
 
+    def test_oanda_universal_rotation_is_size_neutral_when_capture_economics_negative_without_firepower(self) -> None:
+        intent = {
+            "metadata": {
+                "forecast_direction": "DOWN",
+                "chart_direction_bias": "SHORT",
+                "m5_atr_pips": 5.0,
+                "session_bucket": "LONDON_NY_OVERLAP",
+                "tp_execution_mode": "ATTACHED_TECHNICAL_TP",
+                "tp_target_intent": "HARVEST",
+                "opportunity_mode": "HARVEST",
+                "capture_economics_status": "NEGATIVE_EXPECTANCY",
+                "loss_asymmetry_guard_mode": "TP_PROVEN_RELAXED",
+                "loss_asymmetry_guard_relaxed": True,
+            }
+        }
+        rationale: list[str] = []
+
+        score = _oanda_universal_rotation_precision_score(
+            intent=intent,
+            pair="EUR_USD",
+            direction="SHORT",
+            order_type="LIMIT",
+            method="PULLBACK_CONTINUATION",
+            entry=1.10000,
+            tp=1.09950,
+            sl=1.10070,
+            spread_pips=1.0,
+            rationale=rationale,
+        )
+
+        self.assertEqual(score, 0.0)
+        self.assertTrue(any("OANDA rank-only rotation edge is size-neutral" in item for item in rationale))
+        assessment = intent["metadata"]["oanda_universal_rotation_precision_assessment"]
+        self.assertEqual(assessment["raw_score_delta_before_capture_rotation_scale"], 8.0)
+        self.assertEqual(assessment["capture_rotation_score_scale"], 0.0)
+
+    def test_oanda_universal_rotation_scores_when_positive_rotation_firepower_is_proved(self) -> None:
+        intent = {
+            "metadata": {
+                "forecast_direction": "DOWN",
+                "chart_direction_bias": "SHORT",
+                "m5_atr_pips": 5.0,
+                "session_bucket": "LONDON_NY_OVERLAP",
+                "tp_execution_mode": "ATTACHED_TECHNICAL_TP",
+                "tp_target_intent": "HARVEST",
+                "opportunity_mode": "HARVEST",
+                "capture_economics_status": "NEGATIVE_EXPECTANCY",
+                "positive_rotation_live_ready": True,
+                "positive_rotation_minimum_floor_reachable": True,
+            }
+        }
+        rationale: list[str] = []
+
+        score = _oanda_universal_rotation_precision_score(
+            intent=intent,
+            pair="EUR_USD",
+            direction="SHORT",
+            order_type="LIMIT",
+            method="PULLBACK_CONTINUATION",
+            entry=1.10000,
+            tp=1.09950,
+            sl=1.10070,
+            spread_pips=1.0,
+            rationale=rationale,
+        )
+
+        self.assertEqual(score, 8.0)
+        assessment = intent["metadata"]["oanda_universal_rotation_precision_assessment"]
+        self.assertNotIn("capture_rotation_score_scale", assessment)
+
     def test_technical_rotation_scores_high_frequency_bucket_without_live_override(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
