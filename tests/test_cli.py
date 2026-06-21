@@ -225,6 +225,7 @@ class CliHelpTest(unittest.TestCase):
             intents = root / "intents.json"
             self_audit = root / "self_improvement.json"
             capture = root / "capture.json"
+            ledger = root / "execution_ledger.db"
             projection = root / "projection_ledger.jsonl"
             bidask = root / "bidask_rules.json"
             output = root / "acceptance.json"
@@ -300,6 +301,55 @@ class CliHelpTest(unittest.TestCase):
                     }
                 )
             )
+            with sqlite3.connect(ledger) as conn:
+                conn.execute(
+                    """
+                    CREATE TABLE execution_events (
+                        ts_utc TEXT,
+                        event_type TEXT,
+                        trade_id TEXT,
+                        order_id TEXT,
+                        lane_id TEXT,
+                        pair TEXT,
+                        side TEXT,
+                        realized_pl_jpy REAL,
+                        exit_reason TEXT
+                    )
+                    """
+                )
+                conn.executemany(
+                    """
+                    INSERT INTO execution_events (
+                        ts_utc, event_type, trade_id, order_id, lane_id, pair, side,
+                        realized_pl_jpy, exit_reason
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    [
+                        (
+                            "2026-06-21T00:00:00+00:00",
+                            "GATEWAY_TRADE_CLOSE_RECONCILED",
+                            "T-loss",
+                            "O-loss",
+                            "range_trader:EUR_USD:LONG:RANGE_ROTATION",
+                            "EUR_USD",
+                            "LONG",
+                            None,
+                            "BROKER_TRADE_CLOSE_TRADER_ENTRY_RECONCILED",
+                        ),
+                        (
+                            "2026-06-21T00:00:00+00:00",
+                            "TRADE_CLOSED",
+                            "T-loss",
+                            "O-loss",
+                            "range_trader:EUR_USD:LONG:RANGE_ROTATION",
+                            "EUR_USD",
+                            "LONG",
+                            -1234.5,
+                            "MARKET_ORDER_TRADE_CLOSE",
+                        ),
+                    ],
+                )
             bidask.write_text(
                 json.dumps(
                     {
@@ -357,6 +407,8 @@ class CliHelpTest(unittest.TestCase):
                         str(self_audit),
                         "--capture-economics",
                         str(capture),
+                        "--execution-ledger-db",
+                        str(ledger),
                         "--projection-ledger",
                         str(projection),
                         "--bidask-rules",
@@ -377,6 +429,7 @@ class CliHelpTest(unittest.TestCase):
         self.assertIn("SELF_IMPROVEMENT_P0_PRESENT", codes)
         self.assertIn("NEGATIVE_EXPECTANCY_ACTIVE", codes)
         self.assertIn("MARKET_CLOSE_LEAK_DOMINATES_TP_EDGE", codes)
+        self.assertIn("RECENT_GATEWAY_LOSS_MARKET_CLOSE_LEAK", codes)
         self.assertIn("PROJECTION_HEADLINE_PRECISION_ECONOMIC_GAP", codes)
         self.assertIn("BIDASK_CONTRARIAN_EDGE_NOT_DAILY_STABLE", codes)
         self.assertIn("NO_LIVE_READY_TARGET_COVERAGE", codes)
@@ -390,6 +443,7 @@ class CliHelpTest(unittest.TestCase):
             intents = root / "intents.json"
             self_audit = root / "self_improvement.json"
             capture = root / "capture.json"
+            ledger = root / "execution_ledger.db"
             projection = root / "projection_ledger.jsonl"
             bidask = root / "bidask_rules.json"
             output = root / "acceptance.json"
@@ -428,6 +482,22 @@ class CliHelpTest(unittest.TestCase):
                 )
             )
             bidask.write_text(json.dumps({"contrarian_edge_rules": []}))
+            with sqlite3.connect(ledger) as conn:
+                conn.execute(
+                    """
+                    CREATE TABLE execution_events (
+                        ts_utc TEXT,
+                        event_type TEXT,
+                        trade_id TEXT,
+                        order_id TEXT,
+                        lane_id TEXT,
+                        pair TEXT,
+                        side TEXT,
+                        realized_pl_jpy REAL,
+                        exit_reason TEXT
+                    )
+                    """
+                )
             projection.write_text("")
             hit_rates = {
                 "session_expansion_london": {
@@ -456,6 +526,8 @@ class CliHelpTest(unittest.TestCase):
                         str(self_audit),
                         "--capture-economics",
                         str(capture),
+                        "--execution-ledger-db",
+                        str(ledger),
                         "--projection-ledger",
                         str(projection),
                         "--bidask-rules",

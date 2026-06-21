@@ -2525,14 +2525,17 @@ class DecisionVerifier:
                 still_valid.append(
                     f"{tid} ({pair} {side})"
                 )
-            elif not standing_authorized:
-                unrealized_pl_jpy = _optional_float(pos.get("unrealized_pl_jpy"))
-                if (
-                    profitability_p0_blocker is not None
-                    and (unrealized_pl_jpy is None or unrealized_pl_jpy <= 0)
-                    and not cites_profitability_p0
-                ):
-                    needs_profitability_p0_context.append(f"{tid} ({pair} {side})")
+                continue
+
+            unrealized_pl_jpy = _optional_float(pos.get("unrealized_pl_jpy"))
+            if (
+                profitability_p0_blocker is not None
+                and (unrealized_pl_jpy is None or unrealized_pl_jpy <= 0)
+                and not cites_profitability_p0
+            ):
+                needs_profitability_p0_context.append(f"{tid} ({pair} {side})")
+
+            if not standing_authorized:
                 sidecar_conflict = _same_direction_hold_support_conflict(
                     self.packet,
                     trade_id=str(tid),
@@ -2602,7 +2605,7 @@ class DecisionVerifier:
                 VerificationIssue(
                     "CLOSE_PROFITABILITY_P0_CONTEXT_REQUIRED",
                     "CLOSE rejected: profitability discipline P0 is active"
-                    f"{suffix}, and this underwater CLOSE relies on softer Gate A evidence. "
+                    f"{suffix}, and this underwater CLOSE would realize another loss-side market close. "
                     "The receipt must cite self_improvement:audit, self_improvement:profitability, "
                     "or self_improvement:finding:PERSISTENT_PROFITABILITY_DISCIPLINE_BLOCKED and explain why "
                     "this loss-side market close repairs rather than repeats the MARKET_ORDER_TRADE_CLOSE leak. "

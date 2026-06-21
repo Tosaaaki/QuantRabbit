@@ -2662,6 +2662,7 @@ def main(argv: list[str] | None = None) -> int:
     p_profit_accept.add_argument("--target-state", type=Path, default=DEFAULT_DAILY_TARGET_STATE)
     p_profit_accept.add_argument("--self-improvement-audit", type=Path, default=DEFAULT_SELF_IMPROVEMENT_AUDIT)
     p_profit_accept.add_argument("--capture-economics", type=Path, default=DEFAULT_CAPTURE_ECONOMICS)
+    p_profit_accept.add_argument("--execution-ledger-db", type=Path, default=DEFAULT_EXECUTION_LEDGER_DB)
     p_profit_accept.add_argument("--projection-ledger", type=Path, default=DEFAULT_PROJECTION_LEDGER)
     p_profit_accept.add_argument("--bidask-rules", type=Path, default=None)
     p_profit_accept.add_argument("--output", type=Path, default=DEFAULT_PROFITABILITY_ACCEPTANCE)
@@ -4865,6 +4866,7 @@ def main(argv: list[str] | None = None) -> int:
                 target_state_path=args.target_state,
                 self_improvement_path=args.self_improvement_audit,
                 capture_economics_path=args.capture_economics,
+                execution_ledger_path=args.execution_ledger_db,
                 projection_ledger_path=args.projection_ledger,
                 bidask_rules_path=args.bidask_rules or DEFAULT_BIDASK_REPLAY_RULES_PATH,
             )

@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import json
+import sqlite3
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -14,6 +15,7 @@ from quant_rabbit.forecast_precision import (
 from quant_rabbit.paths import (
     DEFAULT_CAPTURE_ECONOMICS,
     DEFAULT_DAILY_TARGET_STATE,
+    DEFAULT_EXECUTION_LEDGER_DB,
     DEFAULT_ORDER_INTENTS,
     DEFAULT_PROFITABILITY_ACCEPTANCE,
     DEFAULT_PROFITABILITY_ACCEPTANCE_REPORT,
@@ -30,6 +32,11 @@ from quant_rabbit.strategy.projection_ledger import compute_hit_rates
 STATUS_PASSED = "PROFITABILITY_ACCEPTANCE_PASSED"
 STATUS_ACTION_REQUIRED = "PROFITABILITY_ACCEPTANCE_ACTION_REQUIRED"
 STATUS_BLOCKED = "PROFITABILITY_ACCEPTANCE_BLOCKED"
+
+# Acceptance recency window, not a market-risk threshold: one trading week is
+# long enough to catch repeated live close leakage while allowing old repaired
+# incidents to age out after a clean operating window.
+LOSS_CLOSE_LEAK_LOOKBACK_DAYS = 7
 
 
 @dataclass(frozen=True)
@@ -61,6 +68,7 @@ class ProfitabilityAcceptanceAuditor:
         target_state_path: Path = DEFAULT_DAILY_TARGET_STATE,
         self_improvement_path: Path = DEFAULT_SELF_IMPROVEMENT_AUDIT,
         capture_economics_path: Path = DEFAULT_CAPTURE_ECONOMICS,
+        execution_ledger_path: Path = DEFAULT_EXECUTION_LEDGER_DB,
         projection_ledger_path: Path = DEFAULT_PROJECTION_LEDGER,
         bidask_rules_path: Path = DEFAULT_BIDASK_REPLAY_RULES_PATH,
     ) -> ProfitabilityAcceptanceSummary:
@@ -77,11 +85,13 @@ class ProfitabilityAcceptanceAuditor:
         target_metrics = _target_metrics(target)
         self_metrics, self_findings = _self_improvement_findings(self_improvement)
         capture_metrics, capture_findings = _capture_economics_findings(capture)
+        ledger_metrics, ledger_findings = _execution_ledger_close_findings(execution_ledger_path)
         projection_metrics, projection_findings = _projection_precision_findings(projection_ledger_path)
         bidask_metrics, bidask_findings = _bidask_rule_findings(bidask_rules, bidask_rules_path)
 
         findings.extend(self_findings)
         findings.extend(capture_findings)
+        findings.extend(ledger_findings)
         findings.extend(projection_findings)
         findings.extend(bidask_findings)
 
@@ -123,6 +133,7 @@ class ProfitabilityAcceptanceAuditor:
             "target": target_metrics,
             "self_improvement": self_metrics,
             "capture_economics": capture_metrics,
+            "execution_ledger_close_leak": ledger_metrics,
             "projection_precision": projection_metrics,
             "bidask_replay_rules": bidask_metrics,
             "finding_counts": {
@@ -343,6 +354,146 @@ def _capture_economics_findings(payload: dict[str, Any]) -> tuple[dict[str, Any]
     return metrics, findings
 
 
+def _execution_ledger_close_findings(path: Path) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    metrics: dict[str, Any] = {
+        "path": str(path),
+        "ledger_exists": path.exists(),
+        "lookback_days": LOSS_CLOSE_LEAK_LOOKBACK_DAYS,
+        "gateway_market_closes": 0,
+        "recent_gateway_market_closes": 0,
+        "recent_loss_closes": 0,
+        "recent_loss_net_jpy": 0.0,
+        "latest_gateway_market_close_ts_utc": None,
+        "latest_loss_close_ts_utc": None,
+        "recent_loss_examples": [],
+    }
+    if not path.exists():
+        return metrics, []
+    try:
+        with sqlite3.connect(path) as conn:
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute(
+                """
+                SELECT
+                    g.ts_utc AS gateway_ts_utc,
+                    g.trade_id AS trade_id,
+                    g.order_id AS order_id,
+                    COALESCE(g.lane_id, c.lane_id) AS lane_id,
+                    COALESCE(g.pair, c.pair) AS pair,
+                    COALESCE(g.side, c.side) AS side,
+                    c.ts_utc AS close_ts_utc,
+                    c.realized_pl_jpy AS realized_pl_jpy,
+                    c.exit_reason AS exit_reason
+                FROM execution_events g
+                INNER JOIN execution_events c
+                  ON c.event_type = 'TRADE_CLOSED'
+                 AND c.trade_id = g.trade_id
+                 AND (
+                     COALESCE(g.order_id, '') = ''
+                     OR COALESCE(c.order_id, '') = ''
+                     OR c.order_id = g.order_id
+                 )
+                WHERE g.event_type = 'GATEWAY_TRADE_CLOSE_RECONCILED'
+                  AND c.exit_reason = 'MARKET_ORDER_TRADE_CLOSE'
+                ORDER BY g.ts_utc ASC
+                """
+            ).fetchall()
+    except sqlite3.Error as exc:
+        return {
+            **metrics,
+            "ledger_read_error": f"{type(exc).__name__}: {exc}",
+        }, [
+            _finding(
+                priority="P1",
+                code="EXECUTION_LEDGER_CLOSE_LEAK_UNREADABLE",
+                message="execution ledger could not be scanned for gateway market-close leakage",
+                next_action=(
+                    "Repair execution_ledger.db readability before treating profitability acceptance as proven."
+                ),
+                evidence={"path": str(path), "error": f"{type(exc).__name__}: {exc}"},
+            )
+        ]
+
+    parsed: list[dict[str, Any]] = []
+    latest_ts: datetime | None = None
+    for row in rows:
+        ts = _parse_utc(row["gateway_ts_utc"]) or _parse_utc(row["close_ts_utc"])
+        if ts is None:
+            continue
+        latest_ts = ts if latest_ts is None or ts > latest_ts else latest_ts
+        parsed.append(
+            {
+                "ts": ts,
+                "ts_utc": row["gateway_ts_utc"] or row["close_ts_utc"],
+                "trade_id": row["trade_id"],
+                "order_id": row["order_id"],
+                "lane_id": row["lane_id"],
+                "pair": row["pair"],
+                "side": row["side"],
+                "realized_pl_jpy": _optional_float(row["realized_pl_jpy"]),
+                "exit_reason": row["exit_reason"],
+            }
+        )
+    metrics["gateway_market_closes"] = len(parsed)
+    if latest_ts is not None:
+        metrics["latest_gateway_market_close_ts_utc"] = latest_ts.isoformat()
+    if not parsed or latest_ts is None:
+        return metrics, []
+
+    cutoff = latest_ts - timedelta(days=LOSS_CLOSE_LEAK_LOOKBACK_DAYS)
+    recent = [row for row in parsed if row["ts"] >= cutoff]
+    recent_losses = [
+        row for row in recent if (_optional_float(row.get("realized_pl_jpy")) or 0.0) < 0.0
+    ]
+    metrics["recent_gateway_market_closes"] = len(recent)
+    metrics["recent_loss_closes"] = len(recent_losses)
+    metrics["recent_loss_net_jpy"] = round(
+        sum(float(row.get("realized_pl_jpy") or 0.0) for row in recent_losses),
+        4,
+    )
+    if recent_losses:
+        latest_loss = max(recent_losses, key=lambda row: row["ts"])
+        metrics["latest_loss_close_ts_utc"] = latest_loss["ts"].isoformat()
+    metrics["recent_loss_examples"] = [
+        {
+            "ts_utc": row.get("ts_utc"),
+            "trade_id": row.get("trade_id"),
+            "order_id": row.get("order_id"),
+            "pair": row.get("pair"),
+            "side": row.get("side"),
+            "lane_id": row.get("lane_id"),
+            "realized_pl_jpy": row.get("realized_pl_jpy"),
+        }
+        for row in sorted(
+            recent_losses,
+            key=lambda row: float(row.get("realized_pl_jpy") or 0.0),
+        )[:5]
+    ]
+    if not recent_losses:
+        return metrics, []
+    return metrics, [
+        _finding(
+            priority="P0",
+            code="RECENT_GATEWAY_LOSS_MARKET_CLOSE_LEAK",
+            message=(
+                f"{len(recent_losses)} loss-side gateway MARKET_ORDER_TRADE_CLOSE event(s) "
+                f"remain inside the {LOSS_CLOSE_LEAK_LOOKBACK_DAYS}-day acceptance window"
+            ),
+            next_action=(
+                "Keep profitability acceptance red until a full recent window shows no new loss-side "
+                "gateway market-close leakage, or the close path is converted to proved structural "
+                "loss-cut evidence with TP/hold counterfactuals audited."
+            ),
+            evidence={
+                "recent_loss_closes": metrics["recent_loss_closes"],
+                "recent_loss_net_jpy": metrics["recent_loss_net_jpy"],
+                "latest_loss_close_ts_utc": metrics["latest_loss_close_ts_utc"],
+                "examples": metrics["recent_loss_examples"],
+            },
+        )
+    ]
+
+
 def _projection_precision_findings(path: Path) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     if not path.exists():
         return {
@@ -484,6 +635,16 @@ def _optional_float(value: Any) -> float | None:
     try:
         return float(value) if value is not None else None
     except (TypeError, ValueError):
+        return None
+
+
+def _parse_utc(value: Any) -> datetime | None:
+    text = str(value or "").strip()
+    if not text:
+        return None
+    try:
+        return datetime.fromisoformat(text.replace("Z", "+00:00")).astimezone(timezone.utc)
+    except ValueError:
         return None
 
 

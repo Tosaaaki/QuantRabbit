@@ -5579,6 +5579,28 @@ class CloseDisciplineTest(unittest.TestCase):
             else:
                 _os.environ["QR_OPERATOR_CLOSE_OVERRIDE"] = prior
 
+    def test_hard_loss_close_under_profitability_p0_must_cite_self_improvement_context(self) -> None:
+        # Hard Gate A can still close a broken thesis, but while the live
+        # account has an active profitability P0, another underwater market
+        # close must explicitly cite that P0 and explain why it is repair
+        # rather than more MARKET_ORDER_TRADE_CLOSE leakage.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _close_fixtures(root, position_side="SHORT", m15_dir="UP", h4_dir="UP")
+            files["self_improvement_audit"].write_text(json.dumps(_self_improvement_profitability_p0()))
+            decision = _close_decision(trade_ids=["555"])
+            decision["evidence_refs"].append("chart:EUR_USD:H4")
+            brain = _brain(root, files, decision)
+
+            summary = brain.run(snapshot_path=files["snapshot"])
+
+            self.assertEqual(summary.status, "REJECTED", msg=summary)
+            payload = json.loads((root / "gpt_decision.json").read_text())
+            codes = {issue["code"] for issue in payload["verification_issues"]}
+            self.assertIn("CLOSE_PROFITABILITY_P0_CONTEXT_REQUIRED", codes)
+            self.assertNotIn("CLOSE_OPERATOR_AUTH_REQUIRED", codes)
+            self.assertNotIn("CLOSE_THESIS_STILL_VALID", codes)
+
     def test_close_rejected_when_soft_sidecar_conflicts_with_same_direction_context_asset_matrix(self) -> None:
         # A soft position_thesis review plus operator Gate B is still not enough
         # when the directional market stack still supports the open side. This
