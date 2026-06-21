@@ -505,6 +505,7 @@ from quant_rabbit.forecast_precision import (
     BIDASK_REPLAY_CONTRARIAN_SCORE_BONUS,
     BIDASK_REPLAY_EDGE_SCORE_BONUS,
     BIDASK_REPLAY_NEGATIVE_SCORE_PENALTY,
+    BIDASK_REPLAY_RANK_ONLY_SCORE_BONUS,
     TECHNICAL_HARVEST_PRECISION_EXTRA_MATCH_BONUS,
     TECHNICAL_HARVEST_PRECISION_SCORE_BONUS,
     TECHNICAL_HARVEST_ROTATION_EXTRA_MATCH_BONUS,
@@ -3522,17 +3523,38 @@ def _bidask_replay_precision_score(
     metadata["bidask_replay_precision_assessment"] = assessment
     score_delta = _optional_float(assessment.get("score_delta")) or 0.0
     if supported and not blocking:
-        best = max(
-            supported,
-            key=lambda item: (
-                float(item.get("optimized_profit_factor") or 0.0),
-                float(item.get("avg_final_pips") or 0.0),
-                int(item.get("samples") or 0),
-                int(bool(item.get("horizon_bucket"))) + int(bool(item.get("confidence_bucket"))),
-            ),
+        primary_live = assessment.get("primary_support")
+        primary_rank = assessment.get("primary_rank_support")
+        best = (
+            primary_live
+            if isinstance(primary_live, dict)
+            else primary_rank
+            if isinstance(primary_rank, dict)
+            else max(
+                supported,
+                key=lambda item: (
+                    float(item.get("optimized_profit_factor") or 0.0),
+                    float(item.get("avg_final_pips") or 0.0),
+                    int(item.get("samples") or 0),
+                    int(bool(item.get("horizon_bucket"))) + int(bool(item.get("confidence_bucket"))),
+                ),
+            )
         )
-        label = "bid/ask replay contrarian edge" if best.get("contrarian_edge") else "bid/ask replay edge"
-        bonus = BIDASK_REPLAY_CONTRARIAN_SCORE_BONUS if best.get("contrarian_edge") else BIDASK_REPLAY_EDGE_SCORE_BONUS
+        live_grade = isinstance(primary_live, dict) and best == primary_live
+        if live_grade:
+            label = "bid/ask replay contrarian edge" if best.get("contrarian_edge") else "bid/ask replay edge"
+            bonus = (
+                BIDASK_REPLAY_CONTRARIAN_SCORE_BONUS
+                if best.get("contrarian_edge")
+                else BIDASK_REPLAY_EDGE_SCORE_BONUS
+            )
+        else:
+            label = (
+                "bid/ask replay rank-only contrarian edge"
+                if best.get("contrarian_edge")
+                else "bid/ask replay rank-only edge"
+            )
+            bonus = BIDASK_REPLAY_RANK_ONLY_SCORE_BONUS
         fade = (
             f" fade={best.get('faded_direction')} trade={best.get('direction')}"
             if best.get("contrarian_edge")

@@ -4711,7 +4711,7 @@ class IntentGeneratorTest(unittest.TestCase):
             "EUR_USD_DOWN_M5_EMA_SLOPE5_OPPOSED_TP5_SL4",
         )
 
-    def test_bidask_replay_support_allows_eurusd_down_harvest_but_blocks_audjpy_up(self) -> None:
+    def test_bidask_replay_rank_only_does_not_clear_live_forecast_gates(self) -> None:
         from quant_rabbit.models import MarketContext, OrderIntent, OrderType, Side, TradeMethod
         from quant_rabbit.strategy.intent_generator import _forecast_live_readiness_issue
 
@@ -4748,18 +4748,14 @@ class IntentGeneratorTest(unittest.TestCase):
             metadata=support_metadata,
         )
 
-        self.assertIsNone(
-            _forecast_live_readiness_issue(
-                support_intent,
-                support_metadata,
-                TradeMethod.BREAKOUT_FAILURE,
-            )
+        support_blocked = _forecast_live_readiness_issue(
+            support_intent,
+            support_metadata,
+            TradeMethod.BREAKOUT_FAILURE,
         )
-        self.assertTrue(support_metadata["bidask_replay_precision_live_ready"])
-        self.assertEqual(
-            support_metadata["bidask_replay_precision_support"]["name"],
-            "EUR_USD_DOWN_S5_BIDASK_HARVEST_TP5_SL7",
-        )
+        self.assertEqual(support_blocked["code"], "FORECAST_CONFIDENCE_REQUIRED_FOR_LIVE")
+        self.assertNotIn("bidask_replay_precision_live_ready", support_metadata)
+        self.assertNotIn("bidask_replay_precision_support", support_metadata)
 
         block_metadata = {
             "forecast_direction": "UP",
@@ -4837,11 +4833,8 @@ class IntentGeneratorTest(unittest.TestCase):
                 TradeMethod.BREAKOUT_FAILURE,
             )
         )
-        self.assertTrue(contrarian_metadata["bidask_replay_precision_live_ready"])
-        self.assertEqual(
-            contrarian_metadata["bidask_replay_precision_support"]["name"],
-            "AUD_JPY_UP_H31_60m_C0p75_0p90_FADE_TO_DOWN_S5_BIDASK_CONTRARIAN_HARVEST_TP10_SL7",
-        )
+        self.assertNotIn("bidask_replay_precision_live_ready", contrarian_metadata)
+        self.assertNotIn("bidask_replay_precision_support", contrarian_metadata)
 
     def test_directional_forecast_weak_hit_rate_blocks_live_readiness(self) -> None:
         from quant_rabbit.models import MarketContext, OrderIntent, OrderType, Side, TradeMethod

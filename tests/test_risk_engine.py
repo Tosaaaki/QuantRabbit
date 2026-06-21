@@ -600,7 +600,7 @@ class RiskEngineTest(unittest.TestCase):
             "EUR_USD_DOWN_M5_EMA_SLOPE5_OPPOSED_TP5_SL4",
         )
 
-    def test_bidask_replay_support_and_negative_bucket_apply_at_live_send(self) -> None:
+    def test_bidask_replay_rank_only_and_negative_bucket_apply_at_live_send(self) -> None:
         support_intent = OrderIntent(
             pair="EUR_USD",
             side=Side.SHORT,
@@ -652,13 +652,10 @@ class RiskEngineTest(unittest.TestCase):
         )
 
         support_codes = {issue.code for issue in support_decision.issues}
-        self.assertTrue(support_decision.allowed, support_decision.block_reasons)
-        self.assertNotIn("FORECAST_CONFIDENCE_REQUIRED_FOR_LIVE", support_codes)
-        self.assertTrue(support_intent.metadata["bidask_replay_precision_live_ready"])
-        self.assertEqual(
-            support_intent.metadata["bidask_replay_precision_support"]["name"],
-            "EUR_USD_DOWN_S5_BIDASK_HARVEST_TP5_SL7",
-        )
+        self.assertFalse(support_decision.allowed)
+        self.assertIn("FORECAST_CONFIDENCE_REQUIRED_FOR_LIVE", support_codes)
+        self.assertNotIn("bidask_replay_precision_live_ready", support_intent.metadata)
+        self.assertNotIn("bidask_replay_precision_support", support_intent.metadata)
 
         block_intent = OrderIntent(
             pair="AUD_JPY",
@@ -749,13 +746,10 @@ class RiskEngineTest(unittest.TestCase):
         )
 
         contrarian_codes = {issue.code for issue in contrarian_decision.issues}
-        self.assertTrue(contrarian_decision.allowed, contrarian_decision.block_reasons)
-        self.assertNotIn("FORECAST_DIRECTION_CONFLICT", contrarian_codes)
-        self.assertTrue(contrarian_intent.metadata["bidask_replay_precision_live_ready"])
-        self.assertEqual(
-            contrarian_intent.metadata["bidask_replay_precision_support"]["name"],
-            "AUD_JPY_UP_H31_60m_C0p75_0p90_FADE_TO_DOWN_S5_BIDASK_CONTRARIAN_HARVEST_TP10_SL7",
-        )
+        self.assertFalse(contrarian_decision.allowed)
+        self.assertIn("FORECAST_DIRECTIONAL_HIT_RATE_WEAK_FOR_LIVE", contrarian_codes)
+        self.assertNotIn("bidask_replay_precision_live_ready", contrarian_intent.metadata)
+        self.assertNotIn("bidask_replay_precision_support", contrarian_intent.metadata)
 
     def test_technical_harvest_rotation_does_not_clear_low_confidence_live_send(self) -> None:
         intent = OrderIntent(

@@ -32,6 +32,7 @@ TECHNICAL_HARVEST_ROTATION_EXTRA_MATCH_BONUS = 3.0
 TECHNICAL_HARVEST_NEGATIVE_SCORE_PENALTY = 35.0
 BIDASK_REPLAY_EDGE_SCORE_BONUS = 18.0
 BIDASK_REPLAY_CONTRARIAN_SCORE_BONUS = 18.0
+BIDASK_REPLAY_RANK_ONLY_SCORE_BONUS = 6.0
 BIDASK_REPLAY_NEGATIVE_SCORE_PENALTY = 70.0
 BIDASK_REPLAY_RULES_ENV = "QR_BIDASK_REPLAY_PRECISION_RULES"
 DEFAULT_BIDASK_REPLAY_RULES_PATH = Path(__file__).with_name("bidask_replay_precision_rules.json")
@@ -977,13 +978,32 @@ def bidask_replay_precision_assessment(
     blocking_negative_matches = [
         item for item in negative_matches if bool(item.get("blocks_live_support"))
     ]
-    primary_support = None
     supported_matches = [*positive_supports, *contrarian_supports]
-    if supported_matches and not blocking_negative_matches:
+    live_supported_matches = [
+        item for item in supported_matches
+        if _bidask_replay_rule_is_daily_stable(item)
+    ]
+    rank_only_supports = [
+        item for item in supported_matches
+        if item not in live_supported_matches
+    ]
+    primary_support = None
+    primary_rank_support = None
+    if live_supported_matches and not blocking_negative_matches:
         primary_support = max(
+            live_supported_matches,
+            key=lambda item: (
+                float(item.get("optimized_profit_factor") or 0.0),
+                float(item.get("avg_final_pips") or 0.0),
+                int(item.get("samples") or 0),
+                int(bool(item.get("horizon_bucket"))) + int(bool(item.get("confidence_bucket"))),
+            ),
+        )
+    if supported_matches and not blocking_negative_matches:
+        primary_rank_support = max(
             supported_matches,
             key=lambda item: (
-                int(item.get("daily_stability_status") == "DAILY_STABLE"),
+                int(_bidask_replay_rule_is_daily_stable(item)),
                 float(item.get("optimized_profit_factor") or 0.0),
                 float(item.get("avg_final_pips") or 0.0),
                 int(item.get("samples") or 0),
@@ -991,20 +1011,25 @@ def bidask_replay_precision_assessment(
             ),
         )
     score_delta = 0.0
-    if supported_matches and not blocking_negative_matches:
+    if live_supported_matches and not blocking_negative_matches:
         primary_is_contrarian = bool(primary_support and primary_support.get("contrarian_edge"))
         score_delta += (
             BIDASK_REPLAY_CONTRARIAN_SCORE_BONUS
             if primary_is_contrarian
             else BIDASK_REPLAY_EDGE_SCORE_BONUS
         )
+    elif supported_matches and not blocking_negative_matches:
+        score_delta += BIDASK_REPLAY_RANK_ONLY_SCORE_BONUS
     if negative_matches:
         score_delta -= len(negative_matches) * BIDASK_REPLAY_NEGATIVE_SCORE_PENALTY
     return {
         "eligible_shape": bool(supported_matches or negative_matches),
         "primary_support": primary_support,
+        "primary_rank_support": primary_rank_support,
         "positive_supports": positive_supports,
         "contrarian_supports": contrarian_supports,
+        "live_supported_matches": live_supported_matches,
+        "rank_only_supports": rank_only_supports,
         "negative_matches": negative_matches,
         "blocking_negative_matches": blocking_negative_matches,
         "rule_source": rule_source,
@@ -1016,13 +1041,28 @@ def _empty_bidask_replay_assessment() -> dict[str, Any]:
     return {
         "eligible_shape": False,
         "primary_support": None,
+        "primary_rank_support": None,
         "positive_supports": [],
         "contrarian_supports": [],
+        "live_supported_matches": [],
+        "rank_only_supports": [],
         "negative_matches": [],
         "blocking_negative_matches": [],
         "rule_source": None,
         "score_delta": 0.0,
     }
+
+
+def _bidask_replay_rule_is_daily_stable(rule: dict[str, Any]) -> bool:
+    """Only daily-stable replay evidence can waive forecast live gates.
+
+    Multi-month validation showed profitable-looking S5 replay buckets can be
+    dominated by one or two days. Those buckets are useful ranking evidence, but
+    they are not a repeatable high-turnover permission source until the audit
+    marks them DAILY_STABLE.
+    """
+
+    return str(rule.get("daily_stability_status") or "").upper() == "DAILY_STABLE"
 
 
 def _bidask_replay_rule_sets(

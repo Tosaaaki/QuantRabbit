@@ -86,7 +86,7 @@ class ForecastPrecisionConfluenceTest(unittest.TestCase):
         self.assertEqual(assessment["score_delta"], 18.0)
         self.assertEqual(assessment["rule_source"]["generated_from"], "unit-test")
 
-    def test_bidask_replay_supports_eurusd_down_harvest_shape(self) -> None:
+    def test_bidask_replay_keeps_non_stable_eurusd_edge_rank_only(self) -> None:
         metadata = {
             "forecast_direction": "DOWN",
             "chart_direction_bias": "SHORT",
@@ -106,14 +106,16 @@ class ForecastPrecisionConfluenceTest(unittest.TestCase):
             stop_loss=1.17400,
         )
 
+        self.assertIsNone(assessment["primary_support"])
         self.assertEqual(
-            assessment["primary_support"]["name"],
+            assessment["primary_rank_support"]["name"],
             "EUR_USD_DOWN_S5_BIDASK_HARVEST_TP5_SL7",
         )
-        self.assertEqual(assessment["score_delta"], 18.0)
-        self.assertEqual(assessment["primary_support"]["current_target_pips"], 5.0)
-        self.assertEqual(assessment["primary_support"]["current_stop_pips"], 7.0)
-        self.assertEqual(
+        self.assertEqual(assessment["score_delta"], 6.0)
+        self.assertEqual(assessment["primary_rank_support"]["current_target_pips"], 5.0)
+        self.assertEqual(assessment["primary_rank_support"]["current_stop_pips"], 7.0)
+        self.assertEqual(assessment["primary_rank_support"]["optimized_profit_factor"], 3.3399)
+        self.assertIsNone(
             bidask_replay_precision_support(
                 metadata,
                 pair="EUR_USD",
@@ -123,8 +125,7 @@ class ForecastPrecisionConfluenceTest(unittest.TestCase):
                 entry=1.17330,
                 take_profit=1.17280,
                 stop_loss=1.17400,
-            )["optimized_profit_factor"],
-            3.3399,
+            )
         )
 
     def test_bidask_replay_contrarian_support_fades_losing_forecast_bucket(self) -> None:
@@ -168,6 +169,10 @@ class ForecastPrecisionConfluenceTest(unittest.TestCase):
                                 "optimized_avg_realized_pips": 2.4,
                                 "optimized_win_rate": 0.70,
                                 "optimized_profit_factor": 2.5,
+                                "daily_stability_status": "DAILY_STABLE",
+                                "active_days": 4,
+                                "max_daily_sample_share": 0.40,
+                                "positive_day_rate": 0.75,
                                 "min_target_pips": 4.8,
                                 "max_target_pips": 5.5,
                                 "max_stop_pips": 7.2,

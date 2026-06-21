@@ -283,9 +283,9 @@ class TraderBrainTest(unittest.TestCase):
             contrarian_score = next(item for item in decision.scores if item.lane_id.endswith(":contrarian"))
             self.assertEqual(good_score.action, ACTION_SEND_ENTRY)
             self.assertEqual(bad_score.action, ACTION_NO_TRADE)
-            self.assertTrue(any("bid/ask replay edge +18.0" in item for item in good_score.rationale))
+            self.assertTrue(any("bid/ask replay rank-only edge +6.0" in item for item in good_score.rationale))
             self.assertTrue(
-                any("bid/ask replay contrarian edge +18.0" in item for item in contrarian_score.rationale)
+                any("bid/ask replay rank-only contrarian edge +6.0" in item for item in contrarian_score.rationale)
             )
             self.assertTrue(any("bidask_replay_negative_bucket" in item for item in bad_score.blockers))
             self.assertEqual(decision.selected_lane_id, good_score.lane_id)
