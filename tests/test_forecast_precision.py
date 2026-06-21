@@ -13,6 +13,7 @@ from quant_rabbit.forecast_precision import (
     bidask_replay_precision_assessment,
     bidask_replay_precision_support,
     oanda_universal_rotation_precision_assessment,
+    projection_precision_gap_summary,
     support_signal_clears_live_precision,
     technical_harvest_precision_assessment,
     technical_harvest_precision_support,
@@ -70,6 +71,50 @@ class ForecastPrecisionConfluenceTest(unittest.TestCase):
                 min_target_pips=2.0,
             )
         )
+
+    def test_projection_precision_gap_summary_flags_headline_only_precision(self) -> None:
+        gaps = projection_precision_gap_summary(
+            {
+                "bb_squeeze_expansion_imminent": {
+                    "EUR_USD:TREND": {
+                        "hit_rate": 0.98,
+                        "samples": 100,
+                        "economic_hit_rate": 0.64,
+                        "economic_samples": 100,
+                        "timeout_rate": 0.34,
+                        "timeout_count": 34,
+                    },
+                    "GBP_USD:TREND": {
+                        "hit_rate": 0.98,
+                        "samples": 100,
+                        "economic_hit_rate": 0.96,
+                        "economic_samples": 100,
+                        "timeout_rate": 0.02,
+                    },
+                },
+                "directional_forecast_up": {
+                    "EUR_USD:TREND": {
+                        "hit_rate": 1.0,
+                        "samples": 100,
+                        "economic_hit_rate": 0.10,
+                        "economic_samples": 100,
+                        "timeout_rate": 0.90,
+                    }
+                },
+            },
+            min_wilson_lower=0.90,
+            min_samples=30,
+            exclude_signals=("directional_forecast_up",),
+        )
+
+        self.assertEqual(len(gaps), 1)
+        gap = gaps[0]
+        self.assertEqual(gap["signal_name"], "bb_squeeze_expansion_imminent")
+        self.assertEqual(gap["pair"], "EUR_USD")
+        self.assertEqual(gap["regime"], "TREND")
+        self.assertAlmostEqual(gap["hit_rate_wilson_lower"], 0.93)
+        self.assertLess(gap["economic_hit_rate_wilson_lower"], 0.90)
+        self.assertAlmostEqual(gap["timeout_rate"], 0.34)
 
     def test_bidask_replay_rules_are_data_driven_across_pairs(self) -> None:
         metadata = {

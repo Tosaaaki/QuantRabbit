@@ -8,6 +8,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
+from quant_rabbit.forecast_precision import projection_precision_gap_summary
 from quant_rabbit.paths import (
     DEFAULT_AI_ATTACK_ADVICE,
     DEFAULT_AI_TEST_BOT_BACKTEST,
@@ -137,6 +138,7 @@ ROOT_CAUSE_CODE_BOOSTS = {
     "DIRECTIONAL_FORECAST_INVALIDATION_FIRST_DOMINANT": 90.0,
     "DIRECTIONAL_FORECAST_HIT_RATE_WEAK": 70.0,
     "DIRECTIONAL_FORECAST_BUCKET_HIT_RATE_WEAK": 55.0,
+    "PROJECTION_ECONOMIC_PRECISION_WEAK": 55.0,
     "FORECAST_ARBITRATION_UNSELECTED_PROJECTION_REPAIR_REQUIRED": 50.0,
     "RANGE_FORECAST_METHOD_MISMATCH_REPAIR_REQUIRED": 45.0,
     "TARGET_OPEN_LIVE_READY_COVERAGE_SHORTFALL": 60.0,
@@ -251,6 +253,21 @@ FORECAST_CALIBRATION_MIN_COVERAGE = min(
 FORECAST_ENTRY_GRADE_CONFIDENCE_MIN = _env_nonnegative_float(
     "QR_FORECAST_ENTRY_CONFIDENCE_MIN",
     0.55,
+)
+# Mirror the live precision gate so the audit explains the same economic
+# precision failure that intent generation and RiskEngine enforce.
+PROJECTION_ECONOMIC_PRECISION_MIN_WILSON_LOWER = _env_nonnegative_float(
+    "QR_FORECAST_LIVE_PRECISION_MIN_WILSON_LOWER",
+    0.90,
+)
+PROJECTION_ECONOMIC_PRECISION_MIN_SAMPLES = max(
+    1,
+    int(_env_nonnegative_float("QR_FORECAST_LIVE_PRECISION_MIN_SAMPLES", 30.0)),
+)
+# Report-limit only; this keeps the live digest readable and is not a market
+# threshold.
+PROJECTION_ECONOMIC_PRECISION_GAP_LIMIT = int(
+    _env_nonnegative_float("QR_SELF_IMPROVEMENT_PROJECTION_ECONOMIC_GAP_LIMIT", 12.0)
 )
 
 
@@ -3305,7 +3322,53 @@ def _projection_findings(
             )
         )
     out.extend(_directional_forecast_quality_findings(run_id=run_id, rows=rows, now=now))
+    out.extend(_projection_economic_precision_findings(run_id=run_id, path=path))
     return out
+
+
+def _projection_economic_precision_findings(*, run_id: str, path: Path) -> list[dict[str, Any]]:
+    try:
+        from quant_rabbit.strategy.projection_ledger import compute_hit_rates
+
+        hit_rates = compute_hit_rates(path.parent)
+    except Exception:
+        return []
+    filtered_hit_rates = {
+        signal_name: buckets
+        for signal_name, buckets in (hit_rates or {}).items()
+        if not str(signal_name or "").startswith("directional_forecast")
+    }
+    weak_buckets = projection_precision_gap_summary(
+        filtered_hit_rates,
+        min_wilson_lower=PROJECTION_ECONOMIC_PRECISION_MIN_WILSON_LOWER,
+        min_samples=PROJECTION_ECONOMIC_PRECISION_MIN_SAMPLES,
+        limit=PROJECTION_ECONOMIC_PRECISION_GAP_LIMIT,
+    )
+    if not weak_buckets:
+        return []
+    return [
+        _finding(
+            run_id=run_id,
+            priority="P1",
+            layer="forecast",
+            code="PROJECTION_ECONOMIC_PRECISION_WEAK",
+            message=(
+                f"{len(weak_buckets)} projection bucket(s) clear headline Wilson "
+                f"{PROJECTION_ECONOMIC_PRECISION_MIN_WILSON_LOWER:.0%} precision but fail "
+                "economic precision after TIMEOUT/no-touch penalties"
+            ),
+            next_action=(
+                "Do not use the named projection buckets as 90% high-turn live support. "
+                "Mine pair/direction/regime variants or tighten target/horizon geometry until "
+                "economic_hit_rate Wilson clears the same live precision floor."
+            ),
+            evidence={
+                "min_wilson_lower": PROJECTION_ECONOMIC_PRECISION_MIN_WILSON_LOWER,
+                "min_samples": PROJECTION_ECONOMIC_PRECISION_MIN_SAMPLES,
+                "weak_buckets": weak_buckets,
+            },
+        )
+    ]
 
 
 def _directional_forecast_quality_findings(
@@ -7741,6 +7804,18 @@ def _root_cause_merge_metrics(
         metrics["invalidation_first_samples"] = finding_evidence.get("samples")
     elif code == "DIRECTIONAL_FORECAST_BUCKET_HIT_RATE_WEAK":
         metrics["weak_forecast_buckets"] = len(finding_evidence.get("weak_buckets") or [])
+    elif code == "PROJECTION_ECONOMIC_PRECISION_WEAK":
+        weak_buckets = [
+            item
+            for item in finding_evidence.get("weak_buckets", []) or []
+            if isinstance(item, dict)
+        ]
+        metrics["projection_economic_precision_gap_count"] = len(weak_buckets)
+        if weak_buckets:
+            metrics["projection_worst_economic_wilson_lower"] = weak_buckets[0].get(
+                "economic_hit_rate_wilson_lower"
+            )
+            metrics["projection_worst_timeout_rate"] = weak_buckets[0].get("timeout_rate")
     elif code == "TARGET_OPEN_LIVE_READY_COVERAGE_SHORTFALL":
         metrics["target_coverage_pct"] = finding_evidence.get("target_coverage_pct")
         metrics["remaining_target_jpy"] = finding_evidence.get("remaining_target_jpy")
@@ -7786,14 +7861,16 @@ def _root_cause_finalize_candidate(candidate: dict[str, Any]) -> dict[str, Any]:
 def _root_cause_family_meta(family: str) -> dict[str, str]:
     if family == "FORECAST_ADVERSE_PATH":
         return {
-            "label": "forecast adverse path is failing before entry expansion",
+            "label": "forecast path or economic precision is failing before entry expansion",
             "goal_adjustment": (
                 "Shift the immediate improvement goal from more entries to reducing invalidation-first "
-                "directional forecasts and weak buckets; only then expand coverage."
+                "directional forecasts, weak buckets, and timeout-heavy projection precision gaps; only "
+                "then expand coverage."
             ),
             "next_action": (
-                "Repair the named directional forecast buckets and range-location priors, then verify "
-                "recent hit-rate and invalidation-first metrics before increasing entry frequency."
+                "Repair the named directional forecast or projection economic-precision buckets, then "
+                "verify recent hit-rate, timeout, and invalidation-first metrics before increasing entry "
+                "frequency."
             ),
         }
     if family == "OPPORTUNITY_COVERAGE":
@@ -7913,6 +7990,16 @@ def _root_cause_why(candidate: dict[str, Any], meta: dict[str, str]) -> str:
         parts.append(f"invalidation_first_rate={_fmt_optional(metrics.get('invalidation_first_rate'))}")
     if "target_coverage_pct" in metrics:
         parts.append(f"target_coverage_pct={_fmt_optional(metrics.get('target_coverage_pct'))}")
+    if "projection_economic_precision_gap_count" in metrics:
+        parts.append(
+            "projection_economic_precision_gap_count="
+            f"{_fmt_optional(metrics.get('projection_economic_precision_gap_count'))}"
+        )
+    if "projection_worst_economic_wilson_lower" in metrics:
+        parts.append(
+            "projection_worst_economic_wilson_lower="
+            f"{_fmt_optional(metrics.get('projection_worst_economic_wilson_lower'))}"
+        )
     if "pending_cancel_before_fill_rate" in metrics:
         parts.append(
             f"pending_cancel_before_fill_rate={_fmt_optional(metrics.get('pending_cancel_before_fill_rate'))}"

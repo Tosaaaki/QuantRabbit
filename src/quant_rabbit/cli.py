@@ -5346,6 +5346,14 @@ def main(argv: list[str] | None = None) -> int:
             load_projection_candle_truth,
             projection_candle_truth_summary,
         )
+        from quant_rabbit.forecast_precision import (
+            hit_rate_wilson_lower,
+            projection_precision_gap_summary,
+        )
+        from quant_rabbit.risk import (
+            FORECAST_LIVE_PRECISION_MIN_SAMPLES,
+            FORECAST_LIVE_PRECISION_MIN_WILSON_LOWER,
+        )
         from pathlib import Path as _P
         data_root = _P("data")
         snapshot_payload = json.loads(args.snapshot.read_text()) if args.snapshot.exists() else {}
@@ -5402,6 +5410,34 @@ def main(argv: list[str] | None = None) -> int:
             candles_by_pair=candles_by_pair,
         )
         hr = compute_hit_rates(data_root)
+        precision_metrics_by_signal = {}
+        for sig, by_pair in hr.items():
+            precision_metrics_by_signal[sig] = {}
+            for pair, d in by_pair.items():
+                hit_lower = hit_rate_wilson_lower(d.get("hit_rate"), d.get("samples"))
+                economic_lower = hit_rate_wilson_lower(
+                    d.get("economic_hit_rate"),
+                    d.get("economic_samples") or d.get("calibration_samples"),
+                )
+                precision_metrics_by_signal[sig][pair] = {
+                    "hit_rate": round(d.get("hit_rate", 0), 3),
+                    "samples": int(d.get("samples", 0) or 0),
+                    "hit_rate_wilson_lower": round(hit_lower, 4) if hit_lower is not None else None,
+                    "economic_hit_rate": round(d.get("economic_hit_rate", 0), 3),
+                    "economic_samples": int(
+                        d.get("economic_samples", d.get("calibration_samples", 0)) or 0
+                    ),
+                    "economic_hit_rate_wilson_lower": (
+                        round(economic_lower, 4) if economic_lower is not None else None
+                    ),
+                    "timeout_rate": round(
+                        d.get("timeout_rate", d.get("target_timeout_rate", 0)) or 0,
+                        4,
+                    ),
+                    "timeout_count": int(
+                        d.get("timeout_count", d.get("target_timeout_count", 0)) or 0
+                    ),
+                }
         print(json.dumps({
             "status": "OK",
             "resolution_counts": counts,
@@ -5432,6 +5468,16 @@ def main(argv: list[str] | None = None) -> int:
                 sig: {pair: round(d.get("hit_rate", 0), 3) for pair, d in by_pair.items()}
                 for sig, by_pair in hr.items()
             },
+            "precision_metrics_by_signal": precision_metrics_by_signal,
+            "economic_precision_gaps": projection_precision_gap_summary(
+                {
+                    sig: by_pair
+                    for sig, by_pair in hr.items()
+                    if not str(sig or "").startswith("directional_forecast")
+                },
+                min_wilson_lower=FORECAST_LIVE_PRECISION_MIN_WILSON_LOWER,
+                min_samples=FORECAST_LIVE_PRECISION_MIN_SAMPLES,
+            ),
         }, indent=2, ensure_ascii=False))
         return 0
     if args.command == "tp-rebalance":

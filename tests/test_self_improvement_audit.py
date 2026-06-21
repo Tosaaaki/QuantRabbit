@@ -1594,6 +1594,72 @@ class SelfImprovementAuditorTest(unittest.TestCase):
         self.assertAlmostEqual(evidence["hit_rate"], 0.1)
         self.assertTrue(evidence["worst_buckets"])
 
+    def test_projection_headline_precision_gap_is_p1_forecast_repair(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(
+                root,
+                active_position=False,
+                live_ready_market_rr=1.4,
+                closed_pls=(100.0, 80.0, -50.0),
+            )
+            rows = []
+            for idx in range(50):
+                rows.append(
+                    {
+                        "timestamp_emitted_utc": (_NOW - timedelta(hours=idx + 2)).isoformat(),
+                        "pair": "EUR_USD",
+                        "direction": "EITHER",
+                        "regime_at_emission": "TREND",
+                        "signal_name": "bb_squeeze_expansion_imminent",
+                        "resolution_window_min": 60.0,
+                        "resolution_status": "HIT",
+                        "cycle_id": f"hit-cycle-{idx}",
+                    }
+                )
+            for idx in range(50):
+                rows.append(
+                    {
+                        "timestamp_emitted_utc": (_NOW - timedelta(hours=idx + 80)).isoformat(),
+                        "pair": "EUR_USD",
+                        "direction": "EITHER",
+                        "regime_at_emission": "TREND",
+                        "signal_name": "bb_squeeze_expansion_imminent",
+                        "resolution_window_min": 60.0,
+                        "resolution_status": "TIMEOUT",
+                        "resolution_evidence": "no tradable expansion before projection expiry",
+                        "cycle_id": f"timeout-cycle-{idx}",
+                    }
+                )
+            files["projection_ledger"].write_text("\n".join(json.dumps(row) for row in rows) + "\n")
+
+            summary = _run(files)
+            payload = json.loads(files["output"].read_text())
+
+        codes = {item["code"]: item for item in payload["findings"]}
+        self.assertEqual(summary.status, STATUS_ACTION_REQUIRED)
+        self.assertEqual(summary.p0_findings, 0)
+        self.assertIn("PROJECTION_ECONOMIC_PRECISION_WEAK", codes)
+        finding = codes["PROJECTION_ECONOMIC_PRECISION_WEAK"]
+        self.assertEqual(finding["priority"], "P1")
+        weak = finding["evidence"]["weak_buckets"][0]
+        self.assertEqual(weak["signal_name"], "bb_squeeze_expansion_imminent")
+        self.assertEqual(weak["pair"], "EUR_USD")
+        self.assertEqual(weak["samples"], 50)
+        self.assertEqual(weak["economic_samples"], 100)
+        self.assertAlmostEqual(weak["hit_rate"], 1.0)
+        self.assertAlmostEqual(weak["economic_hit_rate"], 0.5)
+        self.assertGreaterEqual(weak["hit_rate_wilson_lower"], 0.90)
+        self.assertLess(weak["economic_hit_rate_wilson_lower"], 0.90)
+        root_focus = payload["root_cause_focus"]
+        forecast_candidates = [
+            item
+            for item in root_focus["candidates"]
+            if "PROJECTION_ECONOMIC_PRECISION_WEAK" in item.get("supporting_codes", [])
+        ]
+        self.assertTrue(forecast_candidates)
+        self.assertIn("projection_economic_precision_gap_count", forecast_candidates[0]["why"])
+
     def test_directional_forecast_watch_only_samples_do_not_trigger_entry_grade_hit_rate_repair(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

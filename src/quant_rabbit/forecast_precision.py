@@ -936,6 +936,109 @@ def _optional_payload_int(value: object) -> int | None:
     return parsed
 
 
+def projection_precision_gap_summary(
+    hit_rates: dict[str, dict[str, dict[str, Any]]],
+    *,
+    min_wilson_lower: float,
+    min_samples: int,
+    limit: int = 20,
+    exclude_signals: Sequence[str] = (),
+) -> list[dict[str, Any]]:
+    """Return projection buckets where headline precision hides timeout drag.
+
+    Headline hit-rate is useful for adverse-direction calibration, but
+    high-turn live support also needs economic precision: HIT divided by all
+    calibration samples, including no-touch/TIMEOUT outcomes that could not
+    produce a tradable move inside the forecast window.
+    """
+
+    excluded = {str(item) for item in exclude_signals}
+    gaps: list[dict[str, Any]] = []
+    for signal_name, by_bucket in (hit_rates or {}).items():
+        if signal_name in excluded:
+            continue
+        if not isinstance(by_bucket, dict):
+            continue
+        for bucket, metrics in by_bucket.items():
+            if not isinstance(metrics, dict):
+                continue
+            samples = _optional_payload_int(metrics.get("samples"))
+            hit_rate = _optional_payload_float(metrics.get("hit_rate"))
+            if samples is None or samples < int(min_samples) or hit_rate is None:
+                continue
+            headline_lower = hit_rate_wilson_lower(hit_rate, samples)
+            if headline_lower is None or headline_lower < float(min_wilson_lower):
+                continue
+
+            economic_hit_rate = _optional_payload_float(metrics.get("economic_hit_rate"))
+            economic_samples = _optional_payload_int(metrics.get("economic_samples"))
+            if economic_samples is None:
+                economic_samples = _optional_payload_int(metrics.get("calibration_samples"))
+            timeout_rate = _optional_payload_float(metrics.get("timeout_rate"))
+            if timeout_rate is None:
+                timeout_rate = _optional_payload_float(metrics.get("target_timeout_rate"))
+            timeout_count = _optional_payload_int(metrics.get("timeout_count"))
+            if timeout_count is None:
+                timeout_count = _optional_payload_int(metrics.get("target_timeout_count"))
+
+            if economic_hit_rate is None:
+                if timeout_rate is None or timeout_rate <= 0.0:
+                    continue
+                economic_lower = None
+            else:
+                if economic_samples is None or economic_samples < int(min_samples):
+                    continue
+                economic_lower = hit_rate_wilson_lower(economic_hit_rate, economic_samples)
+                if economic_lower is not None and economic_lower >= float(min_wilson_lower):
+                    continue
+
+            pair, regime = _projection_bucket_pair_regime(str(bucket))
+            gaps.append(
+                {
+                    "signal_name": str(signal_name),
+                    "bucket": str(bucket),
+                    "pair": pair,
+                    "regime": regime,
+                    "samples": samples,
+                    "hit_rate": round(float(hit_rate), 4),
+                    "hit_rate_wilson_lower": round(float(headline_lower), 4),
+                    "economic_samples": economic_samples,
+                    "economic_hit_rate": (
+                        round(float(economic_hit_rate), 4)
+                        if economic_hit_rate is not None
+                        else None
+                    ),
+                    "economic_hit_rate_wilson_lower": (
+                        round(float(economic_lower), 4)
+                        if economic_lower is not None
+                        else None
+                    ),
+                    "timeout_count": timeout_count,
+                    "timeout_rate": round(float(timeout_rate or 0.0), 4),
+                }
+            )
+
+    gaps.sort(
+        key=lambda item: (
+            float(item["economic_hit_rate_wilson_lower"])
+            if item.get("economic_hit_rate_wilson_lower") is not None
+            else -1.0,
+            -float(item.get("hit_rate_wilson_lower") or 0.0),
+            -float(item.get("timeout_rate") or 0.0),
+            str(item.get("signal_name") or ""),
+            str(item.get("bucket") or ""),
+        )
+    )
+    return gaps[: max(0, int(limit))]
+
+
+def _projection_bucket_pair_regime(bucket: str) -> tuple[str, str]:
+    pair, sep, regime = str(bucket or "").partition(":")
+    if not sep:
+        return pair or "_unknown", "_unknown"
+    return pair or "_unknown", regime or "_unknown"
+
+
 def technical_harvest_precision_support(
     metadata: dict[str, Any],
     *,
