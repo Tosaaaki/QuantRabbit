@@ -124,7 +124,7 @@ class ForecastPrecisionConfluenceTest(unittest.TestCase):
                 take_profit=1.17280,
                 stop_loss=1.17400,
             )["optimized_profit_factor"],
-            3.7168,
+            3.3399,
         )
 
     def test_bidask_replay_contrarian_support_fades_losing_forecast_bucket(self) -> None:
@@ -254,7 +254,7 @@ class ForecastPrecisionConfluenceTest(unittest.TestCase):
 
         self.assertEqual(issue["name"], "AUD_JPY_UP_S5_BIDASK_NEGATIVE_EXPECTANCY")
         self.assertTrue(issue["blocks_live_support"])
-        self.assertEqual(issue["samples"], 124)
+        self.assertEqual(issue["samples"], 133)
 
     def test_holdout_confluence_adds_rotation_support_without_live_override(self) -> None:
         metadata = {

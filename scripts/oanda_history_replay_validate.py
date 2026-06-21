@@ -79,8 +79,12 @@ class ForecastRow:
 def main() -> int:
     args = _parse_args()
     history_dirs = _history_dirs(args.history_dir)
-    candles_by_pair, candle_stats = _load_candles(history_dirs, granularity=args.granularity)
     rows, load_stats = _load_forecasts(args.forecast_history)
+    candles_by_pair, candle_stats = _load_candles(
+        history_dirs,
+        granularity=args.granularity,
+        windows_by_pair=_forecast_truth_windows(rows),
+    )
     results, score_stats = _score_forecasts(rows, candles_by_pair)
     contrarian_results = [
         item for item in (_contrarian_row(row) for row in results)
@@ -272,13 +276,26 @@ def _parse_float_csv(value: str | Sequence[float]) -> tuple[float, ...]:
     return out
 
 
-def _load_candles(history_dirs: Sequence[Path], *, granularity: str) -> tuple[dict[str, list[QuoteCandle]], dict[str, Any]]:
+def _load_candles(
+    history_dirs: Sequence[Path],
+    *,
+    granularity: str,
+    windows_by_pair: dict[str, list[tuple[datetime, datetime]]] | None = None,
+) -> tuple[dict[str, list[QuoteCandle]], dict[str, Any]]:
     by_pair: dict[str, dict[datetime, QuoteCandle]] = collections.defaultdict(dict)
+    window_starts_by_pair = {
+        pair: [start for start, _end in windows]
+        for pair, windows in (windows_by_pair or {}).items()
+    }
     files = 0
     rows = 0
+    filtered = 0
     skipped = 0
     for history_dir in history_dirs:
         for path in sorted(history_dir.glob(f"*/*_{granularity}_BA_*.jsonl")):
+            path_pair = path.parent.name.upper()
+            if windows_by_pair is not None and path_pair not in windows_by_pair:
+                continue
             files += 1
             with path.open(encoding="utf-8") as handle:
                 for line in handle:
@@ -293,8 +310,15 @@ def _load_candles(history_dirs: Sequence[Path], *, granularity: str) -> tuple[di
                     if candle is None:
                         skipped += 1
                         continue
-                    by_pair[candle.pair][candle.timestamp_utc] = candle
                     rows += 1
+                    if windows_by_pair is not None and not _timestamp_in_windows(
+                        candle.timestamp_utc,
+                        windows_by_pair.get(candle.pair, []),
+                        window_starts_by_pair.get(candle.pair, []),
+                    ):
+                        filtered += 1
+                        continue
+                    by_pair[candle.pair][candle.timestamp_utc] = candle
     sorted_by_pair = {
         pair: [items[key] for key in sorted(items)]
         for pair, items in by_pair.items()
@@ -302,10 +326,57 @@ def _load_candles(history_dirs: Sequence[Path], *, granularity: str) -> tuple[di
     return sorted_by_pair, {
         "history_files": files,
         "history_raw_rows": rows,
+        "history_filtered_rows": filtered,
         "history_skipped_rows": skipped,
         "history_pairs": len(sorted_by_pair),
         "history_candles": sum(len(items) for items in sorted_by_pair.values()),
     }
+
+
+def _forecast_truth_windows(rows: Sequence[ForecastRow]) -> dict[str, list[tuple[datetime, datetime]]]:
+    """Build compact candle windows needed to score forecasts.
+
+    The one-minute pad is a clock-alignment margin for local candle timestamps,
+    not a trading threshold.
+    """
+
+    pad = timedelta(minutes=1)
+    by_pair: dict[str, list[tuple[datetime, datetime]]] = collections.defaultdict(list)
+    for row in rows:
+        by_pair[row.pair].append(
+            (
+                row.timestamp_utc - pad,
+                row.timestamp_utc + timedelta(minutes=row.horizon_min) + pad,
+            )
+        )
+    return {
+        pair: _merge_windows(windows)
+        for pair, windows in by_pair.items()
+    }
+
+
+def _merge_windows(windows: Sequence[tuple[datetime, datetime]]) -> list[tuple[datetime, datetime]]:
+    merged: list[tuple[datetime, datetime]] = []
+    for start, end in sorted(windows):
+        if not merged or start > merged[-1][1]:
+            merged.append((start, end))
+        else:
+            merged[-1] = (merged[-1][0], max(merged[-1][1], end))
+    return merged
+
+
+def _timestamp_in_windows(
+    timestamp: datetime,
+    windows: Sequence[tuple[datetime, datetime]],
+    starts: Sequence[datetime],
+) -> bool:
+    if not windows or not starts:
+        return False
+    idx = bisect.bisect_right(starts, timestamp) - 1
+    if idx < 0:
+        return False
+    start, end = windows[idx]
+    return start <= timestamp <= end
 
 
 def _candle_from_payload(payload: dict[str, Any]) -> QuoteCandle | None:

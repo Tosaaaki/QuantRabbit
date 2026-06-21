@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 import sys
+import tempfile
 import unittest
 from datetime import datetime, timezone
 from pathlib import Path
@@ -404,6 +406,48 @@ class OandaHistoryReplayValidateTest(unittest.TestCase):
         self.assertEqual(groups[0]["needed_to_utc"], "2026-06-17T18:09:00Z")
         self.assertEqual(groups[0]["pairs"], ["AUD_JPY", "EUR_USD"])
         self.assertEqual(groups[0]["pair_directions"], ["AUD_JPY:UP", "EUR_USD:DOWN"])
+
+    def test_load_candles_filters_to_forecast_truth_windows(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            history = Path(tmp) / "history"
+            pair_dir = history / "EUR_USD"
+            pair_dir.mkdir(parents=True)
+            path = pair_dir / "EUR_USD_S5_BA_20260619T000000Z_20260619T010000Z.jsonl"
+            rows = [
+                {
+                    "pair": "EUR_USD",
+                    "granularity": "S5",
+                    "time": "2026-06-19T00:00:00Z",
+                    "bid": {"o": "1.1000", "h": "1.1001", "l": "1.0999", "c": "1.1000"},
+                    "ask": {"o": "1.1002", "h": "1.1003", "l": "1.1001", "c": "1.1002"},
+                },
+                {
+                    "pair": "EUR_USD",
+                    "granularity": "S5",
+                    "time": "2026-06-19T00:30:00Z",
+                    "bid": {"o": "1.1010", "h": "1.1011", "l": "1.1009", "c": "1.1010"},
+                    "ask": {"o": "1.1012", "h": "1.1013", "l": "1.1011", "c": "1.1012"},
+                },
+            ]
+            path.write_text("\n".join(json.dumps(row) for row in rows) + "\n", encoding="utf-8")
+
+            candles, stats = replay._load_candles(
+                [history],
+                granularity="S5",
+                windows_by_pair={
+                    "EUR_USD": [
+                        (
+                            datetime(2026, 6, 18, 23, 59, tzinfo=timezone.utc),
+                            datetime(2026, 6, 19, 0, 1, tzinfo=timezone.utc),
+                        )
+                    ]
+                },
+            )
+
+        self.assertEqual(stats["history_raw_rows"], 2)
+        self.assertEqual(stats["history_filtered_rows"], 1)
+        self.assertEqual(stats["history_candles"], 1)
+        self.assertEqual([c.timestamp_utc.isoformat() for c in candles["EUR_USD"]], ["2026-06-19T00:00:00+00:00"])
 
     def test_target_not_on_reward_side_is_not_counted_as_touch(self) -> None:
         row = replay.ForecastRow(
