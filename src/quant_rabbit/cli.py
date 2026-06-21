@@ -5054,6 +5054,7 @@ def main(argv: list[str] | None = None) -> int:
         # rather than re-running the 17-detector stack — keeps this CLI
         # cheap and aligned with what trader_brain saw.
         from quant_rabbit.strategy.entry_thesis_ledger import (
+            backfill_entry_theses_from_execution_ledger,
             evaluate_all_open_positions,
             load_latest_forecast,
             write_thesis_evolution_report,
@@ -5084,6 +5085,23 @@ def main(argv: list[str] | None = None) -> int:
                 continue
 
         data_root = Path("data")
+        active_trader_trade_ids = [
+            str(pos.trade_id)
+            for pos in positions
+            if pos.owner == Owner.TRADER and str(pos.trade_id or "").strip()
+        ]
+        try:
+            entry_thesis_backfill = backfill_entry_theses_from_execution_ledger(
+                db_path=data_root / DEFAULT_EXECUTION_LEDGER_DB.name,
+                data_root=data_root,
+                trade_ids=active_trader_trade_ids,
+            ).to_dict()
+        except Exception as exc:  # noqa: BLE001 - missing thesis should remain the gate.
+            entry_thesis_backfill = {
+                "status": "FAILED",
+                "requested_trade_ids": active_trader_trade_ids,
+                "issue": str(exc),
+            }
         forecast_refresh = _refresh_current_forecast_history(
             snapshot_payload=snapshot_payload,
             pair_charts_path=args.pair_charts,
@@ -5142,6 +5160,7 @@ def main(argv: list[str] | None = None) -> int:
                 "BROKEN": sum(1 for e in evolutions if e.status == "BROKEN"),
                 "UNVERIFIABLE": sum(1 for e in evolutions if e.status == "UNVERIFIABLE"),
             },
+            "entry_thesis_backfill": entry_thesis_backfill,
             "forecast_refresh": forecast_refresh,
             "verdicts": [
                 {"trade_id": e.trade_id, "pair": e.pair, "side": e.side,

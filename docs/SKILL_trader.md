@@ -302,6 +302,11 @@ QR_LIVE_ENABLED=1 ./scripts/run-autotrade-live.sh \
 #   verdicts. A fresh BROKEN / RECOMMEND_CLOSE from thesis evolution is hard
 #   Gate A standing loss-cut authorization; score-only or
 #   adverse-entry-buffer-only reviews still need explicit env/token Gate B.
+#   thesis-evolution-check must first backfill active trader-owned entry
+#   theses from execution-ledger broker truth when possible, then evaluate.
+#   A backfillable ledger gap must not survive as an UNVERIFIABLE blocker
+#   until a later memory-health pass; otherwise the route can freeze on a
+#   missing-thesis state that the same cycle already knows how to repair.
 # - position-management is regenerated against the post-gateway broker
 #   snapshot before self-improvement-audit so the next route does not inherit a
 #   stale open-position sidecar P0.

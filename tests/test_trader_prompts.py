@@ -3043,6 +3043,8 @@ class TraderPromptRouteTest(unittest.TestCase):
                         str(files["memory_health"]),
                         "--self-improvement-audit",
                         str(files["self_improvement_audit"]),
+                        "--coverage-optimization",
+                        str(files["coverage_optimization"]),
                         "--strategy-profile",
                         str(files["strategy_profile"]),
                         "--trader-overrides",

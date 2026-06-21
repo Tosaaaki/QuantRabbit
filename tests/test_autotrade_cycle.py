@@ -52,6 +52,49 @@ class AutoTradeCycleTest(unittest.TestCase):
         self._default_settings_patch.stop()
         self._default_settings_tmp.cleanup()
 
+    def test_gpt_brain_resolves_default_sidecars_next_to_custom_decision_path(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            cycle = AutoTradeCycle(
+                client=object(),
+                gpt_decision_path=root / "gpt_decision.json",
+                gpt_decision_report_path=root / "gpt_decision.md",
+            )
+            brain = cycle._gpt_brain()
+
+            expected_brain_paths = {
+                "target_state_path": "daily_target_state.json",
+                "attack_advice_path": "ai_attack_advice.json",
+                "context_asset_charts_path": "context_asset_charts.json",
+                "broker_instruments_path": "broker_instruments.json",
+                "cross_asset_path": "cross_asset_snapshot.json",
+                "flow_path": "flow_snapshot.json",
+                "currency_strength_path": "currency_strength.json",
+                "levels_path": "levels_snapshot.json",
+                "market_context_matrix_path": "market_context_matrix.json",
+                "calendar_path": "economic_calendar.json",
+                "cot_path": "cot_snapshot.json",
+                "option_skew_path": "option_skew_snapshot.json",
+                "capture_economics_path": "capture_economics.json",
+                "execution_timing_audit_path": "execution_timing_audit.json",
+                "coverage_optimization_path": "coverage_optimization.json",
+                "learning_audit_path": "learning_audit.json",
+                "verification_ledger_path": "verification_ledger.json",
+                "self_improvement_audit_path": "self_improvement_audit.json",
+                "projection_ledger_path": "projection_ledger.jsonl",
+                "operator_precedent_path": "operator_precedent_audit.json",
+                "manual_market_context_path": "manual_market_context_audit.json",
+                "predictive_limits_path": "predictive_limit_orders.json",
+                "news_items_path": "news_items.json",
+                "news_health_path": "news_health.json",
+            }
+            for attr, filename in expected_brain_paths.items():
+                self.assertEqual(getattr(brain, attr), root / filename, attr)
+
+            self.assertEqual(cycle.gpt_ai_backtest_path, root / "ai_test_bot_backtest.json")
+            self.assertEqual(cycle.gpt_outcome_mart_path, root / "outcome_mart.json")
+            self.assertEqual(cycle.gpt_post_trade_learning_path, root / "post_trade_learning.json")
+
     def test_cycle_perspective_alignment_keeps_later_opposite_rail_view(self) -> None:
         parts = _cycle_perspective_alignment_parts(
             {
@@ -3734,6 +3777,19 @@ class AutoTradeCycleTest(unittest.TestCase):
                 settings_path.write_text(
                     json.dumps({"size_by_score": {"enabled": False}}) + "\n"
                 )
+                (root / "execution_timing_audit.json").write_text(
+                    json.dumps(
+                        {
+                            "generated_at_utc": now.isoformat(),
+                            "status": "OK",
+                            "summary": {
+                                "loss_market_closes_may_have_been_premature": 0,
+                                "market_close_estimated_followthrough_jpy": 0.0,
+                            },
+                        }
+                    )
+                    + "\n"
+                )
 
                 close_decision = _gpt_close_decision(["close-me"])
                 close_decision["evidence_refs"].append("timing:audit")
@@ -6853,7 +6909,7 @@ def _gpt_cancel_pending_decision(cancel_order_ids: list[str]) -> dict:
         "invalidation": "Do not cancel if the order id is not present in current broker truth.",
         "rejected_alternatives": ["TRADE rejected until pending exposure is resolved."],
         "risk_notes": ["Canceling a pending entry reduces possible future exposure."],
-        "evidence_refs": ["broker:snapshot", "target:daily", "timing:audit"],
+        "evidence_refs": ["broker:snapshot", "target:daily"],
         "operator_summary": "Clear the stale pending order before considering another entry.",
     }
 

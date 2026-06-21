@@ -23,15 +23,25 @@ from quant_rabbit.execution_ledger import ExecutionLedger
 from quant_rabbit.paths import (
     DEFAULT_AI_ATTACK_ADVICE,
     DEFAULT_AI_ATTACK_ADVICE_REPORT,
+    DEFAULT_BROKER_INSTRUMENTS,
     DEFAULT_BROKER_SNAPSHOT,
     DEFAULT_AI_TEST_BOT_BACKTEST,
     DEFAULT_AI_TEST_BOT_BACKTEST_REPORT,
     DEFAULT_CAMPAIGN_REPORT,
     DEFAULT_CAMPAIGN_PLAN,
+    DEFAULT_CALENDAR_SNAPSHOT,
+    DEFAULT_CAPTURE_ECONOMICS,
+    DEFAULT_CONTEXT_ASSET_CHARTS,
+    DEFAULT_COT_SNAPSHOT,
+    DEFAULT_COVERAGE_OPTIMIZATION,
+    DEFAULT_CROSS_ASSET_SNAPSHOT,
+    DEFAULT_CURRENCY_STRENGTH,
     DEFAULT_DAILY_TARGET_REPORT,
     DEFAULT_DAILY_TARGET_STATE,
     DEFAULT_EXECUTION_LEDGER_DB,
     DEFAULT_EXECUTION_LEDGER_REPORT,
+    DEFAULT_EXECUTION_TIMING_AUDIT,
+    DEFAULT_FLOW_SNAPSHOT,
     DEFAULT_GPT_TRADER_DECISION,
     DEFAULT_GPT_TRADER_DECISION_REPORT,
     DEFAULT_LIVE_ORDER_REQUEST,
@@ -44,6 +54,11 @@ from quant_rabbit.paths import (
     DEFAULT_MARKET_STATUS_REPORT,
     DEFAULT_MARKET_STORY_PROFILE,
     DEFAULT_MARKET_STORY_REPORT,
+    DEFAULT_MANUAL_MARKET_CONTEXT_AUDIT,
+    DEFAULT_NEWS_HEALTH,
+    DEFAULT_NEWS_SNAPSHOT,
+    DEFAULT_OPERATOR_PRECEDENT_AUDIT,
+    DEFAULT_OPTION_SKEW,
     DEFAULT_ORDER_INTENT_REPORT,
     DEFAULT_ORDER_INTENTS,
     DEFAULT_HISTORY_DB,
@@ -54,9 +69,9 @@ from quant_rabbit.paths import (
     DEFAULT_POSITION_MANAGEMENT,
     DEFAULT_POSITION_MANAGEMENT_REPORT,
     DEFAULT_POST_TRADE_LEARNING,
+    DEFAULT_PREDICTIVE_LIMIT_ORDERS,
     DEFAULT_PROJECTION_LEDGER,
     DEFAULT_RECEIPT_PROMOTION_REPORT,
-    DEFAULT_COVERAGE_OPTIMIZATION,
     DEFAULT_SELF_IMPROVEMENT_AUDIT,
     DEFAULT_STRATEGY_PROFILE,
     DEFAULT_TRADER_DECISION,
@@ -771,6 +786,21 @@ def _gpt_sidecar_path(
     return gpt_decision_path.with_name(default_path.name)
 
 
+def _gpt_defaulted_sidecar_path(
+    *,
+    value: Path,
+    gpt_decision_path: Path,
+    default_path: Path,
+) -> Path:
+    repo_data_default = ROOT / "data" / default_path.name
+    explicit = None if value in {default_path, repo_data_default} else value
+    return _gpt_sidecar_path(
+        explicit=explicit,
+        gpt_decision_path=gpt_decision_path,
+        default_path=default_path,
+    )
+
+
 def _attack_sidecar_path(
     *,
     explicit: Path | None,
@@ -1158,8 +1188,16 @@ class AutoTradeCycle:
         self.gpt_provider = gpt_provider
         self.gpt_decision_path = gpt_decision_path
         self.gpt_decision_report_path = gpt_decision_report_path
-        self.gpt_target_state_path = gpt_target_state_path
-        self.gpt_attack_advice_path = gpt_attack_advice_path
+        self.gpt_target_state_path = _gpt_defaulted_sidecar_path(
+            value=gpt_target_state_path,
+            gpt_decision_path=gpt_decision_path,
+            default_path=DEFAULT_DAILY_TARGET_STATE,
+        )
+        self.gpt_attack_advice_path = _gpt_defaulted_sidecar_path(
+            value=gpt_attack_advice_path,
+            gpt_decision_path=gpt_decision_path,
+            default_path=DEFAULT_AI_ATTACK_ADVICE,
+        )
         self.gpt_learning_audit_path = _gpt_sidecar_path(
             explicit=gpt_learning_audit_path,
             gpt_decision_path=gpt_decision_path,
@@ -1210,19 +1248,109 @@ class AutoTradeCycle:
             gpt_decision_path=gpt_decision_path,
             default_path=DEFAULT_MARKET_STATUS_REPORT,
         )
+        self.gpt_context_asset_charts_path = _gpt_sidecar_path(
+            explicit=None,
+            gpt_decision_path=gpt_decision_path,
+            default_path=DEFAULT_CONTEXT_ASSET_CHARTS,
+        )
+        self.gpt_broker_instruments_path = _gpt_sidecar_path(
+            explicit=None,
+            gpt_decision_path=gpt_decision_path,
+            default_path=DEFAULT_BROKER_INSTRUMENTS,
+        )
+        self.gpt_cross_asset_path = _gpt_sidecar_path(
+            explicit=None,
+            gpt_decision_path=gpt_decision_path,
+            default_path=DEFAULT_CROSS_ASSET_SNAPSHOT,
+        )
+        self.gpt_flow_path = _gpt_sidecar_path(
+            explicit=None,
+            gpt_decision_path=gpt_decision_path,
+            default_path=DEFAULT_FLOW_SNAPSHOT,
+        )
+        self.gpt_currency_strength_path = _gpt_sidecar_path(
+            explicit=None,
+            gpt_decision_path=gpt_decision_path,
+            default_path=DEFAULT_CURRENCY_STRENGTH,
+        )
+        self.gpt_levels_path = _gpt_sidecar_path(
+            explicit=None,
+            gpt_decision_path=gpt_decision_path,
+            default_path=DEFAULT_LEVELS_SNAPSHOT,
+        )
+        self.gpt_market_context_matrix_path = _gpt_sidecar_path(
+            explicit=None,
+            gpt_decision_path=gpt_decision_path,
+            default_path=DEFAULT_MARKET_CONTEXT_MATRIX,
+        )
+        self.gpt_calendar_path = _gpt_sidecar_path(
+            explicit=None,
+            gpt_decision_path=gpt_decision_path,
+            default_path=DEFAULT_CALENDAR_SNAPSHOT,
+        )
+        self.gpt_cot_path = _gpt_sidecar_path(
+            explicit=None,
+            gpt_decision_path=gpt_decision_path,
+            default_path=DEFAULT_COT_SNAPSHOT,
+        )
+        self.gpt_option_skew_path = _gpt_sidecar_path(
+            explicit=None,
+            gpt_decision_path=gpt_decision_path,
+            default_path=DEFAULT_OPTION_SKEW,
+        )
+        self.gpt_capture_economics_path = _gpt_sidecar_path(
+            explicit=None,
+            gpt_decision_path=gpt_decision_path,
+            default_path=DEFAULT_CAPTURE_ECONOMICS,
+        )
+        self.gpt_execution_timing_audit_path = _gpt_sidecar_path(
+            explicit=None,
+            gpt_decision_path=gpt_decision_path,
+            default_path=DEFAULT_EXECUTION_TIMING_AUDIT,
+        )
+        self.gpt_coverage_optimization_path = _gpt_sidecar_path(
+            explicit=None,
+            gpt_decision_path=gpt_decision_path,
+            default_path=DEFAULT_COVERAGE_OPTIMIZATION,
+        )
+        self.gpt_operator_precedent_path = _gpt_sidecar_path(
+            explicit=None,
+            gpt_decision_path=gpt_decision_path,
+            default_path=DEFAULT_OPERATOR_PRECEDENT_AUDIT,
+        )
+        self.gpt_manual_market_context_path = _gpt_sidecar_path(
+            explicit=None,
+            gpt_decision_path=gpt_decision_path,
+            default_path=DEFAULT_MANUAL_MARKET_CONTEXT_AUDIT,
+        )
+        self.gpt_predictive_limits_path = _gpt_sidecar_path(
+            explicit=None,
+            gpt_decision_path=gpt_decision_path,
+            default_path=DEFAULT_PREDICTIVE_LIMIT_ORDERS,
+        )
+        self.gpt_news_items_path = _gpt_sidecar_path(
+            explicit=None,
+            gpt_decision_path=gpt_decision_path,
+            default_path=DEFAULT_NEWS_SNAPSHOT,
+        )
+        self.gpt_news_health_path = _gpt_sidecar_path(
+            explicit=None,
+            gpt_decision_path=gpt_decision_path,
+            default_path=DEFAULT_NEWS_HEALTH,
+        )
         self.gpt_ai_backtest_path = _attack_sidecar_path(
             explicit=gpt_ai_backtest_path,
-            attack_advice_path=gpt_attack_advice_path,
+            attack_advice_path=self.gpt_attack_advice_path,
             default_path=DEFAULT_AI_TEST_BOT_BACKTEST,
         )
         self.gpt_outcome_mart_path = _attack_sidecar_path(
             explicit=gpt_outcome_mart_path,
-            attack_advice_path=gpt_attack_advice_path,
+            attack_advice_path=self.gpt_attack_advice_path,
             default_path=DEFAULT_OUTCOME_MART,
         )
         self.gpt_post_trade_learning_path = _attack_sidecar_path(
             explicit=gpt_post_trade_learning_path,
-            attack_advice_path=gpt_attack_advice_path,
+            attack_advice_path=self.gpt_attack_advice_path,
             default_path=DEFAULT_POST_TRADE_LEARNING,
         )
         self.gpt_max_lanes = gpt_max_lanes
@@ -4125,11 +4253,29 @@ class AutoTradeCycle:
             market_status_path=self.gpt_market_status_path,
             target_state_path=self.gpt_target_state_path,
             pair_charts_path=self.pair_charts_path,
+            context_asset_charts_path=self.gpt_context_asset_charts_path,
+            broker_instruments_path=self.gpt_broker_instruments_path,
+            cross_asset_path=self.gpt_cross_asset_path,
+            flow_path=self.gpt_flow_path,
+            currency_strength_path=self.gpt_currency_strength_path,
+            levels_path=self.gpt_levels_path,
+            market_context_matrix_path=self.gpt_market_context_matrix_path,
+            calendar_path=self.gpt_calendar_path,
+            cot_path=self.gpt_cot_path,
+            option_skew_path=self.gpt_option_skew_path,
             attack_advice_path=self.gpt_attack_advice_path,
+            capture_economics_path=self.gpt_capture_economics_path,
+            execution_timing_audit_path=self.gpt_execution_timing_audit_path,
+            coverage_optimization_path=self.gpt_coverage_optimization_path,
             learning_audit_path=self.gpt_learning_audit_path,
+            verification_ledger_path=self.gpt_verification_ledger_path,
             self_improvement_audit_path=self.gpt_self_improvement_audit_path,
             projection_ledger_path=self.gpt_projection_ledger_path,
-            verification_ledger_path=self.gpt_verification_ledger_path,
+            operator_precedent_path=self.gpt_operator_precedent_path,
+            manual_market_context_path=self.gpt_manual_market_context_path,
+            predictive_limits_path=self.gpt_predictive_limits_path,
+            news_items_path=self.gpt_news_items_path,
+            news_health_path=self.gpt_news_health_path,
             output_path=self.gpt_decision_path,
             report_path=self.gpt_decision_report_path,
             max_lanes=self.gpt_max_lanes,

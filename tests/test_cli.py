@@ -557,6 +557,174 @@ class CliHelpTest(unittest.TestCase):
         self.assertEqual(payload["status"], "OK")
         self.assertEqual(payload["evolution_count"], 0)
 
+    def test_thesis_evolution_backfills_entry_thesis_before_blocking(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            data = root / "data"
+            data.mkdir()
+            (data / "forecast_history.jsonl").write_text(
+                json.dumps(
+                    {
+                        "timestamp_utc": "2026-06-19T07:50:00Z",
+                        "cycle_id": "cycle-before-fill",
+                        "pair": "EUR_USD",
+                        "direction": "DOWN",
+                        "confidence": 0.61,
+                        "target_price": 1.1441,
+                        "invalidation_price": 1.1518,
+                        "horizon_min": 60,
+                    }
+                )
+                + "\n"
+            )
+            snapshot = data / "broker_snapshot.json"
+            snapshot.write_text(
+                json.dumps(
+                    {
+                        "fetched_at_utc": "2026-06-19T08:10:00Z",
+                        "positions": [
+                            {
+                                "trade_id": "472732",
+                                "pair": "EUR_USD",
+                                "side": "SHORT",
+                                "owner": "trader",
+                                "units": 6300,
+                                "entry_price": 1.14486,
+                                "take_profit": 1.14414,
+                                "stop_loss": 1.15171,
+                                "unrealized_pl_jpy": -10.0,
+                            }
+                        ],
+                        "orders": [],
+                        "quotes": {
+                            "EUR_USD": {
+                                "bid": 1.1447,
+                                "ask": 1.1448,
+                                "timestamp_utc": "2026-06-19T08:10:00Z",
+                            }
+                        },
+                    }
+                )
+            )
+            pair_charts = data / "pair_charts.json"
+            pair_charts.write_text(
+                json.dumps(
+                    {
+                        "charts": [
+                            {
+                                "pair": "EUR_USD",
+                                "confluence": {"dominant_regime": "TREND_DOWN"},
+                                "views": [],
+                            }
+                        ]
+                    }
+                )
+            )
+            fill = {
+                "id": "472732",
+                "type": "ORDER_FILL",
+                "time": "2026-06-19T08:01:32.903433014Z",
+                "orderID": "472730",
+                "instrument": "EUR_USD",
+                "units": "-6300",
+                "price": "1.14486",
+                "reason": "LIMIT_ORDER",
+                "clientOrderID": "qrv1-EURUSD-S-81b9490de070",
+                "tradeOpened": {
+                    "tradeID": "472732",
+                    "units": "-6300",
+                    "price": "1.14486",
+                    "clientExtensions": {
+                        "id": "qrv1-EURUSD-S-d0dda4b89776",
+                        "tag": "trader",
+                        "comment": (
+                            "qr-vnext lane=failure_trader:EUR_USD:SHORT:BREAKOUT_FAILURE:LIMIT "
+                            "desk=failure_trader"
+                        ),
+                    },
+                },
+            }
+            tp = {
+                "id": "472733",
+                "type": "TAKE_PROFIT_ORDER",
+                "batchID": "472732",
+                "time": "2026-06-19T08:01:32.903433014Z",
+                "tradeID": "472732",
+                "price": "1.14414",
+            }
+            sl = {
+                "id": "472734",
+                "type": "STOP_LOSS_ORDER",
+                "batchID": "472732",
+                "time": "2026-06-19T08:01:32.903433014Z",
+                "tradeID": "472732",
+                "price": "1.15171",
+            }
+            with sqlite3.connect(data / "execution_ledger.db") as conn:
+                conn.executescript(
+                    """
+                    CREATE TABLE oanda_transactions (
+                        transaction_id TEXT PRIMARY KEY,
+                        type TEXT NOT NULL,
+                        time_utc TEXT,
+                        batch_id TEXT,
+                        request_id TEXT,
+                        raw_json TEXT NOT NULL,
+                        inserted_at_utc TEXT NOT NULL
+                    );
+                    """
+                )
+                for payload in (fill, tp, sl):
+                    conn.execute(
+                        """
+                        INSERT INTO oanda_transactions(
+                            transaction_id, type, time_utc, batch_id, request_id, raw_json, inserted_at_utc
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            payload["id"],
+                            payload["type"],
+                            payload.get("time"),
+                            payload.get("batchID"),
+                            None,
+                            json.dumps(payload),
+                            "2026-06-19T08:02:00Z",
+                        ),
+                    )
+
+            old_cwd = Path.cwd()
+            stdout = io.StringIO()
+            try:
+                os.chdir(root)
+                with mock.patch(
+                    "quant_rabbit.cli._refresh_current_forecast_history",
+                    return_value={"recorded": 0},
+                ):
+                    with redirect_stdout(stdout):
+                        code = main(
+                            [
+                                "thesis-evolution-check",
+                                "--snapshot",
+                                str(snapshot),
+                                "--pair-charts",
+                                str(pair_charts),
+                                "--output",
+                                str(data / "thesis_evolution_report.json"),
+                            ]
+                        )
+            finally:
+                os.chdir(old_cwd)
+
+            self.assertEqual(code, 0)
+            payload = json.loads(stdout.getvalue())
+            report = json.loads((data / "thesis_evolution_report.json").read_text())
+
+            self.assertEqual(payload["entry_thesis_backfill"]["status"], "BACKFILLED")
+            self.assertEqual(payload["by_status"]["UNVERIFIABLE"], 0)
+            self.assertEqual(report["entry_thesis_coverage"]["missing"], 0)
+            self.assertFalse(report["entry_thesis_coverage"]["blocking"])
+            self.assertIn("472732", (data / "entry_thesis_ledger.jsonl").read_text())
+
     def test_refresh_current_forecast_history_records_snapshot_cycle_once(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
