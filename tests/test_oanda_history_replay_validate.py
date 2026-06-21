@@ -130,6 +130,7 @@ class OandaHistoryReplayValidateTest(unittest.TestCase):
 
     def test_segment_exit_grids_keep_pair_direction_best_exit(self) -> None:
         row = {
+            "timestamp_utc": "2026-06-19T00:00:00Z",
             "pair": "EUR_USD",
             "direction": "DOWN",
             "entry_price": 1.1000,
@@ -157,6 +158,45 @@ class OandaHistoryReplayValidateTest(unittest.TestCase):
         self.assertEqual(segments[0]["best_exit"]["take_profit_pips"], 5.0)
         self.assertEqual(segments[0]["best_exit"]["stop_loss_pips"], 7.0)
         self.assertEqual(segments[0]["best_exit"]["avg_realized_pips"], 5.0)
+        self.assertEqual(segments[0]["daily_stability"]["active_days"], 1)
+
+    def test_daily_exit_stability_flags_multi_day_distribution(self) -> None:
+        def row(ts: str, *, high: float, low: float) -> dict:
+            return {
+                "timestamp_utc": ts,
+                "pair": "EUR_USD",
+                "direction": "UP",
+                "entry_price": 1.1000,
+                "final_pips": 0.0,
+                "_window": [
+                    _candle(ts.replace("Z", ""), bid_o=1.1000, bid_h=high, bid_l=low, bid_c=1.1000, ask_o=1.1002, ask_h=high + 0.0002, ask_l=low + 0.0002, ask_c=1.1002)
+                ],
+            }
+
+        daily = replay._daily_exit_stability(
+            [
+                row("2026-06-18T15:00:00Z", high=1.1006, low=1.0999),
+                row("2026-06-18T16:00:00Z", high=1.1006, low=1.0999),
+                row("2026-06-19T15:00:00Z", high=1.1001, low=1.0992),
+                row("2026-06-20T15:00:00Z", high=1.1006, low=1.0999),
+            ],
+            take_profit_pips=5.0,
+            stop_loss_pips=7.0,
+        )
+
+        self.assertEqual(daily["active_days"], 3)
+        self.assertEqual(daily["positive_days"], 2)
+        self.assertEqual(daily["negative_days"], 1)
+        self.assertEqual(daily["max_daily_sample_share"], 0.5)
+        self.assertEqual(
+            replay._daily_stability_status(
+                daily,
+                min_active_days=3,
+                max_daily_sample_share=0.70,
+                min_positive_day_rate=2.0 / 3.0,
+            ),
+            "DAILY_STABLE",
+        )
 
     def test_precision_rules_are_selected_from_pair_direction_segments(self) -> None:
         rules = replay._bidask_precision_rules(
@@ -178,6 +218,23 @@ class OandaHistoryReplayValidateTest(unittest.TestCase):
                         "avg_realized_pips": 2.1,
                         "win_rate": 0.69,
                         "profit_factor": 2.4,
+                    },
+                    "daily_stability": {
+                        "campaign_timezone": "Asia/Tokyo",
+                        "active_days": 3,
+                        "first_day": "2026-06-17",
+                        "last_day": "2026-06-19",
+                        "min_daily_samples": 8,
+                        "max_daily_samples": 20,
+                        "avg_daily_samples": 16.0,
+                        "max_daily_sample_share": 0.4167,
+                        "positive_days": 3,
+                        "negative_days": 0,
+                        "flat_days": 0,
+                        "positive_day_rate": 1.0,
+                        "avg_daily_realized_pips": 33.6,
+                        "worst_daily_realized_pips": 11.2,
+                        "best_daily_realized_pips": 58.8,
                     },
                 },
                 {
@@ -240,6 +297,11 @@ class OandaHistoryReplayValidateTest(unittest.TestCase):
             ["GBP_USD_DOWN_S5_BIDASK_HARVEST_TP5_SL7"],
         )
         self.assertEqual(rules["edge_rules"][0]["min_target_pips"], 4.8)
+        self.assertEqual(
+            [rule["name"] for rule in rules["daily_stable_edge_rules"]],
+            ["GBP_USD_DOWN_S5_BIDASK_HARVEST_TP5_SL7"],
+        )
+        self.assertEqual(rules["edge_rules"][0]["daily_stability_status"], "DAILY_STABLE")
         self.assertEqual(
             [rule["name"] for rule in rules["negative_rules"]],
             ["AUD_JPY_UP_S5_BIDASK_NEGATIVE_EXPECTANCY"],

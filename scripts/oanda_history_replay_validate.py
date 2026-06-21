@@ -37,6 +37,13 @@ DEFAULT_NEGATIVE_MAX_AVG_FINAL_PIPS = 0.0
 DEFAULT_NEGATIVE_MAX_AVG_REALIZED_PIPS = -0.5
 DEFAULT_NEGATIVE_MAX_WIN_RATE = 0.40
 DEFAULT_NEGATIVE_MAX_PROFIT_FACTOR = 0.75
+# Daily-stability gates are audit quality controls, not market thresholds:
+# a replay edge must be seen on multiple JST campaign days and must not be
+# dominated by one day before it can be called a stable daily route.
+DEFAULT_STABLE_MIN_ACTIVE_DAYS = 3
+DEFAULT_STABLE_MAX_DAILY_SAMPLE_SHARE = 0.70
+DEFAULT_STABLE_MIN_POSITIVE_DAY_RATE = 2.0 / 3.0
+JST = timezone(timedelta(hours=9), "JST")
 
 
 @dataclass(frozen=True)
@@ -159,6 +166,9 @@ def main() -> int:
         negative_max_avg_realized_pips=args.negative_max_avg_realized_pips,
         negative_max_win_rate=args.negative_max_win_rate,
         negative_max_profit_factor=args.negative_max_profit_factor,
+        stable_min_active_days=args.stable_min_active_days,
+        stable_max_daily_sample_share=args.stable_max_daily_sample_share,
+        stable_min_positive_day_rate=args.stable_min_positive_day_rate,
     )
 
     report = {
@@ -234,6 +244,9 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--negative-max-avg-realized-pips", type=float, default=DEFAULT_NEGATIVE_MAX_AVG_REALIZED_PIPS)
     parser.add_argument("--negative-max-win-rate", type=float, default=DEFAULT_NEGATIVE_MAX_WIN_RATE)
     parser.add_argument("--negative-max-profit-factor", type=float, default=DEFAULT_NEGATIVE_MAX_PROFIT_FACTOR)
+    parser.add_argument("--stable-min-active-days", type=int, default=DEFAULT_STABLE_MIN_ACTIVE_DAYS)
+    parser.add_argument("--stable-max-daily-sample-share", type=float, default=DEFAULT_STABLE_MAX_DAILY_SAMPLE_SHARE)
+    parser.add_argument("--stable-min-positive-day-rate", type=float, default=DEFAULT_STABLE_MIN_POSITIVE_DAY_RATE)
     return parser.parse_args()
 
 
@@ -817,15 +830,22 @@ def _segment_exit_grids(
         if len(items) < min_n:
             continue
         grid = _exit_grid(items, tp_grid=tp_grid, sl_grid=sl_grid)
+        best = grid[0] if grid else None
         payload = {field: value for field, value in zip(fields, key)}
         payload.update(
             {
                 "n": len(items),
                 "summary": _summary(items),
-                "best_exit": grid[0] if grid else None,
+                "best_exit": best,
                 "exit_grid": grid,
             }
         )
+        if best:
+            payload["daily_stability"] = _daily_exit_stability(
+                items,
+                take_profit_pips=float(best["take_profit_pips"]),
+                stop_loss_pips=float(best["stop_loss_pips"]),
+            )
         source_summary = _source_summary(items)
         if source_summary is not None:
             payload["source_summary"] = source_summary
@@ -838,6 +858,116 @@ def _segment_exit_grids(
         reverse=True,
     )
     return out
+
+
+def _daily_exit_stability(
+    rows: Sequence[dict[str, Any]],
+    *,
+    take_profit_pips: float,
+    stop_loss_pips: float,
+) -> dict[str, Any]:
+    buckets: dict[str, list[dict[str, Any]]] = collections.defaultdict(list)
+    for row in rows:
+        buckets[_campaign_day_jst(row)].append(row)
+    if not buckets:
+        return {
+            "campaign_timezone": "Asia/Tokyo",
+            "active_days": 0,
+            "daily_summaries": [],
+        }
+    daily_summaries: list[dict[str, Any]] = []
+    for day, items in sorted(buckets.items()):
+        realized = [
+            _simulate_exit(item, take_profit_pips=take_profit_pips, stop_loss_pips=stop_loss_pips)
+            for item in items
+        ]
+        pips = [float(item["pips"]) for item in realized]
+        daily_summaries.append(
+            {
+                "date": day,
+                "samples": len(items),
+                "realized_pips": _round(sum(pips)),
+                "avg_realized_pips": _round(_mean(pips)),
+                "win_rate": _round(_rate(value > 0.0 for value in pips)),
+                "tp_rate": _round(_rate(item["reason"] == "TP" for item in realized)),
+                "sl_rate": _round(_rate(item["reason"] == "SL" for item in realized)),
+                "timeout_rate": _round(_rate(item["reason"] == "TIMEOUT" for item in realized)),
+            }
+        )
+    total = len(rows)
+    samples_by_day = [int(item["samples"]) for item in daily_summaries]
+    realized_by_day = [float(item["realized_pips"] or 0.0) for item in daily_summaries]
+    active_days = len(daily_summaries)
+    positive_days = sum(1 for value in realized_by_day if value > 0.0)
+    negative_days = sum(1 for value in realized_by_day if value < 0.0)
+    flat_days = active_days - positive_days - negative_days
+    return {
+        "campaign_timezone": "Asia/Tokyo",
+        "active_days": active_days,
+        "first_day": daily_summaries[0]["date"],
+        "last_day": daily_summaries[-1]["date"],
+        "min_daily_samples": min(samples_by_day),
+        "max_daily_samples": max(samples_by_day),
+        "avg_daily_samples": _round(total / active_days),
+        "max_daily_sample_share": _round(max(samples_by_day) / total),
+        "positive_days": positive_days,
+        "negative_days": negative_days,
+        "flat_days": flat_days,
+        "positive_day_rate": _round(positive_days / active_days),
+        "avg_daily_realized_pips": _round(_mean(realized_by_day)),
+        "worst_daily_realized_pips": _round(min(realized_by_day)),
+        "best_daily_realized_pips": _round(max(realized_by_day)),
+        "daily_summaries": daily_summaries,
+    }
+
+
+def _campaign_day_jst(row: dict[str, Any]) -> str:
+    timestamp = _parse_time(row.get("timestamp_utc"))
+    if timestamp is None:
+        return "unknown"
+    return timestamp.astimezone(JST).date().isoformat()
+
+
+def _daily_stability_status(
+    daily: dict[str, Any],
+    *,
+    min_active_days: int,
+    max_daily_sample_share: float,
+    min_positive_day_rate: float,
+) -> str:
+    active_days = int(daily.get("active_days") or 0)
+    if active_days < min_active_days:
+        return "INSUFFICIENT_ACTIVE_DAYS"
+    share = _safe_metric(daily.get("max_daily_sample_share"))
+    if share is None or share > max_daily_sample_share:
+        return "DAILY_SAMPLE_CONCENTRATED"
+    positive_rate = _safe_metric(daily.get("positive_day_rate"))
+    if positive_rate is None or positive_rate < min_positive_day_rate:
+        return "DAILY_PNL_UNSTABLE"
+    return "DAILY_STABLE"
+
+
+def _daily_stability_payload(daily: dict[str, Any], status: str) -> dict[str, Any]:
+    keys = (
+        "campaign_timezone",
+        "active_days",
+        "first_day",
+        "last_day",
+        "min_daily_samples",
+        "max_daily_samples",
+        "avg_daily_samples",
+        "max_daily_sample_share",
+        "positive_days",
+        "negative_days",
+        "flat_days",
+        "positive_day_rate",
+        "avg_daily_realized_pips",
+        "worst_daily_realized_pips",
+        "best_daily_realized_pips",
+    )
+    payload = {key: daily[key] for key in keys if key in daily}
+    payload["daily_stability_status"] = status
+    return payload
 
 
 def _bidask_precision_rules(
@@ -858,6 +988,9 @@ def _bidask_precision_rules(
     negative_max_avg_realized_pips: float,
     negative_max_win_rate: float,
     negative_max_profit_factor: float,
+    stable_min_active_days: int = DEFAULT_STABLE_MIN_ACTIVE_DAYS,
+    stable_max_daily_sample_share: float = DEFAULT_STABLE_MAX_DAILY_SAMPLE_SHARE,
+    stable_min_positive_day_rate: float = DEFAULT_STABLE_MIN_POSITIVE_DAY_RATE,
 ) -> dict[str, Any]:
     selection = {
         "edge_min_samples": edge_min_samples,
@@ -872,12 +1005,18 @@ def _bidask_precision_rules(
         "negative_max_avg_realized_pips": negative_max_avg_realized_pips,
         "negative_max_win_rate": negative_max_win_rate,
         "negative_max_profit_factor": negative_max_profit_factor,
+        "stable_min_active_days": stable_min_active_days,
+        "stable_max_daily_sample_share": stable_max_daily_sample_share,
+        "stable_min_positive_day_rate": stable_min_positive_day_rate,
     }
     edge_rules: list[dict[str, Any]] = []
+    daily_stable_edge_rules: list[dict[str, Any]] = []
     negative_rules: list[dict[str, Any]] = []
     contrarian_edge_rules: list[dict[str, Any]] = []
+    daily_stable_contrarian_edge_rules: list[dict[str, Any]] = []
     rejected: list[dict[str, Any]] = []
     rejected_contrarian: list[dict[str, Any]] = []
+    rejected_daily_stability: list[dict[str, Any]] = []
     for row in segment_rows:
         summary = row.get("summary") or {}
         best = row.get("best_exit") or {}
@@ -894,6 +1033,13 @@ def _bidask_precision_rules(
         profit_factor = _safe_metric(best.get("profit_factor"))
         take_profit = _safe_metric(best.get("take_profit_pips"))
         stop_loss = _safe_metric(best.get("stop_loss_pips"))
+        daily = row.get("daily_stability") or {}
+        daily_status = _daily_stability_status(
+            daily,
+            min_active_days=stable_min_active_days,
+            max_daily_sample_share=stable_max_daily_sample_share,
+            min_positive_day_rate=stable_min_positive_day_rate,
+        )
         if not pair or direction not in DIRECTIONAL or take_profit is None or stop_loss is None:
             continue
         common = {
@@ -913,6 +1059,7 @@ def _bidask_precision_rules(
             "optimized_win_rate": _round(win_rate),
             "optimized_profit_factor": _round(profit_factor),
             "audit_report": audit_report,
+            **_daily_stability_payload(daily, daily_status),
         }
         if (
             n >= edge_min_samples
@@ -928,18 +1075,32 @@ def _bidask_precision_rules(
             and profit_factor >= edge_min_profit_factor
         ):
             min_target, max_target = _target_bounds(take_profit)
-            edge_rules.append(
-                {
-                    "name": (
-                        f"{pair}_{direction}_{granularity}_BIDASK_HARVEST_"
-                        f"TP{_rule_number(take_profit)}_SL{_rule_number(stop_loss)}"
-                    ),
-                    **common,
-                    "min_target_pips": min_target,
-                    "max_target_pips": max_target,
-                    "max_stop_pips": _round(stop_loss + 0.2),
-                }
-            )
+            rule = {
+                "name": (
+                    f"{pair}_{direction}_{granularity}_BIDASK_HARVEST_"
+                    f"TP{_rule_number(take_profit)}_SL{_rule_number(stop_loss)}"
+                ),
+                **common,
+                "min_target_pips": min_target,
+                "max_target_pips": max_target,
+                "max_stop_pips": _round(stop_loss + 0.2),
+            }
+            edge_rules.append(rule)
+            if daily_status == "DAILY_STABLE":
+                daily_stable_edge_rules.append(rule)
+            else:
+                rejected_daily_stability.append(
+                    {
+                        "name": rule["name"],
+                        "pair": pair,
+                        "direction": direction,
+                        "samples": n,
+                        "optimized_avg_realized_pips": _round(avg_realized),
+                        "optimized_win_rate": _round(win_rate),
+                        "optimized_profit_factor": _round(profit_factor),
+                        **_daily_stability_payload(daily, daily_status),
+                    }
+                )
             continue
         if (
             n >= negative_min_samples
@@ -1001,6 +1162,13 @@ def _bidask_precision_rules(
         profit_factor = _safe_metric(best.get("profit_factor"))
         take_profit = _safe_metric(best.get("take_profit_pips"))
         stop_loss = _safe_metric(best.get("stop_loss_pips"))
+        daily = row.get("daily_stability") or {}
+        daily_status = _daily_stability_status(
+            daily,
+            min_active_days=stable_min_active_days,
+            max_daily_sample_share=stable_max_daily_sample_share,
+            min_positive_day_rate=stable_min_positive_day_rate,
+        )
         if not pair or direction not in DIRECTIONAL or take_profit is None or stop_loss is None:
             continue
         clears = (
@@ -1031,42 +1199,59 @@ def _bidask_precision_rules(
                 if value
             }
             bucket_name = _contrarian_bucket_name(bucket_fields)
-            contrarian_edge_rules.append(
-                {
-                    "name": (
-                        f"{pair}_{forecast_direction}{bucket_name}_FADE_TO_{direction}_{granularity}_"
-                        f"BIDASK_CONTRARIAN_HARVEST_TP{_rule_number(take_profit)}_"
-                        f"SL{_rule_number(stop_loss)}"
-                    ),
-                    "pair": pair,
-                    "side": _side_for_direction(direction),
-                    "direction": direction,
-                    "forecast_direction": forecast_direction,
-                    "faded_direction": forecast_direction,
-                    "contrarian_edge": True,
-                    **bucket_fields,
-                    "granularity": granularity,
-                    "samples": n,
-                    "source_directional_hit_rate": _round(source_hit_rate),
-                    "source_avg_final_pips": _round(source_avg_final),
-                    "source_avg_mfe_pips": _round(source_avg_mfe),
-                    "source_avg_mae_pips": _round(source_avg_mae),
-                    "directional_hit_rate": _round(hit_rate),
-                    "avg_final_pips": _round(avg_final),
-                    "median_final_pips": _round(median_final),
-                    "avg_mfe_pips": _round(avg_mfe),
-                    "avg_mae_pips": _round(avg_mae),
-                    "optimized_take_profit_pips": _round(take_profit),
-                    "optimized_stop_loss_pips": _round(stop_loss),
-                    "optimized_avg_realized_pips": _round(avg_realized),
-                    "optimized_win_rate": _round(win_rate),
-                    "optimized_profit_factor": _round(profit_factor),
-                    "min_target_pips": min_target,
-                    "max_target_pips": max_target,
-                    "max_stop_pips": _round(stop_loss + 0.2),
-                    "audit_report": audit_report,
-                }
-            )
+            rule = {
+                "name": (
+                    f"{pair}_{forecast_direction}{bucket_name}_FADE_TO_{direction}_{granularity}_"
+                    f"BIDASK_CONTRARIAN_HARVEST_TP{_rule_number(take_profit)}_"
+                    f"SL{_rule_number(stop_loss)}"
+                ),
+                "pair": pair,
+                "side": _side_for_direction(direction),
+                "direction": direction,
+                "forecast_direction": forecast_direction,
+                "faded_direction": forecast_direction,
+                "contrarian_edge": True,
+                **bucket_fields,
+                "granularity": granularity,
+                "samples": n,
+                "source_directional_hit_rate": _round(source_hit_rate),
+                "source_avg_final_pips": _round(source_avg_final),
+                "source_avg_mfe_pips": _round(source_avg_mfe),
+                "source_avg_mae_pips": _round(source_avg_mae),
+                "directional_hit_rate": _round(hit_rate),
+                "avg_final_pips": _round(avg_final),
+                "median_final_pips": _round(median_final),
+                "avg_mfe_pips": _round(avg_mfe),
+                "avg_mae_pips": _round(avg_mae),
+                "optimized_take_profit_pips": _round(take_profit),
+                "optimized_stop_loss_pips": _round(stop_loss),
+                "optimized_avg_realized_pips": _round(avg_realized),
+                "optimized_win_rate": _round(win_rate),
+                "optimized_profit_factor": _round(profit_factor),
+                "min_target_pips": min_target,
+                "max_target_pips": max_target,
+                "max_stop_pips": _round(stop_loss + 0.2),
+                "audit_report": audit_report,
+                **_daily_stability_payload(daily, daily_status),
+            }
+            contrarian_edge_rules.append(rule)
+            if daily_status == "DAILY_STABLE":
+                daily_stable_contrarian_edge_rules.append(rule)
+            else:
+                rejected_daily_stability.append(
+                    {
+                        "name": rule["name"],
+                        "pair": pair,
+                        "forecast_direction": forecast_direction,
+                        "direction": direction,
+                        **bucket_fields,
+                        "samples": n,
+                        "optimized_avg_realized_pips": _round(avg_realized),
+                        "optimized_win_rate": _round(win_rate),
+                        "optimized_profit_factor": _round(profit_factor),
+                        **_daily_stability_payload(daily, daily_status),
+                    }
+                )
             continue
         if n >= edge_min_samples:
             rejected_contrarian.append(
@@ -1116,13 +1301,33 @@ def _bidask_precision_rules(
         ),
         reverse=True,
     )
+    daily_stable_edge_rules.sort(
+        key=lambda item: (
+            item["optimized_profit_factor"],
+            item["optimized_avg_realized_pips"],
+            item["samples"],
+        ),
+        reverse=True,
+    )
+    daily_stable_contrarian_edge_rules.sort(
+        key=lambda item: (
+            item["optimized_profit_factor"],
+            item["optimized_avg_realized_pips"],
+            item["samples"],
+            int(bool(item.get("horizon_bucket"))) + int(bool(item.get("confidence_bucket"))),
+        ),
+        reverse=True,
+    )
     return {
         "selection": selection,
         "edge_rules": edge_rules,
+        "daily_stable_edge_rules": daily_stable_edge_rules,
         "contrarian_edge_rules": contrarian_edge_rules,
+        "daily_stable_contrarian_edge_rules": daily_stable_contrarian_edge_rules,
         "negative_rules": negative_rules,
         "rejected_sampled_segments": rejected,
         "rejected_contrarian_segments": rejected_contrarian,
+        "rejected_daily_stability_segments": rejected_daily_stability,
     }
 
 
@@ -1254,17 +1459,23 @@ def _markdown(report: dict[str, Any]) -> str:
     lines.extend(["", "## Precision Rule Candidates", ""])
     edge_rules = precision.get("edge_rules") or []
     contrarian_rules = precision.get("contrarian_edge_rules") or []
+    daily_stable_edge_rules = precision.get("daily_stable_edge_rules") or []
+    daily_stable_contrarian_rules = precision.get("daily_stable_contrarian_edge_rules") or []
     negative_rules = precision.get("negative_rules") or []
     lines.append(f"- edge_rules: {len(edge_rules)}")
+    lines.append(f"- daily_stable_edge_rules: {len(daily_stable_edge_rules)}")
     for rule in edge_rules[:12]:
         lines.append(
             f"  - {rule['name']}: n={rule['samples']} hit={_pct(rule.get('directional_hit_rate'))} "
             f"avg_final={_fmt(rule.get('avg_final_pips'))} "
             f"TP={rule.get('optimized_take_profit_pips')} SL={rule.get('optimized_stop_loss_pips')} "
             f"realized={_fmt(rule.get('optimized_avg_realized_pips'))} "
-            f"win={_pct(rule.get('optimized_win_rate'))} PF={_fmt(rule.get('optimized_profit_factor'))}"
+            f"win={_pct(rule.get('optimized_win_rate'))} PF={_fmt(rule.get('optimized_profit_factor'))} "
+            f"daily={rule.get('daily_stability_status')} days={rule.get('active_days')} "
+            f"max_share={_pct(rule.get('max_daily_sample_share'))}"
         )
     lines.append(f"- contrarian_edge_rules: {len(contrarian_rules)}")
+    lines.append(f"- daily_stable_contrarian_edge_rules: {len(daily_stable_contrarian_rules)}")
     for rule in contrarian_rules[:12]:
         lines.append(
             f"  - {rule['name']}: fade={rule.get('faded_direction')} trade={rule.get('direction')} "
@@ -1273,7 +1484,9 @@ def _markdown(report: dict[str, Any]) -> str:
             f"avg_final={_fmt(rule.get('avg_final_pips'))} "
             f"TP={rule.get('optimized_take_profit_pips')} SL={rule.get('optimized_stop_loss_pips')} "
             f"realized={_fmt(rule.get('optimized_avg_realized_pips'))} "
-            f"win={_pct(rule.get('optimized_win_rate'))} PF={_fmt(rule.get('optimized_profit_factor'))}"
+            f"win={_pct(rule.get('optimized_win_rate'))} PF={_fmt(rule.get('optimized_profit_factor'))} "
+            f"daily={rule.get('daily_stability_status')} days={rule.get('active_days')} "
+            f"max_share={_pct(rule.get('max_daily_sample_share'))}"
         )
     lines.append(f"- negative_rules: {len(negative_rules)}")
     for rule in negative_rules[:12]:
@@ -1307,6 +1520,8 @@ def _markdown(report: dict[str, Any]) -> str:
                 f"best TP={best.get('take_profit_pips')} SL={best.get('stop_loss_pips')} "
                 f"avg={_fmt(best.get('avg_realized_pips'))} win={_pct(best.get('win_rate'))} "
                 f"PF={_fmt(best.get('profit_factor'))} timeout={_pct(best.get('timeout_rate'))}; "
+                f"daily={((row.get('daily_stability') or {}).get('active_days'))}d "
+                f"max_share={_pct((row.get('daily_stability') or {}).get('max_daily_sample_share'))}; "
                 f"{_summary_line(row.get('summary') or {})}"
             )
         lines.append("")

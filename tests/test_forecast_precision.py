@@ -48,6 +48,10 @@ class ForecastPrecisionConfluenceTest(unittest.TestCase):
                                 "optimized_avg_realized_pips": 2.1,
                                 "optimized_win_rate": 0.69,
                                 "optimized_profit_factor": 2.4,
+                                "daily_stability_status": "DAILY_STABLE",
+                                "active_days": 4,
+                                "max_daily_sample_share": 0.40,
+                                "positive_day_rate": 0.75,
                                 "min_target_pips": 4.8,
                                 "max_target_pips": 5.5,
                                 "max_stop_pips": 7.2,
@@ -77,6 +81,8 @@ class ForecastPrecisionConfluenceTest(unittest.TestCase):
             "GBP_USD_DOWN_S5_BIDASK_HARVEST_TP5_SL7",
         )
         self.assertEqual(assessment["primary_support"]["pair"], "GBP_USD")
+        self.assertEqual(assessment["primary_support"]["daily_stability_status"], "DAILY_STABLE")
+        self.assertEqual(assessment["primary_support"]["active_days"], 4)
         self.assertEqual(assessment["score_delta"], 18.0)
         self.assertEqual(assessment["rule_source"]["generated_from"], "unit-test")
 
