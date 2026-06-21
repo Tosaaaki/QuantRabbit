@@ -57,7 +57,11 @@ WITH gateway_entries AS (
       AND lane_id IS NOT NULL AND lane_id != ''
 ),
 entries AS (
-    SELECT e.trade_id
+    SELECT
+        e.trade_id,
+        COALESCE(NULLIF(MAX(e.pair), ''), '') AS pair,
+        COALESCE(NULLIF(MAX(e.side), ''), '') AS side,
+        COALESCE(NULLIF(MAX(e.lane_id), ''), MAX(g.lane_id)) AS lane_id
     FROM execution_events e
     LEFT JOIN gateway_entries g
       ON (g.trade_id IS NOT NULL AND g.trade_id != '' AND g.trade_id = e.trade_id)
@@ -74,7 +78,9 @@ entries AS (
 -- ts_utc come from the FINAL close event of the trade.
 SELECT
     MAX(e.ts_utc) AS ts_utc,
-    e.pair,
+    entries.pair,
+    entries.side,
+    entries.lane_id,
     (
         SELECT e2.exit_reason FROM execution_events e2
         WHERE e2.trade_id = e.trade_id
@@ -87,10 +93,21 @@ FROM execution_events e
 INNER JOIN entries ON entries.trade_id = e.trade_id
 WHERE e.event_type IN ('TRADE_CLOSED', 'TRADE_REDUCED')
   AND e.realized_pl_jpy IS NOT NULL
-GROUP BY e.trade_id, e.pair
+GROUP BY e.trade_id, entries.pair, entries.side, entries.lane_id
 HAVING SUM(e.realized_pl_jpy) != 0
 ORDER BY MAX(e.ts_utc) ASC
 """
+
+
+@dataclass(frozen=True)
+class RealizedOutcome:
+    ts_utc: str
+    pair: str
+    side: str
+    lane_id: str
+    method: str
+    exit_reason: str
+    realized_pl_jpy: float
 
 
 @dataclass(frozen=True)
@@ -105,9 +122,9 @@ class CaptureEconomicsSummary:
     expectancy_jpy: float | None
 
 
-def _bucket_metrics(rows: list[tuple[str, str, str, float]]) -> dict[str, Any]:
-    wins = [r[3] for r in rows if r[3] > 0]
-    losses = [r[3] for r in rows if r[3] < 0]
+def _bucket_metrics(rows: list[RealizedOutcome]) -> dict[str, Any]:
+    wins = [r.realized_pl_jpy for r in rows if r.realized_pl_jpy > 0]
+    losses = [r.realized_pl_jpy for r in rows if r.realized_pl_jpy < 0]
     n = len(wins) + len(losses)
     if n == 0:
         return {"trades": 0}
@@ -129,6 +146,30 @@ def _bucket_metrics(rows: list[tuple[str, str, str, float]]) -> dict[str, Any]:
         "expectancy_jpy_per_trade": round(expectancy, 1),
         "net_jpy": round(sum(wins) + sum(losses), 1),
     }
+
+
+def _nested_segment_metrics(
+    rows: list[RealizedOutcome],
+    dimensions: tuple[str, ...],
+) -> dict[str, Any]:
+    out: dict[str, Any] = {}
+    groups: dict[tuple[str, ...], list[RealizedOutcome]] = {}
+    for row in rows:
+        key = tuple(str(getattr(row, dimension) or "UNKNOWN") for dimension in dimensions)
+        groups.setdefault(key, []).append(row)
+    for key, bucket in sorted(groups.items()):
+        cursor = out
+        for part in key[:-1]:
+            cursor = cursor.setdefault(part, {})
+        cursor[key[-1]] = _bucket_metrics(bucket)
+    return out
+
+
+def _lane_method(lane_id: str) -> str:
+    parts = [part for part in str(lane_id or "").split(":") if part]
+    if len(parts) >= 4:
+        return parts[3]
+    return "UNKNOWN"
 
 
 def _iso_week(ts_utc: str) -> str:
@@ -271,13 +312,21 @@ def build_capture_economics(
     output_path: Path = DEFAULT_CAPTURE_ECONOMICS,
     report_path: Path = DEFAULT_CAPTURE_ECONOMICS_REPORT,
 ) -> CaptureEconomicsSummary:
-    rows: list[tuple[str, str, str, float]] = []
+    rows: list[RealizedOutcome] = []
     if ledger_path.exists():
         try:
             with sqlite3.connect(f"file:{ledger_path}?mode=ro", uri=True) as conn:
                 rows = [
-                    (str(ts or ""), str(pair or ""), str(reason or ""), float(pl))
-                    for ts, pair, reason, pl in conn.execute(_ATTRIBUTED_REALIZED_SQL)
+                    RealizedOutcome(
+                        ts_utc=str(ts or ""),
+                        pair=str(pair or "UNKNOWN"),
+                        side=str(side or "UNKNOWN"),
+                        lane_id=str(lane_id or ""),
+                        method=_lane_method(str(lane_id or "")),
+                        exit_reason=str(reason or "UNKNOWN"),
+                        realized_pl_jpy=float(pl),
+                    )
+                    for ts, pair, side, lane_id, reason, pl in conn.execute(_ATTRIBUTED_REALIZED_SQL)
                     if pl is not None
                 ]
         except sqlite3.Error:
@@ -286,10 +335,12 @@ def build_capture_economics(
     overall = _bucket_metrics(rows)
     by_exit: dict[str, Any] = {}
     by_week: dict[str, Any] = {}
-    for reason in sorted({r[2] for r in rows}):
-        by_exit[reason] = _bucket_metrics([r for r in rows if r[2] == reason])
-    for week in sorted({_iso_week(r[0]) for r in rows}):
-        by_week[week] = _bucket_metrics([r for r in rows if _iso_week(r[0]) == week])
+    for reason in sorted({r.exit_reason for r in rows}):
+        by_exit[reason] = _bucket_metrics([r for r in rows if r.exit_reason == reason])
+    for week in sorted({_iso_week(r.ts_utc) for r in rows}):
+        by_week[week] = _bucket_metrics([r for r in rows if _iso_week(r.ts_utc) == week])
+    by_pair_side_exit = _nested_segment_metrics(rows, ("pair", "side", "exit_reason"))
+    by_pair_side_method_exit = _nested_segment_metrics(rows, ("pair", "side", "method", "exit_reason"))
 
     trades = int(overall.get("trades") or 0)
     payoff = overall.get("payoff_ratio")
@@ -320,6 +371,8 @@ def build_capture_economics(
         "min_sample_for_verdict": MIN_SAMPLE_FOR_VERDICT,
         "overall": overall,
         "by_exit_reason": by_exit,
+        "by_pair_side_exit_reason": by_pair_side_exit,
+        "by_pair_side_method_exit_reason": by_pair_side_method_exit,
         "by_iso_week": by_week,
         "repair_summary": repair_summary,
         "action_items": action_items,

@@ -251,6 +251,8 @@ class RiskEngineTest(unittest.TestCase):
                 "tp_execution_mode": "ATTACHED_TECHNICAL_TP",
                 "attach_take_profit_on_fill": True,
                 "tp_target_intent": "HARVEST",
+                "capture_take_profit_scope": "PAIR_SIDE_METHOD",
+                "capture_take_profit_scope_key": "EUR_USD|LONG|RANGE_ROTATION|TAKE_PROFIT_ORDER",
                 "capture_take_profit_trades": 93,
                 "capture_take_profit_expectancy_jpy": 504.0,
                 "capture_take_profit_losses": 0,
@@ -261,6 +263,45 @@ class RiskEngineTest(unittest.TestCase):
 
         self.assertTrue(decision.allowed, decision.block_reasons)
         self.assertNotIn("LOSS_ASYMMETRY_GUARD_EXCEEDED", {issue.code for issue in decision.issues})
+
+    def test_tp_proven_relaxed_requires_scoped_capture_proof(self) -> None:
+        intent = OrderIntent(
+            pair="EUR_USD",
+            side=Side.LONG,
+            order_type=OrderType.LIMIT,
+            units=3000,
+            entry=1.17300,
+            tp=1.17600,
+            sl=1.17130,
+            thesis="global_tp_proof_cannot_exempt_unscoped_shape",
+            market_context=MarketContext(
+                regime="RANGE current; RANGE_ROTATION campaign lane",
+                narrative="global TP proof is not enough for this pair-side-method",
+                chart_story="range lower rail",
+                method=TradeMethod.RANGE_ROTATION,
+                invalidation="1.1713 loses on M5 bodies",
+            ),
+            metadata={
+                "capture_economics_status": "NEGATIVE_EXPECTANCY",
+                "capture_avg_win_jpy": 600.0,
+                "capture_avg_loss_jpy": 1100.0,
+                "loss_asymmetry_guard_active": True,
+                "loss_asymmetry_guard_mode": "TP_PROVEN_RELAXED",
+                "loss_asymmetry_guard_loss_cap_jpy": 600.0,
+                "loss_asymmetry_guard_effective_max_loss_jpy": 1000.0,
+                "tp_execution_mode": "ATTACHED_TECHNICAL_TP",
+                "attach_take_profit_on_fill": True,
+                "tp_target_intent": "HARVEST",
+                "capture_take_profit_trades": 93,
+                "capture_take_profit_expectancy_jpy": 504.0,
+                "capture_take_profit_losses": 0,
+            },
+        )
+
+        decision = _capped_engine(policy=RiskPolicy(max_loss_jpy=1000.0)).validate(intent, snapshot())
+
+        self.assertFalse(decision.allowed)
+        self.assertIn("LOSS_ASYMMETRY_GUARD_EXCEEDED", {issue.code for issue in decision.issues})
 
     def test_stale_capture_economics_blocks_even_tp_proven_relaxation(self) -> None:
         intent = OrderIntent(

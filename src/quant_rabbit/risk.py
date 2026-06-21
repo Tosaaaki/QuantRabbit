@@ -502,6 +502,8 @@ def _loss_asymmetry_tp_relaxation_shape_allowed(
         return False
     if str(metadata.get("tp_target_intent") or "").upper() != "HARVEST":
         return False
+    if str(metadata.get("capture_take_profit_scope") or "").upper() not in {"PAIR_SIDE_METHOD", "PAIR_SIDE"}:
+        return False
     tp_trades = _to_float(metadata.get("capture_take_profit_trades"))
     tp_expectancy = _to_float(metadata.get("capture_take_profit_expectancy_jpy"))
     tp_losses = _to_float(metadata.get("capture_take_profit_losses"))

@@ -52,6 +52,46 @@ def _high_precision_market_support(direction: str) -> dict:
     }
 
 
+def _capture_scoped_tp_payload(
+    *,
+    pair: str = "EUR_USD",
+    side: str = "LONG",
+    method: str = "RANGE_ROTATION",
+    trades: int = 93,
+    wins: int = 93,
+    losses: int = 0,
+    avg_win_jpy: float = 504.0,
+    avg_loss_jpy: float = 0.0,
+    expectancy_jpy_per_trade: float = 504.0,
+) -> dict:
+    metrics = {
+        "trades": trades,
+        "wins": wins,
+        "losses": losses,
+        "avg_win_jpy": avg_win_jpy,
+        "avg_loss_jpy": avg_loss_jpy,
+        "expectancy_jpy_per_trade": expectancy_jpy_per_trade,
+    }
+    return {
+        "by_pair_side_exit_reason": {
+            pair: {
+                side: {
+                    "TAKE_PROFIT_ORDER": dict(metrics),
+                }
+            }
+        },
+        "by_pair_side_method_exit_reason": {
+            pair: {
+                side: {
+                    method: {
+                        "TAKE_PROFIT_ORDER": dict(metrics),
+                    }
+                }
+            }
+        },
+    }
+
+
 class IntentGeneratorTest(unittest.TestCase):
     def setUp(self) -> None:
         self._default_root_tmp = tempfile.TemporaryDirectory()
@@ -357,6 +397,7 @@ class IntentGeneratorTest(unittest.TestCase):
                                 "expectancy_jpy_per_trade": -892.1,
                             },
                         },
+                        **_capture_scoped_tp_payload(),
                     }
                 )
             )
@@ -389,6 +430,7 @@ class IntentGeneratorTest(unittest.TestCase):
             self.assertEqual(metadata["max_loss_jpy"], 1000.0)
             self.assertEqual(metadata["tp_execution_mode"], "ATTACHED_TECHNICAL_TP")
             self.assertEqual(metadata["tp_target_intent"], "HARVEST")
+            self.assertEqual(metadata["capture_take_profit_scope"], "PAIR_SIDE_METHOD")
             self.assertEqual(metadata["positive_rotation_mode"], "TP_PROVEN_HARVEST")
             self.assertEqual(
                 metadata["positive_rotation_confidence_method"],
@@ -401,6 +443,154 @@ class IntentGeneratorTest(unittest.TestCase):
             self.assertTrue(metadata["positive_rotation_minimum_floor_reachable"])
             self.assertLessEqual(metadata["positive_rotation_required_minimum_trades"], 30)
             self.assertLessEqual(result["risk_metrics"]["risk_jpy"], 1000.0)
+
+    def test_global_tp_profit_is_not_enough_to_relax_unproven_pair_shape(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "capture_economics.json").write_text(
+                json.dumps(
+                    {
+                        "status": "NEGATIVE_EXPECTANCY",
+                        "overall": {
+                            "trades": 210,
+                            "avg_win_jpy": 600.0,
+                            "avg_loss_jpy": 1100.0,
+                            "payoff_ratio": 0.545,
+                            "breakeven_payoff_at_win_rate": 0.7,
+                        },
+                        "by_exit_reason": {
+                            "TAKE_PROFIT_ORDER": {
+                                "trades": 93,
+                                "wins": 93,
+                                "losses": 0,
+                                "avg_win_jpy": 504.0,
+                                "avg_loss_jpy": 0.0,
+                                "expectancy_jpy_per_trade": 504.0,
+                            },
+                            "MARKET_ORDER_TRADE_CLOSE": {
+                                "trades": 84,
+                                "wins": 13,
+                                "losses": 71,
+                                "avg_win_jpy": 218.4,
+                                "avg_loss_jpy": 1095.5,
+                                "expectancy_jpy_per_trade": -892.1,
+                            },
+                        },
+                    }
+                )
+            )
+            output = root / "intents.json"
+
+            IntentGenerator(
+                campaign_plan=_stamp_campaign_generated_at(_range_campaign(root)),
+                strategy_profile=_strategy(root, status="CANDIDATE"),
+                output_path=output,
+                report_path=root / "intents.md",
+                pair_charts_path=_pair_charts(root),
+                data_root=root,
+                max_loss_jpy=1000.0,
+            ).run(snapshot_path=_snapshot(root))
+
+            payload = json.loads(output.read_text())
+            result = next(
+                item for item in payload["results"]
+                if item["lane_id"] == "range_trader:EUR_USD:LONG:RANGE_ROTATION"
+            )
+            metadata = result["intent"]["metadata"]
+            issue_codes = {issue["code"] for issue in result["risk_issues"]}
+
+            self.assertEqual(metadata["loss_asymmetry_guard_mode"], "CAP_AVG_WIN")
+            self.assertEqual(metadata["capture_take_profit_scope"], "MISSING_SCOPED")
+            self.assertNotEqual(metadata.get("positive_rotation_mode"), "TP_PROVEN_HARVEST")
+            self.assertIn(POSITIVE_ROTATION_LIVE_BLOCK_CODE, issue_codes)
+
+    def test_pair_side_tp_profit_does_not_relax_method_without_tp_proof(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "capture_economics.json").write_text(
+                json.dumps(
+                    {
+                        "status": "NEGATIVE_EXPECTANCY",
+                        "overall": {
+                            "trades": 210,
+                            "avg_win_jpy": 600.0,
+                            "avg_loss_jpy": 1100.0,
+                            "payoff_ratio": 0.545,
+                            "breakeven_payoff_at_win_rate": 0.7,
+                        },
+                        "by_exit_reason": {
+                            "TAKE_PROFIT_ORDER": {
+                                "trades": 93,
+                                "wins": 93,
+                                "losses": 0,
+                                "avg_win_jpy": 504.0,
+                                "avg_loss_jpy": 0.0,
+                                "expectancy_jpy_per_trade": 504.0,
+                            },
+                            "MARKET_ORDER_TRADE_CLOSE": {
+                                "trades": 84,
+                                "wins": 13,
+                                "losses": 71,
+                                "avg_win_jpy": 218.4,
+                                "avg_loss_jpy": 1095.5,
+                                "expectancy_jpy_per_trade": -892.1,
+                            },
+                        },
+                        "by_pair_side_exit_reason": {
+                            "EUR_USD": {
+                                "LONG": {
+                                    "TAKE_PROFIT_ORDER": {
+                                        "trades": 25,
+                                        "wins": 25,
+                                        "losses": 0,
+                                        "avg_win_jpy": 505.4,
+                                        "avg_loss_jpy": 0.0,
+                                        "expectancy_jpy_per_trade": 505.4,
+                                    }
+                                }
+                            }
+                        },
+                        "by_pair_side_method_exit_reason": {
+                            "EUR_USD": {
+                                "LONG": {
+                                    "RANGE_ROTATION": {
+                                        "MARKET_ORDER_TRADE_CLOSE": {
+                                            "trades": 2,
+                                            "wins": 0,
+                                            "losses": 2,
+                                            "avg_win_jpy": 0.0,
+                                            "avg_loss_jpy": 1316.8,
+                                            "expectancy_jpy_per_trade": -1316.8,
+                                        }
+                                    }
+                                }
+                            }
+                        },
+                    }
+                )
+            )
+            output = root / "intents.json"
+
+            IntentGenerator(
+                campaign_plan=_stamp_campaign_generated_at(_range_campaign(root)),
+                strategy_profile=_strategy(root, status="CANDIDATE"),
+                output_path=output,
+                report_path=root / "intents.md",
+                pair_charts_path=_pair_charts(root),
+                data_root=root,
+                max_loss_jpy=1000.0,
+            ).run(snapshot_path=_snapshot(root))
+
+            payload = json.loads(output.read_text())
+            result = next(
+                item for item in payload["results"]
+                if item["lane_id"] == "range_trader:EUR_USD:LONG:RANGE_ROTATION"
+            )
+            metadata = result["intent"]["metadata"]
+
+            self.assertEqual(metadata["loss_asymmetry_guard_mode"], "CAP_AVG_WIN")
+            self.assertEqual(metadata["capture_take_profit_scope"], "MISSING_METHOD_EXIT")
+            self.assertNotEqual(metadata.get("positive_rotation_mode"), "TP_PROVEN_HARVEST")
 
     def test_stale_capture_economics_blocks_tp_proven_rotation_claim(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -446,6 +636,7 @@ class IntentGeneratorTest(unittest.TestCase):
                                 "expectancy_jpy_per_trade": -892.1,
                             },
                         },
+                        **_capture_scoped_tp_payload(),
                     }
                 )
             )
@@ -541,6 +732,7 @@ class IntentGeneratorTest(unittest.TestCase):
                                 "expectancy_jpy_per_trade": -892.1,
                             },
                         },
+                        **_capture_scoped_tp_payload(),
                     }
                 )
             )
@@ -610,6 +802,14 @@ class IntentGeneratorTest(unittest.TestCase):
                                 "expectancy_jpy_per_trade": -892.1,
                             },
                         },
+                        **_capture_scoped_tp_payload(
+                            trades=20,
+                            wins=20,
+                            losses=0,
+                            avg_win_jpy=20.0,
+                            avg_loss_jpy=0.0,
+                            expectancy_jpy_per_trade=20.0,
+                        ),
                     }
                 )
             )
@@ -6933,6 +7133,7 @@ class IntentGeneratorTest(unittest.TestCase):
                                 "expectancy_jpy_per_trade": -892.1,
                             },
                         },
+                        **_capture_scoped_tp_payload(),
                     }
                 )
             )
@@ -7028,6 +7229,7 @@ class IntentGeneratorTest(unittest.TestCase):
                                 "expectancy_jpy_per_trade": -892.1,
                             },
                         },
+                        **_capture_scoped_tp_payload(),
                     }
                 )
             )
@@ -7463,6 +7665,7 @@ class IntentGeneratorTest(unittest.TestCase):
                                 "expectancy_jpy_per_trade": -892.1,
                             },
                         },
+                        **_capture_scoped_tp_payload(),
                     }
                 )
             )
@@ -7681,6 +7884,7 @@ class IntentGeneratorTest(unittest.TestCase):
                                 "expectancy_jpy_per_trade": -892.1,
                             },
                         },
+                        **_capture_scoped_tp_payload(),
                     }
                 )
             )

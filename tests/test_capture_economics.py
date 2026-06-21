@@ -26,14 +26,17 @@ def _make_db(path: Path, closes: list[dict]) -> None:
     rows = []
     for i, c in enumerate(closes):
         trade_id = c.get("trade_id", f"t{i}")
+        side = c.get("side", "LONG")
+        method = c.get("method", "RANGE_ROTATION")
+        lane_id = c.get("lane_id", f"range_trader:{c['pair']}:{side}:{method}")
         if c.get("attributed", True):
             rows.append(
-                (f"g{i}", c["ts_utc"], "GATEWAY_ORDER_SENT", "lane:X", f"o{i}", trade_id,
-                 c["pair"], "LONG", 1000, None, None)
+                (f"g{i}", c["ts_utc"], "GATEWAY_ORDER_SENT", lane_id, f"o{i}", trade_id,
+                 c["pair"], side, 1000, None, None)
             )
             rows.append(
                 (f"f{i}", c["ts_utc"], "ORDER_FILLED", None, f"o{i}", trade_id,
-                 c["pair"], "LONG", 1000, None, None)
+                 c["pair"], side, 1000, None, None)
             )
         rows.append(
             (f"c{i}", c["ts_utc"], c.get("event_type", "TRADE_CLOSED"), None, f"x{i}", trade_id,
@@ -87,6 +90,16 @@ class CaptureEconomicsTest(unittest.TestCase):
                 payload["repair_summary"]["dominant_loss_exit_reason"],
                 "MARKET_ORDER_TRADE_CLOSE",
             )
+            self.assertEqual(
+                payload["by_pair_side_exit_reason"]["EUR_USD"]["LONG"]["MARKET_ORDER_TRADE_CLOSE"]["losses"],
+                9,
+            )
+            self.assertEqual(
+                payload["by_pair_side_method_exit_reason"]["EUR_USD"]["LONG"]["RANGE_ROTATION"][
+                    "TAKE_PROFIT_ORDER"
+                ]["wins"],
+                21,
+            )
             self.assertGreater(payload["repair_summary"]["payoff_gap_to_breakeven"], 0)
             self.assertTrue(
                 any("MARKET_ORDER_TRADE_CLOSE drag" in item for item in payload["action_items"])
@@ -125,6 +138,12 @@ class CaptureEconomicsTest(unittest.TestCase):
             # The aggregated trade's exit reason is its FINAL close event.
             self.assertIn("MARKET_ORDER_TRADE_CLOSE", payload["by_exit_reason"])
             self.assertEqual(payload["by_exit_reason"]["MARKET_ORDER_TRADE_CLOSE"]["losses"], 1)
+            self.assertEqual(
+                payload["by_pair_side_method_exit_reason"]["EUR_USD"]["LONG"]["RANGE_ROTATION"][
+                    "MARKET_ORDER_TRADE_CLOSE"
+                ]["losses"],
+                1,
+            )
 
     def test_all_wins_sample_reports_positive_expectancy(self) -> None:
         """Zero losses leaves payoff undefined; the verdict must still be
@@ -163,6 +182,7 @@ class CaptureEconomicsTest(unittest.TestCase):
             self.assertEqual(summary.status, "POSITIVE_EXPECTANCY")
             payload = json.loads((root / "out.json").read_text())
             self.assertNotIn("USD_JPY", json.dumps(payload["by_exit_reason"]))
+            self.assertNotIn("USD_JPY", json.dumps(payload["by_pair_side_exit_reason"]))
 
 
 if __name__ == "__main__":

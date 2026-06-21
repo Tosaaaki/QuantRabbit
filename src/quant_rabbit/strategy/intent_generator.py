@@ -1081,6 +1081,16 @@ def _capture_loss_asymmetry_guard(data_root: Path | None = None) -> dict[str, An
     if avg_win is None or avg_win <= 0 or avg_loss is None or avg_loss <= avg_win:
         return {}
     by_exit_reason = payload.get("by_exit_reason") if isinstance(payload.get("by_exit_reason"), dict) else {}
+    by_pair_side_exit_reason = (
+        payload.get("by_pair_side_exit_reason")
+        if isinstance(payload.get("by_pair_side_exit_reason"), dict)
+        else {}
+    )
+    by_pair_side_method_exit_reason = (
+        payload.get("by_pair_side_method_exit_reason")
+        if isinstance(payload.get("by_pair_side_method_exit_reason"), dict)
+        else {}
+    )
     tp_exit = by_exit_reason.get("TAKE_PROFIT_ORDER") if isinstance(by_exit_reason, dict) else None
     tp_exit = tp_exit if isinstance(tp_exit, dict) else {}
     market_close_exit = by_exit_reason.get("MARKET_ORDER_TRADE_CLOSE") if isinstance(by_exit_reason, dict) else None
@@ -1110,6 +1120,8 @@ def _capture_loss_asymmetry_guard(data_root: Path | None = None) -> dict[str, An
         "take_profit_avg_loss_jpy": _optional_float(tp_exit.get("avg_loss_jpy")),
         "take_profit_losses": take_profit_losses,
         "market_close_expectancy_jpy": _optional_float(market_close_exit.get("expectancy_jpy_per_trade")),
+        "by_pair_side_exit_reason": by_pair_side_exit_reason,
+        "by_pair_side_method_exit_reason": by_pair_side_method_exit_reason,
     }
 
 
@@ -5778,6 +5790,9 @@ POSITIVE_ROTATION_CONFIDENCE_Z = 1.96
 def _loss_asymmetry_sizing_plan(
     guard: dict[str, Any] | None,
     *,
+    pair: str,
+    side: Side,
+    method: TradeMethod,
     base_max_loss_jpy: float,
     position_metadata: dict[str, Any],
     order_type: OrderType,
@@ -5822,16 +5837,27 @@ def _loss_asymmetry_sizing_plan(
     cap = _optional_float(guard.get("loss_cap_jpy"))
     if cap is None or cap <= 0:
         return base_max_loss_jpy, {}
-    relaxation_reason = _loss_asymmetry_tp_relaxation_reason(
+    scope_metrics, scope_name, scope_key = _capture_scoped_exit_metrics(
         guard,
+        pair=pair,
+        side=side.value,
+        method=method.value,
+        exit_reason="TAKE_PROFIT_ORDER",
+    )
+    relaxation = _loss_asymmetry_tp_relaxation(
+        scope_metrics=scope_metrics,
+        scope_name=scope_name,
+        scope_key=scope_key,
         order_type=order_type,
         tp_execution_metadata=tp_execution_metadata,
     )
-    effective = base_max_loss_jpy if relaxation_reason else min(base_max_loss_jpy, cap)
+    relaxation_reason = relaxation.get("reason") if relaxation else None
+    effective = base_max_loss_jpy if relaxation else min(base_max_loss_jpy, cap)
+    scoped_tp = relaxation or scope_metrics
     metadata = {
         "loss_asymmetry_guard_active": True,
-        "loss_asymmetry_guard_mode": "TP_PROVEN_RELAXED" if relaxation_reason else "CAP_AVG_WIN",
-        "loss_asymmetry_guard_relaxed": bool(relaxation_reason),
+        "loss_asymmetry_guard_mode": "TP_PROVEN_RELAXED" if relaxation else "CAP_AVG_WIN",
+        "loss_asymmetry_guard_relaxed": bool(relaxation),
         "loss_asymmetry_guard_relaxation_reason": relaxation_reason,
         "loss_asymmetry_guard_loss_cap_jpy": round(cap, 4),
         "loss_asymmetry_guard_base_max_loss_jpy": round(base_max_loss_jpy, 4),
@@ -5849,24 +5875,28 @@ def _loss_asymmetry_sizing_plan(
         "capture_avg_loss_jpy": guard.get("avg_loss_jpy"),
         "capture_payoff_ratio": guard.get("payoff_ratio"),
         "capture_breakeven_payoff_at_win_rate": guard.get("breakeven_payoff_at_win_rate"),
-        "capture_take_profit_trades": guard.get("take_profit_trades"),
-        "capture_take_profit_wins": guard.get("take_profit_wins"),
-        "capture_take_profit_expectancy_jpy": guard.get("take_profit_expectancy_jpy"),
-        "capture_take_profit_avg_win_jpy": guard.get("take_profit_avg_win_jpy"),
-        "capture_take_profit_avg_loss_jpy": guard.get("take_profit_avg_loss_jpy"),
-        "capture_take_profit_losses": guard.get("take_profit_losses"),
+        "capture_take_profit_scope": scope_name,
+        "capture_take_profit_scope_key": scope_key,
+        "capture_take_profit_trades": scoped_tp.get("trades"),
+        "capture_take_profit_wins": scoped_tp.get("wins"),
+        "capture_take_profit_expectancy_jpy": scoped_tp.get("expectancy_jpy_per_trade"),
+        "capture_take_profit_avg_win_jpy": scoped_tp.get("avg_win_jpy"),
+        "capture_take_profit_avg_loss_jpy": scoped_tp.get("avg_loss_jpy"),
+        "capture_take_profit_losses": scoped_tp.get("losses"),
         "capture_market_close_expectancy_jpy": guard.get("market_close_expectancy_jpy"),
         "capture_economics_source": guard.get("source"),
     }
     return effective, metadata
 
 
-def _loss_asymmetry_tp_relaxation_reason(
-    guard: dict[str, Any],
+def _loss_asymmetry_tp_relaxation(
     *,
+    scope_metrics: dict[str, Any],
+    scope_name: str,
+    scope_key: str,
     order_type: OrderType,
     tp_execution_metadata: dict[str, Any],
-) -> str | None:
+) -> dict[str, Any] | None:
     if order_type == OrderType.MARKET:
         return None
     if not tp_execution_metadata.get("attach_take_profit_on_fill"):
@@ -5875,19 +5905,58 @@ def _loss_asymmetry_tp_relaxation_reason(
         return None
     if str(tp_execution_metadata.get("tp_target_intent") or "").upper() != "HARVEST":
         return None
-    tp_trades = int(_optional_float(guard.get("take_profit_trades")) or 0)
-    tp_expectancy = _optional_float(guard.get("take_profit_expectancy_jpy"))
-    tp_avg_win = _optional_float(guard.get("take_profit_avg_win_jpy"))
+    if scope_name not in {"PAIR_SIDE_METHOD", "PAIR_SIDE"}:
+        return None
+    tp_trades = int(_optional_float(scope_metrics.get("trades")) or 0)
+    tp_expectancy = _optional_float(scope_metrics.get("expectancy_jpy_per_trade"))
+    tp_avg_win = _optional_float(scope_metrics.get("avg_win_jpy"))
     if tp_trades < LOSS_ASYMMETRY_TP_RELAX_MIN_EXIT_TRADES:
         return None
     if tp_expectancy is None or tp_expectancy <= 0 or tp_avg_win is None or tp_avg_win <= 0:
         return None
-    return (
+    out = dict(scope_metrics)
+    out["reason"] = (
         "TAKE_PROFIT_ORDER exits are positive-expectancy for this broker-TP "
-        f"HARVEST shape (trades={tp_trades}, expectancy={tp_expectancy:.1f} JPY); "
+        f"HARVEST shape ({scope_name} {scope_key}, trades={tp_trades}, "
+        f"expectancy={tp_expectancy:.1f} JPY); "
         "the negative overall payoff is concentrated in market-close exits, so "
         "do not throttle this TP-attached entry below the normal per-trade cap"
     )
+    return out
+
+
+def _capture_scoped_exit_metrics(
+    guard: dict[str, Any],
+    *,
+    pair: str,
+    side: str,
+    method: str,
+    exit_reason: str,
+) -> tuple[dict[str, Any], str, str]:
+    by_method = guard.get("by_pair_side_method_exit_reason")
+    method_scopes = _nested_dict_get(by_method, pair, side)
+    if method_scopes is not None:
+        method_exits = method_scopes.get(method)
+        if isinstance(method_exits, dict):
+            metrics = method_exits.get(exit_reason)
+            if isinstance(metrics, dict):
+                return metrics, "PAIR_SIDE_METHOD", f"{pair}|{side}|{method}|{exit_reason}"
+            return {}, "MISSING_METHOD_EXIT", f"{pair}|{side}|{method}|{exit_reason}"
+        return {}, "MISSING_METHOD_SCOPE", f"{pair}|{side}|{method}|{exit_reason}"
+    by_pair_side = guard.get("by_pair_side_exit_reason")
+    metrics = _nested_dict_get(by_pair_side, pair, side, exit_reason)
+    if metrics is not None:
+        return metrics, "PAIR_SIDE", f"{pair}|{side}|{exit_reason}"
+    return {}, "MISSING_SCOPED", f"{pair}|{side}|{method}|{exit_reason}"
+
+
+def _nested_dict_get(root: object, *keys: str) -> dict[str, Any] | None:
+    cursor: object = root
+    for key in keys:
+        if not isinstance(cursor, dict):
+            return None
+        cursor = cursor.get(key)
+    return cursor if isinstance(cursor, dict) else None
 
 
 def _tp_proven_harvest_rotation_allowed(intent: OrderIntent) -> bool:
@@ -5913,6 +5982,8 @@ def _tp_proven_harvest_rotation_allowed(intent: OrderIntent) -> bool:
     if str(metadata.get("loss_asymmetry_guard_mode") or "").upper() != "TP_PROVEN_RELAXED":
         return False
     if metadata.get("loss_asymmetry_guard_relaxed") is not True:
+        return False
+    if str(metadata.get("capture_take_profit_scope") or "").upper() not in {"PAIR_SIDE_METHOD", "PAIR_SIDE"}:
         return False
     tp_trades = int(_optional_float(metadata.get("capture_take_profit_trades")) or 0)
     if tp_trades < LOSS_ASYMMETRY_TP_RELAX_MIN_EXIT_TRADES:
@@ -6188,6 +6259,9 @@ def _intent_from_lane(
     )
     effective_max_loss_jpy, loss_asymmetry_metadata = _loss_asymmetry_sizing_plan(
         loss_asymmetry_guard,
+        pair=pair,
+        side=side,
+        method=method,
         base_max_loss_jpy=effective_max_loss_jpy,
         position_metadata=position_metadata,
         order_type=order_type,
