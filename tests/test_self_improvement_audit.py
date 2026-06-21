@@ -1631,6 +1631,33 @@ class SelfImprovementAuditorTest(unittest.TestCase):
                         "cycle_id": f"timeout-cycle-{idx}",
                     }
                 )
+            for idx in range(96):
+                rows.append(
+                    {
+                        "timestamp_emitted_utc": (_NOW - timedelta(hours=idx + 140)).isoformat(),
+                        "pair": "GBP_USD",
+                        "direction": "EITHER",
+                        "regime_at_emission": "TREND",
+                        "signal_name": "session_expansion_london",
+                        "resolution_window_min": 60.0,
+                        "resolution_status": "HIT",
+                        "cycle_id": f"edge-hit-cycle-{idx}",
+                    }
+                )
+            for idx in range(4):
+                rows.append(
+                    {
+                        "timestamp_emitted_utc": (_NOW - timedelta(hours=idx + 240)).isoformat(),
+                        "pair": "GBP_USD",
+                        "direction": "EITHER",
+                        "regime_at_emission": "TREND",
+                        "signal_name": "session_expansion_london",
+                        "resolution_window_min": 60.0,
+                        "resolution_status": "MISS",
+                        "resolution_evidence": "expansion threshold not reached",
+                        "cycle_id": f"edge-miss-cycle-{idx}",
+                    }
+                )
             files["projection_ledger"].write_text("\n".join(json.dumps(row) for row in rows) + "\n")
 
             summary = _run(files)
@@ -1651,6 +1678,14 @@ class SelfImprovementAuditorTest(unittest.TestCase):
         self.assertAlmostEqual(weak["economic_hit_rate"], 0.5)
         self.assertGreaterEqual(weak["hit_rate_wilson_lower"], 0.90)
         self.assertLess(weak["economic_hit_rate_wilson_lower"], 0.90)
+        self.assertTrue(
+            any(
+                item["signal_name"] == "session_expansion_london"
+                and item["pair"] == "GBP_USD"
+                and item["passes_economic_precision"]
+                for item in finding["evidence"]["usable_edges"]
+            )
+        )
         root_focus = payload["root_cause_focus"]
         forecast_candidates = [
             item
@@ -1659,6 +1694,7 @@ class SelfImprovementAuditorTest(unittest.TestCase):
         ]
         self.assertTrue(forecast_candidates)
         self.assertIn("projection_economic_precision_gap_count", forecast_candidates[0]["why"])
+        self.assertIn("projection_economic_precision_edge_count", forecast_candidates[0]["why"])
 
     def test_directional_forecast_watch_only_samples_do_not_trigger_entry_grade_hit_rate_repair(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

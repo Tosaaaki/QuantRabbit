@@ -5348,6 +5348,7 @@ def main(argv: list[str] | None = None) -> int:
         )
         from quant_rabbit.forecast_precision import (
             hit_rate_wilson_lower,
+            projection_precision_edge_summary,
             projection_precision_gap_summary,
         )
         from quant_rabbit.risk import (
@@ -5469,6 +5470,15 @@ def main(argv: list[str] | None = None) -> int:
                 for sig, by_pair in hr.items()
             },
             "precision_metrics_by_signal": precision_metrics_by_signal,
+            "economic_precision_edges": projection_precision_edge_summary(
+                {
+                    sig: by_pair
+                    for sig, by_pair in hr.items()
+                    if not str(sig or "").startswith("directional_forecast")
+                },
+                min_wilson_lower=FORECAST_LIVE_PRECISION_MIN_WILSON_LOWER,
+                min_samples=FORECAST_LIVE_PRECISION_MIN_SAMPLES,
+            ),
             "economic_precision_gaps": projection_precision_gap_summary(
                 {
                     sig: by_pair

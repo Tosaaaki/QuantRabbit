@@ -13,6 +13,7 @@ from quant_rabbit.forecast_precision import (
     bidask_replay_precision_assessment,
     bidask_replay_precision_support,
     oanda_universal_rotation_precision_assessment,
+    projection_precision_edge_summary,
     projection_precision_gap_summary,
     support_signal_clears_live_precision,
     technical_harvest_precision_assessment,
@@ -115,6 +116,47 @@ class ForecastPrecisionConfluenceTest(unittest.TestCase):
         self.assertAlmostEqual(gap["hit_rate_wilson_lower"], 0.93)
         self.assertLess(gap["economic_hit_rate_wilson_lower"], 0.90)
         self.assertAlmostEqual(gap["timeout_rate"], 0.34)
+
+    def test_projection_precision_edge_summary_keeps_economic_precision_passes(self) -> None:
+        edges = projection_precision_edge_summary(
+            {
+                "session_expansion_london": {
+                    "GBP_USD:TREND": {
+                        "hit_rate": 0.98,
+                        "samples": 100,
+                        "economic_hit_rate": 0.96,
+                        "economic_samples": 100,
+                        "timeout_rate": 0.02,
+                    },
+                    "EUR_USD:TREND": {
+                        "hit_rate": 0.98,
+                        "samples": 100,
+                        "economic_hit_rate": 0.88,
+                        "economic_samples": 100,
+                        "timeout_rate": 0.10,
+                    },
+                },
+                "directional_forecast_up": {
+                    "GBP_USD:TREND": {
+                        "hit_rate": 1.0,
+                        "samples": 100,
+                        "economic_hit_rate": 1.0,
+                        "economic_samples": 100,
+                    }
+                },
+            },
+            min_wilson_lower=0.90,
+            min_samples=30,
+            exclude_signals=("directional_forecast_up",),
+        )
+
+        self.assertEqual(len(edges), 1)
+        edge = edges[0]
+        self.assertEqual(edge["signal_name"], "session_expansion_london")
+        self.assertEqual(edge["pair"], "GBP_USD")
+        self.assertEqual(edge["regime"], "TREND")
+        self.assertGreaterEqual(edge["economic_hit_rate_wilson_lower"], 0.90)
+        self.assertTrue(edge["passes_economic_precision"])
 
     def test_bidask_replay_rules_are_data_driven_across_pairs(self) -> None:
         metadata = {

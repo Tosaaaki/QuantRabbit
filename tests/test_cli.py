@@ -140,6 +140,84 @@ class CliHelpTest(unittest.TestCase):
         payload = json.loads(stdout.getvalue())
         self.assertIn("qr-missing-gpt-decision-response.json", payload["error"])
 
+    def test_verify_projections_reports_economic_precision_edges(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            snapshot = root / "snapshot.json"
+            snapshot.write_text(json.dumps({"quotes": {}}))
+            hit_rates = {
+                "session_expansion_london": {
+                    "GBP_USD:TREND": {
+                        "hit_rate": 0.98,
+                        "samples": 100,
+                        "economic_hit_rate": 0.96,
+                        "economic_samples": 100,
+                        "timeout_rate": 0.02,
+                    },
+                    "EUR_USD:TREND": {
+                        "hit_rate": 0.98,
+                        "samples": 100,
+                        "economic_hit_rate": 0.50,
+                        "economic_samples": 100,
+                        "timeout_rate": 0.48,
+                        "timeout_count": 48,
+                    },
+                },
+                "directional_forecast_up": {
+                    "GBP_USD:TREND": {
+                        "hit_rate": 1.0,
+                        "samples": 100,
+                        "economic_hit_rate": 1.0,
+                        "economic_samples": 100,
+                    }
+                },
+            }
+            stdout = io.StringIO()
+
+            with mock.patch(
+                "quant_rabbit.strategy.projection_ledger.load_ledger",
+                return_value=[],
+            ), mock.patch(
+                "quant_rabbit.strategy.projection_ledger.retryable_truth_timeout_pairs",
+                return_value=[],
+            ), mock.patch(
+                "quant_rabbit.strategy.projection_ledger.verify_pending",
+                return_value={"HIT": 0, "MISS": 0, "TIMEOUT": 0, "PENDING": 0},
+            ), mock.patch(
+                "quant_rabbit.strategy.projection_ledger.compute_hit_rates",
+                return_value=hit_rates,
+            ), redirect_stdout(stdout):
+                code = main(
+                    [
+                        "verify-projections",
+                        "--snapshot",
+                        str(snapshot),
+                        "--pair-charts",
+                        str(root / "missing_pair_charts.json"),
+                        "--m1-count",
+                        "0",
+                        "--m5-count",
+                        "0",
+                    ]
+                )
+
+        self.assertEqual(code, 0)
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(payload["status"], "OK")
+        self.assertEqual(
+            payload["economic_precision_edges"][0]["signal_name"],
+            "session_expansion_london",
+        )
+        self.assertEqual(payload["economic_precision_edges"][0]["pair"], "GBP_USD")
+        self.assertTrue(payload["economic_precision_edges"][0]["passes_economic_precision"])
+        self.assertEqual(payload["economic_precision_gaps"][0]["pair"], "EUR_USD")
+        self.assertTrue(
+            all(
+                item["signal_name"] != "directional_forecast_up"
+                for item in payload["economic_precision_edges"]
+            )
+        )
+
     def test_position_management_command_refreshes_sidecar_from_snapshot(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

@@ -8,7 +8,10 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
-from quant_rabbit.forecast_precision import projection_precision_gap_summary
+from quant_rabbit.forecast_precision import (
+    projection_precision_edge_summary,
+    projection_precision_gap_summary,
+)
 from quant_rabbit.paths import (
     DEFAULT_AI_ATTACK_ADVICE,
     DEFAULT_AI_TEST_BOT_BACKTEST,
@@ -268,6 +271,11 @@ PROJECTION_ECONOMIC_PRECISION_MIN_SAMPLES = max(
 # threshold.
 PROJECTION_ECONOMIC_PRECISION_GAP_LIMIT = int(
     _env_nonnegative_float("QR_SELF_IMPROVEMENT_PROJECTION_ECONOMIC_GAP_LIMIT", 12.0)
+)
+# Report-limit only. Positive edge rows are evidence for the next mining/ranking
+# pass; they do not grant live permission or weaken RiskEngine/Gateway checks.
+PROJECTION_ECONOMIC_PRECISION_EDGE_LIMIT = int(
+    _env_nonnegative_float("QR_SELF_IMPROVEMENT_PROJECTION_ECONOMIC_EDGE_LIMIT", 12.0)
 )
 
 
@@ -3346,6 +3354,12 @@ def _projection_economic_precision_findings(*, run_id: str, path: Path) -> list[
     )
     if not weak_buckets:
         return []
+    usable_edges = projection_precision_edge_summary(
+        filtered_hit_rates,
+        min_wilson_lower=PROJECTION_ECONOMIC_PRECISION_MIN_WILSON_LOWER,
+        min_samples=PROJECTION_ECONOMIC_PRECISION_MIN_SAMPLES,
+        limit=PROJECTION_ECONOMIC_PRECISION_EDGE_LIMIT,
+    )
     return [
         _finding(
             run_id=run_id,
@@ -3366,6 +3380,7 @@ def _projection_economic_precision_findings(*, run_id: str, path: Path) -> list[
                 "min_wilson_lower": PROJECTION_ECONOMIC_PRECISION_MIN_WILSON_LOWER,
                 "min_samples": PROJECTION_ECONOMIC_PRECISION_MIN_SAMPLES,
                 "weak_buckets": weak_buckets,
+                "usable_edges": usable_edges,
             },
         )
     ]
@@ -7810,7 +7825,13 @@ def _root_cause_merge_metrics(
             for item in finding_evidence.get("weak_buckets", []) or []
             if isinstance(item, dict)
         ]
+        usable_edges = [
+            item
+            for item in finding_evidence.get("usable_edges", []) or []
+            if isinstance(item, dict)
+        ]
         metrics["projection_economic_precision_gap_count"] = len(weak_buckets)
+        metrics["projection_economic_precision_edge_count"] = len(usable_edges)
         if weak_buckets:
             metrics["projection_worst_economic_wilson_lower"] = weak_buckets[0].get(
                 "economic_hit_rate_wilson_lower"
@@ -7994,6 +8015,11 @@ def _root_cause_why(candidate: dict[str, Any], meta: dict[str, str]) -> str:
         parts.append(
             "projection_economic_precision_gap_count="
             f"{_fmt_optional(metrics.get('projection_economic_precision_gap_count'))}"
+        )
+    if "projection_economic_precision_edge_count" in metrics:
+        parts.append(
+            "projection_economic_precision_edge_count="
+            f"{_fmt_optional(metrics.get('projection_economic_precision_edge_count'))}"
         )
     if "projection_worst_economic_wilson_lower" in metrics:
         parts.append(
