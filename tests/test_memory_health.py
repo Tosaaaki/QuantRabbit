@@ -667,6 +667,46 @@ class MemoryHealthAuditorTest(unittest.TestCase):
         self.assertGreater(payload["metrics"]["order_intents"]["advisory_memory_blockers"], 0)
         self.assertFalse(any(issue["code"] == "SHORT_ORDER_INTENTS_MEMORY_BLOCKERS" for issue in payload["issues"]))
 
+    def test_capture_economics_profitability_blocker_is_advisory_for_memory_health(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root)
+            message = (
+                "capture_economics is NEGATIVE_EXPECTANCY; fresh live rotation is limited to "
+                "non-market attached-TP HARVEST receipts until realized PF/expectancy recover"
+            )
+            files["intents"].write_text(
+                json.dumps(
+                    {
+                        "results": [
+                            {
+                                "lane_id": "range_trader:EUR_USD:SHORT:RANGE_ROTATION",
+                                "status": "DRY_RUN_BLOCKED",
+                                "intent": {"pair": "EUR_USD"},
+                                "risk_issues": [
+                                    {
+                                        "code": "NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION",
+                                        "message": message,
+                                        "severity": "BLOCK",
+                                    }
+                                ],
+                                "strategy_issues": [],
+                                "live_blockers": [message],
+                            }
+                        ]
+                    }
+                )
+            )
+
+            summary = _run(files)
+            payload = json.loads(files["output"].read_text())
+
+        self.assertEqual(summary.status, STATUS_PASS)
+        self.assertEqual(summary.layers["short_term"], "PASS")
+        self.assertEqual(payload["metrics"]["order_intents"]["memory_blockers"], 0)
+        self.assertGreater(payload["metrics"]["order_intents"]["advisory_memory_blockers"], 0)
+        self.assertFalse(any(issue["code"] == "SHORT_ORDER_INTENTS_MEMORY_BLOCKERS" for issue in payload["issues"]))
+
     def test_stale_quote_live_blocker_is_advisory_for_memory_health(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -695,6 +735,47 @@ class MemoryHealthAuditorTest(unittest.TestCase):
                                     "EUR_USD quote is 22s old versus the 20s live freshness contract; skip "
                                     "forecast_history direction/confidence matching because a same-cycle forecast "
                                     "cannot be recorded from stale price truth."
+                                ],
+                            }
+                        ]
+                    }
+                )
+            )
+
+            summary = _run(files)
+            payload = json.loads(files["output"].read_text())
+
+        self.assertEqual(summary.status, STATUS_PASS)
+        self.assertEqual(summary.layers["short_term"], "PASS")
+        self.assertEqual(payload["metrics"]["order_intents"]["memory_blockers"], 0)
+        self.assertGreater(payload["metrics"]["order_intents"]["advisory_memory_blockers"], 0)
+        self.assertFalse(any(issue["code"] == "SHORT_ORDER_INTENTS_MEMORY_BLOCKERS" for issue in payload["issues"]))
+
+    def test_telemetry_forecast_quote_stale_blocker_is_advisory_for_memory_health(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root)
+            files["intents"].write_text(
+                json.dumps(
+                    {
+                        "results": [
+                            {
+                                "lane_id": "range_trader:EUR_USD:SHORT:RANGE_ROTATION",
+                                "status": "DRY_RUN_BLOCKED",
+                                "intent": {"pair": "EUR_USD"},
+                                "risk_issues": [
+                                    {
+                                        "code": "TELEMETRY_FORECAST_QUOTE_STALE_FOR_LIVE",
+                                        "message": (
+                                            "EUR_USD forecast telemetry cannot be audited from stale quote truth; "
+                                            "refresh broker snapshot before live entry."
+                                        ),
+                                        "severity": "BLOCK",
+                                    }
+                                ],
+                                "strategy_issues": [],
+                                "live_blockers": [
+                                    "TELEMETRY_FORECAST_QUOTE_STALE_FOR_LIVE",
                                 ],
                             }
                         ]

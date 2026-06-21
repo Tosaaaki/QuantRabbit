@@ -1212,6 +1212,10 @@ def _audit_intent_memory_blockers(
                     structured_advisory.update(issue_variants)
                     advisory_memory_blockers += 1
                     continue
+                if _is_capture_economics_profitability_blocker(item):
+                    structured_advisory.update(issue_variants)
+                    advisory_memory_blockers += 1
+                    continue
                 if _is_strategy_profile_gap(item):
                     structured_advisory.update(issue_variants)
                     advisory_memory_blockers += 1
@@ -1234,6 +1238,9 @@ def _audit_intent_memory_blockers(
                 if issue_text in structured_advisory:
                     continue
                 if _is_quote_freshness_blocker(item):
+                    advisory_memory_blockers += 1
+                    continue
+                if _is_capture_economics_profitability_blocker(item):
                     advisory_memory_blockers += 1
                     continue
                 if _is_strategy_profile_gap(item):
@@ -1448,9 +1455,24 @@ def _issue_text(item: Any) -> str:
 
 def _is_quote_freshness_blocker(item: Any) -> bool:
     text = _issue_text(item).upper()
-    if isinstance(item, dict) and str(item.get("code") or "").upper() == "STALE_QUOTE":
-        return True
+    if isinstance(item, dict):
+        code = str(item.get("code") or "").upper()
+        if code in {"STALE_QUOTE", "TELEMETRY_FORECAST_QUOTE_STALE_FOR_LIVE"}:
+            return True
     return "QUOTE IS" in text and "LIVE FRESHNESS CONTRACT" in text
+
+
+def _is_capture_economics_profitability_blocker(item: Any) -> bool:
+    """Profitability gates may cite capture_economics without being memory defects."""
+
+    text = _issue_text(item).upper()
+    if isinstance(item, dict):
+        code = str(item.get("code") or "").upper()
+        if code == "NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION":
+            return True
+        message = str(item.get("message") or "").upper()
+        text = f"{text} {message}"
+    return "CAPTURE_ECONOMICS IS NEGATIVE_EXPECTANCY" in text
 
 
 def _is_strategy_profile_gap(item: Any) -> bool:
