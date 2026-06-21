@@ -1739,6 +1739,8 @@ class GPTTraderBrainTest(unittest.TestCase):
                         str(files["attack_advice"]),
                         "--self-improvement-audit",
                         str(files["self_improvement_audit"]),
+                        "--projection-ledger",
+                        str(files["projection_ledger"]),
                         "--decision-response",
                         str(decision_response),
                         "--output",
@@ -2569,6 +2571,79 @@ class GPTTraderBrainTest(unittest.TestCase):
             packet = payload["input_packet"]["self_improvement_audit"]
             self.assertEqual(packet["p0_blockers"][0]["code"], "PROJECTION_LEDGER_EXPIRED_PENDING")
 
+    def test_trade_rejected_when_projection_ledger_has_expired_pending_rows(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root)
+            emitted = (datetime.now(timezone.utc) - timedelta(hours=3)).isoformat()
+            files["projection_ledger"].write_text(
+                json.dumps(
+                    {
+                        "timestamp_emitted_utc": emitted,
+                        "pair": "EUR_USD",
+                        "signal_name": "directional_forecast",
+                        "direction": "UP",
+                        "resolution_window_min": 30.0,
+                        "resolution_status": "PENDING",
+                        "cycle_id": "cycle-expired-projection",
+                    }
+                )
+                + "\n"
+            )
+            brain = _brain(root, files, _trade_decision())
+
+            summary = brain.run(snapshot_path=files["snapshot"])
+
+            self.assertEqual(summary.status, "REJECTED")
+            payload = json.loads((root / "gpt_decision.json").read_text())
+            codes = {issue["code"] for issue in payload["verification_issues"]}
+            self.assertIn("PROJECTION_LEDGER_EXPIRED_PENDING_BLOCKS_TRADE", codes)
+            projection = payload["input_packet"]["projection_ledger"]
+            self.assertEqual(projection["expired_pending_count"], 1)
+            self.assertIn("projection:expired_pending", payload["input_packet"]["allowed_evidence_refs"])
+
+    def test_wait_with_projection_ref_can_pause_attack_trade_for_expired_pending_projection(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root)
+            files["attack_advice"].write_text(
+                json.dumps(
+                    {
+                        "status": "ATTACK_PARTIAL",
+                        "read_only": True,
+                        "live_permission": False,
+                        "recommended_now_lane_ids": [LANE_ID],
+                    }
+                )
+            )
+            emitted = (datetime.now(timezone.utc) - timedelta(hours=3)).isoformat()
+            files["projection_ledger"].write_text(
+                json.dumps(
+                    {
+                        "timestamp_emitted_utc": emitted,
+                        "pair": "EUR_USD",
+                        "signal_name": "directional_forecast",
+                        "direction": "UP",
+                        "resolution_window_min": 30.0,
+                        "resolution_status": "PENDING",
+                        "cycle_id": "cycle-expired-projection",
+                    }
+                )
+                + "\n"
+            )
+            decision = _wait_decision()
+            decision["evidence_refs"].extend(["attack:advice", f"attack:lane:{LANE_ID}", "projection:ledger"])
+            brain = _brain(root, files, decision)
+
+            summary = brain.run(snapshot_path=files["snapshot"])
+
+            self.assertEqual(summary.status, "ACCEPTED")
+            payload = json.loads((root / "gpt_decision.json").read_text())
+            codes = {issue["code"] for issue in payload["verification_issues"]}
+            self.assertNotIn("ATTACK_ADVICE_REQUIRES_TRADE", codes)
+            self.assertNotIn("CAMPAIGN_EXPOSURE_REQUIRED", codes)
+            self.assertNotIn("PROJECTION_LEDGER_EVIDENCE_MISSING", codes)
+
     def test_wait_rejects_attack_advice_when_stale_decision_p0_is_only_blocker(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -3199,6 +3274,7 @@ def _brain(root: Path, files: dict[str, Path], decision: dict, *, max_lanes: int
         learning_audit_path=files["learning_audit"],
         verification_ledger_path=files["verification_ledger"],
         self_improvement_audit_path=files["self_improvement_audit"],
+        projection_ledger_path=files["projection_ledger"],
         operator_precedent_path=files["operator_precedent"],
         manual_market_context_path=files["manual_market_context"],
         predictive_limits_path=files["predictive_limits"],
@@ -3259,6 +3335,7 @@ def _fixtures(root: Path, *, positions: list[dict] | None = None, orders: list[d
         "learning_audit": root / "learning_audit.json",
         "verification_ledger": root / "verification_ledger.json",
         "self_improvement_audit": root / "self_improvement_audit.json",
+        "projection_ledger": root / "projection_ledger.jsonl",
         "operator_precedent": root / "operator_precedent.json",
         "manual_market_context": root / "manual_market_context.json",
         "predictive_limits": root / "predictive_limits.json",
@@ -3566,6 +3643,7 @@ def _fixtures(root: Path, *, positions: list[dict] | None = None, orders: list[d
     files["coverage_optimization"].write_text(json.dumps({"status": "OK"}))
     files["learning_audit"].write_text(json.dumps({}))
     files["self_improvement_audit"].write_text(json.dumps({}))
+    files["projection_ledger"].write_text("")
     files["operator_precedent"].write_text(json.dumps({}))
     files["manual_market_context"].write_text(json.dumps({}))
     files["predictive_limits"].write_text(json.dumps({"dry_run": True, "orders": []}))

@@ -2827,6 +2827,7 @@ def main(argv: list[str] | None = None) -> int:
     p_gpt.add_argument("--attack-advice", type=Path, default=DEFAULT_AI_ATTACK_ADVICE)
     p_gpt.add_argument("--learning-audit", type=Path, default=DEFAULT_LEARNING_AUDIT)
     p_gpt.add_argument("--self-improvement-audit", type=Path, default=DEFAULT_SELF_IMPROVEMENT_AUDIT)
+    p_gpt.add_argument("--projection-ledger", type=Path, default=DEFAULT_PROJECTION_LEDGER)
     p_gpt.add_argument("--market-context-matrix", type=Path, default=DEFAULT_MARKET_CONTEXT_MATRIX)
     p_gpt.add_argument("--decision-response", type=Path, default=None)
     p_gpt.add_argument("--max-lanes", type=int, default=DEFAULT_GPT_MAX_LANES)
@@ -5925,6 +5926,7 @@ def main(argv: list[str] | None = None) -> int:
                 attack_advice_path=args.attack_advice,
                 learning_audit_path=args.learning_audit,
                 self_improvement_audit_path=args.self_improvement_audit,
+                projection_ledger_path=args.projection_ledger,
                 market_context_matrix_path=args.market_context_matrix,
                 output_path=args.output,
                 report_path=args.report,

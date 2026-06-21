@@ -4,7 +4,7 @@ import json
 import os
 import re
 from dataclasses import asdict, dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -80,6 +80,16 @@ OPERATOR_CLOSE_TOKEN_FILENAME = ".operator_close_token"
 OPERATOR_CLOSE_TOKEN_FRESH_SECONDS = 300  # 5 minutes documented window
 
 
+def _projection_pending_expiry_grace() -> timedelta:
+    """Same-cycle projection resolution grace used by live telemetry audits."""
+
+    try:
+        seconds = max(0.0, float(os.environ.get("QR_PROJECTION_PENDING_EXPIRY_GRACE_SECONDS", "1200")))
+    except (TypeError, ValueError):
+        seconds = 1200.0
+    return timedelta(seconds=seconds)
+
+
 def _operator_close_token_fresh(data_root: Path | None = None) -> bool:
     """Whether a fresh operator close-authorization token file exists.
 
@@ -127,6 +137,117 @@ def _decision_cites_pending_cancel_timing_evidence(evidence_refs: tuple[str, ...
         if text.startswith("timing:canceled_order:"):
             return True
     return False
+
+
+def _decision_cites_projection_evidence(evidence_refs: tuple[str, ...]) -> bool:
+    for ref in evidence_refs:
+        text = str(ref or "").strip()
+        if text in {"projection:ledger", "projection:expired_pending"}:
+            return True
+        if text.startswith("projection:expired_pending:"):
+            return True
+    return False
+
+
+def _projection_row_expired(row: dict[str, Any], *, now: datetime) -> bool:
+    emitted = _parse_utc(row.get("timestamp_emitted_utc"))
+    window_min = _optional_float(row.get("resolution_window_min"))
+    if emitted is None or window_min is None or window_min <= 0:
+        return True
+    return now >= emitted + timedelta(minutes=window_min) + _projection_pending_expiry_grace()
+
+
+def _projection_row_ref(row: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "pair": row.get("pair"),
+        "signal_name": row.get("signal_name"),
+        "direction": row.get("direction"),
+        "cycle_id": row.get("cycle_id"),
+        "timestamp_emitted_utc": row.get("timestamp_emitted_utc"),
+        "resolution_window_min": row.get("resolution_window_min"),
+    }
+
+
+def _projection_ledger_packet(path: Path, *, now: datetime | None = None) -> dict[str, Any]:
+    packet: dict[str, Any] = {
+        "evidence_ref": "projection:ledger",
+        "path": str(path),
+        "status": "missing",
+        "rows": 0,
+        "malformed_rows": 0,
+        "status_counts": {},
+        "expired_pending_count": 0,
+        "expired_pending_examples": [],
+    }
+    if not path.exists():
+        return packet
+    now = now or datetime.now(timezone.utc)
+    status_counts: dict[str, int] = {}
+    expired: list[dict[str, Any]] = []
+    malformed = 0
+    rows = 0
+    try:
+        with path.open(encoding="utf-8") as handle:
+            for line in handle:
+                if not line.strip():
+                    continue
+                try:
+                    row = json.loads(line)
+                except json.JSONDecodeError:
+                    malformed += 1
+                    continue
+                if not isinstance(row, dict):
+                    malformed += 1
+                    continue
+                rows += 1
+                status = str(row.get("resolution_status") or "PENDING").upper()
+                status_counts[status] = status_counts.get(status, 0) + 1
+                if status == "PENDING" and _projection_row_expired(row, now=now):
+                    expired.append(row)
+    except OSError as exc:
+        packet["status"] = "unreadable"
+        packet["error"] = str(exc)
+        return packet
+
+    packet.update(
+        {
+            "status": "BLOCK" if expired else ("WARN" if malformed else "OK"),
+            "rows": rows,
+            "malformed_rows": malformed,
+            "status_counts": status_counts,
+            "expired_pending_count": len(expired),
+            "expired_pending_examples": [_projection_row_ref(row) for row in expired[:8]],
+        }
+    )
+    return packet
+
+
+def _projection_ledger_trade_blockers(packet: dict[str, Any]) -> list[str]:
+    projection = packet.get("projection_ledger")
+    if not isinstance(projection, dict):
+        return []
+    blockers: list[str] = []
+    expired = _optional_int(projection.get("expired_pending_count")) or 0
+    if expired > 0:
+        examples = []
+        for row in projection.get("expired_pending_examples", []) or []:
+            if not isinstance(row, dict):
+                continue
+            pair = str(row.get("pair") or "").strip()
+            signal = str(row.get("signal_name") or "").strip()
+            direction = str(row.get("direction") or "").strip()
+            if pair or signal or direction:
+                examples.append(" ".join(part for part in (pair, signal, direction) if part))
+        suffix = f"; examples={', '.join(examples[:3])}" if examples else ""
+        blockers.append(
+            f"PROJECTION_LEDGER_EXPIRED_PENDING count={expired}{suffix}. "
+            "Run verify-projections before taking new risk so forecast HIT/MISS/TIMEOUT is measured."
+        )
+    if str(projection.get("status") or "").upper() == "UNREADABLE":
+        blockers.append(
+            "PROJECTION_LEDGER_UNREADABLE: projection telemetry cannot be audited before new risk"
+        )
+    return blockers
 
 
 def _decision_cites_profitability_p0(evidence_refs: tuple[str, ...]) -> bool:
@@ -1198,6 +1319,7 @@ from quant_rabbit.paths import (
     DEFAULT_ORDER_INTENTS,
     DEFAULT_PAIR_CHARTS,
     DEFAULT_PREDICTIVE_LIMIT_ORDERS,
+    DEFAULT_PROJECTION_LEDGER,
     DEFAULT_SELF_IMPROVEMENT_AUDIT,
     DEFAULT_STRATEGY_PROFILE,
     DEFAULT_VERIFICATION_LEDGER,
@@ -1413,6 +1535,7 @@ class GPTTraderBrain:
         learning_audit_path: Path = DEFAULT_LEARNING_AUDIT,
         verification_ledger_path: Path = DEFAULT_VERIFICATION_LEDGER,
         self_improvement_audit_path: Path = DEFAULT_SELF_IMPROVEMENT_AUDIT,
+        projection_ledger_path: Path = DEFAULT_PROJECTION_LEDGER,
         operator_precedent_path: Path = DEFAULT_OPERATOR_PRECEDENT_AUDIT,
         manual_market_context_path: Path = DEFAULT_MANUAL_MARKET_CONTEXT_AUDIT,
         predictive_limits_path: Path = DEFAULT_PREDICTIVE_LIMIT_ORDERS,
@@ -1447,6 +1570,7 @@ class GPTTraderBrain:
         self.learning_audit_path = learning_audit_path
         self.verification_ledger_path = verification_ledger_path
         self.self_improvement_audit_path = self_improvement_audit_path
+        self.projection_ledger_path = projection_ledger_path
         self.operator_precedent_path = operator_precedent_path
         self.manual_market_context_path = manual_market_context_path
         self.predictive_limits_path = predictive_limits_path
@@ -1503,6 +1627,7 @@ class GPTTraderBrain:
         learning_audit = _load_optional_json(self.learning_audit_path)
         verification_ledger = _load_optional_json(self.verification_ledger_path)
         self_improvement_audit = _load_optional_json(self.self_improvement_audit_path)
+        projection_ledger = _projection_ledger_packet(self.projection_ledger_path)
         operator_precedent = _load_optional_json(self.operator_precedent_path)
         manual_market_context = _load_optional_json(self.manual_market_context_path)
         predictive_limits = _load_optional_json(self.predictive_limits_path)
@@ -1523,6 +1648,7 @@ class GPTTraderBrain:
             learning_audit=learning_audit,
             verification_ledger=verification_ledger,
             self_improvement_audit=self_improvement_audit,
+            projection_ledger=projection_ledger,
             operator_precedent=operator_precedent,
             manual_market_context=manual_market_context,
             predictive_limits=predictive_limits,
@@ -1599,6 +1725,7 @@ class GPTTraderBrain:
             "learning_audit": learning_packet,
             "verification_ledger": _verification_ledger_packet(verification_ledger),
             "self_improvement_audit": _self_improvement_audit_packet(self_improvement_audit),
+            "projection_ledger": projection_ledger,
             "operator_precedent": _operator_precedent_packet(operator_precedent),
             "manual_market_context": _manual_market_context_packet(manual_market_context),
             "predictive_limits": _predictive_limits_packet(predictive_limits, pairs=pairs),
@@ -1713,6 +1840,7 @@ class DecisionVerifier:
         exposure_blockers = _trade_exposure_blockers(self.packet)
         entry_thesis_blockers = _entry_thesis_sidecar_reasons(self.packet)
         position_close_reasons = _position_close_sidecar_reasons(self.packet)
+        projection_trade_blockers = _projection_ledger_trade_blockers(self.packet)
         self_improvement_trade_blockers = _self_improvement_trade_blockers(
             self.packet,
             decision_generated_at_utc=decision.generated_at_utc,
@@ -1763,6 +1891,14 @@ class DecisionVerifier:
                         "SELF_IMPROVEMENT_P0_BLOCKS_TRADE",
                         "TRADE rejected while self-improvement audit carries P0 blocker(s): "
                         + "; ".join(self_improvement_trade_blockers[:3]),
+                    )
+                )
+            if projection_trade_blockers:
+                issues.append(
+                    VerificationIssue(
+                        "PROJECTION_LEDGER_EXPIRED_PENDING_BLOCKS_TRADE",
+                        "TRADE rejected while projection_ledger has expired PENDING forecast telemetry: "
+                        + "; ".join(projection_trade_blockers[:3]),
                     )
                 )
             issues.extend(_learning_audit_trade_issues(self.packet, selected_lane_ids, decision.evidence_refs))
@@ -1940,11 +2076,21 @@ class DecisionVerifier:
                         + "; ".join(pending_cancel_reasons[:3]),
                     )
                 )
+            if projection_trade_blockers and not _decision_cites_projection_evidence(decision.evidence_refs):
+                issues.append(
+                    VerificationIssue(
+                        "PROJECTION_LEDGER_EVIDENCE_MISSING",
+                        "WAIT / REQUEST_EVIDENCE may pause new risk for expired projection telemetry only when "
+                        "the receipt cites projection:ledger, projection:expired_pending, or the relevant "
+                        "projection:expired_pending:<pair> evidence ref.",
+                    )
+                )
             if (
                 not position_close_reasons
                 and _target_requires_entry(self.packet)
                 and not exposure_blockers
                 and not self_improvement_entry_blockers
+                and not projection_trade_blockers
                 and attack_lane_ids
             ):
                 issues.append(
@@ -1960,6 +2106,7 @@ class DecisionVerifier:
                 and _target_requires_entry(self.packet)
                 and not exposure_blockers
                 and not self_improvement_entry_blockers
+                and not projection_trade_blockers
                 and tradeable_lanes
             ):
                 if not _trader_exposure_present(self.packet):
@@ -3202,6 +3349,7 @@ def _allowed_refs(
     learning_audit: dict[str, Any] | None,
     verification_ledger: dict[str, Any] | None,
     self_improvement_audit: dict[str, Any] | None,
+    projection_ledger: dict[str, Any] | None,
     operator_precedent: dict[str, Any] | None,
     manual_market_context: dict[str, Any] | None,
     predictive_limits: dict[str, Any] | None,
@@ -3424,6 +3572,20 @@ def _allowed_refs(
             code = str(finding.get("code") or "").strip()
             if code:
                 refs.append(f"self_improvement:finding:{code}")
+    if projection_ledger:
+        refs.append("projection:ledger")
+        expired = _optional_int(projection_ledger.get("expired_pending_count")) or 0
+        if expired > 0:
+            refs.append("projection:expired_pending")
+            for row in projection_ledger.get("expired_pending_examples", []) or []:
+                if not isinstance(row, dict):
+                    continue
+                pair = str(row.get("pair") or "").strip()
+                signal = str(row.get("signal_name") or "").strip()
+                if pair:
+                    refs.append(f"projection:expired_pending:{pair}")
+                if pair and signal:
+                    refs.append(f"projection:expired_pending:{pair}:{signal}")
     if operator_precedent:
         refs.append(OPERATOR_PRECEDENT_EVIDENCE_REF)
     if manual_market_context:
