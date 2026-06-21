@@ -953,6 +953,12 @@ PENDING_ENTRY_OPPOSITE_SCORE_MARGIN = 25.0
 # contract so stale reports cannot preserve dead orders indefinitely.
 PENDING_CANCEL_REGRET_AUDIT_FILENAME = "execution_timing_audit.json"
 PENDING_CANCEL_REGRET_MAX_AGE_HOURS = 168.0
+PENDING_CANCEL_REGRET_PRESERVE_PRIORITIES = frozenset(
+    {
+        "PRESERVE_PENDING_THESIS_TP_TOUCHED",
+        "REPRICE_OR_EXTEND_TTL_ENTRY_TOUCHED",
+    }
+)
 PENDING_ENTRY_HARD_CANCEL_KEYWORDS = (
     "BAD_UNITS",
     "DAILY TARGET",
@@ -2643,7 +2649,7 @@ def _pending_entry_still_has_live_thesis(
     if _pending_entry_has_opposite_only_pair_thesis(order, scores):
         if _pending_entry_thesis_horizon_active(pending_thesis, now=snapshot.fetched_at_utc):
             return True
-        if _pending_entry_recent_cancel_regret_supports_preservation(order, data_root):
+        if _pending_entry_recent_cancel_regret_supports_preservation(order, pending_thesis, data_root):
             return True
         return False
     return True
@@ -2704,6 +2710,7 @@ def _pending_entry_thesis_horizon_active(
 
 def _pending_entry_recent_cancel_regret_supports_preservation(
     order: BrokerOrder,
+    pending_thesis: PendingEntryThesis | None,
     data_root: Path | None,
 ) -> bool:
     """Preserve anchored GTC entries when the same cancel pattern recently paid.
@@ -2730,6 +2737,14 @@ def _pending_entry_recent_cancel_regret_supports_preservation(
         if age_hours > PENDING_CANCEL_REGRET_MAX_AGE_HOURS:
             return False
     wanted_order_type = _normalized_regret_order_type(order.order_type)
+    if _pending_entry_cancel_regret_shape_supports_preservation(
+        order,
+        pending_thesis,
+        payload,
+        wanted_order_type=wanted_order_type,
+    ):
+        return True
+    wanted_method = _pending_entry_method(order, pending_thesis)
     for row in payload.get("canceled_order_regrets") or []:
         if not isinstance(row, dict):
             continue
@@ -2739,6 +2754,9 @@ def _pending_entry_recent_cancel_regret_supports_preservation(
             continue
         if _normalized_regret_order_type(row.get("order_type")) != wanted_order_type:
             continue
+        row_method = _method_from_lane_id(row.get("lane_id"))
+        if wanted_method and row_method and row_method != wanted_method:
+            continue
         if row.get("sl_touched_after_cancel"):
             continue
         if not row.get("entry_touched_after_cancel"):
@@ -2746,6 +2764,104 @@ def _pending_entry_recent_cancel_regret_supports_preservation(
         if row.get("tp_touched_after_cancel") or (_optional_float(row.get("mfe_pips_after_cancel_entry")) or 0.0) > 0:
             return True
     return False
+
+
+def _pending_entry_cancel_regret_shape_supports_preservation(
+    order: BrokerOrder,
+    pending_thesis: PendingEntryThesis | None,
+    payload: dict[str, Any],
+    *,
+    wanted_order_type: str,
+) -> bool:
+    """Use pair/side/method/order_type regret rollups when the order shape is known."""
+
+    direction = _order_direction(order.units)
+    wanted_method = _pending_entry_method(order, pending_thesis)
+    if not order.pair or direction is None or not wanted_method:
+        return False
+    shape_rollup = payload.get("canceled_order_regret_by_shape")
+    if not isinstance(shape_rollup, dict):
+        return False
+    for item in shape_rollup.get("items") or []:
+        if not isinstance(item, dict):
+            continue
+        if str(item.get("pair") or "") != order.pair:
+            continue
+        if str(item.get("side") or "").upper() != direction:
+            continue
+        if str(item.get("method") or "").upper() != wanted_method:
+            continue
+        if _normalized_regret_order_type(item.get("order_type")) != wanted_order_type:
+            continue
+        priority = str(item.get("priority_class") or "").upper()
+        if priority == "PRESERVE_PENDING_THESIS_TP_TOUCHED":
+            if _positive_int(item.get("tp_touched_after_cancel")) > 0:
+                return True
+            continue
+        if priority == "REPRICE_OR_EXTEND_TTL_ENTRY_TOUCHED":
+            if _positive_int(item.get("positive_after_cancel_entry")) > 0:
+                return True
+            continue
+        if priority in PENDING_CANCEL_REGRET_PRESERVE_PRIORITIES:
+            return True
+    return False
+
+
+def _pending_entry_method(
+    order: BrokerOrder,
+    pending_thesis: PendingEntryThesis | None,
+) -> str | None:
+    if pending_thesis is not None:
+        method = _method_from_lane_id(pending_thesis.lane_id)
+        if method:
+            return method
+    lane_id = _pending_entry_lane_id(order)
+    method = _method_from_lane_id(lane_id)
+    if method:
+        return method
+    raw = order.raw if isinstance(order.raw, dict) else {}
+    for extension_key in ("clientExtensions", "tradeClientExtensions"):
+        extension = raw.get(extension_key)
+        if not isinstance(extension, dict):
+            continue
+        comment = str(extension.get("comment") or "")
+        for token in comment.split():
+            if token.startswith("method="):
+                value = token.split("=", 1)[1].strip().upper()
+                if value:
+                    return value
+    return None
+
+
+def _pending_entry_lane_id(order: BrokerOrder) -> str | None:
+    raw = order.raw if isinstance(order.raw, dict) else {}
+    for extension_key in ("clientExtensions", "tradeClientExtensions"):
+        extension = raw.get(extension_key)
+        if not isinstance(extension, dict):
+            continue
+        comment = str(extension.get("comment") or "")
+        for token in comment.split():
+            for prefix in ("lane=", "lane_id=", "laneId="):
+                if token.startswith(prefix):
+                    lane_id = token[len(prefix):].strip()
+                    return lane_id or None
+    return None
+
+
+def _method_from_lane_id(lane_id: object) -> str | None:
+    parts = [part.strip() for part in str(lane_id or "").split(":") if part.strip()]
+    if len(parts) >= 4:
+        method = parts[3].upper()
+        return method or None
+    return None
+
+
+def _positive_int(value: object) -> int:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return 0
+    return parsed if parsed > 0 else 0
 
 
 def _normalized_regret_order_type(order_type: object) -> str:

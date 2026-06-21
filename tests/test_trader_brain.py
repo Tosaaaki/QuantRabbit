@@ -1113,6 +1113,145 @@ class TraderBrainTest(unittest.TestCase):
 
             self.assertEqual(_contaminated_pending_order_ids(snapshot, (weak_opposite,), data_root=root), ())
 
+    def test_shape_cancel_regret_preserves_method_scoped_pending_against_weak_opposite_only(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_cancel_shape_audit(
+                root,
+                pair="AUD_CAD",
+                side="SHORT",
+                method="RANGE_ROTATION",
+                order_type="LIMIT_ORDER",
+                priority_class="PRESERVE_PENDING_THESIS_TP_TOUCHED",
+            )
+            now = datetime.now(timezone.utc)
+            record_pending_entry_thesis(
+                PendingEntryThesis(
+                    timestamp_utc=(now - timedelta(hours=2)).isoformat(),
+                    order_id="shape-regret-short-limit",
+                    pair="AUD_CAD",
+                    side="SHORT",
+                    entry_price=0.98980,
+                    forecast_direction="RANGE",
+                    forecast_confidence=0.72,
+                    regime="RANGE",
+                    invalidation_price=0.99501,
+                    target_price=0.98870,
+                    lane_id="range_trader:AUD_CAD:SHORT:RANGE_ROTATION",
+                ),
+                root,
+            )
+            pending = BrokerOrder(
+                order_id="shape-regret-short-limit",
+                pair="AUD_CAD",
+                order_type="LIMIT",
+                price=0.98980,
+                state="PENDING",
+                units=-8000,
+                owner=Owner.TRADER,
+                raw={
+                    "createTime": now.isoformat(),
+                    "clientExtensions": {"tag": "trader"},
+                    "takeProfitOnFill": {"price": "0.98870"},
+                    "stopLossOnFill": {"price": "0.99501"},
+                },
+            )
+            snapshot = BrokerSnapshot(
+                fetched_at_utc=now,
+                orders=(pending,),
+                quotes={"AUD_CAD": Quote("AUD_CAD", 0.98942, 0.98950, timestamp_utc=now)},
+            )
+            weak_opposite = LaneScore(
+                lane_id="range_trader:AUD_CAD:LONG:RANGE_ROTATION",
+                pair="AUD_CAD",
+                direction="LONG",
+                method="RANGE_ROTATION",
+                order_type="LIMIT",
+                entry=0.98913,
+                tp=0.99023,
+                sl=0.98741,
+                status="DRY_RUN_BLOCKED",
+                score=24.0,
+                action=ACTION_NO_TRADE,
+                blockers=("forecast watch-only", "range location chase"),
+                rationale=("current packet exposes only a weak AUD_CAD LONG candidate",),
+                spread_pips=2.2,
+                estimated_margin_jpy=36_000.0,
+            )
+
+            self.assertEqual(_contaminated_pending_order_ids(snapshot, (weak_opposite,), data_root=root), ())
+
+    def test_shape_cancel_regret_does_not_preserve_invalidated_pending(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_cancel_shape_audit(
+                root,
+                pair="AUD_CAD",
+                side="SHORT",
+                method="RANGE_ROTATION",
+                order_type="LIMIT_ORDER",
+                priority_class="PRESERVE_PENDING_THESIS_TP_TOUCHED",
+            )
+            now = datetime.now(timezone.utc)
+            record_pending_entry_thesis(
+                PendingEntryThesis(
+                    timestamp_utc=(now - timedelta(hours=2)).isoformat(),
+                    order_id="shape-regret-invalidated-short-limit",
+                    pair="AUD_CAD",
+                    side="SHORT",
+                    entry_price=0.98980,
+                    forecast_direction="RANGE",
+                    forecast_confidence=0.72,
+                    regime="RANGE",
+                    invalidation_price=0.99501,
+                    target_price=0.98870,
+                    lane_id="range_trader:AUD_CAD:SHORT:RANGE_ROTATION",
+                ),
+                root,
+            )
+            pending = BrokerOrder(
+                order_id="shape-regret-invalidated-short-limit",
+                pair="AUD_CAD",
+                order_type="LIMIT",
+                price=0.98980,
+                state="PENDING",
+                units=-8000,
+                owner=Owner.TRADER,
+                raw={
+                    "createTime": now.isoformat(),
+                    "clientExtensions": {"tag": "trader"},
+                    "takeProfitOnFill": {"price": "0.98870"},
+                    "stopLossOnFill": {"price": "0.99501"},
+                },
+            )
+            snapshot = BrokerSnapshot(
+                fetched_at_utc=now,
+                orders=(pending,),
+                quotes={"AUD_CAD": Quote("AUD_CAD", 0.99525, 0.99531, timestamp_utc=now)},
+            )
+            weak_opposite = LaneScore(
+                lane_id="range_trader:AUD_CAD:LONG:RANGE_ROTATION",
+                pair="AUD_CAD",
+                direction="LONG",
+                method="RANGE_ROTATION",
+                order_type="LIMIT",
+                entry=0.98913,
+                tp=0.99023,
+                sl=0.98741,
+                status="DRY_RUN_BLOCKED",
+                score=24.0,
+                action=ACTION_NO_TRADE,
+                blockers=("forecast watch-only", "range location chase"),
+                rationale=("current packet exposes only a weak AUD_CAD LONG candidate",),
+                spread_pips=2.2,
+                estimated_margin_jpy=36_000.0,
+            )
+
+            self.assertEqual(
+                _contaminated_pending_order_ids(snapshot, (weak_opposite,), data_root=root),
+                ("shape-regret-invalidated-short-limit",),
+            )
+
     def test_pending_thesis_horizon_preserves_against_weak_opposite_only(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -2542,6 +2681,44 @@ def _write_cancel_regret_audit(root: Path, *, pair: str, side: str, order_type: 
                         "mfe_pips_after_cancel_entry": 4.0,
                     }
                 ],
+            }
+        )
+    )
+
+
+def _write_cancel_shape_audit(
+    root: Path,
+    *,
+    pair: str,
+    side: str,
+    method: str,
+    order_type: str,
+    priority_class: str,
+) -> None:
+    now = datetime.now(timezone.utc)
+    (root / "execution_timing_audit.json").write_text(
+        json.dumps(
+            {
+                "generated_at_utc": now.isoformat(),
+                "status": "OK",
+                "canceled_order_regrets": [],
+                "canceled_order_regret_by_shape": {
+                    "total_shapes": 1,
+                    "items": [
+                        {
+                            "evidence_ref": f"timing:canceled_shape:{pair}:{side}:{method}:{order_type}",
+                            "pair": pair,
+                            "side": side,
+                            "method": method,
+                            "order_type": order_type,
+                            "priority_class": priority_class,
+                            "orders": 3,
+                            "entry_touched_after_cancel": 3,
+                            "positive_after_cancel_entry": 3,
+                            "tp_touched_after_cancel": 2,
+                        }
+                    ],
+                },
             }
         )
     )

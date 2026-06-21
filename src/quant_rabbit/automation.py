@@ -641,7 +641,7 @@ def _filtered_gpt_trade_cancel_order_ids(
             ):
                 continue
             if (
-                _pending_entry_recent_cancel_regret_supports_preservation(order, intents_path.parent)
+                _pending_entry_recent_cancel_regret_supports_preservation(order, None, intents_path.parent)
                 and not _gpt_cancel_has_material_same_parent_replacement(
                     order=order,
                     candidates=candidates,
