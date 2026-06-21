@@ -2535,6 +2535,7 @@ def main(argv: list[str] | None = None) -> int:
     p_attack.add_argument("--ai-backtest", type=Path, default=DEFAULT_AI_TEST_BOT_BACKTEST)
     p_attack.add_argument("--outcome-mart", type=Path, default=DEFAULT_OUTCOME_MART)
     p_attack.add_argument("--coverage", type=Path, default=DEFAULT_COVERAGE_OPTIMIZATION)
+    p_attack.add_argument("--projection-ledger", type=Path, default=DEFAULT_PROJECTION_LEDGER)
     p_attack.add_argument("--output", type=Path, default=DEFAULT_AI_ATTACK_ADVICE)
     p_attack.add_argument("--report", type=Path, default=DEFAULT_AI_ATTACK_ADVICE_REPORT)
 
@@ -5938,6 +5939,7 @@ def main(argv: list[str] | None = None) -> int:
                 ai_backtest_path=args.ai_backtest,
                 outcome_mart_path=args.outcome_mart,
                 coverage_path=args.coverage,
+                projection_ledger_path=args.projection_ledger,
                 output_path=args.output,
                 report_path=args.report,
             ).run()

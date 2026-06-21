@@ -451,6 +451,234 @@ class AttackAdvisorTest(unittest.TestCase):
             self.assertEqual(lane["learning_influences"], [])
             self.assertTrue(any("OANDA rank-only rotation edge is size-neutral" in item for item in lane["rationale"]))
 
+    def test_projection_economic_precision_edge_boosts_matching_live_ready_lane(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            intents = root / "intents.json"
+            target = root / "target.json"
+            backtest = root / "ai_backtest.json"
+            coverage = root / "coverage.json"
+            projection = root / "projection_ledger.jsonl"
+            edge_lane_id = "range_trader:GBP_AUD:SHORT:RANGE_ROTATION"
+            _write_projection_edge_rows(
+                projection,
+                signal_name="bb_squeeze_expansion_imminent",
+                pair="GBP_AUD",
+                direction="EITHER",
+                regime="TREND",
+            )
+            intents.write_text(
+                json.dumps(
+                    {
+                        "results": [
+                            _result(
+                                lane_id=edge_lane_id,
+                                pair="GBP_AUD",
+                                side="SHORT",
+                                method="RANGE_ROTATION",
+                                order_type="LIMIT",
+                                reward_jpy=400.0,
+                                risk_jpy=200.0,
+                                rr=2.0,
+                                metadata={
+                                    "regime_state": "TREND",
+                                    "forecast_market_support": {
+                                        "ok": True,
+                                        "direction": "DOWN",
+                                        "signals": [
+                                            {
+                                                "name": "bb_squeeze_expansion_imminent",
+                                                "calibration_name": "bb_squeeze_expansion_imminent",
+                                                "direction": "EITHER",
+                                                "hit_rate": 0.96,
+                                                "samples": 100,
+                                                "economic_hit_rate": 0.96,
+                                                "economic_samples": 100,
+                                                "live_precision_ok": True,
+                                            }
+                                        ],
+                                    },
+                                },
+                            ),
+                            _result(
+                                lane_id="plain:AUD_JPY:LONG:TREND_CONTINUATION",
+                                pair="AUD_JPY",
+                                side="LONG",
+                                method="TREND_CONTINUATION",
+                                order_type="LIMIT",
+                                reward_jpy=500.0,
+                                risk_jpy=500.0,
+                                rr=1.0,
+                            ),
+                        ]
+                    }
+                )
+            )
+            target.write_text(json.dumps({"status": "PURSUE_TARGET", "remaining_target_jpy": 1000.0, "remaining_risk_budget_jpy": 1000.0}))
+            backtest.write_text(json.dumps({"status": "TARGET_COVERAGE_GAP", "bucket_contributions": []}))
+            coverage.write_text(json.dumps({"status": "LIVE_READY_COVERAGE_READY"}))
+
+            AttackAdvisor(
+                intents_path=intents,
+                target_state_path=target,
+                ai_backtest_path=backtest,
+                outcome_mart_path=root / "missing_outcome_mart.json",
+                coverage_path=coverage,
+                projection_ledger_path=projection,
+                output_path=root / "advice.json",
+                report_path=root / "advice.md",
+            ).run()
+
+            payload = json.loads((root / "advice.json").read_text())
+            self.assertEqual(payload["recommended_now_lane_ids"][0], edge_lane_id)
+            self.assertGreater(payload["projection_economic_precision_edges"], 0)
+            lane = next(item for item in payload["lanes"] if item["lane_id"] == edge_lane_id)
+            self.assertEqual(lane["learning_score_delta"], 14.0)
+            self.assertIn("projection_economic_precision_rank_edge", lane["learning_influences"])
+            detail = lane["learning_influence_details"][0]
+            self.assertEqual(detail["source"], "projection_ledger")
+            self.assertEqual(detail["bucket"], "GBP_AUD:TREND")
+            self.assertGreaterEqual(detail["economic_hit_rate_wilson_lower"], 0.90)
+
+    def test_projection_economic_precision_edge_does_not_override_current_precision_failure(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            intents = root / "intents.json"
+            target = root / "target.json"
+            backtest = root / "ai_backtest.json"
+            coverage = root / "coverage.json"
+            projection = root / "projection_ledger.jsonl"
+            _write_projection_edge_rows(
+                projection,
+                signal_name="bb_squeeze_expansion_imminent",
+                pair="GBP_AUD",
+                direction="EITHER",
+                regime="TREND",
+            )
+            intents.write_text(
+                json.dumps(
+                    {
+                        "results": [
+                            _result(
+                                lane_id="range_trader:GBP_AUD:SHORT:RANGE_ROTATION",
+                                pair="GBP_AUD",
+                                side="SHORT",
+                                method="RANGE_ROTATION",
+                                order_type="LIMIT",
+                                metadata={
+                                    "regime_state": "TREND",
+                                    "forecast_market_support": {
+                                        "ok": True,
+                                        "direction": "DOWN",
+                                        "signals": [
+                                            {
+                                                "name": "bb_squeeze_expansion_imminent",
+                                                "calibration_name": "bb_squeeze_expansion_imminent",
+                                                "direction": "EITHER",
+                                                "hit_rate": 0.96,
+                                                "samples": 100,
+                                                "economic_hit_rate": 0.96,
+                                                "economic_samples": 100,
+                                                "live_precision_ok": False,
+                                            }
+                                        ],
+                                    },
+                                },
+                            )
+                        ]
+                    }
+                )
+            )
+            target.write_text(json.dumps({"status": "PURSUE_TARGET", "remaining_target_jpy": 1000.0, "remaining_risk_budget_jpy": 1000.0}))
+            backtest.write_text(json.dumps({"status": "TARGET_COVERAGE_GAP", "bucket_contributions": []}))
+            coverage.write_text(json.dumps({"status": "LIVE_READY_COVERAGE_READY"}))
+
+            AttackAdvisor(
+                intents_path=intents,
+                target_state_path=target,
+                ai_backtest_path=backtest,
+                outcome_mart_path=root / "missing_outcome_mart.json",
+                coverage_path=coverage,
+                projection_ledger_path=projection,
+                output_path=root / "advice.json",
+                report_path=root / "advice.md",
+            ).run()
+
+            payload = json.loads((root / "advice.json").read_text())
+            lane = payload["lanes"][0]
+            self.assertEqual(lane["learning_score_delta"], 0.0)
+            self.assertNotIn("projection_economic_precision_rank_edge", lane["learning_influences"])
+
+    def test_projection_economic_precision_edge_requires_current_market_support_ok(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            intents = root / "intents.json"
+            target = root / "target.json"
+            backtest = root / "ai_backtest.json"
+            coverage = root / "coverage.json"
+            projection = root / "projection_ledger.jsonl"
+            _write_projection_edge_rows(
+                projection,
+                signal_name="bb_squeeze_expansion_imminent",
+                pair="GBP_AUD",
+                direction="EITHER",
+                regime="TREND",
+            )
+            intents.write_text(
+                json.dumps(
+                    {
+                        "results": [
+                            _result(
+                                lane_id="range_trader:GBP_AUD:SHORT:RANGE_ROTATION",
+                                pair="GBP_AUD",
+                                side="SHORT",
+                                method="RANGE_ROTATION",
+                                order_type="LIMIT",
+                                metadata={
+                                    "regime_state": "TREND",
+                                    "forecast_market_support": {
+                                        "ok": False,
+                                        "reason": "no current projection clears audited support floors",
+                                        "direction": "DOWN",
+                                        "signals": [
+                                            {
+                                                "name": "bb_squeeze_expansion_imminent",
+                                                "calibration_name": "bb_squeeze_expansion_imminent",
+                                                "direction": "EITHER",
+                                                "hit_rate": 0.96,
+                                                "samples": 100,
+                                                "economic_hit_rate": 0.96,
+                                                "economic_samples": 100,
+                                                "live_precision_ok": True,
+                                            }
+                                        ],
+                                    },
+                                },
+                            )
+                        ]
+                    }
+                )
+            )
+            target.write_text(json.dumps({"status": "PURSUE_TARGET", "remaining_target_jpy": 1000.0, "remaining_risk_budget_jpy": 1000.0}))
+            backtest.write_text(json.dumps({"status": "TARGET_COVERAGE_GAP", "bucket_contributions": []}))
+            coverage.write_text(json.dumps({"status": "LIVE_READY_COVERAGE_READY"}))
+
+            AttackAdvisor(
+                intents_path=intents,
+                target_state_path=target,
+                ai_backtest_path=backtest,
+                outcome_mart_path=root / "missing_outcome_mart.json",
+                coverage_path=coverage,
+                projection_ledger_path=projection,
+                output_path=root / "advice.json",
+                report_path=root / "advice.md",
+            ).run()
+
+            payload = json.loads((root / "advice.json").read_text())
+            lane = payload["lanes"][0]
+            self.assertEqual(lane["learning_score_delta"], 0.0)
+            self.assertNotIn("projection_economic_precision_rank_edge", lane["learning_influences"])
+
     def test_blocks_when_live_ready_metrics_are_missing(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -1388,6 +1616,38 @@ def _result(
             "metadata": metadata or {},
         },
     }
+
+
+def _write_projection_edge_rows(
+    path: Path,
+    *,
+    signal_name: str,
+    pair: str,
+    direction: str,
+    regime: str,
+) -> None:
+    rows: list[dict[str, object]] = []
+    for idx in range(100):
+        status = "HIT" if idx < 96 else "MISS"
+        rows.append(
+            {
+                "timestamp_emitted_utc": f"2026-06-{1 + idx // 60:02d}T00:{idx % 60:02d}:00Z",
+                "resolved_at_utc": f"2026-06-{1 + idx // 60:02d}T00:{idx % 60:02d}:30Z",
+                "cycle_id": f"projection-edge-{status.lower()}-{idx}",
+                "pair": pair,
+                "signal_name": signal_name,
+                "direction": direction,
+                "lead_time_min": 5.0,
+                "confidence": 0.95,
+                "entry_price": 1.0,
+                "predicted_target_price": 1.001,
+                "resolution_window_min": 5.0,
+                "resolution_status": status,
+                "resolution_evidence": "unit-test projection edge",
+                "regime_at_emission": regime,
+            }
+        )
+    path.write_text("\n".join(json.dumps(row, sort_keys=True) for row in rows) + "\n")
 
 
 if __name__ == "__main__":

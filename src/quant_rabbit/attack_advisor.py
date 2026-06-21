@@ -7,7 +7,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterator
 
-from quant_rabbit.forecast_precision import oanda_universal_rotation_precision_assessment
+from quant_rabbit.forecast_precision import (
+    oanda_universal_rotation_precision_assessment,
+    projection_precision_edge_summary,
+)
 from quant_rabbit.paths import (
     DEFAULT_AI_ATTACK_ADVICE,
     DEFAULT_AI_ATTACK_ADVICE_REPORT,
@@ -16,6 +19,7 @@ from quant_rabbit.paths import (
     DEFAULT_DAILY_TARGET_STATE,
     DEFAULT_OUTCOME_MART,
     DEFAULT_ORDER_INTENTS,
+    DEFAULT_PROJECTION_LEDGER,
 )
 
 
@@ -31,6 +35,11 @@ ADVISORY_OUTCOME_MART_EDGE_SCORE = 15.0
 ADVISORY_OUTCOME_MART_UNVALIDATED_EDGE_SCORE = 4.0
 ADVISORY_OUTCOME_MART_MIN_TRIALS = 5
 ADVISORY_MARKET_PARTICIPATION_SCORE = 5.0
+# Projection economic edges are current calibration evidence, not realized
+# trade profitability. Keep the boost below walk-forward outcome evidence and
+# certified AI backtests so it ranks already-LIVE_READY lanes without implying
+# live permission or a solved daily guarantee.
+ADVISORY_PROJECTION_ECONOMIC_EDGE_SCORE = 14.0
 REPORT_LANE_LIMIT = 12
 
 
@@ -96,6 +105,7 @@ class AttackAdvisor:
         ai_backtest_path: Path = DEFAULT_AI_TEST_BOT_BACKTEST,
         outcome_mart_path: Path = DEFAULT_OUTCOME_MART,
         coverage_path: Path = DEFAULT_COVERAGE_OPTIMIZATION,
+        projection_ledger_path: Path = DEFAULT_PROJECTION_LEDGER,
         output_path: Path = DEFAULT_AI_ATTACK_ADVICE,
         report_path: Path = DEFAULT_AI_ATTACK_ADVICE_REPORT,
     ) -> None:
@@ -104,6 +114,7 @@ class AttackAdvisor:
         self.ai_backtest_path = ai_backtest_path
         self.outcome_mart_path = outcome_mart_path
         self.coverage_path = coverage_path
+        self.projection_ledger_path = projection_ledger_path
         self.output_path = output_path
         self.report_path = report_path
 
@@ -119,6 +130,7 @@ class AttackAdvisor:
         outcome_index = _outcome_index(outcome_mart or {})
         condition_index = _condition_index(outcome_mart or {})
         condition_validation_index = _condition_validation_index(outcome_mart or {})
+        projection_edge_index = _projection_economic_edge_index(self.projection_ledger_path)
         intent_session_bucket = _session_bucket_from_timestamp(intents.get("generated_at_utc"))
         remaining_target = _positive_float(target.get("remaining_target_jpy"))
         remaining_risk = _positive_float(target.get("remaining_risk_budget_jpy"))
@@ -129,6 +141,7 @@ class AttackAdvisor:
                 outcome_index=outcome_index,
                 condition_index=condition_index,
                 condition_validation_index=condition_validation_index,
+                projection_edge_index=projection_edge_index,
                 intent_session_bucket=intent_session_bucket,
                 remaining_target_jpy=remaining_target,
             )
@@ -194,6 +207,8 @@ class AttackAdvisor:
             "ai_backtest_path": str(self.ai_backtest_path) if self.ai_backtest_path.exists() else None,
             "outcome_mart_path": str(self.outcome_mart_path) if self.outcome_mart_path.exists() else None,
             "coverage_path": str(self.coverage_path) if self.coverage_path.exists() else None,
+            "projection_ledger_path": str(self.projection_ledger_path) if self.projection_ledger_path.exists() else None,
+            "projection_economic_precision_edges": len(projection_edge_index),
             "remaining_target_jpy": remaining_target,
             "remaining_risk_budget_jpy": remaining_risk,
             "live_ready_lanes": len(live_ready),
@@ -252,6 +267,7 @@ class AttackAdvisor:
             f"reward=`{payload['recommended_now_reward_jpy']:.0f} JPY`, risk=`{payload['recommended_now_risk_jpy']:.0f} JPY`",
             f"- Required additional reward: `{payload['required_additional_reward_jpy']:.0f} JPY`",
             f"- Required additional live-ready lanes: `{payload['required_additional_live_ready_lanes']}`",
+            f"- Projection economic precision edges: `{payload['projection_economic_precision_edges']}`",
             "",
             "## Recommended Now",
             "",
@@ -332,6 +348,7 @@ def _attack_lane(
     outcome_index: dict[tuple[str, str, str], dict[str, Any]],
     condition_index: dict[tuple[str, str, str, str], dict[str, Any]],
     condition_validation_index: dict[tuple[str, str], dict[str, Any]],
+    projection_edge_index: dict[tuple[str, str, str], dict[str, Any]],
     intent_session_bucket: str,
     remaining_target_jpy: float | None,
 ) -> AttackLaneAdvice:
@@ -519,6 +536,18 @@ def _attack_lane(
         learning_score_delta += oanda_delta
         learning_influences.append("oanda_universal_rotation_rank_edge")
         learning_details.append(oanda_detail)
+    projection_delta, projection_detail, projection_rationale = _projection_economic_rank_edge(
+        metadata=metadata,
+        projection_edge_index=projection_edge_index,
+        pair=pair,
+    )
+    if projection_rationale:
+        rationale.append(projection_rationale)
+    if projection_delta > 0.0 and projection_detail:
+        score += projection_delta
+        learning_score_delta += projection_delta
+        learning_influences.append("projection_economic_precision_rank_edge")
+        learning_details.append(projection_detail)
     if order_type == "MARKET":
         score += ADVISORY_MARKET_PARTICIPATION_SCORE
         rationale.append("immediate market participation")
@@ -557,6 +586,126 @@ def _attack_lane(
         learning_score_delta=_round(learning_score_delta),
         blockers=tuple(blockers),
     )
+
+
+def _projection_economic_rank_edge(
+    *,
+    metadata: dict[str, Any],
+    projection_edge_index: dict[tuple[str, str, str], dict[str, Any]],
+    pair: str,
+) -> tuple[float, dict[str, object] | None, str | None]:
+    if not projection_edge_index:
+        return 0.0, None, None
+    support = metadata.get("forecast_market_support")
+    if not isinstance(support, dict):
+        return 0.0, None, None
+    if support.get("ok") is not True:
+        return 0.0, None, None
+    regime = _projection_regime_token(
+        metadata.get("regime_state")
+        or metadata.get("dominant_regime")
+        or metadata.get("forecast_regime")
+    )
+    candidates: list[dict[str, Any]] = []
+    for signal in support.get("signals") or []:
+        if not isinstance(signal, dict):
+            continue
+        if signal.get("live_precision_ok") is False:
+            continue
+        candidates.extend(
+            _projection_edge_matches_for_signal(
+                signal,
+                projection_edge_index=projection_edge_index,
+                pair=pair,
+                regime=regime,
+            )
+        )
+    if not candidates:
+        return 0.0, None, None
+    best = max(
+        candidates,
+        key=lambda item: (
+            float(item.get("economic_hit_rate_wilson_lower") or 0.0),
+            float(item.get("economic_hit_rate") or 0.0),
+            int(item.get("economic_samples") or 0),
+            float(item.get("hit_rate_wilson_lower") or 0.0),
+        ),
+    )
+    detail: dict[str, object] = {
+        "source": "projection_ledger",
+        "influence": "projection_economic_precision_rank_edge",
+        "score_delta": ADVISORY_PROJECTION_ECONOMIC_EDGE_SCORE,
+        "rank_only": True,
+        "signal_name": str(best.get("signal_name") or ""),
+        "bucket": str(best.get("bucket") or ""),
+        "pair": str(best.get("pair") or ""),
+        "regime": str(best.get("regime") or ""),
+        "samples": int(best.get("samples") or 0),
+        "hit_rate": _round(float(best.get("hit_rate") or 0.0)),
+        "hit_rate_wilson_lower": _round(float(best.get("hit_rate_wilson_lower") or 0.0)),
+        "economic_samples": int(best.get("economic_samples") or 0),
+        "economic_hit_rate": _round(float(best.get("economic_hit_rate") or 0.0)),
+        "economic_hit_rate_wilson_lower": _round(
+            float(best.get("economic_hit_rate_wilson_lower") or 0.0)
+        ),
+        "timeout_rate": _round(float(best.get("timeout_rate") or 0.0)),
+    }
+    rationale = (
+        "projection economic precision rank edge "
+        f"(+{ADVISORY_PROJECTION_ECONOMIC_EDGE_SCORE:.1f}): {best.get('signal_name')} "
+        f"bucket={best.get('bucket')} economic_Wilson95_lower="
+        f"{float(best.get('economic_hit_rate_wilson_lower') or 0.0):.2f} "
+        f"economic_hit={float(best.get('economic_hit_rate') or 0.0):.2f} "
+        f"n={int(best.get('economic_samples') or 0)} rank-only"
+    )
+    return ADVISORY_PROJECTION_ECONOMIC_EDGE_SCORE, detail, rationale
+
+
+def _projection_edge_matches_for_signal(
+    signal: dict[str, Any],
+    *,
+    projection_edge_index: dict[tuple[str, str, str], dict[str, Any]],
+    pair: str,
+    regime: str,
+) -> list[dict[str, Any]]:
+    names: list[str] = []
+    for raw in (signal.get("calibration_name"), signal.get("name")):
+        text = str(raw or "").strip()
+        if text and text not in names:
+            names.append(text)
+    if not names:
+        return []
+    regimes = [regime, "_all_regimes"] if regime else ["_all_regimes"]
+    pairs = [pair, "_all_pairs"] if pair else ["_all_pairs"]
+    out: list[dict[str, Any]] = []
+    seen: set[tuple[str, str]] = set()
+    for name in names:
+        for pair_key in pairs:
+            for regime_key in regimes:
+                item = projection_edge_index.get((name, pair_key, regime_key))
+                if not item:
+                    continue
+                key = (str(item.get("signal_name") or ""), str(item.get("bucket") or ""))
+                if key in seen:
+                    continue
+                seen.add(key)
+                out.append(item)
+    return out
+
+
+def _projection_regime_token(value: object) -> str:
+    text = str(value or "").strip().upper().replace("-", "_").replace(" ", "_")
+    if not text:
+        return ""
+    if "RANGE" in text:
+        return "RANGE"
+    if "TREND" in text or "IMPULSE" in text:
+        return "TREND"
+    if "REVERSAL" in text:
+        return "REVERSAL_RISK"
+    if "UNCLEAR" in text or "TRANSITION" in text:
+        return "UNCLEAR"
+    return text
 
 
 def _oanda_rotation_rank_edge(
@@ -764,6 +913,43 @@ def _ai_backtest_edge_indexable(payload: dict[str, Any]) -> bool:
     managed_net = _optional_float(summary.get("total_managed_net_jpy")) or 0.0
     profit_factor = _optional_float(summary.get("profit_factor")) or 0.0
     return selected_trades >= 30 and managed_net > 0 and profit_factor > 1.0
+
+
+def _projection_economic_edge_index(path: Path) -> dict[tuple[str, str, str], dict[str, Any]]:
+    if not path.exists():
+        return {}
+    try:
+        from quant_rabbit.risk import (
+            FORECAST_LIVE_PRECISION_MIN_SAMPLES,
+            FORECAST_LIVE_PRECISION_MIN_WILSON_LOWER,
+        )
+        from quant_rabbit.strategy.projection_ledger import compute_hit_rates
+
+        hit_rates = compute_hit_rates(path.parent)
+    except Exception:
+        return {}
+    filtered = {
+        signal_name: buckets
+        for signal_name, buckets in (hit_rates or {}).items()
+        if not str(signal_name or "").startswith("directional_forecast")
+    }
+    edges = projection_precision_edge_summary(
+        filtered,
+        min_wilson_lower=FORECAST_LIVE_PRECISION_MIN_WILSON_LOWER,
+        min_samples=FORECAST_LIVE_PRECISION_MIN_SAMPLES,
+        limit=10_000,
+    )
+    index: dict[tuple[str, str, str], dict[str, Any]] = {}
+    for item in edges:
+        if not isinstance(item, dict):
+            continue
+        signal_name = str(item.get("signal_name") or "")
+        pair = str(item.get("pair") or "")
+        regime = str(item.get("regime") or "")
+        if not signal_name or not pair or not regime:
+            continue
+        index[(signal_name, pair, regime)] = item
+    return index
 
 
 def _outcome_index(payload: dict[str, Any]) -> dict[tuple[str, str, str], dict[str, Any]]:
