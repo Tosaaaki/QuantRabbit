@@ -93,6 +93,71 @@ def _capture_scoped_tp_payload(
     }
 
 
+def _write_oanda_campaign_firepower_report(
+    root: Path,
+    *,
+    status: str = "VERIFIED_TARGET_10_ROUTE_ESTIMATED",
+    pair: str = "EUR_USD",
+    side: str = "LONG",
+    shape: str = "range_reversion",
+) -> Path:
+    path = (
+        root
+        / "logs"
+        / "reports"
+        / "forecast_improvement"
+        / "oanda_universal_rotation_mining_latest.json"
+    )
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "generated_at_utc": "2026-06-21T00:00:00Z",
+                "campaign_firepower": {
+                    "contract": "audit-only firepower estimate; live gates still decide",
+                    "per_trade_risk_pct_lens": 1.0,
+                    "minimum_return_pct": 5.0,
+                    "target_return_pct": 10.0,
+                    "status": status,
+                    "high_precision": {
+                        "unique_vehicle_count": 5,
+                        "pair_count": 5,
+                        "observed_attempts_per_active_day": 22.0,
+                        "weighted_return_pct_per_trade_at_risk_lens": 0.64,
+                        "estimated_return_pct_per_active_day_at_observed_frequency": 14.08,
+                        "trades_needed_for_minimum_5pct_at_weighted_expectancy": 8,
+                        "trades_needed_for_target_10pct_at_weighted_expectancy": 16,
+                        "top_vehicles": [
+                            {
+                                "vehicle_key": f"{pair}|{side}|{shape}|tp1_sl1",
+                                "evidence_status": "HIGH_PRECISION_VALIDATED",
+                                "pair": pair,
+                                "shape": shape,
+                                "firepower_side": side,
+                                "validation_n": 80,
+                                "active_days": 20,
+                                "estimated_return_pct_per_active_day_at_observed_frequency": 2.8,
+                                "live_permission": False,
+                            }
+                        ],
+                    },
+                    "evidence_queue": {
+                        "unique_vehicle_count": 0,
+                        "pair_count": 0,
+                        "observed_attempts_per_active_day": 0.0,
+                        "weighted_return_pct_per_trade_at_risk_lens": 0.0,
+                        "estimated_return_pct_per_active_day_at_observed_frequency": 0.0,
+                        "trades_needed_for_minimum_5pct_at_weighted_expectancy": None,
+                        "trades_needed_for_target_10pct_at_weighted_expectancy": None,
+                        "top_vehicles": [],
+                    },
+                },
+            }
+        )
+    )
+    return path
+
+
 class IntentGeneratorTest(unittest.TestCase):
     def setUp(self) -> None:
         self._default_root_tmp = tempfile.TemporaryDirectory()
@@ -809,6 +874,169 @@ class IntentGeneratorTest(unittest.TestCase):
                 if issue["code"] == POSITIVE_ROTATION_FIREPOWER_BLOCK_CODE
             )
             self.assertEqual(firepower_issue["severity"], "WARN")
+            self.assertNotIn(POSITIVE_ROTATION_FIREPOWER_BLOCK_CODE, result["live_blocker_codes"])
+
+    def test_capture_tp_proven_uses_matching_oanda_campaign_firepower_route(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_oanda_campaign_firepower_report(root)
+            (root / "daily_target_state.json").write_text(
+                json.dumps(
+                    {
+                        "status": "PURSUE_TARGET",
+                        "remaining_risk_budget_jpy": 100000.0,
+                        "remaining_minimum_jpy": 20000.0,
+                        "remaining_target_jpy": 30000.0,
+                        "target_trades_per_day": 30,
+                    }
+                )
+            )
+            (root / "capture_economics.json").write_text(
+                json.dumps(
+                    {
+                        "status": "NEGATIVE_EXPECTANCY",
+                        "overall": {
+                            "trades": 210,
+                            "avg_win_jpy": 600.0,
+                            "avg_loss_jpy": 1100.0,
+                            "payoff_ratio": 0.545,
+                            "breakeven_payoff_at_win_rate": 0.7,
+                        },
+                        "by_exit_reason": {
+                            "TAKE_PROFIT_ORDER": {
+                                "trades": 93,
+                                "wins": 93,
+                                "losses": 0,
+                                "avg_win_jpy": 504.0,
+                                "avg_loss_jpy": 0.0,
+                                "expectancy_jpy_per_trade": 504.0,
+                            },
+                            "MARKET_ORDER_TRADE_CLOSE": {
+                                "trades": 84,
+                                "wins": 13,
+                                "losses": 71,
+                                "avg_win_jpy": 218.4,
+                                "avg_loss_jpy": 1095.5,
+                                "expectancy_jpy_per_trade": -892.1,
+                            },
+                        },
+                        **_capture_scoped_tp_payload(),
+                    }
+                )
+            )
+            output = root / "intents.json"
+
+            summary = IntentGenerator(
+                campaign_plan=_stamp_campaign_generated_at(_range_campaign(root)),
+                strategy_profile=_strategy(root, status="CANDIDATE"),
+                output_path=output,
+                report_path=root / "intents.md",
+                pair_charts_path=_pair_charts(root),
+                data_root=root,
+                max_loss_jpy=1000.0,
+            ).run(snapshot_path=_snapshot(root))
+
+            payload = json.loads(output.read_text())
+            result = next(
+                item for item in payload["results"]
+                if item["lane_id"] == "range_trader:EUR_USD:LONG:RANGE_ROTATION"
+            )
+            metadata = result["intent"]["metadata"]
+            issue_codes = {issue["code"] for issue in result["risk_issues"]}
+
+            self.assertGreater(summary.generated, 0)
+            self.assertEqual(result["status"], "LIVE_READY")
+            self.assertEqual(metadata["positive_rotation_mode"], "TP_PROVEN_HARVEST")
+            self.assertFalse(metadata["positive_rotation_capture_minimum_floor_reachable"])
+            self.assertTrue(metadata["positive_rotation_minimum_floor_reachable"])
+            self.assertEqual(
+                metadata["positive_rotation_minimum_floor_reach_basis"],
+                "OANDA_CAMPAIGN_FIREPOWER_MATCHING_VEHICLE",
+            )
+            self.assertTrue(metadata["positive_rotation_oanda_campaign_firepower_vehicle_match"])
+            self.assertEqual(
+                metadata["positive_rotation_oanda_campaign_firepower_status"],
+                "VERIFIED_TARGET_10_ROUTE_ESTIMATED",
+            )
+            self.assertFalse(metadata["positive_rotation_oanda_campaign_live_permission"])
+            self.assertNotIn(POSITIVE_ROTATION_FIREPOWER_BLOCK_CODE, issue_codes)
+
+    def test_capture_tp_proven_keeps_firepower_warn_for_non_matching_oanda_route(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_oanda_campaign_firepower_report(
+                root,
+                pair="GBP_USD",
+                side="SHORT",
+                shape="pullback_continuation",
+            )
+            (root / "daily_target_state.json").write_text(
+                json.dumps(
+                    {
+                        "status": "PURSUE_TARGET",
+                        "remaining_risk_budget_jpy": 100000.0,
+                        "remaining_minimum_jpy": 20000.0,
+                        "remaining_target_jpy": 30000.0,
+                        "target_trades_per_day": 30,
+                    }
+                )
+            )
+            (root / "capture_economics.json").write_text(
+                json.dumps(
+                    {
+                        "status": "NEGATIVE_EXPECTANCY",
+                        "overall": {
+                            "trades": 210,
+                            "avg_win_jpy": 600.0,
+                            "avg_loss_jpy": 1100.0,
+                            "payoff_ratio": 0.545,
+                            "breakeven_payoff_at_win_rate": 0.7,
+                        },
+                        "by_exit_reason": {
+                            "TAKE_PROFIT_ORDER": {
+                                "trades": 93,
+                                "wins": 93,
+                                "losses": 0,
+                                "avg_win_jpy": 504.0,
+                                "avg_loss_jpy": 0.0,
+                                "expectancy_jpy_per_trade": 504.0,
+                            },
+                            "MARKET_ORDER_TRADE_CLOSE": {
+                                "trades": 84,
+                                "wins": 13,
+                                "losses": 71,
+                                "avg_win_jpy": 218.4,
+                                "avg_loss_jpy": 1095.5,
+                                "expectancy_jpy_per_trade": -892.1,
+                            },
+                        },
+                        **_capture_scoped_tp_payload(),
+                    }
+                )
+            )
+            output = root / "intents.json"
+
+            IntentGenerator(
+                campaign_plan=_stamp_campaign_generated_at(_range_campaign(root)),
+                strategy_profile=_strategy(root, status="CANDIDATE"),
+                output_path=output,
+                report_path=root / "intents.md",
+                pair_charts_path=_pair_charts(root),
+                data_root=root,
+                max_loss_jpy=1000.0,
+            ).run(snapshot_path=_snapshot(root))
+
+            payload = json.loads(output.read_text())
+            result = next(
+                item for item in payload["results"]
+                if item["lane_id"] == "range_trader:EUR_USD:LONG:RANGE_ROTATION"
+            )
+            metadata = result["intent"]["metadata"]
+            issue_codes = {issue["code"] for issue in result["risk_issues"]}
+
+            self.assertFalse(metadata["positive_rotation_oanda_campaign_firepower_vehicle_match"])
+            self.assertFalse(metadata["positive_rotation_minimum_floor_reachable"])
+            self.assertIn(POSITIVE_ROTATION_FIREPOWER_BLOCK_CODE, issue_codes)
             self.assertNotIn(POSITIVE_ROTATION_FIREPOWER_BLOCK_CODE, result["live_blocker_codes"])
 
     def test_thin_exact_tp_collection_warns_without_claiming_tp_proven_rotation(self) -> None:

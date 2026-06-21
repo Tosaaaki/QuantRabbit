@@ -1041,6 +1041,9 @@ def _oanda_capture_rotation_scale(metadata: dict[str, Any]) -> tuple[float, str 
             "capture economics is NEGATIVE_EXPECTANCY; OANDA rank-only rotation edge is size-neutral "
             "until positive_rotation_live_ready proves TP HARVEST capture",
         )
+    campaign_rationale = _oanda_campaign_firepower_rationale(metadata)
+    if campaign_rationale is not None:
+        return 1.0, campaign_rationale
     if metadata.get("positive_rotation_minimum_floor_reachable") is not True:
         return (
             1.0,
@@ -1048,6 +1051,21 @@ def _oanda_capture_rotation_scale(metadata: dict[str, Any]) -> tuple[float, str 
             "but do not treat the daily floor as solved",
         )
     return 1.0, None
+
+
+def _oanda_campaign_firepower_rationale(metadata: dict[str, Any]) -> str | None:
+    if metadata.get("positive_rotation_oanda_campaign_firepower_vehicle_match") is not True:
+        return None
+    if metadata.get("positive_rotation_oanda_campaign_minimum_floor_reachable") is not True:
+        return None
+    status = str(metadata.get("positive_rotation_oanda_campaign_firepower_status") or "UNKNOWN")
+    vehicles = metadata.get("positive_rotation_oanda_campaign_high_precision_unique_vehicles")
+    daily_return = metadata.get("positive_rotation_oanda_campaign_estimated_return_pct_per_active_day")
+    return (
+        "matching OANDA campaign-firepower vehicle is verified "
+        f"(status={status}, vehicles={vehicles}, estimated_daily_return_pct={daily_return}); "
+        "use it only as rank-only ordering evidence while live gates still decide"
+    )
 
 
 def _recommend_now(

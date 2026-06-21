@@ -484,6 +484,51 @@ class TraderBrainTest(unittest.TestCase):
         )
         self.assertNotIn("capture_rotation_score_scale", assessment)
 
+    def test_oanda_universal_rotation_rationale_uses_matching_campaign_firepower(self) -> None:
+        intent = {
+            "metadata": {
+                "forecast_direction": "DOWN",
+                "chart_direction_bias": "SHORT",
+                "m5_atr_pips": 5.0,
+                "session_bucket": "LONDON_NY_OVERLAP",
+                "tp_execution_mode": "ATTACHED_TECHNICAL_TP",
+                "tp_target_intent": "HARVEST",
+                "opportunity_mode": "HARVEST",
+                "capture_economics_status": "NEGATIVE_EXPECTANCY",
+                "positive_rotation_live_ready": True,
+                "positive_rotation_minimum_floor_reachable": False,
+                "positive_rotation_oanda_campaign_firepower_vehicle_match": True,
+                "positive_rotation_oanda_campaign_minimum_floor_reachable": True,
+                "positive_rotation_oanda_campaign_firepower_status": (
+                    "VERIFIED_TARGET_10_ROUTE_ESTIMATED"
+                ),
+                "positive_rotation_oanda_campaign_high_precision_unique_vehicles": 17,
+                "positive_rotation_oanda_campaign_estimated_return_pct_per_active_day": 20.09,
+            }
+        }
+        rationale: list[str] = []
+
+        score = _oanda_universal_rotation_precision_score(
+            intent=intent,
+            pair="EUR_USD",
+            direction="SHORT",
+            order_type="LIMIT",
+            method="PULLBACK_CONTINUATION",
+            entry=1.10000,
+            tp=1.09950,
+            sl=1.10070,
+            spread_pips=1.0,
+            rationale=rationale,
+        )
+
+        self.assertEqual(score, 8.0)
+        self.assertTrue(
+            any("matching OANDA campaign-firepower vehicle is verified" in item for item in rationale)
+        )
+        assessment = intent["metadata"]["oanda_universal_rotation_precision_assessment"]
+        self.assertIn("matching OANDA campaign-firepower vehicle", assessment["capture_rotation_rationale"])
+        self.assertNotIn("capture_rotation_score_scale", assessment)
+
     def test_oanda_universal_rotation_scores_when_positive_rotation_firepower_is_proved(self) -> None:
         intent = {
             "metadata": {
