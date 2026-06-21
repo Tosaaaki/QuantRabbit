@@ -19,6 +19,7 @@ from quant_rabbit.strategy.intent_generator import (
     RANGE_TARGET_SPREAD_CUSHION_MULT,
     _forecast_context_payload,
     _minimum_range_target_pips,
+    _oanda_m5_rotation_state_for,
     _same_day_loss_streak_issues,
     _session_bucket_from_tag,
 )
@@ -82,6 +83,37 @@ class IntentGeneratorTest(unittest.TestCase):
 
     def test_session_bucket_maps_judas_window_to_london_context(self) -> None:
         self.assertEqual(_session_bucket_from_tag("JUDAS_WINDOW"), "LONDON")
+
+    def test_oanda_m5_rotation_state_exposes_mined_candle_features(self) -> None:
+        prior_candles = [
+            {"o": 100.40, "h": 101.00, "l": 100.00, "c": 100.50, "complete": True}
+            for _ in range(21)
+        ]
+        current = {
+            "o": 100.95,
+            "h": 101.20,
+            "l": 100.80,
+            "c": 100.90,
+            "complete": True,
+        }
+
+        state = _oanda_m5_rotation_state_for(
+            "GBP_JPY",
+            {
+                "M5": {"atr_pips": 10.0},
+                "M5__recent_candles": [*prior_candles, current],
+            },
+        )
+
+        self.assertEqual(state["oanda_m5_bar_range"], "wide")
+        self.assertEqual(state["oanda_m5_bar_range_atr"], 4.0)
+        self.assertEqual(state["oanda_m5_range_pos_bucket"], "high")
+        self.assertEqual(state["oanda_m5_wick_reject_short"], True)
+        self.assertEqual(state["oanda_m5_wick_reject_long"], False)
+        self.assertEqual(state["oanda_m5_failed_break_short"], True)
+        self.assertEqual(state["oanda_m5_failed_break_long"], False)
+        self.assertAlmostEqual(state["oanda_m5_upper_wick"], 0.625)
+        self.assertAlmostEqual(state["oanda_m5_lower_wick"], 0.25)
 
     def test_requires_snapshot_before_pricing_intents(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

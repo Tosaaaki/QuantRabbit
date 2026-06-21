@@ -1452,6 +1452,8 @@ def oanda_universal_rotation_precision_assessment(
         rule_direction = str(rule.get("direction") or "").upper()
         if normalized_direction and normalized_direction not in {"UNCLEAR", "RANGE", rule_direction}:
             continue
+        if not _oanda_universal_rotation_shape_allowed_for_method(rule.get("shape"), method):
+            continue
         if target_pips < float(rule["min_target_pips"]):
             continue
         if stop_pips > float(rule["max_stop_pips"]):
@@ -1545,6 +1547,28 @@ def _empty_oanda_universal_rotation_assessment() -> dict[str, Any]:
         "rule_source": None,
         "score_delta": 0.0,
     }
+
+
+def _oanda_universal_rotation_shape_allowed_for_method(shape: Any, method: str | None) -> bool:
+    normalized_shape = str(shape or "").strip().lower()
+    if not normalized_shape:
+        return False
+    normalized_method = str(method or "").strip().upper().replace("-", "_").replace(" ", "_")
+    if not normalized_method:
+        return True
+    allowed_shapes = {
+        "RANGE_ROTATION": {"range_reversion", "range_reclaim", "failed_break_fade"},
+        "BREAKOUT_FAILURE": {"failed_break_fade", "range_reclaim"},
+        "TREND_CONTINUATION": {"trend_continuation", "pullback_continuation", "squeeze_breakout"},
+        "RANGE_REVERSION": {"range_reversion"},
+        "RANGE_RECLAIM": {"range_reclaim"},
+        "FAILED_BREAK_FADE": {"failed_break_fade"},
+        "PULLBACK_CONTINUATION": {"pullback_continuation"},
+        "SQUEEZE_BREAKOUT": {"squeeze_breakout"},
+    }
+    if normalized_method in allowed_shapes:
+        return normalized_shape in allowed_shapes[normalized_method]
+    return normalized_method.lower() == normalized_shape
 
 
 def _oanda_universal_rotation_live_gap(rule: dict[str, Any]) -> dict[str, Any]:
@@ -1900,7 +1924,7 @@ def _oanda_universal_rotation_feature_value(
     elif feature_name == "wick_reject":
         current = _metadata_oanda_wick_reject_bucket(metadata, side)
     elif feature_name == "failed_break":
-        current = _metadata_oanda_binary_bucket(metadata, "failed_break")
+        current = _metadata_oanda_failed_break_bucket(metadata, side)
     else:
         return None
     if current != expected_bucket:
@@ -2045,6 +2069,9 @@ def _direction_bucket_relative_to_side(direction: str, side: str) -> str | None:
 
 
 def _metadata_oanda_wick_reject_bucket(metadata: dict[str, Any], side: str) -> str | None:
+    direct = _metadata_oanda_side_binary_bucket(metadata, "wick_reject", side)
+    if direct is not None:
+        return direct
     direct = _metadata_oanda_binary_bucket(metadata, "wick_reject")
     if direct is not None:
         return direct
@@ -2067,6 +2094,27 @@ def _metadata_oanda_wick_reject_bucket(metadata: dict[str, Any], side: str) -> s
     return "1" if wick_ratio >= 0.45 else "0"
 
 
+def _metadata_oanda_failed_break_bucket(metadata: dict[str, Any], side: str) -> str | None:
+    direct = _metadata_oanda_side_binary_bucket(metadata, "failed_break", side)
+    if direct is not None:
+        return direct
+    return _metadata_oanda_binary_bucket(metadata, "failed_break")
+
+
+def _metadata_oanda_side_binary_bucket(metadata: dict[str, Any], feature_name: str, side: str) -> str | None:
+    normalized_side = str(side or "").strip().lower()
+    if normalized_side not in {"long", "short"}:
+        return None
+    for key in (
+        f"oanda_m5_{feature_name}_{normalized_side}",
+        f"m5_{feature_name}_{normalized_side}",
+        f"{feature_name}_{normalized_side}",
+    ):
+        if key in metadata:
+            return _metadata_oanda_binary_value(metadata.get(key))
+    return None
+
+
 def _metadata_oanda_binary_bucket(metadata: dict[str, Any], feature_name: str) -> str | None:
     oanda_key = f"oanda_m5_{feature_name}"
     m5_key = f"m5_{feature_name}"
@@ -2076,6 +2124,12 @@ def _metadata_oanda_binary_bucket(metadata: dict[str, Any], feature_name: str) -
         value = metadata.get(m5_key)
     else:
         value = metadata.get(feature_name)
+    if value is None:
+        return None
+    return _metadata_oanda_binary_value(value)
+
+
+def _metadata_oanda_binary_value(value: Any) -> str | None:
     if value is None:
         return None
     if isinstance(value, bool):

@@ -1410,6 +1410,32 @@ def _oanda_range_pos_bucket(value: float) -> str:
     return "mid"
 
 
+def _oanda_m5_failed_break(candles: list[dict[str, Any]], *, side: str) -> bool:
+    """Mirror the universal-rotation miner's current-candle failed-break test."""
+
+    range_lookback = 20
+    idx = len(candles) - 1
+    if idx < range_lookback + 1:
+        return False
+    prev_window = candles[idx - range_lookback:idx]
+    try:
+        prior_high = max(float(item["h"]) for item in prev_window)
+        prior_low = min(float(item["l"]) for item in prev_window)
+        current_high = float(candles[idx]["h"])
+        current_low = float(candles[idx]["l"])
+        current_close = float(candles[idx]["c"])
+    except (KeyError, TypeError, ValueError):
+        return False
+    width = max(prior_high - prior_low, 1e-12)
+    inside_buffer = width * 0.05
+    normalized_side = str(side or "").upper()
+    if normalized_side == Side.LONG.value:
+        return current_low < prior_low and current_close > prior_low + inside_buffer
+    if normalized_side == Side.SHORT.value:
+        return current_high > prior_high and current_close < prior_high - inside_buffer
+    return False
+
+
 def _oanda_m5_rotation_state_for(pair: str, per_tf: dict[str, Any]) -> dict[str, Any]:
     """Expose the M5 candle buckets used by the OANDA rotation miner."""
 
@@ -1435,6 +1461,8 @@ def _oanda_m5_rotation_state_for(pair: str, per_tf: dict[str, Any]) -> dict[str,
     try:
         close = float(current["c"])
         open_ = float(current["o"])
+        high = float(current["h"])
+        low = float(current["l"])
         window = candles[-20:]
         range_high = max(float(candle["h"]) for candle in window)
         range_low = min(float(candle["l"]) for candle in window)
@@ -1445,6 +1473,12 @@ def _oanda_m5_rotation_state_for(pair: str, per_tf: dict[str, Any]) -> dict[str,
     range_pos = max(0.0, min(1.0, (close - range_low) / width))
     factor = instrument_pip_factor(pair)
     body_atr = ((close - open_) * factor) / atr_pips
+    bar_range_atr = max(0.0, ((high - low) * factor) / atr_pips)
+    full_range_atr = max(bar_range_atr, 1e-9)
+    upper_wick_atr = max(0.0, ((high - max(open_, close)) * factor) / atr_pips)
+    lower_wick_atr = max(0.0, ((min(open_, close) - low) * factor) / atr_pips)
+    upper_wick = upper_wick_atr / full_range_atr
+    lower_wick = lower_wick_atr / full_range_atr
     out: dict[str, Any] = {
         "m5_atr_pips": atr_pips,
         "oanda_m5_atr_pips": atr_pips,
@@ -1452,6 +1486,14 @@ def _oanda_m5_rotation_state_for(pair: str, per_tf: dict[str, Any]) -> dict[str,
         "oanda_m5_range_pos_bucket": _oanda_range_pos_bucket(range_pos),
         "oanda_m5_body_atr": round(body_atr, 6),
         "oanda_m5_body_abs": _oanda_rotation_bucket(body_atr),
+        "oanda_m5_bar_range_atr": round(bar_range_atr, 6),
+        "oanda_m5_bar_range": "wide" if bar_range_atr >= 1.2 else "normal",
+        "oanda_m5_upper_wick": round(upper_wick, 6),
+        "oanda_m5_lower_wick": round(lower_wick, 6),
+        "oanda_m5_wick_reject_long": lower_wick >= 0.45,
+        "oanda_m5_wick_reject_short": upper_wick >= 0.45,
+        "oanda_m5_failed_break_long": _oanda_m5_failed_break(candles, side=Side.LONG.value),
+        "oanda_m5_failed_break_short": _oanda_m5_failed_break(candles, side=Side.SHORT.value),
     }
     if isinstance(prev_fast, dict):
         prev_fast_close = _optional_float(prev_fast.get("c"))
