@@ -21,6 +21,7 @@ from quant_rabbit.paths import (
     DEFAULT_ORDER_INTENTS,
     DEFAULT_PROJECTION_LEDGER,
 )
+from quant_rabbit.strategy.projection_ledger import directional_calibration_signal_name
 
 
 # Advisory weights only. They rank already-LIVE_READY receipts for Codex
@@ -320,6 +321,7 @@ class AttackAdvisor:
             for item in payload["projection_edge_activation_queue"][:REPORT_LANE_LIMIT]:
                 lines.append(
                     f"- `{item.get('signal_name')}` bucket=`{item.get('bucket')}` "
+                    f"direction=`{item.get('edge_direction') or 'EITHER'}` "
                     f"status=`{item.get('activation_status')}` "
                     f"repair=`{item.get('primary_repair_category')}` "
                     f"economic_Wilson95_lower=`{item.get('economic_hit_rate_wilson_lower')}` "
@@ -634,6 +636,7 @@ def _projection_economic_rank_edge(
                 projection_edge_index=projection_edge_index,
                 pair=pair,
                 regime=regime,
+                support_direction=support.get("direction"),
             )
         )
     if not candidates:
@@ -653,6 +656,7 @@ def _projection_economic_rank_edge(
         "score_delta": ADVISORY_PROJECTION_ECONOMIC_EDGE_SCORE,
         "rank_only": True,
         "signal_name": str(best.get("signal_name") or ""),
+        "edge_direction": str(best.get("edge_direction") or ""),
         "bucket": str(best.get("bucket") or ""),
         "pair": str(best.get("pair") or ""),
         "regime": str(best.get("regime") or ""),
@@ -669,6 +673,7 @@ def _projection_economic_rank_edge(
     rationale = (
         "projection economic precision rank edge "
         f"(+{ADVISORY_PROJECTION_ECONOMIC_EDGE_SCORE:.1f}): {best.get('signal_name')} "
+        f"direction={best.get('edge_direction') or 'EITHER'} "
         f"bucket={best.get('bucket')} economic_Wilson95_lower="
         f"{float(best.get('economic_hit_rate_wilson_lower') or 0.0):.2f} "
         f"economic_hit={float(best.get('economic_hit_rate') or 0.0):.2f} "
@@ -683,30 +688,94 @@ def _projection_edge_matches_for_signal(
     projection_edge_index: dict[tuple[str, str, str], dict[str, Any]],
     pair: str,
     regime: str,
+    support_direction: object | None = None,
 ) -> list[dict[str, Any]]:
-    names: list[str] = []
-    for raw in (signal.get("calibration_name"), signal.get("name")):
-        text = str(raw or "").strip()
-        if text and text not in names:
-            names.append(text)
+    signal_direction = _projection_signal_direction(signal, fallback=support_direction)
+    names = _projection_signal_candidate_names(signal, signal_direction)
     if not names:
         return []
     regimes = [regime, "_all_regimes"] if regime else ["_all_regimes"]
     pairs = [pair, "_all_pairs"] if pair else ["_all_pairs"]
+    specificity_order = [
+        (pair_key, regime_key)
+        for pair_key in pairs
+        for regime_key in regimes
+    ]
     out: list[dict[str, Any]] = []
     seen: set[tuple[str, str]] = set()
     for name in names:
-        for pair_key in pairs:
-            for regime_key in regimes:
-                item = projection_edge_index.get((name, pair_key, regime_key))
-                if not item:
-                    continue
-                key = (str(item.get("signal_name") or ""), str(item.get("bucket") or ""))
-                if key in seen:
-                    continue
-                seen.add(key)
-                out.append(item)
+        for pair_key, regime_key in specificity_order:
+            item = projection_edge_index.get((name, pair_key, regime_key))
+            if not item:
+                continue
+            if not _projection_edge_direction_matches(item, signal_direction):
+                continue
+            key = (str(item.get("signal_name") or ""), str(item.get("bucket") or ""))
+            if key in seen:
+                continue
+            seen.add(key)
+            out.append(item)
+            break
     return out
+
+
+def _projection_signal_direction(signal: dict[str, Any], *, fallback: object | None = None) -> str:
+    for raw in (signal.get("direction"), fallback):
+        text = str(raw or "").strip().upper()
+        if text in {"UP", "DOWN", "RANGE", "EITHER"}:
+            return text
+    return ""
+
+
+def _projection_signal_candidate_names(signal: dict[str, Any], signal_direction: str) -> list[str]:
+    raw_names: list[str] = []
+    for raw in (signal.get("calibration_name"), signal.get("name")):
+        text = str(raw or "").strip()
+        if text and text not in raw_names:
+            raw_names.append(text)
+    if signal_direction not in {"UP", "DOWN", "RANGE"}:
+        return raw_names
+
+    names: list[str] = []
+    for raw in raw_names:
+        alias = directional_calibration_signal_name(raw, signal_direction)
+        if alias and alias not in names:
+            names.append(alias)
+        # A base signal name pools all directions. Once a direction is known,
+        # only a matching direction-specific alias is precise enough for rank
+        # activation; otherwise the opposite side can inherit a stale edge.
+        if _projection_signal_name_direction(raw) == signal_direction and raw not in names:
+            names.append(raw)
+    return names
+
+
+def _projection_signal_name_direction(signal_name: object) -> str:
+    text = str(signal_name or "").strip().lower()
+    if text.endswith("_up"):
+        return "UP"
+    if text.endswith("_down"):
+        return "DOWN"
+    if text.endswith("_range"):
+        return "RANGE"
+    return ""
+
+
+def _projection_signal_base_name(signal_name: object) -> str:
+    text = str(signal_name or "").strip()
+    direction = _projection_signal_name_direction(text)
+    if not direction:
+        return text
+    suffix = f"_{direction.lower()}"
+    return text[: -len(suffix)]
+
+
+def _projection_edge_direction_matches(edge: dict[str, Any], signal_direction: str) -> bool:
+    edge_direction = str(edge.get("edge_direction") or "").upper()
+    if signal_direction in {"UP", "DOWN", "RANGE"}:
+        return edge_direction == signal_direction
+    if signal_direction == "EITHER":
+        return edge_direction in {"", "EITHER"}
+    return True
 
 
 def _projection_regime_token(value: object) -> str:
@@ -956,6 +1025,7 @@ def _projection_economic_edge_index(path: Path) -> dict[tuple[str, str, str], di
         limit=10_000,
     )
     index: dict[tuple[str, str, str], dict[str, Any]] = {}
+    directional_base_keys: set[tuple[str, str, str]] = set()
     for item in edges:
         if not isinstance(item, dict):
             continue
@@ -964,7 +1034,24 @@ def _projection_economic_edge_index(path: Path) -> dict[tuple[str, str, str], di
         regime = str(item.get("regime") or "")
         if not signal_name or not pair or not regime:
             continue
-        index[(signal_name, pair, regime)] = item
+        edge_direction = _projection_signal_name_direction(signal_name)
+        if edge_direction:
+            directional_base_keys.add((_projection_signal_base_name(signal_name), pair, regime))
+
+    for item in edges:
+        if not isinstance(item, dict):
+            continue
+        signal_name = str(item.get("signal_name") or "")
+        pair = str(item.get("pair") or "")
+        regime = str(item.get("regime") or "")
+        if not signal_name or not pair or not regime:
+            continue
+        edge_direction = _projection_signal_name_direction(signal_name)
+        if not edge_direction and (signal_name, pair, regime) in directional_base_keys:
+            continue
+        enriched = dict(item)
+        enriched["edge_direction"] = edge_direction or "EITHER"
+        index[(signal_name, pair, regime)] = enriched
     return index
 
 
@@ -1014,6 +1101,7 @@ def _projection_edge_activation_queue(
                     projection_edge_index=projection_edge_index,
                     pair=pair,
                     regime=regime,
+                    support_direction=support.get("direction"),
                 )
                 for edge in matches:
                     key = _projection_edge_key(edge)
@@ -1094,6 +1182,7 @@ def _projection_edge_activation_queue(
         row.pop("repair_category_hits", None)
         out.append(row)
 
+    out = _projection_edge_activation_collapse_broader_duplicates(out)
     out.sort(key=_projection_edge_activation_sort_key)
     return out[: max(0, int(limit))]
 
@@ -1101,6 +1190,7 @@ def _projection_edge_activation_queue(
 def _projection_edge_activation_row(edge: dict[str, Any]) -> dict[str, Any]:
     return {
         "signal_name": str(edge.get("signal_name") or ""),
+        "edge_direction": str(edge.get("edge_direction") or ""),
         "bucket": str(edge.get("bucket") or ""),
         "pair": str(edge.get("pair") or ""),
         "regime": str(edge.get("regime") or ""),
@@ -1239,6 +1329,51 @@ def _projection_edge_key(edge: dict[str, Any]) -> tuple[str, str] | None:
     if not signal_name or not bucket:
         return None
     return (signal_name, bucket)
+
+
+def _projection_edge_activation_collapse_broader_duplicates(
+    rows: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Prefer actionable pair/regime rows over their broader fallback copies."""
+
+    signatures = {
+        (
+            str(row.get("signal_name") or ""),
+            str(row.get("edge_direction") or ""),
+            str(row.get("pair") or ""),
+            str(row.get("regime") or ""),
+        )
+        for row in rows
+    }
+    out: list[dict[str, Any]] = []
+    for row in rows:
+        signal = str(row.get("signal_name") or "")
+        direction = str(row.get("edge_direction") or "")
+        pair = str(row.get("pair") or "")
+        regime = str(row.get("regime") or "")
+        if not signal:
+            out.append(row)
+            continue
+        if pair != "_all_pairs" and regime == "_all_regimes":
+            if any(
+                s == signal and d == direction and p == pair and r != "_all_regimes"
+                for s, d, p, r in signatures
+            ):
+                continue
+        if pair == "_all_pairs" and regime != "_all_regimes":
+            if any(
+                s == signal and d == direction and p != "_all_pairs" and r == regime
+                for s, d, p, r in signatures
+            ):
+                continue
+        if pair == "_all_pairs" and regime == "_all_regimes":
+            if any(
+                s == signal and d == direction and (p != "_all_pairs" or r != "_all_regimes")
+                for s, d, p, r in signatures
+            ):
+                continue
+        out.append(row)
+    return out
 
 
 def _projection_edge_activation_sort_key(row: dict[str, Any]) -> tuple[int, int, float, float, int, str, str]:

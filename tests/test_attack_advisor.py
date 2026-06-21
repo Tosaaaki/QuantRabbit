@@ -783,7 +783,7 @@ class AttackAdvisorTest(unittest.TestCase):
                 projection,
                 signal_name="news_theme_followthrough",
                 pair="EUR_USD",
-                direction="EITHER",
+                direction="UP",
                 regime="RANGE",
             )
             intents.write_text(
@@ -841,8 +841,119 @@ class AttackAdvisorTest(unittest.TestCase):
             queue = payload["projection_edge_activation_queue"]
             self.assertEqual(queue[0]["activation_status"], "SURFACED_UNSELECTED")
             self.assertEqual(queue[0]["signal_sources"], ["unselected"])
+            self.assertEqual(queue[0]["signal_name"], "news_theme_followthrough_up")
+            self.assertEqual(queue[0]["edge_direction"], "UP")
             self.assertEqual(queue[0]["primary_repair_category"], "FORECAST_SUPPORT_REPAIR")
             self.assertEqual(queue[0]["activation_action"], "repair forecast/support alignment; do not trade the edge until current direction support clears")
+
+    def test_projection_edge_activation_queue_keeps_directional_edge_on_matching_side(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            intents = root / "intents.json"
+            target = root / "target.json"
+            backtest = root / "ai_backtest.json"
+            coverage = root / "coverage.json"
+            projection = root / "projection_ledger.jsonl"
+            _write_projection_edge_rows(
+                projection,
+                signal_name="liquidity_sweep_high",
+                pair="AUD_JPY",
+                direction="UP",
+                regime="UNCLEAR",
+            )
+            intents.write_text(
+                json.dumps(
+                    {
+                        "results": [
+                            _result(
+                                status="DRY_RUN_BLOCKED",
+                                live_blockers=["FORECAST_CONFIDENCE_REQUIRED_FOR_LIVE"],
+                                lane_id="failure_trader:AUD_JPY:LONG:BREAKOUT_FAILURE:LIMIT",
+                                pair="AUD_JPY",
+                                side="LONG",
+                                method="BREAKOUT_FAILURE",
+                                order_type="LIMIT",
+                                metadata={
+                                    "regime_state": "UNCLEAR",
+                                    "forecast_market_support": {
+                                        "ok": True,
+                                        "direction": "UP",
+                                        "signals": [
+                                            {
+                                                "name": "liquidity_sweep_high",
+                                                "calibration_name": "liquidity_sweep_high",
+                                                "direction": "UP",
+                                                "hit_rate": 0.96,
+                                                "samples": 100,
+                                                "economic_hit_rate": 0.96,
+                                                "economic_samples": 100,
+                                                "live_precision_ok": True,
+                                            }
+                                        ],
+                                    },
+                                },
+                            ),
+                            _result(
+                                status="DRY_RUN_BLOCKED",
+                                live_blockers=["FORECAST_CONFIDENCE_REQUIRED_FOR_LIVE"],
+                                lane_id="failure_trader:AUD_JPY:SHORT:BREAKOUT_FAILURE:LIMIT",
+                                pair="AUD_JPY",
+                                side="SHORT",
+                                method="BREAKOUT_FAILURE",
+                                order_type="LIMIT",
+                                metadata={
+                                    "regime_state": "UNCLEAR",
+                                    "forecast_market_support": {
+                                        "ok": True,
+                                        "direction": "DOWN",
+                                        "signals": [
+                                            {
+                                                "name": "liquidity_sweep_high",
+                                                "calibration_name": "liquidity_sweep_high",
+                                                "direction": "DOWN",
+                                                "hit_rate": 0.96,
+                                                "samples": 100,
+                                                "economic_hit_rate": 0.96,
+                                                "economic_samples": 100,
+                                                "live_precision_ok": True,
+                                            }
+                                        ],
+                                    },
+                                },
+                            ),
+                        ]
+                    }
+                )
+            )
+            target.write_text(json.dumps({"status": "PURSUE_TARGET", "remaining_target_jpy": 1000.0, "remaining_risk_budget_jpy": 1000.0}))
+            backtest.write_text(json.dumps({"status": "TARGET_COVERAGE_GAP", "bucket_contributions": []}))
+            coverage.write_text(json.dumps({"status": "LIVE_READY_COVERAGE_READY"}))
+
+            AttackAdvisor(
+                intents_path=intents,
+                target_state_path=target,
+                ai_backtest_path=backtest,
+                outcome_mart_path=root / "missing_outcome_mart.json",
+                coverage_path=coverage,
+                projection_ledger_path=projection,
+                output_path=root / "advice.json",
+                report_path=root / "advice.md",
+            ).run()
+
+            payload = json.loads((root / "advice.json").read_text())
+            queue = payload["projection_edge_activation_queue"]
+            self.assertEqual(len(queue), 1)
+            surfaced = [
+                item
+                for item in queue
+                if item["activation_status"] == "SURFACED_BUT_BLOCKED"
+            ]
+            self.assertEqual(len(surfaced), 1)
+            self.assertEqual(surfaced[0]["signal_name"], "liquidity_sweep_high_up")
+            self.assertEqual(surfaced[0]["edge_direction"], "UP")
+            self.assertEqual(surfaced[0]["matched_lane_ids"], ["failure_trader:AUD_JPY:LONG:BREAKOUT_FAILURE:LIMIT"])
+            self.assertEqual(surfaced[0]["blocked_lane_ids"], ["failure_trader:AUD_JPY:LONG:BREAKOUT_FAILURE:LIMIT"])
+            self.assertEqual(surfaced[0]["matched_lane_count"], 1)
 
     def test_projection_edge_activation_queue_prioritizes_risk_resize_repair(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -915,6 +1026,8 @@ class AttackAdvisorTest(unittest.TestCase):
 
             payload = json.loads((root / "advice.json").read_text())
             queue = payload["projection_edge_activation_queue"]
+            self.assertEqual(queue[0]["signal_name"], "liquidity_sweep_high_up")
+            self.assertEqual(queue[0]["edge_direction"], "UP")
             self.assertEqual(queue[0]["primary_repair_category"], "RISK_RESIZE_DRY_RUN")
             self.assertEqual(queue[0]["repair_categories"][0]["category"], "RISK_RESIZE_DRY_RUN")
             self.assertIn("risk-resized dry-run receipt", queue[0]["primary_repair_action"])
