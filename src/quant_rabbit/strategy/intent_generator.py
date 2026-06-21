@@ -6650,6 +6650,178 @@ def _oanda_campaign_firepower_evidence_for_values(
     }
 
 
+def _oanda_campaign_vehicle_shape_reprice_metadata(
+    *,
+    lane: dict[str, Any],
+    pair: str,
+    side: Side,
+    method: TradeMethod | None,
+    order_type: OrderType,
+    quote: Quote,
+    entry: float,
+    tp: float,
+    sl: float,
+    data_root: Path | None,
+) -> dict[str, Any]:
+    """Diagnose whether a passive OANDA seed can wait into its proven vehicle.
+
+    The OANDA firepower artifact proves historical `pair/side/shape/exit_shape`
+    vehicles, not arbitrary live TP/SL geometry. This diagnostic keeps that
+    evidence falsifiable: if current geometry is too thin for the vehicle, it
+    publishes the deeper LIMIT entry that would restore the historical RR
+    shape without moving TP/SL or granting live permission.
+    """
+    if lane.get("oanda_campaign_firepower_seed") is not True:
+        return {}
+    current_rr = _geometry_reward_risk(entry=entry, tp=tp, sl=sl)
+    oanda_firepower = _oanda_campaign_firepower_evidence_for_values(
+        pair=pair,
+        side=side,
+        method=method,
+        current_reward_risk=current_rr,
+        allowed_vehicle_keys=_oanda_campaign_source_vehicle_keys(lane),
+        allowed_exit_shapes=_oanda_campaign_source_exit_shapes(lane),
+        data_root=data_root,
+    )
+    if oanda_firepower is None:
+        return {}
+    matching_expected = _optional_float(
+        oanda_firepower.get("matching_vehicle_expected_reward_risk")
+    )
+    closest_expected = _optional_float(
+        oanda_firepower.get("closest_vehicle_expected_reward_risk")
+    )
+    expected_rr = matching_expected if matching_expected is not None else closest_expected
+    vehicle_key = (
+        oanda_firepower.get("matching_vehicle_key")
+        or oanda_firepower.get("closest_vehicle_key")
+    )
+    exit_shape = (
+        oanda_firepower.get("matching_vehicle_exit_shape")
+        or oanda_firepower.get("closest_vehicle_exit_shape")
+    )
+    out: dict[str, Any] = {
+        "oanda_campaign_vehicle_reprice_checked": True,
+        "oanda_campaign_vehicle_reprice_vehicle_key": vehicle_key,
+        "oanda_campaign_vehicle_reprice_exit_shape": exit_shape,
+        "oanda_campaign_vehicle_reprice_expected_reward_risk": (
+            round(expected_rr, 6) if expected_rr is not None else None
+        ),
+        "oanda_campaign_vehicle_reprice_current_reward_risk": (
+            round(current_rr, 6) if current_rr is not None else None
+        ),
+    }
+    if oanda_firepower.get("vehicle_match") is True:
+        out.update(
+            {
+                "oanda_campaign_vehicle_reprice_status": "MATCHED_CURRENT_GEOMETRY",
+                "oanda_campaign_vehicle_reprice_reason": (
+                    "current intent geometry already matches the OANDA campaign vehicle"
+                ),
+            }
+        )
+        return out
+    if order_type != OrderType.LIMIT:
+        out.update(
+            {
+                "oanda_campaign_vehicle_reprice_status": "ORDER_TYPE_NOT_REPRICEABLE",
+                "oanda_campaign_vehicle_reprice_reason": (
+                    "only passive LIMIT entries are repriced toward OANDA campaign vehicles"
+                ),
+            }
+        )
+        return out
+    if oanda_firepower.get("closest_vehicle_identity_allowed") is not True:
+        out.update(
+            {
+                "oanda_campaign_vehicle_reprice_status": "ENTRY_REPRICE_UNSAFE",
+                "oanda_campaign_vehicle_reprice_reason": (
+                    oanda_firepower.get("vehicle_mismatch_reason")
+                    or "closest OANDA vehicle is not allowed by this lane identity"
+                ),
+            }
+        )
+        return out
+    if expected_rr is None or expected_rr <= 0 or current_rr is None or current_rr <= 0:
+        out.update(
+            {
+                "oanda_campaign_vehicle_reprice_status": "ENTRY_REPRICE_UNSAFE",
+                "oanda_campaign_vehicle_reprice_reason": (
+                    "vehicle expected RR or current intent RR is missing, so reprice cannot be solved"
+                ),
+            }
+        )
+        return out
+    if current_rr >= expected_rr:
+        out.update(
+            {
+                "oanda_campaign_vehicle_reprice_status": "ENTRY_REPRICE_NOT_NEEDED_OR_DEGRADES",
+                "oanda_campaign_vehicle_reprice_reason": (
+                    f"current intent RR {current_rr:.3f} is already >= vehicle RR "
+                    f"{expected_rr:.3f}; do not worsen entry to force the historical shape"
+                ),
+            }
+        )
+        return out
+
+    required_entry = _round_price(pair, (tp + expected_rr * sl) / (expected_rr + 1.0))
+    required_rr = _geometry_reward_risk(entry=required_entry, tp=tp, sl=sl)
+    pip_factor = PIP_FACTORS.get(pair, instrument_pip_factor(pair))
+    current_target_pips = abs(tp - entry) * pip_factor
+    current_stop_pips = abs(entry - sl) * pip_factor
+    required_target_pips = abs(tp - required_entry) * pip_factor
+    required_stop_pips = abs(required_entry - sl) * pip_factor
+    out.update(
+        {
+            "oanda_campaign_vehicle_reprice_required_entry": required_entry,
+            "oanda_campaign_vehicle_reprice_entry_improvement_pips": round(
+                abs(entry - required_entry) * pip_factor,
+                3,
+            ),
+            "oanda_campaign_vehicle_reprice_required_reward_risk": (
+                round(required_rr, 6) if required_rr is not None else None
+            ),
+            "oanda_campaign_vehicle_reprice_current_target_pips": round(current_target_pips, 3),
+            "oanda_campaign_vehicle_reprice_current_stop_pips": round(current_stop_pips, 3),
+            "oanda_campaign_vehicle_reprice_required_target_pips": round(
+                required_target_pips,
+                3,
+            ),
+            "oanda_campaign_vehicle_reprice_required_stop_pips": round(
+                required_stop_pips,
+                3,
+            ),
+        }
+    )
+    between_tp_sl = min(tp, sl) < required_entry < max(tp, sl)
+    if side == Side.LONG:
+        pending_side = required_entry < entry and required_entry < quote.ask
+    else:
+        pending_side = required_entry > entry and required_entry > quote.bid
+    matches_after_rounding = _oanda_campaign_exit_shape_matches_current_geometry(
+        {"exit_shape": exit_shape},
+        current_reward_risk=required_rr,
+    )
+    if not between_tp_sl:
+        status = "ENTRY_REPRICE_UNSAFE"
+        reason = "required entry is outside current TP/SL bounds"
+    elif not pending_side:
+        status = "ENTRY_REPRICE_UNSAFE"
+        reason = "required entry is not a deeper passive LIMIT from current price"
+    elif not matches_after_rounding:
+        status = "ENTRY_REPRICE_UNSAFE"
+        reason = "rounded required entry still fails the OANDA vehicle RR tolerance"
+    else:
+        status = "ENTRY_REPRICE_POSSIBLE"
+        reason = (
+            f"wait {out['oanda_campaign_vehicle_reprice_entry_improvement_pips']:.3f}p "
+            f"deeper to restore {expected_rr:.3f}R OANDA vehicle geometry without moving TP/SL"
+        )
+    out["oanda_campaign_vehicle_reprice_status"] = status
+    out["oanda_campaign_vehicle_reprice_reason"] = reason
+    return out
+
+
 def _oanda_campaign_firepower_vehicle_matches(
     intent: OrderIntent,
     vehicle: dict[str, Any],
@@ -7424,6 +7596,20 @@ def _intent_from_lane(
         atr_pips=atr_pips,
     )
     geometry_metadata.update(tp_execution_metadata)
+    geometry_metadata.update(
+        _oanda_campaign_vehicle_shape_reprice_metadata(
+            lane=lane,
+            pair=pair,
+            side=side,
+            method=method,
+            order_type=order_type,
+            quote=quote,
+            entry=entry,
+            tp=tp,
+            sl=sl,
+            data_root=data_root,
+        )
+    )
     # Disaster stop: broker-side catastrophe bound computed AFTER geometry so
     # the expected intent.sl (sizing / reward-risk anchor) is final, and the
     # strict-ordering buffer can guarantee the broker stop sits beyond it.

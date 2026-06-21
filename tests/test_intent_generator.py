@@ -11,7 +11,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from quant_rabbit.models import OrderIntent, OrderType, Side, TradeMethod
+from quant_rabbit.models import OrderIntent, OrderType, Quote, Side, TradeMethod
 from quant_rabbit.strategy.intent_generator import (
     IntentGenerator,
     LOSS_ASYMMETRY_OANDA_CAMPAIGN_FIREPOWER_MIN_LOT_MODE,
@@ -25,6 +25,7 @@ from quant_rabbit.strategy.intent_generator import (
     _forecast_seed_lane,
     _minimum_range_target_pips,
     _oanda_campaign_firepower_shape_matches_method,
+    _oanda_campaign_vehicle_shape_reprice_metadata,
     _oanda_m5_rotation_state_for,
     _same_day_loss_streak_issues,
     _session_bucket_from_tag,
@@ -1311,6 +1312,94 @@ class IntentGeneratorTest(unittest.TestCase):
             self.assertNotIn("positive_rotation_oanda_campaign_min_lot_sizing", metadata)
             self.assertIn("LOSS_BUDGET_TOO_THIN_FOR_MIN_LOT", issue_codes)
             self.assertIn(POSITIVE_ROTATION_LIVE_BLOCK_CODE, issue_codes)
+
+    def test_oanda_campaign_vehicle_reprice_reports_deeper_limit_entry(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_oanda_campaign_firepower_report(
+                root,
+                pair="USD_JPY",
+                side="LONG",
+                exit_shape="tp1_sl1",
+            )
+            now = datetime.now(timezone.utc)
+            quote = Quote(pair="USD_JPY", bid=161.27, ask=161.35, timestamp_utc=now)
+            metadata = _oanda_campaign_vehicle_shape_reprice_metadata(
+                lane={
+                    "oanda_campaign_firepower_seed": True,
+                    "oanda_campaign_vehicle_key": "USD_JPY|LONG|range_reversion|tp1_sl1",
+                    "oanda_campaign_vehicle_keys": ["USD_JPY|LONG|range_reversion|tp1_sl1"],
+                    "oanda_campaign_exit_shape": "tp1_sl1",
+                    "oanda_campaign_exit_shapes": ["tp1_sl1"],
+                },
+                pair="USD_JPY",
+                side=Side.LONG,
+                method=TradeMethod.RANGE_ROTATION,
+                order_type=OrderType.LIMIT,
+                quote=quote,
+                entry=161.19,
+                tp=161.358,
+                sl=160.566,
+                data_root=root,
+            )
+
+            self.assertTrue(metadata["oanda_campaign_vehicle_reprice_checked"])
+            self.assertEqual(
+                metadata["oanda_campaign_vehicle_reprice_status"],
+                "ENTRY_REPRICE_POSSIBLE",
+            )
+            self.assertEqual(
+                metadata["oanda_campaign_vehicle_reprice_vehicle_key"],
+                "USD_JPY|LONG|range_reversion|tp1_sl1",
+            )
+            self.assertEqual(metadata["oanda_campaign_vehicle_reprice_exit_shape"], "tp1_sl1")
+            self.assertEqual(metadata["oanda_campaign_vehicle_reprice_expected_reward_risk"], 1.0)
+            self.assertAlmostEqual(
+                metadata["oanda_campaign_vehicle_reprice_current_reward_risk"],
+                0.269231,
+                places=6,
+            )
+            self.assertEqual(metadata["oanda_campaign_vehicle_reprice_required_entry"], 160.962)
+            self.assertAlmostEqual(
+                metadata["oanda_campaign_vehicle_reprice_entry_improvement_pips"],
+                22.8,
+                places=1,
+            )
+            self.assertEqual(metadata["oanda_campaign_vehicle_reprice_required_reward_risk"], 1.0)
+
+    def test_oanda_campaign_vehicle_reprice_does_not_degrade_richer_geometry(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_oanda_campaign_firepower_report(root, exit_shape="tp1_sl1")
+            now = datetime.now(timezone.utc)
+            quote = Quote(pair="EUR_USD", bid=1.10000, ask=1.10008, timestamp_utc=now)
+            metadata = _oanda_campaign_vehicle_shape_reprice_metadata(
+                lane={
+                    "oanda_campaign_firepower_seed": True,
+                    "oanda_campaign_vehicle_key": "EUR_USD|LONG|range_reversion|tp1_sl1",
+                    "oanda_campaign_vehicle_keys": ["EUR_USD|LONG|range_reversion|tp1_sl1"],
+                    "oanda_campaign_exit_shape": "tp1_sl1",
+                    "oanda_campaign_exit_shapes": ["tp1_sl1"],
+                },
+                pair="EUR_USD",
+                side=Side.LONG,
+                method=TradeMethod.RANGE_ROTATION,
+                order_type=OrderType.LIMIT,
+                quote=quote,
+                entry=1.10000,
+                tp=1.10200,
+                sl=1.09900,
+                data_root=root,
+            )
+
+            self.assertTrue(metadata["oanda_campaign_vehicle_reprice_checked"])
+            self.assertEqual(
+                metadata["oanda_campaign_vehicle_reprice_status"],
+                "ENTRY_REPRICE_NOT_NEEDED_OR_DEGRADES",
+            )
+            self.assertEqual(metadata["oanda_campaign_vehicle_reprice_expected_reward_risk"], 1.0)
+            self.assertEqual(metadata["oanda_campaign_vehicle_reprice_current_reward_risk"], 2.0)
+            self.assertNotIn("oanda_campaign_vehicle_reprice_required_entry", metadata)
 
     def test_capture_tp_proven_keeps_firepower_warn_for_non_matching_oanda_route(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
