@@ -9,6 +9,7 @@ from quant_rabbit.forecast_precision import (
     bidask_replay_negative_precision_issue,
     bidask_replay_precision_assessment,
     bidask_replay_precision_support,
+    oanda_universal_rotation_precision_assessment,
     technical_harvest_precision_assessment,
     technical_harvest_precision_support,
 )
@@ -332,6 +333,65 @@ class ForecastPrecisionConfluenceTest(unittest.TestCase):
 
         self.assertIsNone(assessment["primary_rotation_support"])
         self.assertEqual(assessment["rotation_supports"], [])
+
+    def test_oanda_universal_rotation_adds_rank_only_gbpusd_short_edge(self) -> None:
+        metadata = {
+            "forecast_direction": "DOWN",
+            "chart_direction_bias": "SHORT",
+            "m5_atr_percentile_100": 0.82,
+            "session_bucket": "ASIA",
+            "tp_execution_mode": "ATTACHED_TECHNICAL_TP",
+            "tp_target_intent": "HARVEST",
+            "opportunity_mode": "HARVEST",
+        }
+
+        assessment = oanda_universal_rotation_precision_assessment(
+            metadata,
+            pair="GBP_USD",
+            side="SHORT",
+            order_type="LIMIT",
+            method="RANGE_ROTATION",
+            entry=1.30000,
+            take_profit=1.29950,
+            stop_loss=1.30070,
+        )
+
+        self.assertIsNone(assessment["primary_support"])
+        self.assertEqual(
+            assessment["primary_rank_support"]["name"],
+            "GBP_USD_SHORT_M5_RANGE_REVERSION_ATR_HIGH_ASIA_TP1_SL1",
+        )
+        self.assertEqual(assessment["primary_rank_support"]["validation_samples"], 30)
+        self.assertEqual(assessment["primary_rank_support"]["validation_win_rate"], 0.70)
+        self.assertEqual(assessment["primary_rank_support"]["validation_profit_factor"], 2.45916)
+        self.assertTrue(assessment["primary_rank_support"]["rank_only"])
+        self.assertEqual(assessment["score_delta"], 10.0)
+
+    def test_oanda_universal_rotation_requires_current_session_and_atr_bucket(self) -> None:
+        metadata = {
+            "forecast_direction": "DOWN",
+            "chart_direction_bias": "SHORT",
+            "m5_atr_percentile_100": 0.40,
+            "session_bucket": "NY",
+            "tp_execution_mode": "ATTACHED_TECHNICAL_TP",
+            "tp_target_intent": "HARVEST",
+            "opportunity_mode": "HARVEST",
+        }
+
+        assessment = oanda_universal_rotation_precision_assessment(
+            metadata,
+            pair="GBP_USD",
+            side="SHORT",
+            order_type="LIMIT",
+            method="RANGE_ROTATION",
+            entry=1.30000,
+            take_profit=1.29950,
+            stop_loss=1.30070,
+        )
+
+        self.assertIsNone(assessment["primary_rank_support"])
+        self.assertEqual(assessment["rank_only_supports"], [])
+        self.assertEqual(assessment["score_delta"], 0.0)
 
 
 if __name__ == "__main__":

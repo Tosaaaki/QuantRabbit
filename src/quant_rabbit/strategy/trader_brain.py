@@ -506,11 +506,13 @@ from quant_rabbit.forecast_precision import (
     BIDASK_REPLAY_EDGE_SCORE_BONUS,
     BIDASK_REPLAY_NEGATIVE_SCORE_PENALTY,
     BIDASK_REPLAY_RANK_ONLY_SCORE_BONUS,
+    OANDA_UNIVERSAL_ROTATION_SCORE_BONUS,
     TECHNICAL_HARVEST_PRECISION_EXTRA_MATCH_BONUS,
     TECHNICAL_HARVEST_PRECISION_SCORE_BONUS,
     TECHNICAL_HARVEST_ROTATION_EXTRA_MATCH_BONUS,
     TECHNICAL_HARVEST_ROTATION_SCORE_BONUS,
     bidask_replay_precision_assessment,
+    oanda_universal_rotation_precision_assessment,
     technical_harvest_precision_assessment,
 )
 from quant_rabbit.strategy.forecast_persistence_tracker import (
@@ -1416,6 +1418,17 @@ class TraderBrain:
             status=status,
             rationale=rationale,
             blockers=blockers,
+        )
+        score += _oanda_universal_rotation_precision_score(
+            intent=intent,
+            pair=pair,
+            direction=direction,
+            order_type=order_type,
+            method=method,
+            entry=entry,
+            tp=tp,
+            sl=sl,
+            rationale=rationale,
         )
 
         # Micro override: M1+M5 struct opposite to lane direction trumps the
@@ -3590,6 +3603,62 @@ def _bidask_replay_precision_score(
             f"bid/ask replay hard block: {top.get('pair')} {top.get('direction')} lost after spread",
         )
         score_delta -= BIDASK_REPLAY_NEGATIVE_SCORE_PENALTY
+    return score_delta
+
+
+def _oanda_universal_rotation_precision_score(
+    *,
+    intent: dict[str, Any],
+    pair: str,
+    direction: str,
+    order_type: str,
+    method: str,
+    entry: float | None,
+    tp: float | None,
+    sl: float | None,
+    rationale: list[str],
+) -> float:
+    metadata = intent.get("metadata") if isinstance(intent.get("metadata"), dict) else {}
+    assessment = oanda_universal_rotation_precision_assessment(
+        metadata,
+        pair=pair,
+        side=direction,
+        order_type=order_type,
+        method=method,
+        entry=entry,
+        take_profit=tp,
+        stop_loss=sl,
+    )
+    supports = [
+        item for item in assessment.get("rank_only_supports", [])
+        if isinstance(item, dict)
+    ]
+    if not supports:
+        return 0.0
+    metadata["oanda_universal_rotation_precision_assessment"] = assessment
+    score_delta = _optional_float(assessment.get("score_delta")) or 0.0
+    best = (
+        assessment.get("primary_rank_support")
+        if isinstance(assessment.get("primary_rank_support"), dict)
+        else max(
+            supports,
+            key=lambda item: (
+                float(item.get("validation_win_wilson95_lower") or 0.0),
+                float(item.get("validation_profit_factor") or 0.0),
+                int(item.get("validation_samples") or 0),
+            ),
+        )
+    )
+    rationale.insert(
+        0,
+        "oanda universal rotation "
+        f"+{OANDA_UNIVERSAL_ROTATION_SCORE_BONUS:.1f}: {best.get('name')} "
+        f"valid_n={int(best.get('validation_samples') or 0)} "
+        f"win={float(best.get('validation_win_rate') or 0.0):.2f} "
+        f"Wilson95_lower={float(best.get('validation_win_wilson95_lower') or 0.0):.2f} "
+        f"avg={float(best.get('validation_avg_realized_pips') or 0.0):.2f}pip "
+        f"PF={float(best.get('validation_profit_factor') or 0.0):.2f} rank-only",
+    )
     return score_delta
 
 

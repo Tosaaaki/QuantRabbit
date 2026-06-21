@@ -28,6 +28,7 @@ from quant_rabbit.strategy.trader_brain import (
     _micro_structure_direction,
     _mtf_confluence_score,
     _narrative_risk_score,
+    _oanda_universal_rotation_precision_score,
     _parse_chart_story_full,
     _forecast_lane_gate,
     _selection_reward_risk_floor,
@@ -289,6 +290,38 @@ class TraderBrainTest(unittest.TestCase):
             )
             self.assertTrue(any("bidask_replay_negative_bucket" in item for item in bad_score.blockers))
             self.assertEqual(decision.selected_lane_id, good_score.lane_id)
+
+    def test_oanda_universal_rotation_is_rank_only_score_support(self) -> None:
+        intent = {
+            "metadata": {
+                "forecast_direction": "DOWN",
+                "chart_direction_bias": "SHORT",
+                "m5_atr_percentile_100": 0.82,
+                "session_bucket": "ASIA",
+                "tp_execution_mode": "ATTACHED_TECHNICAL_TP",
+                "tp_target_intent": "HARVEST",
+                "opportunity_mode": "HARVEST",
+            }
+        }
+        rationale: list[str] = []
+
+        score = _oanda_universal_rotation_precision_score(
+            intent=intent,
+            pair="GBP_USD",
+            direction="SHORT",
+            order_type="LIMIT",
+            method="RANGE_ROTATION",
+            entry=1.30000,
+            tp=1.29950,
+            sl=1.30070,
+            rationale=rationale,
+        )
+
+        self.assertEqual(score, 10.0)
+        self.assertTrue(any("oanda universal rotation +10.0" in item for item in rationale))
+        assessment = intent["metadata"]["oanda_universal_rotation_precision_assessment"]
+        self.assertIsNone(assessment["primary_support"])
+        self.assertTrue(assessment["primary_rank_support"]["rank_only"])
 
     def test_technical_rotation_scores_high_frequency_bucket_without_live_override(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

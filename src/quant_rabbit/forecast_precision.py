@@ -34,6 +34,8 @@ BIDASK_REPLAY_EDGE_SCORE_BONUS = 18.0
 BIDASK_REPLAY_CONTRARIAN_SCORE_BONUS = 18.0
 BIDASK_REPLAY_RANK_ONLY_SCORE_BONUS = 6.0
 BIDASK_REPLAY_NEGATIVE_SCORE_PENALTY = 70.0
+OANDA_UNIVERSAL_ROTATION_SCORE_BONUS = 10.0
+OANDA_UNIVERSAL_ROTATION_EXTRA_MATCH_BONUS = 2.0
 BIDASK_REPLAY_RULES_ENV = "QR_BIDASK_REPLAY_PRECISION_RULES"
 DEFAULT_BIDASK_REPLAY_RULES_PATH = Path(__file__).with_name("bidask_replay_precision_rules.json")
 
@@ -431,6 +433,40 @@ BIDASK_REPLAY_NEGATIVE_RULES: tuple[dict[str, Any], ...] = (
         "reward_side_target_rate": 0.0089,
         "blocks_live_support": True,
         "audit_report": "logs/reports/forecast_improvement/oanda_history_replay_validate_20260620T155821Z.json",
+    },
+)
+
+
+# Train-selected direction selectors mined directly from local multi-month
+# OANDA M5 bid/ask candles, not from forecast_history. These are rank-only:
+# the active-days count and Wilson lower bound improve selection priority, but
+# do not waive live forecast/risk gates.
+OANDA_UNIVERSAL_ROTATION_RULES: tuple[dict[str, Any], ...] = (
+    {
+        "name": "GBP_USD_SHORT_M5_RANGE_REVERSION_ATR_HIGH_ASIA_TP1_SL1",
+        "pair": "GBP_USD",
+        "side": "SHORT",
+        "direction": "DOWN",
+        "shape": "range_reversion",
+        "timeframe": "M5",
+        "exit_shape": "tp1_sl1",
+        "confluence": "atr_regime:high + session:asia",
+        "train_samples": 37,
+        "train_win_rate": 0.567568,
+        "validation_samples": 30,
+        "validation_win_rate": 0.70,
+        "validation_win_wilson95_lower": 0.521239,
+        "validation_avg_realized_pips": 2.854048,
+        "validation_avg_realized_atr": 0.333729,
+        "validation_profit_factor": 2.459160,
+        "active_days": 7,
+        "positive_day_rate": 0.5714285714,
+        "min_m5_atr_percentile_100": 0.75,
+        "session_bucket": "ASIA",
+        "min_target_pips": 2.5,
+        "max_stop_pips": 20.0,
+        "rank_only": True,
+        "audit_report": "logs/reports/forecast_improvement/oanda_universal_rotation_mining_latest.json",
     },
 )
 
@@ -1053,6 +1089,138 @@ def _empty_bidask_replay_assessment() -> dict[str, Any]:
     }
 
 
+def oanda_universal_rotation_precision_assessment(
+    metadata: dict[str, Any],
+    *,
+    pair: str,
+    side: str,
+    order_type: str | None,
+    method: str | None,
+    entry: float | None,
+    take_profit: float | None,
+    stop_loss: float | None,
+) -> dict[str, Any]:
+    """Return rank-only OANDA M5 candle-mined rotation evidence.
+
+    The OANDA universal miner selects LONG/SHORT using only the train slice and
+    validates on holdout candles. These rules improve lane ranking only; they
+    never return a live support object because the evidence is still sparse at
+    the daily-stability layer.
+    """
+
+    if not isinstance(metadata, dict):
+        return _empty_oanda_universal_rotation_assessment()
+    if str(order_type or "").upper() == "MARKET":
+        return _empty_oanda_universal_rotation_assessment()
+    if str(metadata.get("tp_execution_mode") or "").upper() != "ATTACHED_TECHNICAL_TP":
+        return _empty_oanda_universal_rotation_assessment()
+    if str(metadata.get("tp_target_intent") or "").upper() != "HARVEST":
+        return _empty_oanda_universal_rotation_assessment()
+    if str(metadata.get("opportunity_mode") or "").upper() not in {"", "HARVEST"}:
+        return _empty_oanda_universal_rotation_assessment()
+
+    normalized_pair = str(pair or "").upper()
+    normalized_side = str(side or "").upper()
+    normalized_direction = str(metadata.get("forecast_direction") or "").upper()
+    chart_bias = str(metadata.get("chart_direction_bias") or "").upper()
+    if chart_bias and chart_bias != normalized_side:
+        return _empty_oanda_universal_rotation_assessment()
+
+    target_pips = _signed_reward_pips(
+        normalized_pair,
+        normalized_side,
+        entry=entry,
+        take_profit=take_profit,
+    )
+    stop_pips = _signed_stop_pips(
+        normalized_pair,
+        normalized_side,
+        entry=entry,
+        stop_loss=stop_loss,
+    )
+    if target_pips is None or stop_pips is None or stop_pips <= 0.0:
+        return _empty_oanda_universal_rotation_assessment()
+
+    matches: list[dict[str, Any]] = []
+    for rule in OANDA_UNIVERSAL_ROTATION_RULES:
+        if normalized_pair != str(rule.get("pair") or "").upper():
+            continue
+        if normalized_side != str(rule.get("side") or "").upper():
+            continue
+        rule_direction = str(rule.get("direction") or "").upper()
+        if normalized_direction and normalized_direction not in {"UNCLEAR", "RANGE", rule_direction}:
+            continue
+        if target_pips < float(rule["min_target_pips"]):
+            continue
+        if stop_pips > float(rule["max_stop_pips"]):
+            continue
+        session = _metadata_session_bucket(metadata)
+        if session != str(rule.get("session_bucket") or "").upper():
+            continue
+        feature_values = _technical_rule_feature_values(metadata, rule)
+        if feature_values is None:
+            continue
+        support = {
+            "name": rule["name"],
+            "pair": rule["pair"],
+            "side": rule["side"],
+            "direction": rule["direction"],
+            "shape": rule["shape"],
+            "timeframe": rule["timeframe"],
+            "exit_shape": rule["exit_shape"],
+            "confluence": rule["confluence"],
+            "train_samples": rule["train_samples"],
+            "train_win_rate": rule["train_win_rate"],
+            "validation_samples": rule["validation_samples"],
+            "validation_win_rate": rule["validation_win_rate"],
+            "validation_win_wilson95_lower": rule["validation_win_wilson95_lower"],
+            "validation_avg_realized_pips": rule["validation_avg_realized_pips"],
+            "validation_avg_realized_atr": rule["validation_avg_realized_atr"],
+            "validation_profit_factor": rule["validation_profit_factor"],
+            "active_days": rule["active_days"],
+            "positive_day_rate": rule["positive_day_rate"],
+            "rank_only": True,
+            "current_target_pips": round(target_pips, 4),
+            "current_stop_pips": round(stop_pips, 4),
+            "current_session_bucket": session,
+            "audit_report": rule["audit_report"],
+        }
+        support.update(feature_values)
+        matches.append(support)
+
+    primary_rank_support = None
+    if matches:
+        primary_rank_support = max(
+            matches,
+            key=lambda item: (
+                float(item.get("validation_win_wilson95_lower") or 0.0),
+                float(item.get("validation_profit_factor") or 0.0),
+                int(item.get("validation_samples") or 0),
+            ),
+        )
+    score_delta = 0.0
+    if matches:
+        score_delta += OANDA_UNIVERSAL_ROTATION_SCORE_BONUS
+        score_delta += max(0, len(matches) - 1) * OANDA_UNIVERSAL_ROTATION_EXTRA_MATCH_BONUS
+    return {
+        "eligible_shape": bool(matches),
+        "primary_support": None,
+        "primary_rank_support": primary_rank_support,
+        "rank_only_supports": matches,
+        "score_delta": round(score_delta, 4),
+    }
+
+
+def _empty_oanda_universal_rotation_assessment() -> dict[str, Any]:
+    return {
+        "eligible_shape": False,
+        "primary_support": None,
+        "primary_rank_support": None,
+        "rank_only_supports": [],
+        "score_delta": 0.0,
+    }
+
+
 def _bidask_replay_rule_is_daily_stable(rule: dict[str, Any]) -> bool:
     """Only daily-stable replay evidence can waive forecast live gates.
 
@@ -1432,6 +1600,31 @@ def _technical_negative_rule_feature_values(
             return None
         out["current_m5_trend_score"] = round(value, 4)
     return out or None
+
+
+def _metadata_session_bucket(metadata: dict[str, Any]) -> str | None:
+    raw = (
+        metadata.get("session_bucket")
+        or metadata.get("session")
+        or metadata.get("current_session")
+        or metadata.get("market_session")
+    )
+    if raw is None:
+        return None
+    text = str(raw).strip().upper().replace("-", "_").replace(" ", "_")
+    if not text:
+        return None
+    if text in {"ASIA", "ASIAN", "TOKYO", "APAC"}:
+        return "ASIA"
+    if text in {"LONDON", "LONDON_OPEN", "EUROPE"}:
+        return "LONDON_OPEN"
+    if text in {"LONDON_NY", "LONDON_NY_OVERLAP", "NY_LONDON_OVERLAP"}:
+        return "LONDON_NY_OVERLAP"
+    if text in {"NY", "NEW_YORK", "US", "US_SESSION"}:
+        return "NY"
+    if text in {"ROLLOVER", "ROLL_OVER"}:
+        return "ROLLOVER"
+    return text
 
 
 def _percentile_0_1(primary: Any, secondary: Any = None) -> float | None:
