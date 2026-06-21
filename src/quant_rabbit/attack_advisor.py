@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterator
 
+from quant_rabbit.forecast_precision import oanda_universal_rotation_precision_assessment
 from quant_rabbit.paths import (
     DEFAULT_AI_ATTACK_ADVICE,
     DEFAULT_AI_ATTACK_ADVICE_REPORT,
@@ -502,6 +503,22 @@ def _attack_lane(
             rationale.append("negative archive condition edge; advisory only")
     elif condition_net_jpy is not None and not condition_is_actionable:
         rationale.append("archive condition edge below sample floor")
+    oanda_delta, oanda_detail, oanda_rationale = _oanda_rotation_rank_edge(
+        intent=intent,
+        metadata=metadata,
+        metrics=metrics,
+        pair=pair,
+        direction=direction,
+        order_type=order_type,
+        method=method,
+    )
+    if oanda_rationale:
+        rationale.append(oanda_rationale)
+    if oanda_delta > 0.0 and oanda_detail:
+        score += oanda_delta
+        learning_score_delta += oanda_delta
+        learning_influences.append("oanda_universal_rotation_rank_edge")
+        learning_details.append(oanda_detail)
     if order_type == "MARKET":
         score += ADVISORY_MARKET_PARTICIPATION_SCORE
         rationale.append("immediate market participation")
@@ -540,6 +557,129 @@ def _attack_lane(
         learning_score_delta=_round(learning_score_delta),
         blockers=tuple(blockers),
     )
+
+
+def _oanda_rotation_rank_edge(
+    *,
+    intent: dict[str, Any],
+    metadata: dict[str, Any],
+    metrics: dict[str, Any],
+    pair: str,
+    direction: str,
+    order_type: str,
+    method: str,
+) -> tuple[float, dict[str, object] | None, str | None]:
+    assessment = metadata.get("oanda_universal_rotation_precision_assessment")
+    if not isinstance(assessment, dict):
+        assessment_metadata = _oanda_metadata_with_execution_costs(
+            metadata,
+            spread_pips=_optional_float(metrics.get("spread_pips")),
+        )
+        assessment = oanda_universal_rotation_precision_assessment(
+            assessment_metadata,
+            pair=pair,
+            side=direction,
+            order_type=order_type,
+            method=method,
+            entry=_optional_float(intent.get("entry")),
+            take_profit=_optional_float(intent.get("tp")),
+            stop_loss=_optional_float(intent.get("sl")),
+        )
+    supports = [
+        item for item in assessment.get("rank_only_supports", [])
+        if isinstance(item, dict)
+    ]
+    if not supports:
+        return 0.0, None, None
+    raw_delta = _optional_float(assessment.get("score_delta")) or 0.0
+    scale, scale_rationale = _oanda_capture_rotation_scale(metadata)
+    delta = _round(raw_delta * scale)
+    best = (
+        assessment.get("primary_rank_support")
+        if isinstance(assessment.get("primary_rank_support"), dict)
+        else max(
+            supports,
+            key=lambda item: (
+                float(item.get("rank_score_bonus") or 0.0),
+                float(item.get("capital_efficiency_score") or 0.0),
+                float(item.get("validation_win_wilson95_lower") or 0.0),
+                float(item.get("validation_profit_factor") or 0.0),
+                int(item.get("validation_samples") or 0),
+            ),
+        )
+    )
+    raw_live_gap_reasons = best.get("live_gap_reasons")
+    live_gap_reasons = (
+        [str(item) for item in raw_live_gap_reasons]
+        if isinstance(raw_live_gap_reasons, list)
+        else ["NONE"]
+    )
+    if scale_rationale and delta <= 0.0:
+        return 0.0, None, scale_rationale
+    detail: dict[str, object] = {
+        "source": "oanda_universal_rotation",
+        "influence": "oanda_universal_rotation_rank_edge",
+        "score_delta": delta,
+        "raw_score_delta": _round(raw_delta),
+        "rule_name": str(best.get("name") or ""),
+        "rank_only": True,
+        "validation_samples": int(best.get("validation_samples") or 0),
+        "validation_win_rate": _round(float(best.get("validation_win_rate") or 0.0)),
+        "validation_wilson95_lower": _round(float(best.get("validation_win_wilson95_lower") or 0.0)),
+        "validation_profit_factor": _round(float(best.get("validation_profit_factor") or 0.0)),
+        "live_gap_reasons": live_gap_reasons,
+        "rule_source_section": str(best.get("rule_source_section") or ""),
+    }
+    if scale != 1.0:
+        detail["capture_rotation_score_scale"] = _round(scale)
+    rationale = (
+        "OANDA universal rotation rank edge "
+        f"(+{delta:.1f}): {best.get('name')} "
+        f"valid_n={int(best.get('validation_samples') or 0)} "
+        f"win={float(best.get('validation_win_rate') or 0.0):.2f} "
+        f"Wilson95_lower={float(best.get('validation_win_wilson95_lower') or 0.0):.2f} "
+        f"PF={float(best.get('validation_profit_factor') or 0.0):.2f} "
+        f"rank-only live_gap={','.join(str(item) for item in live_gap_reasons)}"
+    )
+    if scale_rationale:
+        rationale = f"{rationale}; {scale_rationale}"
+    return delta, detail, rationale
+
+
+def _oanda_metadata_with_execution_costs(
+    metadata: dict[str, Any],
+    *,
+    spread_pips: float | None,
+) -> dict[str, Any]:
+    out = dict(metadata)
+    atr_pips = _optional_float(
+        out.get("oanda_m5_atr_pips")
+        if out.get("oanda_m5_atr_pips") is not None
+        else out.get("m5_atr_pips")
+    )
+    if spread_pips is not None and spread_pips > 0.0 and atr_pips is not None and atr_pips > 0.0:
+        spread_atr = spread_pips / atr_pips
+        out["oanda_m5_spread_atr"] = round(spread_atr, 6)
+    return out
+
+
+def _oanda_capture_rotation_scale(metadata: dict[str, Any]) -> tuple[float, str | None]:
+    status = str(metadata.get("capture_economics_status") or "").upper()
+    if status != "NEGATIVE_EXPECTANCY":
+        return 1.0, None
+    if metadata.get("positive_rotation_live_ready") is not True:
+        return (
+            0.0,
+            "capture economics is NEGATIVE_EXPECTANCY; OANDA rank-only rotation edge is size-neutral "
+            "until positive_rotation_live_ready proves TP HARVEST capture",
+        )
+    if metadata.get("positive_rotation_minimum_floor_reachable") is not True:
+        return (
+            1.0,
+            "positive rotation lacks daily 5% floor firepower proof; keep OANDA rank-only ordering active "
+            "but do not treat the daily floor as solved",
+        )
+    return 1.0, None
 
 
 def _recommend_now(

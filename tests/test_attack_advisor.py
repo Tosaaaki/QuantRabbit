@@ -319,6 +319,138 @@ class AttackAdvisorTest(unittest.TestCase):
             self.assertIn("ai_backtest_research_positive_edge", edge_lane["learning_influences"])
             self.assertIn("RESEARCH_PROFITABLE_NOT_CERTIFIED", " ".join(edge_lane["rationale"]))
 
+    def test_oanda_rotation_rank_edge_reaches_attack_recommendation(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            intents = root / "intents.json"
+            target = root / "target.json"
+            backtest = root / "ai_backtest.json"
+            coverage = root / "coverage.json"
+            oanda_lane_id = "range_trader:GBP_USD:SHORT:RANGE_ROTATION"
+            intents.write_text(
+                json.dumps(
+                    {
+                        "results": [
+                            _result(
+                                lane_id=oanda_lane_id,
+                                pair="GBP_USD",
+                                side="SHORT",
+                                method="RANGE_ROTATION",
+                                order_type="LIMIT",
+                                reward_jpy=400.0,
+                                risk_jpy=200.0,
+                                rr=2.0,
+                                entry=1.30000,
+                                tp=1.29950,
+                                sl=1.30070,
+                                metadata={
+                                    "forecast_direction": "DOWN",
+                                    "chart_direction_bias": "SHORT",
+                                    "m5_atr_percentile_100": 0.82,
+                                    "session_bucket": "ASIA",
+                                    "tp_execution_mode": "ATTACHED_TECHNICAL_TP",
+                                    "tp_target_intent": "HARVEST",
+                                    "opportunity_mode": "HARVEST",
+                                },
+                            ),
+                            _result(
+                                lane_id="plain:AUD_JPY:LONG:TREND_CONTINUATION",
+                                pair="AUD_JPY",
+                                side="LONG",
+                                method="TREND_CONTINUATION",
+                                order_type="LIMIT",
+                                reward_jpy=500.0,
+                                risk_jpy=500.0,
+                                rr=1.0,
+                            ),
+                        ]
+                    }
+                )
+            )
+            target.write_text(json.dumps({"status": "PURSUE_TARGET", "remaining_target_jpy": 1000.0, "remaining_risk_budget_jpy": 1000.0}))
+            backtest.write_text(json.dumps({"status": "TARGET_COVERAGE_GAP", "bucket_contributions": []}))
+            coverage.write_text(json.dumps({"status": "LIVE_READY_COVERAGE_READY"}))
+
+            AttackAdvisor(
+                intents_path=intents,
+                target_state_path=target,
+                ai_backtest_path=backtest,
+                outcome_mart_path=root / "missing_outcome_mart.json",
+                coverage_path=coverage,
+                output_path=root / "advice.json",
+                report_path=root / "advice.md",
+            ).run()
+
+            payload = json.loads((root / "advice.json").read_text())
+            self.assertEqual(payload["recommended_now_lane_ids"][0], oanda_lane_id)
+            lane = next(item for item in payload["lanes"] if item["lane_id"] == oanda_lane_id)
+            self.assertEqual(lane["learning_score_delta"], 10.0)
+            self.assertIn("oanda_universal_rotation_rank_edge", lane["learning_influences"])
+            self.assertTrue(
+                any(detail.get("source") == "oanda_universal_rotation" for detail in lane["learning_influence_details"])
+            )
+            self.assertTrue(any("OANDA universal rotation rank edge" in item for item in lane["rationale"]))
+
+    def test_oanda_rotation_rank_edge_is_neutral_when_capture_economics_is_negative(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            intents = root / "intents.json"
+            target = root / "target.json"
+            backtest = root / "ai_backtest.json"
+            coverage = root / "coverage.json"
+            lane_id = "range_trader:GBP_USD:SHORT:RANGE_ROTATION"
+            metadata = {
+                "forecast_direction": "DOWN",
+                "chart_direction_bias": "SHORT",
+                "m5_atr_percentile_100": 0.82,
+                "session_bucket": "ASIA",
+                "tp_execution_mode": "ATTACHED_TECHNICAL_TP",
+                "tp_target_intent": "HARVEST",
+                "opportunity_mode": "HARVEST",
+                "capture_economics_status": "NEGATIVE_EXPECTANCY",
+            }
+            intents.write_text(
+                json.dumps(
+                    {
+                        "results": [
+                            _result(
+                                lane_id=lane_id,
+                                pair="GBP_USD",
+                                side="SHORT",
+                                method="RANGE_ROTATION",
+                                order_type="LIMIT",
+                                reward_jpy=400.0,
+                                risk_jpy=200.0,
+                                rr=2.0,
+                                entry=1.30000,
+                                tp=1.29950,
+                                sl=1.30070,
+                                metadata=metadata,
+                            )
+                        ]
+                    }
+                )
+            )
+            target.write_text(json.dumps({"status": "PURSUE_TARGET", "remaining_target_jpy": 1000.0, "remaining_risk_budget_jpy": 1000.0}))
+            backtest.write_text(json.dumps({"status": "TARGET_COVERAGE_GAP", "bucket_contributions": []}))
+            coverage.write_text(json.dumps({"status": "LIVE_READY_COVERAGE_READY"}))
+
+            AttackAdvisor(
+                intents_path=intents,
+                target_state_path=target,
+                ai_backtest_path=backtest,
+                outcome_mart_path=root / "missing_outcome_mart.json",
+                coverage_path=coverage,
+                output_path=root / "advice.json",
+                report_path=root / "advice.md",
+            ).run()
+
+            payload = json.loads((root / "advice.json").read_text())
+            lane = next(item for item in payload["lanes"] if item["lane_id"] == lane_id)
+            self.assertEqual(lane["learning_score_delta"], 0.0)
+            self.assertEqual(lane["learning_influences"], [])
+            self.assertTrue(any("OANDA rank-only rotation edge is size-neutral" in item for item in lane["rationale"]))
+
     def test_blocks_when_live_ready_metrics_are_missing(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -1230,6 +1362,9 @@ def _result(
     risk_metrics: dict | None = None,
     context: dict | None = None,
     metadata: dict | None = None,
+    entry: float = 1.1,
+    tp: float = 1.2,
+    sl: float = 1.0,
 ) -> dict:
     metrics = risk_metrics if risk_metrics is not None else {"reward_jpy": reward_jpy, "risk_jpy": risk_jpy, "reward_risk": rr, "spread_pips": 0.8}
     return {
@@ -1244,9 +1379,9 @@ def _result(
             "side": side,
             "order_type": order_type,
             "units": 1000,
-            "entry": 1.1,
-            "tp": 1.2,
-            "sl": 1.0,
+            "entry": entry,
+            "tp": tp,
+            "sl": sl,
             "market_context": context
             if context is not None
             else {"method": method, "narrative": "test", "chart_story": "test", "invalidation": "test"},
