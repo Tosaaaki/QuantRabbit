@@ -445,6 +445,7 @@ from quant_rabbit.paths import (
     DEFAULT_AI_ATTACK_ADVICE,
     DEFAULT_CAMPAIGN_PLAN,
     DEFAULT_CALENDAR_SNAPSHOT,
+    DEFAULT_CAPTURE_ECONOMICS,
     DEFAULT_COT_SNAPSHOT,
     DEFAULT_CROSS_ASSET_SNAPSHOT,
     DEFAULT_DAILY_TARGET_STATE,
@@ -542,6 +543,19 @@ ATTACK_ADVICE_PROMOTION_RANK_CEILING = 4
 # LIVE_READY lanes is 5–15), without dwarfing the MTF / price-action / RR
 # components that should still discriminate between advised candidates.
 ATTACK_ADVICE_PROMOTION_BONUS = 10.0
+# Capture-economics segment promotion is rank-only and uses the same magnitude
+# as the attack-advice overlay: enough to break ties among already-LIVE_READY
+# receipts, not enough to overpower current forecast, price-action, RR, risk,
+# or gateway evidence. The source is broker-realized TP capture by exact
+# pair/side/method, so it can promote only the shapes that already proved the
+# TP path the current intent is about to use.
+CAPTURE_SEGMENT_TP_PROVEN_BONUS = ATTACK_ADVICE_PROMOTION_BONUS
+CAPTURE_SEGMENT_TP_PROVEN_PRIORITY_CLASSES = frozenset(
+    {
+        "PRESERVE_TP_PROVEN_REPAIR_MARKET_CLOSE_LEAK",
+        "PRESERVE_TP_PROVEN_SHAPE",
+    }
+)
 
 # === Directional gating constants (C-1 + C-2, 2026-05-12) ===
 # The trader_brain prefilter previously emitted both LONG and SHORT
@@ -1053,6 +1067,7 @@ class TraderBrain:
         trader_settings_path: Path = DEFAULT_TRADER_SETTINGS,
         target_state_path: Path = DEFAULT_DAILY_TARGET_STATE,
         attack_advice_path: Path = DEFAULT_AI_ATTACK_ADVICE,
+        capture_economics_path: Path = DEFAULT_CAPTURE_ECONOMICS,
         pair_charts_path: Path = DEFAULT_PAIR_CHARTS,
         output_path: Path = DEFAULT_TRADER_DECISION,
         report_path: Path = DEFAULT_TRADER_DECISION_REPORT,
@@ -1076,6 +1091,11 @@ class TraderBrain:
             if attack_advice_path == DEFAULT_AI_ATTACK_ADVICE
             else attack_advice_path
         )
+        self.capture_economics_path = (
+            data_root / DEFAULT_CAPTURE_ECONOMICS.name
+            if capture_economics_path == DEFAULT_CAPTURE_ECONOMICS
+            else capture_economics_path
+        )
         self.pair_charts_path = (
             data_root / DEFAULT_PAIR_CHARTS.name
             if pair_charts_path == DEFAULT_PAIR_CHARTS
@@ -1091,6 +1111,7 @@ class TraderBrain:
         strategy_payload = _load_json(self.strategy_profile_path)
         story_payload = _load_json(self.market_story_profile_path)
         attack_payload = _load_json(self.attack_advice_path)
+        capture_payload = _load_json(self.capture_economics_path)
         strategies = _strategy_index(strategy_payload)
         stories = _story_index(story_payload)
         campaign = _campaign_index(campaign_payload)
@@ -1102,6 +1123,7 @@ class TraderBrain:
         # missing-receipt, exposure, etc.). Missing/malformed advice
         # degrades silently — the map is empty and scoring is unchanged.
         attack_ranks = _attack_advice_top_k_ranks(attack_payload)
+        capture_segment_priorities = _capture_segment_priority_index(capture_payload)
         # Full pair_charts entries (with views array) so `_score_lane` can
         # consult the price-action lens (swings, structure_events, dealing
         # range, order blocks, liquidity) on every candidate. Missing /
@@ -1170,6 +1192,7 @@ class TraderBrain:
                         projection_hit_rates=projection_hit_rates,
                         snapshot=snapshot,
                         attack_ranks=attack_ranks,
+                        capture_segment_priorities=capture_segment_priorities,
                         lane_history=lane_history,
                         regime_snapshots=regime_snapshots,
                         trader_overrides=trader_overrides,
@@ -1273,6 +1296,7 @@ class TraderBrain:
         projection_hit_rates: dict[str, dict[str, dict[str, float]]] | None = None,
         snapshot: BrokerSnapshot | None = None,
         attack_ranks: dict[str, int] | None = None,
+        capture_segment_priorities: dict[tuple[str, str, str], dict[str, Any]] | None = None,
         lane_history: dict[tuple[str, ...], LaneHistorySnapshot] | None = None,
         regime_snapshots: dict[str, RegimeSnapshot] | None = None,
         trader_overrides: TraderOverrides | None = None,
@@ -1557,6 +1581,17 @@ class TraderBrain:
             method_pressure=method_pressure,
         )
         blockers.extend(gate_blockers)
+
+        score += _capture_segment_priority_score(
+            intent=intent,
+            pair=pair,
+            direction=direction,
+            method=method,
+            order_type=order_type,
+            status=status,
+            priorities=capture_segment_priorities,
+            rationale=rationale,
+        )
 
         # ai_attack_advice overlay (AGENT_CONTRACT §8): the operator's
         # deterministic prefilter must surface advised lanes alongside its
@@ -2117,6 +2152,112 @@ def _attack_advice_top_k_ranks(
         if len(ranks) >= k:
             break
     return ranks
+
+
+def _capture_segment_priority_index(payload: dict[str, Any]) -> dict[tuple[str, str, str], dict[str, Any]]:
+    """Map TP-proven capture segments by exact pair/side/method.
+
+    Negative or thin-proof capture rows are deliberately ignored here. Per
+    AGENT_CONTRACT §6, past negative evidence must not block or derank a current
+    LIVE_READY receipt after risk/profile validation. This index only exposes
+    realized-positive broker-TP shapes as rank-only support.
+    """
+    if not isinstance(payload, dict):
+        return {}
+    priorities = payload.get("segment_repair_priorities")
+    if not isinstance(priorities, dict):
+        return {}
+    items = priorities.get("items")
+    if not isinstance(items, list):
+        return {}
+    out: dict[tuple[str, str, str], dict[str, Any]] = {}
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        priority_class = str(item.get("priority_class") or "").upper()
+        if priority_class not in CAPTURE_SEGMENT_TP_PROVEN_PRIORITY_CLASSES:
+            continue
+        if item.get("take_profit_proven") is not True:
+            continue
+        pair = str(item.get("pair") or "").upper()
+        side = str(item.get("side") or "").upper()
+        method = str(item.get("method") or "").upper()
+        if not pair or side not in {"LONG", "SHORT"} or not method:
+            continue
+        out.setdefault((pair, side, method), item)
+    return out
+
+
+def _capture_segment_priority_score(
+    *,
+    intent: dict[str, Any],
+    pair: str,
+    direction: str,
+    method: str,
+    order_type: str,
+    status: str,
+    priorities: dict[tuple[str, str, str], dict[str, Any]] | None,
+    rationale: list[str],
+) -> float:
+    """Promote current TP-proven capture shapes without granting permission."""
+    if status != "LIVE_READY" or not priorities:
+        return 0.0
+    item = priorities.get((pair.upper(), direction.upper(), method.upper()))
+    if not item:
+        return 0.0
+    if not _capture_segment_priority_current_shape_can_use_tp(intent, order_type=order_type):
+        return 0.0
+
+    metadata = intent.get("metadata") if isinstance(intent.get("metadata"), dict) else {}
+    if metadata.get("capture_economics_stale") is True:
+        return 0.0
+
+    priority_class = str(item.get("priority_class") or "").upper()
+    tp_trades = int(_optional_float(item.get("take_profit_trades")) or 0)
+    tp_exp = _optional_float(item.get("take_profit_expectancy_jpy"))
+    market_close_net = _optional_float(item.get("market_close_net_jpy"))
+    details: list[str] = [
+        f"capture segment {priority_class}",
+        f"TP-proven trades={tp_trades}",
+    ]
+    if tp_exp is not None:
+        details.append(f"TP expectancy={tp_exp:.0f} JPY")
+    if market_close_net is not None and market_close_net < 0:
+        details.append(f"market-close leak={market_close_net:.0f} JPY")
+    evidence_ref = str(item.get("evidence_ref") or "")
+    if evidence_ref:
+        details.append(evidence_ref)
+    rationale.insert(
+        0,
+        "; ".join(details) + f"; rank-only +{CAPTURE_SEGMENT_TP_PROVEN_BONUS:.0f}",
+    )
+
+    if isinstance(metadata, dict):
+        metadata["capture_segment_priority_class"] = priority_class
+        metadata["capture_segment_priority_score_delta"] = round(CAPTURE_SEGMENT_TP_PROVEN_BONUS, 4)
+        metadata["capture_segment_priority_evidence_ref"] = evidence_ref or None
+    return CAPTURE_SEGMENT_TP_PROVEN_BONUS
+
+
+def _capture_segment_priority_current_shape_can_use_tp(
+    intent: dict[str, Any],
+    *,
+    order_type: str,
+) -> bool:
+    if order_type.upper() == "MARKET":
+        return False
+    metadata = intent.get("metadata") if isinstance(intent.get("metadata"), dict) else {}
+    if metadata.get("attach_take_profit_on_fill") is not True:
+        return False
+    if str(metadata.get("tp_execution_mode") or "").upper() != "ATTACHED_TECHNICAL_TP":
+        return False
+    if str(metadata.get("tp_target_intent") or "").upper() != "HARVEST":
+        return False
+    if str(metadata.get("opportunity_mode") or "").upper() != "HARVEST":
+        return False
+    if str(metadata.get("position_intent") or "NEW").upper() == "HEDGE":
+        return False
+    return True
 
 
 def _pair_charts_directional_bias(

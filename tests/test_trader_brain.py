@@ -14,6 +14,7 @@ from quant_rabbit.strategy.trader_brain import (
     ACTION_MONITOR_EXISTING,
     ACTION_NO_TRADE,
     ACTION_SEND_ENTRY,
+    CAPTURE_SEGMENT_TP_PROVEN_BONUS,
     MICRO_STRUCTURE_ALIGNED_BONUS,
     MICRO_STRUCTURE_OPPOSED_PENALTY,
     MTF_CONFLUENCE_CEILING,
@@ -23,6 +24,8 @@ from quant_rabbit.strategy.trader_brain import (
     LaneScore,
     TraderBrain,
     _contaminated_pending_order_ids,
+    _capture_segment_priority_index,
+    _capture_segment_priority_score,
     _forecast_market_support_allows_low_confidence_live_ready,
     _micro_structure_alignment_score,
     _micro_structure_direction,
@@ -3589,6 +3592,226 @@ class RiskIssueSeverityTest(unittest.TestCase):
                 "needs M5 TREND_UP",
                 " ".join(score.blockers),
             )
+
+
+class CaptureSegmentPriorityPromotionTest(unittest.TestCase):
+    def _capture(self, root: Path, *, priority_class: str) -> Path:
+        path = root / "capture_economics.json"
+        path.write_text(
+            json.dumps(
+                {
+                    "segment_repair_priorities": {
+                        "items": [
+                            {
+                                "evidence_ref": "capture:segment:EUR_USD:LONG:BREAKOUT_FAILURE",
+                                "pair": "EUR_USD",
+                                "side": "LONG",
+                                "method": "BREAKOUT_FAILURE",
+                                "priority_class": priority_class,
+                                "take_profit_proven": True,
+                                "take_profit_trades": 24,
+                                "take_profit_expectancy_jpy": 420.0,
+                                "market_close_net_jpy": -2100.0,
+                            }
+                        ]
+                    }
+                }
+            )
+        )
+        return path
+
+    def _strategy(self, root: Path) -> Path:
+        path = root / "strategy.json"
+        profile = {
+            "status": "CANDIDATE",
+            "pretrade_net_jpy": 0,
+            "live_net_jpy": 0,
+            "live_worst_jpy": -200,
+            "positive_evidence_n": 40,
+            "positive_tail_jpy": 500,
+            "positive_best_jpy": 800,
+            "seat_discovered": 10,
+            "seat_orderable": 8,
+            "seat_captured": 4,
+        }
+        path.write_text(
+            json.dumps(
+                {
+                    "system_contract": {
+                        "loss_cap_jpy": 500.0,
+                        "loss_cap_source": "test current campaign cap",
+                    },
+                    "profiles": [
+                        {"pair": "AUD_JPY", "direction": "LONG", **profile},
+                        {"pair": "EUR_USD", "direction": "LONG", **profile},
+                    ],
+                }
+            )
+        )
+        return path
+
+    def _stories(self, root: Path) -> Path:
+        path = root / "stories.json"
+        path.write_text(
+            json.dumps(
+                {
+                    "pair_profiles": [
+                        {
+                            "pair": "AUD_JPY",
+                            "methods": {"BREAKOUT_FAILURE": 20},
+                            "themes": {"breakout_failure": 2},
+                            "examples": ["test breakout-failure harvest"],
+                        },
+                        {
+                            "pair": "EUR_USD",
+                            "methods": {"BREAKOUT_FAILURE": 20},
+                            "themes": {"breakout_failure": 2},
+                            "examples": ["test breakout-failure harvest"],
+                        },
+                    ]
+                }
+            )
+        )
+        return path
+
+    def _campaign(self, root: Path) -> Path:
+        path = root / "campaign.json"
+        path.write_text(
+            json.dumps(
+                {
+                    "lanes": [
+                        _lane("failure_trader", "AUD_JPY", "LONG", "BREAKOUT_FAILURE"),
+                        _lane("failure_trader", "EUR_USD", "LONG", "BREAKOUT_FAILURE"),
+                    ]
+                }
+            )
+        )
+        return path
+
+    def _intents(self, root: Path, *, both_pairs: bool) -> Path:
+        path = root / "intents.json"
+        lanes = [
+            _result("failure_trader:AUD_JPY:LONG:BREAKOUT_FAILURE", "AUD_JPY", "LONG", "BREAKOUT_FAILURE"),
+            _result("failure_trader:EUR_USD:LONG:BREAKOUT_FAILURE", "EUR_USD", "LONG", "BREAKOUT_FAILURE"),
+        ]
+        if not both_pairs:
+            lanes = lanes[1:]
+        for lane in lanes:
+            lane["intent"]["order_type"] = "LIMIT"
+            lane["intent"]["metadata"] = {
+                "attach_take_profit_on_fill": True,
+                "tp_execution_mode": "ATTACHED_TECHNICAL_TP",
+                "tp_target_intent": "HARVEST",
+                "opportunity_mode": "HARVEST",
+            }
+        path.write_text(json.dumps({"results": lanes}))
+        return path
+
+    def test_tp_proven_capture_segment_promotes_send_entry_ordering(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            common = {
+                "intents_path": self._intents(root, both_pairs=True),
+                "campaign_plan_path": self._campaign(root),
+                "strategy_profile_path": self._strategy(root),
+                "market_story_profile_path": self._stories(root),
+                "target_state_path": root / "missing_target.json",
+                "trader_settings_path": root / "settings.json",
+                "attack_advice_path": root / "missing_attack_advice.json",
+                "pair_charts_path": root / "missing_pair_charts.json",
+            }
+            plain = TraderBrain(
+                **common,
+                capture_economics_path=root / "missing_capture.json",
+                output_path=root / "plain.json",
+                report_path=root / "plain.md",
+            ).run(_snapshot())
+            promoted = TraderBrain(
+                **common,
+                capture_economics_path=self._capture(
+                    root,
+                    priority_class="PRESERVE_TP_PROVEN_REPAIR_MARKET_CLOSE_LEAK",
+                ),
+                output_path=root / "promoted.json",
+                report_path=root / "promoted.md",
+            ).run(_snapshot())
+
+            plain_eur = next(s for s in plain.scores if s.pair == "EUR_USD")
+            promoted_eur = next(s for s in promoted.scores if s.pair == "EUR_USD")
+            self.assertEqual(plain.selected_lane_id, "failure_trader:AUD_JPY:LONG:BREAKOUT_FAILURE")
+            self.assertEqual(promoted.selected_lane_id, "failure_trader:EUR_USD:LONG:BREAKOUT_FAILURE")
+            self.assertAlmostEqual(
+                promoted_eur.score - plain_eur.score,
+                CAPTURE_SEGMENT_TP_PROVEN_BONUS,
+                places=2,
+            )
+            self.assertTrue(any("capture segment PRESERVE_TP_PROVEN" in item for item in promoted_eur.rationale))
+
+    def test_negative_capture_priority_does_not_derank_live_ready_receipt(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            common = {
+                "intents_path": self._intents(root, both_pairs=False),
+                "campaign_plan_path": self._campaign(root),
+                "strategy_profile_path": self._strategy(root),
+                "market_story_profile_path": self._stories(root),
+                "target_state_path": root / "missing_target.json",
+                "trader_settings_path": root / "settings.json",
+                "attack_advice_path": root / "missing_attack_advice.json",
+                "pair_charts_path": root / "missing_pair_charts.json",
+            }
+            plain = TraderBrain(
+                **common,
+                capture_economics_path=root / "missing_capture.json",
+                output_path=root / "plain.json",
+                report_path=root / "plain.md",
+            ).run(_snapshot())
+            negative = TraderBrain(
+                **common,
+                capture_economics_path=self._capture(root, priority_class="AVOID_OR_REPRICE_SEGMENT"),
+                output_path=root / "negative.json",
+                report_path=root / "negative.md",
+            ).run(_snapshot())
+
+            plain_score = plain.scores[0]
+            negative_score = negative.scores[0]
+            self.assertEqual(negative_score.action, ACTION_SEND_ENTRY)
+            self.assertEqual(negative_score.score, plain_score.score)
+            self.assertEqual(negative_score.blockers, plain_score.blockers)
+            self.assertFalse(any("capture segment" in item for item in negative_score.rationale))
+            self.assertEqual(
+                _capture_segment_priority_index(
+                    json.loads(self._capture(root, priority_class="AVOID_OR_REPRICE_SEGMENT").read_text())
+                ),
+                {},
+            )
+
+    def test_capture_segment_score_requires_current_attached_harvest_shape(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            payload = json.loads(
+                self._capture(root, priority_class="PRESERVE_TP_PROVEN_SHAPE").read_text()
+            )
+            priorities = _capture_segment_priority_index(payload)
+            rationale: list[str] = []
+            score = _capture_segment_priority_score(
+                intent=_result(
+                    "failure_trader:EUR_USD:LONG:BREAKOUT_FAILURE",
+                    "EUR_USD",
+                    "LONG",
+                    "BREAKOUT_FAILURE",
+                )["intent"],
+                pair="EUR_USD",
+                direction="LONG",
+                method="BREAKOUT_FAILURE",
+                order_type="STOP-ENTRY",
+                status="LIVE_READY",
+                priorities=priorities,
+                rationale=rationale,
+            )
+
+        self.assertEqual(score, 0.0)
+        self.assertEqual(rationale, [])
 
 
 class AttackAdvicePromotionTest(unittest.TestCase):
