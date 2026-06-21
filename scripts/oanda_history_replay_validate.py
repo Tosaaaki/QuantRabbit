@@ -174,6 +174,12 @@ def main() -> int:
         stable_max_daily_sample_share=args.stable_max_daily_sample_share,
         stable_min_positive_day_rate=args.stable_min_positive_day_rate,
     )
+    sample_coverage = _forecast_sample_coverage(
+        rows,
+        results,
+        min_directional_samples=args.edge_min_samples,
+        min_active_days=args.stable_min_active_days,
+    )
 
     report = {
         "generated_at_utc": _iso(datetime.now(timezone.utc)),
@@ -195,6 +201,7 @@ def main() -> int:
         **candle_stats,
         **score_stats,
         "summary": _summary(results),
+        "forecast_sample_coverage": sample_coverage,
         "segments": {
             "by_direction": _group(results, ("direction",)),
             "by_pair": _group(results, ("pair",), min_n=args.min_group_samples),
@@ -519,6 +526,103 @@ def _score_forecasts(
         "skipped_no_pair_candles": skipped_no_pair,
         "skipped_no_price_window": skipped_no_window,
         "missing_price_window_groups": _missing_price_window_groups(missing_windows),
+    }
+
+
+def _forecast_sample_coverage(
+    rows: Sequence[ForecastRow],
+    results: Sequence[dict[str, Any]],
+    *,
+    min_directional_samples: int,
+    min_active_days: int,
+) -> dict[str, Any]:
+    """Publish pair/direction evidence gaps before precision-rule selection."""
+
+    forecast_counts: collections.Counter[tuple[str, str]] = collections.Counter(
+        (row.pair, row.direction) for row in rows
+    )
+    forecast_days: dict[tuple[str, str], set[str]] = collections.defaultdict(set)
+    for row in rows:
+        forecast_days[(row.pair, row.direction)].add(row.timestamp_utc.astimezone(JST).date().isoformat())
+
+    evaluated_counts: collections.Counter[tuple[str, str]] = collections.Counter(
+        (str(row.get("pair") or "").upper(), str(row.get("direction") or "").upper())
+        for row in results
+        if row.get("pair") and row.get("direction")
+    )
+    evaluated_days: dict[tuple[str, str], set[str]] = collections.defaultdict(set)
+    for row in results:
+        pair = str(row.get("pair") or "").upper()
+        direction = str(row.get("direction") or "").upper()
+        if not pair or direction not in DIRECTIONAL:
+            continue
+        evaluated_days[(pair, direction)].add(_campaign_day_jst(row))
+
+    pair_counts: collections.Counter[str] = collections.Counter(row.pair for row in rows)
+    pair_evaluated_counts: collections.Counter[str] = collections.Counter(
+        str(row.get("pair") or "").upper() for row in results if row.get("pair")
+    )
+    pair_rows = [
+        {
+            "pair": pair,
+            "forecast_samples": count,
+            "evaluated_samples": pair_evaluated_counts.get(pair, 0),
+            "missing_price_truth_samples": max(0, count - pair_evaluated_counts.get(pair, 0)),
+            "missing_evaluated_samples_to_min_directional": max(
+                0,
+                min_directional_samples - pair_evaluated_counts.get(pair, 0),
+            ),
+        }
+        for pair, count in pair_counts.items()
+    ]
+    pair_rows.sort(key=lambda item: (-int(item["evaluated_samples"]), item["pair"]))
+
+    under_sampled: list[dict[str, Any]] = []
+    all_keys = sorted(set(forecast_counts) | set(evaluated_counts))
+    for pair, direction in all_keys:
+        forecast_samples = forecast_counts.get((pair, direction), 0)
+        evaluated_samples = evaluated_counts.get((pair, direction), 0)
+        forecast_active_days = len(forecast_days.get((pair, direction), set()))
+        evaluated_active_days = len(evaluated_days.get((pair, direction), set()))
+        gaps: list[str] = []
+        if evaluated_samples < min_directional_samples:
+            gaps.append("INSUFFICIENT_EVALUATED_SAMPLES")
+        if evaluated_active_days < min_active_days:
+            gaps.append("INSUFFICIENT_ACTIVE_DAYS")
+        missing_price_truth_samples = max(0, forecast_samples - evaluated_samples)
+        if missing_price_truth_samples > 0 and gaps:
+            gaps.append("PRICE_TRUTH_WINDOW_MISSING")
+        if not gaps:
+            continue
+        under_sampled.append(
+            {
+                "pair": pair,
+                "direction": direction,
+                "forecast_samples": forecast_samples,
+                "forecast_active_days": forecast_active_days,
+                "evaluated_samples": evaluated_samples,
+                "evaluated_active_days": evaluated_active_days,
+                "missing_price_truth_samples": missing_price_truth_samples,
+                "missing_evaluated_samples": max(0, min_directional_samples - evaluated_samples),
+                "missing_active_days": max(0, min_active_days - evaluated_active_days),
+                "coverage_gap_reasons": gaps,
+            }
+        )
+    under_sampled.sort(
+        key=lambda item: (
+            -int(item["missing_evaluated_samples"]),
+            -int(item["missing_active_days"]),
+            item["pair"],
+            item["direction"],
+        )
+    )
+    return {
+        "min_directional_samples_for_precision_rule": min_directional_samples,
+        "min_active_days_for_daily_stability": min_active_days,
+        "pair_count": len(pair_counts),
+        "pair_direction_count": len(all_keys),
+        "pairs": pair_rows,
+        "under_sampled_pair_directions": under_sampled,
     }
 
 
@@ -1501,9 +1605,29 @@ def _markdown(report: dict[str, Any]) -> str:
         "",
         _summary_line(summary),
         "",
-        "## Train/Validation Exit Selection",
-        "",
     ]
+    coverage = report.get("forecast_sample_coverage") or {}
+    under_sampled = coverage.get("under_sampled_pair_directions") or []
+    lines.extend(
+        [
+            "## Forecast Sample Coverage",
+            "",
+            f"- pair_count: {coverage.get('pair_count')}",
+            f"- pair_direction_count: {coverage.get('pair_direction_count')}",
+            f"- under_sampled_pair_directions: {len(under_sampled)}",
+        ]
+    )
+    for item in under_sampled[:12]:
+        lines.append(
+            f"  - {item['pair']} {item['direction']}: "
+            f"forecast={item['forecast_samples']} evaluated={item['evaluated_samples']} "
+            f"days={item['evaluated_active_days']} "
+            f"missing_truth={item['missing_price_truth_samples']} "
+            f"missing_samples={item['missing_evaluated_samples']} "
+            f"missing_days={item['missing_active_days']} "
+            f"gap={','.join(item.get('coverage_gap_reasons') or [])}"
+        )
+    lines.extend(["", "## Train/Validation Exit Selection", ""])
     if split.get("status") != "OK":
         lines.append(f"- status: {split.get('status')} n={split.get('n')} min_required={split.get('min_required')}")
     else:

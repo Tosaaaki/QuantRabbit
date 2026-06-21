@@ -36,6 +36,13 @@ BIDASK_REPLAY_RANK_ONLY_SCORE_BONUS = 6.0
 BIDASK_REPLAY_NEGATIVE_SCORE_PENALTY = 70.0
 OANDA_UNIVERSAL_ROTATION_SCORE_BONUS = 10.0
 OANDA_UNIVERSAL_ROTATION_EXTRA_MATCH_BONUS = 2.0
+# OANDA universal rotation rows are mined from M5 candles and only rank lanes.
+# These floors describe the evidence gap required before such rows could even
+# be discussed as a 90% prediction replacement for normal live forecast gates.
+OANDA_UNIVERSAL_LIVE_MIN_VALIDATION_WIN_RATE = 0.90
+OANDA_UNIVERSAL_LIVE_MIN_WILSON95_LOWER = 0.90
+OANDA_UNIVERSAL_LIVE_MIN_ACTIVE_DAYS = 15
+OANDA_UNIVERSAL_LIVE_MIN_POSITIVE_DAY_RATE = 0.90
 BIDASK_REPLAY_RULES_ENV = "QR_BIDASK_REPLAY_PRECISION_RULES"
 DEFAULT_BIDASK_REPLAY_RULES_PATH = Path(__file__).with_name("bidask_replay_precision_rules.json")
 
@@ -1264,6 +1271,7 @@ def oanda_universal_rotation_precision_assessment(
             "current_session_bucket": session,
             "audit_report": rule["audit_report"],
         }
+        support.update(_oanda_universal_rotation_live_gap(rule))
         support.update(feature_values)
         matches.append(support)
 
@@ -1292,6 +1300,11 @@ def oanda_universal_rotation_precision_assessment(
         "primary_support": None,
         "primary_rank_support": primary_rank_support,
         "rank_only_supports": matches,
+        "live_gap": (
+            _oanda_universal_rotation_live_gap(primary_rank_support)
+            if isinstance(primary_rank_support, dict)
+            else None
+        ),
         "score_delta": round(score_delta, 4),
     }
 
@@ -1302,7 +1315,51 @@ def _empty_oanda_universal_rotation_assessment() -> dict[str, Any]:
         "primary_support": None,
         "primary_rank_support": None,
         "rank_only_supports": [],
+        "live_gap": None,
         "score_delta": 0.0,
+    }
+
+
+def _oanda_universal_rotation_live_gap(rule: dict[str, Any]) -> dict[str, Any]:
+    """Explain why an OANDA M5 rotation row remains rank-only.
+
+    The thresholds mirror the operator's 90% prediction objective and the
+    multi-week stability bar needed for a daily campaign route. They are
+    diagnostic only: this helper never grants live support.
+    """
+
+    validation_win_rate = float(rule.get("validation_win_rate") or 0.0)
+    wilson_lower = float(rule.get("validation_win_wilson95_lower") or 0.0)
+    active_days = int(rule.get("active_days") or 0)
+    positive_day_rate = float(rule.get("positive_day_rate") or 0.0)
+    reasons: list[str] = []
+    if validation_win_rate < OANDA_UNIVERSAL_LIVE_MIN_VALIDATION_WIN_RATE:
+        reasons.append("VALIDATION_WIN_RATE_BELOW_90_PERCENT")
+    if wilson_lower < OANDA_UNIVERSAL_LIVE_MIN_WILSON95_LOWER:
+        reasons.append("VALIDATION_WILSON95_LOWER_BELOW_90_PERCENT")
+    if active_days < OANDA_UNIVERSAL_LIVE_MIN_ACTIVE_DAYS:
+        reasons.append("INSUFFICIENT_MULTI_WEEK_ACTIVE_DAYS")
+    if positive_day_rate < OANDA_UNIVERSAL_LIVE_MIN_POSITIVE_DAY_RATE:
+        reasons.append("DAILY_EXPECTANCY_BELOW_90_PERCENT")
+    return {
+        "rank_only_reason": (
+            "OANDA universal rotation is broad M5 candle evidence for ordering only; "
+            "it does not waive live forecast, risk, spread, strategy-profile, or gateway gates."
+        ),
+        "live_grade_thresholds": {
+            "min_validation_win_rate": OANDA_UNIVERSAL_LIVE_MIN_VALIDATION_WIN_RATE,
+            "min_validation_wilson95_lower": OANDA_UNIVERSAL_LIVE_MIN_WILSON95_LOWER,
+            "min_active_days": OANDA_UNIVERSAL_LIVE_MIN_ACTIVE_DAYS,
+            "min_positive_day_rate": OANDA_UNIVERSAL_LIVE_MIN_POSITIVE_DAY_RATE,
+        },
+        "live_grade_metrics": {
+            "validation_win_rate": round(validation_win_rate, 6),
+            "validation_wilson95_lower": round(wilson_lower, 6),
+            "active_days": active_days,
+            "positive_day_rate": round(positive_day_rate, 6),
+        },
+        "live_gap_reasons": reasons,
+        "live_grade_ready": not reasons,
     }
 
 

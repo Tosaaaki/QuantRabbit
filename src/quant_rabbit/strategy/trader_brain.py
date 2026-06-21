@@ -3753,7 +3753,8 @@ def _oanda_universal_rotation_precision_score(
         f"win={float(best.get('validation_win_rate') or 0.0):.2f} "
         f"Wilson95_lower={float(best.get('validation_win_wilson95_lower') or 0.0):.2f} "
         f"avg={float(best.get('validation_avg_realized_pips') or 0.0):.2f}pip "
-        f"PF={float(best.get('validation_profit_factor') or 0.0):.2f} rank-only",
+        f"PF={float(best.get('validation_profit_factor') or 0.0):.2f} "
+        f"rank-only live_gap={','.join(best.get('live_gap_reasons') or ['NONE'])}",
     )
     return score_delta
 

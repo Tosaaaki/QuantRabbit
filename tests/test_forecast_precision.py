@@ -365,6 +365,19 @@ class ForecastPrecisionConfluenceTest(unittest.TestCase):
         self.assertEqual(assessment["primary_rank_support"]["validation_win_rate"], 0.70)
         self.assertEqual(assessment["primary_rank_support"]["validation_profit_factor"], 2.45916)
         self.assertTrue(assessment["primary_rank_support"]["rank_only"])
+        self.assertFalse(assessment["primary_rank_support"]["live_grade_ready"])
+        self.assertIn(
+            "VALIDATION_WIN_RATE_BELOW_90_PERCENT",
+            assessment["primary_rank_support"]["live_gap_reasons"],
+        )
+        self.assertIn(
+            "VALIDATION_WILSON95_LOWER_BELOW_90_PERCENT",
+            assessment["primary_rank_support"]["live_gap_reasons"],
+        )
+        self.assertEqual(
+            assessment["live_gap"]["live_grade_metrics"]["validation_win_rate"],
+            0.7,
+        )
         self.assertEqual(assessment["score_delta"], 10.0)
 
     def test_oanda_universal_rotation_requires_current_session_and_atr_bucket(self) -> None:

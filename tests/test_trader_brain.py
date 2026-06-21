@@ -320,6 +320,7 @@ class TraderBrainTest(unittest.TestCase):
 
         self.assertEqual(score, 10.0)
         self.assertTrue(any("oanda universal rotation +10.0" in item for item in rationale))
+        self.assertTrue(any("live_gap=VALIDATION_WIN_RATE_BELOW_90_PERCENT" in item for item in rationale))
         assessment = intent["metadata"]["oanda_universal_rotation_precision_assessment"]
         self.assertIsNone(assessment["primary_support"])
         self.assertTrue(assessment["primary_rank_support"]["rank_only"])

@@ -407,6 +407,51 @@ class OandaHistoryReplayValidateTest(unittest.TestCase):
         self.assertEqual(groups[0]["pairs"], ["AUD_JPY", "EUR_USD"])
         self.assertEqual(groups[0]["pair_directions"], ["AUD_JPY:UP", "EUR_USD:DOWN"])
 
+    def test_forecast_sample_coverage_exposes_under_sampled_gbp_pair_direction(self) -> None:
+        rows = [
+            replay.ForecastRow(
+                source_index=idx,
+                timestamp_utc=datetime(2026, 6, 17, idx, tzinfo=timezone.utc),
+                pair="GBP_USD",
+                direction="DOWN",
+                confidence=0.7,
+                current_price=None,
+                target_price=None,
+                invalidation_price=None,
+                horizon_min=60,
+                cycle_id=None,
+            )
+            for idx in range(2)
+        ]
+        results = [
+            {
+                "timestamp_utc": "2026-06-17T00:00:00Z",
+                "pair": "GBP_USD",
+                "direction": "DOWN",
+            }
+        ]
+
+        coverage = replay._forecast_sample_coverage(
+            rows,
+            results,
+            min_directional_samples=30,
+            min_active_days=3,
+        )
+
+        self.assertEqual(coverage["pair_count"], 1)
+        self.assertEqual(coverage["pair_direction_count"], 1)
+        gap = coverage["under_sampled_pair_directions"][0]
+        self.assertEqual(gap["pair"], "GBP_USD")
+        self.assertEqual(gap["direction"], "DOWN")
+        self.assertEqual(gap["forecast_samples"], 2)
+        self.assertEqual(gap["evaluated_samples"], 1)
+        self.assertEqual(gap["missing_price_truth_samples"], 1)
+        self.assertEqual(gap["missing_evaluated_samples"], 29)
+        self.assertEqual(gap["missing_active_days"], 2)
+        self.assertIn("INSUFFICIENT_EVALUATED_SAMPLES", gap["coverage_gap_reasons"])
+        self.assertIn("INSUFFICIENT_ACTIVE_DAYS", gap["coverage_gap_reasons"])
+        self.assertIn("PRICE_TRUTH_WINDOW_MISSING", gap["coverage_gap_reasons"])
+
     def test_load_candles_filters_to_forecast_truth_windows(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             history = Path(tmp) / "history"
