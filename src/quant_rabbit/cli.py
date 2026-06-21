@@ -894,6 +894,7 @@ def _partial_close_receipt_actions(
                 "type": "CLOSE",
                 "trade_id": trade_id,
                 "units": str(close_units),
+                "provenance": str(result.get("provenance") or management_action).lower(),
             }
         issues = []
         error = result.get("error")

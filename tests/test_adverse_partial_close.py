@@ -173,6 +173,28 @@ class ApplyPartialClosesTest(unittest.TestCase):
         results = apply_partial_closes([action], client, dry_run=False)
         self.assertTrue(results[0]["sent"])
         self.assertEqual(client.calls[0], ("t2", "6500"))
+        self.assertEqual(results[0]["provenance"], "adverse_partial_close")
+
+    def test_apply_uses_provenance_method_when_supported(self) -> None:
+        action = PartialCloseAction(
+            trade_id="t3", pair="USD_JPY", side="SHORT",
+            original_units=13000, close_units=6500, remaining_units=6500,
+            adverse_pips=40, atr_pips=20, rationale="test",
+        )
+
+        class MockClient:
+            calls = []
+            def close_trade(self, trade_id, units):
+                raise AssertionError("adverse partial close must use provenance-aware close when available")
+
+            def close_trade_with_provenance(self, trade_id, units="ALL", *, provenance):
+                self.calls.append((trade_id, units, provenance))
+                return {"ok": True}
+
+        client = MockClient()
+        results = apply_partial_closes([action], client, dry_run=False)
+        self.assertTrue(results[0]["sent"])
+        self.assertEqual(client.calls[0], ("t3", "6500", "adverse_partial_close"))
 
 
 if __name__ == "__main__":

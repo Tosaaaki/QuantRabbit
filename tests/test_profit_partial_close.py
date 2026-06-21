@@ -150,6 +150,31 @@ class ApplyProfitPartialCloseTest(unittest.TestCase):
 
         self.assertTrue(results[0]["sent"])
         self.assertEqual(client.calls, [("t4", "2500")])
+        self.assertEqual(results[0]["provenance"], "profit_partial_close")
+
+    def test_live_send_uses_provenance_method_when_supported(self) -> None:
+        class Client:
+            def __init__(self) -> None:
+                self.calls = []
+
+            def close_trade(self, trade_id, units):
+                raise AssertionError("profit partial close must use provenance-aware close when available")
+
+            def close_trade_with_provenance(self, trade_id, units="ALL", *, provenance):
+                self.calls.append((trade_id, units, provenance))
+                return {"ok": True}
+
+        client = Client()
+        results = apply_profit_partial_closes(
+            [self._action()],
+            broker_client=client,
+            send=True,
+            live_enabled=True,
+            confirm_live=True,
+        )
+
+        self.assertTrue(results[0]["sent"])
+        self.assertEqual(client.calls, [("t4", "2500", "profit_partial_close")])
 
     def test_state_updates_only_after_successful_send(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

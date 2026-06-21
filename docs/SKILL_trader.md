@@ -22,6 +22,7 @@ PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli trader-prompt-route
 - Broker truth wins over memory, prose, and prior prompts.
 - OANDA entry orders go only through `LiveOrderGateway`.
 - OANDA position changes go only through `PositionProtectionGateway`.
+- Direct `OandaExecutionClient.close_trade()` is blocked; live market closes must use the provenance-aware gateway/partial-close paths and leave a position-execution receipt.
 - Do not print secrets.
 - Do not call `QR_OPENAI_API_KEY`, `OPENAI_API_KEY`, or any model API path from QuantRabbit code.
 - Do not invent JPY caps, pip distances, reward/risk multipliers, stale defaults, or extra risk gates.

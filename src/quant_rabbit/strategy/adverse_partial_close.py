@@ -49,6 +49,7 @@ PARTIAL_CLOSE_FRACTION = float(os.environ.get("QR_ADVERSE_PARTIAL_FRACTION", "0.
 MIN_POSITION_UNITS_FOR_PARTIAL = int(
     os.environ.get("QR_ADVERSE_PARTIAL_MIN_UNITS", "2000")
 )
+ADVERSE_PARTIAL_CLOSE_PROVENANCE = "adverse_partial_close"
 
 
 @dataclass(frozen=True)
@@ -243,15 +244,35 @@ def apply_partial_closes(
             "sent": False,
             "error": None,
             "response": None,
+            "provenance": ADVERSE_PARTIAL_CLOSE_PROVENANCE,
         }
         if dry_run:
             results.append(entry)
             continue
         try:
-            response = broker_client.close_trade(a.trade_id, units=str(a.close_units))
+            response = _close_trade_with_supported_provenance(
+                broker_client,
+                a.trade_id,
+                str(a.close_units),
+                provenance=ADVERSE_PARTIAL_CLOSE_PROVENANCE,
+            )
             entry["sent"] = True
             entry["response"] = response
         except Exception as exc:  # noqa: BLE001
             entry["error"] = str(exc)
         results.append(entry)
     return results
+
+
+def _close_trade_with_supported_provenance(
+    broker_client: Any,
+    trade_id: str,
+    units: str,
+    *,
+    provenance: str,
+) -> dict[str, Any]:
+    close_with_provenance = getattr(broker_client, "close_trade_with_provenance", None)
+    class_method = getattr(type(broker_client), "close_trade_with_provenance", None)
+    if callable(close_with_provenance) and callable(class_method):
+        return close_with_provenance(trade_id, units, provenance=provenance)
+    return broker_client.close_trade(trade_id, units=units)

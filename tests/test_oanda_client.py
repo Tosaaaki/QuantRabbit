@@ -8,7 +8,7 @@ from contextlib import redirect_stdout
 from pathlib import Path
 from unittest.mock import patch
 
-from quant_rabbit.broker.oanda import DEFAULT_OANDA_HTTP_TIMEOUT_SECONDS, OandaReadOnlyClient
+from quant_rabbit.broker.oanda import DEFAULT_OANDA_HTTP_TIMEOUT_SECONDS, OandaExecutionClient, OandaReadOnlyClient
 from quant_rabbit.cli import main
 
 
@@ -98,6 +98,53 @@ class OandaClientTest(unittest.TestCase):
         self.assertEqual(exit_code, 2)
         payload = json.loads(output.getvalue())
         self.assertIn("QR_OANDA_TOKEN", payload["error"])
+
+    def test_execution_client_blocks_direct_trade_close(self) -> None:
+        client = OandaExecutionClient(token="qr-token", account_id="qr-account", base_url="https://example.invalid")
+
+        with patch("quant_rabbit.broker.oanda.urllib.request.urlopen") as urlopen:
+            with self.assertRaisesRegex(RuntimeError, "close_trade_with_provenance"):
+                client.close_trade("T-1")
+
+        urlopen.assert_not_called()
+
+    def test_execution_client_requires_approved_close_provenance(self) -> None:
+        client = OandaExecutionClient(token="qr-token", account_id="qr-account", base_url="https://example.invalid")
+
+        with patch("quant_rabbit.broker.oanda.urllib.request.urlopen") as urlopen:
+            with self.assertRaisesRegex(RuntimeError, "approved provenance"):
+                client.close_trade_with_provenance("T-1", provenance="unknown_path")
+
+        urlopen.assert_not_called()
+
+    def test_execution_client_sends_provenance_approved_trade_close(self) -> None:
+        class FakeResponse:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, _exc_type, _exc, _tb) -> None:
+                return None
+
+            def read(self) -> bytes:
+                return b'{"ok": true}'
+
+        client = OandaExecutionClient(token="qr-token", account_id="qr-account", base_url="https://example.invalid")
+
+        with patch("quant_rabbit.broker.oanda.urllib.request.urlopen", return_value=FakeResponse()) as urlopen:
+            result = client.close_trade_with_provenance(
+                "T 1",
+                units="2500",
+                provenance="position_protection_gateway",
+            )
+
+        self.assertEqual(result, {"ok": True})
+        request = urlopen.call_args.args[0]
+        self.assertEqual(request.get_method(), "PUT")
+        self.assertEqual(
+            request.full_url,
+            "https://example.invalid/v3/accounts/qr-account/trades/T%201/close",
+        )
+        self.assertEqual(json.loads(request.data.decode()), {"units": "2500"})
 
 
 class OandaAccountSummaryTest(unittest.TestCase):

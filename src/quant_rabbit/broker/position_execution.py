@@ -28,6 +28,9 @@ from quant_rabbit.strategy.position_manager import (
 )
 
 
+POSITION_PROTECTION_CLOSE_PROVENANCE = "position_protection_gateway"
+
+
 class PositionExecutionClient(Protocol):
     def replace_trade_dependent_orders(self, trade_id: str, order_request: dict[str, Any]) -> dict[str, Any]: ...
 
@@ -92,7 +95,12 @@ class PositionProtectionGateway:
             if send and request is not None and not blocked:
                 try:
                     if request["type"] == "CLOSE":
-                        response = self.client.close_trade(str(request["trade_id"]), str(request.get("units") or "ALL"))
+                        response = _close_trade_with_supported_provenance(
+                            self.client,
+                            str(request["trade_id"]),
+                            str(request.get("units") or "ALL"),
+                            provenance=POSITION_PROTECTION_CLOSE_PROVENANCE,
+                        )
                     elif request["type"] == "DEPENDENT_ORDER_REPLACE":
                         response = self.client.replace_trade_dependent_orders(
                             str(request["trade_id"]),
@@ -197,7 +205,12 @@ class PositionProtectionGateway:
             if spread_issue:
                 action["issues"].append(spread_issue)
                 return action
-            action["request"] = {"type": "CLOSE", "trade_id": position.trade_id, "units": "ALL"}
+            action["request"] = {
+                "type": "CLOSE",
+                "trade_id": position.trade_id,
+                "units": "ALL",
+                "provenance": POSITION_PROTECTION_CLOSE_PROVENANCE,
+            }
             return action
         if managed.action == ACTION_REVIEW_EXIT:
             if manual_tp_owner:
@@ -217,7 +230,12 @@ class PositionProtectionGateway:
             if spread_issue:
                 action["issues"].append(spread_issue)
                 return action
-            action["request"] = {"type": "CLOSE", "trade_id": position.trade_id, "units": "ALL"}
+            action["request"] = {
+                "type": "CLOSE",
+                "trade_id": position.trade_id,
+                "units": "ALL",
+                "provenance": POSITION_PROTECTION_CLOSE_PROVENANCE,
+            }
             return action
         # Adaptive TP actions fire a TP-only DEPENDENT_ORDER_REPLACE through the
         # same path as REPAIR/PROFIT_PROTECT (user 2026-05-08「ミクロとマクロの
@@ -343,6 +361,20 @@ def _send_error_code(request_type: str) -> str:
     if request_type == "DEPENDENT_ORDER_REPLACE":
         return "POSITION_PROTECTION_SEND_FAILED"
     return "POSITION_ACTION_SEND_FAILED"
+
+
+def _close_trade_with_supported_provenance(
+    client: PositionExecutionClient,
+    trade_id: str,
+    units: str,
+    *,
+    provenance: str,
+) -> dict[str, Any]:
+    close_with_provenance = getattr(client, "close_trade_with_provenance", None)
+    class_method = getattr(type(client), "close_trade_with_provenance", None)
+    if callable(close_with_provenance) and callable(class_method):
+        return close_with_provenance(trade_id, units, provenance=provenance)
+    return client.close_trade(trade_id, units)
 
 
 def _has_block(action: dict[str, Any]) -> bool:

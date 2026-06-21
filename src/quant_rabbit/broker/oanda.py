@@ -19,6 +19,16 @@ from quant_rabbit.paths import DEFAULT_ENV_LOCAL
 # cycle. Replace this with an observed endpoint SLO if OANDA latency telemetry
 # becomes available.
 DEFAULT_OANDA_HTTP_TIMEOUT_SECONDS = 15.0
+OANDA_CLOSE_PROVENANCE_POSITION_PROTECTION = "position_protection_gateway"
+OANDA_CLOSE_PROVENANCE_PROFIT_PARTIAL = "profit_partial_close"
+OANDA_CLOSE_PROVENANCE_ADVERSE_PARTIAL = "adverse_partial_close"
+ALLOWED_OANDA_CLOSE_PROVENANCES = frozenset(
+    {
+        OANDA_CLOSE_PROVENANCE_POSITION_PROTECTION,
+        OANDA_CLOSE_PROVENANCE_PROFIT_PARTIAL,
+        OANDA_CLOSE_PROVENANCE_ADVERSE_PARTIAL,
+    }
+)
 
 
 def _oanda_http_timeout_seconds() -> float:
@@ -408,6 +418,16 @@ class OandaExecutionClient(OandaReadOnlyClient):
             return json.loads(resp.read())
 
     def close_trade(self, trade_id: str, units: str = "ALL") -> dict:
+        raise RuntimeError(
+            "Direct OandaExecutionClient.close_trade() is blocked; use "
+            "close_trade_with_provenance() from an approved position-management gateway."
+        )
+
+    def close_trade_with_provenance(self, trade_id: str, units: str = "ALL", *, provenance: str) -> dict:
+        _validate_oanda_close_provenance(provenance)
+        return self._close_trade_request(trade_id, units)
+
+    def _close_trade_request(self, trade_id: str, units: str = "ALL") -> dict:
         url = f"{self.base_url}/v3/accounts/{self.account_id}/trades/{urllib.parse.quote(trade_id)}/close"
         body = json.dumps({"units": units}).encode()
         req = urllib.request.Request(
@@ -421,3 +441,14 @@ class OandaExecutionClient(OandaReadOnlyClient):
         )
         with urllib.request.urlopen(req, timeout=self.http_timeout_seconds) as resp:
             return json.loads(resp.read())
+
+
+def _validate_oanda_close_provenance(provenance: str) -> None:
+    normalized = str(provenance or "").strip()
+    if normalized in ALLOWED_OANDA_CLOSE_PROVENANCES:
+        return
+    allowed = ", ".join(sorted(ALLOWED_OANDA_CLOSE_PROVENANCES))
+    raise RuntimeError(
+        "OANDA trade close requires approved provenance before the broker write; "
+        f"got {normalized!r}, allowed: {allowed}"
+    )

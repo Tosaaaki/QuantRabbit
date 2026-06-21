@@ -102,6 +102,22 @@ class PositionProtectionGatewayTest(unittest.TestCase):
             self.assertEqual(summary.status, "SENT")
             self.assertEqual(client.closed, [("1", "ALL")])
 
+    def test_close_uses_position_protection_provenance_when_supported(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp, patch.dict("os.environ", {"QR_DISABLE_AUTO_CLOSE": ""}, clear=False):
+            root = Path(tmp)
+            client = ProvenancePositionClient()
+            summary = PositionProtectionGateway(
+                client=client,
+                output_path=root / "exec.json",
+                report_path=root / "exec.md",
+                live_enabled=True,
+            ).run(decision=_decision(ACTION_REVIEW_EXIT, stop=None), snapshot=_snapshot(), send=True)
+
+            self.assertEqual(summary.status, "SENT")
+            self.assertEqual(client.closed_with_provenance, [("1", "ALL", "position_protection_gateway")])
+            payload = json.loads((root / "exec.json").read_text())
+            self.assertEqual(payload["actions"][0]["request"]["provenance"], "position_protection_gateway")
+
     def test_blocks_plain_review_exit_when_auto_close_disabled(self) -> None:
         with tempfile.TemporaryDirectory() as tmp, patch.dict(
             "os.environ",
@@ -517,6 +533,19 @@ class FakePositionClient:
 
     def close_trade(self, trade_id: str, units: str = "ALL") -> dict[str, Any]:
         self.closed.append((trade_id, units))
+        return {"relatedTransactionIDs": ["20"]}
+
+
+class ProvenancePositionClient(FakePositionClient):
+    def __init__(self) -> None:
+        super().__init__()
+        self.closed_with_provenance: list[tuple[str, str, str]] = []
+
+    def close_trade(self, trade_id: str, units: str = "ALL") -> dict[str, Any]:
+        raise AssertionError("position gateway must use close_trade_with_provenance when available")
+
+    def close_trade_with_provenance(self, trade_id: str, units: str = "ALL", *, provenance: str) -> dict[str, Any]:
+        self.closed_with_provenance.append((trade_id, units, provenance))
         return {"relatedTransactionIDs": ["20"]}
 
 

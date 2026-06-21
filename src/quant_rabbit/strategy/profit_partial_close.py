@@ -28,6 +28,7 @@ from quant_rabbit.paths import DEFAULT_PROFIT_PARTIAL_CLOSE_STATE
 MIN_POSITION_UNITS_FOR_PROFIT_PARTIAL = int(os.environ.get("QR_PROFIT_PARTIAL_MIN_UNITS", "2000"))
 MIN_RUNNER_UNITS_AFTER_PROFIT_PARTIAL = int(os.environ.get("QR_PROFIT_PARTIAL_MIN_RUNNER_UNITS", "1000"))
 PROFIT_PARTIAL_ROUND_UNITS = int(os.environ.get("QR_PROFIT_PARTIAL_ROUND_UNITS", "100"))
+PROFIT_PARTIAL_CLOSE_PROVENANCE = "profit_partial_close"
 
 
 @dataclass(frozen=True)
@@ -235,6 +236,7 @@ def apply_profit_partial_closes(
             "sent": False,
             "error": None,
             "response": None,
+            "provenance": PROFIT_PARTIAL_CLOSE_PROVENANCE,
         }
         if not send:
             results.append(entry)
@@ -248,13 +250,32 @@ def apply_profit_partial_closes(
             results.append(entry)
             continue
         try:
-            response = broker_client.close_trade(action.trade_id, units=str(action.close_units))
+            response = _close_trade_with_supported_provenance(
+                broker_client,
+                action.trade_id,
+                str(action.close_units),
+                provenance=PROFIT_PARTIAL_CLOSE_PROVENANCE,
+            )
             entry["sent"] = True
             entry["response"] = response
         except Exception as exc:  # noqa: BLE001
             entry["error"] = str(exc)
         results.append(entry)
     return results
+
+
+def _close_trade_with_supported_provenance(
+    broker_client: Any,
+    trade_id: str,
+    units: str,
+    *,
+    provenance: str,
+) -> dict[str, Any]:
+    close_with_provenance = getattr(broker_client, "close_trade_with_provenance", None)
+    class_method = getattr(type(broker_client), "close_trade_with_provenance", None)
+    if callable(close_with_provenance) and callable(class_method):
+        return close_with_provenance(trade_id, units, provenance=provenance)
+    return broker_client.close_trade(trade_id, units=units)
 
 
 def load_profit_partial_state(path: Path = DEFAULT_PROFIT_PARTIAL_CLOSE_STATE) -> dict[str, Any]:
