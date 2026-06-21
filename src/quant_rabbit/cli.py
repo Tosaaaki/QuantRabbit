@@ -73,6 +73,7 @@ from quant_rabbit.paths import (
     DEFAULT_PAIR_CHARTS_REPORT,
     DEFAULT_CONTEXT_ASSET_CHARTS,
     DEFAULT_CONTEXT_ASSET_CHARTS_REPORT,
+    DEFAULT_CAPTURE_ECONOMICS,
     DEFAULT_COVERAGE_OPTIMIZATION,
     DEFAULT_COVERAGE_OPTIMIZATION_REPORT,
     DEFAULT_DAILY_TARGET_REPORT,
@@ -109,6 +110,8 @@ from quant_rabbit.paths import (
     DEFAULT_PROFIT_PARTIAL_CLOSE_STATE,
     DEFAULT_POST_TRADE_LEARNING,
     DEFAULT_POST_TRADE_LEARNING_REPORT,
+    DEFAULT_PROFITABILITY_ACCEPTANCE,
+    DEFAULT_PROFITABILITY_ACCEPTANCE_REPORT,
     DEFAULT_RECEIPT_PROMOTION_REPORT,
     DEFAULT_REPLAY_BACKTEST,
     DEFAULT_REPLAY_BACKTEST_REPORT,
@@ -1796,6 +1799,7 @@ def _cycle_refresh_steps(daily_risk_pct: str) -> list[dict[str, Any]]:
         {"argv": ["position-management"], "required": True},
         {"argv": ["memory-health"], "required": True},
         {"argv": ["self-improvement-audit"], "required": False, "ok_rcs": [0, 2]},
+        {"argv": ["profitability-acceptance"], "required": False, "ok_rcs": [0, 2]},
     ]
 
 
@@ -1823,6 +1827,7 @@ def _cycle_sidecar_steps() -> list[dict[str, Any]]:
         {"argv": ["position-management"], "required": True},
         {"argv": ["memory-health"], "required": True},
         {"argv": ["self-improvement-audit"], "required": False, "ok_rcs": [0, 2]},
+        {"argv": ["profitability-acceptance"], "required": False, "ok_rcs": [0, 2]},
     ]
 
 
@@ -1843,6 +1848,7 @@ def _direct_autotrade_audit_sidecar_steps() -> list[dict[str, Any]]:
         {"argv": ["position-management"], "required": True},
         {"argv": ["memory-health"], "required": True},
         {"argv": ["self-improvement-audit"], "required": False, "ok_rcs": [0, 2]},
+        {"argv": ["profitability-acceptance"], "required": False, "ok_rcs": [0, 2]},
     ]
 
 
@@ -2648,6 +2654,19 @@ def main(argv: list[str] | None = None) -> int:
     p_self_audit.add_argument("--coverage-optimization", type=Path, default=DEFAULT_COVERAGE_OPTIMIZATION)
     p_self_audit.add_argument("--window-hours", type=float, default=168.0)
 
+    p_profit_accept = sub.add_parser(
+        "profitability-acceptance",
+        help="Fail one acceptance gate when profit, forecast precision, or close/TP invariants are not proved.",
+    )
+    p_profit_accept.add_argument("--order-intents", type=Path, default=DEFAULT_ORDER_INTENTS)
+    p_profit_accept.add_argument("--target-state", type=Path, default=DEFAULT_DAILY_TARGET_STATE)
+    p_profit_accept.add_argument("--self-improvement-audit", type=Path, default=DEFAULT_SELF_IMPROVEMENT_AUDIT)
+    p_profit_accept.add_argument("--capture-economics", type=Path, default=DEFAULT_CAPTURE_ECONOMICS)
+    p_profit_accept.add_argument("--projection-ledger", type=Path, default=DEFAULT_PROJECTION_LEDGER)
+    p_profit_accept.add_argument("--bidask-rules", type=Path, default=None)
+    p_profit_accept.add_argument("--output", type=Path, default=DEFAULT_PROFITABILITY_ACCEPTANCE)
+    p_profit_accept.add_argument("--report", type=Path, default=DEFAULT_PROFITABILITY_ACCEPTANCE_REPORT)
+
     p_exec_replay = sub.add_parser("replay-execution", help="Replay live-ready order receipts over a quote path.")
     p_exec_replay.add_argument("--intents", type=Path, default=DEFAULT_ORDER_INTENTS)
     p_exec_replay.add_argument("--prices", type=Path, required=True)
@@ -3079,15 +3098,15 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "capture-economics":
         from quant_rabbit.capture_economics import (
-            DEFAULT_CAPTURE_ECONOMICS,
-            DEFAULT_CAPTURE_ECONOMICS_REPORT,
+            DEFAULT_CAPTURE_ECONOMICS as CAPTURE_ECONOMICS_DEFAULT_OUTPUT,
+            DEFAULT_CAPTURE_ECONOMICS_REPORT as CAPTURE_ECONOMICS_DEFAULT_REPORT,
             build_capture_economics,
         )
 
         summary = build_capture_economics(
             ledger_path=args.execution_ledger_db,
-            output_path=args.output or DEFAULT_CAPTURE_ECONOMICS,
-            report_path=args.report or DEFAULT_CAPTURE_ECONOMICS_REPORT,
+            output_path=args.output or CAPTURE_ECONOMICS_DEFAULT_OUTPUT,
+            report_path=args.report or CAPTURE_ECONOMICS_DEFAULT_REPORT,
         )
         print(
             json.dumps(
@@ -4830,6 +4849,44 @@ def main(argv: list[str] | None = None) -> int:
             )
         )
         return 0 if summary.status != "SELF_IMPROVEMENT_BLOCKED" else 2
+    if args.command == "profitability-acceptance":
+        try:
+            from quant_rabbit.forecast_precision import DEFAULT_BIDASK_REPLAY_RULES_PATH
+            from quant_rabbit.profitability_acceptance import (
+                STATUS_PASSED,
+                ProfitabilityAcceptanceAuditor,
+            )
+
+            summary = ProfitabilityAcceptanceAuditor(
+                output_path=args.output,
+                report_path=args.report,
+            ).run(
+                order_intents_path=args.order_intents,
+                target_state_path=args.target_state,
+                self_improvement_path=args.self_improvement_audit,
+                capture_economics_path=args.capture_economics,
+                projection_ledger_path=args.projection_ledger,
+                bidask_rules_path=args.bidask_rules or DEFAULT_BIDASK_REPLAY_RULES_PATH,
+            )
+        except (OSError, json.JSONDecodeError, sqlite3.Error, ValueError) as exc:
+            print(json.dumps({"error": str(exc)}, ensure_ascii=False, indent=2, sort_keys=True))
+            return 2
+        print(
+            json.dumps(
+                {
+                    "status": summary.status,
+                    "output_path": str(summary.output_path),
+                    "report_path": str(summary.report_path),
+                    "findings": summary.findings,
+                    "blockers": summary.blockers,
+                    "metrics": summary.metrics,
+                },
+                ensure_ascii=False,
+                indent=2,
+                sort_keys=True,
+            )
+        )
+        return 0 if summary.status == STATUS_PASSED else 2
     if args.command == "trailing-sl-update":
         from quant_rabbit.strategy.trailing_sl import apply_trailing_sls
         snapshot_payload = json.loads(args.snapshot.read_text()) if args.snapshot.exists() else {}

@@ -105,7 +105,7 @@ PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli trader-prompt-route
 # daily-target-state → generate-intents --reuse-market-artifacts → optimize-coverage → ai-attack-advice →
 # learning/capture/execution-timing/manual-market-context/operator-precedent/verification audits →
 # generate-predictive-limits → position sidecars → memory-health →
-# self-improvement-audit) in one
+# self-improvement-audit → profitability-acceptance) in one
 # process, in the same order and with the same arguments the per-step
 # skeleton used (`cli._cycle_refresh_steps` is the canonical list), then
 # prints ONE compact digest including the re-routed prompt branch.
@@ -270,7 +270,7 @@ QR_LIVE_ENABLED=1 ./scripts/run-autotrade-live.sh \
 # still point at the pre-gateway snapshot. When `autotrade-cycle` exits
 # non-zero after refreshing broker truth, the wrapper does NOT run the full
 # broker/order sidecar list; it runs only the read-only audit subset
-# `position-management` → `memory-health` → `self-improvement-audit`, preserves
+# `position-management` → `memory-health` → `self-improvement-audit` → `profitability-acceptance`, preserves
 # the original exit code, and avoids carrying a stale P0 into the next route.
 # Do not run a second routine `cycle-sidecars` after the wrapper unless the
 # wrapper was intentionally called with `QR_RUN_POST_GATEWAY_SIDECARS=0` for
@@ -280,7 +280,7 @@ QR_LIVE_ENABLED=1 ./scripts/run-autotrade-live.sh \
 #   broker-snapshot → tp-rebalance → execution-ledger-sync → broker-snapshot
 #   → profit-partial-close → verify-projections → position-thesis-check
 #   → thesis-evolution-check → forecast-persistence-check
-#   → position-management → memory-health → self-improvement-audit
+#   → position-management → memory-health → self-improvement-audit → profitability-acceptance
 # and prints one compact digest.
 #
 # Semantics preserved from the per-step skeleton:
@@ -315,6 +315,11 @@ QR_LIVE_ENABLED=1 ./scripts/run-autotrade-live.sh \
 # - self-improvement-audit is recalculated after the post-gateway snapshot and
 #   memory-health pass so the next route sees current P0/P1/P2 gates instead
 #   of the pre-gateway refresh audit.
+# - profitability-acceptance is the single red/green profit invariant gate:
+#   it aggregates self-improvement P0s, negative capture expectancy, TP-proven
+#   market-close leakage, projection headline-vs-economic precision gaps, and
+#   rank-only contrarian replay edges. A non-passing result is diagnostic but
+#   must keep high-turn scaling blocked until the named evidence clears.
 # Manual recovery only:
 # QR_RUN_POST_GATEWAY_SIDECARS=0 QR_LIVE_ENABLED=1 ./scripts/run-autotrade-live.sh ...
 # QR_LIVE_ENABLED=1 PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli cycle-sidecars

@@ -218,6 +218,264 @@ class CliHelpTest(unittest.TestCase):
             )
         )
 
+    def test_profitability_acceptance_blocks_systemic_profit_leaks(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            target = root / "target.json"
+            intents = root / "intents.json"
+            self_audit = root / "self_improvement.json"
+            capture = root / "capture.json"
+            projection = root / "projection_ledger.jsonl"
+            bidask = root / "bidask_rules.json"
+            output = root / "acceptance.json"
+            report = root / "acceptance.md"
+
+            target.write_text(json.dumps({"status": "PURSUE_TARGET", "remaining_target_jpy": 5000.0}))
+            intents.write_text(
+                json.dumps(
+                    {
+                        "generated_at_utc": "2026-06-21T00:00:00+00:00",
+                        "results": [
+                            {
+                                "lane_id": "range_trader:EUR_USD:LONG:RANGE_ROTATION",
+                                "status": "DRY_RUN_BLOCKED",
+                                "risk_issues": [{"code": "STALE_QUOTE"}, {"code": "SPREAD_TOO_WIDE"}],
+                                "live_blockers": ["SELF_IMPROVEMENT_P0_PROFITABILITY_DISCIPLINE"],
+                            }
+                        ],
+                    }
+                )
+            )
+            self_audit.write_text(
+                json.dumps(
+                    {
+                        "status": "SELF_IMPROVEMENT_BLOCKED",
+                        "findings": [
+                            {
+                                "priority": "P0",
+                                "code": "PERSISTENT_PROFITABILITY_DISCIPLINE_BLOCKED",
+                                "message": "profitability discipline has failed",
+                            }
+                        ],
+                    }
+                )
+            )
+            capture.write_text(
+                json.dumps(
+                    {
+                        "status": "NEGATIVE_EXPECTANCY",
+                        "overall": {
+                            "trades": 30,
+                            "net_jpy": -4056.9,
+                            "expectancy_jpy_per_trade": -135.2,
+                            "win_rate": 0.6667,
+                            "payoff_ratio": 0.392,
+                        },
+                        "by_exit_reason": {
+                            "TAKE_PROFIT_ORDER": {
+                                "trades": 20,
+                                "net_jpy": 11830.5,
+                                "expectancy_jpy_per_trade": 591.5,
+                            },
+                            "MARKET_ORDER_TRADE_CLOSE": {
+                                "trades": 7,
+                                "net_jpy": -15091.7,
+                                "expectancy_jpy_per_trade": -2156.0,
+                            },
+                        },
+                        "segment_repair_priorities": {
+                            "items": [
+                                {
+                                    "priority_class": "PRESERVE_TP_PROVEN_REPAIR_MARKET_CLOSE_LEAK",
+                                    "pair": "EUR_USD",
+                                    "side": "LONG",
+                                    "method": "BREAKOUT_FAILURE",
+                                    "take_profit_trades": 20,
+                                    "take_profit_expectancy_jpy": 591.5,
+                                    "market_close_net_jpy": -15091.7,
+                                    "market_close_expectancy_jpy": -2156.0,
+                                }
+                            ]
+                        },
+                    }
+                )
+            )
+            bidask.write_text(
+                json.dumps(
+                    {
+                        "contrarian_edge_rules": [
+                            {
+                                "name": "AUD_JPY_UP_FADE_TO_DOWN_RANK_ONLY",
+                                "pair": "AUD_JPY",
+                                "forecast_direction": "UP",
+                                "direction": "DOWN",
+                                "samples": 40,
+                                "active_days": 2,
+                                "positive_day_rate": 0.5,
+                                "daily_stability_status": "INSUFFICIENT_ACTIVE_DAYS",
+                                "optimized_profit_factor": 2.31,
+                            }
+                        ]
+                    }
+                )
+            )
+            projection.write_text("")
+            hit_rates = {
+                "bb_squeeze_expansion_imminent": {
+                    "EUR_USD:TREND": {
+                        "hit_rate": 1.0,
+                        "samples": 50,
+                        "economic_hit_rate": 0.5,
+                        "economic_samples": 100,
+                        "timeout_rate": 0.5,
+                        "timeout_count": 50,
+                    }
+                },
+                "session_expansion_london": {
+                    "GBP_USD:TREND": {
+                        "hit_rate": 0.98,
+                        "samples": 100,
+                        "economic_hit_rate": 0.96,
+                        "economic_samples": 100,
+                    }
+                },
+            }
+            stdout = io.StringIO()
+
+            with mock.patch(
+                "quant_rabbit.profitability_acceptance.compute_hit_rates",
+                return_value=hit_rates,
+            ), redirect_stdout(stdout):
+                code = main(
+                    [
+                        "profitability-acceptance",
+                        "--order-intents",
+                        str(intents),
+                        "--target-state",
+                        str(target),
+                        "--self-improvement-audit",
+                        str(self_audit),
+                        "--capture-economics",
+                        str(capture),
+                        "--projection-ledger",
+                        str(projection),
+                        "--bidask-rules",
+                        str(bidask),
+                        "--output",
+                        str(output),
+                        "--report",
+                        str(report),
+                    ]
+                )
+            output_exists = output.exists()
+            report_exists = report.exists()
+
+        self.assertEqual(code, 2)
+        payload = json.loads(stdout.getvalue())
+        codes = {item["code"] for item in payload["findings"]}
+        self.assertEqual(payload["status"], "PROFITABILITY_ACCEPTANCE_BLOCKED")
+        self.assertIn("SELF_IMPROVEMENT_P0_PRESENT", codes)
+        self.assertIn("NEGATIVE_EXPECTANCY_ACTIVE", codes)
+        self.assertIn("MARKET_CLOSE_LEAK_DOMINATES_TP_EDGE", codes)
+        self.assertIn("PROJECTION_HEADLINE_PRECISION_ECONOMIC_GAP", codes)
+        self.assertIn("BIDASK_CONTRARIAN_EDGE_NOT_DAILY_STABLE", codes)
+        self.assertIn("NO_LIVE_READY_TARGET_COVERAGE", codes)
+        self.assertTrue(output_exists)
+        self.assertTrue(report_exists)
+
+    def test_profitability_acceptance_passes_when_profit_invariants_are_clear(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            target = root / "target.json"
+            intents = root / "intents.json"
+            self_audit = root / "self_improvement.json"
+            capture = root / "capture.json"
+            projection = root / "projection_ledger.jsonl"
+            bidask = root / "bidask_rules.json"
+            output = root / "acceptance.json"
+            report = root / "acceptance.md"
+
+            target.write_text(json.dumps({"status": "PURSUE_TARGET", "remaining_target_jpy": 5000.0}))
+            intents.write_text(
+                json.dumps(
+                    {
+                        "results": [
+                            {
+                                "lane_id": "failure_trader:GBP_USD:SHORT:BREAKOUT_FAILURE",
+                                "status": "LIVE_READY",
+                                "risk_issues": [],
+                                "live_blockers": [],
+                            }
+                        ]
+                    }
+                )
+            )
+            self_audit.write_text(json.dumps({"status": "SELF_IMPROVEMENT_OK", "findings": []}))
+            capture.write_text(
+                json.dumps(
+                    {
+                        "status": "POSITIVE_EXPECTANCY",
+                        "overall": {
+                            "trades": 40,
+                            "net_jpy": 12000.0,
+                            "expectancy_jpy_per_trade": 300.0,
+                            "win_rate": 0.7,
+                            "payoff_ratio": 1.2,
+                        },
+                        "by_exit_reason": {},
+                        "segment_repair_priorities": {"items": []},
+                    }
+                )
+            )
+            bidask.write_text(json.dumps({"contrarian_edge_rules": []}))
+            projection.write_text("")
+            hit_rates = {
+                "session_expansion_london": {
+                    "GBP_USD:TREND": {
+                        "hit_rate": 0.98,
+                        "samples": 100,
+                        "economic_hit_rate": 0.96,
+                        "economic_samples": 100,
+                    }
+                }
+            }
+            stdout = io.StringIO()
+
+            with mock.patch(
+                "quant_rabbit.profitability_acceptance.compute_hit_rates",
+                return_value=hit_rates,
+            ), redirect_stdout(stdout):
+                code = main(
+                    [
+                        "profitability-acceptance",
+                        "--order-intents",
+                        str(intents),
+                        "--target-state",
+                        str(target),
+                        "--self-improvement-audit",
+                        str(self_audit),
+                        "--capture-economics",
+                        str(capture),
+                        "--projection-ledger",
+                        str(projection),
+                        "--bidask-rules",
+                        str(bidask),
+                        "--output",
+                        str(output),
+                        "--report",
+                        str(report),
+                    ]
+                )
+            output_exists = output.exists()
+            report_exists = report.exists()
+
+        self.assertEqual(code, 0)
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(payload["status"], "PROFITABILITY_ACCEPTANCE_PASSED")
+        self.assertEqual(payload["findings"], [])
+        self.assertTrue(output_exists)
+        self.assertTrue(report_exists)
+
     def test_position_management_command_refreshes_sidecar_from_snapshot(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -2705,7 +2963,8 @@ class ConsolidatedCycleCommandTest(unittest.TestCase):
         self.assertLess(refresh.index("manual-market-context-audit"), refresh.index("operator-precedent-audit"))
         self.assertLess(refresh.index("operator-precedent-audit"), refresh.index("verification-ledger-audit"))
         self.assertLess(refresh.index("memory-health"), refresh.index("self-improvement-audit"))
-        self.assertEqual(refresh[-1], "self-improvement-audit")
+        self.assertLess(refresh.index("self-improvement-audit"), refresh.index("profitability-acceptance"))
+        self.assertEqual(refresh[-1], "profitability-acceptance")
         refresh_by_step = {" ".join(s["argv"]): s for s in _cycle_refresh_steps("10")}
         self.assertTrue(refresh_by_step["position-management"]["required"])
         self.assertTrue(refresh_by_step["memory-health"]["required"])
@@ -2718,7 +2977,8 @@ class ConsolidatedCycleCommandTest(unittest.TestCase):
         self.assertLess(sidecars.index("forecast-persistence-check"), sidecars.index("position-management"))
         self.assertLess(sidecars.index("position-management"), sidecars.index("memory-health"))
         self.assertLess(sidecars.index("memory-health"), sidecars.index("self-improvement-audit"))
-        self.assertEqual(sidecars[-1], "self-improvement-audit")
+        self.assertLess(sidecars.index("self-improvement-audit"), sidecars.index("profitability-acceptance"))
+        self.assertEqual(sidecars[-1], "profitability-acceptance")
         sidecars_by_step = {" ".join(s["argv"]): s for s in sidecar_specs}
         self.assertTrue(sidecars_by_step["position-management"]["required"])
         self.assertTrue(sidecars_by_step["memory-health"]["required"])
@@ -2757,6 +3017,8 @@ class ConsolidatedCycleCommandTest(unittest.TestCase):
         self.assertEqual(direct_sidecars[0], "verify-projections")
         self.assertLess(direct_sidecars.index("verify-projections"), direct_sidecars.index("memory-health"))
         self.assertLess(direct_sidecars.index("verify-projections"), direct_sidecars.index("self-improvement-audit"))
+        self.assertLess(direct_sidecars.index("self-improvement-audit"), direct_sidecars.index("profitability-acceptance"))
+        self.assertEqual(direct_sidecars[-1], "profitability-acceptance")
         cycle_digest.assert_called_once_with(
             kind="direct_autotrade_audit_sidecars_digest",
             step_results=step_results,
