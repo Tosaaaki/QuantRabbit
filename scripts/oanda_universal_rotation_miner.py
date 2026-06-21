@@ -80,6 +80,14 @@ DEFAULT_EXIT_SHAPES = (
     "tp1_sl1",
     "tp1.25_sl1",
 )
+LIVE_GRADE_EVIDENCE_ONLY_BLOCKERS = frozenset(
+    {
+        "INSUFFICIENT_VALIDATION_SAMPLES",
+        "INSUFFICIENT_ACTIVE_DAYS",
+        "DAILY_SAMPLE_CONCENTRATED",
+        "DAILY_EXPECTANCY_UNSTABLE",
+    }
+)
 
 
 @dataclass(frozen=True)
@@ -917,6 +925,22 @@ def _build_report(
         if (row.get("validation_win_rate") or 0.0) >= high_precision_min_win_rate
         and (row.get("validation_win_wilson95_lower") or 0.0) >= high_precision_min_wilson_lower
     ]
+    live_grade_evidence_queue = _live_grade_evidence_queue(
+        (
+            ("pair_confluence", pair_confluence_rows),
+            ("multi_confluence", multi_confluence_rows),
+            ("directional_selector", directional_selector_rows),
+            ("inversion_selector", inversion_selector_rows),
+        ),
+        min_validation_samples=min_validation_samples,
+        min_active_days=min_active_days,
+        min_positive_day_rate=min_positive_day_rate,
+        min_validation_expectancy_atr=min_validation_expectancy_atr,
+        min_profit_factor=min_profit_factor,
+        high_precision_min_win_rate=high_precision_min_win_rate,
+        high_precision_min_wilson_lower=high_precision_min_wilson_lower,
+        top=top,
+    )
     return {
         "generated_at_utc": _iso(generated_at_utc),
         "source": str(history_root),
@@ -981,6 +1005,7 @@ def _build_report(
         "high_precision_directional_selector_count": len(high_precision_directional_selectors),
         "qualified_inversion_selector_count": len(qualified_inversion_selectors),
         "high_precision_inversion_selector_count": len(high_precision_inversion_selectors),
+        "live_grade_evidence_queue_count": len(live_grade_evidence_queue),
         "qualified_shapes": qualified_shapes[:top],
         "qualified_pair_shapes": qualified_pair_shapes[:top],
         "qualified_features": qualified_features[:top],
@@ -993,6 +1018,7 @@ def _build_report(
         "high_precision_directional_selectors": high_precision_directional_selectors[:top],
         "qualified_inversion_selectors": qualified_inversion_selectors[:top],
         "high_precision_inversion_selectors": high_precision_inversion_selectors[:top],
+        "live_grade_evidence_queue": live_grade_evidence_queue[:top],
         "top_shapes": shape_rows[:top],
         "top_pair_shapes": pair_shape_rows[:top],
         "top_features": feature_rows[:top],
@@ -1748,6 +1774,181 @@ def _bucket_sort_key(row: dict[str, Any]) -> tuple[Any, ...]:
     )
 
 
+def _live_grade_evidence_queue(
+    sections: Sequence[tuple[str, Sequence[dict[str, Any]]]],
+    *,
+    min_validation_samples: int,
+    min_active_days: int,
+    min_positive_day_rate: float,
+    min_validation_expectancy_atr: float,
+    min_profit_factor: float,
+    high_precision_min_win_rate: float,
+    high_precision_min_wilson_lower: float,
+    top: int,
+) -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
+    for section, rows in sections:
+        for row in rows:
+            candidate = _live_grade_evidence_candidate(
+                row,
+                section=section,
+                min_validation_samples=min_validation_samples,
+                min_active_days=min_active_days,
+                min_positive_day_rate=min_positive_day_rate,
+                min_validation_expectancy_atr=min_validation_expectancy_atr,
+                min_profit_factor=min_profit_factor,
+                high_precision_min_win_rate=high_precision_min_win_rate,
+                high_precision_min_wilson_lower=high_precision_min_wilson_lower,
+            )
+            if candidate is not None:
+                out.append(candidate)
+    out.sort(key=_live_grade_evidence_sort_key)
+    return out[: max(0, int(top))]
+
+
+def _live_grade_evidence_candidate(
+    row: dict[str, Any],
+    *,
+    section: str,
+    min_validation_samples: int,
+    min_active_days: int,
+    min_positive_day_rate: float,
+    min_validation_expectancy_atr: float,
+    min_profit_factor: float,
+    high_precision_min_win_rate: float,
+    high_precision_min_wilson_lower: float,
+) -> dict[str, Any] | None:
+    blockers = {str(item) for item in row.get("blockers") or []}
+    fatal_blockers = blockers - LIVE_GRADE_EVIDENCE_ONLY_BLOCKERS
+    if fatal_blockers:
+        return None
+    validation_n = int(row.get("validation_n") or 0)
+    validation_win_rate = float(row.get("validation_win_rate") or 0.0)
+    validation_wilson = float(row.get("validation_win_wilson95_lower") or 0.0)
+    validation_avg_atr = float(row.get("validation_avg_realized_atr") or 0.0)
+    validation_pf_raw = row.get("validation_profit_factor")
+    validation_pf = _profit_factor_sort(validation_pf_raw)
+    if validation_n <= 0:
+        return None
+    if validation_win_rate < high_precision_min_win_rate:
+        return None
+    if validation_avg_atr <= min_validation_expectancy_atr:
+        return None
+    if validation_pf_raw is not None and validation_pf < min_profit_factor:
+        return None
+    active_days = int(row.get("active_days") or 0)
+    positive_day_rate = float(row.get("positive_day_rate") or 0.0)
+    successes = max(0, min(validation_n, int(round(validation_win_rate * validation_n))))
+    missing_validation_samples = max(0, min_validation_samples - validation_n)
+    missing_active_days = max(0, min_active_days - active_days)
+    wilson_extra = _additional_all_win_samples_for_wilson(
+        successes,
+        validation_n,
+        high_precision_min_wilson_lower,
+    )
+    required_days_for_stability = max(active_days, min_active_days)
+    current_positive_days = int(round(active_days * positive_day_rate))
+    required_positive_days = math.ceil(min_positive_day_rate * required_days_for_stability)
+    missing_positive_days = max(0, required_positive_days - current_positive_days)
+
+    gap_reasons: list[str] = []
+    if missing_validation_samples:
+        gap_reasons.append("NEEDS_MORE_VALIDATION_SAMPLES")
+    if validation_wilson < high_precision_min_wilson_lower:
+        gap_reasons.append("NEEDS_WILSON95_LOWER_CONFIRMATION")
+    if missing_active_days:
+        gap_reasons.append("NEEDS_MORE_ACTIVE_DAYS")
+    if positive_day_rate < min_positive_day_rate:
+        gap_reasons.append("NEEDS_DAILY_STABILITY_CONFIRMATION")
+    if "DAILY_SAMPLE_CONCENTRATED" in blockers:
+        gap_reasons.append("NEEDS_LESS_DAILY_SAMPLE_CONCENTRATION")
+    if not gap_reasons:
+        return None
+
+    out = {
+        key: row.get(key)
+        for key in (
+            "pair",
+            "shape",
+            "side",
+            "source_side",
+            "selected_side",
+            "exit_shape",
+            "confluence_size",
+            "feature",
+            "confluence",
+            "feature_a",
+            "feature_b",
+            "feature_c",
+            "feature_d",
+            "feature_e",
+            "feature_f",
+            "feature_g",
+            "feature_h",
+            "qualification",
+            "validation_n",
+            "validation_win_rate",
+            "validation_win_wilson95_lower",
+            "validation_avg_realized_pips",
+            "validation_avg_realized_atr",
+            "validation_profit_factor",
+            "active_days",
+            "positive_day_rate",
+            "blockers",
+        )
+        if key in row
+    }
+    out.update(
+        {
+            "evidence_section": section,
+            "live_grade_ready": False,
+            "live_permission": False,
+            "live_permission_reason": "evidence collection only; do not waive live forecast, risk, spread, or gateway gates",
+            "live_grade_gap_reasons": gap_reasons,
+            "missing_validation_samples": missing_validation_samples,
+            "missing_active_days": missing_active_days,
+            "missing_positive_days_at_min_active_days": missing_positive_days,
+            "additional_all_win_samples_for_wilson95_lower": wilson_extra,
+            "current_validation_successes": successes,
+            "required_validation_samples": min_validation_samples,
+            "required_active_days": min_active_days,
+            "required_positive_day_rate": min_positive_day_rate,
+            "required_wilson95_lower": high_precision_min_wilson_lower,
+        }
+    )
+    return out
+
+
+def _additional_all_win_samples_for_wilson(
+    successes: int,
+    trials: int,
+    threshold: float,
+    *,
+    max_extra: int = 500,
+) -> int | None:
+    if trials <= 0:
+        return None
+    for extra in range(max_extra + 1):
+        if _wilson_lower(successes + extra, trials + extra) >= threshold:
+            return extra
+    return None
+
+
+def _live_grade_evidence_sort_key(row: dict[str, Any]) -> tuple[Any, ...]:
+    missing_wilson = row.get("additional_all_win_samples_for_wilson95_lower")
+    return (
+        (row.get("missing_validation_samples") or 0)
+        + (row.get("missing_active_days") or 0)
+        + (missing_wilson if isinstance(missing_wilson, int) else 500),
+        -(row.get("validation_win_rate") or 0.0),
+        -(row.get("validation_avg_realized_atr") or 0.0),
+        -_profit_factor_sort(row.get("validation_profit_factor")),
+        row.get("pair") or "",
+        row.get("shape") or "",
+        row.get("side") or row.get("selected_side") or "",
+    )
+
+
 def _profit_factor_sort(value: Any) -> float:
     if value is None:
         return 1_000_000.0
@@ -1907,6 +2108,7 @@ def _markdown(report: dict[str, Any]) -> str:
         f"- high_precision_directional_selector_count: `{report.get('high_precision_directional_selector_count')}`",
         f"- qualified_inversion_selector_count: `{report.get('qualified_inversion_selector_count')}`",
         f"- high_precision_inversion_selector_count: `{report.get('high_precision_inversion_selector_count')}`",
+        f"- live_grade_evidence_queue_count: `{report.get('live_grade_evidence_queue_count')}`",
         "",
         "## Qualified Universal Shapes",
         "",
@@ -1924,6 +2126,8 @@ def _markdown(report: dict[str, Any]) -> str:
     lines.extend(_table(report.get("high_precision_directional_selectors") or []))
     lines.extend(["", "## High Precision Inversion Selectors", ""])
     lines.extend(_table(report.get("high_precision_inversion_selectors") or []))
+    lines.extend(["", "## Live Grade Evidence Queue", ""])
+    lines.extend(_table(report.get("live_grade_evidence_queue") or []))
     lines.extend(["", "## Qualified Pair Confluences", ""])
     lines.extend(_table(report.get("qualified_pair_confluences") or []))
     lines.extend(["", "## Qualified Multi Confluences", ""])
@@ -1969,6 +2173,13 @@ def _table(rows: Sequence[dict[str, Any]]) -> list[str]:
         "feature_f",
         "feature_g",
         "feature_h",
+        "evidence_section",
+        "live_permission",
+        "live_grade_gap_reasons",
+        "missing_validation_samples",
+        "additional_all_win_samples_for_wilson95_lower",
+        "missing_active_days",
+        "missing_positive_days_at_min_active_days",
         "qualification",
         "validation_n",
         "validation_win_rate",

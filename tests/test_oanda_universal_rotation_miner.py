@@ -209,6 +209,78 @@ class OandaUniversalRotationMinerTest(unittest.TestCase):
         self.assertIn(3, sizes)
         self.assertIn(4, sizes)
 
+    def test_build_report_surfaces_live_grade_evidence_queue_for_sample_gap(self) -> None:
+        rows = []
+        start = datetime(2026, 3, 1, tzinfo=timezone.utc)
+        features = [
+            "shape:pullback_continuation",
+            "side:SHORT",
+            "session:london_ny_overlap",
+            "spread_regime:mid",
+            "wick_reject:1",
+            "bar_range:normal",
+        ]
+        for index in range(36):
+            ts = start + timedelta(days=index)
+            rows.append(
+                {
+                    "timestamp_utc": ts.isoformat().replace("+00:00", "Z"),
+                    "jst_day": ts.date().isoformat(),
+                    "pair": "EUR_USD",
+                    "shape": "pullback_continuation",
+                    "side": "SHORT",
+                    "exit_shape": "tp1.25_sl1",
+                    "realized_pips": 6.0,
+                    "realized_atr": 0.8,
+                    "win": True,
+                    "outcome": "TAKE_PROFIT_FIRST",
+                    "features": features,
+                    "neutral_features": [],
+                }
+            )
+
+        report = miner._build_report(
+            rows,
+            generated_at_utc=start,
+            history_root=miner.DEFAULT_HISTORY_ROOT,
+            files=[],
+            exit_shapes=miner._parse_exit_shapes("tp1.25_sl1"),
+            max_hold_bars=12,
+            stride_bars=1,
+            tp_spread_floor=2.5,
+            sl_spread_floor=2.0,
+            train_fraction=0.7,
+            min_samples=24,
+            min_active_days=15,
+            min_pair_count=1,
+            max_pair_sample_share=1.0,
+            max_daily_sample_share=1.0,
+            min_positive_day_rate=0.90,
+            min_validation_expectancy_atr=0.0,
+            min_validation_win_rate=0.90,
+            min_validation_samples=30,
+            min_profit_factor=0.0,
+            high_precision_min_win_rate=0.90,
+            high_precision_min_wilson_lower=0.90,
+            multi_confluence_sizes=(3,),
+            top=100,
+            load_stats={"history_files": 0, "history_pairs": 0, "scored_outcomes": len(rows)},
+        )
+
+        self.assertEqual(report["qualified_multi_confluence_count"], 0)
+        self.assertGreater(report["live_grade_evidence_queue_count"], 0)
+        queue_row = next(
+            row
+            for row in report["live_grade_evidence_queue"]
+            if row["evidence_section"] == "multi_confluence"
+        )
+        self.assertEqual(queue_row["pair"], "EUR_USD")
+        self.assertFalse(queue_row["live_permission"])
+        self.assertIn("NEEDS_MORE_VALIDATION_SAMPLES", queue_row["live_grade_gap_reasons"])
+        self.assertIn("NEEDS_WILSON95_LOWER_CONFIRMATION", queue_row["live_grade_gap_reasons"])
+        self.assertEqual(queue_row["missing_validation_samples"], 19)
+        self.assertGreater(queue_row["additional_all_win_samples_for_wilson95_lower"], 0)
+
     def test_build_report_mines_same_candle_inversion_selectors(self) -> None:
         inversion_rows = []
         start = datetime(2026, 3, 1, tzinfo=timezone.utc)
