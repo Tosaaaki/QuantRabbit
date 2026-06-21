@@ -3916,6 +3916,8 @@ class ConsolidatedCycleCommandTest(unittest.TestCase):
         self.assertLess(refresh.index("self-improvement-audit"), refresh.index("profitability-acceptance"))
         self.assertEqual(refresh[-1], "profitability-acceptance")
         refresh_by_step = {" ".join(s["argv"]): s for s in _cycle_refresh_steps("10")}
+        self.assertEqual(refresh_by_step["execution-timing-audit --max-events 80"]["timeout_seconds"], 60.0)
+        self.assertFalse(refresh_by_step["execution-timing-audit --max-events 80"]["required"])
         self.assertTrue(refresh_by_step["position-management"]["required"])
         self.assertTrue(refresh_by_step["memory-health"]["required"])
         self.assertTrue(refresh_by_step["profitability-acceptance"]["required"])

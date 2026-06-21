@@ -1472,9 +1472,30 @@ class VerificationIssue:
 
 
 @dataclass(frozen=True)
+class CloseGateEvidence:
+    trade_id: str
+    pair: str
+    side: str
+    unrealized_pl_jpy: float | None
+    loss_side_close: bool
+    gate_a_invalidated: bool
+    gate_a_reason: str
+    gate_b_standing_authorized: bool
+    gate_b_explicit_operator_authorized: bool
+    explicit_gate_b_required: bool
+    profitability_p0_context_required: bool
+    profitability_p0_context_cited: bool
+    timing_audit_required: bool
+    timing_evidence_cited: bool
+    hard_timing_gate_required: bool
+    same_direction_support_conflict: str | None = None
+
+
+@dataclass(frozen=True)
 class VerificationResult:
     allowed: bool
     issues: tuple[VerificationIssue, ...]
+    close_gate_evidence: tuple[CloseGateEvidence, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -1594,6 +1615,7 @@ class GPTTraderBrain:
             "status": status,
             "decision": asdict(decision),
             "verification_issues": [asdict(issue) for issue in verification.issues],
+            "close_gate_evidence": [asdict(item) for item in verification.close_gate_evidence],
             "input_packet": packet,
         }
         self._write_result(result)
@@ -1784,6 +1806,22 @@ class GPTTraderBrain:
                 lines.append(f"- `{issue['severity']}` {issue['code']}: {issue['message']}")
         else:
             lines.append("- none")
+        lines.extend(["", "## Close Gate Evidence", ""])
+        close_gate_evidence = result.get("close_gate_evidence", [])
+        if close_gate_evidence:
+            for item in close_gate_evidence:
+                gate_b = "standing" if item.get("gate_b_standing_authorized") else (
+                    "explicit" if item.get("gate_b_explicit_operator_authorized") else "missing/soft"
+                )
+                lines.append(
+                    "- "
+                    f"`{item.get('trade_id')}` {item.get('pair')} {item.get('side')} "
+                    f"GateA={item.get('gate_a_invalidated')} GateB={gate_b} "
+                    f"loss_side={item.get('loss_side_close')} "
+                    f"reason={item.get('gate_a_reason') or 'none'}"
+                )
+        else:
+            lines.append("- none")
         lines.extend(
             [
                 "",
@@ -1812,6 +1850,7 @@ class DecisionVerifier:
         self.packet = input_packet
         self.lanes = {str(lane["lane_id"]): lane for lane in input_packet.get("lanes", [])}
         self.allowed_refs = set(str(ref) for ref in input_packet.get("allowed_evidence_refs", []))
+        self.close_gate_evidence: list[CloseGateEvidence] = []
 
     def verify(self, decision: GPTTraderDecision) -> VerificationResult:
         issues: list[VerificationIssue] = []
@@ -2229,7 +2268,11 @@ class DecisionVerifier:
             self._verify_close_trade_ids(decision, issues)
             self._verify_close_discipline(decision, issues)
 
-        return VerificationResult(allowed=not any(issue.severity == "BLOCK" for issue in issues), issues=tuple(issues))
+        return VerificationResult(
+            allowed=not any(issue.severity == "BLOCK" for issue in issues),
+            issues=tuple(issues),
+            close_gate_evidence=tuple(self.close_gate_evidence),
+        )
 
     def _verify_decision_freshness(self, decision: GPTTraderDecision, issues: list[VerificationIssue]) -> None:
         if not decision.generated_at_utc:
@@ -2505,6 +2548,9 @@ class DecisionVerifier:
         profitability_p0_blocker = _profitability_p0_soft_close_blocker(self.packet)
         premature_timing_guard = _premature_loss_close_timing_guard(self.packet)
         cites_profitability_p0 = _decision_cites_profitability_p0(decision.evidence_refs)
+        cites_timing_evidence = _decision_cites_close_timing_evidence(decision.evidence_refs)
+        timing_required_ids = {str(item).split(" ", 1)[0] for item in timing_required}
+        explicit_operator_gate_b = _operator_close_gate_authorized()
         for tid in decision.close_trade_ids:
             pos = position_by_tid.get(str(tid))
             if pos is None:
@@ -2513,6 +2559,8 @@ class DecisionVerifier:
                 continue
             pair = str(pos.get("pair") or "")
             side = str(pos.get("side") or "")
+            unrealized_pl_jpy = _optional_float(pos.get("unrealized_pl_jpy"))
+            loss_side_close = unrealized_pl_jpy is None or unrealized_pl_jpy <= 0
             issues.extend(_close_spread_issues(self.packet, pair, trade_id=str(tid)))
             invalidated, _reason, standing_authorized = _close_thesis_invalidation(
                 self.packet,
@@ -2521,19 +2569,38 @@ class DecisionVerifier:
                 trade_id=str(tid),
                 decision=decision,
             )
+            evidence = {
+                "trade_id": str(tid),
+                "pair": pair,
+                "side": side,
+                "unrealized_pl_jpy": unrealized_pl_jpy,
+                "loss_side_close": loss_side_close,
+                "gate_a_invalidated": invalidated,
+                "gate_a_reason": _reason or "no reproducible Gate A invalidation evidence",
+                "gate_b_standing_authorized": standing_authorized,
+                "gate_b_explicit_operator_authorized": explicit_operator_gate_b,
+                "explicit_gate_b_required": False,
+                "profitability_p0_context_required": False,
+                "profitability_p0_context_cited": cites_profitability_p0,
+                "timing_audit_required": str(tid) in timing_required_ids,
+                "timing_evidence_cited": cites_timing_evidence,
+                "hard_timing_gate_required": False,
+                "same_direction_support_conflict": None,
+            }
             if not invalidated:
                 still_valid.append(
                     f"{tid} ({pair} {side})"
                 )
+                self.close_gate_evidence.append(CloseGateEvidence(**evidence))
                 continue
 
-            unrealized_pl_jpy = _optional_float(pos.get("unrealized_pl_jpy"))
             if (
                 profitability_p0_blocker is not None
-                and (unrealized_pl_jpy is None or unrealized_pl_jpy <= 0)
+                and loss_side_close
                 and not cites_profitability_p0
             ):
                 needs_profitability_p0_context.append(f"{tid} ({pair} {side})")
+                evidence["profitability_p0_context_required"] = True
 
             if not standing_authorized:
                 sidecar_conflict = _same_direction_hold_support_conflict(
@@ -2544,26 +2611,34 @@ class DecisionVerifier:
                     evidence_label="soft close evidence",
                     allow_single_strong_sidecar=True,
                 )
-                if sidecar_conflict and (unrealized_pl_jpy is None or unrealized_pl_jpy <= 0):
+                if sidecar_conflict and loss_side_close:
                     same_direction_supported.append(
                         f"{tid} ({sidecar_conflict})"
                     )
+                    evidence["same_direction_support_conflict"] = sidecar_conflict
+                    self.close_gate_evidence.append(CloseGateEvidence(**evidence))
                     continue
                 supported, support_reason = _close_same_direction_matrix_support(
                     self.packet,
                     pair,
                     side,
                 )
-                if supported and (unrealized_pl_jpy is None or unrealized_pl_jpy <= 0):
+                if supported and loss_side_close:
                     same_direction_supported.append(
                         f"{tid} ({support_reason})"
                     )
+                    evidence["same_direction_support_conflict"] = support_reason
+                    self.close_gate_evidence.append(CloseGateEvidence(**evidence))
                     continue
                 if premature_timing_guard is not None and (
-                    unrealized_pl_jpy is None or unrealized_pl_jpy <= 0
+                    loss_side_close
                 ):
                     needs_hard_timing_gate.append(f"{tid} ({pair} {side})")
+                    evidence["hard_timing_gate_required"] = True
                 needs_explicit_gate_b.append(f"{tid} ({pair} {side})")
+                evidence["explicit_gate_b_required"] = True
+
+            self.close_gate_evidence.append(CloseGateEvidence(**evidence))
 
         if still_valid:
             issues.append(
@@ -2673,7 +2748,7 @@ class DecisionVerifier:
         # satisfy the operator's standing "妥当な損切りならやっていい" directive.
         # Softer sidecar-only reviews still require explicit env/token
         # authorization. The JSON receipt field remains advisory-only.
-        if needs_explicit_gate_b and not _operator_close_gate_authorized():
+        if needs_explicit_gate_b and not explicit_operator_gate_b:
             issues.append(
                 VerificationIssue(
                     "CLOSE_OPERATOR_AUTH_REQUIRED",

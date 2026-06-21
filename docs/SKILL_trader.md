@@ -142,6 +142,10 @@ PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli trader-prompt-route
 # news-health --strict during a stale-news window) appear in `steps_failed`
 # but do not stop evidence generation — treat them as named blockers in the
 # decision receipt exactly as before.
+# `execution-timing-audit` is optional and has a shorter per-step timeout than
+# the full refresh because it can fetch many OANDA candle windows; a slow
+# timing-regret audit must be surfaced in the digest, not allowed to leave
+# memory-health / self-improvement / profitability-acceptance stale.
 PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli cycle-refresh --daily-risk-pct 10
 
 # The refresh branch is not an end state: it must produce one current receipt
@@ -212,6 +216,11 @@ PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli cycle-refresh --daily-risk-pct 1
 #     require `QR_OPERATOR_CLOSE_OVERRIDE=1` in the operator shell, OR a fresh
 #     `data/.operator_close_token` file. The receipt field
 #     `operator_close_authorized: true` is advisory audit text only.
+# `gpt-trader-decision` writes `close_gate_evidence[]` for every CLOSE trade id,
+# accepted or rejected. Read it before sending/staging any loss-side CLOSE:
+# it must show the Gate A reason, standing-vs-explicit Gate B state, P0/timing
+# audit citations, and any same-direction support conflict. A missing durable
+# close-gate evidence row is an audit defect, not proof that the close is safe.
 # A TRADE receipt must not list close_trade_ids. If hard Gate A or explicit
 # Gate B close evidence is present, write one current CLOSE receipt first and
 # end that autotrade cycle as close-only. Refresh broker truth / intents on the
@@ -328,11 +337,12 @@ QR_LIVE_ENABLED=1 ./scripts/run-autotrade-live.sh \
 #   replay edges. A broker `TRADE_CLOSE` that was only reconciled after the
 #   fact from a trader entry lane is not proved close discipline; loss-side
 #   closes need durable `GATEWAY_GPT_CLOSE_ACCEPTED` and/or
-#   `GATEWAY_TRADE_CLOSE_SENT` provenance before the system can count them as
-#   verified structural exits. A missing, stale, or unreadable acceptance file
-#   routes back to refresh; P0 findings route to learning/repair and keep
-#   high-turn scaling blocked until the named evidence clears. The only entry
-#   exception is an attached-TP HARVEST repair lane that explicitly carries the
+#   `GATEWAY_TRADE_CLOSE_SENT` provenance plus the decision packet's
+#   `close_gate_evidence[]` before the system can count them as verified
+#   structural exits. A missing, stale, or unreadable acceptance file routes
+#   back to refresh; P0 findings route to learning/repair and keep high-turn
+#   scaling blocked until the named evidence clears. The only entry exception
+#   is an attached-TP HARVEST repair lane that explicitly carries the
 #   self-improvement P0 repair metadata.
 # Manual recovery only:
 # QR_RUN_POST_GATEWAY_SIDECARS=0 QR_LIVE_ENABLED=1 ./scripts/run-autotrade-live.sh ...

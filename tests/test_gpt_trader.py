@@ -5007,6 +5007,15 @@ class CloseDisciplineTest(unittest.TestCase):
             self.assertIn("CLOSE_OPERATOR_AUTH_REQUIRED", codes)
             self.assertNotIn("CLOSE_SAME_DIRECTION_MARKET_SUPPORT", codes)
             self.assertNotIn("CLOSE_THESIS_STILL_VALID", codes)
+            evidence = payload["close_gate_evidence"][0]
+            self.assertEqual(evidence["trade_id"], "555")
+            self.assertEqual(evidence["pair"], "EUR_USD")
+            self.assertEqual(evidence["side"], "SHORT")
+            self.assertTrue(evidence["gate_a_invalidated"])
+            self.assertIn("M15", evidence["gate_a_reason"])
+            self.assertFalse(evidence["gate_b_standing_authorized"])
+            self.assertTrue(evidence["explicit_gate_b_required"])
+            self.assertFalse(evidence["gate_b_explicit_operator_authorized"])
 
     def test_close_rejected_when_m15_break_conflicts_with_hold_sidecars(self) -> None:
         # Regression for 2026-06-12 USD_CHF: M15 can flip during an internal
@@ -5136,6 +5145,14 @@ class CloseDisciplineTest(unittest.TestCase):
             self.assertTrue(summary.allowed)
             payload = json.loads((root / "gpt_decision.json").read_text())
             self.assertEqual(payload["verification_issues"], [])
+            evidence = payload["close_gate_evidence"][0]
+            self.assertEqual(evidence["trade_id"], "555")
+            self.assertTrue(evidence["loss_side_close"])
+            self.assertTrue(evidence["gate_a_invalidated"])
+            self.assertIn("H4", evidence["gate_a_reason"])
+            self.assertTrue(evidence["gate_b_standing_authorized"])
+            self.assertFalse(evidence["explicit_gate_b_required"])
+            self.assertFalse(evidence["gate_b_explicit_operator_authorized"])
 
     def test_loss_close_requires_timing_audit_after_premature_close_regrets(self) -> None:
         # Regression for 2026-06-18: recent GPT_CLOSE losses later touched TP
@@ -5543,6 +5560,10 @@ class CloseDisciplineTest(unittest.TestCase):
                 codes = {issue["code"] for issue in payload["verification_issues"]}
                 self.assertIn("CLOSE_PROFITABILITY_P0_CONTEXT_REQUIRED", codes)
                 self.assertNotIn("CLOSE_OPERATOR_AUTH_REQUIRED", codes)
+                evidence = payload["close_gate_evidence"][0]
+                self.assertTrue(evidence["profitability_p0_context_required"])
+                self.assertFalse(evidence["profitability_p0_context_cited"])
+                self.assertTrue(evidence["gate_b_explicit_operator_authorized"])
         finally:
             if prior is None:
                 _os.environ.pop("QR_OPERATOR_CLOSE_OVERRIDE", None)

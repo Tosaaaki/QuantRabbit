@@ -1288,6 +1288,10 @@ _AUTOTRADE_EXIT_ZERO_STATUSES: frozenset[str] = frozenset(
 # evidence, usually a wedged HTTPS/read-only data fetch, and should be recorded
 # as a named failure instead of holding the live runtime lock indefinitely.
 DEFAULT_CYCLE_STEP_TIMEOUT_SECONDS = 300.0
+# execution-timing-audit can fan out to many OANDA candle windows. It is
+# optional evidence; one slow broker history read must not consume the refresh
+# window and leave self-improvement/profitability acceptance stale.
+DEFAULT_EXECUTION_TIMING_AUDIT_CYCLE_TIMEOUT_SECONDS = 60.0
 
 
 class _CycleStepTimeout(BaseException):
@@ -1896,7 +1900,11 @@ def _cycle_refresh_steps(daily_risk_pct: str) -> list[dict[str, Any]]:
         # Keep the module default 168h operating-week lookback. A 24h override
         # loses Friday MARKET_ORDER_TRADE_CLOSE leakage after the weekend while
         # profitability/self-improvement P0s can still cite that exact close.
-        {"argv": ["execution-timing-audit", "--max-events", "80"], "required": False},
+        {
+            "argv": ["execution-timing-audit", "--max-events", "80"],
+            "required": False,
+            "timeout_seconds": DEFAULT_EXECUTION_TIMING_AUDIT_CYCLE_TIMEOUT_SECONDS,
+        },
         {"argv": ["manual-market-context-audit"], "required": False},
         {"argv": ["operator-precedent-audit"], "required": False},
         {"argv": ["verification-ledger-audit"], "required": False},

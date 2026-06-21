@@ -77,11 +77,26 @@ class VerificationLedgerTest(unittest.TestCase):
                       AND check_name='recommended_learning_influence'
                     """
                 ).fetchone()[0]
+                close_gate_row = conn.execute(
+                    """
+                    SELECT status, severity, evidence_json
+                    FROM verification_observations
+                    WHERE source='gpt_decision'
+                      AND check_name='close_gate_evidence'
+                      AND subject_id='555'
+                    """
+                ).fetchone()
 
             self.assertGreater(unverifiable, 0)
             self.assertEqual(net_row, (50.0, 2))
             self.assertGreaterEqual(learning_rows, 5)
             self.assertEqual(advice_delta, 8.0)
+            self.assertIsNotNone(close_gate_row)
+            self.assertEqual(close_gate_row[0], "BLOCK")
+            self.assertEqual(close_gate_row[1], "BLOCK")
+            close_gate_evidence = json.loads(close_gate_row[2])
+            self.assertEqual(close_gate_evidence["gate_a_reason"], "M15 BOS_UP")
+            self.assertTrue(close_gate_evidence["explicit_gate_b_required"])
             self.assertIn("INSUFFICIENT_SAMPLE_LT_30", (root / "verification.md").read_text())
             self.assertIn("Learning Evidence", (root / "verification.md").read_text())
             packet = json.loads((root / "verification.json").read_text())
@@ -197,6 +212,26 @@ def _fixtures(root: Path) -> dict[str, Path]:
                         "severity": "BLOCK",
                         "code": "ENTRY_THESIS_REPAIR_REQUIRED",
                         "message": "unverifiable",
+                    }
+                ],
+                "close_gate_evidence": [
+                    {
+                        "trade_id": "555",
+                        "pair": "EUR_USD",
+                        "side": "SHORT",
+                        "unrealized_pl_jpy": -120.0,
+                        "loss_side_close": True,
+                        "gate_a_invalidated": True,
+                        "gate_a_reason": "M15 BOS_UP",
+                        "gate_b_standing_authorized": False,
+                        "gate_b_explicit_operator_authorized": False,
+                        "explicit_gate_b_required": True,
+                        "profitability_p0_context_required": False,
+                        "profitability_p0_context_cited": False,
+                        "timing_audit_required": False,
+                        "timing_evidence_cited": False,
+                        "hard_timing_gate_required": False,
+                        "same_direction_support_conflict": None,
                     }
                 ],
             }

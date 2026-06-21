@@ -599,6 +599,11 @@ def _gpt_decision_observations(run_id: str, path: Path, payload: dict[str, Any] 
         return []
     status = str(payload.get("status") or "UNKNOWN")
     issues = payload.get("verification_issues") if isinstance(payload.get("verification_issues"), list) else []
+    close_gate_evidence = (
+        payload.get("close_gate_evidence")
+        if isinstance(payload.get("close_gate_evidence"), list)
+        else []
+    )
     observations = [
         _observation(
             run_id=run_id,
@@ -629,7 +634,55 @@ def _gpt_decision_observations(run_id: str, path: Path, payload: dict[str, Any] 
                 evidence=issue,
             )
         )
+    for idx, evidence in enumerate(close_gate_evidence):
+        if not isinstance(evidence, dict):
+            continue
+        trade_id = str(evidence.get("trade_id") or idx)
+        status_label = _close_gate_evidence_status(evidence)
+        observations.append(
+            _observation(
+                run_id=run_id,
+                source="gpt_decision",
+                source_path=path,
+                subject_type="close_gate",
+                subject_id=trade_id,
+                check_name="close_gate_evidence",
+                status=status_label,
+                severity="INFO" if status_label == "PASS" else "BLOCK",
+                evidence=evidence,
+            )
+        )
     return observations
+
+
+def _close_gate_evidence_status(evidence: dict[str, Any]) -> str:
+    if evidence.get("gate_a_invalidated") is not True:
+        return "BLOCK"
+    if evidence.get("same_direction_support_conflict"):
+        return "BLOCK"
+    if evidence.get("hard_timing_gate_required") is True:
+        return "BLOCK"
+    if (
+        evidence.get("explicit_gate_b_required") is True
+        and evidence.get("gate_b_explicit_operator_authorized") is not True
+    ):
+        return "BLOCK"
+    if (
+        evidence.get("profitability_p0_context_required") is True
+        and evidence.get("profitability_p0_context_cited") is not True
+    ):
+        return "BLOCK"
+    if (
+        evidence.get("timing_audit_required") is True
+        and evidence.get("timing_evidence_cited") is not True
+    ):
+        return "BLOCK"
+    if (
+        evidence.get("gate_b_standing_authorized") is not True
+        and evidence.get("gate_b_explicit_operator_authorized") is not True
+    ):
+        return "BLOCK"
+    return "PASS"
 
 
 def _gateway_observations(
