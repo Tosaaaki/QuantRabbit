@@ -838,6 +838,20 @@ class SelfImprovementAuditor:
                     f"tp_touched `{timing_regret.get('canceled_tp_touched_after_cancel', 0)}`, "
                     f"missed_mfe_jpy `{_fmt_optional(timing_regret.get('canceled_estimated_missed_mfe_jpy'))}`"
                 )
+                top_shapes = (
+                    timing_regret.get("top_regretted_shapes")
+                    if isinstance(timing_regret.get("top_regretted_shapes"), list)
+                    else []
+                )
+                if top_shapes and isinstance(top_shapes[0], dict):
+                    top_shape = top_shapes[0]
+                    lines.append(
+                        "- Top pending cancel regret shape: "
+                        f"`{top_shape.get('evidence_ref')}`, "
+                        f"priority `{top_shape.get('priority_class')}`, "
+                        f"orders `{top_shape.get('orders', 0)}`, "
+                        f"missed_mfe_jpy `{_fmt_optional(top_shape.get('estimated_missed_mfe_jpy'))}`"
+                    )
         if isinstance(pending_reconcile, dict) and pending_reconcile:
             if "## Execution Quality" not in lines:
                 lines.extend(["", "## Execution Quality", ""])
@@ -2550,6 +2564,11 @@ def _merge_pending_cancel_timing_regret(
             return
     summary = timing_payload.get("summary") if isinstance(timing_payload.get("summary"), dict) else {}
     rows = [row for row in timing_payload.get("canceled_order_regrets", []) or [] if isinstance(row, dict)]
+    shape_rollup = (
+        timing_payload.get("canceled_order_regret_by_shape")
+        if isinstance(timing_payload.get("canceled_order_regret_by_shape"), dict)
+        else {}
+    )
     regretted_rows = [
         row
         for row in rows
@@ -2582,7 +2601,54 @@ def _merge_pending_cancel_timing_regret(
             }
             for row in regretted_rows[:8]
         ],
+        "top_regretted_shapes": _top_regretted_cancel_shapes(shape_rollup),
     }
+
+
+def _top_regretted_cancel_shapes(shape_rollup: dict[str, Any]) -> list[dict[str, Any]]:
+    items = shape_rollup.get("items") if isinstance(shape_rollup.get("items"), list) else []
+    out: list[dict[str, Any]] = []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        priority = str(item.get("priority_class") or "")
+        missed_mfe = _maybe_float(item.get("estimated_missed_mfe_jpy"))
+        if priority == "LOW_CANCEL_REGRET" and not missed_mfe:
+            continue
+        out.append(
+            {
+                "evidence_ref": str(item.get("evidence_ref") or ""),
+                "pair": str(item.get("pair") or ""),
+                "side": str(item.get("side") or ""),
+                "method": str(item.get("method") or ""),
+                "order_type": str(item.get("order_type") or ""),
+                "priority_class": priority,
+                "orders": int(item.get("orders") or 0),
+                "entry_touched_after_cancel": int(item.get("entry_touched_after_cancel") or 0),
+                "entry_touch_after_cancel_rate": _maybe_float(item.get("entry_touch_after_cancel_rate")),
+                "positive_after_cancel_entry": int(item.get("positive_after_cancel_entry") or 0),
+                "positive_after_cancel_entry_rate": _maybe_float(item.get("positive_after_cancel_entry_rate")),
+                "tp_touched_after_cancel": int(item.get("tp_touched_after_cancel") or 0),
+                "tp_touched_after_cancel_rate": _maybe_float(item.get("tp_touched_after_cancel_rate")),
+                "estimated_missed_mfe_jpy": missed_mfe,
+                "next_action": str(item.get("next_action") or ""),
+            }
+        )
+    priority_order = {
+        "PRESERVE_PENDING_THESIS_TP_TOUCHED": 0,
+        "REPRICE_OR_EXTEND_TTL_ENTRY_TOUCHED": 1,
+        "ENTRY_TOUCHED_NO_POSITIVE_MFE": 2,
+        "LOW_CANCEL_REGRET": 3,
+    }
+    out.sort(
+        key=lambda item: (
+            priority_order.get(str(item.get("priority_class") or ""), 99),
+            -float(item.get("estimated_missed_mfe_jpy") or 0.0),
+            -int(item.get("orders") or 0),
+            str(item.get("evidence_ref") or ""),
+        )
+    )
+    return out[:8]
 
 
 def _pending_cancel_replacement(

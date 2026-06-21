@@ -1015,6 +1015,29 @@ class SelfImprovementAuditorTest(unittest.TestCase):
                                 "estimated_missed_mfe_jpy": 815.5,
                             }
                         ],
+                        "canceled_order_regret_by_shape": {
+                            "basis": "canceled pending orders grouped by pair|side|method|order_type",
+                            "total_shapes": 1,
+                            "items": [
+                                {
+                                    "evidence_ref": "timing:canceled_shape:EUR_CAD:LONG:RANGE_ROTATION:LIMIT_ORDER",
+                                    "pair": "EUR_CAD",
+                                    "side": "LONG",
+                                    "method": "RANGE_ROTATION",
+                                    "order_type": "LIMIT_ORDER",
+                                    "priority_class": "PRESERVE_PENDING_THESIS_TP_TOUCHED",
+                                    "next_action": "review cancel rule/TTL before canceling this pending shape",
+                                    "orders": 3,
+                                    "entry_touched_after_cancel": 2,
+                                    "entry_touch_after_cancel_rate": 0.667,
+                                    "positive_after_cancel_entry": 2,
+                                    "positive_after_cancel_entry_rate": 0.667,
+                                    "tp_touched_after_cancel": 1,
+                                    "tp_touched_after_cancel_rate": 0.333,
+                                    "estimated_missed_mfe_jpy": 815.5,
+                                }
+                            ],
+                        },
                     }
                 )
             )
@@ -1029,7 +1052,16 @@ class SelfImprovementAuditorTest(unittest.TestCase):
         self.assertEqual(timing_regret["canceled_tp_touched_after_cancel"], 1)
         self.assertAlmostEqual(timing_regret["canceled_estimated_missed_mfe_jpy"], 815.5)
         self.assertEqual(timing_regret["top_regretted_cancels"][0]["order_id"], "O-mixed-3")
+        self.assertEqual(
+            timing_regret["top_regretted_shapes"][0]["evidence_ref"],
+            "timing:canceled_shape:EUR_CAD:LONG:RANGE_ROTATION:LIMIT_ORDER",
+        )
+        self.assertEqual(
+            timing_regret["top_regretted_shapes"][0]["priority_class"],
+            "PRESERVE_PENDING_THESIS_TP_TOUCHED",
+        )
         self.assertIn("Pending cancel timing regret", report)
+        self.assertIn("timing:canceled_shape:EUR_CAD:LONG:RANGE_ROTATION:LIMIT_ORDER", report)
 
     def test_pending_entry_lifecycle_distinguishes_replaced_from_orphan_cancels(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
