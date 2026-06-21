@@ -770,6 +770,81 @@ class IntentGeneratorTest(unittest.TestCase):
             self.assertEqual(firepower_issue["severity"], "WARN")
             self.assertNotIn(POSITIVE_ROTATION_FIREPOWER_BLOCK_CODE, result["live_blocker_codes"])
 
+    def test_tp_proven_pair_side_method_rotation_survives_stale_chart_bias(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "capture_economics.json").write_text(
+                json.dumps(
+                    {
+                        "status": "NEGATIVE_EXPECTANCY",
+                        "overall": {
+                            "trades": 213,
+                            "avg_win_jpy": 415.5,
+                            "avg_loss_jpy": 1061.9,
+                            "payoff_ratio": 0.391,
+                            "breakeven_payoff_at_win_rate": 0.651,
+                        },
+                        "by_exit_reason": {
+                            "TAKE_PROFIT_ORDER": {
+                                "trades": 93,
+                                "wins": 93,
+                                "losses": 0,
+                                "avg_win_jpy": 504.0,
+                                "avg_loss_jpy": 0.0,
+                                "expectancy_jpy_per_trade": 504.0,
+                            },
+                            "MARKET_ORDER_TRADE_CLOSE": {
+                                "trades": 92,
+                                "wins": 19,
+                                "losses": 73,
+                                "avg_win_jpy": 220.0,
+                                "avg_loss_jpy": 1095.5,
+                                "expectancy_jpy_per_trade": -809.8,
+                            },
+                        },
+                        **_capture_scoped_tp_payload(method="BREAKOUT_FAILURE"),
+                    }
+                )
+            )
+            output = root / "intents.json"
+
+            IntentGenerator(
+                campaign_plan=_breakout_failure_campaign(root),
+                strategy_profile=_strategy(root, status="CANDIDATE"),
+                output_path=output,
+                report_path=root / "intents.md",
+                pair_charts_path=_pair_charts_with_direction(
+                    root,
+                    long_score=0.30,
+                    short_score=0.70,
+                    dominant_regime="BREAKOUT_FAILURE",
+                    m5_regime="BREAKOUT_FAILURE",
+                ),
+                data_root=root,
+                max_loss_jpy=1000.0,
+            ).run(snapshot_path=_snapshot(root))
+
+            payload = json.loads(output.read_text())
+            result = next(
+                item for item in payload["results"]
+                if item["lane_id"] == "failure_trader:EUR_USD:LONG:BREAKOUT_FAILURE:LIMIT"
+            )
+            metadata = result["intent"]["metadata"]
+            issue_codes = {issue["code"] for issue in result["risk_issues"]}
+
+            self.assertEqual(metadata["chart_direction_bias"], "SHORT")
+            self.assertEqual(metadata["capture_take_profit_scope"], "PAIR_SIDE_METHOD")
+            self.assertEqual(
+                metadata["capture_take_profit_scope_key"],
+                "EUR_USD|LONG|BREAKOUT_FAILURE|TAKE_PROFIT_ORDER",
+            )
+            self.assertEqual(metadata["positive_rotation_mode"], "TP_PROVEN_HARVEST")
+            self.assertTrue(metadata["positive_rotation_direction_bias_conflict_overridden"])
+            self.assertGreater(metadata["positive_rotation_pessimistic_expectancy_jpy"], 0.0)
+            self.assertNotIn(POSITIVE_ROTATION_LIVE_BLOCK_CODE, issue_codes)
+            self.assertIn("CHART_DIRECTION_CONFLICT", issue_codes)
+            self.assertNotEqual(result["status"], "LIVE_READY")
+
     def test_capture_tp_positive_but_stress_negative_blocks_live_rotation(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

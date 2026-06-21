@@ -5969,7 +5969,12 @@ def _tp_proven_harvest_rotation_allowed(intent: OrderIntent) -> bool:
         return False
     method = intent.market_context.method if intent.market_context is not None else None
     direction_bias = _method_direction_bias(metadata, method)
-    if direction_bias in {Side.LONG.value, Side.SHORT.value} and direction_bias != intent.side.value:
+    direction_bias_conflict = (
+        direction_bias in {Side.LONG.value, Side.SHORT.value}
+        and direction_bias != intent.side.value
+    )
+    exact_tp_scope = _capture_take_profit_scope_matches_intent(intent, metadata, method)
+    if direction_bias_conflict and not exact_tp_scope:
         return False
     if metadata.get("attach_take_profit_on_fill") is not True:
         return False
@@ -6004,7 +6009,37 @@ def _tp_proven_harvest_rotation_allowed(intent: OrderIntent) -> bool:
     metadata.update(confidence)
     if confidence["positive_rotation_pessimistic_expectancy_jpy"] <= 0:
         return False
+    if direction_bias_conflict:
+        metadata.update(
+            {
+                "positive_rotation_direction_bias_conflict_overridden": True,
+                "positive_rotation_direction_bias": direction_bias,
+                "positive_rotation_direction_bias_override_basis": (
+                    "PAIR_SIDE_METHOD TAKE_PROFIT_ORDER receipts match this "
+                    "pair/side/method exactly; keep other chart/forecast gates "
+                    "active, but do not let the capture-economics repair gate "
+                    "discard the realized TP-proven HARVEST shape"
+                ),
+            }
+        )
     return True
+
+
+def _capture_take_profit_scope_matches_intent(
+    intent: OrderIntent,
+    metadata: dict[str, Any],
+    method: TradeMethod | None,
+) -> bool:
+    if str(metadata.get("capture_take_profit_scope") or "").upper() != "PAIR_SIDE_METHOD":
+        return False
+    method_value = str(getattr(method, "value", method) or "").upper()
+    if not method_value:
+        return False
+    expected_key = (
+        f"{intent.pair}|{intent.side.value}|{method_value}|TAKE_PROFIT_ORDER"
+    ).upper()
+    scope_key = str(metadata.get("capture_take_profit_scope_key") or "").upper()
+    return scope_key == expected_key
 
 
 def _wilson_lower_bound(successes: int, trials: int, *, z: float = POSITIVE_ROTATION_CONFIDENCE_Z) -> float:
