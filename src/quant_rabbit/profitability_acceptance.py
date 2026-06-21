@@ -39,6 +39,12 @@ STATUS_BLOCKED = "PROFITABILITY_ACCEPTANCE_BLOCKED"
 # incidents to age out after a clean operating window.
 LOSS_CLOSE_LEAK_LOOKBACK_DAYS = 7
 
+# Engineering freshness guard for the append-only local gateway receipt stream.
+# Live cycles run far more often than this; a larger gap means the ledger being
+# audited is missing local gateway receipts and broker-close provenance cannot
+# be classified as operator/GPT-unverified with confidence.
+GATEWAY_RECEIPT_STREAM_STALE_GRACE_MINUTES = 120
+
 
 @dataclass(frozen=True)
 class ProfitabilityAcceptanceSummary:
@@ -487,6 +493,10 @@ def _execution_ledger_close_findings(path: Path) -> tuple[dict[str, Any], list[d
         "recent_unverified_loss_net_jpy": 0.0,
         "latest_gateway_market_close_ts_utc": None,
         "latest_loss_close_ts_utc": None,
+        "gateway_event_stream_events": 0,
+        "gateway_event_stream_latest_ts_utc": None,
+        "gateway_event_stream_lag_minutes": None,
+        "gateway_event_stream_stale": False,
         "recent_loss_examples": [],
         "recent_unverified_loss_examples": [],
     }
@@ -507,8 +517,26 @@ def _execution_ledger_close_findings(path: Path) -> tuple[dict[str, Any], list[d
             gateway_raw_json_select = (
                 "g.raw_json AS gateway_raw_json" if "raw_json" in columns else "NULL AS gateway_raw_json"
             )
+            gateway_event_stream_latest: datetime | None = None
+            if "source" in columns:
+                stream_row = conn.execute(
+                    """
+                    SELECT COUNT(*) AS n, MAX(ts_utc) AS latest_ts
+                    FROM execution_events
+                    WHERE source = 'gateway'
+                    """
+                ).fetchone()
+                if stream_row is not None:
+                    metrics["gateway_event_stream_events"] = int(stream_row["n"] or 0)
+                    metrics["gateway_event_stream_latest_ts_utc"] = stream_row["latest_ts"]
+                    gateway_event_stream_latest = _parse_utc(stream_row["latest_ts"])
             rows = conn.execute(
                 f"""
+                WITH gateway_closes AS (
+                    SELECT *
+                    FROM execution_events
+                    WHERE event_type IN ('GATEWAY_TRADE_CLOSE_SENT', 'GATEWAY_TRADE_CLOSE_RECONCILED')
+                )
                 SELECT
                     g.ts_utc AS gateway_ts_utc,
                     g.trade_id AS trade_id,
@@ -537,7 +565,7 @@ def _execution_ledger_close_findings(path: Path) -> tuple[dict[str, Any], list[d
                           AND COALESCE(accepted.trade_id, '') != ''
                           AND accepted.trade_id = g.trade_id
                     ) AS has_gpt_close_accepted
-                FROM execution_events g
+                FROM gateway_closes g
                 INNER JOIN execution_events c
                   ON c.event_type = 'TRADE_CLOSED'
                  AND c.trade_id = g.trade_id
@@ -546,8 +574,19 @@ def _execution_ledger_close_findings(path: Path) -> tuple[dict[str, Any], list[d
                      OR COALESCE(c.order_id, '') = ''
                      OR c.order_id = g.order_id
                  )
-                WHERE g.event_type = 'GATEWAY_TRADE_CLOSE_RECONCILED'
-                  AND c.exit_reason = 'MARKET_ORDER_TRADE_CLOSE'
+                WHERE c.exit_reason = 'MARKET_ORDER_TRADE_CLOSE'
+                  AND NOT (
+                      g.event_type = 'GATEWAY_TRADE_CLOSE_RECONCILED'
+                      AND EXISTS (
+                          SELECT 1
+                          FROM execution_events direct
+                          WHERE direct.event_type = 'GATEWAY_TRADE_CLOSE_SENT'
+                            AND (
+                                (COALESCE(direct.trade_id, '') != '' AND direct.trade_id = g.trade_id)
+                                OR (COALESCE(direct.order_id, '') != '' AND direct.order_id = g.order_id)
+                            )
+                      )
+                  )
                 ORDER BY g.ts_utc ASC
                 """
             ).fetchall()
@@ -598,6 +637,14 @@ def _execution_ledger_close_findings(path: Path) -> tuple[dict[str, Any], list[d
     metrics["gateway_market_closes"] = len(parsed)
     if latest_ts is not None:
         metrics["latest_gateway_market_close_ts_utc"] = latest_ts.isoformat()
+    gateway_stream_stale = False
+    if latest_ts is not None and gateway_event_stream_latest is not None:
+        lag_minutes = (latest_ts - gateway_event_stream_latest).total_seconds() / 60.0
+        metrics["gateway_event_stream_lag_minutes"] = round(lag_minutes, 3)
+        gateway_stream_stale = lag_minutes > GATEWAY_RECEIPT_STREAM_STALE_GRACE_MINUTES
+    elif latest_ts is not None and "source" in columns:
+        gateway_stream_stale = True
+    metrics["gateway_event_stream_stale"] = gateway_stream_stale
     if not parsed or latest_ts is None:
         return metrics, []
 
@@ -681,7 +728,30 @@ def _execution_ledger_close_findings(path: Path) -> tuple[dict[str, Any], list[d
             },
         )
     ]
-    if recent_unverified_losses:
+    if gateway_stream_stale:
+        findings.append(
+            _finding(
+                priority="P0",
+                code="EXECUTION_LEDGER_GATEWAY_RECEIPT_STREAM_STALE",
+                message=(
+                    "execution ledger gateway receipt stream is stale relative to broker market-close truth; "
+                    "loss-close provenance cannot be classified from this database"
+                ),
+                next_action=(
+                    "Refresh or read the live runtime execution_ledger.db before diagnosing recent loss-side "
+                    "market closes as unverified. Do not tune close discipline from a ledger missing local "
+                    "GATEWAY_GPT_CLOSE_ACCEPTED / GATEWAY_TRADE_CLOSE_SENT receipts."
+                ),
+                evidence={
+                    "ledger_path": str(path),
+                    "latest_gateway_market_close_ts_utc": metrics["latest_gateway_market_close_ts_utc"],
+                    "gateway_event_stream_latest_ts_utc": metrics["gateway_event_stream_latest_ts_utc"],
+                    "gateway_event_stream_events": metrics["gateway_event_stream_events"],
+                    "gateway_event_stream_lag_minutes": metrics["gateway_event_stream_lag_minutes"],
+                },
+            )
+        )
+    elif recent_unverified_losses:
         findings.append(
             _finding(
                 priority="P0",

@@ -516,6 +516,172 @@ class CliHelpTest(unittest.TestCase):
         self.assertTrue(output_exists)
         self.assertTrue(report_exists)
 
+    def test_profitability_acceptance_treats_stale_gateway_stream_as_ledger_integrity_gap(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            ledger = Path(tmp) / "execution_ledger.db"
+            with sqlite3.connect(ledger) as conn:
+                conn.execute(
+                    """
+                    CREATE TABLE execution_events (
+                        ts_utc TEXT,
+                        source TEXT,
+                        event_type TEXT,
+                        trade_id TEXT,
+                        order_id TEXT,
+                        lane_id TEXT,
+                        pair TEXT,
+                        side TEXT,
+                        realized_pl_jpy REAL,
+                        exit_reason TEXT,
+                        raw_json TEXT
+                    )
+                    """
+                )
+                conn.executemany(
+                    """
+                    INSERT INTO execution_events (
+                        ts_utc, source, event_type, trade_id, order_id, lane_id, pair, side,
+                        realized_pl_jpy, exit_reason, raw_json
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    [
+                        (
+                            "2026-06-01T00:00:00+00:00",
+                            "gateway",
+                            "GATEWAY_POSITION_NO_ACTION",
+                            "T-old",
+                            None,
+                            None,
+                            "EUR_USD",
+                            None,
+                            None,
+                            "HOLD_PROTECTED",
+                            "{}",
+                        ),
+                        (
+                            "2026-06-21T00:00:00+00:00",
+                            "ledger_reconcile",
+                            "GATEWAY_TRADE_CLOSE_RECONCILED",
+                            "T-loss",
+                            "O-loss",
+                            "range_trader:EUR_USD:LONG:RANGE_ROTATION",
+                            "EUR_USD",
+                            "LONG",
+                            None,
+                            "BROKER_TRADE_CLOSE_TRADER_ENTRY_RECONCILED",
+                            json.dumps({"reconcile_reason": "NO_LOCAL_POSITION_EXECUTION_RECEIPT"}),
+                        ),
+                        (
+                            "2026-06-21T00:00:10+00:00",
+                            "oanda",
+                            "TRADE_CLOSED",
+                            "T-loss",
+                            "O-loss",
+                            "range_trader:EUR_USD:LONG:RANGE_ROTATION",
+                            "EUR_USD",
+                            "LONG",
+                            -1234.5,
+                            "MARKET_ORDER_TRADE_CLOSE",
+                            "{}",
+                        ),
+                    ],
+                )
+
+            metrics, findings = _execution_ledger_close_findings(ledger)
+
+        codes = {item["code"] for item in findings}
+        self.assertIn("RECENT_GATEWAY_LOSS_MARKET_CLOSE_LEAK", codes)
+        self.assertIn("EXECUTION_LEDGER_GATEWAY_RECEIPT_STREAM_STALE", codes)
+        self.assertNotIn("UNVERIFIED_LOSS_SIDE_MARKET_CLOSE_RECONCILED", codes)
+        self.assertTrue(metrics["gateway_event_stream_stale"])
+        self.assertEqual(metrics["recent_unverified_loss_closes"], 1)
+
+    def test_profitability_acceptance_counts_direct_gateway_close_sent_loss(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            ledger = Path(tmp) / "execution_ledger.db"
+            with sqlite3.connect(ledger) as conn:
+                conn.execute(
+                    """
+                    CREATE TABLE execution_events (
+                        ts_utc TEXT,
+                        source TEXT,
+                        event_type TEXT,
+                        trade_id TEXT,
+                        order_id TEXT,
+                        lane_id TEXT,
+                        pair TEXT,
+                        side TEXT,
+                        realized_pl_jpy REAL,
+                        exit_reason TEXT,
+                        raw_json TEXT
+                    )
+                    """
+                )
+                conn.executemany(
+                    """
+                    INSERT INTO execution_events (
+                        ts_utc, source, event_type, trade_id, order_id, lane_id, pair, side,
+                        realized_pl_jpy, exit_reason, raw_json
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    [
+                        (
+                            "2026-06-21T00:00:00+00:00",
+                            "gateway",
+                            "GATEWAY_GPT_CLOSE_ACCEPTED",
+                            "T-gpt",
+                            None,
+                            None,
+                            "EUR_USD",
+                            None,
+                            None,
+                            "GPT_CLOSE_ACCEPTED",
+                            json.dumps({"decision": {"action": "CLOSE", "close_trade_ids": ["T-gpt"]}}),
+                        ),
+                        (
+                            "2026-06-21T00:01:00+00:00",
+                            "gateway",
+                            "GATEWAY_TRADE_CLOSE_SENT",
+                            "T-gpt",
+                            "O-gpt",
+                            "range_trader:EUR_USD:LONG:RANGE_ROTATION",
+                            "EUR_USD",
+                            "LONG",
+                            None,
+                            "GPT_CLOSE",
+                            json.dumps({"request": {"type": "CLOSE", "trade_id": "T-gpt"}}),
+                        ),
+                        (
+                            "2026-06-21T00:01:05+00:00",
+                            "oanda",
+                            "TRADE_CLOSED",
+                            "T-gpt",
+                            "O-gpt",
+                            "range_trader:EUR_USD:LONG:RANGE_ROTATION",
+                            "EUR_USD",
+                            "LONG",
+                            -250.0,
+                            "MARKET_ORDER_TRADE_CLOSE",
+                            "{}",
+                        ),
+                    ],
+                )
+
+            metrics, findings = _execution_ledger_close_findings(ledger)
+
+        codes = {item["code"] for item in findings}
+        self.assertIn("RECENT_GATEWAY_LOSS_MARKET_CLOSE_LEAK", codes)
+        self.assertNotIn("UNVERIFIED_LOSS_SIDE_MARKET_CLOSE_RECONCILED", codes)
+        self.assertEqual(metrics["latest_gateway_market_close_ts_utc"], "2026-06-21T00:01:00+00:00")
+        self.assertEqual(metrics["recent_loss_closes"], 1)
+        self.assertEqual(metrics["recent_unverified_loss_closes"], 0)
+        self.assertEqual(
+            metrics["recent_loss_examples"][0]["close_provenance"],
+            "GATEWAY_TRADE_CLOSE_SENT",
+        )
+
     def test_profitability_acceptance_does_not_call_gpt_reconciled_loss_close_unverified(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             ledger = Path(tmp) / "execution_ledger.db"
@@ -3632,6 +3798,8 @@ class ConsolidatedCycleCommandTest(unittest.TestCase):
         refresh_by_step = {" ".join(s["argv"]): s for s in _cycle_refresh_steps("10")}
         self.assertTrue(refresh_by_step["position-management"]["required"])
         self.assertTrue(refresh_by_step["memory-health"]["required"])
+        self.assertTrue(refresh_by_step["profitability-acceptance"]["required"])
+        self.assertEqual(refresh_by_step["profitability-acceptance"]["ok_rcs"], [0, 2])
 
         with mock.patch.dict(os.environ, {"QR_LIVE_ENABLED": ""}, clear=False):
             sidecar_specs = _cycle_sidecar_steps()
@@ -3646,6 +3814,8 @@ class ConsolidatedCycleCommandTest(unittest.TestCase):
         sidecars_by_step = {" ".join(s["argv"]): s for s in sidecar_specs}
         self.assertTrue(sidecars_by_step["position-management"]["required"])
         self.assertTrue(sidecars_by_step["memory-health"]["required"])
+        self.assertTrue(sidecars_by_step["profitability-acceptance"]["required"])
+        self.assertEqual(sidecars_by_step["profitability-acceptance"]["ok_rcs"], [0, 2])
 
         with mock.patch.dict(os.environ, {"QR_LIVE_ENABLED": "1"}, clear=False):
             sidecars_live = [" ".join(s["argv"]) for s in _cycle_sidecar_steps()]
@@ -3678,11 +3848,14 @@ class ConsolidatedCycleCommandTest(unittest.TestCase):
         self.assertEqual(result, digest)
         run_steps.assert_called_once_with(_direct_autotrade_audit_sidecar_steps())
         direct_sidecars = [" ".join(s["argv"]) for s in _direct_autotrade_audit_sidecar_steps()]
+        direct_sidecar_specs = {" ".join(s["argv"]): s for s in _direct_autotrade_audit_sidecar_steps()}
         self.assertEqual(direct_sidecars[0], "verify-projections")
         self.assertLess(direct_sidecars.index("verify-projections"), direct_sidecars.index("memory-health"))
         self.assertLess(direct_sidecars.index("verify-projections"), direct_sidecars.index("self-improvement-audit"))
         self.assertLess(direct_sidecars.index("self-improvement-audit"), direct_sidecars.index("profitability-acceptance"))
         self.assertEqual(direct_sidecars[-1], "profitability-acceptance")
+        self.assertTrue(direct_sidecar_specs["profitability-acceptance"]["required"])
+        self.assertEqual(direct_sidecar_specs["profitability-acceptance"]["ok_rcs"], [0, 2])
         cycle_digest.assert_called_once_with(
             kind="direct_autotrade_audit_sidecars_digest",
             step_results=step_results,

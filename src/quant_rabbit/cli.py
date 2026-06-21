@@ -1902,7 +1902,7 @@ def _cycle_refresh_steps(daily_risk_pct: str) -> list[dict[str, Any]]:
         {"argv": ["position-management"], "required": True},
         {"argv": ["memory-health"], "required": True},
         {"argv": ["self-improvement-audit"], "required": False, "ok_rcs": [0, 2]},
-        {"argv": ["profitability-acceptance"], "required": False, "ok_rcs": [0, 2]},
+        {"argv": ["profitability-acceptance"], "required": True, "ok_rcs": [0, 2]},
     ]
 
 
@@ -1930,7 +1930,7 @@ def _cycle_sidecar_steps() -> list[dict[str, Any]]:
         {"argv": ["position-management"], "required": True},
         {"argv": ["memory-health"], "required": True},
         {"argv": ["self-improvement-audit"], "required": False, "ok_rcs": [0, 2]},
-        {"argv": ["profitability-acceptance"], "required": False, "ok_rcs": [0, 2]},
+        {"argv": ["profitability-acceptance"], "required": True, "ok_rcs": [0, 2]},
     ]
 
 
@@ -1951,7 +1951,7 @@ def _direct_autotrade_audit_sidecar_steps() -> list[dict[str, Any]]:
         {"argv": ["position-management"], "required": True},
         {"argv": ["memory-health"], "required": True},
         {"argv": ["self-improvement-audit"], "required": False, "ok_rcs": [0, 2]},
-        {"argv": ["profitability-acceptance"], "required": False, "ok_rcs": [0, 2]},
+        {"argv": ["profitability-acceptance"], "required": True, "ok_rcs": [0, 2]},
     ]
 
 
