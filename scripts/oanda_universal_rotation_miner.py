@@ -80,6 +80,15 @@ DEFAULT_EXIT_SHAPES = (
     "tp1_sl1",
     "tp1.25_sl1",
 )
+# Audit-only campaign lens from the product contract: the report measures how
+# far mined evidence is from the 5% floor / 10% target without granting live
+# permission or changing gateway sizing.
+CAMPAIGN_MINIMUM_RETURN_PCT = 5.0
+CAMPAIGN_TARGET_RETURN_PCT = 10.0
+# Audit-only per-trade risk lens mirroring the contract's fallback pace
+# (10% daily budget / 10 target trades). Live sizing still comes from
+# RiskPolicy, broker truth, current ATR, margin, and gateway validation.
+DEFAULT_FIREPOWER_PER_TRADE_RISK_PCT = 1.0
 LIVE_GRADE_EVIDENCE_ONLY_BLOCKERS = frozenset(
     {
         "INSUFFICIENT_VALIDATION_SAMPLES",
@@ -181,6 +190,7 @@ def main() -> int:
         min_profit_factor=args.min_profit_factor,
         high_precision_min_win_rate=args.high_precision_min_win_rate,
         high_precision_min_wilson_lower=args.high_precision_min_wilson_lower,
+        firepower_per_trade_risk_pct=args.firepower_per_trade_risk_pct,
         multi_confluence_sizes=multi_confluence_sizes,
         inversion_selector_sizes=inversion_selector_sizes,
         top=args.top,
@@ -260,6 +270,15 @@ def _parse_args() -> argparse.Namespace:
         help=(
             "comma-separated neutral-feature confluence sizes used to test whether the opposite "
             "side of a fired entry shape was actually profitable on the same candles. Defaults to 2,3."
+        ),
+    )
+    parser.add_argument(
+        "--firepower-per-trade-risk-pct",
+        type=float,
+        default=DEFAULT_FIREPOWER_PER_TRADE_RISK_PCT,
+        help=(
+            "audit-only return lens for campaign firepower. It estimates percent-of-NAV expectancy "
+            "from validation expectancy R; it does not size live orders or waive live gates."
         ),
     )
     parser.add_argument("--top", type=int, default=DEFAULT_TOP)
@@ -775,6 +794,7 @@ def _build_report(
     inversion_selector_sizes: Sequence[int] = DEFAULT_INVERSION_SELECTOR_CONFLUENCE_SIZES,
     top: int,
     load_stats: dict[str, Any],
+    firepower_per_trade_risk_pct: float = DEFAULT_FIREPOWER_PER_TRADE_RISK_PCT,
 ) -> dict[str, Any]:
     inversion_rows = inversion_rows or []
     shape_rows = _summarize_buckets(
@@ -941,6 +961,17 @@ def _build_report(
         high_precision_min_wilson_lower=high_precision_min_wilson_lower,
         top=top,
     )
+    campaign_firepower = _campaign_firepower_report(
+        (
+            ("pair_confluence", high_precision_pair_confluences),
+            ("multi_confluence", high_precision_multi_confluences),
+            ("directional_selector", high_precision_directional_selectors),
+            ("inversion_selector", high_precision_inversion_selectors),
+        ),
+        live_grade_evidence_queue=live_grade_evidence_queue,
+        per_trade_risk_pct=firepower_per_trade_risk_pct,
+        top=top,
+    )
     return {
         "generated_at_utc": _iso(generated_at_utc),
         "source": str(history_root),
@@ -976,6 +1007,9 @@ def _build_report(
             "min_profit_factor": min_profit_factor,
             "high_precision_min_win_rate": high_precision_min_win_rate,
             "high_precision_min_wilson_lower": high_precision_min_wilson_lower,
+            "firepower_per_trade_risk_pct": firepower_per_trade_risk_pct,
+            "campaign_minimum_return_pct": CAMPAIGN_MINIMUM_RETURN_PCT,
+            "campaign_target_return_pct": CAMPAIGN_TARGET_RETURN_PCT,
             "multi_confluence_sizes": list(multi_confluence_sizes),
             "multi_confluence_min_samples": multi_confluence_min_samples,
             "directional_selector_min_samples": max(
@@ -1006,6 +1040,7 @@ def _build_report(
         "qualified_inversion_selector_count": len(qualified_inversion_selectors),
         "high_precision_inversion_selector_count": len(high_precision_inversion_selectors),
         "live_grade_evidence_queue_count": len(live_grade_evidence_queue),
+        "campaign_firepower": campaign_firepower,
         "qualified_shapes": qualified_shapes[:top],
         "qualified_pair_shapes": qualified_pair_shapes[:top],
         "qualified_features": qualified_features[:top],
@@ -1919,6 +1954,265 @@ def _live_grade_evidence_candidate(
     return out
 
 
+def _campaign_firepower_report(
+    high_precision_sections: Sequence[tuple[str, Sequence[dict[str, Any]]]],
+    *,
+    live_grade_evidence_queue: Sequence[dict[str, Any]],
+    per_trade_risk_pct: float,
+    top: int,
+) -> dict[str, Any]:
+    high_precision_candidates: list[dict[str, Any]] = []
+    for section, rows in high_precision_sections:
+        for row in rows:
+            candidate = _firepower_candidate(
+                row,
+                section=section,
+                per_trade_risk_pct=per_trade_risk_pct,
+                evidence_status="HIGH_PRECISION_VALIDATED",
+            )
+            if candidate is not None:
+                high_precision_candidates.append(candidate)
+    evidence_candidates = [
+        candidate
+        for row in live_grade_evidence_queue
+        if (
+            candidate := _firepower_candidate(
+                row,
+                section=str(row.get("evidence_section") or "live_grade_evidence_queue"),
+                per_trade_risk_pct=per_trade_risk_pct,
+                evidence_status="EVIDENCE_COLLECTION_ONLY",
+            )
+        )
+        is not None
+    ]
+    high_precision_unique = _dedupe_firepower_candidates(high_precision_candidates)
+    evidence_unique = _dedupe_firepower_candidates(evidence_candidates)
+    high_precision_summary = _firepower_summary(high_precision_unique, top=top)
+    evidence_summary = _firepower_summary(evidence_unique, top=top)
+    return {
+        "contract": (
+            "audit-only firepower estimate from validation expectancy R at the configured "
+            "per-trade risk lens; it does not grant live permission, size orders, or waive "
+            "forecast, spread, strategy-profile, risk, broker-truth, or gateway gates"
+        ),
+        "per_trade_risk_pct_lens": _round_value(per_trade_risk_pct),
+        "minimum_return_pct": CAMPAIGN_MINIMUM_RETURN_PCT,
+        "target_return_pct": CAMPAIGN_TARGET_RETURN_PCT,
+        "status": _campaign_firepower_status(high_precision_summary, evidence_summary),
+        "high_precision": high_precision_summary,
+        "evidence_queue": evidence_summary,
+    }
+
+
+def _firepower_candidate(
+    row: dict[str, Any],
+    *,
+    section: str,
+    per_trade_risk_pct: float,
+    evidence_status: str,
+) -> dict[str, Any] | None:
+    stop_loss_atr = _exit_shape_stop_loss_atr(row.get("exit_shape"))
+    validation_n = int(row.get("validation_n") or 0)
+    active_days = int(row.get("active_days") or 0)
+    validation_avg_atr = float(row.get("validation_avg_realized_atr") or 0.0)
+    if stop_loss_atr is None or stop_loss_atr <= 0.0 or validation_n <= 0 or active_days <= 0:
+        return None
+    expectancy_r = validation_avg_atr / stop_loss_atr
+    return_pct_per_trade = expectancy_r * max(0.0, per_trade_risk_pct)
+    attempts_per_active_day = validation_n / active_days
+    return_pct_per_active_day = return_pct_per_trade * attempts_per_active_day
+    side = _firepower_side(row)
+    out = {
+        key: row.get(key)
+        for key in (
+            "pair",
+            "shape",
+            "side",
+            "source_side",
+            "selected_side",
+            "exit_shape",
+            "confluence_size",
+            "confluence",
+            "feature",
+            "feature_a",
+            "feature_b",
+            "feature_c",
+            "feature_d",
+            "validation_n",
+            "validation_win_rate",
+            "validation_win_wilson95_lower",
+            "validation_avg_realized_pips",
+            "validation_avg_realized_atr",
+            "validation_profit_factor",
+            "active_days",
+            "positive_day_rate",
+            "live_grade_gap_reasons",
+            "missing_validation_samples",
+            "missing_active_days",
+            "additional_all_win_samples_for_wilson95_lower",
+        )
+        if key in row
+    }
+    out.update(
+        {
+            "firepower_section": section,
+            "evidence_status": evidence_status,
+            "vehicle_key": _firepower_vehicle_key(row),
+            "firepower_side": side,
+            "stop_loss_atr": _round_value(stop_loss_atr),
+            "validation_expectancy_r": _round_value(expectancy_r),
+            "observed_attempts_per_active_day": _round_value(attempts_per_active_day),
+            "estimated_return_pct_per_trade_at_risk_lens": _round_value(return_pct_per_trade),
+            "estimated_return_pct_per_active_day_at_observed_frequency": _round_value(
+                return_pct_per_active_day
+            ),
+            "trades_needed_for_minimum_5pct": _trades_needed(
+                CAMPAIGN_MINIMUM_RETURN_PCT,
+                return_pct_per_trade,
+            ),
+            "trades_needed_for_target_10pct": _trades_needed(
+                CAMPAIGN_TARGET_RETURN_PCT,
+                return_pct_per_trade,
+            ),
+            "active_days_needed_for_minimum_5pct_at_observed_frequency": _days_needed(
+                CAMPAIGN_MINIMUM_RETURN_PCT,
+                return_pct_per_active_day,
+            ),
+            "active_days_needed_for_target_10pct_at_observed_frequency": _days_needed(
+                CAMPAIGN_TARGET_RETURN_PCT,
+                return_pct_per_active_day,
+            ),
+            "live_permission": False,
+            "live_permission_reason": "firepower estimate is historical audit only; live gates still decide",
+        }
+    )
+    return out
+
+
+def _dedupe_firepower_candidates(candidates: Sequence[dict[str, Any]]) -> list[dict[str, Any]]:
+    by_vehicle: dict[str, dict[str, Any]] = {}
+    for candidate in candidates:
+        key = str(candidate.get("vehicle_key") or "")
+        current = by_vehicle.get(key)
+        if current is None or _firepower_candidate_sort_key(candidate) < _firepower_candidate_sort_key(current):
+            by_vehicle[key] = candidate
+    out = list(by_vehicle.values())
+    out.sort(key=_firepower_candidate_sort_key)
+    return out
+
+
+def _firepower_summary(candidates: Sequence[dict[str, Any]], *, top: int) -> dict[str, Any]:
+    total_attempts_per_active_day = sum(
+        float(item.get("observed_attempts_per_active_day") or 0.0) for item in candidates
+    )
+    total_return_pct_per_active_day = sum(
+        float(item.get("estimated_return_pct_per_active_day_at_observed_frequency") or 0.0)
+        for item in candidates
+    )
+    weighted_return_pct_per_trade = (
+        total_return_pct_per_active_day / total_attempts_per_active_day
+        if total_attempts_per_active_day > 0.0
+        else 0.0
+    )
+    pairs = {
+        str(item.get("pair"))
+        for item in candidates
+        if item.get("pair") not in (None, "", "*")
+    }
+    return {
+        "unique_vehicle_count": len(candidates),
+        "pair_count": len(pairs),
+        "observed_attempts_per_active_day": _round_value(total_attempts_per_active_day),
+        "weighted_return_pct_per_trade_at_risk_lens": _round_value(
+            weighted_return_pct_per_trade
+        ),
+        "estimated_return_pct_per_active_day_at_observed_frequency": _round_value(
+            total_return_pct_per_active_day
+        ),
+        "trades_needed_for_minimum_5pct_at_weighted_expectancy": _trades_needed(
+            CAMPAIGN_MINIMUM_RETURN_PCT,
+            weighted_return_pct_per_trade,
+        ),
+        "trades_needed_for_target_10pct_at_weighted_expectancy": _trades_needed(
+            CAMPAIGN_TARGET_RETURN_PCT,
+            weighted_return_pct_per_trade,
+        ),
+        "active_days_needed_for_minimum_5pct_at_observed_frequency": _days_needed(
+            CAMPAIGN_MINIMUM_RETURN_PCT,
+            total_return_pct_per_active_day,
+        ),
+        "active_days_needed_for_target_10pct_at_observed_frequency": _days_needed(
+            CAMPAIGN_TARGET_RETURN_PCT,
+            total_return_pct_per_active_day,
+        ),
+        "top_vehicles": list(candidates[: max(0, int(top))]),
+    }
+
+
+def _campaign_firepower_status(
+    high_precision_summary: dict[str, Any],
+    evidence_summary: dict[str, Any],
+) -> str:
+    high_precision_count = int(high_precision_summary.get("unique_vehicle_count") or 0)
+    if high_precision_count <= 0:
+        if int(evidence_summary.get("unique_vehicle_count") or 0) > 0:
+            return "EVIDENCE_QUEUE_ONLY_NO_VERIFIED_FIREPOWER"
+        return "NO_VERIFIED_FIREPOWER"
+    daily_return = float(
+        high_precision_summary.get("estimated_return_pct_per_active_day_at_observed_frequency")
+        or 0.0
+    )
+    if daily_return >= CAMPAIGN_TARGET_RETURN_PCT:
+        return "VERIFIED_TARGET_10_ROUTE_ESTIMATED"
+    if daily_return >= CAMPAIGN_MINIMUM_RETURN_PCT:
+        return "VERIFIED_MINIMUM_5_ROUTE_ESTIMATED"
+    return "VERIFIED_EDGE_BUT_DAILY_TARGET_SHORTFALL"
+
+
+def _firepower_candidate_sort_key(row: dict[str, Any]) -> tuple[Any, ...]:
+    return (
+        -(row.get("estimated_return_pct_per_active_day_at_observed_frequency") or 0.0),
+        -(row.get("estimated_return_pct_per_trade_at_risk_lens") or 0.0),
+        -(row.get("validation_win_wilson95_lower") or 0.0),
+        -(row.get("validation_n") or 0),
+        row.get("vehicle_key") or "",
+    )
+
+
+def _firepower_vehicle_key(row: dict[str, Any]) -> str:
+    pair = str(row.get("pair") or "*")
+    side = _firepower_side(row)
+    shape = str(row.get("shape") or row.get("source_shape") or "*")
+    exit_shape = str(row.get("exit_shape") or "*")
+    return "|".join((pair, side, shape, exit_shape))
+
+
+def _firepower_side(row: dict[str, Any]) -> str:
+    return str(row.get("selected_side") or row.get("side") or "*")
+
+
+def _exit_shape_stop_loss_atr(value: Any) -> float | None:
+    text = str(value or "")
+    if "_sl" not in text:
+        return None
+    try:
+        return float(text.rsplit("_sl", 1)[1])
+    except ValueError:
+        return None
+
+
+def _trades_needed(target_pct: float, return_pct_per_trade: float) -> int | None:
+    if return_pct_per_trade <= 0.0:
+        return None
+    return int(math.ceil(target_pct / return_pct_per_trade))
+
+
+def _days_needed(target_pct: float, return_pct_per_active_day: float) -> float | None:
+    if return_pct_per_active_day <= 0.0:
+        return None
+    return _round_value(target_pct / return_pct_per_active_day)
+
+
 def _additional_all_win_samples_for_wilson(
     successes: int,
     trials: int,
@@ -2109,10 +2403,33 @@ def _markdown(report: dict[str, Any]) -> str:
         f"- qualified_inversion_selector_count: `{report.get('qualified_inversion_selector_count')}`",
         f"- high_precision_inversion_selector_count: `{report.get('high_precision_inversion_selector_count')}`",
         f"- live_grade_evidence_queue_count: `{report.get('live_grade_evidence_queue_count')}`",
-        "",
-        "## Qualified Universal Shapes",
+        f"- campaign_firepower_status: `{(report.get('campaign_firepower') or {}).get('status')}`",
         "",
     ]
+    firepower = report.get("campaign_firepower") or {}
+    high_precision_firepower = firepower.get("high_precision") or {}
+    evidence_firepower = firepower.get("evidence_queue") or {}
+    lines.extend(
+        [
+            "## Campaign Firepower",
+            "",
+            f"- contract: `{firepower.get('contract')}`",
+            f"- per_trade_risk_pct_lens: `{firepower.get('per_trade_risk_pct_lens')}`",
+            f"- minimum_return_pct: `{firepower.get('minimum_return_pct')}`",
+            f"- target_return_pct: `{firepower.get('target_return_pct')}`",
+            f"- high_precision_unique_vehicle_count: `{high_precision_firepower.get('unique_vehicle_count')}`",
+            f"- high_precision_estimated_return_pct_per_active_day: `{high_precision_firepower.get('estimated_return_pct_per_active_day_at_observed_frequency')}`",
+            f"- evidence_queue_unique_vehicle_count: `{evidence_firepower.get('unique_vehicle_count')}`",
+            f"- evidence_queue_estimated_return_pct_per_active_day: `{evidence_firepower.get('estimated_return_pct_per_active_day_at_observed_frequency')}`",
+            "",
+            "### High Precision Firepower Vehicles",
+            "",
+        ]
+    )
+    lines.extend(_table(high_precision_firepower.get("top_vehicles") or []))
+    lines.extend(["", "### Evidence Queue Firepower Vehicles", ""])
+    lines.extend(_table(evidence_firepower.get("top_vehicles") or []))
+    lines.extend(["", "## Qualified Universal Shapes", ""])
     lines.extend(_table(report.get("qualified_shapes") or []))
     lines.extend(["", "## Qualified Pair Shapes", ""])
     lines.extend(_table(report.get("qualified_pair_shapes") or []))

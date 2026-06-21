@@ -280,6 +280,92 @@ class OandaUniversalRotationMinerTest(unittest.TestCase):
         self.assertIn("NEEDS_WILSON95_LOWER_CONFIRMATION", queue_row["live_grade_gap_reasons"])
         self.assertEqual(queue_row["missing_validation_samples"], 19)
         self.assertGreater(queue_row["additional_all_win_samples_for_wilson95_lower"], 0)
+        firepower = report["campaign_firepower"]
+        self.assertEqual(firepower["status"], "EVIDENCE_QUEUE_ONLY_NO_VERIFIED_FIREPOWER")
+        self.assertEqual(firepower["high_precision"]["unique_vehicle_count"], 0)
+        self.assertEqual(firepower["evidence_queue"]["unique_vehicle_count"], 1)
+        evidence_vehicle = firepower["evidence_queue"]["top_vehicles"][0]
+        self.assertFalse(evidence_vehicle["live_permission"])
+        self.assertEqual(evidence_vehicle["evidence_status"], "EVIDENCE_COLLECTION_ONLY")
+        self.assertEqual(evidence_vehicle["trades_needed_for_minimum_5pct"], 7)
+
+    def test_build_report_estimates_campaign_firepower_from_verified_unique_vehicles(self) -> None:
+        rows = []
+        start = datetime(2026, 3, 1, tzinfo=timezone.utc)
+        pairs = ("EUR_USD", "GBP_USD", "AUD_JPY", "GBP_JPY", "USD_CAD")
+        features = [
+            "shape:pullback_continuation",
+            "side:LONG",
+            "session:london_ny_overlap",
+            "atr_regime:mid",
+            "spread_regime:mid",
+            "range_pos:mid",
+            "bar_range:normal",
+        ]
+        for pair in pairs:
+            for index in range(80):
+                ts = start + timedelta(days=index)
+                rows.append(
+                    {
+                        "timestamp_utc": ts.isoformat().replace("+00:00", "Z"),
+                        "jst_day": ts.date().isoformat(),
+                        "pair": pair,
+                        "shape": "pullback_continuation",
+                        "side": "LONG",
+                        "exit_shape": "tp1_sl1",
+                        "realized_pips": 10.0,
+                        "realized_atr": 1.0,
+                        "win": True,
+                        "outcome": "TAKE_PROFIT_FIRST",
+                        "features": features,
+                        "neutral_features": [],
+                    }
+                )
+
+        report = miner._build_report(
+            rows,
+            generated_at_utc=start,
+            history_root=miner.DEFAULT_HISTORY_ROOT,
+            files=[],
+            exit_shapes=miner._parse_exit_shapes("tp1_sl1"),
+            max_hold_bars=12,
+            stride_bars=1,
+            tp_spread_floor=2.5,
+            sl_spread_floor=2.0,
+            train_fraction=0.7,
+            min_samples=4,
+            min_active_days=1,
+            min_pair_count=1,
+            max_pair_sample_share=1.0,
+            max_daily_sample_share=1.0,
+            min_positive_day_rate=0.0,
+            min_validation_expectancy_atr=0.0,
+            min_validation_win_rate=0.70,
+            min_validation_samples=10,
+            min_profit_factor=0.0,
+            high_precision_min_win_rate=0.70,
+            high_precision_min_wilson_lower=0.50,
+            multi_confluence_sizes=(3,),
+            top=100,
+            load_stats={"history_files": 0, "history_pairs": 0, "scored_outcomes": len(rows)},
+        )
+
+        firepower = report["campaign_firepower"]
+        self.assertEqual(firepower["status"], "VERIFIED_MINIMUM_5_ROUTE_ESTIMATED")
+        self.assertEqual(firepower["high_precision"]["unique_vehicle_count"], len(pairs))
+        self.assertAlmostEqual(
+            firepower["high_precision"][
+                "estimated_return_pct_per_active_day_at_observed_frequency"
+            ],
+            5.0,
+        )
+        self.assertEqual(
+            firepower["high_precision"]["trades_needed_for_minimum_5pct_at_weighted_expectancy"],
+            5,
+        )
+        vehicle = firepower["high_precision"]["top_vehicles"][0]
+        self.assertEqual(vehicle["evidence_status"], "HIGH_PRECISION_VALIDATED")
+        self.assertFalse(vehicle["live_permission"])
 
     def test_build_report_mines_same_candle_inversion_selectors(self) -> None:
         inversion_rows = []
