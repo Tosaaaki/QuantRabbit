@@ -656,7 +656,9 @@ def _oanda_universal_rotation_rules_from_report(
     generated_at = payload.get("generated_at_utc")
     sections: tuple[tuple[str, str, float], ...] = (
         ("high_precision_directional_selectors", "selected_side", 10.0),
+        ("high_precision_inversion_selectors", "selected_side", 9.0),
         ("qualified_directional_selectors", "selected_side", 8.0),
+        ("qualified_inversion_selectors", "selected_side", 7.0),
         ("high_precision_multi_confluences", "side", 7.0),
         ("qualified_multi_confluences", "side", 5.0),
         ("high_precision_pair_confluences", "side", 6.0),
@@ -756,6 +758,18 @@ def _oanda_universal_rotation_rule_from_report_row(
     rule["rule_set_source"] = report_path
     rule["rule_set_generated_at_utc"] = generated_at
     rule["rule_source_section"] = source_section
+    for optional_key in (
+        "source_shape",
+        "source_side",
+        "source_train_win_rate",
+        "source_train_avg_realized_atr",
+        "source_validation_win_rate",
+        "source_validation_avg_realized_atr",
+        "source_validation_profit_factor",
+        "validation_inversion_edge_atr",
+    ):
+        if optional_key in row:
+            rule[optional_key] = row[optional_key]
     return rule
 
 
@@ -1519,6 +1533,14 @@ def oanda_universal_rotation_precision_assessment(
             "rule_set_source",
             "rule_set_generated_at_utc",
             "rule_source_section",
+            "source_shape",
+            "source_side",
+            "source_train_win_rate",
+            "source_train_avg_realized_atr",
+            "source_validation_win_rate",
+            "source_validation_avg_realized_atr",
+            "source_validation_profit_factor",
+            "validation_inversion_edge_atr",
         ):
             if optional_key in rule:
                 support[optional_key] = rule[optional_key]

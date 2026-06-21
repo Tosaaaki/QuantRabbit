@@ -456,6 +456,79 @@ class ForecastPrecisionConfluenceTest(unittest.TestCase):
         self.assertEqual(assessment["rule_source"]["dynamic_rule_count"], 1)
         self.assertEqual(assessment["score_delta"], 6.0)
 
+    def test_oanda_universal_rotation_loads_inversion_selector_report(self) -> None:
+        metadata = {
+            "forecast_direction": "DOWN",
+            "chart_direction_bias": "SHORT",
+            "m5_atr_percentile_100": 0.82,
+            "session_bucket": "ASIA",
+            "tp_execution_mode": "ATTACHED_TECHNICAL_TP",
+            "tp_target_intent": "HARVEST",
+            "opportunity_mode": "HARVEST",
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            rules_path = Path(tmp) / "oanda_universal_rotation_mining_latest.json"
+            rules_path.write_text(
+                json.dumps(
+                    {
+                        "generated_at_utc": "2026-06-21T00:00:00Z",
+                        "high_precision_inversion_selectors": [
+                            {
+                                "pair": "AUD_JPY",
+                                "shape": "range_reversion",
+                                "source_shape": "range_reversion",
+                                "source_side": "LONG",
+                                "selected_side": "SHORT",
+                                "exit_shape": "tp1_sl1",
+                                "feature_a": "atr_regime:high",
+                                "feature_b": "session:asia",
+                                "qualification": "PASS",
+                                "train_n": 40,
+                                "train_win_rate": 0.75,
+                                "validation_n": 12,
+                                "validation_win_rate": 0.916667,
+                                "validation_win_wilson95_lower": 0.64612,
+                                "validation_avg_realized_pips": 4.2,
+                                "validation_avg_realized_atr": 0.41,
+                                "validation_profit_factor": 5.2,
+                                "active_days": 8,
+                                "positive_day_rate": 0.875,
+                                "source_validation_win_rate": 0.083333,
+                                "source_validation_avg_realized_atr": -0.28,
+                                "validation_inversion_edge_atr": 0.69,
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            assessment = oanda_universal_rotation_precision_assessment(
+                metadata,
+                pair="AUD_JPY",
+                side="SHORT",
+                order_type="LIMIT",
+                method="RANGE_ROTATION",
+                entry=95.000,
+                take_profit=94.920,
+                stop_loss=95.120,
+                rules_path=rules_path,
+            )
+
+        support = assessment["primary_rank_support"]
+        self.assertEqual(
+            support["name"],
+            "AUD_JPY_SHORT_M5_RANGE_REVERSION_ATR_REGIME_HIGH_SESSION_ASIA_TP1_SL1",
+        )
+        self.assertEqual(support["rule_source_section"], "high_precision_inversion_selectors")
+        self.assertEqual(support["source_side"], "LONG")
+        self.assertEqual(support["source_validation_avg_realized_atr"], -0.28)
+        self.assertEqual(support["validation_inversion_edge_atr"], 0.69)
+        self.assertEqual(support["rank_score_bonus"], 9.0)
+        self.assertTrue(support["rank_only"])
+        self.assertFalse(support["live_grade_ready"])
+        self.assertEqual(assessment["score_delta"], 9.0)
+
     def test_oanda_universal_rotation_matches_side_relative_report_features(self) -> None:
         metadata = {
             "forecast_direction": "DOWN",

@@ -63,6 +63,7 @@ DEFAULT_TRAIN_FRACTION = 0.70
 DEFAULT_TOP = 30
 DEFAULT_DIRECTIONAL_SELECTOR_MIN_SAMPLES = 60
 DEFAULT_MULTI_CONFLUENCE_SIZES = (3, 4)
+DEFAULT_INVERSION_SELECTOR_CONFLUENCE_SIZES = (2, 3)
 DEFAULT_SELECTOR_FEATURE_PREFIXES = (
     "session:",
     "atr_regime:",
@@ -129,6 +130,7 @@ def main() -> int:
     pairs = _parse_pairs(args.pairs)
     exit_shapes = _parse_exit_shapes(args.exit_shapes)
     multi_confluence_sizes = _parse_multi_confluence_sizes(args.multi_confluence_sizes)
+    inversion_selector_sizes = _parse_inversion_selector_sizes(args.inversion_selector_sizes)
     out_dir = args.output_dir
     out_dir.mkdir(parents=True, exist_ok=True)
     run_ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
@@ -138,7 +140,7 @@ def main() -> int:
     latest_md = out_dir / "oanda_universal_rotation_mining_latest.md"
 
     files = _discover_m5_files(args.history_root, args.history_glob, pairs=pairs)
-    rows, load_stats = _score_files(
+    rows, inversion_rows, load_stats = _score_files(
         files,
         exit_shapes=exit_shapes,
         max_hold_bars=args.max_hold_bars,
@@ -172,8 +174,10 @@ def main() -> int:
         high_precision_min_win_rate=args.high_precision_min_win_rate,
         high_precision_min_wilson_lower=args.high_precision_min_wilson_lower,
         multi_confluence_sizes=multi_confluence_sizes,
+        inversion_selector_sizes=inversion_selector_sizes,
         top=args.top,
         load_stats=load_stats,
+        inversion_rows=inversion_rows,
     )
     text = json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True)
     json_out.write_text(text, encoding="utf-8")
@@ -242,6 +246,14 @@ def _parse_args() -> argparse.Namespace:
             "Defaults to 3,4; larger values are intentionally opt-in because combinations grow quickly."
         ),
     )
+    parser.add_argument(
+        "--inversion-selector-sizes",
+        default=",".join(str(size) for size in DEFAULT_INVERSION_SELECTOR_CONFLUENCE_SIZES),
+        help=(
+            "comma-separated neutral-feature confluence sizes used to test whether the opposite "
+            "side of a fired entry shape was actually profitable on the same candles. Defaults to 2,3."
+        ),
+    )
     parser.add_argument("--top", type=int, default=DEFAULT_TOP)
     return parser.parse_args()
 
@@ -288,6 +300,24 @@ def _parse_multi_confluence_sizes(value: str) -> tuple[int, ...]:
     return tuple(sorted(sizes))
 
 
+def _parse_inversion_selector_sizes(value: str) -> tuple[int, ...]:
+    sizes: set[int] = set()
+    for raw in str(value or "").split(","):
+        text = raw.strip()
+        if not text:
+            continue
+        try:
+            size = int(text)
+        except ValueError as exc:
+            raise ValueError(f"invalid inversion selector size: {text!r}") from exc
+        if size < 2 or size > 6:
+            raise ValueError("inversion selector sizes must be between 2 and 6")
+        sizes.add(size)
+    if not sizes:
+        raise ValueError("--inversion-selector-sizes produced no valid sizes")
+    return tuple(sorted(sizes))
+
+
 def _discover_m5_files(root: Path, history_glob: str, *, pairs: set[str]) -> list[Path]:
     by_pair: dict[str, Path] = {}
     for path in sorted(root.rglob(history_glob)):
@@ -310,13 +340,14 @@ def _score_files(
     max_spread_atr: float,
     tp_spread_floor: float,
     sl_spread_floor: float,
-) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], dict[str, Any]]:
     scored: list[dict[str, Any]] = []
+    inversion_scored: list[dict[str, Any]] = []
     pair_stats: list[dict[str, Any]] = []
     for path in files:
         pair = path.parent.name.upper()
         candles = _load_ba_candles(path)
-        pair_rows = _score_pair(
+        pair_rows, pair_inversion_rows = _score_pair(
             pair,
             candles,
             exit_shapes=exit_shapes,
@@ -328,19 +359,22 @@ def _score_files(
             sl_spread_floor=sl_spread_floor,
         )
         scored.extend(pair_rows)
+        inversion_scored.extend(pair_inversion_rows)
         pair_stats.append(
             {
                 "pair": pair,
                 "candles": len(candles),
                 "scored_outcomes": len(pair_rows),
+                "inversion_scored_outcomes": len(pair_inversion_rows),
             }
         )
-    return scored, {
+    return scored, inversion_scored, {
         "history_files": len(files),
         "history_pairs": len({path.parent.name.upper() for path in files}),
         "history_file_paths": [str(path) for path in files],
         "pair_load_stats": pair_stats,
         "scored_outcomes": len(scored),
+        "inversion_scored_outcomes": len(inversion_scored),
     }
 
 
@@ -390,9 +424,9 @@ def _score_pair(
     max_spread_atr: float,
     tp_spread_floor: float,
     sl_spread_floor: float,
-) -> list[dict[str, Any]]:
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     if len(candles) < MIN_WARMUP_BARS + max_hold_bars + 2:
-        return []
+        return [], []
     factor = instrument_pip_factor(pair)
     atrs = _atr_pips(candles, factor=factor, period=ATR_PERIOD)
     atr_quantiles = _quantile_boundaries(
@@ -401,6 +435,7 @@ def _score_pair(
         upper=0.75,
     )
     rows: list[dict[str, Any]] = []
+    inversion_rows: list[dict[str, Any]] = []
     stride = max(1, int(stride_bars))
     for idx in range(MIN_WARMUP_BARS, len(candles) - max_hold_bars - 1, stride):
         atr = atrs[idx]
@@ -420,6 +455,7 @@ def _score_pair(
             spread_atr=spread_atr,
             atr_quantiles=atr_quantiles,
         )
+        neutral_features = _neutral_features(common)
         for side in ("LONG", "SHORT"):
             side_features = _side_features(candles, idx, side=side, atr_pips=atr, common=common)
             for shape in _entry_shapes(side_features):
@@ -429,6 +465,18 @@ def _score_pair(
                     side=side,
                     shape=shape,
                     features=tuple(sorted(side_features | {f"shape:{shape}", f"side:{side}"})),
+                    entry_bid=candles[idx].bid_c,
+                    entry_ask=candles[idx].ask_c,
+                    atr_pips=atr,
+                    spread_pips=spread_pips,
+                )
+                inverse_side = _opposite_side(side)
+                inverse_candidate = Candidate(
+                    timestamp_utc=candles[idx].timestamp_utc,
+                    pair=pair,
+                    side=inverse_side,
+                    shape=shape,
+                    features=(),
                     entry_bid=candles[idx].bid_c,
                     entry_ask=candles[idx].ask_c,
                     atr_pips=atr,
@@ -464,10 +512,49 @@ def _score_pair(
                             "win": result["realized_pips"] > 0.0,
                             "outcome": result["outcome"],
                             "features": list(candidate.features),
-                            "neutral_features": _neutral_features(common),
+                            "neutral_features": neutral_features,
                         }
                     )
-    return rows
+                    inverse_result = _score_exit(
+                        inverse_candidate,
+                        candles,
+                        idx,
+                        factor=factor,
+                        tp_atr=tp_atr,
+                        sl_atr=sl_atr,
+                        max_hold_bars=max_hold_bars,
+                        tp_spread_floor=tp_spread_floor,
+                        sl_spread_floor=sl_spread_floor,
+                    )
+                    inversion_rows.append(
+                        {
+                            "timestamp_utc": _iso(candidate.timestamp_utc),
+                            "jst_day": candidate.timestamp_utc.astimezone(JST).date().isoformat(),
+                            "pair": pair,
+                            "shape": shape,
+                            "source_shape": shape,
+                            "source_side": side,
+                            "selected_side": inverse_side,
+                            "side": inverse_side,
+                            "exit_shape": exit_name,
+                            "atr_pips": round(atr, 6),
+                            "spread_pips": round(spread_pips, 6),
+                            "spread_atr": round(spread_atr, 6),
+                            "take_profit_pips": inverse_result["take_profit_pips"],
+                            "stop_loss_pips": inverse_result["stop_loss_pips"],
+                            "realized_pips": inverse_result["realized_pips"],
+                            "realized_atr": inverse_result["realized_pips"] / atr,
+                            "win": inverse_result["realized_pips"] > 0.0,
+                            "outcome": inverse_result["outcome"],
+                            "source_realized_pips": result["realized_pips"],
+                            "source_realized_atr": result["realized_pips"] / atr,
+                            "source_win": result["realized_pips"] > 0.0,
+                            "source_outcome": result["outcome"],
+                            "source_features": list(candidate.features),
+                            "neutral_features": neutral_features,
+                        }
+                    )
+    return rows, inversion_rows
 
 
 def _market_state_features(
@@ -561,6 +648,10 @@ def _side_features(
     return features
 
 
+def _opposite_side(side: str) -> str:
+    return "SHORT" if str(side).upper() == "LONG" else "LONG"
+
+
 def _entry_shapes(features: set[str]) -> tuple[str, ...]:
     values: list[str] = []
     reward_edge = "side_range:reward_edge" in features
@@ -650,6 +741,7 @@ def _score_exit(
 def _build_report(
     rows: list[dict[str, Any]],
     *,
+    inversion_rows: list[dict[str, Any]] | None = None,
     generated_at_utc: datetime,
     history_root: Path,
     files: Sequence[Path],
@@ -672,9 +764,11 @@ def _build_report(
     high_precision_min_win_rate: float,
     high_precision_min_wilson_lower: float,
     multi_confluence_sizes: Sequence[int],
+    inversion_selector_sizes: Sequence[int] = DEFAULT_INVERSION_SELECTOR_CONFLUENCE_SIZES,
     top: int,
     load_stats: dict[str, Any],
 ) -> dict[str, Any]:
+    inversion_rows = inversion_rows or []
     shape_rows = _summarize_buckets(
         rows,
         key_fields=("shape", "side", "exit_shape"),
@@ -774,6 +868,19 @@ def _build_report(
         min_validation_samples=min_validation_samples,
         min_profit_factor=min_profit_factor,
     )
+    inversion_selector_rows = _summarize_inversion_selector_buckets(
+        inversion_rows,
+        confluence_sizes=inversion_selector_sizes,
+        train_fraction=train_fraction,
+        min_samples=max(DEFAULT_DIRECTIONAL_SELECTOR_MIN_SAMPLES, min_samples // 4),
+        min_active_days=max(5, min_active_days // 3),
+        max_daily_sample_share=max(0.35, max_daily_sample_share),
+        min_positive_day_rate=min_positive_day_rate,
+        min_validation_expectancy_atr=min_validation_expectancy_atr,
+        min_validation_win_rate=min_validation_win_rate,
+        min_validation_samples=min_validation_samples,
+        min_profit_factor=min_profit_factor,
+    )
     qualified_shapes = [row for row in shape_rows if row["qualification"] == "PASS"]
     qualified_pair_shapes = [row for row in pair_shape_rows if row["qualification"] == "PASS"]
     qualified_features = [row for row in feature_rows if row["qualification"] == "PASS"]
@@ -782,6 +889,9 @@ def _build_report(
     qualified_multi_confluences = [row for row in multi_confluence_rows if row["qualification"] == "PASS"]
     qualified_directional_selectors = [
         row for row in directional_selector_rows if row["qualification"] == "PASS"
+    ]
+    qualified_inversion_selectors = [
+        row for row in inversion_selector_rows if row["qualification"] == "PASS"
     ]
     high_precision_pair_confluences = [
         row
@@ -798,6 +908,12 @@ def _build_report(
     high_precision_directional_selectors = [
         row
         for row in qualified_directional_selectors
+        if (row.get("validation_win_rate") or 0.0) >= high_precision_min_win_rate
+        and (row.get("validation_win_wilson95_lower") or 0.0) >= high_precision_min_wilson_lower
+    ]
+    high_precision_inversion_selectors = [
+        row
+        for row in qualified_inversion_selectors
         if (row.get("validation_win_rate") or 0.0) >= high_precision_min_win_rate
         and (row.get("validation_win_wilson95_lower") or 0.0) >= high_precision_min_wilson_lower
     ]
@@ -843,6 +959,12 @@ def _build_report(
                 min_samples // 4,
             ),
             "directional_selector_feature_prefixes": list(DEFAULT_SELECTOR_FEATURE_PREFIXES),
+            "inversion_selector_min_samples": max(
+                DEFAULT_DIRECTIONAL_SELECTOR_MIN_SAMPLES,
+                min_samples // 4,
+            ),
+            "inversion_selector_confluence_sizes": list(inversion_selector_sizes),
+            "inversion_selector_feature_prefixes": list(DEFAULT_SELECTOR_FEATURE_PREFIXES),
         },
         **load_stats,
         "history_files_used": [str(path) for path in files],
@@ -857,6 +979,8 @@ def _build_report(
         "high_precision_multi_confluence_count": len(high_precision_multi_confluences),
         "qualified_directional_selector_count": len(qualified_directional_selectors),
         "high_precision_directional_selector_count": len(high_precision_directional_selectors),
+        "qualified_inversion_selector_count": len(qualified_inversion_selectors),
+        "high_precision_inversion_selector_count": len(high_precision_inversion_selectors),
         "qualified_shapes": qualified_shapes[:top],
         "qualified_pair_shapes": qualified_pair_shapes[:top],
         "qualified_features": qualified_features[:top],
@@ -867,6 +991,8 @@ def _build_report(
         "high_precision_multi_confluences": high_precision_multi_confluences[:top],
         "qualified_directional_selectors": qualified_directional_selectors[:top],
         "high_precision_directional_selectors": high_precision_directional_selectors[:top],
+        "qualified_inversion_selectors": qualified_inversion_selectors[:top],
+        "high_precision_inversion_selectors": high_precision_inversion_selectors[:top],
         "top_shapes": shape_rows[:top],
         "top_pair_shapes": pair_shape_rows[:top],
         "top_features": feature_rows[:top],
@@ -874,6 +1000,7 @@ def _build_report(
         "top_pair_confluences": pair_confluence_rows[:top],
         "top_multi_confluences": multi_confluence_rows[:top],
         "top_directional_selectors": directional_selector_rows[:top],
+        "top_inversion_selectors": inversion_selector_rows[:top],
     }
 
 
@@ -1212,6 +1339,77 @@ def _summarize_directional_selector_buckets(
     return out
 
 
+def _summarize_inversion_selector_buckets(
+    rows: list[dict[str, Any]],
+    *,
+    confluence_sizes: Sequence[int],
+    train_fraction: float,
+    min_samples: int,
+    min_active_days: int,
+    max_daily_sample_share: float,
+    min_positive_day_rate: float,
+    min_validation_expectancy_atr: float,
+    min_validation_win_rate: float,
+    min_validation_samples: int,
+    min_profit_factor: float,
+) -> list[dict[str, Any]]:
+    buckets: dict[tuple[str, str, str, str, str, tuple[str, ...]], list[dict[str, Any]]] = (
+        collections.defaultdict(list)
+    )
+    sizes = tuple(sorted({int(size) for size in confluence_sizes if int(size) >= 2}))
+    for row in rows:
+        features = _selector_confluence_features(row.get("neutral_features") or ())
+        for confluence_size in sizes:
+            if len(features) < confluence_size:
+                continue
+            for feature_group in itertools.combinations(features, confluence_size):
+                buckets[
+                    (
+                        str(row.get("pair")),
+                        str(row.get("shape")),
+                        str(row.get("source_side")),
+                        str(row.get("selected_side") or row.get("side")),
+                        str(row.get("exit_shape")),
+                        feature_group,
+                    )
+                ].append(row)
+    out: list[dict[str, Any]] = []
+    for key, values in buckets.items():
+        if len(values) < min_samples:
+            continue
+        pair, shape, source_side, selected_side, exit_shape, feature_group = key
+        row = {
+            "pair": pair,
+            "shape": shape,
+            "source_shape": shape,
+            "source_side": source_side,
+            "selected_side": selected_side,
+            "side": selected_side,
+            "exit_shape": exit_shape,
+            "confluence_size": len(feature_group),
+            "confluence": " + ".join(feature_group),
+            "selection_basis": "same-candle opposite side of fired source shape",
+        }
+        for index, feature in enumerate(feature_group):
+            row[f"feature_{chr(ord('a') + index)}"] = feature
+        row.update(
+            _inversion_bucket_summary(
+                values,
+                train_fraction=train_fraction,
+                min_active_days=min_active_days,
+                max_daily_sample_share=max_daily_sample_share,
+                min_positive_day_rate=min_positive_day_rate,
+                min_validation_expectancy_atr=min_validation_expectancy_atr,
+                min_validation_win_rate=min_validation_win_rate,
+                min_validation_samples=min_validation_samples,
+                min_profit_factor=min_profit_factor,
+            )
+        )
+        out.append(row)
+    out.sort(key=_bucket_sort_key)
+    return out
+
+
 def _selector_confluence_features(features: Iterable[str]) -> list[str]:
     selected = []
     for feature in features:
@@ -1289,6 +1487,89 @@ def _train_select_side_summary(
         **_prefix("validation", validation_summary),
         **daily,
     }
+
+
+def _inversion_bucket_summary(
+    values: list[dict[str, Any]],
+    *,
+    train_fraction: float,
+    min_active_days: int,
+    max_daily_sample_share: float,
+    min_positive_day_rate: float,
+    min_validation_expectancy_atr: float,
+    min_validation_win_rate: float,
+    min_validation_samples: int,
+    min_profit_factor: float,
+) -> dict[str, Any]:
+    ordered = _ensure_chronological(values)
+    split = int(len(ordered) * min(max(train_fraction, 0.1), 0.9))
+    split = min(max(split, 1), len(ordered) - 1)
+    train = ordered[:split]
+    validation = ordered[split:]
+    train_summary = _metric_summary(train)
+    validation_summary = _metric_summary(validation)
+    all_summary = _metric_summary(ordered)
+    source_train_summary = _source_metric_summary(train)
+    source_validation_summary = _source_metric_summary(validation)
+    source_all_summary = _source_metric_summary(ordered)
+    daily = _daily_stability(validation)
+    inversion_edge_atr = (
+        validation_summary["avg_realized_atr"] - source_validation_summary["avg_realized_atr"]
+    )
+    blockers: list[str] = []
+    if validation_summary["n"] <= 0:
+        blockers.append("NO_VALIDATION")
+    if validation_summary["n"] < min_validation_samples:
+        blockers.append("INSUFFICIENT_VALIDATION_SAMPLES")
+    if daily["active_days"] < min_active_days:
+        blockers.append("INSUFFICIENT_ACTIVE_DAYS")
+    if daily["max_daily_sample_share"] > max_daily_sample_share:
+        blockers.append("DAILY_SAMPLE_CONCENTRATED")
+    if daily["positive_day_rate"] < min_positive_day_rate:
+        blockers.append("DAILY_EXPECTANCY_UNSTABLE")
+    if train_summary["avg_realized_atr"] <= min_validation_expectancy_atr:
+        blockers.append("TRAIN_INVERSION_EXPECTANCY_TOO_LOW")
+    if source_train_summary["avg_realized_atr"] >= 0.0:
+        blockers.append("TRAIN_SOURCE_NOT_NEGATIVE")
+    if validation_summary["avg_realized_atr"] <= min_validation_expectancy_atr:
+        blockers.append("VALIDATION_EXPECTANCY_TOO_LOW")
+    if validation_summary["win_rate"] < min_validation_win_rate:
+        blockers.append("VALIDATION_WIN_RATE_TOO_LOW")
+    if source_validation_summary["avg_realized_atr"] >= 0.0:
+        blockers.append("VALIDATION_SOURCE_NOT_NEGATIVE")
+    if inversion_edge_atr <= min_validation_expectancy_atr:
+        blockers.append("VALIDATION_INVERSION_EDGE_TOO_LOW")
+    pf = validation_summary["profit_factor"]
+    if pf is not None and pf < min_profit_factor:
+        blockers.append("VALIDATION_PROFIT_FACTOR_TOO_LOW")
+    return {
+        "qualification": "PASS" if not blockers else "FAIL",
+        "blockers": blockers,
+        "split_at_utc": validation[0]["timestamp_utc"] if validation else None,
+        "pair_count": 1,
+        "max_pair_sample_share": 1.0,
+        "validation_inversion_edge_atr": _round_value(inversion_edge_atr),
+        **_prefix("train", train_summary),
+        **_prefix("validation", validation_summary),
+        **_prefix("all", all_summary),
+        **_prefix("source_train", source_train_summary),
+        **_prefix("source_validation", source_validation_summary),
+        **_prefix("source_all", source_all_summary),
+        **daily,
+    }
+
+
+def _source_metric_summary(values: Sequence[dict[str, Any]]) -> dict[str, Any]:
+    source_rows = [
+        {
+            "realized_pips": item.get("source_realized_pips"),
+            "realized_atr": item.get("source_realized_atr"),
+            "win": item.get("source_win"),
+            "outcome": item.get("source_outcome"),
+        }
+        for item in values
+    ]
+    return _metric_summary(source_rows)
 
 
 def _pair_confluence_features(features: Iterable[str]) -> list[str]:
@@ -1624,6 +1905,8 @@ def _markdown(report: dict[str, Any]) -> str:
         f"- high_precision_multi_confluence_count: `{report.get('high_precision_multi_confluence_count')}`",
         f"- qualified_directional_selector_count: `{report.get('qualified_directional_selector_count')}`",
         f"- high_precision_directional_selector_count: `{report.get('high_precision_directional_selector_count')}`",
+        f"- qualified_inversion_selector_count: `{report.get('qualified_inversion_selector_count')}`",
+        f"- high_precision_inversion_selector_count: `{report.get('high_precision_inversion_selector_count')}`",
         "",
         "## Qualified Universal Shapes",
         "",
@@ -1639,12 +1922,16 @@ def _markdown(report: dict[str, Any]) -> str:
     lines.extend(_table(report.get("high_precision_multi_confluences") or []))
     lines.extend(["", "## High Precision Directional Selectors", ""])
     lines.extend(_table(report.get("high_precision_directional_selectors") or []))
+    lines.extend(["", "## High Precision Inversion Selectors", ""])
+    lines.extend(_table(report.get("high_precision_inversion_selectors") or []))
     lines.extend(["", "## Qualified Pair Confluences", ""])
     lines.extend(_table(report.get("qualified_pair_confluences") or []))
     lines.extend(["", "## Qualified Multi Confluences", ""])
     lines.extend(_table(report.get("qualified_multi_confluences") or []))
     lines.extend(["", "## Qualified Directional Selectors", ""])
     lines.extend(_table(report.get("qualified_directional_selectors") or []))
+    lines.extend(["", "## Qualified Inversion Selectors", ""])
+    lines.extend(_table(report.get("qualified_inversion_selectors") or []))
     lines.extend(["", "## Top Shapes", ""])
     lines.extend(_table(report.get("top_shapes") or []))
     lines.extend(["", "## Top Pair Features", ""])
@@ -1655,6 +1942,8 @@ def _markdown(report: dict[str, Any]) -> str:
     lines.extend(_table(report.get("top_multi_confluences") or []))
     lines.extend(["", "## Top Directional Selectors", ""])
     lines.extend(_table(report.get("top_directional_selectors") or []))
+    lines.extend(["", "## Top Inversion Selectors", ""])
+    lines.extend(_table(report.get("top_inversion_selectors") or []))
     lines.append("")
     return "\n".join(lines)
 
@@ -1666,20 +1955,29 @@ def _table(rows: Sequence[dict[str, Any]]) -> list[str]:
         "pair",
         "shape",
         "side",
+        "source_side",
         "selected_side",
         "exit_shape",
+        "confluence_size",
         "feature",
         "confluence",
         "feature_a",
         "feature_b",
         "feature_c",
         "feature_d",
+        "feature_e",
+        "feature_f",
+        "feature_g",
+        "feature_h",
         "qualification",
         "validation_n",
         "validation_win_rate",
         "validation_avg_realized_pips",
         "validation_avg_realized_atr",
         "validation_profit_factor",
+        "source_validation_win_rate",
+        "source_validation_avg_realized_atr",
+        "validation_inversion_edge_atr",
         "active_days",
         "positive_day_rate",
         "pair_count",
