@@ -38,6 +38,7 @@ from quant_rabbit.strategy.trader_brain import (
 )
 from quant_rabbit.strategy.directional_forecaster import DirectionalForecast
 from quant_rabbit.strategy.entry_thesis_ledger import PendingEntryThesis, record_pending_entry_thesis
+from quant_rabbit.strategy.lane_history_ledger import LaneHistorySnapshot
 
 
 class TraderBrainTest(unittest.TestCase):
@@ -358,6 +359,50 @@ class TraderBrainTest(unittest.TestCase):
             assessment["primary_rank_support"]["name"],
             "EUR_USD_SHORT_M5_PULLBACK_CONTINUATION_SESSION_LONDON_NY_OVERLAP_SPREAD_REGIME_MID_TP1P25_SL1",
         )
+
+    def test_oanda_universal_rotation_scales_down_when_recent_lane_history_degrades(self) -> None:
+        intent = {
+            "metadata": {
+                "forecast_direction": "DOWN",
+                "chart_direction_bias": "SHORT",
+                "m5_atr_pips": 5.0,
+                "session_bucket": "LONDON_NY_OVERLAP",
+                "tp_execution_mode": "ATTACHED_TECHNICAL_TP",
+                "tp_target_intent": "HARVEST",
+                "opportunity_mode": "HARVEST",
+            }
+        }
+        lane_history = {
+            ("EUR_USD", "SHORT", "PULLBACK_CONTINUATION"): LaneHistorySnapshot(
+                pair="EUR_USD",
+                direction="SHORT",
+                sample_size=5,
+                net_pl_jpy=-4000.0,
+                modifier=-25.0,
+                method="PULLBACK_CONTINUATION",
+            )
+        }
+        rationale: list[str] = []
+
+        score = _oanda_universal_rotation_precision_score(
+            intent=intent,
+            pair="EUR_USD",
+            direction="SHORT",
+            order_type="LIMIT",
+            method="PULLBACK_CONTINUATION",
+            entry=1.10000,
+            tp=1.09950,
+            sl=1.10070,
+            spread_pips=1.0,
+            lane_history=lane_history,
+            rationale=rationale,
+        )
+
+        self.assertEqual(score, 0.0)
+        self.assertTrue(any("recent lane history scales OANDA rotation edge x0.00" in item for item in rationale))
+        assessment = intent["metadata"]["oanda_universal_rotation_precision_assessment"]
+        self.assertEqual(assessment["raw_score_delta_before_recent_history_scale"], 8.0)
+        self.assertEqual(assessment["recent_history_score_scale"], 0.0)
 
     def test_technical_rotation_scores_high_frequency_bucket_without_live_override(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

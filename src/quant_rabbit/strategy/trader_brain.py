@@ -1428,6 +1428,7 @@ class TraderBrain:
             tp=tp,
             sl=sl,
             spread_pips=spread_pips,
+            lane_history=lane_history,
             rationale=rationale,
         )
 
@@ -3633,6 +3634,27 @@ def _oanda_metadata_with_execution_costs(
     return out
 
 
+def _oanda_recent_history_scale(
+    lane_history: dict[tuple[str, ...], LaneHistorySnapshot] | None,
+    *,
+    pair: str,
+    direction: str,
+    method: str,
+) -> tuple[float, str | None]:
+    if not lane_history:
+        return 1.0, None
+    modifier, history_rationale = lane_history_modifier(lane_history, pair, direction, method)
+    if modifier >= 0.0:
+        return 1.0, None
+    scale = _clamp(1.0 + (modifier / 25.0), 0.0, 1.0)
+    rationale = (
+        f"recent lane history scales OANDA rotation edge x{scale:.2f}: {history_rationale}"
+        if history_rationale
+        else f"recent lane history scales OANDA rotation edge x{scale:.2f}"
+    )
+    return scale, rationale
+
+
 def _oanda_universal_rotation_precision_score(
     *,
     intent: dict[str, Any],
@@ -3644,6 +3666,7 @@ def _oanda_universal_rotation_precision_score(
     tp: float | None,
     sl: float | None,
     spread_pips: float | None = None,
+    lane_history: dict[tuple[str, ...], LaneHistorySnapshot] | None = None,
     rationale: list[str],
 ) -> float:
     metadata = intent.get("metadata") if isinstance(intent.get("metadata"), dict) else {}
@@ -3668,7 +3691,19 @@ def _oanda_universal_rotation_precision_score(
         if key in assessment_metadata:
             metadata[key] = assessment_metadata[key]
     metadata["oanda_universal_rotation_precision_assessment"] = assessment
-    score_delta = _optional_float(assessment.get("score_delta")) or 0.0
+    raw_score_delta = _optional_float(assessment.get("score_delta")) or 0.0
+    recent_scale, recent_scale_rationale = _oanda_recent_history_scale(
+        lane_history,
+        pair=pair,
+        direction=direction,
+        method=method,
+    )
+    score_delta = round(raw_score_delta * recent_scale, 4)
+    if recent_scale < 1.0:
+        assessment["raw_score_delta_before_recent_history_scale"] = raw_score_delta
+        assessment["recent_history_score_scale"] = round(recent_scale, 4)
+        if recent_scale_rationale:
+            rationale.insert(0, recent_scale_rationale)
     best = (
         assessment.get("primary_rank_support")
         if isinstance(assessment.get("primary_rank_support"), dict)
