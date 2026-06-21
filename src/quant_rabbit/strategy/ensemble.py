@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -74,8 +74,11 @@ class DeskLane:
     story_examples: tuple[str, ...] = ()
     oanda_campaign_firepower_seed: bool = False
     oanda_campaign_vehicle_key: str | None = None
+    oanda_campaign_vehicle_count: int = 0
+    oanda_campaign_vehicle_keys: tuple[str, ...] = ()
     oanda_campaign_firepower_status: str | None = None
     oanda_campaign_exit_shape: str | None = None
+    oanda_campaign_exit_shapes: tuple[str, ...] = ()
     oanda_campaign_estimated_return_pct_per_active_day: float | None = None
     oanda_campaign_live_permission: bool = False
 
@@ -238,7 +241,9 @@ class CampaignPlanner:
                     "  - oanda_firepower: "
                     f"status={lane.oanda_campaign_firepower_status} "
                     f"vehicle={lane.oanda_campaign_vehicle_key} "
+                    f"vehicle_count={lane.oanda_campaign_vehicle_count} "
                     f"estimated_daily_return_pct={lane.oanda_campaign_estimated_return_pct_per_active_day} "
+                    f"exit_shapes={','.join(lane.oanda_campaign_exit_shapes)} "
                     "live_permission=false"
                 )
             for example in lane.story_examples[:2]:
@@ -339,8 +344,7 @@ def _oanda_campaign_firepower_lanes(
     high_precision = firepower.get("high_precision")
     if not isinstance(high_precision, dict):
         return []
-    lanes: list[DeskLane] = []
-    seen: set[tuple[str, str, str]] = set()
+    grouped: dict[tuple[str, str, str], dict[str, Any]] = {}
     for vehicle in high_precision.get("top_vehicles", []) or []:
         if not isinstance(vehicle, dict):
             continue
@@ -352,10 +356,39 @@ def _oanda_campaign_firepower_lanes(
         if lane is None:
             continue
         key = (lane.pair, lane.direction, lane.method)
-        if key in seen:
-            continue
-        seen.add(key)
-        lanes.append(lane)
+        group = grouped.setdefault(
+            key,
+            {
+                "primary": lane,
+                "estimated_return_pct": 0.0,
+                "vehicle_keys": [],
+                "exit_shapes": [],
+            },
+        )
+        estimate = lane.oanda_campaign_estimated_return_pct_per_active_day
+        if estimate is not None:
+            group["estimated_return_pct"] += estimate
+        _append_unique_str(group["vehicle_keys"], lane.oanda_campaign_vehicle_key)
+        _append_unique_str(group["exit_shapes"], lane.oanda_campaign_exit_shape)
+    lanes: list[DeskLane] = []
+    for group in grouped.values():
+        primary = group["primary"]
+        estimated_pct = round(float(group["estimated_return_pct"]), 6)
+        estimated_jpy = round(start_balance_jpy * (estimated_pct / 100.0), 4)
+        vehicle_keys = tuple(str(item) for item in group["vehicle_keys"])
+        exit_shapes = tuple(str(item) for item in group["exit_shapes"])
+        lanes.append(
+            replace(
+                primary,
+                evidence_tail_jpy=estimated_jpy,
+                evidence_best_jpy=estimated_jpy,
+                missed_reward_pressure_jpy=estimated_jpy,
+                oanda_campaign_vehicle_count=len(vehicle_keys),
+                oanda_campaign_vehicle_keys=vehicle_keys,
+                oanda_campaign_exit_shapes=exit_shapes,
+                oanda_campaign_estimated_return_pct_per_active_day=estimated_pct,
+            )
+        )
     return lanes
 
 
@@ -407,11 +440,20 @@ def _oanda_campaign_firepower_lane(
         missed_reward_pressure_jpy=estimated_return_jpy,
         oanda_campaign_firepower_seed=True,
         oanda_campaign_vehicle_key=vehicle_key,
+        oanda_campaign_vehicle_count=1,
+        oanda_campaign_vehicle_keys=(vehicle_key,),
         oanda_campaign_firepower_status=status,
         oanda_campaign_exit_shape=str(vehicle.get("exit_shape") or ""),
+        oanda_campaign_exit_shapes=(str(vehicle.get("exit_shape") or ""),),
         oanda_campaign_estimated_return_pct_per_active_day=estimated_return_pct,
         oanda_campaign_live_permission=False,
     )
+
+
+def _append_unique_str(items: list[str], value: object) -> None:
+    text = str(value or "").strip()
+    if text and text not in items:
+        items.append(text)
 
 
 def _oanda_campaign_vehicle_side(vehicle: dict[str, Any]) -> str:

@@ -583,8 +583,11 @@ RANGE_AUTOLANE_FORMING_BB_WIDTH_PCT_MAX = 35.0
 OANDA_CAMPAIGN_FIREPOWER_LANE_KEYS = (
     "oanda_campaign_firepower_seed",
     "oanda_campaign_vehicle_key",
+    "oanda_campaign_vehicle_count",
+    "oanda_campaign_vehicle_keys",
     "oanda_campaign_firepower_status",
     "oanda_campaign_exit_shape",
+    "oanda_campaign_exit_shapes",
     "oanda_campaign_estimated_return_pct_per_active_day",
     "oanda_campaign_live_permission",
 )
@@ -6956,8 +6959,11 @@ def _intent_from_lane(
             "post_harvest_age_minutes": lane.get("post_harvest_age_minutes"),
             "oanda_campaign_firepower_seed": bool(lane.get("oanda_campaign_firepower_seed")),
             "oanda_campaign_vehicle_key": lane.get("oanda_campaign_vehicle_key"),
+            "oanda_campaign_vehicle_count": lane.get("oanda_campaign_vehicle_count"),
+            "oanda_campaign_vehicle_keys": lane.get("oanda_campaign_vehicle_keys") or [],
             "oanda_campaign_firepower_status": lane.get("oanda_campaign_firepower_status"),
             "oanda_campaign_exit_shape": lane.get("oanda_campaign_exit_shape"),
+            "oanda_campaign_exit_shapes": lane.get("oanda_campaign_exit_shapes") or [],
             "oanda_campaign_estimated_return_pct_per_active_day": (
                 lane.get("oanda_campaign_estimated_return_pct_per_active_day")
             ),

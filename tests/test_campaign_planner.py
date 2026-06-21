@@ -17,7 +17,7 @@ def _write_oanda_firepower_report(root: Path, *, status: str = "VERIFIED_TARGET_
                 "campaign_firepower": {
                     "status": status,
                     "high_precision": {
-                        "unique_vehicle_count": 2,
+                        "unique_vehicle_count": 3,
                         "pair_count": 2,
                         "estimated_return_pct_per_active_day_at_observed_frequency": 11.0,
                         "top_vehicles": [
@@ -45,6 +45,19 @@ def _write_oanda_firepower_report(root: Path, *, status: str = "VERIFIED_TARGET_
                                 "validation_win_wilson95_lower": 0.60,
                                 "validation_profit_factor": 8.89,
                                 "estimated_return_pct_per_active_day_at_observed_frequency": 1.62,
+                                "live_permission": False,
+                            },
+                            {
+                                "vehicle_key": "USD_JPY|LONG|range_reversion|tp1_sl1",
+                                "pair": "USD_JPY",
+                                "shape": "range_reversion",
+                                "firepower_side": "LONG",
+                                "exit_shape": "tp1_sl1",
+                                "validation_n": 22,
+                                "validation_win_rate": 0.76,
+                                "validation_win_wilson95_lower": 0.54,
+                                "validation_profit_factor": 3.12,
+                                "estimated_return_pct_per_active_day_at_observed_frequency": 0.80,
                                 "live_permission": False,
                             },
                         ],
@@ -241,6 +254,16 @@ class CampaignPlannerTest(unittest.TestCase):
             self.assertEqual(first["method"], "RANGE_ROTATION")
             self.assertEqual(first["campaign_role"], "OANDA_FIREPOWER_ROUTE")
             self.assertEqual(first["target_reward_risk"], 1.25)
+            self.assertEqual(first["oanda_campaign_vehicle_count"], 2)
+            self.assertEqual(
+                first["oanda_campaign_vehicle_keys"],
+                [
+                    "USD_JPY|LONG|range_reversion|tp1.25_sl1",
+                    "USD_JPY|LONG|range_reversion|tp1_sl1",
+                ],
+            )
+            self.assertEqual(first["oanda_campaign_exit_shapes"], ["tp1.25_sl1", "tp1_sl1"])
+            self.assertAlmostEqual(first["oanda_campaign_estimated_return_pct_per_active_day"], 2.42)
             self.assertFalse(first["oanda_campaign_live_permission"])
             self.assertTrue(any(lane["pair"] == "GBP_USD" for lane in lanes))
 

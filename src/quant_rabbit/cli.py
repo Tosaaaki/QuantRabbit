@@ -353,6 +353,48 @@ def _generated_at_from_json(path: Path) -> datetime | None:
     return _parse_utc_datetime(payload.get("generated_at_utc"))
 
 
+OANDA_CAMPAIGN_FIREPOWER_REFRESH_STATUSES = {
+    "VERIFIED_MINIMUM_5_ROUTE_ESTIMATED",
+    "VERIFIED_TARGET_10_ROUTE_ESTIMATED",
+}
+
+
+def _oanda_rotation_mining_path_for_campaign_plan(campaign_plan_path: Path) -> Path | None:
+    if _paths_equivalent(campaign_plan_path, DEFAULT_CAMPAIGN_PLAN):
+        return DEFAULT_OANDA_UNIVERSAL_ROTATION_MINING
+    return None
+
+
+def _campaign_plan_missing_oanda_firepower_seed(plan: dict[str, Any]) -> bool:
+    lanes = plan.get("lanes")
+    if not isinstance(lanes, list):
+        return True
+    return not any(isinstance(lane, dict) and lane.get("oanda_campaign_firepower_seed") for lane in lanes)
+
+
+def _oanda_rotation_mining_has_seedable_firepower(path: Path | None) -> bool:
+    if path is None or not path.exists():
+        return False
+    try:
+        payload = _load_json_object(path)
+    except (OSError, json.JSONDecodeError, ValueError):
+        return False
+    firepower = payload.get("campaign_firepower")
+    if not isinstance(firepower, dict):
+        return False
+    status = str(firepower.get("status") or "").strip().upper()
+    if status not in OANDA_CAMPAIGN_FIREPOWER_REFRESH_STATUSES:
+        return False
+    high_precision = firepower.get("high_precision")
+    if not isinstance(high_precision, dict):
+        return False
+    vehicles = high_precision.get("top_vehicles")
+    if isinstance(vehicles, list) and any(isinstance(item, dict) for item in vehicles):
+        return True
+    count = _optional_float(high_precision.get("unique_vehicle_count"))
+    return bool(count is not None and count > 0)
+
+
 def _auto_refresh_campaign_plan_if_required(
     *,
     campaign_plan_path: Path,
@@ -408,6 +450,13 @@ def _auto_refresh_campaign_plan_if_required(
     target_generated_at = _parse_utc_datetime(target_state.get("generated_at_utc"))
     strategy_generated_at = _generated_at_from_json(strategy_profile_path)
     story_generated_at = _generated_at_from_json(market_story_profile_path)
+    oanda_rotation_mining_path = _oanda_rotation_mining_path_for_campaign_plan(campaign_plan_path)
+    oanda_generated_at = (
+        _generated_at_from_json(oanda_rotation_mining_path)
+        if oanda_rotation_mining_path is not None
+        else None
+    )
+    oanda_has_seedable_firepower = _oanda_rotation_mining_has_seedable_firepower(oanda_rotation_mining_path)
 
     if generated_at is not None:
         if target_generated_at is not None and generated_at < target_generated_at:
@@ -416,6 +465,10 @@ def _auto_refresh_campaign_plan_if_required(
             reasons.append("strategy_profile_newer")
         if story_generated_at is not None and generated_at < story_generated_at:
             reasons.append("market_story_profile_newer")
+        if oanda_generated_at is not None and generated_at < oanda_generated_at:
+            reasons.append("oanda_rotation_mining_newer")
+        if oanda_has_seedable_firepower and _campaign_plan_missing_oanda_firepower_seed(plan):
+            reasons.append("oanda_rotation_mining_seed_missing")
         mismatch = _campaign_target_mismatch_for_cli(plan, target_state)
         if mismatch is not None:
             reasons.append(f"target_state_mismatch:{mismatch}")
@@ -455,6 +508,7 @@ def _auto_refresh_campaign_plan_if_required(
             market_story_profile=market_story_profile_path,
             report_path=_campaign_report_path_for_plan(campaign_plan_path),
             plan_path=campaign_plan_path,
+            oanda_rotation_mining=oanda_rotation_mining_path,
         ).run(start_balance_jpy=start_balance, target_return_pct=target_return_pct)
     except (OSError, json.JSONDecodeError, ValueError, RuntimeError) as exc:
         return {
@@ -470,6 +524,7 @@ def _auto_refresh_campaign_plan_if_required(
         "refresh_reasons": reasons,
         "campaign_plan_path": str(summary.plan_path),
         "campaign_report_path": str(summary.report_path),
+        "oanda_rotation_mining_path": str(oanda_rotation_mining_path) if oanda_rotation_mining_path else None,
         "target_state_path": str(target_state_path),
         "start_balance_jpy": start_balance,
         "target_return_pct": target_return_pct,
