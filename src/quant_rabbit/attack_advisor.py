@@ -321,6 +321,7 @@ class AttackAdvisor:
                 lines.append(
                     f"- `{item.get('signal_name')}` bucket=`{item.get('bucket')}` "
                     f"status=`{item.get('activation_status')}` "
+                    f"repair=`{item.get('primary_repair_category')}` "
                     f"economic_Wilson95_lower=`{item.get('economic_hit_rate_wilson_lower')}` "
                     f"matched_lanes=`{item.get('matched_lane_count')}` "
                     f"blocker=`{((item.get('top_blockers') or [''])[0])}`"
@@ -1036,6 +1037,11 @@ def _projection_edge_activation_queue(
                         row["current_precision_failure_count"] = int(row["current_precision_failure_count"]) + 1
                     for blocker in blockers:
                         _append_unique(row["top_blockers"], blocker)
+                        if not blocker.startswith("status is "):
+                            _append_unique(row["non_status_blockers"], blocker)
+                        category = _projection_edge_repair_category(blocker)
+                        if category:
+                            row["repair_category_hits"][category] = int(row["repair_category_hits"].get(category, 0)) + 1
 
     for edge in projection_edge_index.values():
         key = _projection_edge_key(edge)
@@ -1063,14 +1069,29 @@ def _projection_edge_activation_queue(
         else:
             activation_status = "EDGE_READY_NO_CURRENT_SIGNAL"
             action = "refresh market context and wait for the detector to fire again"
+        repair_categories = _projection_edge_repair_category_summary(row["repair_category_hits"])
+        primary_repair_category = (
+            str(repair_categories[0]["category"])
+            if repair_categories
+            else _projection_edge_default_repair_category(activation_status)
+        )
+        primary_repair_action = _projection_edge_repair_action(
+            primary_repair_category,
+            activation_status=activation_status,
+        )
         row["activation_status"] = activation_status
-        row["activation_action"] = action
+        row["activation_action"] = primary_repair_action or action
+        row["primary_repair_category"] = primary_repair_category
+        row["primary_repair_action"] = primary_repair_action or action
+        row["repair_categories"] = repair_categories
         row["matched_lane_count"] = len(matched)
         row["blocked_lane_count"] = len(blocked)
         row["matched_lane_ids"] = matched[:6]
         row["blocked_lane_ids"] = blocked[:6]
         row["signal_sources"] = row["signal_sources"][:4]
-        row["top_blockers"] = row["top_blockers"][:6]
+        row["top_blockers"] = (row["non_status_blockers"] or row["top_blockers"])[:6]
+        row["non_status_blockers"] = row["non_status_blockers"][:6]
+        row.pop("repair_category_hits", None)
         out.append(row)
 
     out.sort(key=_projection_edge_activation_sort_key)
@@ -1097,8 +1118,119 @@ def _projection_edge_activation_row(edge: dict[str, Any]) -> dict[str, Any]:
         "blocked_lane_ids": [],
         "signal_sources": [],
         "top_blockers": [],
+        "non_status_blockers": [],
+        "repair_category_hits": {},
         "current_precision_failure_count": 0,
     }
+
+
+def _projection_edge_repair_category(blocker: str) -> str:
+    text = str(blocker or "").upper()
+    if not text or text.startswith("STATUS IS "):
+        return ""
+    if "SPREAD" in text or "LIQUIDITY" in text:
+        return "SPREAD_LIQUIDITY_WAIT"
+    if (
+        "RISK-RESIZED" in text
+        or "RISK_RESIZED" in text
+        or "LOSS CAP" in text
+        or "LOSS_CAP" in text
+        or "MARGIN" in text
+        or "MIN_LOT" in text
+    ):
+        return "RISK_RESIZE_DRY_RUN"
+    if (
+        "BLOCK_UNTIL_NEW_EVIDENCE" in text
+        or "WATCH_ONLY" in text
+        or "STRATEGY_PROFILE" in text
+        or "MINED STRATEGY PROFILE" in text
+    ):
+        return "STRATEGY_PROFILE_REPAIR"
+    if (
+        "MATRIX_REPAIR_REJECT_CONTEXT" in text
+        or "REJECT CONTEXT" in text
+        or "MARKET_CONTEXT" in text
+        or "CONFLUENCE" in text
+        or "SCORE_BALANCE" in text
+        or "QUOTE JPY STRENGTH" in text
+    ):
+        return "MARKET_CONTEXT_REPAIR"
+    if (
+        "FORECAST" in text
+        or "PREDICTION" in text
+        or "UNSELECTED_DIRECTION" in text
+        or "AUDITED" in text
+        or "PROJECTION" in text
+    ):
+        return "FORECAST_SUPPORT_REPAIR"
+    if (
+        "EXHAUSTION" in text
+        or "PATTERN" in text
+        or "CHART_DIRECTION_CONFLICT" in text
+        or "BOS" in text
+        or "CHOCH" in text
+    ):
+        return "STRUCTURE_TIMING_REPAIR"
+    return "OTHER_BLOCKER"
+
+
+def _projection_edge_repair_category_summary(counts: dict[str, Any]) -> list[dict[str, object]]:
+    rows: list[dict[str, object]] = []
+    for category, count in counts.items():
+        rows.append({"category": str(category), "count": int(count or 0)})
+    rows.sort(
+        key=lambda item: (
+            -int(item.get("count") or 0),
+            _projection_edge_repair_category_priority(str(item.get("category") or "")),
+            str(item.get("category") or ""),
+        )
+    )
+    return rows
+
+
+def _projection_edge_repair_category_priority(category: str) -> int:
+    order = {
+        "RISK_RESIZE_DRY_RUN": 0,
+        "FORECAST_SUPPORT_REPAIR": 1,
+        "MARKET_CONTEXT_REPAIR": 2,
+        "STRATEGY_PROFILE_REPAIR": 3,
+        "STRUCTURE_TIMING_REPAIR": 4,
+        "SPREAD_LIQUIDITY_WAIT": 5,
+        "CURRENT_PRECISION_REPAIR": 6,
+        "DETECTOR_REFRESH_WAIT": 7,
+        "OTHER_BLOCKER": 8,
+    }
+    return order.get(str(category or ""), 99)
+
+
+def _projection_edge_default_repair_category(activation_status: str) -> str:
+    if activation_status == "CURRENT_PRECISION_FAILED":
+        return "CURRENT_PRECISION_REPAIR"
+    if activation_status == "SURFACED_UNSELECTED":
+        return "FORECAST_SUPPORT_REPAIR"
+    if activation_status == "EDGE_READY_NO_CURRENT_SIGNAL":
+        return "DETECTOR_REFRESH_WAIT"
+    return "OTHER_BLOCKER"
+
+
+def _projection_edge_repair_action(category: str, *, activation_status: str) -> str:
+    if activation_status == "EDGE_READY_NO_CURRENT_SIGNAL":
+        return "refresh market context and wait for this detector to fire before ranking the edge"
+    if category == "RISK_RESIZE_DRY_RUN":
+        return "produce a risk-resized dry-run receipt that fits the current loss cap before promotion"
+    if category == "FORECAST_SUPPORT_REPAIR":
+        return "repair forecast/support alignment; do not trade the edge until current direction support clears"
+    if category == "MARKET_CONTEXT_REPAIR":
+        return "refresh market-context matrix and wait for reject context to clear before using the edge"
+    if category == "STRATEGY_PROFILE_REPAIR":
+        return "mine or promote fresh bounded evidence for this pair/side/method; no auto-promotion"
+    if category == "STRUCTURE_TIMING_REPAIR":
+        return "wait for market-structure timing proof such as retest, rejection, or close-confirmed structure"
+    if category == "SPREAD_LIQUIDITY_WAIT":
+        return "wait for session/liquidity spread normalization before treating the edge as usable"
+    if category == "CURRENT_PRECISION_REPAIR":
+        return "wait for current live_precision_ok support before ranking this edge"
+    return "repair current lane blockers before using this rank-only edge"
 
 
 def _projection_edge_key(edge: dict[str, Any]) -> tuple[str, str] | None:
@@ -1396,7 +1528,7 @@ def _action_items(
         yield f"repair matrix-supported profitable edges before broad exploration: {preview}"
     if projection_edge_activation_queue:
         preview = "; ".join(
-            f"{item.get('signal_name')} {item.get('bucket')} ({item.get('activation_status')})"
+            f"{item.get('signal_name')} {item.get('bucket')} ({item.get('primary_repair_category')})"
             for item in projection_edge_activation_queue[:3]
         )
         yield f"activate projection economic precision edges only after current blockers clear: {preview}"
