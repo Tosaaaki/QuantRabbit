@@ -539,6 +539,13 @@ class AttackAdvisorTest(unittest.TestCase):
             self.assertEqual(detail["source"], "projection_ledger")
             self.assertEqual(detail["bucket"], "GBP_AUD:TREND")
             self.assertGreaterEqual(detail["economic_hit_rate_wilson_lower"], 0.90)
+            self.assertFalse(
+                any(
+                    item["signal_name"] == "bb_squeeze_expansion_imminent"
+                    and item["bucket"] == "GBP_AUD:TREND"
+                    for item in payload["projection_edge_activation_queue"]
+                )
+            )
 
     def test_projection_economic_precision_edge_does_not_override_current_precision_failure(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -678,6 +685,155 @@ class AttackAdvisorTest(unittest.TestCase):
             lane = payload["lanes"][0]
             self.assertEqual(lane["learning_score_delta"], 0.0)
             self.assertNotIn("projection_economic_precision_rank_edge", lane["learning_influences"])
+
+    def test_projection_edge_activation_queue_surfaces_blocked_current_signal(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            intents = root / "intents.json"
+            target = root / "target.json"
+            backtest = root / "ai_backtest.json"
+            coverage = root / "coverage.json"
+            projection = root / "projection_ledger.jsonl"
+            _write_projection_edge_rows(
+                projection,
+                signal_name="session_expansion_london",
+                pair="EUR_USD",
+                direction="EITHER",
+                regime="UNCLEAR",
+            )
+            intents.write_text(
+                json.dumps(
+                    {
+                        "results": [
+                            _result(
+                                status="DRY_RUN_BLOCKED",
+                                live_blockers=["FORECAST_CONFIDENCE_REQUIRED_FOR_LIVE"],
+                                lane_id="trend_trader:EUR_USD:LONG:TREND_CONTINUATION",
+                                pair="EUR_USD",
+                                side="LONG",
+                                method="TREND_CONTINUATION",
+                                metadata={
+                                    "regime_state": "UNCLEAR",
+                                    "forecast_market_support": {
+                                        "ok": True,
+                                        "direction": "UP",
+                                        "signals": [
+                                            {
+                                                "name": "session_expansion_london",
+                                                "calibration_name": "session_expansion_london",
+                                                "direction": "EITHER",
+                                                "hit_rate": 0.96,
+                                                "samples": 100,
+                                                "economic_hit_rate": 0.96,
+                                                "economic_samples": 100,
+                                                "live_precision_ok": True,
+                                            }
+                                        ],
+                                    },
+                                },
+                            )
+                        ]
+                    }
+                )
+            )
+            target.write_text(json.dumps({"status": "PURSUE_TARGET", "remaining_target_jpy": 1000.0, "remaining_risk_budget_jpy": 1000.0}))
+            backtest.write_text(json.dumps({"status": "TARGET_COVERAGE_GAP", "bucket_contributions": []}))
+            coverage.write_text(json.dumps({"status": "LIVE_READY_COVERAGE_READY"}))
+
+            AttackAdvisor(
+                intents_path=intents,
+                target_state_path=target,
+                ai_backtest_path=backtest,
+                outcome_mart_path=root / "missing_outcome_mart.json",
+                coverage_path=coverage,
+                projection_ledger_path=projection,
+                output_path=root / "advice.json",
+                report_path=root / "advice.md",
+            ).run()
+
+            payload = json.loads((root / "advice.json").read_text())
+            queue = payload["projection_edge_activation_queue"]
+            self.assertEqual(queue[0]["activation_status"], "SURFACED_BUT_BLOCKED")
+            self.assertEqual(queue[0]["signal_name"], "session_expansion_london")
+            self.assertEqual(queue[0]["bucket"], "EUR_USD:UNCLEAR")
+            self.assertEqual(queue[0]["matched_lane_count"], 1)
+            self.assertIn("FORECAST_CONFIDENCE_REQUIRED_FOR_LIVE", queue[0]["top_blockers"])
+            self.assertTrue(
+                any("activate projection economic precision edges" in item for item in payload["action_items"])
+            )
+            self.assertIn("Projection Edge Activation Queue", (root / "advice.md").read_text())
+
+    def test_projection_edge_activation_queue_surfaces_unselected_edge(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            intents = root / "intents.json"
+            target = root / "target.json"
+            backtest = root / "ai_backtest.json"
+            coverage = root / "coverage.json"
+            projection = root / "projection_ledger.jsonl"
+            _write_projection_edge_rows(
+                projection,
+                signal_name="news_theme_followthrough",
+                pair="EUR_USD",
+                direction="EITHER",
+                regime="RANGE",
+            )
+            intents.write_text(
+                json.dumps(
+                    {
+                        "results": [
+                            _result(
+                                status="DRY_RUN_BLOCKED",
+                                live_blockers=["FORECAST_RANGE_UNSELECTED_DIRECTION_CONFLICT"],
+                                lane_id="failure_trader:EUR_USD:SHORT:BREAKOUT_FAILURE",
+                                pair="EUR_USD",
+                                side="SHORT",
+                                method="BREAKOUT_FAILURE",
+                                metadata={
+                                    "regime_state": "RANGE",
+                                    "forecast_market_support": {
+                                        "ok": False,
+                                        "direction": "RANGE",
+                                        "signals": [],
+                                        "unselected_signals": [
+                                            {
+                                                "name": "news_theme_followthrough",
+                                                "calibration_name": "news_theme_followthrough",
+                                                "direction": "UP",
+                                                "hit_rate": 0.96,
+                                                "samples": 100,
+                                                "economic_hit_rate": 0.96,
+                                                "economic_samples": 100,
+                                                "live_precision_ok": True,
+                                            }
+                                        ],
+                                    },
+                                },
+                            )
+                        ]
+                    }
+                )
+            )
+            target.write_text(json.dumps({"status": "PURSUE_TARGET", "remaining_target_jpy": 1000.0, "remaining_risk_budget_jpy": 1000.0}))
+            backtest.write_text(json.dumps({"status": "TARGET_COVERAGE_GAP", "bucket_contributions": []}))
+            coverage.write_text(json.dumps({"status": "LIVE_READY_COVERAGE_READY"}))
+
+            AttackAdvisor(
+                intents_path=intents,
+                target_state_path=target,
+                ai_backtest_path=backtest,
+                outcome_mart_path=root / "missing_outcome_mart.json",
+                coverage_path=coverage,
+                projection_ledger_path=projection,
+                output_path=root / "advice.json",
+                report_path=root / "advice.md",
+            ).run()
+
+            payload = json.loads((root / "advice.json").read_text())
+            queue = payload["projection_edge_activation_queue"]
+            self.assertEqual(queue[0]["activation_status"], "SURFACED_UNSELECTED")
+            self.assertEqual(queue[0]["signal_sources"], ["unselected"])
+            self.assertEqual(queue[0]["activation_action"], "resolve forecast direction conflict before using this rank-only edge")
 
     def test_blocks_when_live_ready_metrics_are_missing(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -1580,6 +1736,7 @@ class AttackAdvisorTest(unittest.TestCase):
 def _result(
     *,
     lane_id: str = "trend_trader:EUR_USD:LONG:TREND_CONTINUATION",
+    status: str = "LIVE_READY",
     pair: str = "EUR_USD",
     side: str = "LONG",
     method: str = "TREND_CONTINUATION",
@@ -1590,6 +1747,9 @@ def _result(
     risk_metrics: dict | None = None,
     context: dict | None = None,
     metadata: dict | None = None,
+    live_blockers: list[str] | None = None,
+    risk_issues: list[str] | None = None,
+    strategy_issues: list[str] | None = None,
     entry: float = 1.1,
     tp: float = 1.2,
     sl: float = 1.0,
@@ -1597,11 +1757,11 @@ def _result(
     metrics = risk_metrics if risk_metrics is not None else {"reward_jpy": reward_jpy, "risk_jpy": risk_jpy, "reward_risk": rr, "spread_pips": 0.8}
     return {
         "lane_id": lane_id,
-        "status": "LIVE_READY",
+        "status": status,
         "risk_metrics": metrics,
-        "risk_issues": [],
-        "strategy_issues": [],
-        "live_blockers": [],
+        "risk_issues": risk_issues or [],
+        "strategy_issues": strategy_issues or [],
+        "live_blockers": live_blockers or [],
         "intent": {
             "pair": pair,
             "side": side,

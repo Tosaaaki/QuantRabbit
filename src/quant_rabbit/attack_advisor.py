@@ -174,6 +174,7 @@ class AttackAdvisor:
         coverage_pct = _round((live_ready_reward / remaining_target) * 100.0) if remaining_target else 0.0
         recommended_coverage_pct = _round((recommended_reward / remaining_target) * 100.0) if remaining_target else 0.0
         matrix_supported_repair_queue = _matrix_supported_repair_queue(coverage or {})
+        projection_edge_activation_queue = _projection_edge_activation_queue(intents, projection_edge_index)
         blockers = tuple(
             _blockers(
                 intents=intents,
@@ -194,6 +195,7 @@ class AttackAdvisor:
                 outcome_index=outcome_index,
                 condition_index=condition_index,
                 coverage=coverage or {},
+                projection_edge_activation_queue=projection_edge_activation_queue,
             )
         )
         status = _status(blockers=blockers, recommended=recommended, remaining_target=remaining_target, recommended_reward=recommended_reward)
@@ -222,6 +224,7 @@ class AttackAdvisor:
             "recommended_now_coverage_pct": recommended_coverage_pct,
             "watchlist_lane_ids": [lane.lane_id for lane in watchlist],
             "matrix_supported_repair_queue": matrix_supported_repair_queue,
+            "projection_edge_activation_queue": projection_edge_activation_queue,
             "self_improvement_p0_shadow_live_ready": p0_shadow,
             "required_additional_reward_jpy": _round(max((remaining_target or 0.0) - live_ready_reward, 0.0)),
             "required_additional_live_ready_lanes": _required_additional_lanes(
@@ -309,6 +312,18 @@ class AttackAdvisor:
                 lines.append(
                     f"- `{pair} {direction}` state=`{state}` profile=`{status}` "
                     f"matrix_support=`{support}` managed_net=`{net}` blocker=`{blocker}`"
+                )
+        else:
+            lines.append("- none")
+        lines.extend(["", "## Projection Edge Activation Queue", ""])
+        if payload.get("projection_edge_activation_queue"):
+            for item in payload["projection_edge_activation_queue"][:REPORT_LANE_LIMIT]:
+                lines.append(
+                    f"- `{item.get('signal_name')}` bucket=`{item.get('bucket')}` "
+                    f"status=`{item.get('activation_status')}` "
+                    f"economic_Wilson95_lower=`{item.get('economic_hit_rate_wilson_lower')}` "
+                    f"matched_lanes=`{item.get('matched_lane_count')}` "
+                    f"blocker=`{((item.get('top_blockers') or [''])[0])}`"
                 )
         else:
             lines.append("- none")
@@ -952,6 +967,192 @@ def _projection_economic_edge_index(path: Path) -> dict[tuple[str, str, str], di
     return index
 
 
+def _projection_edge_activation_queue(
+    intents: dict[str, Any],
+    projection_edge_index: dict[tuple[str, str, str], dict[str, Any]],
+    *,
+    limit: int = REPORT_LANE_LIMIT,
+) -> list[dict[str, Any]]:
+    if not projection_edge_index:
+        return []
+    active_keys: set[tuple[str, str]] = set()
+    rows: dict[tuple[str, str], dict[str, Any]] = {}
+    results = [
+        item for item in intents.get("results", []) or []
+        if isinstance(item, dict) and isinstance(item.get("intent"), dict)
+    ]
+
+    for result in results:
+        intent = result["intent"]
+        metadata = intent.get("metadata") if isinstance(intent.get("metadata"), dict) else {}
+        support = metadata.get("forecast_market_support")
+        if not isinstance(support, dict):
+            continue
+        pair = str(intent.get("pair") or "")
+        regime = _projection_regime_token(
+            metadata.get("regime_state")
+            or metadata.get("dominant_regime")
+            or metadata.get("forecast_regime")
+        )
+        lane_id = str(result.get("lane_id") or "")
+        status = str(result.get("status") or "")
+        blockers = _intent_issue_strings(result)
+        support_ok = support.get("ok") is True
+
+        for source, signals in (
+            ("selected", support.get("signals") or []),
+            ("unselected", support.get("unselected_signals") or []),
+        ):
+            if not isinstance(signals, list):
+                continue
+            for signal in signals:
+                if not isinstance(signal, dict):
+                    continue
+                matches = _projection_edge_matches_for_signal(
+                    signal,
+                    projection_edge_index=projection_edge_index,
+                    pair=pair,
+                    regime=regime,
+                )
+                for edge in matches:
+                    key = _projection_edge_key(edge)
+                    if not key:
+                        continue
+                    if (
+                        source == "selected"
+                        and status == "LIVE_READY"
+                        and support_ok
+                        and not blockers
+                        and signal.get("live_precision_ok") is not False
+                    ):
+                        active_keys.add(key)
+                        continue
+                    row = rows.setdefault(key, _projection_edge_activation_row(edge))
+                    _append_unique(row["matched_lane_ids"], lane_id)
+                    _append_unique(row["signal_sources"], source)
+                    if status != "LIVE_READY" or blockers:
+                        _append_unique(row["blocked_lane_ids"], lane_id)
+                    if signal.get("live_precision_ok") is False:
+                        row["current_precision_failure_count"] = int(row["current_precision_failure_count"]) + 1
+                    for blocker in blockers:
+                        _append_unique(row["top_blockers"], blocker)
+
+    for edge in projection_edge_index.values():
+        key = _projection_edge_key(edge)
+        if not key or key in active_keys or key in rows:
+            continue
+        rows[key] = _projection_edge_activation_row(edge)
+
+    out: list[dict[str, Any]] = []
+    for key, row in rows.items():
+        if key in active_keys:
+            continue
+        matched = row["matched_lane_ids"]
+        blocked = row["blocked_lane_ids"]
+        sources = set(row["signal_sources"])
+        precision_failures = int(row["current_precision_failure_count"])
+        if precision_failures:
+            activation_status = "CURRENT_PRECISION_FAILED"
+            action = "wait for current live_precision_ok support before ranking this edge"
+        elif "selected" in sources and (blocked or matched):
+            activation_status = "SURFACED_BUT_BLOCKED"
+            action = "repair current lane blockers before using this rank-only edge"
+        elif "unselected" in sources:
+            activation_status = "SURFACED_UNSELECTED"
+            action = "resolve forecast direction conflict before using this rank-only edge"
+        else:
+            activation_status = "EDGE_READY_NO_CURRENT_SIGNAL"
+            action = "refresh market context and wait for the detector to fire again"
+        row["activation_status"] = activation_status
+        row["activation_action"] = action
+        row["matched_lane_count"] = len(matched)
+        row["blocked_lane_count"] = len(blocked)
+        row["matched_lane_ids"] = matched[:6]
+        row["blocked_lane_ids"] = blocked[:6]
+        row["signal_sources"] = row["signal_sources"][:4]
+        row["top_blockers"] = row["top_blockers"][:6]
+        out.append(row)
+
+    out.sort(key=_projection_edge_activation_sort_key)
+    return out[: max(0, int(limit))]
+
+
+def _projection_edge_activation_row(edge: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "signal_name": str(edge.get("signal_name") or ""),
+        "bucket": str(edge.get("bucket") or ""),
+        "pair": str(edge.get("pair") or ""),
+        "regime": str(edge.get("regime") or ""),
+        "samples": int(edge.get("samples") or 0),
+        "hit_rate": _round(float(edge.get("hit_rate") or 0.0)),
+        "hit_rate_wilson_lower": _round(float(edge.get("hit_rate_wilson_lower") or 0.0)),
+        "economic_samples": int(edge.get("economic_samples") or 0),
+        "economic_hit_rate": _round(float(edge.get("economic_hit_rate") or 0.0)),
+        "economic_hit_rate_wilson_lower": _round(
+            float(edge.get("economic_hit_rate_wilson_lower") or 0.0)
+        ),
+        "timeout_rate": _round(float(edge.get("timeout_rate") or 0.0)),
+        "rank_only": True,
+        "matched_lane_ids": [],
+        "blocked_lane_ids": [],
+        "signal_sources": [],
+        "top_blockers": [],
+        "current_precision_failure_count": 0,
+    }
+
+
+def _projection_edge_key(edge: dict[str, Any]) -> tuple[str, str] | None:
+    signal_name = str(edge.get("signal_name") or "")
+    bucket = str(edge.get("bucket") or "")
+    if not signal_name or not bucket:
+        return None
+    return (signal_name, bucket)
+
+
+def _projection_edge_activation_sort_key(row: dict[str, Any]) -> tuple[int, int, float, float, int, str, str]:
+    status_rank = {
+        "SURFACED_BUT_BLOCKED": 0,
+        "CURRENT_PRECISION_FAILED": 1,
+        "SURFACED_UNSELECTED": 2,
+        "EDGE_READY_NO_CURRENT_SIGNAL": 3,
+    }.get(str(row.get("activation_status") or ""), 9)
+    broad_rank = 1 if str(row.get("pair") or "").startswith("_all") else 0
+    return (
+        status_rank,
+        broad_rank,
+        -float(row.get("economic_hit_rate_wilson_lower") or 0.0),
+        -float(row.get("economic_hit_rate") or 0.0),
+        -int(row.get("economic_samples") or 0),
+        str(row.get("signal_name") or ""),
+        str(row.get("bucket") or ""),
+    )
+
+
+def _intent_issue_strings(item: dict[str, Any]) -> list[str]:
+    out: list[str] = []
+    status = str(item.get("status") or "")
+    if status and status != "LIVE_READY":
+        out.append(f"status is {status}")
+    for key in ("live_blockers", "risk_issues", "strategy_issues", "blockers"):
+        value = item.get(key)
+        if not isinstance(value, list):
+            continue
+        for raw in value:
+            text = ""
+            if isinstance(raw, dict):
+                text = str(raw.get("code") or raw.get("message") or raw.get("reason") or "").strip()
+            else:
+                text = str(raw or "").strip()
+            if text:
+                _append_unique(out, text)
+    return out
+
+
+def _append_unique(items: list[Any], value: Any) -> None:
+    if value and value not in items:
+        items.append(value)
+
+
 def _outcome_index(payload: dict[str, Any]) -> dict[tuple[str, str, str], dict[str, Any]]:
     index: dict[tuple[str, str, str], dict[str, Any]] = {}
     for item in payload.get("method_edges", []) or []:
@@ -1166,6 +1367,7 @@ def _action_items(
     outcome_index: dict[tuple[str, str, str], dict[str, Any]],
     condition_index: dict[tuple[str, str, str, str], dict[str, Any]],
     coverage: dict[str, Any],
+    projection_edge_activation_queue: list[dict[str, Any]],
 ) -> Iterator[str]:
     if remaining_target and live_ready_reward < remaining_target:
         gap = _round(remaining_target - live_ready_reward)
@@ -1192,6 +1394,12 @@ def _action_items(
             for item in matrix_queue[:3]
         )
         yield f"repair matrix-supported profitable edges before broad exploration: {preview}"
+    if projection_edge_activation_queue:
+        preview = "; ".join(
+            f"{item.get('signal_name')} {item.get('bucket')} ({item.get('activation_status')})"
+            for item in projection_edge_activation_queue[:3]
+        )
+        yield f"activate projection economic precision edges only after current blockers clear: {preview}"
     coverage_status = str(coverage.get("status") or "")
     if coverage_status and coverage_status != "LIVE_READY_COVERAGE_READY":
         yield f"resolve coverage optimizer status {coverage_status} before treating attack advice as certified"
