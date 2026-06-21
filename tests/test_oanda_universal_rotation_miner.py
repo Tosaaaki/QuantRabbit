@@ -30,6 +30,11 @@ class OandaUniversalRotationMinerTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             miner._parse_exit_shapes("bad,tp0_sl1,tp1_sl0")
 
+    def test_parse_multi_confluence_sizes_dedupes_and_requires_three_plus(self) -> None:
+        self.assertEqual(miner._parse_multi_confluence_sizes("4,3,4"), (3, 4))
+        with self.assertRaises(ValueError):
+            miner._parse_multi_confluence_sizes("2")
+
     def test_score_exit_uses_spread_floor_for_take_profit_and_stop(self) -> None:
         start = datetime(2026, 6, 1, tzinfo=timezone.utc)
         candles = [
@@ -128,6 +133,76 @@ class OandaUniversalRotationMinerTest(unittest.TestCase):
         self.assertEqual(summary["qualification"], "FAIL")
         self.assertEqual(summary["validation_win_rate"], 0.0)
         self.assertIn("VALIDATION_WIN_RATE_TOO_LOW", summary["blockers"])
+
+    def test_build_report_mines_three_and_four_feature_confluences(self) -> None:
+        rows = []
+        start = datetime(2026, 3, 1, tzinfo=timezone.utc)
+        features = [
+            "shape:range_reversion",
+            "side:LONG",
+            "session:london_ny_overlap",
+            "atr_regime:mid",
+            "spread_regime:mid",
+            "range_pos:low",
+            "body:flat",
+            "wick_reject:1",
+            "bar_range:normal",
+            "failed_break:0",
+        ]
+        for index in range(40):
+            ts = start + timedelta(days=index)
+            rows.append(
+                {
+                    "timestamp_utc": ts.isoformat().replace("+00:00", "Z"),
+                    "jst_day": ts.date().isoformat(),
+                    "pair": "USD_JPY",
+                    "shape": "range_reversion",
+                    "side": "LONG",
+                    "exit_shape": "tp1_sl1",
+                    "realized_pips": 4.0,
+                    "realized_atr": 0.5,
+                    "win": True,
+                    "outcome": "TAKE_PROFIT_FIRST",
+                    "features": features,
+                    "neutral_features": [],
+                }
+            )
+
+        report = miner._build_report(
+            rows,
+            generated_at_utc=start,
+            history_root=miner.DEFAULT_HISTORY_ROOT,
+            files=[],
+            exit_shapes=miner._parse_exit_shapes("tp1_sl1"),
+            max_hold_bars=12,
+            stride_bars=1,
+            tp_spread_floor=2.5,
+            sl_spread_floor=2.0,
+            train_fraction=0.7,
+            min_samples=4,
+            min_active_days=1,
+            min_pair_count=1,
+            max_pair_sample_share=1.0,
+            max_daily_sample_share=1.0,
+            min_positive_day_rate=0.0,
+            min_validation_expectancy_atr=0.0,
+            min_validation_win_rate=0.0,
+            min_validation_samples=2,
+            min_profit_factor=0.0,
+            high_precision_min_win_rate=0.7,
+            high_precision_min_wilson_lower=0.5,
+            multi_confluence_sizes=(3, 4),
+            top=100,
+            load_stats={"history_files": 0, "history_pairs": 0, "scored_outcomes": len(rows)},
+        )
+
+        sizes = {
+            row["confluence_size"]
+            for row in report["high_precision_multi_confluences"]
+        }
+        self.assertEqual(report["config"]["multi_confluence_sizes"], [3, 4])
+        self.assertIn(3, sizes)
+        self.assertIn(4, sizes)
 
 
 if __name__ == "__main__":

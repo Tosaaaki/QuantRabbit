@@ -601,6 +601,7 @@ class ForecastPrecisionConfluenceTest(unittest.TestCase):
             "oanda_m5_bar_range": "wide",
             "oanda_m5_wick_reject_long": False,
             "oanda_m5_fast_mom_atr": 0.35,
+            "session_bucket": "ASIA",
             "tp_execution_mode": "ATTACHED_TECHNICAL_TP",
             "tp_target_intent": "HARVEST",
             "opportunity_mode": "HARVEST",
@@ -620,6 +621,7 @@ class ForecastPrecisionConfluenceTest(unittest.TestCase):
                                 "feature_a": "bar_range:wide",
                                 "feature_b": "wick_reject:0",
                                 "feature_c": "fast_mom:aligned",
+                                "feature_d": "session:asia",
                                 "qualification": "PASS",
                                 "train_n": 40,
                                 "train_win_rate": 0.72,
@@ -653,11 +655,12 @@ class ForecastPrecisionConfluenceTest(unittest.TestCase):
         support = assessment["primary_rank_support"]
         self.assertEqual(
             support["name"],
-            "CAD_CHF_LONG_M5_TREND_CONTINUATION_BAR_RANGE_WIDE_WICK_REJECT_0_FAST_MOM_ALIGNED_TP1_SL1",
+            "CAD_CHF_LONG_M5_TREND_CONTINUATION_BAR_RANGE_WIDE_WICK_REJECT_0_FAST_MOM_ALIGNED_SESSION_ASIA_TP1_SL1",
         )
         self.assertEqual(support["current_oanda_bar_range"], "WIDE")
         self.assertEqual(support["current_oanda_wick_reject"], "0")
         self.assertEqual(support["current_oanda_fast_mom"], "ALIGNED")
+        self.assertEqual(support["current_oanda_session"], "ASIA")
         self.assertEqual(support["rule_source_section"], "high_precision_multi_confluences")
         self.assertEqual(support["rank_score_bonus"], 7.0)
         self.assertEqual(assessment["score_delta"], 7.0)

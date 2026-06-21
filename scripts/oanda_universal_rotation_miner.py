@@ -62,6 +62,7 @@ DEFAULT_HIGH_PRECISION_MIN_WILSON_LOWER = 0.50
 DEFAULT_TRAIN_FRACTION = 0.70
 DEFAULT_TOP = 30
 DEFAULT_DIRECTIONAL_SELECTOR_MIN_SAMPLES = 60
+DEFAULT_MULTI_CONFLUENCE_SIZES = (3, 4)
 DEFAULT_SELECTOR_FEATURE_PREFIXES = (
     "session:",
     "atr_regime:",
@@ -127,6 +128,7 @@ def main() -> int:
     args = _parse_args()
     pairs = _parse_pairs(args.pairs)
     exit_shapes = _parse_exit_shapes(args.exit_shapes)
+    multi_confluence_sizes = _parse_multi_confluence_sizes(args.multi_confluence_sizes)
     out_dir = args.output_dir
     out_dir.mkdir(parents=True, exist_ok=True)
     run_ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
@@ -169,6 +171,7 @@ def main() -> int:
         min_profit_factor=args.min_profit_factor,
         high_precision_min_win_rate=args.high_precision_min_win_rate,
         high_precision_min_wilson_lower=args.high_precision_min_wilson_lower,
+        multi_confluence_sizes=multi_confluence_sizes,
         top=args.top,
         load_stats=load_stats,
     )
@@ -231,6 +234,14 @@ def _parse_args() -> argparse.Namespace:
         type=float,
         default=DEFAULT_HIGH_PRECISION_MIN_WILSON_LOWER,
     )
+    parser.add_argument(
+        "--multi-confluence-sizes",
+        default=",".join(str(size) for size in DEFAULT_MULTI_CONFLUENCE_SIZES),
+        help=(
+            "comma-separated feature-confluence sizes to mine for pair-specific buckets. "
+            "Defaults to 3,4; larger values are intentionally opt-in because combinations grow quickly."
+        ),
+    )
     parser.add_argument("--top", type=int, default=DEFAULT_TOP)
     return parser.parse_args()
 
@@ -257,6 +268,24 @@ def _parse_exit_shapes(value: str) -> tuple[tuple[str, float, float], ...]:
     if not shapes:
         raise ValueError("--exit-shapes produced no valid tp/sl ATR ratios")
     return tuple(shapes)
+
+
+def _parse_multi_confluence_sizes(value: str) -> tuple[int, ...]:
+    sizes: set[int] = set()
+    for raw in str(value or "").split(","):
+        text = raw.strip()
+        if not text:
+            continue
+        try:
+            size = int(text)
+        except ValueError as exc:
+            raise ValueError(f"invalid multi confluence size: {text!r}") from exc
+        if size < 3 or size > 8:
+            raise ValueError("multi confluence sizes must be between 3 and 8")
+        sizes.add(size)
+    if not sizes:
+        raise ValueError("--multi-confluence-sizes produced no valid sizes")
+    return tuple(sorted(sizes))
 
 
 def _discover_m5_files(root: Path, history_glob: str, *, pairs: set[str]) -> list[Path]:
@@ -642,6 +671,7 @@ def _build_report(
     min_profit_factor: float,
     high_precision_min_win_rate: float,
     high_precision_min_wilson_lower: float,
+    multi_confluence_sizes: Sequence[int],
     top: int,
     load_stats: dict[str, Any],
 ) -> dict[str, Any]:
@@ -713,19 +743,25 @@ def _build_report(
         min_validation_samples=min_validation_samples,
         min_profit_factor=min_profit_factor,
     )
-    multi_confluence_rows = _summarize_pair_multi_confluence_buckets(
-        rows,
-        confluence_size=3,
-        train_fraction=train_fraction,
-        min_samples=max(24, min_samples // 10),
-        min_active_days=max(5, min_active_days // 3),
-        max_daily_sample_share=max(0.35, max_daily_sample_share),
-        min_positive_day_rate=min_positive_day_rate,
-        min_validation_expectancy_atr=min_validation_expectancy_atr,
-        min_validation_win_rate=min_validation_win_rate,
-        min_validation_samples=min_validation_samples,
-        min_profit_factor=min_profit_factor,
-    )
+    multi_confluence_rows = []
+    multi_confluence_min_samples = max(24, min_samples // 10)
+    for confluence_size in multi_confluence_sizes:
+        multi_confluence_rows.extend(
+            _summarize_pair_multi_confluence_buckets(
+                rows,
+                confluence_size=confluence_size,
+                train_fraction=train_fraction,
+                min_samples=multi_confluence_min_samples,
+                min_active_days=max(5, min_active_days // 3),
+                max_daily_sample_share=max(0.35, max_daily_sample_share),
+                min_positive_day_rate=min_positive_day_rate,
+                min_validation_expectancy_atr=min_validation_expectancy_atr,
+                min_validation_win_rate=min_validation_win_rate,
+                min_validation_samples=min_validation_samples,
+                min_profit_factor=min_profit_factor,
+            )
+        )
+    multi_confluence_rows.sort(key=_bucket_sort_key)
     directional_selector_rows = _summarize_directional_selector_buckets(
         rows,
         train_fraction=train_fraction,
@@ -800,8 +836,8 @@ def _build_report(
             "min_profit_factor": min_profit_factor,
             "high_precision_min_win_rate": high_precision_min_win_rate,
             "high_precision_min_wilson_lower": high_precision_min_wilson_lower,
-            "multi_confluence_size": 3,
-            "multi_confluence_min_samples": max(24, min_samples // 10),
+            "multi_confluence_sizes": list(multi_confluence_sizes),
+            "multi_confluence_min_samples": multi_confluence_min_samples,
             "directional_selector_min_samples": max(
                 DEFAULT_DIRECTIONAL_SELECTOR_MIN_SAMPLES,
                 min_samples // 4,
