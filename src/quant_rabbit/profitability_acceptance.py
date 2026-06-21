@@ -85,12 +85,17 @@ class ProfitabilityAcceptanceAuditor:
         target_metrics = _target_metrics(target)
         self_metrics, self_findings = _self_improvement_findings(self_improvement)
         capture_metrics, capture_findings = _capture_economics_findings(capture)
+        capture_freshness_metrics, capture_freshness_findings = _order_capture_freshness_findings(
+            intents,
+            capture,
+        )
         ledger_metrics, ledger_findings = _execution_ledger_close_findings(execution_ledger_path)
         projection_metrics, projection_findings = _projection_precision_findings(projection_ledger_path)
         bidask_metrics, bidask_findings = _bidask_rule_findings(bidask_rules, bidask_rules_path)
 
         findings.extend(self_findings)
         findings.extend(capture_findings)
+        findings.extend(capture_freshness_findings)
         findings.extend(ledger_findings)
         findings.extend(projection_findings)
         findings.extend(bidask_findings)
@@ -133,6 +138,7 @@ class ProfitabilityAcceptanceAuditor:
             "target": target_metrics,
             "self_improvement": self_metrics,
             "capture_economics": capture_metrics,
+            "order_capture_freshness": capture_freshness_metrics,
             "execution_ledger_close_leak": ledger_metrics,
             "projection_precision": projection_metrics,
             "bidask_replay_rules": bidask_metrics,
@@ -352,6 +358,75 @@ def _capture_economics_findings(payload: dict[str, Any]) -> tuple[dict[str, Any]
             )
         )
     return metrics, findings
+
+
+def _order_capture_freshness_findings(
+    intents: dict[str, Any],
+    capture: dict[str, Any],
+) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    intent_generated = _parse_utc(str(intents.get("generated_at_utc") or ""))
+    capture_generated = _parse_utc(str(capture.get("generated_at_utc") or ""))
+    results = intents.get("results") if isinstance(intents.get("results"), list) else []
+    capture_overall = capture.get("overall") if isinstance(capture.get("overall"), dict) else {}
+    capture_trades = int(_optional_float(capture_overall.get("trades")) or 0)
+    embedded_values: list[int] = []
+    embedded_examples: list[dict[str, Any]] = []
+    for item in results:
+        if not isinstance(item, dict):
+            continue
+        intent = item.get("intent") if isinstance(item.get("intent"), dict) else {}
+        metadata = intent.get("metadata") if isinstance(intent.get("metadata"), dict) else {}
+        embedded = _optional_float(metadata.get("capture_economics_trades"))
+        if embedded is None:
+            continue
+        embedded_int = int(embedded)
+        embedded_values.append(embedded_int)
+        if len(embedded_examples) < 5 and embedded_int != capture_trades:
+            embedded_examples.append(
+                {
+                    "lane_id": item.get("lane_id"),
+                    "status": item.get("status"),
+                    "intent_capture_economics_trades": embedded_int,
+                }
+            )
+    metadata_mismatch = bool(
+        capture_trades > 0
+        and embedded_values
+        and any(value != capture_trades for value in embedded_values)
+    )
+    timestamp_stale = bool(
+        intent_generated is not None
+        and capture_generated is not None
+        and capture_generated > intent_generated
+    )
+    metrics = {
+        "order_intents_generated_at_utc": intents.get("generated_at_utc"),
+        "capture_economics_generated_at_utc": capture.get("generated_at_utc"),
+        "capture_generated_after_order_intents": timestamp_stale,
+        "capture_trades": capture_trades,
+        "intent_capture_economics_trades": sorted(set(embedded_values)),
+        "metadata_trade_count_mismatch": metadata_mismatch,
+        "mismatch_examples": embedded_examples,
+    }
+    if not timestamp_stale and not metadata_mismatch:
+        return metrics, []
+    reasons: list[str] = []
+    if timestamp_stale:
+        reasons.append("capture_economics generated after order_intents")
+    if metadata_mismatch:
+        reasons.append("intent metadata embeds stale capture_economics trade count")
+    return metrics, [
+        _finding(
+            priority="P0",
+            code="ORDER_INTENTS_CAPTURE_ECONOMICS_STALE",
+            message="order_intents were priced from stale capture_economics evidence",
+            next_action=(
+                "Refresh capture-economics before generate-intents, then regenerate order_intents. "
+                "Do not trust live coverage or loss-asymmetry relaxation from this packet."
+            ),
+            evidence={**metrics, "reasons": reasons},
+        )
+    ]
 
 
 def _execution_ledger_close_findings(path: Path) -> tuple[dict[str, Any], list[dict[str, Any]]]:

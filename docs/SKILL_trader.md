@@ -102,8 +102,9 @@ PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli trader-prompt-route
 # pair-charts → cross-asset/context/flow/strength/levels/calendar/COT/skew →
 # market-context-matrix → news-snapshot → mine-market-stories → news-health --strict →
 # daily-review → tp-rebalance → verify-projections → broker-snapshot →
-# daily-target-state → generate-intents --reuse-market-artifacts → optimize-coverage → ai-attack-advice →
-# learning/capture/execution-timing/manual-market-context/operator-precedent/verification audits →
+# daily-target-state → capture-economics → generate-intents --reuse-market-artifacts →
+# optimize-coverage → ai-attack-advice →
+# learning/execution-timing/manual-market-context/operator-precedent/verification audits →
 # generate-predictive-limits → position sidecars → memory-health →
 # self-improvement-audit → profitability-acceptance) in one
 # process, in the same order and with the same arguments the per-step

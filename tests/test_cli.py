@@ -26,7 +26,7 @@ from quant_rabbit.cli import (
     main,
 )
 from quant_rabbit.models import AccountSummary, BrokerOrder, BrokerSnapshot, Owner, Quote
-from quant_rabbit.paths import DEFAULT_MARKET_CONTEXT_MATRIX
+from quant_rabbit.paths import DEFAULT_CAPTURE_ECONOMICS, DEFAULT_EXECUTION_LEDGER_DB, DEFAULT_MARKET_CONTEXT_MATRIX
 from quant_rabbit.strategy.intent_generator import _snapshot_from_json as _intent_snapshot_from_json
 
 
@@ -240,6 +240,11 @@ class CliHelpTest(unittest.TestCase):
                             {
                                 "lane_id": "range_trader:EUR_USD:LONG:RANGE_ROTATION",
                                 "status": "DRY_RUN_BLOCKED",
+                                "intent": {
+                                    "metadata": {
+                                        "capture_economics_trades": 29,
+                                    }
+                                },
                                 "risk_issues": [{"code": "STALE_QUOTE"}, {"code": "SPREAD_TOO_WIDE"}],
                                 "live_blockers": ["SELF_IMPROVEMENT_P0_PROFITABILITY_DISCIPLINE"],
                             }
@@ -264,6 +269,7 @@ class CliHelpTest(unittest.TestCase):
             capture.write_text(
                 json.dumps(
                     {
+                        "generated_at_utc": "2026-06-21T00:00:10+00:00",
                         "status": "NEGATIVE_EXPECTANCY",
                         "overall": {
                             "trades": 30,
@@ -428,6 +434,7 @@ class CliHelpTest(unittest.TestCase):
         self.assertEqual(payload["status"], "PROFITABILITY_ACCEPTANCE_BLOCKED")
         self.assertIn("SELF_IMPROVEMENT_P0_PRESENT", codes)
         self.assertIn("NEGATIVE_EXPECTANCY_ACTIVE", codes)
+        self.assertIn("ORDER_INTENTS_CAPTURE_ECONOMICS_STALE", codes)
         self.assertIn("MARKET_CLOSE_LEAK_DOMINATES_TP_EDGE", codes)
         self.assertIn("RECENT_GATEWAY_LOSS_MARKET_CLOSE_LEAK", codes)
         self.assertIn("PROJECTION_HEADLINE_PRECISION_ECONOMIC_GAP", codes)
@@ -1959,6 +1966,20 @@ class CliHelpTest(unittest.TestCase):
                 last_transaction_id="471858",
                 baseline_transaction_id=None,
             )
+            call_order: list[str] = []
+
+            def capture_preflight(**_: object) -> dict[str, object]:
+                call_order.append("capture")
+                return {
+                    "status": "NEGATIVE_EXPECTANCY",
+                    "trades": 215,
+                    "expectancy_jpy": -168.9,
+                }
+
+            def generator_run(*_: object, **__: object) -> SimpleNamespace:
+                call_order.append("generator")
+                return summary
+
             stdout = io.StringIO()
 
             with mock.patch.dict(os.environ, {}, clear=True), mock.patch(
@@ -1975,10 +1996,13 @@ class CliHelpTest(unittest.TestCase):
                 "quant_rabbit.cli._refresh_current_forecast_history",
                 return_value={"recorded": 0, "skipped": {}, "cycle_id": "cycle"},
             ), mock.patch(
+                "quant_rabbit.cli._pre_entry_capture_economics_refresh_if_required",
+                side_effect=capture_preflight,
+            ), mock.patch(
                 "quant_rabbit.cli.IntentGenerator"
             ) as generator_cls, redirect_stdout(stdout):
                 ledger_cls.return_value.sync_oanda_transactions.return_value = ledger_summary
-                generator_cls.return_value.run.return_value = summary
+                generator_cls.return_value.run.side_effect = generator_run
                 code = main(
                     [
                         "generate-intents",
@@ -2008,6 +2032,39 @@ class CliHelpTest(unittest.TestCase):
         self.assertEqual(payload["market_evidence_refresh"]["status"], "SKIPPED")
         self.assertEqual(payload["execution_ledger_sync"]["status"], "SYNCED")
         self.assertEqual(payload["execution_ledger_sync"]["last_transaction_id"], "471858")
+        self.assertEqual(payload["capture_economics_refresh"]["trades"], 215)
+        self.assertEqual(call_order, ["capture", "generator"])
+
+    def test_pre_entry_capture_economics_refresh_uses_current_ledger_summary(self) -> None:
+        from quant_rabbit.cli import _pre_entry_capture_economics_refresh_if_required
+
+        summary = SimpleNamespace(
+            status="NEGATIVE_EXPECTANCY",
+            output_path=Path("/tmp/capture.json"),
+            report_path=Path("/tmp/capture.md"),
+            trades=215,
+            win_rate=0.6047,
+            payoff_ratio=0.392,
+            expectancy_jpy=-168.9,
+        )
+        with mock.patch("quant_rabbit.cli._running_under_test_harness", return_value=False), mock.patch(
+            "quant_rabbit.capture_economics.build_capture_economics",
+            return_value=summary,
+        ) as build:
+            result = _pre_entry_capture_economics_refresh_if_required(
+                telemetry_required=True,
+                execution_ledger_sync={"status": "SYNCED"},
+            )
+
+        build.assert_called_once_with(
+            ledger_path=DEFAULT_EXECUTION_LEDGER_DB,
+            output_path=DEFAULT_CAPTURE_ECONOMICS,
+            report_path=mock.ANY,
+        )
+        self.assertEqual(result["status"], "NEGATIVE_EXPECTANCY")
+        self.assertEqual(result["trades"], 215)
+        self.assertEqual(result["expectancy_jpy"], -168.9)
+        self.assertEqual(result["execution_ledger_sync_status"], "SYNCED")
 
     def test_generate_intents_refreshes_snapshot_after_market_evidence_refresh(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -3003,6 +3060,7 @@ class ConsolidatedCycleCommandTest(unittest.TestCase):
         intent_step = "generate-intents --snapshot data/broker_snapshot.json --reuse-market-artifacts"
         self.assertIn(intent_step, refresh)
         self.assertLess(refresh.index("verify-projections"), refresh.index(intent_step))
+        self.assertLess(refresh.index("capture-economics"), refresh.index(intent_step))
         verify_index = refresh.index("verify-projections")
         intent_index = refresh.index(intent_step)
         post_projection_snapshot = [

@@ -716,6 +716,49 @@ def _pre_entry_execution_ledger_sync_if_required(
     }
 
 
+def _pre_entry_capture_economics_refresh_if_required(
+    *,
+    telemetry_required: bool,
+    execution_ledger_sync: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    """Refresh realized payoff evidence before entry pricing.
+
+    `IntentGenerator` reads `data/capture_economics.json` to cap weak
+    NEGATIVE_EXPECTANCY entries and to admit only TP-proven HARVEST repair
+    shapes. Rebuilding that file after `generate-intents` leaves the current
+    intent packet priced from the previous cycle's realized losses.
+    """
+    if not telemetry_required:
+        return None
+    if _running_under_test_harness() and os.environ.get("QR_LIVE_ENABLED") != "1":
+        return None
+    if execution_ledger_sync is None:
+        return {"status": "SKIPPED", "reason": "execution_ledger_sync_skipped"}
+    try:
+        from quant_rabbit.capture_economics import (
+            DEFAULT_CAPTURE_ECONOMICS_REPORT as CAPTURE_ECONOMICS_DEFAULT_REPORT,
+            build_capture_economics,
+        )
+
+        summary = build_capture_economics(
+            ledger_path=DEFAULT_EXECUTION_LEDGER_DB,
+            output_path=DEFAULT_CAPTURE_ECONOMICS,
+            report_path=CAPTURE_ECONOMICS_DEFAULT_REPORT,
+        )
+    except (OSError, sqlite3.Error, json.JSONDecodeError, ValueError) as exc:
+        return {"status": "REFRESH_FAILED", "error": str(exc)}
+    return {
+        "status": summary.status,
+        "output_path": str(summary.output_path),
+        "report_path": str(summary.report_path),
+        "trades": summary.trades,
+        "win_rate": summary.win_rate,
+        "payoff_ratio": summary.payoff_ratio,
+        "expectancy_jpy": summary.expectancy_jpy,
+        "execution_ledger_sync_status": execution_ledger_sync.get("status"),
+    }
+
+
 def _refresh_memory_health_after_intents_if_required(
     *,
     snapshot_path: Path | None,
@@ -1780,6 +1823,7 @@ def _cycle_refresh_steps(daily_risk_pct: str) -> list[dict[str, Any]]:
         # cycle-internal STALE_QUOTE blockers.
         {"argv": snapshot_args, "required": True},
         {"argv": target_args, "required": True},
+        {"argv": ["capture-economics"], "required": False},
         {
             "argv": ["generate-intents", "--snapshot", "data/broker_snapshot.json", "--reuse-market-artifacts"],
             "required": True,
@@ -1787,7 +1831,6 @@ def _cycle_refresh_steps(daily_risk_pct: str) -> list[dict[str, Any]]:
         {"argv": ["optimize-coverage"], "required": False},
         {"argv": ["ai-attack-advice"], "required": False},
         {"argv": ["learning-audit"], "required": False},
-        {"argv": ["capture-economics"], "required": False},
         {"argv": ["execution-timing-audit", "--lookback-hours", "24", "--max-events", "80"], "required": False},
         {"argv": ["manual-market-context-audit"], "required": False},
         {"argv": ["operator-precedent-audit"], "required": False},
@@ -3400,6 +3443,24 @@ def main(argv: list[str] | None = None) -> int:
             telemetry_required=telemetry_required,
             snapshot_path=args.snapshot,
         )
+        capture_economics_refresh = _pre_entry_capture_economics_refresh_if_required(
+            telemetry_required=telemetry_required,
+            execution_ledger_sync=execution_ledger_sync,
+        )
+        if (capture_economics_refresh or {}).get("status") == "REFRESH_FAILED":
+            print(
+                json.dumps(
+                    {
+                        "error": capture_economics_refresh.get("error") or "capture_economics_refresh_failed",
+                        "capture_economics_refresh": capture_economics_refresh,
+                        "execution_ledger_sync": execution_ledger_sync,
+                    },
+                    ensure_ascii=False,
+                    indent=2,
+                    sort_keys=True,
+                )
+            )
+            return 2
         projection_verification = _pre_entry_projection_verification_if_required(
             telemetry_required=telemetry_required,
             snapshot_path=args.snapshot,
@@ -3472,6 +3533,7 @@ def main(argv: list[str] | None = None) -> int:
                     "dry_run_passed": summary.dry_run_passed,
                     "campaign_refresh": campaign_refresh,
                     "daily_target_refresh": daily_target_refresh,
+                    "capture_economics_refresh": capture_economics_refresh,
                     "execution_ledger_sync": execution_ledger_sync,
                     "forecast_refresh": forecast_refresh,
                     "live_ready": summary.live_ready,
