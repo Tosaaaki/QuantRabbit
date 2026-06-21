@@ -101,6 +101,7 @@ from quant_rabbit.paths import (
     DEFAULT_MARKET_STORY_REPORT,
     DEFAULT_ORDER_INTENT_REPORT,
     DEFAULT_ORDER_INTENTS,
+    DEFAULT_OANDA_UNIVERSAL_ROTATION_MINING,
     DEFAULT_POSITION_EXECUTION,
     DEFAULT_POSITION_EXECUTION_REPORT,
     DEFAULT_POSITION_MANAGEMENT,
@@ -2712,6 +2713,11 @@ def main(argv: list[str] | None = None) -> int:
     p_profit_accept.add_argument("--execution-ledger-db", type=Path, default=DEFAULT_EXECUTION_LEDGER_DB)
     p_profit_accept.add_argument("--projection-ledger", type=Path, default=DEFAULT_PROJECTION_LEDGER)
     p_profit_accept.add_argument("--bidask-rules", type=Path, default=None)
+    p_profit_accept.add_argument(
+        "--oanda-rotation-mining",
+        type=Path,
+        default=DEFAULT_OANDA_UNIVERSAL_ROTATION_MINING,
+    )
     p_profit_accept.add_argument("--output", type=Path, default=DEFAULT_PROFITABILITY_ACCEPTANCE)
     p_profit_accept.add_argument("--report", type=Path, default=DEFAULT_PROFITABILITY_ACCEPTANCE_REPORT)
 
@@ -4938,6 +4944,7 @@ def main(argv: list[str] | None = None) -> int:
                 execution_ledger_path=args.execution_ledger_db,
                 projection_ledger_path=args.projection_ledger,
                 bidask_rules_path=args.bidask_rules or DEFAULT_BIDASK_REPLAY_RULES_PATH,
+                oanda_rotation_mining_path=args.oanda_rotation_mining,
             )
         except (OSError, json.JSONDecodeError, sqlite3.Error, ValueError) as exc:
             print(json.dumps({"error": str(exc)}, ensure_ascii=False, indent=2, sort_keys=True))

@@ -16,6 +16,7 @@ from quant_rabbit.paths import (
     DEFAULT_CAPTURE_ECONOMICS,
     DEFAULT_DAILY_TARGET_STATE,
     DEFAULT_EXECUTION_LEDGER_DB,
+    DEFAULT_OANDA_UNIVERSAL_ROTATION_MINING,
     DEFAULT_ORDER_INTENTS,
     DEFAULT_PROFITABILITY_ACCEPTANCE,
     DEFAULT_PROFITABILITY_ACCEPTANCE_REPORT,
@@ -71,6 +72,7 @@ class ProfitabilityAcceptanceAuditor:
         execution_ledger_path: Path = DEFAULT_EXECUTION_LEDGER_DB,
         projection_ledger_path: Path = DEFAULT_PROJECTION_LEDGER,
         bidask_rules_path: Path = DEFAULT_BIDASK_REPLAY_RULES_PATH,
+        oanda_rotation_mining_path: Path = DEFAULT_OANDA_UNIVERSAL_ROTATION_MINING,
     ) -> ProfitabilityAcceptanceSummary:
         generated_at = datetime.now(timezone.utc).isoformat()
         findings: list[dict[str, Any]] = []
@@ -80,6 +82,7 @@ class ProfitabilityAcceptanceAuditor:
         self_improvement = _load_json(self_improvement_path)
         capture = _load_json(capture_economics_path)
         bidask_rules = _load_json(bidask_rules_path)
+        oanda_rotation_mining = _load_json(oanda_rotation_mining_path)
 
         order_metrics = _order_intent_metrics(intents)
         target_metrics = _target_metrics(target)
@@ -92,6 +95,11 @@ class ProfitabilityAcceptanceAuditor:
         ledger_metrics, ledger_findings = _execution_ledger_close_findings(execution_ledger_path)
         projection_metrics, projection_findings = _projection_precision_findings(projection_ledger_path)
         bidask_metrics, bidask_findings = _bidask_rule_findings(bidask_rules, bidask_rules_path)
+        firepower_metrics, firepower_findings = _oanda_campaign_firepower_findings(
+            oanda_rotation_mining,
+            oanda_rotation_mining_path,
+            target_open=bool(target_metrics["target_open"]),
+        )
 
         findings.extend(self_findings)
         findings.extend(capture_findings)
@@ -99,6 +107,7 @@ class ProfitabilityAcceptanceAuditor:
         findings.extend(ledger_findings)
         findings.extend(projection_findings)
         findings.extend(bidask_findings)
+        findings.extend(firepower_findings)
 
         if target_metrics["target_open"] and order_metrics["live_ready_lanes"] <= 0:
             findings.append(
@@ -142,6 +151,7 @@ class ProfitabilityAcceptanceAuditor:
             "execution_ledger_close_leak": ledger_metrics,
             "projection_precision": projection_metrics,
             "bidask_replay_rules": bidask_metrics,
+            "oanda_campaign_firepower": firepower_metrics,
             "finding_counts": {
                 "P0": len(p0_findings),
                 "P1": sum(1 for item in findings if item.get("priority") == "P1"),
@@ -866,6 +876,133 @@ def _bidask_rule_findings(payload: dict[str, Any], path: Path) -> tuple[dict[str
             )
         ]
     return metrics, []
+
+
+_OANDA_FIREPOWER_TARGET_OK_STATUSES = {
+    "VERIFIED_MINIMUM_5_ROUTE_ESTIMATED",
+    "VERIFIED_TARGET_10_ROUTE_ESTIMATED",
+}
+
+
+def _oanda_campaign_firepower_findings(
+    payload: dict[str, Any],
+    path: Path,
+    *,
+    target_open: bool,
+) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    firepower = payload.get("campaign_firepower") if isinstance(payload.get("campaign_firepower"), dict) else {}
+    high_precision = firepower.get("high_precision") if isinstance(firepower.get("high_precision"), dict) else {}
+    evidence_queue = firepower.get("evidence_queue") if isinstance(firepower.get("evidence_queue"), dict) else {}
+    status = str(firepower.get("status") or "").strip().upper()
+    metrics = {
+        "path": str(path),
+        "report_exists": path.exists(),
+        "target_open": target_open,
+        "generated_at_utc": payload.get("generated_at_utc"),
+        "status": status or None,
+        "contract": firepower.get("contract"),
+        "minimum_return_pct": _optional_float(firepower.get("minimum_return_pct")),
+        "target_return_pct": _optional_float(firepower.get("target_return_pct")),
+        "per_trade_risk_pct_lens": _optional_float(firepower.get("per_trade_risk_pct_lens")),
+        "high_precision": _oanda_firepower_section_metrics(high_precision),
+        "evidence_queue": _oanda_firepower_section_metrics(evidence_queue),
+    }
+    if not target_open:
+        return metrics, []
+
+    next_action = (
+        "Rerun scripts/oanda_universal_rotation_miner.py with current multi-month OANDA candles. "
+        "Keep universal rotation as rank-only until campaign_firepower.status reaches "
+        "VERIFIED_MINIMUM_5_ROUTE_ESTIMATED or VERIFIED_TARGET_10_ROUTE_ESTIMATED."
+    )
+    if not path.exists():
+        return metrics, [
+            _finding(
+                priority="P0",
+                code="OANDA_CAMPAIGN_FIREPOWER_REPORT_MISSING",
+                message="OANDA universal rotation mining report is missing while the daily target is open",
+                next_action=next_action,
+                evidence=metrics,
+            )
+        ]
+    if not firepower:
+        return metrics, [
+            _finding(
+                priority="P0",
+                code="OANDA_CAMPAIGN_FIREPOWER_NOT_COMPUTED",
+                message=(
+                    "OANDA universal rotation mining report lacks campaign_firepower; "
+                    "daily 5-10% high-turn firepower is unproven"
+                ),
+                next_action=next_action,
+                evidence=metrics,
+            )
+        ]
+    if status in _OANDA_FIREPOWER_TARGET_OK_STATUSES:
+        return metrics, []
+    if status in {"EVIDENCE_QUEUE_ONLY_NO_VERIFIED_FIREPOWER", "NO_VERIFIED_FIREPOWER"}:
+        return metrics, [
+            _finding(
+                priority="P0",
+                code="OANDA_CAMPAIGN_FIREPOWER_UNVERIFIED",
+                message=(
+                    "OANDA campaign firepower has no high-precision validated vehicle; "
+                    "evidence-queue return estimates cannot support high-turn scaling"
+                ),
+                next_action=next_action,
+                evidence=metrics,
+            )
+        ]
+    if status == "VERIFIED_EDGE_BUT_DAILY_TARGET_SHORTFALL":
+        return metrics, [
+            _finding(
+                priority="P0",
+                code="OANDA_CAMPAIGN_FIREPOWER_DAILY_TARGET_SHORTFALL",
+                message=(
+                    "validated OANDA campaign firepower does not reach the daily 5% floor "
+                    "at observed frequency"
+                ),
+                next_action=next_action,
+                evidence=metrics,
+            )
+        ]
+    return metrics, [
+        _finding(
+            priority="P0",
+            code="OANDA_CAMPAIGN_FIREPOWER_STATUS_UNKNOWN",
+            message=f"OANDA campaign firepower status is not recognized: {status or 'MISSING'}",
+            next_action=next_action,
+            evidence=metrics,
+        )
+    ]
+
+
+def _oanda_firepower_section_metrics(section: dict[str, Any]) -> dict[str, Any]:
+    vehicles = section.get("top_vehicles") if isinstance(section.get("top_vehicles"), list) else []
+    return {
+        "unique_vehicle_count": int(_optional_float(section.get("unique_vehicle_count")) or 0),
+        "pair_count": int(_optional_float(section.get("pair_count")) or 0),
+        "observed_attempts_per_active_day": _optional_float(
+            section.get("observed_attempts_per_active_day")
+        ),
+        "estimated_return_pct_per_active_day_at_observed_frequency": _optional_float(
+            section.get("estimated_return_pct_per_active_day_at_observed_frequency")
+        ),
+        "weighted_return_pct_per_trade_at_risk_lens": _optional_float(
+            section.get("weighted_return_pct_per_trade_at_risk_lens")
+        ),
+        "trades_needed_for_minimum_5pct_at_weighted_expectancy": _optional_float(
+            section.get("trades_needed_for_minimum_5pct_at_weighted_expectancy")
+        ),
+        "trades_needed_for_target_10pct_at_weighted_expectancy": _optional_float(
+            section.get("trades_needed_for_target_10pct_at_weighted_expectancy")
+        ),
+        "top_vehicle_keys": [
+            str(item.get("vehicle_key") or "")
+            for item in vehicles[:3]
+            if isinstance(item, dict) and item.get("vehicle_key")
+        ],
+    }
 
 
 def _optional_float(value: Any) -> float | None:

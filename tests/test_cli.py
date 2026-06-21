@@ -32,6 +32,66 @@ from quant_rabbit.strategy.intent_generator import _snapshot_from_json as _inten
 
 
 class CliHelpTest(unittest.TestCase):
+    def _write_oanda_firepower_report(
+        self,
+        path: Path,
+        *,
+        status: str,
+        high_precision_count: int = 1,
+        evidence_queue_count: int = 0,
+        high_precision_daily_return_pct: float = 5.4,
+        evidence_queue_daily_return_pct: float = 0.0,
+    ) -> None:
+        def section(count: int, daily_return_pct: float, status_label: str) -> dict[str, object]:
+            top_vehicles = []
+            if count > 0:
+                top_vehicles.append(
+                    {
+                        "vehicle_key": f"EUR_USD|LONG|range_reclaim|tp1_sl1|{status_label}",
+                        "evidence_status": status_label,
+                        "pair": "EUR_USD",
+                        "firepower_side": "LONG",
+                        "validation_n": 80,
+                        "active_days": 20,
+                        "estimated_return_pct_per_active_day_at_observed_frequency": daily_return_pct,
+                    }
+                )
+            return {
+                "unique_vehicle_count": count,
+                "pair_count": 1 if count else 0,
+                "observed_attempts_per_active_day": 4.0 if count else 0.0,
+                "weighted_return_pct_per_trade_at_risk_lens": 1.35 if count else 0.0,
+                "estimated_return_pct_per_active_day_at_observed_frequency": daily_return_pct,
+                "trades_needed_for_minimum_5pct_at_weighted_expectancy": 4 if count else None,
+                "trades_needed_for_target_10pct_at_weighted_expectancy": 8 if count else None,
+                "top_vehicles": top_vehicles,
+            }
+
+        path.write_text(
+            json.dumps(
+                {
+                    "generated_at_utc": "2026-06-21T00:00:00Z",
+                    "campaign_firepower": {
+                        "contract": "audit-only firepower estimate; live gates still decide",
+                        "per_trade_risk_pct_lens": 1.0,
+                        "minimum_return_pct": 5.0,
+                        "target_return_pct": 10.0,
+                        "status": status,
+                        "high_precision": section(
+                            high_precision_count,
+                            high_precision_daily_return_pct,
+                            "HIGH_PRECISION_VALIDATED",
+                        ),
+                        "evidence_queue": section(
+                            evidence_queue_count,
+                            evidence_queue_daily_return_pct,
+                            "EVIDENCE_COLLECTION_ONLY",
+                        ),
+                    },
+                }
+            )
+        )
+
     def _adverse_partial_close_files(self, root: Path) -> tuple[Path, Path]:
         snapshot = root / "snapshot.json"
         snapshot.write_text(json.dumps({
@@ -229,6 +289,7 @@ class CliHelpTest(unittest.TestCase):
             ledger = root / "execution_ledger.db"
             projection = root / "projection_ledger.jsonl"
             bidask = root / "bidask_rules.json"
+            oanda_rotation = root / "oanda_rotation.json"
             output = root / "acceptance.json"
             report = root / "acceptance.md"
 
@@ -376,6 +437,10 @@ class CliHelpTest(unittest.TestCase):
                     }
                 )
             )
+            self._write_oanda_firepower_report(
+                oanda_rotation,
+                status="VERIFIED_MINIMUM_5_ROUTE_ESTIMATED",
+            )
             projection.write_text("")
             hit_rates = {
                 "bb_squeeze_expansion_imminent": {
@@ -420,6 +485,8 @@ class CliHelpTest(unittest.TestCase):
                         str(projection),
                         "--bidask-rules",
                         str(bidask),
+                        "--oanda-rotation-mining",
+                        str(oanda_rotation),
                         "--output",
                         str(output),
                         "--report",
@@ -528,6 +595,134 @@ class CliHelpTest(unittest.TestCase):
             "GATEWAY_GPT_CLOSE_RECONCILED",
         )
 
+    def test_profitability_acceptance_blocks_evidence_queue_oanda_firepower(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            target = root / "target.json"
+            intents = root / "intents.json"
+            self_audit = root / "self_improvement.json"
+            capture = root / "capture.json"
+            ledger = root / "execution_ledger.db"
+            projection = root / "projection_ledger.jsonl"
+            bidask = root / "bidask_rules.json"
+            oanda_rotation = root / "oanda_rotation.json"
+            output = root / "acceptance.json"
+            report = root / "acceptance.md"
+
+            target.write_text(json.dumps({"status": "PURSUE_TARGET", "remaining_target_jpy": 5000.0}))
+            intents.write_text(
+                json.dumps(
+                    {
+                        "results": [
+                            {
+                                "lane_id": "range_trader:EUR_USD:LONG:RANGE_ROTATION",
+                                "status": "LIVE_READY",
+                                "risk_issues": [],
+                                "live_blockers": [],
+                            }
+                        ]
+                    }
+                )
+            )
+            self_audit.write_text(json.dumps({"status": "SELF_IMPROVEMENT_OK", "findings": []}))
+            capture.write_text(
+                json.dumps(
+                    {
+                        "status": "POSITIVE_EXPECTANCY",
+                        "overall": {
+                            "trades": 40,
+                            "net_jpy": 12000.0,
+                            "expectancy_jpy_per_trade": 300.0,
+                            "win_rate": 0.7,
+                            "payoff_ratio": 1.2,
+                        },
+                        "by_exit_reason": {},
+                        "segment_repair_priorities": {"items": []},
+                    }
+                )
+            )
+            bidask.write_text(json.dumps({"contrarian_edge_rules": []}))
+            with sqlite3.connect(ledger) as conn:
+                conn.execute(
+                    """
+                    CREATE TABLE execution_events (
+                        ts_utc TEXT,
+                        event_type TEXT,
+                        trade_id TEXT,
+                        order_id TEXT,
+                        lane_id TEXT,
+                        pair TEXT,
+                        side TEXT,
+                        realized_pl_jpy REAL,
+                        exit_reason TEXT
+                    )
+                    """
+                )
+            projection.write_text("")
+            self._write_oanda_firepower_report(
+                oanda_rotation,
+                status="EVIDENCE_QUEUE_ONLY_NO_VERIFIED_FIREPOWER",
+                high_precision_count=0,
+                evidence_queue_count=1,
+                high_precision_daily_return_pct=0.0,
+                evidence_queue_daily_return_pct=8.0,
+            )
+            hit_rates = {
+                "session_expansion_london": {
+                    "GBP_USD:TREND": {
+                        "hit_rate": 0.98,
+                        "samples": 100,
+                        "economic_hit_rate": 0.96,
+                        "economic_samples": 100,
+                    }
+                }
+            }
+            stdout = io.StringIO()
+
+            with mock.patch(
+                "quant_rabbit.profitability_acceptance.compute_hit_rates",
+                return_value=hit_rates,
+            ), redirect_stdout(stdout):
+                code = main(
+                    [
+                        "profitability-acceptance",
+                        "--order-intents",
+                        str(intents),
+                        "--target-state",
+                        str(target),
+                        "--self-improvement-audit",
+                        str(self_audit),
+                        "--capture-economics",
+                        str(capture),
+                        "--execution-ledger-db",
+                        str(ledger),
+                        "--projection-ledger",
+                        str(projection),
+                        "--bidask-rules",
+                        str(bidask),
+                        "--oanda-rotation-mining",
+                        str(oanda_rotation),
+                        "--output",
+                        str(output),
+                        "--report",
+                        str(report),
+                    ]
+                )
+
+        self.assertEqual(code, 2)
+        payload = json.loads(stdout.getvalue())
+        codes = [item["code"] for item in payload["findings"]]
+        self.assertEqual(payload["status"], "PROFITABILITY_ACCEPTANCE_BLOCKED")
+        self.assertEqual(codes, ["OANDA_CAMPAIGN_FIREPOWER_UNVERIFIED"])
+        firepower = payload["metrics"]["oanda_campaign_firepower"]
+        self.assertEqual(firepower["status"], "EVIDENCE_QUEUE_ONLY_NO_VERIFIED_FIREPOWER")
+        self.assertEqual(firepower["high_precision"]["unique_vehicle_count"], 0)
+        self.assertEqual(firepower["evidence_queue"]["unique_vehicle_count"], 1)
+        self.assertEqual(
+            firepower["evidence_queue"]["estimated_return_pct_per_active_day_at_observed_frequency"],
+            8.0,
+        )
+
     def test_profitability_acceptance_order_metrics_prefers_live_blocker_codes(self) -> None:
         metrics = _order_intent_metrics(
             {
@@ -597,6 +792,7 @@ class CliHelpTest(unittest.TestCase):
             ledger = root / "execution_ledger.db"
             projection = root / "projection_ledger.jsonl"
             bidask = root / "bidask_rules.json"
+            oanda_rotation = root / "oanda_rotation.json"
             output = root / "acceptance.json"
             report = root / "acceptance.md"
 
@@ -633,6 +829,10 @@ class CliHelpTest(unittest.TestCase):
                 )
             )
             bidask.write_text(json.dumps({"contrarian_edge_rules": []}))
+            self._write_oanda_firepower_report(
+                oanda_rotation,
+                status="VERIFIED_MINIMUM_5_ROUTE_ESTIMATED",
+            )
             with sqlite3.connect(ledger) as conn:
                 conn.execute(
                     """
@@ -683,6 +883,8 @@ class CliHelpTest(unittest.TestCase):
                         str(projection),
                         "--bidask-rules",
                         str(bidask),
+                        "--oanda-rotation-mining",
+                        str(oanda_rotation),
                         "--output",
                         str(output),
                         "--report",
