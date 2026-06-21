@@ -823,6 +823,54 @@ class ForecastPrecisionConfluenceTest(unittest.TestCase):
         self.assertEqual(support["rule_source_section"], "high_precision_multi_confluences")
         self.assertEqual(assessment["score_delta"], 7.0)
 
+    def test_packaged_oanda_universal_rotation_contains_inversion_selectors(self) -> None:
+        metadata = {
+            "forecast_direction": "UP",
+            "chart_direction_bias": "LONG",
+            "m5_atr_percentile_100": 0.50,
+            "oanda_m5_bar_range": "normal",
+            "session_bucket": "NY",
+            "tp_execution_mode": "ATTACHED_TECHNICAL_TP",
+            "tp_target_intent": "HARVEST",
+            "opportunity_mode": "HARVEST",
+        }
+
+        forecast_precision._load_oanda_universal_rotation_rule_set.cache_clear()
+        with (
+            mock.patch.dict(
+                os.environ,
+                {forecast_precision.OANDA_UNIVERSAL_ROTATION_RULES_ENV: ""},
+                clear=False,
+            ),
+            mock.patch.object(
+                forecast_precision,
+                "OANDA_UNIVERSAL_ROTATION_AUDIT_REPORT",
+                "/tmp/qr_missing_oanda_universal_rotation_latest.json",
+            ),
+        ):
+            assessment = oanda_universal_rotation_precision_assessment(
+                metadata,
+                pair="USD_JPY",
+                side="LONG",
+                order_type="LIMIT",
+                method="TREND_CONTINUATION",
+                entry=150.00,
+                take_profit=150.10,
+                stop_loss=149.85,
+            )
+        forecast_precision._load_oanda_universal_rotation_rule_set.cache_clear()
+
+        support = assessment["primary_rank_support"]
+        self.assertIsNotNone(support)
+        self.assertEqual(support["rule_source_section"], "qualified_inversion_selectors")
+        self.assertEqual(support["source_side"], "SHORT")
+        self.assertLess(support["source_validation_avg_realized_atr"], 0.0)
+        self.assertGreater(support["validation_inversion_edge_atr"], 0.0)
+        self.assertEqual(support["rank_score_bonus"], 7.0)
+        self.assertTrue(support["rank_only"])
+        self.assertFalse(support["live_grade_ready"])
+        self.assertEqual(assessment["rule_source"]["source"], "dynamic_report_with_static_fallback")
+
     def test_oanda_universal_rotation_requires_current_session_and_atr_bucket(self) -> None:
         metadata = {
             "forecast_direction": "DOWN",
