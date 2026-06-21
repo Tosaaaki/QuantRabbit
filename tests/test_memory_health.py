@@ -265,6 +265,29 @@ class MemoryHealthAuditorTest(unittest.TestCase):
         self.assertIn("SHORT_FORECAST_HISTORY_STALE", codes)
         self.assertIn("SHORT_FORECAST_PAIR_STALE", codes)
 
+    def test_forecast_stale_while_quotes_stale_warns_without_memory_block(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root)
+            stale_ts = _NOW - FORECAST_SNAPSHOT_GRACE - timedelta(seconds=1)
+            _write_forecast_history(files["forecast_history"], stale_ts)
+            snapshot = json.loads(files["snapshot"].read_text())
+            snapshot["quotes"]["EUR_USD"]["timestamp_utc"] = stale_ts.isoformat()
+            files["snapshot"].write_text(json.dumps(snapshot))
+
+            summary = _run(files)
+            payload = json.loads(files["output"].read_text())
+
+        self.assertEqual(summary.status, STATUS_WARN)
+        self.assertEqual(summary.blockers, 0)
+        warn_codes = {issue["code"] for issue in payload["issues"] if issue["severity"] == "WARN"}
+        block_codes = {issue["code"] for issue in payload["issues"] if issue["severity"] == "BLOCK"}
+        self.assertIn("SHORT_FORECAST_HISTORY_STALE_WHILE_QUOTES_STALE", warn_codes)
+        self.assertIn("SHORT_FORECAST_PAIR_STALE_WHILE_QUOTE_STALE", warn_codes)
+        self.assertNotIn("SHORT_FORECAST_HISTORY_STALE", block_codes)
+        self.assertNotIn("SHORT_FORECAST_PAIR_STALE", block_codes)
+        self.assertTrue(payload["metrics"]["forecast_history"]["quotes_predate_snapshot"])
+
     def test_stale_required_forecast_does_not_require_projection_row(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

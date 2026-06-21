@@ -126,6 +126,8 @@ class MemoryHealthAuditor:
         intents = intents_loaded.payload or {}
         target_open = _target_open(target_state)
         snapshot_ts = _parse_utc(snapshot.get("fetched_at_utc") or (snapshot.get("account") or {}).get("fetched_at_utc"))
+        quote_timestamps = _quote_timestamps(snapshot)
+        latest_quote_ts = max(quote_timestamps.values()) if quote_timestamps else None
         intents_ts = _parse_utc(intents.get("generated_at_utc"))
         active_positions = _active_trader_positions(snapshot)
         live_ready_pairs = _live_ready_pairs(intents)
@@ -176,6 +178,8 @@ class MemoryHealthAuditor:
             error=forecast_error,
             path=forecast_history_path,
             snapshot_ts=snapshot_ts,
+            latest_quote_ts=latest_quote_ts,
+            quote_timestamps=quote_timestamps,
             required_pairs=required_pairs,
             target_open=target_open,
             active_positions=active_positions,
@@ -394,6 +398,8 @@ def _audit_forecast_history(
     error: str | None,
     path: Path,
     snapshot_ts: datetime | None,
+    latest_quote_ts: datetime | None,
+    quote_timestamps: dict[str, datetime],
     required_pairs: tuple[str, ...],
     target_open: bool,
     active_positions: list[dict[str, str]],
@@ -438,6 +444,12 @@ def _audit_forecast_history(
         "duplicate_cycle_pairs": duplicate_cycle_pairs,
         "current_duplicate_cycle_pairs": current_duplicate_cycle_pairs,
         "snapshot_grace_seconds": FORECAST_SNAPSHOT_GRACE.total_seconds(),
+        "latest_quote_timestamp_utc": latest_quote_ts.isoformat() if latest_quote_ts else None,
+        "quotes_predate_snapshot": _timestamp_predates_snapshot_beyond_grace(
+            latest_quote_ts,
+            snapshot_ts,
+            FORECAST_SNAPSHOT_GRACE,
+        ),
     }
     if error is not None:
         issues.append(
@@ -482,17 +494,37 @@ def _audit_forecast_history(
     if (
         snapshot_ts is not None
         and latest_ts is not None
-        and _forecast_predates_snapshot_beyond_grace(latest_ts, snapshot_ts)
+        and _timestamp_predates_snapshot_beyond_grace(latest_ts, snapshot_ts, FORECAST_SNAPSHOT_GRACE)
         and (target_open or active_positions)
     ):
+        quote_stale = _timestamp_predates_snapshot_beyond_grace(
+            latest_quote_ts,
+            snapshot_ts,
+            FORECAST_SNAPSHOT_GRACE,
+        )
+        # When broker quotes themselves predate the snapshot, the market packet
+        # has no newer executable price to forecast from. Keep the gap visible
+        # but do not escalate it as a forecast-memory defect; stale quotes and
+        # telemetry gates already prevent live entries.
+        severity = "WARN" if quote_stale else "BLOCK"
+        code = (
+            "SHORT_FORECAST_HISTORY_STALE_WHILE_QUOTES_STALE"
+            if quote_stale
+            else "SHORT_FORECAST_HISTORY_STALE"
+        )
         issues.append(
             _issue(
                 layer=LAYER_SHORT,
-                severity="BLOCK",
-                code="SHORT_FORECAST_HISTORY_STALE",
+                severity=severity,
+                code=code,
                 message=(
                     "forecast_history latest row predates broker snapshot "
                     f"(forecast={latest_ts.isoformat()}, snapshot={snapshot_ts.isoformat()})"
+                    + (
+                        f" while latest quote is also stale (quote={latest_quote_ts.isoformat()})"
+                        if quote_stale and latest_quote_ts is not None
+                        else ""
+                    )
                 ),
             )
         )
@@ -513,17 +545,34 @@ def _audit_forecast_history(
         if (
             snapshot_ts is not None
             and row_ts is not None
-            and _forecast_predates_snapshot_beyond_grace(row_ts, snapshot_ts)
+            and _timestamp_predates_snapshot_beyond_grace(row_ts, snapshot_ts, FORECAST_SNAPSHOT_GRACE)
             and (target_open or active_positions)
         ):
+            pair_quote_ts = quote_timestamps.get(pair) or latest_quote_ts
+            pair_quote_stale = _timestamp_predates_snapshot_beyond_grace(
+                pair_quote_ts,
+                snapshot_ts,
+                FORECAST_SNAPSHOT_GRACE,
+            )
+            severity = "WARN" if pair_quote_stale else "BLOCK"
+            code = (
+                "SHORT_FORECAST_PAIR_STALE_WHILE_QUOTE_STALE"
+                if pair_quote_stale
+                else "SHORT_FORECAST_PAIR_STALE"
+            )
             issues.append(
                 _issue(
                     layer=LAYER_SHORT,
-                    severity="BLOCK",
-                    code="SHORT_FORECAST_PAIR_STALE",
+                    severity=severity,
+                    code=code,
                     message=(
                         f"forecast_history row for {pair} predates broker snapshot "
                         f"(forecast={row_ts.isoformat()}, snapshot={snapshot_ts.isoformat()})"
+                        + (
+                            f" while pair quote is also stale (quote={pair_quote_ts.isoformat()})"
+                            if pair_quote_stale and pair_quote_ts is not None
+                            else ""
+                        )
                     ),
                     evidence={"pair": pair},
                 )
@@ -1233,8 +1282,32 @@ def _row_is_newer(candidate_ts: datetime | None, current_ts: datetime | None) ->
     return _to_utc(candidate_ts) >= _to_utc(current_ts)
 
 
+def _quote_timestamps(snapshot: dict[str, Any]) -> dict[str, datetime]:
+    quotes = snapshot.get("quotes")
+    if not isinstance(quotes, dict):
+        return {}
+    timestamps: dict[str, datetime] = {}
+    for pair, quote in quotes.items():
+        if not isinstance(quote, dict):
+            continue
+        ts = _parse_utc(quote.get("timestamp_utc"))
+        if ts is not None:
+            timestamps[str(pair)] = ts
+    return timestamps
+
+
+def _timestamp_predates_snapshot_beyond_grace(
+    timestamp: datetime | None,
+    snapshot_ts: datetime | None,
+    grace: timedelta,
+) -> bool:
+    if timestamp is None or snapshot_ts is None:
+        return False
+    return _to_utc(timestamp) + grace < _to_utc(snapshot_ts)
+
+
 def _forecast_predates_snapshot_beyond_grace(forecast_ts: datetime, snapshot_ts: datetime) -> bool:
-    return _to_utc(forecast_ts) + FORECAST_SNAPSHOT_GRACE < _to_utc(snapshot_ts)
+    return _timestamp_predates_snapshot_beyond_grace(forecast_ts, snapshot_ts, FORECAST_SNAPSHOT_GRACE)
 
 
 def _issue_text(item: Any) -> str:
