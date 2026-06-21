@@ -119,6 +119,16 @@ def _decision_cites_close_timing_evidence(evidence_refs: tuple[str, ...]) -> boo
     return False
 
 
+def _decision_cites_pending_cancel_timing_evidence(evidence_refs: tuple[str, ...]) -> bool:
+    for ref in evidence_refs:
+        text = str(ref or "").strip()
+        if text in {"timing:audit", "timing:canceled_orders"}:
+            return True
+        if text.startswith("timing:canceled_order:"):
+            return True
+    return False
+
+
 def _decision_cites_profitability_p0(evidence_refs: tuple[str, ...]) -> bool:
     for ref in evidence_refs:
         text = str(ref or "").strip()
@@ -210,6 +220,66 @@ def _premature_loss_close_timing_guard(packet: dict[str, Any]) -> dict[str, Any]
             summary.get("market_close_estimated_followthrough_jpy")
         ),
     }
+
+
+def _pending_cancel_timing_audit_required_orders(
+    packet: dict[str, Any],
+    decision: "GPTTraderDecision",
+) -> tuple[str, ...]:
+    """Orders whose same-shape cancel-regret evidence must be acknowledged."""
+
+    audit = packet.get("execution_timing_audit")
+    if not isinstance(audit, dict):
+        return ()
+    regrets = audit.get("canceled_order_regrets")
+    if not isinstance(regrets, list):
+        return ()
+    pending_by_id = {
+        str(order.get("order_id") or ""): order
+        for order in _pending_entry_orders(packet)
+        if str(order.get("order_id") or "")
+    }
+    blocked: list[str] = []
+    for order_id in decision.cancel_order_ids:
+        order = pending_by_id.get(str(order_id))
+        if order is None:
+            continue
+        pair = str(order.get("pair") or "").strip()
+        side = str(order.get("side") or _side_from_order_units(order.get("units")) or "").upper()
+        order_type = _normalized_timing_order_type(order.get("order_type"))
+        if not pair or not side or not order_type:
+            continue
+        for row in regrets:
+            if not isinstance(row, dict):
+                continue
+            if str(row.get("pair") or "").strip() != pair:
+                continue
+            if str(row.get("side") or "").upper() != side:
+                continue
+            if _normalized_timing_order_type(row.get("order_type")) != order_type:
+                continue
+            if row.get("sl_touched_after_cancel"):
+                continue
+            if not row.get("entry_touched_after_cancel"):
+                continue
+            mfe_pips = _optional_float(row.get("mfe_pips_after_cancel_entry")) or 0.0
+            if not row.get("tp_touched_after_cancel") and mfe_pips <= 0.0:
+                continue
+            prior_id = str(row.get("order_id") or "prior-cancel")
+            blocked.append(f"{order_id} ({pair} {side} {order_type}; prior={prior_id})")
+            break
+    return tuple(blocked)
+
+
+def _normalized_timing_order_type(order_type: object) -> str:
+    text = str(order_type or "").upper().replace("-", "_")
+    if text.endswith("_ORDER"):
+        text = text[: -len("_ORDER")]
+    if text == "STOP_ENTRY":
+        return "STOP"
+    if text in {"LIMIT", "STOP", "MARKET_IF_TOUCHED"}:
+        return text
+    return text
 
 
 # Matches a single per-timeframe segment in chart_reader's chart_story format.
@@ -2101,6 +2171,18 @@ class DecisionVerifier:
                     "UNKNOWN_CANCEL_ORDER_ID",
                     f"{action} cancel_order_ids must match current trader-owned pending entry orders: "
                     + ", ".join(unknown_cancel_ids),
+                )
+            )
+        timing_required = _pending_cancel_timing_audit_required_orders(self.packet, decision)
+        if timing_required and not _decision_cites_pending_cancel_timing_evidence(decision.evidence_refs):
+            issues.append(
+                VerificationIssue(
+                    "PENDING_CANCEL_TIMING_AUDIT_REQUIRED",
+                    f"{action} rejected: execution-timing audit shows same-shape pending cancels "
+                    "later touched entry and produced TP or positive MFE without SL. Cite timing:audit, "
+                    "timing:canceled_orders, or the relevant timing:canceled_order ref before clearing "
+                    "this broker-anchored pending entry: "
+                    + ", ".join(timing_required),
                 )
             )
 

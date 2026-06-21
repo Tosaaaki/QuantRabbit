@@ -1584,6 +1584,89 @@ class GPTTraderBrainTest(unittest.TestCase):
             payload = json.loads((root / "gpt_decision.json").read_text())
             self.assertEqual(payload["verification_issues"], [])
 
+    def test_cancel_pending_requires_timing_audit_when_same_shape_cancel_regret_exists(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root, orders=[_pending_order()])
+            blocked_result = _result()
+            blocked_result["lane_id"] = "range_trader:USD_JPY:SHORT:RANGE_ROTATION"
+            blocked_result["intent"]["pair"] = "USD_JPY"
+            blocked_result["intent"]["side"] = "SHORT"
+            blocked_result["status"] = "DRY_RUN_BLOCKED"
+            blocked_result["live_blockers"] = ["forecast no longer backs this entry"]
+            files["intents"].write_text(json.dumps({"results": [blocked_result]}))
+            files["execution_timing_audit"].write_text(
+                json.dumps(
+                    {
+                        "generated_at_utc": datetime.now(timezone.utc).isoformat(),
+                        "status": "OK",
+                        "canceled_order_regrets": [
+                            {
+                                "order_id": "prior-eurusd-stop",
+                                "pair": "EUR_USD",
+                                "side": "LONG",
+                                "order_type": "STOP_ORDER",
+                                "entry_touched_after_cancel": True,
+                                "tp_touched_after_cancel": False,
+                                "sl_touched_after_cancel": False,
+                                "mfe_pips_after_cancel_entry": 3.2,
+                            }
+                        ],
+                    }
+                )
+            )
+            brain = _brain(root, files, _cancel_pending_decision(cancel_order_ids=["pending-1"]))
+
+            summary = brain.run(snapshot_path=files["snapshot"])
+
+            self.assertEqual(summary.status, "REJECTED")
+            payload = json.loads((root / "gpt_decision.json").read_text())
+            codes = {issue["code"] for issue in payload["verification_issues"]}
+            self.assertIn("PENDING_CANCEL_TIMING_AUDIT_REQUIRED", codes)
+            self.assertNotIn("CANCEL_PENDING_CURRENT_THESIS_VISIBLE", codes)
+
+    def test_cancel_pending_with_timing_audit_ref_uses_normal_cancel_gates(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root, orders=[_pending_order()])
+            blocked_result = _result()
+            blocked_result["lane_id"] = "range_trader:USD_JPY:SHORT:RANGE_ROTATION"
+            blocked_result["intent"]["pair"] = "USD_JPY"
+            blocked_result["intent"]["side"] = "SHORT"
+            blocked_result["status"] = "DRY_RUN_BLOCKED"
+            blocked_result["live_blockers"] = ["forecast no longer backs this entry"]
+            files["intents"].write_text(json.dumps({"results": [blocked_result]}))
+            files["execution_timing_audit"].write_text(
+                json.dumps(
+                    {
+                        "generated_at_utc": datetime.now(timezone.utc).isoformat(),
+                        "status": "OK",
+                        "canceled_order_regrets": [
+                            {
+                                "order_id": "prior-eurusd-stop",
+                                "pair": "EUR_USD",
+                                "side": "LONG",
+                                "order_type": "STOP_ORDER",
+                                "entry_touched_after_cancel": True,
+                                "tp_touched_after_cancel": False,
+                                "sl_touched_after_cancel": False,
+                                "mfe_pips_after_cancel_entry": 3.2,
+                            }
+                        ],
+                    }
+                )
+            )
+            decision = _cancel_pending_decision(cancel_order_ids=["pending-1"])
+            decision["evidence_refs"].append("timing:audit")
+            brain = _brain(root, files, decision)
+
+            summary = brain.run(snapshot_path=files["snapshot"])
+
+            self.assertEqual(summary.status, "ACCEPTED", msg=summary)
+            payload = json.loads((root / "gpt_decision.json").read_text())
+            codes = {issue["code"] for issue in payload["verification_issues"]}
+            self.assertNotIn("PENDING_CANCEL_TIMING_AUDIT_REQUIRED", codes)
+
     def test_accepts_cancel_pending_for_self_improvement_pending_cancel_review_p0(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

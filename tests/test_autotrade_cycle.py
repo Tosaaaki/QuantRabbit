@@ -6853,7 +6853,7 @@ def _gpt_cancel_pending_decision(cancel_order_ids: list[str]) -> dict:
         "invalidation": "Do not cancel if the order id is not present in current broker truth.",
         "rejected_alternatives": ["TRADE rejected until pending exposure is resolved."],
         "risk_notes": ["Canceling a pending entry reduces possible future exposure."],
-        "evidence_refs": ["broker:snapshot", "target:daily"],
+        "evidence_refs": ["broker:snapshot", "target:daily", "timing:audit"],
         "operator_summary": "Clear the stale pending order before considering another entry.",
     }
 
