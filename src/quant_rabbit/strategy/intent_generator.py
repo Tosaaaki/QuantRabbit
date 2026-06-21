@@ -6822,6 +6822,26 @@ def _oanda_campaign_vehicle_shape_reprice_metadata(
     return out
 
 
+def _position_metadata_and_recovery_target_units(
+    *,
+    pair: str,
+    side: Side,
+    snapshot: BrokerSnapshot,
+    entry: float,
+    chart_context: dict[str, Any] | None,
+    lane: dict[str, Any],
+) -> tuple[dict[str, Any], int | None]:
+    metadata = _position_intent_metadata(pair, side, snapshot, entry=entry)
+    if str(metadata.get("position_intent") or "").upper() == "HEDGE":
+        metadata.update(_hedge_timing_metadata(side, metadata, chart_context, lane))
+    recovery_target_units: int | None = None
+    if _is_hedge_recovery_metadata(metadata):
+        recovery_metadata = _recovery_hedge_sizing_metadata(side, metadata, chart_context, lane)
+        metadata.update(recovery_metadata)
+        recovery_target_units = int(metadata.get("hedge_recovery_units") or 0) or None
+    return metadata, recovery_target_units
+
+
 def _oanda_campaign_firepower_vehicle_matches(
     intent: OrderIntent,
     vehicle: dict[str, Any],
@@ -7490,20 +7510,13 @@ def _intent_from_lane(
         stop_widen_mult=stop_widen_mult,
         chart_context=chart_context,
     )
-    position_metadata = _position_intent_metadata(pair, side, snapshot, entry=entry)
-    if str(position_metadata.get("position_intent") or "").upper() == "HEDGE":
-        position_metadata.update(_hedge_timing_metadata(side, position_metadata, chart_context, lane))
-    recovery_target_units: int | None = None
-    if _is_hedge_recovery_metadata(position_metadata):
-        recovery_metadata = _recovery_hedge_sizing_metadata(side, position_metadata, chart_context, lane)
-        position_metadata.update(recovery_metadata)
-        recovery_target_units = int(position_metadata.get("hedge_recovery_units") or 0) or None
-    effective_max_loss_jpy, macro_event_sizing_metadata = _macro_event_sizing_plan(
-        lane,
+    position_metadata, recovery_target_units = _position_metadata_and_recovery_target_units(
+        pair=pair,
         side=side,
-        base_max_loss_jpy=max_loss_jpy,
-        portfolio_loss_cap=portfolio_loss_cap,
-        position_metadata=position_metadata,
+        snapshot=snapshot,
+        entry=entry,
+        chart_context=chart_context,
+        lane=lane,
     )
     tp, tp_execution_metadata = _take_profit_execution_plan(
         pair=pair,
@@ -7538,6 +7551,142 @@ def _intent_from_lane(
     )
     if precision_geometry_metadata:
         tp_execution_metadata.update(precision_geometry_metadata)
+    vehicle_reprice_metadata = _oanda_campaign_vehicle_shape_reprice_metadata(
+        lane=lane,
+        pair=pair,
+        side=side,
+        method=method,
+        order_type=order_type,
+        quote=quote,
+        entry=entry,
+        tp=tp,
+        sl=sl,
+        data_root=data_root,
+    )
+    if (
+        vehicle_reprice_metadata.get("oanda_campaign_vehicle_reprice_status")
+        == "ENTRY_REPRICE_POSSIBLE"
+    ):
+        original_entry = entry
+        original_tp = tp
+        original_sl = sl
+        original_tp_execution_metadata = dict(tp_execution_metadata)
+        original_position_metadata = dict(position_metadata)
+        original_recovery_target_units = recovery_target_units
+        candidate_entry = _optional_float(
+            vehicle_reprice_metadata.get("oanda_campaign_vehicle_reprice_required_entry")
+        )
+        if candidate_entry is not None:
+            entry = candidate_entry
+            position_metadata, recovery_target_units = _position_metadata_and_recovery_target_units(
+                pair=pair,
+                side=side,
+                snapshot=snapshot,
+                entry=entry,
+                chart_context=chart_context,
+                lane=lane,
+            )
+            tp, tp_execution_metadata = _take_profit_execution_plan(
+                pair=pair,
+                side=side,
+                method=method,
+                order_type=order_type,
+                quote=quote,
+                entry=entry,
+                tp=original_tp,
+                sl=original_sl,
+                reward_risk=target_reward_risk,
+                execution_regime=execution_regime,
+                chart_context=chart_context,
+                pair_chart=pair_chart,
+                atr_pips=atr_pips,
+                forecast_direction=lane.get("forecast_direction"),
+                forecast_confidence=_optional_float(lane.get("forecast_confidence")),
+                forecast_target_price=_optional_float(lane.get("forecast_target_price")),
+                hedge_recovery=_is_hedge_recovery_metadata(position_metadata),
+            )
+            tp, sl, precision_geometry_metadata = _technical_harvest_precision_geometry_plan(
+                pair=pair,
+                side=side,
+                method=method,
+                order_type=order_type,
+                entry=entry,
+                tp=tp,
+                sl=original_sl,
+                chart_context=chart_context,
+                tp_execution_metadata=tp_execution_metadata,
+                forecast_direction=lane.get("forecast_direction"),
+            )
+            if precision_geometry_metadata:
+                tp_execution_metadata.update(precision_geometry_metadata)
+            confirmed_reprice_metadata = _oanda_campaign_vehicle_shape_reprice_metadata(
+                lane=lane,
+                pair=pair,
+                side=side,
+                method=method,
+                order_type=order_type,
+                quote=quote,
+                entry=entry,
+                tp=tp,
+                sl=sl,
+                data_root=data_root,
+            )
+            if (
+                confirmed_reprice_metadata.get("oanda_campaign_vehicle_reprice_status")
+                == "MATCHED_CURRENT_GEOMETRY"
+            ):
+                confirmed_reprice_metadata.update(
+                    {
+                        "oanda_campaign_vehicle_reprice_applied": True,
+                        "oanda_campaign_vehicle_reprice_original_entry": original_entry,
+                        "oanda_campaign_vehicle_reprice_applied_entry": entry,
+                        "oanda_campaign_vehicle_reprice_original_reward_risk": (
+                            vehicle_reprice_metadata.get(
+                                "oanda_campaign_vehicle_reprice_current_reward_risk"
+                            )
+                        ),
+                        "oanda_campaign_vehicle_reprice_applied_reward_risk": (
+                            confirmed_reprice_metadata.get(
+                                "oanda_campaign_vehicle_reprice_current_reward_risk"
+                            )
+                        ),
+                        "oanda_campaign_vehicle_reprice_applied_reason": (
+                            vehicle_reprice_metadata.get(
+                                "oanda_campaign_vehicle_reprice_reason"
+                            )
+                        ),
+                    }
+                )
+                vehicle_reprice_metadata = confirmed_reprice_metadata
+            else:
+                entry = original_entry
+                tp = original_tp
+                sl = original_sl
+                tp_execution_metadata = original_tp_execution_metadata
+                position_metadata = original_position_metadata
+                recovery_target_units = original_recovery_target_units
+                vehicle_reprice_metadata.update(
+                    {
+                        "oanda_campaign_vehicle_reprice_applied": False,
+                        "oanda_campaign_vehicle_reprice_apply_rejected_status": (
+                            confirmed_reprice_metadata.get(
+                                "oanda_campaign_vehicle_reprice_status"
+                            )
+                        ),
+                        "oanda_campaign_vehicle_reprice_apply_rejected_reason": (
+                            confirmed_reprice_metadata.get(
+                                "oanda_campaign_vehicle_reprice_reason"
+                            )
+                        ),
+                    }
+                )
+    effective_max_loss_jpy, macro_event_sizing_metadata = _macro_event_sizing_plan(
+        lane,
+        side=side,
+        base_max_loss_jpy=max_loss_jpy,
+        portfolio_loss_cap=portfolio_loss_cap,
+        position_metadata=position_metadata,
+    )
     effective_max_loss_jpy, loss_asymmetry_metadata = _loss_asymmetry_sizing_plan(
         loss_asymmetry_guard,
         pair=pair,
@@ -7596,20 +7745,7 @@ def _intent_from_lane(
         atr_pips=atr_pips,
     )
     geometry_metadata.update(tp_execution_metadata)
-    geometry_metadata.update(
-        _oanda_campaign_vehicle_shape_reprice_metadata(
-            lane=lane,
-            pair=pair,
-            side=side,
-            method=method,
-            order_type=order_type,
-            quote=quote,
-            entry=entry,
-            tp=tp,
-            sl=sl,
-            data_root=data_root,
-        )
-    )
+    geometry_metadata.update(vehicle_reprice_metadata)
     # Disaster stop: broker-side catastrophe bound computed AFTER geometry so
     # the expected intent.sl (sizing / reward-risk anchor) is final, and the
     # strict-ordering buffer can guarantee the broker stop sits beyond it.

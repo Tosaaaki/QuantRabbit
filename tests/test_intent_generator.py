@@ -1401,6 +1401,53 @@ class IntentGeneratorTest(unittest.TestCase):
             self.assertEqual(metadata["oanda_campaign_vehicle_reprice_current_reward_risk"], 2.0)
             self.assertNotIn("oanda_campaign_vehicle_reprice_required_entry", metadata)
 
+    def test_oanda_campaign_vehicle_reprice_applies_before_sizing(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_oanda_campaign_firepower_report(root, exit_shape="tp3_sl1")
+            campaign = _oanda_seed_range_campaign(root)
+            campaign_payload = json.loads(campaign.read_text())
+            campaign_payload["lanes"][0].update(
+                {
+                    "oanda_campaign_vehicle_key": "EUR_USD|LONG|range_reversion|tp3_sl1",
+                    "oanda_campaign_vehicle_keys": ["EUR_USD|LONG|range_reversion|tp3_sl1"],
+                    "oanda_campaign_exit_shape": "tp3_sl1",
+                    "oanda_campaign_exit_shapes": ["tp3_sl1"],
+                }
+            )
+            campaign.write_text(json.dumps(campaign_payload))
+            output = root / "intents.json"
+
+            IntentGenerator(
+                campaign_plan=_stamp_campaign_generated_at(campaign),
+                strategy_profile=_strategy(root, status="CANDIDATE"),
+                output_path=output,
+                report_path=root / "intents.md",
+                pair_charts_path=_pair_charts(root),
+                data_root=root,
+                max_loss_jpy=1000.0,
+            ).run(snapshot_path=_snapshot(root))
+
+            payload = json.loads(output.read_text())
+            result = next(
+                item for item in payload["results"]
+                if item["lane_id"] == "range_trader:EUR_USD:LONG:RANGE_ROTATION"
+            )
+            intent = result["intent"]
+            metadata = intent["metadata"]
+
+            self.assertEqual(intent["entry"], 1.17084)
+            self.assertEqual(metadata["oanda_campaign_vehicle_reprice_applied"], True)
+            self.assertEqual(metadata["oanda_campaign_vehicle_reprice_original_entry"], 1.17104)
+            self.assertEqual(metadata["oanda_campaign_vehicle_reprice_applied_entry"], 1.17084)
+            self.assertEqual(
+                metadata["oanda_campaign_vehicle_reprice_status"],
+                "MATCHED_CURRENT_GEOMETRY",
+            )
+            self.assertEqual(metadata["oanda_campaign_vehicle_reprice_current_reward_risk"], 3.0)
+            self.assertEqual(metadata["virtual_take_profit_reward_risk"], 3.0)
+            self.assertGreater(intent["units"], 0)
+
     def test_capture_tp_proven_keeps_firepower_warn_for_non_matching_oanda_route(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
