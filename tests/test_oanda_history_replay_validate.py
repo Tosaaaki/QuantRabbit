@@ -484,12 +484,91 @@ class OandaHistoryReplayValidateTest(unittest.TestCase):
             ["GBP_USD_DOWN_S5_BIDASK_HARVEST_TP5_SL7"],
         )
         self.assertEqual(rules["edge_rules"][0]["daily_stability_status"], "DAILY_STABLE")
+        self.assertEqual(rules["edge_rules"][0]["adoption_status"], "LIVE_GRADE_DAILY_STABLE")
+        self.assertTrue(rules["edge_rules"][0]["live_grade"])
         self.assertEqual(
             [rule["name"] for rule in rules["negative_rules"]],
             ["AUD_JPY_UP_S5_BIDASK_NEGATIVE_EXPECTANCY"],
         )
+        self.assertEqual(
+            rules["negative_rules"][0]["adoption_status"],
+            "LIVE_BLOCK_NEGATIVE_EXPECTANCY",
+        )
         self.assertEqual(rules["negative_rules"][0]["side"], "LONG")
+        self.assertEqual(rules["adoption_summary"]["live_grade_support_rules"], 1)
+        self.assertEqual(rules["adoption_summary"]["negative_block_rules"], 1)
         self.assertEqual(rules["rejected_sampled_segments"], [])
+
+    def test_precision_rules_mark_concentrated_edge_rank_only(self) -> None:
+        rules = replay._bidask_precision_rules(
+            [
+                {
+                    "pair": "EUR_USD",
+                    "direction": "DOWN",
+                    "n": 226,
+                    "summary": {
+                        "hit_rate": 0.74,
+                        "avg_final_pips": 2.3,
+                        "median_final_pips": 3.7,
+                        "avg_mfe_pips": 5.1,
+                        "avg_mae_pips": 4.3,
+                    },
+                    "best_exit": {
+                        "take_profit_pips": 5.0,
+                        "stop_loss_pips": 7.0,
+                        "avg_realized_pips": 2.58,
+                        "win_rate": 0.74,
+                        "profit_factor": 3.34,
+                    },
+                    "daily_stability": {
+                        "campaign_timezone": "Asia/Tokyo",
+                        "active_days": 5,
+                        "first_day": "2026-05-15",
+                        "last_day": "2026-06-16",
+                        "min_daily_samples": 1,
+                        "max_daily_samples": 219,
+                        "avg_daily_samples": 45.2,
+                        "max_daily_sample_share": 0.969,
+                        "positive_days": 2,
+                        "negative_days": 3,
+                        "flat_days": 0,
+                        "positive_day_rate": 0.4,
+                        "avg_daily_realized_pips": 116.76,
+                        "worst_daily_realized_pips": -14.0,
+                        "best_daily_realized_pips": 606.1,
+                    },
+                }
+            ],
+            granularity="S5",
+            audit_report="unit.json",
+            edge_min_samples=30,
+            edge_min_directional_hit_rate=0.60,
+            edge_min_avg_final_pips=0.0,
+            edge_min_avg_realized_pips=0.5,
+            edge_min_win_rate=0.55,
+            edge_min_profit_factor=1.5,
+            negative_min_samples=30,
+            negative_max_directional_hit_rate=0.45,
+            negative_max_avg_final_pips=0.0,
+            negative_max_avg_realized_pips=-0.5,
+            negative_max_win_rate=0.40,
+            negative_max_profit_factor=0.75,
+        )
+
+        rule = rules["edge_rules"][0]
+        self.assertEqual(rule["adoption_status"], "RANK_ONLY_NOT_DAILY_STABLE")
+        self.assertFalse(rule["live_grade"])
+        self.assertIn("DAILY_SAMPLE_CONCENTRATED", rule["adoption_blockers"])
+        self.assertIn("NEEDS_LESS_DAILY_SAMPLE_CONCENTRATION", rule["adoption_blockers"])
+        self.assertIn("NEEDS_HIGHER_POSITIVE_DAY_RATE", rule["adoption_blockers"])
+        self.assertEqual(rule["daily_stability_gap"]["current_max_daily_sample_share"], 0.969)
+        self.assertEqual(rules["daily_stable_edge_rules"], [])
+        self.assertEqual(rules["adoption_summary"]["live_grade_support_rules"], 0)
+        self.assertEqual(rules["adoption_summary"]["rank_only_support_rules"], 1)
+        self.assertEqual(
+            rules["adoption_summary"]["rank_only_blocker_counts"]["DAILY_SAMPLE_CONCENTRATED"],
+            1,
+        )
 
     def test_precision_rules_select_contrarian_edge_from_losing_forecast_bucket(self) -> None:
         rules = replay._bidask_precision_rules(
@@ -548,6 +627,9 @@ class OandaHistoryReplayValidateTest(unittest.TestCase):
         self.assertEqual(rule["direction"], "DOWN")
         self.assertEqual(rule["source_directional_hit_rate"], 0.2)
         self.assertTrue(rule["contrarian_edge"])
+        self.assertEqual(rule["adoption_status"], "RANK_ONLY_NOT_DAILY_STABLE")
+        self.assertFalse(rule["live_grade"])
+        self.assertIn("INSUFFICIENT_ACTIVE_DAYS", rule["adoption_blockers"])
 
     def test_missing_price_window_groups_publish_fetch_windows(self) -> None:
         rows = [

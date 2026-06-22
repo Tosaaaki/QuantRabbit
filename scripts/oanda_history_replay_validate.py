@@ -1601,6 +1601,115 @@ def _daily_stability_payload(daily: dict[str, Any], status: str) -> dict[str, An
     return payload
 
 
+def _daily_stability_gap(
+    daily: dict[str, Any],
+    status: str,
+    *,
+    min_active_days: int,
+    max_daily_sample_share: float,
+    min_positive_day_rate: float,
+) -> dict[str, Any]:
+    active_days = int(daily.get("active_days") or 0)
+    positive_day_rate = _safe_metric(daily.get("positive_day_rate")) or 0.0
+    positive_days = int(daily.get("positive_days") or 0)
+    required_active_days = max(active_days, int(min_active_days))
+    required_positive_days = math.ceil(float(min_positive_day_rate) * required_active_days)
+    max_share = _safe_metric(daily.get("max_daily_sample_share"))
+    reasons: list[str] = []
+    missing_active_days = max(0, int(min_active_days) - active_days)
+    missing_positive_days = max(0, required_positive_days - positive_days)
+    if missing_active_days:
+        reasons.append("NEEDS_MORE_ACTIVE_DAYS")
+    if max_share is None:
+        reasons.append("NEEDS_DAILY_SAMPLE_DISTRIBUTION")
+    elif max_share > float(max_daily_sample_share):
+        reasons.append("NEEDS_LESS_DAILY_SAMPLE_CONCENTRATION")
+    if positive_day_rate < float(min_positive_day_rate):
+        reasons.append("NEEDS_HIGHER_POSITIVE_DAY_RATE")
+    return {
+        "status": status,
+        "reasons": reasons,
+        "missing_active_days": missing_active_days,
+        "missing_positive_days_at_current_requirement": missing_positive_days,
+        "required_active_days": int(min_active_days),
+        "required_positive_days_at_current_requirement": required_positive_days,
+        "required_positive_day_rate": _round(float(min_positive_day_rate)),
+        "current_positive_day_rate": _round(positive_day_rate),
+        "max_allowed_daily_sample_share": _round(float(max_daily_sample_share)),
+        "current_max_daily_sample_share": _round(max_share),
+    }
+
+
+def _precision_rule_adoption_payload(
+    daily: dict[str, Any],
+    status: str,
+    *,
+    min_active_days: int,
+    max_daily_sample_share: float,
+    min_positive_day_rate: float,
+) -> dict[str, Any]:
+    gap = _daily_stability_gap(
+        daily,
+        status,
+        min_active_days=min_active_days,
+        max_daily_sample_share=max_daily_sample_share,
+        min_positive_day_rate=min_positive_day_rate,
+    )
+    if status == "DAILY_STABLE":
+        return {
+            "adoption_status": "LIVE_GRADE_DAILY_STABLE",
+            "live_grade": True,
+            "adoption_blockers": [],
+            "daily_stability_gap": gap,
+        }
+    blockers = [status]
+    blockers.extend(reason for reason in gap["reasons"] if reason not in blockers)
+    return {
+        "adoption_status": "RANK_ONLY_NOT_DAILY_STABLE",
+        "live_grade": False,
+        "adoption_blockers": blockers,
+        "daily_stability_gap": gap,
+    }
+
+
+def _precision_rule_negative_adoption_payload() -> dict[str, Any]:
+    return {
+        "adoption_status": "LIVE_BLOCK_NEGATIVE_EXPECTANCY",
+        "live_grade": False,
+        "adoption_blockers": ["NEGATIVE_EXPECTANCY"],
+    }
+
+
+def _precision_adoption_summary(
+    *,
+    edge_rules: Sequence[dict[str, Any]],
+    daily_stable_edge_rules: Sequence[dict[str, Any]],
+    contrarian_edge_rules: Sequence[dict[str, Any]],
+    daily_stable_contrarian_edge_rules: Sequence[dict[str, Any]],
+    negative_rules: Sequence[dict[str, Any]],
+    rejected_daily_stability: Sequence[dict[str, Any]],
+) -> dict[str, Any]:
+    live_grade_count = len(daily_stable_edge_rules) + len(daily_stable_contrarian_edge_rules)
+    rank_only_count = (
+        len(edge_rules)
+        + len(contrarian_edge_rules)
+        - live_grade_count
+    )
+    blockers = collections.Counter(
+        blocker
+        for row in rejected_daily_stability
+        for blocker in row.get("adoption_blockers", [])
+    )
+    return {
+        "live_grade_support_rules": live_grade_count,
+        "rank_only_support_rules": rank_only_count,
+        "negative_block_rules": len(negative_rules),
+        "has_live_grade_support": live_grade_count > 0,
+        "has_rank_only_support": rank_only_count > 0,
+        "rank_only_blocker_counts": dict(sorted(blockers.items())),
+    }
+
+
 def _bidask_precision_rules(
     segment_rows: Sequence[dict[str, Any]],
     *,
@@ -1691,6 +1800,13 @@ def _bidask_precision_rules(
             "optimized_profit_factor": _round(profit_factor),
             "audit_report": audit_report,
             **_daily_stability_payload(daily, daily_status),
+            **_precision_rule_adoption_payload(
+                daily,
+                daily_status,
+                min_active_days=stable_min_active_days,
+                max_daily_sample_share=stable_max_daily_sample_share,
+                min_positive_day_rate=stable_min_positive_day_rate,
+            ),
         }
         if (
             n >= edge_min_samples
@@ -1730,6 +1846,13 @@ def _bidask_precision_rules(
                         "optimized_win_rate": _round(win_rate),
                         "optimized_profit_factor": _round(profit_factor),
                         **_daily_stability_payload(daily, daily_status),
+                        **_precision_rule_adoption_payload(
+                            daily,
+                            daily_status,
+                            min_active_days=stable_min_active_days,
+                            max_daily_sample_share=stable_max_daily_sample_share,
+                            min_positive_day_rate=stable_min_positive_day_rate,
+                        ),
                     }
                 )
             continue
@@ -1750,6 +1873,7 @@ def _bidask_precision_rules(
                 {
                     "name": f"{pair}_{direction}_{granularity}_BIDASK_NEGATIVE_EXPECTANCY",
                     **common,
+                    **_precision_rule_negative_adoption_payload(),
                     "blocks_live_support": True,
                 }
             )
@@ -1864,6 +1988,13 @@ def _bidask_precision_rules(
                 "max_stop_pips": _round(stop_loss + 0.2),
                 "audit_report": audit_report,
                 **_daily_stability_payload(daily, daily_status),
+                **_precision_rule_adoption_payload(
+                    daily,
+                    daily_status,
+                    min_active_days=stable_min_active_days,
+                    max_daily_sample_share=stable_max_daily_sample_share,
+                    min_positive_day_rate=stable_min_positive_day_rate,
+                ),
             }
             contrarian_edge_rules.append(rule)
             if daily_status == "DAILY_STABLE":
@@ -1881,6 +2012,13 @@ def _bidask_precision_rules(
                         "optimized_win_rate": _round(win_rate),
                         "optimized_profit_factor": _round(profit_factor),
                         **_daily_stability_payload(daily, daily_status),
+                        **_precision_rule_adoption_payload(
+                            daily,
+                            daily_status,
+                            min_active_days=stable_min_active_days,
+                            max_daily_sample_share=stable_max_daily_sample_share,
+                            min_positive_day_rate=stable_min_positive_day_rate,
+                        ),
                     }
                 )
             continue
@@ -1956,6 +2094,14 @@ def _bidask_precision_rules(
         "contrarian_edge_rules": contrarian_edge_rules,
         "daily_stable_contrarian_edge_rules": daily_stable_contrarian_edge_rules,
         "negative_rules": negative_rules,
+        "adoption_summary": _precision_adoption_summary(
+            edge_rules=edge_rules,
+            daily_stable_edge_rules=daily_stable_edge_rules,
+            contrarian_edge_rules=contrarian_edge_rules,
+            daily_stable_contrarian_edge_rules=daily_stable_contrarian_edge_rules,
+            negative_rules=negative_rules,
+            rejected_daily_stability=rejected_daily_stability,
+        ),
         "rejected_sampled_segments": rejected,
         "rejected_contrarian_segments": rejected_contrarian,
         "rejected_daily_stability_segments": rejected_daily_stability,
@@ -2153,8 +2299,16 @@ def _markdown(report: dict[str, Any]) -> str:
     daily_stable_edge_rules = precision.get("daily_stable_edge_rules") or []
     daily_stable_contrarian_rules = precision.get("daily_stable_contrarian_edge_rules") or []
     negative_rules = precision.get("negative_rules") or []
+    adoption = precision.get("adoption_summary") or {}
     lines.append(f"- edge_rules: {len(edge_rules)}")
     lines.append(f"- daily_stable_edge_rules: {len(daily_stable_edge_rules)}")
+    lines.append(
+        "- adoption_summary: "
+        f"live_grade={adoption.get('live_grade_support_rules', 0)} "
+        f"rank_only={adoption.get('rank_only_support_rules', 0)} "
+        f"negative_blocks={adoption.get('negative_block_rules', 0)} "
+        f"has_live_grade={adoption.get('has_live_grade_support', False)}"
+    )
     for rule in edge_rules[:12]:
         lines.append(
             f"  - {rule['name']}: n={rule['samples']} hit={_pct(rule.get('directional_hit_rate'))} "
@@ -2162,6 +2316,8 @@ def _markdown(report: dict[str, Any]) -> str:
             f"TP={rule.get('optimized_take_profit_pips')} SL={rule.get('optimized_stop_loss_pips')} "
             f"realized={_fmt(rule.get('optimized_avg_realized_pips'))} "
             f"win={_pct(rule.get('optimized_win_rate'))} PF={_fmt(rule.get('optimized_profit_factor'))} "
+            f"adoption={rule.get('adoption_status')} "
+            f"blockers={','.join(rule.get('adoption_blockers') or []) or 'none'} "
             f"daily={rule.get('daily_stability_status')} days={rule.get('active_days')} "
             f"max_share={_pct(rule.get('max_daily_sample_share'))}"
         )
@@ -2176,6 +2332,8 @@ def _markdown(report: dict[str, Any]) -> str:
             f"TP={rule.get('optimized_take_profit_pips')} SL={rule.get('optimized_stop_loss_pips')} "
             f"realized={_fmt(rule.get('optimized_avg_realized_pips'))} "
             f"win={_pct(rule.get('optimized_win_rate'))} PF={_fmt(rule.get('optimized_profit_factor'))} "
+            f"adoption={rule.get('adoption_status')} "
+            f"blockers={','.join(rule.get('adoption_blockers') or []) or 'none'} "
             f"daily={rule.get('daily_stability_status')} days={rule.get('active_days')} "
             f"max_share={_pct(rule.get('max_daily_sample_share'))}"
         )
@@ -2185,7 +2343,20 @@ def _markdown(report: dict[str, Any]) -> str:
             f"  - {rule['name']}: n={rule['samples']} hit={_pct(rule.get('directional_hit_rate'))} "
             f"avg_final={_fmt(rule.get('avg_final_pips'))} "
             f"best_realized={_fmt(rule.get('optimized_avg_realized_pips'))} "
-            f"win={_pct(rule.get('optimized_win_rate'))} PF={_fmt(rule.get('optimized_profit_factor'))}"
+            f"win={_pct(rule.get('optimized_win_rate'))} PF={_fmt(rule.get('optimized_profit_factor'))} "
+            f"adoption={rule.get('adoption_status')}"
+        )
+    rejected_daily = precision.get("rejected_daily_stability_segments") or []
+    lines.append(f"- rejected_daily_stability_segments: {len(rejected_daily)}")
+    for row in rejected_daily[:12]:
+        gap = row.get("daily_stability_gap") or {}
+        lines.append(
+            f"  - {row.get('name')}: adoption={row.get('adoption_status')} "
+            f"blockers={','.join(row.get('adoption_blockers') or []) or 'none'} "
+            f"days={row.get('active_days')} missing_days={gap.get('missing_active_days')} "
+            f"positive_day_rate={_pct(row.get('positive_day_rate'))} "
+            f"max_share={_pct(row.get('max_daily_sample_share'))} "
+            f"PF={_fmt(row.get('optimized_profit_factor'))}"
         )
     lines.extend(["", "## Missing Price Windows", ""])
     missing_groups = report.get("missing_price_window_groups") or []

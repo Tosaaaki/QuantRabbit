@@ -20,6 +20,7 @@ class ScriptBootstrapTest(unittest.TestCase):
             "oanda_history_fetch.py",
             "oanda_history_replay_validate.py",
             "oanda_universal_rotation_miner.py",
+            "package_bidask_replay_precision_rules.py",
             "plan_campaign.py",
             "qr_weekend_task_switch.py",
             "technical_entry_miner.py",

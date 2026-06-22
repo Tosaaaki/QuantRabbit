@@ -1,8 +1,29 @@
 {
+  "adoption_summary": {
+    "has_live_grade_support": false,
+    "has_rank_only_support": true,
+    "live_grade_support_rules": 0,
+    "negative_block_rules": 1,
+    "rank_only_blocker_counts": {
+      "DAILY_SAMPLE_CONCENTRATED": 1,
+      "INSUFFICIENT_ACTIVE_DAYS": 2,
+      "NEEDS_HIGHER_POSITIVE_DAY_RATE": 3,
+      "NEEDS_LESS_DAILY_SAMPLE_CONCENTRATION": 3,
+      "NEEDS_MORE_ACTIVE_DAYS": 2
+    },
+    "rank_only_support_rules": 3
+  },
   "contrarian_edge_rules": [
     {
       "active_days": 2,
-      "audit_report": "logs/reports/forecast_improvement/oanda_history_replay_validate_20260621T024749Z.json",
+      "adoption_blockers": [
+        "INSUFFICIENT_ACTIVE_DAYS",
+        "NEEDS_MORE_ACTIVE_DAYS",
+        "NEEDS_LESS_DAILY_SAMPLE_CONCENTRATION",
+        "NEEDS_HIGHER_POSITIVE_DAY_RATE"
+      ],
+      "adoption_status": "RANK_ONLY_NOT_DAILY_STABLE",
+      "audit_report": "logs/reports/forecast_improvement/oanda_history_replay_validate_20260622T164722Z.json",
       "avg_daily_realized_pips": 56.75,
       "avg_daily_samples": 20.0,
       "avg_final_pips": 4.8425,
@@ -12,6 +33,22 @@
       "campaign_timezone": "Asia/Tokyo",
       "confidence_bucket": "0.75-0.90",
       "contrarian_edge": true,
+      "daily_stability_gap": {
+        "current_max_daily_sample_share": 0.95,
+        "current_positive_day_rate": 0.5,
+        "max_allowed_daily_sample_share": 0.7,
+        "missing_active_days": 1,
+        "missing_positive_days_at_current_requirement": 1,
+        "reasons": [
+          "NEEDS_MORE_ACTIVE_DAYS",
+          "NEEDS_LESS_DAILY_SAMPLE_CONCENTRATION",
+          "NEEDS_HIGHER_POSITIVE_DAY_RATE"
+        ],
+        "required_active_days": 3,
+        "required_positive_day_rate": 0.6667,
+        "required_positive_days_at_current_requirement": 2,
+        "status": "INSUFFICIENT_ACTIVE_DAYS"
+      },
       "daily_stability_status": "INSUFFICIENT_ACTIVE_DAYS",
       "direction": "DOWN",
       "directional_hit_rate": 0.65,
@@ -22,6 +59,7 @@
       "granularity": "S5",
       "horizon_bucket": "31-60m",
       "last_day": "2026-06-02",
+      "live_grade": false,
       "max_daily_sample_share": 0.95,
       "max_daily_samples": 38,
       "max_stop_pips": 7.2,
@@ -49,7 +87,14 @@
     },
     {
       "active_days": 2,
-      "audit_report": "logs/reports/forecast_improvement/oanda_history_replay_validate_20260621T024749Z.json",
+      "adoption_blockers": [
+        "INSUFFICIENT_ACTIVE_DAYS",
+        "NEEDS_MORE_ACTIVE_DAYS",
+        "NEEDS_LESS_DAILY_SAMPLE_CONCENTRATION",
+        "NEEDS_HIGHER_POSITIVE_DAY_RATE"
+      ],
+      "adoption_status": "RANK_ONLY_NOT_DAILY_STABLE",
+      "audit_report": "logs/reports/forecast_improvement/oanda_history_replay_validate_20260622T164722Z.json",
       "avg_daily_realized_pips": 56.75,
       "avg_daily_samples": 20.0,
       "avg_final_pips": 4.8425,
@@ -59,6 +104,22 @@
       "campaign_timezone": "Asia/Tokyo",
       "confidence_bucket": "0.75-0.90",
       "contrarian_edge": true,
+      "daily_stability_gap": {
+        "current_max_daily_sample_share": 0.95,
+        "current_positive_day_rate": 0.5,
+        "max_allowed_daily_sample_share": 0.7,
+        "missing_active_days": 1,
+        "missing_positive_days_at_current_requirement": 1,
+        "reasons": [
+          "NEEDS_MORE_ACTIVE_DAYS",
+          "NEEDS_LESS_DAILY_SAMPLE_CONCENTRATION",
+          "NEEDS_HIGHER_POSITIVE_DAY_RATE"
+        ],
+        "required_active_days": 3,
+        "required_positive_day_rate": 0.6667,
+        "required_positive_days_at_current_requirement": 2,
+        "status": "INSUFFICIENT_ACTIVE_DAYS"
+      },
       "daily_stability_status": "INSUFFICIENT_ACTIVE_DAYS",
       "direction": "DOWN",
       "directional_hit_rate": 0.65,
@@ -68,6 +129,7 @@
       "forecast_direction": "UP",
       "granularity": "S5",
       "last_day": "2026-06-02",
+      "live_grade": false,
       "max_daily_sample_share": 0.95,
       "max_daily_samples": 38,
       "max_stop_pips": 7.2,
@@ -99,7 +161,13 @@
   "edge_rules": [
     {
       "active_days": 5,
-      "audit_report": "logs/reports/forecast_improvement/oanda_history_replay_validate_20260621T024749Z.json",
+      "adoption_blockers": [
+        "DAILY_SAMPLE_CONCENTRATED",
+        "NEEDS_LESS_DAILY_SAMPLE_CONCENTRATION",
+        "NEEDS_HIGHER_POSITIVE_DAY_RATE"
+      ],
+      "adoption_status": "RANK_ONLY_NOT_DAILY_STABLE",
+      "audit_report": "logs/reports/forecast_improvement/oanda_history_replay_validate_20260622T164722Z.json",
       "avg_daily_realized_pips": 116.76,
       "avg_daily_samples": 45.2,
       "avg_final_pips": 2.3425,
@@ -107,6 +175,21 @@
       "avg_mfe_pips": 5.1642,
       "best_daily_realized_pips": 606.1,
       "campaign_timezone": "Asia/Tokyo",
+      "daily_stability_gap": {
+        "current_max_daily_sample_share": 0.969,
+        "current_positive_day_rate": 0.4,
+        "max_allowed_daily_sample_share": 0.7,
+        "missing_active_days": 0,
+        "missing_positive_days_at_current_requirement": 2,
+        "reasons": [
+          "NEEDS_LESS_DAILY_SAMPLE_CONCENTRATION",
+          "NEEDS_HIGHER_POSITIVE_DAY_RATE"
+        ],
+        "required_active_days": 3,
+        "required_positive_day_rate": 0.6667,
+        "required_positive_days_at_current_requirement": 4,
+        "status": "DAILY_SAMPLE_CONCENTRATED"
+      },
       "daily_stability_status": "DAILY_SAMPLE_CONCENTRATED",
       "direction": "DOWN",
       "directional_hit_rate": 0.7389,
@@ -114,6 +197,7 @@
       "flat_days": 0,
       "granularity": "S5",
       "last_day": "2026-06-16",
+      "live_grade": false,
       "max_daily_sample_share": 0.969,
       "max_daily_samples": 219,
       "max_stop_pips": 7.2,
@@ -136,31 +220,62 @@
       "worst_daily_realized_pips": -14.0
     }
   ],
+  "forecast_sample_coverage_summary": {
+    "min_active_days_for_daily_stability": 3,
+    "min_directional_samples_for_precision_rule": 30,
+    "pair_count": 28,
+    "pair_direction_count": 49,
+    "under_sampled_pair_directions": 48,
+    "unscorable_no_market_samples": 12
+  },
+  "generated_at_utc": "2026-06-22T16:47:22.435656Z",
+  "generated_from": "scripts/oanda_history_replay_validate.py",
+  "granularity": "S5",
   "negative_rules": [
     {
-      "active_days": 5,
-      "audit_report": "logs/reports/forecast_improvement/oanda_history_replay_validate_20260621T024749Z.json",
-      "avg_daily_realized_pips": -53.2,
-      "avg_daily_samples": 26.6,
-      "avg_final_pips": -6.4534,
-      "avg_mae_pips": 14.0639,
-      "avg_mfe_pips": 3.703,
+      "active_days": 6,
+      "adoption_blockers": [
+        "NEGATIVE_EXPECTANCY"
+      ],
+      "adoption_status": "LIVE_BLOCK_NEGATIVE_EXPECTANCY",
+      "audit_report": "logs/reports/forecast_improvement/oanda_history_replay_validate_20260622T164722Z.json",
+      "avg_daily_realized_pips": -45.0,
+      "avg_daily_samples": 22.5,
+      "avg_final_pips": -6.4356,
+      "avg_mae_pips": 14.0222,
+      "avg_mfe_pips": 3.6985,
       "best_daily_realized_pips": -2.0,
       "blocks_live_support": true,
       "campaign_timezone": "Asia/Tokyo",
+      "daily_stability_gap": {
+        "current_max_daily_sample_share": 0.9111,
+        "current_positive_day_rate": 0.0,
+        "max_allowed_daily_sample_share": 0.7,
+        "missing_active_days": 0,
+        "missing_positive_days_at_current_requirement": 4,
+        "reasons": [
+          "NEEDS_LESS_DAILY_SAMPLE_CONCENTRATION",
+          "NEEDS_HIGHER_POSITIVE_DAY_RATE"
+        ],
+        "required_active_days": 3,
+        "required_positive_day_rate": 0.6667,
+        "required_positive_days_at_current_requirement": 4,
+        "status": "DAILY_SAMPLE_CONCENTRATED"
+      },
       "daily_stability_status": "DAILY_SAMPLE_CONCENTRATED",
       "direction": "UP",
-      "directional_hit_rate": 0.2105,
+      "directional_hit_rate": 0.2148,
       "first_day": "2026-05-15",
       "flat_days": 0,
       "granularity": "S5",
-      "last_day": "2026-06-08",
-      "max_daily_sample_share": 0.9248,
+      "last_day": "2026-06-22",
+      "live_grade": false,
+      "max_daily_sample_share": 0.9111,
       "max_daily_samples": 123,
       "median_final_pips": -4.6,
       "min_daily_samples": 1,
       "name": "AUD_JPY_UP_S5_BIDASK_NEGATIVE_EXPECTANCY",
-      "negative_days": 5,
+      "negative_days": 6,
       "optimized_avg_realized_pips": -2.0,
       "optimized_profit_factor": 0.0,
       "optimized_stop_loss_pips": 2.0,
@@ -169,24 +284,43 @@
       "pair": "AUD_JPY",
       "positive_day_rate": 0.0,
       "positive_days": 0,
-      "samples": 133,
+      "samples": 135,
       "side": "LONG",
       "worst_daily_realized_pips": -246.0
     }
   ],
+  "packaged_by": "scripts/package_bidask_replay_precision_rules.py",
+  "price_truth_coverage": {
+    "adoption_level": "FULL_REPLAY_READY",
+    "candidate_rule_validation_blocked": false,
+    "deduped_directional_rows": 662,
+    "evaluated_rows": 650,
+    "future_price_truth_window_group_count": 0,
+    "global_currency_validation_blocked": false,
+    "history_candles": 330150,
+    "history_files": 140,
+    "missing_price_truth_samples": 0,
+    "missing_price_window_group_count": 0,
+    "raw_directional_rows": 1327,
+    "reason": "All loaded forecast samples have local bid/ask candle truth for this replay window.",
+    "required_min_evaluated_rows": 30,
+    "status": "PRICE_TRUTH_OK",
+    "unscorable_no_market_rows": 12,
+    "unscorable_no_market_window_group_count": 1
+  },
   "rejected_contrarian_segments": [
     {
-      "avg_final_pips": 0.9624,
+      "avg_final_pips": 0.9585,
       "direction": "DOWN",
-      "directional_hit_rate": 0.4887,
+      "directional_hit_rate": 0.4889,
       "forecast_direction": "UP",
-      "optimized_avg_realized_pips": 0.8519,
-      "optimized_profit_factor": 1.276,
-      "optimized_win_rate": 0.4962,
+      "optimized_avg_realized_pips": 0.8615,
+      "optimized_profit_factor": 1.2786,
+      "optimized_win_rate": 0.4963,
       "pair": "AUD_JPY",
-      "samples": 133,
-      "source_avg_final_pips": -6.4534,
-      "source_directional_hit_rate": 0.2105
+      "samples": 135,
+      "source_avg_final_pips": -6.4356,
+      "source_directional_hit_rate": 0.2148
     },
     {
       "avg_final_pips": -5.6965,
@@ -202,18 +336,18 @@
       "source_directional_hit_rate": 0.7389
     },
     {
-      "avg_final_pips": 0.9624,
+      "avg_final_pips": 0.9585,
       "direction": "DOWN",
-      "directional_hit_rate": 0.4887,
+      "directional_hit_rate": 0.4889,
       "forecast_direction": "UP",
       "horizon_bucket": "31-60m",
-      "optimized_avg_realized_pips": 0.8519,
-      "optimized_profit_factor": 1.276,
-      "optimized_win_rate": 0.4962,
+      "optimized_avg_realized_pips": 0.8615,
+      "optimized_profit_factor": 1.2786,
+      "optimized_win_rate": 0.4963,
       "pair": "AUD_JPY",
-      "samples": 133,
-      "source_avg_final_pips": -6.4534,
-      "source_directional_hit_rate": 0.2105
+      "samples": 135,
+      "source_avg_final_pips": -6.4356,
+      "source_directional_hit_rate": 0.2148
     },
     {
       "avg_final_pips": -5.8158,
@@ -320,15 +454,37 @@
   "rejected_daily_stability_segments": [
     {
       "active_days": 5,
+      "adoption_blockers": [
+        "DAILY_SAMPLE_CONCENTRATED",
+        "NEEDS_LESS_DAILY_SAMPLE_CONCENTRATION",
+        "NEEDS_HIGHER_POSITIVE_DAY_RATE"
+      ],
+      "adoption_status": "RANK_ONLY_NOT_DAILY_STABLE",
       "avg_daily_realized_pips": 116.76,
       "avg_daily_samples": 45.2,
       "best_daily_realized_pips": 606.1,
       "campaign_timezone": "Asia/Tokyo",
+      "daily_stability_gap": {
+        "current_max_daily_sample_share": 0.969,
+        "current_positive_day_rate": 0.4,
+        "max_allowed_daily_sample_share": 0.7,
+        "missing_active_days": 0,
+        "missing_positive_days_at_current_requirement": 2,
+        "reasons": [
+          "NEEDS_LESS_DAILY_SAMPLE_CONCENTRATION",
+          "NEEDS_HIGHER_POSITIVE_DAY_RATE"
+        ],
+        "required_active_days": 3,
+        "required_positive_day_rate": 0.6667,
+        "required_positive_days_at_current_requirement": 4,
+        "status": "DAILY_SAMPLE_CONCENTRATED"
+      },
       "daily_stability_status": "DAILY_SAMPLE_CONCENTRATED",
       "direction": "DOWN",
       "first_day": "2026-05-15",
       "flat_days": 0,
       "last_day": "2026-06-16",
+      "live_grade": false,
       "max_daily_sample_share": 0.969,
       "max_daily_samples": 219,
       "min_daily_samples": 1,
@@ -345,17 +501,41 @@
     },
     {
       "active_days": 2,
+      "adoption_blockers": [
+        "INSUFFICIENT_ACTIVE_DAYS",
+        "NEEDS_MORE_ACTIVE_DAYS",
+        "NEEDS_LESS_DAILY_SAMPLE_CONCENTRATION",
+        "NEEDS_HIGHER_POSITIVE_DAY_RATE"
+      ],
+      "adoption_status": "RANK_ONLY_NOT_DAILY_STABLE",
       "avg_daily_realized_pips": 56.75,
       "avg_daily_samples": 20.0,
       "best_daily_realized_pips": 117.9,
       "campaign_timezone": "Asia/Tokyo",
       "confidence_bucket": "0.75-0.90",
+      "daily_stability_gap": {
+        "current_max_daily_sample_share": 0.95,
+        "current_positive_day_rate": 0.5,
+        "max_allowed_daily_sample_share": 0.7,
+        "missing_active_days": 1,
+        "missing_positive_days_at_current_requirement": 1,
+        "reasons": [
+          "NEEDS_MORE_ACTIVE_DAYS",
+          "NEEDS_LESS_DAILY_SAMPLE_CONCENTRATION",
+          "NEEDS_HIGHER_POSITIVE_DAY_RATE"
+        ],
+        "required_active_days": 3,
+        "required_positive_day_rate": 0.6667,
+        "required_positive_days_at_current_requirement": 2,
+        "status": "INSUFFICIENT_ACTIVE_DAYS"
+      },
       "daily_stability_status": "INSUFFICIENT_ACTIVE_DAYS",
       "direction": "DOWN",
       "first_day": "2026-05-15",
       "flat_days": 0,
       "forecast_direction": "UP",
       "last_day": "2026-06-02",
+      "live_grade": false,
       "max_daily_sample_share": 0.95,
       "max_daily_samples": 38,
       "min_daily_samples": 2,
@@ -372,11 +552,34 @@
     },
     {
       "active_days": 2,
+      "adoption_blockers": [
+        "INSUFFICIENT_ACTIVE_DAYS",
+        "NEEDS_MORE_ACTIVE_DAYS",
+        "NEEDS_LESS_DAILY_SAMPLE_CONCENTRATION",
+        "NEEDS_HIGHER_POSITIVE_DAY_RATE"
+      ],
+      "adoption_status": "RANK_ONLY_NOT_DAILY_STABLE",
       "avg_daily_realized_pips": 56.75,
       "avg_daily_samples": 20.0,
       "best_daily_realized_pips": 117.9,
       "campaign_timezone": "Asia/Tokyo",
       "confidence_bucket": "0.75-0.90",
+      "daily_stability_gap": {
+        "current_max_daily_sample_share": 0.95,
+        "current_positive_day_rate": 0.5,
+        "max_allowed_daily_sample_share": 0.7,
+        "missing_active_days": 1,
+        "missing_positive_days_at_current_requirement": 1,
+        "reasons": [
+          "NEEDS_MORE_ACTIVE_DAYS",
+          "NEEDS_LESS_DAILY_SAMPLE_CONCENTRATION",
+          "NEEDS_HIGHER_POSITIVE_DAY_RATE"
+        ],
+        "required_active_days": 3,
+        "required_positive_day_rate": 0.6667,
+        "required_positive_days_at_current_requirement": 2,
+        "status": "INSUFFICIENT_ACTIVE_DAYS"
+      },
       "daily_stability_status": "INSUFFICIENT_ACTIVE_DAYS",
       "direction": "DOWN",
       "first_day": "2026-05-15",
@@ -384,6 +587,7 @@
       "forecast_direction": "UP",
       "horizon_bucket": "31-60m",
       "last_day": "2026-06-02",
+      "live_grade": false,
       "max_daily_sample_share": 0.95,
       "max_daily_samples": 38,
       "min_daily_samples": 2,
@@ -400,6 +604,7 @@
     }
   ],
   "rejected_sampled_segments": [],
+  "schema_version": 1,
   "selection": {
     "edge_min_avg_final_pips": 0.0,
     "edge_min_avg_realized_pips": 0.5,
@@ -416,5 +621,7 @@
     "stable_max_daily_sample_share": 0.7,
     "stable_min_active_days": 3,
     "stable_min_positive_day_rate": 0.6666666666666666
-  }
+  },
+  "source_report": "logs/reports/forecast_improvement/oanda_history_replay_validate_latest.json",
+  "truth_source": "local OANDA S5 bid/ask candles; UP entry=ask/exit=bid, DOWN entry=bid/exit=ask; same-candle TP+SL ambiguity counts as stop-first loss"
 }

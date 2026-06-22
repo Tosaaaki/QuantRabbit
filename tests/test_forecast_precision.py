@@ -259,6 +259,14 @@ class ForecastPrecisionConfluenceTest(unittest.TestCase):
         self.assertEqual(assessment["primary_rank_support"]["current_target_pips"], 5.0)
         self.assertEqual(assessment["primary_rank_support"]["current_stop_pips"], 7.0)
         self.assertEqual(assessment["primary_rank_support"]["optimized_profit_factor"], 3.3399)
+        self.assertEqual(
+            assessment["primary_rank_support"]["adoption_status"],
+            "RANK_ONLY_NOT_DAILY_STABLE",
+        )
+        self.assertIn(
+            "DAILY_SAMPLE_CONCENTRATED",
+            assessment["primary_rank_support"]["adoption_blockers"],
+        )
         self.assertIsNone(
             bidask_replay_precision_support(
                 metadata,
@@ -403,7 +411,7 @@ class ForecastPrecisionConfluenceTest(unittest.TestCase):
 
         self.assertEqual(issue["name"], "AUD_JPY_UP_S5_BIDASK_NEGATIVE_EXPECTANCY")
         self.assertTrue(issue["blocks_live_support"])
-        self.assertEqual(issue["samples"], 133)
+        self.assertEqual(issue["samples"], 135)
 
     def test_holdout_confluence_adds_rotation_support_without_live_override(self) -> None:
         metadata = {
