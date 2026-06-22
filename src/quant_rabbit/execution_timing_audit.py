@@ -59,7 +59,7 @@ TIMING_SHAPE_ROLLUP_LIMIT = 12
 TP_PROGRESS_CAPTURE_THRESHOLD = float(
     os.environ.get(
         "QR_TIMING_PROFIT_CAPTURE_MIN_TP_PROGRESS",
-        os.environ.get("QR_TP_PROGRESS_PROFIT_TAKE_MIN_PROGRESS", "0.60"),
+        os.environ.get("QR_TP_PROGRESS_PROFIT_TAKE_MIN_PROGRESS", "0.30"),
     )
 )
 

@@ -793,6 +793,58 @@ class PositionManagerTest(unittest.TestCase):
             else:
                 os.environ["QR_TRADER_DISABLE_SL_REPAIR"] = prior
 
+    def test_tp_progress_profit_take_outranks_adaptive_harvest_tp(self) -> None:
+        # Regresses the "TPを寄せるだけでプラス決済しない" hole: once a
+        # profitable attached-TP trade has cleared executable noise and deep
+        # progress, market banking must outrank HARVEST_TP/NARROW_TP rewrites.
+        prior = os.environ.get("QR_TRADER_DISABLE_SL_REPAIR")
+        os.environ["QR_TRADER_DISABLE_SL_REPAIR"] = "1"
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                decision = _decision(root, long_score=160, short_score=120)
+                pair_charts = _adaptive_harvest_pair_charts(
+                    root,
+                    atr_pips=1.0,
+                    harvest_price=1.16550,
+                    m1_atr_pips=1.0,
+                )
+                _write_latest_forecast(root, direction="UNCLEAR", confidence=0.24)
+                snapshot = _snapshot(
+                    BrokerPosition(
+                        trade_id="long-harvest-progress-bank",
+                        pair="EUR_USD",
+                        side=Side.LONG,
+                        units=3600,
+                        entry_price=1.16492,
+                        unrealized_pl_jpy=400,
+                        take_profit=1.16568,
+                        stop_loss=None,
+                    ),
+                    bid=1.16545,
+                    ask=1.16547,
+                )
+
+                result = PositionManager(
+                    trader_decision_path=decision,
+                    pair_charts_path=pair_charts,
+                    output_path=root / "pm.json",
+                    report_path=root / "pm.md",
+                ).run(snapshot)
+
+                self.assertEqual(result.action, ACTION_TAKE_PROFIT_MARKET)
+                self.assertEqual(result.positions[0].action, ACTION_TAKE_PROFIT_MARKET)
+                self.assertIsNone(result.positions[0].recommended_take_profit)
+                report = (root / "pm.md").read_text()
+                self.assertIn("TP-progress profit-take", report)
+                self.assertIn("bank high-turnover profit before reversal", report)
+                self.assertNotIn("harvest TP", report)
+        finally:
+            if prior is None:
+                os.environ.pop("QR_TRADER_DISABLE_SL_REPAIR", None)
+            else:
+                os.environ["QR_TRADER_DISABLE_SL_REPAIR"] = prior
+
     def test_adaptive_harvest_tp_allows_stale_wide_target_contraction(self) -> None:
         prior = os.environ.get("QR_TRADER_DISABLE_SL_REPAIR")
         os.environ["QR_TRADER_DISABLE_SL_REPAIR"] = "1"
@@ -2267,7 +2319,13 @@ def _pair_charts(
     return path
 
 
-def _adaptive_harvest_pair_charts(root: Path, *, atr_pips: float, harvest_price: float) -> Path:
+def _adaptive_harvest_pair_charts(
+    root: Path,
+    *,
+    atr_pips: float,
+    harvest_price: float,
+    m1_atr_pips: float | None = None,
+) -> Path:
     path = root / "pair_charts_adaptive_harvest.json"
     now = datetime.now(timezone.utc)
     chart_story = (
@@ -2276,6 +2334,46 @@ def _adaptive_harvest_pair_charts(root: Path, *, atr_pips: float, harvest_price:
         "H1(TREND_UP,ADX=31,ST=+) "
         "H4(RANGE,ADX=12,ST=+) "
         "D(RANGE,ADX=10,ST=+)"
+    )
+    views = []
+    if m1_atr_pips is not None:
+        views.append(
+            {
+                "granularity": "M1",
+                "regime": "TREND_UP",
+                "indicators": {"atr_pips": m1_atr_pips},
+            }
+        )
+    views.extend(
+        [
+            {
+                "granularity": "M5",
+                "regime": "TREND_UP",
+                "indicators": {"atr_pips": atr_pips},
+            },
+            {
+                "granularity": "M15",
+                "regime": "TREND_UP",
+                "indicators": {
+                    "atr_pips": atr_pips * 2.0,
+                    "rsi_14": 74.0,
+                    "stoch_rsi": 0.91,
+                    "williams_r_14": -12.0,
+                    "close": harvest_price,
+                    "bb_upper": harvest_price - 0.00001,
+                    "donchian_high": harvest_price - 0.00001,
+                },
+                "structure": {
+                    "liquidity": [
+                        {
+                            "side": "EQ_HIGH",
+                            "price": harvest_price,
+                            "indices": [1, 2, 3, 4],
+                        }
+                    ]
+                },
+            },
+        ]
     )
     path.write_text(
         json.dumps(
@@ -2292,35 +2390,7 @@ def _adaptive_harvest_pair_charts(root: Path, *, atr_pips: float, harvest_price:
                             "range_24h_sigma_multiple": 3.1,
                         },
                         "session": {"current_tag": "LONDON_KILLZONE"},
-                        "views": [
-                            {
-                                "granularity": "M5",
-                                "regime": "TREND_UP",
-                                "indicators": {"atr_pips": atr_pips},
-                            },
-                            {
-                                "granularity": "M15",
-                                "regime": "TREND_UP",
-                                "indicators": {
-                                    "atr_pips": atr_pips * 2.0,
-                                    "rsi_14": 74.0,
-                                    "stoch_rsi": 0.91,
-                                    "williams_r_14": -12.0,
-                                    "close": harvest_price,
-                                    "bb_upper": harvest_price - 0.00001,
-                                    "donchian_high": harvest_price - 0.00001,
-                                },
-                                "structure": {
-                                    "liquidity": [
-                                        {
-                                            "side": "EQ_HIGH",
-                                            "price": harvest_price,
-                                            "indices": [1, 2, 3, 4],
-                                        }
-                                    ]
-                                },
-                            },
-                        ],
+                        "views": views,
                     }
                 ],
             }

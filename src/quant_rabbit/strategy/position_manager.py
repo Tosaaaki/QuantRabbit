@@ -1076,6 +1076,14 @@ def _adaptive_tp_action(
                     f"BB rail supports {lane_dir}; keep existing TP ({tp_rail_reason}) and use BE/profit-lock sidecar"
                 )
                 return action, new_tp, reasons
+        tp_progress_profit_take, tp_progress_reasons = _tp_progress_profit_take_signal(
+            position=position,
+            quote=quote,
+            pair_chart=pair_chart,
+        )
+        reasons.extend(tp_progress_reasons)
+        if tp_progress_profit_take:
+            return ACTION_TAKE_PROFIT_MARKET, None, reasons
         # Market-derived TP target (no hardcoded buffer, no fallback).
         # AGENT_CONTRACT §3.5 + user 2026-05-08「TPの設定は市況をみてる？
         # テクニカル等」「ハードコードとフォールバックはなし」.
@@ -1110,6 +1118,14 @@ def _adaptive_tp_action(
             action = ACTION_HOLD_PROTECTED
             reasons.append(f"harvest skipped: structural anchor {anchor_reason} not closer than current TP")
     elif action == ACTION_NARROW_TP:
+        tp_progress_profit_take, tp_progress_reasons = _tp_progress_profit_take_signal(
+            position=position,
+            quote=quote,
+            pair_chart=pair_chart,
+        )
+        reasons.extend(tp_progress_reasons)
+        if tp_progress_profit_take:
+            return ACTION_TAKE_PROFIT_MARKET, None, reasons
         # Same market-derived path with NARROW intent (midpoint between
         # current price and the nearest structural anchor).
         candidate, anchor_reason = structural_tp_target(

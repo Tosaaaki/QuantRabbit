@@ -464,6 +464,88 @@ class ExecutionTimingAuditTest(unittest.TestCase):
             self.assertAlmostEqual(row["tp_progress_before_loss_close"], 0.8)
             self.assertTrue(row["profit_capture_missed_before_loss_close"])
 
+    def test_stop_loss_close_marks_thirty_percent_tp_progress_capture_missed(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            db = root / "ledger.db"
+            _make_db(db)
+            with sqlite3.connect(db) as conn:
+                _insert_event(
+                    conn,
+                    "fill-t-sl-30",
+                    ts_utc="2026-06-16T01:00:10Z",
+                    event_type="ORDER_FILLED",
+                    lane_id="range_trader:USD_JPY:SHORT:RANGE_ROTATION",
+                    order_id="o-fill-30",
+                    trade_id="t-sl-30",
+                    pair="USD_JPY",
+                    side="SHORT",
+                    units=-1000,
+                    price=150.00,
+                )
+                _insert_event(
+                    conn,
+                    "tp-t-sl-30",
+                    ts_utc="2026-06-16T01:00:20Z",
+                    event_type="PROTECTION_CREATED",
+                    trade_id="t-sl-30",
+                    pair="USD_JPY",
+                    price=149.90,
+                    raw={"type": "TAKE_PROFIT_ORDER", "tradeID": "t-sl-30", "price": "149.90"},
+                )
+                _insert_event(
+                    conn,
+                    "sl-t-sl-30",
+                    ts_utc="2026-06-16T01:00:20Z",
+                    event_type="PROTECTION_CREATED",
+                    trade_id="t-sl-30",
+                    pair="USD_JPY",
+                    price=150.05,
+                    raw={"type": "STOP_LOSS_ORDER", "tradeID": "t-sl-30", "price": "150.05"},
+                )
+                _insert_event(
+                    conn,
+                    "close-t-sl-30",
+                    ts_utc="2026-06-16T01:10:30Z",
+                    event_type="TRADE_CLOSED",
+                    order_id="o-sl-30",
+                    trade_id="t-sl-30",
+                    pair="USD_JPY",
+                    side="SHORT",
+                    units=1000,
+                    price=150.05,
+                    realized_pl_jpy=-50.0,
+                    exit_reason="STOP_LOSS_ORDER",
+                )
+                conn.commit()
+
+            candles = (
+                BidAskCandle(_dt("2026-06-16T01:03:00Z"), 149.970, 149.960, 149.975, 149.968),
+                BidAskCandle(_dt("2026-06-16T01:08:00Z"), 150.030, 149.990, 150.050, 150.010),
+            )
+
+            def fetcher(pair: str, start: datetime, end: datetime, granularity: str) -> tuple[BidAskCandle, ...]:
+                self.assertEqual(pair, "USD_JPY")
+                return tuple(c for c in candles if start <= c.timestamp_utc <= end)
+
+            payload = build_execution_timing_audit(
+                ledger_path=db,
+                snapshot_path=None,
+                output_path=root / "audit.json",
+                report_path=root / "audit.md",
+                now_utc=_dt("2026-06-17T00:00:00Z"),
+                candle_fetcher=fetcher,
+            )
+
+            summary = payload["summary"]
+            self.assertEqual(summary["loss_closes_profit_capture_missed"], 1)
+            self.assertEqual(summary["stop_loss_closes_profit_capture_missed"], 1)
+            self.assertAlmostEqual(summary["loss_close_estimated_capture_gap_jpy"], 32.0)
+            row = payload["loss_close_regrets"][0]
+            self.assertEqual(row["mfe_pips_before_loss_close"], 3.2)
+            self.assertAlmostEqual(row["tp_progress_before_loss_close"], 0.32)
+            self.assertTrue(row["profit_capture_missed_before_loss_close"])
+
     def test_market_close_lookback_is_anchored_to_latest_close_activity(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
