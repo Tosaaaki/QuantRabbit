@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 import sqlite3
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -46,6 +47,16 @@ LOSS_CLOSE_LEAK_LOOKBACK_DAYS = 7
 # audited is missing local gateway receipts and broker-close provenance cannot
 # be classified as operator/GPT-unverified with confidence.
 GATEWAY_RECEIPT_STREAM_STALE_GRACE_MINUTES = 120
+
+# Mirrors the read-only bid/ask replay validator defaults in
+# scripts/oanda_history_replay_validate.py. These are audit-quality thresholds,
+# not market-risk thresholds: rank-only replay candidates must show multi-day
+# coverage before they can be treated as repeatable daily campaign evidence.
+BIDASK_REPLAY_STABLE_MIN_ACTIVE_DAYS = 3
+BIDASK_REPLAY_STABLE_MAX_DAILY_SAMPLE_SHARE = 0.70
+BIDASK_REPLAY_STABLE_MIN_POSITIVE_DAY_RATE = 2.0 / 3.0
+BIDASK_REPLAY_AUTO_HISTORY_MIN_DAYS = 30
+BIDASK_REPLAY_HISTORY_FETCH_DAYS = 120
 
 
 @dataclass(frozen=True)
@@ -1416,25 +1427,21 @@ def _bidask_rule_findings(payload: dict[str, Any], path: Path) -> tuple[dict[str
         if str(item.get("daily_stability_status") or "").upper() == "DAILY_STABLE"
     ]
     rank_only = [item for item in contrarian_rules if item not in daily_stable]
+    rank_only_examples = [_bidask_rank_only_example(item) for item in rank_only[:5]]
+    fetch_command, validation_command = _bidask_replay_verification_commands(rank_only)
     metrics = {
         "path": str(path),
         "contrarian_edge_rules": len(contrarian_rules),
         "daily_stable_contrarian_edge_rules": len(daily_stable),
         "rank_only_contrarian_edge_rules": len(rank_only),
-        "rank_only_examples": [
-            {
-                "name": item.get("name"),
-                "pair": item.get("pair"),
-                "forecast_direction": item.get("forecast_direction") or item.get("faded_direction"),
-                "direction": item.get("direction"),
-                "samples": item.get("samples"),
-                "active_days": item.get("active_days"),
-                "positive_day_rate": item.get("positive_day_rate"),
-                "daily_stability_status": item.get("daily_stability_status"),
-                "optimized_profit_factor": item.get("optimized_profit_factor"),
-            }
-            for item in rank_only[:5]
-        ],
+        "daily_stability_requirements": {
+            "min_active_days": BIDASK_REPLAY_STABLE_MIN_ACTIVE_DAYS,
+            "max_daily_sample_share": BIDASK_REPLAY_STABLE_MAX_DAILY_SAMPLE_SHARE,
+            "min_positive_day_rate": BIDASK_REPLAY_STABLE_MIN_POSITIVE_DAY_RATE,
+        },
+        "rank_only_examples": rank_only_examples,
+        "history_fetch_command": fetch_command,
+        "replay_validation_command": validation_command,
     }
     if rank_only and not daily_stable:
         return metrics, [
@@ -1453,6 +1460,86 @@ def _bidask_rule_findings(payload: dict[str, Any], path: Path) -> tuple[dict[str
             )
         ]
     return metrics, []
+
+
+def _bidask_rank_only_example(item: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "name": item.get("name"),
+        "pair": item.get("pair"),
+        "granularity": item.get("granularity"),
+        "forecast_direction": item.get("forecast_direction") or item.get("faded_direction"),
+        "direction": item.get("direction"),
+        "samples": item.get("samples"),
+        "active_days": item.get("active_days"),
+        "positive_days": item.get("positive_days"),
+        "positive_day_rate": item.get("positive_day_rate"),
+        "max_daily_sample_share": item.get("max_daily_sample_share"),
+        "daily_stability_status": item.get("daily_stability_status"),
+        "optimized_profit_factor": item.get("optimized_profit_factor"),
+        "optimized_win_rate": item.get("optimized_win_rate"),
+        "optimized_take_profit_pips": item.get("optimized_take_profit_pips"),
+        "optimized_stop_loss_pips": item.get("optimized_stop_loss_pips"),
+        "daily_stability_gap": _bidask_daily_stability_gap(item),
+    }
+
+
+def _bidask_daily_stability_gap(item: dict[str, Any]) -> dict[str, Any]:
+    active_days = int(item.get("active_days") or 0)
+    positive_day_rate = _optional_float(item.get("positive_day_rate")) or 0.0
+    positive_days = item.get("positive_days")
+    if positive_days is None:
+        positive_days = int(round(active_days * positive_day_rate))
+    positive_days = int(positive_days or 0)
+    required_active_days = max(active_days, BIDASK_REPLAY_STABLE_MIN_ACTIVE_DAYS)
+    required_positive_days = math.ceil(
+        BIDASK_REPLAY_STABLE_MIN_POSITIVE_DAY_RATE * required_active_days
+    )
+    max_daily_sample_share = _optional_float(item.get("max_daily_sample_share"))
+    reasons: list[str] = []
+    missing_active_days = max(0, BIDASK_REPLAY_STABLE_MIN_ACTIVE_DAYS - active_days)
+    missing_positive_days = max(0, required_positive_days - positive_days)
+    if missing_active_days:
+        reasons.append("NEEDS_MORE_ACTIVE_DAYS")
+    if max_daily_sample_share is not None and max_daily_sample_share > BIDASK_REPLAY_STABLE_MAX_DAILY_SAMPLE_SHARE:
+        reasons.append("NEEDS_LESS_DAILY_SAMPLE_CONCENTRATION")
+    if positive_day_rate < BIDASK_REPLAY_STABLE_MIN_POSITIVE_DAY_RATE:
+        reasons.append("NEEDS_DAILY_STABILITY_CONFIRMATION")
+    return {
+        "reasons": reasons,
+        "missing_active_days": missing_active_days,
+        "missing_positive_days_at_current_requirement": missing_positive_days,
+        "required_active_days": BIDASK_REPLAY_STABLE_MIN_ACTIVE_DAYS,
+        "required_positive_days_at_current_requirement": required_positive_days,
+        "required_positive_day_rate": BIDASK_REPLAY_STABLE_MIN_POSITIVE_DAY_RATE,
+        "max_allowed_daily_sample_share": BIDASK_REPLAY_STABLE_MAX_DAILY_SAMPLE_SHARE,
+    }
+
+
+def _bidask_replay_verification_commands(rank_only: list[dict[str, Any]]) -> tuple[str | None, str | None]:
+    if not rank_only:
+        return None, None
+    pairs = sorted({str(item.get("pair") or "").upper() for item in rank_only if item.get("pair")})
+    granularities = sorted({str(item.get("granularity") or "S5").upper() for item in rank_only})
+    granularities_arg = ",".join(granularities)
+    primary_granularity = granularities[0] if granularities else "S5"
+    fetch_command = None
+    if pairs:
+        pairs_arg = ",".join(pairs)
+        fetch_command = (
+            "python3 scripts/oanda_history_fetch.py "
+            f"--pairs {pairs_arg} --granularities {granularities_arg} --price BA "
+            f"--days {BIDASK_REPLAY_HISTORY_FETCH_DAYS} --output-dir logs/replay/oanda_history"
+        )
+    validation_command = (
+        "python3 scripts/oanda_history_replay_validate.py "
+        "--forecast-history data/forecast_history.jsonl "
+        f"--granularity {primary_granularity} "
+        f"--auto-history-min-days {BIDASK_REPLAY_AUTO_HISTORY_MIN_DAYS} "
+        f"--stable-min-active-days {BIDASK_REPLAY_STABLE_MIN_ACTIVE_DAYS} "
+        f"--stable-max-daily-sample-share {BIDASK_REPLAY_STABLE_MAX_DAILY_SAMPLE_SHARE} "
+        f"--stable-min-positive-day-rate {BIDASK_REPLAY_STABLE_MIN_POSITIVE_DAY_RATE:.10f}"
+    )
+    return fetch_command, validation_command
 
 
 _OANDA_FIREPOWER_TARGET_OK_STATUSES = {

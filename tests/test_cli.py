@@ -731,6 +731,20 @@ class CliHelpTest(unittest.TestCase):
         self.assertIn("BIDASK_CONTRARIAN_EDGE_NOT_DAILY_STABLE", codes)
         self.assertIn("NO_LIVE_READY_TARGET_COVERAGE", codes)
         self.assertIn("REPAIR_FRONTIER_BLOCKED", codes)
+        bidask_metrics = payload["metrics"]["bidask_replay_rules"]
+        self.assertEqual(bidask_metrics["daily_stability_requirements"]["min_active_days"], 3)
+        self.assertIn("oanda_history_fetch.py --pairs AUD_JPY", bidask_metrics["history_fetch_command"])
+        self.assertIn("--stable-min-active-days 3", bidask_metrics["replay_validation_command"])
+        self.assertEqual(
+            bidask_metrics["rank_only_examples"][0]["daily_stability_gap"]["missing_active_days"],
+            1,
+        )
+        self.assertEqual(
+            bidask_metrics["rank_only_examples"][0]["daily_stability_gap"][
+                "missing_positive_days_at_current_requirement"
+            ],
+            1,
+        )
         frontier = payload["metrics"]["order_intents"]["repair_frontier"]
         self.assertEqual(frontier["candidate_count"], 1)
         self.assertEqual(frontier["live_ready_count"], 0)

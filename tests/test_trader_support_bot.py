@@ -62,6 +62,17 @@ class TraderSupportBotTest(unittest.TestCase):
             repair_plan = payload["profitability_acceptance"]["repair_plan"]
             self.assertEqual(repair_plan["p0_count"], 2)
             self.assertIn("Rerunning profitability-acceptance alone", repair_plan["loop_breaker"])
+            self.assertEqual(payload["metrics"]["acceptance_evidence_collection_count"], 1)
+            self.assertEqual(
+                repair_plan["evidence_collection_items"][0]["code"],
+                "BIDASK_CONTRARIAN_EDGE_NOT_DAILY_STABLE",
+            )
+            self.assertEqual(
+                repair_plan["evidence_collection_items"][0]["evidence_summary"]["rank_only_examples"][0][
+                    "daily_stability_gap"
+                ]["missing_active_days"],
+                1,
+            )
             self.assertEqual(
                 [item["code"] for item in repair_plan["items"]],
                 ["RECENT_GATEWAY_LOSS_MARKET_CLOSE_LEAK", "LOSS_CLOSE_GATE_EVIDENCE_MISSING"],
@@ -91,6 +102,8 @@ class TraderSupportBotTest(unittest.TestCase):
             action_codes = {item["code"] for item in payload["operator_actions"]}
             self.assertIn("CHECK_POSITION_GUARDIAN_PREFLIGHT", action_codes)
             self.assertIn("FOLLOW_ACCEPTANCE_REPAIR_PLAN", action_codes)
+            self.assertIn("FETCH_BIDASK_REPLAY_HISTORY", action_codes)
+            self.assertIn("VALIDATE_BIDASK_REPLAY_HISTORY", action_codes)
             self.assertIn("VERIFY_CLOSE_GATE_EVIDENCE", action_codes)
             self.assertIn("RECHECK_LOSS_CLOSE_LEAK_WINDOW", action_codes)
             self.assertIn("WORK_GLOBAL_UNLOCK_FRONTIER", action_codes)
@@ -104,6 +117,8 @@ class TraderSupportBotTest(unittest.TestCase):
             self.assertIn("Trader Support Bot Report", report)
             self.assertIn("Counterfactual profit-capture delta JPY", report)
             self.assertIn("Acceptance Repair Plan", report)
+            self.assertIn("Acceptance Evidence Collection", report)
+            self.assertIn("BIDASK_CONTRARIAN_EDGE_NOT_DAILY_STABLE", report)
             self.assertIn("Repair Frontier Blockers After Support", report)
             self.assertIn("FORECAST_CONTEXT_REQUIRED_FOR_LIVE", report)
             self.assertIn("472792", report)
@@ -228,10 +243,9 @@ class TraderSupportBotTest(unittest.TestCase):
                                     "self_improvement_p0_repair_live_ready": True,
                                     "self_improvement_p0_repair_mode": "TP_HARVEST_REPAIR",
                                     "positive_rotation_mode": "OANDA_CAMPAIGN_FIREPOWER_HARVEST",
-                                    "sizing_actual_reward_jpy": 1362.0,
-                                    "sizing_actual_risk_jpy": 1362.0,
                                 },
                             },
+                            "risk_metrics": {"reward_jpy": 1362.0, "risk_jpy": 1362.0},
                         }
                     ],
                 },
@@ -264,6 +278,8 @@ class TraderSupportBotTest(unittest.TestCase):
                 ["range_trader:GBP_JPY:SHORT:RANGE_ROTATION"],
             )
             candidate = payload["entry_readiness"]["repair_basket_guardian_recovery"][0]
+            self.assertEqual(candidate["reward_jpy"], 1362.0)
+            self.assertEqual(candidate["risk_jpy"], 1362.0)
             self.assertEqual(candidate["remaining_blocker_codes_after_guardian_and_repair_exemption"], [])
             report = files["report"].read_text()
             self.assertIn("Repair lanes after guardian recovery", report)
@@ -726,6 +742,56 @@ def _write_fixture(root: Path, *, now: datetime, blocked: bool) -> dict[str, Pat
                     ],
                 },
             },
+            {
+                "priority": "P1",
+                "code": "BIDASK_CONTRARIAN_EDGE_NOT_DAILY_STABLE",
+                "message": "1 S5 contrarian replay edge exists but remains rank-only",
+                "next_action": "fetch more OANDA BA candles and rerun bid/ask replay",
+                "evidence": {
+                    "contrarian_edge_rules": 1,
+                    "daily_stable_contrarian_edge_rules": 0,
+                    "rank_only_contrarian_edge_rules": 1,
+                    "daily_stability_requirements": {
+                        "min_active_days": 3,
+                        "max_daily_sample_share": 0.7,
+                        "min_positive_day_rate": 2.0 / 3.0,
+                    },
+                    "history_fetch_command": (
+                        "python3 scripts/oanda_history_fetch.py --pairs AUD_JPY --granularities S5 "
+                        "--price BA --days 120 --output-dir logs/replay/oanda_history"
+                    ),
+                    "replay_validation_command": (
+                        "python3 scripts/oanda_history_replay_validate.py "
+                        "--forecast-history data/forecast_history.jsonl "
+                        "--granularity S5 "
+                        "--auto-history-min-days 30 --stable-min-active-days 3 "
+                        "--stable-max-daily-sample-share 0.7 "
+                        "--stable-min-positive-day-rate 0.6666666667"
+                    ),
+                    "rank_only_examples": [
+                        {
+                            "name": "AUD_JPY_UP_FADE_TO_DOWN_RANK_ONLY",
+                            "pair": "AUD_JPY",
+                            "granularity": "S5",
+                            "forecast_direction": "UP",
+                            "direction": "DOWN",
+                            "samples": 40,
+                            "active_days": 2,
+                            "positive_day_rate": 0.5,
+                            "daily_stability_status": "INSUFFICIENT_ACTIVE_DAYS",
+                            "optimized_profit_factor": 2.31,
+                            "daily_stability_gap": {
+                                "reasons": [
+                                    "NEEDS_MORE_ACTIVE_DAYS",
+                                    "NEEDS_DAILY_STABILITY_CONFIRMATION",
+                                ],
+                                "missing_active_days": 1,
+                                "missing_positive_days_at_current_requirement": 1,
+                            },
+                        }
+                    ],
+                },
+            },
         ]
     else:
         findings = []
@@ -768,6 +834,49 @@ def _write_fixture(root: Path, *, now: datetime, blocked: bool) -> dict[str, Pat
                         "unique_vehicle_count": 3,
                         "top_vehicle_keys": ["USD_JPY|LONG|range_reversion|tp1_sl1"],
                     },
+                },
+                "bidask_replay_rules": {
+                    "contrarian_edge_rules": 1,
+                    "daily_stable_contrarian_edge_rules": 0,
+                    "rank_only_contrarian_edge_rules": 1,
+                    "daily_stability_requirements": {
+                        "min_active_days": 3,
+                        "max_daily_sample_share": 0.7,
+                        "min_positive_day_rate": 2.0 / 3.0,
+                    },
+                    "history_fetch_command": (
+                        "python3 scripts/oanda_history_fetch.py --pairs AUD_JPY --granularities S5 "
+                        "--price BA --days 120 --output-dir logs/replay/oanda_history"
+                    ),
+                    "replay_validation_command": (
+                        "python3 scripts/oanda_history_replay_validate.py "
+                        "--forecast-history data/forecast_history.jsonl "
+                        "--granularity S5 "
+                        "--auto-history-min-days 30 --stable-min-active-days 3 "
+                        "--stable-max-daily-sample-share 0.7 "
+                        "--stable-min-positive-day-rate 0.6666666667"
+                    ),
+                    "rank_only_examples": [
+                        {
+                            "name": "AUD_JPY_UP_FADE_TO_DOWN_RANK_ONLY",
+                            "pair": "AUD_JPY",
+                            "granularity": "S5",
+                            "forecast_direction": "UP",
+                            "direction": "DOWN",
+                            "samples": 40,
+                            "active_days": 2,
+                            "positive_day_rate": 0.5,
+                            "daily_stability_status": "INSUFFICIENT_ACTIVE_DAYS",
+                            "daily_stability_gap": {
+                                "reasons": [
+                                    "NEEDS_MORE_ACTIVE_DAYS",
+                                    "NEEDS_DAILY_STABILITY_CONFIRMATION",
+                                ],
+                                "missing_active_days": 1,
+                                "missing_positive_days_at_current_requirement": 1,
+                            },
+                        }
+                    ],
                 },
             },
         },

@@ -199,6 +199,9 @@ class TraderSupportBot:
             "target_firepower_target_10pct_estimated_reachable": acceptance["target_firepower"][
                 "target_10pct_estimated_reachable"
             ],
+            "acceptance_evidence_collection_count": len(
+                acceptance["repair_plan"].get("evidence_collection_items", [])
+            ),
             "repair_basket_lane_ids": [item["lane_id"] for item in entry["repair_live_ready"]],
             "repair_basket_guardian_recovery_lane_ids": [
                 item["lane_id"] for item in entry["repair_basket_guardian_recovery"]
@@ -588,8 +591,8 @@ def _entry_readiness_summary(payload: dict[str, Any]) -> dict[str, Any]:
                 "side": intent.get("side"),
                 "method": context.get("method"),
                 "order_type": intent.get("order_type"),
-                "reward_jpy": _round_optional(metadata.get("sizing_actual_reward_jpy"), 3),
-                "risk_jpy": _round_optional(metadata.get("sizing_actual_risk_jpy"), 3),
+                "reward_jpy": _intent_reward_jpy(item, metadata),
+                "risk_jpy": _intent_risk_jpy(item, metadata),
                 "repair_mode": metadata.get("self_improvement_p0_repair_mode"),
                 "matrix_repair_profile_status": metadata.get("matrix_repair_profile_status"),
                 "blocker_codes": blocker_codes,
@@ -788,6 +791,12 @@ def _acceptance_repair_plan(payload: dict[str, Any]) -> dict[str, Any]:
         for item in findings
         if isinstance(item, dict) and str(item.get("priority") or "").upper() == "P0"
     ]
+    evidence_findings = [
+        item
+        for item in findings
+        if isinstance(item, dict)
+        and str(item.get("code") or "") in {"BIDASK_CONTRARIAN_EDGE_NOT_DAILY_STABLE"}
+    ]
     fallback_blockers = payload.get("blockers") if isinstance(payload.get("blockers"), list) else []
     metrics = payload.get("metrics") if isinstance(payload.get("metrics"), dict) else {}
     items: list[dict[str, Any]] = []
@@ -809,9 +818,10 @@ def _acceptance_repair_plan(payload: dict[str, Any]) -> dict[str, Any]:
                     metrics,
                 )
             )
+    evidence_items = [_acceptance_repair_item(finding, metrics) for finding in evidence_findings[:8]]
     commands: list[str] = []
     seen = set()
-    for item in items:
+    for item in [*items, *evidence_items]:
         command = item.get("verification_command")
         if not command or command in seen:
             continue
@@ -821,11 +831,16 @@ def _acceptance_repair_plan(payload: dict[str, Any]) -> dict[str, Any]:
         "status": payload.get("status"),
         "p0_count": len(p0_findings) if p0_findings else len(fallback_blockers),
         "items": items,
+        "evidence_collection_items": evidence_items,
         "next_verification_commands": commands[:8],
         "loop_breaker": (
             "Rerunning profitability-acceptance alone cannot clear these P0s; the listed proof condition "
-            "must change first."
+            "must change first. Evidence-collection items also require fresh replay/mining output before "
+            "they can graduate into live-grade turnover."
             if items
+            else "No acceptance P0 repair item is active; work evidence-collection items before claiming "
+            "new high-turn firepower."
+            if evidence_items
             else "No acceptance P0 repair item is active."
         ),
     }
@@ -926,6 +941,29 @@ def _acceptance_clearance_for_code(
                     ACCEPTANCE_LEAK_LOOKBACK_DAYS,
                 ),
                 "example_trade_ids": _example_trade_ids(evidence),
+            },
+        )
+    if code == "BIDASK_CONTRARIAN_EDGE_NOT_DAILY_STABLE":
+        bidask = metrics.get("bidask_replay_rules") if isinstance(metrics.get("bidask_replay_rules"), dict) else {}
+        bidask = bidask or evidence
+        examples = bidask.get("rank_only_examples") if isinstance(bidask.get("rank_only_examples"), list) else []
+        validation_command = bidask.get("replay_validation_command") or (
+            "python3 scripts/oanda_history_replay_validate.py "
+            "--forecast-history data/forecast_history.jsonl "
+            "--granularity S5"
+        )
+        return (
+            "at least one bid/ask contrarian replay rule graduates from rank-only to DAILY_STABLE after "
+            "fresh multi-week OANDA BA candle replay; until then weak forecast inversion is advisory ranking "
+            "evidence and cannot be counted as live-grade turnover firepower",
+            str(validation_command),
+            {
+                "contrarian_edge_rules": bidask.get("contrarian_edge_rules"),
+                "daily_stable_contrarian_edge_rules": bidask.get("daily_stable_contrarian_edge_rules"),
+                "rank_only_contrarian_edge_rules": bidask.get("rank_only_contrarian_edge_rules"),
+                "daily_stability_requirements": bidask.get("daily_stability_requirements"),
+                "history_fetch_command": bidask.get("history_fetch_command"),
+                "rank_only_examples": examples[:3],
             },
         )
     if code == "EXECUTION_LEDGER_GATEWAY_RECEIPT_STREAM_STALE":
@@ -1202,6 +1240,11 @@ def _operator_actions(
         )
     repair_plan = acceptance.get("repair_plan") if isinstance(acceptance.get("repair_plan"), dict) else {}
     repair_items = repair_plan.get("items") if isinstance(repair_plan.get("items"), list) else []
+    evidence_items = (
+        repair_plan.get("evidence_collection_items")
+        if isinstance(repair_plan.get("evidence_collection_items"), list)
+        else []
+    )
     if repair_items:
         actions.append(
             {
@@ -1214,6 +1257,33 @@ def _operator_actions(
                 ),
             }
         )
+    if evidence_items:
+        first_evidence = evidence_items[0] if isinstance(evidence_items[0], dict) else {}
+        summary = (
+            first_evidence.get("evidence_summary")
+            if isinstance(first_evidence.get("evidence_summary"), dict)
+            else {}
+        )
+        history_fetch = summary.get("history_fetch_command")
+        if history_fetch:
+            actions.append(
+                {
+                    "code": "FETCH_BIDASK_REPLAY_HISTORY",
+                    "command": str(history_fetch),
+                    "requires_explicit_operator_approval": False,
+                    "reason": "read-only OANDA BA candle fetch for rank-only contrarian replay validation",
+                }
+            )
+        validation_command = first_evidence.get("verification_command")
+        if validation_command:
+            actions.append(
+                {
+                    "code": "VALIDATE_BIDASK_REPLAY_HISTORY",
+                    "command": str(validation_command),
+                    "requires_explicit_operator_approval": False,
+                    "reason": "rerun historical bid/ask replay before treating forecast inversion as live-grade",
+                }
+            )
     repair_codes = {str(item.get("code")) for item in repair_items if isinstance(item, dict)}
     if "LOSS_CLOSE_GATE_EVIDENCE_MISSING" in repair_codes:
         actions.append(
@@ -1508,6 +1578,30 @@ def _render_report(payload: dict[str, Any]) -> str:
                 f"| `{item['code']}` | {item['clearance_condition']} | "
                 f"`{item['verification_command']}` |"
             )
+    else:
+        lines.append("- none")
+    evidence_items = (
+        acceptance_repair.get("evidence_collection_items")
+        if isinstance(acceptance_repair.get("evidence_collection_items"), list)
+        else []
+    )
+    lines.extend(["", "## Acceptance Evidence Collection", ""])
+    if evidence_items:
+        lines.extend(
+            [
+                "| Code | Clearance condition | Verify |",
+                "|---|---|---|",
+            ]
+        )
+        for item in evidence_items[:8]:
+            lines.append(
+                f"| `{item['code']}` | {item['clearance_condition']} | "
+                f"`{item['verification_command']}` |"
+            )
+            summary = item.get("evidence_summary") if isinstance(item.get("evidence_summary"), dict) else {}
+            fetch = summary.get("history_fetch_command")
+            if fetch:
+                lines.append(f"| `{item['code']}:fetch` | Fetch fresh BA candles | `{fetch}` |")
     else:
         lines.append("- none")
     lines.extend(["", "## Current Profit Capture", ""])
