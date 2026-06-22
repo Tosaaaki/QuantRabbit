@@ -791,6 +791,315 @@ class CliHelpTest(unittest.TestCase):
             "GATEWAY_TRADE_CLOSE_SENT",
         )
 
+    def test_profitability_acceptance_excludes_timing_contained_loss_from_recent_leak(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            ledger = root / "execution_ledger.db"
+            timing = root / "execution_timing_audit.json"
+            with sqlite3.connect(ledger) as conn:
+                conn.execute(
+                    """
+                    CREATE TABLE execution_events (
+                        ts_utc TEXT,
+                        event_type TEXT,
+                        trade_id TEXT,
+                        order_id TEXT,
+                        lane_id TEXT,
+                        pair TEXT,
+                        side TEXT,
+                        realized_pl_jpy REAL,
+                        exit_reason TEXT,
+                        raw_json TEXT
+                    )
+                    """
+                )
+                conn.executemany(
+                    """
+                    INSERT INTO execution_events (
+                        ts_utc, event_type, trade_id, order_id, lane_id, pair, side,
+                        realized_pl_jpy, exit_reason, raw_json
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    [
+                        (
+                            "2026-06-21T00:00:00+00:00",
+                            "GATEWAY_TRADE_CLOSE_SENT",
+                            "T-contained",
+                            "O-contained",
+                            "trend_trader:EUR_CHF:LONG:TREND_CONTINUATION",
+                            "EUR_CHF",
+                            "LONG",
+                            None,
+                            "GPT_CLOSE",
+                            "{}",
+                        ),
+                        (
+                            "2026-06-21T00:00:05+00:00",
+                            "TRADE_CLOSED",
+                            "T-contained",
+                            "O-contained",
+                            "trend_trader:EUR_CHF:LONG:TREND_CONTINUATION",
+                            "EUR_CHF",
+                            "LONG",
+                            -1019.78,
+                            "MARKET_ORDER_TRADE_CLOSE",
+                            "{}",
+                        ),
+                    ],
+                )
+            timing.write_text(
+                json.dumps(
+                    {
+                        "generated_at_utc": "2026-06-21T01:00:00+00:00",
+                        "market_close_counterfactuals": [
+                            {
+                                "trade_id": "T-contained",
+                                "order_id": "O-contained",
+                                "post_close_path_label": "LOSS_CLOSE_CONTAINED_RISK",
+                            }
+                        ],
+                    }
+                )
+            )
+
+            metrics, findings = _execution_ledger_close_findings(
+                ledger,
+                execution_timing_audit_path=timing,
+            )
+
+        codes = {item["code"] for item in findings}
+        self.assertNotIn("RECENT_GATEWAY_LOSS_MARKET_CLOSE_LEAK", codes)
+        self.assertNotIn("UNVERIFIED_LOSS_SIDE_MARKET_CLOSE_RECONCILED", codes)
+        self.assertEqual(metrics["recent_loss_closes"], 1)
+        self.assertEqual(metrics["recent_contained_risk_loss_closes"], 1)
+        self.assertEqual(metrics["recent_leak_loss_closes"], 0)
+        self.assertEqual(
+            metrics["recent_loss_timing_label_counts"],
+            {"LOSS_CLOSE_CONTAINED_RISK": 1},
+        )
+
+    def test_profitability_acceptance_counts_only_premature_timing_losses_as_recent_leak(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            ledger = root / "execution_ledger.db"
+            timing = root / "execution_timing_audit.json"
+            with sqlite3.connect(ledger) as conn:
+                conn.execute(
+                    """
+                    CREATE TABLE execution_events (
+                        ts_utc TEXT,
+                        event_type TEXT,
+                        trade_id TEXT,
+                        order_id TEXT,
+                        lane_id TEXT,
+                        pair TEXT,
+                        side TEXT,
+                        realized_pl_jpy REAL,
+                        exit_reason TEXT,
+                        raw_json TEXT
+                    )
+                    """
+                )
+                conn.executemany(
+                    """
+                    INSERT INTO execution_events (
+                        ts_utc, event_type, trade_id, order_id, lane_id, pair, side,
+                        realized_pl_jpy, exit_reason, raw_json
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    [
+                        (
+                            "2026-06-21T00:00:00+00:00",
+                            "GATEWAY_TRADE_CLOSE_SENT",
+                            "T-contained",
+                            "O-contained",
+                            "trend_trader:EUR_CHF:LONG:TREND_CONTINUATION",
+                            "EUR_CHF",
+                            "LONG",
+                            None,
+                            "GPT_CLOSE",
+                            "{}",
+                        ),
+                        (
+                            "2026-06-21T00:00:05+00:00",
+                            "TRADE_CLOSED",
+                            "T-contained",
+                            "O-contained",
+                            "trend_trader:EUR_CHF:LONG:TREND_CONTINUATION",
+                            "EUR_CHF",
+                            "LONG",
+                            -1019.78,
+                            "MARKET_ORDER_TRADE_CLOSE",
+                            "{}",
+                        ),
+                        (
+                            "2026-06-21T00:05:00+00:00",
+                            "GATEWAY_TRADE_CLOSE_SENT",
+                            "T-premature",
+                            "O-premature",
+                            "range_trader:NZD_USD:LONG:RANGE_ROTATION",
+                            "NZD_USD",
+                            "LONG",
+                            None,
+                            "GPT_CLOSE",
+                            "{}",
+                        ),
+                        (
+                            "2026-06-21T00:05:05+00:00",
+                            "TRADE_CLOSED",
+                            "T-premature",
+                            "O-premature",
+                            "range_trader:NZD_USD:LONG:RANGE_ROTATION",
+                            "NZD_USD",
+                            "LONG",
+                            -1380.8,
+                            "MARKET_ORDER_TRADE_CLOSE",
+                            "{}",
+                        ),
+                    ],
+                )
+            timing.write_text(
+                json.dumps(
+                    {
+                        "generated_at_utc": "2026-06-21T01:00:00+00:00",
+                        "market_close_counterfactuals": [
+                            {
+                                "trade_id": "T-contained",
+                                "order_id": "O-contained",
+                                "post_close_path_label": "LOSS_CLOSE_CONTAINED_RISK",
+                            },
+                            {
+                                "trade_id": "T-premature",
+                                "order_id": "O-premature",
+                                "post_close_path_label": "LOSS_CLOSE_MAY_HAVE_BEEN_PREMATURE",
+                            },
+                        ],
+                    }
+                )
+            )
+
+            metrics, findings = _execution_ledger_close_findings(
+                ledger,
+                execution_timing_audit_path=timing,
+            )
+
+        leak = next(
+            finding
+            for finding in findings
+            if finding["code"] == "RECENT_GATEWAY_LOSS_MARKET_CLOSE_LEAK"
+        )
+        self.assertEqual(metrics["recent_loss_closes"], 2)
+        self.assertEqual(metrics["recent_contained_risk_loss_closes"], 1)
+        self.assertEqual(metrics["recent_premature_loss_closes"], 1)
+        self.assertEqual(metrics["recent_leak_loss_closes"], 1)
+        self.assertEqual(leak["evidence"]["recent_leak_loss_closes"], 1)
+        self.assertEqual(
+            leak["evidence"]["by_lane"][0]["lane_id"],
+            "range_trader:NZD_USD:LONG:RANGE_ROTATION",
+        )
+
+    def test_profitability_acceptance_keeps_unverified_p0_for_contained_reconciled_loss(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            ledger = root / "execution_ledger.db"
+            timing = root / "execution_timing_audit.json"
+            with sqlite3.connect(ledger) as conn:
+                conn.execute(
+                    """
+                    CREATE TABLE execution_events (
+                        ts_utc TEXT,
+                        source TEXT,
+                        event_type TEXT,
+                        trade_id TEXT,
+                        order_id TEXT,
+                        lane_id TEXT,
+                        pair TEXT,
+                        side TEXT,
+                        realized_pl_jpy REAL,
+                        exit_reason TEXT,
+                        raw_json TEXT
+                    )
+                    """
+                )
+                conn.executemany(
+                    """
+                    INSERT INTO execution_events (
+                        ts_utc, source, event_type, trade_id, order_id, lane_id, pair, side,
+                        realized_pl_jpy, exit_reason, raw_json
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    [
+                        (
+                            "2026-06-21T00:00:00+00:00",
+                            "gateway",
+                            "GATEWAY_POSITION_NO_ACTION",
+                            "T-old",
+                            None,
+                            None,
+                            "EUR_USD",
+                            None,
+                            None,
+                            "HOLD_PROTECTED",
+                            "{}",
+                        ),
+                        (
+                            "2026-06-21T00:10:00+00:00",
+                            "ledger_reconcile",
+                            "GATEWAY_TRADE_CLOSE_RECONCILED",
+                            "T-contained",
+                            "O-contained",
+                            "trend_trader:EUR_CHF:LONG:TREND_CONTINUATION",
+                            "EUR_CHF",
+                            "LONG",
+                            None,
+                            "BROKER_TRADE_CLOSE_TRADER_ENTRY_RECONCILED",
+                            json.dumps({"reconcile_reason": "NO_LOCAL_POSITION_EXECUTION_RECEIPT"}),
+                        ),
+                        (
+                            "2026-06-21T00:10:05+00:00",
+                            "oanda",
+                            "TRADE_CLOSED",
+                            "T-contained",
+                            "O-contained",
+                            "trend_trader:EUR_CHF:LONG:TREND_CONTINUATION",
+                            "EUR_CHF",
+                            "LONG",
+                            -1019.78,
+                            "MARKET_ORDER_TRADE_CLOSE",
+                            "{}",
+                        ),
+                    ],
+                )
+            timing.write_text(
+                json.dumps(
+                    {
+                        "generated_at_utc": "2026-06-21T01:00:00+00:00",
+                        "market_close_counterfactuals": [
+                            {
+                                "trade_id": "T-contained",
+                                "order_id": "O-contained",
+                                "post_close_path_label": "LOSS_CLOSE_CONTAINED_RISK",
+                            }
+                        ],
+                    }
+                )
+            )
+
+            metrics, findings = _execution_ledger_close_findings(
+                ledger,
+                execution_timing_audit_path=timing,
+            )
+
+        codes = {item["code"] for item in findings}
+        self.assertNotIn("RECENT_GATEWAY_LOSS_MARKET_CLOSE_LEAK", codes)
+        self.assertIn("UNVERIFIED_LOSS_SIDE_MARKET_CLOSE_RECONCILED", codes)
+        self.assertEqual(metrics["recent_contained_risk_loss_closes"], 1)
+        self.assertEqual(metrics["recent_leak_loss_closes"], 0)
+        self.assertEqual(metrics["recent_unverified_loss_closes"], 1)
+
     def test_profitability_acceptance_backfills_close_leak_lane_from_entry_fill(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             ledger = Path(tmp) / "execution_ledger.db"

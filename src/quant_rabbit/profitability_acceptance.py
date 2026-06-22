@@ -16,6 +16,7 @@ from quant_rabbit.paths import (
     DEFAULT_CAPTURE_ECONOMICS,
     DEFAULT_DAILY_TARGET_STATE,
     DEFAULT_EXECUTION_LEDGER_DB,
+    DEFAULT_EXECUTION_TIMING_AUDIT,
     DEFAULT_OANDA_UNIVERSAL_ROTATION_MINING,
     DEFAULT_OANDA_UNIVERSAL_ROTATION_PACKAGED_RULES,
     DEFAULT_ORDER_INTENTS,
@@ -77,6 +78,7 @@ class ProfitabilityAcceptanceAuditor:
         self_improvement_path: Path = DEFAULT_SELF_IMPROVEMENT_AUDIT,
         capture_economics_path: Path = DEFAULT_CAPTURE_ECONOMICS,
         execution_ledger_path: Path = DEFAULT_EXECUTION_LEDGER_DB,
+        execution_timing_audit_path: Path = DEFAULT_EXECUTION_TIMING_AUDIT,
         projection_ledger_path: Path = DEFAULT_PROJECTION_LEDGER,
         bidask_rules_path: Path = DEFAULT_BIDASK_REPLAY_RULES_PATH,
         oanda_rotation_mining_path: Path = DEFAULT_OANDA_UNIVERSAL_ROTATION_MINING,
@@ -100,7 +102,10 @@ class ProfitabilityAcceptanceAuditor:
             intents,
             capture,
         )
-        ledger_metrics, ledger_findings = _execution_ledger_close_findings(execution_ledger_path)
+        ledger_metrics, ledger_findings = _execution_ledger_close_findings(
+            execution_ledger_path,
+            execution_timing_audit_path=execution_timing_audit_path,
+        )
         projection_metrics, projection_findings = _projection_precision_findings(projection_ledger_path)
         bidask_metrics, bidask_findings = _bidask_rule_findings(bidask_rules, bidask_rules_path)
         firepower_metrics, firepower_findings = _oanda_campaign_firepower_findings(
@@ -613,18 +618,32 @@ def _order_capture_freshness_findings(
     ]
 
 
-def _execution_ledger_close_findings(path: Path) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+def _execution_ledger_close_findings(
+    path: Path,
+    *,
+    execution_timing_audit_path: Path | None = None,
+) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    timing_labels, timing_metrics = _execution_timing_loss_close_labels(execution_timing_audit_path)
     metrics: dict[str, Any] = {
         "path": str(path),
         "ledger_exists": path.exists(),
         "lookback_days": LOSS_CLOSE_LEAK_LOOKBACK_DAYS,
+        "execution_timing_audit": timing_metrics,
         "gateway_market_closes": 0,
         "recent_gateway_market_closes": 0,
         "recent_loss_closes": 0,
         "recent_loss_net_jpy": 0.0,
+        "recent_loss_timing_label_counts": {},
+        "recent_leak_loss_closes": 0,
+        "recent_leak_loss_net_jpy": 0.0,
+        "recent_contained_risk_loss_closes": 0,
+        "recent_contained_risk_loss_net_jpy": 0.0,
+        "recent_unclassified_loss_closes": 0,
+        "recent_premature_loss_closes": 0,
         "recent_unverified_loss_closes": 0,
         "recent_unverified_loss_net_jpy": 0.0,
         "recent_loss_by_lane": [],
+        "recent_leak_loss_by_lane": [],
         "latest_gateway_market_close_ts_utc": None,
         "latest_loss_close_ts_utc": None,
         "gateway_event_stream_events": 0,
@@ -632,6 +651,8 @@ def _execution_ledger_close_findings(path: Path) -> tuple[dict[str, Any], list[d
         "gateway_event_stream_lag_minutes": None,
         "gateway_event_stream_stale": False,
         "recent_loss_examples": [],
+        "recent_leak_loss_examples": [],
+        "recent_contained_risk_loss_examples": [],
         "recent_unverified_loss_examples": [],
     }
     if not path.exists():
@@ -800,6 +821,22 @@ def _execution_ledger_close_findings(path: Path) -> tuple[dict[str, Any], list[d
     recent_losses = [
         row for row in recent if (_optional_float(row.get("realized_pl_jpy")) or 0.0) < 0.0
     ]
+    for row in recent_losses:
+        label = _loss_close_timing_label(row, timing_labels)
+        if label:
+            row["timing_path_label"] = label
+    recent_contained_losses = [
+        row for row in recent_losses if row.get("timing_path_label") == "LOSS_CLOSE_CONTAINED_RISK"
+    ]
+    recent_leak_losses = [
+        row for row in recent_losses if row.get("timing_path_label") != "LOSS_CLOSE_CONTAINED_RISK"
+    ]
+    recent_premature_losses = [
+        row
+        for row in recent_losses
+        if row.get("timing_path_label") == "LOSS_CLOSE_MAY_HAVE_BEEN_PREMATURE"
+    ]
+    recent_unclassified_losses = [row for row in recent_losses if not row.get("timing_path_label")]
     recent_unverified_losses = [
         row
         for row in recent_losses
@@ -811,40 +848,30 @@ def _execution_ledger_close_findings(path: Path) -> tuple[dict[str, Any], list[d
         sum(float(row.get("realized_pl_jpy") or 0.0) for row in recent_losses),
         4,
     )
+    label_counts: dict[str, int] = {}
+    for row in recent_losses:
+        label = str(row.get("timing_path_label") or "UNCLASSIFIED")
+        label_counts[label] = label_counts.get(label, 0) + 1
+    metrics["recent_loss_timing_label_counts"] = dict(sorted(label_counts.items()))
+    metrics["recent_leak_loss_closes"] = len(recent_leak_losses)
+    metrics["recent_leak_loss_net_jpy"] = round(
+        sum(float(row.get("realized_pl_jpy") or 0.0) for row in recent_leak_losses),
+        4,
+    )
+    metrics["recent_contained_risk_loss_closes"] = len(recent_contained_losses)
+    metrics["recent_contained_risk_loss_net_jpy"] = round(
+        sum(float(row.get("realized_pl_jpy") or 0.0) for row in recent_contained_losses),
+        4,
+    )
+    metrics["recent_unclassified_loss_closes"] = len(recent_unclassified_losses)
+    metrics["recent_premature_loss_closes"] = len(recent_premature_losses)
     metrics["recent_unverified_loss_closes"] = len(recent_unverified_losses)
     metrics["recent_unverified_loss_net_jpy"] = round(
         sum(float(row.get("realized_pl_jpy") or 0.0) for row in recent_unverified_losses),
         4,
     )
-    by_lane: dict[str, dict[str, Any]] = {}
-    for row in recent_losses:
-        lane_id = str(row.get("lane_id") or "").strip()
-        key = lane_id or f"UNKNOWN:{row.get('pair') or ''}:{row.get('side') or ''}"
-        item = by_lane.setdefault(
-            key,
-            {
-                "lane_id": lane_id or None,
-                "pair": row.get("pair"),
-                "side": row.get("side"),
-                "method": _method_from_lane_id(lane_id),
-                "loss_closes": 0,
-                "net_jpy": 0.0,
-            },
-        )
-        item["loss_closes"] = int(item.get("loss_closes") or 0) + 1
-        item["net_jpy"] = float(item.get("net_jpy") or 0.0) + float(
-            row.get("realized_pl_jpy") or 0.0
-        )
-    metrics["recent_loss_by_lane"] = [
-        {**item, "net_jpy": round(float(item.get("net_jpy") or 0.0), 4)}
-        for item in sorted(
-            by_lane.values(),
-            key=lambda item: (
-                float(item.get("net_jpy") or 0.0),
-                str(item.get("lane_id") or ""),
-            ),
-        )[:10]
-    ]
+    metrics["recent_loss_by_lane"] = _loss_close_by_lane(recent_losses)
+    metrics["recent_leak_loss_by_lane"] = _loss_close_by_lane(recent_leak_losses)
     if recent_losses:
         latest_loss = max(recent_losses, key=lambda row: row["ts"])
         metrics["latest_loss_close_ts_utc"] = latest_loss["ts"].isoformat()
@@ -858,9 +885,44 @@ def _execution_ledger_close_findings(path: Path) -> tuple[dict[str, Any], list[d
             "lane_id": row.get("lane_id"),
             "realized_pl_jpy": row.get("realized_pl_jpy"),
             "close_provenance": row.get("close_provenance"),
+            "timing_path_label": row.get("timing_path_label"),
         }
         for row in sorted(
             recent_losses,
+            key=lambda row: float(row.get("realized_pl_jpy") or 0.0),
+        )[:5]
+    ]
+    metrics["recent_leak_loss_examples"] = [
+        {
+            "ts_utc": row.get("ts_utc"),
+            "trade_id": row.get("trade_id"),
+            "order_id": row.get("order_id"),
+            "pair": row.get("pair"),
+            "side": row.get("side"),
+            "lane_id": row.get("lane_id"),
+            "realized_pl_jpy": row.get("realized_pl_jpy"),
+            "close_provenance": row.get("close_provenance"),
+            "timing_path_label": row.get("timing_path_label"),
+        }
+        for row in sorted(
+            recent_leak_losses,
+            key=lambda row: float(row.get("realized_pl_jpy") or 0.0),
+        )[:5]
+    ]
+    metrics["recent_contained_risk_loss_examples"] = [
+        {
+            "ts_utc": row.get("ts_utc"),
+            "trade_id": row.get("trade_id"),
+            "order_id": row.get("order_id"),
+            "pair": row.get("pair"),
+            "side": row.get("side"),
+            "lane_id": row.get("lane_id"),
+            "realized_pl_jpy": row.get("realized_pl_jpy"),
+            "close_provenance": row.get("close_provenance"),
+            "timing_path_label": row.get("timing_path_label"),
+        }
+        for row in sorted(
+            recent_contained_losses,
             key=lambda row: float(row.get("realized_pl_jpy") or 0.0),
         )[:5]
     ]
@@ -875,6 +937,7 @@ def _execution_ledger_close_findings(path: Path) -> tuple[dict[str, Any], list[d
             "realized_pl_jpy": row.get("realized_pl_jpy"),
             "gateway_exit_reason": row.get("gateway_exit_reason"),
             "close_provenance": row.get("close_provenance"),
+            "timing_path_label": row.get("timing_path_label"),
         }
         for row in sorted(
             recent_unverified_losses,
@@ -883,28 +946,34 @@ def _execution_ledger_close_findings(path: Path) -> tuple[dict[str, Any], list[d
     ]
     if not recent_losses:
         return metrics, []
-    findings = [
-        _finding(
-            priority="P0",
-            code="RECENT_GATEWAY_LOSS_MARKET_CLOSE_LEAK",
-            message=(
-                f"{len(recent_losses)} loss-side gateway MARKET_ORDER_TRADE_CLOSE event(s) "
-                f"remain inside the {LOSS_CLOSE_LEAK_LOOKBACK_DAYS}-day acceptance window"
-            ),
-            next_action=(
-                "Keep profitability acceptance red until a full recent window shows no new loss-side "
-                "gateway market-close leakage, or the close path is converted to proved structural "
-                "loss-cut evidence with TP/hold counterfactuals audited."
-            ),
-            evidence={
-                "recent_loss_closes": metrics["recent_loss_closes"],
-                "recent_loss_net_jpy": metrics["recent_loss_net_jpy"],
-                "latest_loss_close_ts_utc": metrics["latest_loss_close_ts_utc"],
-                "by_lane": metrics["recent_loss_by_lane"],
-                "examples": metrics["recent_loss_examples"],
-            },
+    findings: list[dict[str, Any]] = []
+    if recent_leak_losses:
+        findings.append(
+            _finding(
+                priority="P0",
+                code="RECENT_GATEWAY_LOSS_MARKET_CLOSE_LEAK",
+                message=(
+                    f"{len(recent_leak_losses)} loss-side gateway MARKET_ORDER_TRADE_CLOSE event(s) "
+                    f"remain inside the {LOSS_CLOSE_LEAK_LOOKBACK_DAYS}-day acceptance window "
+                    "without contained-risk timing evidence"
+                ),
+                next_action=(
+                    "Keep profitability acceptance red for premature or unclassified loss-side market "
+                    "closes. Do not count LOSS_CLOSE_CONTAINED_RISK rows as leak repair proof unless "
+                    "the ledger also has durable GPT/gateway close receipts."
+                ),
+                evidence={
+                    "recent_leak_loss_closes": metrics["recent_leak_loss_closes"],
+                    "recent_leak_loss_net_jpy": metrics["recent_leak_loss_net_jpy"],
+                    "recent_loss_timing_label_counts": metrics["recent_loss_timing_label_counts"],
+                    "latest_loss_close_ts_utc": metrics["latest_loss_close_ts_utc"],
+                    "by_lane": metrics["recent_leak_loss_by_lane"],
+                    "examples": metrics["recent_leak_loss_examples"],
+                    "contained_risk_loss_closes": metrics["recent_contained_risk_loss_closes"],
+                    "contained_risk_loss_net_jpy": metrics["recent_contained_risk_loss_net_jpy"],
+                },
+            )
         )
-    ]
     if gateway_stream_stale:
         findings.append(
             _finding(
@@ -976,6 +1045,95 @@ def _reconciled_close_provenance(
     ):
         return "GATEWAY_GPT_CLOSE_RECONCILED"
     return "GATEWAY_TRADE_CLOSE_RECONCILED_UNVERIFIED"
+
+
+def _execution_timing_loss_close_labels(
+    path: Path | None,
+) -> tuple[dict[tuple[str, str], str], dict[str, Any]]:
+    metrics: dict[str, Any] = {
+        "path": str(path) if path is not None else None,
+        "loaded": False,
+        "generated_at_utc": None,
+        "loss_market_close_rows": 0,
+        "label_counts": {},
+        "read_error": None,
+    }
+    if path is None:
+        return {}, metrics
+    if not path.exists():
+        return {}, metrics
+    try:
+        payload = json.loads(path.read_text())
+    except (OSError, json.JSONDecodeError) as exc:
+        metrics["read_error"] = f"{type(exc).__name__}: {exc}"
+        return {}, metrics
+    rows = payload.get("market_close_counterfactuals")
+    if not isinstance(rows, list):
+        rows = []
+    labels: dict[tuple[str, str], str] = {}
+    counts: dict[str, int] = {}
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        label = str(row.get("post_close_path_label") or "").strip().upper()
+        if not label.startswith("LOSS_CLOSE_"):
+            continue
+        metrics["loss_market_close_rows"] = int(metrics["loss_market_close_rows"]) + 1
+        counts[label] = counts.get(label, 0) + 1
+        for key_name in ("trade_id", "order_id"):
+            value = str(row.get(key_name) or "").strip()
+            if value:
+                labels[(key_name, value)] = label
+    metrics["loaded"] = True
+    metrics["generated_at_utc"] = payload.get("generated_at_utc") or payload.get("generated_at")
+    metrics["label_counts"] = dict(sorted(counts.items()))
+    return labels, metrics
+
+
+def _loss_close_timing_label(
+    row: dict[str, Any],
+    labels: dict[tuple[str, str], str],
+) -> str | None:
+    for key_name in ("trade_id", "order_id"):
+        value = str(row.get(key_name) or "").strip()
+        if not value:
+            continue
+        label = labels.get((key_name, value))
+        if label:
+            return label
+    return None
+
+
+def _loss_close_by_lane(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    by_lane: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        lane_id = str(row.get("lane_id") or "").strip()
+        key = lane_id or f"UNKNOWN:{row.get('pair') or ''}:{row.get('side') or ''}"
+        item = by_lane.setdefault(
+            key,
+            {
+                "lane_id": lane_id or None,
+                "pair": row.get("pair"),
+                "side": row.get("side"),
+                "method": _method_from_lane_id(lane_id),
+                "loss_closes": 0,
+                "net_jpy": 0.0,
+            },
+        )
+        item["loss_closes"] = int(item.get("loss_closes") or 0) + 1
+        item["net_jpy"] = float(item.get("net_jpy") or 0.0) + float(
+            row.get("realized_pl_jpy") or 0.0
+        )
+    return [
+        {**item, "net_jpy": round(float(item.get("net_jpy") or 0.0), 4)}
+        for item in sorted(
+            by_lane.values(),
+            key=lambda item: (
+                float(item.get("net_jpy") or 0.0),
+                str(item.get("lane_id") or ""),
+            ),
+        )[:10]
+    ]
 
 
 def _method_from_lane_id(lane_id: str | None) -> str | None:

@@ -2909,6 +2909,7 @@ def main(argv: list[str] | None = None) -> int:
     p_profit_accept.add_argument("--self-improvement-audit", type=Path, default=DEFAULT_SELF_IMPROVEMENT_AUDIT)
     p_profit_accept.add_argument("--capture-economics", type=Path, default=DEFAULT_CAPTURE_ECONOMICS)
     p_profit_accept.add_argument("--execution-ledger-db", type=Path, default=DEFAULT_EXECUTION_LEDGER_DB)
+    p_profit_accept.add_argument("--execution-timing-audit", type=Path, default=DEFAULT_EXECUTION_TIMING_AUDIT)
     p_profit_accept.add_argument("--projection-ledger", type=Path, default=DEFAULT_PROJECTION_LEDGER)
     p_profit_accept.add_argument("--bidask-rules", type=Path, default=None)
     p_profit_accept.add_argument(
@@ -5191,6 +5192,7 @@ def main(argv: list[str] | None = None) -> int:
                 self_improvement_path=args.self_improvement_audit,
                 capture_economics_path=args.capture_economics,
                 execution_ledger_path=audit_db,
+                execution_timing_audit_path=args.execution_timing_audit,
                 projection_ledger_path=args.projection_ledger,
                 bidask_rules_path=args.bidask_rules or DEFAULT_BIDASK_REPLAY_RULES_PATH,
                 oanda_rotation_mining_path=args.oanda_rotation_mining,
