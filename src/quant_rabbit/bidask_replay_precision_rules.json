@@ -23,7 +23,7 @@
         "NEEDS_HIGHER_POSITIVE_DAY_RATE"
       ],
       "adoption_status": "RANK_ONLY_NOT_DAILY_STABLE",
-      "audit_report": "logs/reports/forecast_improvement/oanda_history_replay_validate_20260622T195626Z.json",
+      "audit_report": "logs/reports/forecast_improvement/oanda_history_replay_validate_20260622T210950Z.json",
       "avg_daily_realized_pips": 56.75,
       "avg_daily_samples": 20.0,
       "avg_final_pips": 4.8425,
@@ -94,7 +94,7 @@
         "NEEDS_HIGHER_POSITIVE_DAY_RATE"
       ],
       "adoption_status": "RANK_ONLY_NOT_DAILY_STABLE",
-      "audit_report": "logs/reports/forecast_improvement/oanda_history_replay_validate_20260622T195626Z.json",
+      "audit_report": "logs/reports/forecast_improvement/oanda_history_replay_validate_20260622T210950Z.json",
       "avg_daily_realized_pips": 56.75,
       "avg_daily_samples": 20.0,
       "avg_final_pips": 4.8425,
@@ -167,7 +167,7 @@
         "NEEDS_HIGHER_POSITIVE_DAY_RATE"
       ],
       "adoption_status": "RANK_ONLY_NOT_DAILY_STABLE",
-      "audit_report": "logs/reports/forecast_improvement/oanda_history_replay_validate_20260622T195626Z.json",
+      "audit_report": "logs/reports/forecast_improvement/oanda_history_replay_validate_20260622T210950Z.json",
       "avg_daily_realized_pips": 116.76,
       "avg_daily_samples": 45.2,
       "avg_final_pips": 2.3425,
@@ -228,23 +228,22 @@
     "under_sampled_pair_directions": 48,
     "unscorable_no_market_samples": 12
   },
-  "generated_at_utc": "2026-06-22T19:56:26.517585Z",
+  "generated_at_utc": "2026-06-22T21:09:50.229150Z",
   "generated_from": "scripts/oanda_history_replay_validate.py",
   "granularity": "S5",
   "history_dirs": [
-    "tmp/qr_acceptance_check/oanda_history_s5/20260622T155928Z",
-    "tmp/qr_acceptance_check/oanda_history_s5_windowed/20260622T163008Z",
-    "tmp/qr_acceptance_check/oanda_history_s5_windowed/20260622T163009Z",
-    "tmp/qr_acceptance_check/oanda_history_s5_windowed/20260622T163010Z",
-    "tmp/qr_acceptance_check/oanda_history_s5_windowed/20260622T163028Z",
-    "tmp/qr_acceptance_check/oanda_history_s5_windowed/20260622T163029Z",
-    "tmp/qr_acceptance_check/oanda_history_s5_windowed/20260622T163034Z",
-    "tmp/qr_acceptance_check/oanda_history_s5_windowed/20260622T163138Z",
-    "tmp/qr_acceptance_check/oanda_history_s5_windowed/20260622T163212Z",
-    "tmp/qr_acceptance_check/oanda_history_s5_windowed/20260622T163240Z",
-    "tmp/qr_acceptance_check/oanda_history_s5_windowed/20260622T163312Z",
-    "tmp/qr_acceptance_check/oanda_history_s5_windowed/20260622T163315Z",
-    "tmp/qr_acceptance_check/oanda_history_s5_windowed/20260622T163332Z"
+    "logs/replay/oanda_history/20260622T191007Z",
+    "logs/replay/oanda_history/20260622T205514Z",
+    "logs/replay/oanda_history/20260622T210341Z",
+    "logs/replay/oanda_history/20260622T210403Z",
+    "logs/replay/oanda_history/20260622T210404Z",
+    "logs/replay/oanda_history/20260622T210411Z",
+    "logs/replay/oanda_history/20260622T210536Z",
+    "logs/replay/oanda_history/20260622T210620Z",
+    "logs/replay/oanda_history/20260622T210657Z",
+    "logs/replay/oanda_history/20260622T210741Z",
+    "logs/replay/oanda_history/20260622T210747Z",
+    "logs/replay/oanda_history/20260622T210816Z"
   ],
   "negative_rules": [
     {
@@ -253,7 +252,7 @@
         "NEGATIVE_EXPECTANCY"
       ],
       "adoption_status": "LIVE_BLOCK_NEGATIVE_EXPECTANCY",
-      "audit_report": "logs/reports/forecast_improvement/oanda_history_replay_validate_20260622T195626Z.json",
+      "audit_report": "logs/reports/forecast_improvement/oanda_history_replay_validate_20260622T210950Z.json",
       "avg_daily_realized_pips": -45.0,
       "avg_daily_samples": 22.5,
       "avg_final_pips": -6.4356,
@@ -312,8 +311,8 @@
     "evaluated_rows": 650,
     "future_price_truth_window_group_count": 0,
     "global_currency_validation_blocked": false,
-    "history_candles": 330150,
-    "history_files": 140,
+    "history_candles": 340465,
+    "history_files": 135,
     "missing_price_truth_samples": 0,
     "missing_price_window_group_count": 0,
     "raw_directional_rows": 1327,
@@ -637,6 +636,6 @@
     "stable_min_active_days": 3,
     "stable_min_positive_day_rate": 0.6666666667
   },
-  "source_report": "logs/reports/forecast_improvement/oanda_history_replay_validate_latest.json",
+  "source_report": "logs/reports/forecast_improvement/oanda_history_replay_validate_20260622T210950Z.json",
   "truth_source": "local OANDA S5 bid/ask candles; UP entry=ask/exit=bid, DOWN entry=bid/exit=ask; same-candle TP+SL ambiguity counts as stop-first loss"
 }
