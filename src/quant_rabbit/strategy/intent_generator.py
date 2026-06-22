@@ -2888,9 +2888,16 @@ def _append_forecast_seed_lanes(
                 continue
             desk = FORECAST_SEED_DESK_BY_METHOD[method]
             key = (desk, pair, side, method)
+            existing_lane = existing_by_key.get(key)
+            if existing_lane and existing_lane.get("oanda_campaign_firepower_seed"):
+                # Preserve the exact OANDA firepower vehicle identity. The
+                # existing lane still receives forecast context below, but a
+                # synthetic forecast/watch seed must not erase the audited
+                # pair/side/method/exit-shape route.
+                continue
             if key in seeded_keys:
                 continue
-            source = existing_by_key.get(key) or source_by_pair.get(pair)
+            source = existing_lane or source_by_pair.get(pair)
             lane = _forecast_seed_lane(
                 source,
                 pair=pair,

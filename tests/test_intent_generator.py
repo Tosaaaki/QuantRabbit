@@ -11,7 +11,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from quant_rabbit.models import OrderIntent, OrderType, Quote, Side, TradeMethod
+from quant_rabbit.models import BrokerSnapshot, OrderIntent, OrderType, Quote, Side, TradeMethod
 from quant_rabbit.strategy.intent_generator import (
     IntentGenerator,
     LOSS_ASYMMETRY_OANDA_CAMPAIGN_FIREPOWER_MIN_LOT_MODE,
@@ -21,6 +21,7 @@ from quant_rabbit.strategy.intent_generator import (
     POSITIVE_ROTATION_PROOF_COLLECTION_WARN_CODE,
     RANGE_TARGET_SPREAD_CUSHION_MULT,
     _append_current_range_phase_lanes,
+    _append_forecast_seed_lanes,
     _forecast_context_payload,
     _forecast_seed_lane,
     _minimum_range_target_pips,
@@ -395,6 +396,89 @@ class IntentGeneratorTest(unittest.TestCase):
                     "trend_trader:EUR_USD:LONG:TREND_CONTINUATION:MARKET",
                 },
             )
+
+    def test_forecast_seed_does_not_replace_oanda_firepower_lane_identity(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            lane = {
+                "desk": "range_trader",
+                "pair": "GBP_CHF",
+                "direction": "SHORT",
+                "method": TradeMethod.RANGE_ROTATION.value,
+                "adoption": "ORDER_INTENT_REQUIRED",
+                "campaign_role": "OANDA_FIREPOWER_ROUTE",
+                "reason": "OANDA firepower route",
+                "required_receipt": "build a current non-market receipt",
+                "blockers": [],
+                "oanda_campaign_firepower_seed": True,
+                "oanda_campaign_vehicle_key": "GBP_CHF|SHORT|range_reversion|tp1.25_sl1",
+                "oanda_campaign_vehicle_keys": ["GBP_CHF|SHORT|range_reversion|tp1.25_sl1"],
+                "oanda_campaign_exit_shape": "tp1.25_sl1",
+                "oanda_campaign_exit_shapes": ["tp1.25_sl1"],
+            }
+            forecast = SimpleNamespace(
+                direction="DOWN",
+                confidence=0.1,
+                raw_confidence=0.1,
+                calibration_multiplier=1.0,
+                current_price=1.1111,
+                target_price=1.1000,
+                invalidation_price=1.1200,
+                range_low_price=None,
+                range_high_price=None,
+                range_width_pips=None,
+                horizon_min=60,
+                rationale_summary="weak forecast should not erase firepower route",
+                drivers_for=[],
+                drivers_against=[],
+                component_scores={},
+                market_support={},
+            )
+            snapshot = BrokerSnapshot(
+                fetched_at_utc=datetime(2026, 6, 22, tzinfo=timezone.utc),
+                quotes={"GBP_CHF": Quote("GBP_CHF", bid=1.1110, ask=1.1112)},
+            )
+
+            with (
+                patch(
+                    "quant_rabbit.strategy.intent_generator._forecast_seed_for_pair",
+                    return_value=forecast,
+                ),
+                patch(
+                    "quant_rabbit.strategy.intent_generator._forecast_seed_methods",
+                    return_value=[TradeMethod.RANGE_ROTATION.value],
+                ),
+                patch(
+                    "quant_rabbit.strategy.intent_generator._forecast_seed_min_confidence_for_direction",
+                    return_value=0.62,
+                ),
+                patch(
+                    "quant_rabbit.strategy.intent_generator._forecast_market_support_allows_side",
+                    return_value=False,
+                ),
+                patch(
+                    "quant_rabbit.strategy.intent_generator._forecast_watch_candidate_reason",
+                    return_value="below live forecast floor",
+                ),
+            ):
+                lanes = _append_forecast_seed_lanes(
+                    [lane],
+                    {"GBP_CHF": {}},
+                    snapshot,
+                    data_root=root,
+                    forecast_cycle_id="cycle-1",
+                )
+
+            self.assertEqual(len(lanes), 1)
+            kept = lanes[0]
+            self.assertEqual(kept["campaign_role"], "OANDA_FIREPOWER_ROUTE")
+            self.assertTrue(kept["oanda_campaign_firepower_seed"])
+            self.assertEqual(
+                kept["oanda_campaign_vehicle_key"],
+                "GBP_CHF|SHORT|range_reversion|tp1.25_sl1",
+            )
+            self.assertEqual(kept["forecast_direction"], "DOWN")
+            self.assertNotIn("forecast_watch_only", kept)
 
     def test_refuses_stale_campaign_plan_when_target_state_is_newer(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
