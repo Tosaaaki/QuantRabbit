@@ -1506,6 +1506,107 @@ class RiskEngineTest(unittest.TestCase):
             {issue.code for issue in decision.issues},
         )
 
+    def test_forecast_watch_role_blocks_live_send_without_gateway_verified_override(self) -> None:
+        intent = OrderIntent(
+            pair="EUR_USD",
+            side=Side.SHORT,
+            order_type=OrderType.LIMIT,
+            units=1000,
+            entry=1.17400,
+            tp=1.17130,
+            sl=1.17470,
+            thesis="do_not_send_watch_role_without_override",
+            market_context=MarketContext(
+                regime="RANGE current; RANGE_ROTATION campaign lane",
+                narrative="watch-only lane has review geometry but no executable override",
+                chart_story="range rail geometry with two-way structure",
+                method=TradeMethod.RANGE_ROTATION,
+                invalidation="SL trades",
+            ),
+            metadata={
+                "campaign_role": "FORECAST_WATCH",
+                "forecast_direction": "RANGE",
+                "forecast_confidence": 0.52,
+                "geometry_model": "RANGE_RAIL_LIMIT",
+                "range_tp_is_inside_box": True,
+                "range_sl_outside_box": True,
+            },
+        )
+
+        decision = _capped_engine(live_enabled=True).validate(intent, snapshot(), for_live_send=True)
+
+        self.assertFalse(decision.allowed)
+        self.assertIn("FORECAST_WATCH_ONLY", {issue.code for issue in decision.issues})
+
+    def test_forecast_watch_range_rail_override_remains_live_sendable(self) -> None:
+        intent = OrderIntent(
+            pair="EUR_USD",
+            side=Side.SHORT,
+            order_type=OrderType.LIMIT,
+            units=1000,
+            entry=1.17400,
+            tp=1.17130,
+            sl=1.17470,
+            thesis="range_rail_watch_override_is_audited_non_market_entry",
+            market_context=MarketContext(
+                regime="RANGE current; RANGE_ROTATION campaign lane",
+                narrative="measured range rail override keeps passive entry executable",
+                chart_story="range rail geometry with two-way structure",
+                method=TradeMethod.RANGE_ROTATION,
+                invalidation="SL trades",
+            ),
+            metadata={
+                "campaign_role": "FORECAST_WATCH",
+                "forecast_watch_only": True,
+                "forecast_watch_only_live_override": True,
+                "forecast_watch_only_live_override_reason": "range rail override",
+                "forecast_direction": "RANGE",
+                "forecast_confidence": 0.52,
+                "geometry_model": "RANGE_RAIL_LIMIT",
+                "range_tp_is_inside_box": True,
+                "range_sl_outside_box": True,
+            },
+        )
+
+        decision = _capped_engine(live_enabled=True).validate(intent, snapshot(), for_live_send=True)
+
+        self.assertTrue(decision.allowed, decision.block_reasons)
+        self.assertNotIn("FORECAST_WATCH_ONLY", {issue.code for issue in decision.issues})
+
+    def test_forecast_watch_override_does_not_allow_market_conversion(self) -> None:
+        intent = OrderIntent(
+            pair="EUR_USD",
+            side=Side.SHORT,
+            order_type=OrderType.MARKET,
+            units=1000,
+            tp=1.17130,
+            sl=1.17430,
+            thesis="do_not_convert_watch_override_to_market",
+            market_context=MarketContext(
+                regime="RANGE current; RANGE_ROTATION campaign lane",
+                narrative="watch override must remain a passive rail entry",
+                chart_story="range rail geometry exists but market order chases",
+                method=TradeMethod.RANGE_ROTATION,
+                invalidation="SL trades",
+            ),
+            metadata={
+                "campaign_role": "FORECAST_WATCH",
+                "forecast_watch_only": True,
+                "forecast_watch_only_live_override": True,
+                "forecast_watch_only_live_override_reason": "range rail override",
+                "forecast_direction": "RANGE",
+                "forecast_confidence": 0.52,
+                "geometry_model": "RANGE_RAIL_LIMIT",
+                "range_tp_is_inside_box": True,
+                "range_sl_outside_box": True,
+            },
+        )
+
+        decision = _capped_engine(live_enabled=True).validate(intent, snapshot(), for_live_send=True)
+
+        self.assertFalse(decision.allowed)
+        self.assertIn("FORECAST_WATCH_ONLY", {issue.code for issue in decision.issues})
+
     def test_range_forecast_same_side_unselected_projection_does_not_authorize_market(self) -> None:
         intent = OrderIntent(
             pair="EUR_USD",

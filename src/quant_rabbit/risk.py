@@ -1331,6 +1331,87 @@ def _forecast_range_confidence_issues(
     ]
 
 
+def _forecast_watch_only_live_send_issues(
+    intent: OrderIntent,
+    *,
+    for_live_send: bool,
+) -> list[RiskIssue]:
+    if not for_live_send:
+        return []
+    metadata = intent.metadata or {}
+    campaign_role = str(metadata.get("campaign_role") or "").upper()
+    watch_only = bool(metadata.get("forecast_watch_only")) or campaign_role == "FORECAST_WATCH"
+    if not watch_only:
+        return []
+    if _forecast_watch_only_live_override_valid(intent, metadata):
+        return []
+    direction = str(metadata.get("forecast_direction") or "").upper() or "UNKNOWN"
+    confidence = _to_float(metadata.get("forecast_confidence"))
+    reason = str(metadata.get("forecast_watch_only_reason") or "").strip()
+    reason_tail = f" Reason: {reason}" if reason else ""
+    return [
+        RiskIssue(
+            "FORECAST_WATCH_ONLY",
+            (
+                f"{intent.pair} {intent.side.value} is labeled as a watch-only forecast lane "
+                f"({direction} conf={0.0 if confidence is None else confidence:.2f}); "
+                "gateway live send is blocked unless the intent carries a current watch-only "
+                f"live override and the order remains a non-market audited support/rail entry.{reason_tail}"
+            ),
+            severity="BLOCK",
+        )
+    ]
+
+
+def _forecast_watch_only_live_override_valid(intent: OrderIntent, metadata: dict) -> bool:
+    if not bool(metadata.get("forecast_watch_only_live_override")):
+        return False
+    # The generator's watch overrides explicitly say "Do not convert to MARKET";
+    # the gateway repeats that contract for replayed receipts and manual staging.
+    if intent.order_type == OrderType.MARKET:
+        return False
+    direction = str(metadata.get("forecast_direction") or "").upper()
+    confidence = _to_float(metadata.get("forecast_confidence"))
+    method = intent.market_context.method if intent.market_context is not None else None
+    support = _forecast_market_support(metadata)
+    if direction == "RANGE":
+        return (
+            method == TradeMethod.RANGE_ROTATION
+            and intent.order_type == OrderType.LIMIT
+            and _range_rail_limit_metadata_ok(metadata)
+            and (
+                (confidence is not None and confidence >= FORECAST_RANGE_ROTATION_MIN_CONFIDENCE)
+                or _forecast_range_unselected_projection_support_allows_side(
+                    intent,
+                    metadata,
+                    support,
+                    confidence=confidence,
+                    min_confidence=FORECAST_RANGE_ROTATION_MIN_CONFIDENCE,
+                )
+            )
+        )
+    if direction not in {"UP", "DOWN"}:
+        return False
+    expected_side = Side.LONG if direction == "UP" else Side.SHORT
+    if intent.side != expected_side:
+        return False
+    support_floor = max(
+        0.0,
+        FORECAST_DIRECTIONAL_LIVE_MIN_CONFIDENCE - FORECAST_MARKET_SUPPORT_MAX_CONFIDENCE_SHORTFALL,
+    )
+    raw_confidence = _to_float(metadata.get("forecast_raw_confidence"))
+    if (
+        (confidence is None or confidence < support_floor)
+        and (raw_confidence is None or raw_confidence < support_floor)
+    ):
+        return False
+    return _forecast_selected_direction_has_audited_support(
+        metadata,
+        support,
+        direction=direction,
+    )
+
+
 def _forecast_executable_live_readiness_issues(
     intent: OrderIntent,
     *,
@@ -1673,6 +1754,7 @@ class RiskEngine:
         issues.extend(_forecast_executable_live_readiness_issues(intent, for_live_send=for_live_send))
         issues.extend(_forecast_range_method_issues(intent, for_live_send=for_live_send))
         issues.extend(_forecast_range_confidence_issues(intent, for_live_send=for_live_send))
+        issues.extend(_forecast_watch_only_live_send_issues(intent, for_live_send=for_live_send))
         issues.extend(self._market_context_issues(intent, for_live_send=for_live_send))
 
         entry_relevant_positions = self._entry_relevant_positions(snapshot)
