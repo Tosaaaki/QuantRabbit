@@ -15,6 +15,7 @@ from quant_rabbit.models import BrokerSnapshot, OrderIntent, OrderType, Quote, S
 from quant_rabbit.strategy.intent_generator import (
     IntentGenerator,
     LOSS_ASYMMETRY_OANDA_CAMPAIGN_FIREPOWER_MIN_LOT_MODE,
+    LOSS_ASYMMETRY_OANDA_CAMPAIGN_FIREPOWER_RELAXED_MODE,
     POSITIVE_ROTATION_OANDA_CAMPAIGN_FIREPOWER_MODE,
     POSITIVE_ROTATION_FIREPOWER_BLOCK_CODE,
     POSITIVE_ROTATION_LIVE_BLOCK_CODE,
@@ -8967,6 +8968,128 @@ class IntentGeneratorTest(unittest.TestCase):
             self.assertEqual(market_result["status"], "DRY_RUN_BLOCKED")
             self.assertIn(POSITIVE_ROTATION_LIVE_BLOCK_CODE, market_issue_codes)
             self.assertIn("SELF_IMPROVEMENT_P0_PROFITABILITY_DISCIPLINE", market_issue_codes)
+
+    def test_oanda_firepower_seed_can_use_normal_cap_when_scaled_pace_reaches_floor(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_profitability_p0_and_negative_capture(root)
+            _write_oanda_campaign_firepower_report(
+                root,
+                pair="EUR_USD",
+                side="LONG",
+                exit_shape="tp2_sl1",
+                weighted_return_pct=0.64,
+                observed_attempts_per_active_day=22.0,
+            )
+            (root / "daily_target_state.json").write_text(
+                json.dumps(
+                    {
+                        "status": "PURSUE_TARGET",
+                        "start_balance_jpy": 100000.0,
+                        "remaining_minimum_jpy": 4000.0,
+                        "remaining_target_jpy": 9000.0,
+                        "target_trades_per_day": 10,
+                    }
+                )
+            )
+            output = root / "intents.json"
+
+            summary = IntentGenerator(
+                campaign_plan=_stamp_campaign_generated_at(
+                    _oanda_seed_range_campaign(root, side="LONG")
+                ),
+                strategy_profile=_strategy(root, status="CANDIDATE"),
+                output_path=output,
+                report_path=root / "intents.md",
+                pair_charts_path=_pair_charts(root),
+                data_root=root,
+                max_loss_jpy=1000.0,
+            ).run(snapshot_path=_snapshot(root))
+
+            payload = json.loads(output.read_text())
+            result = next(
+                item for item in payload["results"]
+                if item["lane_id"] == "range_trader:EUR_USD:LONG:RANGE_ROTATION"
+            )
+            metadata = result["intent"]["metadata"]
+            issue_codes = {issue["code"] for issue in result["risk_issues"]}
+
+            self.assertGreaterEqual(summary.live_ready, 1)
+            self.assertEqual(result["status"], "LIVE_READY")
+            self.assertEqual(
+                metadata["loss_asymmetry_guard_mode"],
+                LOSS_ASYMMETRY_OANDA_CAMPAIGN_FIREPOWER_RELAXED_MODE,
+            )
+            self.assertTrue(metadata["loss_asymmetry_guard_relaxed"])
+            self.assertEqual(metadata["loss_asymmetry_guard_loss_cap_jpy"], 600.0)
+            self.assertEqual(metadata["loss_asymmetry_guard_effective_max_loss_jpy"], 1000.0)
+            self.assertGreater(
+                result["risk_metrics"]["risk_jpy"],
+                metadata["loss_asymmetry_guard_loss_cap_jpy"],
+            )
+            self.assertTrue(metadata["positive_rotation_oanda_campaign_normal_cap_relaxed"])
+            self.assertTrue(
+                metadata[
+                    "positive_rotation_oanda_campaign_normal_cap_minimum_floor_reachable"
+                ]
+            )
+            self.assertLessEqual(
+                metadata["positive_rotation_oanda_campaign_normal_cap_required_minimum_trades"],
+                metadata["positive_rotation_oanda_campaign_normal_cap_target_trades_per_day"],
+            )
+            self.assertNotIn("LOSS_ASYMMETRY_GUARD_EXCEEDED", issue_codes)
+            self.assertNotIn(POSITIVE_ROTATION_LIVE_BLOCK_CODE, issue_codes)
+
+    def test_oanda_firepower_seed_does_not_relax_when_daily_floor_is_missing(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_profitability_p0_and_negative_capture(root)
+            _write_oanda_campaign_firepower_report(
+                root,
+                pair="EUR_USD",
+                side="LONG",
+                exit_shape="tp2_sl1",
+                weighted_return_pct=0.64,
+                observed_attempts_per_active_day=22.0,
+            )
+            (root / "daily_target_state.json").write_text(
+                json.dumps(
+                    {
+                        "status": "PURSUE_TARGET",
+                        "start_balance_jpy": 100000.0,
+                        "remaining_target_jpy": 9000.0,
+                        "target_trades_per_day": 10,
+                    }
+                )
+            )
+            output = root / "intents.json"
+
+            IntentGenerator(
+                campaign_plan=_stamp_campaign_generated_at(
+                    _oanda_seed_range_campaign(root, side="LONG")
+                ),
+                strategy_profile=_strategy(root, status="CANDIDATE"),
+                output_path=output,
+                report_path=root / "intents.md",
+                pair_charts_path=_pair_charts(root),
+                data_root=root,
+                max_loss_jpy=1000.0,
+            ).run(snapshot_path=_snapshot(root))
+
+            payload = json.loads(output.read_text())
+            result = next(
+                item for item in payload["results"]
+                if item["lane_id"] == "range_trader:EUR_USD:LONG:RANGE_ROTATION"
+            )
+            metadata = result["intent"]["metadata"]
+
+            self.assertEqual(metadata["loss_asymmetry_guard_mode"], "CAP_AVG_WIN")
+            self.assertFalse(metadata["loss_asymmetry_guard_relaxed"])
+            self.assertEqual(metadata["loss_asymmetry_guard_effective_max_loss_jpy"], 600.0)
+            self.assertNotIn(
+                "positive_rotation_oanda_campaign_normal_cap_relaxed",
+                metadata,
+            )
 
     def test_oanda_firepower_seed_scales_daily_floor_to_current_risk(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

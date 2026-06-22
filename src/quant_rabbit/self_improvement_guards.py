@@ -7,6 +7,7 @@ root-cause diagnosis before it can leak through a lower layer.
 
 from __future__ import annotations
 
+import math
 from typing import Any
 
 
@@ -40,6 +41,9 @@ PROFITABILITY_DISCIPLINE_BLOCKED_CODE = "PERSISTENT_PROFITABILITY_DISCIPLINE_BLO
 OANDA_CAMPAIGN_FIREPOWER_REPAIR_MODE = "OANDA_CAMPAIGN_FIREPOWER_HARVEST"
 OANDA_CAMPAIGN_CURRENT_RISK_UNDERPOWERED_BASIS = (
     "OANDA_CAMPAIGN_FIREPOWER_CURRENT_RISK_UNDERPOWERED"
+)
+OANDA_CAMPAIGN_NORMAL_CAP_WEIGHTED_PACE_BASIS = (
+    "OANDA_CAMPAIGN_FIREPOWER_NORMAL_CAP_WEIGHTED_PACE"
 )
 
 
@@ -259,14 +263,56 @@ def oanda_firepower_repair_current_risk_reaches_minimum(
     if metadata.get("positive_rotation_minimum_floor_reachable") is not True:
         return False
     basis = str(metadata.get("positive_rotation_minimum_floor_reach_basis") or "").strip().upper()
-    if basis == OANDA_CAMPAIGN_CURRENT_RISK_UNDERPOWERED_BASIS:
+    normal_cap_reachable = _oanda_firepower_normal_cap_weighted_pace_reaches_minimum(
+        metadata,
+        basis=basis,
+    )
+    if basis == OANDA_CAMPAIGN_CURRENT_RISK_UNDERPOWERED_BASIS and not normal_cap_reachable:
         return False
     current_risk_reachable = metadata.get(
         "positive_rotation_oanda_campaign_current_risk_minimum_floor_reachable"
     )
-    if current_risk_reachable is False:
+    if current_risk_reachable is False and not normal_cap_reachable:
         return False
     return True
+
+
+def _oanda_firepower_normal_cap_weighted_pace_reaches_minimum(
+    metadata: dict[str, Any],
+    *,
+    basis: str,
+) -> bool:
+    if basis != OANDA_CAMPAIGN_NORMAL_CAP_WEIGHTED_PACE_BASIS:
+        return False
+    if (
+        metadata.get("positive_rotation_oanda_campaign_normal_cap_minimum_floor_reachable")
+        is not True
+    ):
+        return False
+    required = _optional_float(
+        metadata.get("positive_rotation_oanda_campaign_normal_cap_required_minimum_trades")
+    )
+    target = _optional_float(
+        metadata.get("positive_rotation_oanda_campaign_normal_cap_target_trades_per_day")
+    )
+    observed = _optional_float(
+        metadata.get("positive_rotation_oanda_campaign_normal_cap_observed_attempts_per_day")
+    )
+    weighted_return = _optional_float(
+        metadata.get("positive_rotation_oanda_campaign_normal_cap_weighted_return_pct_per_trade")
+    )
+    if (
+        required is None
+        or target is None
+        or observed is None
+        or weighted_return is None
+        or required < 0
+        or target <= 0
+        or observed < 0
+        or weighted_return <= 0
+    ):
+        return False
+    return required == 0 or (required <= target and required <= math.floor(observed))
 
 
 def _pending_churn_lane_keys(payload: dict[str, Any]) -> list[dict[str, Any]]:

@@ -1845,7 +1845,8 @@ def _portfolio_loss_remaining_jpy(
 
 
 def _loss_asymmetry_cap_from_metadata(metadata: dict[str, Any]) -> float | None:
-    if str(metadata.get("loss_asymmetry_guard_mode") or "").upper() == "TP_PROVEN_RELAXED":
+    mode = str(metadata.get("loss_asymmetry_guard_mode") or "").upper()
+    if mode in {"TP_PROVEN_RELAXED", "OANDA_CAMPAIGN_FIREPOWER_RELAXED"}:
         return None
     status = str(metadata.get("capture_economics_status") or "").upper()
     active = str(metadata.get("loss_asymmetry_guard_active") or "").strip().lower() in {

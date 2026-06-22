@@ -118,6 +118,7 @@ LOSS_ASYMMETRY_TP_RELAX_MIN_EXIT_TRADES = 20
 LOSS_ASYMMETRY_TP_PROOF_COLLECTION_MIN_EXIT_TRADES = 5
 LOSS_ASYMMETRY_TP_PROOF_COLLECTION_MIN_LOT_MODE = "TP_PROOF_COLLECTION_MIN_LOT"
 LOSS_ASYMMETRY_OANDA_CAMPAIGN_FIREPOWER_MIN_LOT_MODE = "OANDA_CAMPAIGN_FIREPOWER_MIN_LOT"
+LOSS_ASYMMETRY_OANDA_CAMPAIGN_FIREPOWER_RELAXED_MODE = "OANDA_CAMPAIGN_FIREPOWER_RELAXED"
 POSITIVE_ROTATION_OANDA_CAMPAIGN_FIREPOWER_MODE = "OANDA_CAMPAIGN_FIREPOWER_HARVEST"
 SELF_IMPROVEMENT_PROFITABILITY_P0_REPAIR_MODE = "TP_HARVEST_REPAIR"
 OANDA_CAMPAIGN_FIREPOWER_TARGET_OK_STATUSES = {
@@ -562,6 +563,15 @@ def _loss_asymmetry_guard_issues(intent: OrderIntent, metrics: RiskMetrics) -> l
         and _loss_asymmetry_tp_relaxation_shape_allowed(intent, metadata)
     ):
         return []
+    if (
+        mode == LOSS_ASYMMETRY_OANDA_CAMPAIGN_FIREPOWER_RELAXED_MODE
+        and _loss_asymmetry_oanda_campaign_firepower_relaxed_shape_allowed(
+            intent,
+            metadata,
+            metrics,
+        )
+    ):
+        return []
     if mode == LOSS_ASYMMETRY_TP_PROOF_COLLECTION_MIN_LOT_MODE:
         proof_cap = _to_float(metadata.get("loss_asymmetry_guard_effective_max_loss_jpy"))
         normal_cap = _to_float(metadata.get("loss_asymmetry_guard_base_max_loss_jpy"))
@@ -754,6 +764,94 @@ def _loss_asymmetry_oanda_campaign_firepower_min_lot_shape_allowed(
     if min_lot_loss is None or effective_cap is None or min_lot_loss > effective_cap + 1e-9:
         return False
     return min_lot_units == MIN_PRODUCTION_LOT_UNITS
+
+
+def _loss_asymmetry_oanda_campaign_firepower_relaxed_shape_allowed(
+    intent: OrderIntent,
+    metadata: dict,
+    metrics: RiskMetrics,
+) -> bool:
+    """Validate OANDA firepower normal-cap relaxation metadata."""
+
+    if intent.order_type == OrderType.MARKET:
+        return False
+    if str(metadata.get("position_intent") or "").upper() == "HEDGE":
+        return False
+    if metadata.get("attach_take_profit_on_fill") is not True:
+        return False
+    if str(metadata.get("tp_execution_mode") or "").upper() != "ATTACHED_TECHNICAL_TP":
+        return False
+    if str(metadata.get("tp_target_intent") or "").upper() != "HARVEST":
+        return False
+    if str(metadata.get("opportunity_mode") or "").upper() != "HARVEST":
+        return False
+    if metadata.get("positive_rotation_oanda_campaign_normal_cap_relaxed") is not True:
+        return False
+    if metadata.get("positive_rotation_oanda_campaign_firepower_vehicle_match") is not True:
+        return False
+    if metadata.get("positive_rotation_oanda_campaign_minimum_floor_reachable") is not True:
+        return False
+    if (
+        metadata.get("positive_rotation_oanda_campaign_normal_cap_minimum_floor_reachable")
+        is not True
+    ):
+        return False
+    status = str(metadata.get("positive_rotation_oanda_campaign_firepower_status") or "").upper()
+    if status not in OANDA_CAMPAIGN_FIREPOWER_TARGET_OK_STATUSES:
+        return False
+    original_cap = _to_float(metadata.get("loss_asymmetry_guard_loss_cap_jpy"))
+    normal_cap = _to_float(metadata.get("positive_rotation_oanda_campaign_normal_cap_jpy"))
+    effective_cap = _to_float(metadata.get("loss_asymmetry_guard_effective_max_loss_jpy"))
+    if (
+        original_cap is None
+        or normal_cap is None
+        or effective_cap is None
+        or not (original_cap < effective_cap <= normal_cap)
+        or metrics.risk_jpy > effective_cap + 1e-9
+    ):
+        return False
+    required_trades = _to_int(
+        metadata.get("positive_rotation_oanda_campaign_normal_cap_required_minimum_trades")
+    )
+    target_trades = _to_int(
+        metadata.get("positive_rotation_oanda_campaign_normal_cap_target_trades_per_day")
+    )
+    observed_attempts = _to_float(
+        metadata.get("positive_rotation_oanda_campaign_normal_cap_observed_attempts_per_day")
+    )
+    if (
+        required_trades is None
+        or target_trades is None
+        or observed_attempts is None
+        or required_trades < 0
+    ):
+        return False
+    if required_trades > 0 and (
+        required_trades > target_trades
+        or required_trades > int(math.floor(observed_attempts))
+    ):
+        return False
+    matching_return = _to_float(
+        metadata.get(
+            "positive_rotation_oanda_campaign_matching_vehicle_estimated_return_pct_per_active_day"
+        )
+    )
+    aggregate_return = _to_float(
+        metadata.get("positive_rotation_oanda_campaign_estimated_return_pct_per_active_day")
+    )
+    weighted_return = _to_float(
+        metadata.get(
+            "positive_rotation_oanda_campaign_normal_cap_weighted_return_pct_per_trade"
+        )
+    )
+    return (
+        weighted_return is not None
+        and weighted_return > 0
+        and (
+            (matching_return is not None and matching_return > 0)
+            or (aggregate_return is not None and aggregate_return > 0)
+        )
+    )
 
 
 @dataclass(frozen=True)

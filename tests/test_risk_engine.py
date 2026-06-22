@@ -6,7 +6,11 @@ from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 
 from quant_rabbit.models import AccountSummary, BrokerOrder, BrokerPosition, BrokerSnapshot, MarketContext, OrderIntent, OrderType, Owner, Quote, Side, TradeMethod
-from quant_rabbit.risk import RiskEngine, RiskPolicy
+from quant_rabbit.risk import (
+    LOSS_ASYMMETRY_OANDA_CAMPAIGN_FIREPOWER_RELAXED_MODE,
+    RiskEngine,
+    RiskPolicy,
+)
 
 
 def snapshot(
@@ -407,6 +411,127 @@ class RiskEngineTest(unittest.TestCase):
         )
 
         decision = _capped_engine(policy=RiskPolicy(max_loss_jpy=1000.0)).validate(intent, snapshot())
+
+        self.assertFalse(decision.allowed)
+        self.assertIn("LOSS_ASYMMETRY_GUARD_EXCEEDED", {issue.code for issue in decision.issues})
+
+    def test_oanda_firepower_relaxed_mode_uses_normal_loss_cap(self) -> None:
+        intent = OrderIntent(
+            pair="EUR_USD",
+            side=Side.LONG,
+            order_type=OrderType.LIMIT,
+            units=3000,
+            entry=1.17300,
+            tp=1.17600,
+            sl=1.17130,
+            thesis="matching_oanda_firepower_can_use_normal_cap_when_daily_pace_reaches_floor",
+            market_context=MarketContext(
+                regime="RANGE current; RANGE_ROTATION campaign lane",
+                narrative="normal-cap risk is justified by matched firepower pace",
+                chart_story="range lower rail",
+                method=TradeMethod.RANGE_ROTATION,
+                invalidation="1.1713 loses on M5 bodies",
+            ),
+            metadata={
+                "capture_economics_status": "NEGATIVE_EXPECTANCY",
+                "capture_avg_win_jpy": 600.0,
+                "capture_avg_loss_jpy": 1100.0,
+                "loss_asymmetry_guard_active": True,
+                "loss_asymmetry_guard_mode": (
+                    LOSS_ASYMMETRY_OANDA_CAMPAIGN_FIREPOWER_RELAXED_MODE
+                ),
+                "loss_asymmetry_guard_loss_cap_jpy": 600.0,
+                "loss_asymmetry_guard_base_max_loss_jpy": 1000.0,
+                "loss_asymmetry_guard_effective_max_loss_jpy": 1000.0,
+                "tp_execution_mode": "ATTACHED_TECHNICAL_TP",
+                "attach_take_profit_on_fill": True,
+                "tp_target_intent": "HARVEST",
+                "opportunity_mode": "HARVEST",
+                "positive_rotation_oanda_campaign_normal_cap_relaxed": True,
+                "positive_rotation_oanda_campaign_normal_cap_jpy": 1000.0,
+                "positive_rotation_oanda_campaign_normal_cap_minimum_floor_reachable": True,
+                "positive_rotation_oanda_campaign_normal_cap_required_minimum_trades": 7,
+                "positive_rotation_oanda_campaign_normal_cap_target_trades_per_day": 10,
+                "positive_rotation_oanda_campaign_normal_cap_observed_attempts_per_day": 22.0,
+                "positive_rotation_oanda_campaign_normal_cap_weighted_return_pct_per_trade": 0.64,
+                "positive_rotation_oanda_campaign_firepower_status": (
+                    "VERIFIED_TARGET_10_ROUTE_ESTIMATED"
+                ),
+                "positive_rotation_oanda_campaign_firepower_vehicle_match": True,
+                "positive_rotation_oanda_campaign_minimum_floor_reachable": True,
+                "positive_rotation_oanda_campaign_estimated_return_pct_per_active_day": 14.0,
+                "positive_rotation_oanda_campaign_matching_vehicle_estimated_return_pct_per_active_day": (
+                    2.8
+                ),
+            },
+        )
+
+        decision = _capped_engine(policy=RiskPolicy(max_loss_jpy=1000.0)).validate(
+            intent,
+            snapshot(),
+        )
+
+        self.assertTrue(decision.allowed, decision.block_reasons)
+        self.assertNotIn(
+            "LOSS_ASYMMETRY_GUARD_EXCEEDED",
+            {issue.code for issue in decision.issues},
+        )
+
+    def test_oanda_firepower_relaxed_mode_requires_matching_vehicle(self) -> None:
+        intent = OrderIntent(
+            pair="EUR_USD",
+            side=Side.LONG,
+            order_type=OrderType.LIMIT,
+            units=3000,
+            entry=1.17300,
+            tp=1.17600,
+            sl=1.17130,
+            thesis="relaxed_firepower_label_without_vehicle_match_cannot_bypass_cap",
+            market_context=MarketContext(
+                regime="RANGE current; RANGE_ROTATION campaign lane",
+                narrative="metadata must prove the exact OANDA vehicle match",
+                chart_story="range lower rail",
+                method=TradeMethod.RANGE_ROTATION,
+                invalidation="1.1713 loses on M5 bodies",
+            ),
+            metadata={
+                "capture_economics_status": "NEGATIVE_EXPECTANCY",
+                "capture_avg_win_jpy": 600.0,
+                "capture_avg_loss_jpy": 1100.0,
+                "loss_asymmetry_guard_active": True,
+                "loss_asymmetry_guard_mode": (
+                    LOSS_ASYMMETRY_OANDA_CAMPAIGN_FIREPOWER_RELAXED_MODE
+                ),
+                "loss_asymmetry_guard_loss_cap_jpy": 600.0,
+                "loss_asymmetry_guard_base_max_loss_jpy": 1000.0,
+                "loss_asymmetry_guard_effective_max_loss_jpy": 1000.0,
+                "tp_execution_mode": "ATTACHED_TECHNICAL_TP",
+                "attach_take_profit_on_fill": True,
+                "tp_target_intent": "HARVEST",
+                "opportunity_mode": "HARVEST",
+                "positive_rotation_oanda_campaign_normal_cap_relaxed": True,
+                "positive_rotation_oanda_campaign_normal_cap_jpy": 1000.0,
+                "positive_rotation_oanda_campaign_normal_cap_minimum_floor_reachable": True,
+                "positive_rotation_oanda_campaign_normal_cap_required_minimum_trades": 7,
+                "positive_rotation_oanda_campaign_normal_cap_target_trades_per_day": 10,
+                "positive_rotation_oanda_campaign_normal_cap_observed_attempts_per_day": 22.0,
+                "positive_rotation_oanda_campaign_normal_cap_weighted_return_pct_per_trade": 0.64,
+                "positive_rotation_oanda_campaign_firepower_status": (
+                    "VERIFIED_TARGET_10_ROUTE_ESTIMATED"
+                ),
+                "positive_rotation_oanda_campaign_firepower_vehicle_match": False,
+                "positive_rotation_oanda_campaign_minimum_floor_reachable": True,
+                "positive_rotation_oanda_campaign_estimated_return_pct_per_active_day": 14.0,
+                "positive_rotation_oanda_campaign_matching_vehicle_estimated_return_pct_per_active_day": (
+                    2.8
+                ),
+            },
+        )
+
+        decision = _capped_engine(policy=RiskPolicy(max_loss_jpy=1000.0)).validate(
+            intent,
+            snapshot(),
+        )
 
         self.assertFalse(decision.allowed)
         self.assertIn("LOSS_ASYMMETRY_GUARD_EXCEEDED", {issue.code for issue in decision.issues})
