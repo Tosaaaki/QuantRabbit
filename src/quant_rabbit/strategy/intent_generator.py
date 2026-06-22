@@ -2880,51 +2880,59 @@ def _append_forecast_seed_lanes(
         methods = _forecast_seed_methods(pair, forecast, charts)
         if not methods:
             continue
-        side = Side.LONG.value if direction == "UP" else Side.SHORT.value if direction == "DOWN" else None
         for method in methods:
+            side_candidates: tuple[str, ...]
             if direction == "RANGE":
                 # RANGE forecasts are executable only through rail/box geometry.
-                side = _range_seed_direction(pair, charts, quote.mid, forecast=forecast)
-                if side is None:
-                    continue
-            if side not in {Side.LONG.value, Side.SHORT.value}:
-                continue
-            desk = FORECAST_SEED_DESK_BY_METHOD[method]
-            key = (desk, pair, side, method)
-            existing_lane = existing_by_key.get(key)
-            if existing_lane and existing_lane.get("oanda_campaign_firepower_seed"):
-                # Preserve the exact OANDA firepower vehicle identity. The
-                # existing lane still receives forecast context below, but a
-                # synthetic forecast/watch seed must not erase the audited
-                # pair/side/method/exit-shape route.
-                continue
-            if key in seeded_keys:
-                continue
-            source = existing_lane or source_by_pair.get(pair)
-            lane = _forecast_seed_lane(
-                source,
-                pair=pair,
-                side=side,
-                method=method,
-                forecast=forecast,
-                cycle_id=forecast_cycle_id,
-            )
-            if watch_reason is not None:
-                lane["campaign_role"] = "FORECAST_WATCH"
-                lane["forecast_watch_only"] = True
-                lane["required_receipt"] = (
-                    "Watch-only forecast-first lane: build dry-run geometry and blocker reasons only. "
-                    "Do not send live until calibrated forecast confidence clears the live-entry floor "
-                    "on a fresh snapshot."
+                side_candidates = _range_seed_directions(
+                    pair,
+                    charts,
+                    quote.mid,
+                    forecast=forecast,
+                    existing_by_key=existing_by_key,
                 )
-                lane["reason"] = f"{lane.get('reason') or 'forecast-first candidate discovery'}; {watch_reason}"
-                lane["forecast_watch_only_reason"] = watch_reason
-                lane["blockers"] = [
-                    *list(lane.get("blockers") or []),
-                    "watch-only forecast candidate below calibrated live-entry confidence",
-                ]
-            seeds.append(lane)
-            seeded_keys.add(key)
+                if not side_candidates:
+                    continue
+            else:
+                side = Side.LONG.value if direction == "UP" else Side.SHORT.value if direction == "DOWN" else None
+                side_candidates = (side,) if side in {Side.LONG.value, Side.SHORT.value} else ()
+            for side in side_candidates:
+                desk = FORECAST_SEED_DESK_BY_METHOD[method]
+                key = (desk, pair, side, method)
+                existing_lane = existing_by_key.get(key)
+                if existing_lane and existing_lane.get("oanda_campaign_firepower_seed"):
+                    # Preserve the exact OANDA firepower vehicle identity. The
+                    # existing lane still receives forecast context below, but a
+                    # synthetic forecast/watch seed must not erase the audited
+                    # pair/side/method/exit-shape route.
+                    continue
+                if key in seeded_keys:
+                    continue
+                source = existing_lane or _source_lane_for_pair_side(existing_by_key, pair, side) or source_by_pair.get(pair)
+                lane = _forecast_seed_lane(
+                    source,
+                    pair=pair,
+                    side=side,
+                    method=method,
+                    forecast=forecast,
+                    cycle_id=forecast_cycle_id,
+                )
+                if watch_reason is not None:
+                    lane["campaign_role"] = "FORECAST_WATCH"
+                    lane["forecast_watch_only"] = True
+                    lane["required_receipt"] = (
+                        "Watch-only forecast-first lane: build dry-run geometry and blocker reasons only. "
+                        "Do not send live until calibrated forecast confidence clears the live-entry floor "
+                        "on a fresh snapshot."
+                    )
+                    lane["reason"] = f"{lane.get('reason') or 'forecast-first candidate discovery'}; {watch_reason}"
+                    lane["forecast_watch_only_reason"] = watch_reason
+                    lane["blockers"] = [
+                        *list(lane.get("blockers") or []),
+                        "watch-only forecast candidate below calibrated live-entry confidence",
+                    ]
+                seeds.append(lane)
+                seeded_keys.add(key)
 
     lanes = [
         _lane_with_forecast_context(
@@ -4203,6 +4211,42 @@ def _range_seed_direction(
         return None
     midpoint = support + ((resistance - support) / 2.0)
     return Side.LONG.value if current_price <= midpoint else Side.SHORT.value
+
+
+def _range_seed_directions(
+    pair: str,
+    charts: dict[str, dict[str, Any]],
+    current_price: float,
+    *,
+    forecast: Any | None,
+    existing_by_key: dict[tuple[Any, Any, Any, Any], dict[str, Any]],
+) -> tuple[str, ...]:
+    current_side = _range_seed_direction(pair, charts, current_price, forecast=forecast)
+    if current_side is None:
+        return ()
+    sides: list[str] = [current_side]
+    for (_, lane_pair, lane_side, lane_method), lane in existing_by_key.items():
+        if lane_pair != pair:
+            continue
+        if lane_side not in {Side.LONG.value, Side.SHORT.value}:
+            continue
+        if lane_method == TradeMethod.RANGE_ROTATION.value:
+            continue
+        if lane.get("oanda_campaign_firepower_seed"):
+            continue
+        sides.append(str(lane_side))
+    return tuple(dict.fromkeys(sides))
+
+
+def _source_lane_for_pair_side(
+    existing_by_key: dict[tuple[Any, Any, Any, Any], dict[str, Any]],
+    pair: str,
+    side: str,
+) -> dict[str, Any] | None:
+    for (_, lane_pair, lane_side, lane_method), lane in existing_by_key.items():
+        if lane_pair == pair and lane_side == side and lane_method != TradeMethod.RANGE_ROTATION.value:
+            return lane
+    return None
 
 
 def _forecast_seed_lane(

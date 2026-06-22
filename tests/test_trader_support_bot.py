@@ -355,6 +355,75 @@ class TraderSupportBotTest(unittest.TestCase):
             self.assertIn("RANGE Forecast Superseded Repair Lanes", report)
             self.assertIn("failure_trader:EUR_USD:LONG:BREAKOUT_FAILURE:LIMIT", report)
 
+    def test_range_forecast_non_rotation_repair_without_counterpart_is_coverage_gap(self) -> None:
+        now = datetime(2026, 6, 22, 12, 15, tzinfo=timezone.utc)
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _write_fixture(root, now=now, blocked=True)
+            _write_json(
+                files["intents"],
+                {
+                    "generated_at_utc": now.isoformat(),
+                    "results": [
+                        {
+                            "lane_id": "failure_trader:GBP_USD:LONG:BREAKOUT_FAILURE:LIMIT",
+                            "status": "DRY_RUN_BLOCKED",
+                            "live_blocker_codes": [
+                                "POSITION_GUARDIAN_INACTIVE_FOR_PROFIT_CAPTURE",
+                                "RANGE_FORECAST_REQUIRES_RANGE_ROTATION",
+                                "MATRIX_REPAIR_REJECT_CONTEXT",
+                            ],
+                            "intent": {
+                                "pair": "GBP_USD",
+                                "side": "LONG",
+                                "order_type": "LIMIT",
+                                "market_context": {"method": "BREAKOUT_FAILURE"},
+                                "metadata": {
+                                    "self_improvement_p0_repair_live_ready": True,
+                                    "self_improvement_p0_repair_mode": "TP_HARVEST_REPAIR",
+                                    "matrix_repair_profile_status": "BLOCK_UNTIL_NEW_EVIDENCE",
+                                    "sizing_actual_reward_jpy": 1000.0,
+                                    "sizing_actual_risk_jpy": 400.0,
+                                },
+                            },
+                        },
+                    ],
+                },
+            )
+            env = _guardian_env(root, active="0")
+            with mock.patch.dict(os.environ, env, clear=False):
+                TraderSupportBot(
+                    broker_snapshot_path=files["broker"],
+                    order_intents_path=files["intents"],
+                    target_state_path=files["target"],
+                    position_management_path=files["position_management"],
+                    position_guardian_management_path=files["guardian_management"],
+                    position_guardian_execution_path=files["guardian_execution"],
+                    position_guardian_heartbeat_path=files["guardian_heartbeat"],
+                    self_improvement_audit_path=files["self_improvement"],
+                    profitability_acceptance_path=files["profitability"],
+                    execution_timing_audit_path=files["timing"],
+                    profit_capture_bot_path=files["profit_capture_bot"],
+                    output_path=files["output"],
+                    report_path=files["report"],
+                    now_utc=now,
+                ).run()
+
+            payload = json.loads(files["output"].read_text())
+            missing = payload["entry_readiness"]["repair_frontier_missing_range_rotation_counterpart"][0]
+
+            self.assertEqual(payload["entry_readiness"]["repair_frontier"], [])
+            self.assertEqual(payload["entry_readiness"]["repair_frontier_superseded_by_range_forecast"], [])
+            self.assertEqual(payload["metrics"]["repair_frontier_missing_range_rotation_counterpart_lanes"], 1)
+            self.assertEqual(missing["missing_range_rotation_counterpart_for"], ["GBP_USD", "LONG"])
+            self.assertIn(
+                "RANGE_ROTATION_COUNTERPART_MISSING",
+                missing["remaining_blocker_codes_after_guardian_and_repair_exemption"],
+            )
+            report = files["report"].read_text()
+            self.assertIn("RANGE Forecast Missing Counterpart Repair Lanes", report)
+            self.assertIn("failure_trader:GBP_USD:LONG:BREAKOUT_FAILURE:LIMIT", report)
+
     def test_cli_writes_support_panel_and_returns_blocked_code(self) -> None:
         now = datetime(2026, 6, 22, 12, 15, tzinfo=timezone.utc)
         with tempfile.TemporaryDirectory() as tmp:

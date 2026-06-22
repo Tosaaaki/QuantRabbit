@@ -5775,6 +5775,89 @@ class IntentGeneratorTest(unittest.TestCase):
         self.assertNotIn("FORECAST_WATCH_ONLY", issue_codes)
         self.assertEqual(seed["status"], "LIVE_READY")
 
+    def test_range_forecast_box_adds_existing_opposite_side_rotation_counterpart(self) -> None:
+        os.environ["QR_REQUIRE_FORECAST_FOR_LIVE"] = "1"
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            output = root / "intents.json"
+            charts = root / "pair_charts.json"
+            charts.write_text(
+                json.dumps(
+                    {
+                        "charts": [
+                            {
+                                "pair": "EUR_USD",
+                                "dominant_regime": "UNCLEAR",
+                                "long_score": 0.50,
+                                "short_score": 0.50,
+                                "views": [
+                                    {
+                                        "granularity": "M5",
+                                        "regime": "TREND_WEAK",
+                                        "regime_reading": {"state": "TREND_WEAK", "confidence": 0.6},
+                                        "family_scores": {"mean_rev_score": 0.8, "trend_score": 0.1},
+                                        "indicators": {
+                                            "close": 1.17326,
+                                            "atr_pips": 8.0,
+                                            "adx_14": 21.0,
+                                            "choppiness_14": 52.0,
+                                        },
+                                    }
+                                ],
+                            }
+                        ]
+                    }
+                )
+            )
+            forecast = SimpleNamespace(
+                direction="RANGE",
+                confidence=0.72,
+                raw_confidence=0.80,
+                current_price=1.17326,
+                target_price=None,
+                invalidation_price=None,
+                range_low_price=1.1710,
+                range_high_price=1.1740,
+                range_width_pips=30.0,
+                horizon_min=60,
+                rationale_summary="measured RANGE box supports rail rotation",
+                drivers_for=("forecast range box defines both support and resistance rails",),
+                drivers_against=("current price is in upper half, so immediate side is SHORT",),
+            )
+
+            with (
+                patch("quant_rabbit.strategy.intent_generator._forecast_seed_for_pair", return_value=forecast),
+                patch("quant_rabbit.strategy.intent_generator._record_forecast_seed_telemetry", return_value=None),
+            ):
+                IntentGenerator(
+                    campaign_plan=_campaign(root, direction="LONG"),
+                    strategy_profile=_strategy(root, status="CANDIDATE", direction="LONG"),
+                    pair_charts_path=charts,
+                    output_path=output,
+                    report_path=root / "intents.md",
+                    max_loss_jpy=500.0,
+                ).run(snapshot_path=_snapshot(root))
+
+            payload = json.loads(output.read_text())
+
+        lane_ids = {item["lane_id"] for item in payload["results"]}
+        long_seed = next(
+            item
+            for item in payload["results"]
+            if item["lane_id"] == "range_trader:EUR_USD:LONG:RANGE_ROTATION"
+        )
+        short_seed = next(
+            item
+            for item in payload["results"]
+            if item["lane_id"] == "range_trader:EUR_USD:SHORT:RANGE_ROTATION"
+        )
+
+        self.assertIn("range_trader:EUR_USD:LONG:RANGE_ROTATION", lane_ids)
+        self.assertIn("range_trader:EUR_USD:SHORT:RANGE_ROTATION", lane_ids)
+        self.assertEqual(long_seed["intent"]["metadata"]["range_entry_side"], "support")
+        self.assertEqual(short_seed["intent"]["metadata"]["range_entry_side"], "resistance")
+        self.assertEqual(long_seed["intent"]["metadata"]["range_indicator_source"], "forecast_range_box")
+
     def test_range_forecast_non_rotation_lane_is_dry_run_blocked(self) -> None:
         os.environ["QR_REQUIRE_FORECAST_FOR_LIVE"] = "1"
         forecast = SimpleNamespace(

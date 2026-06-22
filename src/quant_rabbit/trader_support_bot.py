@@ -34,6 +34,7 @@ PROFIT_CAPTURE_MISS = "LOSS_CLOSE_PROFIT_CAPTURE_MISSED"
 PERSISTENT_DISCIPLINE = "PERSISTENT_PROFITABILITY_DISCIPLINE_BLOCKED"
 RANGE_FORECAST_ROTATION_BLOCKER = "RANGE_FORECAST_REQUIRES_RANGE_ROTATION"
 RANGE_ROTATION_METHOD = "RANGE_ROTATION"
+RANGE_ROTATION_COUNTERPART_MISSING = "RANGE_ROTATION_COUNTERPART_MISSING"
 REPAIR_EXEMPTION_CODES = {PERSISTENT_DISCIPLINE, "SELF_IMPROVEMENT_P0_PROFITABILITY_DISCIPLINE"}
 GLOBAL_UNLOCK_BLOCKERS = {
     GUARDIAN_BLOCKER,
@@ -171,6 +172,9 @@ class TraderSupportBot:
             "repair_frontier_lanes": len(entry["repair_frontier"]),
             "repair_frontier_superseded_by_range_forecast_lanes": len(
                 entry["repair_frontier_superseded_by_range_forecast"]
+            ),
+            "repair_frontier_missing_range_rotation_counterpart_lanes": len(
+                entry["repair_frontier_missing_range_rotation_counterpart"]
             ),
             "repair_frontier_after_support_clear_lanes": entry["repair_frontier_after_support_clear_lanes"],
             "repair_frontier_after_support_blocked_lanes": entry["repair_frontier_after_support_blocked_lanes"],
@@ -520,6 +524,7 @@ def _entry_readiness_summary(payload: dict[str, Any]) -> dict[str, Any]:
     repair_live_ready: list[dict[str, Any]] = []
     repair_basket_guardian_recovery: list[dict[str, Any]] = []
     repair_frontier_superseded_by_range_forecast: list[dict[str, Any]] = []
+    repair_frontier_missing_range_rotation_counterpart: list[dict[str, Any]] = []
     global_unlock_frontier: list[dict[str, Any]] = []
     range_rotation_counterparts = _range_rotation_counterparts(results)
     for item in results:
@@ -573,13 +578,28 @@ def _entry_readiness_summary(payload: dict[str, Any]) -> dict[str, Any]:
                 RANGE_FORECAST_ROTATION_BLOCKER in blocker_codes
                 and str(context.get("method") or "").upper() != RANGE_ROTATION_METHOD
             ):
-                repair_item["superseded_reason"] = (
-                    "RANGE forecast requires RANGE_ROTATION; non-rotation repair candidate is not an executable repair frontier"
-                )
-                repair_item["superseded_by_range_rotation_lane_id"] = range_rotation_counterparts.get(
-                    (intent.get("pair"), intent.get("side"))
-                )
-                repair_frontier_superseded_by_range_forecast.append(repair_item)
+                counterpart = range_rotation_counterparts.get((intent.get("pair"), intent.get("side")))
+                if counterpart:
+                    repair_item["superseded_reason"] = (
+                        "RANGE forecast requires RANGE_ROTATION; non-rotation repair candidate is not an executable repair frontier"
+                    )
+                    repair_item["superseded_by_range_rotation_lane_id"] = counterpart
+                    repair_frontier_superseded_by_range_forecast.append(repair_item)
+                else:
+                    remaining_with_gap = [
+                        code
+                        for code in remaining_after_support
+                        if code != RANGE_FORECAST_ROTATION_BLOCKER
+                    ]
+                    remaining_with_gap.append(RANGE_ROTATION_COUNTERPART_MISSING)
+                    repair_item["missing_range_rotation_counterpart_for"] = [intent.get("pair"), intent.get("side")]
+                    repair_item["missing_range_rotation_counterpart_reason"] = (
+                        "RANGE forecast blocked a non-rotation repair lane, but order_intents has no same pair/side "
+                        "RANGE_ROTATION counterpart to inspect. Treat this as candidate coverage debt, not as a "
+                        "superseded executable frontier lane."
+                    )
+                    repair_item["remaining_blocker_codes_after_guardian_and_repair_exemption"] = remaining_with_gap
+                    repair_frontier_missing_range_rotation_counterpart.append(repair_item)
                 continue
             repair_frontier.append(repair_item)
             if item.get("status") == "LIVE_READY" and not blocker_codes:
@@ -590,6 +610,7 @@ def _entry_readiness_summary(payload: dict[str, Any]) -> dict[str, Any]:
     repair_live_ready.sort(key=lambda item: _float(item.get("reward_jpy")), reverse=True)
     repair_basket_guardian_recovery.sort(key=lambda item: _float(item.get("reward_jpy")), reverse=True)
     repair_frontier_superseded_by_range_forecast.sort(key=lambda item: _float(item.get("reward_jpy")), reverse=True)
+    repair_frontier_missing_range_rotation_counterpart.sort(key=lambda item: _float(item.get("reward_jpy")), reverse=True)
     global_unlock_frontier.sort(key=lambda item: _float(item.get("reward_jpy")), reverse=True)
     remaining_repair_blockers = _repair_frontier_remaining_blockers(repair_frontier)
     return {
@@ -601,6 +622,7 @@ def _entry_readiness_summary(payload: dict[str, Any]) -> dict[str, Any]:
         "guardian_blocked_lanes": codes.get(GUARDIAN_BLOCKER, 0),
         "repair_frontier": repair_frontier[:12],
         "repair_frontier_superseded_by_range_forecast": repair_frontier_superseded_by_range_forecast[:12],
+        "repair_frontier_missing_range_rotation_counterpart": repair_frontier_missing_range_rotation_counterpart[:12],
         "repair_live_ready": repair_live_ready[:12],
         "repair_basket_guardian_recovery": repair_basket_guardian_recovery[:12],
         "repair_frontier_after_support_clear_lanes": sum(
@@ -1269,6 +1291,7 @@ def _render_report(payload: dict[str, Any]) -> str:
         f"| Repair lanes after guardian recovery | `{len(entry['repair_basket_guardian_recovery'])}` |",
         f"| Repair frontier lanes | `{len(entry['repair_frontier'])}` |",
         f"| RANGE forecast superseded repair lanes | `{len(entry['repair_frontier_superseded_by_range_forecast'])}` |",
+        f"| RANGE forecast missing counterpart lanes | `{len(entry['repair_frontier_missing_range_rotation_counterpart'])}` |",
         f"| Repair frontier clear after support | `{entry['repair_frontier_after_support_clear_lanes']}` |",
         f"| Repair frontier blocked after support | `{entry['repair_frontier_after_support_blocked_lanes']}` |",
         f"| Global unlock frontier lanes | `{len(entry['global_unlock_frontier'])}` |",
@@ -1379,6 +1402,23 @@ def _render_report(payload: dict[str, Any]) -> str:
             lines.append(
                 f"| `{item['lane_id']}` | `{item['pair']}` | `{item['side']}` | "
                 f"`{item['method']}` | `{item['reward_jpy']}` | `{counterpart}` |"
+            )
+    else:
+        lines.append("- none")
+    lines.extend(["", "## RANGE Forecast Missing Counterpart Repair Lanes", ""])
+    if entry["repair_frontier_missing_range_rotation_counterpart"]:
+        lines.extend(
+            [
+                "| Lane | Pair | Side | Method | Reward JPY | Missing counterpart |",
+                "|---|---|---|---|---:|---|",
+            ]
+        )
+        for item in entry["repair_frontier_missing_range_rotation_counterpart"][:8]:
+            missing_pair_side = item.get("missing_range_rotation_counterpart_for") or []
+            missing = ":".join(str(part) for part in missing_pair_side if part) or "unknown"
+            lines.append(
+                f"| `{item['lane_id']}` | `{item['pair']}` | `{item['side']}` | "
+                f"`{item['method']}` | `{item['reward_jpy']}` | `{missing}` |"
             )
     else:
         lines.append("- none")
