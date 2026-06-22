@@ -821,7 +821,10 @@ class CliHelpTest(unittest.TestCase):
                     ],
                 )
 
-            metrics, findings = _execution_ledger_close_findings(ledger)
+            metrics, findings = _execution_ledger_close_findings(
+                ledger,
+                now_utc=datetime(2026, 6, 21, 3, 0, tzinfo=timezone.utc),
+            )
 
         codes = {item["code"] for item in findings}
         self.assertIn("RECENT_GATEWAY_LOSS_MARKET_CLOSE_LEAK", codes)
@@ -829,6 +832,89 @@ class CliHelpTest(unittest.TestCase):
         self.assertNotIn("UNVERIFIED_LOSS_SIDE_MARKET_CLOSE_RECONCILED", codes)
         self.assertTrue(metrics["gateway_event_stream_stale"])
         self.assertEqual(metrics["recent_unverified_loss_closes"], 1)
+
+    def test_profitability_acceptance_gateway_stream_lag_uses_audit_time(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            ledger = Path(tmp) / "execution_ledger.db"
+            with sqlite3.connect(ledger) as conn:
+                conn.execute(
+                    """
+                    CREATE TABLE execution_events (
+                        ts_utc TEXT,
+                        source TEXT,
+                        event_type TEXT,
+                        trade_id TEXT,
+                        order_id TEXT,
+                        lane_id TEXT,
+                        pair TEXT,
+                        side TEXT,
+                        realized_pl_jpy REAL,
+                        exit_reason TEXT,
+                        raw_json TEXT
+                    )
+                    """
+                )
+                conn.executemany(
+                    """
+                    INSERT INTO execution_events (
+                        ts_utc, source, event_type, trade_id, order_id, lane_id, pair, side,
+                        realized_pl_jpy, exit_reason, raw_json
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    [
+                        (
+                            "2026-06-21T00:20:00+00:00",
+                            "gateway",
+                            "GATEWAY_POSITION_NO_ACTION",
+                            "T-heartbeat",
+                            None,
+                            None,
+                            "EUR_USD",
+                            None,
+                            None,
+                            "HOLD_PROTECTED",
+                            "{}",
+                        ),
+                        (
+                            "2026-06-21T00:00:00+00:00",
+                            "gateway",
+                            "GATEWAY_TRADE_CLOSE_SENT",
+                            "T-loss",
+                            "O-loss",
+                            "range_trader:EUR_USD:LONG:RANGE_ROTATION",
+                            "EUR_USD",
+                            "LONG",
+                            None,
+                            "GPT_CLOSE",
+                            "{}",
+                        ),
+                        (
+                            "2026-06-21T00:00:10+00:00",
+                            "oanda",
+                            "TRADE_CLOSED",
+                            "T-loss",
+                            "O-loss",
+                            "range_trader:EUR_USD:LONG:RANGE_ROTATION",
+                            "EUR_USD",
+                            "LONG",
+                            -1234.5,
+                            "MARKET_ORDER_TRADE_CLOSE",
+                            "{}",
+                        ),
+                    ],
+                )
+
+            metrics, findings = _execution_ledger_close_findings(
+                ledger,
+                now_utc=datetime(2026, 6, 21, 0, 30, tzinfo=timezone.utc),
+            )
+
+        codes = {item["code"] for item in findings}
+        self.assertNotIn("EXECUTION_LEDGER_GATEWAY_RECEIPT_STREAM_STALE", codes)
+        self.assertEqual(metrics["gateway_event_stream_lag_minutes"], 10.0)
+        self.assertEqual(metrics["gateway_event_stream_market_close_gap_minutes"], 0.0)
+        self.assertFalse(metrics["gateway_event_stream_stale"])
 
     def test_profitability_acceptance_counts_direct_gateway_close_sent_loss(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -990,6 +1076,7 @@ class CliHelpTest(unittest.TestCase):
             metrics, findings = _execution_ledger_close_findings(
                 ledger,
                 execution_timing_audit_path=timing,
+                now_utc=datetime(2026, 6, 21, 1, 0, tzinfo=timezone.utc),
             )
 
         codes = {item["code"] for item in findings}
@@ -1078,6 +1165,7 @@ class CliHelpTest(unittest.TestCase):
             metrics, findings = _execution_ledger_close_findings(
                 ledger,
                 execution_timing_audit_path=timing,
+                now_utc=datetime(2026, 6, 21, 1, 0, tzinfo=timezone.utc),
             )
 
         codes = {item["code"] for item in findings}
@@ -1653,6 +1741,7 @@ class CliHelpTest(unittest.TestCase):
             metrics, findings = _execution_ledger_close_findings(
                 ledger,
                 execution_timing_audit_path=timing,
+                now_utc=datetime(2026, 6, 21, 1, 0, tzinfo=timezone.utc),
             )
 
         codes = {item["code"] for item in findings}

@@ -83,7 +83,8 @@ class ProfitabilityAcceptanceAuditor:
         bidask_rules_path: Path = DEFAULT_BIDASK_REPLAY_RULES_PATH,
         oanda_rotation_mining_path: Path = DEFAULT_OANDA_UNIVERSAL_ROTATION_MINING,
     ) -> ProfitabilityAcceptanceSummary:
-        generated_at = datetime.now(timezone.utc).isoformat()
+        generated_at_dt = datetime.now(timezone.utc)
+        generated_at = generated_at_dt.isoformat()
         findings: list[dict[str, Any]] = []
 
         target = _load_json(target_state_path)
@@ -105,6 +106,7 @@ class ProfitabilityAcceptanceAuditor:
         ledger_metrics, ledger_findings = _execution_ledger_close_findings(
             execution_ledger_path,
             execution_timing_audit_path=execution_timing_audit_path,
+            now_utc=generated_at_dt,
         )
         projection_metrics, projection_findings = _projection_precision_findings(projection_ledger_path)
         bidask_metrics, bidask_findings = _bidask_rule_findings(bidask_rules, bidask_rules_path)
@@ -622,8 +624,10 @@ def _execution_ledger_close_findings(
     path: Path,
     *,
     execution_timing_audit_path: Path | None = None,
+    now_utc: datetime | None = None,
 ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     timing_labels, timing_metrics = _execution_timing_loss_close_labels(execution_timing_audit_path)
+    audit_now = _normalize_utc(now_utc or datetime.now(timezone.utc))
     metrics: dict[str, Any] = {
         "path": str(path),
         "ledger_exists": path.exists(),
@@ -651,6 +655,7 @@ def _execution_ledger_close_findings(
         "gateway_event_stream_events": 0,
         "gateway_event_stream_latest_ts_utc": None,
         "gateway_event_stream_lag_minutes": None,
+        "gateway_event_stream_market_close_gap_minutes": None,
         "gateway_event_stream_stale": False,
         "recent_loss_examples": [],
         "recent_leak_loss_examples": [],
@@ -875,10 +880,23 @@ def _execution_ledger_close_findings(
     if latest_ts is not None:
         metrics["latest_gateway_market_close_ts_utc"] = latest_ts.isoformat()
     gateway_stream_stale = False
-    if latest_ts is not None and gateway_event_stream_latest is not None:
-        lag_minutes = (latest_ts - gateway_event_stream_latest).total_seconds() / 60.0
+    if gateway_event_stream_latest is not None:
+        lag_minutes = max(0.0, (audit_now - gateway_event_stream_latest).total_seconds() / 60.0)
         metrics["gateway_event_stream_lag_minutes"] = round(lag_minutes, 3)
         gateway_stream_stale = lag_minutes > GATEWAY_RECEIPT_STREAM_STALE_GRACE_MINUTES
+        if latest_ts is not None:
+            market_close_gap_minutes = max(
+                0.0,
+                (latest_ts - gateway_event_stream_latest).total_seconds() / 60.0,
+            )
+            metrics["gateway_event_stream_market_close_gap_minutes"] = round(
+                market_close_gap_minutes,
+                3,
+            )
+            gateway_stream_stale = (
+                gateway_stream_stale
+                or market_close_gap_minutes > GATEWAY_RECEIPT_STREAM_STALE_GRACE_MINUTES
+            )
     elif latest_ts is not None and "source" in columns:
         gateway_stream_stale = True
     metrics["gateway_event_stream_stale"] = gateway_stream_stale
@@ -1094,6 +1112,9 @@ def _execution_ledger_close_findings(
                     "gateway_event_stream_latest_ts_utc": metrics["gateway_event_stream_latest_ts_utc"],
                     "gateway_event_stream_events": metrics["gateway_event_stream_events"],
                     "gateway_event_stream_lag_minutes": metrics["gateway_event_stream_lag_minutes"],
+                    "gateway_event_stream_market_close_gap_minutes": metrics[
+                        "gateway_event_stream_market_close_gap_minutes"
+                    ],
                 },
             )
         )
@@ -1547,6 +1568,12 @@ def _optional_float(value: Any) -> float | None:
         return float(value) if value is not None else None
     except (TypeError, ValueError):
         return None
+
+
+def _normalize_utc(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
 
 
 def _parse_utc(value: Any) -> datetime | None:
