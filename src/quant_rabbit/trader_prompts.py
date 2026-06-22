@@ -248,6 +248,8 @@ def route_trader_prompts(
     attack_advice = _load_json(attack_advice_path)
     trader_support = _trader_support_bot_payload(trader_support_bot_path)
     support_guardian_recovery_reasons = _trader_support_guardian_recovery_reasons(trader_support)
+    support_global_unlock_reasons = _trader_support_global_unlock_reasons(trader_support)
+    support_repair_context_reasons = (*support_guardian_recovery_reasons, *support_global_unlock_reasons)
 
     position_sidecar_reasons = _position_management_sidecar_refresh_reasons(
         snapshot,
@@ -507,7 +509,7 @@ def route_trader_prompts(
                     *carry_reasons,
                     *advisory_close_review_reasons,
                     *pending_entry_reasons,
-                    *support_guardian_recovery_reasons,
+                    *support_repair_context_reasons,
                     "self-improvement P0 blocks fresh risk while trader-owned pending entry risk remains fillable; "
                     "write CANCEL_PENDING or explicitly justify keeping the current pending order before learning/gap work",
                     *self_improvement_repair_reasons,
@@ -537,7 +539,7 @@ def route_trader_prompts(
                 *carry_reasons,
                 *advisory_close_review_reasons,
                 *pending_entry_reasons,
-                *support_guardian_recovery_reasons,
+                *support_repair_context_reasons,
                 *self_improvement_repair_reasons,
             ),
             include_content=include_content,
@@ -573,7 +575,7 @@ def route_trader_prompts(
                     *carry_reasons,
                     *advisory_close_review_reasons,
                     *pending_entry_reasons,
-                    *support_guardian_recovery_reasons,
+                    *support_repair_context_reasons,
                     "profitability acceptance P0 blocks fresh risk while trader-owned pending entry risk remains fillable; "
                     "write CANCEL_PENDING or explicitly justify keeping the current pending order before learning/gap work",
                     *profitability_acceptance_repair_reasons,
@@ -602,7 +604,7 @@ def route_trader_prompts(
                 *carry_reasons,
                 *advisory_close_review_reasons,
                 *pending_entry_reasons,
-                *support_guardian_recovery_reasons,
+                *support_repair_context_reasons,
                 *profitability_acceptance_repair_reasons,
             ),
             include_content=include_content,
@@ -628,7 +630,7 @@ def route_trader_prompts(
                     *carry_reasons,
                     *advisory_close_review_reasons,
                     *pending_entry_reasons,
-                    *support_guardian_recovery_reasons,
+                    *support_repair_context_reasons,
                     no_live_ready_reason,
                     "no live entry can offset the active close/hold ambiguity; refresh the position decision before learning-gap work",
                 ),
@@ -640,7 +642,7 @@ def route_trader_prompts(
                 (
                     *carry_reasons,
                     *pending_entry_reasons,
-                    *support_guardian_recovery_reasons,
+                    *support_repair_context_reasons,
                     no_live_ready_reason,
                     "resolve stale pending entry risk with CANCEL_PENDING or an explicit keep justification before learning-gap work",
                 ),
@@ -652,7 +654,7 @@ def route_trader_prompts(
                 *carry_reasons,
                 *advisory_close_review_reasons,
                 *pending_entry_reasons,
-                *support_guardian_recovery_reasons,
+                *support_repair_context_reasons,
                 no_live_ready_reason,
             ),
             include_content=include_content,
@@ -740,6 +742,63 @@ def _trader_support_guardian_recovery_reasons(payload: dict[str, Any]) -> tuple[
     return (
         "trader-support-bot shows TP_HARVEST_REPAIR lane(s) blocked only by position-guardian recovery; "
         "do not add unrelated indicators or resend generic entries before resolving guardian proof "
+        f"({'; '.join(details)})",
+    )
+
+
+def _trader_support_global_unlock_reasons(payload: dict[str, Any]) -> tuple[str, ...]:
+    if not payload:
+        return ()
+    metrics = payload.get("metrics") if isinstance(payload.get("metrics"), dict) else {}
+    live_ready_lanes = _optional_int(metrics.get("live_ready_lanes"))
+    if live_ready_lanes is not None and live_ready_lanes > 0:
+        return ()
+
+    entry = payload.get("entry_readiness") if isinstance(payload.get("entry_readiness"), dict) else {}
+    raw_candidates = entry.get("global_unlock_frontier")
+    candidates: list[dict[str, Any]] = []
+    if isinstance(raw_candidates, list):
+        for item in raw_candidates:
+            if not isinstance(item, dict):
+                continue
+            remaining = item.get("remaining_blocker_codes_after_global_unlock")
+            if isinstance(remaining, list) and [str(code) for code in remaining if str(code)]:
+                continue
+            lane_id = str(item.get("lane_id") or "")
+            if not lane_id:
+                continue
+            raw_blocker_codes = item.get("global_blocker_codes")
+            blocker_codes = [
+                str(code)
+                for code in (raw_blocker_codes if isinstance(raw_blocker_codes, list) else [])
+                if str(code)
+            ]
+            if not blocker_codes:
+                continue
+            candidates.append(item)
+
+    frontier_count = len(candidates) or _optional_int(metrics.get("global_unlock_frontier_lanes")) or 0
+    if frontier_count <= 0 or not candidates:
+        return ()
+
+    lane_ids = list(dict.fromkeys(str(item.get("lane_id")) for item in candidates if str(item.get("lane_id") or "")))
+    blocker_codes: list[str] = []
+    for item in candidates:
+        raw_blocker_codes = item.get("global_blocker_codes")
+        blocker_codes.extend(
+            str(code)
+            for code in (raw_blocker_codes if isinstance(raw_blocker_codes, list) else [])
+            if str(code)
+        )
+    unique_blocker_codes = list(dict.fromkeys(blocker_codes))
+    details = [
+        f"lane(s)={','.join(lane_ids[:3])}",
+        "global_blockers=" + ",".join(unique_blocker_codes[:5]),
+        "support_bot=data/trader_support_bot.json",
+    ]
+    return (
+        "trader-support-bot shows global-unlock frontier lane(s) with no lane-local blockers after campaign/P0 repair; "
+        "prioritize clearing the named global blockers before adding unrelated indicators "
         f"({'; '.join(details)})",
     )
 

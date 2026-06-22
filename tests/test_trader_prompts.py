@@ -221,6 +221,44 @@ class TraderPromptRouteTest(unittest.TestCase):
         self.assertTrue(any("range_trader:GBP_JPY:SHORT:RANGE_ROTATION" in reason for reason in route.reasons))
         self.assertTrue(any("LOAD_POSITION_GUARDIAN_ONLY_IF_APPROVED (explicit approval)" in reason for reason in route.reasons))
 
+    def test_support_bot_global_unlock_frontier_is_carried_into_learning_route(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root)
+            intents = json.loads(files["intents"].read_text())
+            intents["results"][0]["status"] = "DRY_RUN_BLOCKED"
+            intents["results"][0]["live_blocker_codes"] = [
+                "NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION",
+                "SELF_IMPROVEMENT_P0_PROFITABILITY_DISCIPLINE",
+            ]
+            files["intents"].write_text(json.dumps(intents))
+            _write_support_global_unlock_frontier(files)
+            files["self_improvement_audit"].write_text(
+                json.dumps(
+                    {
+                        "generated_at_utc": datetime.now(timezone.utc).isoformat(),
+                        "status": "SELF_IMPROVEMENT_BLOCKED",
+                        "findings": [
+                            {
+                                "priority": "P0",
+                                "layer": "opportunity",
+                                "code": "TARGET_OPEN_NO_LIVE_READY_LANES",
+                                "message": "daily target is open but order_intents has no LIVE_READY lanes",
+                                "evidence": {"target_open": True, "live_ready_lanes": 0},
+                            }
+                        ],
+                    }
+                )
+            )
+
+            route = route_trader_prompts(**_route_paths(files), decision_response_path=None)
+
+        self.assertEqual(route.branch, BRANCH_LEARNING)
+        self.assertTrue(any("trader-support-bot shows global-unlock frontier" in reason for reason in route.reasons))
+        self.assertTrue(any("range_trader:USD_CHF:SHORT:RANGE_ROTATION" in reason for reason in route.reasons))
+        self.assertTrue(any("NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION" in reason for reason in route.reasons))
+        self.assertTrue(any("SELF_IMPROVEMENT_P0_PROFITABILITY_DISCIPLINE" in reason for reason in route.reasons))
+
     def test_missing_profitability_acceptance_routes_to_refresh_branch(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -4066,6 +4104,47 @@ def _write_support_guardian_recovery(files: dict[str, Path]) -> None:
                         "requires_explicit_operator_approval": True,
                     },
                 ],
+                "live_side_effects": [],
+            }
+        )
+    )
+
+
+def _write_support_global_unlock_frontier(files: dict[str, Path]) -> None:
+    files["trader_support_bot"].write_text(
+        json.dumps(
+            {
+                "generated_at_utc": datetime.now(timezone.utc).isoformat(),
+                "status": "SUPPORT_BLOCKED",
+                "metrics": {
+                    "live_ready_lanes": 0,
+                    "global_unlock_frontier_lanes": 1,
+                    "repair_basket_send_allowed": False,
+                    "guardian_active": False,
+                    "repair_basket_guardian_recovery_lanes": 0,
+                    "repair_basket_guardian_recovery_lane_ids": [],
+                },
+                "entry_readiness": {
+                    "global_unlock_frontier": [
+                        {
+                            "lane_id": "range_trader:USD_CHF:SHORT:RANGE_ROTATION",
+                            "status": "DRY_RUN_BLOCKED",
+                            "pair": "USD_CHF",
+                            "side": "SHORT",
+                            "method": "RANGE_ROTATION",
+                            "order_type": "LIMIT",
+                            "reward_jpy": 304.279,
+                            "risk_jpy": 236.217,
+                            "global_blocker_codes": [
+                                "NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION",
+                                "SELF_IMPROVEMENT_P0_PROFITABILITY_DISCIPLINE",
+                            ],
+                            "remaining_blocker_codes_after_global_unlock": [],
+                        }
+                    ],
+                    "repair_basket_guardian_recovery": [],
+                },
+                "operator_actions": [],
                 "live_side_effects": [],
             }
         )
