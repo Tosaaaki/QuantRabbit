@@ -103,7 +103,6 @@ class ProfitCaptureBot:
                 "broker_snapshot": broker,
                 "pair_charts": pair_charts,
                 "position_management": position_management,
-                "position_guardian_management": guardian_management,
                 "execution_timing_audit": timing,
             }
         )
@@ -122,7 +121,6 @@ class ProfitCaptureBot:
             for raw in broker.get("positions", []) or []
             if isinstance(raw, dict) and str(raw.get("owner") or "").lower() == Owner.TRADER.value
         ]
-
         history = _historical_capture_summary(timing)
         blockers = artifact_blockers + _blockers(positions=positions, history=history)
         bankable = [item for item in positions if item["gate_status"] == "BANKABLE_NOW"]

@@ -8224,9 +8224,10 @@ def _root_cause_focus(
                     "message": item.get("message"),
                 }
             )
+        metric_code = code if repeated_from_process_loop else support_code
         _root_cause_merge_metrics(
             candidate,
-            code=support_code,
+            code=metric_code,
             finding_evidence=evidence,
             runtime=runtime,
             effect_metrics=effect_metrics,
@@ -8553,6 +8554,14 @@ def _root_cause_why(candidate: dict[str, Any], meta: dict[str, str]) -> str:
         parts.append(
             f"pending_cancel_before_fill_rate={_fmt_optional(metrics.get('pending_cancel_before_fill_rate'))}"
         )
+    if "position_guardian_active" in metrics:
+        source = metrics.get("position_guardian_active_source")
+        guardian_text = f"position_guardian_active={metrics.get('position_guardian_active')}"
+        if source:
+            guardian_text += f" source={source}"
+        parts.append(guardian_text)
+    if "profit_capture_miss_active" in metrics:
+        parts.append(f"profit_capture_miss_active={metrics.get('profit_capture_miss_active')}")
     if "profit_factor" in metrics:
         parts.append(f"profit_factor={_fmt_optional(metrics.get('profit_factor'))}")
     loop = candidate.get("process_loop_streak")

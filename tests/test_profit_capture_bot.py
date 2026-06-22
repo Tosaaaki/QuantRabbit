@@ -124,6 +124,61 @@ class ProfitCaptureBotTest(unittest.TestCase):
             self.assertEqual(summary.status, STATUS_BLOCKED)
             self.assertIn("BROKER_SNAPSHOT_MISSING", {item["code"] for item in payload["blockers"]})
 
+    def test_missing_guardian_management_is_not_profit_capture_input_blocker(self) -> None:
+        now = datetime(2026, 6, 22, 12, 15, tzinfo=timezone.utc)
+        with tempfile.TemporaryDirectory() as tmp:
+            files = _write_fixture(
+                Path(tmp),
+                now=now,
+                ask=161.660,
+                m1_atr_pips=0.5,
+                historical_missed=0,
+                open_position=False,
+            )
+            files["guardian_management"].unlink()
+
+            summary = ProfitCaptureBot(
+                broker_snapshot_path=files["broker"],
+                pair_charts_path=files["charts"],
+                position_management_path=files["position_management"],
+                position_guardian_management_path=files["guardian_management"],
+                execution_timing_audit_path=files["timing"],
+                output_path=files["output"],
+                report_path=files["report"],
+                now_utc=now,
+            ).run()
+
+            payload = json.loads(files["output"].read_text())
+            self.assertEqual(summary.status, STATUS_WATCH)
+            self.assertEqual(payload["metrics"]["open_trader_positions"], 0)
+            self.assertNotIn(
+                "POSITION_GUARDIAN_MANAGEMENT_MISSING",
+                {item["code"] for item in payload["blockers"]},
+            )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            files = _write_fixture(Path(tmp), now=now, ask=161.660, m1_atr_pips=0.5, historical_missed=0)
+            files["guardian_management"].unlink()
+
+            summary = ProfitCaptureBot(
+                broker_snapshot_path=files["broker"],
+                pair_charts_path=files["charts"],
+                position_management_path=files["position_management"],
+                position_guardian_management_path=files["guardian_management"],
+                execution_timing_audit_path=files["timing"],
+                output_path=files["output"],
+                report_path=files["report"],
+                now_utc=now,
+            ).run()
+
+            payload = json.loads(files["output"].read_text())
+            self.assertEqual(summary.status, STATUS_READY)
+            self.assertNotIn(
+                "POSITION_GUARDIAN_MANAGEMENT_MISSING",
+                {item["code"] for item in payload["blockers"]},
+            )
+            self.assertEqual(payload["positions"][0]["gate_status"], "BANKABLE_NOW")
+
     def test_cli_returns_error_code_distinct_from_blocked_diagnostic(self) -> None:
         now = datetime(2026, 6, 22, 12, 15, tzinfo=timezone.utc)
         with tempfile.TemporaryDirectory() as tmp:
@@ -162,6 +217,7 @@ def _write_fixture(
     ask: float,
     m1_atr_pips: float | None,
     historical_missed: int = 1,
+    open_position: bool = True,
 ) -> dict[str, Path]:
     data = root / "data"
     docs = root / "docs"
@@ -176,6 +232,23 @@ def _write_fixture(
         "output": data / "profit_capture_bot.json",
         "report": docs / "profit_capture_bot_report.md",
     }
+    positions = (
+        [
+            {
+                "trade_id": "472792",
+                "pair": "USD_JPY",
+                "side": "SHORT",
+                "owner": "trader",
+                "units": 6300,
+                "entry_price": 161.692,
+                "unrealized_pl_jpy": 120.0 if ask < 161.692 else -120.0,
+                "take_profit": 161.636,
+                "stop_loss": 161.745,
+            }
+        ]
+        if open_position
+        else []
+    )
     _write_json(
         files["broker"],
         {
@@ -187,19 +260,7 @@ def _write_fixture(
                     "timestamp_utc": now.isoformat(),
                 }
             },
-            "positions": [
-                {
-                    "trade_id": "472792",
-                    "pair": "USD_JPY",
-                    "side": "SHORT",
-                    "owner": "trader",
-                    "units": 6300,
-                    "entry_price": 161.692,
-                    "unrealized_pl_jpy": 120.0 if ask < 161.692 else -120.0,
-                    "take_profit": 161.636,
-                    "stop_loss": 161.745,
-                }
-            ],
+            "positions": positions,
         },
     )
     indicators = {} if m1_atr_pips is None else {"atr_pips": m1_atr_pips}

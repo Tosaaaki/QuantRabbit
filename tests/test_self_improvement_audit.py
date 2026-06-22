@@ -1699,6 +1699,55 @@ class SelfImprovementAuditorTest(unittest.TestCase):
         self.assertEqual(execution["metrics"]["pending_fill_rate"], 0.33)
         self.assertIn("pending_cancel_before_fill_rate=0.670", execution["why"])
 
+    def test_root_cause_focus_repeated_loop_does_not_erase_guardian_metrics(self) -> None:
+        findings = [
+            {
+                "priority": "P0",
+                "layer": "execution_quality",
+                "code": "POSITION_GUARDIAN_INACTIVE_FOR_PROFIT_CAPTURE",
+                "message": "position guardian is required but inactive",
+                "next_action": "load only with explicit operator approval",
+                "evidence": {
+                    "guardian": {
+                        "required": True,
+                        "active": False,
+                        "active_source": "plist_missing",
+                    },
+                    "profit_capture_miss_active": True,
+                },
+            },
+            {
+                "priority": "P1",
+                "layer": "process",
+                "code": "REPEATED_SELF_IMPROVEMENT_LOOP",
+                "message": "same self-improvement finding persisted",
+                "next_action": "execute a narrow repair",
+                "evidence": {
+                    "repeated_code": "POSITION_GUARDIAN_INACTIVE_FOR_PROFIT_CAPTURE",
+                    "repeated_layer": "execution_quality",
+                    "current_streak": 7,
+                    "previous_streak": 6,
+                },
+            },
+        ]
+
+        root_focus = _root_cause_focus(
+            findings=findings,
+            runtime={"live_ready_lanes": 0},
+            effect_metrics={"window": {"net_jpy": -277.61, "profit_factor": 0.907}},
+            execution_quality={},
+        )
+
+        primary = root_focus["primary"]
+        self.assertEqual(primary["family"], "EXIT_AND_PROFIT_CAPTURE")
+        self.assertEqual(primary["process_loop_streak"], 7)
+        self.assertTrue(primary["metrics"]["position_guardian_required"])
+        self.assertFalse(primary["metrics"]["position_guardian_active"])
+        self.assertEqual(primary["metrics"]["position_guardian_active_source"], "plist_missing")
+        self.assertTrue(primary["metrics"]["profit_capture_miss_active"])
+        self.assertIn("position_guardian_active=False source=plist_missing", primary["why"])
+        self.assertIn("profit_capture_miss_active=True", primary["why"])
+
     def test_action_required_for_hidden_open_loss_and_low_market_rr(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
