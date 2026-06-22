@@ -346,6 +346,11 @@ class PositionManager:
             data_root=self.data_root,
             latest_forecast=latest_forecast,
         )
+        thesis_break_review, thesis_break_reasons = _fresh_broken_thesis_close_review(
+            position=position,
+            snapshot=snapshot,
+            data_root=self.data_root,
+        )
 
         # Contradiction-based auto-REVIEW_EXIT was producing churn loops on
         # SL-free trader-owned positions: chart regime flips frequently on M1/M5,
@@ -368,6 +373,9 @@ class PositionManager:
             contradicted = _chart_regime_contradicted(position, pair_charts)
         if entry_invalidation_review:
             reasons.extend(entry_invalidation_reasons)
+            action = ACTION_REVIEW_EXIT
+        elif thesis_break_review:
+            reasons.extend(thesis_break_reasons)
             action = ACTION_REVIEW_EXIT
         elif contradicted:
             if opposite_score is not None and same_score is not None:
@@ -1772,6 +1780,71 @@ def _next_generation_structural_auto_close_allowed(m: ManagedPosition, data_root
     if not _structural_loss_cut_reason(m.reasons):
         return False
     return load_entry_thesis(m.trade_id, data_root) is not None
+
+
+def _fresh_broken_thesis_close_review(
+    *,
+    position: BrokerPosition,
+    snapshot: BrokerSnapshot,
+    data_root: Path,
+) -> tuple[bool, list[str]]:
+    """Carry fresh thesis_evolution BROKEN into the close-review path.
+
+    PositionManager runs after thesis-evolution in the cycle. If it ignores a
+    fresh BROKEN/RECOMMEND_CLOSE row and emits a plain HOLD_PROTECTED, router
+    and GPT packets treat that new HOLD as same-direction support and can bury
+    the hard close evidence. This helper does not close by itself; under the
+    live default QR_DISABLE_AUTO_CLOSE=1 it is demoted to
+    close_review_action=REVIEW_EXIT and still must pass GPT CLOSE Gate A/B.
+    """
+
+    fetched_at = _parse_utc_datetime(snapshot.fetched_at_utc)
+    payload = _fresh_report(data_root / "thesis_evolution_report.json", fetched_at)
+    if not payload:
+        return False, []
+    for item in payload.get("evolutions", []) or []:
+        if not isinstance(item, dict):
+            continue
+        trade_id = str(item.get("trade_id") or "")
+        if trade_id and trade_id != str(position.trade_id):
+            continue
+        pair = str(item.get("pair") or "")
+        if pair and pair != position.pair:
+            continue
+        side = str(item.get("side") or "").upper()
+        if side and side != position.side.value:
+            continue
+        status = str(item.get("status") or "").upper()
+        verdict = str(item.get("verdict") or "").upper()
+        if status != "BROKEN" and verdict != "RECOMMEND_CLOSE":
+            continue
+        rationale = str(item.get("rationale") or f"status={status} verdict={verdict}")
+        return (
+            True,
+            [
+                f"thesis_evolution BROKEN/RECOMMEND_CLOSE for trade {position.trade_id}: {rationale}",
+                (
+                    "loss-side market close still requires GPT CLOSE Gate A/B; "
+                    "keep broker TP/SL live while close review is pending"
+                ),
+            ],
+        )
+    return False, []
+
+
+def _fresh_report(path: Path, fetched_at: datetime | None) -> dict[str, Any] | None:
+    if fetched_at is None or not path.exists():
+        return None
+    try:
+        payload = json.loads(path.read_text())
+    except (OSError, json.JSONDecodeError, ValueError):
+        return None
+    if not isinstance(payload, dict):
+        return None
+    generated_at = _parse_utc_datetime(payload.get("generated_at_utc"))
+    if generated_at is None or generated_at < fetched_at:
+        return None
+    return payload
 
 
 def _structural_auto_close_enabled() -> bool:
