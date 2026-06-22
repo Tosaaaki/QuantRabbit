@@ -82,6 +82,30 @@ class ProfitabilityAcceptanceReplayRepairTest(unittest.TestCase):
             "t-noisy-cleared",
         )
 
+    def test_raw_tp_progress_miss_without_production_gate_replay_is_diagnostic_only(self) -> None:
+        metrics, findings = _profit_capture_replay_repair_findings(
+            {
+                "loaded": True,
+                "generated_at_utc": "2026-06-22T17:10:24+00:00",
+                "repair_replay_contract_present": True,
+                "loss_closes_profit_capture_missed": 1,
+                "loss_closes_repair_replay_triggered": 0,
+                "loss_close_counterfactual_profit_capture_delta_jpy": 607.5,
+                "top_profit_capture_misses": [
+                    {
+                        "trade_id": "raw-only-noise",
+                        "counterfactual_delta_jpy": 607.5,
+                    }
+                ],
+            },
+            self_metrics={"p0_codes": ["LOSS_CLOSE_PROFIT_CAPTURE_MISSED"]},
+        )
+
+        self.assertTrue(metrics["replay_repair_proved"])
+        self.assertEqual(metrics["loss_closes_profit_capture_missed"], 1)
+        self.assertEqual(metrics["loss_closes_repair_replay_triggered"], 0)
+        self.assertEqual(findings, [])
+
     def test_does_not_mix_unrelated_default_timing_into_acceptance_without_self_context(self) -> None:
         metrics, findings = _profit_capture_replay_repair_findings(
             {

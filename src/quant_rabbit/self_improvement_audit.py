@@ -9,6 +9,10 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
+from quant_rabbit.execution_timing_contracts import (
+    TP_PROGRESS_REPAIR_REPLAY_CONTRACT,
+    repair_replay_contract_from_payload,
+)
 from quant_rabbit.forecast_precision import (
     projection_precision_edge_summary,
     projection_precision_gap_summary,
@@ -1961,6 +1965,10 @@ def _profit_capture_miss_findings(
     missed = int(summary.get("loss_closes_profit_capture_missed") or 0)
     if missed <= 0:
         return []
+    repair_replay_contract = repair_replay_contract_from_payload(timing_payload)
+    repair_replay_contract_present = repair_replay_contract == TP_PROGRESS_REPAIR_REPLAY_CONTRACT
+    repair_replay_missed = int(summary.get("loss_closes_repair_replay_triggered") or 0)
+    production_gate_p0 = (not repair_replay_contract_present) or repair_replay_missed > 0
     rows = [
         row
         for row in (timing_payload.get("loss_close_regrets") or [])
@@ -1974,19 +1982,54 @@ def _profit_capture_miss_findings(
         ),
         reverse=True,
     )
+    repair_rows = [
+        row
+        for row in (timing_payload.get("loss_close_regrets") or [])
+        if isinstance(row, dict) and row.get("repair_replay_triggered_before_loss_close")
+    ]
+    repair_rows.sort(
+        key=lambda row: float(
+            row.get("repair_replay_counterfactual_net_improvement_jpy")
+            or row.get("profit_capture_counterfactual_net_improvement_jpy")
+            or 0.0
+        ),
+        reverse=True,
+    )
+    if not repair_replay_contract_present:
+        message = (
+            f"{missed} losing close(s) have raw TP-progress capture evidence, but the "
+            "execution-timing-audit sidecar lacks current production-gate replay proof"
+        )
+        next_action = (
+            "Regenerate execution-timing-audit with the current runtime before treating "
+            "TP-progress repair as proved or cleared."
+        )
+    elif repair_replay_missed > 0:
+        message = (
+            f"{repair_replay_missed} losing close(s) had production-gate replay proof that "
+            f"TP-progress capture was executable before closing red ({missed} raw TP-progress miss(es))"
+        )
+        next_action = (
+            "Keep the TP-progress TAKE_PROFIT_MARKET path and position guardian active, then "
+            "rerun execution-timing-audit until loss_closes_repair_replay_triggered is zero."
+        )
+    else:
+        message = (
+            f"{missed} raw TP-progress miss(es) remain, but production-gate replay found no "
+            "executable profit-capture trigger"
+        )
+        next_action = (
+            "Keep these rows as diagnostic only; use tick replay or improved candle ordering to "
+            "upgrade them before blocking high-turnover entries."
+        )
     return [
         _finding(
             run_id=run_id,
-            priority="P0" if target_open else "P1",
+            priority="P0" if target_open and production_gate_p0 else "P1",
             layer="execution_quality",
             code="LOSS_CLOSE_PROFIT_CAPTURE_MISSED",
-            message=(
-                f"{missed} losing close(s) had positive TP-progress capture opportunity before closing red"
-            ),
-            next_action=(
-                "Repair and verify the fast position-guardian/profit-capture loop before adding more risk: "
-                "the issue is not canceling entries, it is missing executable profit exits between full cycles."
-            ),
+            message=message,
+            next_action=next_action,
             evidence={
                 "generated_at_utc": timing_payload.get("generated_at_utc"),
                 "loss_closes_audited": int(summary.get("loss_closes_audited") or 0),
@@ -2009,6 +2052,21 @@ def _profit_capture_miss_findings(
                 ),
                 "loss_close_counterfactual_profit_capture_jpy": _maybe_float(
                     summary.get("loss_close_counterfactual_profit_capture_jpy")
+                ),
+                "repair_replay_contract": repair_replay_contract,
+                "repair_replay_contract_present": repair_replay_contract_present,
+                "loss_closes_repair_replay_triggered": repair_replay_missed,
+                "loss_closes_repair_replay_triggered_rate": _maybe_float(
+                    summary.get("loss_closes_repair_replay_triggered_rate")
+                ),
+                "loss_close_repair_replay_profit_capture_jpy": _maybe_float(
+                    summary.get("loss_close_repair_replay_profit_capture_jpy")
+                ),
+                "loss_close_repair_replay_counterfactual_pl_jpy": _maybe_float(
+                    summary.get("loss_close_repair_replay_counterfactual_pl_jpy")
+                ),
+                "loss_close_repair_replay_delta_jpy": _maybe_float(
+                    summary.get("loss_close_repair_replay_delta_jpy")
                 ),
                 "top_profit_capture_misses": [
                     {
@@ -2039,6 +2097,33 @@ def _profit_capture_miss_findings(
                         ),
                     }
                     for row in rows[:8]
+                ],
+                "top_repair_replay_triggers": [
+                    {
+                        "trade_id": str(row.get("trade_id") or ""),
+                        "lane_id": str(row.get("lane_id") or ""),
+                        "pair": str(row.get("pair") or ""),
+                        "side": str(row.get("side") or ""),
+                        "exit_reason": str(row.get("exit_reason") or ""),
+                        "realized_pl_jpy": _maybe_float(row.get("realized_pl_jpy")),
+                        "repair_replay_exit": row.get("repair_replay_exit"),
+                        "repair_replay_trigger_at_utc": row.get(
+                            "repair_replay_trigger_at_utc"
+                        ),
+                        "repair_replay_profit_pips": _maybe_float(
+                            row.get("repair_replay_profit_pips")
+                        ),
+                        "repair_replay_noise_floor_pips": _maybe_float(
+                            row.get("repair_replay_noise_floor_pips")
+                        ),
+                        "repair_replay_counterfactual_jpy": _maybe_float(
+                            row.get("repair_replay_counterfactual_jpy")
+                        ),
+                        "repair_replay_counterfactual_net_improvement_jpy": _maybe_float(
+                            row.get("repair_replay_counterfactual_net_improvement_jpy")
+                        ),
+                    }
+                    for row in repair_rows[:8]
                 ],
             },
         )

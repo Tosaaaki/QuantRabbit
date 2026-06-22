@@ -127,7 +127,8 @@ class ProfitCaptureBot:
         blockers = artifact_blockers + _blockers(positions=positions, history=history)
         bankable = [item for item in positions if item["gate_status"] == "BANKABLE_NOW"]
         blocked_positions = [item for item in positions if item["gate_status"] == "BLOCKED_MISSING_INPUT"]
-        status = STATUS_READY if bankable else STATUS_BLOCKED if blockers else STATUS_WATCH
+        p0_blockers = [item for item in blockers if item.get("severity") == "P0"]
+        status = STATUS_READY if bankable else STATUS_BLOCKED if p0_blockers else STATUS_WATCH
         metrics = {
             "open_trader_positions": len(positions),
             "bankable_positions": len(bankable),
@@ -473,10 +474,14 @@ def _blockers(*, positions: list[dict[str, Any]], history: dict[str, Any]) -> li
             }
         )
     if history["missed_loss_closes"] > 0:
+        production_gate_block = (
+            not history.get("repair_replay_contract_present")
+            or int(history.get("repair_replay_triggered") or 0) > 0
+        )
         blockers.append(
             {
                 "code": "HISTORICAL_PROFIT_CAPTURE_MISSED",
-                "severity": "P0",
+                "severity": "P0" if production_gate_block else "P1",
                 "message": _historical_miss_message(history),
             }
         )

@@ -1377,7 +1377,7 @@ def _profit_capture_replay_repair_findings(
     repair_replay_contract_missing = (
         bool(timing_metrics.get("loaded")) and not repair_replay_contract_present
     )
-    missed = repair_replay_missed if repair_replay_missed > 0 else simple_missed
+    missed = repair_replay_missed
     counterfactual_delta = _optional_float(
         timing_metrics.get("loss_close_repair_replay_delta_jpy")
     )
@@ -1407,13 +1407,14 @@ def _profit_capture_replay_repair_findings(
         "self_improvement_p0_codes": sorted(self_p0_codes),
         "clearance_condition": (
             "execution-timing-audit must report zero loss_closes_repair_replay_triggered "
-            "and zero loss_closes_profit_capture_missed after TP-progress TAKE_PROFIT_MARKET / "
-            "guardian repair has run on live broker truth"
+            "with the current production-gate replay contract after TP-progress "
+            "TAKE_PROFIT_MARKET / guardian repair has run on live broker truth; raw "
+            "loss_closes_profit_capture_missed remains diagnostic unless the production gate "
+            "also proves an executable profit capture"
         ),
         "replay_repair_proved": (
             bool(timing_metrics.get("loaded"))
             and repair_replay_contract_present
-            and simple_missed == 0
             and repair_replay_missed == 0
         ),
     }
@@ -1448,11 +1449,9 @@ def _profit_capture_replay_repair_findings(
                 },
             )
         ]
-    if (
-        not metrics["execution_timing_loaded"]
-        or missed <= 0
-        or not has_self_profit_capture_context
-    ):
+    if not metrics["execution_timing_loaded"] or not has_self_profit_capture_context:
+        return metrics, []
+    if repair_replay_contract_present and missed <= 0:
         return metrics, []
     return metrics, [
         _finding(
@@ -1466,11 +1465,12 @@ def _profit_capture_replay_repair_findings(
             next_action=(
                 "Do not treat high-turnover trading as repaired by rerunning reports. Keep the "
                 "TP-progress TAKE_PROFIT_MARKET path and position guardian active, then rerun "
-                "execution-timing-audit until loss_closes_repair_replay_triggered and "
-                "loss_closes_profit_capture_missed are both zero in the active window."
+                "execution-timing-audit until loss_closes_repair_replay_triggered is zero under "
+                "the current production-gate replay contract. Raw TP-progress misses without "
+                "production-gate triggers stay diagnostic until tick replay upgrades them."
             ),
             evidence={
-                "loss_closes_profit_capture_missed": missed,
+                "loss_closes_profit_capture_missed": simple_missed,
                 "loss_closes_repair_replay_triggered": repair_replay_missed,
                 "counterfactual_profit_capture_delta_jpy": counterfactual_delta,
                 "counterfactual_profit_capture_jpy": counterfactual_jpy,

@@ -549,9 +549,10 @@ def _profit_capture_summary(self_improvement: dict[str, Any], timing: dict[str, 
         "message": finding.get("message") if finding else None,
         "next_action": finding.get("next_action") if finding else None,
         "clearance_condition": (
-            "execution-timing-audit reports zero loss_closes_repair_replay_triggered and zero "
-            "loss_closes_profit_capture_missed in the active audit window, and position guardian "
-            "is proven active before fresh entries resume"
+            "execution-timing-audit reports zero loss_closes_repair_replay_triggered under the "
+            "current production-gate replay contract, and position guardian is proven active "
+            "before fresh entries resume; raw loss_closes_profit_capture_missed remains "
+            "diagnostic unless production-gate replay also triggers"
             if _float(missed) > 0
             else "no missed TP-progress loss close in the active timing audit"
         ),
@@ -994,9 +995,10 @@ def _acceptance_clearance_for_code(
         )
     if code == "TP_PROGRESS_REPLAY_REPAIR_UNPROVED":
         return (
-            "execution-timing-audit reports zero loss_closes_repair_replay_triggered and zero "
-            "loss_closes_profit_capture_missed after the TP-progress TAKE_PROFIT_MARKET path "
-            "and position guardian have had a live window to capture executable plus P/L before red closes",
+            "execution-timing-audit reports zero loss_closes_repair_replay_triggered under the "
+            "current production-gate replay contract after the TP-progress TAKE_PROFIT_MARKET "
+            "path and position guardian have had a live window to capture executable plus P/L "
+            "before red closes",
             "PYTHONPATH=src python3 -m quant_rabbit.cli execution-timing-audit --max-events 80",
             {
                 "loss_closes_profit_capture_missed": evidence.get(
@@ -1253,10 +1255,14 @@ def _build_blockers(
             }
         )
     if profit_capture["missed_loss_closes"] > 0:
+        production_gate_block = (
+            not profit_capture.get("repair_replay_contract_present")
+            or int(_float(profit_capture.get("repair_replay_triggered"))) > 0
+        )
         blockers.append(
             {
                 "code": PROFIT_CAPTURE_MISS,
-                "severity": "P0",
+                "severity": "P0" if production_gate_block else "P1",
                 "message": _profit_capture_miss_message(profit_capture),
             }
         )

@@ -12,6 +12,10 @@ from pathlib import Path
 from unittest import mock
 
 from quant_rabbit.cli import main
+from quant_rabbit.execution_timing_contracts import (
+    TP_PROGRESS_REPAIR_REPLAY_CONTRACT,
+    TP_PROGRESS_REPAIR_REPLAY_FIELD,
+)
 from quant_rabbit.self_improvement_audit import (
     PROFITABILITY_DISCIPLINE_CODES,
     PROJECTION_PENDING_EXPIRY_GRACE_SECONDS,
@@ -85,10 +89,17 @@ class SelfImprovementAuditorTest(unittest.TestCase):
             target_open=True,
             timing_payload={
                 "generated_at_utc": _NOW.isoformat(),
+                "precision": {
+                    TP_PROGRESS_REPAIR_REPLAY_FIELD: TP_PROGRESS_REPAIR_REPLAY_CONTRACT,
+                },
                 "summary": {
                     "loss_closes_audited": 1,
                     "loss_closes_profit_capture_missed": 1,
                     "loss_closes_profit_capture_missed_rate": 1.0,
+                    "loss_closes_repair_replay_triggered": 1,
+                    "loss_closes_repair_replay_triggered_rate": 1.0,
+                    "loss_close_repair_replay_profit_capture_jpy": 126.0,
+                    "loss_close_repair_replay_delta_jpy": 466.2,
                     "stop_loss_closes_profit_capture_missed": 1,
                     "loss_close_estimated_capture_gap_jpy": 302.4,
                     "loss_close_actual_pl_jpy": -340.2,
@@ -112,6 +123,13 @@ class SelfImprovementAuditorTest(unittest.TestCase):
                         "profit_capture_counterfactual_pips": 3.0,
                         "profit_capture_counterfactual_jpy": 105.84,
                         "profit_capture_counterfactual_net_improvement_jpy": 446.04,
+                        "repair_replay_triggered_before_loss_close": True,
+                        "repair_replay_exit": "TP_PROGRESS_PRODUCTION_GATE_REPLAY",
+                        "repair_replay_trigger_at_utc": _NOW.isoformat(),
+                        "repair_replay_profit_pips": 2.0,
+                        "repair_replay_noise_floor_pips": 1.6,
+                        "repair_replay_counterfactual_jpy": 126.0,
+                        "repair_replay_counterfactual_net_improvement_jpy": 466.2,
                     }
                 ],
             },
@@ -134,6 +152,49 @@ class SelfImprovementAuditorTest(unittest.TestCase):
             ],
             446.04,
         )
+        self.assertEqual(findings[0]["evidence"]["loss_closes_repair_replay_triggered"], 1)
+        self.assertEqual(
+            findings[0]["evidence"]["top_repair_replay_triggers"][0]["trade_id"],
+            "472792",
+        )
+
+    def test_raw_profit_capture_miss_without_repair_replay_is_p1_diagnostic(self) -> None:
+        findings = _profit_capture_miss_findings(
+            run_id=_NOW.isoformat(),
+            target_open=True,
+            timing_payload={
+                "generated_at_utc": _NOW.isoformat(),
+                "precision": {
+                    TP_PROGRESS_REPAIR_REPLAY_FIELD: TP_PROGRESS_REPAIR_REPLAY_CONTRACT,
+                },
+                "summary": {
+                    "loss_closes_audited": 1,
+                    "loss_closes_profit_capture_missed": 1,
+                    "loss_closes_profit_capture_missed_rate": 1.0,
+                    "loss_closes_repair_replay_triggered": 0,
+                    "loss_closes_repair_replay_triggered_rate": 0.0,
+                    "loss_close_counterfactual_profit_capture_delta_jpy": 607.5,
+                },
+                "loss_close_regrets": [
+                    {
+                        "trade_id": "raw-only-noise",
+                        "lane_id": "range_trader:AUD_NZD:SHORT:RANGE_ROTATION",
+                        "pair": "AUD_NZD",
+                        "side": "SHORT",
+                        "exit_reason": "MARKET_ORDER_TRADE_CLOSE",
+                        "profit_capture_missed_before_loss_close": True,
+                        "profit_capture_counterfactual_net_improvement_jpy": 607.5,
+                        "repair_replay_triggered_before_loss_close": False,
+                    }
+                ],
+            },
+        )
+
+        self.assertEqual(len(findings), 1)
+        self.assertEqual(findings[0]["priority"], "P1")
+        self.assertEqual(findings[0]["code"], "LOSS_CLOSE_PROFIT_CAPTURE_MISSED")
+        self.assertEqual(findings[0]["evidence"]["loss_closes_repair_replay_triggered"], 0)
+        self.assertEqual(findings[0]["evidence"]["top_repair_replay_triggers"], [])
 
     def test_inactive_position_guardian_is_p0_for_target_open_profit_capture(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
