@@ -103,7 +103,7 @@ def main() -> int:
         granularity=args.granularity,
         windows_by_pair=_forecast_truth_windows(rows),
     )
-    results, score_stats = _score_forecasts(rows, candles_by_pair)
+    results, score_stats, unscorable_no_market_rows = _score_forecasts(rows, candles_by_pair)
     contrarian_results = [
         item for item in (_contrarian_row(row) for row in results)
         if item is not None
@@ -195,6 +195,7 @@ def main() -> int:
     sample_coverage = _forecast_sample_coverage(
         rows,
         results,
+        unscorable_no_market_rows=unscorable_no_market_rows,
         min_directional_samples=args.edge_min_samples,
         min_active_days=args.stable_min_active_days,
     )
@@ -338,6 +339,11 @@ def _explicit_history_dirs(
             for item in discovered:
                 _append_unique_path(selected, seen, item)
             continue
+        summary_dirs = _discover_history_summary_dirs(path, granularity=granularity)
+        if summary_dirs:
+            for item in summary_dirs:
+                _append_unique_path(selected, seen, item)
+            continue
         latest = path / "latest_summary.json"
         if latest.exists():
             try:
@@ -405,6 +411,26 @@ def _discover_multi_month_history_dirs(
             continue
         seen.add(resolved)
         selected.append(output_dir)
+    return sorted(selected, key=lambda path: str(path))
+
+
+def _discover_history_summary_dirs(root: Path, *, granularity: str) -> list[Path]:
+    selected: list[Path] = []
+    seen: set[Path] = set()
+    if not root.exists():
+        return selected
+    for summary_path in sorted(root.glob("**/summary.json")):
+        try:
+            payload = json.loads(summary_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        granularities = {str(item).upper() for item in payload.get("granularities") or []}
+        if granularity not in granularities:
+            continue
+        output_dir = Path(str(payload.get("output_dir") or summary_path.parent))
+        if not output_dir.exists():
+            continue
+        _append_unique_path(selected, seen, output_dir)
     return sorted(selected, key=lambda path: str(path))
 
 
@@ -646,40 +672,67 @@ def _dedupe_key(
 def _score_forecasts(
     rows: Sequence[ForecastRow],
     candles_by_pair: dict[str, list[QuoteCandle]],
-) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+) -> tuple[list[dict[str, Any]], dict[str, Any], list[ForecastRow]]:
     results: list[dict[str, Any]] = []
     skipped_no_pair = 0
     skipped_no_window = 0
     missing_windows: list[ForecastRow] = []
+    unscorable_no_market: list[ForecastRow] = []
     for row in rows:
         candles = candles_by_pair.get(row.pair)
         if not candles:
-            skipped_no_pair += 1
-            missing_windows.append(row)
+            if _is_likely_fx_no_market_window(row):
+                unscorable_no_market.append(row)
+            else:
+                skipped_no_pair += 1
+                missing_windows.append(row)
             continue
         times = [c.timestamp_utc for c in candles]
         start = bisect.bisect_left(times, row.timestamp_utc)
         end = bisect.bisect_right(times, row.timestamp_utc + timedelta(minutes=row.horizon_min))
         if start >= len(candles) or end <= start:
-            skipped_no_window += 1
-            missing_windows.append(row)
+            if _is_likely_fx_no_market_window(row):
+                unscorable_no_market.append(row)
+            else:
+                skipped_no_window += 1
+                missing_windows.append(row)
             continue
         window = candles[start:end]
         scored = _score_one(row, window)
         if scored is not None:
             results.append(scored)
-    return results, {
-        "evaluated_rows": len(results),
-        "skipped_no_pair_candles": skipped_no_pair,
-        "skipped_no_price_window": skipped_no_window,
-        "missing_price_window_groups": _missing_price_window_groups(missing_windows),
-    }
+    return (
+        results,
+        {
+            "evaluated_rows": len(results),
+            "skipped_no_pair_candles": skipped_no_pair,
+            "skipped_no_price_window": skipped_no_window,
+            "missing_price_window_groups": _missing_price_window_groups(missing_windows),
+            "unscorable_no_market_rows": len(unscorable_no_market),
+            "unscorable_no_market_window_groups": _missing_price_window_groups(unscorable_no_market),
+        },
+        unscorable_no_market,
+    )
+
+
+def _is_likely_fx_no_market_window(row: ForecastRow) -> bool:
+    """Identify forecast windows where OANDA has no FX candles to fetch.
+
+    This is a broker-session data-quality classification, not a trading edge
+    threshold. Keep it conservative: full Saturday UTC windows are unscorable
+    because retail FX markets do not print normal OANDA candles then.
+    """
+
+    start = row.timestamp_utc.astimezone(timezone.utc)
+    end = (row.timestamp_utc + timedelta(minutes=row.horizon_min)).astimezone(timezone.utc)
+    return start.date() == end.date() and start.weekday() == 5
 
 
 def _forecast_sample_coverage(
     rows: Sequence[ForecastRow],
     results: Sequence[dict[str, Any]],
     *,
+    unscorable_no_market_rows: Sequence[ForecastRow] | None = None,
     min_directional_samples: int,
     min_active_days: int,
 ) -> dict[str, Any]:
@@ -691,6 +744,11 @@ def _forecast_sample_coverage(
     forecast_days: dict[tuple[str, str], set[str]] = collections.defaultdict(set)
     for row in rows:
         forecast_days[(row.pair, row.direction)].add(row.timestamp_utc.astimezone(JST).date().isoformat())
+    no_market_rows = list(unscorable_no_market_rows or [])
+    no_market_counts: collections.Counter[tuple[str, str]] = collections.Counter(
+        (row.pair, row.direction) for row in no_market_rows
+    )
+    no_market_pair_counts: collections.Counter[str] = collections.Counter(row.pair for row in no_market_rows)
 
     evaluated_counts: collections.Counter[tuple[str, str]] = collections.Counter(
         (str(row.get("pair") or "").upper(), str(row.get("direction") or "").upper())
@@ -714,7 +772,11 @@ def _forecast_sample_coverage(
             "pair": pair,
             "forecast_samples": count,
             "evaluated_samples": pair_evaluated_counts.get(pair, 0),
-            "missing_price_truth_samples": max(0, count - pair_evaluated_counts.get(pair, 0)),
+            "unscorable_no_market_samples": no_market_pair_counts.get(pair, 0),
+            "missing_price_truth_samples": max(
+                0,
+                count - pair_evaluated_counts.get(pair, 0) - no_market_pair_counts.get(pair, 0),
+            ),
             "missing_evaluated_samples_to_min_directional": max(
                 0,
                 min_directional_samples - pair_evaluated_counts.get(pair, 0),
@@ -731,14 +793,20 @@ def _forecast_sample_coverage(
         evaluated_samples = evaluated_counts.get((pair, direction), 0)
         forecast_active_days = len(forecast_days.get((pair, direction), set()))
         evaluated_active_days = len(evaluated_days.get((pair, direction), set()))
+        unscorable_no_market_samples = no_market_counts.get((pair, direction), 0)
         gaps: list[str] = []
         if evaluated_samples < min_directional_samples:
             gaps.append("INSUFFICIENT_EVALUATED_SAMPLES")
         if evaluated_active_days < min_active_days:
             gaps.append("INSUFFICIENT_ACTIVE_DAYS")
-        missing_price_truth_samples = max(0, forecast_samples - evaluated_samples)
+        missing_price_truth_samples = max(
+            0,
+            forecast_samples - evaluated_samples - unscorable_no_market_samples,
+        )
         if missing_price_truth_samples > 0 and gaps:
             gaps.append("PRICE_TRUTH_WINDOW_MISSING")
+        if unscorable_no_market_samples > 0:
+            gaps.append("NO_MARKET_SESSION_UNSCORABLE")
         if not gaps:
             continue
         under_sampled.append(
@@ -749,6 +817,7 @@ def _forecast_sample_coverage(
                 "forecast_active_days": forecast_active_days,
                 "evaluated_samples": evaluated_samples,
                 "evaluated_active_days": evaluated_active_days,
+                "unscorable_no_market_samples": unscorable_no_market_samples,
                 "missing_price_truth_samples": missing_price_truth_samples,
                 "missing_evaluated_samples": max(0, min_directional_samples - evaluated_samples),
                 "missing_active_days": max(0, min_active_days - evaluated_active_days),
@@ -768,6 +837,7 @@ def _forecast_sample_coverage(
         "min_active_days_for_daily_stability": min_active_days,
         "pair_count": len(pair_counts),
         "pair_direction_count": len(all_keys),
+        "unscorable_no_market_samples": len(no_market_rows),
         "pairs": pair_rows,
         "under_sampled_pair_directions": under_sampled,
     }
@@ -790,6 +860,8 @@ def _price_truth_coverage(
     history_candles = _int_metric(candle_stats.get("history_candles"))
     evaluated_rows = _int_metric(score_stats.get("evaluated_rows"))
     missing_groups = list(score_stats.get("missing_price_window_groups") or [])
+    no_market_groups = list(score_stats.get("unscorable_no_market_window_groups") or [])
+    no_market_rows = _int_metric(score_stats.get("unscorable_no_market_rows"))
     pair_rows = list(sample_coverage.get("pairs") or [])
     under_sampled = list(sample_coverage.get("under_sampled_pair_directions") or [])
     missing_truth_samples = sum(
@@ -812,6 +884,9 @@ def _price_truth_coverage(
     if raw_rows <= 0 or deduped_rows <= 0:
         status = "NO_DIRECTIONAL_FORECAST_ROWS"
         reason = "forecast_history has no deduped UP/DOWN rows to replay."
+    elif evaluated_rows <= 0 and no_market_rows >= deduped_rows and missing_truth_samples <= 0:
+        status = "NO_SCORABLE_MARKET_FORECAST_ROWS"
+        reason = "Directional forecast rows exist only in broker no-market windows."
     elif history_files <= 0:
         status = "NO_PRICE_HISTORY_FILES"
         reason = "No local OANDA bid/ask candle files matched the forecast pairs, granularity, and windows."
@@ -852,7 +927,15 @@ def _price_truth_coverage(
         blockers.append("DO_NOT_CLAIM_ALL_CURRENCY_VALIDATION")
     if missing_truth_samples > 0:
         blockers.append("FETCH_MISSING_PRICE_TRUTH")
+    warnings: list[str] = []
+    if no_market_rows > 0:
+        warnings.append("FORECAST_ROWS_DURING_BROKER_NO_MARKET_WINDOW")
     now_utc = datetime.now(timezone.utc)
+    history_fetch_commands = _history_fetch_commands(
+        missing_groups,
+        granularity,
+        now_utc=now_utc,
+    )
 
     return {
         "status": status,
@@ -861,26 +944,75 @@ def _price_truth_coverage(
         "candidate_rule_validation_blocked": candidate_blocked,
         "global_currency_validation_blocked": global_blocked,
         "blockers": blockers,
+        "warnings": warnings,
         "raw_directional_rows": raw_rows,
         "deduped_directional_rows": deduped_rows,
         "evaluated_rows": evaluated_rows,
+        "unscorable_no_market_rows": no_market_rows,
         "required_min_evaluated_rows": int(edge_min_samples),
         "history_files": history_files,
         "history_candles": history_candles,
         "missing_price_truth_samples": missing_truth_samples,
         "missing_price_window_group_count": len(missing_groups),
+        "unscorable_no_market_window_group_count": len(no_market_groups),
+        "unscorable_no_market_window_groups": no_market_groups[:12],
         "future_price_truth_window_group_count": _future_missing_window_group_count(
             missing_groups,
             now_utc=now_utc,
         ),
         "missing_pairs": missing_pairs,
         "missing_pair_directions": missing_pair_directions[:24],
+        "history_fetch_command_mode": "WINDOWED",
+        "history_fetch_command_count": len(history_fetch_commands),
+        "history_fetch_commands": history_fetch_commands,
         "history_fetch_command": _history_fetch_command(
             missing_groups,
             granularity,
             now_utc=now_utc,
         ),
     }
+
+
+def _history_fetch_commands(
+    missing_groups: Sequence[dict[str, Any]],
+    granularity: str,
+    *,
+    now_utc: datetime | None = None,
+) -> list[dict[str, Any]]:
+    now = (now_utc or datetime.now(timezone.utc)).astimezone(timezone.utc)
+    commands: list[dict[str, Any]] = []
+    for group in missing_groups:
+        start = _parse_time(group.get("needed_from_utc"))
+        end = _parse_time(group.get("needed_to_utc"))
+        pairs = sorted(
+            {
+                str(pair).upper()
+                for pair in group.get("pairs") or []
+                if str(pair).strip()
+            }
+        )
+        if start is None or end is None or start >= now or not pairs:
+            continue
+        clamped_end = min(end, now)
+        command = _format_history_fetch_command(
+            pairs=pairs,
+            granularity=granularity,
+            start=start,
+            end=clamped_end,
+        )
+        commands.append(
+            {
+                "date": group.get("date"),
+                "forecast_rows_missing_truth": _int_metric(group.get("count")),
+                "pairs": pairs,
+                "from_utc": _iso(start),
+                "to_utc": _iso(clamped_end),
+                "clamped_to_now": end > now,
+                "command": command,
+            }
+        )
+    commands.sort(key=lambda item: (str(item.get("from_utc") or ""), str(item.get("date") or "")))
+    return commands
 
 
 def _history_fetch_command(
@@ -903,13 +1035,28 @@ def _history_fetch_command(
         ends.append(min(end, now))
     if not pairs or not starts or not ends:
         return None
+    return _format_history_fetch_command(
+        pairs=sorted(pairs),
+        granularity=granularity,
+        start=min(starts),
+        end=max(ends),
+    )
+
+
+def _format_history_fetch_command(
+    *,
+    pairs: Sequence[str],
+    granularity: str,
+    start: datetime,
+    end: datetime,
+) -> str:
     return (
         "PYTHONPATH=src python3 scripts/oanda_history_fetch.py "
-        f"--pairs {','.join(sorted(pairs))} "
+        f"--pairs {','.join(pairs)} "
         f"--granularities {str(granularity or '').upper()} "
         "--price BA "
-        f"--from {_iso(min(starts))} "
-        f"--to {_iso(max(ends))} "
+        f"--from {_iso(start)} "
+        f"--to {_iso(end)} "
         "--output-dir logs/replay/oanda_history"
     )
 
@@ -1926,17 +2073,33 @@ def _markdown(report: dict[str, Any]) -> str:
             f"- candidate_rule_validation_blocked: {truth.get('candidate_rule_validation_blocked')}",
             f"- global_currency_validation_blocked: {truth.get('global_currency_validation_blocked')}",
             f"- evaluated_rows: {truth.get('evaluated_rows')} / required_min={truth.get('required_min_evaluated_rows')}",
+            f"- unscorable_no_market_rows: {truth.get('unscorable_no_market_rows')}",
             f"- missing_price_truth_samples: {truth.get('missing_price_truth_samples')}",
             f"- missing_price_window_groups: {truth.get('missing_price_window_group_count')}",
+            f"- unscorable_no_market_window_groups: {truth.get('unscorable_no_market_window_group_count')}",
             f"- future_price_truth_window_groups: {truth.get('future_price_truth_window_group_count')}",
             f"- missing_pairs: {', '.join(truth.get('missing_pairs') or []) or 'none'}",
+            f"- history_fetch_command_mode: {truth.get('history_fetch_command_mode')}",
+            f"- history_fetch_command_count: {truth.get('history_fetch_command_count')}",
         ]
     )
+    fetch_commands = truth.get("history_fetch_commands") or []
+    for item in fetch_commands[:12]:
+        lines.append(
+            f"  - {item.get('date')}: missing_rows={item.get('forecast_rows_missing_truth')} "
+            f"pairs={len(item.get('pairs') or [])} "
+            f"from={item.get('from_utc')} to={item.get('to_utc')} "
+            f"clamped_to_now={item.get('clamped_to_now')}"
+        )
+        if item.get("command"):
+            lines.append(f"    `{item.get('command')}`")
     fetch_command = truth.get("history_fetch_command")
     if fetch_command:
-        lines.append(f"- history_fetch_command: `{fetch_command}`")
+        lines.append(f"- broad_history_fetch_command_fallback: `{fetch_command}`")
     blockers = truth.get("blockers") or []
     lines.append(f"- blockers: {', '.join(blockers) if blockers else 'none'}")
+    warnings = truth.get("warnings") or []
+    lines.append(f"- warnings: {', '.join(warnings) if warnings else 'none'}")
     lines.append("")
     coverage = report.get("forecast_sample_coverage") or {}
     under_sampled = coverage.get("under_sampled_pair_directions") or []
@@ -1954,6 +2117,7 @@ def _markdown(report: dict[str, Any]) -> str:
             f"  - {item['pair']} {item['direction']}: "
             f"forecast={item['forecast_samples']} evaluated={item['evaluated_samples']} "
             f"days={item['evaluated_active_days']} "
+            f"no_market={item.get('unscorable_no_market_samples', 0)} "
             f"missing_truth={item['missing_price_truth_samples']} "
             f"missing_samples={item['missing_evaluated_samples']} "
             f"missing_days={item['missing_active_days']} "

@@ -144,6 +144,55 @@ class OandaHistoryReplayValidateTest(unittest.TestCase):
 
         self.assertEqual(dirs, [run])
 
+    def test_explicit_history_parent_discovers_windowed_short_runs(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            history = root / "oanda_history_s5"
+            run_a = history / "20260622T155928Z"
+            run_b = history / "20260622T160015Z"
+            other_granularity = history / "20260622T160111Z"
+            run_a.mkdir(parents=True)
+            run_b.mkdir(parents=True)
+            other_granularity.mkdir(parents=True)
+            (run_a / "summary.json").write_text(
+                json.dumps(
+                    {
+                        "output_dir": str(run_a),
+                        "granularities": ["S5"],
+                        "window": {
+                            "from": "2026-06-17T07:16:00Z",
+                            "to": "2026-06-17T18:09:00Z",
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (run_b / "summary.json").write_text(
+                json.dumps(
+                    {
+                        "output_dir": str(run_b),
+                        "granularities": ["S5"],
+                        "window": {
+                            "from": "2026-06-18T01:00:00Z",
+                            "to": "2026-06-18T02:00:00Z",
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (other_granularity / "summary.json").write_text(
+                json.dumps({"output_dir": str(other_granularity), "granularities": ["M5"]}),
+                encoding="utf-8",
+            )
+            (history / "latest_summary.json").write_text(
+                json.dumps({"output_dir": str(run_b), "granularities": ["S5"]}),
+                encoding="utf-8",
+            )
+
+            dirs = replay._history_dirs([history], granularity="S5", auto_min_days=30.0)
+
+        self.assertEqual(dirs, [run_a, run_b])
+
     def test_history_dirs_falls_back_to_latest_when_no_multi_month_suite_exists(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -583,6 +632,51 @@ class OandaHistoryReplayValidateTest(unittest.TestCase):
         self.assertIn("INSUFFICIENT_ACTIVE_DAYS", gap["coverage_gap_reasons"])
         self.assertIn("PRICE_TRUTH_WINDOW_MISSING", gap["coverage_gap_reasons"])
 
+    def test_saturday_no_market_windows_are_not_price_truth_missing(self) -> None:
+        row = replay.ForecastRow(
+            source_index=1,
+            timestamp_utc=datetime(2026, 5, 16, 1, 4, tzinfo=timezone.utc),
+            pair="AUD_JPY",
+            direction="UP",
+            confidence=0.8,
+            current_price=None,
+            target_price=None,
+            invalidation_price=None,
+            horizon_min=60,
+            cycle_id=None,
+        )
+
+        results, score_stats, no_market_rows = replay._score_forecasts([row], {})
+        coverage = replay._forecast_sample_coverage(
+            [row],
+            results,
+            unscorable_no_market_rows=no_market_rows,
+            min_directional_samples=1,
+            min_active_days=1,
+        )
+        truth = replay._price_truth_coverage(
+            load_stats={"raw_directional_rows": 1, "deduped_directional_rows": 1},
+            candle_stats={"history_files": 0, "history_candles": 0},
+            score_stats=score_stats,
+            sample_coverage=coverage,
+            granularity="S5",
+            edge_min_samples=1,
+        )
+
+        self.assertEqual(results, [])
+        self.assertEqual(score_stats["missing_price_window_groups"], [])
+        self.assertEqual(score_stats["unscorable_no_market_rows"], 1)
+        self.assertEqual(score_stats["unscorable_no_market_window_groups"][0]["pairs"], ["AUD_JPY"])
+        pair_row = coverage["pairs"][0]
+        self.assertEqual(pair_row["unscorable_no_market_samples"], 1)
+        self.assertEqual(pair_row["missing_price_truth_samples"], 0)
+        gap = coverage["under_sampled_pair_directions"][0]
+        self.assertIn("NO_MARKET_SESSION_UNSCORABLE", gap["coverage_gap_reasons"])
+        self.assertNotIn("PRICE_TRUTH_WINDOW_MISSING", gap["coverage_gap_reasons"])
+        self.assertEqual(truth["status"], "NO_SCORABLE_MARKET_FORECAST_ROWS")
+        self.assertEqual(truth["missing_price_truth_samples"], 0)
+        self.assertIn("FORECAST_ROWS_DURING_BROKER_NO_MARKET_WINDOW", truth["warnings"])
+
     def test_price_truth_coverage_blocks_empty_history_validation(self) -> None:
         truth = replay._price_truth_coverage(
             load_stats={"raw_directional_rows": 2, "deduped_directional_rows": 2},
@@ -709,6 +803,75 @@ class OandaHistoryReplayValidateTest(unittest.TestCase):
         self.assertIn("--pairs USD_JPY", command)
         self.assertIn("--from 2026-06-17T10:00:00Z", command)
         self.assertIn("--to 2026-06-17T12:00:00Z", command)
+
+    def test_history_fetch_commands_preserve_windowed_missing_groups(self) -> None:
+        commands = replay._history_fetch_commands(
+            [
+                {
+                    "date": "2026-06-17",
+                    "count": 2,
+                    "needed_from_utc": "2026-06-17T07:16:00Z",
+                    "needed_to_utc": "2026-06-17T18:09:00Z",
+                    "pairs": ["EUR_USD", "AUD_JPY"],
+                },
+                {
+                    "date": "2026-06-18",
+                    "count": 1,
+                    "needed_from_utc": "2026-06-18T01:00:00Z",
+                    "needed_to_utc": "2026-06-18T02:00:00Z",
+                    "pairs": ["GBP_USD"],
+                },
+            ],
+            "S5",
+            now_utc=datetime(2026, 6, 19, tzinfo=timezone.utc),
+        )
+
+        self.assertEqual(len(commands), 2)
+        self.assertEqual(commands[0]["date"], "2026-06-17")
+        self.assertEqual(commands[0]["forecast_rows_missing_truth"], 2)
+        self.assertEqual(commands[0]["pairs"], ["AUD_JPY", "EUR_USD"])
+        self.assertIn("--pairs AUD_JPY,EUR_USD", commands[0]["command"])
+        self.assertIn("--from 2026-06-17T07:16:00Z", commands[0]["command"])
+        self.assertIn("--to 2026-06-17T18:09:00Z", commands[0]["command"])
+        self.assertEqual(commands[1]["date"], "2026-06-18")
+        self.assertIn("--pairs GBP_USD", commands[1]["command"])
+        self.assertNotIn("AUD_JPY", commands[1]["command"])
+
+    def test_price_truth_coverage_publishes_windowed_fetch_plan(self) -> None:
+        truth = replay._price_truth_coverage(
+            load_stats={"raw_directional_rows": 40, "deduped_directional_rows": 40},
+            candle_stats={"history_files": 1, "history_candles": 500},
+            score_stats={
+                "evaluated_rows": 35,
+                "missing_price_window_groups": [
+                    {
+                        "date": "2026-06-18",
+                        "count": 5,
+                        "needed_from_utc": "2026-06-18T00:00:00Z",
+                        "needed_to_utc": "2026-06-18T02:00:00Z",
+                        "pairs": ["GBP_USD"],
+                    }
+                ],
+            },
+            sample_coverage={
+                "pairs": [
+                    {
+                        "pair": "GBP_USD",
+                        "forecast_samples": 5,
+                        "evaluated_samples": 0,
+                        "missing_price_truth_samples": 5,
+                    }
+                ],
+                "under_sampled_pair_directions": [],
+            },
+            granularity="S5",
+            edge_min_samples=30,
+        )
+
+        self.assertEqual(truth["history_fetch_command_mode"], "WINDOWED")
+        self.assertEqual(truth["history_fetch_command_count"], 1)
+        self.assertEqual(truth["history_fetch_commands"][0]["date"], "2026-06-18")
+        self.assertIn("--pairs GBP_USD", truth["history_fetch_commands"][0]["command"])
 
     def test_load_candles_filters_to_forecast_truth_windows(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
