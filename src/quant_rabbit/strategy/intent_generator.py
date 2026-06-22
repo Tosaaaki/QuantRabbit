@@ -7254,6 +7254,133 @@ def _annotate_oanda_campaign_firepower_metadata(
     )
 
 
+def _annotate_oanda_campaign_current_risk_firepower(
+    metadata: dict[str, Any],
+    *,
+    data_root: Path | None,
+) -> dict[str, float | bool | int | None] | None:
+    """Scale audit-only OANDA firepower to the live intent's current risk.
+
+    The packaged OANDA campaign artifact is expressed at
+    `per_trade_risk_pct_lens` (normally a 1% risk lens). Live orders often run
+    smaller because the loss-asymmetry guard caps `max_loss_jpy`. A 1%-lens
+    target proof must therefore not be reported as today's 5% route until it is
+    rescaled to the current `max_loss_jpy / start_balance_jpy` risk lens.
+    """
+
+    root = data_root or (ROOT / "data")
+    path = root / "daily_target_state.json"
+    if not path.exists():
+        return None
+    try:
+        payload = json.loads(path.read_text())
+    except (OSError, json.JSONDecodeError, ValueError):
+        return None
+    if not isinstance(payload, dict):
+        return None
+    start_balance = _optional_float(payload.get("start_balance_jpy"))
+    max_loss_jpy = _optional_float(metadata.get("max_loss_jpy"))
+    lens_pct = _optional_float(
+        metadata.get("positive_rotation_oanda_campaign_per_trade_risk_pct_lens")
+    )
+    if start_balance is None or start_balance <= 0 or max_loss_jpy is None or max_loss_jpy <= 0:
+        return None
+    if lens_pct is None or lens_pct <= 0:
+        return None
+
+    current_risk_pct = (max_loss_jpy / start_balance) * 100.0
+    risk_scale = current_risk_pct / lens_pct
+    aggregate_return = _optional_float(
+        metadata.get("positive_rotation_oanda_campaign_estimated_return_pct_per_active_day")
+    )
+    matching_return = _optional_float(
+        metadata.get(
+            "positive_rotation_oanda_campaign_matching_vehicle_estimated_return_pct_per_active_day"
+        )
+    )
+    weighted_return = _optional_float(
+        metadata.get("positive_rotation_oanda_campaign_weighted_return_pct_per_trade_at_risk_lens")
+    )
+    adjusted_aggregate = aggregate_return * risk_scale if aggregate_return is not None else None
+    adjusted_matching = matching_return * risk_scale if matching_return is not None else None
+    adjusted_weighted = weighted_return * risk_scale if weighted_return is not None else None
+    remaining_minimum_jpy = max(0.0, _optional_float(payload.get("remaining_minimum_jpy")) or 0.0)
+    remaining_target_jpy = max(0.0, _optional_float(payload.get("remaining_target_jpy")) or 0.0)
+    remaining_minimum_pct = (remaining_minimum_jpy / start_balance) * 100.0
+    remaining_target_pct = (remaining_target_jpy / start_balance) * 100.0
+    minimum_reachable = (
+        adjusted_aggregate is not None
+        and adjusted_aggregate >= remaining_minimum_pct
+    ) if remaining_minimum_pct > 0 else True
+    target_reachable = (
+        adjusted_aggregate is not None
+        and adjusted_aggregate >= remaining_target_pct
+    ) if remaining_target_pct > 0 else True
+    required_minimum_trades = (
+        math.ceil(remaining_minimum_pct / adjusted_weighted)
+        if remaining_minimum_pct > 0 and adjusted_weighted is not None and adjusted_weighted > 0
+        else 0
+    )
+    required_target_trades = (
+        math.ceil(remaining_target_pct / adjusted_weighted)
+        if remaining_target_pct > 0 and adjusted_weighted is not None and adjusted_weighted > 0
+        else 0
+    )
+    metrics: dict[str, float | bool | int | None] = {
+        "current_risk_pct": round(current_risk_pct, 6),
+        "risk_scale": round(risk_scale, 6),
+        "estimated_return_pct_per_active_day": (
+            round(adjusted_aggregate, 6) if adjusted_aggregate is not None else None
+        ),
+        "matching_vehicle_estimated_return_pct_per_active_day": (
+            round(adjusted_matching, 6) if adjusted_matching is not None else None
+        ),
+        "weighted_return_pct_per_trade": (
+            round(adjusted_weighted, 6) if adjusted_weighted is not None else None
+        ),
+        "remaining_minimum_pct": round(remaining_minimum_pct, 6),
+        "remaining_target_pct": round(remaining_target_pct, 6),
+        "minimum_floor_reachable": bool(minimum_reachable),
+        "target_reachable": bool(target_reachable),
+        "required_minimum_trades": required_minimum_trades,
+        "required_target_trades": required_target_trades,
+    }
+    metadata.update(
+        {
+            "positive_rotation_oanda_campaign_current_risk_pct": metrics["current_risk_pct"],
+            "positive_rotation_oanda_campaign_current_risk_scale": metrics["risk_scale"],
+            "positive_rotation_oanda_campaign_current_risk_estimated_return_pct_per_active_day": (
+                metrics["estimated_return_pct_per_active_day"]
+            ),
+            "positive_rotation_oanda_campaign_current_risk_matching_vehicle_estimated_return_pct_per_active_day": (
+                metrics["matching_vehicle_estimated_return_pct_per_active_day"]
+            ),
+            "positive_rotation_oanda_campaign_current_risk_weighted_return_pct_per_trade": (
+                metrics["weighted_return_pct_per_trade"]
+            ),
+            "positive_rotation_oanda_campaign_remaining_minimum_pct": (
+                metrics["remaining_minimum_pct"]
+            ),
+            "positive_rotation_oanda_campaign_remaining_target_pct": (
+                metrics["remaining_target_pct"]
+            ),
+            "positive_rotation_oanda_campaign_current_risk_minimum_floor_reachable": (
+                metrics["minimum_floor_reachable"]
+            ),
+            "positive_rotation_oanda_campaign_current_risk_target_reachable": (
+                metrics["target_reachable"]
+            ),
+            "positive_rotation_oanda_campaign_current_risk_required_minimum_trades": (
+                required_minimum_trades
+            ),
+            "positive_rotation_oanda_campaign_current_risk_required_target_trades": (
+                required_target_trades
+            ),
+        }
+    )
+    return metrics
+
+
 def _oanda_campaign_firepower_harvest_rotation_allowed(
     intent: OrderIntent,
     *,
@@ -7328,6 +7455,68 @@ def _positive_rotation_daily_firepower_issue(
     except (OSError, json.JSONDecodeError, ValueError):
         return None
     if not isinstance(payload, dict):
+        return None
+    if (
+        str(metadata.get("positive_rotation_mode") or "").upper()
+        == POSITIVE_ROTATION_OANDA_CAMPAIGN_FIREPOWER_MODE
+    ):
+        current_firepower = _annotate_oanda_campaign_current_risk_firepower(
+            metadata,
+            data_root=data_root,
+        )
+        if current_firepower is None:
+            return None
+        if current_firepower.get("minimum_floor_reachable") is not True:
+            current_risk_pct = _optional_float(current_firepower.get("current_risk_pct"))
+            estimated_return_pct = _optional_float(
+                current_firepower.get("estimated_return_pct_per_active_day")
+            )
+            remaining_minimum_pct = _optional_float(
+                current_firepower.get("remaining_minimum_pct")
+            )
+            current_risk_label = (
+                f"{current_risk_pct:.4f}%" if current_risk_pct is not None else "unknown"
+            )
+            estimated_return_label = (
+                f"{estimated_return_pct:.4f}%"
+                if estimated_return_pct is not None
+                else "unknown"
+            )
+            remaining_minimum_label = (
+                f"{remaining_minimum_pct:.4f}%"
+                if remaining_minimum_pct is not None
+                else "unknown"
+            )
+            metadata["positive_rotation_minimum_floor_reachable"] = False
+            metadata["positive_rotation_minimum_floor_reach_basis"] = (
+                "OANDA_CAMPAIGN_FIREPOWER_CURRENT_RISK_UNDERPOWERED"
+            )
+            metadata["positive_rotation_target_reachable"] = False
+            metadata["positive_rotation_target_reach_basis"] = (
+                "OANDA_CAMPAIGN_FIREPOWER_CURRENT_RISK_UNDERPOWERED"
+            )
+            return {
+                "code": POSITIVE_ROTATION_FIREPOWER_BLOCK_CODE,
+                "message": (
+                    "OANDA campaign firepower matches the current HARVEST vehicle, "
+                    "but after scaling the 1% audit lens to this intent's current "
+                    f"risk ({current_risk_label} of start balance), estimated "
+                    f"active-day return is only {estimated_return_label} against "
+                    f"today's remaining minimum {remaining_minimum_label}; "
+                    "keep it as a bounded repair lane, but do not claim the daily "
+                    "5% floor is solved at this size."
+                ),
+                "severity": "WARN",
+            }
+        metadata["positive_rotation_minimum_floor_reachable"] = True
+        metadata["positive_rotation_minimum_floor_reach_basis"] = (
+            "OANDA_CAMPAIGN_FIREPOWER_CURRENT_RISK"
+        )
+        if current_firepower.get("target_reachable") is True:
+            metadata["positive_rotation_target_reachable"] = True
+            metadata["positive_rotation_target_reach_basis"] = (
+                "OANDA_CAMPAIGN_FIREPOWER_CURRENT_RISK"
+            )
         return None
     pessimistic_expectancy = _optional_float(
         metadata.get("positive_rotation_pessimistic_expectancy_jpy")
@@ -7468,24 +7657,68 @@ def _capture_positive_rotation_live_issue(
             "severity": "WARN",
         }
     if _oanda_campaign_firepower_harvest_rotation_allowed(intent, data_root=data_root):
+        current_firepower = _annotate_oanda_campaign_current_risk_firepower(
+            metadata,
+            data_root=data_root,
+        )
         metadata["positive_rotation_live_ready"] = True
         metadata["positive_rotation_mode"] = POSITIVE_ROTATION_OANDA_CAMPAIGN_FIREPOWER_MODE
-        metadata["positive_rotation_basis"] = (
-            "capture_economics is negative overall and local broker-TP scope is "
-            "missing, but this non-market attached-TP HARVEST receipt matches an "
-            "OANDA campaign_firepower high-precision vehicle whose aggregate "
-            "firepower reaches the daily 5% floor. Historical firepower remains "
-            "audit-only; all current forecast, spread, strategy, risk, broker-truth, "
-            "and gateway gates still apply."
-        )
-        metadata["positive_rotation_minimum_floor_reachable"] = True
-        metadata["positive_rotation_minimum_floor_reach_basis"] = (
-            "OANDA_CAMPAIGN_FIREPOWER_MATCHING_VEHICLE"
-        )
-        if metadata.get("positive_rotation_oanda_campaign_target_reachable") is True:
+        if current_firepower is None:
+            metadata["positive_rotation_basis"] = (
+                "capture_economics is negative overall and local broker-TP scope is "
+                "missing, but this non-market attached-TP HARVEST receipt matches an "
+                "OANDA campaign_firepower high-precision vehicle whose aggregate "
+                "firepower reaches the daily 5% floor under the audit risk lens. "
+                "Historical firepower remains audit-only; all current forecast, "
+                "spread, strategy, risk, broker-truth, and gateway gates still apply."
+            )
+            metadata["positive_rotation_minimum_floor_reachable"] = True
+            metadata["positive_rotation_minimum_floor_reach_basis"] = (
+                "OANDA_CAMPAIGN_FIREPOWER_MATCHING_VEHICLE"
+            )
+        elif current_firepower.get("minimum_floor_reachable") is True:
+            metadata["positive_rotation_basis"] = (
+                "capture_economics is negative overall and local broker-TP scope is "
+                "missing, but this non-market attached-TP HARVEST receipt matches an "
+                "OANDA campaign_firepower high-precision vehicle and the firepower "
+                "still covers today's remaining 5% floor after scaling from the "
+                "audit risk lens to the current intent risk. Historical firepower "
+                "remains audit-only; all current forecast, spread, strategy, risk, "
+                "broker-truth, and gateway gates still apply."
+            )
+            metadata["positive_rotation_minimum_floor_reachable"] = True
+            metadata["positive_rotation_minimum_floor_reach_basis"] = (
+                "OANDA_CAMPAIGN_FIREPOWER_CURRENT_RISK"
+            )
+        else:
+            metadata["positive_rotation_basis"] = (
+                "capture_economics is negative overall and local broker-TP scope is "
+                "missing, but this non-market attached-TP HARVEST receipt matches an "
+                "OANDA campaign_firepower high-precision vehicle. After scaling from "
+                "the audit risk lens to the current intent risk, the active-day "
+                "firepower is under today's remaining 5% floor, so this is a bounded "
+                "repair lane rather than proof that the daily target is solved."
+            )
+            metadata["positive_rotation_minimum_floor_reachable"] = False
+            metadata["positive_rotation_minimum_floor_reach_basis"] = (
+                "OANDA_CAMPAIGN_FIREPOWER_CURRENT_RISK_UNDERPOWERED"
+            )
+            metadata["positive_rotation_target_reachable"] = False
+            metadata["positive_rotation_target_reach_basis"] = (
+                "OANDA_CAMPAIGN_FIREPOWER_CURRENT_RISK_UNDERPOWERED"
+            )
+        if (
+            current_firepower is None
+            and metadata.get("positive_rotation_oanda_campaign_target_reachable") is True
+        ):
             metadata["positive_rotation_target_reachable"] = True
             metadata["positive_rotation_target_reach_basis"] = (
                 "OANDA_CAMPAIGN_FIREPOWER_MATCHING_VEHICLE"
+            )
+        elif current_firepower is not None and current_firepower.get("target_reachable") is True:
+            metadata["positive_rotation_target_reachable"] = True
+            metadata["positive_rotation_target_reach_basis"] = (
+                "OANDA_CAMPAIGN_FIREPOWER_CURRENT_RISK"
             )
         return None
     return {

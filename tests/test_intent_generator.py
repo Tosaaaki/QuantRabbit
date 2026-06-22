@@ -8813,6 +8813,86 @@ class IntentGeneratorTest(unittest.TestCase):
             self.assertIn(POSITIVE_ROTATION_LIVE_BLOCK_CODE, market_issue_codes)
             self.assertIn("SELF_IMPROVEMENT_P0_PROFITABILITY_DISCIPLINE", market_issue_codes)
 
+    def test_oanda_firepower_seed_scales_daily_floor_to_current_risk(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_profitability_p0_and_negative_capture(root)
+            _write_oanda_campaign_firepower_report(
+                root,
+                pair="EUR_USD",
+                side="LONG",
+                exit_shape="tp2_sl1",
+            )
+            (root / "daily_target_state.json").write_text(
+                json.dumps(
+                    {
+                        "status": "PURSUE_TARGET",
+                        "start_balance_jpy": 173958.1237,
+                        "remaining_minimum_jpy": 10655.9438,
+                        "remaining_target_jpy": 19353.8438,
+                        "target_trades_per_day": 30,
+                    }
+                )
+            )
+            output = root / "intents.json"
+
+            summary = IntentGenerator(
+                campaign_plan=_stamp_campaign_generated_at(
+                    _oanda_seed_range_campaign(root, side="LONG")
+                ),
+                strategy_profile=_strategy(root, status="CANDIDATE"),
+                output_path=output,
+                report_path=root / "intents.md",
+                pair_charts_path=_pair_charts(root),
+                data_root=root,
+                max_loss_jpy=417.4,
+            ).run(snapshot_path=_snapshot(root))
+
+            payload = json.loads(output.read_text())
+            result = next(
+                item for item in payload["results"]
+                if item["lane_id"] == "range_trader:EUR_USD:LONG:RANGE_ROTATION"
+            )
+            metadata = result["intent"]["metadata"]
+            issue_codes = {issue["code"] for issue in result["risk_issues"]}
+            firepower_issue = next(
+                issue
+                for issue in result["risk_issues"]
+                if issue["code"] == POSITIVE_ROTATION_FIREPOWER_BLOCK_CODE
+            )
+
+            self.assertGreaterEqual(summary.live_ready, 1)
+            self.assertEqual(result["status"], "LIVE_READY")
+            self.assertEqual(
+                metadata["positive_rotation_mode"],
+                POSITIVE_ROTATION_OANDA_CAMPAIGN_FIREPOWER_MODE,
+            )
+            self.assertAlmostEqual(
+                metadata["positive_rotation_oanda_campaign_current_risk_pct"],
+                0.239943,
+                places=5,
+            )
+            self.assertFalse(
+                metadata["positive_rotation_oanda_campaign_current_risk_minimum_floor_reachable"]
+            )
+            self.assertLess(
+                metadata["positive_rotation_oanda_campaign_current_risk_estimated_return_pct_per_active_day"],
+                metadata["positive_rotation_oanda_campaign_remaining_minimum_pct"],
+            )
+            self.assertGreater(
+                metadata["positive_rotation_oanda_campaign_current_risk_required_minimum_trades"],
+                30,
+            )
+            self.assertFalse(metadata["positive_rotation_minimum_floor_reachable"])
+            self.assertEqual(
+                metadata["positive_rotation_minimum_floor_reach_basis"],
+                "OANDA_CAMPAIGN_FIREPOWER_CURRENT_RISK_UNDERPOWERED",
+            )
+            self.assertIn(POSITIVE_ROTATION_FIREPOWER_BLOCK_CODE, issue_codes)
+            self.assertEqual(firepower_issue["severity"], "WARN")
+            self.assertNotIn(POSITIVE_ROTATION_FIREPOWER_BLOCK_CODE, result["live_blocker_codes"])
+            self.assertNotIn("SELF_IMPROVEMENT_P0_PROFITABILITY_DISCIPLINE", issue_codes)
+
     def test_oanda_firepower_seed_repair_requires_matching_vehicle(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
