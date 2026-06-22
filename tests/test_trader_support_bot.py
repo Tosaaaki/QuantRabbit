@@ -60,7 +60,7 @@ class TraderSupportBotTest(unittest.TestCase):
             self.assertTrue(payload["profitability_acceptance"]["target_firepower"]["minimum_5pct_estimated_reachable"])
             self.assertEqual(payload["profitability_acceptance"]["target_firepower"]["best_bucket"], "high_precision")
             repair_plan = payload["profitability_acceptance"]["repair_plan"]
-            self.assertEqual(repair_plan["p0_count"], 2)
+            self.assertEqual(repair_plan["p0_count"], 3)
             self.assertIn("Rerunning profitability-acceptance alone", repair_plan["loop_breaker"])
             self.assertEqual(payload["metrics"]["acceptance_evidence_collection_count"], 1)
             self.assertEqual(
@@ -79,11 +79,19 @@ class TraderSupportBotTest(unittest.TestCase):
             )
             self.assertEqual(
                 [item["code"] for item in repair_plan["items"]],
-                ["RECENT_GATEWAY_LOSS_MARKET_CLOSE_LEAK", "LOSS_CLOSE_GATE_EVIDENCE_MISSING"],
+                [
+                    "RECENT_GATEWAY_LOSS_MARKET_CLOSE_LEAK",
+                    "LOSS_CLOSE_GATE_EVIDENCE_MISSING",
+                    "TP_PROGRESS_REPLAY_REPAIR_UNPROVED",
+                ],
             )
             self.assertEqual(
                 repair_plan["items"][1]["evidence_summary"]["example_trade_ids"],
                 ["472743"],
+            )
+            self.assertEqual(
+                repair_plan["items"][2]["evidence_summary"]["example_trade_ids"],
+                ["472792"],
             )
             repair = payload["entry_readiness"]["repair_frontier"][0]
             self.assertEqual(
@@ -110,6 +118,7 @@ class TraderSupportBotTest(unittest.TestCase):
             self.assertIn("VALIDATE_BIDASK_REPLAY_HISTORY", action_codes)
             self.assertIn("VERIFY_CLOSE_GATE_EVIDENCE", action_codes)
             self.assertIn("RECHECK_LOSS_CLOSE_LEAK_WINDOW", action_codes)
+            self.assertIn("VERIFY_TP_PROGRESS_REPLAY_REPAIR", action_codes)
             self.assertIn("WORK_GLOBAL_UNLOCK_FRONTIER", action_codes)
             self.assertIn("WORK_REPAIR_FRONTIER_REMAINING_BLOCKERS", action_codes)
             self.assertIn("WORK_TARGET_FIREPOWER_BLOCKERS", action_codes)
@@ -742,6 +751,29 @@ def _write_fixture(root: Path, *, now: datetime, blocked: bool) -> dict[str, Pat
                             "pair": "NZD_USD",
                             "side": "LONG",
                             "ts_utc": (now - timedelta(days=2)).isoformat(),
+                        }
+                    ],
+                },
+            },
+            {
+                "priority": "P0",
+                "code": "TP_PROGRESS_REPLAY_REPAIR_UNPROVED",
+                "message": "2 loss close(s) have OANDA candle replay evidence for TP-progress capture",
+                "next_action": "prove TP-progress capture repair clean",
+                "evidence": {
+                    "loss_closes_profit_capture_missed": 2,
+                    "counterfactual_profit_capture_delta_jpy": 1054.02,
+                    "counterfactual_profit_capture_jpy": 474.341,
+                    "clearance_condition": (
+                        "execution-timing-audit must report zero loss_closes_profit_capture_missed"
+                    ),
+                    "top_profit_capture_misses": [
+                        {
+                            "trade_id": "472792",
+                            "pair": "USD_JPY",
+                            "side": "SHORT",
+                            "counterfactual_jpy": 105.84,
+                            "counterfactual_delta_jpy": 446.04,
                         }
                     ],
                 },

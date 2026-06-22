@@ -946,6 +946,28 @@ def _acceptance_clearance_for_code(
                 "example_trade_ids": _example_trade_ids(evidence),
             },
         )
+    if code == "TP_PROGRESS_REPLAY_REPAIR_UNPROVED":
+        return (
+            "execution-timing-audit reports zero loss_closes_profit_capture_missed after the "
+            "TP-progress TAKE_PROFIT_MARKET path and position guardian have had a live window to "
+            "capture executable plus P/L before red closes",
+            "PYTHONPATH=src python3 -m quant_rabbit.cli execution-timing-audit --max-events 80",
+            {
+                "loss_closes_profit_capture_missed": evidence.get(
+                    "loss_closes_profit_capture_missed"
+                ),
+                "counterfactual_profit_capture_delta_jpy": _round_optional(
+                    evidence.get("counterfactual_profit_capture_delta_jpy"),
+                    3,
+                ),
+                "counterfactual_profit_capture_jpy": _round_optional(
+                    evidence.get("counterfactual_profit_capture_jpy"),
+                    3,
+                ),
+                "example_trade_ids": _example_trade_ids_from_top_misses(evidence),
+                "clearance_condition": evidence.get("clearance_condition"),
+            },
+        )
     if code in {"BIDASK_REPLAY_SUPPORT_NOT_DAILY_STABLE", "BIDASK_CONTRARIAN_EDGE_NOT_DAILY_STABLE"}:
         bidask = metrics.get("bidask_replay_rules") if isinstance(metrics.get("bidask_replay_rules"), dict) else {}
         bidask = bidask or evidence
@@ -1044,6 +1066,23 @@ def _example_trade_ids(evidence: dict[str, Any]) -> list[str]:
     examples = evidence.get("examples") if isinstance(evidence.get("examples"), list) else []
     trade_ids: list[str] = []
     for item in examples:
+        if not isinstance(item, dict):
+            continue
+        trade_id = item.get("trade_id")
+        if trade_id is None:
+            continue
+        trade_ids.append(str(trade_id))
+    return trade_ids[:8]
+
+
+def _example_trade_ids_from_top_misses(evidence: dict[str, Any]) -> list[str]:
+    top = (
+        evidence.get("top_profit_capture_misses")
+        if isinstance(evidence.get("top_profit_capture_misses"), list)
+        else []
+    )
+    trade_ids: list[str] = []
+    for item in top:
         if not isinstance(item, dict):
             continue
         trade_id = item.get("trade_id")
@@ -1322,6 +1361,18 @@ def _operator_actions(
                 "command": "PYTHONPATH=src python3 -m quant_rabbit.cli execution-timing-audit --max-events 80",
                 "requires_explicit_operator_approval": False,
                 "reason": "verify the 7-day loss-close leak window is shrinking before adding turnover",
+            }
+        )
+    if "TP_PROGRESS_REPLAY_REPAIR_UNPROVED" in repair_codes:
+        actions.append(
+            {
+                "code": "VERIFY_TP_PROGRESS_REPLAY_REPAIR",
+                "command": "PYTHONPATH=src python3 -m quant_rabbit.cli execution-timing-audit --max-events 80",
+                "requires_explicit_operator_approval": False,
+                "reason": (
+                    "prove the OANDA candle replay TP-progress miss has cleared before "
+                    "treating high-turnover profit capture as repaired"
+                ),
             }
         )
     if entry.get("global_unlock_frontier"):
