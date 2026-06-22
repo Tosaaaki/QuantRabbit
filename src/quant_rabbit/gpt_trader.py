@@ -262,6 +262,10 @@ def _decision_cites_profitability_p0(evidence_refs: tuple[str, ...]) -> bool:
     return False
 
 
+def _decision_cites_profitability_acceptance(evidence_refs: tuple[str, ...]) -> bool:
+    return any(str(ref or "").strip() == "profitability:acceptance" for ref in evidence_refs)
+
+
 def _profitability_p0_soft_close_blocker(packet: dict[str, Any]) -> dict[str, Any] | None:
     """Return the active profitability-P0 blocker that makes soft closes higher risk."""
 
@@ -277,6 +281,29 @@ def _profitability_p0_soft_close_blocker(packet: dict[str, Any]) -> dict[str, An
         if str(blocker.get("code") or "") == "PERSISTENT_PROFITABILITY_DISCIPLINE_BLOCKED":
             return blocker
     return None
+
+
+def _profitability_acceptance_loss_close_blockers(packet: dict[str, Any]) -> tuple[dict[str, Any], ...]:
+    """Return active acceptance P0s proving loss-side market-close leakage."""
+
+    acceptance = packet.get("profitability_acceptance")
+    if not isinstance(acceptance, dict):
+        return ()
+    findings = acceptance.get("p0_findings")
+    if not isinstance(findings, list):
+        return ()
+    leak_codes = {
+        "RECENT_GATEWAY_LOSS_MARKET_CLOSE_LEAK",
+        "MARKET_CLOSE_LEAK_DOMINATES_TP_EDGE",
+        "UNVERIFIED_LOSS_SIDE_MARKET_CLOSE_RECONCILED",
+    }
+    blockers: list[dict[str, Any]] = []
+    for finding in findings:
+        if not isinstance(finding, dict):
+            continue
+        if str(finding.get("code") or "") in leak_codes:
+            blockers.append(finding)
+    return tuple(blockers)
 
 
 def _loss_close_timing_audit_required_trades(
@@ -1320,6 +1347,7 @@ from quant_rabbit.paths import (
     DEFAULT_PAIR_CHARTS,
     DEFAULT_PREDICTIVE_LIMIT_ORDERS,
     DEFAULT_PROJECTION_LEDGER,
+    DEFAULT_PROFITABILITY_ACCEPTANCE,
     DEFAULT_SELF_IMPROVEMENT_AUDIT,
     DEFAULT_STRATEGY_PROFILE,
     DEFAULT_VERIFICATION_LEDGER,
@@ -1551,6 +1579,7 @@ class GPTTraderBrain:
         option_skew_path: Path = DEFAULT_OPTION_SKEW,
         attack_advice_path: Path = DEFAULT_AI_ATTACK_ADVICE,
         capture_economics_path: Path = DEFAULT_CAPTURE_ECONOMICS,
+        profitability_acceptance_path: Path = DEFAULT_PROFITABILITY_ACCEPTANCE,
         execution_timing_audit_path: Path = DEFAULT_EXECUTION_TIMING_AUDIT,
         coverage_optimization_path: Path = DEFAULT_COVERAGE_OPTIMIZATION,
         learning_audit_path: Path = DEFAULT_LEARNING_AUDIT,
@@ -1586,6 +1615,7 @@ class GPTTraderBrain:
         self.option_skew_path = option_skew_path
         self.attack_advice_path = attack_advice_path
         self.capture_economics_path = capture_economics_path
+        self.profitability_acceptance_path = profitability_acceptance_path
         self.execution_timing_audit_path = execution_timing_audit_path
         self.coverage_optimization_path = coverage_optimization_path
         self.learning_audit_path = learning_audit_path
@@ -1644,6 +1674,7 @@ class GPTTraderBrain:
         lanes = _lane_packet(intents, campaign, strategy, story, max_lanes=self.max_lanes)
         attack_advice = _load_optional_json(self.attack_advice_path)
         capture_economics = _load_optional_json(self.capture_economics_path)
+        profitability_acceptance = _load_optional_json(self.profitability_acceptance_path)
         execution_timing_audit = _load_optional_json(self.execution_timing_audit_path)
         coverage_optimization = _load_optional_json(self.coverage_optimization_path)
         learning_audit = _load_optional_json(self.learning_audit_path)
@@ -1665,6 +1696,7 @@ class GPTTraderBrain:
             lanes=lanes,
             attack_advice=attack_advice,
             capture_economics=capture_economics,
+            profitability_acceptance=profitability_acceptance,
             execution_timing_audit=execution_timing_audit,
             coverage_optimization=coverage_optimization,
             learning_audit=learning_audit,
@@ -1742,6 +1774,7 @@ class GPTTraderBrain:
             "lanes": lanes,
             "ai_attack_advice": attack_packet,
             "capture_economics": _capture_economics_packet(capture_economics),
+            "profitability_acceptance": _profitability_acceptance_packet(profitability_acceptance),
             "execution_timing_audit": _execution_timing_audit_packet(execution_timing_audit),
             "coverage_optimization": _coverage_optimization_packet(coverage_optimization),
             "learning_audit": learning_packet,
@@ -2544,10 +2577,13 @@ class DecisionVerifier:
         same_direction_supported: list[str] = []
         needs_explicit_gate_b: list[str] = []
         needs_profitability_p0_context: list[str] = []
+        needs_profitability_acceptance_context: list[str] = []
         needs_hard_timing_gate: list[str] = []
         profitability_p0_blocker = _profitability_p0_soft_close_blocker(self.packet)
+        acceptance_loss_close_blockers = _profitability_acceptance_loss_close_blockers(self.packet)
         premature_timing_guard = _premature_loss_close_timing_guard(self.packet)
         cites_profitability_p0 = _decision_cites_profitability_p0(decision.evidence_refs)
+        cites_profitability_acceptance = _decision_cites_profitability_acceptance(decision.evidence_refs)
         cites_timing_evidence = _decision_cites_close_timing_evidence(decision.evidence_refs)
         timing_required_ids = {str(item).split(" ", 1)[0] for item in timing_required}
         explicit_operator_gate_b = _operator_close_gate_authorized()
@@ -2601,6 +2637,12 @@ class DecisionVerifier:
             ):
                 needs_profitability_p0_context.append(f"{tid} ({pair} {side})")
                 evidence["profitability_p0_context_required"] = True
+            if (
+                acceptance_loss_close_blockers
+                and loss_side_close
+                and not cites_profitability_acceptance
+            ):
+                needs_profitability_acceptance_context.append(f"{tid} ({pair} {side})")
 
             if not standing_authorized:
                 sidecar_conflict = _same_direction_hold_support_conflict(
@@ -2686,6 +2728,27 @@ class DecisionVerifier:
                     "this loss-side market close repairs rather than repeats the MARKET_ORDER_TRADE_CLOSE leak. "
                     "Missing self-improvement P0 context for: "
                     + ", ".join(needs_profitability_p0_context),
+                )
+            )
+
+        if needs_profitability_acceptance_context:
+            codes = sorted(
+                {
+                    str(item.get("code") or "")
+                    for item in acceptance_loss_close_blockers
+                    if str(item.get("code") or "")
+                }
+            )
+            issues.append(
+                VerificationIssue(
+                    "CLOSE_PROFITABILITY_ACCEPTANCE_P0_REQUIRED",
+                    "CLOSE rejected: profitability_acceptance has active P0 loss-side "
+                    "market-close leakage"
+                    + (f" ({', '.join(codes)})" if codes else "")
+                    + ". An underwater CLOSE must cite profitability:acceptance and explain why "
+                    "the close repairs the recent MARKET_ORDER_TRADE_CLOSE leak instead of adding "
+                    "another red gateway close. Missing profitability acceptance context for: "
+                    + ", ".join(needs_profitability_acceptance_context),
                 )
             )
 
@@ -3422,6 +3485,7 @@ def _allowed_refs(
     lanes: list[dict[str, Any]],
     attack_advice: dict[str, Any] | None,
     capture_economics: dict[str, Any] | None,
+    profitability_acceptance: dict[str, Any] | None,
     execution_timing_audit: dict[str, Any] | None,
     coverage_optimization: dict[str, Any] | None,
     learning_audit: dict[str, Any] | None,
@@ -3562,6 +3626,14 @@ def _allowed_refs(
             ref = str(item.get("evidence_ref") or "").strip()
             if ref:
                 refs.append(ref)
+    if profitability_acceptance:
+        refs.append("profitability:acceptance")
+        for finding in profitability_acceptance.get("findings", []) or []:
+            if not isinstance(finding, dict):
+                continue
+            code = str(finding.get("code") or "").strip()
+            if code:
+                refs.append(f"profitability:acceptance:{code}")
     if execution_timing_audit:
         refs.extend(
             [
@@ -3875,6 +3947,52 @@ def _capture_economics_packet(payload: dict[str, Any] | None) -> dict[str, Any]:
             "items": segment_repair_items[:8],
         },
         "action_items": [str(item) for item in (payload.get("action_items") or [])[:6] if str(item).strip()],
+    }
+
+
+def _profitability_acceptance_packet(payload: dict[str, Any] | None) -> dict[str, Any]:
+    if not payload:
+        return {
+            "evidence_ref": "profitability:acceptance",
+            "status": "missing",
+            "p0_findings": [],
+        }
+    p0_findings: list[dict[str, Any]] = []
+    for finding in payload.get("findings", []) or []:
+        if not isinstance(finding, dict):
+            continue
+        if str(finding.get("priority") or "").upper() != "P0":
+            continue
+        code = str(finding.get("code") or "").strip()
+        p0_findings.append(
+            {
+                "evidence_ref": f"profitability:acceptance:{code}",
+                **_small_dict(
+                    finding,
+                    (
+                        "code",
+                        "message",
+                        "next_action",
+                    ),
+                ),
+                "evidence": _small_dict(
+                    finding.get("evidence"),
+                    (
+                        "recent_loss_closes",
+                        "recent_loss_net_jpy",
+                        "latest_loss_close_ts_utc",
+                        "examples",
+                        "segments",
+                    ),
+                ),
+            }
+        )
+    return {
+        "evidence_ref": "profitability:acceptance",
+        "generated_at_utc": payload.get("generated_at_utc"),
+        "status": payload.get("status"),
+        "blockers": list(payload.get("blockers", []) or [])[:8],
+        "p0_findings": p0_findings,
     }
 
 

@@ -234,6 +234,44 @@ class ExecutionLedgerTest(unittest.TestCase):
                             "selected_lane_id": None,
                             "close_trade_ids": ["T-100", "T-200"],
                         },
+                        "close_gate_evidence": [
+                            {
+                                "trade_id": "T-100",
+                                "pair": "EUR_USD",
+                                "side": "LONG",
+                                "unrealized_pl_jpy": -125.0,
+                                "loss_side_close": True,
+                                "gate_a_invalidated": True,
+                                "gate_a_reason": "fresh position_thesis REVIEW_CLOSE",
+                                "gate_b_standing_authorized": True,
+                                "gate_b_explicit_operator_authorized": False,
+                                "explicit_gate_b_required": False,
+                                "profitability_p0_context_required": True,
+                                "profitability_p0_context_cited": True,
+                                "timing_audit_required": True,
+                                "timing_evidence_cited": True,
+                                "hard_timing_gate_required": False,
+                                "same_direction_support_conflict": None,
+                            },
+                            {
+                                "trade_id": "T-200",
+                                "pair": "GBP_USD",
+                                "side": "SHORT",
+                                "unrealized_pl_jpy": -80.0,
+                                "loss_side_close": True,
+                                "gate_a_invalidated": False,
+                                "gate_a_reason": "no reproducible Gate A invalidation evidence",
+                                "gate_b_standing_authorized": False,
+                                "gate_b_explicit_operator_authorized": False,
+                                "explicit_gate_b_required": True,
+                                "profitability_p0_context_required": False,
+                                "profitability_p0_context_cited": False,
+                                "timing_audit_required": False,
+                                "timing_evidence_cited": False,
+                                "hard_timing_gate_required": False,
+                                "same_direction_support_conflict": None,
+                            },
+                        ],
                         "verification_issues": [],
                     }
                 )
@@ -243,12 +281,21 @@ class ExecutionLedgerTest(unittest.TestCase):
             summary = ledger.record_gateway_receipt(kind="gpt_decision", receipt_path=receipt)
 
             self.assertEqual(summary.events_inserted, 2)
+            self.assertEqual(summary.verification_observations_inserted, 2)
             with sqlite3.connect(root / "ledger.db") as conn:
                 rows = conn.execute(
                     """
                     SELECT event_type, trade_id, exit_reason
                     FROM execution_events
                     ORDER BY trade_id
+                    """
+                ).fetchall()
+                close_gate_rows = conn.execute(
+                    """
+                    SELECT subject_id, status, severity, evidence_json
+                    FROM verification_observations
+                    WHERE check_name='close_gate_evidence'
+                    ORDER BY subject_id
                     """
                 ).fetchall()
             self.assertEqual(
@@ -258,6 +305,9 @@ class ExecutionLedgerTest(unittest.TestCase):
                     ("GATEWAY_GPT_CLOSE_ACCEPTED", "T-200", "GPT_CLOSE_ACCEPTED"),
                 ],
             )
+            self.assertEqual(close_gate_rows[0][0:3], ("T-100", "PASS", "INFO"))
+            self.assertEqual(close_gate_rows[1][0:3], ("T-200", "BLOCK", "BLOCK"))
+            self.assertEqual(json.loads(close_gate_rows[0][3])["gate_a_reason"], "fresh position_thesis REVIEW_CLOSE")
 
     def test_sync_reconciles_accepted_gpt_close_to_broker_trade_close(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

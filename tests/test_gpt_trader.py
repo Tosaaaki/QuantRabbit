@@ -3339,6 +3339,7 @@ def _brain(root: Path, files: dict[str, Path], decision: dict, *, max_lanes: int
         option_skew_path=files["option_skew"],
         attack_advice_path=files["attack_advice"],
         capture_economics_path=files["capture_economics"],
+        profitability_acceptance_path=files["profitability_acceptance"],
         execution_timing_audit_path=files["execution_timing_audit"],
         coverage_optimization_path=files["coverage_optimization"],
         learning_audit_path=files["learning_audit"],
@@ -3400,6 +3401,7 @@ def _fixtures(root: Path, *, positions: list[dict] | None = None, orders: list[d
         "option_skew": root / "option_skew.json",
         "attack_advice": root / "attack_advice.json",
         "capture_economics": root / "capture_economics.json",
+        "profitability_acceptance": root / "profitability_acceptance.json",
         "execution_timing_audit": root / "execution_timing_audit.json",
         "coverage_optimization": root / "coverage_optimization.json",
         "learning_audit": root / "learning_audit.json",
@@ -3709,6 +3711,7 @@ def _fixtures(root: Path, *, positions: list[dict] | None = None, orders: list[d
     )
     files["attack_advice"].write_text(json.dumps({}))
     files["capture_economics"].write_text(json.dumps({}))
+    files["profitability_acceptance"].write_text(json.dumps({}))
     files["execution_timing_audit"].write_text(json.dumps({}))
     files["coverage_optimization"].write_text(json.dumps({"status": "OK"}))
     files["learning_audit"].write_text(json.dumps({}))
@@ -3976,6 +3979,38 @@ def _self_improvement_profitability_p0() -> dict:
                             }
                         ],
                     },
+                },
+            }
+        ],
+    }
+
+
+def _profitability_acceptance_close_leak_p0() -> dict:
+    return {
+        "generated_at_utc": datetime.now(timezone.utc).isoformat(),
+        "status": "BLOCKED",
+        "blockers": [
+            "RECENT_GATEWAY_LOSS_MARKET_CLOSE_LEAK: 7 loss-side gateway MARKET_ORDER_TRADE_CLOSE event(s) remain inside the 7-day acceptance window"
+        ],
+        "findings": [
+            {
+                "priority": "P0",
+                "code": "RECENT_GATEWAY_LOSS_MARKET_CLOSE_LEAK",
+                "message": "7 loss-side gateway MARKET_ORDER_TRADE_CLOSE event(s) remain inside the 7-day acceptance window",
+                "next_action": "Keep profitability acceptance red until a full recent window shows no new loss-side gateway market-close leakage.",
+                "evidence": {
+                    "recent_loss_closes": 7,
+                    "recent_loss_net_jpy": -4567.1974,
+                    "latest_loss_close_ts_utc": "2026-06-19T14:22:08.785628+00:00",
+                    "examples": [
+                        {
+                            "trade_id": "472743",
+                            "pair": "NZD_USD",
+                            "side": "LONG",
+                            "close_provenance": "GATEWAY_TRADE_CLOSE_SENT",
+                            "realized_pl_jpy": -1380.8008,
+                        }
+                    ],
                 },
             }
         ],
@@ -5594,6 +5629,45 @@ class CloseDisciplineTest(unittest.TestCase):
                 payload = json.loads((root / "gpt_decision.json").read_text())
                 codes = {issue["code"] for issue in payload["verification_issues"]}
                 self.assertNotIn("CLOSE_PROFITABILITY_P0_CONTEXT_REQUIRED", codes)
+        finally:
+            if prior is None:
+                _os.environ.pop("QR_OPERATOR_CLOSE_OVERRIDE", None)
+            else:
+                _os.environ["QR_OPERATOR_CLOSE_OVERRIDE"] = prior
+
+    def test_loss_close_under_profitability_acceptance_p0_must_cite_acceptance_context(self) -> None:
+        # Regression for 2026-06-19 NZD_USD 472743: the close receipt cited
+        # timing/capture context but did not account for the red profitability
+        # acceptance gate showing recent loss-side gateway close leakage.
+        prior = _os.environ.get("QR_OPERATOR_CLOSE_OVERRIDE")
+        _os.environ["QR_OPERATOR_CLOSE_OVERRIDE"] = "1"
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                files = _close_fixtures(root, position_side="LONG", m15_dir="DOWN", h4_dir="DOWN")
+                files["self_improvement_audit"].write_text(json.dumps(_self_improvement_profitability_p0()))
+                files["profitability_acceptance"].write_text(json.dumps(_profitability_acceptance_close_leak_p0()))
+                _write_fresh_position_thesis_close_recommendation(root, files, side="LONG")
+                decision = _close_decision(trade_ids=["555"])
+                decision["evidence_refs"].extend(
+                    [
+                        "position:thesis:555",
+                        "self_improvement:finding:PERSISTENT_PROFITABILITY_DISCIPLINE_BLOCKED",
+                        "timing:audit",
+                    ]
+                )
+                brain = _brain(root, files, decision)
+
+                summary = brain.run(snapshot_path=files["snapshot"])
+
+                self.assertEqual(summary.status, "REJECTED")
+                payload = json.loads((root / "gpt_decision.json").read_text())
+                codes = {issue["code"] for issue in payload["verification_issues"]}
+                self.assertIn("CLOSE_PROFITABILITY_ACCEPTANCE_P0_REQUIRED", codes)
+                self.assertIn(
+                    "profitability:acceptance",
+                    payload["input_packet"]["allowed_evidence_refs"],
+                )
         finally:
             if prior is None:
                 _os.environ.pop("QR_OPERATOR_CLOSE_OVERRIDE", None)

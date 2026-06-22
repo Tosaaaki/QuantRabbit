@@ -3816,7 +3816,7 @@ class AutoTradeCycleTest(unittest.TestCase):
                 )
 
                 close_decision = _gpt_close_decision(["close-me"])
-                close_decision["evidence_refs"].append("timing:audit")
+                close_decision["evidence_refs"].extend(["timing:audit", "profitability:acceptance"])
                 summary = AutoTradeCycle(
                     client=client,
                     snapshot_path=root / "snapshot.json",

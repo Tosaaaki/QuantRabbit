@@ -36,6 +36,7 @@ class ExecutionLedgerSummary:
     transactions_inserted: int = 0
     events_inserted: int = 0
     gateway_receipts_inserted: int = 0
+    verification_observations_inserted: int = 0
     reconciled_gateway_events_inserted: int = 0
     last_transaction_id: str | None = None
     baseline_transaction_id: str | None = None
@@ -146,6 +147,13 @@ class ExecutionLedger:
             for event in _events_from_gateway_receipt(kind=kind, payload=payload, now=now):
                 if _insert_event(conn, event):
                     inserted_events += 1
+            inserted_observations = _insert_gateway_close_gate_observations(
+                conn,
+                kind=kind,
+                path=receipt_path,
+                payload=payload,
+                now=now,
+            )
             reconciled_events = _reconcile_gateway_trade_close_broker_accepts(conn, now=now)
         summary = ExecutionLedgerSummary(
             db_path=self.db_path,
@@ -153,6 +161,7 @@ class ExecutionLedger:
             status="RECORDED",
             gateway_receipts_inserted=1 if receipt_inserted else 0,
             events_inserted=inserted_events,
+            verification_observations_inserted=inserted_observations,
             reconciled_gateway_events_inserted=reconciled_events,
         )
         self._write_report(summary)
@@ -223,6 +232,27 @@ class ExecutionLedger:
                 CREATE INDEX IF NOT EXISTS idx_execution_events_trade_id ON execution_events(trade_id);
                 CREATE INDEX IF NOT EXISTS idx_execution_events_order_id ON execution_events(order_id);
                 CREATE INDEX IF NOT EXISTS idx_execution_events_type ON execution_events(event_type);
+                CREATE TABLE IF NOT EXISTS verification_observations (
+                    observation_uid TEXT PRIMARY KEY,
+                    ts_utc TEXT NOT NULL,
+                    source TEXT NOT NULL,
+                    source_path TEXT,
+                    subject_type TEXT NOT NULL,
+                    subject_id TEXT,
+                    check_name TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    severity TEXT,
+                    metric_value REAL,
+                    metric_unit TEXT,
+                    evidence_json TEXT NOT NULL,
+                    inserted_at_utc TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_verification_observations_ts
+                    ON verification_observations(ts_utc);
+                CREATE INDEX IF NOT EXISTS idx_verification_observations_status
+                    ON verification_observations(status, severity);
+                CREATE INDEX IF NOT EXISTS idx_verification_observations_subject
+                    ON verification_observations(subject_type, subject_id);
                 """
             )
             _backfill_legacy_lane_ids(conn)
@@ -668,6 +698,89 @@ def _insert_event(conn: sqlite3.Connection, event: dict[str, Any]) -> bool:
         event,
     )
     return cur.rowcount > 0
+
+
+def _insert_gateway_close_gate_observations(
+    conn: sqlite3.Connection,
+    *,
+    kind: str,
+    path: Path,
+    payload: dict[str, Any],
+    now: str,
+) -> int:
+    if kind != "gpt_decision":
+        return 0
+    close_gate_evidence = (
+        payload.get("close_gate_evidence")
+        if isinstance(payload.get("close_gate_evidence"), list)
+        else []
+    )
+    if not close_gate_evidence:
+        return 0
+    ts = str(payload.get("generated_at_utc") or now)
+    inserted = 0
+    for index, evidence in enumerate(close_gate_evidence):
+        if not isinstance(evidence, dict):
+            continue
+        trade_id = str(evidence.get("trade_id") or index)
+        status = _close_gate_evidence_status(evidence)
+        observation = {
+            "observation_uid": f"execution_ledger:gpt_decision:{ts}:close_gate_evidence:{trade_id}:{index}",
+            "ts_utc": ts,
+            "source": "gpt_decision",
+            "source_path": str(path),
+            "subject_type": "close_gate",
+            "subject_id": trade_id,
+            "check_name": "close_gate_evidence",
+            "status": status,
+            "severity": "INFO" if status == "PASS" else "BLOCK",
+            "metric_value": None,
+            "metric_unit": None,
+            "evidence_json": _json(evidence),
+            "inserted_at_utc": now,
+        }
+        cur = conn.execute(
+            """
+            INSERT OR IGNORE INTO verification_observations(
+                observation_uid, ts_utc, source, source_path, subject_type, subject_id,
+                check_name, status, severity, metric_value, metric_unit, evidence_json,
+                inserted_at_utc
+            )
+            VALUES (
+                :observation_uid, :ts_utc, :source, :source_path, :subject_type, :subject_id,
+                :check_name, :status, :severity, :metric_value, :metric_unit, :evidence_json,
+                :inserted_at_utc
+            )
+            """,
+            observation,
+        )
+        inserted += int(cur.rowcount > 0)
+    return inserted
+
+
+def _close_gate_evidence_status(evidence: dict[str, Any]) -> str:
+    if evidence.get("gate_a_invalidated") is not True:
+        return "BLOCK"
+    if evidence.get("same_direction_support_conflict"):
+        return "BLOCK"
+    if evidence.get("hard_timing_gate_required") is True:
+        return "BLOCK"
+    if (
+        evidence.get("explicit_gate_b_required") is True
+        and evidence.get("gate_b_explicit_operator_authorized") is not True
+    ):
+        return "BLOCK"
+    if (
+        evidence.get("profitability_p0_context_required") is True
+        and evidence.get("profitability_p0_context_cited") is not True
+    ):
+        return "BLOCK"
+    if (
+        evidence.get("timing_audit_required") is True
+        and evidence.get("timing_evidence_cited") is not True
+    ):
+        return "BLOCK"
+    return "PASS"
 
 
 def _reconcile_gateway_trade_close_broker_accepts(conn: sqlite3.Connection, *, now: str) -> int:
