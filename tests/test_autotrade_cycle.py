@@ -76,6 +76,7 @@ class AutoTradeCycleTest(unittest.TestCase):
                 "cot_path": "cot_snapshot.json",
                 "option_skew_path": "option_skew_snapshot.json",
                 "capture_economics_path": "capture_economics.json",
+                "profitability_acceptance_path": "profitability_acceptance.json",
                 "execution_timing_audit_path": "execution_timing_audit.json",
                 "coverage_optimization_path": "coverage_optimization.json",
                 "learning_audit_path": "learning_audit.json",
@@ -3816,7 +3817,7 @@ class AutoTradeCycleTest(unittest.TestCase):
                 )
 
                 close_decision = _gpt_close_decision(["close-me"])
-                close_decision["evidence_refs"].extend(["timing:audit", "profitability:acceptance"])
+                close_decision["evidence_refs"].append("timing:audit")
                 summary = AutoTradeCycle(
                     client=client,
                     snapshot_path=root / "snapshot.json",

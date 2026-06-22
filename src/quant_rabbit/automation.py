@@ -71,6 +71,7 @@ from quant_rabbit.paths import (
     DEFAULT_POST_TRADE_LEARNING,
     DEFAULT_PREDICTIVE_LIMIT_ORDERS,
     DEFAULT_PROJECTION_LEDGER,
+    DEFAULT_PROFITABILITY_ACCEPTANCE,
     DEFAULT_RECEIPT_PROMOTION_REPORT,
     DEFAULT_SELF_IMPROVEMENT_AUDIT,
     DEFAULT_STRATEGY_PROFILE,
@@ -1302,6 +1303,11 @@ class AutoTradeCycle:
             explicit=None,
             gpt_decision_path=gpt_decision_path,
             default_path=DEFAULT_CAPTURE_ECONOMICS,
+        )
+        self.gpt_profitability_acceptance_path = _gpt_sidecar_path(
+            explicit=None,
+            gpt_decision_path=gpt_decision_path,
+            default_path=DEFAULT_PROFITABILITY_ACCEPTANCE,
         )
         self.gpt_execution_timing_audit_path = _gpt_sidecar_path(
             explicit=None,
@@ -4265,6 +4271,7 @@ class AutoTradeCycle:
             option_skew_path=self.gpt_option_skew_path,
             attack_advice_path=self.gpt_attack_advice_path,
             capture_economics_path=self.gpt_capture_economics_path,
+            profitability_acceptance_path=self.gpt_profitability_acceptance_path,
             execution_timing_audit_path=self.gpt_execution_timing_audit_path,
             coverage_optimization_path=self.gpt_coverage_optimization_path,
             learning_audit_path=self.gpt_learning_audit_path,
