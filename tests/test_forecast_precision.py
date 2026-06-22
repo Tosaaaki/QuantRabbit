@@ -1010,8 +1010,9 @@ class ForecastPrecisionConfluenceTest(unittest.TestCase):
         metadata = {
             "forecast_direction": "UP",
             "chart_direction_bias": "LONG",
-            "m5_atr_percentile_100": 0.50,
+            "m5_atr_percentile_100": 0.80,
             "oanda_m5_bar_range": "normal",
+            "oanda_m5_spread_regime": "mid",
             "session_bucket": "NY",
             "tp_execution_mode": "ATTACHED_TECHNICAL_TP",
             "tp_target_intent": "HARVEST",
@@ -1033,13 +1034,13 @@ class ForecastPrecisionConfluenceTest(unittest.TestCase):
         ):
             assessment = oanda_universal_rotation_precision_assessment(
                 metadata,
-                pair="USD_JPY",
+                pair="EUR_USD",
                 side="LONG",
                 order_type="LIMIT",
                 method="TREND_CONTINUATION",
-                entry=150.00,
-                take_profit=150.10,
-                stop_loss=149.85,
+                entry=1.10000,
+                take_profit=1.10125,
+                stop_loss=1.09900,
             )
         forecast_precision._load_oanda_universal_rotation_rule_set.cache_clear()
 

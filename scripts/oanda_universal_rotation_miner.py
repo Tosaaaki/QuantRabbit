@@ -24,10 +24,16 @@ import itertools
 import json
 import math
 import statistics
+import sys
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Iterable, Sequence
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+SRC_ROOT = REPO_ROOT / "src"
+if str(SRC_ROOT) not in sys.path:
+    sys.path.insert(0, str(SRC_ROOT))
 
 from quant_rabbit.instruments import DEFAULT_TRADER_PAIRS, instrument_pip_factor
 

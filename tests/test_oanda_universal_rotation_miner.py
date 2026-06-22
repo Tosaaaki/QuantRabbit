@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import importlib.util
+import os
+import subprocess
 import sys
 import unittest
 from datetime import datetime, timedelta, timezone
@@ -21,6 +23,24 @@ miner = _load_module()
 
 
 class OandaUniversalRotationMinerTest(unittest.TestCase):
+    def test_help_runs_without_pythonpath(self) -> None:
+        repo = Path(__file__).resolve().parents[1]
+        script = repo / "scripts" / "oanda_universal_rotation_miner.py"
+        env = os.environ.copy()
+        env.pop("PYTHONPATH", None)
+
+        result = subprocess.run(
+            [sys.executable, str(script), "--help"],
+            cwd=repo,
+            capture_output=True,
+            text=True,
+            env=env,
+            timeout=10,
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("Mine cross-pair high-turnover entry shapes", result.stdout)
+
     def test_parse_exit_shapes_keeps_valid_shapes(self) -> None:
         parsed = miner._parse_exit_shapes("tp0.75_sl0.5,bad,tp1_sl1,tp0_sl1")
 

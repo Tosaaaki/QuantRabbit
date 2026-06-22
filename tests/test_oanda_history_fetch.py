@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -23,6 +25,24 @@ hist = _load_module()
 
 
 class OandaHistoryFetchTest(unittest.TestCase):
+    def test_help_runs_without_pythonpath(self) -> None:
+        repo = Path(__file__).resolve().parents[1]
+        script = repo / "scripts" / "oanda_history_fetch.py"
+        env = os.environ.copy()
+        env.pop("PYTHONPATH", None)
+
+        result = subprocess.run(
+            [sys.executable, str(script), "--help"],
+            cwd=repo,
+            capture_output=True,
+            text=True,
+            env=env,
+            timeout=10,
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("Fetch large read-only OANDA candle datasets", result.stdout)
+
     def test_s5_chunks_stay_under_candle_cap(self) -> None:
         start = datetime(2026, 6, 1, tzinfo=timezone.utc)
         end = start + timedelta(hours=2)

@@ -23,6 +23,7 @@ from quant_rabbit.automation import (
 )
 from quant_rabbit.broker.execution import LiveOrderStageSummary
 from quant_rabbit.broker.position_execution import PositionExecutionSummary
+from quant_rabbit import forecast_precision
 from quant_rabbit.gpt_trader import StaticTraderProvider
 from quant_rabbit.models import AccountSummary, BrokerOrder, BrokerPosition, BrokerSnapshot, Owner, Quote, Side
 from quant_rabbit.strategy.entry_thesis_ledger import PendingEntryThesis, record_pending_entry_thesis
@@ -46,8 +47,18 @@ class AutoTradeCycleTest(unittest.TestCase):
         )
         self._default_settings_patch.start()
         self._default_target_state_patch.start()
+        self._oanda_rules_env_prior = os.environ.get(forecast_precision.OANDA_UNIVERSAL_ROTATION_RULES_ENV)
+        os.environ[forecast_precision.OANDA_UNIVERSAL_ROTATION_RULES_ENV] = str(
+            tmp_root / "missing_oanda_universal_rotation_rules.json"
+        )
+        forecast_precision._load_oanda_universal_rotation_rule_set.cache_clear()
 
     def tearDown(self) -> None:
+        if self._oanda_rules_env_prior is None:
+            os.environ.pop(forecast_precision.OANDA_UNIVERSAL_ROTATION_RULES_ENV, None)
+        else:
+            os.environ[forecast_precision.OANDA_UNIVERSAL_ROTATION_RULES_ENV] = self._oanda_rules_env_prior
+        forecast_precision._load_oanda_universal_rotation_rule_set.cache_clear()
         self._default_target_state_patch.stop()
         self._default_settings_patch.stop()
         self._default_settings_tmp.cleanup()

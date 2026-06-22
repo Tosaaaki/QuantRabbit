@@ -22,12 +22,18 @@ import itertools
 import json
 import math
 import statistics
+import sys
 import time
 from bisect import bisect_left, bisect_right
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Iterable, Sequence
+
+ROOT = Path(__file__).resolve().parents[1]
+SRC_ROOT = ROOT / "src"
+if str(SRC_ROOT) not in sys.path:
+    sys.path.insert(0, str(SRC_ROOT))
 
 from quant_rabbit.analysis.candles import Candle, fetch_candles_between
 from quant_rabbit.analysis.families import compute_family_scores
