@@ -23,6 +23,7 @@ FORECAST_ADVERSE_SUPPORT_CODES = frozenset(
         "DIRECTIONAL_FORECAST_BUCKET_HIT_RATE_WEAK",
         "DIRECTIONAL_FORECAST_HIT_RATE_WEAK",
         "DIRECTIONAL_FORECAST_INVALIDATION_FIRST_DOMINANT",
+        "PROJECTION_ECONOMIC_PRECISION_WEAK",
     }
 )
 
@@ -75,11 +76,20 @@ def forecast_adverse_path_new_risk_blocker(payload: dict[str, Any] | None) -> di
     details: list[str] = [f"streak={streak}"]
     directional_hit_rate = _optional_float(metrics.get("directional_hit_rate"))
     invalidation_first_rate = _optional_float(metrics.get("invalidation_first_rate"))
+    projection_gap_count = _optional_int(metrics.get("projection_economic_precision_gap_count"))
+    projection_worst_lower = _optional_float(metrics.get("projection_worst_economic_wilson_lower"))
+    projection_timeout_rate = _optional_float(metrics.get("projection_worst_timeout_rate"))
     profit_factor = _optional_float(metrics.get("profit_factor"))
     if directional_hit_rate is not None:
         details.append(f"directional_hit_rate={directional_hit_rate:.3f}")
     if invalidation_first_rate is not None:
         details.append(f"invalidation_first_rate={invalidation_first_rate:.3f}")
+    if projection_gap_count is not None:
+        details.append(f"projection_economic_precision_gap_count={projection_gap_count}")
+    if projection_worst_lower is not None:
+        details.append(f"projection_worst_economic_wilson_lower={projection_worst_lower:.3f}")
+    if projection_timeout_rate is not None:
+        details.append(f"projection_worst_timeout_rate={projection_timeout_rate:.3f}")
     if profit_factor is not None:
         details.append(f"PF={profit_factor:.3f}")
     suffix = f" ({', '.join(details)})"
@@ -97,6 +107,9 @@ def forecast_adverse_path_new_risk_blocker(payload: dict[str, Any] | None) -> di
         "current_streak": streak,
         "directional_hit_rate": directional_hit_rate,
         "invalidation_first_rate": invalidation_first_rate,
+        "projection_economic_precision_gap_count": projection_gap_count,
+        "projection_worst_economic_wilson_lower": projection_worst_lower,
+        "projection_worst_timeout_rate": projection_timeout_rate,
         "profit_factor": profit_factor,
         "supporting_codes": sorted(supporting_codes.intersection(FORECAST_ADVERSE_SUPPORT_CODES)),
         "evidence_ref": f"self_improvement:root_cause:{FORECAST_ADVERSE_PATH_FAMILY}",

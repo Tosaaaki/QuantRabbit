@@ -9758,6 +9758,80 @@ class IntentGeneratorTest(unittest.TestCase):
                 )
             )
 
+    def test_projection_economic_precision_gap_blocks_persistent_forecast_path(self) -> None:
+        # The operator goal needs forecast precision that remains true after
+        # TIMEOUT/no-touch outcomes. A repeated headline-only projection bucket
+        # must therefore become an executable no-new-risk blocker, not just an
+        # audit line.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            data_root = root / "data"
+            data_root.mkdir()
+            (data_root / "self_improvement_audit.json").write_text(
+                json.dumps(
+                    {
+                        "generated_at_utc": datetime.now(timezone.utc).isoformat(),
+                        "root_cause_focus": {
+                            "primary": {
+                                "family": "FORECAST_ADVERSE_PATH",
+                                "confidence": "HIGH",
+                                "priority": "P1",
+                                "process_loop_streak": 9,
+                                "supporting_codes": [
+                                    "PROJECTION_ECONOMIC_PRECISION_WEAK",
+                                ],
+                                "metrics": {
+                                    "projection_economic_precision_gap_count": 2,
+                                    "projection_worst_economic_wilson_lower": 0.8882,
+                                    "projection_worst_timeout_rate": 0.02,
+                                    "profit_factor": 0.626,
+                                },
+                            }
+                        },
+                        "findings": [
+                            {
+                                "priority": "P1",
+                                "layer": "forecast",
+                                "code": "PROJECTION_ECONOMIC_PRECISION_WEAK",
+                                "message": (
+                                    "2 projection bucket(s) clear headline Wilson 90% precision "
+                                    "but fail economic precision after TIMEOUT/no-touch penalties"
+                                ),
+                            }
+                        ],
+                    }
+                )
+            )
+            output = root / "intents.json"
+
+            summary = IntentGenerator(
+                campaign_plan=_campaign(root),
+                strategy_profile=_strategy(root, status="CANDIDATE"),
+                output_path=output,
+                report_path=root / "intents.md",
+                pair_charts_path=_pair_charts(root),
+                data_root=data_root,
+                max_loss_jpy=500.0,
+            ).run(snapshot_path=_snapshot(root))
+
+            payload = json.loads(output.read_text())
+            issue_codes = {
+                issue["code"]
+                for item in payload["results"]
+                for issue in item["risk_issues"]
+            }
+
+            self.assertEqual(summary.live_ready, 0)
+            self.assertIn("SELF_IMPROVEMENT_FORECAST_ADVERSE_PATH", issue_codes)
+            self.assertTrue(
+                any(
+                    "projection_economic_precision_gap_count=2" in blocker
+                    and "projection_worst_economic_wilson_lower=0.888" in blocker
+                    for item in payload["results"]
+                    for blocker in item["live_blockers"]
+                )
+            )
+
     def test_persistent_pending_churn_blocks_fresh_pending_intents_only(self) -> None:
         # Regression from qr-self-improvement-watch 2026-06-17: pending entries
         # were accepted, then repeatedly canceled before fill. Keep MARKET
