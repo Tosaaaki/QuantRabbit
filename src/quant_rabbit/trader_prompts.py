@@ -264,12 +264,16 @@ def route_trader_prompts(
         position_execution_path=position_execution_path,
         autotrade_report_path=autotrade_report_path,
     )
+    pending_trade_decision_state: DecisionReceiptState | None = None
     if accepted_gateway_state is not None and accepted_gateway_state.pending:
-        return _build_route(
-            BRANCH_VERIFY,
-            accepted_gateway_state.reasons,
-            include_content=include_content,
-        )
+        if accepted_gateway_state.action == "TRADE":
+            pending_trade_decision_state = accepted_gateway_state
+        else:
+            return _build_route(
+                BRANCH_VERIFY,
+                accepted_gateway_state.reasons,
+                include_content=include_content,
+            )
 
     decision_state = _decision_receipt_state(
         decision_response_path=decision_response_path,
@@ -280,13 +284,15 @@ def route_trader_prompts(
         position_execution_path=position_execution_path,
         autotrade_report_path=autotrade_report_path,
     )
-    if decision_state.pending:
+    if decision_state.pending and decision_state.action == "TRADE":
+        pending_trade_decision_state = pending_trade_decision_state or decision_state
+    elif decision_state.pending:
         return _build_route(
             BRANCH_VERIFY,
             decision_state.reasons,
             include_content=include_content,
         )
-    carry_reasons = decision_state.reasons
+    carry_reasons = pending_trade_decision_state.reasons if pending_trade_decision_state else decision_state.reasons
 
     close_review_reasons = _position_close_recommendation_reasons(
         snapshot,
@@ -344,6 +350,12 @@ def route_trader_prompts(
         intents_path=intents_path,
         market_context_matrix_path=market_context_matrix_path,
     )
+    order_intents_packet_refresh_reasons = _order_intents_packet_refresh_reasons(
+        target_state,
+        intents,
+        campaign_plan_path=campaign_plan_path,
+        intents_path=intents_path,
+    )
     order_intents_forecast_refresh_reasons = _order_intents_forecast_refresh_reasons(
         target_state,
         intents,
@@ -384,6 +396,7 @@ def route_trader_prompts(
         *strategy_profile_refresh_reasons,
         *campaign_plan_refresh_reasons,
         *order_intents_context_refresh_reasons,
+        *order_intents_packet_refresh_reasons,
         *order_intents_forecast_refresh_reasons,
         *attack_advice_refresh_reasons,
         *memory_health_refresh_reasons,
@@ -395,6 +408,13 @@ def route_trader_prompts(
         return _build_route(
             BRANCH_REFRESH,
             (*carry_reasons, *evidence_refresh_reasons),
+            include_content=include_content,
+        )
+
+    if pending_trade_decision_state is not None:
+        return _build_route(
+            BRANCH_VERIFY,
+            pending_trade_decision_state.reasons,
             include_content=include_content,
         )
 
@@ -641,6 +661,7 @@ def _prompt_doc(key: str, *, include_content: bool) -> PromptDoc:
 class DecisionReceiptState:
     pending: bool
     reasons: tuple[str, ...] = ()
+    action: str | None = None
 
 
 def _current_accepted_gpt_action_pending_gateway(
@@ -687,6 +708,7 @@ def _decision_receipt_state(
     if decision_response_path is None or not decision_response_path.exists():
         return DecisionReceiptState(pending=False)
 
+    response_action = _decision_response_action(decision_response_path)
     decision_mtime_ns = decision_response_path.stat().st_mtime_ns
     for path, label in (
         (snapshot_path, "refreshed broker snapshot"),
@@ -698,6 +720,7 @@ def _decision_receipt_state(
             return DecisionReceiptState(
                 pending=False,
                 reasons=tuple(reasons),
+                action=response_action,
             )
     timestamp_stale_reasons = _decision_payload_stale_reasons(
         decision_response_path=decision_response_path,
@@ -705,7 +728,7 @@ def _decision_receipt_state(
         intents_path=intents_path,
     )
     if timestamp_stale_reasons:
-        return DecisionReceiptState(pending=False, reasons=timestamp_stale_reasons)
+        return DecisionReceiptState(pending=False, reasons=timestamp_stale_reasons, action=response_action)
 
     gpt_pending = _accepted_gpt_action_pending_gateway(
         gpt_decision_path=gpt_decision_path,
@@ -726,15 +749,17 @@ def _decision_receipt_state(
             return DecisionReceiptState(
                 pending=False,
                 reasons=(f"decision response already consumed by {label}: {path}",),
+                action=response_action,
             )
 
     gpt_state = _gpt_decision_terminal_state(gpt_decision_path, decision_mtime_ns)
     if gpt_state:
-        return DecisionReceiptState(pending=False, reasons=(gpt_state,))
+        return DecisionReceiptState(pending=False, reasons=(gpt_state,), action=response_action)
 
     return DecisionReceiptState(
         pending=True,
         reasons=(f"unconsumed decision response exists: {decision_response_path}",),
+        action=response_action,
     )
 
 
@@ -773,6 +798,7 @@ def _accepted_gpt_action_pending_gateway(
             return DecisionReceiptState(
                 pending=False,
                 reasons=tuple(reasons),
+                action=action,
             )
 
     return DecisionReceiptState(
@@ -781,11 +807,25 @@ def _accepted_gpt_action_pending_gateway(
             f"accepted {action} decision has no newer gateway receipt; "
             f"run exactly one gateway cycle now: {gpt_decision_path}",
         ),
+        action=action,
     )
 
 
 def _artifact_newer(path: Path | None, decision_mtime_ns: int) -> bool:
     return path is not None and path.exists() and path.stat().st_mtime_ns > decision_mtime_ns
+
+
+def _decision_response_action(path: Path) -> str | None:
+    try:
+        payload = _load_json(path)
+    except (OSError, ValueError, json.JSONDecodeError):
+        return None
+    action = payload.get("action")
+    if action is None and isinstance(payload.get("decision"), dict):
+        action = payload["decision"].get("action")
+    if action is None:
+        return None
+    return str(action).upper()
 
 
 def _decision_payload_stale_reasons(
@@ -2066,6 +2106,46 @@ def _order_intents_context_refresh_reasons(
             f"order_intents generated at {intents_generated_at.isoformat()} predates "
             f"market_context_matrix {matrix_generated_at.isoformat()} "
             f"({market_context_matrix_path}); rerun generate-intents before entry/learning routing",
+        )
+    return ()
+
+
+def _order_intents_packet_refresh_reasons(
+    target_state: dict[str, Any],
+    intents: dict[str, Any],
+    *,
+    campaign_plan_path: Path | None,
+    intents_path: Path,
+) -> tuple[str, ...]:
+    """Require generated entry packets to post-date the target/campaign packet."""
+    if not _target_open(target_state):
+        return ()
+    intents_generated_at = _parse_utc(intents.get("generated_at_utc"))
+    if intents_generated_at is None:
+        return (
+            f"order_intents lacks generated_at_utc while target is open: {intents_path}; "
+            "rerun generate-intents after the current daily target and campaign plan before entry/verify routing",
+        )
+    target_generated_at = _parse_utc(target_state.get("generated_at_utc"))
+    if target_generated_at is not None and intents_generated_at < target_generated_at:
+        return (
+            "order intents stale against daily target while target is open: "
+            f"order_intents generated at {intents_generated_at.isoformat()} predates "
+            f"daily target state {target_generated_at.isoformat()}; rerun generate-intents before entry/verify routing",
+        )
+    if campaign_plan_path is None or not campaign_plan_path.exists():
+        return ()
+    try:
+        campaign_payload = _load_json(campaign_plan_path)
+    except (OSError, ValueError, json.JSONDecodeError):
+        return ()
+    campaign_generated_at = _parse_utc(campaign_payload.get("generated_at_utc"))
+    if campaign_generated_at is not None and intents_generated_at < campaign_generated_at:
+        return (
+            "order intents stale against campaign plan while target is open: "
+            f"order_intents generated at {intents_generated_at.isoformat()} predates "
+            f"campaign plan {campaign_generated_at.isoformat()} ({campaign_plan_path}); "
+            "rerun generate-intents before entry/verify routing",
         )
     return ()
 

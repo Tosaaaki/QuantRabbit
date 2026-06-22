@@ -861,6 +861,55 @@ class TraderPromptRouteTest(unittest.TestCase):
         self.assertEqual(route.branch, BRANCH_REFRESH)
         self.assertTrue(any("campaign plan stale" in reason for reason in route.reasons))
 
+    def test_stale_order_intents_against_daily_target_routes_open_target_to_refresh_branch(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root)
+            base = datetime.now(timezone.utc).replace(microsecond=0)
+            target_ts = (base + timedelta(minutes=5)).isoformat()
+
+            target = json.loads(files["target"].read_text())
+            target["generated_at_utc"] = target_ts
+            files["target"].write_text(json.dumps(target))
+
+            campaign = json.loads(files["campaign_plan"].read_text())
+            campaign["generated_at_utc"] = target_ts
+            files["campaign_plan"].write_text(json.dumps(campaign))
+
+            intents = json.loads(files["intents"].read_text())
+            intents["generated_at_utc"] = base.isoformat()
+            files["intents"].write_text(json.dumps(intents))
+
+            route = route_trader_prompts(**_route_paths(files), decision_response_path=None)
+
+        self.assertEqual(route.branch, BRANCH_REFRESH)
+        self.assertTrue(any("order intents stale against daily target" in reason for reason in route.reasons))
+
+    def test_stale_order_intents_against_campaign_plan_routes_open_target_to_refresh_branch(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root)
+            base = datetime.now(timezone.utc).replace(microsecond=0)
+            target_ts = (base - timedelta(minutes=1)).isoformat()
+            campaign_ts = (base + timedelta(minutes=5)).isoformat()
+
+            target = json.loads(files["target"].read_text())
+            target["generated_at_utc"] = target_ts
+            files["target"].write_text(json.dumps(target))
+
+            campaign = json.loads(files["campaign_plan"].read_text())
+            campaign["generated_at_utc"] = campaign_ts
+            files["campaign_plan"].write_text(json.dumps(campaign))
+
+            intents = json.loads(files["intents"].read_text())
+            intents["generated_at_utc"] = base.isoformat()
+            files["intents"].write_text(json.dumps(intents))
+
+            route = route_trader_prompts(**_route_paths(files), decision_response_path=None)
+
+        self.assertEqual(route.branch, BRANCH_REFRESH)
+        self.assertTrue(any("order intents stale against campaign plan" in reason for reason in route.reasons))
+
     def test_campaign_plan_target_mismatch_routes_open_target_to_refresh_branch(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -1032,7 +1081,7 @@ class TraderPromptRouteTest(unittest.TestCase):
             snapshot_ts = base.isoformat()
             memory_ts = (base + timedelta(minutes=1)).isoformat()
             intents_ts = (base + timedelta(minutes=2)).isoformat()
-            target_ts = (base + timedelta(minutes=3)).isoformat()
+            target_ts = (base + timedelta(seconds=30)).isoformat()
 
             snapshot = json.loads(files["snapshot"].read_text())
             snapshot["fetched_at_utc"] = snapshot_ts
@@ -1041,6 +1090,14 @@ class TraderPromptRouteTest(unittest.TestCase):
             target = json.loads(files["target"].read_text())
             target["generated_at_utc"] = target_ts
             files["target"].write_text(json.dumps(target))
+
+            campaign = json.loads(files["campaign_plan"].read_text())
+            campaign["generated_at_utc"] = target_ts
+            files["campaign_plan"].write_text(json.dumps(campaign))
+
+            strategy = json.loads(files["strategy_profile"].read_text())
+            strategy["generated_at_utc"] = base.isoformat()
+            files["strategy_profile"].write_text(json.dumps(strategy))
 
             intents = json.loads(files["intents"].read_text())
             intents["generated_at_utc"] = intents_ts
@@ -1086,6 +1143,18 @@ class TraderPromptRouteTest(unittest.TestCase):
             capture = json.loads(files["capture_economics"].read_text())
             capture["generated_at_utc"] = capture_ts
             files["capture_economics"].write_text(json.dumps(capture))
+
+            target = json.loads(files["target"].read_text())
+            target["generated_at_utc"] = base.isoformat()
+            files["target"].write_text(json.dumps(target))
+
+            campaign = json.loads(files["campaign_plan"].read_text())
+            campaign["generated_at_utc"] = base.isoformat()
+            files["campaign_plan"].write_text(json.dumps(campaign))
+
+            strategy = json.loads(files["strategy_profile"].read_text())
+            strategy["generated_at_utc"] = base.isoformat()
+            files["strategy_profile"].write_text(json.dumps(strategy))
 
             memory = json.loads(files["memory_health"].read_text())
             memory["generated_at_utc"] = base.isoformat()
@@ -1245,15 +1314,15 @@ class TraderPromptRouteTest(unittest.TestCase):
         self.assertEqual(route.branch, BRANCH_VERIFY)
         self.assertIn("accepted CANCEL_PENDING decision has no newer gateway receipt", route.reasons[0])
 
-    def test_daily_target_refresh_after_memory_health_does_not_force_refresh(self) -> None:
+    def test_memory_health_does_not_use_daily_target_as_staleness_reference(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             files = _fixtures(root)
             base = datetime(2026, 1, 1, tzinfo=timezone.utc)
             snapshot_ts = base.isoformat()
-            intents_ts = (base + timedelta(minutes=1)).isoformat()
-            memory_ts = (base + timedelta(minutes=2)).isoformat()
-            target_ts = (base + timedelta(minutes=5)).isoformat()
+            target_ts = (base + timedelta(minutes=1)).isoformat()
+            intents_ts = (base + timedelta(minutes=2)).isoformat()
+            memory_ts = (base + timedelta(minutes=3)).isoformat()
 
             snapshot = json.loads(files["snapshot"].read_text())
             snapshot["fetched_at_utc"] = snapshot_ts
@@ -1274,6 +1343,14 @@ class TraderPromptRouteTest(unittest.TestCase):
             target["status"] = "PURSUE_TARGET"
             target["remaining_target_jpy"] = 1000.0
             files["target"].write_text(json.dumps(target))
+
+            campaign = json.loads(files["campaign_plan"].read_text())
+            campaign["generated_at_utc"] = target_ts
+            files["campaign_plan"].write_text(json.dumps(campaign))
+
+            strategy = json.loads(files["strategy_profile"].read_text())
+            strategy["generated_at_utc"] = base.isoformat()
+            files["strategy_profile"].write_text(json.dumps(strategy))
 
             route = route_trader_prompts(**_route_paths(files), decision_response_path=None)
 
@@ -3052,6 +3129,52 @@ class TraderPromptRouteTest(unittest.TestCase):
         self.assertEqual(route.branch, BRANCH_VERIFY)
         self.assertIn("accepted TRADE decision has no newer gateway receipt", route.reasons[0])
 
+    def test_accepted_trade_with_stale_target_packet_routes_to_refresh_branch(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root)
+            base = datetime.now(timezone.utc).replace(microsecond=0)
+            target_ts = (base + timedelta(minutes=5)).isoformat()
+
+            target = json.loads(files["target"].read_text())
+            target["generated_at_utc"] = target_ts
+            files["target"].write_text(json.dumps(target))
+
+            campaign = json.loads(files["campaign_plan"].read_text())
+            campaign["generated_at_utc"] = target_ts
+            files["campaign_plan"].write_text(json.dumps(campaign))
+
+            intents = json.loads(files["intents"].read_text())
+            intents["generated_at_utc"] = base.isoformat()
+            files["intents"].write_text(json.dumps(intents))
+
+            decision_response = root / "codex_trader_decision_response.json"
+            decision_response.write_text(json.dumps({"action": "TRADE"}))
+            files["autotrade_report"].write_text("# stale no-send cycle\n")
+            files["gpt_decision"].write_text(
+                json.dumps(
+                    {
+                        "status": "ACCEPTED",
+                        "decision": {
+                            "action": "TRADE",
+                            "selected_lane_id": "trend_trader:EUR_USD:LONG:TREND_CONTINUATION",
+                            "selected_lane_ids": ["trend_trader:EUR_USD:LONG:TREND_CONTINUATION"],
+                        },
+                    }
+                )
+            )
+            _set_mtime(files["snapshot"], 99.0)
+            _set_mtime(files["intents"], 99.0)
+            _set_mtime(decision_response, 100.0)
+            _set_mtime(files["autotrade_report"], 101.0)
+            _set_mtime(files["gpt_decision"], 102.0)
+
+            route = route_trader_prompts(**_route_paths(files), decision_response_path=decision_response)
+
+        self.assertEqual(route.branch, BRANCH_REFRESH)
+        self.assertTrue(any("accepted TRADE decision has no newer gateway receipt" in reason for reason in route.reasons))
+        self.assertTrue(any("order intents stale against daily target" in reason for reason in route.reasons))
+
     def test_routes_accepted_cancel_pending_without_newer_gateway_to_verify_branch(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -3073,6 +3196,50 @@ class TraderPromptRouteTest(unittest.TestCase):
             _set_mtime(decision_response, 100.0)
             _set_mtime(files["snapshot"], 99.0)
             _set_mtime(files["intents"], 99.0)
+            _set_mtime(files["autotrade_report"], 101.0)
+            _set_mtime(files["gpt_decision"], 102.0)
+
+            route = route_trader_prompts(**_route_paths(files), decision_response_path=decision_response)
+
+        self.assertEqual(route.branch, BRANCH_VERIFY)
+        self.assertIn("accepted CANCEL_PENDING decision has no newer gateway receipt", route.reasons[0])
+
+    def test_accepted_cancel_pending_can_verify_with_stale_target_packet(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root)
+            base = datetime.now(timezone.utc).replace(microsecond=0)
+            target_ts = (base + timedelta(minutes=5)).isoformat()
+
+            target = json.loads(files["target"].read_text())
+            target["generated_at_utc"] = target_ts
+            files["target"].write_text(json.dumps(target))
+
+            campaign = json.loads(files["campaign_plan"].read_text())
+            campaign["generated_at_utc"] = target_ts
+            files["campaign_plan"].write_text(json.dumps(campaign))
+
+            intents = json.loads(files["intents"].read_text())
+            intents["generated_at_utc"] = base.isoformat()
+            files["intents"].write_text(json.dumps(intents))
+
+            decision_response = root / "codex_trader_decision_response.json"
+            decision_response.write_text(json.dumps({"action": "CANCEL_PENDING", "cancel_order_ids": ["472124"]}))
+            files["autotrade_report"].write_text("# stale no-send cycle\n")
+            files["gpt_decision"].write_text(
+                json.dumps(
+                    {
+                        "status": "ACCEPTED",
+                        "decision": {
+                            "action": "CANCEL_PENDING",
+                            "cancel_order_ids": ["472124"],
+                        },
+                    }
+                )
+            )
+            _set_mtime(files["snapshot"], 99.0)
+            _set_mtime(files["intents"], 99.0)
+            _set_mtime(decision_response, 100.0)
             _set_mtime(files["autotrade_report"], 101.0)
             _set_mtime(files["gpt_decision"], 102.0)
 
