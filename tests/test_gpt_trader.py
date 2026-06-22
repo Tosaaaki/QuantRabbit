@@ -93,6 +93,102 @@ class GPTTraderBrainTest(unittest.TestCase):
             ]
             self.assertTrue(any("order intents" in message for message in stale_messages))
 
+    def test_rejects_trade_when_order_intents_predate_daily_target_state(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root)
+            snapshot = json.loads(files["snapshot"].read_text())
+            snapshot_ts = datetime.fromisoformat(snapshot["fetched_at_utc"])
+            intents_ts = snapshot_ts + timedelta(seconds=1)
+            target_ts = snapshot_ts + timedelta(seconds=2)
+            decision_ts = snapshot_ts + timedelta(seconds=3)
+            intents = json.loads(files["intents"].read_text())
+            intents["generated_at_utc"] = intents_ts.isoformat()
+            files["intents"].write_text(json.dumps(intents))
+            target = json.loads(files["target"].read_text())
+            target["generated_at_utc"] = target_ts.isoformat()
+            files["target"].write_text(json.dumps(target))
+            decision = _trade_decision()
+            decision["generated_at_utc"] = decision_ts.isoformat()
+            brain = _brain(root, files, decision)
+
+            summary = brain.run(snapshot_path=files["snapshot"])
+
+            self.assertEqual(summary.status, "REJECTED")
+            payload = json.loads((root / "gpt_decision.json").read_text())
+            issues = {
+                issue["code"]: issue
+                for issue in payload["verification_issues"]
+            }
+            self.assertIn("STALE_ORDER_INTENTS_PACKET", issues)
+            self.assertEqual(issues["STALE_ORDER_INTENTS_PACKET"]["severity"], "BLOCK")
+
+    def test_rejects_trade_when_campaign_plan_predates_daily_target_state(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root)
+            snapshot = json.loads(files["snapshot"].read_text())
+            snapshot_ts = datetime.fromisoformat(snapshot["fetched_at_utc"])
+            campaign_ts = snapshot_ts + timedelta(seconds=1)
+            target_ts = snapshot_ts + timedelta(seconds=2)
+            intents_ts = snapshot_ts + timedelta(seconds=3)
+            decision_ts = snapshot_ts + timedelta(seconds=4)
+            campaign = json.loads(files["campaign"].read_text())
+            campaign["generated_at_utc"] = campaign_ts.isoformat()
+            files["campaign"].write_text(json.dumps(campaign))
+            target = json.loads(files["target"].read_text())
+            target["generated_at_utc"] = target_ts.isoformat()
+            files["target"].write_text(json.dumps(target))
+            intents = json.loads(files["intents"].read_text())
+            intents["generated_at_utc"] = intents_ts.isoformat()
+            files["intents"].write_text(json.dumps(intents))
+            decision = _trade_decision()
+            decision["generated_at_utc"] = decision_ts.isoformat()
+            brain = _brain(root, files, decision)
+
+            summary = brain.run(snapshot_path=files["snapshot"])
+
+            self.assertEqual(summary.status, "REJECTED")
+            payload = json.loads((root / "gpt_decision.json").read_text())
+            issues = {
+                issue["code"]: issue
+                for issue in payload["verification_issues"]
+            }
+            self.assertIn("STALE_CAMPAIGN_PLAN_PACKET", issues)
+            self.assertEqual(issues["STALE_CAMPAIGN_PLAN_PACKET"]["severity"], "BLOCK")
+
+    def test_allows_cancel_pending_when_order_intents_predate_daily_target_state(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root, orders=[_pending_order()])
+            snapshot = json.loads(files["snapshot"].read_text())
+            snapshot_ts = datetime.fromisoformat(snapshot["fetched_at_utc"])
+            campaign_ts = snapshot_ts + timedelta(seconds=1)
+            intents_ts = snapshot_ts + timedelta(seconds=2)
+            target_ts = snapshot_ts + timedelta(seconds=3)
+            decision_ts = snapshot_ts + timedelta(seconds=4)
+            campaign = json.loads(files["campaign"].read_text())
+            campaign["generated_at_utc"] = campaign_ts.isoformat()
+            files["campaign"].write_text(json.dumps(campaign))
+            files["intents"].write_text(
+                json.dumps({"generated_at_utc": intents_ts.isoformat(), "results": []})
+            )
+            target = json.loads(files["target"].read_text())
+            target["generated_at_utc"] = target_ts.isoformat()
+            files["target"].write_text(json.dumps(target))
+            decision = _cancel_pending_decision(cancel_order_ids=["pending-1"])
+            decision["generated_at_utc"] = decision_ts.isoformat()
+            brain = _brain(root, files, decision)
+
+            summary = brain.run(snapshot_path=files["snapshot"])
+
+            self.assertEqual(summary.status, "ACCEPTED")
+            self.assertTrue(summary.allowed)
+            payload = json.loads((root / "gpt_decision.json").read_text())
+            codes = {issue["code"] for issue in payload["verification_issues"]}
+            self.assertNotIn("STALE_ORDER_INTENTS_PACKET", codes)
+            self.assertNotIn("STALE_CAMPAIGN_PLAN_PACKET", codes)
+
     def test_rejects_trade_receipt_that_predates_market_context_matrix(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

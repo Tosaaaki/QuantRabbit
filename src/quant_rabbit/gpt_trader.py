@@ -1751,6 +1751,12 @@ class GPTTraderBrain:
                 ),
             },
             "artifact_timestamps": {
+                "daily_target_generated_at_utc": (
+                    target.get("generated_at_utc") if isinstance(target, dict) else None
+                ),
+                "campaign_plan_generated_at_utc": (
+                    campaign.get("generated_at_utc") if isinstance(campaign, dict) else None
+                ),
                 "order_intents_generated_at_utc": intents.get("generated_at_utc"),
                 "ai_attack_advice_generated_at_utc": (
                     attack_advice.get("generated_at_utc") if isinstance(attack_advice, dict) else None
@@ -2338,8 +2344,40 @@ class DecisionVerifier:
         ]
         artifact_timestamps = self.packet.get("artifact_timestamps")
         if isinstance(artifact_timestamps, dict):
+            daily_target_ts = _parse_utc(artifact_timestamps.get("daily_target_generated_at_utc"))
+            campaign_plan_ts = _parse_utc(artifact_timestamps.get("campaign_plan_generated_at_utc"))
             order_intents_ts = _parse_utc(artifact_timestamps.get("order_intents_generated_at_utc"))
             attack_advice_ts = _parse_utc(artifact_timestamps.get("ai_attack_advice_generated_at_utc"))
+            if (
+                decision.action == "TRADE"
+                and campaign_plan_ts is not None
+                and daily_target_ts is not None
+                and campaign_plan_ts < daily_target_ts
+            ):
+                issues.append(
+                    VerificationIssue(
+                        "STALE_CAMPAIGN_PLAN_PACKET",
+                        "campaign_plan predates the daily_target_state used for verification; rerun "
+                        "plan-campaign, then regenerate order_intents before accepting a target-open receipt.",
+                    )
+                )
+            if order_intents_ts is not None:
+                if decision.action == "TRADE" and daily_target_ts is not None and order_intents_ts < daily_target_ts:
+                    issues.append(
+                        VerificationIssue(
+                            "STALE_ORDER_INTENTS_PACKET",
+                            "order_intents predate the daily_target_state used for verification; rerun "
+                            "plan-campaign and generate-intents so lane sizing/firepower reflects the current 5% floor.",
+                        )
+                    )
+                if decision.action == "TRADE" and campaign_plan_ts is not None and order_intents_ts < campaign_plan_ts:
+                    issues.append(
+                        VerificationIssue(
+                            "STALE_ORDER_INTENTS_PACKET",
+                            "order_intents predate the campaign_plan used for verification; rerun generate-intents "
+                            "from the current campaign plan before accepting a TRADE receipt.",
+                        )
+                    )
             if order_intents_ts is not None and attack_advice_ts is not None and attack_advice_ts < order_intents_ts:
                 issues.append(
                     VerificationIssue(
@@ -3374,6 +3412,7 @@ def _target_packet(target: dict[str, Any]) -> dict[str, Any]:
         return {"evidence_ref": "target:daily", "status": "missing"}
     return {
         "evidence_ref": "target:daily",
+        "generated_at_utc": target.get("generated_at_utc"),
         "status": target.get("status"),
         "target_jpy": target.get("target_jpy"),
         "progress_jpy": target.get("progress_jpy"),
