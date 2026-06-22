@@ -2644,6 +2644,13 @@ def _cycle_digest(*, kind: str, step_results: list[dict[str, Any]], aborted: boo
             "profit_capture_watch_positions": metrics.get("profit_capture_watch_positions"),
             "profit_capture_blocked_positions": metrics.get("profit_capture_blocked_positions"),
             "live_ready_lanes": metrics.get("live_ready_lanes"),
+            "repair_basket_send_allowed": metrics.get("repair_basket_send_allowed"),
+            "repair_live_ready_lanes": metrics.get("repair_live_ready_lanes"),
+            "repair_basket_guardian_recovery_lanes": metrics.get("repair_basket_guardian_recovery_lanes"),
+            "repair_basket_guardian_recovery_lane_ids": metrics.get(
+                "repair_basket_guardian_recovery_lane_ids"
+            )
+            or [],
             "repair_frontier_lanes": metrics.get("repair_frontier_lanes"),
             "global_unlock_frontier_lanes": metrics.get("global_unlock_frontier_lanes"),
             "target_firepower_status": metrics.get("target_firepower_status"),
@@ -2669,6 +2676,8 @@ def _cycle_digest(*, kind: str, step_results: list[dict[str, Any]], aborted: boo
             ][:8],
             "top_profit_capture_misses": profit_capture.get("top_misses", [])[:3],
             "current_profit_capture_gate_statuses": current_profit_capture.get("top_gate_statuses", [])[:3],
+            "repair_live_ready": entry.get("repair_live_ready", [])[:4],
+            "repair_basket_guardian_recovery": entry.get("repair_basket_guardian_recovery", [])[:4],
             "repair_frontier": entry.get("repair_frontier", [])[:4],
             "global_unlock_frontier": entry.get("global_unlock_frontier", [])[:4],
         }

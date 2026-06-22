@@ -5286,6 +5286,12 @@ class ConsolidatedCycleCommandTest(unittest.TestCase):
                             "profit_capture_watch_positions": 1,
                             "profit_capture_blocked_positions": 0,
                             "live_ready_lanes": 0,
+                            "repair_basket_send_allowed": False,
+                            "repair_live_ready_lanes": 0,
+                            "repair_basket_guardian_recovery_lanes": 1,
+                            "repair_basket_guardian_recovery_lane_ids": [
+                                "range_trader:GBP_JPY:SHORT:RANGE_ROTATION"
+                            ],
                             "repair_frontier_lanes": 8,
                             "global_unlock_frontier_lanes": 1,
                             "target_firepower_status": "VERIFIED_TARGET_10_ROUTE_ESTIMATED",
@@ -5319,6 +5325,13 @@ class ConsolidatedCycleCommandTest(unittest.TestCase):
                             ],
                         },
                         "entry_readiness": {
+                            "repair_live_ready": [],
+                            "repair_basket_guardian_recovery": [
+                                {
+                                    "lane_id": "range_trader:GBP_JPY:SHORT:RANGE_ROTATION",
+                                    "remaining_blocker_codes_after_guardian_and_repair_exemption": [],
+                                }
+                            ],
                             "repair_frontier": [
                                 {
                                     "lane_id": "failure_trader:GBP_USD:LONG:BREAKOUT_FAILURE:LIMIT",
@@ -5362,6 +5375,13 @@ class ConsolidatedCycleCommandTest(unittest.TestCase):
         self.assertEqual(support["guardian_active_source"], "plist_missing")
         self.assertEqual(support["profit_capture_missed_loss_closes"], 2)
         self.assertEqual(support["profit_capture_watch_positions"], 1)
+        self.assertFalse(support["repair_basket_send_allowed"])
+        self.assertEqual(support["repair_live_ready_lanes"], 0)
+        self.assertEqual(support["repair_basket_guardian_recovery_lanes"], 1)
+        self.assertEqual(
+            support["repair_basket_guardian_recovery_lane_ids"],
+            ["range_trader:GBP_JPY:SHORT:RANGE_ROTATION"],
+        )
         self.assertEqual(support["repair_frontier_lanes"], 8)
         self.assertEqual(support["global_unlock_frontier_lanes"], 1)
         self.assertEqual(support["target_firepower_status"], "VERIFIED_TARGET_10_ROUTE_ESTIMATED")
@@ -5384,6 +5404,16 @@ class ConsolidatedCycleCommandTest(unittest.TestCase):
         self.assertEqual(
             support["current_profit_capture_gate_statuses"][0]["gate_status"],
             "WATCH_NOT_PROFITABLE",
+        )
+        self.assertEqual(
+            support["repair_basket_guardian_recovery"][0]["lane_id"],
+            "range_trader:GBP_JPY:SHORT:RANGE_ROTATION",
+        )
+        self.assertEqual(
+            support["repair_basket_guardian_recovery"][0][
+                "remaining_blocker_codes_after_guardian_and_repair_exemption"
+            ],
+            [],
         )
         self.assertEqual(
             support["repair_frontier"][0]["remaining_blocker_codes_after_guardian_and_repair_exemption"],
