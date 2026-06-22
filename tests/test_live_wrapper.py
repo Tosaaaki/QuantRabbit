@@ -11,6 +11,7 @@ from quant_rabbit.automation import _acquire_autotrade_lock
 
 ROOT = Path(__file__).resolve().parents[1]
 WRAPPER = ROOT / "scripts" / "run-autotrade-live.sh"
+GUARDIAN_WRAPPER = ROOT / "scripts" / "run-position-guardian-live.sh"
 
 
 class LiveWrapperTest(unittest.TestCase):
@@ -286,6 +287,30 @@ class LiveWrapperTest(unittest.TestCase):
             self.assertTrue(capture.exists())
             self.assertIn("waiting up to 5s", result.stderr)
             self.assertIn("removing defunct lock holder", result.stderr)
+
+    def test_position_guardian_skips_when_full_trader_lock_is_active(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            capture = root / "capture.json"
+            env = _wrapper_env(root, capture, live_enabled="1")
+            lock_dir = root / "lock"
+            lock_dir.mkdir()
+            (lock_dir / "pid").write_text(str(os.getpid()) + "\n")
+            (lock_dir / "command").write_text("run-autotrade-live\n")
+
+            result = subprocess.run(
+                ["bash", str(GUARDIAN_WRAPPER)],
+                env=env,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=False,
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertFalse(capture.exists())
+            self.assertIn("live runtime lock busy", result.stderr)
+            self.assertIn("skipped guardian cycle", result.stderr)
 
     def test_live_lock_release_preserves_reacquired_lock_token(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

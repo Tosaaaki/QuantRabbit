@@ -46,6 +46,10 @@ readonly QR_AUTOTRADE_LOCK_DIR="${QR_AUTOTRADE_LOCK_DIR:-${ROOT_DIR}/.quant_rabb
 readonly QR_AUTOTRADE_LOCK_WAIT_SECONDS="${QR_AUTOTRADE_LOCK_WAIT_SECONDS:-0}"
 readonly QR_AUTOTRADE_LOCK_WAIT_COMMAND_PATTERN="${QR_AUTOTRADE_LOCK_WAIT_COMMAND_PATTERN:-}"
 readonly QR_AUTOTRADE_LOCK_POLL_SECONDS="${QR_AUTOTRADE_LOCK_POLL_SECONDS:-2}"
+# launchd can fire this guardian every 30s. When the full trader cycle is
+# already holding the live lock, the guardian must yield instead of turning
+# profit protection into a cycle-blocking error stream.
+readonly QR_POSITION_GUARDIAN_LOCK_BUSY_MODE="${QR_POSITION_GUARDIAN_LOCK_BUSY_MODE:-skip}"
 
 source "${SCRIPT_DIR}/qr-live-lock.sh"
 
@@ -56,6 +60,26 @@ acquire_lock() {
     "$QR_AUTOTRADE_LOCK_WAIT_SECONDS" \
     "$QR_AUTOTRADE_LOCK_WAIT_COMMAND_PATTERN" \
     "$QR_AUTOTRADE_LOCK_POLL_SECONDS"
+}
+
+skip_if_live_lock_busy() {
+  local existing_pid existing_command existing_label
+  existing_pid="$(qr_live_lock_pid "$QR_AUTOTRADE_LOCK_DIR")"
+  if ! qr_live_lock_pid_is_running "$existing_pid"; then
+    return 0
+  fi
+  existing_command="$(ps -p "$existing_pid" -o command= 2>/dev/null || true)"
+  existing_label=""
+  if [[ -f "${QR_AUTOTRADE_LOCK_DIR}/command" ]]; then
+    existing_label="$(cat "${QR_AUTOTRADE_LOCK_DIR}/command" 2>/dev/null || true)"
+  fi
+  if [[ "$QR_POSITION_GUARDIAN_LOCK_BUSY_MODE" == "skip" ]]; then
+    echo "[run-position-guardian-live] live runtime lock busy pid=${existing_pid} label=${existing_label:-unknown}; skipped guardian cycle." >&2
+    if [[ -n "$existing_command" ]]; then
+      echo "[run-position-guardian-live] lock owner command=${existing_command}" >&2
+    fi
+    exit 0
+  fi
 }
 
 open_trader_pairs() {
@@ -98,6 +122,7 @@ PY
 }
 
 load_live_enabled_from_env_file
+skip_if_live_lock_busy
 acquire_lock
 
 # Mirror the live trader risk/protection defaults so direct CLI calls and the
