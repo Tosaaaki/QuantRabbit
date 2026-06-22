@@ -18,6 +18,7 @@ from quant_rabbit.paths import (
     DEFAULT_POSITION_GUARDIAN_HEARTBEAT,
     DEFAULT_POSITION_GUARDIAN_MANAGEMENT,
     DEFAULT_POSITION_MANAGEMENT,
+    DEFAULT_PROFIT_CAPTURE_BOT,
     DEFAULT_PROFITABILITY_ACCEPTANCE,
     DEFAULT_SELF_IMPROVEMENT_AUDIT,
     DEFAULT_TRADER_SUPPORT_BOT,
@@ -65,6 +66,7 @@ class TraderSupportBot:
         self_improvement_audit_path: Path = DEFAULT_SELF_IMPROVEMENT_AUDIT,
         profitability_acceptance_path: Path = DEFAULT_PROFITABILITY_ACCEPTANCE,
         execution_timing_audit_path: Path = DEFAULT_EXECUTION_TIMING_AUDIT,
+        profit_capture_bot_path: Path = DEFAULT_PROFIT_CAPTURE_BOT,
         output_path: Path = DEFAULT_TRADER_SUPPORT_BOT,
         report_path: Path = DEFAULT_TRADER_SUPPORT_BOT_REPORT,
         now_utc: datetime | None = None,
@@ -79,6 +81,7 @@ class TraderSupportBot:
         self.self_improvement_audit_path = self_improvement_audit_path
         self.profitability_acceptance_path = profitability_acceptance_path
         self.execution_timing_audit_path = execution_timing_audit_path
+        self.profit_capture_bot_path = profit_capture_bot_path
         self.output_path = output_path
         self.report_path = report_path
         self.now_utc = (now_utc or datetime.now(timezone.utc)).astimezone(timezone.utc)
@@ -107,6 +110,7 @@ class TraderSupportBot:
         self_improvement = _read_json(self.self_improvement_audit_path)
         profitability = _read_json(self.profitability_acceptance_path)
         timing = _read_json(self.execution_timing_audit_path)
+        profit_capture_bot = _read_json(self.profit_capture_bot_path)
 
         guardian = _guardian_status(
             now_utc=self.now_utc,
@@ -117,6 +121,7 @@ class TraderSupportBot:
         target_summary = _target_summary(target)
         p0_findings = _p0_findings(self_improvement)
         profit_capture = _profit_capture_summary(self_improvement, timing)
+        current_profit_capture = _current_profit_capture_summary(profit_capture_bot)
         entry = _entry_readiness_summary(intents)
         position = _position_support_summary(position_management, guardian_management, now_utc=self.now_utc)
         acceptance = _acceptance_summary(profitability)
@@ -151,6 +156,9 @@ class TraderSupportBot:
             "repair_frontier_lanes": len(entry["repair_frontier"]),
             "profit_capture_missed_loss_closes": profit_capture["missed_loss_closes"],
             "profit_capture_estimated_gap_jpy": profit_capture["estimated_gap_jpy"],
+            "profit_capture_bankable_positions": current_profit_capture["bankable_positions"],
+            "profit_capture_watch_positions": current_profit_capture["watch_positions"],
+            "profit_capture_blocked_positions": current_profit_capture["blocked_positions"],
             "open_trader_positions": broker_summary["trader_positions"],
             "target_remaining_jpy": target_summary["remaining_target_jpy"],
             "profitability_status": acceptance["status"],
@@ -168,6 +176,7 @@ class TraderSupportBot:
                 "self_improvement_audit": str(self.self_improvement_audit_path),
                 "profitability_acceptance": str(self.profitability_acceptance_path),
                 "execution_timing_audit": str(self.execution_timing_audit_path),
+                "profit_capture_bot": str(self.profit_capture_bot_path),
             },
             "generated_at_utc": generated,
             "status": status,
@@ -178,6 +187,7 @@ class TraderSupportBot:
             "broker": broker_summary,
             "target": target_summary,
             "profit_capture": profit_capture,
+            "current_profit_capture": current_profit_capture,
             "entry_readiness": entry,
             "position_support": position,
             "self_improvement": {
@@ -437,6 +447,31 @@ def _profit_capture_summary(self_improvement: dict[str, Any], timing: dict[str, 
     }
 
 
+def _current_profit_capture_summary(payload: dict[str, Any]) -> dict[str, Any]:
+    metrics = payload.get("metrics") if isinstance(payload.get("metrics"), dict) else {}
+    positions = payload.get("positions") if isinstance(payload.get("positions"), list) else []
+    return {
+        "generated_at_utc": payload.get("generated_at_utc"),
+        "status": payload.get("status"),
+        "open_trader_positions": metrics.get("open_trader_positions"),
+        "bankable_positions": metrics.get("bankable_positions", 0),
+        "watch_positions": metrics.get("watch_positions", 0),
+        "blocked_positions": metrics.get("blocked_positions", 0),
+        "top_gate_statuses": [
+            {
+                "trade_id": item.get("trade_id"),
+                "pair": item.get("pair"),
+                "side": item.get("side"),
+                "gate_status": item.get("gate_status"),
+                "tp_progress": item.get("tp_progress"),
+                "capture_trigger": item.get("capture_trigger"),
+            }
+            for item in positions[:5]
+            if isinstance(item, dict)
+        ],
+    }
+
+
 def _entry_readiness_summary(payload: dict[str, Any]) -> dict[str, Any]:
     results = payload.get("results") if isinstance(payload.get("results"), list) else []
     live_ready = [item for item in results if item.get("status") == "LIVE_READY"]
@@ -689,6 +724,7 @@ def _render_report(payload: dict[str, Any]) -> str:
     guardian = payload["guardian"]
     entry = payload["entry_readiness"]
     profit = payload["profit_capture"]
+    current_profit = payload["current_profit_capture"]
     broker = payload["broker"]
     target = payload["target"]
     lines = [
@@ -709,6 +745,7 @@ def _render_report(payload: dict[str, Any]) -> str:
         f"| LIVE_READY lanes | `{entry['live_ready_lanes']}` / `{entry['lanes']}` |",
         f"| Repair frontier lanes | `{len(entry['repair_frontier'])}` |",
         f"| Profit-capture misses | `{profit['missed_loss_closes']}` gap=`{profit['estimated_gap_jpy']}` JPY |",
+        f"| Current profit-capture positions | bankable=`{current_profit['bankable_positions']}` watch=`{current_profit['watch_positions']}` blocked=`{current_profit['blocked_positions']}` |",
         f"| Open trader positions | `{broker['trader_positions']}` upl=`{broker['trader_unrealized_pl_jpy']}` JPY |",
         f"| Target remaining | `{target['remaining_target_jpy']}` JPY |",
         "",
@@ -754,6 +791,15 @@ def _render_report(payload: dict[str, Any]) -> str:
             lines.append(
                 f"| `{item['lane_id']}` | `{item['pair']}` | `{item['side']}` | "
                 f"`{item['method']}` | `{item['reward_jpy']}` | `{remaining}` |"
+            )
+    else:
+        lines.append("- none")
+    lines.extend(["", "## Current Profit Capture", ""])
+    if current_profit["top_gate_statuses"]:
+        for item in current_profit["top_gate_statuses"]:
+            lines.append(
+                f"- `{item['trade_id']}` `{item['pair']}` `{item['side']}` "
+                f"gate=`{item['gate_status']}` progress=`{item['tp_progress']}` trigger=`{item['capture_trigger']}`"
             )
     else:
         lines.append("- none")

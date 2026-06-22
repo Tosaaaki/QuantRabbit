@@ -4660,9 +4660,16 @@ class LiveRuntimeBootstrapTest(unittest.TestCase):
                     # self-improvement-audit is consumed by the verifier and
                     # gateway as the live-facing repair gate.
                     "self-improvement-audit",
+                    # profit-capture-bot reads live position/quote/chart
+                    # state and must share the same SL-free assumptions as
+                    # position-management when explaining TP-progress gates.
+                    "profit-capture-bot",
                     # trader-support-bot reads the same live support state and
                     # must classify guardian/profit-capture under live defaults.
                     "trader-support-bot",
+                    # profit-capture-bot mirrors PositionManager's current
+                    # TP-progress gates and must use live SL-free defaults.
+                    "profit-capture-bot",
                 }
             ),
         )
@@ -5069,6 +5076,8 @@ class ConsolidatedCycleCommandTest(unittest.TestCase):
         self.assertLess(refresh.index("execution-timing-audit --max-events 80"), refresh.index("self-improvement-audit"))
         self.assertLess(refresh.index("manual-market-context-audit"), refresh.index("operator-precedent-audit"))
         self.assertLess(refresh.index("operator-precedent-audit"), refresh.index("verification-ledger-audit"))
+        self.assertLess(refresh.index("position-management"), refresh.index("profit-capture-bot"))
+        self.assertLess(refresh.index("profit-capture-bot"), refresh.index("memory-health"))
         self.assertLess(refresh.index("memory-health"), refresh.index("self-improvement-audit"))
         self.assertLess(refresh.index("self-improvement-audit"), refresh.index("profitability-acceptance"))
         self.assertLess(refresh.index("profitability-acceptance"), refresh.index("trader-support-bot"))
@@ -5077,6 +5086,8 @@ class ConsolidatedCycleCommandTest(unittest.TestCase):
         self.assertEqual(refresh_by_step["execution-timing-audit --max-events 80"]["timeout_seconds"], 60.0)
         self.assertFalse(refresh_by_step["execution-timing-audit --max-events 80"]["required"])
         self.assertTrue(refresh_by_step["position-management"]["required"])
+        self.assertTrue(refresh_by_step["profit-capture-bot"]["required"])
+        self.assertEqual(refresh_by_step["profit-capture-bot"]["ok_rcs"], [0, 2])
         self.assertTrue(refresh_by_step["memory-health"]["required"])
         self.assertTrue(refresh_by_step["profitability-acceptance"]["required"])
         self.assertEqual(refresh_by_step["profitability-acceptance"]["ok_rcs"], [0, 2])
@@ -5092,7 +5103,8 @@ class ConsolidatedCycleCommandTest(unittest.TestCase):
         self.assertNotIn("position-execution --send --confirm-live", sidecars)
         self.assertLess(sidecars.index("forecast-persistence-check"), sidecars.index("position-management"))
         self.assertLess(sidecars.index("position-management"), sidecars.index("position-execution"))
-        self.assertLess(sidecars.index("position-execution"), sidecars.index("memory-health"))
+        self.assertLess(sidecars.index("position-execution"), sidecars.index("profit-capture-bot"))
+        self.assertLess(sidecars.index("profit-capture-bot"), sidecars.index("memory-health"))
         self.assertLess(sidecars.index("memory-health"), sidecars.index("self-improvement-audit"))
         self.assertLess(sidecars.index("self-improvement-audit"), sidecars.index("profitability-acceptance"))
         self.assertLess(sidecars.index("profitability-acceptance"), sidecars.index("trader-support-bot"))
@@ -5100,6 +5112,8 @@ class ConsolidatedCycleCommandTest(unittest.TestCase):
         sidecars_by_step = {" ".join(s["argv"]): s for s in sidecar_specs}
         self.assertTrue(sidecars_by_step["position-management"]["required"])
         self.assertFalse(sidecars_by_step["position-execution"]["required"])
+        self.assertTrue(sidecars_by_step["profit-capture-bot"]["required"])
+        self.assertEqual(sidecars_by_step["profit-capture-bot"]["ok_rcs"], [0, 2])
         self.assertTrue(sidecars_by_step["memory-health"]["required"])
         self.assertTrue(sidecars_by_step["profitability-acceptance"]["required"])
         self.assertEqual(sidecars_by_step["profitability-acceptance"]["ok_rcs"], [0, 2])
@@ -5143,11 +5157,15 @@ class ConsolidatedCycleCommandTest(unittest.TestCase):
         self.assertEqual(direct_sidecars[0], "verify-projections")
         self.assertLess(direct_sidecars.index("verify-projections"), direct_sidecars.index("memory-health"))
         self.assertLess(direct_sidecars.index("verify-projections"), direct_sidecars.index("self-improvement-audit"))
+        self.assertLess(direct_sidecars.index("position-management"), direct_sidecars.index("profit-capture-bot"))
+        self.assertLess(direct_sidecars.index("profit-capture-bot"), direct_sidecars.index("memory-health"))
         self.assertLess(direct_sidecars.index("self-improvement-audit"), direct_sidecars.index("profitability-acceptance"))
         self.assertLess(direct_sidecars.index("profitability-acceptance"), direct_sidecars.index("trader-support-bot"))
         self.assertEqual(direct_sidecars[-1], "trader-support-bot")
         self.assertTrue(direct_sidecar_specs["profitability-acceptance"]["required"])
         self.assertEqual(direct_sidecar_specs["profitability-acceptance"]["ok_rcs"], [0, 2])
+        self.assertTrue(direct_sidecar_specs["profit-capture-bot"]["required"])
+        self.assertEqual(direct_sidecar_specs["profit-capture-bot"]["ok_rcs"], [0, 2])
         self.assertTrue(direct_sidecar_specs["trader-support-bot"]["required"])
         self.assertEqual(direct_sidecar_specs["trader-support-bot"]["ok_rcs"], [0, 2])
         cycle_digest.assert_called_once_with(
@@ -5264,6 +5282,9 @@ class ConsolidatedCycleCommandTest(unittest.TestCase):
                             "guardian_heartbeat_fresh": False,
                             "profit_capture_missed_loss_closes": 2,
                             "profit_capture_estimated_gap_jpy": 646.489,
+                            "profit_capture_bankable_positions": 0,
+                            "profit_capture_watch_positions": 1,
+                            "profit_capture_blocked_positions": 0,
                             "live_ready_lanes": 0,
                             "repair_frontier_lanes": 8,
                         },
@@ -5281,6 +5302,18 @@ class ConsolidatedCycleCommandTest(unittest.TestCase):
                         ],
                         "profit_capture": {
                             "top_misses": [{"trade_id": "472792", "pair": "USD_JPY"}],
+                        },
+                        "current_profit_capture": {
+                            "top_gate_statuses": [
+                                {
+                                    "trade_id": "472732",
+                                    "pair": "EUR_USD",
+                                    "side": "SHORT",
+                                    "gate_status": "WATCH_NOT_PROFITABLE",
+                                    "tp_progress": None,
+                                    "capture_trigger": {"quote_side": "ask", "comparator": "<=", "price": 1.14462},
+                                }
+                            ],
                         },
                         "entry_readiness": {
                             "repair_frontier": [
@@ -5305,6 +5338,7 @@ class ConsolidatedCycleCommandTest(unittest.TestCase):
         self.assertFalse(support["guardian_active"])
         self.assertEqual(support["guardian_active_source"], "plist_missing")
         self.assertEqual(support["profit_capture_missed_loss_closes"], 2)
+        self.assertEqual(support["profit_capture_watch_positions"], 1)
         self.assertEqual(support["repair_frontier_lanes"], 8)
         self.assertEqual(
             support["top_blocker_codes"],
@@ -5316,9 +5350,59 @@ class ConsolidatedCycleCommandTest(unittest.TestCase):
         )
         self.assertEqual(support["top_profit_capture_misses"][0]["trade_id"], "472792")
         self.assertEqual(
+            support["current_profit_capture_gate_statuses"][0]["gate_status"],
+            "WATCH_NOT_PROFITABLE",
+        )
+        self.assertEqual(
             support["repair_frontier"][0]["remaining_blocker_codes_after_guardian_and_repair_exemption"],
             ["FORECAST_CONTEXT_REQUIRED_FOR_LIVE"],
         )
+
+    def test_cycle_digest_summarizes_profit_capture_bot(self) -> None:
+        from quant_rabbit.cli import _cycle_digest
+
+        with tempfile.TemporaryDirectory() as tmp:
+            capture_path = Path(tmp) / "profit_capture_bot.json"
+            capture_path.write_text(
+                json.dumps(
+                    {
+                        "generated_at_utc": "2026-06-22T12:16:00+00:00",
+                        "status": "PROFIT_CAPTURE_BLOCKED",
+                        "metrics": {
+                            "open_trader_positions": 1,
+                            "bankable_positions": 0,
+                            "blocked_positions": 0,
+                            "watch_positions": 1,
+                            "historical_missed_loss_closes": 2,
+                            "historical_estimated_gap_jpy": 646.489,
+                        },
+                        "history": {
+                            "avg_decision_lag_minutes_after_first_positive": 297.09,
+                        },
+                        "positions": [
+                            {
+                                "trade_id": "472732",
+                                "pair": "EUR_USD",
+                                "side": "SHORT",
+                                "gate_status": "WATCH_NOT_PROFITABLE",
+                                "tp_progress": None,
+                                "capture_trigger": {"quote_side": "ask", "comparator": "<=", "price": 1.14462},
+                            }
+                        ],
+                        "blockers": [{"code": "HISTORICAL_PROFIT_CAPTURE_MISSED"}],
+                    }
+                )
+            )
+
+            with mock.patch("quant_rabbit.cli.DEFAULT_PROFIT_CAPTURE_BOT", capture_path):
+                digest = _cycle_digest(kind="cycle_refresh_digest", step_results=[], aborted=False)
+
+        capture = digest["profit_capture_bot"]
+        self.assertEqual(capture["status"], "PROFIT_CAPTURE_BLOCKED")
+        self.assertEqual(capture["watch_positions"], 1)
+        self.assertEqual(capture["historical_missed_loss_closes"], 2)
+        self.assertEqual(capture["top_gate_statuses"][0]["gate_status"], "WATCH_NOT_PROFITABLE")
+        self.assertEqual(capture["top_blocker_codes"], ["HISTORICAL_PROFIT_CAPTURE_MISSED"])
 
     def test_cycle_digest_summarizes_operator_precedent(self) -> None:
         from quant_rabbit.cli import _cycle_digest

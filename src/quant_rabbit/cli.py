@@ -114,6 +114,8 @@ from quant_rabbit.paths import (
     DEFAULT_POSITION_GUARDIAN_MANAGEMENT,
     DEFAULT_POSITION_MANAGEMENT,
     DEFAULT_POSITION_MANAGEMENT_REPORT,
+    DEFAULT_PROFIT_CAPTURE_BOT,
+    DEFAULT_PROFIT_CAPTURE_BOT_REPORT,
     DEFAULT_PROFIT_PARTIAL_CLOSE,
     DEFAULT_PROFIT_PARTIAL_CLOSE_REPORT,
     DEFAULT_PROFIT_PARTIAL_CLOSE_STATE,
@@ -1269,6 +1271,7 @@ _LIVE_RUNTIME_COMMANDS: frozenset[str] = frozenset(
         # state. It must classify guardian/profit-capture support under the
         # same runtime defaults as the gateway and self-improvement audit.
         "trader-support-bot",
+        "profit-capture-bot",
         # Consolidated cycle commands run the same refresh/sidecar steps the
         # wrapper-era skeleton ran one-by-one; they must see identical SL-free
         # defaults so nested generate-intents / position-management /
@@ -2077,6 +2080,7 @@ def _cycle_refresh_steps(daily_risk_pct: str) -> list[dict[str, Any]]:
         {"argv": ["thesis-evolution-check"], "required": False},
         {"argv": ["forecast-persistence-check"], "required": False},
         {"argv": ["position-management"], "required": True},
+        {"argv": ["profit-capture-bot"], "required": True, "ok_rcs": [0, 2]},
         {"argv": ["memory-health"], "required": True},
         {"argv": ["self-improvement-audit"], "required": False, "ok_rcs": [0, 2]},
         {"argv": ["profitability-acceptance"], "required": True, "ok_rcs": [0, 2]},
@@ -2115,6 +2119,7 @@ def _cycle_sidecar_steps() -> list[dict[str, Any]]:
         # live lock. Run the gateway here as the full-cycle fallback; live sends
         # still require QR_LIVE_ENABLED plus --send --confirm-live.
         {"argv": position_execution, "required": False},
+        {"argv": ["profit-capture-bot"], "required": True, "ok_rcs": [0, 2]},
         {"argv": ["memory-health"], "required": True},
         {"argv": ["self-improvement-audit"], "required": False, "ok_rcs": [0, 2]},
         {"argv": ["profitability-acceptance"], "required": True, "ok_rcs": [0, 2]},
@@ -2137,6 +2142,7 @@ def _direct_autotrade_audit_sidecar_steps() -> list[dict[str, Any]]:
         {"argv": ["thesis-evolution-check"], "required": False},
         {"argv": ["forecast-persistence-check"], "required": False},
         {"argv": ["position-management"], "required": True},
+        {"argv": ["profit-capture-bot"], "required": True, "ok_rcs": [0, 2]},
         {"argv": ["memory-health"], "required": True},
         {"argv": ["self-improvement-audit"], "required": False, "ok_rcs": [0, 2]},
         {"argv": ["profitability-acceptance"], "required": True, "ok_rcs": [0, 2]},
@@ -2547,6 +2553,49 @@ def _cycle_digest(*, kind: str, step_results: list[dict[str, Any]], aborted: boo
             if isinstance(a, dict)
         ][:10]
 
+    profit_capture_bot = _read_json_quiet(DEFAULT_PROFIT_CAPTURE_BOT)
+    if isinstance(profit_capture_bot, dict):
+        metrics = (
+            profit_capture_bot.get("metrics")
+            if isinstance(profit_capture_bot.get("metrics"), dict)
+            else {}
+        )
+        history = (
+            profit_capture_bot.get("history")
+            if isinstance(profit_capture_bot.get("history"), dict)
+            else {}
+        )
+        digest["profit_capture_bot"] = {
+            "generated_at_utc": profit_capture_bot.get("generated_at_utc"),
+            "status": profit_capture_bot.get("status"),
+            "open_trader_positions": metrics.get("open_trader_positions"),
+            "bankable_positions": metrics.get("bankable_positions"),
+            "blocked_positions": metrics.get("blocked_positions"),
+            "watch_positions": metrics.get("watch_positions"),
+            "historical_missed_loss_closes": metrics.get("historical_missed_loss_closes"),
+            "historical_estimated_gap_jpy": metrics.get("historical_estimated_gap_jpy"),
+            "avg_decision_lag_minutes_after_first_positive": history.get(
+                "avg_decision_lag_minutes_after_first_positive"
+            ),
+            "top_gate_statuses": [
+                {
+                    "trade_id": item.get("trade_id"),
+                    "pair": item.get("pair"),
+                    "side": item.get("side"),
+                    "gate_status": item.get("gate_status"),
+                    "tp_progress": item.get("tp_progress"),
+                    "capture_trigger": item.get("capture_trigger"),
+                }
+                for item in (profit_capture_bot.get("positions") or [])[:5]
+                if isinstance(item, dict)
+            ],
+            "top_blocker_codes": [
+                item.get("code")
+                for item in profit_capture_bot.get("blockers", []) or []
+                if isinstance(item, dict)
+            ][:8],
+        }
+
     trader_support = _read_json_quiet(DEFAULT_TRADER_SUPPORT_BOT)
     if isinstance(trader_support, dict):
         metrics = trader_support.get("metrics") if isinstance(trader_support.get("metrics"), dict) else {}
@@ -2561,6 +2610,11 @@ def _cycle_digest(*, kind: str, step_results: list[dict[str, Any]], aborted: boo
             if isinstance(trader_support.get("entry_readiness"), dict)
             else {}
         )
+        current_profit_capture = (
+            trader_support.get("current_profit_capture")
+            if isinstance(trader_support.get("current_profit_capture"), dict)
+            else {}
+        )
         digest["trader_support_bot"] = {
             "generated_at_utc": trader_support.get("generated_at_utc"),
             "status": trader_support.get("status"),
@@ -2571,6 +2625,9 @@ def _cycle_digest(*, kind: str, step_results: list[dict[str, Any]], aborted: boo
             "guardian_heartbeat_age_seconds": guardian.get("heartbeat_age_seconds"),
             "profit_capture_missed_loss_closes": metrics.get("profit_capture_missed_loss_closes"),
             "profit_capture_estimated_gap_jpy": metrics.get("profit_capture_estimated_gap_jpy"),
+            "profit_capture_bankable_positions": metrics.get("profit_capture_bankable_positions"),
+            "profit_capture_watch_positions": metrics.get("profit_capture_watch_positions"),
+            "profit_capture_blocked_positions": metrics.get("profit_capture_blocked_positions"),
             "live_ready_lanes": metrics.get("live_ready_lanes"),
             "repair_frontier_lanes": metrics.get("repair_frontier_lanes"),
             "top_blocker_codes": [
@@ -2584,6 +2641,7 @@ def _cycle_digest(*, kind: str, step_results: list[dict[str, Any]], aborted: boo
                 if isinstance(item, dict)
             ][:8],
             "top_profit_capture_misses": profit_capture.get("top_misses", [])[:3],
+            "current_profit_capture_gate_statuses": current_profit_capture.get("top_gate_statuses", [])[:3],
             "repair_frontier": entry.get("repair_frontier", [])[:4],
         }
 
@@ -3015,6 +3073,22 @@ def main(argv: list[str] | None = None) -> int:
     p_profit_accept.add_argument("--output", type=Path, default=DEFAULT_PROFITABILITY_ACCEPTANCE)
     p_profit_accept.add_argument("--report", type=Path, default=DEFAULT_PROFITABILITY_ACCEPTANCE_REPORT)
 
+    p_capture_bot = sub.add_parser(
+        "profit-capture-bot",
+        help="Write a read-only TP-progress profit-capture diagnosis for open trader positions.",
+    )
+    p_capture_bot.add_argument("--broker-snapshot", type=Path, default=DEFAULT_BROKER_SNAPSHOT)
+    p_capture_bot.add_argument("--pair-charts", type=Path, default=DEFAULT_PAIR_CHARTS)
+    p_capture_bot.add_argument("--position-management", type=Path, default=DEFAULT_POSITION_MANAGEMENT)
+    p_capture_bot.add_argument(
+        "--position-guardian-management",
+        type=Path,
+        default=DEFAULT_POSITION_GUARDIAN_MANAGEMENT,
+    )
+    p_capture_bot.add_argument("--execution-timing-audit", type=Path, default=DEFAULT_EXECUTION_TIMING_AUDIT)
+    p_capture_bot.add_argument("--output", type=Path, default=DEFAULT_PROFIT_CAPTURE_BOT)
+    p_capture_bot.add_argument("--report", type=Path, default=DEFAULT_PROFIT_CAPTURE_BOT_REPORT)
+
     p_support = sub.add_parser(
         "trader-support-bot",
         help="Write a read-only operator panel for guardian, profit-capture, and live-entry readiness.",
@@ -3029,6 +3103,7 @@ def main(argv: list[str] | None = None) -> int:
     p_support.add_argument("--self-improvement-audit", type=Path, default=DEFAULT_SELF_IMPROVEMENT_AUDIT)
     p_support.add_argument("--profitability-acceptance", type=Path, default=DEFAULT_PROFITABILITY_ACCEPTANCE)
     p_support.add_argument("--execution-timing-audit", type=Path, default=DEFAULT_EXECUTION_TIMING_AUDIT)
+    p_support.add_argument("--profit-capture-bot", type=Path, default=DEFAULT_PROFIT_CAPTURE_BOT)
     p_support.add_argument("--output", type=Path, default=DEFAULT_TRADER_SUPPORT_BOT)
     p_support.add_argument("--report", type=Path, default=DEFAULT_TRADER_SUPPORT_BOT_REPORT)
 
@@ -5333,6 +5408,38 @@ def main(argv: list[str] | None = None) -> int:
             )
         )
         return 0 if summary.status == STATUS_PASSED else 2
+    if args.command == "profit-capture-bot":
+        try:
+            from quant_rabbit.profit_capture_bot import STATUS_BLOCKED, ProfitCaptureBot
+
+            summary = ProfitCaptureBot(
+                broker_snapshot_path=args.broker_snapshot,
+                pair_charts_path=args.pair_charts,
+                position_management_path=args.position_management,
+                position_guardian_management_path=args.position_guardian_management,
+                execution_timing_audit_path=args.execution_timing_audit,
+                output_path=args.output,
+                report_path=args.report,
+            ).run()
+        except (OSError, json.JSONDecodeError, ValueError) as exc:
+            print(json.dumps({"error": str(exc)}, ensure_ascii=False, indent=2, sort_keys=True))
+            return 3
+        print(
+            json.dumps(
+                {
+                    "status": summary.status,
+                    "output_path": str(summary.output_path),
+                    "report_path": str(summary.report_path),
+                    "metrics": summary.metrics,
+                    "blockers": summary.blockers,
+                    "positions": summary.positions,
+                },
+                ensure_ascii=False,
+                indent=2,
+                sort_keys=True,
+            )
+        )
+        return 2 if summary.status == STATUS_BLOCKED else 0
     if args.command == "trader-support-bot":
         try:
             from quant_rabbit.trader_support_bot import STATUS_READY, TraderSupportBot
@@ -5348,6 +5455,7 @@ def main(argv: list[str] | None = None) -> int:
                 self_improvement_audit_path=args.self_improvement_audit,
                 profitability_acceptance_path=args.profitability_acceptance,
                 execution_timing_audit_path=args.execution_timing_audit,
+                profit_capture_bot_path=args.profit_capture_bot,
                 output_path=args.output,
                 report_path=args.report,
             ).run()

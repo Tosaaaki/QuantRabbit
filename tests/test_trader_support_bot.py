@@ -33,6 +33,7 @@ class TraderSupportBotTest(unittest.TestCase):
                     self_improvement_audit_path=files["self_improvement"],
                     profitability_acceptance_path=files["profitability"],
                     execution_timing_audit_path=files["timing"],
+                    profit_capture_bot_path=files["profit_capture_bot"],
                     output_path=files["output"],
                     report_path=files["report"],
                     now_utc=now,
@@ -45,6 +46,7 @@ class TraderSupportBotTest(unittest.TestCase):
             self.assertIn("LOSS_CLOSE_PROFIT_CAPTURE_MISSED", codes)
             self.assertFalse(payload["metrics"]["send_fresh_entries_allowed"])
             self.assertEqual(payload["profit_capture"]["missed_loss_closes"], 2)
+            self.assertEqual(payload["current_profit_capture"]["watch_positions"], 1)
             self.assertEqual(payload["entry_readiness"]["guardian_blocked_lanes"], 1)
             repair = payload["entry_readiness"]["repair_frontier"][0]
             self.assertEqual(
@@ -77,6 +79,7 @@ class TraderSupportBotTest(unittest.TestCase):
                     self_improvement_audit_path=files["self_improvement"],
                     profitability_acceptance_path=files["profitability"],
                     execution_timing_audit_path=files["timing"],
+                    profit_capture_bot_path=files["profit_capture_bot"],
                     output_path=files["output"],
                     report_path=files["report"],
                     now_utc=now,
@@ -121,6 +124,8 @@ class TraderSupportBotTest(unittest.TestCase):
                         str(files["profitability"]),
                         "--execution-timing-audit",
                         str(files["timing"]),
+                        "--profit-capture-bot",
+                        str(files["profit_capture_bot"]),
                         "--output",
                         str(files["output"]),
                         "--report",
@@ -165,6 +170,8 @@ class TraderSupportBotTest(unittest.TestCase):
                         str(files["profitability"]),
                         "--execution-timing-audit",
                         str(files["timing"]),
+                        "--profit-capture-bot",
+                        str(files["profit_capture_bot"]),
                         "--output",
                         str(files["output"]),
                         "--report",
@@ -192,6 +199,7 @@ def _write_fixture(root: Path, *, now: datetime, blocked: bool) -> dict[str, Pat
         "self_improvement": data / "self_improvement_audit.json",
         "profitability": data / "profitability_acceptance.json",
         "timing": data / "execution_timing_audit.json",
+        "profit_capture_bot": data / "profit_capture_bot.json",
         "output": data / "trader_support_bot.json",
         "report": docs / "trader_support_bot_report.md",
     }
@@ -328,6 +336,30 @@ def _write_fixture(root: Path, *, now: datetime, blocked: bool) -> dict[str, Pat
             "generated_at_utc": now.isoformat(),
             "status": "OK",
             "summary": {"loss_closes_profit_capture_missed": 2 if blocked else 0},
+        },
+    )
+    _write_json(
+        files["profit_capture_bot"],
+        {
+            "generated_at_utc": now.isoformat(),
+            "status": "PROFIT_CAPTURE_BLOCKED" if blocked else "PROFIT_CAPTURE_WATCH",
+            "metrics": {
+                "open_trader_positions": 1,
+                "bankable_positions": 0,
+                "watch_positions": 1,
+                "blocked_positions": 0,
+                "historical_missed_loss_closes": 2 if blocked else 0,
+            },
+            "positions": [
+                {
+                    "trade_id": "472792",
+                    "pair": "USD_JPY",
+                    "side": "SHORT",
+                    "gate_status": "WATCH_NOT_PROFITABLE",
+                    "tp_progress": None,
+                    "capture_trigger": {"quote_side": "ask", "comparator": "<=", "price": 161.674},
+                }
+            ],
         },
     )
     return files
