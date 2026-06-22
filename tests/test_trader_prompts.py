@@ -190,6 +190,37 @@ class TraderPromptRouteTest(unittest.TestCase):
         )
         self.assertTrue(any("layer=execution_quality" in reason for reason in route.reasons))
 
+    def test_support_bot_guardian_recovery_lane_is_carried_into_self_improvement_learning_route(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root)
+            _write_support_guardian_recovery(files)
+            files["self_improvement_audit"].write_text(
+                json.dumps(
+                    {
+                        "generated_at_utc": datetime.now(timezone.utc).isoformat(),
+                        "status": "SELF_IMPROVEMENT_BLOCKED",
+                        "findings": [
+                            {
+                                "priority": "P0",
+                                "layer": "execution_quality",
+                                "code": "POSITION_GUARDIAN_INACTIVE_FOR_PROFIT_CAPTURE",
+                                "message": "position guardian is inactive for profit capture",
+                                "evidence": {"target_open": True},
+                            }
+                        ],
+                    }
+                )
+            )
+
+            route = route_trader_prompts(**_route_paths(files), decision_response_path=None)
+
+        self.assertEqual(route.branch, BRANCH_LEARNING)
+        self.assertTrue(any("trader-support-bot shows TP_HARVEST_REPAIR" in reason for reason in route.reasons))
+        self.assertTrue(any("position-guardian recovery" in reason for reason in route.reasons))
+        self.assertTrue(any("range_trader:GBP_JPY:SHORT:RANGE_ROTATION" in reason for reason in route.reasons))
+        self.assertTrue(any("LOAD_POSITION_GUARDIAN_ONLY_IF_APPROVED (explicit approval)" in reason for reason in route.reasons))
+
     def test_missing_profitability_acceptance_routes_to_refresh_branch(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -263,6 +294,41 @@ class TraderPromptRouteTest(unittest.TestCase):
         self.assertEqual(route.branch, BRANCH_LEARNING)
         self.assertTrue(any("profitability acceptance NEGATIVE_EXPECTANCY_ACTIVE blocks high-turn entry routing" in reason for reason in route.reasons))
         self.assertTrue(any("expectancy=-168.9" in reason for reason in route.reasons))
+
+    def test_support_bot_guardian_recovery_lane_is_carried_into_profitability_learning_route(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root)
+            _write_support_guardian_recovery(files)
+            now = datetime.now(timezone.utc).isoformat()
+            files["profitability_acceptance"].write_text(
+                json.dumps(
+                    {
+                        "generated_at_utc": now,
+                        "status": "PROFITABILITY_ACCEPTANCE_BLOCKED",
+                        "findings": [
+                            {
+                                "priority": "P0",
+                                "code": "NEGATIVE_EXPECTANCY_ACTIVE",
+                                "message": "capture economics is still NEGATIVE_EXPECTANCY",
+                                "evidence": {"trades": 215, "expectancy_jpy_per_trade": -168.9},
+                            }
+                        ],
+                        "metrics": {
+                            "order_intents": {
+                                "generated_at_utc": json.loads(files["intents"].read_text())["generated_at_utc"],
+                            }
+                        },
+                    }
+                )
+            )
+
+            route = route_trader_prompts(**_route_paths(files), decision_response_path=None)
+
+        self.assertEqual(route.branch, BRANCH_LEARNING)
+        self.assertTrue(any("profitability acceptance NEGATIVE_EXPECTANCY_ACTIVE" in reason for reason in route.reasons))
+        self.assertTrue(any("trader-support-bot shows TP_HARVEST_REPAIR" in reason for reason in route.reasons))
+        self.assertTrue(any("range_trader:GBP_JPY:SHORT:RANGE_ROTATION" in reason for reason in route.reasons))
 
     def test_profitability_acceptance_p0_with_repair_live_ready_lane_routes_to_entry(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -3666,6 +3732,7 @@ def _route_paths(files: dict[str, Path]) -> dict[str, Path]:
         "memory_health_path": files["memory_health"],
         "self_improvement_audit_path": files["self_improvement_audit"],
         "profitability_acceptance_path": files["profitability_acceptance"],
+        "trader_support_bot_path": files["trader_support_bot"],
         "coverage_optimization_path": files["coverage_optimization"],
         "strategy_profile_path": files["strategy_profile"],
         "trader_overrides_path": files["trader_overrides"],
@@ -3704,6 +3771,7 @@ def _fixtures(root: Path, *, positions: list[dict] | None = None) -> dict[str, P
         "memory_health": root / "memory_health.json",
         "self_improvement_audit": root / "self_improvement_audit.json",
         "profitability_acceptance": root / "profitability_acceptance.json",
+        "trader_support_bot": root / "trader_support_bot.json",
         "coverage_optimization": root / "coverage_optimization.json",
         "strategy_profile": root / "strategy_profile.json",
         "history_db": root / "legacy_history.db",
@@ -3879,6 +3947,23 @@ def _fixtures(root: Path, *, positions: list[dict] | None = None) -> dict[str, P
             }
         )
     )
+    files["trader_support_bot"].write_text(
+        json.dumps(
+            {
+                "generated_at_utc": now,
+                "status": "SUPPORT_READY",
+                "metrics": {
+                    "repair_basket_send_allowed": True,
+                    "guardian_active": True,
+                    "repair_basket_guardian_recovery_lanes": 0,
+                    "repair_basket_guardian_recovery_lane_ids": [],
+                },
+                "entry_readiness": {"repair_basket_guardian_recovery": []},
+                "operator_actions": [],
+                "live_side_effects": [],
+            }
+        )
+    )
     files["coverage_optimization"].write_text(
         json.dumps(
             {
@@ -3937,6 +4022,54 @@ def _fixtures(root: Path, *, positions: list[dict] | None = None) -> dict[str, P
         )
     )
     return files
+
+
+def _write_support_guardian_recovery(files: dict[str, Path]) -> None:
+    files["trader_support_bot"].write_text(
+        json.dumps(
+            {
+                "generated_at_utc": datetime.now(timezone.utc).isoformat(),
+                "status": "SUPPORT_BLOCKED",
+                "metrics": {
+                    "repair_basket_send_allowed": False,
+                    "guardian_active": False,
+                    "repair_basket_guardian_recovery_lanes": 1,
+                    "repair_basket_guardian_recovery_lane_ids": [
+                        "range_trader:GBP_JPY:SHORT:RANGE_ROTATION",
+                    ],
+                },
+                "entry_readiness": {
+                    "repair_basket_guardian_recovery": [
+                        {
+                            "lane_id": "range_trader:GBP_JPY:SHORT:RANGE_ROTATION",
+                            "status": "DRY_RUN_BLOCKED",
+                            "pair": "GBP_JPY",
+                            "side": "SHORT",
+                            "method": "RANGE_ROTATION",
+                            "order_type": "LIMIT",
+                            "repair_mode": "TP_HARVEST_REPAIR",
+                            "remaining_blocker_codes_after_guardian_and_repair_exemption": [],
+                        }
+                    ],
+                },
+                "operator_actions": [
+                    {
+                        "code": "CHECK_POSITION_GUARDIAN_PREFLIGHT",
+                        "requires_explicit_operator_approval": False,
+                    },
+                    {
+                        "code": "CHECK_POSITION_GUARDIAN_STATUS",
+                        "requires_explicit_operator_approval": False,
+                    },
+                    {
+                        "code": "LOAD_POSITION_GUARDIAN_ONLY_IF_APPROVED",
+                        "requires_explicit_operator_approval": True,
+                    },
+                ],
+                "live_side_effects": [],
+            }
+        )
+    )
 
 
 def _set_mtime(path: Path, value: float) -> None:

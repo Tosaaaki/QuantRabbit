@@ -97,6 +97,7 @@ from quant_rabbit.paths import (
     DEFAULT_PROFITABILITY_ACCEPTANCE,
     DEFAULT_SELF_IMPROVEMENT_AUDIT,
     DEFAULT_STRATEGY_PROFILE,
+    DEFAULT_TRADER_SUPPORT_BOT,
     DEFAULT_TRADER_OVERRIDES,
     DEFAULT_TRADER_PROMPTS_DIR,
 )
@@ -201,6 +202,7 @@ def route_trader_prompts(
     memory_health_path: Path | None = DEFAULT_MEMORY_HEALTH,
     self_improvement_audit_path: Path | None = DEFAULT_SELF_IMPROVEMENT_AUDIT,
     profitability_acceptance_path: Path | None = DEFAULT_PROFITABILITY_ACCEPTANCE,
+    trader_support_bot_path: Path | None = DEFAULT_TRADER_SUPPORT_BOT,
     coverage_optimization_path: Path | None = DEFAULT_COVERAGE_OPTIMIZATION,
     strategy_profile_path: Path | None = DEFAULT_STRATEGY_PROFILE,
     trader_overrides_path: Path | None = DEFAULT_TRADER_OVERRIDES,
@@ -244,6 +246,8 @@ def route_trader_prompts(
     pair_charts = _load_json(pair_charts_path)
     market_context_matrix = _load_json(market_context_matrix_path)
     attack_advice = _load_json(attack_advice_path)
+    trader_support = _trader_support_bot_payload(trader_support_bot_path)
+    support_guardian_recovery_reasons = _trader_support_guardian_recovery_reasons(trader_support)
 
     position_sidecar_reasons = _position_management_sidecar_refresh_reasons(
         snapshot,
@@ -503,6 +507,7 @@ def route_trader_prompts(
                     *carry_reasons,
                     *advisory_close_review_reasons,
                     *pending_entry_reasons,
+                    *support_guardian_recovery_reasons,
                     "self-improvement P0 blocks fresh risk while trader-owned pending entry risk remains fillable; "
                     "write CANCEL_PENDING or explicitly justify keeping the current pending order before learning/gap work",
                     *self_improvement_repair_reasons,
@@ -528,7 +533,13 @@ def route_trader_prompts(
             )
         return _build_route(
             BRANCH_LEARNING,
-            (*carry_reasons, *advisory_close_review_reasons, *pending_entry_reasons, *self_improvement_repair_reasons),
+            (
+                *carry_reasons,
+                *advisory_close_review_reasons,
+                *pending_entry_reasons,
+                *support_guardian_recovery_reasons,
+                *self_improvement_repair_reasons,
+            ),
             include_content=include_content,
         )
 
@@ -562,6 +573,7 @@ def route_trader_prompts(
                     *carry_reasons,
                     *advisory_close_review_reasons,
                     *pending_entry_reasons,
+                    *support_guardian_recovery_reasons,
                     "profitability acceptance P0 blocks fresh risk while trader-owned pending entry risk remains fillable; "
                     "write CANCEL_PENDING or explicitly justify keeping the current pending order before learning/gap work",
                     *profitability_acceptance_repair_reasons,
@@ -590,6 +602,7 @@ def route_trader_prompts(
                 *carry_reasons,
                 *advisory_close_review_reasons,
                 *pending_entry_reasons,
+                *support_guardian_recovery_reasons,
                 *profitability_acceptance_repair_reasons,
             ),
             include_content=include_content,
@@ -615,6 +628,7 @@ def route_trader_prompts(
                     *carry_reasons,
                     *advisory_close_review_reasons,
                     *pending_entry_reasons,
+                    *support_guardian_recovery_reasons,
                     no_live_ready_reason,
                     "no live entry can offset the active close/hold ambiguity; refresh the position decision before learning-gap work",
                 ),
@@ -626,6 +640,7 @@ def route_trader_prompts(
                 (
                     *carry_reasons,
                     *pending_entry_reasons,
+                    *support_guardian_recovery_reasons,
                     no_live_ready_reason,
                     "resolve stale pending entry risk with CANCEL_PENDING or an explicit keep justification before learning-gap work",
                 ),
@@ -637,6 +652,7 @@ def route_trader_prompts(
                 *carry_reasons,
                 *advisory_close_review_reasons,
                 *pending_entry_reasons,
+                *support_guardian_recovery_reasons,
                 no_live_ready_reason,
             ),
             include_content=include_content,
@@ -652,6 +668,79 @@ def route_trader_prompts(
 def _pending_cancel_review_reasons(reasons: tuple[str, ...]) -> tuple[str, ...]:
     return tuple(
         reason for reason in reasons if reason.startswith("self-improvement pending cancel review ")
+    )
+
+
+def _trader_support_bot_payload(path: Path | None) -> dict[str, Any]:
+    if path is None or not path.exists():
+        return {}
+    try:
+        return _load_json(path)
+    except (OSError, ValueError, json.JSONDecodeError):
+        return {}
+
+
+def _trader_support_guardian_recovery_reasons(payload: dict[str, Any]) -> tuple[str, ...]:
+    if not payload:
+        return ()
+    metrics = payload.get("metrics") if isinstance(payload.get("metrics"), dict) else {}
+    if metrics.get("repair_basket_send_allowed") is True or metrics.get("guardian_active") is True:
+        return ()
+    entry = payload.get("entry_readiness") if isinstance(payload.get("entry_readiness"), dict) else {}
+    raw_candidates = entry.get("repair_basket_guardian_recovery")
+    candidates: list[dict[str, Any]] = []
+    if isinstance(raw_candidates, list):
+        for item in raw_candidates:
+            if not isinstance(item, dict):
+                continue
+            if str(item.get("repair_mode") or "") != "TP_HARVEST_REPAIR":
+                continue
+            remaining = item.get("remaining_blocker_codes_after_guardian_and_repair_exemption")
+            if isinstance(remaining, list) and [str(code) for code in remaining if str(code)]:
+                continue
+            candidates.append(item)
+
+    raw_metric_lane_ids = metrics.get("repair_basket_guardian_recovery_lane_ids")
+    metric_lane_ids = [
+        str(lane_id)
+        for lane_id in (raw_metric_lane_ids if isinstance(raw_metric_lane_ids, list) else [])
+        if str(lane_id)
+    ]
+    lane_ids = [
+        str(item.get("lane_id"))
+        for item in candidates
+        if str(item.get("lane_id") or "")
+    ] or metric_lane_ids
+    lane_ids = list(dict.fromkeys(lane_ids))
+    recovery_count = len(candidates) or _optional_int(metrics.get("repair_basket_guardian_recovery_lanes")) or 0
+    if recovery_count <= 0 or not lane_ids:
+        return ()
+
+    actions = payload.get("operator_actions") if isinstance(payload.get("operator_actions"), list) else []
+    action_codes: list[str] = []
+    for action in actions:
+        if not isinstance(action, dict):
+            continue
+        code = str(action.get("code") or "")
+        if code not in {
+            "CHECK_POSITION_GUARDIAN_PREFLIGHT",
+            "CHECK_POSITION_GUARDIAN_STATUS",
+            "LOAD_POSITION_GUARDIAN_ONLY_IF_APPROVED",
+        }:
+            continue
+        suffix = " (explicit approval)" if action.get("requires_explicit_operator_approval") is True else ""
+        action_codes.append(code + suffix)
+
+    details = [
+        f"lane(s)={','.join(lane_ids[:3])}",
+        "support_bot=data/trader_support_bot.json",
+    ]
+    if action_codes:
+        details.append("operator_actions=" + ",".join(dict.fromkeys(action_codes)))
+    return (
+        "trader-support-bot shows TP_HARVEST_REPAIR lane(s) blocked only by position-guardian recovery; "
+        "do not add unrelated indicators or resend generic entries before resolving guardian proof "
+        f"({'; '.join(details)})",
     )
 
 
