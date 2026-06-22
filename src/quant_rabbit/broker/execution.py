@@ -4,6 +4,7 @@ import math
 import hashlib
 import json
 import os
+import subprocess
 import time
 from dataclasses import asdict, dataclass, replace
 from datetime import datetime, timezone
@@ -1984,7 +1985,64 @@ def _send_guard_issues(*, send: bool, confirm_live: bool, lane_id: str | None) -
         issues.append(RiskIssue("LIVE_CONFIRMATION_REQUIRED", "live send requires --confirm-live"))
     if send and not lane_id:
         issues.append(RiskIssue("LANE_ID_REQUIRED_FOR_SEND", "live send requires an explicit --lane-id"))
+    if send and _truthy_env("QR_REQUIRE_POSITION_GUARDIAN_ACTIVE", default=False) and not _position_guardian_active():
+        issues.append(
+            RiskIssue(
+                "POSITION_GUARDIAN_INACTIVE_FOR_SEND",
+                "fresh entry live send requires an active position guardian so TP-progress profit can be "
+                "captured between full trader cycles; load com.quantrabbit.position-guardian or set "
+                "QR_REQUIRE_POSITION_GUARDIAN_ACTIVE=0 for an explicit operator override",
+            )
+        )
     return [issue.__dict__ for issue in issues]
+
+
+def _truthy_env(name: str, *, default: bool) -> bool:
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    return _truthy_value(raw)
+
+
+def _truthy_value(raw: str) -> bool:
+    return raw.strip() in {"1", "true", "TRUE", "yes", "YES", "on", "ON"}
+
+
+def _position_guardian_active() -> bool:
+    raw = os.environ.get("QR_POSITION_GUARDIAN_ACTIVE")
+    if raw is not None:
+        return _truthy_value(raw)
+
+    label = os.environ.get("QR_POSITION_GUARDIAN_LABEL", "com.quantrabbit.position-guardian")
+    plist = Path(
+        os.environ.get(
+            "QR_POSITION_GUARDIAN_PLIST",
+            str(Path.home() / "Library" / "LaunchAgents" / f"{label}.plist"),
+        )
+    )
+    if not plist.exists():
+        return False
+    try:
+        list_proc = subprocess.run(
+            ["launchctl", "list", label],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=False,
+        )
+    except (FileNotFoundError, OSError):
+        return False
+    if list_proc.returncode == 0:
+        return True
+    try:
+        print_proc = subprocess.run(
+            ["launchctl", "print", f"gui/{os.getuid()}/{label}"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=False,
+        )
+    except (FileNotFoundError, OSError):
+        return False
+    return print_proc.returncode == 0
 
 
 def _risk_has_blocking_stale_quote(risk: Any) -> bool:

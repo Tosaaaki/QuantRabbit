@@ -250,6 +250,11 @@ _SL_FREE_RUNTIME_DEFAULTS: dict[str, str] = {
     # A prediction that is not logged, projection-tracked, and reconciled with
     # broker transaction truth is not auditable enough for live order flow.
     "QR_REQUIRE_TELEMETRY_FOR_LIVE": "1",
+    # Fresh entry sends need the fast launchd position guardian active so
+    # TP-progress profit can be captured between full trader cycles. The live
+    # wrapper exports QR_POSITION_GUARDIAN_ACTIVE after reading launchd; direct
+    # CLI sends fall back to the gateway's read-only launchd check.
+    "QR_REQUIRE_POSITION_GUARDIAN_ACTIVE": "1",
 }
 
 

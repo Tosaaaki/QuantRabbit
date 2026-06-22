@@ -60,8 +60,29 @@ class LiveWrapperTest(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stderr)
             payload = capture.read_text()
             self.assertIn("QR_LIVE_ENABLED=1\n", payload)
+            self.assertIn("QR_POSITION_GUARDIAN_ACTIVE=1\n", payload)
             self.assertNotIn("forcing dry-run mode", result.stderr)
             self.assertEqual((root / "sync.args").read_text(), "--live-only --skip-tests\n")
+
+    def test_live_send_marks_inactive_position_guardian_for_gateway_block(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            capture = root / "capture.json"
+            env = _wrapper_env(root, capture, live_enabled="1", guardian_loaded=False)
+
+            result = subprocess.run(
+                ["bash", str(WRAPPER), "--send"],
+                env=env,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=False,
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            payload = capture.read_text()
+            self.assertIn("QR_POSITION_GUARDIAN_ACTIVE=0\n", payload)
+            self.assertIn("LiveOrderGateway will block fresh entry sends", result.stderr)
 
     def test_live_gpt_handoff_adds_missing_send(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -372,6 +393,7 @@ def _wrapper_env(
     live_enabled: str | None = None,
     sync_exit: int = 0,
     python_exit: int = 0,
+    guardian_loaded: bool = True,
 ) -> dict[str, str]:
     env_file = root / "oanda.env"
     lines = [
@@ -400,6 +422,27 @@ def _wrapper_env(
         + "\n"
     )
     fake_sync.chmod(0o755)
+    fake_guardian_check = fake_scripts / "install-position-guardian.sh"
+    fake_guardian_check.write_text(
+        "\n".join(
+            [
+                "#!/usr/bin/env bash",
+                "set -euo pipefail",
+                "if [[ \"${1:-}\" != \"--require-loaded\" ]]; then",
+                "  printf 'unexpected guardian check args: %s\\n' \"$*\" >&2",
+                "  exit 64",
+                "fi",
+                "if [[ \"${QR_FAKE_POSITION_GUARDIAN_LOADED:-1}\" == \"1\" ]]; then",
+                "  printf '[install-position-guardian] active OK: label=com.quantrabbit.position-guardian\\n'",
+                "  exit 0",
+                "fi",
+                "printf '[install-position-guardian] position guardian launchd label is not loaded: com.quantrabbit.position-guardian\\n' >&2",
+                "exit 6",
+            ]
+        )
+        + "\n"
+    )
+    fake_guardian_check.chmod(0o755)
     fake_bin = root / "bin"
     fake_bin.mkdir()
     fake_python = fake_bin / "python3"
@@ -410,6 +453,8 @@ def _wrapper_env(
                 "set -euo pipefail",
                 "{",
                 "  printf 'QR_LIVE_ENABLED=%s\\n' \"${QR_LIVE_ENABLED:-}\"",
+                "  printf 'QR_REQUIRE_POSITION_GUARDIAN_ACTIVE=%s\\n' \"${QR_REQUIRE_POSITION_GUARDIAN_ACTIVE:-}\"",
+                "  printf 'QR_POSITION_GUARDIAN_ACTIVE=%s\\n' \"${QR_POSITION_GUARDIAN_ACTIVE:-}\"",
                 "  printf 'QR_AUTOTRADE_LOCK_HELD=%s\\n' \"${QR_AUTOTRADE_LOCK_HELD:-}\"",
                 "  printf 'PYTHONPATH=%s\\n' \"${PYTHONPATH:-}\"",
                 "  printf 'ARGV='",
@@ -438,6 +483,7 @@ def _wrapper_env(
             "QR_TRADER_ROOT_DIR": str(root),
             "QR_LIVE_SYNC_ENABLED": "1",
             "QR_SYNC_MARKER_PATH": str(root / "sync.args"),
+            "QR_FAKE_POSITION_GUARDIAN_LOADED": "1" if guardian_loaded else "0",
         }
     )
     return env

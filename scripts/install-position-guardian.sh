@@ -14,13 +14,20 @@ PLIST="$HOME/Library/LaunchAgents/$LABEL.plist"
 INTERVAL="${QR_POSITION_GUARDIAN_INTERVAL:-30}"
 ENV_FILE="${QR_OANDA_ENV_FILE:-.env.local}"
 CHECK_ONLY=0
+STATUS_ONLY=0
+REQUIRE_LOADED=0
 
 usage() {
   cat <<'USAGE'
-Usage: scripts/install-position-guardian.sh [--check]
+Usage: scripts/install-position-guardian.sh [--check] [--status] [--require-loaded]
 
 Install the QuantRabbit position guardian launchd agent. --check runs the same
 activation preflight without writing a plist or loading launchd.
+
+--status prints the current plist/launchd state without writing anything.
+--require-loaded exits non-zero unless the LaunchAgent plist exists and the
+launchd label is currently loaded. Combine it with --check when activation
+preflight should also be enforced.
 USAGE
 }
 
@@ -28,6 +35,14 @@ while [[ "$#" -gt 0 ]]; do
   case "$1" in
     --check)
       CHECK_ONLY=1
+      shift
+      ;;
+    --status)
+      STATUS_ONLY=1
+      shift
+      ;;
+    --require-loaded)
+      REQUIRE_LOADED=1
       shift
       ;;
     -h|--help)
@@ -101,6 +116,42 @@ validate_env_file() {
   fi
 }
 
+launchd_label_loaded() {
+  command -v launchctl >/dev/null 2>&1 || return 2
+  launchctl list "$LABEL" >/dev/null 2>&1 && return 0
+  launchctl print "gui/$(id -u)/$LABEL" >/dev/null 2>&1 && return 0
+  return 1
+}
+
+guardian_loaded_status() {
+  if ! command -v launchctl >/dev/null 2>&1; then
+    printf 'launchctl_unavailable'
+    return 0
+  fi
+  if launchd_label_loaded; then
+    printf 'loaded'
+  else
+    printf 'not_loaded'
+  fi
+}
+
+print_guardian_status() {
+  local plist_state loaded_state
+  plist_state="missing"
+  [[ -f "$PLIST" ]] && plist_state="present"
+  loaded_state="$(guardian_loaded_status)"
+  echo "[install-position-guardian] status: label=$LABEL plist=$plist_state launchd=$loaded_state live_root=$LIVE_ROOT interval=${INTERVAL}s plist_path=$PLIST"
+}
+
+require_guardian_loaded() {
+  [[ -f "$PLIST" ]] || die "position guardian plist is missing: $PLIST" 6
+  command -v launchctl >/dev/null 2>&1 || die "launchctl is not available; position guardian cannot be proven active." 6
+  if ! launchd_label_loaded; then
+    die "position guardian launchd label is not loaded: $LABEL" 6
+  fi
+  echo "[install-position-guardian] active OK: label=$LABEL plist=$PLIST"
+}
+
 preflight() {
   [[ "$INTERVAL" =~ ^[0-9]+$ ]] || die "QR_POSITION_GUARDIAN_INTERVAL must be an integer >= 15 seconds." 2
   [[ "$INTERVAL" -ge 15 ]] || die "QR_POSITION_GUARDIAN_INTERVAL must be an integer >= 15 seconds." 2
@@ -122,10 +173,24 @@ preflight() {
   validate_env_file "$(env_file_path)"
 }
 
-preflight
+if [[ "$CHECK_ONLY" -eq 1 || ( "$CHECK_ONLY" -eq 0 && "$STATUS_ONLY" -eq 0 && "$REQUIRE_LOADED" -eq 0 ) ]]; then
+  preflight
+fi
+
+if [[ "$STATUS_ONLY" -eq 1 ]]; then
+  print_guardian_status
+fi
+
+if [[ "$REQUIRE_LOADED" -eq 1 ]]; then
+  require_guardian_loaded
+fi
 
 if [[ "$CHECK_ONLY" -eq 1 ]]; then
   echo "[install-position-guardian] preflight OK: live_root=$LIVE_ROOT interval=${INTERVAL}s plist=$PLIST"
+  exit 0
+fi
+
+if [[ "$STATUS_ONLY" -eq 1 || "$REQUIRE_LOADED" -eq 1 ]]; then
   exit 0
 fi
 

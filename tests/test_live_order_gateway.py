@@ -1376,6 +1376,66 @@ class LiveOrderGatewayTest(unittest.TestCase):
             result = json.loads((root / "request.json").read_text())
             self.assertIn("MARGIN_UTILIZATION_CAP_EXCEEDED", {issue["code"] for issue in result["risk_issues"]})
 
+    def test_send_blocks_when_required_position_guardian_is_inactive(self) -> None:
+        prior_required = os.environ.get("QR_REQUIRE_POSITION_GUARDIAN_ACTIVE")
+        prior_active = os.environ.get("QR_POSITION_GUARDIAN_ACTIVE")
+        os.environ["QR_REQUIRE_POSITION_GUARDIAN_ACTIVE"] = "1"
+        os.environ["QR_POSITION_GUARDIAN_ACTIVE"] = "0"
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                client = FakeExecutionClient()
+
+                summary = LiveOrderGateway(
+                    client=client,
+                    strategy_profile=_profile(root),
+                    output_path=root / "request.json",
+                    report_path=root / "report.md",
+                    live_enabled=True,
+                ).run(intents_path=_intents(root), lane_id="lane:EUR_USD:LONG", send=True, confirm_live=True)
+
+                self.assertEqual(summary.status, "BLOCKED")
+                self.assertFalse(summary.sent)
+                self.assertEqual(client.orders, [])
+                result = json.loads((root / "request.json").read_text())
+                self.assertIn(
+                    "POSITION_GUARDIAN_INACTIVE_FOR_SEND",
+                    {issue["code"] for issue in result["risk_issues"]},
+                )
+        finally:
+            _restore_env("QR_REQUIRE_POSITION_GUARDIAN_ACTIVE", prior_required)
+            _restore_env("QR_POSITION_GUARDIAN_ACTIVE", prior_active)
+
+    def test_send_position_guardian_requirement_has_explicit_operator_override(self) -> None:
+        prior_required = os.environ.get("QR_REQUIRE_POSITION_GUARDIAN_ACTIVE")
+        prior_active = os.environ.get("QR_POSITION_GUARDIAN_ACTIVE")
+        os.environ["QR_REQUIRE_POSITION_GUARDIAN_ACTIVE"] = "0"
+        os.environ["QR_POSITION_GUARDIAN_ACTIVE"] = "0"
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                client = FakeExecutionClient()
+
+                summary = LiveOrderGateway(
+                    client=client,
+                    strategy_profile=_profile(root),
+                    output_path=root / "request.json",
+                    report_path=root / "report.md",
+                    live_enabled=True,
+                ).run(intents_path=_intents(root), lane_id="lane:EUR_USD:LONG", send=True, confirm_live=True)
+
+                self.assertEqual(summary.status, "SENT")
+                self.assertTrue(summary.sent)
+                self.assertEqual(len(client.orders), 1)
+                result = json.loads((root / "request.json").read_text())
+                self.assertNotIn(
+                    "POSITION_GUARDIAN_INACTIVE_FOR_SEND",
+                    {issue["code"] for issue in result["risk_issues"]},
+                )
+        finally:
+            _restore_env("QR_REQUIRE_POSITION_GUARDIAN_ACTIVE", prior_required)
+            _restore_env("QR_POSITION_GUARDIAN_ACTIVE", prior_active)
+
     def test_send_allows_same_pair_hedge_when_margin_cap_is_full(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -2046,6 +2106,13 @@ class FakeExecutionClient:
     def post_order_json(self, order_request: dict[str, Any]) -> dict[str, Any]:
         self.orders.append(order_request)
         return {"orderCreateTransaction": {"id": "1"}, "relatedTransactionIDs": ["1"]}
+
+
+def _restore_env(name: str, value: str | None) -> None:
+    if value is None:
+        os.environ.pop(name, None)
+    else:
+        os.environ[name] = value
 
 
 class SequenceExecutionClient(FakeExecutionClient):

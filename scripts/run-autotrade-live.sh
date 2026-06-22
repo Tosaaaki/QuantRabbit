@@ -76,6 +76,17 @@ export QR_REQUIRE_FORECAST_FOR_LIVE="${QR_REQUIRE_FORECAST_FOR_LIVE:-1}"
 # The forecast must also be auditable: current forecast_history row, projection
 # ledger calibration target, and OANDA execution ledger sync all gate LIVE_READY.
 export QR_REQUIRE_TELEMETRY_FOR_LIVE="${QR_REQUIRE_TELEMETRY_FOR_LIVE:-1}"
+# Entry sends need the fast position guardian alive so TP-progress profit can be
+# converted between full trader cycles. The gateway uses the status exported by
+# this wrapper to block new risk while still allowing position-management closes.
+export QR_REQUIRE_POSITION_GUARDIAN_ACTIVE="${QR_REQUIRE_POSITION_GUARDIAN_ACTIVE:-1}"
+case "$QR_REQUIRE_POSITION_GUARDIAN_ACTIVE" in
+  0|1) ;;
+  *)
+    echo "[run-autotrade-live] invalid QR_REQUIRE_POSITION_GUARDIAN_ACTIVE=${QR_REQUIRE_POSITION_GUARDIAN_ACTIVE}; expected 0 or 1." >&2
+    exit 2
+    ;;
+esac
 
 readonly QR_AUTOTRADE_LOCK_DIR="${QR_AUTOTRADE_LOCK_DIR:-${ROOT_DIR}/.quant_rabbit_live.lock}"
 readonly QR_AUTOTRADE_LOCK_WAIT_SECONDS="${QR_AUTOTRADE_LOCK_WAIT_SECONDS:-180}"
@@ -206,6 +217,29 @@ has_arg() {
   return 1
 }
 
+refresh_position_guardian_send_status() {
+  if [[ "$QR_LIVE_ENABLED" != "1" || "$arg_count" -le 0 || "$QR_REQUIRE_POSITION_GUARDIAN_ACTIVE" != "1" ]] \
+    || ! has_arg "--send" "${args[@]}"; then
+    return 0
+  fi
+
+  local guardian_check
+  guardian_check="${ROOT_DIR}/scripts/install-position-guardian.sh"
+  if [[ ! -x "$guardian_check" ]]; then
+    export QR_POSITION_GUARDIAN_ACTIVE=0
+    echo "[run-autotrade-live] position guardian checker missing: ${guardian_check}; LiveOrderGateway will block fresh entry sends." >&2
+    return 0
+  fi
+
+  if QR_SYNC_LIVE_ROOT="$ROOT_DIR" QR_OANDA_ENV_FILE="$QR_OANDA_ENV_FILE" "$guardian_check" --require-loaded >&2; then
+    export QR_POSITION_GUARDIAN_ACTIVE=1
+    echo "[run-autotrade-live] position guardian active; fresh entry sends may proceed through gateway validation." >&2
+  else
+    export QR_POSITION_GUARDIAN_ACTIVE=0
+    echo "[run-autotrade-live] position guardian is not active; full cycle will still run, but LiveOrderGateway will block fresh entry sends so TP-progress profit capture is not blind." >&2
+  fi
+}
+
 if [[ "$arg_count" -gt 0 ]] && has_arg "--send" "${args[@]}" && ! has_arg "--use-gpt-trader" "${args[@]}"; then
   gpt_args=("--use-gpt-trader")
   if ! has_arg "--reuse-market-artifacts" "${args[@]}"; then
@@ -231,6 +265,8 @@ if [[ "$QR_LIVE_ENABLED" == "1" && "$arg_count" -gt 0 ]] \
     echo "[run-autotrade-live] QR_LIVE_ENABLED=1 GPT handoff omitted --send; adding --send to avoid a stage-only live trader cycle." >&2
   fi
 fi
+
+refresh_position_guardian_send_status
 
 set +e
 if [[ "$arg_count" -gt 0 ]]; then

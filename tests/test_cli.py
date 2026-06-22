@@ -4604,6 +4604,7 @@ class LiveRuntimeBootstrapTest(unittest.TestCase):
         "QR_DISABLE_TRAILING_SL",
         "QR_REQUIRE_FORECAST_FOR_LIVE",
         "QR_REQUIRE_TELEMETRY_FOR_LIVE",
+        "QR_REQUIRE_POSITION_GUARDIAN_ACTIVE",
     )
 
     def setUp(self) -> None:

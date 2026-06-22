@@ -75,6 +75,50 @@ class PositionGuardianInstallTest(unittest.TestCase):
             self.assertIn("blocking dirty live path", result.stderr)
             self.assertIn("data/codex_trader_decision_response.json", result.stderr)
 
+    def test_require_loaded_fails_when_launchd_label_is_not_loaded(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            live = root / "live"
+            home = root / "home"
+            _create_live_repo(live)
+            _write_guardian_plist(home)
+            env = _install_env(live=live, home=home)
+            _install_fake_launchctl(root, env, loaded=False)
+
+            result = subprocess.run(
+                ["bash", str(INSTALL), "--require-loaded"],
+                env=env,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=False,
+            )
+
+            self.assertEqual(result.returncode, 6)
+            self.assertIn("position guardian launchd label is not loaded", result.stderr)
+
+    def test_require_loaded_passes_when_launchd_label_is_loaded(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            live = root / "live"
+            home = root / "home"
+            _create_live_repo(live)
+            _write_guardian_plist(home)
+            env = _install_env(live=live, home=home)
+            _install_fake_launchctl(root, env, loaded=True)
+
+            result = subprocess.run(
+                ["bash", str(INSTALL), "--require-loaded"],
+                env=env,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=False,
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn("active OK", result.stdout)
+
 
 def _create_live_repo(root: Path) -> None:
     (root / "scripts").mkdir(parents=True)
@@ -113,6 +157,49 @@ def _install_env(*, live: Path, home: Path) -> dict[str, str]:
         }
     )
     return env
+
+
+def _write_guardian_plist(home: Path) -> Path:
+    plist = home / "Library" / "LaunchAgents" / "com.quantrabbit.position-guardian.plist"
+    plist.parent.mkdir(parents=True, exist_ok=True)
+    plist.write_text("<plist><dict><key>Label</key><string>com.quantrabbit.position-guardian</string></dict></plist>\n")
+    return plist
+
+
+def _install_fake_launchctl(root: Path, env: dict[str, str], *, loaded: bool) -> None:
+    bin_dir = root / "bin"
+    bin_dir.mkdir(exist_ok=True)
+    script = bin_dir / "launchctl"
+    script.write_text(
+        "\n".join(
+            [
+                "#!/usr/bin/env bash",
+                "set -euo pipefail",
+                "cmd=\"${1:-}\"",
+                "label=\"${2:-}\"",
+                "if [[ \"$cmd\" == \"list\" && \"$label\" == \"com.quantrabbit.position-guardian\" ]]; then",
+                "  if [[ \"${QR_FAKE_POSITION_GUARDIAN_LOADED:-0}\" == \"1\" ]]; then",
+                "    printf '123\\t0\\tcom.quantrabbit.position-guardian\\n'",
+                "    exit 0",
+                "  fi",
+                "  exit 113",
+                "fi",
+                "if [[ \"$cmd\" == \"print\" && \"$label\" == gui/*/com.quantrabbit.position-guardian ]]; then",
+                "  if [[ \"${QR_FAKE_POSITION_GUARDIAN_LOADED:-0}\" == \"1\" ]]; then",
+                "    printf 'com.quantrabbit.position-guardian = { active = 1 }\\n'",
+                "    exit 0",
+                "  fi",
+                "  exit 113",
+                "fi",
+                "printf 'unsupported fake launchctl command: %s %s\\n' \"$cmd\" \"$label\" >&2",
+                "exit 64",
+            ]
+        )
+        + "\n"
+    )
+    script.chmod(0o755)
+    env["PATH"] = f"{bin_dir}{os.pathsep}{env.get('PATH', '')}"
+    env["QR_FAKE_POSITION_GUARDIAN_LOADED"] = "1" if loaded else "0"
 
 
 def _run(args: list[str], *, cwd: Path) -> subprocess.CompletedProcess[str]:
