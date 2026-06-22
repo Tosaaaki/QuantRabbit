@@ -133,6 +133,48 @@ class TraderSupportBotTest(unittest.TestCase):
             self.assertTrue(files["output"].exists())
             self.assertTrue(files["report"].exists())
 
+    def test_cli_returns_error_code_distinct_from_blocked_diagnostic(self) -> None:
+        now = datetime(2026, 6, 22, 12, 15, tzinfo=timezone.utc)
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _write_fixture(root, now=now, blocked=True)
+            files["broker"].write_text("{not-json", encoding="utf-8")
+            env = _guardian_env(root, active="0")
+            stdout = io.StringIO()
+            with mock.patch.dict(os.environ, env, clear=False), redirect_stdout(stdout):
+                code = main(
+                    [
+                        "trader-support-bot",
+                        "--broker-snapshot",
+                        str(files["broker"]),
+                        "--order-intents",
+                        str(files["intents"]),
+                        "--target-state",
+                        str(files["target"]),
+                        "--position-management",
+                        str(files["position_management"]),
+                        "--position-guardian-management",
+                        str(files["guardian_management"]),
+                        "--position-guardian-execution",
+                        str(files["guardian_execution"]),
+                        "--position-guardian-heartbeat",
+                        str(files["guardian_heartbeat"]),
+                        "--self-improvement-audit",
+                        str(files["self_improvement"]),
+                        "--profitability-acceptance",
+                        str(files["profitability"]),
+                        "--execution-timing-audit",
+                        str(files["timing"]),
+                        "--output",
+                        str(files["output"]),
+                        "--report",
+                        str(files["report"]),
+                    ]
+                )
+
+            self.assertEqual(code, 3)
+            self.assertIn("error", json.loads(stdout.getvalue()))
+
 
 def _write_fixture(root: Path, *, now: datetime, blocked: bool) -> dict[str, Path]:
     data = root / "data"

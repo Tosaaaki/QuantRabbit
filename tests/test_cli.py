@@ -5071,7 +5071,8 @@ class ConsolidatedCycleCommandTest(unittest.TestCase):
         self.assertLess(refresh.index("operator-precedent-audit"), refresh.index("verification-ledger-audit"))
         self.assertLess(refresh.index("memory-health"), refresh.index("self-improvement-audit"))
         self.assertLess(refresh.index("self-improvement-audit"), refresh.index("profitability-acceptance"))
-        self.assertEqual(refresh[-1], "profitability-acceptance")
+        self.assertLess(refresh.index("profitability-acceptance"), refresh.index("trader-support-bot"))
+        self.assertEqual(refresh[-1], "trader-support-bot")
         refresh_by_step = {" ".join(s["argv"]): s for s in _cycle_refresh_steps("10")}
         self.assertEqual(refresh_by_step["execution-timing-audit --max-events 80"]["timeout_seconds"], 60.0)
         self.assertFalse(refresh_by_step["execution-timing-audit --max-events 80"]["required"])
@@ -5079,6 +5080,8 @@ class ConsolidatedCycleCommandTest(unittest.TestCase):
         self.assertTrue(refresh_by_step["memory-health"]["required"])
         self.assertTrue(refresh_by_step["profitability-acceptance"]["required"])
         self.assertEqual(refresh_by_step["profitability-acceptance"]["ok_rcs"], [0, 2])
+        self.assertTrue(refresh_by_step["trader-support-bot"]["required"])
+        self.assertEqual(refresh_by_step["trader-support-bot"]["ok_rcs"], [0, 2])
 
         with mock.patch.dict(os.environ, {"QR_LIVE_ENABLED": ""}, clear=False):
             sidecar_specs = _cycle_sidecar_steps()
@@ -5092,13 +5095,16 @@ class ConsolidatedCycleCommandTest(unittest.TestCase):
         self.assertLess(sidecars.index("position-execution"), sidecars.index("memory-health"))
         self.assertLess(sidecars.index("memory-health"), sidecars.index("self-improvement-audit"))
         self.assertLess(sidecars.index("self-improvement-audit"), sidecars.index("profitability-acceptance"))
-        self.assertEqual(sidecars[-1], "profitability-acceptance")
+        self.assertLess(sidecars.index("profitability-acceptance"), sidecars.index("trader-support-bot"))
+        self.assertEqual(sidecars[-1], "trader-support-bot")
         sidecars_by_step = {" ".join(s["argv"]): s for s in sidecar_specs}
         self.assertTrue(sidecars_by_step["position-management"]["required"])
         self.assertFalse(sidecars_by_step["position-execution"]["required"])
         self.assertTrue(sidecars_by_step["memory-health"]["required"])
         self.assertTrue(sidecars_by_step["profitability-acceptance"]["required"])
         self.assertEqual(sidecars_by_step["profitability-acceptance"]["ok_rcs"], [0, 2])
+        self.assertTrue(sidecars_by_step["trader-support-bot"]["required"])
+        self.assertEqual(sidecars_by_step["trader-support-bot"]["ok_rcs"], [0, 2])
 
         with mock.patch.dict(os.environ, {"QR_LIVE_ENABLED": "1"}, clear=False):
             sidecars_live = [" ".join(s["argv"]) for s in _cycle_sidecar_steps()]
@@ -5138,9 +5144,12 @@ class ConsolidatedCycleCommandTest(unittest.TestCase):
         self.assertLess(direct_sidecars.index("verify-projections"), direct_sidecars.index("memory-health"))
         self.assertLess(direct_sidecars.index("verify-projections"), direct_sidecars.index("self-improvement-audit"))
         self.assertLess(direct_sidecars.index("self-improvement-audit"), direct_sidecars.index("profitability-acceptance"))
-        self.assertEqual(direct_sidecars[-1], "profitability-acceptance")
+        self.assertLess(direct_sidecars.index("profitability-acceptance"), direct_sidecars.index("trader-support-bot"))
+        self.assertEqual(direct_sidecars[-1], "trader-support-bot")
         self.assertTrue(direct_sidecar_specs["profitability-acceptance"]["required"])
         self.assertEqual(direct_sidecar_specs["profitability-acceptance"]["ok_rcs"], [0, 2])
+        self.assertTrue(direct_sidecar_specs["trader-support-bot"]["required"])
+        self.assertEqual(direct_sidecar_specs["trader-support-bot"]["ok_rcs"], [0, 2])
         cycle_digest.assert_called_once_with(
             kind="direct_autotrade_audit_sidecars_digest",
             step_results=step_results,
@@ -5237,6 +5246,78 @@ class ConsolidatedCycleCommandTest(unittest.TestCase):
         self.assertEqual(
             digest["intents"]["top_blockers"],
             {"FORECAST_CONFIDENCE_REQUIRED_FOR_LIVE": 1, "LEGACY_BLOCKER": 1},
+        )
+
+    def test_cycle_digest_summarizes_trader_support_bot(self) -> None:
+        from quant_rabbit.cli import _cycle_digest
+
+        with tempfile.TemporaryDirectory() as tmp:
+            support_path = Path(tmp) / "trader_support_bot.json"
+            support_path.write_text(
+                json.dumps(
+                    {
+                        "generated_at_utc": "2026-06-22T12:15:00+00:00",
+                        "status": "SUPPORT_BLOCKED",
+                        "metrics": {
+                            "send_fresh_entries_allowed": False,
+                            "guardian_active": False,
+                            "guardian_heartbeat_fresh": False,
+                            "profit_capture_missed_loss_closes": 2,
+                            "profit_capture_estimated_gap_jpy": 646.489,
+                            "live_ready_lanes": 0,
+                            "repair_frontier_lanes": 8,
+                        },
+                        "guardian": {
+                            "active_source": "plist_missing",
+                            "heartbeat_age_seconds": 1234.0,
+                        },
+                        "blockers": [
+                            {"code": "POSITION_GUARDIAN_INACTIVE"},
+                            {"code": "LOSS_CLOSE_PROFIT_CAPTURE_MISSED"},
+                        ],
+                        "operator_actions": [
+                            {"code": "CHECK_POSITION_GUARDIAN_PREFLIGHT"},
+                            {"code": "LOAD_POSITION_GUARDIAN_ONLY_IF_APPROVED"},
+                        ],
+                        "profit_capture": {
+                            "top_misses": [{"trade_id": "472792", "pair": "USD_JPY"}],
+                        },
+                        "entry_readiness": {
+                            "repair_frontier": [
+                                {
+                                    "lane_id": "failure_trader:GBP_USD:LONG:BREAKOUT_FAILURE:LIMIT",
+                                    "remaining_blocker_codes_after_guardian_and_repair_exemption": [
+                                        "FORECAST_CONTEXT_REQUIRED_FOR_LIVE"
+                                    ],
+                                }
+                            ],
+                        },
+                    }
+                )
+            )
+
+            with mock.patch("quant_rabbit.cli.DEFAULT_TRADER_SUPPORT_BOT", support_path):
+                digest = _cycle_digest(kind="cycle_refresh_digest", step_results=[], aborted=False)
+
+        support = digest["trader_support_bot"]
+        self.assertEqual(support["status"], "SUPPORT_BLOCKED")
+        self.assertFalse(support["send_fresh_entries_allowed"])
+        self.assertFalse(support["guardian_active"])
+        self.assertEqual(support["guardian_active_source"], "plist_missing")
+        self.assertEqual(support["profit_capture_missed_loss_closes"], 2)
+        self.assertEqual(support["repair_frontier_lanes"], 8)
+        self.assertEqual(
+            support["top_blocker_codes"],
+            ["POSITION_GUARDIAN_INACTIVE", "LOSS_CLOSE_PROFIT_CAPTURE_MISSED"],
+        )
+        self.assertEqual(
+            support["operator_action_codes"],
+            ["CHECK_POSITION_GUARDIAN_PREFLIGHT", "LOAD_POSITION_GUARDIAN_ONLY_IF_APPROVED"],
+        )
+        self.assertEqual(support["top_profit_capture_misses"][0]["trade_id"], "472792")
+        self.assertEqual(
+            support["repair_frontier"][0]["remaining_blocker_codes_after_guardian_and_repair_exemption"],
+            ["FORECAST_CONTEXT_REQUIRED_FOR_LIVE"],
         )
 
     def test_cycle_digest_summarizes_operator_precedent(self) -> None:

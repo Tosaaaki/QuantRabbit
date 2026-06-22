@@ -2080,6 +2080,7 @@ def _cycle_refresh_steps(daily_risk_pct: str) -> list[dict[str, Any]]:
         {"argv": ["memory-health"], "required": True},
         {"argv": ["self-improvement-audit"], "required": False, "ok_rcs": [0, 2]},
         {"argv": ["profitability-acceptance"], "required": True, "ok_rcs": [0, 2]},
+        {"argv": ["trader-support-bot"], "required": True, "ok_rcs": [0, 2]},
     ]
 
 
@@ -2117,6 +2118,7 @@ def _cycle_sidecar_steps() -> list[dict[str, Any]]:
         {"argv": ["memory-health"], "required": True},
         {"argv": ["self-improvement-audit"], "required": False, "ok_rcs": [0, 2]},
         {"argv": ["profitability-acceptance"], "required": True, "ok_rcs": [0, 2]},
+        {"argv": ["trader-support-bot"], "required": True, "ok_rcs": [0, 2]},
     ]
 
 
@@ -2138,6 +2140,7 @@ def _direct_autotrade_audit_sidecar_steps() -> list[dict[str, Any]]:
         {"argv": ["memory-health"], "required": True},
         {"argv": ["self-improvement-audit"], "required": False, "ok_rcs": [0, 2]},
         {"argv": ["profitability-acceptance"], "required": True, "ok_rcs": [0, 2]},
+        {"argv": ["trader-support-bot"], "required": True, "ok_rcs": [0, 2]},
     ]
 
 
@@ -2543,6 +2546,46 @@ def _cycle_digest(*, kind: str, step_results: list[dict[str, Any]], aborted: boo
             for a in assessments
             if isinstance(a, dict)
         ][:10]
+
+    trader_support = _read_json_quiet(DEFAULT_TRADER_SUPPORT_BOT)
+    if isinstance(trader_support, dict):
+        metrics = trader_support.get("metrics") if isinstance(trader_support.get("metrics"), dict) else {}
+        guardian = trader_support.get("guardian") if isinstance(trader_support.get("guardian"), dict) else {}
+        profit_capture = (
+            trader_support.get("profit_capture")
+            if isinstance(trader_support.get("profit_capture"), dict)
+            else {}
+        )
+        entry = (
+            trader_support.get("entry_readiness")
+            if isinstance(trader_support.get("entry_readiness"), dict)
+            else {}
+        )
+        digest["trader_support_bot"] = {
+            "generated_at_utc": trader_support.get("generated_at_utc"),
+            "status": trader_support.get("status"),
+            "send_fresh_entries_allowed": metrics.get("send_fresh_entries_allowed"),
+            "guardian_active": metrics.get("guardian_active"),
+            "guardian_heartbeat_fresh": metrics.get("guardian_heartbeat_fresh"),
+            "guardian_active_source": guardian.get("active_source"),
+            "guardian_heartbeat_age_seconds": guardian.get("heartbeat_age_seconds"),
+            "profit_capture_missed_loss_closes": metrics.get("profit_capture_missed_loss_closes"),
+            "profit_capture_estimated_gap_jpy": metrics.get("profit_capture_estimated_gap_jpy"),
+            "live_ready_lanes": metrics.get("live_ready_lanes"),
+            "repair_frontier_lanes": metrics.get("repair_frontier_lanes"),
+            "top_blocker_codes": [
+                item.get("code")
+                for item in trader_support.get("blockers", []) or []
+                if isinstance(item, dict)
+            ][:8],
+            "operator_action_codes": [
+                item.get("code")
+                for item in trader_support.get("operator_actions", []) or []
+                if isinstance(item, dict)
+            ][:8],
+            "top_profit_capture_misses": profit_capture.get("top_misses", [])[:3],
+            "repair_frontier": entry.get("repair_frontier", [])[:4],
+        }
 
     return digest
 
@@ -5310,7 +5353,7 @@ def main(argv: list[str] | None = None) -> int:
             ).run()
         except (OSError, json.JSONDecodeError, ValueError) as exc:
             print(json.dumps({"error": str(exc)}, ensure_ascii=False, indent=2, sort_keys=True))
-            return 2
+            return 3
         print(
             json.dumps(
                 {

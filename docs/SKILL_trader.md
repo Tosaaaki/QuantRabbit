@@ -107,7 +107,7 @@ PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli trader-prompt-route
 # optimize-coverage → ai-attack-advice →
 # learning/execution-timing/manual-market-context/operator-precedent/verification audits →
 # generate-predictive-limits → position sidecars → memory-health →
-# self-improvement-audit → profitability-acceptance) in one
+# self-improvement-audit → profitability-acceptance → trader-support-bot) in one
 # process, in the same order and with the same arguments the per-step
 # skeleton used (`cli._cycle_refresh_steps` is the canonical list), then
 # prints ONE compact digest including the re-routed prompt branch.
@@ -287,7 +287,7 @@ QR_LIVE_ENABLED=1 ./scripts/run-autotrade-live.sh \
 # broker/order sidecar list; it runs the projection/position/audit repair
 # subset, including `position-management` followed by `position-execution`
 # when management succeeds, then `memory-health` →
-# `self-improvement-audit` → `profitability-acceptance`. It preserves the
+# `self-improvement-audit` → `profitability-acceptance` → `trader-support-bot`. It preserves the
 # original exit code and avoids carrying a stale P0 into the next route.
 # Do not run a second routine `cycle-sidecars` after the wrapper unless the
 # wrapper was intentionally called with `QR_RUN_POST_GATEWAY_SIDECARS=0` for
@@ -298,7 +298,7 @@ QR_LIVE_ENABLED=1 ./scripts/run-autotrade-live.sh \
 #   → profit-partial-close → verify-projections → position-thesis-check
 #   → thesis-evolution-check → forecast-persistence-check
 #   → position-management → position-execution → memory-health
-#   → self-improvement-audit → profitability-acceptance
+#   → self-improvement-audit → profitability-acceptance → trader-support-bot
 # and prints one compact digest.
 #
 # Semantics preserved from the per-step skeleton:
@@ -352,6 +352,11 @@ QR_LIVE_ENABLED=1 ./scripts/run-autotrade-live.sh \
 #   scaling blocked until the named evidence clears. The only entry exception
 #   is an attached-TP HARVEST repair lane that explicitly carries the
 #   self-improvement P0 repair metadata.
+# - trader-support-bot is read-only and runs after the acceptance gate so the
+#   compact cycle digest names the operational support state: guardian active /
+#   heartbeat freshness, TP-progress profit-capture misses, fresh-entry send
+#   allowed flag, repair-frontier lanes, and explicit operator actions. It
+#   never loads launchd, sends orders, closes positions, or cancels entries.
 # Manual recovery only:
 # QR_RUN_POST_GATEWAY_SIDECARS=0 QR_LIVE_ENABLED=1 ./scripts/run-autotrade-live.sh ...
 # QR_LIVE_ENABLED=1 PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli cycle-sidecars
@@ -379,3 +384,4 @@ QR_LIVE_ENABLED=1 ./scripts/run-autotrade-live.sh \
 - Gateway result and report paths under `docs/*_report.md`.
 - Execution ledger DB/report: `data/execution_ledger.db`, `docs/execution_ledger_report.md`.
 - Verification ledger JSON/SQL/report: `data/verification_ledger.json`, `data/execution_ledger.db`, `docs/verification_ledger_report.md`.
+- Trader support JSON/report: `data/trader_support_bot.json`, `docs/trader_support_bot_report.md`.
