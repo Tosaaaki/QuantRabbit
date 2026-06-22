@@ -642,6 +642,8 @@ def _execution_ledger_close_findings(
         "recent_premature_loss_closes": 0,
         "recent_unverified_loss_closes": 0,
         "recent_unverified_loss_net_jpy": 0.0,
+        "recent_close_gate_unverified_loss_closes": 0,
+        "recent_close_gate_unverified_loss_net_jpy": 0.0,
         "recent_loss_by_lane": [],
         "recent_leak_loss_by_lane": [],
         "latest_gateway_market_close_ts_utc": None,
@@ -654,6 +656,7 @@ def _execution_ledger_close_findings(
         "recent_leak_loss_examples": [],
         "recent_contained_risk_loss_examples": [],
         "recent_unverified_loss_examples": [],
+        "recent_close_gate_unverified_loss_examples": [],
     }
     if not path.exists():
         return metrics, []
@@ -664,6 +667,10 @@ def _execution_ledger_close_findings(
                 str(row[1])
                 for row in conn.execute("PRAGMA table_info(execution_events)").fetchall()
             }
+            tables = {
+                str(row[0])
+                for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
+            }
             gateway_exit_reason_select = (
                 "g.exit_reason AS gateway_exit_reason"
                 if "exit_reason" in columns
@@ -672,6 +679,29 @@ def _execution_ledger_close_findings(
             gateway_raw_json_select = (
                 "g.raw_json AS gateway_raw_json" if "raw_json" in columns else "NULL AS gateway_raw_json"
             )
+            if "verification_observations" in tables:
+                close_gate_select = """
+                    EXISTS (
+                        SELECT 1
+                        FROM verification_observations v
+                        WHERE v.check_name = 'close_gate_evidence'
+                          AND v.subject_id = g.trade_id
+                          AND v.ts_utc = g.ts_utc
+                    ) AS has_close_gate_evidence,
+                    EXISTS (
+                        SELECT 1
+                        FROM verification_observations v
+                        WHERE v.check_name = 'close_gate_evidence'
+                          AND v.subject_id = g.trade_id
+                          AND v.ts_utc = g.ts_utc
+                          AND v.status = 'PASS'
+                    ) AS has_passing_close_gate_evidence
+                """
+            else:
+                close_gate_select = """
+                    0 AS has_close_gate_evidence,
+                    0 AS has_passing_close_gate_evidence
+                """
             gateway_event_stream_latest: datetime | None = None
             if "source" in columns:
                 stream_row = conn.execute(
@@ -715,6 +745,7 @@ def _execution_ledger_close_findings(
                     c.exit_reason AS exit_reason,
                     {gateway_exit_reason_select},
                     {gateway_raw_json_select},
+                    {close_gate_select},
                     EXISTS (
                         SELECT 1
                         FROM execution_events sent
@@ -800,6 +831,8 @@ def _execution_ledger_close_findings(
                 "exit_reason": row["exit_reason"],
                 "gateway_exit_reason": row["gateway_exit_reason"],
                 "close_provenance": close_provenance,
+                "has_close_gate_evidence": bool(row["has_close_gate_evidence"]),
+                "has_passing_close_gate_evidence": bool(row["has_passing_close_gate_evidence"]),
             }
         )
     metrics["gateway_market_closes"] = len(parsed)
@@ -842,6 +875,12 @@ def _execution_ledger_close_findings(
         for row in recent_losses
         if row.get("close_provenance") == "GATEWAY_TRADE_CLOSE_RECONCILED_UNVERIFIED"
     ]
+    recent_close_gate_unverified_losses = [
+        row
+        for row in recent_losses
+        if str(row.get("gateway_exit_reason") or "").strip().upper() == "GPT_CLOSE"
+        and row.get("has_passing_close_gate_evidence") is not True
+    ]
     metrics["recent_gateway_market_closes"] = len(recent)
     metrics["recent_loss_closes"] = len(recent_losses)
     metrics["recent_loss_net_jpy"] = round(
@@ -868,6 +907,11 @@ def _execution_ledger_close_findings(
     metrics["recent_unverified_loss_closes"] = len(recent_unverified_losses)
     metrics["recent_unverified_loss_net_jpy"] = round(
         sum(float(row.get("realized_pl_jpy") or 0.0) for row in recent_unverified_losses),
+        4,
+    )
+    metrics["recent_close_gate_unverified_loss_closes"] = len(recent_close_gate_unverified_losses)
+    metrics["recent_close_gate_unverified_loss_net_jpy"] = round(
+        sum(float(row.get("realized_pl_jpy") or 0.0) for row in recent_close_gate_unverified_losses),
         4,
     )
     metrics["recent_loss_by_lane"] = _loss_close_by_lane(recent_losses)
@@ -944,6 +988,26 @@ def _execution_ledger_close_findings(
             key=lambda row: float(row.get("realized_pl_jpy") or 0.0),
         )[:5]
     ]
+    metrics["recent_close_gate_unverified_loss_examples"] = [
+        {
+            "ts_utc": row.get("ts_utc"),
+            "trade_id": row.get("trade_id"),
+            "order_id": row.get("order_id"),
+            "pair": row.get("pair"),
+            "side": row.get("side"),
+            "lane_id": row.get("lane_id"),
+            "realized_pl_jpy": row.get("realized_pl_jpy"),
+            "gateway_exit_reason": row.get("gateway_exit_reason"),
+            "close_provenance": row.get("close_provenance"),
+            "timing_path_label": row.get("timing_path_label"),
+            "has_close_gate_evidence": row.get("has_close_gate_evidence"),
+            "has_passing_close_gate_evidence": row.get("has_passing_close_gate_evidence"),
+        }
+        for row in sorted(
+            recent_close_gate_unverified_losses,
+            key=lambda row: float(row.get("realized_pl_jpy") or 0.0),
+        )[:5]
+    ]
     if not recent_losses:
         return metrics, []
     findings: list[dict[str, Any]] = []
@@ -1016,6 +1080,31 @@ def _execution_ledger_close_findings(
                     "recent_unverified_loss_closes": metrics["recent_unverified_loss_closes"],
                     "recent_unverified_loss_net_jpy": metrics["recent_unverified_loss_net_jpy"],
                     "examples": metrics["recent_unverified_loss_examples"],
+                },
+            )
+        )
+    if recent_close_gate_unverified_losses:
+        findings.append(
+            _finding(
+                priority="P0",
+                code="LOSS_CLOSE_GATE_EVIDENCE_MISSING",
+                message=(
+                    f"{len(recent_close_gate_unverified_losses)} recent GPT loss-side market close(s) "
+                    "lack passing durable close_gate_evidence in verification_observations"
+                ),
+                next_action=(
+                    "Do not treat these loss closes as proved Gate A/B discipline. Persist "
+                    "gpt-trader close_gate_evidence into execution_ledger verification_observations "
+                    "before acceptance can clear the loss-side market-close leak."
+                ),
+                evidence={
+                    "recent_close_gate_unverified_loss_closes": metrics[
+                        "recent_close_gate_unverified_loss_closes"
+                    ],
+                    "recent_close_gate_unverified_loss_net_jpy": metrics[
+                        "recent_close_gate_unverified_loss_net_jpy"
+                    ],
+                    "examples": metrics["recent_close_gate_unverified_loss_examples"],
                 },
             )
         )

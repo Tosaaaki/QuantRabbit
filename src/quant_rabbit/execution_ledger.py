@@ -521,17 +521,28 @@ def _gateway_gpt_close_events(payload: dict[str, Any], *, now: str) -> list[dict
         return []
     close_trade_ids = decision.get("close_trade_ids") if isinstance(decision.get("close_trade_ids"), list) else []
     ts = str(payload.get("generated_at_utc") or now)
-    raw = {
-        "generated_at_utc": payload.get("generated_at_utc"),
-        "status": payload.get("status"),
-        "decision": decision,
-        "verification_issues": payload.get("verification_issues") or [],
-    }
+    close_gate_evidence = (
+        payload.get("close_gate_evidence")
+        if isinstance(payload.get("close_gate_evidence"), list)
+        else []
+    )
     events: list[dict[str, Any]] = []
     for index, trade_id_value in enumerate(close_trade_ids):
         trade_id = str(trade_id_value or "").strip()
         if not trade_id:
             continue
+        trade_close_gate_evidence = [
+            evidence
+            for evidence in close_gate_evidence
+            if isinstance(evidence, dict) and str(evidence.get("trade_id") or "").strip() == trade_id
+        ]
+        raw = {
+            "generated_at_utc": payload.get("generated_at_utc"),
+            "status": payload.get("status"),
+            "decision": decision,
+            "verification_issues": payload.get("verification_issues") or [],
+            "close_gate_evidence": trade_close_gate_evidence,
+        }
         events.append(
             {
                 "event_uid": f"gateway:gpt_decision:{ts}:{index}:GATEWAY_GPT_CLOSE_ACCEPTED:{trade_id}",

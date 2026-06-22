@@ -285,7 +285,7 @@ class ExecutionLedgerTest(unittest.TestCase):
             with sqlite3.connect(root / "ledger.db") as conn:
                 rows = conn.execute(
                     """
-                    SELECT event_type, trade_id, exit_reason
+                    SELECT event_type, trade_id, exit_reason, raw_json
                     FROM execution_events
                     ORDER BY trade_id
                     """
@@ -299,12 +299,16 @@ class ExecutionLedgerTest(unittest.TestCase):
                     """
                 ).fetchall()
             self.assertEqual(
-                rows,
+                [row[:3] for row in rows],
                 [
                     ("GATEWAY_GPT_CLOSE_ACCEPTED", "T-100", "GPT_CLOSE_ACCEPTED"),
                     ("GATEWAY_GPT_CLOSE_ACCEPTED", "T-200", "GPT_CLOSE_ACCEPTED"),
                 ],
             )
+            raw_t100 = json.loads(rows[0][3])
+            raw_t200 = json.loads(rows[1][3])
+            self.assertEqual(raw_t100["close_gate_evidence"][0]["trade_id"], "T-100")
+            self.assertEqual(raw_t200["close_gate_evidence"][0]["trade_id"], "T-200")
             self.assertEqual(close_gate_rows[0][0:3], ("T-100", "PASS", "INFO"))
             self.assertEqual(close_gate_rows[1][0:3], ("T-200", "BLOCK", "BLOCK"))
             self.assertEqual(json.loads(close_gate_rows[0][3])["gate_a_reason"], "fresh position_thesis REVIEW_CLOSE")
