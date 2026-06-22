@@ -151,6 +151,111 @@ class PositionManagerTest(unittest.TestCase):
             else:
                 os.environ["QR_DISABLE_AUTO_CLOSE"] = prior
 
+    def test_forecast_persistence_close_with_poor_rr_carries_close_review(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            decision = _decision(root, long_score=160, short_score=120)
+            snapshot = _snapshot(
+                BrokerPosition(
+                    trade_id="poor-rr",
+                    pair="EUR_USD",
+                    side=Side.LONG,
+                    units=1000,
+                    entry_price=1.2000,
+                    unrealized_pl_jpy=-120,
+                    take_profit=1.2010,
+                    stop_loss=1.1950,
+                ),
+                bid=1.1990,
+                ask=1.1991,
+            )
+            (root / "forecast_persistence_report.json").write_text(
+                json.dumps(
+                    {
+                        "generated_at_utc": (
+                            snapshot.fetched_at_utc + timedelta(seconds=1)
+                        ).isoformat(),
+                        "verdicts": [
+                            {
+                                "trade_id": "poor-rr",
+                                "pair": "EUR_USD",
+                                "side": "LONG",
+                                "verdict": "RECOMMEND_CLOSE",
+                                "reason": "last 10 forecasts went RANGE/UNCLEAR",
+                            }
+                        ],
+                    }
+                )
+            )
+
+            result = PositionManager(
+                trader_decision_path=decision,
+                pair_charts_path=root / "missing_pair_charts.json",
+                output_path=root / "pm.json",
+                report_path=root / "pm.md",
+                data_root=root,
+            ).run(snapshot)
+
+            self.assertEqual(result.action, ACTION_HOLD_PROTECTED)
+            self.assertEqual(result.positions[0].action, ACTION_HOLD_PROTECTED)
+            self.assertEqual(result.positions[0].close_review_action, ACTION_REVIEW_EXIT)
+            report = (root / "pm.md").read_text()
+            self.assertIn("forecast_persistence RECOMMEND_CLOSE", report)
+            self.assertIn("remaining reward/risk", report)
+            self.assertIn("loss-side market close still requires GPT CLOSE Gate A/B", report)
+
+    def test_forecast_persistence_close_keeps_good_rr_hold(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            decision = _decision(root, long_score=160, short_score=120)
+            snapshot = _snapshot(
+                BrokerPosition(
+                    trade_id="good-rr",
+                    pair="EUR_USD",
+                    side=Side.LONG,
+                    units=1000,
+                    entry_price=1.2000,
+                    unrealized_pl_jpy=-80,
+                    take_profit=1.2020,
+                    stop_loss=1.1990,
+                ),
+                bid=1.1994,
+                ask=1.1995,
+            )
+            (root / "forecast_persistence_report.json").write_text(
+                json.dumps(
+                    {
+                        "generated_at_utc": (
+                            snapshot.fetched_at_utc + timedelta(seconds=1)
+                        ).isoformat(),
+                        "verdicts": [
+                            {
+                                "trade_id": "good-rr",
+                                "pair": "EUR_USD",
+                                "side": "LONG",
+                                "verdict": "RECOMMEND_CLOSE",
+                                "reason": "last 10 forecasts went RANGE/UNCLEAR",
+                            }
+                        ],
+                    }
+                )
+            )
+
+            result = PositionManager(
+                trader_decision_path=decision,
+                pair_charts_path=root / "missing_pair_charts.json",
+                output_path=root / "pm.json",
+                report_path=root / "pm.md",
+                data_root=root,
+            ).run(snapshot)
+
+            self.assertEqual(result.action, ACTION_HOLD_PROTECTED)
+            self.assertEqual(result.positions[0].action, ACTION_HOLD_PROTECTED)
+            self.assertIsNone(result.positions[0].close_review_action)
+            report = (root / "pm.md").read_text()
+            self.assertIn("TP/SL present and current thesis is not contradicted enough to force exit", report)
+            self.assertNotIn("forecast_persistence RECOMMEND_CLOSE", report)
+
     def test_missing_stop_requires_protection_repair(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

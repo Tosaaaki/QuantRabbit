@@ -107,6 +107,10 @@ def _position_management_owner(owner: Owner) -> bool:
 # plus one current M5 ATR: this is market-derived noise room, not a profit gate.
 PROFIT_PROTECTION_NOISE_ATR_MULT = 1.0
 PROFIT_PROTECTION_SPREAD_MULT = GEOMETRY_SPREAD_FLOOR_MULT
+# Soft forecast-persistence close evidence should not force a market close by
+# itself. It does need to remove HOLD support when the remaining payoff is badly
+# asymmetric, otherwise a stale loser can keep blocking capital recycle.
+FORECAST_PERSISTENCE_CLOSE_REVIEW_MAX_REWARD_RISK = 0.5
 # SL-free break-even/profit-lock is not initial SL repair. It is a profit-only
 # escape hatch after executable MFE clears current micro-noise. M5 is the live
 # management timeframe already exposed by pair_charts. The spread multiplier is
@@ -501,7 +505,24 @@ class PositionManager:
                         )
                         close_review_action = ACTION_REVIEW_EXIT
                     else:
-                        reasons.append("TP/SL present and current thesis is not contradicted enough to force exit")
+                        persistence_review_reason = (
+                            _fresh_forecast_persistence_poor_rr_close_review_reason(
+                                position=position,
+                                snapshot=snapshot,
+                                data_root=self.data_root,
+                                remaining_risk=remaining_risk,
+                                remaining_reward=remaining_reward,
+                            )
+                        )
+                        if persistence_review_reason is not None:
+                            reasons.append(persistence_review_reason)
+                            reasons.append(
+                                "loss-side market close still requires GPT CLOSE Gate A/B; "
+                                "keep broker TP/SL live while close review is pending"
+                            )
+                            close_review_action = ACTION_REVIEW_EXIT
+                        else:
+                            reasons.append("TP/SL present and current thesis is not contradicted enough to force exit")
                     action = ACTION_HOLD_PROTECTED
 
         if remaining_risk is not None:
@@ -1830,6 +1851,55 @@ def _fresh_broken_thesis_close_review(
             ],
         )
     return False, []
+
+
+def _fresh_forecast_persistence_poor_rr_close_review_reason(
+    *,
+    position: BrokerPosition,
+    snapshot: BrokerSnapshot,
+    data_root: Path,
+    remaining_risk: float | None,
+    remaining_reward: float | None,
+) -> str | None:
+    if position.owner != Owner.TRADER:
+        return None
+    if position.unrealized_pl_jpy >= 0:
+        return None
+    if remaining_risk is None or remaining_reward is None:
+        return None
+    if remaining_risk <= 0 or remaining_reward <= 0:
+        return None
+    reward_risk = remaining_reward / remaining_risk
+    if reward_risk >= FORECAST_PERSISTENCE_CLOSE_REVIEW_MAX_REWARD_RISK:
+        return None
+
+    fetched_at = _parse_utc_datetime(snapshot.fetched_at_utc)
+    payload = _fresh_report(data_root / "forecast_persistence_report.json", fetched_at)
+    if not payload:
+        return None
+    for item in payload.get("verdicts", []) or []:
+        if not isinstance(item, dict):
+            continue
+        trade_id = str(item.get("trade_id") or "")
+        if trade_id and trade_id != str(position.trade_id):
+            continue
+        pair = str(item.get("pair") or "")
+        if pair and pair != position.pair:
+            continue
+        side = str(item.get("side") or "").upper()
+        if side and side != position.side.value:
+            continue
+        verdict = str(item.get("verdict") or "").upper()
+        if verdict != "RECOMMEND_CLOSE":
+            continue
+        reason = str(item.get("reason") or "forecast persistence recommends capital recycle")
+        return (
+            "close-review: forecast_persistence RECOMMEND_CLOSE for trade "
+            f"{position.trade_id}: {reason}; remaining reward/risk "
+            f"{reward_risk:.2f} < {FORECAST_PERSISTENCE_CLOSE_REVIEW_MAX_REWARD_RISK:.2f} "
+            f"({remaining_reward:.0f} JPY reward vs {remaining_risk:.0f} JPY risk)"
+        )
+    return None
 
 
 def _fresh_report(path: Path, fetched_at: datetime | None) -> dict[str, Any] | None:
