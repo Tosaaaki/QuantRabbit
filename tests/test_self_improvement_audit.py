@@ -251,6 +251,98 @@ class SelfImprovementAuditorTest(unittest.TestCase):
         self.assertNotIn("POSITION_GUARDIAN_INACTIVE_FOR_PROFIT_CAPTURE", codes)
         self.assertFalse(payload["runtime"]["position_guardian"]["required"])
 
+    def test_loaded_position_guardian_with_stale_heartbeat_is_p0(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(
+                root,
+                active_position=False,
+                live_ready_market_rr=1.4,
+                closed_pls=(120.0, 90.0, 60.0),
+            )
+            plist = root / "com.quantrabbit.position-guardian.plist"
+            plist.write_text("<plist/>")
+            heartbeat = root / "position_guardian_execution.json"
+            heartbeat.write_text(
+                json.dumps(
+                    {
+                        "generated_at_utc": (datetime.now(timezone.utc) - timedelta(minutes=10)).isoformat(),
+                        "status": "NO_ACTION",
+                    }
+                )
+            )
+            with mock.patch.dict(
+                os.environ,
+                {
+                    "QR_REQUIRE_POSITION_GUARDIAN_ACTIVE": "1",
+                    "QR_POSITION_GUARDIAN_PLIST": str(plist),
+                    "QR_POSITION_GUARDIAN_EXECUTION": str(heartbeat),
+                    "QR_POSITION_GUARDIAN_HEARTBEAT": str(root / "missing_position_guardian.json"),
+                    "QR_POSITION_GUARDIAN_INTERVAL": "30",
+                    "QR_POSITION_GUARDIAN_HEARTBEAT_MAX_AGE_SECONDS": "120",
+                },
+                clear=False,
+            ), mock.patch(
+                "quant_rabbit.self_improvement_audit.subprocess.run",
+                return_value=mock.Mock(returncode=0),
+            ):
+                summary = _run(files)
+            payload = json.loads(files["output"].read_text())
+
+        codes = {item["code"]: item for item in payload["findings"]}
+        self.assertEqual(summary.status, STATUS_BLOCKED)
+        finding = codes["POSITION_GUARDIAN_INACTIVE_FOR_PROFIT_CAPTURE"]
+        guardian = finding["evidence"]["guardian"]
+        self.assertTrue(guardian["launchd_loaded"])
+        self.assertFalse(guardian["heartbeat_fresh"])
+        self.assertEqual(guardian["active_source"], "stale_heartbeat")
+        self.assertFalse(guardian["active"])
+
+    def test_loaded_position_guardian_with_fresh_heartbeat_suppresses_inactive_p0(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(
+                root,
+                active_position=False,
+                live_ready_market_rr=1.4,
+                closed_pls=(120.0, 90.0, 60.0),
+            )
+            plist = root / "com.quantrabbit.position-guardian.plist"
+            plist.write_text("<plist/>")
+            heartbeat = root / "position_guardian_execution.json"
+            heartbeat.write_text(
+                json.dumps(
+                    {
+                        "generated_at_utc": datetime.now(timezone.utc).isoformat(),
+                        "status": "NO_ACTION",
+                    }
+                )
+            )
+            with mock.patch.dict(
+                os.environ,
+                {
+                    "QR_REQUIRE_POSITION_GUARDIAN_ACTIVE": "1",
+                    "QR_POSITION_GUARDIAN_PLIST": str(plist),
+                    "QR_POSITION_GUARDIAN_EXECUTION": str(heartbeat),
+                    "QR_POSITION_GUARDIAN_HEARTBEAT": str(root / "missing_position_guardian.json"),
+                    "QR_POSITION_GUARDIAN_INTERVAL": "30",
+                    "QR_POSITION_GUARDIAN_HEARTBEAT_MAX_AGE_SECONDS": "120",
+                },
+                clear=False,
+            ), mock.patch(
+                "quant_rabbit.self_improvement_audit.subprocess.run",
+                return_value=mock.Mock(returncode=0),
+            ):
+                _run(files)
+            payload = json.loads(files["output"].read_text())
+
+        codes = {item["code"] for item in payload["findings"]}
+        self.assertNotIn("POSITION_GUARDIAN_INACTIVE_FOR_PROFIT_CAPTURE", codes)
+        guardian = payload["runtime"]["position_guardian"]
+        self.assertTrue(guardian["launchd_loaded"])
+        self.assertTrue(guardian["heartbeat_fresh"])
+        self.assertTrue(guardian["active"])
+
     def test_projection_expiry_uses_live_telemetry_grace(self) -> None:
         grace = timedelta(seconds=PROJECTION_PENDING_EXPIRY_GRACE_SECONDS)
         row = {

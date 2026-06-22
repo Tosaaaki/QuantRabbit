@@ -1265,18 +1265,39 @@ def _position_guardian_runtime_status() -> dict[str, Any]:
         )
     ).expanduser()
     raw_active = os.environ.get("QR_POSITION_GUARDIAN_ACTIVE")
+    interval = _int_env("QR_POSITION_GUARDIAN_INTERVAL", default=30, minimum=15)
+    heartbeat_max_age = _int_env(
+        "QR_POSITION_GUARDIAN_HEARTBEAT_MAX_AGE_SECONDS",
+        default=interval * 4,
+        minimum=interval,
+    )
+    heartbeat_required = _truthy_env("QR_POSITION_GUARDIAN_REQUIRE_HEARTBEAT", default=True)
+    heartbeat_paths = [
+        _env_path("QR_POSITION_GUARDIAN_EXECUTION", Path("data/position_guardian_execution.json")),
+        _env_path("QR_POSITION_GUARDIAN_HEARTBEAT", Path("data/position_guardian.json")),
+    ]
+    heartbeat = _freshest_guardian_heartbeat(heartbeat_paths, max_age_seconds=heartbeat_max_age)
     status: dict[str, Any] = {
         "required": _truthy_env("QR_REQUIRE_POSITION_GUARDIAN_ACTIVE", default=False),
         "active": False,
-        "active_source": "launchd",
+        "active_source": "launchd+heartbeat",
         "label": label,
         "plist_path": str(plist),
         "plist_exists": plist.exists(),
         "launchd_loaded": None,
+        "heartbeat_required": heartbeat_required,
+        "heartbeat_max_age_seconds": heartbeat_max_age,
+        "heartbeat_fresh": heartbeat.get("fresh"),
+        "heartbeat_age_seconds": heartbeat.get("age_seconds"),
+        "heartbeat_generated_at_utc": heartbeat.get("generated_at_utc"),
+        "heartbeat_path": heartbeat.get("path"),
+        "heartbeat_source": heartbeat.get("source"),
+        "heartbeat_status": heartbeat.get("status"),
+        "heartbeat_candidates": [str(path) for path in heartbeat_paths],
     }
     if raw_active is not None:
-        status["active"] = _truthy_value(raw_active)
-        status["active_source"] = "env"
+        status["active"] = bool(_truthy_value(raw_active) and (heartbeat.get("fresh") or not heartbeat_required))
+        status["active_source"] = "env+heartbeat"
         status["env_active"] = raw_active
         return status
     if not plist.exists():
@@ -1296,8 +1317,10 @@ def _position_guardian_runtime_status() -> dict[str, Any]:
         status["launchctl_error"] = exc.__class__.__name__
         return status
     if list_proc.returncode == 0:
-        status["active"] = True
         status["launchd_loaded"] = True
+        status["active"] = bool(heartbeat.get("fresh") or not heartbeat_required)
+        if heartbeat_required and not heartbeat.get("fresh"):
+            status["active_source"] = "stale_heartbeat"
         return status
     try:
         print_proc = subprocess.run(
@@ -1311,9 +1334,88 @@ def _position_guardian_runtime_status() -> dict[str, Any]:
         status["launchd_loaded"] = False
         status["launchctl_error"] = exc.__class__.__name__
         return status
-    status["active"] = print_proc.returncode == 0
-    status["launchd_loaded"] = status["active"]
+    loaded = print_proc.returncode == 0
+    status["launchd_loaded"] = loaded
+    status["active"] = bool(loaded and (heartbeat.get("fresh") or not heartbeat_required))
+    if loaded and heartbeat_required and not heartbeat.get("fresh"):
+        status["active_source"] = "stale_heartbeat"
     return status
+
+
+def _int_env(name: str, *, default: int, minimum: int) -> int:
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    try:
+        value = int(float(raw))
+    except (TypeError, ValueError):
+        return default
+    return max(minimum, value)
+
+
+def _env_path(name: str, default: Path) -> Path:
+    raw = os.environ.get(name)
+    path = Path(raw).expanduser() if raw else default
+    if path.is_absolute():
+        return path
+    return Path.cwd() / path
+
+
+def _freshest_guardian_heartbeat(paths: list[Path], *, max_age_seconds: int) -> dict[str, Any]:
+    now = datetime.now(timezone.utc)
+    best: dict[str, Any] | None = None
+    for path in paths:
+        if not path.exists():
+            continue
+        generated: datetime | None = None
+        status: Any = None
+        try:
+            payload = json.loads(path.read_text())
+        except (OSError, json.JSONDecodeError, ValueError):
+            payload = {}
+        if isinstance(payload, dict):
+            generated = _parse_guardian_heartbeat_time(payload.get("generated_at_utc"))
+            status = payload.get("status")
+        source = "generated_at_utc"
+        if generated is None:
+            try:
+                generated = datetime.fromtimestamp(path.stat().st_mtime, tz=timezone.utc)
+            except OSError:
+                continue
+            source = "mtime"
+        age = (now - generated).total_seconds()
+        item = {
+            "path": str(path),
+            "generated_at_utc": generated.isoformat(),
+            "age_seconds": round(age, 3),
+            "fresh": -60.0 <= age <= max_age_seconds,
+            "source": source,
+            "status": status,
+        }
+        if best is None or item["age_seconds"] < best["age_seconds"]:
+            best = item
+    if best is None:
+        return {
+            "path": None,
+            "generated_at_utc": None,
+            "age_seconds": None,
+            "fresh": False,
+            "source": None,
+            "status": "MISSING",
+        }
+    return best
+
+
+def _parse_guardian_heartbeat_time(value: Any) -> datetime | None:
+    if not isinstance(value, str) or not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
 
 
 def _history_run_signature(
