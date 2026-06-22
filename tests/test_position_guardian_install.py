@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 import tempfile
 import unittest
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 
@@ -104,6 +106,7 @@ class PositionGuardianInstallTest(unittest.TestCase):
             home = root / "home"
             _create_live_repo(live)
             _write_guardian_plist(home)
+            _write_guardian_heartbeat(live)
             env = _install_env(live=live, home=home)
             _install_fake_launchctl(root, env, loaded=True)
 
@@ -117,6 +120,78 @@ class PositionGuardianInstallTest(unittest.TestCase):
             )
 
             self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn("heartbeat OK", result.stdout)
+            self.assertIn("active OK", result.stdout)
+
+    def test_require_loaded_fails_when_launchd_loaded_but_heartbeat_missing(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            live = root / "live"
+            home = root / "home"
+            _create_live_repo(live)
+            _write_guardian_plist(home)
+            env = _install_env(live=live, home=home)
+            _install_fake_launchctl(root, env, loaded=True)
+
+            result = subprocess.run(
+                ["bash", str(INSTALL), "--require-loaded"],
+                env=env,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=False,
+            )
+
+            self.assertEqual(result.returncode, 6)
+            self.assertIn("position guardian heartbeat is missing or stale", result.stderr)
+            self.assertIn("fresh entry sends remain blocked", result.stderr)
+
+    def test_require_loaded_fails_when_launchd_loaded_but_heartbeat_stale(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            live = root / "live"
+            home = root / "home"
+            _create_live_repo(live)
+            _write_guardian_plist(home)
+            _write_guardian_heartbeat(live, generated_at=datetime.now(timezone.utc) - timedelta(minutes=10))
+            env = _install_env(live=live, home=home)
+            _install_fake_launchctl(root, env, loaded=True)
+
+            result = subprocess.run(
+                ["bash", str(INSTALL), "--require-loaded"],
+                env=env,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=False,
+            )
+
+            self.assertEqual(result.returncode, 6)
+            self.assertIn("position guardian heartbeat is missing or stale", result.stderr)
+            self.assertIn("position_guardian_execution.json", result.stderr)
+
+    def test_require_loaded_heartbeat_check_has_explicit_operator_override(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            live = root / "live"
+            home = root / "home"
+            _create_live_repo(live)
+            _write_guardian_plist(home)
+            env = _install_env(live=live, home=home)
+            env["QR_POSITION_GUARDIAN_REQUIRE_HEARTBEAT"] = "0"
+            _install_fake_launchctl(root, env, loaded=True)
+
+            result = subprocess.run(
+                ["bash", str(INSTALL), "--require-loaded"],
+                env=env,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=False,
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn("heartbeat check skipped", result.stdout)
             self.assertIn("active OK", result.stdout)
 
 
@@ -164,6 +239,22 @@ def _write_guardian_plist(home: Path) -> Path:
     plist.parent.mkdir(parents=True, exist_ok=True)
     plist.write_text("<plist><dict><key>Label</key><string>com.quantrabbit.position-guardian</string></dict></plist>\n")
     return plist
+
+
+def _write_guardian_heartbeat(live: Path, *, generated_at: datetime | None = None) -> Path:
+    path = live / "data" / "position_guardian_execution.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "generated_at_utc": (generated_at or datetime.now(timezone.utc)).isoformat(),
+                "status": "NO_ACTION",
+                "sent": False,
+            }
+        )
+        + "\n"
+    )
+    return path
 
 
 def _install_fake_launchctl(root: Path, env: dict[str, str], *, loaded: bool) -> None:

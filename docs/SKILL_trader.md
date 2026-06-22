@@ -329,8 +329,10 @@ QR_LIVE_ENABLED=1 ./scripts/run-autotrade-live.sh \
 #   snapshot, then position-execution consumes any profit-only
 #   TAKE_PROFIT_MARKET / TP-update decision through PositionProtectionGateway.
 #   This is the full-cycle fallback for fast TP-progress wins when the separate
-#   launchd position guardian is inactive or skipped under the live lock. Live
-#   sends still require QR_LIVE_ENABLED=1 plus --send --confirm-live.
+#   launchd position guardian is inactive, stale, or skipped under the live
+#   lock. Live sends still require QR_LIVE_ENABLED=1 plus --send --confirm-live,
+#   and fresh entries require both a loaded guardian and a recent guardian
+#   heartbeat unless the operator uses an explicit override.
 # - memory-health BLOCK does not grant/deny a trade by itself;
 #   trader-prompt-route reads it for the next cycle's routing.
 # - self-improvement-audit is recalculated after the post-gateway snapshot and

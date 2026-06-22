@@ -13,6 +13,8 @@ LABEL="com.quantrabbit.position-guardian"
 PLIST="$HOME/Library/LaunchAgents/$LABEL.plist"
 INTERVAL="${QR_POSITION_GUARDIAN_INTERVAL:-30}"
 ENV_FILE="${QR_OANDA_ENV_FILE:-.env.local}"
+HEARTBEAT_MAX_AGE_SECONDS="${QR_POSITION_GUARDIAN_HEARTBEAT_MAX_AGE_SECONDS:-$((INTERVAL * 4))}"
+REQUIRE_HEARTBEAT="${QR_POSITION_GUARDIAN_REQUIRE_HEARTBEAT:-1}"
 CHECK_ONLY=0
 STATUS_ONLY=0
 REQUIRE_LOADED=0
@@ -26,8 +28,8 @@ activation preflight without writing a plist or loading launchd.
 
 --status prints the current plist/launchd state without writing anything.
 --require-loaded exits non-zero unless the LaunchAgent plist exists and the
-launchd label is currently loaded. Combine it with --check when activation
-preflight should also be enforced.
+launchd label is currently loaded and a recent guardian heartbeat exists.
+Combine it with --check when activation preflight should also be enforced.
 USAGE
 }
 
@@ -140,7 +142,85 @@ print_guardian_status() {
   plist_state="missing"
   [[ -f "$PLIST" ]] && plist_state="present"
   loaded_state="$(guardian_loaded_status)"
-  echo "[install-position-guardian] status: label=$LABEL plist=$plist_state launchd=$loaded_state live_root=$LIVE_ROOT interval=${INTERVAL}s plist_path=$PLIST"
+  echo "[install-position-guardian] status: label=$LABEL plist=$plist_state launchd=$loaded_state live_root=$LIVE_ROOT interval=${INTERVAL}s heartbeat_max_age=${HEARTBEAT_MAX_AGE_SECONDS}s plist_path=$PLIST"
+}
+
+require_recent_guardian_heartbeat() {
+  case "$REQUIRE_HEARTBEAT" in
+    0|false|FALSE|no|NO)
+      echo "[install-position-guardian] heartbeat check skipped by QR_POSITION_GUARDIAN_REQUIRE_HEARTBEAT=${REQUIRE_HEARTBEAT}"
+      return 0
+      ;;
+    1|true|TRUE|yes|YES) ;;
+    *)
+      die "invalid QR_POSITION_GUARDIAN_REQUIRE_HEARTBEAT=${REQUIRE_HEARTBEAT}; expected 0 or 1." 2
+      ;;
+  esac
+  [[ "$HEARTBEAT_MAX_AGE_SECONDS" =~ ^[0-9]+$ ]] || die "QR_POSITION_GUARDIAN_HEARTBEAT_MAX_AGE_SECONDS must be an integer >= ${INTERVAL} seconds." 2
+  [[ "$HEARTBEAT_MAX_AGE_SECONDS" -ge "$INTERVAL" ]] || die "QR_POSITION_GUARDIAN_HEARTBEAT_MAX_AGE_SECONDS must be an integer >= ${INTERVAL} seconds." 2
+  local py
+  if [[ -x /opt/homebrew/bin/python3 ]]; then
+    py="/opt/homebrew/bin/python3"
+  else
+    py="$(command -v python3 || true)"
+  fi
+  [[ -n "$py" ]] || die "python3 is required to validate position guardian heartbeat freshness." 2
+  "$py" - "$HEARTBEAT_MAX_AGE_SECONDS" \
+    "$LIVE_ROOT/data/position_guardian_execution.json" \
+    "$LIVE_ROOT/data/position_guardian.json" <<'PY'
+import json
+import sys
+import time
+from datetime import datetime, timezone
+from pathlib import Path
+
+max_age = int(sys.argv[1])
+paths = [Path(item) for item in sys.argv[2:]]
+now = datetime.now(timezone.utc)
+seen = []
+
+def parse_ts(value: object) -> datetime | None:
+    if not isinstance(value, str) or not value:
+        return None
+    text = value.replace("Z", "+00:00")
+    try:
+        parsed = datetime.fromisoformat(text)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+for path in paths:
+    if not path.exists():
+        seen.append(f"{path}: missing")
+        continue
+    generated = None
+    try:
+        payload = json.loads(path.read_text())
+    except Exception:
+        payload = {}
+    if isinstance(payload, dict):
+        generated = parse_ts(payload.get("generated_at_utc"))
+    if generated is not None:
+        age = (now - generated).total_seconds()
+        source = "generated_at_utc"
+    else:
+        age = time.time() - path.stat().st_mtime
+        source = "mtime"
+    seen.append(f"{path}: age={age:.1f}s source={source}")
+    if -60.0 <= age <= max_age:
+        print(f"[install-position-guardian] heartbeat OK: path={path} age={age:.1f}s source={source} max_age={max_age}s")
+        raise SystemExit(0)
+
+print(
+    "[install-position-guardian] position guardian heartbeat is missing or stale; "
+    "fresh entry sends remain blocked so TP-progress profit capture is not blind. "
+    + "; ".join(seen),
+    file=sys.stderr,
+)
+raise SystemExit(6)
+PY
 }
 
 require_guardian_loaded() {
@@ -149,6 +229,7 @@ require_guardian_loaded() {
   if ! launchd_label_loaded; then
     die "position guardian launchd label is not loaded: $LABEL" 6
   fi
+  require_recent_guardian_heartbeat
   echo "[install-position-guardian] active OK: label=$LABEL plist=$PLIST"
 }
 
