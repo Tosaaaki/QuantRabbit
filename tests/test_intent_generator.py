@@ -3489,6 +3489,76 @@ class IntentGeneratorTest(unittest.TestCase):
             ]
             self.assertFalse(any(lane_id.endswith(":MARKET") for lane_id in post_harvest_lane_ids))
 
+    def test_attached_take_profit_order_seeds_pullback_limit_reentry_lane(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            data_root = root / "data"
+            data_root.mkdir()
+            close_ts = datetime.now(timezone.utc) - timedelta(minutes=10)
+            _write_broker_take_profit_close(
+                data_root,
+                ts_utc=close_ts.isoformat().replace("+00:00", "Z"),
+                pair="EUR_USD",
+                side="LONG",
+                lane_id="range_trader:EUR_USD:LONG:RANGE_ROTATION",
+                realized_pl_jpy=620.5,
+            )
+            forecast = SimpleNamespace(
+                pair="EUR_USD",
+                direction="UP",
+                confidence=0.84,
+                current_price=1.17326,
+                target_price=1.1762,
+                invalidation_price=1.1718,
+                horizon_min=60,
+                rationale_summary="UP forecast after broker TP pullback",
+                drivers_for=("fresh range retest",),
+                drivers_against=("wait for rail fill",),
+            )
+            output = root / "intents.json"
+
+            with patch(
+                "quant_rabbit.strategy.intent_generator._forecast_seed_for_pair",
+                return_value=forecast,
+            ):
+                IntentGenerator(
+                    campaign_plan=_campaign(root),
+                    strategy_profile=_strategy(root, status="CANDIDATE"),
+                    pair_charts_path=_pair_charts_with_direction(
+                        root,
+                        long_score=0.58,
+                        short_score=0.42,
+                        dominant_regime="RANGE",
+                        m5_regime="RANGE",
+                        m5_long_bias=0.54,
+                        m5_short_bias=0.30,
+                        adx=12.0,
+                        choppiness=68.0,
+                        close=1.1733,
+                    ),
+                    output_path=output,
+                    report_path=root / "intents.md",
+                    data_root=data_root,
+                    max_loss_jpy=500.0,
+                ).run(snapshot_path=_snapshot(root))
+
+            payload = json.loads(output.read_text())
+            reentry_rows = [
+                item
+                for item in payload["results"]
+                if ((item.get("intent") or {}).get("metadata") or {}).get("post_harvest_reentry_seed")
+            ]
+
+            self.assertEqual(len(reentry_rows), 1)
+            row = reentry_rows[0]
+            metadata = row["intent"]["metadata"]
+            self.assertEqual(row["lane_id"], "post_harvest_trader:EUR_USD:LONG:RANGE_ROTATION")
+            self.assertEqual(row["intent"]["order_type"], "LIMIT")
+            self.assertEqual(metadata["post_harvest_source"], "TAKE_PROFIT_ORDER")
+            self.assertEqual(metadata["post_harvest_trade_id"], "tp-1")
+            self.assertIn("Post-harvest re-entry lane", metadata["required_receipt"])
+            self.assertFalse(row["lane_id"].endswith(":MARKET"))
+
     def test_post_harvest_reentry_seed_skips_when_same_pair_position_still_open(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -11911,6 +11981,78 @@ def _write_post_harvest_close(
                         },
                     }
                 ),
+            ),
+        )
+
+
+def _write_broker_take_profit_close(
+    data_root: Path,
+    *,
+    ts_utc: str,
+    pair: str,
+    side: str,
+    lane_id: str,
+    realized_pl_jpy: float,
+) -> None:
+    db = data_root / "execution_ledger.db"
+    with sqlite3.connect(db) as conn:
+        conn.execute(
+            """
+            CREATE TABLE execution_events (
+              ts_utc TEXT,
+              event_type TEXT,
+              lane_id TEXT,
+              pair TEXT,
+              side TEXT,
+              units INTEGER,
+              order_id TEXT,
+              trade_id TEXT,
+              exit_reason TEXT,
+              realized_pl_jpy REAL,
+              raw_json TEXT
+            )
+            """
+        )
+        conn.execute(
+            """
+            INSERT INTO execution_events (
+              ts_utc, event_type, lane_id, pair, side, units, order_id, trade_id,
+              exit_reason, realized_pl_jpy, raw_json
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                ts_utc,
+                "ORDER_FILLED",
+                lane_id,
+                pair,
+                side,
+                5000,
+                "entry-order-1",
+                "tp-1",
+                None,
+                None,
+                json.dumps({"client_order_id": "qrv1-test"}),
+            ),
+        )
+        conn.execute(
+            """
+            INSERT INTO execution_events (
+              ts_utc, event_type, lane_id, pair, side, units, order_id, trade_id,
+              exit_reason, realized_pl_jpy, raw_json
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                ts_utc,
+                "TRADE_CLOSED",
+                "",
+                pair,
+                side,
+                5000,
+                "tp-order-1",
+                "tp-1",
+                "TAKE_PROFIT_ORDER",
+                realized_pl_jpy,
+                json.dumps({"reason": "TAKE_PROFIT_ORDER"}),
             ),
         )
 

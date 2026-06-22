@@ -2401,16 +2401,58 @@ def _recent_post_harvest_reentry_seeds(data_root: Path, *, snapshot: BrokerSnaps
     try:
         with sqlite3.connect(f"file:{ledger}?mode=ro", uri=True) as conn:
             conn.row_factory = sqlite3.Row
-            records = conn.execute(
-                """
-                SELECT ts_utc, pair, side, trade_id, order_id, exit_reason, raw_json
-                FROM execution_events
-                WHERE event_type = 'GATEWAY_TRADE_CLOSE_SENT'
-                  AND exit_reason = 'TAKE_PROFIT_MARKET'
-                ORDER BY ts_utc DESC
-                LIMIT 50
-                """
-            ).fetchall()
+            columns = {
+                str(row["name"])
+                for row in conn.execute("PRAGMA table_info(execution_events)").fetchall()
+                if "name" in row.keys()
+            }
+            records = [
+                dict(row)
+                for row in conn.execute(
+                    """
+                    SELECT
+                        ts_utc, pair, side, trade_id, order_id, exit_reason, raw_json,
+                        'TAKE_PROFIT_MARKET' AS post_harvest_source,
+                        NULL AS realized_pl_jpy,
+                        NULL AS entry_lane_id
+                    FROM execution_events
+                    WHERE event_type = 'GATEWAY_TRADE_CLOSE_SENT'
+                      AND exit_reason = 'TAKE_PROFIT_MARKET'
+                    ORDER BY ts_utc DESC
+                    LIMIT 50
+                    """
+                ).fetchall()
+            ]
+            if {"lane_id", "realized_pl_jpy"}.issubset(columns):
+                records.extend(
+                    dict(row)
+                    for row in conn.execute(
+                        """
+                        SELECT
+                            c.ts_utc AS ts_utc,
+                            c.pair AS pair,
+                            c.side AS side,
+                            c.trade_id AS trade_id,
+                            c.order_id AS order_id,
+                            c.exit_reason AS exit_reason,
+                            c.raw_json AS raw_json,
+                            'TAKE_PROFIT_ORDER' AS post_harvest_source,
+                            c.realized_pl_jpy AS realized_pl_jpy,
+                            e.lane_id AS entry_lane_id
+                        FROM execution_events c
+                        INNER JOIN execution_events e
+                          ON e.trade_id = c.trade_id
+                         AND e.event_type IN ('ORDER_FILLED', 'ORDER_ACCEPTED')
+                         AND COALESCE(e.lane_id, '') != ''
+                        WHERE c.event_type = 'TRADE_CLOSED'
+                          AND c.exit_reason = 'TAKE_PROFIT_ORDER'
+                          AND COALESCE(c.realized_pl_jpy, 0) > 0
+                        ORDER BY c.ts_utc DESC
+                        LIMIT 50
+                        """
+                    ).fetchall()
+                )
+            records.sort(key=lambda item: str(item.get("ts_utc") or ""), reverse=True)
     except sqlite3.Error:
         return []
     seen_pairs: set[tuple[str, str]] = set()
@@ -2425,15 +2467,31 @@ def _recent_post_harvest_reentry_seeds(data_root: Path, *, snapshot: BrokerSnaps
         if age_seconds > cutoff_seconds:
             continue
         raw = _json_dict(record["raw_json"])
-        if not bool(raw.get("sent")):
-            continue
-        if str(raw.get("management_action") or "") != "TAKE_PROFIT_MARKET":
-            continue
-        if str(raw.get("owner") or "") != Owner.TRADER.value:
-            continue
-        reasons = [str(item) for item in raw.get("reasons") or [] if str(item)]
-        reason_blob = " | ".join(reasons)
-        if "temporary top profit-take" not in reason_blob and "temporary bottom profit-take" not in reason_blob:
+        source = str(record.get("post_harvest_source") or "")
+        reasons: list[str]
+        if source == "TAKE_PROFIT_MARKET":
+            if not bool(raw.get("sent")):
+                continue
+            if str(raw.get("management_action") or "") != "TAKE_PROFIT_MARKET":
+                continue
+            if str(raw.get("owner") or "") != Owner.TRADER.value:
+                continue
+            reasons = [str(item) for item in raw.get("reasons") or [] if str(item)]
+            reason_blob = " | ".join(reasons)
+            if "temporary top profit-take" not in reason_blob and "temporary bottom profit-take" not in reason_blob:
+                continue
+        elif source == "TAKE_PROFIT_ORDER":
+            entry_lane_id = str(record.get("entry_lane_id") or "").strip()
+            if not entry_lane_id.startswith(("range_trader:", "trend_trader:", "failure_trader:", "post_harvest_trader:")):
+                continue
+            realized_pl_jpy = _optional_float(record.get("realized_pl_jpy"))
+            if realized_pl_jpy is None or realized_pl_jpy <= 0:
+                continue
+            reasons = [
+                f"broker attached TP filled with realized_pl_jpy={round(realized_pl_jpy, 4)}",
+                f"source entry lane {entry_lane_id}",
+            ]
+        else:
             continue
         pair = str(record["pair"] or raw.get("pair") or "")
         side = _closed_position_side(record["side"], raw)
@@ -2452,6 +2510,7 @@ def _recent_post_harvest_reentry_seeds(data_root: Path, *, snapshot: BrokerSnaps
                 "closed_at_utc": close_time.isoformat().replace("+00:00", "Z"),
                 "age_minutes": round(age_seconds / 60.0, 2),
                 "reasons": reasons[:4],
+                "source": source,
             }
         )
     return rows
@@ -2464,7 +2523,7 @@ def _post_harvest_reentry_lane(seed: dict[str, Any]) -> dict[str, Any]:
     closed_at = str(seed.get("closed_at_utc") or "unknown")
     reason = (
         f"post-harvest re-entry seed: trader-owned {pair} {side} trade {trade_id} "
-        f"was profit-harvested at a temporary local extreme at {closed_at}; "
+        f"was profit-harvested by {seed.get('source') or 'TAKE_PROFIT_MARKET'} at {closed_at}; "
         "wait for the market to pull back to the range support/resistance rail before re-entering"
     )
     return {
@@ -2487,6 +2546,7 @@ def _post_harvest_reentry_lane(seed: dict[str, Any]) -> dict[str, Any]:
         "post_harvest_trade_id": trade_id,
         "post_harvest_closed_at_utc": closed_at,
         "post_harvest_age_minutes": seed.get("age_minutes"),
+        "post_harvest_source": seed.get("source"),
     }
 
 
@@ -8720,6 +8780,7 @@ def _intent_from_lane(
             "post_harvest_trade_id": lane.get("post_harvest_trade_id"),
             "post_harvest_closed_at_utc": lane.get("post_harvest_closed_at_utc"),
             "post_harvest_age_minutes": lane.get("post_harvest_age_minutes"),
+            "post_harvest_source": lane.get("post_harvest_source"),
             "oanda_campaign_firepower_seed": bool(lane.get("oanda_campaign_firepower_seed")),
             "oanda_campaign_vehicle_key": lane.get("oanda_campaign_vehicle_key"),
             "oanda_campaign_vehicle_count": lane.get("oanda_campaign_vehicle_count"),
