@@ -30,6 +30,65 @@ from quant_rabbit.strategy.entry_thesis_ledger import PendingEntryThesis, record
 from quant_rabbit.strategy.trader_brain import ACTION_NO_TRADE, ACTION_SEND_ENTRY, LaneScore, TraderDecision
 
 
+def _accepted_gpt_close_receipt(
+    trade_id: str = "471232",
+    *,
+    generated_at_utc: str = "2026-06-08T00:00:00+00:00",
+    decision: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    receipt_decision = decision or {
+        "action": "CLOSE",
+        "selected_lane_id": None,
+        "close_trade_ids": [trade_id],
+    }
+    return {
+        "generated_at_utc": generated_at_utc,
+        "status": "ACCEPTED",
+        "decision": receipt_decision,
+        "close_gate_evidence": [
+            {
+                "trade_id": trade_id,
+                "pair": "EUR_USD",
+                "side": "LONG",
+                "unrealized_pl_jpy": -250.0,
+                "loss_side_close": True,
+                "gate_a_invalidated": True,
+                "gate_a_reason": "fresh position_thesis REVIEW_CLOSE invalidation-hit",
+                "gate_b_standing_authorized": True,
+                "gate_b_explicit_operator_authorized": False,
+                "explicit_gate_b_required": False,
+                "profitability_p0_context_required": False,
+                "profitability_p0_context_cited": False,
+                "timing_audit_required": False,
+                "timing_evidence_cited": False,
+                "hard_timing_gate_required": False,
+                "same_direction_support_conflict": False,
+            }
+        ],
+        "verification_issues": [],
+    }
+
+
+def _write_accepted_gpt_close_receipt(
+    path: Path,
+    trade_id: str = "471232",
+    *,
+    generated_at_utc: str = "2026-06-08T00:00:00+00:00",
+    decision: dict[str, Any] | None = None,
+) -> None:
+    path.write_text(
+        json.dumps(
+            _accepted_gpt_close_receipt(
+                trade_id,
+                generated_at_utc=generated_at_utc,
+                decision=decision,
+            ),
+            indent=2,
+        )
+        + "\n"
+    )
+
+
 class AutoTradeCycleTest(unittest.TestCase):
     def setUp(self) -> None:
         self._default_settings_tmp = tempfile.TemporaryDirectory()
@@ -844,6 +903,8 @@ class AutoTradeCycleTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             now = datetime.now(timezone.utc)
+            gpt_decision_path = root / "gpt_decision.json"
+            _write_accepted_gpt_close_receipt(gpt_decision_path)
             snapshot = BrokerSnapshot(
                 fetched_at_utc=now,
                 positions=(
@@ -867,8 +928,11 @@ class AutoTradeCycleTest(unittest.TestCase):
                 client=client,
                 live_enabled=True,
                 snapshot_path=root / "broker.json",
+                gpt_decision_path=gpt_decision_path,
                 position_execution_path=root / "pe.json",
                 position_execution_report_path=root / "pe.md",
+                execution_ledger_db_path=root / "execution_ledger.db",
+                execution_ledger_report_path=root / "execution_ledger.md",
             )
             summary = GptHandoffSummary(
                 status="ACCEPTED",
@@ -891,6 +955,94 @@ class AutoTradeCycleTest(unittest.TestCase):
             self.assertEqual(payload["actions"][0]["request"]["type"], "CLOSE")
             self.assertEqual(payload["actions"][0]["trade_id"], "471232")
             self.assertIn("CLOSE", (root / "pe.md").read_text())
+
+    def test_accepted_gpt_close_without_close_gate_evidence_blocks_before_gateway(self) -> None:
+        class Client:
+            def __init__(self) -> None:
+                self.closed: list[tuple[str, str]] = []
+                self.snapshot_calls: list[tuple[str, ...]] = []
+
+            def snapshot(self, pairs: tuple[str, ...]) -> BrokerSnapshot:
+                self.snapshot_calls.append(pairs)
+                raise AssertionError("close-gate evidence block must happen before snapshot refresh")
+
+            def close_trade_with_provenance(
+                self,
+                trade_id: str,
+                units: str = "ALL",
+                *,
+                provenance: str,
+            ) -> dict[str, Any]:
+                self.closed.append((trade_id, units))
+                raise AssertionError("broker close must not be called without close_gate_evidence")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            now = datetime.now(timezone.utc)
+            gpt_decision_path = root / "gpt_decision.json"
+            gpt_decision_path.write_text(
+                json.dumps(
+                    {
+                        "generated_at_utc": "2026-06-08T00:00:00+00:00",
+                        "status": "ACCEPTED",
+                        "decision": {
+                            "action": "CLOSE",
+                            "selected_lane_id": None,
+                            "close_trade_ids": ["471232"],
+                        },
+                        "verification_issues": [],
+                    },
+                    indent=2,
+                )
+                + "\n"
+            )
+            snapshot = BrokerSnapshot(
+                fetched_at_utc=now,
+                positions=(
+                    BrokerPosition(
+                        trade_id="471232",
+                        pair="EUR_USD",
+                        side=Side.LONG,
+                        units=1000,
+                        entry_price=1.1729,
+                        unrealized_pl_jpy=-250.0,
+                        take_profit=1.1740,
+                        stop_loss=None,
+                        owner=Owner.TRADER,
+                    ),
+                ),
+                quotes={"EUR_USD": Quote("EUR_USD", 1.1710, 1.1711, timestamp_utc=now)},
+            )
+            client = Client()
+            cycle = AutoTradeCycle(
+                client=client,
+                live_enabled=True,
+                snapshot_path=root / "broker.json",
+                gpt_decision_path=gpt_decision_path,
+                position_execution_path=root / "pe.json",
+                position_execution_report_path=root / "pe.md",
+                execution_ledger_db_path=root / "execution_ledger.db",
+                execution_ledger_report_path=root / "execution_ledger.md",
+            )
+            summary = GptHandoffSummary(
+                status="ACCEPTED",
+                action="CLOSE",
+                selected_lane_id=None,
+                allowed=True,
+                issues=0,
+                close_trade_ids=("471232",),
+            )
+
+            execution = cycle._close_gpt_trades(summary, snapshot=snapshot, send=True)
+
+            self.assertEqual(execution.status, "BLOCKED")
+            self.assertFalse(execution.sent)
+            self.assertEqual(client.closed, [])
+            self.assertEqual(client.snapshot_calls, [])
+            payload = json.loads((root / "pe.json").read_text())
+            self.assertEqual(payload["status"], "BLOCKED")
+            self.assertEqual(payload["actions"][0]["issues"][0]["code"], "GPT_CLOSE_GATE_EVIDENCE_MISSING")
+            self.assertIn("close_gate_evidence", (root / "pe.md").read_text())
 
     def test_accepted_gpt_close_ledger_receipt_survives_position_execution_overwrite(self) -> None:
         class Client:
@@ -948,21 +1100,7 @@ class AutoTradeCycleTest(unittest.TestCase):
             )
             ledger_path = root / "execution_ledger.db"
             gpt_decision_path = root / "gpt_decision.json"
-            gpt_decision_path.write_text(
-                json.dumps(
-                    {
-                        "generated_at_utc": "2026-06-08T00:00:00+00:00",
-                        "status": "ACCEPTED",
-                        "decision": {
-                            "action": "CLOSE",
-                            "selected_lane_id": None,
-                            "close_trade_ids": ["471232"],
-                        },
-                        "verification_issues": [],
-                    }
-                )
-                + "\n"
-            )
+            _write_accepted_gpt_close_receipt(gpt_decision_path)
             cycle = AutoTradeCycle(
                 client=Client(snapshot),
                 live_enabled=True,
@@ -1042,6 +1180,8 @@ class AutoTradeCycleTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             now = datetime.now(timezone.utc)
+            gpt_decision_path = root / "gpt_decision.json"
+            _write_accepted_gpt_close_receipt(gpt_decision_path)
             stale_snapshot = BrokerSnapshot(
                 fetched_at_utc=now,
                 positions=(
@@ -1069,8 +1209,11 @@ class AutoTradeCycleTest(unittest.TestCase):
                 client=client,
                 live_enabled=True,
                 snapshot_path=root / "broker.json",
+                gpt_decision_path=gpt_decision_path,
                 position_execution_path=root / "pe.json",
                 position_execution_report_path=root / "pe.md",
+                execution_ledger_db_path=root / "execution_ledger.db",
+                execution_ledger_report_path=root / "execution_ledger.md",
             )
             summary = GptHandoffSummary(
                 status="ACCEPTED",
@@ -5260,16 +5403,11 @@ class AutoTradeCycleTest(unittest.TestCase):
                 close_decision = _gpt_close_decision(["close-me"])
                 response_path.write_text(json.dumps(close_decision) + "\n")
                 gpt_decision_path = root / "gpt_decision.json"
-                gpt_decision_path.write_text(
-                    json.dumps(
-                        {
-                            "generated_at_utc": now.isoformat(),
-                            "status": "ACCEPTED",
-                            "decision": close_decision,
-                            "verification_issues": [],
-                        }
-                    )
-                    + "\n"
+                _write_accepted_gpt_close_receipt(
+                    gpt_decision_path,
+                    trade_id="close-me",
+                    generated_at_utc=now.isoformat(),
+                    decision=close_decision,
                 )
                 live_order_path = root / "live_order.json"
                 live_order_path.write_text(json.dumps({"status": "REJECTED"}) + "\n")
@@ -5322,6 +5460,8 @@ class AutoTradeCycleTest(unittest.TestCase):
                     position_execution_report_path=root / "pe.md",
                     live_order_output_path=live_order_path,
                     live_order_report_path=root / "live_order.md",
+                    execution_ledger_db_path=root / "execution_ledger.db",
+                    execution_ledger_report_path=root / "execution_ledger.md",
                     report_path=root / "report.md",
                     campaign_plan_path=_campaign(root),
                     pair_charts_path=pair_charts_path,

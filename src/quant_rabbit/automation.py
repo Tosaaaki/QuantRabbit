@@ -177,6 +177,33 @@ def _position_execution_cycle_status(
     return fallback
 
 
+def _close_gate_evidence_status(evidence: dict[str, Any]) -> str:
+    """Mirror execution_ledger close-gate normalization before broker close."""
+
+    if evidence.get("gate_a_invalidated") is not True:
+        return "BLOCK"
+    if evidence.get("same_direction_support_conflict"):
+        return "BLOCK"
+    if evidence.get("hard_timing_gate_required") is True:
+        return "BLOCK"
+    if (
+        evidence.get("explicit_gate_b_required") is True
+        and evidence.get("gate_b_explicit_operator_authorized") is not True
+    ):
+        return "BLOCK"
+    if (
+        evidence.get("profitability_p0_context_required") is True
+        and evidence.get("profitability_p0_context_cited") is not True
+    ):
+        return "BLOCK"
+    if (
+        evidence.get("timing_audit_required") is True
+        and evidence.get("timing_evidence_cited") is not True
+    ):
+        return "BLOCK"
+    return "PASS"
+
+
 def _snapshot_refresh_pairs(snapshot: object) -> tuple[str, ...]:
     pairs = set(DEFAULT_TRADER_PAIRS)
     pairs.update(str(pair) for pair in getattr(snapshot, "quotes", {}) or {} if pair)
@@ -4109,6 +4136,18 @@ class AutoTradeCycle:
                 f"close_trade_ids={list(gpt_summary.close_trade_ids)}\n"
             )
             return no_action
+        close_gate_issue = self._gpt_close_gate_evidence_issue(gpt_summary)
+        if close_gate_issue is not None:
+            self._record_execution_ledger_receipt(
+                kind="gpt_decision",
+                receipt_path=self.gpt_decision_path,
+            )
+            return self._write_gpt_close_gate_evidence_blocked(
+                gpt_summary,
+                issue=close_gate_issue,
+                snapshot=snapshot,
+                send=send,
+            )
         self._record_execution_ledger_receipt(
             kind="gpt_decision",
             receipt_path=self.gpt_decision_path,
@@ -4260,6 +4299,144 @@ class AutoTradeCycle:
             else None,
             action="GPT_CLOSE",
             positions=tuple(managed),
+        )
+
+    def _gpt_close_gate_evidence_issue(self, gpt_summary: GptHandoffSummary) -> dict[str, Any] | None:
+        try:
+            payload = json.loads(self.gpt_decision_path.read_text())
+        except (OSError, json.JSONDecodeError, ValueError) as exc:
+            return {
+                "severity": "BLOCK",
+                "code": "GPT_CLOSE_GATE_EVIDENCE_UNREADABLE",
+                "message": f"accepted GPT CLOSE receipt is unreadable before broker close: {exc}",
+            }
+        close_gate_evidence = (
+            payload.get("close_gate_evidence")
+            if isinstance(payload.get("close_gate_evidence"), list)
+            else []
+        )
+        if not close_gate_evidence:
+            return {
+                "severity": "BLOCK",
+                "code": "GPT_CLOSE_GATE_EVIDENCE_MISSING",
+                "message": (
+                    "accepted GPT CLOSE receipt has no close_gate_evidence; "
+                    "loss-side market close cannot reach PositionProtectionGateway"
+                ),
+            }
+        evidence_by_trade: dict[str, list[dict[str, Any]]] = {}
+        for item in close_gate_evidence:
+            if not isinstance(item, dict):
+                continue
+            trade_id = str(item.get("trade_id") or "").strip()
+            if not trade_id:
+                continue
+            evidence_by_trade.setdefault(trade_id, []).append(item)
+        missing: list[str] = []
+        blocked: list[str] = []
+        for trade_id in gpt_summary.close_trade_ids:
+            trade_key = str(trade_id)
+            evidence_items = evidence_by_trade.get(trade_key) or []
+            if not evidence_items:
+                missing.append(trade_key)
+                continue
+            if not any(_close_gate_evidence_status(item) == "PASS" for item in evidence_items):
+                blocked.append(trade_key)
+        if missing or blocked:
+            details: list[str] = []
+            if missing:
+                details.append("missing evidence for " + ", ".join(missing))
+            if blocked:
+                details.append("non-PASS evidence for " + ", ".join(blocked))
+            return {
+                "severity": "BLOCK",
+                "code": "GPT_CLOSE_GATE_EVIDENCE_NOT_PASSING",
+                "message": (
+                    "accepted GPT CLOSE receipt lacks PASS close_gate_evidence for every named trade; "
+                    + "; ".join(details)
+                ),
+            }
+        return None
+
+    def _write_gpt_close_gate_evidence_blocked(
+        self,
+        gpt_summary: GptHandoffSummary,
+        *,
+        issue: dict[str, Any],
+        snapshot,
+        send: bool,
+    ) -> PositionExecutionSummary:
+        generated_at = datetime.now(timezone.utc).isoformat()
+        positions_by_id = {
+            str(getattr(position, "trade_id", "")): position
+            for position in getattr(snapshot, "positions", ()) or ()
+        }
+        actions: list[dict[str, Any]] = []
+        for trade_id in gpt_summary.close_trade_ids:
+            position = positions_by_id.get(str(trade_id))
+            actions.append(
+                {
+                    "trade_id": str(trade_id),
+                    "pair": str(getattr(position, "pair", "") if position is not None else ""),
+                    "owner": str(getattr(getattr(position, "owner", ""), "value", getattr(position, "owner", "")) or ""),
+                    "management_action": "GPT_CLOSE",
+                    "request": None,
+                    "issues": [dict(issue)],
+                    "sent": False,
+                    "response": None,
+                }
+            )
+        result = {
+            "generated_at_utc": generated_at,
+            "status": "BLOCKED",
+            "send_requested": send,
+            "sent": False,
+            "snapshot_fetched_at_utc": str(getattr(snapshot, "fetched_at_utc", "") or ""),
+            "actions": actions,
+        }
+        self.position_execution_path.parent.mkdir(parents=True, exist_ok=True)
+        self.position_execution_path.write_text(json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True) + "\n")
+        lines = [
+            "# Position Execution Report",
+            "",
+            f"- Generated at UTC: `{generated_at}`",
+            "- Status: `BLOCKED`",
+            f"- Send requested: `{send}`",
+            "- Sent: `False`",
+            f"- Broker snapshot UTC: `{result['snapshot_fetched_at_utc']}`",
+            "",
+            "## Actions",
+            "",
+        ]
+        for action in actions:
+            lines.append(
+                f"- `{action['trade_id']}` owner=`{action.get('owner')}` management=`{action['management_action']}` "
+                "request=`none` sent=`False`"
+            )
+            for item in action.get("issues", []):
+                lines.append(f"  - `{item['severity']}` {item['code']}: {item['message']}")
+        lines.extend(
+            [
+                "",
+                "## Execution Contract",
+                "",
+                "- Accepted GPT CLOSE receipts must carry PASS close_gate_evidence for every named trade id.",
+                "- Missing or non-passing close-gate evidence blocks the broker close before PositionProtectionGateway.",
+            ]
+        )
+        self.position_execution_report_path.parent.mkdir(parents=True, exist_ok=True)
+        self.position_execution_report_path.write_text("\n".join(lines) + "\n")
+        self._record_execution_ledger_receipt(
+            kind="position_execution",
+            receipt_path=self.position_execution_path,
+        )
+        return PositionExecutionSummary(
+            status="BLOCKED",
+            output_path=self.position_execution_path,
+            report_path=self.position_execution_report_path,
+            sent=False,
+            actions=len(actions),
+            blocked=len(actions),
         )
 
     def _gpt_brain(self) -> GPTTraderBrain:
