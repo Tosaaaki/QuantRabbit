@@ -146,6 +146,7 @@ ROOT_CAUSE_CODE_BOOSTS = {
     "RANGE_FORECAST_METHOD_MISMATCH_REPAIR_REQUIRED": 45.0,
     "TARGET_OPEN_LIVE_READY_COVERAGE_SHORTFALL": 60.0,
     "TARGET_OPEN_NO_LIVE_READY_LANES": 60.0,
+    "LOSS_CLOSE_PROFIT_CAPTURE_MISSED": 85.0,
     "PENDING_ENTRY_FILL_RATE_WEAK": 45.0,
     "PENDING_ENTRY_CANCEL_RATE_HIGH": 40.0,
     "NEGATIVE_RECENT_EXPECTANCY": 35.0,
@@ -473,6 +474,13 @@ class SelfImprovementAuditor:
             _pending_entry_lifecycle_findings(
                 run_id=run_id,
                 metrics=pending_entry_lifecycle,
+                target_open=target_open,
+            )
+        )
+        findings.extend(
+            _profit_capture_miss_findings(
+                run_id=run_id,
+                timing_payload=execution_timing_loaded.payload,
                 target_open=target_open,
             )
         )
@@ -1847,6 +1855,73 @@ def _pending_entry_lifecycle_findings(
                 "fill_rate": fill_rate,
                 "timing_regret": metrics.get("timing_regret") or {},
                 "samples": metrics.get("canceled_before_fill_samples", [])[:8],
+            },
+        )
+    ]
+
+
+def _profit_capture_miss_findings(
+    *,
+    run_id: str,
+    timing_payload: dict[str, Any] | None,
+    target_open: bool,
+) -> list[dict[str, Any]]:
+    if not isinstance(timing_payload, dict):
+        return []
+    summary = timing_payload.get("summary") if isinstance(timing_payload.get("summary"), dict) else {}
+    missed = int(summary.get("loss_closes_profit_capture_missed") or 0)
+    if missed <= 0:
+        return []
+    rows = [
+        row
+        for row in (timing_payload.get("loss_close_regrets") or [])
+        if isinstance(row, dict) and row.get("profit_capture_missed_before_loss_close")
+    ]
+    rows.sort(key=lambda row: float(row.get("estimated_mfe_jpy_before_loss_close") or 0.0), reverse=True)
+    return [
+        _finding(
+            run_id=run_id,
+            priority="P0" if target_open else "P1",
+            layer="execution_quality",
+            code="LOSS_CLOSE_PROFIT_CAPTURE_MISSED",
+            message=(
+                f"{missed} losing close(s) had positive TP-progress capture opportunity before closing red"
+            ),
+            next_action=(
+                "Repair and verify the fast position-guardian/profit-capture loop before adding more risk: "
+                "the issue is not canceling entries, it is missing executable profit exits between full cycles."
+            ),
+            evidence={
+                "generated_at_utc": timing_payload.get("generated_at_utc"),
+                "loss_closes_audited": int(summary.get("loss_closes_audited") or 0),
+                "loss_closes_profit_capture_missed": missed,
+                "loss_closes_profit_capture_missed_rate": _maybe_float(
+                    summary.get("loss_closes_profit_capture_missed_rate")
+                ),
+                "stop_loss_closes_profit_capture_missed": int(
+                    summary.get("stop_loss_closes_profit_capture_missed") or 0
+                ),
+                "loss_close_estimated_capture_gap_jpy": _maybe_float(
+                    summary.get("loss_close_estimated_capture_gap_jpy")
+                ),
+                "top_profit_capture_misses": [
+                    {
+                        "trade_id": str(row.get("trade_id") or ""),
+                        "lane_id": str(row.get("lane_id") or ""),
+                        "pair": str(row.get("pair") or ""),
+                        "side": str(row.get("side") or ""),
+                        "exit_reason": str(row.get("exit_reason") or ""),
+                        "realized_pl_jpy": _maybe_float(row.get("realized_pl_jpy")),
+                        "mfe_pips_before_loss_close": _maybe_float(row.get("mfe_pips_before_loss_close")),
+                        "tp_progress_before_loss_close": _maybe_float(
+                            row.get("tp_progress_before_loss_close")
+                        ),
+                        "estimated_mfe_jpy_before_loss_close": _maybe_float(
+                            row.get("estimated_mfe_jpy_before_loss_close")
+                        ),
+                    }
+                    for row in rows[:8]
+                ],
             },
         )
     ]

@@ -24,6 +24,7 @@ from quant_rabbit.self_improvement_audit import (
     _gateway_close_recovery_observation,
     _intent_live_readiness_family_breakdown,
     _normalized_pending_order_type,
+    _profit_capture_miss_findings,
     _profitability_findings,
     _projection_expired,
     _report_perspective_alignment_text,
@@ -77,6 +78,44 @@ class SelfImprovementAuditorTest(unittest.TestCase):
         self.assertEqual(_normalized_pending_order_type("STOP_ORDER"), "STOP-ENTRY")
         self.assertEqual(_normalized_pending_order_type("STOP_ENTRY"), "STOP-ENTRY")
         self.assertEqual(_normalized_pending_order_type("MARKET_IF_TOUCHED_ORDER"), "MARKET-IF-TOUCHED")
+
+    def test_profit_capture_miss_becomes_p0_while_target_open(self) -> None:
+        findings = _profit_capture_miss_findings(
+            run_id=_NOW.isoformat(),
+            target_open=True,
+            timing_payload={
+                "generated_at_utc": _NOW.isoformat(),
+                "summary": {
+                    "loss_closes_audited": 1,
+                    "loss_closes_profit_capture_missed": 1,
+                    "loss_closes_profit_capture_missed_rate": 1.0,
+                    "stop_loss_closes_profit_capture_missed": 1,
+                    "loss_close_estimated_capture_gap_jpy": 302.4,
+                },
+                "loss_close_regrets": [
+                    {
+                        "trade_id": "472792",
+                        "lane_id": "range_trader:USD_JPY:SHORT:RANGE_ROTATION",
+                        "pair": "USD_JPY",
+                        "side": "SHORT",
+                        "exit_reason": "STOP_LOSS_ORDER",
+                        "realized_pl_jpy": -340.2,
+                        "mfe_pips_before_loss_close": 4.8,
+                        "tp_progress_before_loss_close": 0.86,
+                        "estimated_mfe_jpy_before_loss_close": 302.4,
+                        "profit_capture_missed_before_loss_close": True,
+                    }
+                ],
+            },
+        )
+
+        self.assertEqual(len(findings), 1)
+        self.assertEqual(findings[0]["priority"], "P0")
+        self.assertEqual(findings[0]["code"], "LOSS_CLOSE_PROFIT_CAPTURE_MISSED")
+        self.assertEqual(
+            findings[0]["evidence"]["top_profit_capture_misses"][0]["trade_id"],
+            "472792",
+        )
 
     def test_projection_expiry_uses_live_telemetry_grace(self) -> None:
         grace = timedelta(seconds=PROJECTION_PENDING_EXPIRY_GRACE_SECONDS)
