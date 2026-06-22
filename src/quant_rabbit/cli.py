@@ -1312,7 +1312,12 @@ DEFAULT_CYCLE_STEP_TIMEOUT_SECONDS = 300.0
 # execution-timing-audit can fan out to many OANDA candle windows. It is
 # optional evidence; one slow broker history read must not consume the refresh
 # window and leave self-improvement/profitability acceptance stale.
-DEFAULT_EXECUTION_TIMING_AUDIT_CYCLE_TIMEOUT_SECONDS = 60.0
+# Cycle-refresh must keep the execution-timing artifact month-scale. If it
+# rewrites the file with the module-default 168h lookback, profitability-
+# acceptance correctly falls back to MONTH_SCALE_LOSS_CLOSE_REPLAY_REQUIRED
+# and the trader stops using the replay proof that was just gathered.
+DEFAULT_EXECUTION_TIMING_AUDIT_CYCLE_LOOKBACK_HOURS = 744.0
+DEFAULT_EXECUTION_TIMING_AUDIT_CYCLE_TIMEOUT_SECONDS = 180.0
 # Pair charts fetch 28 G8 pairs x 7 timeframes. Fourteen workers keeps the
 # broker-read fanout inside the 20-minute live cadence even when one batch hits
 # the OANDA HTTP timeout, while staying far below one thread per candle request.
@@ -2064,11 +2069,19 @@ def _cycle_refresh_steps(daily_risk_pct: str) -> list[dict[str, Any]]:
         {"argv": ["optimize-coverage"], "required": False},
         {"argv": ["ai-attack-advice"], "required": False},
         {"argv": ["learning-audit"], "required": False},
-        # Keep the module default 168h operating-week lookback. A 24h override
-        # loses Friday MARKET_ORDER_TRADE_CLOSE leakage after the weekend while
-        # profitability/self-improvement P0s can still cite that exact close.
+        # Keep this month-scale so the scheduled refresh does not overwrite a
+        # 744h TP-progress replay with a shorter 168h artifact before
+        # profitability-acceptance consumes it.
         {
-            "argv": ["execution-timing-audit", "--max-events", "80"],
+            "argv": [
+                "execution-timing-audit",
+                "--lookback-hours",
+                str(int(DEFAULT_EXECUTION_TIMING_AUDIT_CYCLE_LOOKBACK_HOURS)),
+                "--post-close-hours",
+                "6",
+                "--max-events",
+                "80",
+            ],
             "required": False,
             "timeout_seconds": DEFAULT_EXECUTION_TIMING_AUDIT_CYCLE_TIMEOUT_SECONDS,
         },

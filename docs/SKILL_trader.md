@@ -142,10 +142,11 @@ PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli trader-prompt-route
 # news-health --strict during a stale-news window) appear in `steps_failed`
 # but do not stop evidence generation — treat them as named blockers in the
 # decision receipt exactly as before.
-# `execution-timing-audit` is optional and has a shorter per-step timeout than
-# the full refresh because it can fetch many OANDA candle windows; a slow
-# timing-regret audit must be surfaced in the digest, not allowed to leave
-# memory-health / self-improvement / profitability-acceptance stale.
+# `execution-timing-audit` is optional and runs the month-scale TP-progress
+# replay (`--lookback-hours 744 --post-close-hours 6 --max-events 80`) before
+# self-improvement / profitability-acceptance. It must not be shortened back to
+# the module-default 168h window, because that overwrites the proof artifact and
+# makes acceptance raise MONTH_SCALE_LOSS_CLOSE_REPLAY_REQUIRED again.
 PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli cycle-refresh --daily-risk-pct 10
 
 # The refresh branch is not an end state: it must produce one current receipt

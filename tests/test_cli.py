@@ -5326,14 +5326,15 @@ class ConsolidatedCycleCommandTest(unittest.TestCase):
         self.assertLess(refresh.index("news-snapshot"), refresh.index("news-health --strict"))
         self.assertLess(refresh.index("capture-economics"), refresh.index("operator-precedent-audit"))
         self.assertLess(refresh.index("capture-economics"), refresh.index("manual-market-context-audit"))
-        self.assertIn("execution-timing-audit --max-events 80", refresh)
+        month_scale_timing_step = "execution-timing-audit --lookback-hours 744 --post-close-hours 6 --max-events 80"
+        self.assertIn(month_scale_timing_step, refresh)
         self.assertFalse(
             any(
                 step.startswith("execution-timing-audit --lookback-hours 24")
                 for step in refresh
             )
         )
-        self.assertLess(refresh.index("execution-timing-audit --max-events 80"), refresh.index("self-improvement-audit"))
+        self.assertLess(refresh.index(month_scale_timing_step), refresh.index("self-improvement-audit"))
         self.assertLess(refresh.index("manual-market-context-audit"), refresh.index("operator-precedent-audit"))
         self.assertLess(refresh.index("operator-precedent-audit"), refresh.index("verification-ledger-audit"))
         self.assertLess(refresh.index("position-management"), refresh.index("profit-capture-bot"))
@@ -5343,8 +5344,8 @@ class ConsolidatedCycleCommandTest(unittest.TestCase):
         self.assertLess(refresh.index("profitability-acceptance"), refresh.index("trader-support-bot"))
         self.assertEqual(refresh[-1], "trader-support-bot")
         refresh_by_step = {" ".join(s["argv"]): s for s in _cycle_refresh_steps("10")}
-        self.assertEqual(refresh_by_step["execution-timing-audit --max-events 80"]["timeout_seconds"], 60.0)
-        self.assertFalse(refresh_by_step["execution-timing-audit --max-events 80"]["required"])
+        self.assertEqual(refresh_by_step[month_scale_timing_step]["timeout_seconds"], 180.0)
+        self.assertFalse(refresh_by_step[month_scale_timing_step]["required"])
         self.assertTrue(refresh_by_step["position-management"]["required"])
         self.assertTrue(refresh_by_step["profit-capture-bot"]["required"])
         self.assertEqual(refresh_by_step["profit-capture-bot"]["ok_rcs"], [0, 2])
