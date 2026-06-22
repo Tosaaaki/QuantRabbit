@@ -60,7 +60,9 @@ from quant_rabbit.snapshot_json import snapshot_payload_order_raw
 from quant_rabbit.strategy.lane_history_ledger import (
     LOSS_STREAK_BLOCK_THRESHOLD,
     LOSS_STREAK_SIZE_BACKOFF,
+    SameDayLaneLossStreak,
     SameDayLossStreak,
+    compute_same_day_lane_loss_streaks,
     compute_same_day_loss_streaks,
 )
 from quant_rabbit.strategy.price_action import structural_tp_target
@@ -4752,6 +4754,9 @@ SELF_IMPROVEMENT_PROFITABILITY_P0_CODE = "SELF_IMPROVEMENT_P0_PROFITABILITY_DISC
 SELF_IMPROVEMENT_PROFITABILITY_P0_REPAIR_CODE = (
     "SELF_IMPROVEMENT_P0_PROFITABILITY_REPAIR_MODE"
 )
+SELF_IMPROVEMENT_PROFITABILITY_P0_REPAIR_RECENT_LOSS_CODE = (
+    "SELF_IMPROVEMENT_P0_REPAIR_RECENT_LANE_LOSS"
+)
 SELF_IMPROVEMENT_PROFITABILITY_P0_REPAIR_MODE = "TP_HARVEST_REPAIR"
 SELF_IMPROVEMENT_PENDING_EXECUTION_REPAIR_CODE = (
     "SELF_IMPROVEMENT_PENDING_EXECUTION_REPAIR_MODE"
@@ -4949,6 +4954,11 @@ class IntentGenerator:
             if snapshot is not None
             else {}
         )
+        repair_loss_streaks = (
+            compute_same_day_lane_loss_streaks(self.data_root / "execution_ledger.db", loss_streak_day)
+            if snapshot is not None
+            else {}
+        )
         self_improvement_profitability_issue = (
             _self_improvement_profitability_p0_issue(self.data_root) if snapshot is not None else None
         )
@@ -4980,6 +4990,7 @@ class IntentGenerator:
                         telemetry_cache=telemetry_cache,
                         data_root=self.data_root,
                         loss_streaks=loss_streaks,
+                        repair_loss_streaks=repair_loss_streaks,
                         self_improvement_profitability_issue=self_improvement_profitability_issue,
                         self_improvement_forecast_issue=self_improvement_forecast_issue,
                         self_improvement_pending_issue=self_improvement_pending_issue,
@@ -5015,6 +5026,7 @@ class IntentGenerator:
         telemetry_cache: _TelemetryLiveReadinessCache | None = None,
         data_root: Path | None = None,
         loss_streaks: dict[str, SameDayLossStreak] | None = None,
+        repair_loss_streaks: dict[tuple[str, str, str], SameDayLaneLossStreak] | None = None,
         self_improvement_profitability_issue: dict[str, str] | None = None,
         self_improvement_forecast_issue: dict[str, str] | None = None,
         self_improvement_pending_issue: dict[str, str] | None = None,
@@ -5252,10 +5264,19 @@ class IntentGenerator:
             self_improvement_profitability_issue is not None
             and str(intent.metadata.get("position_intent") or "").upper() != "HEDGE"
         ):
-            if _self_improvement_profitability_p0_repair_allowed(
+            repair_allowed = _self_improvement_profitability_p0_repair_allowed(
                 intent,
                 self_improvement_profitability_issue,
-            ):
+            )
+            repair_recent_loss_issue = (
+                _self_improvement_p0_repair_recent_lane_loss_issue(
+                    intent,
+                    repair_loss_streaks,
+                )
+                if repair_allowed
+                else None
+            )
+            if repair_allowed and repair_recent_loss_issue is None:
                 intent.metadata["self_improvement_p0_repair_live_ready"] = True
                 intent.metadata["self_improvement_p0_repair_mode"] = (
                     SELF_IMPROVEMENT_PROFITABILITY_P0_REPAIR_MODE
@@ -5280,6 +5301,9 @@ class IntentGenerator:
                     }
                 )
             else:
+                if repair_recent_loss_issue is not None:
+                    risk_issues.append(repair_recent_loss_issue)
+                    live_blockers = (*live_blockers, repair_recent_loss_issue["message"])
                 risk_issues.append(dict(self_improvement_profitability_issue))
                 live_blockers = (*live_blockers, self_improvement_profitability_issue["message"])
                 risk_allowed = False
@@ -8853,6 +8877,49 @@ def _self_improvement_profitability_p0_repair_allowed(
     if _self_improvement_intent_matches_worst_segment(intent, p0_issue):
         return False
     return True
+
+
+def _self_improvement_p0_repair_recent_lane_loss_issue(
+    intent: OrderIntent,
+    repair_loss_streaks: dict[tuple[str, str, str], SameDayLaneLossStreak] | None,
+) -> dict[str, str] | None:
+    """Block same-day recycling of a P0 repair lane after it already lost.
+
+    Normal loss-streak discipline intentionally waits for repetition. The P0
+    repair escape is different: it exists only to collect positive TP evidence
+    while close-discipline P0 is active. If the exact repair vehicle lost today,
+    sending the same lane again is the self-improvement loop the audit is meant
+    to break.
+    """
+
+    if not repair_loss_streaks:
+        return None
+    method = intent.market_context.method if intent.market_context is not None else None
+    method_value = str(getattr(method, "value", method) or "").strip().upper()
+    side_value = str(getattr(intent.side, "value", intent.side) or "").strip().upper()
+    key = (str(intent.pair), side_value, method_value)
+    streak = repair_loss_streaks.get(key)
+    if streak is None or streak.consecutive_losses <= 0:
+        return None
+    intent.metadata["self_improvement_p0_repair_recent_lane_loss"] = streak.consecutive_losses
+    intent.metadata["self_improvement_p0_repair_recent_lane_loss_net_jpy"] = round(
+        streak.net_loss_jpy,
+        2,
+    )
+    intent.metadata["self_improvement_p0_repair_recent_lane_loss_ts_utc"] = (
+        streak.last_loss_ts_utc
+    )
+    return {
+        "code": SELF_IMPROVEMENT_PROFITABILITY_P0_REPAIR_RECENT_LOSS_CODE,
+        "message": (
+            f"{intent.pair} {side_value} {method_value} P0 repair lane already "
+            f"lost {streak.consecutive_losses} time(s) today "
+            f"(net {streak.net_loss_jpy:+.1f} JPY, last {streak.last_loss_ts_utc or 'unknown'}); "
+            "do not recycle the same repair vehicle until a new campaign day, "
+            "a winning close resets the lane, or fresh evidence creates a different TP-backed repair lane."
+        ),
+        "severity": "BLOCK",
+    }
 
 
 def _self_improvement_intent_matches_worst_segment(

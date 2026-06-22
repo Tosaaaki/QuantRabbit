@@ -231,6 +231,18 @@ class SameDayLossStreak:
     last_loss_ts_utc: str
 
 
+@dataclass(frozen=True)
+class SameDayLaneLossStreak:
+    """Consecutive trader-attributed losses on the same pair/side/method today."""
+
+    pair: str
+    side: str
+    method: str
+    consecutive_losses: int
+    net_loss_jpy: float
+    last_loss_ts_utc: str
+
+
 def compute_same_day_loss_streaks(
     db_path: Path, campaign_day: str
 ) -> Dict[str, SameDayLossStreak]:
@@ -319,6 +331,103 @@ def compute_same_day_loss_streaks(
             consecutive_losses=len(losses),
             net_loss_jpy=sum(losses),
             last_loss_ts_utc=last_ts.get(pair_text, ""),
+        )
+    return result
+
+
+def compute_same_day_lane_loss_streaks(
+    db_path: Path, campaign_day: str
+) -> Dict[Tuple[str, str, str], SameDayLaneLossStreak]:
+    """Exact lane-shape realized-loss streaks for the current campaign day.
+
+    The broader pair-level gate intentionally waits for two same-day losses
+    before blocking active chase entries. P0 repair lanes are narrower: if the
+    exact pair/side/method repair lane already lost today, the next repair
+    attempt needs fresh evidence instead of immediately recycling the same
+    vehicle. Wins reset the exact-lane streak and the campaign day boundary
+    clears it, so this cannot become a permanent pair ban.
+    """
+    if not db_path.exists():
+        return {}
+    try:
+        conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+    except sqlite3.Error:
+        return {}
+    try:
+        cur = conn.execute(
+            """
+            WITH gateway_entries AS (
+                SELECT trade_id, order_id, lane_id
+                FROM execution_events
+                WHERE event_type IN ('GATEWAY_ORDER_SENT', 'ORDER_ACCEPTED')
+                  AND lane_id IS NOT NULL
+                  AND lane_id != ''
+            ),
+            entries AS (
+                SELECT
+                    e.trade_id,
+                    COALESCE(NULLIF(MAX(e.lane_id), ''), MAX(g.lane_id)) AS gateway_lane_id,
+                    CASE
+                        WHEN SUM(CASE WHEN UPPER(COALESCE(e.side, '')) = 'LONG' THEN 1 ELSE 0 END) > 0 THEN 'LONG'
+                        WHEN SUM(CASE WHEN UPPER(COALESCE(e.side, '')) = 'SHORT' THEN 1 ELSE 0 END) > 0 THEN 'SHORT'
+                        WHEN MAX(e.units) > 0 THEN 'LONG'
+                        WHEN MIN(e.units) < 0 THEN 'SHORT'
+                        ELSE NULL
+                    END AS position_side
+                FROM execution_events e
+                LEFT JOIN gateway_entries g
+                  ON (g.trade_id IS NOT NULL AND g.trade_id != '' AND g.trade_id = e.trade_id)
+                  OR (g.order_id IS NOT NULL AND g.order_id != '' AND g.order_id = e.order_id)
+                WHERE e.event_type = 'ORDER_FILLED'
+                  AND e.trade_id IS NOT NULL
+                  AND e.trade_id != ''
+                GROUP BY e.trade_id
+                HAVING gateway_lane_id IS NOT NULL
+                   AND gateway_lane_id != ''
+                   AND position_side IS NOT NULL
+            )
+            SELECT e.pair, entries.position_side, entries.gateway_lane_id, e.realized_pl_jpy, e.ts_utc
+            FROM execution_events e
+            INNER JOIN entries ON entries.trade_id = e.trade_id
+            WHERE e.event_type IN ('TRADE_CLOSED', 'TRADE_REDUCED')
+              AND e.realized_pl_jpy IS NOT NULL
+              AND e.pair IS NOT NULL
+              AND substr(e.ts_utc, 1, 10) = ?
+            ORDER BY e.ts_utc ASC
+            """,
+            (campaign_day,),
+        )
+        rows = cur.fetchall()
+    except sqlite3.Error:
+        conn.close()
+        return {}
+    conn.close()
+
+    streaks: Dict[Tuple[str, str, str], list[float]] = {}
+    last_ts: Dict[Tuple[str, str, str], str] = {}
+    for pair, side, lane_id, pl, ts in rows:
+        method = _method_from_lane_id(lane_id)
+        if pair is None or side is None or method is None or pl is None:
+            continue
+        key = (str(pair), str(side).upper(), method)
+        value = float(pl)
+        if value > 0:
+            streaks[key] = []
+        elif value < 0:
+            streaks.setdefault(key, []).append(value)
+            last_ts[key] = str(ts or "")
+
+    result: Dict[Tuple[str, str, str], SameDayLaneLossStreak] = {}
+    for key, losses in streaks.items():
+        if not losses:
+            continue
+        result[key] = SameDayLaneLossStreak(
+            pair=key[0],
+            side=key[1],
+            method=key[2],
+            consecutive_losses=len(losses),
+            net_loss_jpy=sum(losses),
+            last_loss_ts_utc=last_ts.get(key, ""),
         )
     return result
 

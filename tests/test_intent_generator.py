@@ -21,6 +21,7 @@ from quant_rabbit.strategy.intent_generator import (
     POSITIVE_ROTATION_LIVE_BLOCK_CODE,
     POSITIVE_ROTATION_PROOF_COLLECTION_WARN_CODE,
     RANGE_TARGET_SPREAD_CUSHION_MULT,
+    SELF_IMPROVEMENT_PROFITABILITY_P0_REPAIR_RECENT_LOSS_CODE,
     _append_current_range_phase_lanes,
     _append_forecast_seed_lanes,
     _forecast_context_payload,
@@ -9335,6 +9336,118 @@ class IntentGeneratorTest(unittest.TestCase):
             self.assertNotIn("SELF_IMPROVEMENT_P0_PROFITABILITY_DISCIPLINE", issue_codes)
             self.assertNotIn("SELF_IMPROVEMENT_P0_PROFITABILITY_DISCIPLINE", result["live_blocker_codes"])
 
+    def test_oanda_repair_blocks_same_day_same_lane_loss_recycle(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_profitability_p0_with_matching_worst_segment(
+                root,
+                close_provenance_net_jpy={"STOP_LOSS_ORDER": -280.8},
+            )
+            _write_oanda_campaign_firepower_report(
+                root,
+                pair="EUR_USD",
+                side="LONG",
+                exit_shape="tp2_sl1",
+            )
+            _write_same_day_lane_outcomes(
+                root,
+                outcomes=(("2026-06-22T05:00:00+00:00", -280.8),),
+            )
+            _stamp_capture_economics(root, "2026-06-22T05:45:00+00:00")
+            output = root / "intents.json"
+
+            IntentGenerator(
+                campaign_plan=_stamp_campaign_generated_at(
+                    _oanda_seed_range_campaign(root, side="LONG")
+                ),
+                strategy_profile=_strategy(root, status="CANDIDATE"),
+                output_path=output,
+                report_path=root / "intents.md",
+                pair_charts_path=_pair_charts(root),
+                data_root=root,
+                max_loss_jpy=1000.0,
+            ).run(
+                snapshot_path=_snapshot(
+                    root,
+                    fetched_at_utc="2026-06-22T06:00:00+00:00",
+                    quote_timestamp_utc="2026-06-22T06:00:00+00:00",
+                )
+            )
+
+            payload = json.loads(output.read_text())
+            result = next(
+                item for item in payload["results"]
+                if item["lane_id"] == "range_trader:EUR_USD:LONG:RANGE_ROTATION"
+            )
+            metadata = result["intent"]["metadata"]
+            issue_codes = {issue["code"] for issue in result["risk_issues"]}
+
+            self.assertEqual(result["status"], "DRY_RUN_BLOCKED")
+            self.assertNotIn("self_improvement_p0_repair_live_ready", metadata)
+            self.assertEqual(metadata["self_improvement_p0_repair_recent_lane_loss"], 1)
+            self.assertEqual(metadata["self_improvement_p0_repair_recent_lane_loss_net_jpy"], -280.8)
+            self.assertIn(SELF_IMPROVEMENT_PROFITABILITY_P0_REPAIR_RECENT_LOSS_CODE, issue_codes)
+            self.assertIn("SELF_IMPROVEMENT_P0_PROFITABILITY_DISCIPLINE", issue_codes)
+            self.assertIn(
+                SELF_IMPROVEMENT_PROFITABILITY_P0_REPAIR_RECENT_LOSS_CODE,
+                result["live_blocker_codes"],
+            )
+
+    def test_oanda_repair_same_day_lane_win_resets_recent_loss_recycle_block(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_profitability_p0_with_matching_worst_segment(
+                root,
+                close_provenance_net_jpy={"STOP_LOSS_ORDER": -280.8},
+            )
+            _write_oanda_campaign_firepower_report(
+                root,
+                pair="EUR_USD",
+                side="LONG",
+                exit_shape="tp2_sl1",
+            )
+            _write_same_day_lane_outcomes(
+                root,
+                outcomes=(
+                    ("2026-06-22T05:00:00+00:00", -280.8),
+                    ("2026-06-22T05:30:00+00:00", 385.0),
+                ),
+            )
+            _stamp_capture_economics(root, "2026-06-22T05:45:00+00:00")
+            output = root / "intents.json"
+
+            IntentGenerator(
+                campaign_plan=_stamp_campaign_generated_at(
+                    _oanda_seed_range_campaign(root, side="LONG")
+                ),
+                strategy_profile=_strategy(root, status="CANDIDATE"),
+                output_path=output,
+                report_path=root / "intents.md",
+                pair_charts_path=_pair_charts(root),
+                data_root=root,
+                max_loss_jpy=1000.0,
+            ).run(
+                snapshot_path=_snapshot(
+                    root,
+                    fetched_at_utc="2026-06-22T06:00:00+00:00",
+                    quote_timestamp_utc="2026-06-22T06:00:00+00:00",
+                )
+            )
+
+            payload = json.loads(output.read_text())
+            result = next(
+                item for item in payload["results"]
+                if item["lane_id"] == "range_trader:EUR_USD:LONG:RANGE_ROTATION"
+            )
+            metadata = result["intent"]["metadata"]
+            issue_codes = {issue["code"] for issue in result["risk_issues"]}
+
+            self.assertEqual(result["status"], "LIVE_READY")
+            self.assertTrue(metadata["self_improvement_p0_repair_live_ready"])
+            self.assertNotIn("self_improvement_p0_repair_recent_lane_loss", metadata)
+            self.assertNotIn(SELF_IMPROVEMENT_PROFITABILITY_P0_REPAIR_RECENT_LOSS_CODE, issue_codes)
+            self.assertNotIn("SELF_IMPROVEMENT_P0_PROFITABILITY_DISCIPLINE", issue_codes)
+
     def test_oanda_repair_still_blocked_by_same_segment_gateway_close_loss(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -10876,6 +10989,71 @@ def _write_post_harvest_close(
                 ),
             ),
         )
+
+
+def _write_same_day_lane_outcomes(
+    data_root: Path,
+    *,
+    lane_id: str = "range_trader:EUR_USD:LONG:RANGE_ROTATION",
+    pair: str = "EUR_USD",
+    side: str = "LONG",
+    outcomes: tuple[tuple[str, float], ...] = (("2026-06-22T05:00:00+00:00", -280.8),),
+) -> None:
+    db = data_root / "execution_ledger.db"
+    conn = sqlite3.connect(db)
+    try:
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS execution_events (
+              ts_utc TEXT,
+              event_type TEXT,
+              trade_id TEXT,
+              order_id TEXT,
+              lane_id TEXT,
+              pair TEXT,
+              side TEXT,
+              units INTEGER,
+              realized_pl_jpy REAL
+            )
+            """
+        )
+        for index, (ts_utc, realized_pl_jpy) in enumerate(outcomes, start=1):
+            trade_id = f"T-lane-{index}"
+            order_id = f"O-lane-{index}"
+            conn.execute(
+                """
+                INSERT INTO execution_events(
+                    ts_utc, event_type, trade_id, order_id, lane_id, pair, side, units, realized_pl_jpy
+                ) VALUES (?, 'ORDER_ACCEPTED', ?, ?, ?, ?, ?, ?, NULL)
+                """,
+                (ts_utc, trade_id, order_id, lane_id, pair, side, 1000),
+            )
+            conn.execute(
+                """
+                INSERT INTO execution_events(
+                    ts_utc, event_type, trade_id, order_id, lane_id, pair, side, units, realized_pl_jpy
+                ) VALUES (?, 'ORDER_FILLED', ?, ?, ?, ?, ?, ?, NULL)
+                """,
+                (ts_utc, trade_id, order_id, lane_id, pair, side, 1000),
+            )
+            conn.execute(
+                """
+                INSERT INTO execution_events(
+                    ts_utc, event_type, trade_id, order_id, lane_id, pair, side, units, realized_pl_jpy
+                ) VALUES (?, 'TRADE_CLOSED', ?, ?, NULL, ?, NULL, NULL, ?)
+                """,
+                (ts_utc, trade_id, order_id, pair, realized_pl_jpy),
+            )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def _stamp_capture_economics(root: Path, generated_at_utc: str) -> None:
+    path = root / "capture_economics.json"
+    payload = json.loads(path.read_text())
+    payload["generated_at_utc"] = generated_at_utc
+    path.write_text(json.dumps(payload))
 
 
 def _pair_charts(root: Path) -> Path:

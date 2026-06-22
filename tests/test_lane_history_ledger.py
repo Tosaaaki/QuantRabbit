@@ -13,6 +13,7 @@ from quant_rabbit.strategy.lane_history_ledger import (
     LANE_HISTORY_SATURATION_PL_JPY,
     LaneHistorySnapshot,
     compute_lane_history,
+    compute_same_day_lane_loss_streaks,
     compute_same_day_loss_streaks,
     lane_history_modifier,
 )
@@ -507,6 +508,93 @@ class SameDayLossStreakTest(unittest.TestCase):
             )
             streaks = compute_same_day_loss_streaks(path, "2026-06-04")
             self.assertEqual(streaks["EUR_USD"].consecutive_losses, 2)
+
+
+class SameDayLaneLossStreakTest(unittest.TestCase):
+    """compute_same_day_lane_loss_streaks — P0 repair loop breaker."""
+
+    def test_exact_pair_side_method_loss_is_recorded(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "ledger.db"
+            _make_db(
+                path,
+                [
+                    {
+                        "pair": "EUR_USD",
+                        "side": "SHORT",
+                        "pl": -280.8,
+                        "ts_utc": "2026-06-22T05:00:00Z",
+                        "trade_id": "t1",
+                        "lane_id": "range_trader:EUR_USD:LONG:RANGE_ROTATION",
+                    }
+                ],
+            )
+
+            streaks = compute_same_day_lane_loss_streaks(path, "2026-06-22")
+
+            key = ("EUR_USD", "LONG", "RANGE_ROTATION")
+            self.assertIn(key, streaks)
+            self.assertEqual(streaks[key].consecutive_losses, 1)
+            self.assertAlmostEqual(streaks[key].net_loss_jpy, -280.8)
+
+    def test_exact_lane_win_resets_loss_streak(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "ledger.db"
+            _make_db(
+                path,
+                [
+                    {
+                        "pair": "EUR_USD",
+                        "side": "SHORT",
+                        "pl": -280.8,
+                        "ts_utc": "2026-06-22T05:00:00Z",
+                        "trade_id": "t1",
+                        "lane_id": "range_trader:EUR_USD:LONG:RANGE_ROTATION",
+                    },
+                    {
+                        "pair": "EUR_USD",
+                        "side": "SHORT",
+                        "pl": +385.0,
+                        "ts_utc": "2026-06-22T05:30:00Z",
+                        "trade_id": "t2",
+                        "lane_id": "range_trader:EUR_USD:LONG:RANGE_ROTATION",
+                    },
+                ],
+            )
+
+            streaks = compute_same_day_lane_loss_streaks(path, "2026-06-22")
+
+            self.assertNotIn(("EUR_USD", "LONG", "RANGE_ROTATION"), streaks)
+
+    def test_different_method_keeps_separate_streaks(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "ledger.db"
+            _make_db(
+                path,
+                [
+                    {
+                        "pair": "EUR_USD",
+                        "side": "SHORT",
+                        "pl": -280.8,
+                        "ts_utc": "2026-06-22T05:00:00Z",
+                        "trade_id": "t1",
+                        "lane_id": "range_trader:EUR_USD:LONG:RANGE_ROTATION",
+                    },
+                    {
+                        "pair": "EUR_USD",
+                        "side": "SHORT",
+                        "pl": -100.0,
+                        "ts_utc": "2026-06-22T05:30:00Z",
+                        "trade_id": "t2",
+                        "lane_id": "failure_trader:EUR_USD:LONG:BREAKOUT_FAILURE",
+                    },
+                ],
+            )
+
+            streaks = compute_same_day_lane_loss_streaks(path, "2026-06-22")
+
+            self.assertIn(("EUR_USD", "LONG", "RANGE_ROTATION"), streaks)
+            self.assertIn(("EUR_USD", "LONG", "BREAKOUT_FAILURE"), streaks)
 
 
 class LaneHistoryModifierLookupTest(unittest.TestCase):
