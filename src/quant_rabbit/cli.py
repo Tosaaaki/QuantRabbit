@@ -109,6 +109,9 @@ from quant_rabbit.paths import (
     DEFAULT_OANDA_UNIVERSAL_ROTATION_PACKAGED_RULES,
     DEFAULT_POSITION_EXECUTION,
     DEFAULT_POSITION_EXECUTION_REPORT,
+    DEFAULT_POSITION_GUARDIAN_EXECUTION,
+    DEFAULT_POSITION_GUARDIAN_HEARTBEAT,
+    DEFAULT_POSITION_GUARDIAN_MANAGEMENT,
     DEFAULT_POSITION_MANAGEMENT,
     DEFAULT_POSITION_MANAGEMENT_REPORT,
     DEFAULT_PROFIT_PARTIAL_CLOSE,
@@ -126,6 +129,8 @@ from quant_rabbit.paths import (
     DEFAULT_TRADER_SETTINGS,
     DEFAULT_TRADER_OVERRIDES,
     DEFAULT_TRADER_DECISION,
+    DEFAULT_TRADER_SUPPORT_BOT,
+    DEFAULT_TRADER_SUPPORT_BOT_REPORT,
     DEFAULT_CROSS_ASSET_SNAPSHOT,
     DEFAULT_CROSS_ASSET_REPORT,
     DEFAULT_FLOW_SNAPSHOT,
@@ -1260,6 +1265,10 @@ _LIVE_RUNTIME_COMMANDS: frozenset[str] = frozenset(
         # state only, but stale SL-free classification would hide or invent P0
         # blockers before new-risk verification.
         "self-improvement-audit",
+        # trader-support-bot is a read-only operator panel for the same live
+        # state. It must classify guardian/profit-capture support under the
+        # same runtime defaults as the gateway and self-improvement audit.
+        "trader-support-bot",
         # Consolidated cycle commands run the same refresh/sidecar steps the
         # wrapper-era skeleton ran one-by-one; they must see identical SL-free
         # defaults so nested generate-intents / position-management /
@@ -2962,6 +2971,23 @@ def main(argv: list[str] | None = None) -> int:
     )
     p_profit_accept.add_argument("--output", type=Path, default=DEFAULT_PROFITABILITY_ACCEPTANCE)
     p_profit_accept.add_argument("--report", type=Path, default=DEFAULT_PROFITABILITY_ACCEPTANCE_REPORT)
+
+    p_support = sub.add_parser(
+        "trader-support-bot",
+        help="Write a read-only operator panel for guardian, profit-capture, and live-entry readiness.",
+    )
+    p_support.add_argument("--broker-snapshot", type=Path, default=DEFAULT_BROKER_SNAPSHOT)
+    p_support.add_argument("--order-intents", type=Path, default=DEFAULT_ORDER_INTENTS)
+    p_support.add_argument("--target-state", type=Path, default=DEFAULT_DAILY_TARGET_STATE)
+    p_support.add_argument("--position-management", type=Path, default=DEFAULT_POSITION_MANAGEMENT)
+    p_support.add_argument("--position-guardian-management", type=Path, default=DEFAULT_POSITION_GUARDIAN_MANAGEMENT)
+    p_support.add_argument("--position-guardian-execution", type=Path, default=DEFAULT_POSITION_GUARDIAN_EXECUTION)
+    p_support.add_argument("--position-guardian-heartbeat", type=Path, default=DEFAULT_POSITION_GUARDIAN_HEARTBEAT)
+    p_support.add_argument("--self-improvement-audit", type=Path, default=DEFAULT_SELF_IMPROVEMENT_AUDIT)
+    p_support.add_argument("--profitability-acceptance", type=Path, default=DEFAULT_PROFITABILITY_ACCEPTANCE)
+    p_support.add_argument("--execution-timing-audit", type=Path, default=DEFAULT_EXECUTION_TIMING_AUDIT)
+    p_support.add_argument("--output", type=Path, default=DEFAULT_TRADER_SUPPORT_BOT)
+    p_support.add_argument("--report", type=Path, default=DEFAULT_TRADER_SUPPORT_BOT_REPORT)
 
     p_exec_replay = sub.add_parser("replay-execution", help="Replay live-ready order receipts over a quote path.")
     p_exec_replay.add_argument("--intents", type=Path, default=DEFAULT_ORDER_INTENTS)
@@ -5264,6 +5290,43 @@ def main(argv: list[str] | None = None) -> int:
             )
         )
         return 0 if summary.status == STATUS_PASSED else 2
+    if args.command == "trader-support-bot":
+        try:
+            from quant_rabbit.trader_support_bot import STATUS_READY, TraderSupportBot
+
+            summary = TraderSupportBot(
+                broker_snapshot_path=args.broker_snapshot,
+                order_intents_path=args.order_intents,
+                target_state_path=args.target_state,
+                position_management_path=args.position_management,
+                position_guardian_management_path=args.position_guardian_management,
+                position_guardian_execution_path=args.position_guardian_execution,
+                position_guardian_heartbeat_path=args.position_guardian_heartbeat,
+                self_improvement_audit_path=args.self_improvement_audit,
+                profitability_acceptance_path=args.profitability_acceptance,
+                execution_timing_audit_path=args.execution_timing_audit,
+                output_path=args.output,
+                report_path=args.report,
+            ).run()
+        except (OSError, json.JSONDecodeError, ValueError) as exc:
+            print(json.dumps({"error": str(exc)}, ensure_ascii=False, indent=2, sort_keys=True))
+            return 2
+        print(
+            json.dumps(
+                {
+                    "status": summary.status,
+                    "output_path": str(summary.output_path),
+                    "report_path": str(summary.report_path),
+                    "blockers": summary.blockers,
+                    "operator_actions": summary.operator_actions,
+                    "metrics": summary.metrics,
+                },
+                ensure_ascii=False,
+                indent=2,
+                sort_keys=True,
+            )
+        )
+        return 0 if summary.status == STATUS_READY else 2
     if args.command == "trailing-sl-update":
         from quant_rabbit.strategy.trailing_sl import apply_trailing_sls
         snapshot_payload = json.loads(args.snapshot.read_text()) if args.snapshot.exists() else {}

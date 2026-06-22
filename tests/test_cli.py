@@ -4660,6 +4660,9 @@ class LiveRuntimeBootstrapTest(unittest.TestCase):
                     # self-improvement-audit is consumed by the verifier and
                     # gateway as the live-facing repair gate.
                     "self-improvement-audit",
+                    # trader-support-bot reads the same live support state and
+                    # must classify guardian/profit-capture under live defaults.
+                    "trader-support-bot",
                 }
             ),
         )

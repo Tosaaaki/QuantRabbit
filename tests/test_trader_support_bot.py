@@ -1,0 +1,306 @@
+from __future__ import annotations
+
+import io
+import json
+import os
+import tempfile
+import unittest
+from contextlib import redirect_stdout
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+from unittest import mock
+
+from quant_rabbit.cli import main
+from quant_rabbit.trader_support_bot import STATUS_BLOCKED, STATUS_READY, TraderSupportBot
+
+
+class TraderSupportBotTest(unittest.TestCase):
+    def test_blocks_when_guardian_is_inactive_and_profit_capture_was_missed(self) -> None:
+        now = datetime(2026, 6, 22, 12, 15, tzinfo=timezone.utc)
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _write_fixture(root, now=now, blocked=True)
+            env = _guardian_env(root, active="0")
+            with mock.patch.dict(os.environ, env, clear=False):
+                summary = TraderSupportBot(
+                    broker_snapshot_path=files["broker"],
+                    order_intents_path=files["intents"],
+                    target_state_path=files["target"],
+                    position_management_path=files["position_management"],
+                    position_guardian_management_path=files["guardian_management"],
+                    position_guardian_execution_path=files["guardian_execution"],
+                    position_guardian_heartbeat_path=files["guardian_heartbeat"],
+                    self_improvement_audit_path=files["self_improvement"],
+                    profitability_acceptance_path=files["profitability"],
+                    execution_timing_audit_path=files["timing"],
+                    output_path=files["output"],
+                    report_path=files["report"],
+                    now_utc=now,
+                ).run()
+
+            self.assertEqual(summary.status, STATUS_BLOCKED)
+            payload = json.loads(files["output"].read_text())
+            codes = {item["code"] for item in payload["blockers"]}
+            self.assertIn("POSITION_GUARDIAN_INACTIVE", codes)
+            self.assertIn("LOSS_CLOSE_PROFIT_CAPTURE_MISSED", codes)
+            self.assertFalse(payload["metrics"]["send_fresh_entries_allowed"])
+            self.assertEqual(payload["profit_capture"]["missed_loss_closes"], 2)
+            self.assertEqual(payload["entry_readiness"]["guardian_blocked_lanes"], 1)
+            repair = payload["entry_readiness"]["repair_frontier"][0]
+            self.assertEqual(
+                repair["remaining_blocker_codes_after_guardian_and_repair_exemption"],
+                ["FORECAST_CONTEXT_REQUIRED_FOR_LIVE"],
+            )
+            action_codes = {item["code"] for item in payload["operator_actions"]}
+            self.assertIn("CHECK_POSITION_GUARDIAN_PREFLIGHT", action_codes)
+            self.assertTrue(
+                any(item["code"] == "LOAD_POSITION_GUARDIAN_ONLY_IF_APPROVED" and item["requires_explicit_operator_approval"]
+                    for item in payload["operator_actions"])
+            )
+            self.assertIn("Trader Support Bot Report", files["report"].read_text())
+
+    def test_ready_when_guardian_heartbeat_is_fresh_and_live_lane_exists(self) -> None:
+        now = datetime(2026, 6, 22, 12, 15, tzinfo=timezone.utc)
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _write_fixture(root, now=now, blocked=False)
+            env = _guardian_env(root, active="1")
+            with mock.patch.dict(os.environ, env, clear=False):
+                summary = TraderSupportBot(
+                    broker_snapshot_path=files["broker"],
+                    order_intents_path=files["intents"],
+                    target_state_path=files["target"],
+                    position_management_path=files["position_management"],
+                    position_guardian_management_path=files["guardian_management"],
+                    position_guardian_execution_path=files["guardian_execution"],
+                    position_guardian_heartbeat_path=files["guardian_heartbeat"],
+                    self_improvement_audit_path=files["self_improvement"],
+                    profitability_acceptance_path=files["profitability"],
+                    execution_timing_audit_path=files["timing"],
+                    output_path=files["output"],
+                    report_path=files["report"],
+                    now_utc=now,
+                ).run()
+
+            payload = json.loads(files["output"].read_text())
+            self.assertEqual(summary.status, STATUS_READY)
+            self.assertTrue(payload["guardian"]["active"])
+            self.assertTrue(payload["guardian"]["heartbeat_fresh"])
+            self.assertTrue(payload["metrics"]["send_fresh_entries_allowed"])
+            self.assertEqual(payload["entry_readiness"]["live_ready_lanes"], 1)
+            self.assertIn("RUN_NEXT_TRADER_CYCLE", {item["code"] for item in payload["operator_actions"]})
+
+    def test_cli_writes_support_panel_and_returns_blocked_code(self) -> None:
+        now = datetime(2026, 6, 22, 12, 15, tzinfo=timezone.utc)
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _write_fixture(root, now=now, blocked=True)
+            env = _guardian_env(root, active="0")
+            stdout = io.StringIO()
+            with mock.patch.dict(os.environ, env, clear=False), redirect_stdout(stdout):
+                code = main(
+                    [
+                        "trader-support-bot",
+                        "--broker-snapshot",
+                        str(files["broker"]),
+                        "--order-intents",
+                        str(files["intents"]),
+                        "--target-state",
+                        str(files["target"]),
+                        "--position-management",
+                        str(files["position_management"]),
+                        "--position-guardian-management",
+                        str(files["guardian_management"]),
+                        "--position-guardian-execution",
+                        str(files["guardian_execution"]),
+                        "--position-guardian-heartbeat",
+                        str(files["guardian_heartbeat"]),
+                        "--self-improvement-audit",
+                        str(files["self_improvement"]),
+                        "--profitability-acceptance",
+                        str(files["profitability"]),
+                        "--execution-timing-audit",
+                        str(files["timing"]),
+                        "--output",
+                        str(files["output"]),
+                        "--report",
+                        str(files["report"]),
+                    ]
+                )
+
+            self.assertEqual(code, 2)
+            self.assertEqual(json.loads(stdout.getvalue())["status"], STATUS_BLOCKED)
+            self.assertTrue(files["output"].exists())
+            self.assertTrue(files["report"].exists())
+
+
+def _write_fixture(root: Path, *, now: datetime, blocked: bool) -> dict[str, Path]:
+    data = root / "data"
+    docs = root / "docs"
+    data.mkdir()
+    docs.mkdir()
+    files = {
+        "broker": data / "broker_snapshot.json",
+        "intents": data / "order_intents.json",
+        "target": data / "daily_target_state.json",
+        "position_management": data / "position_management.json",
+        "guardian_management": data / "position_guardian_management.json",
+        "guardian_execution": data / "position_guardian_execution.json",
+        "guardian_heartbeat": data / "position_guardian.json",
+        "self_improvement": data / "self_improvement_audit.json",
+        "profitability": data / "profitability_acceptance.json",
+        "timing": data / "execution_timing_audit.json",
+        "output": data / "trader_support_bot.json",
+        "report": docs / "trader_support_bot_report.md",
+    }
+    _write_json(
+        files["broker"],
+        {
+            "fetched_at_utc": now.isoformat(),
+            "account": {"balance_jpy": 173000.0, "nav_jpy": 172500.0, "margin_available_jpy": 120000.0},
+            "positions": [
+                {
+                    "trade_id": "472792",
+                    "pair": "USD_JPY",
+                    "side": "SHORT",
+                    "owner": "trader",
+                    "units": 6300,
+                    "unrealized_pl_jpy": -120.5,
+                    "take_profit": 161.1,
+                    "stop_loss": 161.9,
+                }
+            ],
+            "orders": [],
+        },
+    )
+    _write_json(
+        files["target"],
+        {
+            "status": "PURSUE_TARGET",
+            "campaign_day_jst": "2026-06-22",
+            "remaining_target_jpy": 9000.0,
+            "remaining_minimum_jpy": 1000.0,
+            "progress_pct": -1.2,
+            "minimum_progress_pct": -2.4,
+            "target_trades_per_day": 30,
+        },
+    )
+    if blocked:
+        results = [
+            {
+                "lane_id": "failure_trader:GBP_USD:LONG:BREAKOUT_FAILURE:LIMIT",
+                "status": "DRY_RUN_BLOCKED",
+                "live_blocker_codes": [
+                    "POSITION_GUARDIAN_INACTIVE_FOR_PROFIT_CAPTURE",
+                    "SELF_IMPROVEMENT_P0_PROFITABILITY_DISCIPLINE",
+                    "FORECAST_CONTEXT_REQUIRED_FOR_LIVE",
+                ],
+                "intent": {
+                    "pair": "GBP_USD",
+                    "side": "LONG",
+                    "order_type": "LIMIT",
+                    "market_context": {"method": "BREAKOUT_FAILURE"},
+                    "metadata": {
+                        "self_improvement_p0_repair_live_ready": True,
+                        "self_improvement_p0_repair_mode": "TP_HARVEST_REPAIR",
+                        "sizing_actual_reward_jpy": 790.5,
+                        "sizing_actual_risk_jpy": 260.0,
+                    },
+                },
+            }
+        ]
+    else:
+        results = [
+            {
+                "lane_id": "range_trader:EUR_USD:SHORT:RANGE_ROTATION",
+                "status": "LIVE_READY",
+                "live_blocker_codes": [],
+                "intent": {
+                    "pair": "EUR_USD",
+                    "side": "SHORT",
+                    "order_type": "LIMIT",
+                    "market_context": {"method": "RANGE_ROTATION"},
+                    "metadata": {},
+                },
+            }
+        ]
+    _write_json(files["intents"], {"generated_at_utc": now.isoformat(), "results": results})
+    _write_json(
+        files["position_management"],
+        {
+            "generated_at_utc": now.isoformat(),
+            "action": "HOLD_PROTECTED",
+            "positions": [{"trade_id": "472792", "pair": "USD_JPY", "side": "SHORT", "action": "HOLD_PROTECTED"}],
+        },
+    )
+    _write_json(
+        files["guardian_management"],
+        {
+            "generated_at_utc": (now - timedelta(seconds=40)).isoformat(),
+            "action": "HOLD_PROTECTED",
+            "positions": [{"trade_id": "472792", "pair": "USD_JPY", "side": "SHORT", "action": "HOLD_PROTECTED"}],
+        },
+    )
+    _write_json(
+        files["guardian_execution"],
+        {"generated_at_utc": (now - timedelta(seconds=30)).isoformat(), "status": "NO_ACTION", "actions": []},
+    )
+    _write_json(files["guardian_heartbeat"], {"generated_at_utc": (now - timedelta(seconds=30)).isoformat()})
+    if blocked:
+        findings = [
+            {
+                "priority": "P0",
+                "code": "LOSS_CLOSE_PROFIT_CAPTURE_MISSED",
+                "message": "2 losing close(s) had positive TP-progress capture opportunity before closing red",
+                "next_action": "repair fast profit capture",
+                "evidence": {
+                    "loss_closes_profit_capture_missed": 2,
+                    "loss_close_estimated_capture_gap_jpy": 646.489,
+                    "top_profit_capture_misses": [{"trade_id": "472792", "pair": "USD_JPY"}],
+                },
+            },
+            {
+                "priority": "P0",
+                "code": "POSITION_GUARDIAN_INACTIVE_FOR_PROFIT_CAPTURE",
+                "message": "position guardian is required but inactive",
+                "next_action": "run guardian preflight",
+                "evidence": {"guardian": {"active": False, "required": True}},
+            },
+        ]
+        self_improvement_status = "SELF_IMPROVEMENT_BLOCKED"
+        profitability_status = "PROFITABILITY_ACCEPTANCE_BLOCKED"
+        profitability_blockers = ["SELF_IMPROVEMENT_P0_PRESENT"]
+    else:
+        findings = []
+        self_improvement_status = "SELF_IMPROVEMENT_OK"
+        profitability_status = "PROFITABILITY_ACCEPTANCE_PASSED"
+        profitability_blockers = []
+    _write_json(files["self_improvement"], {"status": self_improvement_status, "findings": findings})
+    _write_json(
+        files["profitability"],
+        {"status": profitability_status, "blockers": profitability_blockers, "metrics": {"capture_economics": {}}},
+    )
+    _write_json(
+        files["timing"],
+        {
+            "generated_at_utc": now.isoformat(),
+            "status": "OK",
+            "summary": {"loss_closes_profit_capture_missed": 2 if blocked else 0},
+        },
+    )
+    return files
+
+
+def _guardian_env(root: Path, *, active: str) -> dict[str, str]:
+    return {
+        "QR_REQUIRE_POSITION_GUARDIAN_ACTIVE": "1",
+        "QR_POSITION_GUARDIAN_ACTIVE": active,
+        "QR_POSITION_GUARDIAN_INTERVAL": "30",
+        "QR_POSITION_GUARDIAN_HEARTBEAT_MAX_AGE_SECONDS": "120",
+        "QR_POSITION_GUARDIAN_REQUIRE_HEARTBEAT": "1",
+        "QR_POSITION_GUARDIAN_PLIST": str(root / "com.quantrabbit.position-guardian.plist"),
+    }
+
+
+def _write_json(path: Path, payload: dict[str, object]) -> None:
+    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
