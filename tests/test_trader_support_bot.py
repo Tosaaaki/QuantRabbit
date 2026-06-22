@@ -43,6 +43,57 @@ class TraderSupportBotTest(unittest.TestCase):
         self.assertTrue(summary["guardian_profit_capture_inactive"])
         self.assertEqual(summary["example_trade_ids"], ["472792"])
 
+    def test_acceptance_plan_requires_month_scale_loss_close_replay(self) -> None:
+        condition, command, summary = _acceptance_clearance_for_code(
+            "MONTH_SCALE_LOSS_CLOSE_REPLAY_REQUIRED",
+            {
+                "take_profit_net_jpy": 48804.0,
+                "market_close_net_jpy": -81147.0,
+                "window_lookback_hours": 168.0,
+                "required_lookback_hours": 720.0,
+                "repair_replay_contract": TP_PROGRESS_REPAIR_REPLAY_CONTRACT,
+                "repair_replay_contract_present": True,
+            },
+            {},
+        )
+
+        self.assertIn("at least 720 hours", condition)
+        self.assertIn("--lookback-hours 744", command)
+        self.assertEqual(summary["take_profit_net_jpy"], 48804.0)
+        self.assertEqual(summary["market_close_net_jpy"], -81147.0)
+        self.assertEqual(summary["window_lookback_hours"], 168.0)
+
+    def test_acceptance_plan_exposes_month_scale_residual_loss_groups(self) -> None:
+        residual_groups = [
+            {
+                "pair": "GBP_USD",
+                "side": "LONG",
+                "method": "BREAKOUT_FAILURE",
+                "exit_reason": "MARKET_ORDER_TRADE_CLOSE",
+                "loss_closes": 1,
+                "repair_replay_pl_jpy": -2981.8961,
+                "block_reasons": {"BELOW_TP_PROGRESS_GATE": 1},
+            }
+        ]
+        condition, command, summary = _acceptance_clearance_for_code(
+            "MONTH_SCALE_TP_PROGRESS_REPLAY_STILL_NEGATIVE",
+            {
+                "window_lookback_hours": 744.0,
+                "loss_closes_profit_capture_missed": 14,
+                "loss_closes_repair_replay_triggered": 13,
+                "repair_replay_counterfactual_pl_jpy": -13824.5957,
+                "active_counterfactual_profit_capture_pl_jpy": -13824.5957,
+                "counterfactual_profit_capture_delta_jpy": 18775.1646,
+                "top_repair_replay_residual_groups": residual_groups,
+            },
+            {},
+        )
+
+        self.assertIn("month-scale production-gate replay is non-negative", condition)
+        self.assertIn("--lookback-hours 744", command)
+        self.assertEqual(summary["repair_replay_counterfactual_pl_jpy"], -13824.596)
+        self.assertEqual(summary["top_repair_replay_residual_groups"], residual_groups)
+
     def test_blocks_when_guardian_is_inactive_and_profit_capture_was_missed(self) -> None:
         now = datetime(2026, 6, 22, 12, 15, tzinfo=timezone.utc)
         with tempfile.TemporaryDirectory() as tmp:

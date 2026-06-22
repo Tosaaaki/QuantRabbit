@@ -1145,6 +1145,58 @@ def _acceptance_clearance_for_code(
                 "clearance_condition": evidence.get("clearance_condition"),
             },
         )
+    if code == "MONTH_SCALE_LOSS_CLOSE_REPLAY_REQUIRED":
+        return (
+            "the active execution-timing-audit covers at least 720 hours with the current "
+            "TP-progress production-gate replay contract before TP-positive / market-close-negative "
+            "economics are treated as repaired",
+            "PYTHONPATH=src python3 -m quant_rabbit.cli execution-timing-audit --lookback-hours 744 --post-close-hours 6",
+            {
+                "take_profit_net_jpy": _round_optional(evidence.get("take_profit_net_jpy"), 3),
+                "market_close_net_jpy": _round_optional(evidence.get("market_close_net_jpy"), 3),
+                "window_lookback_hours": _round_optional(evidence.get("window_lookback_hours"), 3),
+                "required_lookback_hours": _round_optional(
+                    evidence.get("required_lookback_hours"),
+                    3,
+                ),
+                "repair_replay_contract": evidence.get("repair_replay_contract"),
+                "repair_replay_contract_present": evidence.get("repair_replay_contract_present"),
+            },
+        )
+    if code == "MONTH_SCALE_TP_PROGRESS_REPLAY_STILL_NEGATIVE":
+        residual_groups = (
+            evidence.get("top_repair_replay_residual_groups")
+            if isinstance(evidence.get("top_repair_replay_residual_groups"), list)
+            else []
+        )
+        return (
+            "month-scale production-gate replay is non-negative, or the top residual "
+            "pair/side/method groups are removed by close-gate, TP-capture, or entry-selection "
+            "changes before turnover is scaled",
+            "PYTHONPATH=src python3 -m quant_rabbit.cli execution-timing-audit --lookback-hours 744 --post-close-hours 6",
+            {
+                "window_lookback_hours": _round_optional(evidence.get("window_lookback_hours"), 3),
+                "loss_closes_profit_capture_missed": evidence.get(
+                    "loss_closes_profit_capture_missed"
+                ),
+                "loss_closes_repair_replay_triggered": evidence.get(
+                    "loss_closes_repair_replay_triggered"
+                ),
+                "repair_replay_counterfactual_pl_jpy": _round_optional(
+                    evidence.get("repair_replay_counterfactual_pl_jpy"),
+                    3,
+                ),
+                "active_counterfactual_profit_capture_pl_jpy": _round_optional(
+                    evidence.get("active_counterfactual_profit_capture_pl_jpy"),
+                    3,
+                ),
+                "counterfactual_profit_capture_delta_jpy": _round_optional(
+                    evidence.get("counterfactual_profit_capture_delta_jpy"),
+                    3,
+                ),
+                "top_repair_replay_residual_groups": residual_groups[:3],
+            },
+        )
     if code == "TP_PROGRESS_REPAIR_REPLAY_NOT_DEPLOYED":
         return (
             "position guardian is proven active with a fresh heartbeat, then the TP-progress "
@@ -1594,15 +1646,26 @@ def _operator_actions(
         "TP_PROGRESS_REPAIR_REPLAY_NOT_DEPLOYED",
         "TP_PROGRESS_REPLAY_REPAIR_UNPROVED",
         "TP_PROGRESS_REPAIR_REPLAY_CONTRACT_MISSING",
+        "MONTH_SCALE_LOSS_CLOSE_REPLAY_REQUIRED",
+        "MONTH_SCALE_TP_PROGRESS_REPLAY_STILL_NEGATIVE",
     } & repair_codes:
         actions.append(
             {
                 "code": "VERIFY_TP_PROGRESS_REPLAY_REPAIR",
-                "command": "PYTHONPATH=src python3 -m quant_rabbit.cli execution-timing-audit --max-events 80",
+                "command": (
+                    "PYTHONPATH=src python3 -m quant_rabbit.cli execution-timing-audit "
+                    "--lookback-hours 744 --post-close-hours 6"
+                    if {
+                        "MONTH_SCALE_LOSS_CLOSE_REPLAY_REQUIRED",
+                        "MONTH_SCALE_TP_PROGRESS_REPLAY_STILL_NEGATIVE",
+                    }
+                    & repair_codes
+                    else "PYTHONPATH=src python3 -m quant_rabbit.cli execution-timing-audit --max-events 80"
+                ),
                 "requires_explicit_operator_approval": False,
                 "reason": (
-                    "prove the OANDA candle replay TP-progress miss has cleared before "
-                    "treating high-turnover profit capture as repaired"
+                    "prove the OANDA candle replay TP-progress miss has cleared at the "
+                    "required coverage before treating high-turnover profit capture as repaired"
                 ),
             }
         )

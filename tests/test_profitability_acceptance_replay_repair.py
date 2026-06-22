@@ -1,8 +1,18 @@
 from __future__ import annotations
 
+import json
+import tempfile
 import unittest
+from pathlib import Path
 
-from quant_rabbit.profitability_acceptance import _profit_capture_replay_repair_findings
+from quant_rabbit.execution_timing_contracts import (
+    TP_PROGRESS_REPAIR_REPLAY_CONTRACT,
+    TP_PROGRESS_REPAIR_REPLAY_FIELD,
+)
+from quant_rabbit.profitability_acceptance import (
+    _execution_timing_loss_close_labels,
+    _profit_capture_replay_repair_findings,
+)
 
 
 class ProfitabilityAcceptanceReplayRepairTest(unittest.TestCase):
@@ -183,6 +193,16 @@ class ProfitabilityAcceptanceReplayRepairTest(unittest.TestCase):
         self.assertEqual(findings[0]["priority"], "P0")
 
     def test_blocks_when_month_scale_replay_improves_but_stays_negative(self) -> None:
+        residual_groups = [
+            {
+                "pair": "GBP_USD",
+                "side": "LONG",
+                "method": "BREAKOUT_FAILURE",
+                "exit_reason": "MARKET_ORDER_TRADE_CLOSE",
+                "loss_closes": 1,
+                "repair_replay_pl_jpy": -2981.8961,
+            }
+        ]
         metrics, findings = _profit_capture_replay_repair_findings(
             {
                 "loaded": True,
@@ -194,6 +214,7 @@ class ProfitabilityAcceptanceReplayRepairTest(unittest.TestCase):
                 "loss_close_repair_replay_counterfactual_pl_jpy": -13824.5957,
                 "loss_close_repair_replay_delta_jpy": 18775.1646,
                 "loss_close_repair_replay_profit_capture_jpy": 3830.5491,
+                "top_repair_replay_residual_groups": residual_groups,
             },
             self_metrics={"p0_codes": ["LOSS_CLOSE_PROFIT_CAPTURE_MISSED"]},
             capture_metrics={
@@ -207,6 +228,15 @@ class ProfitabilityAcceptanceReplayRepairTest(unittest.TestCase):
         self.assertFalse(metrics["replay_repair_proved"])
         self.assertIn("MONTH_SCALE_TP_PROGRESS_REPLAY_STILL_NEGATIVE", codes)
         self.assertIn("TP_PROGRESS_REPLAY_REPAIR_UNPROVED", codes)
+        month_finding = next(
+            item
+            for item in findings
+            if item["code"] == "MONTH_SCALE_TP_PROGRESS_REPLAY_STILL_NEGATIVE"
+        )
+        self.assertEqual(
+            month_finding["evidence"]["top_repair_replay_residual_groups"],
+            residual_groups,
+        )
 
     def test_month_scale_replay_non_negative_can_clear_month_specific_gate(self) -> None:
         metrics, findings = _profit_capture_replay_repair_findings(
@@ -228,6 +258,62 @@ class ProfitabilityAcceptanceReplayRepairTest(unittest.TestCase):
         self.assertTrue(metrics["month_scale_replay_loaded"])
         self.assertTrue(metrics["replay_repair_proved"])
         self.assertEqual(findings, [])
+
+    def test_timing_audit_surfaces_residual_loss_groups_after_repair_replay(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "execution_timing_audit.json"
+            path.write_text(
+                json.dumps(
+                    {
+                        "generated_at_utc": "2026-06-22T17:10:24+00:00",
+                        "window": {"lookback_hours": 744.0},
+                        "precision": {
+                            TP_PROGRESS_REPAIR_REPLAY_FIELD: (
+                                TP_PROGRESS_REPAIR_REPLAY_CONTRACT
+                            )
+                        },
+                        "summary": {
+                            "loss_close_actual_pl_jpy": -3481.8961,
+                            "loss_close_repair_replay_counterfactual_pl_jpy": -2981.8961,
+                        },
+                        "loss_close_regrets": [
+                            {
+                                "trade_id": "472071",
+                                "pair": "GBP_USD",
+                                "side": "LONG",
+                                "lane_id": "failure_trader:GBP_USD:LONG:BREAKOUT_FAILURE",
+                                "exit_reason": "MARKET_ORDER_TRADE_CLOSE",
+                                "realized_pl_jpy": -2981.8961,
+                                "repair_replay_counterfactual_pl_jpy": -2981.8961,
+                                "repair_replay_block_reason": "BELOW_TP_PROGRESS_GATE",
+                            },
+                            {
+                                "trade_id": "would-clear",
+                                "pair": "USD_JPY",
+                                "side": "SHORT",
+                                "lane_id": "range_trader:USD_JPY:SHORT:RANGE_ROTATION",
+                                "exit_reason": "MARKET_ORDER_TRADE_CLOSE",
+                                "realized_pl_jpy": -500.0,
+                                "repair_replay_counterfactual_pl_jpy": 42.0,
+                                "repair_replay_triggered_before_loss_close": True,
+                            },
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            _labels, metrics = _execution_timing_loss_close_labels(path)
+
+        groups = metrics["top_repair_replay_residual_groups"]
+        self.assertEqual(len(groups), 1)
+        self.assertEqual(groups[0]["pair"], "GBP_USD")
+        self.assertEqual(groups[0]["side"], "LONG")
+        self.assertEqual(groups[0]["method"], "BREAKOUT_FAILURE")
+        self.assertEqual(groups[0]["exit_reason"], "MARKET_ORDER_TRADE_CLOSE")
+        self.assertEqual(groups[0]["loss_closes"], 1)
+        self.assertEqual(groups[0]["repair_replay_pl_jpy"], -2981.8961)
+        self.assertEqual(groups[0]["block_reasons"], {"BELOW_TP_PROGRESS_GATE": 1})
 
 
 if __name__ == "__main__":

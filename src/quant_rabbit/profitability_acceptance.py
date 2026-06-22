@@ -1250,6 +1250,7 @@ def _execution_timing_loss_close_labels(
         "top_profit_capture_misses": [],
         "top_repair_replay_triggers": [],
         "top_repair_replay_blocks": [],
+        "top_repair_replay_residual_groups": [],
         "read_error": None,
     }
     if path is None:
@@ -1323,11 +1324,14 @@ def _execution_timing_loss_close_labels(
     top_misses: list[dict[str, Any]] = []
     top_repair_triggers: list[dict[str, Any]] = []
     top_repair_blocks: list[dict[str, Any]] = []
+    residual_groups: dict[tuple[str, str, str, str], dict[str, Any]] = {}
     for row in regret_rows:
         if not isinstance(row, dict):
             continue
+        lane_id = row.get("lane_id")
         common = {
             "trade_id": row.get("trade_id"),
+            "lane_id": lane_id,
             "pair": row.get("pair"),
             "side": row.get("side"),
             "exit_reason": row.get("exit_reason"),
@@ -1336,6 +1340,7 @@ def _execution_timing_loss_close_labels(
                 row.get("tp_progress_before_loss_close")
             ),
         }
+        _add_repair_replay_residual_group(residual_groups, row)
         if row.get("profit_capture_missed_before_loss_close"):
             top_misses.append(
                 {
@@ -1416,7 +1421,116 @@ def _execution_timing_loss_close_labels(
     metrics["top_profit_capture_misses"] = top_misses[:5]
     metrics["top_repair_replay_triggers"] = top_repair_triggers[:5]
     metrics["top_repair_replay_blocks"] = top_repair_blocks[:5]
+    metrics["top_repair_replay_residual_groups"] = _top_repair_replay_residual_groups(
+        residual_groups
+    )
     return labels, metrics
+
+
+def _add_repair_replay_residual_group(
+    groups: dict[tuple[str, str, str, str], dict[str, Any]],
+    row: dict[str, Any],
+) -> None:
+    actual = _optional_float(row.get("realized_pl_jpy"))
+    if actual is None or actual >= 0.0:
+        return
+    replay_pl = _optional_float(row.get("repair_replay_counterfactual_pl_jpy"))
+    if replay_pl is None:
+        replay_pl = actual
+    if replay_pl >= 0.0:
+        return
+    pair = str(row.get("pair") or "UNKNOWN")
+    side = str(row.get("side") or "UNKNOWN")
+    lane_id = str(row.get("lane_id") or "")
+    method = _method_from_lane_id(lane_id) or "UNKNOWN"
+    exit_reason = str(row.get("exit_reason") or "UNKNOWN")
+    key = (pair, side, method, exit_reason)
+    item = groups.setdefault(
+        key,
+        {
+            "pair": pair,
+            "side": side,
+            "method": method,
+            "exit_reason": exit_reason,
+            "loss_closes": 0,
+            "actual_pl_jpy": 0.0,
+            "repair_replay_pl_jpy": 0.0,
+            "repair_replay_delta_jpy": 0.0,
+            "repair_replay_triggered": 0,
+            "block_reasons": {},
+            "examples": [],
+        },
+    )
+    item["loss_closes"] = int(item["loss_closes"]) + 1
+    item["actual_pl_jpy"] = float(item["actual_pl_jpy"]) + actual
+    item["repair_replay_pl_jpy"] = float(item["repair_replay_pl_jpy"]) + replay_pl
+    item["repair_replay_delta_jpy"] = float(item["repair_replay_delta_jpy"]) + (
+        replay_pl - actual
+    )
+    if row.get("repair_replay_triggered_before_loss_close"):
+        item["repair_replay_triggered"] = int(item["repair_replay_triggered"]) + 1
+    reason = str(row.get("repair_replay_block_reason") or "NO_REPAIR_REPLAY_TRIGGER")
+    reasons = item["block_reasons"]
+    if isinstance(reasons, dict):
+        reasons[reason] = int(reasons.get(reason) or 0) + 1
+    examples = item["examples"]
+    if isinstance(examples, list) and len(examples) < 3:
+        examples.append(
+            {
+                "trade_id": row.get("trade_id"),
+                "lane_id": lane_id or None,
+                "actual_pl_jpy": round(actual, 4),
+                "repair_replay_pl_jpy": round(replay_pl, 4),
+                "repair_replay_triggered": bool(
+                    row.get("repair_replay_triggered_before_loss_close")
+                ),
+                "repair_replay_block_reason": row.get("repair_replay_block_reason"),
+            }
+        )
+
+
+def _top_repair_replay_residual_groups(
+    groups: dict[tuple[str, str, str, str], dict[str, Any]]
+) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for item in groups.values():
+        rows.append(
+            {
+                **item,
+                "actual_pl_jpy": round(float(item.get("actual_pl_jpy") or 0.0), 4),
+                "repair_replay_pl_jpy": round(
+                    float(item.get("repair_replay_pl_jpy") or 0.0),
+                    4,
+                ),
+                "repair_replay_delta_jpy": round(
+                    float(item.get("repair_replay_delta_jpy") or 0.0),
+                    4,
+                ),
+                "block_reasons": dict(
+                    sorted(
+                        (
+                            (str(key), int(value))
+                            for key, value in (
+                                item.get("block_reasons")
+                                if isinstance(item.get("block_reasons"), dict)
+                                else {}
+                            ).items()
+                        ),
+                        key=lambda part: (-part[1], part[0]),
+                    )
+                ),
+            }
+        )
+    rows.sort(
+        key=lambda item: (
+            float(item.get("repair_replay_pl_jpy") or 0.0),
+            float(item.get("actual_pl_jpy") or 0.0),
+            str(item.get("pair") or ""),
+            str(item.get("side") or ""),
+            str(item.get("method") or ""),
+        )
+    )
+    return rows[:10]
 
 
 def _profit_capture_replay_repair_findings(
@@ -1521,6 +1635,9 @@ def _profit_capture_replay_repair_findings(
         "counterfactual_profit_capture_jpy": counterfactual_jpy,
         "top_profit_capture_misses": timing_metrics.get("top_profit_capture_misses") or [],
         "top_repair_replay_triggers": timing_metrics.get("top_repair_replay_triggers") or [],
+        "top_repair_replay_residual_groups": (
+            timing_metrics.get("top_repair_replay_residual_groups") or []
+        ),
         "loss_close_repair_replay_block_reasons": (
             timing_metrics.get("loss_close_repair_replay_block_reasons") or {}
         ),
@@ -1608,6 +1725,9 @@ def _profit_capture_replay_repair_findings(
                     "counterfactual_profit_capture_jpy": counterfactual_jpy,
                     "top_repair_replay_triggers": metrics["top_repair_replay_triggers"],
                     "top_repair_replay_blocks": metrics["top_repair_replay_blocks"],
+                    "top_repair_replay_residual_groups": metrics[
+                        "top_repair_replay_residual_groups"
+                    ],
                 },
             )
         )

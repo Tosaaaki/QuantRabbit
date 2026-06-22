@@ -333,6 +333,57 @@ class TraderPromptRouteTest(unittest.TestCase):
         self.assertTrue(any("profitability acceptance NEGATIVE_EXPECTANCY_ACTIVE blocks high-turn entry routing" in reason for reason in route.reasons))
         self.assertTrue(any("expectancy=-168.9" in reason for reason in route.reasons))
 
+    def test_month_scale_replay_residual_group_is_carried_into_learning_route(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root)
+            now = datetime.now(timezone.utc).isoformat()
+            files["profitability_acceptance"].write_text(
+                json.dumps(
+                    {
+                        "generated_at_utc": now,
+                        "status": "PROFITABILITY_ACCEPTANCE_BLOCKED",
+                        "findings": [
+                            {
+                                "priority": "P0",
+                                "code": "MONTH_SCALE_TP_PROGRESS_REPLAY_STILL_NEGATIVE",
+                                "message": "month-scale replay remains negative",
+                                "evidence": {
+                                    "repair_replay_counterfactual_pl_jpy": -13824.5957,
+                                    "top_repair_replay_residual_groups": [
+                                        {
+                                            "pair": "GBP_USD",
+                                            "side": "LONG",
+                                            "method": "BREAKOUT_FAILURE",
+                                            "repair_replay_pl_jpy": -2981.8961,
+                                        }
+                                    ],
+                                },
+                            }
+                        ],
+                        "metrics": {
+                            "order_intents": {
+                                "generated_at_utc": json.loads(files["intents"].read_text())[
+                                    "generated_at_utc"
+                                ],
+                            }
+                        },
+                    }
+                )
+            )
+
+            route = route_trader_prompts(**_route_paths(files), decision_response_path=None)
+
+        self.assertEqual(route.branch, BRANCH_LEARNING)
+        self.assertTrue(
+            any(
+                "MONTH_SCALE_TP_PROGRESS_REPLAY_STILL_NEGATIVE" in reason
+                and "residual=GBP_USD:LONG:BREAKOUT_FAILURE" in reason
+                and "repair_replay_pl=-13824.6" in reason
+                for reason in route.reasons
+            )
+        )
+
     def test_support_bot_guardian_recovery_lane_is_carried_into_profitability_learning_route(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

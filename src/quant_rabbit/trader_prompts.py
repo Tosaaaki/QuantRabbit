@@ -2924,6 +2924,39 @@ def _profitability_acceptance_repair_reasons(
                     details.append(f"market_close_net={market_net:.1f}")
                 if tp_exp is not None:
                     details.append(f"tp_expectancy={tp_exp:.1f}")
+        elif code == "MONTH_SCALE_LOSS_CLOSE_REPLAY_REQUIRED":
+            window_hours = _optional_float(evidence.get("window_lookback_hours"))
+            required_hours = _optional_float(evidence.get("required_lookback_hours"))
+            tp_net = _optional_float(evidence.get("take_profit_net_jpy"))
+            market_net = _optional_float(evidence.get("market_close_net_jpy"))
+            if window_hours is not None:
+                details.append(f"window_hours={window_hours:.0f}")
+            if required_hours is not None:
+                details.append(f"required_hours={required_hours:.0f}")
+            if tp_net is not None:
+                details.append(f"tp_net={tp_net:.1f}")
+            if market_net is not None:
+                details.append(f"market_close_net={market_net:.1f}")
+        elif code == "MONTH_SCALE_TP_PROGRESS_REPLAY_STILL_NEGATIVE":
+            replay_pl = _optional_float(evidence.get("repair_replay_counterfactual_pl_jpy"))
+            if replay_pl is not None:
+                details.append(f"repair_replay_pl={replay_pl:.1f}")
+            residual_groups = (
+                evidence.get("top_repair_replay_residual_groups")
+                if isinstance(evidence.get("top_repair_replay_residual_groups"), list)
+                else []
+            )
+            if residual_groups and isinstance(residual_groups[0], dict):
+                group = residual_groups[0]
+                group_parts = [
+                    str(group.get("pair") or "").strip(),
+                    str(group.get("side") or "").strip(),
+                    str(group.get("method") or "").strip(),
+                ]
+                details.append("residual=" + ":".join(part for part in group_parts if part))
+                residual_pl = _optional_float(group.get("repair_replay_pl_jpy"))
+                if residual_pl is not None:
+                    details.append(f"residual_pl={residual_pl:.1f}")
         else:
             count = evidence.get("recent_unverified_loss_closes") or evidence.get("recent_loss_closes")
             if count is not None:
