@@ -583,6 +583,133 @@ class OandaHistoryReplayValidateTest(unittest.TestCase):
         self.assertIn("INSUFFICIENT_ACTIVE_DAYS", gap["coverage_gap_reasons"])
         self.assertIn("PRICE_TRUTH_WINDOW_MISSING", gap["coverage_gap_reasons"])
 
+    def test_price_truth_coverage_blocks_empty_history_validation(self) -> None:
+        truth = replay._price_truth_coverage(
+            load_stats={"raw_directional_rows": 2, "deduped_directional_rows": 2},
+            candle_stats={"history_files": 0, "history_candles": 0},
+            score_stats={
+                "evaluated_rows": 0,
+                "missing_price_window_groups": [
+                    {
+                        "date": "2026-06-17",
+                        "count": 2,
+                        "needed_from_utc": "2026-06-17T07:16:00Z",
+                        "needed_to_utc": "2026-06-17T18:09:00Z",
+                        "pairs": ["AUD_JPY", "EUR_USD"],
+                    }
+                ],
+            },
+            sample_coverage={
+                "pairs": [
+                    {
+                        "pair": "AUD_JPY",
+                        "forecast_samples": 1,
+                        "evaluated_samples": 0,
+                        "missing_price_truth_samples": 1,
+                    },
+                    {
+                        "pair": "EUR_USD",
+                        "forecast_samples": 1,
+                        "evaluated_samples": 0,
+                        "missing_price_truth_samples": 1,
+                    },
+                ],
+                "under_sampled_pair_directions": [
+                    {
+                        "pair": "AUD_JPY",
+                        "direction": "UP",
+                        "coverage_gap_reasons": ["PRICE_TRUTH_WINDOW_MISSING"],
+                    }
+                ],
+            },
+            granularity="S5",
+            edge_min_samples=30,
+        )
+
+        self.assertEqual(truth["status"], "NO_PRICE_HISTORY_FILES")
+        self.assertEqual(truth["adoption_level"], "NO_REPLAY_EVIDENCE")
+        self.assertTrue(truth["candidate_rule_validation_blocked"])
+        self.assertTrue(truth["global_currency_validation_blocked"])
+        self.assertEqual(truth["missing_price_truth_samples"], 2)
+        self.assertEqual(truth["missing_pairs"], ["AUD_JPY", "EUR_USD"])
+        self.assertIn("DO_NOT_PROMOTE_PRECISION_RULE", truth["blockers"])
+        self.assertIn("DO_NOT_CLAIM_ALL_CURRENCY_VALIDATION", truth["blockers"])
+        self.assertIn("--pairs AUD_JPY,EUR_USD", truth["history_fetch_command"])
+        self.assertIn("--from 2026-06-17T07:16:00Z", truth["history_fetch_command"])
+        self.assertIn("--to 2026-06-17T18:09:00Z", truth["history_fetch_command"])
+
+    def test_price_truth_coverage_marks_partial_history_rank_only(self) -> None:
+        truth = replay._price_truth_coverage(
+            load_stats={"raw_directional_rows": 40, "deduped_directional_rows": 40},
+            candle_stats={"history_files": 1, "history_candles": 500},
+            score_stats={
+                "evaluated_rows": 35,
+                "missing_price_window_groups": [
+                    {
+                        "date": "2026-06-18",
+                        "count": 5,
+                        "needed_from_utc": "2026-06-18T00:00:00Z",
+                        "needed_to_utc": "2026-06-18T02:00:00Z",
+                        "pairs": ["GBP_USD"],
+                    }
+                ],
+            },
+            sample_coverage={
+                "pairs": [
+                    {
+                        "pair": "AUD_JPY",
+                        "forecast_samples": 35,
+                        "evaluated_samples": 35,
+                        "missing_price_truth_samples": 0,
+                    },
+                    {
+                        "pair": "GBP_USD",
+                        "forecast_samples": 5,
+                        "evaluated_samples": 0,
+                        "missing_price_truth_samples": 5,
+                    },
+                ],
+                "under_sampled_pair_directions": [
+                    {
+                        "pair": "GBP_USD",
+                        "direction": "DOWN",
+                        "coverage_gap_reasons": ["PRICE_TRUTH_WINDOW_MISSING"],
+                    }
+                ],
+            },
+            granularity="S5",
+            edge_min_samples=30,
+        )
+
+        self.assertEqual(truth["status"], "PARTIAL_PRICE_TRUTH")
+        self.assertEqual(truth["adoption_level"], "PAIR_LOCAL_RANK_ONLY")
+        self.assertFalse(truth["candidate_rule_validation_blocked"])
+        self.assertTrue(truth["global_currency_validation_blocked"])
+        self.assertEqual(truth["missing_pairs"], ["GBP_USD"])
+        self.assertEqual(truth["missing_pair_directions"], ["GBP_USD:DOWN"])
+        self.assertNotIn("DO_NOT_PROMOTE_PRECISION_RULE", truth["blockers"])
+        self.assertIn("DO_NOT_CLAIM_ALL_CURRENCY_VALIDATION", truth["blockers"])
+
+    def test_history_fetch_command_clamps_future_window_to_now(self) -> None:
+        command = replay._history_fetch_command(
+            [
+                {
+                    "date": "2026-06-17",
+                    "count": 1,
+                    "needed_from_utc": "2026-06-17T10:00:00Z",
+                    "needed_to_utc": "2026-06-17T14:00:00Z",
+                    "pairs": ["USD_JPY"],
+                }
+            ],
+            "S5",
+            now_utc=datetime(2026, 6, 17, 12, 0, tzinfo=timezone.utc),
+        )
+
+        self.assertIsNotNone(command)
+        self.assertIn("--pairs USD_JPY", command)
+        self.assertIn("--from 2026-06-17T10:00:00Z", command)
+        self.assertIn("--to 2026-06-17T12:00:00Z", command)
+
     def test_load_candles_filters_to_forecast_truth_windows(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             history = Path(tmp) / "history"

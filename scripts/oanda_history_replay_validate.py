@@ -198,6 +198,14 @@ def main() -> int:
         min_directional_samples=args.edge_min_samples,
         min_active_days=args.stable_min_active_days,
     )
+    price_truth_coverage = _price_truth_coverage(
+        load_stats=load_stats,
+        candle_stats=candle_stats,
+        score_stats=score_stats,
+        sample_coverage=sample_coverage,
+        granularity=args.granularity,
+        edge_min_samples=args.edge_min_samples,
+    )
 
     report = {
         "generated_at_utc": _iso(datetime.now(timezone.utc)),
@@ -219,6 +227,7 @@ def main() -> int:
         **candle_stats,
         **score_stats,
         "summary": _summary(results),
+        "price_truth_coverage": price_truth_coverage,
         "forecast_sample_coverage": sample_coverage,
         "segments": {
             "by_direction": _group(results, ("direction",)),
@@ -762,6 +771,168 @@ def _forecast_sample_coverage(
         "pairs": pair_rows,
         "under_sampled_pair_directions": under_sampled,
     }
+
+
+def _price_truth_coverage(
+    *,
+    load_stats: dict[str, Any],
+    candle_stats: dict[str, Any],
+    score_stats: dict[str, Any],
+    sample_coverage: dict[str, Any],
+    granularity: str,
+    edge_min_samples: int,
+) -> dict[str, Any]:
+    """Summarize whether replay has enough bid/ask truth to be adoption evidence."""
+
+    raw_rows = _int_metric(load_stats.get("raw_directional_rows"))
+    deduped_rows = _int_metric(load_stats.get("deduped_directional_rows"))
+    history_files = _int_metric(candle_stats.get("history_files"))
+    history_candles = _int_metric(candle_stats.get("history_candles"))
+    evaluated_rows = _int_metric(score_stats.get("evaluated_rows"))
+    missing_groups = list(score_stats.get("missing_price_window_groups") or [])
+    pair_rows = list(sample_coverage.get("pairs") or [])
+    under_sampled = list(sample_coverage.get("under_sampled_pair_directions") or [])
+    missing_truth_samples = sum(
+        max(0, _int_metric(item.get("missing_price_truth_samples")))
+        for item in pair_rows
+    )
+    missing_pairs = sorted(
+        {
+            str(item.get("pair") or "").upper()
+            for item in pair_rows
+            if _int_metric(item.get("missing_price_truth_samples")) > 0
+        }
+    )
+    missing_pair_directions = [
+        f"{item.get('pair')}:{item.get('direction')}"
+        for item in under_sampled
+        if "PRICE_TRUTH_WINDOW_MISSING" in (item.get("coverage_gap_reasons") or [])
+    ]
+
+    if raw_rows <= 0 or deduped_rows <= 0:
+        status = "NO_DIRECTIONAL_FORECAST_ROWS"
+        reason = "forecast_history has no deduped UP/DOWN rows to replay."
+    elif history_files <= 0:
+        status = "NO_PRICE_HISTORY_FILES"
+        reason = "No local OANDA bid/ask candle files matched the forecast pairs, granularity, and windows."
+    elif history_candles <= 0:
+        status = "NO_PRICE_CANDLES_LOADED"
+        reason = "History files were found, but no bid/ask candles survived parsing and window filtering."
+    elif evaluated_rows <= 0:
+        status = "NO_EVALUATED_PRICE_TRUTH"
+        reason = "Forecast rows exist, but none could be scored against local bid/ask candles."
+    elif evaluated_rows < int(edge_min_samples):
+        status = "INSUFFICIENT_EVALUATED_SAMPLES"
+        reason = "Evaluated rows are below the precision-rule sample floor."
+    elif missing_truth_samples > 0 or missing_groups:
+        status = "PARTIAL_PRICE_TRUTH"
+        reason = "Some forecast pairs or windows still lack matching bid/ask candle truth."
+    else:
+        status = "PRICE_TRUTH_OK"
+        reason = "All loaded forecast samples have local bid/ask candle truth for this replay window."
+
+    candidate_blocked = status in {
+        "NO_DIRECTIONAL_FORECAST_ROWS",
+        "NO_PRICE_HISTORY_FILES",
+        "NO_PRICE_CANDLES_LOADED",
+        "NO_EVALUATED_PRICE_TRUTH",
+        "INSUFFICIENT_EVALUATED_SAMPLES",
+    }
+    global_blocked = status != "PRICE_TRUTH_OK"
+    if candidate_blocked:
+        adoption_level = "NO_REPLAY_EVIDENCE"
+    elif global_blocked:
+        adoption_level = "PAIR_LOCAL_RANK_ONLY"
+    else:
+        adoption_level = "FULL_REPLAY_READY"
+    blockers: list[str] = []
+    if candidate_blocked:
+        blockers.append("DO_NOT_PROMOTE_PRECISION_RULE")
+    if global_blocked:
+        blockers.append("DO_NOT_CLAIM_ALL_CURRENCY_VALIDATION")
+    if missing_truth_samples > 0:
+        blockers.append("FETCH_MISSING_PRICE_TRUTH")
+    now_utc = datetime.now(timezone.utc)
+
+    return {
+        "status": status,
+        "reason": reason,
+        "adoption_level": adoption_level,
+        "candidate_rule_validation_blocked": candidate_blocked,
+        "global_currency_validation_blocked": global_blocked,
+        "blockers": blockers,
+        "raw_directional_rows": raw_rows,
+        "deduped_directional_rows": deduped_rows,
+        "evaluated_rows": evaluated_rows,
+        "required_min_evaluated_rows": int(edge_min_samples),
+        "history_files": history_files,
+        "history_candles": history_candles,
+        "missing_price_truth_samples": missing_truth_samples,
+        "missing_price_window_group_count": len(missing_groups),
+        "future_price_truth_window_group_count": _future_missing_window_group_count(
+            missing_groups,
+            now_utc=now_utc,
+        ),
+        "missing_pairs": missing_pairs,
+        "missing_pair_directions": missing_pair_directions[:24],
+        "history_fetch_command": _history_fetch_command(
+            missing_groups,
+            granularity,
+            now_utc=now_utc,
+        ),
+    }
+
+
+def _history_fetch_command(
+    missing_groups: Sequence[dict[str, Any]],
+    granularity: str,
+    *,
+    now_utc: datetime | None = None,
+) -> str | None:
+    now = (now_utc or datetime.now(timezone.utc)).astimezone(timezone.utc)
+    pairs: set[str] = set()
+    starts: list[datetime] = []
+    ends: list[datetime] = []
+    for group in missing_groups:
+        start = _parse_time(group.get("needed_from_utc"))
+        end = _parse_time(group.get("needed_to_utc"))
+        if start is None or end is None or start >= now:
+            continue
+        pairs.update(str(pair).upper() for pair in group.get("pairs") or [] if str(pair).strip())
+        starts.append(start)
+        ends.append(min(end, now))
+    if not pairs or not starts or not ends:
+        return None
+    return (
+        "PYTHONPATH=src python3 scripts/oanda_history_fetch.py "
+        f"--pairs {','.join(sorted(pairs))} "
+        f"--granularities {str(granularity or '').upper()} "
+        "--price BA "
+        f"--from {_iso(min(starts))} "
+        f"--to {_iso(max(ends))} "
+        "--output-dir logs/replay/oanda_history"
+    )
+
+
+def _future_missing_window_group_count(
+    missing_groups: Sequence[dict[str, Any]],
+    *,
+    now_utc: datetime | None = None,
+) -> int:
+    now = (now_utc or datetime.now(timezone.utc)).astimezone(timezone.utc)
+    count = 0
+    for group in missing_groups:
+        end = _parse_time(group.get("needed_to_utc"))
+        if end is not None and end > now:
+            count += 1
+    return count
+
+
+def _int_metric(value: object) -> int:
+    try:
+        return int(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return 0
 
 
 def _missing_price_window_groups(rows: Sequence[ForecastRow]) -> list[dict[str, Any]]:
@@ -1738,12 +1909,35 @@ def _markdown(report: dict[str, Any]) -> str:
         f"- truth_source: {report['truth_source']}",
         f"- rows: raw_directional={report['raw_directional_rows']} deduped={report['deduped_directional_rows']} evaluated={report['evaluated_rows']}",
         f"- history: files={report['history_files']} candles={report['history_candles']} skipped={report['history_skipped_rows']}",
+        f"- price_truth_coverage: status={(report.get('price_truth_coverage') or {}).get('status')} adoption={(report.get('price_truth_coverage') or {}).get('adoption_level')}",
         "",
         "## Summary",
         "",
         _summary_line(summary),
         "",
     ]
+    truth = report.get("price_truth_coverage") or {}
+    lines.extend(
+        [
+            "## Price Truth Coverage",
+            "",
+            f"- status: {truth.get('status')} ({truth.get('reason')})",
+            f"- adoption_level: {truth.get('adoption_level')}",
+            f"- candidate_rule_validation_blocked: {truth.get('candidate_rule_validation_blocked')}",
+            f"- global_currency_validation_blocked: {truth.get('global_currency_validation_blocked')}",
+            f"- evaluated_rows: {truth.get('evaluated_rows')} / required_min={truth.get('required_min_evaluated_rows')}",
+            f"- missing_price_truth_samples: {truth.get('missing_price_truth_samples')}",
+            f"- missing_price_window_groups: {truth.get('missing_price_window_group_count')}",
+            f"- future_price_truth_window_groups: {truth.get('future_price_truth_window_group_count')}",
+            f"- missing_pairs: {', '.join(truth.get('missing_pairs') or []) or 'none'}",
+        ]
+    )
+    fetch_command = truth.get("history_fetch_command")
+    if fetch_command:
+        lines.append(f"- history_fetch_command: `{fetch_command}`")
+    blockers = truth.get("blockers") or []
+    lines.append(f"- blockers: {', '.join(blockers) if blockers else 'none'}")
+    lines.append("")
     coverage = report.get("forecast_sample_coverage") or {}
     under_sampled = coverage.get("under_sampled_pair_directions") or []
     lines.extend(
