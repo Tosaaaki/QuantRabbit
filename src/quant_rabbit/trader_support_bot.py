@@ -154,11 +154,17 @@ class TraderSupportBot:
             and bool(entry["live_ready_lanes"])
             and (not guardian["required"] or bool(guardian["active"]))
         )
+        repair_basket_send_allowed = (
+            bool(entry["repair_live_ready"])
+            and (not guardian["required"] or bool(guardian["active"]))
+        )
         metrics = {
             "send_fresh_entries_allowed": send_allowed,
+            "repair_basket_send_allowed": repair_basket_send_allowed,
             "guardian_active": guardian["active"],
             "guardian_heartbeat_fresh": guardian["heartbeat_fresh"],
             "live_ready_lanes": entry["live_ready_lanes"],
+            "repair_live_ready_lanes": len(entry["repair_live_ready"]),
             "repair_frontier_lanes": len(entry["repair_frontier"]),
             "global_unlock_frontier_lanes": len(entry["global_unlock_frontier"]),
             "profit_capture_missed_loss_closes": profit_capture["missed_loss_closes"],
@@ -176,6 +182,7 @@ class TraderSupportBot:
             "target_firepower_target_10pct_estimated_reachable": acceptance["target_firepower"][
                 "target_10pct_estimated_reachable"
             ],
+            "repair_basket_lane_ids": [item["lane_id"] for item in entry["repair_live_ready"]],
         }
         generated = self.now_utc.isoformat()
         return {
@@ -498,6 +505,7 @@ def _entry_readiness_summary(payload: dict[str, Any]) -> dict[str, Any]:
     live_ready = [item for item in results if item.get("status") == "LIVE_READY"]
     codes = Counter()
     repair_frontier: list[dict[str, Any]] = []
+    repair_live_ready: list[dict[str, Any]] = []
     global_unlock_frontier: list[dict[str, Any]] = []
     for item in results:
         for code in item.get("live_blocker_codes") or []:
@@ -532,23 +540,25 @@ def _entry_readiness_summary(payload: dict[str, Any]) -> dict[str, Any]:
             ]
             intent = item.get("intent") if isinstance(item.get("intent"), dict) else {}
             context = intent.get("market_context") if isinstance(intent.get("market_context"), dict) else {}
-            repair_frontier.append(
-                {
-                    "lane_id": item.get("lane_id"),
-                    "status": item.get("status"),
-                    "pair": intent.get("pair"),
-                    "side": intent.get("side"),
-                    "method": context.get("method"),
-                    "order_type": intent.get("order_type"),
-                    "reward_jpy": _round_optional(metadata.get("sizing_actual_reward_jpy"), 3),
-                    "risk_jpy": _round_optional(metadata.get("sizing_actual_risk_jpy"), 3),
-                    "repair_mode": metadata.get("self_improvement_p0_repair_mode"),
-                    "matrix_repair_profile_status": metadata.get("matrix_repair_profile_status"),
-                    "blocker_codes": blocker_codes,
-                    "remaining_blocker_codes_after_guardian_and_repair_exemption": remaining_after_support,
-                }
-            )
+            repair_item = {
+                "lane_id": item.get("lane_id"),
+                "status": item.get("status"),
+                "pair": intent.get("pair"),
+                "side": intent.get("side"),
+                "method": context.get("method"),
+                "order_type": intent.get("order_type"),
+                "reward_jpy": _round_optional(metadata.get("sizing_actual_reward_jpy"), 3),
+                "risk_jpy": _round_optional(metadata.get("sizing_actual_risk_jpy"), 3),
+                "repair_mode": metadata.get("self_improvement_p0_repair_mode"),
+                "matrix_repair_profile_status": metadata.get("matrix_repair_profile_status"),
+                "blocker_codes": blocker_codes,
+                "remaining_blocker_codes_after_guardian_and_repair_exemption": remaining_after_support,
+            }
+            repair_frontier.append(repair_item)
+            if item.get("status") == "LIVE_READY" and not blocker_codes:
+                repair_live_ready.append(repair_item)
     repair_frontier.sort(key=lambda item: _float(item.get("reward_jpy")), reverse=True)
+    repair_live_ready.sort(key=lambda item: _float(item.get("reward_jpy")), reverse=True)
     global_unlock_frontier.sort(key=lambda item: _float(item.get("reward_jpy")), reverse=True)
     return {
         "generated_at_utc": payload.get("generated_at_utc"),
@@ -558,6 +568,7 @@ def _entry_readiness_summary(payload: dict[str, Any]) -> dict[str, Any]:
         "top_blockers": [{"code": code, "count": count} for code, count in codes.most_common(12)],
         "guardian_blocked_lanes": codes.get(GUARDIAN_BLOCKER, 0),
         "repair_frontier": repair_frontier[:12],
+        "repair_live_ready": repair_live_ready[:12],
         "global_unlock_frontier": global_unlock_frontier[:12],
     }
 
@@ -1153,9 +1164,11 @@ def _render_report(payload: dict[str, Any]) -> str:
         "| Gate | Value |",
         "|---|---|",
         f"| Fresh entry send allowed | `{payload['metrics']['send_fresh_entries_allowed']}` |",
+        f"| Repair basket send allowed | `{payload['metrics']['repair_basket_send_allowed']}` |",
         f"| Guardian active | `{guardian['active']}` source=`{guardian['active_source']}` |",
         f"| Guardian heartbeat fresh | `{guardian['heartbeat_fresh']}` age=`{guardian['heartbeat_age_seconds']}`s |",
         f"| LIVE_READY lanes | `{entry['live_ready_lanes']}` / `{entry['lanes']}` |",
+        f"| Repair LIVE_READY lanes | `{len(entry['repair_live_ready'])}` |",
         f"| Repair frontier lanes | `{len(entry['repair_frontier'])}` |",
         f"| Global unlock frontier lanes | `{len(entry['global_unlock_frontier'])}` |",
         f"| Profit-capture misses | `{profit['missed_loss_closes']}` gap=`{profit['estimated_gap_jpy']}` JPY |",

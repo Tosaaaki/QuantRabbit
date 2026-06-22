@@ -45,6 +45,7 @@ class TraderSupportBotTest(unittest.TestCase):
             self.assertIn("POSITION_GUARDIAN_INACTIVE", codes)
             self.assertIn("LOSS_CLOSE_PROFIT_CAPTURE_MISSED", codes)
             self.assertFalse(payload["metrics"]["send_fresh_entries_allowed"])
+            self.assertFalse(payload["metrics"]["repair_basket_send_allowed"])
             self.assertEqual(payload["profit_capture"]["missed_loss_closes"], 2)
             self.assertIn("zero loss_closes_profit_capture_missed", payload["profit_capture"]["clearance_condition"])
             self.assertEqual(payload["current_profit_capture"]["watch_positions"], 1)
@@ -115,8 +116,73 @@ class TraderSupportBotTest(unittest.TestCase):
             self.assertTrue(payload["guardian"]["active"])
             self.assertTrue(payload["guardian"]["heartbeat_fresh"])
             self.assertTrue(payload["metrics"]["send_fresh_entries_allowed"])
+            self.assertFalse(payload["metrics"]["repair_basket_send_allowed"])
             self.assertEqual(payload["entry_readiness"]["live_ready_lanes"], 1)
             self.assertIn("RUN_NEXT_TRADER_CYCLE", {item["code"] for item in payload["operator_actions"]})
+
+    def test_repair_basket_allowed_even_when_acceptance_panel_is_blocked(self) -> None:
+        now = datetime(2026, 6, 22, 12, 15, tzinfo=timezone.utc)
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _write_fixture(root, now=now, blocked=True)
+            _write_json(
+                files["intents"],
+                {
+                    "generated_at_utc": now.isoformat(),
+                    "results": [
+                        {
+                            "lane_id": "range_trader:GBP_JPY:SHORT:RANGE_ROTATION",
+                            "status": "LIVE_READY",
+                            "live_blocker_codes": [],
+                            "intent": {
+                                "pair": "GBP_JPY",
+                                "side": "SHORT",
+                                "order_type": "LIMIT",
+                                "market_context": {"method": "RANGE_ROTATION"},
+                                "metadata": {
+                                    "self_improvement_p0_repair_live_ready": True,
+                                    "self_improvement_p0_repair_mode": "TP_HARVEST_REPAIR",
+                                    "positive_rotation_mode": "OANDA_CAMPAIGN_FIREPOWER_HARVEST",
+                                    "sizing_actual_reward_jpy": 1152.0,
+                                    "sizing_actual_risk_jpy": 1146.0,
+                                },
+                            },
+                        }
+                    ],
+                },
+            )
+            env = _guardian_env(root, active="1")
+            with mock.patch.dict(os.environ, env, clear=False):
+                summary = TraderSupportBot(
+                    broker_snapshot_path=files["broker"],
+                    order_intents_path=files["intents"],
+                    target_state_path=files["target"],
+                    position_management_path=files["position_management"],
+                    position_guardian_management_path=files["guardian_management"],
+                    position_guardian_execution_path=files["guardian_execution"],
+                    position_guardian_heartbeat_path=files["guardian_heartbeat"],
+                    self_improvement_audit_path=files["self_improvement"],
+                    profitability_acceptance_path=files["profitability"],
+                    execution_timing_audit_path=files["timing"],
+                    profit_capture_bot_path=files["profit_capture_bot"],
+                    output_path=files["output"],
+                    report_path=files["report"],
+                    now_utc=now,
+                ).run()
+
+            payload = json.loads(files["output"].read_text())
+            self.assertEqual(summary.status, STATUS_BLOCKED)
+            self.assertFalse(payload["metrics"]["send_fresh_entries_allowed"])
+            self.assertTrue(payload["metrics"]["repair_basket_send_allowed"])
+            self.assertEqual(payload["metrics"]["repair_live_ready_lanes"], 1)
+            self.assertEqual(
+                payload["metrics"]["repair_basket_lane_ids"],
+                ["range_trader:GBP_JPY:SHORT:RANGE_ROTATION"],
+            )
+            self.assertEqual(payload["entry_readiness"]["repair_live_ready"][0]["repair_mode"], "TP_HARVEST_REPAIR")
+            report = files["report"].read_text()
+            self.assertIn("Repair basket send allowed", report)
+            self.assertIn("Repair LIVE_READY lanes", report)
 
     def test_cli_writes_support_panel_and_returns_blocked_code(self) -> None:
         now = datetime(2026, 6, 22, 12, 15, tzinfo=timezone.utc)
