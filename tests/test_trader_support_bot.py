@@ -265,6 +265,96 @@ class TraderSupportBotTest(unittest.TestCase):
             report = files["report"].read_text()
             self.assertIn("Repair lanes after guardian recovery", report)
 
+    def test_range_forecast_non_rotation_repair_is_superseded_by_range_counterpart(self) -> None:
+        now = datetime(2026, 6, 22, 12, 15, tzinfo=timezone.utc)
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _write_fixture(root, now=now, blocked=True)
+            _write_json(
+                files["intents"],
+                {
+                    "generated_at_utc": now.isoformat(),
+                    "results": [
+                        {
+                            "lane_id": "range_trader:EUR_USD:LONG:RANGE_ROTATION",
+                            "status": "DRY_RUN_BLOCKED",
+                            "live_blocker_codes": [
+                                "POSITION_GUARDIAN_INACTIVE_FOR_PROFIT_CAPTURE",
+                                "RANGE_ROTATION_BROADER_LOCATION_CHASE",
+                            ],
+                            "intent": {
+                                "pair": "EUR_USD",
+                                "side": "LONG",
+                                "order_type": "LIMIT",
+                                "market_context": {"method": "RANGE_ROTATION"},
+                                "metadata": {
+                                    "self_improvement_p0_repair_live_ready": True,
+                                    "self_improvement_p0_repair_mode": "TP_HARVEST_REPAIR",
+                                    "sizing_actual_reward_jpy": 900.0,
+                                    "sizing_actual_risk_jpy": 300.0,
+                                },
+                            },
+                        },
+                        {
+                            "lane_id": "failure_trader:EUR_USD:LONG:BREAKOUT_FAILURE:LIMIT",
+                            "status": "DRY_RUN_BLOCKED",
+                            "live_blocker_codes": [
+                                "POSITION_GUARDIAN_INACTIVE_FOR_PROFIT_CAPTURE",
+                                "RANGE_FORECAST_REQUIRES_RANGE_ROTATION",
+                            ],
+                            "intent": {
+                                "pair": "EUR_USD",
+                                "side": "LONG",
+                                "order_type": "LIMIT",
+                                "market_context": {"method": "BREAKOUT_FAILURE"},
+                                "metadata": {
+                                    "self_improvement_p0_repair_live_ready": True,
+                                    "self_improvement_p0_repair_mode": "TP_HARVEST_REPAIR",
+                                    "sizing_actual_reward_jpy": 1400.0,
+                                    "sizing_actual_risk_jpy": 350.0,
+                                },
+                            },
+                        },
+                    ],
+                },
+            )
+            env = _guardian_env(root, active="0")
+            with mock.patch.dict(os.environ, env, clear=False):
+                TraderSupportBot(
+                    broker_snapshot_path=files["broker"],
+                    order_intents_path=files["intents"],
+                    target_state_path=files["target"],
+                    position_management_path=files["position_management"],
+                    position_guardian_management_path=files["guardian_management"],
+                    position_guardian_execution_path=files["guardian_execution"],
+                    position_guardian_heartbeat_path=files["guardian_heartbeat"],
+                    self_improvement_audit_path=files["self_improvement"],
+                    profitability_acceptance_path=files["profitability"],
+                    execution_timing_audit_path=files["timing"],
+                    profit_capture_bot_path=files["profit_capture_bot"],
+                    output_path=files["output"],
+                    report_path=files["report"],
+                    now_utc=now,
+                ).run()
+
+            payload = json.loads(files["output"].read_text())
+            frontier_lane_ids = [item["lane_id"] for item in payload["entry_readiness"]["repair_frontier"]]
+            remaining_codes = {
+                item["code"] for item in payload["metrics"]["repair_frontier_after_support_top_blockers"]
+            }
+            superseded = payload["entry_readiness"]["repair_frontier_superseded_by_range_forecast"][0]
+
+            self.assertEqual(frontier_lane_ids, ["range_trader:EUR_USD:LONG:RANGE_ROTATION"])
+            self.assertNotIn("RANGE_FORECAST_REQUIRES_RANGE_ROTATION", remaining_codes)
+            self.assertEqual(payload["metrics"]["repair_frontier_superseded_by_range_forecast_lanes"], 1)
+            self.assertEqual(
+                superseded["superseded_by_range_rotation_lane_id"],
+                "range_trader:EUR_USD:LONG:RANGE_ROTATION",
+            )
+            report = files["report"].read_text()
+            self.assertIn("RANGE Forecast Superseded Repair Lanes", report)
+            self.assertIn("failure_trader:EUR_USD:LONG:BREAKOUT_FAILURE:LIMIT", report)
+
     def test_cli_writes_support_panel_and_returns_blocked_code(self) -> None:
         now = datetime(2026, 6, 22, 12, 15, tzinfo=timezone.utc)
         with tempfile.TemporaryDirectory() as tmp:
