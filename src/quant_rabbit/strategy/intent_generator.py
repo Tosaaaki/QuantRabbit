@@ -5849,6 +5849,11 @@ LOSS_ASYMMETRY_TP_PROOF_COLLECTION_MIN_LOT_MODE = "TP_PROOF_COLLECTION_MIN_LOT"
 # the historical vehicle's win rate/PF does not apply to the current receipt.
 OANDA_CAMPAIGN_EXIT_SHAPE_RR_REL_TOLERANCE = 0.10
 OANDA_CAMPAIGN_EXIT_SHAPE_RR_ABS_TOLERANCE = 0.05
+# OANDA vehicle reprice is a small fixed-point solve: moving a passive entry
+# can make the attached HARVEST TP precision rule re-anchor, which may require
+# one more deeper LIMIT calculation. Cap the solve so it cannot chase a moving
+# target indefinitely; failure remains a blocked diagnostic.
+OANDA_CAMPAIGN_VEHICLE_REPRICE_MAX_PASSES = 3
 OANDA_CAMPAIGN_FIREPOWER_TARGET_OK_STATUSES = {
     "VERIFIED_MINIMUM_5_ROUTE_ESTIMATED",
     "VERIFIED_TARGET_10_ROUTE_ESTIMATED",
@@ -7909,10 +7914,41 @@ def _intent_from_lane(
         original_tp_execution_metadata = dict(tp_execution_metadata)
         original_position_metadata = dict(position_metadata)
         original_recovery_target_units = recovery_target_units
-        candidate_entry = _optional_float(
-            vehicle_reprice_metadata.get("oanda_campaign_vehicle_reprice_required_entry")
-        )
-        if candidate_entry is not None:
+        initial_reprice_metadata = dict(vehicle_reprice_metadata)
+        reprice_attempts: list[dict[str, Any]] = []
+        reprice_applied = False
+        last_reprice_rejection: dict[str, Any] | None = None
+        pip_factor = PIP_FACTORS.get(pair, instrument_pip_factor(pair))
+        for reprice_pass in range(1, OANDA_CAMPAIGN_VEHICLE_REPRICE_MAX_PASSES + 1):
+            candidate_entry = _optional_float(
+                vehicle_reprice_metadata.get("oanda_campaign_vehicle_reprice_required_entry")
+            )
+            if candidate_entry is None:
+                last_reprice_rejection = {
+                    "status": "ENTRY_REPRICE_UNSAFE",
+                    "reason": "OANDA vehicle reprice did not publish a required entry",
+                }
+                break
+            if math.isclose(candidate_entry, entry, abs_tol=0.0):
+                last_reprice_rejection = {
+                    "status": "ENTRY_REPRICE_UNSAFE",
+                    "reason": "OANDA vehicle reprice stopped making entry progress",
+                }
+                break
+            reprice_attempts.append(
+                {
+                    "pass": reprice_pass,
+                    "from_entry": entry,
+                    "required_entry": candidate_entry,
+                    "entry_improvement_pips": round(abs(entry - candidate_entry) * pip_factor, 3),
+                    "status": vehicle_reprice_metadata.get(
+                        "oanda_campaign_vehicle_reprice_status"
+                    ),
+                    "reason": vehicle_reprice_metadata.get(
+                        "oanda_campaign_vehicle_reprice_reason"
+                    ),
+                }
+            )
             entry = candidate_entry
             position_metadata, recovery_target_units = _position_metadata_and_recovery_target_units(
                 pair=pair,
@@ -7967,95 +8003,112 @@ def _intent_from_lane(
                 sl=sl,
                 data_root=data_root,
             )
+            confirmed_reprice_metadata["oanda_campaign_vehicle_reprice_pass"] = reprice_pass
+            confirmed_reprice_metadata["oanda_campaign_vehicle_reprice_max_passes"] = (
+                OANDA_CAMPAIGN_VEHICLE_REPRICE_MAX_PASSES
+            )
+            confirmed_reprice_metadata["oanda_campaign_vehicle_reprice_attempts"] = (
+                reprice_attempts
+            )
+            confirmed_range_metadata = _geometry_metadata(
+                pair,
+                side,
+                order_type,
+                quote,
+                entry=entry,
+                tp=tp,
+                sl=sl,
+                range_indicators=range_indicators if method == TradeMethod.RANGE_ROTATION else None,
+                chart_indicators=range_indicators,
+                chart_context=chart_context,
+                atr_pips=atr_pips,
+            )
+            range_box_ok = (
+                method != TradeMethod.RANGE_ROTATION
+                or (
+                    confirmed_range_metadata.get("range_tp_is_inside_box") is True
+                    and confirmed_range_metadata.get("range_sl_outside_box") is True
+                )
+            )
             if (
                 confirmed_reprice_metadata.get("oanda_campaign_vehicle_reprice_status")
                 == "MATCHED_CURRENT_GEOMETRY"
+                and range_box_ok
             ):
-                confirmed_range_metadata = _geometry_metadata(
-                    pair,
-                    side,
-                    order_type,
-                    quote,
-                    entry=entry,
-                    tp=tp,
-                    sl=sl,
-                    range_indicators=range_indicators if method == TradeMethod.RANGE_ROTATION else None,
-                    chart_indicators=range_indicators,
-                    chart_context=chart_context,
-                    atr_pips=atr_pips,
-                )
-                range_box_ok = (
-                    method != TradeMethod.RANGE_ROTATION
-                    or (
-                        confirmed_range_metadata.get("range_tp_is_inside_box") is True
-                        and confirmed_range_metadata.get("range_sl_outside_box") is True
-                    )
-                )
-                if range_box_ok:
-                    confirmed_reprice_metadata.update(
-                        {
-                            "oanda_campaign_vehicle_reprice_applied": True,
-                            "oanda_campaign_vehicle_reprice_original_entry": original_entry,
-                            "oanda_campaign_vehicle_reprice_applied_entry": entry,
-                            "oanda_campaign_vehicle_reprice_original_reward_risk": (
-                                vehicle_reprice_metadata.get(
-                                    "oanda_campaign_vehicle_reprice_current_reward_risk"
-                                )
-                            ),
-                            "oanda_campaign_vehicle_reprice_applied_reward_risk": (
-                                confirmed_reprice_metadata.get(
-                                    "oanda_campaign_vehicle_reprice_current_reward_risk"
-                                )
-                            ),
-                            "oanda_campaign_vehicle_reprice_applied_reason": (
-                                vehicle_reprice_metadata.get(
-                                    "oanda_campaign_vehicle_reprice_reason"
-                                )
-                            ),
-                        }
-                    )
-                    vehicle_reprice_metadata = confirmed_reprice_metadata
-                else:
-                    entry = original_entry
-                    tp = original_tp
-                    sl = original_sl
-                    tp_execution_metadata = original_tp_execution_metadata
-                    position_metadata = original_position_metadata
-                    recovery_target_units = original_recovery_target_units
-                    vehicle_reprice_metadata.update(
-                        {
-                            "oanda_campaign_vehicle_reprice_applied": False,
-                            "oanda_campaign_vehicle_reprice_apply_rejected_status": (
-                                "RANGE_BOX_CONTRACT_BROKEN"
-                            ),
-                            "oanda_campaign_vehicle_reprice_apply_rejected_reason": (
-                                "confirmed OANDA vehicle reprice would move RANGE TP outside "
-                                "the current box or leave SL inside it"
-                            ),
-                        }
-                    )
-            else:
-                entry = original_entry
-                tp = original_tp
-                sl = original_sl
-                tp_execution_metadata = original_tp_execution_metadata
-                position_metadata = original_position_metadata
-                recovery_target_units = original_recovery_target_units
-                vehicle_reprice_metadata.update(
+                confirmed_reprice_metadata.update(
                     {
-                        "oanda_campaign_vehicle_reprice_applied": False,
-                        "oanda_campaign_vehicle_reprice_apply_rejected_status": (
-                            confirmed_reprice_metadata.get(
-                                "oanda_campaign_vehicle_reprice_status"
+                        "oanda_campaign_vehicle_reprice_applied": True,
+                        "oanda_campaign_vehicle_reprice_original_entry": original_entry,
+                        "oanda_campaign_vehicle_reprice_applied_entry": entry,
+                        "oanda_campaign_vehicle_reprice_original_reward_risk": (
+                            initial_reprice_metadata.get(
+                                "oanda_campaign_vehicle_reprice_current_reward_risk"
                             )
                         ),
-                        "oanda_campaign_vehicle_reprice_apply_rejected_reason": (
+                        "oanda_campaign_vehicle_reprice_applied_reward_risk": (
                             confirmed_reprice_metadata.get(
+                                "oanda_campaign_vehicle_reprice_current_reward_risk"
+                            )
+                        ),
+                        "oanda_campaign_vehicle_reprice_applied_reason": (
+                            initial_reprice_metadata.get(
                                 "oanda_campaign_vehicle_reprice_reason"
                             )
                         ),
+                        "oanda_campaign_vehicle_reprice_applied_passes": reprice_pass,
                     }
                 )
+                vehicle_reprice_metadata = confirmed_reprice_metadata
+                reprice_applied = True
+                break
+            if not range_box_ok:
+                last_reprice_rejection = {
+                    "status": "RANGE_BOX_CONTRACT_BROKEN",
+                    "reason": (
+                        "confirmed OANDA vehicle reprice would move RANGE TP outside "
+                        "the current box or leave SL inside it"
+                    ),
+                }
+                break
+            if (
+                confirmed_reprice_metadata.get("oanda_campaign_vehicle_reprice_status")
+                == "ENTRY_REPRICE_POSSIBLE"
+                and reprice_pass < OANDA_CAMPAIGN_VEHICLE_REPRICE_MAX_PASSES
+            ):
+                vehicle_reprice_metadata = confirmed_reprice_metadata
+                continue
+            last_reprice_rejection = {
+                "status": confirmed_reprice_metadata.get(
+                    "oanda_campaign_vehicle_reprice_status"
+                ),
+                "reason": confirmed_reprice_metadata.get(
+                    "oanda_campaign_vehicle_reprice_reason"
+                ),
+            }
+            break
+        if not reprice_applied:
+            entry = original_entry
+            tp = original_tp
+            sl = original_sl
+            tp_execution_metadata = original_tp_execution_metadata
+            position_metadata = original_position_metadata
+            recovery_target_units = original_recovery_target_units
+            vehicle_reprice_metadata = dict(initial_reprice_metadata)
+            vehicle_reprice_metadata.update(
+                {
+                    "oanda_campaign_vehicle_reprice_applied": False,
+                    "oanda_campaign_vehicle_reprice_attempts": reprice_attempts,
+                    "oanda_campaign_vehicle_reprice_apply_rejected_status": (
+                        (last_reprice_rejection or {}).get("status")
+                    ),
+                    "oanda_campaign_vehicle_reprice_apply_rejected_reason": (
+                        (last_reprice_rejection or {}).get("reason")
+                    ),
+                    "oanda_campaign_vehicle_reprice_max_passes": (
+                        OANDA_CAMPAIGN_VEHICLE_REPRICE_MAX_PASSES
+                    )
+                }
+            )
     effective_max_loss_jpy, macro_event_sizing_metadata = _macro_event_sizing_plan(
         lane,
         side=side,

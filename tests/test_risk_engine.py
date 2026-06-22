@@ -3475,6 +3475,124 @@ class RiskEngineTest(unittest.TestCase):
         self.assertGreaterEqual(decision.metrics.reward_risk, 0.6)
         self.assertLess(decision.metrics.reward_risk, 1.0)
 
+    def test_oanda_firepower_range_countertrend_with_vehicle_rr_tolerance_warns(self) -> None:
+        intent = OrderIntent(
+            pair="EUR_USD",
+            side=Side.SHORT,
+            order_type=OrderType.LIMIT,
+            units=1000,
+            entry=1.17500,
+            tp=1.17410,
+            sl=1.17600,
+            thesis="oanda_firepower_range_repair_vehicle_rr_tolerance",
+            market_context=MarketContext(
+                regime="TREND_UP current; RANGE_ROTATION campaign lane",
+                narrative="upper-rail harvest fade while higher-timeframe buyers still dominate",
+                chart_story=(
+                    "M5 RANGE upper rail rejection; M15 TREND_UP; H1 TREND_UP; "
+                    "H4 TREND_UP; matrix confluence score_balance=LONG_LEAN"
+                ),
+                method=TradeMethod.RANGE_ROTATION,
+                invalidation="M5 upper rail breaks",
+            ),
+            metadata={
+                "regime_state": "TREND_UP",
+                "geometry_model": "RANGE_RAIL_LIMIT",
+                "forecast_direction": "RANGE",
+                "forecast_confidence": 0.78,
+                "range_entry_side": "resistance",
+                "range_tp_is_inside_box": True,
+                "range_sl_outside_box": True,
+                "attach_take_profit_on_fill": True,
+                "tp_execution_mode": "ATTACHED_TECHNICAL_TP",
+                "tp_target_intent": "HARVEST",
+                "opportunity_mode": "HARVEST",
+                "positive_rotation_mode": "OANDA_CAMPAIGN_FIREPOWER_HARVEST",
+                "positive_rotation_live_ready": True,
+                "positive_rotation_oanda_campaign_firepower_vehicle_match": True,
+                "positive_rotation_oanda_campaign_minimum_floor_reachable": True,
+                "positive_rotation_oanda_campaign_firepower_status": (
+                    "VERIFIED_TARGET_10_ROUTE_ESTIMATED"
+                ),
+                "positive_rotation_oanda_campaign_current_reward_risk": 0.9,
+                "positive_rotation_oanda_campaign_matching_vehicle_expected_reward_risk": 1.0,
+                "positive_rotation_oanda_campaign_matching_vehicle_estimated_return_pct_per_active_day": 1.2,
+                "self_improvement_p0_repair_live_ready": True,
+                "self_improvement_p0_repair_mode": "TP_HARVEST_REPAIR",
+                "strongest_matrix_reject": "EUR_USD confluence score_balance=LONG_LEAN",
+                "strongest_matrix_warning": "EUR_USD dominant_regime=TREND_UP",
+            },
+        )
+
+        decision = _capped_engine(live_enabled=True).validate(intent, snapshot(), for_live_send=True)
+
+        codes = {issue.code for issue in decision.issues}
+        self.assertTrue(decision.allowed, decision.block_reasons)
+        self.assertNotIn("RANGE_COUNTERTREND_RR_TOO_LOW", codes)
+        self.assertIn("OANDA_CAMPAIGN_FIREPOWER_RANGE_COUNTERTREND_RR_TOLERANCE", codes)
+        warn = next(
+            issue
+            for issue in decision.issues
+            if issue.code == "OANDA_CAMPAIGN_FIREPOWER_RANGE_COUNTERTREND_RR_TOLERANCE"
+        )
+        self.assertEqual(warn.severity, "WARN")
+
+    def test_oanda_firepower_range_countertrend_outside_vehicle_rr_tolerance_blocks(self) -> None:
+        intent = OrderIntent(
+            pair="EUR_USD",
+            side=Side.SHORT,
+            order_type=OrderType.LIMIT,
+            units=1000,
+            entry=1.17500,
+            tp=1.17420,
+            sl=1.17620,
+            thesis="oanda_firepower_range_repair_rr_too_far_from_vehicle",
+            market_context=MarketContext(
+                regime="TREND_UP current; RANGE_ROTATION campaign lane",
+                narrative="upper-rail harvest fade while higher-timeframe buyers still dominate",
+                chart_story=(
+                    "M5 RANGE upper rail rejection; M15 TREND_UP; H1 TREND_UP; "
+                    "H4 TREND_UP; matrix confluence score_balance=LONG_LEAN"
+                ),
+                method=TradeMethod.RANGE_ROTATION,
+                invalidation="M5 upper rail breaks",
+            ),
+            metadata={
+                "regime_state": "TREND_UP",
+                "geometry_model": "RANGE_RAIL_LIMIT",
+                "forecast_direction": "RANGE",
+                "forecast_confidence": 0.78,
+                "range_entry_side": "resistance",
+                "range_tp_is_inside_box": True,
+                "range_sl_outside_box": True,
+                "attach_take_profit_on_fill": True,
+                "tp_execution_mode": "ATTACHED_TECHNICAL_TP",
+                "tp_target_intent": "HARVEST",
+                "opportunity_mode": "HARVEST",
+                "positive_rotation_mode": "OANDA_CAMPAIGN_FIREPOWER_HARVEST",
+                "positive_rotation_live_ready": True,
+                "positive_rotation_oanda_campaign_firepower_vehicle_match": True,
+                "positive_rotation_oanda_campaign_minimum_floor_reachable": True,
+                "positive_rotation_oanda_campaign_firepower_status": (
+                    "VERIFIED_TARGET_10_ROUTE_ESTIMATED"
+                ),
+                "positive_rotation_oanda_campaign_current_reward_risk": 2 / 3,
+                "positive_rotation_oanda_campaign_matching_vehicle_expected_reward_risk": 1.0,
+                "positive_rotation_oanda_campaign_matching_vehicle_estimated_return_pct_per_active_day": 1.2,
+                "self_improvement_p0_repair_live_ready": True,
+                "self_improvement_p0_repair_mode": "TP_HARVEST_REPAIR",
+                "strongest_matrix_reject": "EUR_USD confluence score_balance=LONG_LEAN",
+                "strongest_matrix_warning": "EUR_USD dominant_regime=TREND_UP",
+            },
+        )
+
+        decision = _capped_engine(live_enabled=True).validate(intent, snapshot(), for_live_send=True)
+
+        codes = {issue.code for issue in decision.issues}
+        self.assertFalse(decision.allowed)
+        self.assertIn("RANGE_COUNTERTREND_RR_TOO_LOW", codes)
+        self.assertNotIn("OANDA_CAMPAIGN_FIREPOWER_RANGE_COUNTERTREND_RR_TOLERANCE", codes)
+
     def test_failed_break_technical_harvest_uses_one_r_floor(self) -> None:
         intent = OrderIntent(
             pair="EUR_USD",

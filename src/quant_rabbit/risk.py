@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import math
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
@@ -117,10 +118,17 @@ LOSS_ASYMMETRY_TP_RELAX_MIN_EXIT_TRADES = 20
 LOSS_ASYMMETRY_TP_PROOF_COLLECTION_MIN_EXIT_TRADES = 5
 LOSS_ASYMMETRY_TP_PROOF_COLLECTION_MIN_LOT_MODE = "TP_PROOF_COLLECTION_MIN_LOT"
 LOSS_ASYMMETRY_OANDA_CAMPAIGN_FIREPOWER_MIN_LOT_MODE = "OANDA_CAMPAIGN_FIREPOWER_MIN_LOT"
+POSITIVE_ROTATION_OANDA_CAMPAIGN_FIREPOWER_MODE = "OANDA_CAMPAIGN_FIREPOWER_HARVEST"
+SELF_IMPROVEMENT_PROFITABILITY_P0_REPAIR_MODE = "TP_HARVEST_REPAIR"
 OANDA_CAMPAIGN_FIREPOWER_TARGET_OK_STATUSES = {
     "VERIFIED_MINIMUM_5_ROUTE_ESTIMATED",
     "VERIFIED_TARGET_10_ROUTE_ESTIMATED",
 }
+# Mirrors intent_generator's OANDA vehicle RR tolerance. This is a receipt
+# consistency bound, not a market-risk setting: RiskEngine rechecks replayed
+# receipts against the same audited vehicle geometry that generated them.
+OANDA_CAMPAIGN_EXIT_SHAPE_RR_REL_TOLERANCE = 0.10
+OANDA_CAMPAIGN_EXIT_SHAPE_RR_ABS_TOLERANCE = 0.05
 CAPTURE_ECONOMICS_STALE_BLOCK_CODE = "CAPTURE_ECONOMICS_STALE"
 
 
@@ -356,6 +364,13 @@ def _range_countertrend_low_rr_issue(
         adverse_side = "LONG"
     if not (adverse_lean and adverse_regime):
         return None
+    oanda_tolerance_issue = _oanda_campaign_firepower_countertrend_rr_tolerance_issue(
+        intent,
+        metrics,
+        policy,
+    )
+    if oanda_tolerance_issue is not None:
+        return oanda_tolerance_issue
     return RiskIssue(
         "RANGE_COUNTERTREND_RR_TOO_LOW",
         f"{intent.pair} {intent.side.value} RANGE_ROTATION is counter to {adverse_side}-leaning "
@@ -387,6 +402,96 @@ def _range_countertrend_evidence_text(intent: OrderIntent) -> str:
         elif value is not None:
             parts.append(str(value))
     return " ".join(parts).upper()
+
+
+def _oanda_campaign_firepower_countertrend_rr_tolerance_issue(
+    intent: OrderIntent,
+    metrics: RiskMetrics,
+    policy: RiskPolicy,
+) -> RiskIssue | None:
+    """Downgrade one narrow OANDA HARVEST repair shape to WARN.
+
+    A RANGE rail fade can sit just below 1R after broker precision and attached
+    HARVEST TP anchoring, while still matching the audited OANDA campaign
+    vehicle that generated the repair lane. This is not a generic low-RR escape:
+    the receipt must prove non-market attached-TP HARVEST shape, range-box
+    geometry, P0 repair mode, current vehicle match, and matching-vehicle
+    positive active-day return. RiskEngine also recomputes the RR tolerance so
+    stale or hand-written metadata cannot turn a 0.6R fade into a live send.
+    """
+
+    metadata = intent.metadata or {}
+    if intent.order_type == OrderType.MARKET:
+        return None
+    if str(metadata.get("position_intent") or "NEW").upper() == "HEDGE":
+        return None
+    if metadata.get("attach_take_profit_on_fill") is not True:
+        return None
+    if str(metadata.get("tp_execution_mode") or "").upper() != "ATTACHED_TECHNICAL_TP":
+        return None
+    if str(metadata.get("tp_target_intent") or "").upper() != "HARVEST":
+        return None
+    if str(metadata.get("opportunity_mode") or "").upper() != "HARVEST":
+        return None
+    if str(metadata.get("positive_rotation_mode") or "") != POSITIVE_ROTATION_OANDA_CAMPAIGN_FIREPOWER_MODE:
+        return None
+    if metadata.get("positive_rotation_live_ready") is not True:
+        return None
+    if metadata.get("positive_rotation_oanda_campaign_firepower_vehicle_match") is not True:
+        return None
+    if metadata.get("positive_rotation_oanda_campaign_minimum_floor_reachable") is not True:
+        return None
+    if metadata.get("self_improvement_p0_repair_live_ready") is not True:
+        return None
+    if (
+        str(metadata.get("self_improvement_p0_repair_mode") or "")
+        != SELF_IMPROVEMENT_PROFITABILITY_P0_REPAIR_MODE
+    ):
+        return None
+    if str(metadata.get("forecast_direction") or "").upper() != "RANGE":
+        return None
+    if metadata.get("range_tp_is_inside_box") is not True:
+        return None
+    if metadata.get("range_sl_outside_box") is not True:
+        return None
+    entry_side = str(metadata.get("range_entry_side") or "").upper()
+    if intent.side == Side.LONG and entry_side != "SUPPORT":
+        return None
+    if intent.side == Side.SHORT and entry_side != "RESISTANCE":
+        return None
+    status = str(metadata.get("positive_rotation_oanda_campaign_firepower_status") or "").upper()
+    if status not in OANDA_CAMPAIGN_FIREPOWER_TARGET_OK_STATUSES:
+        return None
+    matching_return = _to_float(
+        metadata.get(
+            "positive_rotation_oanda_campaign_matching_vehicle_estimated_return_pct_per_active_day"
+        )
+    )
+    if matching_return is None or matching_return <= 0.0:
+        return None
+    current_rr = _to_float(metadata.get("positive_rotation_oanda_campaign_current_reward_risk"))
+    if current_rr is None or not math.isclose(current_rr, metrics.reward_risk, abs_tol=1e-6):
+        return None
+    expected_rr = _to_float(
+        metadata.get("positive_rotation_oanda_campaign_matching_vehicle_expected_reward_risk")
+    )
+    if expected_rr is None or expected_rr < policy.technical_harvest_min_reward_risk:
+        return None
+    if metrics.reward_risk < policy.range_min_reward_risk:
+        return None
+    tolerance = max(
+        OANDA_CAMPAIGN_EXIT_SHAPE_RR_ABS_TOLERANCE,
+        abs(expected_rr) * OANDA_CAMPAIGN_EXIT_SHAPE_RR_REL_TOLERANCE,
+    )
+    if expected_rr - metrics.reward_risk > tolerance + 1e-9:
+        return None
+    return RiskIssue(
+        "OANDA_CAMPAIGN_FIREPOWER_RANGE_COUNTERTREND_RR_TOLERANCE",
+        f"{intent.pair} {intent.side.value} RANGE_ROTATION is countertrend, but the non-market "
+        f"attached-TP HARVEST repair receipt matches the audited OANDA vehicle within RR tolerance "
+        f"({metrics.reward_risk:.2f}x vs vehicle {expected_rr:.2f}x); keep all other live gates active.",
+        severity="WARN",
+    )
 
 
 def _uses_technical_harvest_reward_floor(intent: OrderIntent) -> bool:
