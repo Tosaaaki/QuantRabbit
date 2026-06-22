@@ -4417,6 +4417,11 @@ class SelfImprovementAuditorTest(unittest.TestCase):
             with sqlite3.connect(db_path) as conn:
                 conn.execute("UPDATE execution_events SET price = 1.1000 WHERE event_uid = 'fill'")
                 conn.execute("UPDATE execution_events SET price = 1.0980 WHERE event_uid = 'close'")
+                _insert_close_gate_pass_observation(
+                    conn,
+                    trade_id="T42",
+                    ts_utc=(_NOW - timedelta(hours=1, minutes=5)).isoformat(),
+                )
                 conn.execute(
                     """
                     INSERT INTO execution_events(
@@ -4451,6 +4456,46 @@ class SelfImprovementAuditorTest(unittest.TestCase):
         self.assertEqual(market_loss["loss_containment_trades"], 1)
         self.assertGreater(market_loss["loss_containment_avoided_loss_jpy"], 0.0)
         self.assertEqual(close_metric["loss_containment_trades"], 1)
+
+    def test_effect_metrics_does_not_count_gateway_loss_containment_without_close_gate_evidence(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "execution_ledger.db"
+            _write_market_close_attribution_ledger(db_path, include_gateway_close=True)
+            with sqlite3.connect(db_path) as conn:
+                conn.execute("UPDATE execution_events SET price = 1.1000 WHERE event_uid = 'fill'")
+                conn.execute("UPDATE execution_events SET price = 1.0980 WHERE event_uid = 'close'")
+                conn.execute(
+                    """
+                    INSERT INTO execution_events(
+                        event_uid, ts_utc, event_type, lane_id, order_id, trade_id,
+                        pair, side, units, realized_pl_jpy, exit_reason, price, sl
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        "protection-sl",
+                        (_NOW - timedelta(hours=2, minutes=50)).isoformat(),
+                        "PROTECTION_CREATED",
+                        "",
+                        "SL42",
+                        "T42",
+                        "EUR_USD",
+                        "",
+                        None,
+                        None,
+                        "ON_FILL",
+                        1.0950,
+                        1.0950,
+                    ),
+                )
+
+            effect = _effect_metrics(db_path, window_hours=168.0, now=_NOW)
+
+        market_loss = effect["market_order_trade_close_loss_provenance_metrics"]["GATEWAY_TRADE_CLOSE_SENT"]
+        self.assertEqual(market_loss["trades"], 1)
+        self.assertAlmostEqual(market_loss["net_jpy"], -500.0)
+        self.assertNotIn("loss_containment_trades", market_loss)
+        self.assertNotIn("loss_containment_avoided_loss_jpy", market_loss)
 
     def test_effect_metrics_matches_gateway_market_order_loss_close_by_order_id(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -6487,6 +6532,31 @@ def _write_market_close_attribution_ledger(
             """,
             rows,
         )
+
+
+def _insert_close_gate_pass_observation(
+    conn: sqlite3.Connection,
+    *,
+    trade_id: str,
+    ts_utc: str,
+) -> None:
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS verification_observations (
+            ts_utc TEXT NOT NULL,
+            subject_id TEXT,
+            check_name TEXT NOT NULL,
+            status TEXT NOT NULL
+        )
+        """
+    )
+    conn.execute(
+        """
+        INSERT INTO verification_observations(ts_utc, subject_id, check_name, status)
+        VALUES (?, ?, ?, ?)
+        """,
+        (ts_utc, trade_id, "close_gate_evidence", "PASS"),
+    )
 
 
 def _add_raw_json_column(conn: sqlite3.Connection) -> None:

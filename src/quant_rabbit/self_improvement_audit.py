@@ -6234,6 +6234,7 @@ def _effect_metrics(db_path: Path, *, window_hours: float, now: datetime) -> dic
     reconciled_close_trade_ids: set[str] = set()
     reconciled_close_order_ids: set[str] = set()
     gpt_close_trade_ids: set[str] = set()
+    close_gate_pass_trade_ids: set[str] = set()
     stale_close_satisfied_trade_ids: set[str] = set()
     error: str | None = None
     if db_path.exists():
@@ -6250,6 +6251,7 @@ def _effect_metrics(db_path: Path, *, window_hours: float, now: datetime) -> dic
                     if "order_id" in columns:
                         gateway_close_order_ids = _event_order_ids(conn, "GATEWAY_TRADE_CLOSE_SENT")
                         reconciled_close_order_ids = _event_order_ids(conn, "GATEWAY_TRADE_CLOSE_RECONCILED")
+                    close_gate_pass_trade_ids = _close_gate_pass_trade_ids(conn)
                     stale_close_satisfied_trade_ids = _stale_gpt_close_satisfied_trade_ids(conn, columns)
                     accepted_close_rows = _broker_trade_close_accept_rows(conn, columns)
                     lane_select = "e.lane_id AS lane_id" if has_lane_id else "NULL AS lane_id"
@@ -6356,7 +6358,13 @@ def _effect_metrics(db_path: Path, *, window_hours: float, now: datetime) -> dic
         contained_loss = False
         avoided_loss_jpy: float | None = None
         if exit_reason == "MARKET_ORDER_TRADE_CLOSE" and value < 0:
-            contained_loss, avoided_loss_jpy = _loss_close_containment(row, value, close_provenance)
+            trade_id = str(_row_text(row, "trade_id") or "").strip()
+            contained_loss, avoided_loss_jpy = _loss_close_containment(
+                row,
+                value,
+                close_provenance,
+                close_gate_evidence_passed=trade_id in close_gate_pass_trade_ids,
+            )
         _add_close_provenance_metric(
             close_provenance_metrics,
             close_provenance,
@@ -6493,6 +6501,56 @@ def _event_order_ids(conn: sqlite3.Connection, event_type: str) -> set[str]:
         return set()
 
 
+def _close_gate_pass_trade_ids(conn: sqlite3.Connection) -> set[str]:
+    try:
+        tables = {
+            str(row[0])
+            for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
+        }
+    except sqlite3.Error:
+        return set()
+    if "verification_observations" not in tables:
+        return set()
+    try:
+        return {
+            str(row[0]).strip()
+            for row in conn.execute(
+                """
+                SELECT DISTINCT g.trade_id
+                FROM execution_events g
+                INNER JOIN verification_observations v
+                  ON v.check_name = 'close_gate_evidence'
+                 AND v.status = 'PASS'
+                 AND v.subject_id = g.trade_id
+                WHERE g.event_type IN ('GATEWAY_TRADE_CLOSE_SENT', 'GATEWAY_GPT_CLOSE_ACCEPTED')
+                  AND COALESCE(g.trade_id, '') != ''
+                  AND (
+                      v.ts_utc = g.ts_utc
+                      OR EXISTS (
+                          SELECT 1
+                          FROM execution_events accepted
+                          WHERE accepted.event_type = 'GATEWAY_GPT_CLOSE_ACCEPTED'
+                            AND accepted.trade_id = g.trade_id
+                            AND accepted.ts_utc = v.ts_utc
+                            AND accepted.ts_utc <= g.ts_utc
+                            AND NOT EXISTS (
+                                SELECT 1
+                                FROM execution_events newer_accepted
+                                WHERE newer_accepted.event_type = 'GATEWAY_GPT_CLOSE_ACCEPTED'
+                                  AND newer_accepted.trade_id = g.trade_id
+                                  AND newer_accepted.ts_utc > accepted.ts_utc
+                                  AND newer_accepted.ts_utc <= g.ts_utc
+                            )
+                      )
+                  )
+                """
+            )
+            if str(row[0]).strip()
+        }
+    except sqlite3.Error:
+        return set()
+
+
 def _stale_gpt_close_satisfied_trade_ids(conn: sqlite3.Connection, columns: set[str]) -> set[str]:
     if "trade_id" not in columns:
         return set()
@@ -6591,16 +6649,20 @@ def _loss_close_containment(
     row: sqlite3.Row,
     value: float,
     close_provenance: str,
+    *,
+    close_gate_evidence_passed: bool,
 ) -> tuple[bool, float | None]:
     """Detect loss-side gateway closes that reduced broker-side SL loss.
 
     A realized negative GPT/gateway close can be good close discipline when it
-    exits a broken thesis before the attached broker SL. Those trades should
-    still count in overall expectancy, but they should not by themselves prove
-    a close-discipline P0.
+    exits a broken thesis before the attached broker SL. The avoided-loss
+    credit is counted only when durable close-gate evidence also passed, so a
+    missing Gate A/B receipt cannot look like repaired close discipline.
     """
 
     if value >= 0 or close_provenance not in _LOSS_CONTAINMENT_CLOSE_PROVENANCES:
+        return False, None
+    if not close_gate_evidence_passed:
         return False, None
     side = str(_row_text(row, "side") or "").upper()
     entry = _maybe_float(row["entry_price"]) if "entry_price" in row.keys() else None
