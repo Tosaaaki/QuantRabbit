@@ -5287,6 +5287,9 @@ class ConsolidatedCycleCommandTest(unittest.TestCase):
                             "profit_capture_blocked_positions": 0,
                             "live_ready_lanes": 0,
                             "repair_frontier_lanes": 8,
+                            "global_unlock_frontier_lanes": 1,
+                            "target_firepower_status": "VERIFIED_TARGET_10_ROUTE_ESTIMATED",
+                            "target_firepower_minimum_5pct_estimated_reachable": True,
                         },
                         "guardian": {
                             "active_source": "plist_missing",
@@ -5324,6 +5327,19 @@ class ConsolidatedCycleCommandTest(unittest.TestCase):
                                     ],
                                 }
                             ],
+                            "global_unlock_frontier": [
+                                {
+                                    "lane_id": "range_trader:NZD_CAD:LONG:RANGE_ROTATION",
+                                    "remaining_blocker_codes_after_global_unlock": [],
+                                }
+                            ],
+                        },
+                        "profitability_acceptance": {
+                            "target_firepower": {
+                                "status": "VERIFIED_TARGET_10_ROUTE_ESTIMATED",
+                                "best_bucket": "high_precision",
+                                "minimum_5pct_estimated_reachable": True,
+                            }
                         },
                     }
                 )
@@ -5340,6 +5356,10 @@ class ConsolidatedCycleCommandTest(unittest.TestCase):
         self.assertEqual(support["profit_capture_missed_loss_closes"], 2)
         self.assertEqual(support["profit_capture_watch_positions"], 1)
         self.assertEqual(support["repair_frontier_lanes"], 8)
+        self.assertEqual(support["global_unlock_frontier_lanes"], 1)
+        self.assertEqual(support["target_firepower_status"], "VERIFIED_TARGET_10_ROUTE_ESTIMATED")
+        self.assertTrue(support["target_firepower_minimum_5pct_estimated_reachable"])
+        self.assertEqual(support["target_firepower_best_bucket"], "high_precision")
         self.assertEqual(
             support["top_blocker_codes"],
             ["POSITION_GUARDIAN_INACTIVE", "LOSS_CLOSE_PROFIT_CAPTURE_MISSED"],
@@ -5356,6 +5376,10 @@ class ConsolidatedCycleCommandTest(unittest.TestCase):
         self.assertEqual(
             support["repair_frontier"][0]["remaining_blocker_codes_after_guardian_and_repair_exemption"],
             ["FORECAST_CONTEXT_REQUIRED_FOR_LIVE"],
+        )
+        self.assertEqual(
+            support["global_unlock_frontier"][0]["lane_id"],
+            "range_trader:NZD_CAD:LONG:RANGE_ROTATION",
         )
 
     def test_cycle_digest_summarizes_profit_capture_bot(self) -> None:

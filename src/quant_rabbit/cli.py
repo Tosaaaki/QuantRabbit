@@ -2610,6 +2610,16 @@ def _cycle_digest(*, kind: str, step_results: list[dict[str, Any]], aborted: boo
             if isinstance(trader_support.get("entry_readiness"), dict)
             else {}
         )
+        profitability_acceptance = (
+            trader_support.get("profitability_acceptance")
+            if isinstance(trader_support.get("profitability_acceptance"), dict)
+            else {}
+        )
+        target_firepower = (
+            profitability_acceptance.get("target_firepower")
+            if isinstance(profitability_acceptance.get("target_firepower"), dict)
+            else {}
+        )
         current_profit_capture = (
             trader_support.get("current_profit_capture")
             if isinstance(trader_support.get("current_profit_capture"), dict)
@@ -2630,6 +2640,12 @@ def _cycle_digest(*, kind: str, step_results: list[dict[str, Any]], aborted: boo
             "profit_capture_blocked_positions": metrics.get("profit_capture_blocked_positions"),
             "live_ready_lanes": metrics.get("live_ready_lanes"),
             "repair_frontier_lanes": metrics.get("repair_frontier_lanes"),
+            "global_unlock_frontier_lanes": metrics.get("global_unlock_frontier_lanes"),
+            "target_firepower_status": metrics.get("target_firepower_status"),
+            "target_firepower_minimum_5pct_estimated_reachable": metrics.get(
+                "target_firepower_minimum_5pct_estimated_reachable"
+            ),
+            "target_firepower_best_bucket": target_firepower.get("best_bucket"),
             "top_blocker_codes": [
                 item.get("code")
                 for item in trader_support.get("blockers", []) or []
@@ -2643,6 +2659,7 @@ def _cycle_digest(*, kind: str, step_results: list[dict[str, Any]], aborted: boo
             "top_profit_capture_misses": profit_capture.get("top_misses", [])[:3],
             "current_profit_capture_gate_statuses": current_profit_capture.get("top_gate_statuses", [])[:3],
             "repair_frontier": entry.get("repair_frontier", [])[:4],
+            "global_unlock_frontier": entry.get("global_unlock_frontier", [])[:4],
         }
 
     return digest

@@ -47,7 +47,13 @@ class TraderSupportBotTest(unittest.TestCase):
             self.assertFalse(payload["metrics"]["send_fresh_entries_allowed"])
             self.assertEqual(payload["profit_capture"]["missed_loss_closes"], 2)
             self.assertEqual(payload["current_profit_capture"]["watch_positions"], 1)
-            self.assertEqual(payload["entry_readiness"]["guardian_blocked_lanes"], 1)
+            self.assertEqual(payload["entry_readiness"]["guardian_blocked_lanes"], 2)
+            self.assertEqual(payload["metrics"]["global_unlock_frontier_lanes"], 1)
+            unlock = payload["entry_readiness"]["global_unlock_frontier"][0]
+            self.assertEqual(unlock["lane_id"], "range_trader:NZD_CAD:LONG:RANGE_ROTATION")
+            self.assertEqual(unlock["remaining_blocker_codes_after_global_unlock"], [])
+            self.assertTrue(payload["profitability_acceptance"]["target_firepower"]["minimum_5pct_estimated_reachable"])
+            self.assertEqual(payload["profitability_acceptance"]["target_firepower"]["best_bucket"], "high_precision")
             repair = payload["entry_readiness"]["repair_frontier"][0]
             self.assertEqual(
                 repair["remaining_blocker_codes_after_guardian_and_repair_exemption"],
@@ -55,6 +61,8 @@ class TraderSupportBotTest(unittest.TestCase):
             )
             action_codes = {item["code"] for item in payload["operator_actions"]}
             self.assertIn("CHECK_POSITION_GUARDIAN_PREFLIGHT", action_codes)
+            self.assertIn("WORK_GLOBAL_UNLOCK_FRONTIER", action_codes)
+            self.assertIn("WORK_TARGET_FIREPOWER_BLOCKERS", action_codes)
             self.assertTrue(
                 any(item["code"] == "LOAD_POSITION_GUARDIAN_ONLY_IF_APPROVED" and item["requires_explicit_operator_approval"]
                     for item in payload["operator_actions"])
@@ -238,6 +246,25 @@ def _write_fixture(root: Path, *, now: datetime, blocked: bool) -> dict[str, Pat
     if blocked:
         results = [
             {
+                "lane_id": "range_trader:NZD_CAD:LONG:RANGE_ROTATION",
+                "status": "DRY_RUN_BLOCKED",
+                "live_blocker_codes": [
+                    "NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION",
+                    "SELF_IMPROVEMENT_P0_PROFITABILITY_DISCIPLINE",
+                    "POSITION_GUARDIAN_INACTIVE_FOR_PROFIT_CAPTURE",
+                ],
+                "intent": {
+                    "pair": "NZD_CAD",
+                    "side": "LONG",
+                    "order_type": "LIMIT",
+                    "market_context": {"method": "RANGE_ROTATION"},
+                    "metadata": {
+                        "sizing_actual_reward_jpy": 910.0,
+                        "sizing_actual_risk_jpy": 300.0,
+                    },
+                },
+            },
+            {
                 "lane_id": "failure_trader:GBP_USD:LONG:BREAKOUT_FAILURE:LIMIT",
                 "status": "DRY_RUN_BLOCKED",
                 "live_blocker_codes": [
@@ -328,7 +355,40 @@ def _write_fixture(root: Path, *, now: datetime, blocked: bool) -> dict[str, Pat
     _write_json(files["self_improvement"], {"status": self_improvement_status, "findings": findings})
     _write_json(
         files["profitability"],
-        {"status": profitability_status, "blockers": profitability_blockers, "metrics": {"capture_economics": {}}},
+        {
+            "status": profitability_status,
+            "blockers": profitability_blockers,
+            "metrics": {
+                "capture_economics": {},
+                "oanda_campaign_firepower": {
+                    "status": "VERIFIED_TARGET_10_ROUTE_ESTIMATED",
+                    "target_open": True,
+                    "minimum_return_pct": 5.0,
+                    "target_return_pct": 10.0,
+                    "per_trade_risk_pct_lens": 1.0,
+                    "high_precision": {
+                        "estimated_return_pct_per_active_day_at_observed_frequency": 12.5,
+                        "weighted_return_pct_per_trade_at_risk_lens": 0.625,
+                        "observed_attempts_per_active_day": 20.0,
+                        "trades_needed_for_minimum_5pct_at_weighted_expectancy": 8,
+                        "trades_needed_for_target_10pct_at_weighted_expectancy": 16,
+                        "pair_count": 4,
+                        "unique_vehicle_count": 9,
+                        "top_vehicle_keys": ["NZD_CAD|LONG|range_reversion|tp1_sl1"],
+                    },
+                    "evidence_queue": {
+                        "estimated_return_pct_per_active_day_at_observed_frequency": 4.0,
+                        "weighted_return_pct_per_trade_at_risk_lens": 0.4,
+                        "observed_attempts_per_active_day": 10.0,
+                        "trades_needed_for_minimum_5pct_at_weighted_expectancy": 13,
+                        "trades_needed_for_target_10pct_at_weighted_expectancy": 25,
+                        "pair_count": 2,
+                        "unique_vehicle_count": 3,
+                        "top_vehicle_keys": ["USD_JPY|LONG|range_reversion|tp1_sl1"],
+                    },
+                },
+            },
+        },
     )
     _write_json(
         files["timing"],

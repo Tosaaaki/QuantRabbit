@@ -33,6 +33,11 @@ GUARDIAN_BLOCKER = "POSITION_GUARDIAN_INACTIVE_FOR_PROFIT_CAPTURE"
 PROFIT_CAPTURE_MISS = "LOSS_CLOSE_PROFIT_CAPTURE_MISSED"
 PERSISTENT_DISCIPLINE = "PERSISTENT_PROFITABILITY_DISCIPLINE_BLOCKED"
 REPAIR_EXEMPTION_CODES = {PERSISTENT_DISCIPLINE, "SELF_IMPROVEMENT_P0_PROFITABILITY_DISCIPLINE"}
+GLOBAL_UNLOCK_BLOCKERS = {
+    GUARDIAN_BLOCKER,
+    "SELF_IMPROVEMENT_P0_PROFITABILITY_DISCIPLINE",
+    "NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION",
+}
 
 
 @dataclass(frozen=True)
@@ -154,6 +159,7 @@ class TraderSupportBot:
             "guardian_heartbeat_fresh": guardian["heartbeat_fresh"],
             "live_ready_lanes": entry["live_ready_lanes"],
             "repair_frontier_lanes": len(entry["repair_frontier"]),
+            "global_unlock_frontier_lanes": len(entry["global_unlock_frontier"]),
             "profit_capture_missed_loss_closes": profit_capture["missed_loss_closes"],
             "profit_capture_estimated_gap_jpy": profit_capture["estimated_gap_jpy"],
             "profit_capture_bankable_positions": current_profit_capture["bankable_positions"],
@@ -162,6 +168,13 @@ class TraderSupportBot:
             "open_trader_positions": broker_summary["trader_positions"],
             "target_remaining_jpy": target_summary["remaining_target_jpy"],
             "profitability_status": acceptance["status"],
+            "target_firepower_status": acceptance["target_firepower"]["status"],
+            "target_firepower_minimum_5pct_estimated_reachable": acceptance["target_firepower"][
+                "minimum_5pct_estimated_reachable"
+            ],
+            "target_firepower_target_10pct_estimated_reachable": acceptance["target_firepower"][
+                "target_10pct_estimated_reachable"
+            ],
         }
         generated = self.now_utc.isoformat()
         return {
@@ -477,12 +490,34 @@ def _entry_readiness_summary(payload: dict[str, Any]) -> dict[str, Any]:
     live_ready = [item for item in results if item.get("status") == "LIVE_READY"]
     codes = Counter()
     repair_frontier: list[dict[str, Any]] = []
+    global_unlock_frontier: list[dict[str, Any]] = []
     for item in results:
         for code in item.get("live_blocker_codes") or []:
             codes[str(code)] += 1
+        blocker_codes = [str(code) for code in item.get("live_blocker_codes") or []]
         metadata = _intent_metadata(item)
+        if str(item.get("status") or "") != "LIVE_READY" and blocker_codes:
+            remaining_after_global = [code for code in blocker_codes if code not in GLOBAL_UNLOCK_BLOCKERS]
+            if not remaining_after_global:
+                intent = item.get("intent") if isinstance(item.get("intent"), dict) else {}
+                context = intent.get("market_context") if isinstance(intent.get("market_context"), dict) else {}
+                global_unlock_frontier.append(
+                    {
+                        "lane_id": item.get("lane_id"),
+                        "status": item.get("status"),
+                        "pair": intent.get("pair"),
+                        "side": intent.get("side"),
+                        "method": context.get("method"),
+                        "order_type": intent.get("order_type"),
+                        "reward_jpy": _intent_reward_jpy(item, metadata),
+                        "risk_jpy": _intent_risk_jpy(item, metadata),
+                        "global_blocker_codes": blocker_codes,
+                        "remaining_blocker_codes_after_global_unlock": remaining_after_global,
+                        "repair_mode": metadata.get("self_improvement_p0_repair_mode")
+                        or metadata.get("positive_rotation_mode"),
+                    }
+                )
         if metadata.get("self_improvement_p0_repair_live_ready") is True:
-            blocker_codes = [str(code) for code in item.get("live_blocker_codes") or []]
             exempt = set(REPAIR_EXEMPTION_CODES)
             remaining_after_support = [
                 code for code in blocker_codes if code != GUARDIAN_BLOCKER and code not in exempt
@@ -506,6 +541,7 @@ def _entry_readiness_summary(payload: dict[str, Any]) -> dict[str, Any]:
                 }
             )
     repair_frontier.sort(key=lambda item: _float(item.get("reward_jpy")), reverse=True)
+    global_unlock_frontier.sort(key=lambda item: _float(item.get("reward_jpy")), reverse=True)
     return {
         "generated_at_utc": payload.get("generated_at_utc"),
         "lanes": len(results),
@@ -514,6 +550,7 @@ def _entry_readiness_summary(payload: dict[str, Any]) -> dict[str, Any]:
         "top_blockers": [{"code": code, "count": count} for code, count in codes.most_common(12)],
         "guardian_blocked_lanes": codes.get(GUARDIAN_BLOCKER, 0),
         "repair_frontier": repair_frontier[:12],
+        "global_unlock_frontier": global_unlock_frontier[:12],
     }
 
 
@@ -521,6 +558,26 @@ def _intent_metadata(item: dict[str, Any]) -> dict[str, Any]:
     intent = item.get("intent") if isinstance(item.get("intent"), dict) else {}
     metadata = intent.get("metadata") if isinstance(intent.get("metadata"), dict) else {}
     return metadata
+
+
+def _intent_reward_jpy(item: dict[str, Any], metadata: dict[str, Any]) -> float | None:
+    risk_metrics = item.get("risk_metrics") if isinstance(item.get("risk_metrics"), dict) else {}
+    return _round_optional(
+        metadata.get("sizing_actual_reward_jpy")
+        if metadata.get("sizing_actual_reward_jpy") is not None
+        else risk_metrics.get("reward_jpy"),
+        3,
+    )
+
+
+def _intent_risk_jpy(item: dict[str, Any], metadata: dict[str, Any]) -> float | None:
+    risk_metrics = item.get("risk_metrics") if isinstance(item.get("risk_metrics"), dict) else {}
+    return _round_optional(
+        metadata.get("sizing_actual_risk_jpy")
+        if metadata.get("sizing_actual_risk_jpy") is not None
+        else risk_metrics.get("risk_jpy"),
+        3,
+    )
 
 
 def _position_support_summary(
@@ -567,12 +624,86 @@ def _compact_position_actions(rows: list[dict[str, Any]]) -> list[dict[str, Any]
 def _acceptance_summary(payload: dict[str, Any]) -> dict[str, Any]:
     metrics = payload.get("metrics") if isinstance(payload.get("metrics"), dict) else {}
     capture = metrics.get("capture_economics") if isinstance(metrics.get("capture_economics"), dict) else {}
+    firepower = metrics.get("oanda_campaign_firepower") if isinstance(metrics.get("oanda_campaign_firepower"), dict) else {}
     blockers = payload.get("blockers") if isinstance(payload.get("blockers"), list) else []
     return {
         "status": payload.get("status"),
         "blockers": blockers[:8],
         "capture_economics": capture,
+        "target_firepower": _target_firepower_summary(firepower),
     }
+
+
+def _target_firepower_summary(payload: dict[str, Any]) -> dict[str, Any]:
+    high_precision = _firepower_bucket_summary(payload.get("high_precision"))
+    evidence_queue = _firepower_bucket_summary(payload.get("evidence_queue"))
+    bucket_name, bucket = _best_firepower_bucket(
+        high_precision=high_precision,
+        evidence_queue=evidence_queue,
+    )
+    minimum = _float(payload.get("minimum_return_pct")) or 5.0
+    target = _float(payload.get("target_return_pct")) or 10.0
+    estimated_return = _float(bucket.get("estimated_return_pct_per_active_day_at_observed_frequency"))
+    return {
+        "status": payload.get("status"),
+        "target_open": payload.get("target_open"),
+        "minimum_return_pct": _round_optional(minimum, 3),
+        "target_return_pct": _round_optional(target, 3),
+        "per_trade_risk_pct_lens": _round_optional(payload.get("per_trade_risk_pct_lens"), 3),
+        "best_bucket": bucket_name,
+        "minimum_5pct_estimated_reachable": bool(estimated_return >= minimum),
+        "target_10pct_estimated_reachable": bool(estimated_return >= target),
+        "audit_only_no_live_permission": True,
+        "high_precision": high_precision,
+        "evidence_queue": evidence_queue,
+        "contract": payload.get("contract"),
+    }
+
+
+def _firepower_bucket_summary(raw: Any) -> dict[str, Any]:
+    bucket = raw if isinstance(raw, dict) else {}
+    return {
+        "estimated_return_pct_per_active_day_at_observed_frequency": _round_optional(
+            bucket.get("estimated_return_pct_per_active_day_at_observed_frequency"),
+            6,
+        ),
+        "weighted_return_pct_per_trade_at_risk_lens": _round_optional(
+            bucket.get("weighted_return_pct_per_trade_at_risk_lens"),
+            6,
+        ),
+        "observed_attempts_per_active_day": _round_optional(
+            bucket.get("observed_attempts_per_active_day"),
+            6,
+        ),
+        "trades_needed_for_minimum_5pct_at_weighted_expectancy": bucket.get(
+            "trades_needed_for_minimum_5pct_at_weighted_expectancy"
+        ),
+        "trades_needed_for_target_10pct_at_weighted_expectancy": bucket.get(
+            "trades_needed_for_target_10pct_at_weighted_expectancy"
+        ),
+        "pair_count": bucket.get("pair_count"),
+        "unique_vehicle_count": bucket.get("unique_vehicle_count"),
+        "top_vehicle_keys": list(bucket.get("top_vehicle_keys") or [])[:5],
+    }
+
+
+def _best_firepower_bucket(
+    *,
+    high_precision: dict[str, Any],
+    evidence_queue: dict[str, Any],
+) -> tuple[str | None, dict[str, Any]]:
+    candidates = [
+        ("high_precision", high_precision),
+        ("evidence_queue", evidence_queue),
+    ]
+    candidates.sort(
+        key=lambda item: _float(item[1].get("estimated_return_pct_per_active_day_at_observed_frequency")),
+        reverse=True,
+    )
+    name, bucket = candidates[0]
+    if _float(bucket.get("estimated_return_pct_per_active_day_at_observed_frequency")) <= 0:
+        return None, {}
+    return name, bucket
 
 
 def _build_blockers(
@@ -699,6 +830,31 @@ def _operator_actions(
                 "reason": "inspect red/green acceptance invariants before increasing turnover",
             }
         )
+    if entry.get("global_unlock_frontier"):
+        actions.append(
+            {
+                "code": "WORK_GLOBAL_UNLOCK_FRONTIER",
+                "command": "PYTHONPATH=src python3 -m quant_rabbit.cli profitability-acceptance",
+                "requires_explicit_operator_approval": False,
+                "reason": (
+                    "some lanes are blocked only by global support/profitability gates; "
+                    "clear those gates before adding unrelated indicators"
+                ),
+            }
+        )
+    target_firepower = acceptance.get("target_firepower") if isinstance(acceptance.get("target_firepower"), dict) else {}
+    if target_firepower.get("minimum_5pct_estimated_reachable"):
+        actions.append(
+            {
+                "code": "WORK_TARGET_FIREPOWER_BLOCKERS",
+                "command": "PYTHONPATH=src python3 -m quant_rabbit.cli profitability-acceptance",
+                "requires_explicit_operator_approval": False,
+                "reason": (
+                    "firepower audit estimates enough turnover for the 5% floor, but live permission "
+                    "still depends on clearing acceptance, guardian, and lane blockers"
+                ),
+            }
+        )
     if status == STATUS_READY:
         actions.append(
             {
@@ -727,6 +883,7 @@ def _render_report(payload: dict[str, Any]) -> str:
     current_profit = payload["current_profit_capture"]
     broker = payload["broker"]
     target = payload["target"]
+    firepower = payload["profitability_acceptance"].get("target_firepower", {})
     lines = [
         "# Trader Support Bot Report",
         "",
@@ -744,10 +901,12 @@ def _render_report(payload: dict[str, Any]) -> str:
         f"| Guardian heartbeat fresh | `{guardian['heartbeat_fresh']}` age=`{guardian['heartbeat_age_seconds']}`s |",
         f"| LIVE_READY lanes | `{entry['live_ready_lanes']}` / `{entry['lanes']}` |",
         f"| Repair frontier lanes | `{len(entry['repair_frontier'])}` |",
+        f"| Global unlock frontier lanes | `{len(entry['global_unlock_frontier'])}` |",
         f"| Profit-capture misses | `{profit['missed_loss_closes']}` gap=`{profit['estimated_gap_jpy']}` JPY |",
         f"| Current profit-capture positions | bankable=`{current_profit['bankable_positions']}` watch=`{current_profit['watch_positions']}` blocked=`{current_profit['blocked_positions']}` |",
         f"| Open trader positions | `{broker['trader_positions']}` upl=`{broker['trader_unrealized_pl_jpy']}` JPY |",
         f"| Target remaining | `{target['remaining_target_jpy']}` JPY |",
+        f"| Firepower 5% audit estimate | `{firepower.get('minimum_5pct_estimated_reachable')}` best=`{firepower.get('best_bucket')}` |",
         "",
         "## Blockers",
         "",
@@ -791,6 +950,40 @@ def _render_report(payload: dict[str, Any]) -> str:
             lines.append(
                 f"| `{item['lane_id']}` | `{item['pair']}` | `{item['side']}` | "
                 f"`{item['method']}` | `{item['reward_jpy']}` | `{remaining}` |"
+            )
+    else:
+        lines.append("- none")
+    lines.extend(["", "## Global Unlock Frontier", ""])
+    if entry["global_unlock_frontier"]:
+        lines.extend(
+            [
+                "| Lane | Pair | Side | Method | Reward JPY | Global blockers |",
+                "|---|---|---|---|---:|---|",
+            ]
+        )
+        for item in entry["global_unlock_frontier"][:8]:
+            blockers = ", ".join(item["global_blocker_codes"]) or "none"
+            lines.append(
+                f"| `{item['lane_id']}` | `{item['pair']}` | `{item['side']}` | "
+                f"`{item['method']}` | `{item['reward_jpy']}` | `{blockers}` |"
+            )
+    else:
+        lines.append("- none")
+    lines.extend(["", "## Target Firepower Evidence", ""])
+    if firepower.get("status"):
+        lines.append(f"- Status: `{firepower.get('status')}`")
+        lines.append(f"- Best bucket: `{firepower.get('best_bucket')}`")
+        lines.append(f"- 5% estimated reachable: `{firepower.get('minimum_5pct_estimated_reachable')}`")
+        lines.append(f"- 10% estimated reachable: `{firepower.get('target_10pct_estimated_reachable')}`")
+        lines.append("- Audit only, no live permission grant: `true`")
+        for label in ("high_precision", "evidence_queue"):
+            bucket = firepower.get(label) if isinstance(firepower.get(label), dict) else {}
+            if bucket.get("estimated_return_pct_per_active_day_at_observed_frequency") is None:
+                continue
+            lines.append(
+                f"- `{label}` return/day=`{bucket.get('estimated_return_pct_per_active_day_at_observed_frequency')}` "
+                f"trades_needed_5pct=`{bucket.get('trades_needed_for_minimum_5pct_at_weighted_expectancy')}` "
+                f"vehicles=`{bucket.get('top_vehicle_keys')}`"
             )
     else:
         lines.append("- none")
