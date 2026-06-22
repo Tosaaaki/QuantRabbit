@@ -644,6 +644,11 @@ class TraderSupportBotTest(unittest.TestCase):
             self.assertEqual(candidate["oanda_replay_evidence"]["validation_win_rate"], 0.8)
             self.assertEqual(candidate["oanda_replay_evidence"]["validation_profit_factor"], 4.129446)
             self.assertEqual(candidate["oanda_replay_evidence"]["trades_needed_for_minimum_5pct"], 9)
+            self.assertFalse(candidate["historical_replay_can_clear_local_tp_proof"])
+            self.assertIn(
+                "PAIR_SIDE_METHOD TAKE_PROFIT_ORDER",
+                candidate["local_tp_proof_clearance_condition"],
+            )
             self.assertEqual(payload["metrics"]["oanda_audit_only_with_replay_evidence_lanes"], 1)
             self.assertEqual(
                 candidate["remaining_blocker_codes_after_guardian"],
@@ -654,8 +659,35 @@ class TraderSupportBotTest(unittest.TestCase):
             )
             action_codes = {item["code"] for item in payload["operator_actions"]}
             self.assertIn("MINE_LOCAL_TP_PROOF_FOR_OANDA_AUDIT_ONLY", action_codes)
+            self.assertIn("VALIDATE_OANDA_AUDIT_ONLY_BIDASK_REPLAY", action_codes)
+            self.assertIn("MINE_OANDA_AUDIT_ONLY_CAMPAIGN_FIREPOWER", action_codes)
+            self.assertIn("PACKAGE_OANDA_AUDIT_ONLY_FIREPOWER_RULES_AFTER_REVIEW", action_codes)
+            self.assertIn("RERUN_INTENTS_AFTER_OANDA_AUDIT_ONLY_REPLAY", action_codes)
+            action_by_code = {item["code"]: item for item in payload["operator_actions"]}
+            self.assertIn(
+                "--granularities S5,M5",
+                action_by_code["MINE_LOCAL_TP_PROOF_FOR_OANDA_AUDIT_ONLY"]["command"],
+            )
+            self.assertIn(
+                "scripts/oanda_history_replay_validate.py",
+                action_by_code["VALIDATE_OANDA_AUDIT_ONLY_BIDASK_REPLAY"]["command"],
+            )
+            self.assertIn(
+                "scripts/oanda_universal_rotation_miner.py",
+                action_by_code["MINE_OANDA_AUDIT_ONLY_CAMPAIGN_FIREPOWER"]["command"],
+            )
+            self.assertIn(
+                "--pairs GBP_JPY",
+                action_by_code["MINE_OANDA_AUDIT_ONLY_CAMPAIGN_FIREPOWER"]["command"],
+            )
+            self.assertTrue(
+                action_by_code["PACKAGE_OANDA_AUDIT_ONLY_FIREPOWER_RULES_AFTER_REVIEW"][
+                    "requires_explicit_operator_approval"
+                ]
+            )
             report = files["report"].read_text()
             self.assertIn("OANDA Audit-Only Local TP Proof Required", report)
+            self.assertIn("Historical replay can rank and mine these candidates", report)
             self.assertIn("MISSING_METHOD_SCOPE", report)
             self.assertIn("n=15", report)
             self.assertIn("pf=4.129446", report)

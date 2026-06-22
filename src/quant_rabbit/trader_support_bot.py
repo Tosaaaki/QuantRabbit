@@ -41,6 +41,7 @@ RANGE_FORECAST_ROTATION_BLOCKER = "RANGE_FORECAST_REQUIRES_RANGE_ROTATION"
 RANGE_ROTATION_METHOD = "RANGE_ROTATION"
 RANGE_ROTATION_COUNTERPART_MISSING = "RANGE_ROTATION_COUNTERPART_MISSING"
 OANDA_AUDIT_ONLY_LOCAL_TP_PROOF_REQUIRED = "OANDA_CAMPAIGN_AUDIT_ONLY_LOCAL_TP_PROOF_REQUIRED"
+OANDA_AUDIT_ONLY_REPLAY_HISTORY_GRANULARITIES = "S5,M5"
 REPAIR_EXEMPTION_CODES = {PERSISTENT_DISCIPLINE, "SELF_IMPROVEMENT_P0_PROFITABILITY_DISCIPLINE"}
 GLOBAL_UNLOCK_BLOCKERS = {
     GUARDIAN_BLOCKER,
@@ -657,6 +658,14 @@ def _entry_readiness_summary(
                         code for code in blocker_codes if code != GUARDIAN_BLOCKER
                     ],
                     "local_proof_required": True,
+                    "historical_replay_can_clear_local_tp_proof": False,
+                    "local_tp_proof_clearance_condition": (
+                        "exact PAIR_SIDE_METHOD TAKE_PROFIT_ORDER receipts for this "
+                        "pair/side/method must show positive expectancy, zero TP losses, "
+                        "and positive Wilson-stressed expectancy; OANDA candle replay can "
+                        "rank/mine the candidate but cannot by itself clear the local "
+                        "broker-TP proof gate"
+                    ),
                 }
             )
         if str(item.get("status") or "") != "LIVE_READY" and blocker_codes:
@@ -1707,14 +1716,66 @@ def _operator_actions(
             {
                 "code": "MINE_LOCAL_TP_PROOF_FOR_OANDA_AUDIT_ONLY",
                 "command": (
-                    "python3 scripts/oanda_history_fetch.py "
-                    f"--pairs {pair_arg} --granularities S5 --price BA "
+                    "PYTHONPATH=src python3 scripts/oanda_history_fetch.py "
+                    f"--pairs {pair_arg} --granularities {OANDA_AUDIT_ONLY_REPLAY_HISTORY_GRANULARITIES} --price BA "
                     "--days 120 --output-dir logs/replay/oanda_history"
                 ),
                 "requires_explicit_operator_approval": False,
                 "reason": (
-                    "OANDA campaign firepower is audit-only for these lanes; fetch bid/ask candles "
-                    "and mine local pair/side/method TAKE_PROFIT proof before treating them as repair/live candidates"
+                    "OANDA campaign firepower is audit-only for these lanes; fetch both S5 truth for "
+                    "forecast replay and M5 truth for universal-rotation mining before treating the "
+                    "candidate as improved evidence"
+                ),
+            }
+        )
+        actions.append(
+            {
+                "code": "VALIDATE_OANDA_AUDIT_ONLY_BIDASK_REPLAY",
+                "command": (
+                    "PYTHONPATH=src python3 scripts/oanda_history_replay_validate.py "
+                    "--history-dir logs/replay/oanda_history --granularity S5"
+                ),
+                "requires_explicit_operator_approval": False,
+                "reason": (
+                    "score forecast_history against local OANDA S5 bid/ask candles with spread included; "
+                    "this proves whether the prediction side actually made money on historical candles"
+                ),
+            }
+        )
+        actions.append(
+            {
+                "code": "MINE_OANDA_AUDIT_ONLY_CAMPAIGN_FIREPOWER",
+                "command": (
+                    "PYTHONPATH=src python3 scripts/oanda_universal_rotation_miner.py "
+                    "--history-root logs/replay/oanda_history --history-glob '*_M5_BA_*.jsonl' "
+                    f"--pairs {pair_arg}"
+                ),
+                "requires_explicit_operator_approval": False,
+                "reason": (
+                    "rerun the multi-month M5 bid/ask candle miner for the audit-only pairs so "
+                    "improved range/failed-break/pullback vehicles are tested before reinsertion"
+                ),
+            }
+        )
+        actions.append(
+            {
+                "code": "PACKAGE_OANDA_AUDIT_ONLY_FIREPOWER_RULES_AFTER_REVIEW",
+                "command": "PYTHONPATH=src python3 scripts/package_oanda_universal_rotation_rules.py",
+                "requires_explicit_operator_approval": True,
+                "reason": (
+                    "packages mined OANDA replay rows into the tracked runtime rule artifact; review "
+                    "the mining report, then test/commit/sync before live runtime uses the new evidence"
+                ),
+            }
+        )
+        actions.append(
+            {
+                "code": "RERUN_INTENTS_AFTER_OANDA_AUDIT_ONLY_REPLAY",
+                "command": "PYTHONPATH=src python3 -m quant_rabbit.cli cycle-refresh --daily-risk-pct 10",
+                "requires_explicit_operator_approval": False,
+                "reason": (
+                    "rerun the full evidence/intents/acceptance loop after replay mining so improved "
+                    "evidence is revalidated instead of leaving the old blocked packet in place"
                 ),
             }
         )
@@ -1910,10 +1971,17 @@ def _render_report(payload: dict[str, Any]) -> str:
         lines.append("- none")
     lines.extend(["", "## OANDA Audit-Only Local TP Proof Required", ""])
     if entry["oanda_audit_only_local_tp_proof_required"]:
+        lines.append(
+            "- Historical replay can rank and mine these candidates, but it does not by itself "
+            "clear the local TP proof gate; the escape condition is exact pair/side/method "
+            "TAKE_PROFIT_ORDER proof with positive expectancy, zero TP losses, and positive "
+            "Wilson-stressed expectancy."
+        )
+        lines.append("")
         lines.extend(
             [
-                "| Lane | Pair | Side | Method | Scope | Vehicle | Replay evidence | Remaining blockers after guardian |",
-                "|---|---|---|---|---|---|---|---|",
+                "| Lane | Pair | Side | Method | Scope | Vehicle | Replay evidence | Historical clears local proof | Remaining blockers after guardian |",
+                "|---|---|---|---|---|---|---|---|---|",
             ]
         )
         for item in entry["oanda_audit_only_local_tp_proof_required"][:8]:
@@ -1922,7 +1990,8 @@ def _render_report(payload: dict[str, Any]) -> str:
             lines.append(
                 f"| `{item['lane_id']}` | `{item['pair']}` | `{item['side']}` | "
                 f"`{item['method']}` | `{item.get('capture_take_profit_scope')}` | "
-                f"`{item.get('oanda_vehicle_key')}` | {replay} | `{remaining}` |"
+                f"`{item.get('oanda_vehicle_key')}` | {replay} | "
+                f"`{item.get('historical_replay_can_clear_local_tp_proof')}` | `{remaining}` |"
             )
     else:
         lines.append("- none")
