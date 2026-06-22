@@ -7,7 +7,10 @@ from pathlib import Path
 from typing import Any
 
 from quant_rabbit.models import OrderIntent, OrderType, RiskIssue
-from quant_rabbit.risk import _forecast_range_unselected_projection_support_allows_side
+from quant_rabbit.risk import (
+    LOSS_ASYMMETRY_TP_PROOF_COLLECTION_MIN_EXIT_TRADES,
+    _forecast_range_unselected_projection_support_allows_side,
+)
 
 
 OANDA_CAMPAIGN_FIREPOWER_TARGET_OK_STATUSES = frozenset(
@@ -452,6 +455,8 @@ def _blocked_profile_market_structure_scout_severity(
     if intent.order_type == OrderType.MARKET:
         return None
     metadata = intent.metadata or {}
+    if _tp_proof_collection_new_vehicle_supported(intent, metadata):
+        return "WARN"
     if _oanda_campaign_firepower_new_vehicle_supported(intent):
         return "WARN"
     if not metadata.get("forecast_seed"):
@@ -464,6 +469,46 @@ def _blocked_profile_market_structure_scout_severity(
     if (entry.positive_evidence_n or 0) <= 0 and (entry.pretrade_net_jpy or 0.0) <= 0:
         return None
     return "WARN"
+
+
+def _tp_proof_collection_new_vehicle_supported(intent: OrderIntent, metadata: dict[str, Any]) -> bool:
+    """Let exact TP-proof collection satisfy a broad pair/side escape hatch.
+
+    This is not live permission. It only downgrades stale pair/side
+    `BLOCK_UNTIL_NEW_EVIDENCE` memory when the current vehicle has already
+    produced exact broker-TP samples and remains non-market, attached-TP, and
+    loss-capped. Forecast, spread, RiskEngine, gateway, and method-specific
+    strategy profile blocks still decide.
+    """
+
+    if intent.order_type == OrderType.MARKET:
+        return False
+    mode = str(metadata.get("positive_rotation_mode") or "").upper()
+    if mode and mode != "TP_PROOF_COLLECTION_HARVEST":
+        return False
+    if str(metadata.get("tp_execution_mode") or "").upper() != "ATTACHED_TECHNICAL_TP":
+        return False
+    if metadata.get("attach_take_profit_on_fill") is not True:
+        return False
+    if str(metadata.get("tp_target_intent") or "").upper() != "HARVEST":
+        return False
+    if str(metadata.get("opportunity_mode") or "").upper() != "HARVEST":
+        return False
+    if str(metadata.get("capture_take_profit_scope") or "").upper() != "PAIR_SIDE_METHOD":
+        return False
+    if (_optional_int(metadata.get("capture_take_profit_trades")) or 0) < (
+        LOSS_ASYMMETRY_TP_PROOF_COLLECTION_MIN_EXIT_TRADES
+    ):
+        return False
+    if (_optional_int(metadata.get("capture_take_profit_losses")) or 0) != 0:
+        return False
+    tp_expectancy = _optional_float(metadata.get("capture_take_profit_expectancy_jpy"))
+    if tp_expectancy is None or tp_expectancy <= 0:
+        return False
+    pessimistic = _optional_float(metadata.get("positive_rotation_pessimistic_expectancy_jpy"))
+    if pessimistic is not None and pessimistic <= 0:
+        return False
+    return True
 
 
 def _oanda_campaign_firepower_new_vehicle_supported(intent: OrderIntent) -> bool:

@@ -20,6 +20,7 @@ from quant_rabbit.cli import (
     _direct_autotrade_audit_sidecar_steps,
     _pre_entry_projection_verification_if_required,
     _refresh_current_forecast_history,
+    _resolve_audit_execution_ledger_db,
     _run_direct_autotrade_audit_sidecars,
     _snapshot_from_json,
     _snapshot_to_json,
@@ -33,6 +34,86 @@ from quant_rabbit.profitability_acceptance import (
     _order_intent_metrics,
 )
 from quant_rabbit.strategy.intent_generator import _snapshot_from_json as _intent_snapshot_from_json
+
+
+class RuntimeLedgerSelectionTest(unittest.TestCase):
+    def _write_gateway_ledger(self, path: Path, latest_ts: str | None) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with sqlite3.connect(path) as conn:
+            conn.execute(
+                """
+                CREATE TABLE execution_events (
+                    ts_utc TEXT,
+                    source TEXT,
+                    event_type TEXT
+                )
+                """
+            )
+            if latest_ts is not None:
+                conn.execute(
+                    """
+                    INSERT INTO execution_events (ts_utc, source, event_type)
+                    VALUES (?, 'gateway', 'GATEWAY_POSITION_NO_ACTION')
+                    """,
+                    (latest_ts,),
+                )
+
+    def test_default_audit_ledger_uses_fresher_live_gateway_stream(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            dev_ledger = root / "dev" / "data" / "execution_ledger.db"
+            live_root = root / "QuantRabbit-live"
+            live_ledger = live_root / "data" / "execution_ledger.db"
+            self._write_gateway_ledger(dev_ledger, "2026-06-01T00:00:00+00:00")
+            self._write_gateway_ledger(live_ledger, "2026-06-22T00:00:00+00:00")
+
+            resolved = _resolve_audit_execution_ledger_db(
+                dev_ledger,
+                default_path=dev_ledger,
+                live_root=live_root,
+            )
+
+        self.assertEqual(resolved, live_ledger)
+
+    def test_default_audit_ledger_keeps_requested_when_live_stream_not_fresher(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            dev_ledger = root / "dev" / "data" / "execution_ledger.db"
+            live_root = root / "QuantRabbit-live"
+            self._write_gateway_ledger(dev_ledger, "2026-06-22T00:00:00+00:00")
+            self._write_gateway_ledger(
+                live_root / "data" / "execution_ledger.db",
+                "2026-06-01T00:00:00+00:00",
+            )
+
+            resolved = _resolve_audit_execution_ledger_db(
+                dev_ledger,
+                default_path=dev_ledger,
+                live_root=live_root,
+            )
+
+        self.assertEqual(resolved, dev_ledger)
+
+    def test_explicit_audit_ledger_is_respected(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            default_ledger = root / "dev" / "data" / "execution_ledger.db"
+            explicit_ledger = root / "custom" / "execution_ledger.db"
+            live_root = root / "QuantRabbit-live"
+            self._write_gateway_ledger(default_ledger, "2026-06-01T00:00:00+00:00")
+            self._write_gateway_ledger(explicit_ledger, "2026-06-01T00:00:00+00:00")
+            self._write_gateway_ledger(
+                live_root / "data" / "execution_ledger.db",
+                "2026-06-22T00:00:00+00:00",
+            )
+
+            resolved = _resolve_audit_execution_ledger_db(
+                explicit_ledger,
+                default_path=default_ledger,
+                live_root=live_root,
+            )
+
+        self.assertEqual(resolved, explicit_ledger)
 
 
 class CliHelpTest(unittest.TestCase):
@@ -4144,6 +4225,7 @@ class ConsolidatedCycleCommandTest(unittest.TestCase):
             sidecars_live = [" ".join(s["argv"]) for s in _cycle_sidecar_steps()]
         self.assertIn("profit-partial-close --send --confirm-live", sidecars_live)
 
+
     def test_direct_autotrade_audit_sidecars_run_without_wrapper_lock(self) -> None:
         digest = {
             "kind": "direct_autotrade_audit_sidecars_digest",
@@ -4373,6 +4455,104 @@ class ConsolidatedCycleCommandTest(unittest.TestCase):
         self.assertEqual(manual_context["position_building"]["adverse_add_clusters"], 8)
         self.assertEqual(manual_context["position_building"]["adverse_add_net_jpy"], 102564.0)
         self.assertFalse(manual_context["position_building"]["nanpin_is_live_permission"])
+
+
+class PairChartsCommandTest(unittest.TestCase):
+    class _FakeChart:
+        def __init__(self, pair: str, long_score: float = 0.7, short_score: float = 0.3) -> None:
+            self.pair = pair
+            self.long_score = long_score
+            self.short_score = short_score
+
+        def to_dict(self) -> dict[str, object]:
+            return {
+                "pair": self.pair,
+                "long_score": self.long_score,
+                "short_score": self.short_score,
+                "dominant_regime": "RANGE",
+                "chart_story": f"{self.pair} test chart",
+                "warnings": [],
+                "views": [],
+                "session": None,
+                "confluence": {},
+            }
+
+    def test_pair_charts_writes_partial_success_instead_of_stale_whole_packet(self) -> None:
+        def fake_build(pair: str, **_kwargs: object) -> PairChartsCommandTest._FakeChart:
+            if pair == "GBP_USD":
+                raise RuntimeError("broker candle timeout")
+            return self._FakeChart(pair)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            output = Path(tmp) / "pair_charts.json"
+            report = Path(tmp) / "pair_charts.md"
+            stdout = io.StringIO()
+            with (
+                mock.patch("quant_rabbit.cli.OandaReadOnlyClient", return_value=object()),
+                mock.patch("quant_rabbit.analysis.chart_reader.build_pair_chart", side_effect=fake_build),
+                mock.patch("quant_rabbit.analysis.score_momentum.attach_score_momentum"),
+                redirect_stdout(stdout),
+            ):
+                rc = main(
+                    [
+                        "pair-charts",
+                        "--pairs",
+                        "EUR_USD,GBP_USD,AUD_USD",
+                        "--timeframes",
+                        "M5",
+                        "--workers",
+                        "2",
+                        "--output",
+                        str(output),
+                        "--report",
+                        str(report),
+                    ]
+                )
+
+            self.assertEqual(rc, 0)
+            payload = json.loads(output.read_text())
+            self.assertTrue(payload["partial"])
+            self.assertEqual(payload["pairs_requested"], 3)
+            self.assertEqual(payload["pairs_succeeded"], 2)
+            self.assertEqual(payload["pairs_failed"], 1)
+            self.assertEqual(payload["failures"][0]["pair"], "GBP_USD")
+            self.assertEqual({chart["pair"] for chart in payload["charts"]}, {"EUR_USD", "AUD_USD"})
+            printed = json.loads(stdout.getvalue())
+            self.assertTrue(printed["partial"])
+            self.assertEqual(printed["pairs_failed"], 1)
+            self.assertIn("GBP_USD", report.read_text())
+
+    def test_pair_charts_returns_failure_when_every_pair_fails(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            output = Path(tmp) / "pair_charts.json"
+            stdout = io.StringIO()
+            with (
+                mock.patch("quant_rabbit.cli.OandaReadOnlyClient", return_value=object()),
+                mock.patch(
+                    "quant_rabbit.analysis.chart_reader.build_pair_chart",
+                    side_effect=RuntimeError("broker down"),
+                ),
+                redirect_stdout(stdout),
+            ):
+                rc = main(
+                    [
+                        "pair-charts",
+                        "--pairs",
+                        "EUR_USD,GBP_USD",
+                        "--timeframes",
+                        "M5",
+                        "--workers",
+                        "2",
+                        "--output",
+                        str(output),
+                    ]
+                )
+
+            self.assertEqual(rc, 2)
+            self.assertFalse(output.exists())
+            printed = json.loads(stdout.getvalue())
+            self.assertEqual(printed["pairs_requested"], 2)
+            self.assertEqual(len(printed["failures"]), 2)
 
 
 if __name__ == "__main__":

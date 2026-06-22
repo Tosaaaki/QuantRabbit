@@ -7,6 +7,7 @@ import signal
 import shutil
 import sqlite3
 import sys
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Iterable
@@ -1292,6 +1293,11 @@ DEFAULT_CYCLE_STEP_TIMEOUT_SECONDS = 300.0
 # optional evidence; one slow broker history read must not consume the refresh
 # window and leave self-improvement/profitability acceptance stale.
 DEFAULT_EXECUTION_TIMING_AUDIT_CYCLE_TIMEOUT_SECONDS = 60.0
+# Pair charts fetch 28 G8 pairs x 7 timeframes. Fourteen workers keeps the
+# broker-read fanout inside the 20-minute live cadence even when one batch hits
+# the OANDA HTTP timeout, while staying far below one thread per candle request.
+# This is infrastructure wall-clock control, not market/risk tuning.
+DEFAULT_PAIR_CHART_WORKERS = 14
 
 
 class _CycleStepTimeout(BaseException):
@@ -1374,6 +1380,125 @@ def _cycle_step_timeout_seconds(spec: dict[str, Any]) -> float | None:
     if seconds <= 0:
         return None
     return seconds
+
+
+def _pair_chart_worker_count(explicit: int | None, pair_count: int) -> int:
+    raw: object = explicit
+    if raw is None:
+        raw = os.environ.get("QR_PAIR_CHART_WORKERS", str(DEFAULT_PAIR_CHART_WORKERS))
+    try:
+        workers = int(raw)
+    except (TypeError, ValueError):
+        workers = DEFAULT_PAIR_CHART_WORKERS
+    workers = max(1, workers)
+    return min(workers, max(1, pair_count))
+
+
+def _resolve_audit_execution_ledger_db(
+    requested_path: Path,
+    *,
+    default_path: Path = DEFAULT_EXECUTION_LEDGER_DB,
+    live_root: Path | None = None,
+) -> Path:
+    """Use the fresher live gateway receipt stream for default audit reads."""
+    requested = Path(requested_path)
+    if not _same_filesystem_path(requested, default_path):
+        return requested
+    override = os.environ.get("QR_AUDIT_EXECUTION_LEDGER_DB")
+    if override:
+        return Path(override)
+    candidate_root = live_root or Path(
+        os.environ.get("QR_SYNC_LIVE_ROOT")
+        or os.environ.get("QR_TRADER_ROOT_DIR")
+        or str(ROOT.parent / "QuantRabbit-live")
+    )
+    candidate = candidate_root / "data" / default_path.name
+    if _same_filesystem_path(requested, candidate) or not candidate.exists():
+        return requested
+    requested_latest = _gateway_stream_latest_ts(requested)
+    candidate_latest = _gateway_stream_latest_ts(candidate)
+    if candidate_latest is None:
+        return requested
+    if requested_latest is None or candidate_latest > requested_latest:
+        return candidate
+    return requested
+
+
+def _same_filesystem_path(left: Path, right: Path) -> bool:
+    try:
+        return left.resolve() == right.resolve()
+    except OSError:
+        return left.absolute() == right.absolute()
+
+
+def _gateway_stream_latest_ts(path: Path) -> datetime | None:
+    if not path.exists():
+        return None
+    try:
+        with sqlite3.connect(path) as conn:
+            row = conn.execute(
+                """
+                SELECT MAX(ts_utc)
+                FROM execution_events
+                WHERE source = 'gateway'
+                """
+            ).fetchone()
+    except sqlite3.Error:
+        return None
+    if row is None:
+        return None
+    return _parse_utc_timestamp(row[0])
+
+
+def _parse_utc_timestamp(value: object) -> datetime | None:
+    text = str(value or "").strip()
+    if not text:
+        return None
+    try:
+        dt = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc)
+
+
+def _build_pair_charts_concurrently(
+    pairs: list[str],
+    *,
+    client: OandaReadOnlyClient,
+    timeframes: tuple[str, ...],
+    count: int,
+    workers: int,
+    builder: Callable[..., Any],
+) -> tuple[list[Any], list[dict[str, str]]]:
+    charts: list[Any] = []
+    failures: list[dict[str, str]] = []
+    if not pairs:
+        return charts, failures
+    if workers <= 1:
+        for pair in pairs:
+            try:
+                charts.append(builder(pair, client=client, timeframes=timeframes, count=count))
+            except Exception as exc:
+                failures.append({"pair": pair, "error": str(exc)})
+        return charts, failures
+
+    executor = ThreadPoolExecutor(max_workers=workers, thread_name_prefix="qr-pair-chart")
+    futures = {
+        executor.submit(builder, pair, client=client, timeframes=timeframes, count=count): pair
+        for pair in pairs
+    }
+    try:
+        for future in as_completed(futures):
+            pair = futures[future]
+            try:
+                charts.append(future.result())
+            except Exception as exc:
+                failures.append({"pair": pair, "error": str(exc)})
+    finally:
+        executor.shutdown(wait=False, cancel_futures=True)
+    return charts, failures
 
 
 def _run_with_cycle_step_timeout(timeout_seconds: float | None, fn: Callable[[], Any]) -> int:
@@ -2423,6 +2548,7 @@ def main(argv: list[str] | None = None) -> int:
     p_charts.add_argument("--pairs", default=DEFAULT_TRADER_PAIRS_ARG)
     p_charts.add_argument("--timeframes", default=",".join(DEFAULT_PAIR_CHART_TIMEFRAMES))
     p_charts.add_argument("--count", type=int, default=200)
+    p_charts.add_argument("--workers", type=int, default=None)
     p_charts.add_argument("--output", type=Path, default=DEFAULT_PAIR_CHARTS)
     p_charts.add_argument("--report", type=Path, default=DEFAULT_PAIR_CHARTS_REPORT)
 
@@ -3900,10 +4026,30 @@ def main(argv: list[str] | None = None) -> int:
             print(json.dumps({"error": str(exc)}, ensure_ascii=False, indent=2, sort_keys=True))
             return 2
 
-        charts = []
-        for pair in pairs:
-            chart = build_pair_chart(pair, client=client, timeframes=timeframes, count=args.count)
-            charts.append(chart)
+        workers = _pair_chart_worker_count(args.workers, len(pairs))
+        charts, failures = _build_pair_charts_concurrently(
+            pairs,
+            client=client,
+            timeframes=timeframes,
+            count=args.count,
+            workers=workers,
+            builder=build_pair_chart,
+        )
+        if not charts:
+            print(
+                json.dumps(
+                    {
+                        "error": "pair-charts failed to build any pair",
+                        "pairs_requested": len(pairs),
+                        "workers": workers,
+                        "failures": failures,
+                    },
+                    ensure_ascii=False,
+                    indent=2,
+                    sort_keys=True,
+                )
+            )
+            return 2
 
         generated_at = datetime.now(timezone.utc).isoformat()
         chart_payloads = [chart.to_dict() for chart in charts]
@@ -3919,6 +4065,12 @@ def main(argv: list[str] | None = None) -> int:
             "generated_at_utc": generated_at,
             "timeframes": list(timeframes),
             "candle_count": int(args.count),
+            "pairs_requested": len(pairs),
+            "pairs_succeeded": len(chart_payloads),
+            "pairs_failed": len(failures),
+            "workers": workers,
+            "partial": bool(failures),
+            "failures": failures,
             "charts": chart_payloads,
         }
         if args.output:
@@ -3933,6 +4085,8 @@ def main(argv: list[str] | None = None) -> int:
                 f"- Generated at UTC: `{generated_at}`",
                 f"- Timeframes: `{','.join(timeframes)}`",
                 f"- Candles per timeframe: `{args.count}`",
+                f"- Pairs requested/succeeded/failed: `{len(pairs)}/{len(chart_payloads)}/{len(failures)}`",
+                f"- Workers: `{workers}`",
                 "",
                 "## Pair Score Table",
                 "",
@@ -3956,6 +4110,18 @@ def main(argv: list[str] | None = None) -> int:
                 )
             lines.extend([
                 "",
+                "## Fetch Failures",
+                "",
+            ])
+            if failures:
+                for item in failures:
+                    lines.append(
+                        f"- `{item.get('pair')}`: {str(item.get('error') or '').strip() or 'unknown error'}"
+                    )
+            else:
+                lines.append("- None")
+            lines.extend([
+                "",
                 "## How To Read",
                 "",
                 "- Long/Short scores are 0..1 indicator-agreement values weighted by timeframe (D>H4>H1>M30>M15>M5>M1).",
@@ -3970,6 +4136,11 @@ def main(argv: list[str] | None = None) -> int:
             "output_path": str(args.output) if args.output else None,
             "report_path": str(args.report) if args.report else None,
             "pairs": len(charts),
+            "pairs_requested": len(pairs),
+            "pairs_failed": len(failures),
+            "workers": workers,
+            "partial": bool(failures),
+            "failures": failures[:8],
             "top": [
                 {"pair": c["pair"], "side": "LONG" if c["long_score"] >= c["short_score"] else "SHORT",
                  "long": round(c["long_score"], 3), "short": round(c["short_score"], 3), "regime": c["dominant_regime"],
@@ -4946,8 +5117,9 @@ def main(argv: list[str] | None = None) -> int:
         try:
             from quant_rabbit.self_improvement_audit import SelfImprovementAuditor
 
+            audit_db = _resolve_audit_execution_ledger_db(args.db)
             summary = SelfImprovementAuditor(
-                db_path=args.db,
+                db_path=audit_db,
                 history_db_path=args.history_db,
                 output_path=args.output,
                 report_path=args.report,
@@ -5009,6 +5181,7 @@ def main(argv: list[str] | None = None) -> int:
                 ProfitabilityAcceptanceAuditor,
             )
 
+            audit_db = _resolve_audit_execution_ledger_db(args.execution_ledger_db)
             summary = ProfitabilityAcceptanceAuditor(
                 output_path=args.output,
                 report_path=args.report,
@@ -5017,7 +5190,7 @@ def main(argv: list[str] | None = None) -> int:
                 target_state_path=args.target_state,
                 self_improvement_path=args.self_improvement_audit,
                 capture_economics_path=args.capture_economics,
-                execution_ledger_path=args.execution_ledger_db,
+                execution_ledger_path=audit_db,
                 projection_ledger_path=args.projection_ledger,
                 bidask_rules_path=args.bidask_rules or DEFAULT_BIDASK_REPLAY_RULES_PATH,
                 oanda_rotation_mining_path=args.oanda_rotation_mining,

@@ -911,6 +911,73 @@ class StrategyProfileTest(unittest.TestCase):
         self.assertEqual(issues[0].code, "STRATEGY_PROFILE_MISSING")
         self.assertEqual(issues[0].severity, "WARN")
 
+    def test_tp_proof_collection_downgrades_pair_side_block_to_warning(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            profile = StrategyProfile.load(
+                _pair_side_profile(Path(tmp), status="BLOCK_UNTIL_NEW_EVIDENCE", direction="SHORT")
+            )
+            prior = os.environ.get("QR_TRADER_DISABLE_SL_REPAIR")
+            os.environ["QR_TRADER_DISABLE_SL_REPAIR"] = "1"
+            try:
+                issues = profile.validate(_tp_proof_intent(), for_live_send=True)
+            finally:
+                _restore_env("QR_TRADER_DISABLE_SL_REPAIR", prior)
+
+        self.assertEqual(len(issues), 1)
+        self.assertEqual(issues[0].code, "STRATEGY_NOT_ELIGIBLE")
+        self.assertEqual(issues[0].severity, "WARN")
+
+    def test_tp_proof_collection_works_before_positive_rotation_label_is_added(self) -> None:
+        metadata = _tp_proof_metadata()
+        metadata.pop("positive_rotation_mode")
+        with tempfile.TemporaryDirectory() as tmp:
+            profile = StrategyProfile.load(
+                _pair_side_profile(Path(tmp), status="BLOCK_UNTIL_NEW_EVIDENCE", direction="SHORT")
+            )
+            prior = os.environ.get("QR_TRADER_DISABLE_SL_REPAIR")
+            os.environ["QR_TRADER_DISABLE_SL_REPAIR"] = "1"
+            try:
+                issues = profile.validate(_tp_proof_intent(metadata=metadata), for_live_send=True)
+            finally:
+                _restore_env("QR_TRADER_DISABLE_SL_REPAIR", prior)
+
+        self.assertEqual(len(issues), 1)
+        self.assertEqual(issues[0].severity, "WARN")
+
+    def test_tp_proof_collection_does_not_downgrade_market_order(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            profile = StrategyProfile.load(
+                _pair_side_profile(Path(tmp), status="BLOCK_UNTIL_NEW_EVIDENCE", direction="SHORT")
+            )
+            prior = os.environ.get("QR_TRADER_DISABLE_SL_REPAIR")
+            os.environ["QR_TRADER_DISABLE_SL_REPAIR"] = "1"
+            try:
+                issues = profile.validate(
+                    _tp_proof_intent(order_type=OrderType.MARKET),
+                    for_live_send=True,
+                )
+            finally:
+                _restore_env("QR_TRADER_DISABLE_SL_REPAIR", prior)
+
+        self.assertEqual(len(issues), 1)
+        self.assertEqual(issues[0].severity, "BLOCK")
+
+    def test_tp_proof_collection_does_not_downgrade_when_tp_losses_exist(self) -> None:
+        metadata = _tp_proof_metadata(capture_take_profit_losses=1)
+        with tempfile.TemporaryDirectory() as tmp:
+            profile = StrategyProfile.load(
+                _pair_side_profile(Path(tmp), status="BLOCK_UNTIL_NEW_EVIDENCE", direction="SHORT")
+            )
+            prior = os.environ.get("QR_TRADER_DISABLE_SL_REPAIR")
+            os.environ["QR_TRADER_DISABLE_SL_REPAIR"] = "1"
+            try:
+                issues = profile.validate(_tp_proof_intent(metadata=metadata), for_live_send=True)
+            finally:
+                _restore_env("QR_TRADER_DISABLE_SL_REPAIR", prior)
+
+        self.assertEqual(len(issues), 1)
+        self.assertEqual(issues[0].severity, "BLOCK")
+
 
 def _profile(root: Path, *, status: str) -> Path:
     path = root / "strategy.json"
@@ -1001,6 +1068,38 @@ def _intent(
             invalidation="test",
         ),
         metadata=metadata or {},
+    )
+
+
+def _tp_proof_metadata(**overrides: object) -> dict:
+    metadata = {
+        "tp_execution_mode": "ATTACHED_TECHNICAL_TP",
+        "attach_take_profit_on_fill": True,
+        "tp_target_intent": "HARVEST",
+        "opportunity_mode": "HARVEST",
+        "capture_take_profit_scope": "PAIR_SIDE_METHOD",
+        "capture_take_profit_trades": 6,
+        "capture_take_profit_wins": 6,
+        "capture_take_profit_losses": 0,
+        "capture_take_profit_expectancy_jpy": 992.7,
+        "positive_rotation_mode": "TP_PROOF_COLLECTION_HARVEST",
+        "positive_rotation_pessimistic_expectancy_jpy": 189.2,
+    }
+    metadata.update(overrides)
+    return metadata
+
+
+def _tp_proof_intent(
+    *,
+    metadata: dict | None = None,
+    order_type: OrderType = OrderType.LIMIT,
+) -> OrderIntent:
+    return _intent(
+        "EUR_USD",
+        side=Side.SHORT,
+        method=TradeMethod.BREAKOUT_FAILURE,
+        order_type=order_type,
+        metadata=metadata or _tp_proof_metadata(),
     )
 
 

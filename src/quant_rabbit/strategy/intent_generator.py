@@ -7998,7 +7998,7 @@ def _same_day_loss_streak_issues(
     ]
 
 
-def _self_improvement_profitability_p0_issue(data_root: Path) -> dict[str, str] | None:
+def _self_improvement_profitability_p0_issue(data_root: Path) -> dict[str, Any] | None:
     """Turn an active profitability P0 into an intent-generation hard block.
 
     `gpt-trader-decision` and `LiveOrderGateway` already reject sends under a
@@ -8069,14 +8069,37 @@ def _self_improvement_profitability_p0_issue(data_root: Path) -> dict[str, str] 
     return None
 
 
-def _self_improvement_worst_segment_fields(system: dict[str, Any]) -> dict[str, str]:
+def _self_improvement_worst_segment_fields(system: dict[str, Any]) -> dict[str, Any]:
     segments = system.get("worst_segments")
     if not isinstance(segments, list) or not segments:
         return {}
     segment = segments[0]
     if not isinstance(segment, dict):
         return {}
-    fields: dict[str, str] = {}
+    fields: dict[str, Any] = {}
+    blocked_segments: list[dict[str, Any]] = []
+    for raw_segment in segments:
+        if not isinstance(raw_segment, dict):
+            continue
+        raw_pair = str(raw_segment.get("pair") or "").strip()
+        raw_side = str(raw_segment.get("side") or "").strip().upper()
+        raw_method = str(raw_segment.get("method") or "").strip().upper()
+        raw_net = _optional_float(raw_segment.get("net_jpy"))
+        if raw_pair and raw_side and raw_method and raw_net is not None and raw_net < 0:
+            blocked_segments.append(
+                {
+                    "pair": raw_pair,
+                    "side": raw_side,
+                    "method": raw_method,
+                    "net_jpy": raw_net,
+                    "trades": raw_segment.get("trades"),
+                    "trade_ids": [
+                        str(item)
+                        for item in raw_segment.get("trade_ids", []) or []
+                        if str(item)
+                    ][:10],
+                }
+            )
     pair = str(segment.get("pair") or "").strip()
     side = str(segment.get("side") or "").strip().upper()
     method = str(segment.get("method") or "").strip().upper()
@@ -8106,6 +8129,8 @@ def _self_improvement_worst_segment_fields(system: dict[str, Any]) -> dict[str, 
         fields["worst_segment_label"] = (
             "data/execution_ledger.db worst_segment[" + ", ".join(label_parts) + "]"
         )
+    if blocked_segments:
+        fields["blocked_profitability_segments"] = blocked_segments[:10]
     return fields
 
 
@@ -8113,7 +8138,7 @@ def _self_improvement_p0_shadow_live_ready(
     *,
     risk_issues: list[dict[str, Any]],
     live_blockers: tuple[str, ...],
-    p0_issue: dict[str, str] | None,
+    p0_issue: dict[str, Any] | None,
 ) -> bool:
     """True when only the profitability P0 prevents LIVE_READY classification.
 
@@ -8150,7 +8175,7 @@ def _self_improvement_p0_shadow_live_ready(
 
 def _self_improvement_profitability_p0_repair_allowed(
     intent: OrderIntent,
-    p0_issue: dict[str, str] | None = None,
+    p0_issue: dict[str, Any] | None = None,
 ) -> bool:
     """Allow only TP-backed, non-market HARVEST receipts to repair a P0 deadlock.
 
@@ -8174,13 +8199,30 @@ def _self_improvement_profitability_p0_repair_allowed(
 
 def _self_improvement_intent_matches_worst_segment(
     intent: OrderIntent,
-    p0_issue: dict[str, str] | None,
+    p0_issue: dict[str, Any] | None,
 ) -> bool:
     if not isinstance(p0_issue, dict):
         return False
-    pair = str(p0_issue.get("worst_segment_pair") or "").strip()
-    side = str(p0_issue.get("worst_segment_side") or "").strip().upper()
-    method = str(p0_issue.get("worst_segment_method") or "").strip().upper()
+    blocked_segments = p0_issue.get("blocked_profitability_segments")
+    if isinstance(blocked_segments, list):
+        for segment in blocked_segments:
+            if not isinstance(segment, dict):
+                continue
+            if _self_improvement_intent_matches_segment(intent, segment):
+                return True
+        return False
+    return _self_improvement_intent_matches_segment(intent, p0_issue)
+
+
+def _self_improvement_intent_matches_segment(
+    intent: OrderIntent,
+    segment: dict[str, Any],
+) -> bool:
+    pair = str(segment.get("pair") or segment.get("worst_segment_pair") or "").strip()
+    side = str(segment.get("side") or segment.get("worst_segment_side") or "").strip().upper()
+    method = str(
+        segment.get("method") or segment.get("worst_segment_method") or ""
+    ).strip().upper()
     if not pair or not side or not method:
         return False
     intent_method = intent.market_context.method if intent.market_context is not None else None
