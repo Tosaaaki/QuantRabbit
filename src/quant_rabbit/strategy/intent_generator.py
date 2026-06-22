@@ -3223,11 +3223,6 @@ def _forecast_seed_for_pair(
         )
     except Exception:
         return None
-    if (
-        str(getattr(forecast, "direction", "") or "").upper() == "UNCLEAR"
-        and (_optional_float(getattr(forecast, "confidence", None)) or 0.0) <= 0.0
-    ):
-        return None
     market_support = _forecast_market_support_for_forecast(
         pair=pair,
         forecast=forecast,

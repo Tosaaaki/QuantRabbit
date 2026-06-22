@@ -635,6 +635,71 @@ class IntentGeneratorTest(unittest.TestCase):
             self.assertEqual(kept["forecast_direction"], "DOWN")
             self.assertNotIn("forecast_watch_only", kept)
 
+    def test_unclear_zero_forecast_seed_is_kept_for_auditable_blocker(self) -> None:
+        from quant_rabbit.strategy.directional_forecaster import DirectionalForecast
+        from quant_rabbit.strategy.intent_generator import _forecast_seed_for_pair
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            raw_chart = {
+                "pair": "EUR_USD",
+                "confluence": {"dominant_regime": "UNCLEAR"},
+                "views": [
+                    {
+                        "granularity": "M5",
+                        "regime_reading": {"state": "TREND_WEAK"},
+                        "family_scores": {"trend_score": 0.1},
+                        "indicators": {"close": 1.1733, "atr_pips": 8.0},
+                    },
+                    {
+                        "granularity": "M15",
+                        "regime_reading": {"state": "RANGE"},
+                        "family_scores": {"mean_rev_score": 0.1},
+                        "indicators": {"close": 1.1733, "atr_pips": 12.0},
+                    },
+                ],
+            }
+            charts = {"EUR_USD": {"__raw_chart": raw_chart}}
+            snapshot = BrokerSnapshot(
+                fetched_at_utc=datetime(2026, 6, 22, tzinfo=timezone.utc),
+                quotes={
+                    "EUR_USD": Quote(
+                        "EUR_USD",
+                        bid=1.1732,
+                        ask=1.1734,
+                        timestamp_utc=datetime(2026, 6, 22, tzinfo=timezone.utc),
+                    )
+                },
+            )
+            unclear = DirectionalForecast(
+                pair="EUR_USD",
+                direction="UNCLEAR",
+                confidence=0.0,
+                invalidation_price=None,
+                target_price=None,
+                horizon_min=0,
+                drivers_for=("UP and DOWN are tied",),
+                drivers_against=("no executable edge",),
+                rationale_summary="contested: UP=25.0 vs DOWN=25.0",
+                current_price=1.1733,
+                component_scores={"UP": 25.0, "DOWN": 25.0, "RANGE": 0.0, "EITHER": 0.0},
+            )
+
+            with (
+                patch("quant_rabbit.strategy.pattern_signals.detect_pattern_signals", return_value=[]),
+                patch("quant_rabbit.strategy.forward_projection.detect_forward_projections", return_value=[]),
+                patch("quant_rabbit.strategy.correlation_predictor.detect_correlation_lag", return_value=[]),
+                patch("quant_rabbit.strategy.path_projection.detect_paths", return_value=[]),
+                patch("quant_rabbit.strategy.reversal_signal.detect_reversal", return_value=None),
+                patch("quant_rabbit.strategy.projection_ledger.compute_hit_rates", return_value={}),
+                patch("quant_rabbit.strategy.directional_forecaster.synthesize_forecast", return_value=unclear),
+            ):
+                seed = _forecast_seed_for_pair("EUR_USD", charts, snapshot, data_root=root)
+
+            self.assertIsNotNone(seed)
+            self.assertEqual(getattr(seed, "direction", None), "UNCLEAR")
+            self.assertEqual(getattr(seed, "confidence", None), 0.0)
+
     def test_refuses_stale_campaign_plan_when_target_state_is_newer(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
