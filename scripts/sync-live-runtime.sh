@@ -275,6 +275,10 @@ verify_automation() {
     echo "[sync-live-runtime] QR vNext Trader automation does not point at $LIVE_ROOT." >&2
     exit 6
   fi
+  if ! grep -Fq 'rrule = "RRULE:FREQ=MINUTELY;INTERVAL=20;BYDAY=MO,TU,WE,TH,FR,SA"' "$AUTOMATION_FILE"; then
+    echo "[sync-live-runtime] QR vNext Trader automation cadence must be 20 minutes to avoid overlapping cycle-refresh and wrapper execution." >&2
+    exit 6
+  fi
   if grep -Fq 'After the receipt is ACCEPTED by `gpt-trader-decision`' "$AUTOMATION_FILE"; then
     echo "[sync-live-runtime] QR vNext Trader automation has stale ACCEPTED-only gateway handoff text." >&2
     exit 6

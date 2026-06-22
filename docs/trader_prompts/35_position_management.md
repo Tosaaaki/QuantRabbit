@@ -260,6 +260,10 @@ PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli gpt-trader-decision \
   --snapshot data/broker_snapshot.json \
   --decision-response data/codex_trader_decision_response.json
 
+# Run this once after every completed verifier result, including WAIT or
+# REJECTED. The wrapper blocks rejected new risk but still runs
+# position-management / position-execution sidecars so profit-only exits and
+# TP/protection updates are not left stale.
 QR_LIVE_ENABLED=1 ./scripts/run-autotrade-live.sh \
   --reuse-market-artifacts \
   --use-gpt-trader \
@@ -270,5 +274,6 @@ QR_LIVE_ENABLED=1 ./scripts/run-autotrade-live.sh \
 ## Receipt Notes
 
 - Cite `broker:snapshot`, affected trade/order ids, and the exact repair reason.
-- If choosing WAIT with open trader-owned exposure, state why no gateway action is required now.
+- If choosing WAIT with open trader-owned exposure, state why no direct position
+  action is required now, then still run the wrapper once so sidecars execute.
 - If closing, cite the contradiction in current broker/market packet evidence.

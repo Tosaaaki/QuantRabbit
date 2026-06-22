@@ -263,6 +263,33 @@ class LiveRuntimeSyncTest(unittest.TestCase):
             self.assertEqual(result.returncode, 6)
             self.assertIn("stale recent-receipt STOP text", result.stderr)
 
+    def test_live_only_blocks_too_fast_trader_cadence(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp) / "repo"
+            live = Path(tmp) / "live"
+            _init_repo(repo)
+            _commit_file(repo, "src/app.py", "print('v1')\n", "initial")
+            _run(["git", "branch", "-m", "main"], cwd=repo)
+            _run(["git", "worktree", "add", "-b", "runtime", str(live), "main"], cwd=repo)
+            automation_file = Path(tmp) / "automation.toml"
+            _write_automation(
+                automation_file,
+                live,
+                status="ACTIVE",
+                rrule="RRULE:FREQ=MINUTELY;INTERVAL=5;BYDAY=MO,TU,WE,TH,FR,SA",
+            )
+
+            result = _sync(
+                repo,
+                live,
+                live_only=True,
+                skip_automation_check=False,
+                automation_file=automation_file,
+            )
+
+            self.assertEqual(result.returncode, 6)
+            self.assertIn("cadence must be 20 minutes", result.stderr)
+
 
 def _sync(
     repo: Path,
@@ -320,7 +347,14 @@ def _run(args: list[str], *, cwd: Path) -> subprocess.CompletedProcess[str]:
     return subprocess.run(args, cwd=cwd, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
 
 
-def _write_automation(path: Path, live: Path, *, status: str, prompt: str | None = None) -> None:
+def _write_automation(
+    path: Path,
+    live: Path,
+    *,
+    status: str,
+    prompt: str | None = None,
+    rrule: str = "RRULE:FREQ=MINUTELY;INTERVAL=20;BYDAY=MO,TU,WE,TH,FR,SA",
+) -> None:
     prompt_text = prompt if prompt is not None else _current_trader_prompt_sentinel()
     path.write_text(
         "\n".join(
@@ -331,7 +365,7 @@ def _write_automation(path: Path, live: Path, *, status: str, prompt: str | None
                 'name = "QR vNext Trader"',
                 "prompt = '''" + prompt_text + "'''",
                 f'status = "{status}"',
-                'rrule = "FREQ=WEEKLY;BYDAY=MO;BYHOUR=7;BYMINUTE=0"',
+                f'rrule = "{rrule}"',
                 'model = "gpt-5.5"',
                 'reasoning_effort = "medium"',
                 'execution_environment = "local"',
