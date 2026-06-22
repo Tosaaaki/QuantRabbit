@@ -39,6 +39,7 @@ PERSISTENT_DISCIPLINE = "PERSISTENT_PROFITABILITY_DISCIPLINE_BLOCKED"
 RANGE_FORECAST_ROTATION_BLOCKER = "RANGE_FORECAST_REQUIRES_RANGE_ROTATION"
 RANGE_ROTATION_METHOD = "RANGE_ROTATION"
 RANGE_ROTATION_COUNTERPART_MISSING = "RANGE_ROTATION_COUNTERPART_MISSING"
+OANDA_AUDIT_ONLY_LOCAL_TP_PROOF_REQUIRED = "OANDA_CAMPAIGN_AUDIT_ONLY_LOCAL_TP_PROOF_REQUIRED"
 REPAIR_EXEMPTION_CODES = {PERSISTENT_DISCIPLINE, "SELF_IMPROVEMENT_P0_PROFITABILITY_DISCIPLINE"}
 GLOBAL_UNLOCK_BLOCKERS = {
     GUARDIAN_BLOCKER,
@@ -177,6 +178,9 @@ class TraderSupportBot:
             "repair_frontier_superseded_by_range_forecast_lanes": len(
                 entry["repair_frontier_superseded_by_range_forecast"]
             ),
+            "oanda_audit_only_local_tp_proof_required_lanes": len(
+                entry["oanda_audit_only_local_tp_proof_required"]
+            ),
             "repair_frontier_missing_range_rotation_counterpart_lanes": len(
                 entry["repair_frontier_missing_range_rotation_counterpart"]
             ),
@@ -216,6 +220,9 @@ class TraderSupportBot:
             "repair_basket_lane_ids": [item["lane_id"] for item in entry["repair_live_ready"]],
             "repair_basket_guardian_recovery_lane_ids": [
                 item["lane_id"] for item in entry["repair_basket_guardian_recovery"]
+            ],
+            "oanda_audit_only_local_tp_proof_required_lane_ids": [
+                item["lane_id"] for item in entry["oanda_audit_only_local_tp_proof_required"]
             ],
         }
         generated = self.now_utc.isoformat()
@@ -596,6 +603,7 @@ def _entry_readiness_summary(payload: dict[str, Any]) -> dict[str, Any]:
     repair_basket_guardian_recovery: list[dict[str, Any]] = []
     repair_frontier_superseded_by_range_forecast: list[dict[str, Any]] = []
     repair_frontier_missing_range_rotation_counterpart: list[dict[str, Any]] = []
+    oanda_audit_only_local_tp_proof_required: list[dict[str, Any]] = []
     global_unlock_frontier: list[dict[str, Any]] = []
     range_rotation_counterparts = _range_rotation_counterparts(results)
     for item in results:
@@ -603,6 +611,34 @@ def _entry_readiness_summary(payload: dict[str, Any]) -> dict[str, Any]:
             codes[str(code)] += 1
         blocker_codes = [str(code) for code in item.get("live_blocker_codes") or []]
         metadata = _intent_metadata(item)
+        if (
+            metadata.get("positive_rotation_oanda_campaign_audit_only") is True
+            or OANDA_AUDIT_ONLY_LOCAL_TP_PROOF_REQUIRED in blocker_codes
+        ):
+            intent = item.get("intent") if isinstance(item.get("intent"), dict) else {}
+            context = intent.get("market_context") if isinstance(intent.get("market_context"), dict) else {}
+            oanda_audit_only_local_tp_proof_required.append(
+                {
+                    "lane_id": item.get("lane_id"),
+                    "status": item.get("status"),
+                    "pair": intent.get("pair"),
+                    "side": intent.get("side"),
+                    "method": context.get("method"),
+                    "order_type": intent.get("order_type"),
+                    "reward_jpy": _intent_reward_jpy(item, metadata),
+                    "risk_jpy": _intent_risk_jpy(item, metadata),
+                    "capture_take_profit_scope": metadata.get("capture_take_profit_scope"),
+                    "capture_take_profit_scope_key": metadata.get("capture_take_profit_scope_key"),
+                    "oanda_vehicle_key": (
+                        metadata.get("positive_rotation_oanda_campaign_matching_vehicle_key")
+                        or metadata.get("oanda_campaign_vehicle_key")
+                    ),
+                    "remaining_blocker_codes_after_guardian": [
+                        code for code in blocker_codes if code != GUARDIAN_BLOCKER
+                    ],
+                    "local_proof_required": True,
+                }
+            )
         if str(item.get("status") or "") != "LIVE_READY" and blocker_codes:
             remaining_after_global = [code for code in blocker_codes if code not in GLOBAL_UNLOCK_BLOCKERS]
             if not remaining_after_global:
@@ -682,6 +718,7 @@ def _entry_readiness_summary(payload: dict[str, Any]) -> dict[str, Any]:
     repair_basket_guardian_recovery.sort(key=lambda item: _float(item.get("reward_jpy")), reverse=True)
     repair_frontier_superseded_by_range_forecast.sort(key=lambda item: _float(item.get("reward_jpy")), reverse=True)
     repair_frontier_missing_range_rotation_counterpart.sort(key=lambda item: _float(item.get("reward_jpy")), reverse=True)
+    oanda_audit_only_local_tp_proof_required.sort(key=lambda item: _float(item.get("reward_jpy")), reverse=True)
     global_unlock_frontier.sort(key=lambda item: _float(item.get("reward_jpy")), reverse=True)
     remaining_repair_blockers = _repair_frontier_remaining_blockers(repair_frontier)
     return {
@@ -694,6 +731,7 @@ def _entry_readiness_summary(payload: dict[str, Any]) -> dict[str, Any]:
         "repair_frontier": repair_frontier[:12],
         "repair_frontier_superseded_by_range_forecast": repair_frontier_superseded_by_range_forecast[:12],
         "repair_frontier_missing_range_rotation_counterpart": repair_frontier_missing_range_rotation_counterpart[:12],
+        "oanda_audit_only_local_tp_proof_required": oanda_audit_only_local_tp_proof_required[:12],
         "repair_live_ready": repair_live_ready[:12],
         "repair_basket_guardian_recovery": repair_basket_guardian_recovery[:12],
         "repair_frontier_after_support_clear_lanes": sum(
@@ -1482,6 +1520,30 @@ def _operator_actions(
                 ),
             }
         )
+    if entry.get("oanda_audit_only_local_tp_proof_required"):
+        pairs = sorted(
+            {
+                str(item.get("pair"))
+                for item in entry["oanda_audit_only_local_tp_proof_required"]
+                if item.get("pair")
+            }
+        )
+        pair_arg = ",".join(pairs) if pairs else "EUR_USD"
+        actions.append(
+            {
+                "code": "MINE_LOCAL_TP_PROOF_FOR_OANDA_AUDIT_ONLY",
+                "command": (
+                    "python3 scripts/oanda_history_fetch.py "
+                    f"--pairs {pair_arg} --granularities S5 --price BA "
+                    "--days 120 --output-dir logs/replay/oanda_history"
+                ),
+                "requires_explicit_operator_approval": False,
+                "reason": (
+                    "OANDA campaign firepower is audit-only for these lanes; fetch bid/ask candles "
+                    "and mine local pair/side/method TAKE_PROFIT proof before treating them as repair/live candidates"
+                ),
+            }
+        )
     target_firepower = acceptance.get("target_firepower") if isinstance(acceptance.get("target_firepower"), dict) else {}
     if target_firepower.get("minimum_5pct_estimated_reachable"):
         actions.append(
@@ -1546,6 +1608,7 @@ def _render_report(payload: dict[str, Any]) -> str:
         f"| Repair lanes after guardian recovery | `{len(entry['repair_basket_guardian_recovery'])}` |",
         f"| Repair frontier lanes | `{len(entry['repair_frontier'])}` |",
         f"| RANGE forecast superseded repair lanes | `{len(entry['repair_frontier_superseded_by_range_forecast'])}` |",
+        f"| OANDA audit-only local TP proof required | `{len(entry['oanda_audit_only_local_tp_proof_required'])}` |",
         f"| RANGE forecast missing counterpart lanes | `{len(entry['repair_frontier_missing_range_rotation_counterpart'])}` |",
         f"| Repair frontier clear after support | `{entry['repair_frontier_after_support_clear_lanes']}` |",
         f"| Repair frontier blocked after support | `{entry['repair_frontier_after_support_blocked_lanes']}` |",
@@ -1668,6 +1731,23 @@ def _render_report(payload: dict[str, Any]) -> str:
             lines.append(
                 f"| `{item['lane_id']}` | `{item['pair']}` | `{item['side']}` | "
                 f"`{item['method']}` | `{item['reward_jpy']}` | `{remaining}` |"
+            )
+    else:
+        lines.append("- none")
+    lines.extend(["", "## OANDA Audit-Only Local TP Proof Required", ""])
+    if entry["oanda_audit_only_local_tp_proof_required"]:
+        lines.extend(
+            [
+                "| Lane | Pair | Side | Method | Scope | Vehicle | Remaining blockers after guardian |",
+                "|---|---|---|---|---|---|---|",
+            ]
+        )
+        for item in entry["oanda_audit_only_local_tp_proof_required"][:8]:
+            remaining = ", ".join(item["remaining_blocker_codes_after_guardian"]) or "none"
+            lines.append(
+                f"| `{item['lane_id']}` | `{item['pair']}` | `{item['side']}` | "
+                f"`{item['method']}` | `{item.get('capture_take_profit_scope')}` | "
+                f"`{item.get('oanda_vehicle_key')}` | `{remaining}` |"
             )
     else:
         lines.append("- none")

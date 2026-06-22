@@ -5956,6 +5956,9 @@ POSITIVE_ROTATION_LIVE_BLOCK_CODE = "NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTA
 POSITIVE_ROTATION_PROOF_COLLECTION_WARN_CODE = (
     "TP_PROOF_COLLECTION_HARVEST_UNDER_NEGATIVE_EXPECTANCY"
 )
+OANDA_CAMPAIGN_AUDIT_ONLY_LOCAL_TP_PROOF_REQUIRED_CODE = (
+    "OANDA_CAMPAIGN_AUDIT_ONLY_LOCAL_TP_PROOF_REQUIRED"
+)
 POSITIVE_ROTATION_FIREPOWER_BLOCK_CODE = "POSITIVE_ROTATION_DAILY_FIREPOWER_INSUFFICIENT"
 POSITIVE_ROTATION_OANDA_CAMPAIGN_FIREPOWER_MODE = "OANDA_CAMPAIGN_FIREPOWER_HARVEST"
 LOSS_ASYMMETRY_OANDA_CAMPAIGN_FIREPOWER_MIN_LOT_MODE = "OANDA_CAMPAIGN_FIREPOWER_MIN_LOT"
@@ -8096,16 +8099,19 @@ def _capture_positive_rotation_live_issue(
             metadata,
             data_root=data_root,
         )
-        metadata["positive_rotation_live_ready"] = True
         metadata["positive_rotation_mode"] = POSITIVE_ROTATION_OANDA_CAMPAIGN_FIREPOWER_MODE
+        metadata["positive_rotation_live_ready"] = False
+        metadata["positive_rotation_oanda_campaign_audit_only"] = True
+        metadata["positive_rotation_oanda_campaign_local_tp_proof_required"] = True
         if current_firepower is None:
             metadata["positive_rotation_basis"] = (
                 "capture_economics is negative overall and local broker-TP scope is "
                 "missing, but this non-market attached-TP HARVEST receipt matches an "
                 "OANDA campaign_firepower high-precision vehicle whose aggregate "
                 "firepower reaches the daily 5% floor under the audit risk lens. "
-                "Historical firepower remains audit-only; all current forecast, "
-                "spread, strategy, risk, broker-truth, and gateway gates still apply."
+                "Historical firepower remains audit-only and cannot clear the "
+                "negative-expectancy live gate until local pair/side/method "
+                "TAKE_PROFIT_ORDER receipts prove the current execution shape."
             )
             metadata["positive_rotation_minimum_floor_reachable"] = True
             metadata["positive_rotation_minimum_floor_reach_basis"] = (
@@ -8118,8 +8124,9 @@ def _capture_positive_rotation_live_issue(
                 "OANDA campaign_firepower high-precision vehicle and the firepower "
                 "still covers today's remaining 5% floor after scaling from the "
                 "audit risk lens to the current intent risk. Historical firepower "
-                "remains audit-only; all current forecast, spread, strategy, risk, "
-                "broker-truth, and gateway gates still apply."
+                "remains audit-only and cannot clear the negative-expectancy live "
+                "gate until local pair/side/method TAKE_PROFIT_ORDER receipts prove "
+                "the current execution shape."
             )
             metadata["positive_rotation_minimum_floor_reachable"] = True
             metadata["positive_rotation_minimum_floor_reach_basis"] = (
@@ -8132,7 +8139,8 @@ def _capture_positive_rotation_live_issue(
                 "OANDA campaign_firepower high-precision vehicle. After scaling from "
                 "the audit risk lens to the current intent risk, the active-day "
                 "firepower is under today's remaining 5% floor, so this is a bounded "
-                "repair lane rather than proof that the daily target is solved."
+                "candidate to mine further rather than proof that the daily target "
+                "or live repair path is solved."
             )
             metadata["positive_rotation_minimum_floor_reachable"] = False
             metadata["positive_rotation_minimum_floor_reach_basis"] = (
@@ -8155,7 +8163,17 @@ def _capture_positive_rotation_live_issue(
             metadata["positive_rotation_target_reach_basis"] = (
                 "OANDA_CAMPAIGN_FIREPOWER_CURRENT_RISK"
             )
-        return None
+        return {
+            "code": OANDA_CAMPAIGN_AUDIT_ONLY_LOCAL_TP_PROOF_REQUIRED_CODE,
+            "message": (
+                "OANDA campaign firepower is historical audit evidence only; under "
+                "NEGATIVE_EXPECTANCY it may rank and size mining candidates, but it "
+                "cannot make a repair/live lane executable until this exact "
+                "pair/side/method has positive local TAKE_PROFIT_ORDER expectancy, "
+                "zero TP losses, and positive Wilson-stressed expectancy."
+            ),
+            "severity": "BLOCK",
+        }
     return {
         "code": POSITIVE_ROTATION_LIVE_BLOCK_CODE,
         "message": (
@@ -8986,7 +9004,6 @@ def _self_improvement_profitability_p0_repair_allowed(
     if not (
         _tp_proven_harvest_rotation_allowed(intent)
         or _tp_proof_collection_harvest_rotation_allowed(intent)
-        or _oanda_campaign_firepower_positive_rotation_allowed(intent)
     ):
         return False
     if not oanda_firepower_repair_current_risk_reaches_minimum(intent.metadata):

@@ -463,6 +463,88 @@ class TraderSupportBotTest(unittest.TestCase):
             self.assertIn("RANGE Forecast Missing Counterpart Repair Lanes", report)
             self.assertIn("failure_trader:GBP_USD:LONG:BREAKOUT_FAILURE:LIMIT", report)
 
+    def test_oanda_audit_only_candidate_requires_local_tp_proof(self) -> None:
+        now = datetime(2026, 6, 22, 12, 15, tzinfo=timezone.utc)
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _write_fixture(root, now=now, blocked=True)
+            _write_json(
+                files["intents"],
+                {
+                    "generated_at_utc": now.isoformat(),
+                    "results": [
+                        {
+                            "lane_id": "range_trader:GBP_JPY:LONG:RANGE_ROTATION",
+                            "status": "DRY_RUN_BLOCKED",
+                            "live_blocker_codes": [
+                                "OANDA_CAMPAIGN_AUDIT_ONLY_LOCAL_TP_PROOF_REQUIRED",
+                                "POSITION_GUARDIAN_INACTIVE_FOR_PROFIT_CAPTURE",
+                                "FORECAST_CONFIDENCE_REQUIRED_FOR_LIVE",
+                            ],
+                            "intent": {
+                                "pair": "GBP_JPY",
+                                "side": "LONG",
+                                "order_type": "LIMIT",
+                                "market_context": {"method": "RANGE_ROTATION"},
+                                "metadata": {
+                                    "positive_rotation_oanda_campaign_audit_only": True,
+                                    "positive_rotation_oanda_campaign_local_tp_proof_required": True,
+                                    "positive_rotation_oanda_campaign_matching_vehicle_key": (
+                                        "GBP_JPY|LONG|range_reversion|tp1_sl1"
+                                    ),
+                                    "capture_take_profit_scope": "MISSING_METHOD_SCOPE",
+                                    "capture_take_profit_scope_key": (
+                                        "GBP_JPY|LONG|RANGE_ROTATION|TAKE_PROFIT_ORDER"
+                                    ),
+                                    "sizing_actual_reward_jpy": 1020.0,
+                                    "sizing_actual_risk_jpy": 820.0,
+                                },
+                            },
+                        }
+                    ],
+                },
+            )
+            env = _guardian_env(root, active="0")
+            with mock.patch.dict(os.environ, env, clear=False):
+                TraderSupportBot(
+                    broker_snapshot_path=files["broker"],
+                    order_intents_path=files["intents"],
+                    target_state_path=files["target"],
+                    position_management_path=files["position_management"],
+                    position_guardian_management_path=files["guardian_management"],
+                    position_guardian_execution_path=files["guardian_execution"],
+                    position_guardian_heartbeat_path=files["guardian_heartbeat"],
+                    self_improvement_audit_path=files["self_improvement"],
+                    profitability_acceptance_path=files["profitability"],
+                    execution_timing_audit_path=files["timing"],
+                    profit_capture_bot_path=files["profit_capture_bot"],
+                    output_path=files["output"],
+                    report_path=files["report"],
+                    now_utc=now,
+                ).run()
+
+            payload = json.loads(files["output"].read_text())
+            self.assertEqual(payload["metrics"]["oanda_audit_only_local_tp_proof_required_lanes"], 1)
+            self.assertEqual(
+                payload["metrics"]["oanda_audit_only_local_tp_proof_required_lane_ids"],
+                ["range_trader:GBP_JPY:LONG:RANGE_ROTATION"],
+            )
+            candidate = payload["entry_readiness"]["oanda_audit_only_local_tp_proof_required"][0]
+            self.assertEqual(candidate["capture_take_profit_scope"], "MISSING_METHOD_SCOPE")
+            self.assertEqual(candidate["oanda_vehicle_key"], "GBP_JPY|LONG|range_reversion|tp1_sl1")
+            self.assertEqual(
+                candidate["remaining_blocker_codes_after_guardian"],
+                [
+                    "OANDA_CAMPAIGN_AUDIT_ONLY_LOCAL_TP_PROOF_REQUIRED",
+                    "FORECAST_CONFIDENCE_REQUIRED_FOR_LIVE",
+                ],
+            )
+            action_codes = {item["code"] for item in payload["operator_actions"]}
+            self.assertIn("MINE_LOCAL_TP_PROOF_FOR_OANDA_AUDIT_ONLY", action_codes)
+            report = files["report"].read_text()
+            self.assertIn("OANDA Audit-Only Local TP Proof Required", report)
+            self.assertIn("MISSING_METHOD_SCOPE", report)
+
     def test_cli_writes_support_panel_and_returns_blocked_code(self) -> None:
         now = datetime(2026, 6, 22, 12, 15, tzinfo=timezone.utc)
         with tempfile.TemporaryDirectory() as tmp:
