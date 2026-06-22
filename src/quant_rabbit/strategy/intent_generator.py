@@ -5311,6 +5311,15 @@ class IntentGenerator:
             risk_issues.extend(loss_streak_issues)
             if any(issue.get("severity") == "BLOCK" for issue in loss_streak_issues):
                 risk_allowed = False
+        month_residual_fresh_issue = (
+            _month_scale_residual_repair_issue(intent, month_scale_residual_issue)
+            if str(intent.metadata.get("position_intent") or "").upper() != "HEDGE"
+            else None
+        )
+        if month_residual_fresh_issue is not None:
+            risk_issues.append(month_residual_fresh_issue)
+            live_blockers = (*live_blockers, month_residual_fresh_issue["message"])
+            risk_allowed = False
         positive_rotation_firepower_issue = _positive_rotation_daily_firepower_issue(
             intent,
             data_root=data_root or self.data_root,
@@ -5323,6 +5332,7 @@ class IntentGenerator:
         if (
             self_improvement_profitability_issue is None
             and str(intent.metadata.get("position_intent") or "").upper() != "HEDGE"
+            and month_residual_fresh_issue is None
             and _self_improvement_profitability_p0_repair_allowed(intent)
         ):
             repair_recent_loss_issue = _self_improvement_p0_repair_recent_lane_loss_issue(
@@ -5332,7 +5342,7 @@ class IntentGenerator:
             repair_residual_issue = _month_scale_residual_repair_issue(
                 intent,
                 month_scale_residual_issue,
-            )
+            ) if month_residual_fresh_issue is None else None
             if repair_recent_loss_issue is not None:
                 risk_issues.append(repair_recent_loss_issue)
                 live_blockers = (*live_blockers, repair_recent_loss_issue["message"])
@@ -5388,13 +5398,14 @@ class IntentGenerator:
                     intent,
                     month_scale_residual_issue,
                 )
-                if repair_allowed
+                if repair_allowed and month_residual_fresh_issue is None
                 else None
             )
             if (
                 repair_allowed
                 and repair_recent_loss_issue is None
                 and repair_residual_issue is None
+                and month_residual_fresh_issue is None
             ):
                 intent.metadata["self_improvement_p0_repair_live_ready"] = True
                 intent.metadata["self_improvement_p0_repair_mode"] = (
@@ -5444,11 +5455,11 @@ class IntentGenerator:
             pending_residual_issue = _month_scale_residual_repair_issue(
                 intent,
                 month_scale_residual_issue,
-            )
+            ) if month_residual_fresh_issue is None else None
             if _self_improvement_pending_execution_repair_allowed(
                 intent,
                 self_improvement_pending_issue,
-            ) and pending_residual_issue is None:
+            ) and pending_residual_issue is None and month_residual_fresh_issue is None:
                 intent.metadata["self_improvement_pending_execution_repair_live_ready"] = True
                 intent.metadata["self_improvement_pending_execution_repair_mode"] = (
                     SELF_IMPROVEMENT_PROFITABILITY_P0_REPAIR_MODE
@@ -9043,7 +9054,7 @@ def _profitability_acceptance_month_residual_issue(data_root: Path) -> dict[str,
         "message": (
             "month-scale TP-progress replay still leaves this repair shape net "
             "negative; rerun 744h execution-timing/profitability acceptance and "
-            "remove the residual loss group before exposing it as TP_HARVEST_REPAIR "
+            "remove the residual loss group before exposing it as a live entry or TP_HARVEST_REPAIR "
             f"({', '.join(label_parts)})"
         ),
         "severity": "BLOCK",

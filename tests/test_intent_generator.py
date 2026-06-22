@@ -9457,6 +9457,46 @@ class IntentGeneratorTest(unittest.TestCase):
                 result["live_blocker_codes"],
             )
 
+    def test_month_scale_residual_group_blocks_matching_normal_live_ready_entry(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_month_scale_residual_acceptance(
+                root,
+                pair="EUR_USD",
+                side="LONG",
+                method="RANGE_ROTATION",
+            )
+            output = root / "intents.json"
+
+            summary = IntentGenerator(
+                campaign_plan=_range_campaign(root),
+                strategy_profile=_strategy(root, status="CANDIDATE"),
+                output_path=output,
+                report_path=root / "intents.md",
+                pair_charts_path=_pair_charts(root),
+                data_root=root,
+                max_loss_jpy=1000.0,
+            ).run(snapshot_path=_snapshot(root))
+
+            payload = json.loads(output.read_text())
+            result = next(
+                item
+                for item in payload["results"]
+                if item["lane_id"] == "range_trader:EUR_USD:LONG:RANGE_ROTATION"
+            )
+            metadata = result["intent"]["metadata"]
+            issue_codes = {issue["code"] for issue in result["risk_issues"]}
+
+            self.assertEqual(summary.live_ready, 0)
+            self.assertEqual(result["status"], "DRY_RUN_BLOCKED")
+            self.assertTrue(metadata["month_scale_residual_loss_repair_blocked"])
+            self.assertNotIn("self_improvement_p0_repair_live_ready", metadata)
+            self.assertIn(MONTH_SCALE_RESIDUAL_LOSS_REPAIR_BLOCK_CODE, issue_codes)
+            self.assertIn(
+                MONTH_SCALE_RESIDUAL_LOSS_REPAIR_BLOCK_CODE,
+                result["live_blocker_codes"],
+            )
+
     def test_month_scale_timing_artifact_blocks_matching_harvest_repair_before_acceptance_refresh(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
