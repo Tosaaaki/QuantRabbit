@@ -8825,6 +8825,74 @@ class IntentGeneratorTest(unittest.TestCase):
                 )
             )
 
+    def test_inactive_position_guardian_p0_blocks_fresh_live_ready_generation(self) -> None:
+        # Regression from USD_JPY 472792: once self-improvement proves the fast
+        # profit-capture guardian is inactive, generate-intents must stop
+        # advertising fresh LIVE_READY risk before GPT/gateway have to reject it.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            data_root = root / "data"
+            data_root.mkdir()
+            (data_root / "self_improvement_audit.json").write_text(
+                json.dumps(
+                    {
+                        "generated_at_utc": datetime.now(timezone.utc).isoformat(),
+                        "findings": [
+                            {
+                                "priority": "P0",
+                                "layer": "execution_quality",
+                                "code": "POSITION_GUARDIAN_INACTIVE_FOR_PROFIT_CAPTURE",
+                                "message": (
+                                    "position guardian is required but inactive; TP-progress profit "
+                                    "cannot be captured between full trader cycles"
+                                ),
+                                "evidence": {
+                                    "target_open": True,
+                                    "live_ready_lanes": 1,
+                                    "guardian": {
+                                        "required": True,
+                                        "active": False,
+                                        "active_source": "plist_missing",
+                                        "launchd_loaded": False,
+                                    },
+                                },
+                            }
+                        ],
+                    }
+                )
+            )
+            output = root / "intents.json"
+
+            summary = IntentGenerator(
+                campaign_plan=_campaign(root),
+                strategy_profile=_strategy(root, status="CANDIDATE"),
+                output_path=output,
+                report_path=root / "intents.md",
+                pair_charts_path=_pair_charts(root),
+                data_root=data_root,
+                max_loss_jpy=500.0,
+            ).run(snapshot_path=_snapshot(root))
+
+            payload = json.loads(output.read_text())
+            issue_codes = {
+                issue["code"]
+                for item in payload["results"]
+                for issue in item["risk_issues"]
+            }
+
+            self.assertEqual(summary.live_ready, 0)
+            self.assertTrue(payload["results"])
+            self.assertTrue(all(item["status"] == "DRY_RUN_BLOCKED" for item in payload["results"]))
+            self.assertIn("POSITION_GUARDIAN_INACTIVE_FOR_PROFIT_CAPTURE", issue_codes)
+            self.assertTrue(
+                any(
+                    "position guardian inactive P0 blocks LIVE_READY" in blocker
+                    and "profit-capture monitoring must be active" in blocker
+                    for item in payload["results"]
+                    for blocker in item["live_blockers"]
+                )
+            )
+
     def test_self_improvement_profitability_p0_allows_tp_proven_harvest_repair_entry(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

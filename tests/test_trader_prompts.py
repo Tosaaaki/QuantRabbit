@@ -144,6 +144,52 @@ class TraderPromptRouteTest(unittest.TestCase):
         self.assertFalse(any("profitability P0 blocks entry routing" in reason for reason in route.reasons))
         self.assertTrue(any("profitability P0 remains active as repair context" in reason for reason in route.reasons))
 
+    def test_inactive_position_guardian_p0_routes_to_learning_repair_before_entry(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root)
+            files["self_improvement_audit"].write_text(
+                json.dumps(
+                    {
+                        "generated_at_utc": datetime.now(timezone.utc).isoformat(),
+                        "status": "SELF_IMPROVEMENT_BLOCKED",
+                        "findings": [
+                            {
+                                "priority": "P0",
+                                "layer": "execution_quality",
+                                "code": "POSITION_GUARDIAN_INACTIVE_FOR_PROFIT_CAPTURE",
+                                "message": (
+                                    "position guardian is required but inactive; TP-progress profit "
+                                    "cannot be captured between full trader cycles"
+                                ),
+                                "evidence": {
+                                    "target_open": True,
+                                    "live_ready_lanes": 1,
+                                    "guardian": {
+                                        "required": True,
+                                        "active": False,
+                                        "active_source": "plist_missing",
+                                        "launchd_loaded": False,
+                                    },
+                                },
+                            }
+                        ],
+                    }
+                )
+            )
+
+            route = route_trader_prompts(**_route_paths(files), decision_response_path=None)
+
+        self.assertEqual(route.branch, BRANCH_LEARNING)
+        self.assertTrue(
+            any(
+                "self-improvement POSITION_GUARDIAN_INACTIVE_FOR_PROFIT_CAPTURE blocks entry routing"
+                in reason
+                for reason in route.reasons
+            )
+        )
+        self.assertTrue(any("layer=execution_quality" in reason for reason in route.reasons))
+
     def test_missing_profitability_acceptance_routes_to_refresh_branch(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

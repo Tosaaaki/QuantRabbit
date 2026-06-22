@@ -4761,6 +4761,9 @@ SELF_IMPROVEMENT_PROFITABILITY_P0_REPAIR_MODE = "TP_HARVEST_REPAIR"
 SELF_IMPROVEMENT_PENDING_EXECUTION_REPAIR_CODE = (
     "SELF_IMPROVEMENT_PENDING_EXECUTION_REPAIR_MODE"
 )
+SELF_IMPROVEMENT_GUARDIAN_PROFIT_CAPTURE_CODE = (
+    "POSITION_GUARDIAN_INACTIVE_FOR_PROFIT_CAPTURE"
+)
 PENDING_CHURN_GROUP_HARD_BLOCK_MIN_COUNT = _env_int(
     "QR_PENDING_CHURN_GROUP_HARD_BLOCK_MIN_COUNT",
     3,
@@ -4970,6 +4973,11 @@ class IntentGenerator:
             if snapshot is not None
             else None
         )
+        self_improvement_guardian_issue = (
+            _self_improvement_guardian_profit_capture_issue(self.data_root)
+            if snapshot is not None
+            else None
+        )
         loss_asymmetry_guard = _capture_loss_asymmetry_guard(self.data_root) if snapshot is not None else {}
         results: list[GeneratedIntent] = []
         for lane in lanes[:max_candidates]:
@@ -4994,6 +5002,7 @@ class IntentGenerator:
                         self_improvement_profitability_issue=self_improvement_profitability_issue,
                         self_improvement_forecast_issue=self_improvement_forecast_issue,
                         self_improvement_pending_issue=self_improvement_pending_issue,
+                        self_improvement_guardian_issue=self_improvement_guardian_issue,
                         loss_asymmetry_guard=loss_asymmetry_guard,
                     )
                 )
@@ -5030,6 +5039,7 @@ class IntentGenerator:
         self_improvement_profitability_issue: dict[str, str] | None = None,
         self_improvement_forecast_issue: dict[str, str] | None = None,
         self_improvement_pending_issue: dict[str, str] | None = None,
+        self_improvement_guardian_issue: dict[str, str] | None = None,
         loss_asymmetry_guard: dict[str, Any] | None = None,
     ) -> GeneratedIntent:
         parent_lane_id = _lane_id(lane)
@@ -5350,6 +5360,10 @@ class IntentGenerator:
                 risk_issues.append(dict(self_improvement_pending_issue))
                 live_blockers = (*live_blockers, self_improvement_pending_issue["message"])
                 risk_allowed = False
+        if self_improvement_guardian_issue is not None:
+            risk_issues.append(dict(self_improvement_guardian_issue))
+            live_blockers = (*live_blockers, self_improvement_guardian_issue["message"])
+            risk_allowed = False
         forecast_live_issue = _forecast_live_readiness_issue(intent, intent.metadata or {}, method)
         if forecast_live_issue is not None:
             risk_issues.append(forecast_live_issue)
@@ -9063,6 +9077,46 @@ def _self_improvement_pending_execution_lifecycle_issue(data_root: Path) -> dict
         "severity": "BLOCK",
         "cancel_churn_lane_keys": list(blocker.get("cancel_churn_lane_keys") or []),
     }
+
+
+def _self_improvement_guardian_profit_capture_issue(data_root: Path) -> dict[str, str] | None:
+    path = data_root / "self_improvement_audit.json"
+    if not path.exists():
+        return None
+    try:
+        payload = json.loads(path.read_text())
+    except (OSError, json.JSONDecodeError, ValueError):
+        return None
+    for item in payload.get("findings", []) or []:
+        if not isinstance(item, dict):
+            continue
+        if str(item.get("priority") or "").upper() != "P0":
+            continue
+        if str(item.get("code") or "") != SELF_IMPROVEMENT_GUARDIAN_PROFIT_CAPTURE_CODE:
+            continue
+        evidence = item.get("evidence") if isinstance(item.get("evidence"), dict) else {}
+        guardian = evidence.get("guardian") if isinstance(evidence.get("guardian"), dict) else {}
+        details: list[str] = []
+        source = guardian.get("active_source")
+        if source:
+            details.append(f"source={source}")
+        launchd_loaded = guardian.get("launchd_loaded")
+        if launchd_loaded is not None:
+            details.append(f"launchd_loaded={launchd_loaded}")
+        live_ready_lanes = evidence.get("live_ready_lanes")
+        if live_ready_lanes is not None:
+            details.append(f"live_ready_lanes={live_ready_lanes}")
+        suffix = f" ({', '.join(details)})" if details else ""
+        return {
+            "code": SELF_IMPROVEMENT_GUARDIAN_PROFIT_CAPTURE_CODE,
+            "message": (
+                "position guardian inactive P0 blocks LIVE_READY intent generation; "
+                "profit-capture monitoring must be active before adding fresh risk"
+                f"{suffix}"
+            ),
+            "severity": "BLOCK",
+        }
+    return None
 
 
 def _method_context_issues(intent: OrderIntent) -> list[dict[str, str]]:
