@@ -111,6 +111,7 @@ PROFIT_PROTECTION_SPREAD_MULT = GEOMETRY_SPREAD_FLOOR_MULT
 # itself. It does need to remove HOLD support when the remaining payoff is badly
 # asymmetric, otherwise a stale loser can keep blocking capital recycle.
 FORECAST_PERSISTENCE_CLOSE_REVIEW_MAX_REWARD_RISK = 0.5
+FORECAST_PERSISTENCE_CLOSE_REVIEW_MAX_REPORT_AGE_SECONDS = 300.0
 # SL-free break-even/profit-lock is not initial SL repair. It is a profit-only
 # escape hatch after executable MFE clears current micro-noise. M5 is the live
 # management timeframe already exposed by pair_charts. The spread multiplier is
@@ -1874,7 +1875,14 @@ def _fresh_forecast_persistence_poor_rr_close_review_reason(
         return None
 
     fetched_at = _parse_utc_datetime(snapshot.fetched_at_utc)
-    payload = _fresh_report(data_root / "forecast_persistence_report.json", fetched_at)
+    payload = _fresh_report(
+        data_root / "forecast_persistence_report.json",
+        fetched_at,
+    ) or _recent_report(
+        data_root / "forecast_persistence_report.json",
+        fetched_at,
+        max_age_seconds=FORECAST_PERSISTENCE_CLOSE_REVIEW_MAX_REPORT_AGE_SECONDS,
+    )
     if not payload:
         return None
     for item in payload.get("verdicts", []) or []:
@@ -1913,6 +1921,29 @@ def _fresh_report(path: Path, fetched_at: datetime | None) -> dict[str, Any] | N
         return None
     generated_at = _parse_utc_datetime(payload.get("generated_at_utc"))
     if generated_at is None or generated_at < fetched_at:
+        return None
+    return payload
+
+
+def _recent_report(
+    path: Path,
+    fetched_at: datetime | None,
+    *,
+    max_age_seconds: float,
+) -> dict[str, Any] | None:
+    if fetched_at is None or not path.exists():
+        return None
+    try:
+        payload = json.loads(path.read_text())
+    except (OSError, json.JSONDecodeError, ValueError):
+        return None
+    if not isinstance(payload, dict):
+        return None
+    generated_at = _parse_utc_datetime(payload.get("generated_at_utc"))
+    if generated_at is None:
+        return None
+    age_seconds = (fetched_at - generated_at).total_seconds()
+    if age_seconds < 0 or age_seconds > max_age_seconds:
         return None
     return payload
 
