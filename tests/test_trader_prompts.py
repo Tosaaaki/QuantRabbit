@@ -3,6 +3,7 @@ from __future__ import annotations
 import io
 import json
 import os
+import sqlite3
 import tempfile
 import unittest
 from contextlib import redirect_stdout
@@ -976,6 +977,29 @@ class TraderPromptRouteTest(unittest.TestCase):
 
         self.assertEqual(route.branch, BRANCH_REFRESH)
         self.assertTrue(any("order intents stale against forecast history" in reason for reason in route.reasons))
+        self.assertFalse(any("no current LIVE_READY lane" in reason for reason in route.reasons))
+
+    def test_stale_order_intents_against_execution_ledger_routes_open_target_to_refresh_branch(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root)
+            base = datetime(2026, 1, 1, tzinfo=timezone.utc)
+            intents = json.loads(files["intents"].read_text())
+            intents["generated_at_utc"] = base.isoformat()
+            files["intents"].write_text(json.dumps(intents))
+            with sqlite3.connect(files["execution_ledger"]) as conn:
+                conn.execute(
+                    """
+                    INSERT INTO execution_events(ts_utc, event_type)
+                    VALUES (?, ?)
+                    """,
+                    ((base + timedelta(minutes=30)).isoformat(), "ORDER_ACCEPTED"),
+                )
+
+            route = route_trader_prompts(**_route_paths(files), decision_response_path=None)
+
+        self.assertEqual(route.branch, BRANCH_REFRESH)
+        self.assertTrue(any("order intents stale against execution ledger" in reason for reason in route.reasons))
         self.assertFalse(any("no current LIVE_READY lane" in reason for reason in route.reasons))
 
     def test_stale_attack_advice_against_order_intents_routes_to_refresh_branch(self) -> None:
@@ -3590,6 +3614,7 @@ def _route_paths(files: dict[str, Path]) -> dict[str, Path]:
         "attack_advice_path": files["attack_advice"],
         "learning_audit_path": files["learning_audit"],
         "capture_economics_path": files["capture_economics"],
+        "execution_ledger_db_path": files["execution_ledger"],
         "forecast_history_path": files["forecast_history"],
         "campaign_plan_path": files["campaign_plan"],
         "memory_health_path": files["memory_health"],
@@ -3627,6 +3652,7 @@ def _fixtures(root: Path, *, positions: list[dict] | None = None) -> dict[str, P
         "attack_advice": root / "ai_attack_advice.json",
         "learning_audit": root / "learning_audit.json",
         "capture_economics": root / "capture_economics.json",
+        "execution_ledger": root / "execution_ledger.db",
         "forecast_history": root / "forecast_history.jsonl",
         "campaign_plan": root / "daily_campaign_plan.json",
         "memory_health": root / "memory_health.json",
@@ -3720,6 +3746,15 @@ def _fixtures(root: Path, *, positions: list[dict] | None = None) -> dict[str, P
             }
         )
     )
+    with sqlite3.connect(files["execution_ledger"]) as conn:
+        conn.execute(
+            """
+            CREATE TABLE execution_events (
+                ts_utc TEXT NOT NULL,
+                event_type TEXT NOT NULL
+            )
+            """
+        )
     files["forecast_history"].write_text("")
     files["market_context_matrix"].write_text(
         json.dumps(

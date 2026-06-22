@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import sqlite3
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -78,6 +79,7 @@ from quant_rabbit.paths import (
     DEFAULT_CROSS_ASSET_SNAPSHOT,
     DEFAULT_CURRENCY_STRENGTH,
     DEFAULT_DAILY_TARGET_STATE,
+    DEFAULT_EXECUTION_LEDGER_DB,
     DEFAULT_FLOW_SNAPSHOT,
     DEFAULT_FORECAST_HISTORY,
     DEFAULT_GPT_TRADER_DECISION,
@@ -193,6 +195,7 @@ def route_trader_prompts(
     attack_advice_path: Path = DEFAULT_AI_ATTACK_ADVICE,
     learning_audit_path: Path = DEFAULT_LEARNING_AUDIT,
     capture_economics_path: Path | None = DEFAULT_CAPTURE_ECONOMICS,
+    execution_ledger_db_path: Path | None = DEFAULT_EXECUTION_LEDGER_DB,
     forecast_history_path: Path | None = DEFAULT_FORECAST_HISTORY,
     campaign_plan_path: Path | None = DEFAULT_CAMPAIGN_PLAN,
     memory_health_path: Path | None = DEFAULT_MEMORY_HEALTH,
@@ -362,6 +365,12 @@ def route_trader_prompts(
         intents_path=intents_path,
         forecast_history_path=forecast_history_path,
     )
+    order_intents_execution_refresh_reasons = _order_intents_execution_refresh_reasons(
+        target_state,
+        intents,
+        intents_path=intents_path,
+        execution_ledger_db_path=execution_ledger_db_path,
+    )
     attack_advice_refresh_reasons = _attack_advice_refresh_reasons(
         target_state,
         intents,
@@ -398,6 +407,7 @@ def route_trader_prompts(
         *order_intents_context_refresh_reasons,
         *order_intents_packet_refresh_reasons,
         *order_intents_forecast_refresh_reasons,
+        *order_intents_execution_refresh_reasons,
         *attack_advice_refresh_reasons,
         *memory_health_refresh_reasons,
         *coverage_market_evidence_refresh_reasons,
@@ -2177,6 +2187,85 @@ def _order_intents_forecast_refresh_reasons(
             f"({forecast_history_path}); rerun generate-intents before entry/learning routing",
         )
     return ()
+
+
+_BROKER_TRUTH_EVENT_TYPES = frozenset(
+    {
+        "ORDER_ACCEPTED",
+        "ORDER_FILLED",
+        "ORDER_CANCELED",
+        "ORDER_REJECTED",
+        "TRADE_CLOSED",
+        "PROTECTION_CREATED",
+        "OANDA_TRANSACTION",
+    }
+)
+
+
+def _order_intents_execution_refresh_reasons(
+    target_state: dict[str, Any],
+    intents: dict[str, Any],
+    *,
+    intents_path: Path,
+    execution_ledger_db_path: Path | None,
+) -> tuple[str, ...]:
+    """Require entry packets to post-date broker-truth execution events.
+
+    Order intents are priced from a specific broker snapshot. Once OANDA order,
+    fill, cancel, protection, or close truth lands in the execution ledger, a
+    prior LIVE_READY packet may describe a lane that already filled, failed, or
+    was canceled. Gateway staging events alone are excluded because they do not
+    change broker truth.
+    """
+
+    if execution_ledger_db_path is None or not _target_open(target_state):
+        return ()
+    intents_generated_at = _parse_utc(intents.get("generated_at_utc"))
+    if intents_generated_at is None:
+        return (
+            f"order_intents lacks generated_at_utc while target is open: {intents_path}; "
+            "rerun generate-intents after syncing the execution ledger before entry/verify routing",
+        )
+    latest_event = _latest_broker_truth_execution_event(execution_ledger_db_path)
+    if latest_event is None:
+        return ()
+    latest_ts, latest_type = latest_event
+    if latest_ts <= intents_generated_at:
+        return ()
+    return (
+        "order intents stale against execution ledger while target is open: "
+        f"order_intents generated at {intents_generated_at.isoformat()} predates "
+        f"latest broker-truth ledger event {latest_type} at {latest_ts.isoformat()} "
+        f"({execution_ledger_db_path}); rerun execution-ledger-sync and generate-intents "
+        "before entry/learning routing",
+    )
+
+
+def _latest_broker_truth_execution_event(path: Path) -> tuple[datetime, str] | None:
+    if not path.exists():
+        return None
+    try:
+        with sqlite3.connect(f"file:{path}?mode=ro", uri=True) as conn:
+            placeholders = ", ".join("?" for _ in _BROKER_TRUTH_EVENT_TYPES)
+            rows = conn.execute(
+                f"""
+                SELECT ts_utc, event_type
+                FROM execution_events
+                WHERE event_type IN ({placeholders})
+                """,
+                tuple(sorted(_BROKER_TRUTH_EVENT_TYPES)),
+            ).fetchall()
+    except sqlite3.Error:
+        return None
+    latest: tuple[datetime, str] | None = None
+    for ts_raw, event_type_raw in rows:
+        ts = _parse_utc(ts_raw)
+        if ts is None:
+            continue
+        event_type = str(event_type_raw or "")
+        if latest is None or ts > latest[0]:
+            latest = (ts, event_type)
+    return latest
 
 
 def _attack_advice_refresh_reasons(
