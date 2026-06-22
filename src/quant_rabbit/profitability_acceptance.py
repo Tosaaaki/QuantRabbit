@@ -47,6 +47,11 @@ STATUS_BLOCKED = "PROFITABILITY_ACCEPTANCE_BLOCKED"
 # incidents to age out after a clean operating window.
 LOSS_CLOSE_LEAK_LOOKBACK_DAYS = 7
 
+# Monthly repair replay bar: this is an acceptance/audit coverage minimum, not
+# a market threshold. A weekly clean window is not enough when capture economics
+# still says TP exits are profitable but market-close leakage is net negative.
+MONTH_SCALE_LOSS_CLOSE_REPLAY_MIN_HOURS = 24.0 * 30.0
+
 # Engineering freshness guard for the append-only local gateway receipt stream.
 # Live cycles run far more often than this; a larger gap means the ledger being
 # audited is missing local gateway receipts and broker-close provenance cannot
@@ -129,6 +134,7 @@ class ProfitabilityAcceptanceAuditor:
             if isinstance(ledger_metrics.get("execution_timing_audit"), dict)
             else {},
             self_metrics=self_metrics,
+            capture_metrics=capture_metrics,
         )
         projection_metrics, projection_findings = _projection_precision_findings(projection_ledger_path)
         bidask_metrics, bidask_findings = _bidask_rule_findings(bidask_rules, bidask_rules_path)
@@ -1236,6 +1242,9 @@ def _execution_timing_loss_close_labels(
         "loss_close_repair_replay_delta_jpy": None,
         "loss_close_repair_replay_profit_capture_jpy": None,
         "loss_close_repair_replay_block_reasons": {},
+        "window_from_utc": None,
+        "window_to_utc": None,
+        "window_lookback_hours": None,
         "loss_market_close_rows": 0,
         "label_counts": {},
         "top_profit_capture_misses": [],
@@ -1253,6 +1262,10 @@ def _execution_timing_loss_close_labels(
         metrics["read_error"] = f"{type(exc).__name__}: {exc}"
         return {}, metrics
     summary = payload.get("summary") if isinstance(payload.get("summary"), dict) else {}
+    window = payload.get("window") if isinstance(payload.get("window"), dict) else {}
+    metrics["window_from_utc"] = window.get("from_utc")
+    metrics["window_to_utc"] = window.get("to_utc")
+    metrics["window_lookback_hours"] = _optional_float(window.get("lookback_hours"))
     repair_replay_contract = repair_replay_contract_from_payload(payload)
     metrics["repair_replay_contract"] = repair_replay_contract
     metrics["repair_replay_contract_present"] = (
@@ -1410,8 +1423,10 @@ def _profit_capture_replay_repair_findings(
     timing_metrics: dict[str, Any],
     *,
     self_metrics: dict[str, Any] | None = None,
+    capture_metrics: dict[str, Any] | None = None,
 ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     self_metrics = self_metrics or {}
+    capture_metrics = capture_metrics or {}
     self_p0_codes = {
         str(code or "").strip().upper()
         for code in self_metrics.get("p0_codes", []) or []
@@ -1448,13 +1463,60 @@ def _profit_capture_replay_repair_findings(
         counterfactual_jpy = _optional_float(
             timing_metrics.get("loss_close_counterfactual_profit_capture_jpy")
         )
+    repair_counterfactual_pl = _optional_float(
+        timing_metrics.get("loss_close_repair_replay_counterfactual_pl_jpy")
+    )
+    raw_counterfactual_pl = _optional_float(
+        timing_metrics.get("loss_close_counterfactual_profit_capture_pl_jpy")
+    )
+    active_counterfactual_pl = (
+        repair_counterfactual_pl
+        if repair_counterfactual_pl is not None
+        else raw_counterfactual_pl
+    )
+    window_lookback_hours = _optional_float(timing_metrics.get("window_lookback_hours"))
+    tp_metrics = (
+        capture_metrics.get("take_profit")
+        if isinstance(capture_metrics.get("take_profit"), dict)
+        else {}
+    )
+    market_close_metrics = (
+        capture_metrics.get("market_close")
+        if isinstance(capture_metrics.get("market_close"), dict)
+        else {}
+    )
+    tp_net = _optional_float(tp_metrics.get("net_jpy"))
+    market_close_net = _optional_float(market_close_metrics.get("net_jpy"))
+    monthly_replay_required = bool(
+        tp_net is not None
+        and tp_net > 0.0
+        and market_close_net is not None
+        and market_close_net < 0.0
+    )
+    month_scale_replay_loaded = bool(
+        timing_metrics.get("loaded")
+        and repair_replay_contract_present
+        and window_lookback_hours is not None
+        and window_lookback_hours >= MONTH_SCALE_LOSS_CLOSE_REPLAY_MIN_HOURS
+    )
     metrics = {
         "execution_timing_loaded": bool(timing_metrics.get("loaded")),
         "execution_timing_generated_at_utc": timing_metrics.get("generated_at_utc"),
+        "execution_timing_window_from_utc": timing_metrics.get("window_from_utc"),
+        "execution_timing_window_to_utc": timing_metrics.get("window_to_utc"),
+        "execution_timing_window_lookback_hours": window_lookback_hours,
+        "month_scale_replay_required": monthly_replay_required,
+        "month_scale_replay_loaded": month_scale_replay_loaded,
+        "month_scale_replay_min_hours": MONTH_SCALE_LOSS_CLOSE_REPLAY_MIN_HOURS,
+        "capture_take_profit_net_jpy": tp_net,
+        "capture_market_close_net_jpy": market_close_net,
         "loss_closes_profit_capture_missed": simple_missed,
         "loss_closes_repair_replay_triggered": repair_replay_missed,
         "repair_replay_contract": timing_metrics.get("repair_replay_contract"),
         "repair_replay_contract_present": repair_replay_contract_present,
+        "repair_replay_counterfactual_pl_jpy": repair_counterfactual_pl,
+        "raw_counterfactual_profit_capture_pl_jpy": raw_counterfactual_pl,
+        "active_counterfactual_profit_capture_pl_jpy": active_counterfactual_pl,
         "counterfactual_profit_capture_delta_jpy": counterfactual_delta,
         "counterfactual_profit_capture_jpy": counterfactual_jpy,
         "top_profit_capture_misses": timing_metrics.get("top_profit_capture_misses") or [],
@@ -1477,14 +1539,84 @@ def _profit_capture_replay_repair_findings(
             bool(timing_metrics.get("loaded"))
             and repair_replay_contract_present
             and repair_replay_missed == 0
+            and (
+                not monthly_replay_required
+                or (
+                    month_scale_replay_loaded
+                    and (
+                        active_counterfactual_pl is None
+                        or active_counterfactual_pl >= 0.0
+                    )
+                )
+            )
         ),
     }
+    findings: list[dict[str, Any]] = []
+    if monthly_replay_required and not month_scale_replay_loaded:
+        findings.append(
+            _finding(
+                priority="P0",
+                code="MONTH_SCALE_LOSS_CLOSE_REPLAY_REQUIRED",
+                message=(
+                    "TAKE_PROFIT_ORDER is net-positive while MARKET_ORDER_TRADE_CLOSE is net-negative, "
+                    "but the active execution-timing-audit does not cover a 30-day OANDA candle "
+                    "replay with the current TP-progress production gate"
+                ),
+                next_action=(
+                    "Run execution-timing-audit with at least 720 lookback hours and the current "
+                    "production-gate replay contract, then use that artifact for profitability "
+                    "acceptance before claiming the market-close leak is repaired."
+                ),
+                evidence={
+                    "take_profit_net_jpy": tp_net,
+                    "market_close_net_jpy": market_close_net,
+                    "execution_timing_loaded": metrics["execution_timing_loaded"],
+                    "window_lookback_hours": window_lookback_hours,
+                    "required_lookback_hours": MONTH_SCALE_LOSS_CLOSE_REPLAY_MIN_HOURS,
+                    "repair_replay_contract": metrics["repair_replay_contract"],
+                    "repair_replay_contract_present": repair_replay_contract_present,
+                },
+            )
+        )
+    elif (
+        monthly_replay_required
+        and month_scale_replay_loaded
+        and active_counterfactual_pl is not None
+        and active_counterfactual_pl < 0.0
+    ):
+        findings.append(
+            _finding(
+                priority="P0",
+                code="MONTH_SCALE_TP_PROGRESS_REPLAY_STILL_NEGATIVE",
+                message=(
+                    "30-day OANDA candle replay says the current TP-progress repair improves "
+                    "loss-side closes, but the replayed loss-close P/L is still net negative"
+                ),
+                next_action=(
+                    "Do not increase high-turnover entries from this repair alone. Improve the "
+                    "loss-close decision path, close-gate evidence, or entry selection until "
+                    "month-scale production-gate replay is non-negative."
+                ),
+                evidence={
+                    "window_lookback_hours": window_lookback_hours,
+                    "loss_closes_profit_capture_missed": simple_missed,
+                    "loss_closes_repair_replay_triggered": repair_replay_missed,
+                    "repair_replay_counterfactual_pl_jpy": repair_counterfactual_pl,
+                    "raw_counterfactual_profit_capture_pl_jpy": raw_counterfactual_pl,
+                    "active_counterfactual_profit_capture_pl_jpy": active_counterfactual_pl,
+                    "counterfactual_profit_capture_delta_jpy": counterfactual_delta,
+                    "counterfactual_profit_capture_jpy": counterfactual_jpy,
+                    "top_repair_replay_triggers": metrics["top_repair_replay_triggers"],
+                    "top_repair_replay_blocks": metrics["top_repair_replay_blocks"],
+                },
+            )
+        )
     if (
         repair_replay_contract_missing
         and simple_missed > 0
         and has_self_profit_capture_context
     ):
-        return metrics, [
+        return metrics, findings + [
             _finding(
                 priority="P0",
                 code="TP_PROGRESS_REPAIR_REPLAY_CONTRACT_MISSING",
@@ -1515,10 +1647,9 @@ def _profit_capture_replay_repair_findings(
             )
         ]
     if not metrics["execution_timing_loaded"] or not has_self_profit_capture_context:
-        return metrics, []
+        return metrics, findings
     if repair_replay_contract_present and missed <= 0:
-        return metrics, []
-    findings: list[dict[str, Any]] = []
+        return metrics, findings
     if guardian_profit_capture_inactive and repair_replay_contract_present and missed > 0:
         findings.append(
             _finding(

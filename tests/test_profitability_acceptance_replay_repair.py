@@ -159,6 +159,76 @@ class ProfitabilityAcceptanceReplayRepairTest(unittest.TestCase):
         self.assertFalse(metrics["self_improvement_profit_capture_context"])
         self.assertEqual(findings, [])
 
+    def test_requires_month_scale_replay_when_tp_positive_but_market_close_negative(self) -> None:
+        metrics, findings = _profit_capture_replay_repair_findings(
+            {
+                "loaded": True,
+                "generated_at_utc": "2026-06-22T17:10:24+00:00",
+                "window_lookback_hours": 168.0,
+                "repair_replay_contract_present": True,
+                "loss_closes_profit_capture_missed": 0,
+                "loss_closes_repair_replay_triggered": 0,
+                "loss_close_repair_replay_counterfactual_pl_jpy": 42.0,
+            },
+            capture_metrics={
+                "take_profit": {"net_jpy": 48804.0},
+                "market_close": {"net_jpy": -81147.0},
+            },
+        )
+
+        self.assertFalse(metrics["month_scale_replay_loaded"])
+        self.assertFalse(metrics["replay_repair_proved"])
+        self.assertEqual(len(findings), 1)
+        self.assertEqual(findings[0]["code"], "MONTH_SCALE_LOSS_CLOSE_REPLAY_REQUIRED")
+        self.assertEqual(findings[0]["priority"], "P0")
+
+    def test_blocks_when_month_scale_replay_improves_but_stays_negative(self) -> None:
+        metrics, findings = _profit_capture_replay_repair_findings(
+            {
+                "loaded": True,
+                "generated_at_utc": "2026-06-22T17:10:24+00:00",
+                "window_lookback_hours": 744.0,
+                "repair_replay_contract_present": True,
+                "loss_closes_profit_capture_missed": 14,
+                "loss_closes_repair_replay_triggered": 13,
+                "loss_close_repair_replay_counterfactual_pl_jpy": -13824.5957,
+                "loss_close_repair_replay_delta_jpy": 18775.1646,
+                "loss_close_repair_replay_profit_capture_jpy": 3830.5491,
+            },
+            self_metrics={"p0_codes": ["LOSS_CLOSE_PROFIT_CAPTURE_MISSED"]},
+            capture_metrics={
+                "take_profit": {"net_jpy": 48804.0},
+                "market_close": {"net_jpy": -81147.0},
+            },
+        )
+
+        codes = [item["code"] for item in findings]
+        self.assertTrue(metrics["month_scale_replay_loaded"])
+        self.assertFalse(metrics["replay_repair_proved"])
+        self.assertIn("MONTH_SCALE_TP_PROGRESS_REPLAY_STILL_NEGATIVE", codes)
+        self.assertIn("TP_PROGRESS_REPLAY_REPAIR_UNPROVED", codes)
+
+    def test_month_scale_replay_non_negative_can_clear_month_specific_gate(self) -> None:
+        metrics, findings = _profit_capture_replay_repair_findings(
+            {
+                "loaded": True,
+                "generated_at_utc": "2026-06-22T17:10:24+00:00",
+                "window_lookback_hours": 744.0,
+                "repair_replay_contract_present": True,
+                "loss_closes_profit_capture_missed": 2,
+                "loss_closes_repair_replay_triggered": 0,
+                "loss_close_repair_replay_counterfactual_pl_jpy": 15.5,
+            },
+            capture_metrics={
+                "take_profit": {"net_jpy": 48804.0},
+                "market_close": {"net_jpy": -81147.0},
+            },
+        )
+
+        self.assertTrue(metrics["month_scale_replay_loaded"])
+        self.assertTrue(metrics["replay_repair_proved"])
+        self.assertEqual(findings, [])
+
 
 if __name__ == "__main__":
     unittest.main()
