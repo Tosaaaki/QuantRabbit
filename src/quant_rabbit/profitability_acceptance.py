@@ -686,15 +686,51 @@ def _execution_ledger_close_findings(
                         FROM verification_observations v
                         WHERE v.check_name = 'close_gate_evidence'
                           AND v.subject_id = g.trade_id
-                          AND v.ts_utc = g.ts_utc
+                          AND (
+                              v.ts_utc = g.ts_utc
+                              OR EXISTS (
+                                  SELECT 1
+                                  FROM execution_events accepted
+                                  WHERE accepted.event_type = 'GATEWAY_GPT_CLOSE_ACCEPTED'
+                                    AND accepted.trade_id = g.trade_id
+                                    AND accepted.ts_utc = v.ts_utc
+                                    AND accepted.ts_utc <= g.ts_utc
+                                    AND NOT EXISTS (
+                                        SELECT 1
+                                        FROM execution_events newer_accepted
+                                        WHERE newer_accepted.event_type = 'GATEWAY_GPT_CLOSE_ACCEPTED'
+                                          AND newer_accepted.trade_id = g.trade_id
+                                          AND newer_accepted.ts_utc > accepted.ts_utc
+                                          AND newer_accepted.ts_utc <= g.ts_utc
+                                    )
+                              )
+                          )
                     ) AS has_close_gate_evidence,
                     EXISTS (
                         SELECT 1
                         FROM verification_observations v
                         WHERE v.check_name = 'close_gate_evidence'
                           AND v.subject_id = g.trade_id
-                          AND v.ts_utc = g.ts_utc
                           AND v.status = 'PASS'
+                          AND (
+                              v.ts_utc = g.ts_utc
+                              OR EXISTS (
+                                  SELECT 1
+                                  FROM execution_events accepted
+                                  WHERE accepted.event_type = 'GATEWAY_GPT_CLOSE_ACCEPTED'
+                                    AND accepted.trade_id = g.trade_id
+                                    AND accepted.ts_utc = v.ts_utc
+                                    AND accepted.ts_utc <= g.ts_utc
+                                    AND NOT EXISTS (
+                                        SELECT 1
+                                        FROM execution_events newer_accepted
+                                        WHERE newer_accepted.event_type = 'GATEWAY_GPT_CLOSE_ACCEPTED'
+                                          AND newer_accepted.trade_id = g.trade_id
+                                          AND newer_accepted.ts_utc > accepted.ts_utc
+                                          AND newer_accepted.ts_utc <= g.ts_utc
+                                    )
+                              )
+                          )
                     ) AS has_passing_close_gate_evidence
                 """
             else:
