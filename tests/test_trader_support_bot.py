@@ -73,12 +73,26 @@ class TraderSupportBotTest(unittest.TestCase):
                 repair["remaining_blocker_codes_after_guardian_and_repair_exemption"],
                 ["FORECAST_CONTEXT_REQUIRED_FOR_LIVE"],
             )
+            self.assertEqual(payload["metrics"]["repair_frontier_after_support_clear_lanes"], 0)
+            self.assertEqual(payload["metrics"]["repair_frontier_after_support_blocked_lanes"], 1)
+            self.assertEqual(
+                payload["metrics"]["repair_frontier_after_support_top_blockers"],
+                [
+                    {
+                        "code": "FORECAST_CONTEXT_REQUIRED_FOR_LIVE",
+                        "count": 1,
+                        "reward_jpy": 790.5,
+                        "example_lane_ids": ["failure_trader:GBP_USD:LONG:BREAKOUT_FAILURE:LIMIT"],
+                    }
+                ],
+            )
             action_codes = {item["code"] for item in payload["operator_actions"]}
             self.assertIn("CHECK_POSITION_GUARDIAN_PREFLIGHT", action_codes)
             self.assertIn("FOLLOW_ACCEPTANCE_REPAIR_PLAN", action_codes)
             self.assertIn("VERIFY_CLOSE_GATE_EVIDENCE", action_codes)
             self.assertIn("RECHECK_LOSS_CLOSE_LEAK_WINDOW", action_codes)
             self.assertIn("WORK_GLOBAL_UNLOCK_FRONTIER", action_codes)
+            self.assertIn("WORK_REPAIR_FRONTIER_REMAINING_BLOCKERS", action_codes)
             self.assertIn("WORK_TARGET_FIREPOWER_BLOCKERS", action_codes)
             self.assertTrue(
                 any(item["code"] == "LOAD_POSITION_GUARDIAN_ONLY_IF_APPROVED" and item["requires_explicit_operator_approval"]
@@ -87,6 +101,9 @@ class TraderSupportBotTest(unittest.TestCase):
             report = files["report"].read_text()
             self.assertIn("Trader Support Bot Report", report)
             self.assertIn("Acceptance Repair Plan", report)
+            self.assertIn("Repair Frontier Blockers After Support", report)
+            self.assertIn("FORECAST_CONTEXT_REQUIRED_FOR_LIVE", report)
+            self.assertIn("472792", report)
 
     def test_ready_when_guardian_heartbeat_is_fresh_and_live_lane_exists(self) -> None:
         now = datetime(2026, 6, 22, 12, 15, tzinfo=timezone.utc)

@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import os
 import subprocess
-from collections import Counter
+from collections import Counter, defaultdict
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -167,6 +167,9 @@ class TraderSupportBot:
             "repair_live_ready_lanes": len(entry["repair_live_ready"]),
             "repair_basket_guardian_recovery_lanes": len(entry["repair_basket_guardian_recovery"]),
             "repair_frontier_lanes": len(entry["repair_frontier"]),
+            "repair_frontier_after_support_clear_lanes": entry["repair_frontier_after_support_clear_lanes"],
+            "repair_frontier_after_support_blocked_lanes": entry["repair_frontier_after_support_blocked_lanes"],
+            "repair_frontier_after_support_top_blockers": entry["repair_frontier_remaining_blockers"],
             "global_unlock_frontier_lanes": len(entry["global_unlock_frontier"]),
             "profit_capture_missed_loss_closes": profit_capture["missed_loss_closes"],
             "profit_capture_estimated_gap_jpy": profit_capture["estimated_gap_jpy"],
@@ -568,6 +571,7 @@ def _entry_readiness_summary(payload: dict[str, Any]) -> dict[str, Any]:
     repair_live_ready.sort(key=lambda item: _float(item.get("reward_jpy")), reverse=True)
     repair_basket_guardian_recovery.sort(key=lambda item: _float(item.get("reward_jpy")), reverse=True)
     global_unlock_frontier.sort(key=lambda item: _float(item.get("reward_jpy")), reverse=True)
+    remaining_repair_blockers = _repair_frontier_remaining_blockers(repair_frontier)
     return {
         "generated_at_utc": payload.get("generated_at_utc"),
         "lanes": len(results),
@@ -578,8 +582,45 @@ def _entry_readiness_summary(payload: dict[str, Any]) -> dict[str, Any]:
         "repair_frontier": repair_frontier[:12],
         "repair_live_ready": repair_live_ready[:12],
         "repair_basket_guardian_recovery": repair_basket_guardian_recovery[:12],
+        "repair_frontier_after_support_clear_lanes": sum(
+            1 for item in repair_frontier if not item["remaining_blocker_codes_after_guardian_and_repair_exemption"]
+        ),
+        "repair_frontier_after_support_blocked_lanes": sum(
+            1 for item in repair_frontier if item["remaining_blocker_codes_after_guardian_and_repair_exemption"]
+        ),
+        "repair_frontier_remaining_blockers": remaining_repair_blockers,
         "global_unlock_frontier": global_unlock_frontier[:12],
     }
+
+
+def _repair_frontier_remaining_blockers(repair_frontier: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    counts: Counter[str] = Counter()
+    reward_by_code: Counter[str] = Counter()
+    examples: dict[str, list[str]] = defaultdict(list)
+    for item in repair_frontier:
+        lane_id = str(item.get("lane_id") or "")
+        reward = _float(item.get("reward_jpy"))
+        remaining = [
+            str(code)
+            for code in item.get("remaining_blocker_codes_after_guardian_and_repair_exemption") or []
+            if str(code).strip()
+        ]
+        for code in sorted(set(remaining)):
+            counts[code] += 1
+            reward_by_code[code] += reward
+            if lane_id and len(examples[code]) < 3:
+                examples[code].append(lane_id)
+    rows = []
+    for code, count in counts.most_common(12):
+        rows.append(
+            {
+                "code": code,
+                "count": count,
+                "reward_jpy": _round_optional(reward_by_code[code], 3),
+                "example_lane_ids": examples[code],
+            }
+        )
+    return rows
 
 
 def _intent_metadata(item: dict[str, Any]) -> dict[str, Any]:
@@ -1117,6 +1158,19 @@ def _operator_actions(
                 ),
             }
         )
+    if entry.get("repair_frontier_remaining_blockers"):
+        top = entry["repair_frontier_remaining_blockers"][0]
+        actions.append(
+            {
+                "code": "WORK_REPAIR_FRONTIER_REMAINING_BLOCKERS",
+                "command": "PYTHONPATH=src python3 -m quant_rabbit.cli trader-support-bot",
+                "requires_explicit_operator_approval": False,
+                "reason": (
+                    "guardian/global repairs are not enough; top remaining repair-frontier blocker is "
+                    f"{top.get('code')} across {top.get('count')} lane(s)"
+                ),
+            }
+        )
     target_firepower = acceptance.get("target_firepower") if isinstance(acceptance.get("target_firepower"), dict) else {}
     if target_firepower.get("minimum_5pct_estimated_reachable"):
         actions.append(
@@ -1180,6 +1234,8 @@ def _render_report(payload: dict[str, Any]) -> str:
         f"| Repair LIVE_READY lanes | `{len(entry['repair_live_ready'])}` |",
         f"| Repair lanes after guardian recovery | `{len(entry['repair_basket_guardian_recovery'])}` |",
         f"| Repair frontier lanes | `{len(entry['repair_frontier'])}` |",
+        f"| Repair frontier clear after support | `{entry['repair_frontier_after_support_clear_lanes']}` |",
+        f"| Repair frontier blocked after support | `{entry['repair_frontier_after_support_blocked_lanes']}` |",
         f"| Global unlock frontier lanes | `{len(entry['global_unlock_frontier'])}` |",
         f"| Profit-capture misses | `{profit['missed_loss_closes']}` gap=`{profit['estimated_gap_jpy']}` JPY |",
         f"| Current profit-capture positions | bankable=`{current_profit['bankable_positions']}` watch=`{current_profit['watch_positions']}` blocked=`{current_profit['blocked_positions']}` |",
@@ -1203,6 +1259,28 @@ def _render_report(payload: dict[str, Any]) -> str:
             f"- Status: `{profit['status']}`",
             f"- Clearance condition: {profit['clearance_condition']}",
             f"- Verify: `{profit['verification_command']}`",
+        ]
+    )
+    if profit.get("top_misses"):
+        lines.extend(
+            [
+                "",
+                "| Trade | Pair | Side | Exit | MFE JPY | TP progress | Realized JPY |",
+                "|---|---|---|---|---:|---:|---:|",
+            ]
+        )
+        for item in profit["top_misses"][:5]:
+            lines.append(
+                f"| `{item.get('trade_id')}` | `{item.get('pair')}` | `{item.get('side')}` | "
+                f"`{item.get('exit_reason')}` | "
+                f"`{_round_optional(item.get('estimated_mfe_jpy_before_loss_close'), 3)}` | "
+                f"`{_round_optional(item.get('tp_progress_before_loss_close'), 4)}` | "
+                f"`{_round_optional(item.get('realized_pl_jpy'), 3)}` |"
+            )
+    else:
+        lines.append("- Missed capture examples: none")
+    lines.extend(
+        [
             "",
             "## Guardian",
             "",
@@ -1220,6 +1298,21 @@ def _render_report(payload: dict[str, Any]) -> str:
     if entry["top_blockers"]:
         for item in entry["top_blockers"]:
             lines.append(f"- `{item['code']}`: `{item['count']}`")
+    else:
+        lines.append("- none")
+    lines.extend(["", "## Repair Frontier Blockers After Support", ""])
+    if entry["repair_frontier_remaining_blockers"]:
+        lines.extend(
+            [
+                "| Blocker | Lanes | Reward JPY | Examples |",
+                "|---|---:|---:|---|",
+            ]
+        )
+        for item in entry["repair_frontier_remaining_blockers"][:8]:
+            examples = ", ".join(f"`{lane_id}`" for lane_id in item["example_lane_ids"]) or "none"
+            lines.append(
+                f"| `{item['code']}` | `{item['count']}` | `{item['reward_jpy']}` | {examples} |"
+            )
     else:
         lines.append("- none")
     lines.extend(["", "## Repair Frontier", ""])
