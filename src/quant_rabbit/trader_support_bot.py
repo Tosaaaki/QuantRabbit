@@ -165,6 +165,7 @@ class TraderSupportBot:
             "guardian_heartbeat_fresh": guardian["heartbeat_fresh"],
             "live_ready_lanes": entry["live_ready_lanes"],
             "repair_live_ready_lanes": len(entry["repair_live_ready"]),
+            "repair_basket_guardian_recovery_lanes": len(entry["repair_basket_guardian_recovery"]),
             "repair_frontier_lanes": len(entry["repair_frontier"]),
             "global_unlock_frontier_lanes": len(entry["global_unlock_frontier"]),
             "profit_capture_missed_loss_closes": profit_capture["missed_loss_closes"],
@@ -183,6 +184,9 @@ class TraderSupportBot:
                 "target_10pct_estimated_reachable"
             ],
             "repair_basket_lane_ids": [item["lane_id"] for item in entry["repair_live_ready"]],
+            "repair_basket_guardian_recovery_lane_ids": [
+                item["lane_id"] for item in entry["repair_basket_guardian_recovery"]
+            ],
         }
         generated = self.now_utc.isoformat()
         return {
@@ -506,6 +510,7 @@ def _entry_readiness_summary(payload: dict[str, Any]) -> dict[str, Any]:
     codes = Counter()
     repair_frontier: list[dict[str, Any]] = []
     repair_live_ready: list[dict[str, Any]] = []
+    repair_basket_guardian_recovery: list[dict[str, Any]] = []
     global_unlock_frontier: list[dict[str, Any]] = []
     for item in results:
         for code in item.get("live_blocker_codes") or []:
@@ -557,8 +562,11 @@ def _entry_readiness_summary(payload: dict[str, Any]) -> dict[str, Any]:
             repair_frontier.append(repair_item)
             if item.get("status") == "LIVE_READY" and not blocker_codes:
                 repair_live_ready.append(repair_item)
+            elif GUARDIAN_BLOCKER in blocker_codes and not remaining_after_support:
+                repair_basket_guardian_recovery.append(repair_item)
     repair_frontier.sort(key=lambda item: _float(item.get("reward_jpy")), reverse=True)
     repair_live_ready.sort(key=lambda item: _float(item.get("reward_jpy")), reverse=True)
+    repair_basket_guardian_recovery.sort(key=lambda item: _float(item.get("reward_jpy")), reverse=True)
     global_unlock_frontier.sort(key=lambda item: _float(item.get("reward_jpy")), reverse=True)
     return {
         "generated_at_utc": payload.get("generated_at_utc"),
@@ -569,6 +577,7 @@ def _entry_readiness_summary(payload: dict[str, Any]) -> dict[str, Any]:
         "guardian_blocked_lanes": codes.get(GUARDIAN_BLOCKER, 0),
         "repair_frontier": repair_frontier[:12],
         "repair_live_ready": repair_live_ready[:12],
+        "repair_basket_guardian_recovery": repair_basket_guardian_recovery[:12],
         "global_unlock_frontier": global_unlock_frontier[:12],
     }
 
@@ -1169,6 +1178,7 @@ def _render_report(payload: dict[str, Any]) -> str:
         f"| Guardian heartbeat fresh | `{guardian['heartbeat_fresh']}` age=`{guardian['heartbeat_age_seconds']}`s |",
         f"| LIVE_READY lanes | `{entry['live_ready_lanes']}` / `{entry['lanes']}` |",
         f"| Repair LIVE_READY lanes | `{len(entry['repair_live_ready'])}` |",
+        f"| Repair lanes after guardian recovery | `{len(entry['repair_basket_guardian_recovery'])}` |",
         f"| Repair frontier lanes | `{len(entry['repair_frontier'])}` |",
         f"| Global unlock frontier lanes | `{len(entry['global_unlock_frontier'])}` |",
         f"| Profit-capture misses | `{profit['missed_loss_closes']}` gap=`{profit['estimated_gap_jpy']}` JPY |",
