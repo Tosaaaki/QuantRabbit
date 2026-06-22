@@ -82,6 +82,45 @@ class ProfitabilityAcceptanceReplayRepairTest(unittest.TestCase):
             "t-noisy-cleared",
         )
 
+    def test_marks_replay_repair_not_deployed_when_guardian_is_inactive(self) -> None:
+        metrics, findings = _profit_capture_replay_repair_findings(
+            {
+                "loaded": True,
+                "generated_at_utc": "2026-06-22T17:10:24+00:00",
+                "repair_replay_contract_present": True,
+                "repair_replay_contract": "TP_PROGRESS_PRODUCTION_GATE_REPLAY_V1",
+                "loss_closes_profit_capture_missed": 1,
+                "loss_closes_repair_replay_triggered": 1,
+                "loss_close_repair_replay_delta_jpy": 466.2,
+                "top_repair_replay_triggers": [
+                    {
+                        "trade_id": "472792",
+                        "repair_replay_exit": "TP_PROGRESS_PRODUCTION_GATE_REPLAY",
+                    }
+                ],
+            },
+            self_metrics={
+                "p0_codes": [
+                    "LOSS_CLOSE_PROFIT_CAPTURE_MISSED",
+                    "POSITION_GUARDIAN_INACTIVE_FOR_PROFIT_CAPTURE",
+                ]
+            },
+        )
+
+        codes = [item["code"] for item in findings]
+        self.assertFalse(metrics["replay_repair_proved"])
+        self.assertTrue(metrics["guardian_profit_capture_inactive"])
+        self.assertIn("TP_PROGRESS_REPAIR_REPLAY_NOT_DEPLOYED", codes)
+        self.assertIn("TP_PROGRESS_REPLAY_REPAIR_UNPROVED", codes)
+        deploy_finding = next(
+            item for item in findings if item["code"] == "TP_PROGRESS_REPAIR_REPLAY_NOT_DEPLOYED"
+        )
+        self.assertTrue(deploy_finding["evidence"]["guardian_profit_capture_inactive"])
+        self.assertEqual(
+            deploy_finding["evidence"]["top_repair_replay_triggers"][0]["trade_id"],
+            "472792",
+        )
+
     def test_raw_tp_progress_miss_without_production_gate_replay_is_diagnostic_only(self) -> None:
         metrics, findings = _profit_capture_replay_repair_findings(
             {

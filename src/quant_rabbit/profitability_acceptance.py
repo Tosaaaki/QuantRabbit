@@ -1421,6 +1421,10 @@ def _profit_capture_replay_repair_findings(
         "PROFIT_CAPTURE" in code or code == "LOSS_CLOSE_PROFIT_CAPTURE_MISSED"
         for code in self_p0_codes
     )
+    guardian_profit_capture_inactive = (
+        "POSITION_GUARDIAN_INACTIVE_FOR_PROFIT_CAPTURE" in self_p0_codes
+        or "POSITION_GUARDIAN_INACTIVE" in self_p0_codes
+    )
     simple_missed = int(_optional_float(timing_metrics.get("loss_closes_profit_capture_missed")) or 0)
     repair_replay_missed = int(
         _optional_float(timing_metrics.get("loss_closes_repair_replay_triggered")) or 0
@@ -1460,6 +1464,7 @@ def _profit_capture_replay_repair_findings(
         ),
         "top_repair_replay_blocks": timing_metrics.get("top_repair_replay_blocks") or [],
         "self_improvement_profit_capture_context": has_self_profit_capture_context,
+        "guardian_profit_capture_inactive": guardian_profit_capture_inactive,
         "self_improvement_p0_codes": sorted(self_p0_codes),
         "clearance_condition": (
             "execution-timing-audit must report zero loss_closes_repair_replay_triggered "
@@ -1513,7 +1518,35 @@ def _profit_capture_replay_repair_findings(
         return metrics, []
     if repair_replay_contract_present and missed <= 0:
         return metrics, []
-    return metrics, [
+    findings: list[dict[str, Any]] = []
+    if guardian_profit_capture_inactive and repair_replay_contract_present and missed > 0:
+        findings.append(
+            _finding(
+                priority="P0",
+                code="TP_PROGRESS_REPAIR_REPLAY_NOT_DEPLOYED",
+                message=(
+                    f"{missed} loss close(s) replay through the current TP-progress production "
+                    "gate, but position guardian is not proven active, so the repaired logic is "
+                    "not actually being rerun between full trader cycles"
+                ),
+                next_action=(
+                    "Do not add turnover by merely rerunning reports. First prove guardian "
+                    "preflight/status green and load it only with explicit operator approval; "
+                    "then give the repaired TP-progress path a live window and rerun "
+                    "execution-timing-audit until loss_closes_repair_replay_triggered is zero."
+                ),
+                evidence={
+                    "loss_closes_repair_replay_triggered": repair_replay_missed,
+                    "loss_closes_profit_capture_missed": simple_missed,
+                    "repair_replay_contract": metrics["repair_replay_contract"],
+                    "guardian_profit_capture_inactive": True,
+                    "self_improvement_p0_codes": metrics["self_improvement_p0_codes"],
+                    "top_repair_replay_triggers": metrics["top_repair_replay_triggers"],
+                    "clearance_condition": metrics["clearance_condition"],
+                },
+            )
+        )
+    findings.append(
         _finding(
             priority="P0",
             code="TP_PROGRESS_REPLAY_REPAIR_UNPROVED",
@@ -1543,7 +1576,8 @@ def _profit_capture_replay_repair_findings(
                 "clearance_condition": metrics["clearance_condition"],
             },
         )
-    ]
+    )
+    return metrics, findings
 
 
 def _loss_close_timing_label(

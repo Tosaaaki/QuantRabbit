@@ -15,10 +15,34 @@ from quant_rabbit.execution_timing_contracts import (
     TP_PROGRESS_REPAIR_REPLAY_CONTRACT,
     TP_PROGRESS_REPAIR_REPLAY_FIELD,
 )
-from quant_rabbit.trader_support_bot import STATUS_BLOCKED, STATUS_READY, TraderSupportBot
+from quant_rabbit.trader_support_bot import (
+    STATUS_BLOCKED,
+    STATUS_READY,
+    TraderSupportBot,
+    _acceptance_clearance_for_code,
+)
 
 
 class TraderSupportBotTest(unittest.TestCase):
+    def test_acceptance_plan_breaks_loop_when_tp_progress_repair_is_not_deployed(self) -> None:
+        condition, command, summary = _acceptance_clearance_for_code(
+            "TP_PROGRESS_REPAIR_REPLAY_NOT_DEPLOYED",
+            {
+                "guardian_profit_capture_inactive": True,
+                "loss_closes_profit_capture_missed": 2,
+                "loss_closes_repair_replay_triggered": 1,
+                "repair_replay_contract": TP_PROGRESS_REPAIR_REPLAY_CONTRACT,
+                "top_repair_replay_triggers": [{"trade_id": "472792"}],
+                "clearance_condition": "guardian active then replay clean",
+            },
+            {},
+        )
+
+        self.assertIn("position guardian is proven active", condition)
+        self.assertEqual(command, "scripts/install-position-guardian.sh --status")
+        self.assertTrue(summary["guardian_profit_capture_inactive"])
+        self.assertEqual(summary["example_trade_ids"], ["472792"])
+
     def test_blocks_when_guardian_is_inactive_and_profit_capture_was_missed(self) -> None:
         now = datetime(2026, 6, 22, 12, 15, tzinfo=timezone.utc)
         with tempfile.TemporaryDirectory() as tmp:
