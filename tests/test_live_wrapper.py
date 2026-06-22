@@ -188,6 +188,7 @@ class LiveWrapperTest(unittest.TestCase):
             self.assertIn("<-m><quant_rabbit.cli><thesis-evolution-check>", payload)
             self.assertIn("<-m><quant_rabbit.cli><forecast-persistence-check>", payload)
             self.assertIn("<-m><quant_rabbit.cli><position-management>", payload)
+            self.assertIn("<-m><quant_rabbit.cli><position-execution><--send><--confirm-live>", payload)
             self.assertIn("<-m><quant_rabbit.cli><memory-health>", payload)
             self.assertIn("<-m><quant_rabbit.cli><self-improvement-audit>", payload)
             self.assertIn("refreshing projection, position, and audit sidecars under live lock", result.stderr)

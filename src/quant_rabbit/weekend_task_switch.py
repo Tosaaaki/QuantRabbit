@@ -134,17 +134,8 @@ def _restore(
 ) -> dict[str, Any]:
     state = _load_state(state_file)
     mode = state.get("mode")
-    if mode == "restored":
-        return _summary(
-            action="restore",
-            dry_run=dry_run,
-            state_file=state_file,
-            baseline_tasks=state.get("tasks", {}),
-            changes=[],
-            warnings=["weekend snapshot already restored"],
-        )
-    if mode != "paused":
-        raise TaskSwitchError(f"state file is not a paused snapshot: mode={mode!r}")
+    if mode not in {"paused", "restored"}:
+        raise TaskSwitchError(f"state file is not a restorable snapshot: mode={mode!r}")
 
     baseline_tasks = state.get("tasks")
     if not isinstance(baseline_tasks, dict):
@@ -156,9 +147,17 @@ def _restore(
 
     desired = {spec.key: baseline_tasks[spec.key] for spec in specs if spec.key in baseline_tasks}
     changes = _apply_states(specs, desired, dry_run=dry_run)
+    warnings: list[str] = []
+    if mode == "restored":
+        warnings.append("weekend snapshot already restored")
+        if any(change.changed for change in changes):
+            warnings.append("restored snapshot drift reconciled")
     if not dry_run:
         state["mode"] = "restored"
-        state["restored_at_utc"] = timestamp
+        if mode == "paused":
+            state["restored_at_utc"] = timestamp
+        elif any(change.changed for change in changes):
+            state["last_restore_reconciled_at_utc"] = timestamp
         state["last_changes"] = [_change_dict(change) for change in changes]
         _write_state(state_file, state)
     return _summary(
@@ -167,7 +166,7 @@ def _restore(
         state_file=state_file,
         baseline_tasks=baseline_tasks,
         changes=changes,
-        warnings=[],
+        warnings=warnings,
     )
 
 

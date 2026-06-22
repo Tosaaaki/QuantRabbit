@@ -294,15 +294,26 @@ if [[ "${QR_RUN_POST_GATEWAY_SIDECARS:-1}" == "1" ]]; then
     post_audit_forecast_persistence_exit="$?"
     "$QR_PYTHON" -m quant_rabbit.cli position-management
     post_audit_pm_exit="$?"
+    post_audit_position_execution_exit=0
+    if [[ "$post_audit_pm_exit" -eq 0 ]]; then
+      position_execution_args=("position-execution")
+      if [[ "${QR_LIVE_ENABLED:-0}" == "1" ]]; then
+        position_execution_args+=("--send" "--confirm-live")
+      fi
+      "$QR_PYTHON" -m quant_rabbit.cli "${position_execution_args[@]}"
+      post_audit_position_execution_exit="$?"
+    else
+      post_audit_position_execution_exit=64
+    fi
     "$QR_PYTHON" -m quant_rabbit.cli memory-health
     post_audit_memory_exit="$?"
     "$QR_PYTHON" -m quant_rabbit.cli self-improvement-audit
     post_audit_self_exit="$?"
     set -e
     if [[ "$post_audit_verify_projections_exit" -ne 0 || "$post_audit_position_thesis_exit" -ne 0 || "$post_audit_thesis_evolution_exit" -ne 0 || "$post_audit_forecast_persistence_exit" -ne 0 ]] \
-      || [[ "$post_audit_pm_exit" -ne 0 || "$post_audit_memory_exit" -ne 0 ]] \
+      || [[ "$post_audit_pm_exit" -ne 0 || "$post_audit_position_execution_exit" -ne 0 || "$post_audit_memory_exit" -ne 0 ]] \
       || [[ "$post_audit_self_exit" -ne 0 && "$post_audit_self_exit" -ne 2 ]]; then
-      echo "[run-autotrade-live] projection/position/audit sidecar refresh incomplete: verify-projections=${post_audit_verify_projections_exit} position-thesis-check=${post_audit_position_thesis_exit} thesis-evolution-check=${post_audit_thesis_evolution_exit} forecast-persistence-check=${post_audit_forecast_persistence_exit} position-management=${post_audit_pm_exit} memory-health=${post_audit_memory_exit} self-improvement-audit=${post_audit_self_exit}" >&2
+      echo "[run-autotrade-live] projection/position/audit sidecar refresh incomplete: verify-projections=${post_audit_verify_projections_exit} position-thesis-check=${post_audit_position_thesis_exit} thesis-evolution-check=${post_audit_thesis_evolution_exit} forecast-persistence-check=${post_audit_forecast_persistence_exit} position-management=${post_audit_pm_exit} position-execution=${post_audit_position_execution_exit} memory-health=${post_audit_memory_exit} self-improvement-audit=${post_audit_self_exit}" >&2
     fi
   fi
 fi

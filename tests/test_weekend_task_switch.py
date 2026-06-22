@@ -64,6 +64,33 @@ class WeekendTaskSwitchTest(unittest.TestCase):
             self.assertFalse(_claude_enabled(claude_root, "trader"))
             self.assertFalse(_claude_enabled(claude_root, "trader_v2"))
 
+    def test_restore_reconciles_drift_after_snapshot_was_already_restored(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            env, codex_root, claude_root, state_file = _env(Path(tmp))
+            _codex_task(codex_root, "qr-trader", "ACTIVE")
+            _codex_task(codex_root, "qr-news-digest", "ACTIVE")
+            _codex_task(codex_root, "qr-hole-audit", "ACTIVE")
+            _codex_task(codex_root, "qr-self-improvement-watch", "ACTIVE")
+            _claude_task(claude_root, "trader", False)
+            _claude_task(claude_root, "trader_v2", False)
+            self.assertEqual(_run_switch("pause", env).returncode, 0)
+            self.assertEqual(_run_switch("restore", env).returncode, 0)
+
+            _write_codex_status(codex_root, "qr-trader", "PAUSED")
+            _write_codex_status(codex_root, "qr-hole-audit", "PAUSED")
+            result = _run_switch("restore", env)
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            payload = json.loads(result.stdout)
+            self.assertEqual(payload["changed_count"], 2)
+            self.assertIn("weekend snapshot already restored", payload["warnings"])
+            self.assertIn("restored snapshot drift reconciled", payload["warnings"])
+            self.assertEqual(_codex_status(codex_root, "qr-trader"), "ACTIVE")
+            self.assertEqual(_codex_status(codex_root, "qr-hole-audit"), "ACTIVE")
+            state = json.loads(state_file.read_text())
+            self.assertEqual(state["mode"], "restored")
+            self.assertIn("last_restore_reconciled_at_utc", state)
+
     def test_claude_quant_rabbit_weekday_tasks_are_snapshot_managed(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             env, codex_root, claude_root, _state_file = _env(Path(tmp))
@@ -219,6 +246,21 @@ def _codex_status(root: Path, task_id: str) -> str:
         if line.startswith("status = "):
             return line.split('"')[1]
     raise AssertionError("missing status")
+
+
+def _write_codex_status(root: Path, task_id: str, status: str) -> None:
+    path = root / task_id / "automation.toml"
+    lines = []
+    changed = False
+    for line in path.read_text().splitlines():
+        if line.startswith("status = "):
+            lines.append(f'status = "{status}"')
+            changed = True
+        else:
+            lines.append(line)
+    if not changed:
+        raise AssertionError("missing status")
+    path.write_text("\n".join(lines) + "\n")
 
 
 def _claude_enabled(root: Path, task_id: str) -> bool:
