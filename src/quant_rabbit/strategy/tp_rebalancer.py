@@ -589,10 +589,16 @@ def compute_tp_adjustment(
     distance_old = abs(current_tp - entry_price) * pip_factor if current_tp is not None else 0.0
     desired_distance_pips = min(reward_risk * atr_pips, MAX_TP_DISTANCE_ATR_MULT * atr_pips)
     lock_in_pips = max(MIN_LOCK_IN_PIPS, atr_pips * LOCK_IN_ATR_MULT)
+    operating_atr = _operating_atr_pips(chart_context)
+    harvest_tp_guard_active = (
+        not tp_reversal_firing
+        or profit_harvest_override
+        or (operating_atr is not None and profit_pips < float(operating_atr))
+    )
     entry_lock_harvest_reasons: list[str] = []
     if (
         current_tp is not None
-        and (not tp_reversal_firing or profit_harvest_override)
+        and harvest_tp_guard_active
         and distance_old <= lock_in_pips + HYSTERESIS_PIPS
         and desired_distance_pips > distance_old
     ):
@@ -603,12 +609,16 @@ def compute_tp_adjustment(
         entry_lock_harvest_reasons.append(
             f"preserving harvest TP instead of expanding to desired {desired_distance_pips:.1f}pip"
         )
-    operating_atr = _operating_atr_pips(chart_context)
+        if tp_reversal_firing and operating_atr is not None:
+            entry_lock_harvest_reasons.append(
+                f"reversal signal has not paid operating ATR yet: progress {profit_pips:.1f}pip "
+                f"< operating ATR {operating_atr:.1f}pip"
+            )
     stale_distance_reasons: list[str] = []
     stale_distance_technical_reasons: list[str] = []
     stale_distance_too_far = (
         current_tp is not None
-        and (not tp_reversal_firing or profit_harvest_override)
+        and harvest_tp_guard_active
         and operating_atr is not None
         and distance_old > MAX_TP_DISTANCE_ATR_MULT * operating_atr
     )
@@ -636,7 +646,7 @@ def compute_tp_adjustment(
     reachable_harvest_tp_reasons: list[str] = []
     if (
         current_tp is not None
-        and (not tp_reversal_firing or profit_harvest_override)
+        and harvest_tp_guard_active
         and operating_atr is not None
         and distance_old <= MAX_TP_DISTANCE_ATR_MULT * operating_atr
     ):

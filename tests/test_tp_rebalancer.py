@@ -587,6 +587,66 @@ class ComputeTPAdjustmentTest(unittest.TestCase):
 
         self.assertIsNone(adj)
 
+    def test_reversal_firing_keeps_entry_lock_harvest_until_operating_atr_progress(self) -> None:
+        """A fresh reversal flag alone must not widen an 8pip harvest TP.
+
+        Regression for 2026-06-22 EUR_GBP: tp-rebalance expanded a SHORT
+        harvest TP from 8.0pip to 24.3pip while the trade was still slightly
+        underwater, then the next pass wanted to contract it back to 8.0pip.
+        """
+        self._kill_switch_off()
+        chart_context = {
+            "confluence": {
+                "range_24h_sigma_multiple": 4.794,
+                "score_balance": "LONG_LEAN",
+                "tf_agreement_score": 0.6667,
+            },
+            "indicators_by_tf": {
+                "M5": {
+                    "atr_pips": 1.1044,
+                    "stoch_rsi": 0.4475,
+                    "williams_r_14": -92.8571,
+                },
+                "M15": {
+                    "atr_pips": 2.7739,
+                    "stoch_rsi": 0.0442,
+                    "williams_r_14": -96.2963,
+                },
+            },
+        }
+
+        adj = compute_tp_adjustment(
+            trade_id="472755", pair="EUR_GBP", side="SHORT",
+            entry_price=0.86707, current_tp=0.86627,
+            current_price=0.86712,
+            atr_pips=11.04, reward_risk=2.2,
+            is_reversal_firing=True,
+            chart_context=chart_context,
+        )
+
+        self.assertIsNone(adj)
+
+    def test_reversal_firing_can_expand_entry_lock_harvest_after_operating_atr_progress(self) -> None:
+        """Once the move has paid the operating timeframe, expansion is allowed."""
+        self._kill_switch_off()
+        chart_context = {
+            "confluence": {"range_24h_sigma_multiple": 4.794},
+            "indicators_by_tf": {"M5": {"atr_pips": 1.1044}},
+        }
+
+        adj = compute_tp_adjustment(
+            trade_id="472755", pair="EUR_GBP", side="SHORT",
+            entry_price=0.86707, current_tp=0.86627,
+            current_price=0.86690,
+            atr_pips=11.04, reward_risk=2.2,
+            is_reversal_firing=True,
+            chart_context=chart_context,
+        )
+
+        self.assertIsNotNone(adj)
+        self.assertLess(adj.new_tp, 0.86627)
+        self.assertIn("expand_reversal", adj.rationale)
+
     def test_trailing_mode_pushes_tp_ahead_of_price(self) -> None:
         """LONG in profit ≥ TRAILING_TRIGGER_ATR_MULT × ATR triggers
         trailing branch: new TP anchored on current_price + lock-behind."""
