@@ -1431,6 +1431,7 @@ class AutoTradeCycle:
         if not self._execution_ledger_available():
             return
         for kind, path in (
+            ("gpt_decision", self.gpt_decision_path),
             ("live_order", self.live_order_output_path),
             ("position_execution", self.position_execution_path),
         ):

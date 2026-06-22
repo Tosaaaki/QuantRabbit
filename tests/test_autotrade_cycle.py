@@ -1153,6 +1153,94 @@ class AutoTradeCycleTest(unittest.TestCase):
         self.assertIn(("GATEWAY_GPT_CLOSE_ACCEPTED", "471232", "GPT_CLOSE_ACCEPTED"), events)
         self.assertIn(("GATEWAY_POSITION_NO_ACTION", "471232", "HOLD_SL_FREE"), events)
 
+    def test_cycle_end_records_rejected_gpt_close_gate_evidence(self) -> None:
+        class Client:
+            def account_summary(self, *, now_utc: datetime | None = None) -> AccountSummary:
+                return AccountSummary(
+                    nav_jpy=200_000.0,
+                    balance_jpy=200_000.0,
+                    margin_available_jpy=200_000.0,
+                    last_transaction_id="100",
+                    fetched_at_utc=now_utc or datetime.now(timezone.utc),
+                )
+
+            def transactions_since_id(self, transaction_id: str) -> dict[str, Any]:
+                return {"lastTransactionID": transaction_id, "transactions": []}
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            ledger_path = root / "execution_ledger.db"
+            gpt_decision_path = root / "gpt_decision.json"
+            gpt_decision_path.write_text(
+                json.dumps(
+                    {
+                        "generated_at_utc": "2026-06-08T00:00:00+00:00",
+                        "status": "REJECTED",
+                        "decision": {
+                            "action": "CLOSE",
+                            "selected_lane_id": None,
+                            "close_trade_ids": ["471232"],
+                        },
+                        "close_gate_evidence": [
+                            {
+                                "trade_id": "471232",
+                                "pair": "EUR_USD",
+                                "side": "LONG",
+                                "unrealized_pl_jpy": -250.0,
+                                "loss_side_close": True,
+                                "gate_a_invalidated": False,
+                                "gate_a_reason": "M15 same-direction support still intact",
+                                "same_direction_support_conflict": True,
+                            }
+                        ],
+                        "verification_issues": [
+                            {
+                                "code": "GPT_CLOSE_GATE_EVIDENCE_BLOCKED",
+                                "severity": "P0",
+                            }
+                        ],
+                    },
+                    indent=2,
+                )
+                + "\n"
+            )
+            cycle = AutoTradeCycle(
+                client=Client(),
+                gpt_decision_path=gpt_decision_path,
+                live_order_output_path=root / "live_order.json",
+                position_execution_path=root / "pe.json",
+                position_execution_report_path=root / "pe.md",
+                execution_ledger_db_path=ledger_path,
+                execution_ledger_report_path=root / "execution_ledger.md",
+            )
+
+            cycle._record_execution_ledger_receipts()
+
+            with sqlite3.connect(ledger_path) as conn:
+                observations = conn.execute(
+                    """
+                    SELECT subject_id, check_name, status, severity, evidence_json
+                    FROM verification_observations
+                    ORDER BY rowid
+                    """
+                ).fetchall()
+                gpt_close_events = conn.execute(
+                    """
+                    SELECT event_type, trade_id
+                    FROM execution_events
+                    WHERE event_type = 'GATEWAY_GPT_CLOSE_ACCEPTED'
+                    """
+                ).fetchall()
+
+        self.assertEqual(len(observations), 1)
+        subject_id, check_name, status, severity, evidence_json = observations[0]
+        self.assertEqual(subject_id, "471232")
+        self.assertEqual(check_name, "close_gate_evidence")
+        self.assertEqual(status, "BLOCK")
+        self.assertEqual(severity, "BLOCK")
+        self.assertIn("same-direction support still intact", evidence_json)
+        self.assertEqual(gpt_close_events, [])
+
     def test_accepted_gpt_close_uses_refreshed_snapshot_before_send(self) -> None:
         class Client:
             def __init__(self, snapshot_payload: BrokerSnapshot) -> None:
