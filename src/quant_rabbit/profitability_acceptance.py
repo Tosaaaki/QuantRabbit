@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import math
+import shlex
 import sqlite3
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -1446,7 +1447,7 @@ def _bidask_rule_findings(payload: dict[str, Any], path: Path) -> tuple[dict[str
         reverse=True,
     )
     rank_only_examples = [_bidask_rank_only_example(item) for item in rank_only[:5]]
-    fetch_command, validation_command = _bidask_replay_verification_commands(rank_only)
+    fetch_command, validation_command = _bidask_replay_verification_commands(rank_only, payload)
     adoption = payload.get("adoption_summary") if isinstance(payload.get("adoption_summary"), dict) else {}
     truth = (
         payload.get("price_truth_coverage")
@@ -1478,6 +1479,7 @@ def _bidask_rule_findings(payload: dict[str, Any], path: Path) -> tuple[dict[str
             "min_positive_day_rate": BIDASK_REPLAY_STABLE_MIN_POSITIVE_DAY_RATE,
         },
         "rank_only_examples": rank_only_examples,
+        "history_dirs": _bidask_history_dirs(payload),
         "history_fetch_command": fetch_command,
         "replay_validation_command": validation_command,
     }
@@ -1582,7 +1584,17 @@ def _bidask_daily_stability_gap(item: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _bidask_replay_verification_commands(rank_only: list[dict[str, Any]]) -> tuple[str | None, str | None]:
+def _bidask_history_dirs(payload: dict[str, Any]) -> list[str]:
+    raw = payload.get("history_dirs")
+    if not isinstance(raw, list):
+        return []
+    return [str(item) for item in raw if str(item).strip()]
+
+
+def _bidask_replay_verification_commands(
+    rank_only: list[dict[str, Any]],
+    payload: dict[str, Any],
+) -> tuple[str | None, str | None]:
     if not rank_only:
         return None, None
     pairs = sorted({str(item.get("pair") or "").upper() for item in rank_only if item.get("pair")})
@@ -1601,12 +1613,20 @@ def _bidask_replay_verification_commands(rank_only: list[dict[str, Any]]) -> tup
         "python3 scripts/oanda_history_replay_validate.py "
         "--forecast-history data/forecast_history.jsonl "
         f"--granularity {primary_granularity} "
+        f"{_bidask_history_dir_args(payload)}"
         f"--auto-history-min-days {BIDASK_REPLAY_AUTO_HISTORY_MIN_DAYS} "
         f"--stable-min-active-days {BIDASK_REPLAY_STABLE_MIN_ACTIVE_DAYS} "
         f"--stable-max-daily-sample-share {BIDASK_REPLAY_STABLE_MAX_DAILY_SAMPLE_SHARE} "
         f"--stable-min-positive-day-rate {BIDASK_REPLAY_STABLE_MIN_POSITIVE_DAY_RATE:.10f}"
     )
     return fetch_command, validation_command
+
+
+def _bidask_history_dir_args(payload: dict[str, Any]) -> str:
+    history_dirs = _bidask_history_dirs(payload)
+    if not history_dirs:
+        return ""
+    return "".join(f"--history-dir {shlex.quote(path)} " for path in history_dirs)
 
 
 _OANDA_FIREPOWER_TARGET_OK_STATUSES = {

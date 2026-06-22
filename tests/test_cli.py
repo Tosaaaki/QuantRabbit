@@ -642,6 +642,10 @@ class CliHelpTest(unittest.TestCase):
             bidask.write_text(
                 json.dumps(
                     {
+                        "history_dirs": [
+                            "tmp/qr_acceptance_check/oanda_history_s5/20260622T155928Z",
+                            "tmp/qr_acceptance_check/oanda_history_s5_windowed/20260622T163008Z",
+                        ],
                         "adoption_summary": {
                             "live_grade_support_rules": 0,
                             "rank_only_support_rules": 2,
@@ -803,7 +807,22 @@ class CliHelpTest(unittest.TestCase):
         self.assertEqual(bidask_metrics["negative_rules"], 1)
         self.assertEqual(bidask_metrics["price_truth_coverage"]["status"], "PRICE_TRUTH_OK")
         self.assertEqual(bidask_metrics["daily_stability_requirements"]["min_active_days"], 3)
+        self.assertEqual(
+            bidask_metrics["history_dirs"],
+            [
+                "tmp/qr_acceptance_check/oanda_history_s5/20260622T155928Z",
+                "tmp/qr_acceptance_check/oanda_history_s5_windowed/20260622T163008Z",
+            ],
+        )
         self.assertIn("oanda_history_fetch.py --pairs AUD_JPY,EUR_USD", bidask_metrics["history_fetch_command"])
+        self.assertIn(
+            "--history-dir tmp/qr_acceptance_check/oanda_history_s5/20260622T155928Z",
+            bidask_metrics["replay_validation_command"],
+        )
+        self.assertIn(
+            "--history-dir tmp/qr_acceptance_check/oanda_history_s5_windowed/20260622T163008Z",
+            bidask_metrics["replay_validation_command"],
+        )
         self.assertIn("--stable-min-active-days 3", bidask_metrics["replay_validation_command"])
         examples_by_pair = {item["pair"]: item for item in bidask_metrics["rank_only_examples"]}
         self.assertEqual(examples_by_pair["EUR_USD"]["daily_stability_gap"]["missing_active_days"], 0)

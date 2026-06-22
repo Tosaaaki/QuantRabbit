@@ -104,6 +104,7 @@ def package_payload(
         "generated_from": "scripts/oanda_history_replay_validate.py",
         "packaged_by": "scripts/package_bidask_replay_precision_rules.py",
         "source_report": str(source_report),
+        "history_dirs": _history_dirs(payload.get("history_dirs")),
         "granularity": payload.get("granularity"),
         "truth_source": payload.get("truth_source"),
         "price_truth_coverage": _copy_fields(truth, TRUTH_FIELDS),
@@ -121,6 +122,12 @@ def package_payload(
 
 def _copy_fields(payload: dict[str, Any], fields: tuple[str, ...]) -> dict[str, Any]:
     return {field: copy.deepcopy(payload[field]) for field in fields if field in payload}
+
+
+def _history_dirs(raw: Any) -> list[str]:
+    if not isinstance(raw, list):
+        return []
+    return [str(item) for item in raw if str(item).strip()]
 
 
 def _forecast_sample_coverage_summary(raw: Any) -> dict[str, Any]:

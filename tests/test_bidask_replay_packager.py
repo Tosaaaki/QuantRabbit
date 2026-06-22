@@ -23,6 +23,10 @@ class BidAskReplayPackagerTest(unittest.TestCase):
     def test_package_payload_preserves_adoption_and_truth_metadata(self) -> None:
         payload = {
             "generated_at_utc": "2026-06-22T16:00:00Z",
+            "history_dirs": [
+                "tmp/qr_acceptance_check/oanda_history_s5/20260622T155928Z",
+                "tmp/qr_acceptance_check/oanda_history_s5_windowed/20260622T163008Z",
+            ],
             "granularity": "S5",
             "truth_source": "local OANDA S5 bid/ask candles",
             "price_truth_coverage": {
@@ -84,6 +88,13 @@ class BidAskReplayPackagerTest(unittest.TestCase):
             "scripts/package_bidask_replay_precision_rules.py",
         )
         self.assertEqual(packaged["source_report"], "latest.json")
+        self.assertEqual(
+            packaged["history_dirs"],
+            [
+                "tmp/qr_acceptance_check/oanda_history_s5/20260622T155928Z",
+                "tmp/qr_acceptance_check/oanda_history_s5_windowed/20260622T163008Z",
+            ],
+        )
         self.assertEqual(packaged["price_truth_coverage"]["status"], "PRICE_TRUTH_OK")
         self.assertEqual(packaged["price_truth_coverage"]["evaluated_rows"], 650)
         self.assertEqual(packaged["adoption_summary"]["rank_only_support_rules"], 3)
