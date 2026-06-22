@@ -2436,7 +2436,18 @@ def _cycle_digest(*, kind: str, step_results: list[dict[str, Any]], aborted: boo
             "loss_closes_profit_capture_missed_rate": summary.get("loss_closes_profit_capture_missed_rate"),
             "stop_loss_closes_profit_capture_missed": summary.get("stop_loss_closes_profit_capture_missed"),
             "loss_close_estimated_capture_gap_jpy": summary.get("loss_close_estimated_capture_gap_jpy"),
+            "loss_close_actual_pl_jpy": summary.get("loss_close_actual_pl_jpy"),
+            "loss_close_counterfactual_profit_capture_pl_jpy": summary.get(
+                "loss_close_counterfactual_profit_capture_pl_jpy"
+            ),
+            "loss_close_counterfactual_profit_capture_delta_jpy": summary.get(
+                "loss_close_counterfactual_profit_capture_delta_jpy"
+            ),
+            "loss_close_counterfactual_profit_capture_jpy": summary.get(
+                "loss_close_counterfactual_profit_capture_jpy"
+            ),
             "avg_decision_lag_minutes_after_first_positive": summary.get("avg_decision_lag_minutes_after_first_positive"),
+            "max_decision_lag_minutes_after_first_positive": summary.get("max_decision_lag_minutes_after_first_positive"),
             "market_closes_audited": summary.get("market_closes_audited"),
             "market_closes_post_close_continued": summary.get("market_closes_post_close_continued"),
             "market_closes_post_close_continued_rate": summary.get("market_closes_post_close_continued_rate"),

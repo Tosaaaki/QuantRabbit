@@ -327,7 +327,15 @@ def _loss_close_timing_audit_required_trades(
     if not isinstance(summary, dict):
         return ()
     premature = _optional_int(summary.get("loss_market_closes_may_have_been_premature")) or 0
-    if premature <= 0:
+    capture_missed = _optional_int(summary.get("loss_closes_profit_capture_missed")) or 0
+    counterfactual_delta = _optional_float(
+        summary.get("loss_close_counterfactual_profit_capture_delta_jpy")
+    )
+    if (
+        premature <= 0
+        and capture_missed <= 0
+        and (counterfactual_delta is None or counterfactual_delta <= 0.0)
+    ):
         return ()
     if _decision_cites_close_timing_evidence(decision.evidence_refs):
         return ()
@@ -359,14 +367,36 @@ def _premature_loss_close_timing_guard(packet: dict[str, Any]) -> dict[str, Any]
     if not isinstance(summary, dict):
         return None
     premature = _optional_int(summary.get("loss_market_closes_may_have_been_premature")) or 0
-    if premature <= 0:
+    capture_missed = _optional_int(summary.get("loss_closes_profit_capture_missed")) or 0
+    counterfactual_delta = _optional_float(
+        summary.get("loss_close_counterfactual_profit_capture_delta_jpy")
+    )
+    if (
+        premature <= 0
+        and capture_missed <= 0
+        and (counterfactual_delta is None or counterfactual_delta <= 0.0)
+    ):
         return None
+    audited = _optional_int(summary.get("loss_market_closes_audited"))
+    if audited is None:
+        audited = _optional_int(summary.get("loss_closes_audited"))
     return {
         "premature": premature,
         "contained": _optional_int(summary.get("loss_market_closes_contained_risk")),
-        "audited": _optional_int(summary.get("loss_market_closes_audited")),
+        "audited": audited,
         "followthrough_jpy": _optional_float(
             summary.get("market_close_estimated_followthrough_jpy")
+        ),
+        "profit_capture_missed": capture_missed,
+        "profit_capture_counterfactual_delta_jpy": counterfactual_delta,
+        "profit_capture_counterfactual_jpy": _optional_float(
+            summary.get("loss_close_counterfactual_profit_capture_jpy")
+        ),
+        "profit_capture_actual_pl_jpy": _optional_float(
+            summary.get("loss_close_actual_pl_jpy")
+        ),
+        "profit_capture_counterfactual_pl_jpy": _optional_float(
+            summary.get("loss_close_counterfactual_profit_capture_pl_jpy")
         ),
     }
 
@@ -2827,20 +2857,38 @@ class DecisionVerifier:
             summary = self.packet.get("execution_timing_audit", {}).get("summary", {})
             premature = _optional_int(
                 summary.get("loss_market_closes_may_have_been_premature")
-            ) or len(timing_required)
+            ) or 0
+            capture_missed = _optional_int(
+                summary.get("loss_closes_profit_capture_missed")
+            ) or 0
+            labels: list[str] = []
+            if premature > 0:
+                labels.append(f"{premature} loss-side market close(s) as potentially premature")
+            if capture_missed > 0:
+                labels.append(
+                    f"{capture_missed} loss close(s) with missed TP-progress profit capture"
+                )
+            if not labels:
+                labels.append(f"{len(timing_required)} loss-side close timing issue(s)")
             followthrough = _optional_float(
                 summary.get("market_close_estimated_followthrough_jpy")
             )
-            tail = (
-                f"; estimated follow-through left behind {followthrough:.2f} JPY"
-                if followthrough is not None
-                else ""
+            counterfactual_delta = _optional_float(
+                summary.get("loss_close_counterfactual_profit_capture_delta_jpy")
             )
+            tail_parts: list[str] = []
+            if followthrough is not None:
+                tail_parts.append(f"estimated follow-through left behind {followthrough:.2f} JPY")
+            if counterfactual_delta is not None:
+                tail_parts.append(
+                    f"profit-capture counterfactual delta {counterfactual_delta:.2f} JPY"
+                )
+            tail = f"; {'; '.join(tail_parts)}" if tail_parts else ""
             issues.append(
                 VerificationIssue(
                     "CLOSE_TIMING_AUDIT_REQUIRED",
                     "CLOSE rejected: recent execution-timing audit marks "
-                    f"{premature} loss-side market close(s) as potentially premature{tail}. "
+                    f"{' and '.join(labels)}{tail}. "
                     "An underwater CLOSE must cite timing:audit, timing:loss_closes, "
                     "timing:market_closes, or the relevant timing:loss_close/market_close ref "
                     "and explain why current invalidation beats HOLD/reprice/TP evidence. "
@@ -2864,12 +2912,33 @@ class DecisionVerifier:
                     details.append(f"contained={contained}")
                 if followthrough is not None:
                     details.append(f"followthrough_left={followthrough:.2f} JPY")
+                capture_missed = premature_timing_guard.get("profit_capture_missed")
+                capture_delta = premature_timing_guard.get(
+                    "profit_capture_counterfactual_delta_jpy"
+                )
+                capture_jpy = premature_timing_guard.get(
+                    "profit_capture_counterfactual_jpy"
+                )
+                actual_pl = premature_timing_guard.get("profit_capture_actual_pl_jpy")
+                counterfactual_pl = premature_timing_guard.get(
+                    "profit_capture_counterfactual_pl_jpy"
+                )
+                if capture_missed is not None:
+                    details.append(f"profit_capture_missed={capture_missed}")
+                if capture_jpy is not None:
+                    details.append(f"profit_capture={capture_jpy:.2f} JPY")
+                if capture_delta is not None:
+                    details.append(f"counterfactual_delta={capture_delta:.2f} JPY")
+                if actual_pl is not None:
+                    details.append(f"actual_loss_close_pl={actual_pl:.2f} JPY")
+                if counterfactual_pl is not None:
+                    details.append(f"counterfactual_pl={counterfactual_pl:.2f} JPY")
             suffix = f" ({', '.join(details)})" if details else ""
             issues.append(
                 VerificationIssue(
                     "CLOSE_PREMATURE_TIMING_HARD_GATE_REQUIRED",
-                    "CLOSE rejected: execution-timing audit still shows premature loss-side "
-                    f"MARKET_ORDER_TRADE_CLOSE leakage{suffix}. A timing reference acknowledges "
+                    "CLOSE rejected: execution-timing audit still shows premature/profit-capture "
+                    f"loss-side close timing leakage{suffix}. A timing reference acknowledges "
                     "that evidence, but softer Gate A plus operator token is not enough for another "
                     "underwater market close while this guard is active. Use HOLD/reprice/TP rebalance "
                     "or provide hard Gate A standing authorization (H4 structure, recorded invalidation, "
@@ -4100,9 +4169,21 @@ def _execution_timing_audit_packet(payload: dict[str, Any] | None) -> dict[str, 
                 "canceled_tp_touched_after_cancel_rate",
                 "canceled_estimated_missed_mfe_jpy",
                 "loss_closes_audited",
+                "loss_closes_had_positive_mfe",
                 "loss_closes_had_positive_mfe_rate",
+                "loss_closes_tp_touched_before_close",
                 "loss_closes_tp_touched_before_close_rate",
                 "loss_close_estimated_mfe_jpy",
+                "loss_closes_profit_capture_missed",
+                "loss_closes_profit_capture_missed_rate",
+                "stop_loss_closes_profit_capture_missed",
+                "loss_close_estimated_capture_gap_jpy",
+                "loss_close_actual_pl_jpy",
+                "loss_close_counterfactual_profit_capture_pl_jpy",
+                "loss_close_counterfactual_profit_capture_delta_jpy",
+                "loss_close_counterfactual_profit_capture_jpy",
+                "avg_decision_lag_minutes_after_first_positive",
+                "max_decision_lag_minutes_after_first_positive",
                 "market_closes_audited",
                 "market_closes_post_close_continued_rate",
                 "market_closes_post_close_adverse_rate",
@@ -4184,8 +4265,18 @@ def _execution_timing_audit_packet(payload: dict[str, Any] | None) -> dict[str, 
                         "realized_pl_jpy",
                         "had_positive_mfe_before_loss_close",
                         "tp_touched_before_loss_close",
+                        "sl_touched_before_loss_close",
                         "mfe_pips_before_loss_close",
                         "estimated_mfe_jpy_before_loss_close",
+                        "tp_progress_before_loss_close",
+                        "profit_capture_missed_before_loss_close",
+                        "profit_capture_progress_threshold",
+                        "profit_capture_counterfactual_exit",
+                        "profit_capture_counterfactual_pips",
+                        "profit_capture_counterfactual_jpy",
+                        "profit_capture_counterfactual_net_improvement_jpy",
+                        "profit_capture_counterfactual_pl_jpy",
+                        "first_positive_minutes_after_fill",
                         "decision_lag_minutes_after_first_positive",
                     ),
                 ),

@@ -2132,6 +2132,12 @@ class GPTTraderBrainTest(unittest.TestCase):
                             "loss_market_closes_contained_risk": 1,
                             "market_close_estimated_followthrough_jpy": 420.0,
                             "market_close_estimated_avoided_adverse_jpy": 900.0,
+                            "loss_closes_audited": 3,
+                            "loss_closes_profit_capture_missed": 1,
+                            "loss_close_actual_pl_jpy": -120.0,
+                            "loss_close_counterfactual_profit_capture_pl_jpy": 45.0,
+                            "loss_close_counterfactual_profit_capture_delta_jpy": 165.0,
+                            "loss_close_counterfactual_profit_capture_jpy": 45.0,
                         },
                         "canceled_order_regrets": [
                             {
@@ -2172,6 +2178,11 @@ class GPTTraderBrainTest(unittest.TestCase):
                                 "gateway_action": "GPT_CLOSE",
                                 "realized_pl_jpy": -120.0,
                                 "had_positive_mfe_before_loss_close": True,
+                                "tp_progress_before_loss_close": 0.42,
+                                "profit_capture_missed_before_loss_close": True,
+                                "profit_capture_counterfactual_jpy": 45.0,
+                                "profit_capture_counterfactual_net_improvement_jpy": 165.0,
+                                "profit_capture_counterfactual_pl_jpy": 45.0,
                             }
                         ],
                         "market_close_counterfactuals": [
@@ -2215,6 +2226,15 @@ class GPTTraderBrainTest(unittest.TestCase):
             timing = payload["input_packet"]["execution_timing_audit"]
             self.assertEqual(timing["evidence_ref"], "timing:audit")
             self.assertEqual(timing["summary"]["market_closes_audited"], 2)
+            self.assertEqual(timing["summary"]["loss_closes_profit_capture_missed"], 1)
+            self.assertEqual(
+                timing["summary"]["loss_close_counterfactual_profit_capture_delta_jpy"],
+                165.0,
+            )
+            self.assertEqual(
+                timing["loss_close_regrets"][0]["profit_capture_counterfactual_pl_jpy"],
+                45.0,
+            )
             self.assertEqual(
                 timing["canceled_order_regret_by_shape"][0]["priority_class"],
                 "PRESERVE_PENDING_THESIS_TP_TOUCHED",
@@ -5395,6 +5415,51 @@ class CloseDisciplineTest(unittest.TestCase):
             codes = {issue["code"] for issue in payload["verification_issues"]}
             self.assertIn("CLOSE_TIMING_AUDIT_REQUIRED", codes)
 
+    def test_loss_close_requires_timing_audit_after_profit_capture_miss_counterfactuals(self) -> None:
+        # Regression for 2026-06-22: candle replay proved loss closes had
+        # bankable TP-progress profit before turning red. A new underwater
+        # CLOSE must cite that evidence instead of repeating the leak.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _close_fixtures(
+                root,
+                position_side="SHORT",
+                m15_dir="UP",
+                h4_dir="UP",
+            )
+            files["execution_timing_audit"].write_text(
+                json.dumps(
+                    {
+                        "generated_at_utc": datetime.now(timezone.utc).isoformat(),
+                        "status": "OK",
+                        "summary": {
+                            "loss_closes_audited": 9,
+                            "loss_closes_profit_capture_missed": 2,
+                            "loss_close_actual_pl_jpy": -5188.197,
+                            "loss_close_counterfactual_profit_capture_pl_jpy": -4134.026,
+                            "loss_close_counterfactual_profit_capture_delta_jpy": 1054.171,
+                            "loss_close_counterfactual_profit_capture_jpy": 474.341,
+                        },
+                    }
+                )
+            )
+            decision = _close_decision(trade_ids=["555"], operator_close_authorized=False)
+            brain = _brain(root, files, decision)
+
+            summary = brain.run(snapshot_path=files["snapshot"])
+
+            self.assertEqual(summary.status, "REJECTED")
+            payload = json.loads((root / "gpt_decision.json").read_text())
+            issues = {
+                issue["code"]: issue["message"]
+                for issue in payload["verification_issues"]
+            }
+            self.assertIn("CLOSE_TIMING_AUDIT_REQUIRED", issues)
+            self.assertIn(
+                "profit-capture counterfactual delta 1054.17 JPY",
+                issues["CLOSE_TIMING_AUDIT_REQUIRED"],
+            )
+
     def test_loss_close_with_timing_audit_ref_uses_normal_close_gates(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -5442,6 +5507,48 @@ class CloseDisciplineTest(unittest.TestCase):
                             "loss_market_closes_may_have_been_premature": 3,
                             "loss_market_closes_contained_risk": 3,
                             "market_close_estimated_followthrough_jpy": 8236.17,
+                        },
+                    }
+                )
+            )
+            decision = _close_decision(trade_ids=["555"])
+            decision["evidence_refs"].append("timing:audit")
+            brain = _brain(root, files, decision)
+
+            summary = brain.run(snapshot_path=files["snapshot"])
+
+            self.assertEqual(summary.status, "REJECTED")
+            payload = json.loads((root / "gpt_decision.json").read_text())
+            codes = {issue["code"] for issue in payload["verification_issues"]}
+            self.assertIn("CLOSE_PREMATURE_TIMING_HARD_GATE_REQUIRED", codes)
+            self.assertNotIn("CLOSE_TIMING_AUDIT_REQUIRED", codes)
+            self.assertNotIn("CLOSE_OPERATOR_AUTH_REQUIRED", codes)
+
+    def test_soft_loss_close_with_profit_capture_timing_ref_still_requires_hard_gate(self) -> None:
+        # A generic timing citation acknowledges the missed-capture replay, but
+        # soft M15-only Gate A plus operator token must not authorize another
+        # underwater market close while that loss-close leak is active.
+        _os.environ["QR_OPERATOR_CLOSE_OVERRIDE"] = "1"
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _close_fixtures(
+                root,
+                position_side="SHORT",
+                m15_dir="UP",
+                h4_dir="DOWN",
+            )
+            files["execution_timing_audit"].write_text(
+                json.dumps(
+                    {
+                        "generated_at_utc": datetime.now(timezone.utc).isoformat(),
+                        "status": "OK",
+                        "summary": {
+                            "loss_closes_audited": 9,
+                            "loss_closes_profit_capture_missed": 2,
+                            "loss_close_actual_pl_jpy": -5188.197,
+                            "loss_close_counterfactual_profit_capture_pl_jpy": -4134.026,
+                            "loss_close_counterfactual_profit_capture_delta_jpy": 1054.171,
+                            "loss_close_counterfactual_profit_capture_jpy": 474.341,
                         },
                     }
                 )

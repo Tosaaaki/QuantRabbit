@@ -5366,6 +5366,39 @@ class ConsolidatedCycleCommandTest(unittest.TestCase):
             {"FORECAST_CONFIDENCE_REQUIRED_FOR_LIVE": 1, "LEGACY_BLOCKER": 1},
         )
 
+    def test_cycle_digest_summarizes_loss_close_profit_capture_counterfactuals(self) -> None:
+        from quant_rabbit.cli import _cycle_digest
+
+        with tempfile.TemporaryDirectory() as tmp:
+            timing_path = Path(tmp) / "execution_timing_audit.json"
+            timing_path.write_text(
+                json.dumps(
+                    {
+                        "status": "OK",
+                        "summary": {
+                            "loss_closes_audited": 9,
+                            "loss_closes_profit_capture_missed": 2,
+                            "loss_close_estimated_capture_gap_jpy": 646.489,
+                            "loss_close_actual_pl_jpy": -5188.197,
+                            "loss_close_counterfactual_profit_capture_pl_jpy": -4134.026,
+                            "loss_close_counterfactual_profit_capture_delta_jpy": 1054.171,
+                            "loss_close_counterfactual_profit_capture_jpy": 474.341,
+                        },
+                    }
+                )
+            )
+
+            with mock.patch("quant_rabbit.cli.DEFAULT_EXECUTION_TIMING_AUDIT", timing_path):
+                digest = _cycle_digest(kind="cycle_refresh_digest", step_results=[], aborted=False)
+
+        timing = digest["execution_timing_audit"]
+        self.assertEqual(timing["loss_closes_profit_capture_missed"], 2)
+        self.assertEqual(timing["loss_close_actual_pl_jpy"], -5188.197)
+        self.assertEqual(
+            timing["loss_close_counterfactual_profit_capture_delta_jpy"],
+            1054.171,
+        )
+
     def test_cycle_digest_summarizes_trader_support_bot(self) -> None:
         from quant_rabbit.cli import _cycle_digest
 
