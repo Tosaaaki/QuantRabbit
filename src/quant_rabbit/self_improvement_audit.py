@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import sqlite3
+import subprocess
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -147,6 +148,7 @@ ROOT_CAUSE_CODE_BOOSTS = {
     "TARGET_OPEN_LIVE_READY_COVERAGE_SHORTFALL": 60.0,
     "TARGET_OPEN_NO_LIVE_READY_LANES": 60.0,
     "LOSS_CLOSE_PROFIT_CAPTURE_MISSED": 85.0,
+    "POSITION_GUARDIAN_INACTIVE_FOR_PROFIT_CAPTURE": 90.0,
     "PENDING_ENTRY_FILL_RATE_WEAK": 45.0,
     "PENDING_ENTRY_CANCEL_RATE_HIGH": 40.0,
     "NEGATIVE_RECENT_EXPECTANCY": 35.0,
@@ -407,6 +409,7 @@ class SelfImprovementAuditor:
             attack_advice=attack_advice_loaded.payload or {},
             target_open=target_open,
         )
+        guardian_status = _position_guardian_runtime_status()
 
         findings: list[dict[str, Any]] = []
         if external_live_lock is not None:
@@ -477,11 +480,21 @@ class SelfImprovementAuditor:
                 target_open=target_open,
             )
         )
+        profit_capture_miss_findings = _profit_capture_miss_findings(
+            run_id=run_id,
+            timing_payload=execution_timing_loaded.payload,
+            target_open=target_open,
+        )
+        findings.extend(profit_capture_miss_findings)
         findings.extend(
-            _profit_capture_miss_findings(
+            _position_guardian_profit_capture_findings(
                 run_id=run_id,
-                timing_payload=execution_timing_loaded.payload,
+                guardian_status=guardian_status,
                 target_open=target_open,
+                live_ready_lanes=len(live_ready),
+                open_trader_positions=len(active_positions),
+                open_trader_pending_entries=len(pending_entry_orders),
+                profit_capture_miss_active=bool(profit_capture_miss_findings),
             )
         )
         findings.extend(
@@ -625,6 +638,7 @@ class SelfImprovementAuditor:
             "open_trader_positions": len(active_positions),
             "open_trader_pending_entries": len(pending_entry_orders),
             "live_ready_lanes": len(live_ready),
+            "position_guardian": guardian_status,
             "gpt_status": (gpt_loaded.payload or {}).get("status"),
             "gpt_action": ((gpt_loaded.payload or {}).get("decision") or {}).get("action")
             if isinstance((gpt_loaded.payload or {}).get("decision"), dict)
@@ -784,6 +798,7 @@ class SelfImprovementAuditor:
             if isinstance(payload.get("execution_quality"), dict)
             else {}
         )
+        guardian = runtime.get("position_guardian") if isinstance(runtime.get("position_guardian"), dict) else {}
         root_focus = payload.get("root_cause_focus") if isinstance(payload.get("root_cause_focus"), dict) else {}
         root_primary = root_focus.get("primary") if isinstance(root_focus.get("primary"), dict) else {}
         lines = [
@@ -799,6 +814,7 @@ class SelfImprovementAuditor:
             f"- Open trader positions: `{runtime['open_trader_positions']}`",
             f"- Open trader pending entries: `{runtime.get('open_trader_pending_entries', 0)}`",
             f"- LIVE_READY lanes: `{runtime['live_ready_lanes']}`",
+            f"- Position guardian: required=`{guardian.get('required')}` active=`{guardian.get('active')}` source=`{guardian.get('active_source')}` launchd_loaded=`{guardian.get('launchd_loaded')}`",
             f"- GPT status/action: `{runtime['gpt_status']}` / `{runtime['gpt_action']}`",
             "",
             "## Profitability",
@@ -1221,6 +1237,79 @@ def _history_live_lock_evidence(findings: list[dict[str, Any]]) -> Any | None:
             continue
         return _history_normalized_evidence("LIVE_RUNTIME_UPDATE_IN_PROGRESS", item.get("evidence") or {})
     return None
+
+
+def _truthy_env(name: str, *, default: bool = False) -> bool:
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    return _truthy_value(raw)
+
+
+def _truthy_value(raw: Any) -> bool:
+    return str(raw).strip() in {"1", "true", "TRUE", "yes", "YES", "on", "ON"}
+
+
+def _position_guardian_runtime_status() -> dict[str, Any]:
+    """Return read-only launchd state used by profit-capture audits."""
+
+    label = os.environ.get("QR_POSITION_GUARDIAN_LABEL", "com.quantrabbit.position-guardian")
+    plist = Path(
+        os.environ.get(
+            "QR_POSITION_GUARDIAN_PLIST",
+            str(Path.home() / "Library" / "LaunchAgents" / f"{label}.plist"),
+        )
+    ).expanduser()
+    raw_active = os.environ.get("QR_POSITION_GUARDIAN_ACTIVE")
+    status: dict[str, Any] = {
+        "required": _truthy_env("QR_REQUIRE_POSITION_GUARDIAN_ACTIVE", default=False),
+        "active": False,
+        "active_source": "launchd",
+        "label": label,
+        "plist_path": str(plist),
+        "plist_exists": plist.exists(),
+        "launchd_loaded": None,
+    }
+    if raw_active is not None:
+        status["active"] = _truthy_value(raw_active)
+        status["active_source"] = "env"
+        status["env_active"] = raw_active
+        return status
+    if not plist.exists():
+        status["active_source"] = "plist_missing"
+        status["launchd_loaded"] = False
+        return status
+    try:
+        list_proc = subprocess.run(
+            ["launchctl", "list", label],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=False,
+        )
+    except (FileNotFoundError, OSError) as exc:
+        status["active_source"] = "launchctl_unavailable"
+        status["launchd_loaded"] = False
+        status["launchctl_error"] = exc.__class__.__name__
+        return status
+    if list_proc.returncode == 0:
+        status["active"] = True
+        status["launchd_loaded"] = True
+        return status
+    try:
+        print_proc = subprocess.run(
+            ["launchctl", "print", f"gui/{os.getuid()}/{label}"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=False,
+        )
+    except (FileNotFoundError, OSError) as exc:
+        status["active_source"] = "launchctl_unavailable"
+        status["launchd_loaded"] = False
+        status["launchctl_error"] = exc.__class__.__name__
+        return status
+    status["active"] = print_proc.returncode == 0
+    status["launchd_loaded"] = status["active"]
+    return status
 
 
 def _history_run_signature(
@@ -1923,6 +2012,56 @@ def _profit_capture_miss_findings(
                     for row in rows[:8]
                 ],
             },
+        )
+    ]
+
+
+def _position_guardian_profit_capture_findings(
+    *,
+    run_id: str,
+    guardian_status: dict[str, Any],
+    target_open: bool,
+    live_ready_lanes: int,
+    open_trader_positions: int,
+    open_trader_pending_entries: int,
+    profit_capture_miss_active: bool,
+) -> list[dict[str, Any]]:
+    if not guardian_status.get("required") or guardian_status.get("active"):
+        return []
+    current_exposure_surface = (
+        live_ready_lanes > 0
+        or open_trader_positions > 0
+        or open_trader_pending_entries > 0
+        or profit_capture_miss_active
+    )
+    if not target_open and not current_exposure_surface:
+        return []
+    priority = "P0" if target_open and current_exposure_surface else "P1"
+    evidence = {
+        "guardian": guardian_status,
+        "target_open": target_open,
+        "live_ready_lanes": live_ready_lanes,
+        "open_trader_positions": open_trader_positions,
+        "open_trader_pending_entries": open_trader_pending_entries,
+        "profit_capture_miss_active": profit_capture_miss_active,
+    }
+    return [
+        _finding(
+            run_id=run_id,
+            priority=priority,
+            layer="execution_quality",
+            code="POSITION_GUARDIAN_INACTIVE_FOR_PROFIT_CAPTURE",
+            message=(
+                "position guardian is required but inactive; TP-progress profit cannot be "
+                "captured between full trader cycles"
+            ),
+            next_action=(
+                "Treat this as a profit-capture outage, not an entry-resend problem: run "
+                "scripts/install-position-guardian.sh --check, then load/keep the guardian active "
+                "only with explicit operator approval; until then, fresh entries remain blocked "
+                "because plus P/L can reverse before the next full cycle."
+            ),
+            evidence=evidence,
         )
     ]
 
@@ -7963,7 +8102,7 @@ def _root_cause_family_for_code(code: str, *, layer: str = "") -> str:
         return "OPPORTUNITY_COVERAGE"
     if code.startswith("PENDING_ENTRY_") or code == "LIVE_READY_MARKET_RR_BELOW_ONE":
         return "EXECUTION_LIFECYCLE"
-    if "PROFITABILITY" in code or "EXPECTANCY" in code or "CLOSE_DRAG" in code:
+    if "PROFIT_CAPTURE" in code or "PROFITABILITY" in code or "EXPECTANCY" in code or "CLOSE_DRAG" in code:
         return "EXIT_AND_PROFIT_CAPTURE"
     if code.startswith("LEGACY_REVIEW_EXIT_") or code.startswith("CLOSE_GATE_"):
         return "EXIT_AND_PROFIT_CAPTURE"
@@ -8049,6 +8188,12 @@ def _root_cause_merge_metrics(
             metrics["pending_fill_rate"] = fill_rate
         if cancel_rate is not None:
             metrics["pending_cancel_before_fill_rate"] = cancel_rate
+    elif code == "POSITION_GUARDIAN_INACTIVE_FOR_PROFIT_CAPTURE":
+        guardian = finding_evidence.get("guardian") if isinstance(finding_evidence.get("guardian"), dict) else {}
+        metrics["position_guardian_required"] = guardian.get("required")
+        metrics["position_guardian_active"] = guardian.get("active")
+        metrics["position_guardian_active_source"] = guardian.get("active_source")
+        metrics["profit_capture_miss_active"] = finding_evidence.get("profit_capture_miss_active")
     pending_lifecycle = (
         execution_quality.get("pending_entry_lifecycle")
         if isinstance(execution_quality.get("pending_entry_lifecycle"), dict)

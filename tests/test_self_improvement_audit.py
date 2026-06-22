@@ -117,6 +117,61 @@ class SelfImprovementAuditorTest(unittest.TestCase):
             "472792",
         )
 
+    def test_inactive_position_guardian_is_p0_for_target_open_profit_capture(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(
+                root,
+                active_position=False,
+                live_ready_market_rr=1.4,
+                closed_pls=(120.0, 90.0, 60.0),
+            )
+            with mock.patch.dict(
+                os.environ,
+                {
+                    "QR_REQUIRE_POSITION_GUARDIAN_ACTIVE": "1",
+                    "QR_POSITION_GUARDIAN_ACTIVE": "0",
+                },
+                clear=False,
+            ):
+                summary = _run(files)
+            payload = json.loads(files["output"].read_text())
+
+        codes = {item["code"]: item for item in payload["findings"]}
+        self.assertEqual(summary.status, STATUS_BLOCKED)
+        self.assertIn("POSITION_GUARDIAN_INACTIVE_FOR_PROFIT_CAPTURE", codes)
+        finding = codes["POSITION_GUARDIAN_INACTIVE_FOR_PROFIT_CAPTURE"]
+        self.assertEqual(finding["priority"], "P0")
+        self.assertEqual(finding["layer"], "execution_quality")
+        self.assertEqual(finding["evidence"]["live_ready_lanes"], 1)
+        self.assertFalse(finding["evidence"]["guardian"]["active"])
+        self.assertTrue(finding["evidence"]["guardian"]["required"])
+        self.assertFalse(payload["runtime"]["position_guardian"]["active"])
+
+    def test_position_guardian_operator_override_suppresses_inactive_p0(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(
+                root,
+                active_position=False,
+                live_ready_market_rr=1.4,
+                closed_pls=(120.0, 90.0, 60.0),
+            )
+            with mock.patch.dict(
+                os.environ,
+                {
+                    "QR_REQUIRE_POSITION_GUARDIAN_ACTIVE": "0",
+                    "QR_POSITION_GUARDIAN_ACTIVE": "0",
+                },
+                clear=False,
+            ):
+                _run(files)
+            payload = json.loads(files["output"].read_text())
+
+        codes = {item["code"] for item in payload["findings"]}
+        self.assertNotIn("POSITION_GUARDIAN_INACTIVE_FOR_PROFIT_CAPTURE", codes)
+        self.assertFalse(payload["runtime"]["position_guardian"]["required"])
+
     def test_projection_expiry_uses_live_telemetry_grace(self) -> None:
         grace = timedelta(seconds=PROJECTION_PENDING_EXPIRY_GRACE_SECONDS)
         row = {
