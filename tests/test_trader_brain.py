@@ -42,9 +42,28 @@ from quant_rabbit.strategy.trader_brain import (
 from quant_rabbit.strategy.directional_forecaster import DirectionalForecast
 from quant_rabbit.strategy.entry_thesis_ledger import PendingEntryThesis, record_pending_entry_thesis
 from quant_rabbit.strategy.lane_history_ledger import LaneHistorySnapshot
+from tests.support_bidask_rules import (
+    bidask_rules_env,
+    write_bidask_replay_fixture_rules,
+    write_nonmatching_bidask_rules,
+)
 
 
 class TraderBrainTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self._bidask_tmp = tempfile.TemporaryDirectory()
+        self._prior_bidask_rules = os.environ.get("QR_BIDASK_REPLAY_PRECISION_RULES")
+        os.environ["QR_BIDASK_REPLAY_PRECISION_RULES"] = str(
+            write_nonmatching_bidask_rules(Path(self._bidask_tmp.name))
+        )
+
+    def tearDown(self) -> None:
+        if self._prior_bidask_rules is None:
+            os.environ.pop("QR_BIDASK_REPLAY_PRECISION_RULES", None)
+        else:
+            os.environ["QR_BIDASK_REPLAY_PRECISION_RULES"] = self._prior_bidask_rules
+        self._bidask_tmp.cleanup()
+
     def test_selection_reward_risk_floor_uses_range_policy_floor(self) -> None:
         policy = RiskPolicy()
 
@@ -203,6 +222,7 @@ class TraderBrainTest(unittest.TestCase):
     def test_bidask_replay_scores_positive_segment_and_blocks_negative_pair_direction(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
+            rules_path = write_bidask_replay_fixture_rules(root)
             good = _result(
                 "failure_trader:EUR_USD:SHORT:BREAKOUT_FAILURE",
                 "EUR_USD",
@@ -278,7 +298,8 @@ class TraderBrainTest(unittest.TestCase):
                 report_path=root / "decision.md",
             )
 
-            decision = brain.run(_snapshot())
+            with bidask_rules_env(rules_path):
+                decision = brain.run(_snapshot())
 
             good_score = next(
                 item for item in decision.scores

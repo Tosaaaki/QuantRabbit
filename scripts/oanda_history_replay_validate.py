@@ -330,6 +330,7 @@ def _explicit_history_dirs(
     seen: set[Path] = set()
     for raw_path in explicit:
         path = Path(raw_path)
+        matched = False
         discovered = _discover_multi_month_history_dirs(
             path,
             granularity=granularity,
@@ -338,11 +339,13 @@ def _explicit_history_dirs(
         if discovered:
             for item in discovered:
                 _append_unique_path(selected, seen, item)
-            continue
+            matched = True
         summary_dirs = _discover_history_summary_dirs(path, granularity=granularity)
         if summary_dirs:
             for item in summary_dirs:
                 _append_unique_path(selected, seen, item)
+            matched = True
+        if matched:
             continue
         latest = path / "latest_summary.json"
         if latest.exists():

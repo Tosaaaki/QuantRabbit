@@ -38,6 +38,11 @@ from quant_rabbit.strategy.intent_generator import (
     _session_bucket_from_tag,
 )
 from quant_rabbit.strategy.lane_history_ledger import SameDayLossStreak
+from tests.support_bidask_rules import (
+    bidask_rules_env,
+    write_bidask_replay_fixture_rules,
+    write_nonmatching_bidask_rules,
+)
 
 
 def _high_precision_market_support(direction: str) -> dict:
@@ -588,6 +593,10 @@ class IntentGeneratorTest(unittest.TestCase):
             "QR_REQUIRE_TELEMETRY_FOR_LIVE",
             None,
         )
+        self._prior_bidask_rules = os.environ.get("QR_BIDASK_REPLAY_PRECISION_RULES")
+        os.environ["QR_BIDASK_REPLAY_PRECISION_RULES"] = str(
+            write_nonmatching_bidask_rules(Path(self._default_root_tmp.name))
+        )
 
     def tearDown(self) -> None:
         self._default_root_patch.stop()
@@ -600,6 +609,10 @@ class IntentGeneratorTest(unittest.TestCase):
             os.environ.pop("QR_REQUIRE_TELEMETRY_FOR_LIVE", None)
         else:
             os.environ["QR_REQUIRE_TELEMETRY_FOR_LIVE"] = self._prior_require_telemetry_for_live
+        if self._prior_bidask_rules is None:
+            os.environ.pop("QR_BIDASK_REPLAY_PRECISION_RULES", None)
+        else:
+            os.environ["QR_BIDASK_REPLAY_PRECISION_RULES"] = self._prior_bidask_rules
 
     def test_session_bucket_maps_judas_window_to_london_context(self) -> None:
         self.assertEqual(_session_bucket_from_tag("JUDAS_WINDOW"), "LONDON")
@@ -7139,6 +7152,7 @@ class IntentGeneratorTest(unittest.TestCase):
         from quant_rabbit.strategy.intent_generator import _forecast_live_readiness_issue
 
         os.environ["QR_REQUIRE_FORECAST_FOR_LIVE"] = "1"
+        rules_path = write_bidask_replay_fixture_rules(Path(self._default_root_tmp.name))
         support_metadata = {
             "forecast_direction": "DOWN",
             "forecast_confidence": 0.23,
@@ -7171,11 +7185,12 @@ class IntentGeneratorTest(unittest.TestCase):
             metadata=support_metadata,
         )
 
-        support_blocked = _forecast_live_readiness_issue(
-            support_intent,
-            support_metadata,
-            TradeMethod.BREAKOUT_FAILURE,
-        )
+        with bidask_rules_env(rules_path):
+            support_blocked = _forecast_live_readiness_issue(
+                support_intent,
+                support_metadata,
+                TradeMethod.BREAKOUT_FAILURE,
+            )
         self.assertEqual(support_blocked["code"], "FORECAST_CONFIDENCE_REQUIRED_FOR_LIVE")
         self.assertNotIn("bidask_replay_precision_live_ready", support_metadata)
         self.assertNotIn("bidask_replay_precision_support", support_metadata)
@@ -7204,11 +7219,12 @@ class IntentGeneratorTest(unittest.TestCase):
             metadata=block_metadata,
         )
 
-        blocked = _forecast_live_readiness_issue(
-            block_intent,
-            block_metadata,
-            TradeMethod.TREND_CONTINUATION,
-        )
+        with bidask_rules_env(rules_path):
+            blocked = _forecast_live_readiness_issue(
+                block_intent,
+                block_metadata,
+                TradeMethod.TREND_CONTINUATION,
+            )
 
         self.assertEqual(blocked["code"], "BIDASK_REPLAY_NEGATIVE_EXPECTANCY_FOR_LIVE")
         self.assertEqual(
@@ -7249,13 +7265,14 @@ class IntentGeneratorTest(unittest.TestCase):
             metadata=contrarian_metadata,
         )
 
-        self.assertIsNone(
-            _forecast_live_readiness_issue(
-                contrarian_intent,
-                contrarian_metadata,
-                TradeMethod.BREAKOUT_FAILURE,
+        with bidask_rules_env(rules_path):
+            self.assertIsNone(
+                _forecast_live_readiness_issue(
+                    contrarian_intent,
+                    contrarian_metadata,
+                    TradeMethod.BREAKOUT_FAILURE,
+                )
             )
-        )
         self.assertNotIn("bidask_replay_precision_live_ready", contrarian_metadata)
         self.assertNotIn("bidask_replay_precision_support", contrarian_metadata)
 

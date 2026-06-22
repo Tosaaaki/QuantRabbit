@@ -193,6 +193,45 @@ class OandaHistoryReplayValidateTest(unittest.TestCase):
 
         self.assertEqual(dirs, [run_a, run_b])
 
+    def test_explicit_history_parent_keeps_windowed_overlays_with_multi_month_run(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            history = root / "oanda_history_s5"
+            long_run = history / "20260622T155928Z"
+            overlay_run = history / "20260622T160015Z"
+            long_run.mkdir(parents=True)
+            overlay_run.mkdir(parents=True)
+            (long_run / "summary.json").write_text(
+                json.dumps(
+                    {
+                        "output_dir": str(long_run),
+                        "granularities": ["S5"],
+                        "window": {
+                            "from": "2026-02-22T15:59:19Z",
+                            "to": "2026-06-22T15:59:19Z",
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (overlay_run / "summary.json").write_text(
+                json.dumps(
+                    {
+                        "output_dir": str(overlay_run),
+                        "granularities": ["S5"],
+                        "window": {
+                            "from": "2026-06-22T00:42:48Z",
+                            "to": "2026-06-22T21:02:28Z",
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            dirs = replay._history_dirs([history], granularity="S5", auto_min_days=30.0)
+
+        self.assertEqual(dirs, [long_run, overlay_run])
+
     def test_history_dirs_falls_back_to_latest_when_no_multi_month_suite_exists(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

@@ -1,15 +1,22 @@
 from __future__ import annotations
 
 import os
+import tempfile
 import unittest
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 from quant_rabbit.models import AccountSummary, BrokerOrder, BrokerPosition, BrokerSnapshot, MarketContext, OrderIntent, OrderType, Owner, Quote, Side, TradeMethod
 from quant_rabbit.risk import (
     LOSS_ASYMMETRY_OANDA_CAMPAIGN_FIREPOWER_RELAXED_MODE,
     RiskEngine,
     RiskPolicy,
+)
+from tests.support_bidask_rules import (
+    bidask_rules_env,
+    write_bidask_replay_fixture_rules,
+    write_nonmatching_bidask_rules,
 )
 
 
@@ -55,6 +62,20 @@ def _capped_engine(*, policy: RiskPolicy | None = None, **kwargs) -> RiskEngine:
 
 
 class RiskEngineTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self._bidask_tmp = tempfile.TemporaryDirectory()
+        self._prior_bidask_rules = os.environ.get("QR_BIDASK_REPLAY_PRECISION_RULES")
+        os.environ["QR_BIDASK_REPLAY_PRECISION_RULES"] = str(
+            write_nonmatching_bidask_rules(Path(self._bidask_tmp.name))
+        )
+
+    def tearDown(self) -> None:
+        if self._prior_bidask_rules is None:
+            os.environ.pop("QR_BIDASK_REPLAY_PRECISION_RULES", None)
+        else:
+            os.environ["QR_BIDASK_REPLAY_PRECISION_RULES"] = self._prior_bidask_rules
+        self._bidask_tmp.cleanup()
+
     def test_default_policy_has_no_jpy_loss_cap_literal(self) -> None:
         self.assertIsNone(RiskPolicy().max_loss_jpy)
 
@@ -1132,6 +1153,7 @@ class RiskEngineTest(unittest.TestCase):
         )
 
     def test_bidask_replay_rank_only_and_negative_bucket_apply_at_live_send(self) -> None:
+        rules_path = write_bidask_replay_fixture_rules(Path(self._bidask_tmp.name))
         support_intent = OrderIntent(
             pair="EUR_USD",
             side=Side.SHORT,
@@ -1176,11 +1198,12 @@ class RiskEngineTest(unittest.TestCase):
             },
         )
 
-        support_decision = _capped_engine(live_enabled=True).validate(
-            support_intent,
-            narrow_spread_snapshot,
-            for_live_send=True,
-        )
+        with bidask_rules_env(rules_path):
+            support_decision = _capped_engine(live_enabled=True).validate(
+                support_intent,
+                narrow_spread_snapshot,
+                for_live_send=True,
+            )
 
         support_codes = {issue.code for issue in support_decision.issues}
         self.assertFalse(support_decision.allowed)
@@ -1224,11 +1247,12 @@ class RiskEngineTest(unittest.TestCase):
                 ),
             },
         )
-        block_decision = _capped_engine(live_enabled=True).validate(
-            block_intent,
-            aud_snapshot,
-            for_live_send=True,
-        )
+        with bidask_rules_env(rules_path):
+            block_decision = _capped_engine(live_enabled=True).validate(
+                block_intent,
+                aud_snapshot,
+                for_live_send=True,
+            )
 
         block_codes = {issue.code for issue in block_decision.issues}
         self.assertFalse(block_decision.allowed)
@@ -1270,11 +1294,12 @@ class RiskEngineTest(unittest.TestCase):
             },
         )
 
-        contrarian_decision = _capped_engine(live_enabled=True).validate(
-            contrarian_intent,
-            aud_snapshot,
-            for_live_send=True,
-        )
+        with bidask_rules_env(rules_path):
+            contrarian_decision = _capped_engine(live_enabled=True).validate(
+                contrarian_intent,
+                aud_snapshot,
+                for_live_send=True,
+            )
 
         contrarian_codes = {issue.code for issue in contrarian_decision.issues}
         self.assertFalse(contrarian_decision.allowed)

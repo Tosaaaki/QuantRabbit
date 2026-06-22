@@ -230,9 +230,10 @@ class ForecastPrecisionConfluenceTest(unittest.TestCase):
         self.assertEqual(assessment["score_delta"], 18.0)
         self.assertEqual(assessment["rule_source"]["generated_from"], "unit-test")
 
-    def test_bidask_replay_keeps_non_stable_eurusd_edge_rank_only(self) -> None:
+    def test_bidask_replay_uses_live_grade_gbpusd_contrarian_edge(self) -> None:
         metadata = {
-            "forecast_direction": "DOWN",
+            "forecast_direction": "UP",
+            "forecast_horizon_min": 90,
             "chart_direction_bias": "SHORT",
             "tp_execution_mode": "ATTACHED_TECHNICAL_TP",
             "tp_target_intent": "HARVEST",
@@ -241,43 +242,45 @@ class ForecastPrecisionConfluenceTest(unittest.TestCase):
 
         assessment = bidask_replay_precision_assessment(
             metadata,
-            pair="EUR_USD",
+            pair="GBP_USD",
             side="SHORT",
             order_type="LIMIT",
             method="BREAKOUT_FAILURE",
-            entry=1.17330,
-            take_profit=1.17280,
-            stop_loss=1.17400,
+            entry=1.30000,
+            take_profit=1.29900,
+            stop_loss=1.30070,
         )
 
-        self.assertIsNone(assessment["primary_support"])
+        self.assertEqual(
+            assessment["primary_support"]["name"],
+            "GBP_USD_UP_H61_240m_FADE_TO_DOWN_S5_BIDASK_CONTRARIAN_HARVEST_TP10_SL7",
+        )
+        self.assertTrue(assessment["primary_support"]["contrarian_edge"])
+        self.assertEqual(assessment["primary_support"]["direction"], "DOWN")
+        self.assertEqual(assessment["score_delta"], 18.0)
         self.assertEqual(
             assessment["primary_rank_support"]["name"],
-            "EUR_USD_DOWN_S5_BIDASK_HARVEST_TP5_SL7",
+            "GBP_USD_UP_H61_240m_FADE_TO_DOWN_S5_BIDASK_CONTRARIAN_HARVEST_TP10_SL7",
         )
-        self.assertEqual(assessment["score_delta"], 6.0)
-        self.assertEqual(assessment["primary_rank_support"]["current_target_pips"], 5.0)
+        self.assertEqual(assessment["primary_rank_support"]["current_target_pips"], 10.0)
         self.assertEqual(assessment["primary_rank_support"]["current_stop_pips"], 7.0)
-        self.assertEqual(assessment["primary_rank_support"]["optimized_profit_factor"], 3.3399)
+        self.assertEqual(assessment["primary_rank_support"]["optimized_profit_factor"], 2.5714)
         self.assertEqual(
             assessment["primary_rank_support"]["adoption_status"],
-            "RANK_ONLY_NOT_DAILY_STABLE",
+            "LIVE_GRADE_DAILY_STABLE",
         )
-        self.assertIn(
-            "DAILY_SAMPLE_CONCENTRATED",
-            assessment["primary_rank_support"]["adoption_blockers"],
-        )
-        self.assertIsNone(
+        self.assertEqual(
             bidask_replay_precision_support(
                 metadata,
-                pair="EUR_USD",
+                pair="GBP_USD",
                 side="SHORT",
                 order_type="LIMIT",
                 method="BREAKOUT_FAILURE",
-                entry=1.17330,
-                take_profit=1.17280,
-                stop_loss=1.17400,
-            )
+                entry=1.30000,
+                take_profit=1.29900,
+                stop_loss=1.30070,
+            )["name"],
+            "GBP_USD_UP_H61_240m_FADE_TO_DOWN_S5_BIDASK_CONTRARIAN_HARVEST_TP10_SL7",
         )
 
     def test_bidask_replay_contrarian_support_fades_losing_forecast_bucket(self) -> None:
@@ -411,7 +414,7 @@ class ForecastPrecisionConfluenceTest(unittest.TestCase):
 
         self.assertEqual(issue["name"], "AUD_JPY_UP_S5_BIDASK_NEGATIVE_EXPECTANCY")
         self.assertTrue(issue["blocks_live_support"])
-        self.assertEqual(issue["samples"], 135)
+        self.assertEqual(issue["samples"], 1223)
 
     def test_holdout_confluence_adds_rotation_support_without_live_override(self) -> None:
         metadata = {
