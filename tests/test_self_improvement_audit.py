@@ -91,6 +91,10 @@ class SelfImprovementAuditorTest(unittest.TestCase):
                     "loss_closes_profit_capture_missed_rate": 1.0,
                     "stop_loss_closes_profit_capture_missed": 1,
                     "loss_close_estimated_capture_gap_jpy": 302.4,
+                    "loss_close_actual_pl_jpy": -340.2,
+                    "loss_close_counterfactual_profit_capture_pl_jpy": 105.84,
+                    "loss_close_counterfactual_profit_capture_delta_jpy": 446.04,
+                    "loss_close_counterfactual_profit_capture_jpy": 105.84,
                 },
                 "loss_close_regrets": [
                     {
@@ -104,6 +108,10 @@ class SelfImprovementAuditorTest(unittest.TestCase):
                         "tp_progress_before_loss_close": 0.86,
                         "estimated_mfe_jpy_before_loss_close": 302.4,
                         "profit_capture_missed_before_loss_close": True,
+                        "profit_capture_counterfactual_exit": "TP_PROGRESS_CAPTURE",
+                        "profit_capture_counterfactual_pips": 3.0,
+                        "profit_capture_counterfactual_jpy": 105.84,
+                        "profit_capture_counterfactual_net_improvement_jpy": 446.04,
                     }
                 ],
             },
@@ -115,6 +123,16 @@ class SelfImprovementAuditorTest(unittest.TestCase):
         self.assertEqual(
             findings[0]["evidence"]["top_profit_capture_misses"][0]["trade_id"],
             "472792",
+        )
+        self.assertEqual(
+            findings[0]["evidence"]["loss_close_counterfactual_profit_capture_delta_jpy"],
+            446.04,
+        )
+        self.assertEqual(
+            findings[0]["evidence"]["top_profit_capture_misses"][0][
+                "profit_capture_counterfactual_net_improvement_jpy"
+            ],
+            446.04,
         )
 
     def test_inactive_position_guardian_is_p0_for_target_open_profit_capture(self) -> None:

@@ -1200,6 +1200,11 @@ def _execution_timing_loss_close_labels(
         "path": str(path) if path is not None else None,
         "loaded": False,
         "generated_at_utc": None,
+        "loss_closes_profit_capture_missed": 0,
+        "loss_close_actual_pl_jpy": None,
+        "loss_close_counterfactual_profit_capture_pl_jpy": None,
+        "loss_close_counterfactual_profit_capture_delta_jpy": None,
+        "loss_close_counterfactual_profit_capture_jpy": None,
         "loss_market_close_rows": 0,
         "label_counts": {},
         "read_error": None,
@@ -1213,6 +1218,20 @@ def _execution_timing_loss_close_labels(
     except (OSError, json.JSONDecodeError) as exc:
         metrics["read_error"] = f"{type(exc).__name__}: {exc}"
         return {}, metrics
+    summary = payload.get("summary") if isinstance(payload.get("summary"), dict) else {}
+    metrics["loss_closes_profit_capture_missed"] = int(
+        _optional_float(summary.get("loss_closes_profit_capture_missed")) or 0
+    )
+    metrics["loss_close_actual_pl_jpy"] = _optional_float(summary.get("loss_close_actual_pl_jpy"))
+    metrics["loss_close_counterfactual_profit_capture_pl_jpy"] = _optional_float(
+        summary.get("loss_close_counterfactual_profit_capture_pl_jpy")
+    )
+    metrics["loss_close_counterfactual_profit_capture_delta_jpy"] = _optional_float(
+        summary.get("loss_close_counterfactual_profit_capture_delta_jpy")
+    )
+    metrics["loss_close_counterfactual_profit_capture_jpy"] = _optional_float(
+        summary.get("loss_close_counterfactual_profit_capture_jpy")
+    )
     rows = payload.get("market_close_counterfactuals")
     if not isinstance(rows, list):
         rows = []

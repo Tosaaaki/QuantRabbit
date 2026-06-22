@@ -48,6 +48,8 @@ class TraderSupportBotTest(unittest.TestCase):
             self.assertFalse(payload["metrics"]["repair_basket_send_allowed"])
             self.assertEqual(payload["metrics"]["repair_basket_guardian_recovery_lanes"], 0)
             self.assertEqual(payload["profit_capture"]["missed_loss_closes"], 2)
+            self.assertEqual(payload["metrics"]["profit_capture_counterfactual_delta_jpy"], 1054.02)
+            self.assertEqual(payload["profit_capture"]["top_misses"][0]["profit_capture_counterfactual_jpy"], 105.84)
             self.assertIn("zero loss_closes_profit_capture_missed", payload["profit_capture"]["clearance_condition"])
             self.assertEqual(payload["current_profit_capture"]["watch_positions"], 1)
             self.assertEqual(payload["entry_readiness"]["guardian_blocked_lanes"], 2)
@@ -100,6 +102,7 @@ class TraderSupportBotTest(unittest.TestCase):
             )
             report = files["report"].read_text()
             self.assertIn("Trader Support Bot Report", report)
+            self.assertIn("Counterfactual profit-capture delta JPY", report)
             self.assertIn("Acceptance Repair Plan", report)
             self.assertIn("Repair Frontier Blockers After Support", report)
             self.assertIn("FORECAST_CONTEXT_REQUIRED_FOR_LIVE", report)
@@ -656,7 +659,18 @@ def _write_fixture(root: Path, *, now: datetime, blocked: bool) -> dict[str, Pat
                 "evidence": {
                     "loss_closes_profit_capture_missed": 2,
                     "loss_close_estimated_capture_gap_jpy": 646.489,
-                    "top_profit_capture_misses": [{"trade_id": "472792", "pair": "USD_JPY"}],
+                    "loss_close_actual_pl_jpy": -5188.197,
+                    "loss_close_counterfactual_profit_capture_pl_jpy": -4134.177,
+                    "loss_close_counterfactual_profit_capture_delta_jpy": 1054.02,
+                    "loss_close_counterfactual_profit_capture_jpy": 474.341,
+                    "top_profit_capture_misses": [
+                        {
+                            "trade_id": "472792",
+                            "pair": "USD_JPY",
+                            "profit_capture_counterfactual_jpy": 105.84,
+                            "profit_capture_counterfactual_net_improvement_jpy": 446.04,
+                        }
+                    ],
                 },
             },
             {

@@ -37,8 +37,11 @@ class ProfitCaptureBotTest(unittest.TestCase):
             payload = json.loads(files["output"].read_text())
             self.assertEqual(summary.status, STATUS_READY)
             self.assertEqual(payload["metrics"]["bankable_positions"], 1)
+            self.assertEqual(payload["metrics"]["historical_counterfactual_profit_capture_delta_jpy"], 446.04)
             self.assertEqual(payload["positions"][0]["gate_status"], "BANKABLE_NOW")
             self.assertGreater(payload["positions"][0]["tp_progress"], 0.3)
+            self.assertEqual(payload["history"]["top_misses"][0]["counterfactual_jpy"], 105.84)
+            self.assertEqual(payload["history"]["top_misses"][0]["counterfactual_delta_jpy"], 446.04)
             self.assertIn("Profit Capture Bot Report", files["report"].read_text())
 
     def test_watch_reports_trigger_when_position_is_not_profitable(self) -> None:
@@ -215,6 +218,10 @@ def _write_fixture(
                 "loss_closes_profit_capture_missed": historical_missed,
                 "stop_loss_closes_profit_capture_missed": historical_missed,
                 "loss_close_estimated_capture_gap_jpy": 340.2 if historical_missed else 0.0,
+                "loss_close_actual_pl_jpy": -340.2 if historical_missed else 0.0,
+                "loss_close_counterfactual_profit_capture_pl_jpy": 105.84 if historical_missed else 0.0,
+                "loss_close_counterfactual_profit_capture_delta_jpy": 446.04 if historical_missed else 0.0,
+                "loss_close_counterfactual_profit_capture_jpy": 105.84 if historical_missed else 0.0,
             },
             "loss_close_regrets": [
                 {
@@ -224,6 +231,10 @@ def _write_fixture(
                     "exit_reason": "STOP_LOSS_ORDER",
                     "realized_pl_jpy": -340.2,
                     "profit_capture_missed_before_loss_close": bool(historical_missed),
+                    "profit_capture_counterfactual_exit": "TP_PROGRESS_CAPTURE",
+                    "profit_capture_counterfactual_pips": 3.0,
+                    "profit_capture_counterfactual_jpy": 105.84,
+                    "profit_capture_counterfactual_net_improvement_jpy": 446.04,
                 }
             ],
         },

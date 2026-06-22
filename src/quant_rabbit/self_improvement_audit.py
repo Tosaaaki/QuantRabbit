@@ -1966,7 +1966,14 @@ def _profit_capture_miss_findings(
         for row in (timing_payload.get("loss_close_regrets") or [])
         if isinstance(row, dict) and row.get("profit_capture_missed_before_loss_close")
     ]
-    rows.sort(key=lambda row: float(row.get("estimated_mfe_jpy_before_loss_close") or 0.0), reverse=True)
+    rows.sort(
+        key=lambda row: float(
+            row.get("profit_capture_counterfactual_net_improvement_jpy")
+            or row.get("estimated_mfe_jpy_before_loss_close")
+            or 0.0
+        ),
+        reverse=True,
+    )
     return [
         _finding(
             run_id=run_id,
@@ -1993,6 +2000,16 @@ def _profit_capture_miss_findings(
                 "loss_close_estimated_capture_gap_jpy": _maybe_float(
                     summary.get("loss_close_estimated_capture_gap_jpy")
                 ),
+                "loss_close_actual_pl_jpy": _maybe_float(summary.get("loss_close_actual_pl_jpy")),
+                "loss_close_counterfactual_profit_capture_pl_jpy": _maybe_float(
+                    summary.get("loss_close_counterfactual_profit_capture_pl_jpy")
+                ),
+                "loss_close_counterfactual_profit_capture_delta_jpy": _maybe_float(
+                    summary.get("loss_close_counterfactual_profit_capture_delta_jpy")
+                ),
+                "loss_close_counterfactual_profit_capture_jpy": _maybe_float(
+                    summary.get("loss_close_counterfactual_profit_capture_jpy")
+                ),
                 "top_profit_capture_misses": [
                     {
                         "trade_id": str(row.get("trade_id") or ""),
@@ -2007,6 +2024,18 @@ def _profit_capture_miss_findings(
                         ),
                         "estimated_mfe_jpy_before_loss_close": _maybe_float(
                             row.get("estimated_mfe_jpy_before_loss_close")
+                        ),
+                        "profit_capture_counterfactual_exit": row.get(
+                            "profit_capture_counterfactual_exit"
+                        ),
+                        "profit_capture_counterfactual_pips": _maybe_float(
+                            row.get("profit_capture_counterfactual_pips")
+                        ),
+                        "profit_capture_counterfactual_jpy": _maybe_float(
+                            row.get("profit_capture_counterfactual_jpy")
+                        ),
+                        "profit_capture_counterfactual_net_improvement_jpy": _maybe_float(
+                            row.get("profit_capture_counterfactual_net_improvement_jpy")
                         ),
                     }
                     for row in rows[:8]

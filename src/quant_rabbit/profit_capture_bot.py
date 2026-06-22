@@ -131,6 +131,16 @@ class ProfitCaptureBot:
             "watch_positions": len(positions) - len(bankable) - len(blocked_positions),
             "historical_missed_loss_closes": history["missed_loss_closes"],
             "historical_estimated_gap_jpy": history["estimated_gap_jpy"],
+            "historical_actual_loss_close_pl_jpy": history["actual_loss_close_pl_jpy"],
+            "historical_counterfactual_profit_capture_pl_jpy": history[
+                "counterfactual_profit_capture_pl_jpy"
+            ],
+            "historical_counterfactual_profit_capture_delta_jpy": history[
+                "counterfactual_profit_capture_delta_jpy"
+            ],
+            "historical_counterfactual_profit_capture_jpy": history[
+                "counterfactual_profit_capture_jpy"
+            ],
         }
         return {
             "artifact_paths": {
@@ -361,6 +371,13 @@ def _historical_capture_summary(timing: dict[str, Any]) -> dict[str, Any]:
             "exit_reason": row.get("exit_reason"),
             "realized_pl_jpy": _round(row.get("realized_pl_jpy"), 3),
             "tp_progress_before_close": _round(row.get("tp_progress_before_close"), 4),
+            "counterfactual_exit": row.get("profit_capture_counterfactual_exit"),
+            "counterfactual_pips": _round(row.get("profit_capture_counterfactual_pips"), 4),
+            "counterfactual_jpy": _round(row.get("profit_capture_counterfactual_jpy"), 3),
+            "counterfactual_delta_jpy": _round(
+                row.get("profit_capture_counterfactual_net_improvement_jpy"),
+                3,
+            ),
         }
         for row in rows
         if isinstance(row, dict) and row.get("profit_capture_missed_before_loss_close")
@@ -370,6 +387,19 @@ def _historical_capture_summary(timing: dict[str, Any]) -> dict[str, Any]:
         "missed_loss_closes": int(_float(summary.get("loss_closes_profit_capture_missed"))),
         "missed_stop_loss_closes": int(_float(summary.get("stop_loss_closes_profit_capture_missed"))),
         "estimated_gap_jpy": _round(summary.get("loss_close_estimated_capture_gap_jpy"), 3),
+        "actual_loss_close_pl_jpy": _round(summary.get("loss_close_actual_pl_jpy"), 3),
+        "counterfactual_profit_capture_pl_jpy": _round(
+            summary.get("loss_close_counterfactual_profit_capture_pl_jpy"),
+            3,
+        ),
+        "counterfactual_profit_capture_delta_jpy": _round(
+            summary.get("loss_close_counterfactual_profit_capture_delta_jpy"),
+            3,
+        ),
+        "counterfactual_profit_capture_jpy": _round(
+            summary.get("loss_close_counterfactual_profit_capture_jpy"),
+            3,
+        ),
         "avg_decision_lag_minutes_after_first_positive": _round(
             summary.get("avg_decision_lag_minutes_after_first_positive"), 3
         ),
@@ -393,10 +423,18 @@ def _blockers(*, positions: list[dict[str, Any]], history: dict[str, Any]) -> li
             {
                 "code": "HISTORICAL_PROFIT_CAPTURE_MISSED",
                 "severity": "P0",
-                "message": f"{history['missed_loss_closes']} recent loss close(s) missed executable profit capture",
+                "message": _historical_miss_message(history),
             }
         )
     return blockers
+
+
+def _historical_miss_message(history: dict[str, Any]) -> str:
+    base = f"{history['missed_loss_closes']} recent loss close(s) missed executable profit capture"
+    delta = history.get("counterfactual_profit_capture_delta_jpy")
+    if delta is None:
+        return base
+    return f"{base}; conservative candle counterfactual delta={delta} JPY"
 
 
 def _operator_actions(
@@ -487,11 +525,22 @@ def _render_report(payload: dict[str, Any]) -> str:
     history = payload["history"]
     lines.append(f"- Missed loss closes: `{history['missed_loss_closes']}`")
     lines.append(f"- Estimated gap JPY: `{history['estimated_gap_jpy']}`")
+    lines.append(f"- Actual loss-close PL JPY: `{history['actual_loss_close_pl_jpy']}`")
+    lines.append(
+        "- Counterfactual profit-capture PL JPY: "
+        f"`{history['counterfactual_profit_capture_pl_jpy']}`"
+    )
+    lines.append(
+        "- Counterfactual profit-capture delta JPY: "
+        f"`{history['counterfactual_profit_capture_delta_jpy']}`"
+    )
     if history["top_misses"]:
         for item in history["top_misses"]:
             lines.append(
                 f"- `{item['trade_id']}` `{item['pair']}` `{item['side']}` "
-                f"{item['exit_reason']} realized=`{item['realized_pl_jpy']}`"
+                f"{item['exit_reason']} realized=`{item['realized_pl_jpy']}` "
+                f"counterfactual=`{item.get('counterfactual_jpy')}` "
+                f"delta=`{item.get('counterfactual_delta_jpy')}`"
             )
     lines.extend(["", "## Blockers", ""])
     if payload["blockers"]:

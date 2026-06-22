@@ -1062,6 +1062,13 @@ class CliHelpTest(unittest.TestCase):
                 json.dumps(
                     {
                         "generated_at_utc": "2026-06-21T01:00:00+00:00",
+                        "summary": {
+                            "loss_closes_profit_capture_missed": 1,
+                            "loss_close_actual_pl_jpy": -1019.78,
+                            "loss_close_counterfactual_profit_capture_pl_jpy": -700.0,
+                            "loss_close_counterfactual_profit_capture_delta_jpy": 319.78,
+                            "loss_close_counterfactual_profit_capture_jpy": 319.78,
+                        },
                         "market_close_counterfactuals": [
                             {
                                 "trade_id": "T-contained",
@@ -1088,6 +1095,10 @@ class CliHelpTest(unittest.TestCase):
         self.assertEqual(
             metrics["recent_loss_timing_label_counts"],
             {"LOSS_CLOSE_CONTAINED_RISK": 1},
+        )
+        self.assertEqual(
+            metrics["execution_timing_audit"]["loss_close_counterfactual_profit_capture_delta_jpy"],
+            319.78,
         )
 
     def test_profitability_acceptance_requires_close_gate_evidence_for_contained_gpt_loss_close(self) -> None:

@@ -182,6 +182,10 @@ class TraderSupportBot:
             "global_unlock_frontier_lanes": len(entry["global_unlock_frontier"]),
             "profit_capture_missed_loss_closes": profit_capture["missed_loss_closes"],
             "profit_capture_estimated_gap_jpy": profit_capture["estimated_gap_jpy"],
+            "profit_capture_actual_loss_close_pl_jpy": profit_capture["actual_loss_close_pl_jpy"],
+            "profit_capture_counterfactual_pl_jpy": profit_capture["counterfactual_profit_capture_pl_jpy"],
+            "profit_capture_counterfactual_delta_jpy": profit_capture["counterfactual_profit_capture_delta_jpy"],
+            "profit_capture_counterfactual_jpy": profit_capture["counterfactual_profit_capture_jpy"],
             "profit_capture_bankable_positions": current_profit_capture["bankable_positions"],
             "profit_capture_watch_positions": current_profit_capture["watch_positions"],
             "profit_capture_blocked_positions": current_profit_capture["blocked_positions"],
@@ -472,11 +476,28 @@ def _profit_capture_summary(self_improvement: dict[str, Any], timing: dict[str, 
     summary = timing.get("summary") if isinstance(timing.get("summary"), dict) else {}
     missed = evidence.get("loss_closes_profit_capture_missed", summary.get("loss_closes_profit_capture_missed"))
     gap = evidence.get("loss_close_estimated_capture_gap_jpy", summary.get("loss_close_estimated_capture_gap_jpy"))
+    actual_pl = evidence.get("loss_close_actual_pl_jpy", summary.get("loss_close_actual_pl_jpy"))
+    counterfactual_pl = evidence.get(
+        "loss_close_counterfactual_profit_capture_pl_jpy",
+        summary.get("loss_close_counterfactual_profit_capture_pl_jpy"),
+    )
+    counterfactual_delta = evidence.get(
+        "loss_close_counterfactual_profit_capture_delta_jpy",
+        summary.get("loss_close_counterfactual_profit_capture_delta_jpy"),
+    )
+    counterfactual_jpy = evidence.get(
+        "loss_close_counterfactual_profit_capture_jpy",
+        summary.get("loss_close_counterfactual_profit_capture_jpy"),
+    )
     top = evidence.get("top_profit_capture_misses") if isinstance(evidence.get("top_profit_capture_misses"), list) else []
     return {
         "status": "PROFIT_CAPTURE_REPAIR_REQUIRED" if _float(missed) > 0 else "OK",
         "missed_loss_closes": int(_float(missed)),
         "estimated_gap_jpy": _round_optional(gap, 3),
+        "actual_loss_close_pl_jpy": _round_optional(actual_pl, 3),
+        "counterfactual_profit_capture_pl_jpy": _round_optional(counterfactual_pl, 3),
+        "counterfactual_profit_capture_delta_jpy": _round_optional(counterfactual_delta, 3),
+        "counterfactual_profit_capture_jpy": _round_optional(counterfactual_jpy, 3),
         "stop_loss_missed": evidence.get("stop_loss_closes_profit_capture_missed", summary.get("stop_loss_closes_profit_capture_missed")),
         "top_misses": top[:5],
         "message": finding.get("message") if finding else None,
@@ -1071,8 +1092,7 @@ def _build_blockers(
             {
                 "code": PROFIT_CAPTURE_MISS,
                 "severity": "P0",
-                "message": profit_capture.get("message")
-                or f"{profit_capture['missed_loss_closes']} losing close(s) missed TP-progress capture",
+                "message": _profit_capture_miss_message(profit_capture),
             }
         )
     if p0_findings:
@@ -1100,6 +1120,17 @@ def _build_blockers(
             }
         )
     return blockers
+
+
+def _profit_capture_miss_message(profit_capture: dict[str, Any]) -> str:
+    message = (
+        profit_capture.get("message")
+        or f"{profit_capture['missed_loss_closes']} losing close(s) missed TP-progress capture"
+    )
+    delta = profit_capture.get("counterfactual_profit_capture_delta_jpy")
+    if delta is None:
+        return message
+    return f"{message}; conservative candle counterfactual delta={delta} JPY"
 
 
 def _operator_actions(
@@ -1295,7 +1326,8 @@ def _render_report(payload: dict[str, Any]) -> str:
         f"| Repair frontier clear after support | `{entry['repair_frontier_after_support_clear_lanes']}` |",
         f"| Repair frontier blocked after support | `{entry['repair_frontier_after_support_blocked_lanes']}` |",
         f"| Global unlock frontier lanes | `{len(entry['global_unlock_frontier'])}` |",
-        f"| Profit-capture misses | `{profit['missed_loss_closes']}` gap=`{profit['estimated_gap_jpy']}` JPY |",
+        f"| Profit-capture misses | `{profit['missed_loss_closes']}` gap=`{profit['estimated_gap_jpy']}` JPY "
+        f"counterfactual_delta=`{profit['counterfactual_profit_capture_delta_jpy']}` JPY |",
         f"| Current profit-capture positions | bankable=`{current_profit['bankable_positions']}` watch=`{current_profit['watch_positions']}` blocked=`{current_profit['blocked_positions']}` |",
         f"| Open trader positions | `{broker['trader_positions']}` upl=`{broker['trader_unrealized_pl_jpy']}` JPY |",
         f"| Target remaining | `{target['remaining_target_jpy']}` JPY |",
@@ -1315,6 +1347,9 @@ def _render_report(payload: dict[str, Any]) -> str:
             "## Profit Capture Repair",
             "",
             f"- Status: `{profit['status']}`",
+            f"- Actual loss-close PL JPY: `{profit['actual_loss_close_pl_jpy']}`",
+            f"- Counterfactual profit-capture PL JPY: `{profit['counterfactual_profit_capture_pl_jpy']}`",
+            f"- Counterfactual profit-capture delta JPY: `{profit['counterfactual_profit_capture_delta_jpy']}`",
             f"- Clearance condition: {profit['clearance_condition']}",
             f"- Verify: `{profit['verification_command']}`",
         ]
@@ -1323,8 +1358,8 @@ def _render_report(payload: dict[str, Any]) -> str:
         lines.extend(
             [
                 "",
-                "| Trade | Pair | Side | Exit | MFE JPY | TP progress | Realized JPY |",
-                "|---|---|---|---|---:|---:|---:|",
+                "| Trade | Pair | Side | Exit | MFE JPY | TP progress | Counterfactual JPY | Delta JPY | Realized JPY |",
+                "|---|---|---|---|---:|---:|---:|---:|---:|",
             ]
         )
         for item in profit["top_misses"][:5]:
@@ -1333,6 +1368,8 @@ def _render_report(payload: dict[str, Any]) -> str:
                 f"`{item.get('exit_reason')}` | "
                 f"`{_round_optional(item.get('estimated_mfe_jpy_before_loss_close'), 3)}` | "
                 f"`{_round_optional(item.get('tp_progress_before_loss_close'), 4)}` | "
+                f"`{_round_optional(item.get('profit_capture_counterfactual_jpy'), 3)}` | "
+                f"`{_round_optional(item.get('profit_capture_counterfactual_net_improvement_jpy'), 3)}` | "
                 f"`{_round_optional(item.get('realized_pl_jpy'), 3)}` |"
             )
     else:
