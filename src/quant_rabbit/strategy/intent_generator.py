@@ -53,6 +53,7 @@ from quant_rabbit.risk import (
 )
 from quant_rabbit.self_improvement_guards import (
     forecast_adverse_path_new_risk_blocker,
+    oanda_firepower_repair_current_risk_reaches_minimum,
     pending_execution_lifecycle_new_risk_blocker,
 )
 from quant_rabbit.snapshot_json import snapshot_payload_order_raw
@@ -7572,7 +7573,7 @@ def _positive_rotation_daily_firepower_issue(
                     "keep it as a bounded repair lane, but do not claim the daily "
                     "5% floor is solved at this size."
                 ),
-                "severity": "WARN",
+                "severity": "BLOCK",
             }
         metadata["positive_rotation_minimum_floor_reachable"] = True
         metadata["positive_rotation_minimum_floor_reach_basis"] = (
@@ -8619,6 +8620,8 @@ def _self_improvement_profitability_p0_repair_allowed(
         or _tp_proof_collection_harvest_rotation_allowed(intent)
         or _oanda_campaign_firepower_positive_rotation_allowed(intent)
     ):
+        return False
+    if not oanda_firepower_repair_current_risk_reaches_minimum(intent.metadata):
         return False
     if _self_improvement_intent_matches_worst_segment(intent, p0_issue):
         return False

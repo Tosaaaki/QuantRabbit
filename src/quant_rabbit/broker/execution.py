@@ -45,6 +45,7 @@ from quant_rabbit.risk import DEFAULT_SPECS, estimate_required_margin_jpy, margi
 from quant_rabbit.self_improvement_guards import (
     forecast_adverse_path_new_risk_blocker,
     intent_matches_profitability_worst_segment,
+    oanda_firepower_repair_current_risk_reaches_minimum,
     profitability_p0_worst_segment,
 )
 from quant_rabbit.strategy.intent_generator import (
@@ -2129,6 +2130,8 @@ def _selected_intent_is_self_improvement_profitability_repair(
     if metadata.get("self_improvement_p0_repair_live_ready") is not True:
         return False
     if str(metadata.get("self_improvement_p0_repair_mode") or "") != "TP_HARVEST_REPAIR":
+        return False
+    if not oanda_firepower_repair_current_risk_reaches_minimum(metadata):
         return False
     if intent_matches_profitability_worst_segment(intent, worst_segment):
         return False

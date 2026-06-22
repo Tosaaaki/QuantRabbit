@@ -725,6 +725,54 @@ class LiveOrderGatewayTest(unittest.TestCase):
             codes = {issue["code"] for issue in payload["risk_issues"]}
             self.assertNotIn("SELF_IMPROVEMENT_P0_BLOCKS_LIVE_ORDER", codes)
 
+    def test_self_improvement_p0_blocks_underpowered_oanda_repair_lane_staging(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            audit = root / "self_improvement.json"
+            audit.write_text(
+                json.dumps(
+                    {
+                        "findings": [
+                            {
+                                "priority": "P0",
+                                "code": "PERSISTENT_PROFITABILITY_DISCIPLINE_BLOCKED",
+                                "message": "profitability discipline has failed for 50 consecutive audit runs",
+                            }
+                        ]
+                    }
+                )
+            )
+            intents = _intents(
+                root,
+                metadata={
+                    "desk": "range_trader",
+                    "campaign_role": "OANDA_FIREPOWER_ROUTE",
+                    "self_improvement_p0_repair_live_ready": True,
+                    "self_improvement_p0_repair_mode": "TP_HARVEST_REPAIR",
+                    "positive_rotation_mode": "OANDA_CAMPAIGN_FIREPOWER_HARVEST",
+                    "positive_rotation_minimum_floor_reachable": False,
+                    "positive_rotation_minimum_floor_reach_basis": (
+                        "OANDA_CAMPAIGN_FIREPOWER_CURRENT_RISK_UNDERPOWERED"
+                    ),
+                    "positive_rotation_oanda_campaign_current_risk_minimum_floor_reachable": False,
+                },
+            )
+            client = FakeExecutionClient()
+            summary = LiveOrderGateway(
+                client=client,
+                strategy_profile=_profile(root),
+                output_path=root / "request.json",
+                report_path=root / "report.md",
+                self_improvement_audit=audit,
+            ).run(intents_path=intents, lane_id="lane:EUR_USD:LONG")
+
+            self.assertEqual(summary.status, "BLOCKED")
+            self.assertFalse(summary.sent)
+            self.assertEqual(client.orders, [])
+            payload = json.loads((root / "request.json").read_text())
+            codes = {issue["code"] for issue in payload["risk_issues"]}
+            self.assertIn("SELF_IMPROVEMENT_P0_BLOCKS_LIVE_ORDER", codes)
+
     def test_self_improvement_p0_rejects_repair_lane_on_named_worst_segment(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

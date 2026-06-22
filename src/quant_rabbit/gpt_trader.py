@@ -1361,6 +1361,7 @@ from quant_rabbit.risk import RiskPolicy, _spread_session_multiplier_from_tag
 from quant_rabbit.self_improvement_guards import (
     forecast_adverse_path_new_risk_blocker,
     intent_matches_profitability_worst_segment,
+    oanda_firepower_repair_current_risk_reaches_minimum,
     profitability_p0_worst_segment,
 )
 from quant_rabbit.strategy.entry_thesis_ledger import (
@@ -3190,6 +3191,12 @@ def _lane_packet(
                         "self_improvement_p0_repair_mode",
                         "self_improvement_p0_repair_blocker_code",
                         "self_improvement_p0_repair_reason",
+                        "positive_rotation_mode",
+                        "positive_rotation_minimum_floor_reachable",
+                        "positive_rotation_minimum_floor_reach_basis",
+                        "positive_rotation_oanda_campaign_current_risk_minimum_floor_reachable",
+                        "positive_rotation_oanda_campaign_current_risk_estimated_return_pct_per_active_day",
+                        "positive_rotation_oanda_campaign_remaining_minimum_pct",
                     ),
                 ),
                 "position_building": _small_dict(
@@ -5770,6 +5777,8 @@ def _all_selected_lanes_are_self_improvement_profitability_repair(
         if repair.get("self_improvement_p0_repair_live_ready") is not True:
             return False
         if str(repair.get("self_improvement_p0_repair_mode") or "") != "TP_HARVEST_REPAIR":
+            return False
+        if not oanda_firepower_repair_current_risk_reaches_minimum(repair):
             return False
         if intent_matches_profitability_worst_segment(lane, worst_segment):
             return False

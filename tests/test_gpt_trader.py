@@ -629,6 +629,50 @@ class GPTTraderBrainTest(unittest.TestCase):
             lane = payload["input_packet"]["lanes"][0]
             self.assertTrue(lane["self_improvement"]["self_improvement_p0_repair_live_ready"])
 
+    def test_rejects_underpowered_oanda_self_improvement_repair_lane(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root)
+            intents = json.loads(files["intents"].read_text())
+            metadata = intents["results"][0]["intent"].setdefault("metadata", {})
+            metadata.update(
+                {
+                    "opportunity_mode": "HARVEST",
+                    "tp_execution_mode": "ATTACHED_TECHNICAL_TP",
+                    "tp_target_intent": "HARVEST",
+                    "tp_target_source": "RANGE_RAIL",
+                    "self_improvement_p0_repair_live_ready": True,
+                    "self_improvement_p0_repair_mode": "TP_HARVEST_REPAIR",
+                    "self_improvement_p0_repair_blocker_code": "SELF_IMPROVEMENT_P0_PROFITABILITY_DISCIPLINE",
+                    "positive_rotation_mode": "OANDA_CAMPAIGN_FIREPOWER_HARVEST",
+                    "positive_rotation_minimum_floor_reachable": False,
+                    "positive_rotation_minimum_floor_reach_basis": (
+                        "OANDA_CAMPAIGN_FIREPOWER_CURRENT_RISK_UNDERPOWERED"
+                    ),
+                    "positive_rotation_oanda_campaign_current_risk_minimum_floor_reachable": False,
+                }
+            )
+            files["intents"].write_text(json.dumps(intents))
+            files["self_improvement_audit"].write_text(json.dumps(_self_improvement_profitability_p0()))
+            decision = _trade_decision()
+            decision["evidence_refs"].extend(
+                [
+                    "self_improvement:audit",
+                    "self_improvement:profitability",
+                    "self_improvement:finding:PERSISTENT_PROFITABILITY_DISCIPLINE_BLOCKED",
+                ]
+            )
+            brain = _brain(root, files, decision)
+
+            summary = brain.run(snapshot_path=files["snapshot"])
+
+            self.assertEqual(summary.status, "REJECTED")
+            payload = json.loads((root / "gpt_decision.json").read_text())
+            codes = {issue["code"] for issue in payload["verification_issues"]}
+            self.assertIn("SELF_IMPROVEMENT_P0_BLOCKS_TRADE", codes)
+            lane = payload["input_packet"]["lanes"][0]
+            self.assertFalse(lane["self_improvement"]["positive_rotation_minimum_floor_reachable"])
+
     def test_rejects_self_improvement_repair_lane_on_named_worst_segment(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

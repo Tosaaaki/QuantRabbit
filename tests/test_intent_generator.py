@@ -9016,8 +9016,8 @@ class IntentGeneratorTest(unittest.TestCase):
                 if issue["code"] == POSITIVE_ROTATION_FIREPOWER_BLOCK_CODE
             )
 
-            self.assertGreaterEqual(summary.live_ready, 1)
-            self.assertEqual(result["status"], "LIVE_READY")
+            self.assertEqual(summary.live_ready, 0)
+            self.assertEqual(result["status"], "DRY_RUN_BLOCKED")
             self.assertEqual(
                 metadata["positive_rotation_mode"],
                 POSITIVE_ROTATION_OANDA_CAMPAIGN_FIREPOWER_MODE,
@@ -9085,9 +9085,10 @@ class IntentGeneratorTest(unittest.TestCase):
                 "OANDA_CAMPAIGN_FIREPOWER_CURRENT_RISK_UNDERPOWERED",
             )
             self.assertIn(POSITIVE_ROTATION_FIREPOWER_BLOCK_CODE, issue_codes)
-            self.assertEqual(firepower_issue["severity"], "WARN")
-            self.assertNotIn(POSITIVE_ROTATION_FIREPOWER_BLOCK_CODE, result["live_blocker_codes"])
-            self.assertNotIn("SELF_IMPROVEMENT_P0_PROFITABILITY_DISCIPLINE", issue_codes)
+            self.assertEqual(firepower_issue["severity"], "BLOCK")
+            self.assertIn(POSITIVE_ROTATION_FIREPOWER_BLOCK_CODE, result["live_blocker_codes"])
+            self.assertIn("SELF_IMPROVEMENT_P0_PROFITABILITY_DISCIPLINE", issue_codes)
+            self.assertNotIn("self_improvement_p0_repair_live_ready", metadata)
 
     def test_oanda_firepower_current_risk_uses_matching_vehicle_not_aggregate_route(
         self,
@@ -9136,7 +9137,7 @@ class IntentGeneratorTest(unittest.TestCase):
             )
             metadata = result["intent"]["metadata"]
 
-            self.assertEqual(result["status"], "LIVE_READY")
+            self.assertEqual(result["status"], "DRY_RUN_BLOCKED")
             self.assertEqual(
                 metadata["positive_rotation_oanda_campaign_current_risk_estimated_return_basis"],
                 "MATCHING_VEHICLE",
@@ -9161,6 +9162,9 @@ class IntentGeneratorTest(unittest.TestCase):
                 metadata["positive_rotation_minimum_floor_reach_basis"],
                 "OANDA_CAMPAIGN_FIREPOWER_CURRENT_RISK_UNDERPOWERED",
             )
+            issue_codes = {issue["code"] for issue in result["risk_issues"]}
+            self.assertIn(POSITIVE_ROTATION_FIREPOWER_BLOCK_CODE, issue_codes)
+            self.assertIn(POSITIVE_ROTATION_FIREPOWER_BLOCK_CODE, result["live_blocker_codes"])
 
     def test_oanda_repair_not_blocked_by_same_segment_stop_loss_memory(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

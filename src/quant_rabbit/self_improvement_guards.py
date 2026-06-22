@@ -36,6 +36,10 @@ PENDING_EXECUTION_LIFECYCLE_SUPPORT_CODES = frozenset(
 )
 
 PROFITABILITY_DISCIPLINE_BLOCKED_CODE = "PERSISTENT_PROFITABILITY_DISCIPLINE_BLOCKED"
+OANDA_CAMPAIGN_FIREPOWER_REPAIR_MODE = "OANDA_CAMPAIGN_FIREPOWER_HARVEST"
+OANDA_CAMPAIGN_CURRENT_RISK_UNDERPOWERED_BASIS = (
+    "OANDA_CAMPAIGN_FIREPOWER_CURRENT_RISK_UNDERPOWERED"
+)
 
 
 def forecast_adverse_path_new_risk_blocker(payload: dict[str, Any] | None) -> dict[str, Any] | None:
@@ -221,6 +225,35 @@ def intent_matches_profitability_worst_segment(
         and side == worst_segment.get("side")
         and method == worst_segment.get("method")
     )
+
+
+def oanda_firepower_repair_current_risk_reaches_minimum(
+    metadata: dict[str, Any] | None,
+) -> bool:
+    """Require current-risk 5% firepower before OANDA-only P0 repair escapes.
+
+    Local TP-proven repair lanes are judged by realized broker TP evidence.
+    OANDA campaign firepower is historical audit evidence, so when a live
+    daily-target state lets us scale that audit lens to the executable order
+    risk, an underpowered result must not bypass a profitability P0.
+    """
+
+    if not isinstance(metadata, dict):
+        return True
+    mode = str(metadata.get("positive_rotation_mode") or "").strip().upper()
+    if mode != OANDA_CAMPAIGN_FIREPOWER_REPAIR_MODE:
+        return True
+    if metadata.get("positive_rotation_minimum_floor_reachable") is not True:
+        return False
+    basis = str(metadata.get("positive_rotation_minimum_floor_reach_basis") or "").strip().upper()
+    if basis == OANDA_CAMPAIGN_CURRENT_RISK_UNDERPOWERED_BASIS:
+        return False
+    current_risk_reachable = metadata.get(
+        "positive_rotation_oanda_campaign_current_risk_minimum_floor_reachable"
+    )
+    if current_risk_reachable is False:
+        return False
+    return True
 
 
 def _pending_churn_lane_keys(payload: dict[str, Any]) -> list[dict[str, Any]]:
