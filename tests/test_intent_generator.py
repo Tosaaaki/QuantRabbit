@@ -109,6 +109,10 @@ def _write_oanda_campaign_firepower_report(
     side: str = "LONG",
     shape: str = "range_reversion",
     exit_shape: str = "tp1_sl1",
+    aggregate_return_pct: float = 14.08,
+    matching_return_pct: float = 2.8,
+    weighted_return_pct: float = 0.64,
+    observed_attempts_per_active_day: float = 22.0,
 ) -> Path:
     path = (
         root
@@ -131,9 +135,9 @@ def _write_oanda_campaign_firepower_report(
                     "high_precision": {
                         "unique_vehicle_count": 5,
                         "pair_count": 5,
-                        "observed_attempts_per_active_day": 22.0,
-                        "weighted_return_pct_per_trade_at_risk_lens": 0.64,
-                        "estimated_return_pct_per_active_day_at_observed_frequency": 14.08,
+                        "observed_attempts_per_active_day": observed_attempts_per_active_day,
+                        "weighted_return_pct_per_trade_at_risk_lens": weighted_return_pct,
+                        "estimated_return_pct_per_active_day_at_observed_frequency": aggregate_return_pct,
                         "trades_needed_for_minimum_5pct_at_weighted_expectancy": 8,
                         "trades_needed_for_target_10pct_at_weighted_expectancy": 16,
                         "top_vehicles": [
@@ -146,7 +150,7 @@ def _write_oanda_campaign_firepower_report(
                                 "firepower_side": side,
                                 "validation_n": 80,
                                 "active_days": 20,
-                                "estimated_return_pct_per_active_day_at_observed_frequency": 2.8,
+                                "estimated_return_pct_per_active_day_at_observed_frequency": matching_return_pct,
                                 "live_permission": False,
                             }
                         ],
@@ -9043,6 +9047,27 @@ class IntentGeneratorTest(unittest.TestCase):
                 metadata["positive_rotation_oanda_campaign_current_risk_pct"],
                 0.239943,
             )
+            self.assertEqual(
+                metadata["positive_rotation_oanda_campaign_current_risk_estimated_return_basis"],
+                "MATCHING_VEHICLE",
+            )
+            self.assertAlmostEqual(
+                metadata[
+                    "positive_rotation_oanda_campaign_current_risk_estimated_return_pct_per_active_day"
+                ],
+                metadata[
+                    "positive_rotation_oanda_campaign_current_risk_matching_vehicle_estimated_return_pct_per_active_day"
+                ],
+                places=6,
+            )
+            self.assertGreater(
+                metadata[
+                    "positive_rotation_oanda_campaign_current_risk_aggregate_estimated_return_pct_per_active_day"
+                ],
+                metadata[
+                    "positive_rotation_oanda_campaign_current_risk_estimated_return_pct_per_active_day"
+                ],
+            )
             self.assertFalse(
                 metadata["positive_rotation_oanda_campaign_current_risk_minimum_floor_reachable"]
             )
@@ -9063,6 +9088,79 @@ class IntentGeneratorTest(unittest.TestCase):
             self.assertEqual(firepower_issue["severity"], "WARN")
             self.assertNotIn(POSITIVE_ROTATION_FIREPOWER_BLOCK_CODE, result["live_blocker_codes"])
             self.assertNotIn("SELF_IMPROVEMENT_P0_PROFITABILITY_DISCIPLINE", issue_codes)
+
+    def test_oanda_firepower_current_risk_uses_matching_vehicle_not_aggregate_route(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_profitability_p0_and_negative_capture(root)
+            _write_oanda_campaign_firepower_report(
+                root,
+                pair="EUR_USD",
+                side="LONG",
+                exit_shape="tp2_sl1",
+                aggregate_return_pct=30.0,
+                matching_return_pct=2.0,
+                weighted_return_pct=0.64,
+            )
+            (root / "daily_target_state.json").write_text(
+                json.dumps(
+                    {
+                        "status": "PURSUE_TARGET",
+                        "start_balance_jpy": 173958.1237,
+                        "remaining_minimum_jpy": 3000.0,
+                        "remaining_target_jpy": 19353.8438,
+                        "target_trades_per_day": 30,
+                    }
+                )
+            )
+            output = root / "intents.json"
+
+            IntentGenerator(
+                campaign_plan=_stamp_campaign_generated_at(
+                    _oanda_seed_range_campaign(root, side="LONG")
+                ),
+                strategy_profile=_strategy(root, status="CANDIDATE"),
+                output_path=output,
+                report_path=root / "intents.md",
+                pair_charts_path=_pair_charts(root),
+                data_root=root,
+                max_loss_jpy=417.4,
+            ).run(snapshot_path=_snapshot(root))
+
+            payload = json.loads(output.read_text())
+            result = next(
+                item for item in payload["results"]
+                if item["lane_id"] == "range_trader:EUR_USD:LONG:RANGE_ROTATION"
+            )
+            metadata = result["intent"]["metadata"]
+
+            self.assertEqual(result["status"], "LIVE_READY")
+            self.assertEqual(
+                metadata["positive_rotation_oanda_campaign_current_risk_estimated_return_basis"],
+                "MATCHING_VEHICLE",
+            )
+            self.assertGreater(
+                metadata[
+                    "positive_rotation_oanda_campaign_current_risk_aggregate_estimated_return_pct_per_active_day"
+                ],
+                metadata["positive_rotation_oanda_campaign_remaining_minimum_pct"],
+            )
+            self.assertLess(
+                metadata[
+                    "positive_rotation_oanda_campaign_current_risk_estimated_return_pct_per_active_day"
+                ],
+                metadata["positive_rotation_oanda_campaign_remaining_minimum_pct"],
+            )
+            self.assertFalse(
+                metadata["positive_rotation_oanda_campaign_current_risk_minimum_floor_reachable"]
+            )
+            self.assertFalse(metadata["positive_rotation_minimum_floor_reachable"])
+            self.assertEqual(
+                metadata["positive_rotation_minimum_floor_reach_basis"],
+                "OANDA_CAMPAIGN_FIREPOWER_CURRENT_RISK_UNDERPOWERED",
+            )
 
     def test_oanda_repair_not_blocked_by_same_segment_stop_loss_memory(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

@@ -7260,7 +7260,7 @@ def _annotate_oanda_campaign_current_risk_firepower(
     metadata: dict[str, Any],
     *,
     data_root: Path | None,
-) -> dict[str, float | bool | int | None] | None:
+) -> dict[str, float | bool | int | str | None] | None:
     """Scale audit-only OANDA firepower to the live intent's current risk.
 
     The packaged OANDA campaign artifact is expressed at
@@ -7311,33 +7311,49 @@ def _annotate_oanda_campaign_current_risk_firepower(
     adjusted_aggregate = aggregate_return * risk_scale if aggregate_return is not None else None
     adjusted_matching = matching_return * risk_scale if matching_return is not None else None
     adjusted_weighted = weighted_return * risk_scale if weighted_return is not None else None
+    route_return = adjusted_matching if matching_return is not None else adjusted_aggregate
+    route_return_basis = "MATCHING_VEHICLE" if matching_return is not None else "AGGREGATE_FALLBACK"
     remaining_minimum_jpy = max(0.0, _optional_float(payload.get("remaining_minimum_jpy")) or 0.0)
     remaining_target_jpy = max(0.0, _optional_float(payload.get("remaining_target_jpy")) or 0.0)
     remaining_minimum_pct = (remaining_minimum_jpy / start_balance) * 100.0
     remaining_target_pct = (remaining_target_jpy / start_balance) * 100.0
     minimum_reachable = (
-        adjusted_aggregate is not None
-        and adjusted_aggregate >= remaining_minimum_pct
+        route_return is not None
+        and route_return >= remaining_minimum_pct
     ) if remaining_minimum_pct > 0 else True
     target_reachable = (
-        adjusted_aggregate is not None
-        and adjusted_aggregate >= remaining_target_pct
+        route_return is not None
+        and route_return >= remaining_target_pct
     ) if remaining_target_pct > 0 else True
-    required_minimum_trades = (
+    required_minimum_trades_from_weighted = (
         math.ceil(remaining_minimum_pct / adjusted_weighted)
         if remaining_minimum_pct > 0 and adjusted_weighted is not None and adjusted_weighted > 0
         else 0
     )
-    required_target_trades = (
+    required_target_trades_from_weighted = (
         math.ceil(remaining_target_pct / adjusted_weighted)
         if remaining_target_pct > 0 and adjusted_weighted is not None and adjusted_weighted > 0
         else 0
     )
-    metrics: dict[str, float | bool | int | None] = {
+    required_minimum_active_days = (
+        math.ceil(remaining_minimum_pct / route_return)
+        if remaining_minimum_pct > 0 and route_return is not None and route_return > 0
+        else 0
+    )
+    required_target_active_days = (
+        math.ceil(remaining_target_pct / route_return)
+        if remaining_target_pct > 0 and route_return is not None and route_return > 0
+        else 0
+    )
+    metrics: dict[str, float | bool | int | str | None] = {
         "current_risk_jpy": round(risk_jpy, 4),
         "current_risk_pct": round(current_risk_pct, 6),
         "risk_scale": round(risk_scale, 6),
         "estimated_return_pct_per_active_day": (
+            round(route_return, 6) if route_return is not None else None
+        ),
+        "estimated_return_basis": route_return_basis,
+        "aggregate_estimated_return_pct_per_active_day": (
             round(adjusted_aggregate, 6) if adjusted_aggregate is not None else None
         ),
         "matching_vehicle_estimated_return_pct_per_active_day": (
@@ -7350,8 +7366,10 @@ def _annotate_oanda_campaign_current_risk_firepower(
         "remaining_target_pct": round(remaining_target_pct, 6),
         "minimum_floor_reachable": bool(minimum_reachable),
         "target_reachable": bool(target_reachable),
-        "required_minimum_trades": required_minimum_trades,
-        "required_target_trades": required_target_trades,
+        "required_minimum_trades": required_minimum_trades_from_weighted,
+        "required_target_trades": required_target_trades_from_weighted,
+        "required_minimum_active_days": required_minimum_active_days,
+        "required_target_active_days": required_target_active_days,
     }
     metadata.update(
         {
@@ -7361,6 +7379,12 @@ def _annotate_oanda_campaign_current_risk_firepower(
             "positive_rotation_oanda_campaign_current_risk_scale": metrics["risk_scale"],
             "positive_rotation_oanda_campaign_current_risk_estimated_return_pct_per_active_day": (
                 metrics["estimated_return_pct_per_active_day"]
+            ),
+            "positive_rotation_oanda_campaign_current_risk_estimated_return_basis": (
+                metrics["estimated_return_basis"]
+            ),
+            "positive_rotation_oanda_campaign_current_risk_aggregate_estimated_return_pct_per_active_day": (
+                metrics["aggregate_estimated_return_pct_per_active_day"]
             ),
             "positive_rotation_oanda_campaign_current_risk_matching_vehicle_estimated_return_pct_per_active_day": (
                 metrics["matching_vehicle_estimated_return_pct_per_active_day"]
@@ -7381,10 +7405,16 @@ def _annotate_oanda_campaign_current_risk_firepower(
                 metrics["target_reachable"]
             ),
             "positive_rotation_oanda_campaign_current_risk_required_minimum_trades": (
-                required_minimum_trades
+                required_minimum_trades_from_weighted
             ),
             "positive_rotation_oanda_campaign_current_risk_required_target_trades": (
-                required_target_trades
+                required_target_trades_from_weighted
+            ),
+            "positive_rotation_oanda_campaign_current_risk_required_minimum_active_days": (
+                required_minimum_active_days
+            ),
+            "positive_rotation_oanda_campaign_current_risk_required_target_active_days": (
+                required_target_active_days
             ),
         }
     )
