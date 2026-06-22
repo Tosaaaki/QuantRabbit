@@ -4061,6 +4061,42 @@ def _profitability_acceptance_close_leak_p0() -> dict:
     }
 
 
+def _profitability_acceptance_close_gate_evidence_missing_p0() -> dict:
+    return {
+        "generated_at_utc": datetime.now(timezone.utc).isoformat(),
+        "status": "BLOCKED",
+        "blockers": [
+            "LOSS_CLOSE_GATE_EVIDENCE_MISSING: 1 recent GPT loss-side market close lacks passing durable close_gate_evidence"
+        ],
+        "findings": [
+            {
+                "priority": "P0",
+                "code": "LOSS_CLOSE_GATE_EVIDENCE_MISSING",
+                "message": (
+                    "1 recent GPT loss-side market close lacks passing durable "
+                    "close_gate_evidence in verification_observations"
+                ),
+                "next_action": (
+                    "Persist gpt-trader close_gate_evidence before acceptance can "
+                    "clear the loss-side market-close leak."
+                ),
+                "evidence": {
+                    "recent_close_gate_unverified_loss_closes": 1,
+                    "recent_close_gate_unverified_loss_net_jpy": -1380.8008,
+                    "examples": [
+                        {
+                            "trade_id": "472743",
+                            "pair": "NZD_USD",
+                            "side": "LONG",
+                            "realized_pl_jpy": -1380.8008,
+                        }
+                    ],
+                },
+            }
+        ],
+    }
+
+
 def _self_improvement_projection_p0() -> dict:
     return {
         "generated_at_utc": datetime.now(timezone.utc).isoformat(),
@@ -5711,6 +5747,51 @@ class CloseDisciplineTest(unittest.TestCase):
                 self.assertIn(
                     "profitability:acceptance",
                     payload["input_packet"]["allowed_evidence_refs"],
+                )
+        finally:
+            if prior is None:
+                _os.environ.pop("QR_OPERATOR_CLOSE_OVERRIDE", None)
+            else:
+                _os.environ["QR_OPERATOR_CLOSE_OVERRIDE"] = prior
+
+    def test_loss_close_gate_evidence_missing_p0_must_cite_acceptance_context(self) -> None:
+        # A missing durable close_gate_evidence P0 is itself a loss-close leak:
+        # without citing it, another underwater CLOSE can keep producing
+        # unverifiable market-close losses that the acceptance audit cannot clear.
+        prior = _os.environ.get("QR_OPERATOR_CLOSE_OVERRIDE")
+        _os.environ["QR_OPERATOR_CLOSE_OVERRIDE"] = "1"
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                files = _close_fixtures(root, position_side="LONG", m15_dir="DOWN", h4_dir="DOWN")
+                files["self_improvement_audit"].write_text(json.dumps(_self_improvement_profitability_p0()))
+                files["profitability_acceptance"].write_text(
+                    json.dumps(_profitability_acceptance_close_gate_evidence_missing_p0())
+                )
+                _write_fresh_position_thesis_close_recommendation(root, files, side="LONG")
+                decision = _close_decision(trade_ids=["555"])
+                decision["evidence_refs"].extend(
+                    [
+                        "position:thesis:555",
+                        "self_improvement:finding:PERSISTENT_PROFITABILITY_DISCIPLINE_BLOCKED",
+                        "timing:audit",
+                    ]
+                )
+                brain = _brain(root, files, decision)
+
+                summary = brain.run(snapshot_path=files["snapshot"])
+
+                self.assertEqual(summary.status, "REJECTED")
+                payload = json.loads((root / "gpt_decision.json").read_text())
+                codes = {issue["code"] for issue in payload["verification_issues"]}
+                self.assertIn("CLOSE_PROFITABILITY_ACCEPTANCE_P0_REQUIRED", codes)
+                self.assertIn(
+                    "LOSS_CLOSE_GATE_EVIDENCE_MISSING",
+                    next(
+                        issue["message"]
+                        for issue in payload["verification_issues"]
+                        if issue["code"] == "CLOSE_PROFITABILITY_ACCEPTANCE_P0_REQUIRED"
+                    ),
                 )
         finally:
             if prior is None:

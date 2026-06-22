@@ -296,6 +296,7 @@ def _profitability_acceptance_loss_close_blockers(packet: dict[str, Any]) -> tup
         "RECENT_GATEWAY_LOSS_MARKET_CLOSE_LEAK",
         "MARKET_CLOSE_LEAK_DOMINATES_TP_EDGE",
         "UNVERIFIED_LOSS_SIDE_MARKET_CLOSE_RECONCILED",
+        "LOSS_CLOSE_GATE_EVIDENCE_MISSING",
     }
     blockers: list[dict[str, Any]] = []
     for finding in findings:
