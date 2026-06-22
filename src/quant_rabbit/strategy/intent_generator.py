@@ -5271,6 +5271,45 @@ class IntentGenerator:
                 live_blockers = (*live_blockers, positive_rotation_firepower_issue["message"])
                 risk_allowed = False
         if (
+            self_improvement_profitability_issue is None
+            and str(intent.metadata.get("position_intent") or "").upper() != "HEDGE"
+            and _self_improvement_profitability_p0_repair_allowed(intent)
+        ):
+            repair_recent_loss_issue = _self_improvement_p0_repair_recent_lane_loss_issue(
+                intent,
+                repair_loss_streaks,
+            )
+            if repair_recent_loss_issue is not None:
+                risk_issues.append(repair_recent_loss_issue)
+                live_blockers = (*live_blockers, repair_recent_loss_issue["message"])
+                risk_allowed = False
+            else:
+                intent.metadata["self_improvement_p0_repair_live_ready"] = True
+                intent.metadata["self_improvement_p0_repair_mode"] = (
+                    SELF_IMPROVEMENT_PROFITABILITY_P0_REPAIR_MODE
+                )
+                intent.metadata["self_improvement_p0_repair_blocker_code"] = (
+                    POSITIVE_ROTATION_LIVE_BLOCK_CODE
+                )
+                intent.metadata["self_improvement_p0_repair_reason"] = (
+                    "profitability acceptance is still red, but this non-market "
+                    "attached-TP HARVEST receipt has positive-rotation firepower "
+                    "that reaches the current 5% floor; expose it as the narrow "
+                    "TP_HARVEST_REPAIR basket while preserving all other live gates"
+                )
+                risk_issues.append(
+                    {
+                        "code": SELF_IMPROVEMENT_PROFITABILITY_P0_REPAIR_CODE,
+                        "message": (
+                            "positive-rotation HARVEST lane exposed as the narrow "
+                            "TP_HARVEST_REPAIR exception for acceptance repair; all "
+                            "forecast, strategy, spread, risk, broker-truth, guardian, "
+                            "and gateway gates still apply"
+                        ),
+                        "severity": "WARN",
+                    }
+                )
+        if (
             self_improvement_profitability_issue is not None
             and str(intent.metadata.get("position_intent") or "").upper() != "HEDGE"
         ):

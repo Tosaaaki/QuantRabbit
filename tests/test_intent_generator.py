@@ -231,6 +231,80 @@ def _write_profitability_p0_and_negative_capture(root: Path) -> None:
     )
 
 
+def _write_acceptance_style_p0_and_negative_capture(root: Path) -> None:
+    """Mirror current live P0 shape: acceptance red, no legacy profitability P0."""
+
+    (root / "self_improvement_audit.json").write_text(
+        json.dumps(
+            {
+                "generated_at_utc": datetime.now(timezone.utc).isoformat(),
+                "findings": [
+                    {
+                        "priority": "P0",
+                        "layer": "execution_quality",
+                        "code": "LOSS_CLOSE_PROFIT_CAPTURE_MISSED",
+                        "message": "loss closes missed available TP-progress profit capture",
+                        "evidence": {"estimated_gap_jpy": 646.508},
+                    },
+                    {
+                        "priority": "P0",
+                        "layer": "execution_quality",
+                        "code": "POSITION_GUARDIAN_INACTIVE_FOR_PROFIT_CAPTURE",
+                        "message": "position guardian is inactive",
+                        "evidence": {
+                            "live_ready_lanes": 1,
+                            "guardian": {
+                                "active": False,
+                                "active_source": "plist_missing",
+                                "launchd_loaded": False,
+                            },
+                        },
+                    },
+                    {
+                        "priority": "P0",
+                        "layer": "target",
+                        "code": "TARGET_OPEN_NO_LIVE_READY_LANES",
+                        "message": "target is open but no executable lanes were visible",
+                        "evidence": {"live_ready_lanes": 0},
+                    },
+                ],
+            }
+        )
+    )
+    (root / "capture_economics.json").write_text(
+        json.dumps(
+            {
+                "status": "NEGATIVE_EXPECTANCY",
+                "overall": {
+                    "trades": 210,
+                    "avg_win_jpy": 600.0,
+                    "avg_loss_jpy": 1100.0,
+                    "payoff_ratio": 0.545,
+                    "breakeven_payoff_at_win_rate": 0.7,
+                },
+                "by_exit_reason": {
+                    "TAKE_PROFIT_ORDER": {
+                        "trades": 93,
+                        "wins": 93,
+                        "losses": 0,
+                        "avg_win_jpy": 504.0,
+                        "avg_loss_jpy": 0.0,
+                        "expectancy_jpy_per_trade": 504.0,
+                    },
+                    "MARKET_ORDER_TRADE_CLOSE": {
+                        "trades": 84,
+                        "wins": 13,
+                        "losses": 71,
+                        "avg_win_jpy": 218.4,
+                        "avg_loss_jpy": 1095.5,
+                        "expectancy_jpy_per_trade": -892.1,
+                    },
+                },
+            }
+        )
+    )
+
+
 def _write_profitability_p0_with_matching_worst_segment(
     root: Path,
     *,
@@ -9037,6 +9111,77 @@ class IntentGeneratorTest(unittest.TestCase):
             self.assertEqual(market_result["status"], "DRY_RUN_BLOCKED")
             self.assertIn(POSITIVE_ROTATION_LIVE_BLOCK_CODE, market_issue_codes)
             self.assertIn("SELF_IMPROVEMENT_P0_PROFITABILITY_DISCIPLINE", market_issue_codes)
+
+    def test_oanda_firepower_seed_exposes_acceptance_repair_under_guardian_p0(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_acceptance_style_p0_and_negative_capture(root)
+            _write_oanda_campaign_firepower_report(
+                root,
+                pair="EUR_USD",
+                side="LONG",
+                exit_shape="tp2_sl1",
+                weighted_return_pct=0.64,
+                observed_attempts_per_active_day=22.0,
+            )
+            (root / "daily_target_state.json").write_text(
+                json.dumps(
+                    {
+                        "status": "PURSUE_TARGET",
+                        "start_balance_jpy": 100000.0,
+                        "remaining_minimum_jpy": 4000.0,
+                        "remaining_target_jpy": 9000.0,
+                        "target_trades_per_day": 10,
+                    }
+                )
+            )
+            output = root / "intents.json"
+
+            summary = IntentGenerator(
+                campaign_plan=_stamp_campaign_generated_at(
+                    _oanda_seed_range_campaign(root, side="LONG")
+                ),
+                strategy_profile=_strategy(root, status="CANDIDATE"),
+                output_path=output,
+                report_path=root / "intents.md",
+                pair_charts_path=_pair_charts(root),
+                data_root=root,
+                max_loss_jpy=1000.0,
+            ).run(snapshot_path=_snapshot(root))
+
+            payload = json.loads(output.read_text())
+            result = next(
+                item for item in payload["results"]
+                if item["lane_id"] == "range_trader:EUR_USD:LONG:RANGE_ROTATION"
+            )
+            metadata = result["intent"]["metadata"]
+            issue_codes = {issue["code"] for issue in result["risk_issues"]}
+
+            self.assertEqual(summary.live_ready, 0)
+            self.assertEqual(result["status"], "DRY_RUN_BLOCKED")
+            self.assertTrue(metadata["positive_rotation_live_ready"])
+            self.assertEqual(
+                metadata["positive_rotation_mode"],
+                POSITIVE_ROTATION_OANDA_CAMPAIGN_FIREPOWER_MODE,
+            )
+            self.assertEqual(
+                metadata["positive_rotation_minimum_floor_reach_basis"],
+                "OANDA_CAMPAIGN_FIREPOWER_NORMAL_CAP_WEIGHTED_PACE",
+            )
+            self.assertTrue(metadata["self_improvement_p0_repair_live_ready"])
+            self.assertEqual(metadata["self_improvement_p0_repair_mode"], "TP_HARVEST_REPAIR")
+            self.assertEqual(
+                metadata["self_improvement_p0_repair_blocker_code"],
+                POSITIVE_ROTATION_LIVE_BLOCK_CODE,
+            )
+            self.assertIn("SELF_IMPROVEMENT_P0_PROFITABILITY_REPAIR_MODE", issue_codes)
+            self.assertIn("POSITION_GUARDIAN_INACTIVE_FOR_PROFIT_CAPTURE", issue_codes)
+            self.assertNotIn(POSITIVE_ROTATION_LIVE_BLOCK_CODE, issue_codes)
+            self.assertNotIn("SELF_IMPROVEMENT_P0_PROFITABILITY_DISCIPLINE", issue_codes)
+            self.assertIn(
+                "POSITION_GUARDIAN_INACTIVE_FOR_PROFIT_CAPTURE",
+                result["live_blocker_codes"],
+            )
 
     def test_oanda_firepower_seed_can_use_normal_cap_when_scaled_pace_reaches_floor(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
