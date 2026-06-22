@@ -2062,16 +2062,11 @@ def _cycle_refresh_steps(daily_risk_pct: str) -> list[dict[str, Any]]:
         {"argv": snapshot_args, "required": True},
         {"argv": target_args, "required": True},
         {"argv": ["capture-economics"], "required": False},
-        {
-            "argv": ["generate-intents", "--snapshot", "data/broker_snapshot.json", "--reuse-market-artifacts"],
-            "required": True,
-        },
-        {"argv": ["optimize-coverage"], "required": False},
-        {"argv": ["ai-attack-advice"], "required": False},
-        {"argv": ["learning-audit"], "required": False},
         # Keep this month-scale so the scheduled refresh does not overwrite a
-        # 744h TP-progress replay with a shorter 168h artifact before
-        # profitability-acceptance consumes it.
+        # 744h TP-progress replay with a shorter 168h artifact. It must run
+        # before generate-intents because P0 TP_HARVEST_REPAIR exceptions read
+        # the residual groups and must not expose a lane the month-scale replay
+        # still says is net negative.
         {
             "argv": [
                 "execution-timing-audit",
@@ -2085,6 +2080,13 @@ def _cycle_refresh_steps(daily_risk_pct: str) -> list[dict[str, Any]]:
             "required": False,
             "timeout_seconds": DEFAULT_EXECUTION_TIMING_AUDIT_CYCLE_TIMEOUT_SECONDS,
         },
+        {
+            "argv": ["generate-intents", "--snapshot", "data/broker_snapshot.json", "--reuse-market-artifacts"],
+            "required": True,
+        },
+        {"argv": ["optimize-coverage"], "required": False},
+        {"argv": ["ai-attack-advice"], "required": False},
+        {"argv": ["learning-audit"], "required": False},
         {"argv": ["manual-market-context-audit"], "required": False},
         {"argv": ["operator-precedent-audit"], "required": False},
         {"argv": ["verification-ledger-audit"], "required": False},

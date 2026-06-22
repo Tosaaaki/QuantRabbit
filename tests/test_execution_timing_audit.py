@@ -649,6 +649,33 @@ class ExecutionTimingAuditTest(unittest.TestCase):
                 summary["loss_close_repair_replay_block_reasons"],
                 {"BELOW_NOISE_FLOOR": 1},
             )
+            self.assertEqual(
+                summary["top_repair_replay_residual_groups"],
+                [
+                    {
+                        "pair": "USD_JPY",
+                        "side": "SHORT",
+                        "method": "RANGE_ROTATION",
+                        "exit_reason": "STOP_LOSS_ORDER",
+                        "loss_closes": 1,
+                        "actual_pl_jpy": -50.0,
+                        "repair_replay_pl_jpy": -50.0,
+                        "repair_replay_delta_jpy": 0.0,
+                        "repair_replay_triggered": 0,
+                        "block_reasons": {"BELOW_NOISE_FLOOR": 1},
+                        "examples": [
+                            {
+                                "trade_id": "t-noisy",
+                                "lane_id": "range_trader:USD_JPY:SHORT:RANGE_ROTATION",
+                                "actual_pl_jpy": -50.0,
+                                "repair_replay_pl_jpy": -50.0,
+                                "repair_replay_triggered": False,
+                                "repair_replay_block_reason": "BELOW_NOISE_FLOOR",
+                            }
+                        ],
+                    }
+                ],
+            )
             row = payload["loss_close_regrets"][0]
             self.assertTrue(row["profit_capture_missed_before_loss_close"])
             self.assertFalse(row["repair_replay_triggered_before_loss_close"])

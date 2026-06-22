@@ -959,6 +959,7 @@ def _summary(
         if not row.get("repair_replay_triggered_before_loss_close")
     )
     repair_replay_pl = _repair_replay_loss_close_pl(loss_rows)
+    repair_replay_residual_groups = _repair_replay_residual_groups(loss_rows)
     return {
         "canceled_orders_audited": len(canceled_rows),
         "canceled_entry_touched_after_cancel": len(canceled_entry),
@@ -1008,6 +1009,7 @@ def _summary(
         "loss_close_repair_replay_block_reasons": dict(
             sorted(repair_replay_block_reasons.items())
         ),
+        "top_repair_replay_residual_groups": repair_replay_residual_groups,
         "avg_decision_lag_minutes_after_first_positive": round(sum(lag_values) / len(lag_values), 2) if lag_values else None,
         "max_decision_lag_minutes_after_first_positive": round(max(lag_values), 2) if lag_values else None,
         "market_closes_audited": len(market_close_rows),
@@ -1066,6 +1068,110 @@ def _repair_replay_loss_close_pl(loss_rows: list[dict[str, Any]]) -> float | Non
         total += float(value)
         seen = True
     return round(total, 4) if seen else None
+
+
+def _repair_replay_residual_groups(loss_rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    groups: dict[tuple[str, str, str, str], dict[str, Any]] = {}
+    for row in loss_rows:
+        actual = row.get("realized_pl_jpy")
+        if actual is None:
+            continue
+        actual_value = float(actual)
+        if actual_value >= 0.0:
+            continue
+        replay_value = row.get("repair_replay_counterfactual_pl_jpy")
+        if replay_value is None:
+            replay_value = actual_value
+        replay_pl = float(replay_value)
+        if replay_pl >= 0.0:
+            continue
+        pair = str(row.get("pair") or "UNKNOWN")
+        side = str(row.get("side") or "UNKNOWN")
+        method = _lane_method(str(row.get("lane_id") or ""))
+        exit_reason = str(row.get("exit_reason") or "UNKNOWN")
+        key = (pair, side, method, exit_reason)
+        group = groups.setdefault(
+            key,
+            {
+                "pair": pair,
+                "side": side,
+                "method": method,
+                "exit_reason": exit_reason,
+                "loss_closes": 0,
+                "actual_pl_jpy": 0.0,
+                "repair_replay_pl_jpy": 0.0,
+                "repair_replay_delta_jpy": 0.0,
+                "repair_replay_triggered": 0,
+                "block_reasons": {},
+                "examples": [],
+            },
+        )
+        group["loss_closes"] = int(group["loss_closes"]) + 1
+        group["actual_pl_jpy"] = float(group["actual_pl_jpy"]) + actual_value
+        group["repair_replay_pl_jpy"] = float(group["repair_replay_pl_jpy"]) + replay_pl
+        group["repair_replay_delta_jpy"] = float(group["repair_replay_delta_jpy"]) + (
+            replay_pl - actual_value
+        )
+        if row.get("repair_replay_triggered_before_loss_close"):
+            group["repair_replay_triggered"] = int(group["repair_replay_triggered"]) + 1
+        reasons = group["block_reasons"]
+        if isinstance(reasons, dict):
+            reason = str(row.get("repair_replay_block_reason") or "NO_REPAIR_REPLAY_TRIGGER")
+            reasons[reason] = int(reasons.get(reason) or 0) + 1
+        examples = group["examples"]
+        if isinstance(examples, list) and len(examples) < 3:
+            examples.append(
+                {
+                    "trade_id": row.get("trade_id"),
+                    "lane_id": row.get("lane_id"),
+                    "actual_pl_jpy": round(actual_value, 4),
+                    "repair_replay_pl_jpy": round(replay_pl, 4),
+                    "repair_replay_triggered": bool(
+                        row.get("repair_replay_triggered_before_loss_close")
+                    ),
+                    "repair_replay_block_reason": row.get("repair_replay_block_reason"),
+                }
+            )
+
+    rows: list[dict[str, Any]] = []
+    for group in groups.values():
+        rows.append(
+            {
+                **group,
+                "actual_pl_jpy": round(float(group.get("actual_pl_jpy") or 0.0), 4),
+                "repair_replay_pl_jpy": round(
+                    float(group.get("repair_replay_pl_jpy") or 0.0),
+                    4,
+                ),
+                "repair_replay_delta_jpy": round(
+                    float(group.get("repair_replay_delta_jpy") or 0.0),
+                    4,
+                ),
+                "block_reasons": dict(
+                    sorted(
+                        (
+                            (str(reason), int(count))
+                            for reason, count in (
+                                group.get("block_reasons")
+                                if isinstance(group.get("block_reasons"), dict)
+                                else {}
+                            ).items()
+                        ),
+                        key=lambda item: (-item[1], item[0]),
+                    )
+                ),
+            }
+        )
+    rows.sort(
+        key=lambda item: (
+            float(item.get("repair_replay_pl_jpy") or 0.0),
+            float(item.get("actual_pl_jpy") or 0.0),
+            str(item.get("pair") or ""),
+            str(item.get("side") or ""),
+            str(item.get("method") or ""),
+        )
+    )
+    return rows[:10]
 
 
 def _canceled_order_regret_by_shape(rows: list[dict[str, Any]]) -> dict[str, Any]:
@@ -1210,6 +1316,7 @@ def _write_report(payload: dict[str, Any], report_path: Path) -> None:
         "loss_close_repair_replay_counterfactual_pl_jpy",
         "loss_close_repair_replay_delta_jpy",
         "loss_close_repair_replay_block_reasons",
+        "top_repair_replay_residual_groups",
         "avg_decision_lag_minutes_after_first_positive",
         "max_decision_lag_minutes_after_first_positive",
         "market_closes_audited",

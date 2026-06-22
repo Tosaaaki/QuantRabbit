@@ -328,6 +328,66 @@ def _write_month_scale_residual_metrics_only(
     )
 
 
+def _write_month_scale_residual_timing_audit(
+    root: Path,
+    *,
+    pair: str = "EUR_USD",
+    side: str = "LONG",
+    method: str = "RANGE_ROTATION",
+    repair_replay_pl_jpy: float = -2333.8215,
+    lookback_hours: float = 744.0,
+) -> None:
+    lane_id = f"range_trader:{pair}:{side}:{method}"
+    (root / "execution_timing_audit.json").write_text(
+        json.dumps(
+            {
+                "generated_at_utc": datetime.now(timezone.utc).isoformat(),
+                "status": "OK",
+                "window": {"lookback_hours": lookback_hours},
+                "precision": {
+                    "profit_capture_repair_replay_contract": {
+                        "name": "TP_PROGRESS_PRODUCTION_GATE_REPLAY"
+                    }
+                },
+                "summary": {
+                    "loss_close_repair_replay_counterfactual_pl_jpy": -13824.5957,
+                    "top_repair_replay_residual_groups": [
+                        {
+                            "pair": pair,
+                            "side": side,
+                            "method": method,
+                            "exit_reason": "MARKET_ORDER_TRADE_CLOSE",
+                            "loss_closes": 1,
+                            "repair_replay_pl_jpy": repair_replay_pl_jpy,
+                            "block_reasons": {"BELOW_TP_PROGRESS_GATE": 1},
+                            "examples": [
+                                {
+                                    "trade_id": "472071",
+                                    "lane_id": lane_id,
+                                    "repair_replay_pl_jpy": repair_replay_pl_jpy,
+                                }
+                            ],
+                        }
+                    ],
+                },
+                "loss_close_regrets": [
+                    {
+                        "trade_id": "472071",
+                        "lane_id": lane_id,
+                        "pair": pair,
+                        "side": side,
+                        "exit_reason": "MARKET_ORDER_TRADE_CLOSE",
+                        "realized_pl_jpy": -2981.8961,
+                        "repair_replay_counterfactual_pl_jpy": repair_replay_pl_jpy,
+                        "repair_replay_triggered_before_loss_close": False,
+                        "repair_replay_block_reason": "BELOW_TP_PROGRESS_GATE",
+                    }
+                ],
+            }
+        )
+    )
+
+
 def _write_acceptance_style_p0_and_negative_capture(root: Path) -> None:
     """Mirror current live P0 shape: acceptance red, no legacy profitability P0."""
 
@@ -9375,6 +9435,83 @@ class IntentGeneratorTest(unittest.TestCase):
             self.assertNotIn("self_improvement_p0_repair_live_ready", metadata)
             self.assertIn(MONTH_SCALE_RESIDUAL_LOSS_REPAIR_BLOCK_CODE, issue_codes)
             self.assertIn("SELF_IMPROVEMENT_P0_PROFITABILITY_DISCIPLINE", issue_codes)
+            self.assertIn(
+                MONTH_SCALE_RESIDUAL_LOSS_REPAIR_BLOCK_CODE,
+                result["live_blocker_codes"],
+            )
+
+    def test_month_scale_timing_artifact_blocks_matching_harvest_repair_before_acceptance_refresh(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_profitability_p0_and_negative_capture(root)
+            (root / "capture_economics.json").write_text(
+                json.dumps(
+                    {
+                        "status": "NEGATIVE_EXPECTANCY",
+                        "overall": {
+                            "trades": 210,
+                            "avg_win_jpy": 600.0,
+                            "avg_loss_jpy": 1100.0,
+                            "payoff_ratio": 0.545,
+                            "breakeven_payoff_at_win_rate": 0.7,
+                        },
+                        "by_exit_reason": {
+                            "TAKE_PROFIT_ORDER": {
+                                "trades": 93,
+                                "wins": 93,
+                                "losses": 0,
+                                "avg_win_jpy": 504.0,
+                                "avg_loss_jpy": 0.0,
+                                "expectancy_jpy_per_trade": 504.0,
+                            },
+                            "MARKET_ORDER_TRADE_CLOSE": {
+                                "trades": 84,
+                                "wins": 13,
+                                "losses": 71,
+                                "avg_win_jpy": 218.4,
+                                "avg_loss_jpy": 1095.5,
+                                "expectancy_jpy_per_trade": -892.1,
+                            },
+                        },
+                        **_capture_scoped_tp_payload(),
+                    }
+                )
+            )
+            _write_month_scale_residual_timing_audit(
+                root,
+                pair="EUR_USD",
+                side="LONG",
+                method="RANGE_ROTATION",
+            )
+            output = root / "intents.json"
+
+            summary = IntentGenerator(
+                campaign_plan=_range_campaign(root),
+                strategy_profile=_strategy(root, status="CANDIDATE"),
+                output_path=output,
+                report_path=root / "intents.md",
+                pair_charts_path=_pair_charts(root),
+                data_root=root,
+                max_loss_jpy=1000.0,
+            ).run(snapshot_path=_snapshot(root))
+
+            payload = json.loads(output.read_text())
+            result = next(
+                item for item in payload["results"]
+                if item["lane_id"] == "range_trader:EUR_USD:LONG:RANGE_ROTATION"
+            )
+            metadata = result["intent"]["metadata"]
+            issue_codes = {issue["code"] for issue in result["risk_issues"]}
+
+            self.assertEqual(summary.live_ready, 0)
+            self.assertEqual(result["status"], "DRY_RUN_BLOCKED")
+            self.assertTrue(metadata["month_scale_residual_loss_repair_blocked"])
+            self.assertEqual(
+                metadata["month_scale_residual_loss_group"]["repair_replay_pl_jpy"],
+                -2333.8215,
+            )
+            self.assertNotIn("self_improvement_p0_repair_live_ready", metadata)
+            self.assertIn(MONTH_SCALE_RESIDUAL_LOSS_REPAIR_BLOCK_CODE, issue_codes)
             self.assertIn(
                 MONTH_SCALE_RESIDUAL_LOSS_REPAIR_BLOCK_CODE,
                 result["live_blocker_codes"],

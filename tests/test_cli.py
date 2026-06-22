@@ -5334,6 +5334,11 @@ class ConsolidatedCycleCommandTest(unittest.TestCase):
                 for step in refresh
             )
         )
+        self.assertLess(refresh.index("capture-economics"), refresh.index(month_scale_timing_step))
+        self.assertLess(
+            refresh.index(month_scale_timing_step),
+            refresh.index("generate-intents --snapshot data/broker_snapshot.json --reuse-market-artifacts"),
+        )
         self.assertLess(refresh.index(month_scale_timing_step), refresh.index("self-improvement-audit"))
         self.assertLess(refresh.index("manual-market-context-audit"), refresh.index("operator-precedent-audit"))
         self.assertLess(refresh.index("operator-precedent-audit"), refresh.index("verification-ledger-audit"))

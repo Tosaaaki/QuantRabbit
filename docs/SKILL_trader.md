@@ -144,9 +144,10 @@ PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli trader-prompt-route
 # decision receipt exactly as before.
 # `execution-timing-audit` is optional and runs the month-scale TP-progress
 # replay (`--lookback-hours 744 --post-close-hours 6 --max-events 80`) before
-# self-improvement / profitability-acceptance. It must not be shortened back to
-# the module-default 168h window, because that overwrites the proof artifact and
-# makes acceptance raise MONTH_SCALE_LOSS_CLOSE_REPLAY_REQUIRED again.
+# generate-intents, self-improvement, and profitability-acceptance. It must not
+# be shortened back to the module-default 168h window, and it must stay before
+# intent generation because TP_HARVEST_REPAIR exceptions read residual replay
+# groups before exposing a repair lane.
 PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli cycle-refresh --daily-risk-pct 10
 
 # The refresh branch is not an end state: it must produce one current receipt
