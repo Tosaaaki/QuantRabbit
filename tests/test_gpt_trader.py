@@ -5674,6 +5674,84 @@ class CloseDisciplineTest(unittest.TestCase):
             else:
                 _os.environ["QR_OPERATOR_CLOSE_OVERRIDE"] = prior
 
+    def test_soft_loss_close_under_profitability_acceptance_p0_requires_hard_gate(self) -> None:
+        # The acceptance P0 is stronger than an acknowledgement requirement:
+        # while recent gateway loss closes are still inside the red window, a
+        # soft REVIEW_CLOSE plus operator token can keep repeating the leak.
+        prior = _os.environ.get("QR_OPERATOR_CLOSE_OVERRIDE")
+        _os.environ["QR_OPERATOR_CLOSE_OVERRIDE"] = "1"
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                files = _close_fixtures(root, position_side="LONG", m15_dir="UP", h4_dir="UP")
+                files["self_improvement_audit"].write_text(json.dumps(_self_improvement_profitability_p0()))
+                files["profitability_acceptance"].write_text(json.dumps(_profitability_acceptance_close_leak_p0()))
+                _write_fresh_position_thesis_close_recommendation(root, files, side="LONG")
+                decision = _close_decision(trade_ids=["555"])
+                decision["evidence_refs"].extend(
+                    [
+                        "position:thesis:555",
+                        "self_improvement:finding:PERSISTENT_PROFITABILITY_DISCIPLINE_BLOCKED",
+                        "profitability:acceptance",
+                    ]
+                )
+                brain = _brain(root, files, decision)
+
+                summary = brain.run(snapshot_path=files["snapshot"])
+
+                self.assertEqual(summary.status, "REJECTED")
+                payload = json.loads((root / "gpt_decision.json").read_text())
+                codes = {issue["code"] for issue in payload["verification_issues"]}
+                self.assertIn("CLOSE_PROFITABILITY_ACCEPTANCE_HARD_GATE_REQUIRED", codes)
+                self.assertNotIn("CLOSE_PROFITABILITY_ACCEPTANCE_P0_REQUIRED", codes)
+                self.assertNotIn("CLOSE_OPERATOR_AUTH_REQUIRED", codes)
+        finally:
+            if prior is None:
+                _os.environ.pop("QR_OPERATOR_CLOSE_OVERRIDE", None)
+            else:
+                _os.environ["QR_OPERATOR_CLOSE_OVERRIDE"] = prior
+
+    def test_hard_loss_close_under_profitability_acceptance_p0_accepts_cited_repair_context(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _close_fixtures(
+                root,
+                position_side="LONG",
+                m15_dir="DOWN",
+                h4_dir="DOWN",
+                quote_bid=1.1747,
+                quote_ask=1.1748,
+            )
+            matrix = json.loads(files["market_context_matrix"].read_text())
+            matrix["pairs"]["EUR_USD"]["LONG"]["support_count"] = 0
+            matrix["pairs"]["EUR_USD"]["LONG"]["supports"] = []
+            matrix["pairs"]["EUR_USD"]["LONG"]["strongest_support"] = ""
+            files["market_context_matrix"].write_text(json.dumps(matrix))
+            files["self_improvement_audit"].write_text(json.dumps(_self_improvement_profitability_p0()))
+            files["profitability_acceptance"].write_text(json.dumps(_profitability_acceptance_close_leak_p0()))
+            decision = _close_decision(
+                trade_ids=["555"],
+                invalidation_price=1.1750,
+                invalidation_tf="H1",
+            )
+            decision["evidence_refs"].extend(
+                [
+                    "chart:EUR_USD:M15",
+                    "self_improvement:finding:PERSISTENT_PROFITABILITY_DISCIPLINE_BLOCKED",
+                    "profitability:acceptance",
+                ]
+            )
+            brain = _brain(root, files, decision)
+
+            summary = brain.run(snapshot_path=files["snapshot"])
+
+            self.assertEqual(summary.status, "ACCEPTED", msg=summary)
+            payload = json.loads((root / "gpt_decision.json").read_text())
+            codes = {issue["code"] for issue in payload["verification_issues"]}
+            self.assertNotIn("CLOSE_PROFITABILITY_ACCEPTANCE_HARD_GATE_REQUIRED", codes)
+            self.assertNotIn("CLOSE_PROFITABILITY_ACCEPTANCE_P0_REQUIRED", codes)
+            self.assertNotIn("CLOSE_OPERATOR_AUTH_REQUIRED", codes)
+
     def test_hard_loss_close_under_profitability_p0_must_cite_self_improvement_context(self) -> None:
         # Hard Gate A can still close a broken thesis, but while the live
         # account has an active profitability P0, another underwater market

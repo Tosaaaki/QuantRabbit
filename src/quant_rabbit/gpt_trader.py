@@ -2578,6 +2578,7 @@ class DecisionVerifier:
         needs_explicit_gate_b: list[str] = []
         needs_profitability_p0_context: list[str] = []
         needs_profitability_acceptance_context: list[str] = []
+        needs_profitability_acceptance_hard_gate: list[str] = []
         needs_hard_timing_gate: list[str] = []
         profitability_p0_blocker = _profitability_p0_soft_close_blocker(self.packet)
         acceptance_loss_close_blockers = _profitability_acceptance_loss_close_blockers(self.packet)
@@ -2643,6 +2644,12 @@ class DecisionVerifier:
                 and not cites_profitability_acceptance
             ):
                 needs_profitability_acceptance_context.append(f"{tid} ({pair} {side})")
+            if (
+                acceptance_loss_close_blockers
+                and loss_side_close
+                and not standing_authorized
+            ):
+                needs_profitability_acceptance_hard_gate.append(f"{tid} ({pair} {side})")
 
             if not standing_authorized:
                 sidecar_conflict = _same_direction_hold_support_conflict(
@@ -2749,6 +2756,30 @@ class DecisionVerifier:
                     "the close repairs the recent MARKET_ORDER_TRADE_CLOSE leak instead of adding "
                     "another red gateway close. Missing profitability acceptance context for: "
                     + ", ".join(needs_profitability_acceptance_context),
+                )
+            )
+
+        if needs_profitability_acceptance_hard_gate:
+            codes = sorted(
+                {
+                    str(item.get("code") or "")
+                    for item in acceptance_loss_close_blockers
+                    if str(item.get("code") or "")
+                }
+            )
+            issues.append(
+                VerificationIssue(
+                    "CLOSE_PROFITABILITY_ACCEPTANCE_HARD_GATE_REQUIRED",
+                    "CLOSE rejected: profitability_acceptance has active P0 loss-side "
+                    "market-close leakage"
+                    + (f" ({', '.join(codes)})" if codes else "")
+                    + ". While this red acceptance gate is active, an underwater market CLOSE "
+                    "requires standing hard Gate A evidence; soft sidecar evidence plus an operator "
+                    "token/citation is not enough because it can repeat the recent gateway "
+                    "MARKET_ORDER_TRADE_CLOSE leak. Use HOLD/reprice/TP rebalance, or provide "
+                    "H4 structure, recorded invalidation, thesis_evolution BROKEN, structural "
+                    "position-management REVIEW_EXIT, or equivalent hard sidecar evidence for: "
+                    + ", ".join(needs_profitability_acceptance_hard_gate),
                 )
             )
 
