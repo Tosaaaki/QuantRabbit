@@ -275,6 +275,22 @@ verify_automation() {
     echo "[sync-live-runtime] QR vNext Trader automation does not point at $LIVE_ROOT." >&2
     exit 6
   fi
+  if grep -Fq 'After the receipt is ACCEPTED by `gpt-trader-decision`' "$AUTOMATION_FILE"; then
+    echo "[sync-live-runtime] QR vNext Trader automation has stale ACCEPTED-only gateway handoff text." >&2
+    exit 6
+  fi
+  if grep -Fq '`data/codex_trader_decision_response.json` was written very recently by another cycle' "$AUTOMATION_FILE"; then
+    echo "[sync-live-runtime] QR vNext Trader automation has stale recent-receipt STOP text." >&2
+    exit 6
+  fi
+  if ! grep -Fq 'Run exactly one gateway cycle after every completed `gpt-trader-decision` verification result, including REJECTED' "$AUTOMATION_FILE"; then
+    echo "[sync-live-runtime] QR vNext Trader automation is missing verifier-result gateway handoff text." >&2
+    exit 6
+  fi
+  if ! grep -Fq 'Do **not** stop solely because `data/codex_trader_decision_response.json` was written recently' "$AUTOMATION_FILE"; then
+    echo "[sync-live-runtime] QR vNext Trader automation is missing recent-receipt router handoff text." >&2
+    exit 6
+  fi
   if grep -Fq 'status = "ACTIVE"' "$AUTOMATION_FILE"; then
     return 0
   fi

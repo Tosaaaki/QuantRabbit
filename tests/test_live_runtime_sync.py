@@ -209,6 +209,60 @@ class LiveRuntimeSyncTest(unittest.TestCase):
             self.assertEqual(result.returncode, 6)
             self.assertIn("QR vNext Trader automation is not ACTIVE", result.stderr)
 
+    def test_live_only_blocks_stale_accepted_only_automation_prompt(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp) / "repo"
+            live = Path(tmp) / "live"
+            _init_repo(repo)
+            _commit_file(repo, "src/app.py", "print('v1')\n", "initial")
+            _run(["git", "branch", "-m", "main"], cwd=repo)
+            _run(["git", "worktree", "add", "-b", "runtime", str(live), "main"], cwd=repo)
+            automation_file = Path(tmp) / "automation.toml"
+            _write_automation(
+                automation_file,
+                live,
+                status="ACTIVE",
+                prompt="After the receipt is ACCEPTED by `gpt-trader-decision`, stop here.",
+            )
+
+            result = _sync(
+                repo,
+                live,
+                live_only=True,
+                skip_automation_check=False,
+                automation_file=automation_file,
+            )
+
+            self.assertEqual(result.returncode, 6)
+            self.assertIn("stale ACCEPTED-only gateway handoff text", result.stderr)
+
+    def test_live_only_blocks_stale_recent_receipt_stop_prompt(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp) / "repo"
+            live = Path(tmp) / "live"
+            _init_repo(repo)
+            _commit_file(repo, "src/app.py", "print('v1')\n", "initial")
+            _run(["git", "branch", "-m", "main"], cwd=repo)
+            _run(["git", "worktree", "add", "-b", "runtime", str(live), "main"], cwd=repo)
+            automation_file = Path(tmp) / "automation.toml"
+            _write_automation(
+                automation_file,
+                live,
+                status="ACTIVE",
+                prompt="STOP if `data/codex_trader_decision_response.json` was written very recently by another cycle.",
+            )
+
+            result = _sync(
+                repo,
+                live,
+                live_only=True,
+                skip_automation_check=False,
+                automation_file=automation_file,
+            )
+
+            self.assertEqual(result.returncode, 6)
+            self.assertIn("stale recent-receipt STOP text", result.stderr)
+
 
 def _sync(
     repo: Path,
@@ -266,7 +320,8 @@ def _run(args: list[str], *, cwd: Path) -> subprocess.CompletedProcess[str]:
     return subprocess.run(args, cwd=cwd, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
 
 
-def _write_automation(path: Path, live: Path, *, status: str) -> None:
+def _write_automation(path: Path, live: Path, *, status: str, prompt: str | None = None) -> None:
+    prompt_text = prompt if prompt is not None else _current_trader_prompt_sentinel()
     path.write_text(
         "\n".join(
             [
@@ -274,7 +329,7 @@ def _write_automation(path: Path, live: Path, *, status: str) -> None:
                 'id = "qr-trader"',
                 'kind = "cron"',
                 'name = "QR vNext Trader"',
-                'prompt = "test"',
+                "prompt = '''" + prompt_text + "'''",
                 f'status = "{status}"',
                 'rrule = "FREQ=WEEKLY;BYDAY=MO;BYHOUR=7;BYMINUTE=0"',
                 'model = "gpt-5.5"',
@@ -284,6 +339,15 @@ def _write_automation(path: Path, live: Path, *, status: str) -> None:
             ]
         )
         + "\n"
+    )
+
+
+def _current_trader_prompt_sentinel() -> str:
+    return "\n".join(
+        [
+            "Run exactly one gateway cycle after every completed `gpt-trader-decision` verification result, including REJECTED.",
+            "Do **not** stop solely because `data/codex_trader_decision_response.json` was written recently; route it through `trader-prompt-route`.",
+        ]
     )
 
 
