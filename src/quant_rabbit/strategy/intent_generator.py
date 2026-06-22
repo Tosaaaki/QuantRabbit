@@ -6726,7 +6726,15 @@ def _oanda_campaign_vehicle_shape_reprice_metadata(
             round(current_rr, 6) if current_rr is not None else None
         ),
     }
-    if oanda_firepower.get("vehicle_match") is True:
+    matched_current_geometry = oanda_firepower.get("vehicle_match") is True
+    needs_rr_restore = (
+        matched_current_geometry
+        and order_type == OrderType.LIMIT
+        and expected_rr is not None
+        and current_rr is not None
+        and 0 < current_rr < expected_rr - 1e-9
+    )
+    if matched_current_geometry and not needs_rr_restore:
         out.update(
             {
                 "oanda_campaign_vehicle_reprice_status": "MATCHED_CURRENT_GEOMETRY",
@@ -6746,7 +6754,7 @@ def _oanda_campaign_vehicle_shape_reprice_metadata(
             }
         )
         return out
-    if oanda_firepower.get("closest_vehicle_identity_allowed") is not True:
+    if not matched_current_geometry and oanda_firepower.get("closest_vehicle_identity_allowed") is not True:
         out.update(
             {
                 "oanda_campaign_vehicle_reprice_status": "ENTRY_REPRICE_UNSAFE",
@@ -6779,7 +6787,11 @@ def _oanda_campaign_vehicle_shape_reprice_metadata(
         )
         return out
 
-    required_entry = _round_price(pair, (tp + expected_rr * sl) / (expected_rr + 1.0))
+    required_entry = _round_reprice_entry_for_rr(
+        pair,
+        side,
+        (tp + expected_rr * sl) / (expected_rr + 1.0),
+    )
     required_rr = _geometry_reward_risk(entry=required_entry, tp=tp, sl=sl)
     pip_factor = PIP_FACTORS.get(pair, instrument_pip_factor(pair))
     current_target_pips = abs(tp - entry) * pip_factor
@@ -7050,6 +7062,21 @@ def _oanda_campaign_closest_exit_shape_vehicle(
         return abs(current_reward_risk - expected)
 
     return min(vehicles, key=score)
+
+
+def _round_reprice_entry_for_rr(pair: str, side: Side, value: float) -> float:
+    """Round a reprice entry without dropping below the target RR.
+
+    Normal price rounding can turn an exactly solved vehicle entry into a
+    slightly under-target reward/risk. A passive LONG reprice improves when the
+    entry is lower; a passive SHORT reprice improves when the entry is higher.
+    """
+
+    digits = 3 if pair.endswith("_JPY") else 5
+    scale = 10**digits
+    if side == Side.LONG:
+        return math.floor(value * scale + 1e-9) / scale
+    return math.ceil(value * scale - 1e-9) / scale
 
 
 def _oanda_campaign_exit_shape_mismatch_reason(

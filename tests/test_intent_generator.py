@@ -1497,6 +1497,44 @@ class IntentGeneratorTest(unittest.TestCase):
             self.assertEqual(metadata["oanda_campaign_vehicle_reprice_current_reward_risk"], 2.0)
             self.assertNotIn("oanda_campaign_vehicle_reprice_required_entry", metadata)
 
+    def test_oanda_campaign_vehicle_reprice_restores_expected_rr_inside_match_tolerance(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_oanda_campaign_firepower_report(root, exit_shape="tp1_sl1")
+            now = datetime.now(timezone.utc)
+            quote = Quote(pair="EUR_USD", bid=1.10000, ask=1.10008, timestamp_utc=now)
+            metadata = _oanda_campaign_vehicle_shape_reprice_metadata(
+                lane={
+                    "oanda_campaign_firepower_seed": True,
+                    "oanda_campaign_vehicle_key": "EUR_USD|LONG|range_reversion|tp1_sl1",
+                    "oanda_campaign_vehicle_keys": ["EUR_USD|LONG|range_reversion|tp1_sl1"],
+                    "oanda_campaign_exit_shape": "tp1_sl1",
+                    "oanda_campaign_exit_shapes": ["tp1_sl1"],
+                },
+                pair="EUR_USD",
+                side=Side.LONG,
+                method=TradeMethod.RANGE_ROTATION,
+                order_type=OrderType.LIMIT,
+                quote=quote,
+                entry=1.10000,
+                tp=1.10095,
+                sl=1.09900,
+                data_root=root,
+            )
+
+            self.assertTrue(metadata["oanda_campaign_vehicle_reprice_checked"])
+            self.assertEqual(
+                metadata["oanda_campaign_vehicle_reprice_status"],
+                "ENTRY_REPRICE_POSSIBLE",
+            )
+            self.assertEqual(metadata["oanda_campaign_vehicle_reprice_expected_reward_risk"], 1.0)
+            self.assertEqual(metadata["oanda_campaign_vehicle_reprice_current_reward_risk"], 0.95)
+            self.assertEqual(metadata["oanda_campaign_vehicle_reprice_required_entry"], 1.09997)
+            self.assertGreaterEqual(
+                metadata["oanda_campaign_vehicle_reprice_required_reward_risk"],
+                1.0,
+            )
+
     def test_oanda_campaign_vehicle_reprice_applies_before_sizing(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
