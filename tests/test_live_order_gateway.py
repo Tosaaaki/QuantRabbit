@@ -1436,6 +1436,107 @@ class LiveOrderGatewayTest(unittest.TestCase):
             _restore_env("QR_REQUIRE_POSITION_GUARDIAN_ACTIVE", prior_required)
             _restore_env("QR_POSITION_GUARDIAN_ACTIVE", prior_active)
 
+    def test_direct_send_fallback_blocks_when_loaded_guardian_lacks_fresh_heartbeat(self) -> None:
+        env_keys = (
+            "PATH",
+            "QR_REQUIRE_POSITION_GUARDIAN_ACTIVE",
+            "QR_POSITION_GUARDIAN_ACTIVE",
+            "QR_POSITION_GUARDIAN_LABEL",
+            "QR_POSITION_GUARDIAN_PLIST",
+            "QR_POSITION_GUARDIAN_EXECUTION",
+            "QR_POSITION_GUARDIAN_HEARTBEAT",
+            "QR_POSITION_GUARDIAN_INTERVAL",
+            "QR_POSITION_GUARDIAN_HEARTBEAT_MAX_AGE_SECONDS",
+            "QR_POSITION_GUARDIAN_REQUIRE_HEARTBEAT",
+            "QR_FAKE_POSITION_GUARDIAN_LOADED",
+        )
+        prior = {key: os.environ.get(key) for key in env_keys}
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                plist = _write_guardian_plist(root)
+                _install_fake_launchctl(root, loaded=True)
+                os.environ["QR_REQUIRE_POSITION_GUARDIAN_ACTIVE"] = "1"
+                os.environ.pop("QR_POSITION_GUARDIAN_ACTIVE", None)
+                os.environ["QR_POSITION_GUARDIAN_LABEL"] = "com.quantrabbit.position-guardian"
+                os.environ["QR_POSITION_GUARDIAN_PLIST"] = str(plist)
+                os.environ["QR_POSITION_GUARDIAN_EXECUTION"] = str(root / "missing_execution.json")
+                os.environ["QR_POSITION_GUARDIAN_HEARTBEAT"] = str(root / "missing_heartbeat.json")
+                os.environ["QR_POSITION_GUARDIAN_INTERVAL"] = "30"
+                os.environ["QR_POSITION_GUARDIAN_REQUIRE_HEARTBEAT"] = "1"
+
+                client = FakeExecutionClient()
+                summary = LiveOrderGateway(
+                    client=client,
+                    strategy_profile=_profile(root),
+                    output_path=root / "request.json",
+                    report_path=root / "report.md",
+                    live_enabled=True,
+                ).run(intents_path=_intents(root), lane_id="lane:EUR_USD:LONG", send=True, confirm_live=True)
+
+                self.assertEqual(summary.status, "BLOCKED")
+                self.assertFalse(summary.sent)
+                self.assertEqual(client.orders, [])
+                result = json.loads((root / "request.json").read_text())
+                self.assertIn(
+                    "POSITION_GUARDIAN_INACTIVE_FOR_SEND",
+                    {issue["code"] for issue in result["risk_issues"]},
+                )
+        finally:
+            for key, value in prior.items():
+                _restore_env(key, value)
+
+    def test_direct_send_fallback_allows_loaded_guardian_with_fresh_heartbeat(self) -> None:
+        env_keys = (
+            "PATH",
+            "QR_REQUIRE_POSITION_GUARDIAN_ACTIVE",
+            "QR_POSITION_GUARDIAN_ACTIVE",
+            "QR_POSITION_GUARDIAN_LABEL",
+            "QR_POSITION_GUARDIAN_PLIST",
+            "QR_POSITION_GUARDIAN_EXECUTION",
+            "QR_POSITION_GUARDIAN_HEARTBEAT",
+            "QR_POSITION_GUARDIAN_INTERVAL",
+            "QR_POSITION_GUARDIAN_HEARTBEAT_MAX_AGE_SECONDS",
+            "QR_POSITION_GUARDIAN_REQUIRE_HEARTBEAT",
+            "QR_FAKE_POSITION_GUARDIAN_LOADED",
+        )
+        prior = {key: os.environ.get(key) for key in env_keys}
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                plist = _write_guardian_plist(root)
+                heartbeat = _write_guardian_heartbeat(root)
+                _install_fake_launchctl(root, loaded=True)
+                os.environ["QR_REQUIRE_POSITION_GUARDIAN_ACTIVE"] = "1"
+                os.environ.pop("QR_POSITION_GUARDIAN_ACTIVE", None)
+                os.environ["QR_POSITION_GUARDIAN_LABEL"] = "com.quantrabbit.position-guardian"
+                os.environ["QR_POSITION_GUARDIAN_PLIST"] = str(plist)
+                os.environ["QR_POSITION_GUARDIAN_EXECUTION"] = str(heartbeat)
+                os.environ["QR_POSITION_GUARDIAN_HEARTBEAT"] = str(root / "missing_heartbeat.json")
+                os.environ["QR_POSITION_GUARDIAN_INTERVAL"] = "30"
+                os.environ["QR_POSITION_GUARDIAN_REQUIRE_HEARTBEAT"] = "1"
+
+                client = FakeExecutionClient()
+                summary = LiveOrderGateway(
+                    client=client,
+                    strategy_profile=_profile(root),
+                    output_path=root / "request.json",
+                    report_path=root / "report.md",
+                    live_enabled=True,
+                ).run(intents_path=_intents(root), lane_id="lane:EUR_USD:LONG", send=True, confirm_live=True)
+
+                self.assertEqual(summary.status, "SENT")
+                self.assertTrue(summary.sent)
+                self.assertEqual(len(client.orders), 1)
+                result = json.loads((root / "request.json").read_text())
+                self.assertNotIn(
+                    "POSITION_GUARDIAN_INACTIVE_FOR_SEND",
+                    {issue["code"] for issue in result["risk_issues"]},
+                )
+        finally:
+            for key, value in prior.items():
+                _restore_env(key, value)
+
     def test_send_allows_same_pair_hedge_when_margin_cap_is_full(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -2113,6 +2214,63 @@ def _restore_env(name: str, value: str | None) -> None:
         os.environ.pop(name, None)
     else:
         os.environ[name] = value
+
+
+def _write_guardian_plist(root: Path) -> Path:
+    plist = root / "com.quantrabbit.position-guardian.plist"
+    plist.write_text("<plist><dict><key>Label</key><string>com.quantrabbit.position-guardian</string></dict></plist>\n")
+    return plist
+
+
+def _write_guardian_heartbeat(root: Path, *, generated_at: datetime | None = None) -> Path:
+    path = root / "position_guardian_execution.json"
+    path.write_text(
+        json.dumps(
+            {
+                "generated_at_utc": (generated_at or datetime.now(timezone.utc)).isoformat(),
+                "status": "NO_ACTION",
+                "sent": False,
+            }
+        )
+        + "\n"
+    )
+    return path
+
+
+def _install_fake_launchctl(root: Path, *, loaded: bool) -> None:
+    bin_dir = root / "bin"
+    bin_dir.mkdir(exist_ok=True)
+    script = bin_dir / "launchctl"
+    script.write_text(
+        "\n".join(
+            [
+                "#!/usr/bin/env bash",
+                "set -euo pipefail",
+                "cmd=\"${1:-}\"",
+                "label=\"${2:-}\"",
+                "if [[ \"$cmd\" == \"list\" && \"$label\" == \"com.quantrabbit.position-guardian\" ]]; then",
+                "  if [[ \"${QR_FAKE_POSITION_GUARDIAN_LOADED:-0}\" == \"1\" ]]; then",
+                "    printf '123\\t0\\tcom.quantrabbit.position-guardian\\n'",
+                "    exit 0",
+                "  fi",
+                "  exit 113",
+                "fi",
+                "if [[ \"$cmd\" == \"print\" && \"$label\" == gui/*/com.quantrabbit.position-guardian ]]; then",
+                "  if [[ \"${QR_FAKE_POSITION_GUARDIAN_LOADED:-0}\" == \"1\" ]]; then",
+                "    printf 'com.quantrabbit.position-guardian = { active = 1 }\\n'",
+                "    exit 0",
+                "  fi",
+                "  exit 113",
+                "fi",
+                "printf 'unsupported fake launchctl command: %s %s\\n' \"$cmd\" \"$label\" >&2",
+                "exit 64",
+            ]
+        )
+        + "\n"
+    )
+    script.chmod(0o755)
+    os.environ["PATH"] = f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}"
+    os.environ["QR_FAKE_POSITION_GUARDIAN_LOADED"] = "1" if loaded else "0"
 
 
 class SequenceExecutionClient(FakeExecutionClient):

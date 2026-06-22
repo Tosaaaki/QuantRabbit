@@ -1989,8 +1989,9 @@ def _send_guard_issues(*, send: bool, confirm_live: bool, lane_id: str | None) -
         issues.append(
             RiskIssue(
                 "POSITION_GUARDIAN_INACTIVE_FOR_SEND",
-                "fresh entry live send requires an active position guardian so TP-progress profit can be "
-                "captured between full trader cycles; load com.quantrabbit.position-guardian or set "
+                "fresh entry live send requires an active position guardian with a recent heartbeat so "
+                "TP-progress profit can be captured between full trader cycles; load "
+                "com.quantrabbit.position-guardian, repair stale guardian execution, or set "
                 "QR_REQUIRE_POSITION_GUARDIAN_ACTIVE=0 for an explicit operator override",
             )
         )
@@ -2032,7 +2033,7 @@ def _position_guardian_active() -> bool:
     except (FileNotFoundError, OSError):
         return False
     if list_proc.returncode == 0:
-        return True
+        return _position_guardian_heartbeat_fresh()
     try:
         print_proc = subprocess.run(
             ["launchctl", "print", f"gui/{os.getuid()}/{label}"],
@@ -2042,7 +2043,70 @@ def _position_guardian_active() -> bool:
         )
     except (FileNotFoundError, OSError):
         return False
-    return print_proc.returncode == 0
+    return print_proc.returncode == 0 and _position_guardian_heartbeat_fresh()
+
+
+def _position_guardian_heartbeat_fresh() -> bool:
+    raw_required = os.environ.get("QR_POSITION_GUARDIAN_REQUIRE_HEARTBEAT", "1")
+    if not _truthy_value(raw_required):
+        return True
+    try:
+        interval = int(float(os.environ.get("QR_POSITION_GUARDIAN_INTERVAL", "30")))
+    except (TypeError, ValueError):
+        interval = 30
+    interval = max(15, interval)
+    try:
+        max_age = int(float(os.environ.get("QR_POSITION_GUARDIAN_HEARTBEAT_MAX_AGE_SECONDS", str(interval * 4))))
+    except (TypeError, ValueError):
+        max_age = interval * 4
+    max_age = max(interval, max_age)
+    paths = (
+        _env_path("QR_POSITION_GUARDIAN_EXECUTION", _QR_ROOT / "data" / "position_guardian_execution.json"),
+        _env_path("QR_POSITION_GUARDIAN_HEARTBEAT", _QR_ROOT / "data" / "position_guardian.json"),
+    )
+    now = datetime.now(timezone.utc)
+    for path in paths:
+        if not path.exists():
+            continue
+        generated = None
+        try:
+            payload = json.loads(path.read_text())
+        except (OSError, json.JSONDecodeError, ValueError):
+            payload = {}
+        if isinstance(payload, dict):
+            generated = _parse_guardian_heartbeat_time(payload.get("generated_at_utc"))
+        if generated is not None:
+            age = (now - generated).total_seconds()
+        else:
+            try:
+                age = time.time() - path.stat().st_mtime
+            except OSError:
+                continue
+        if -60.0 <= age <= max_age:
+            return True
+    return False
+
+
+def _env_path(name: str, default: Path) -> Path:
+    raw = os.environ.get(name)
+    if not raw:
+        return default
+    path = Path(raw)
+    if path.is_absolute():
+        return path
+    return _QR_ROOT / path
+
+
+def _parse_guardian_heartbeat_time(value: Any) -> datetime | None:
+    if not isinstance(value, str) or not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
 
 
 def _risk_has_blocking_stale_quote(risk: Any) -> bool:
