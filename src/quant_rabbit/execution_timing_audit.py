@@ -583,6 +583,14 @@ def _audit_loss_close(
         tp_touch_at is not None
         or (tp_progress is not None and tp_progress >= TP_PROGRESS_CAPTURE_THRESHOLD)
     )
+    counterfactual = _profit_capture_counterfactual(
+        close,
+        capture_missed=capture_missed,
+        tp_touch_at=tp_touch_at,
+        tp_distance_pips=tp_distance_pips,
+        mfe_pips=mfe_pips,
+        jpy_per_pip=jpy_per_pip,
+    )
     return {
         "trade_id": close.trade_id,
         "lane_id": close.lane_id,
@@ -611,8 +619,45 @@ def _audit_loss_close(
         "tp_progress_before_loss_close": tp_progress,
         "profit_capture_missed_before_loss_close": capture_missed,
         "profit_capture_progress_threshold": TP_PROGRESS_CAPTURE_THRESHOLD,
+        "profit_capture_counterfactual_exit": counterfactual.get("exit"),
+        "profit_capture_counterfactual_pips": counterfactual.get("pips"),
+        "profit_capture_counterfactual_jpy": counterfactual.get("jpy"),
+        "profit_capture_counterfactual_net_improvement_jpy": counterfactual.get("net_improvement_jpy"),
+        "profit_capture_counterfactual_pl_jpy": counterfactual.get("pl_jpy"),
         "jpy_per_pip_estimate": round(jpy_per_pip, 6) if jpy_per_pip is not None else None,
         "candles_available": len(candles),
+    }
+
+
+def _profit_capture_counterfactual(
+    close: _MarketClose,
+    *,
+    capture_missed: bool,
+    tp_touch_at: datetime | None,
+    tp_distance_pips: float | None,
+    mfe_pips: float,
+    jpy_per_pip: float | None,
+) -> dict[str, Any]:
+    if not capture_missed or jpy_per_pip is None:
+        return {}
+    if tp_touch_at is not None and tp_distance_pips is not None and tp_distance_pips > 0:
+        exit_label = "TAKE_PROFIT_TOUCH"
+        capture_pips = tp_distance_pips
+    elif tp_distance_pips is not None and tp_distance_pips > 0:
+        exit_label = "TP_PROGRESS_CAPTURE"
+        capture_pips = min(mfe_pips, tp_distance_pips * TP_PROGRESS_CAPTURE_THRESHOLD)
+    else:
+        exit_label = "MFE_CAPTURE"
+        capture_pips = mfe_pips
+    if capture_pips <= 0:
+        return {}
+    capture_jpy = round(capture_pips * jpy_per_pip, 4)
+    return {
+        "exit": exit_label,
+        "pips": round(capture_pips, 4),
+        "jpy": capture_jpy,
+        "pl_jpy": capture_jpy,
+        "net_improvement_jpy": round(capture_jpy - close.realized_pl_jpy, 4),
     }
 
 
@@ -742,6 +787,8 @@ def _summary(
     ]
     market_tp_after = [row for row in market_close_rows if row.get("tp_touched_after_market_close")]
     market_sl_after = [row for row in market_close_rows if row.get("sl_touched_after_market_close")]
+    actual_loss_close_pl = _sum_known(loss_rows, "realized_pl_jpy")
+    counterfactual_loss_close_pl = _counterfactual_loss_close_pl(loss_rows)
     return {
         "canceled_orders_audited": len(canceled_rows),
         "canceled_entry_touched_after_cancel": len(canceled_entry),
@@ -763,6 +810,17 @@ def _summary(
         "loss_close_estimated_capture_gap_jpy": _sum_known(
             loss_capture_missed,
             "estimated_mfe_jpy_before_loss_close",
+        ),
+        "loss_close_actual_pl_jpy": actual_loss_close_pl,
+        "loss_close_counterfactual_profit_capture_pl_jpy": counterfactual_loss_close_pl,
+        "loss_close_counterfactual_profit_capture_delta_jpy": (
+            round(counterfactual_loss_close_pl - actual_loss_close_pl, 4)
+            if counterfactual_loss_close_pl is not None and actual_loss_close_pl is not None
+            else None
+        ),
+        "loss_close_counterfactual_profit_capture_jpy": _sum_known(
+            loss_capture_missed,
+            "profit_capture_counterfactual_jpy",
         ),
         "avg_decision_lag_minutes_after_first_positive": round(sum(lag_values) / len(lag_values), 2) if lag_values else None,
         "max_decision_lag_minutes_after_first_positive": round(max(lag_values), 2) if lag_values else None,
@@ -790,6 +848,22 @@ def _summary(
         "loss_market_closes_may_have_been_premature": len(loss_premature),
         "loss_market_closes_contained_risk": len(loss_contained),
     }
+
+
+def _counterfactual_loss_close_pl(loss_rows: list[dict[str, Any]]) -> float | None:
+    if not loss_rows:
+        return None
+    total = 0.0
+    seen = False
+    for row in loss_rows:
+        value = row.get("profit_capture_counterfactual_pl_jpy")
+        if value is None:
+            value = row.get("realized_pl_jpy")
+        if value is None:
+            continue
+        total += float(value)
+        seen = True
+    return round(total, 4) if seen else None
 
 
 def _canceled_order_regret_by_shape(rows: list[dict[str, Any]]) -> dict[str, Any]:
@@ -923,6 +997,10 @@ def _write_report(payload: dict[str, Any], report_path: Path) -> None:
         "loss_closes_profit_capture_missed_rate",
         "stop_loss_closes_profit_capture_missed",
         "loss_close_estimated_capture_gap_jpy",
+        "loss_close_actual_pl_jpy",
+        "loss_close_counterfactual_profit_capture_pl_jpy",
+        "loss_close_counterfactual_profit_capture_delta_jpy",
+        "loss_close_counterfactual_profit_capture_jpy",
         "avg_decision_lag_minutes_after_first_positive",
         "max_decision_lag_minutes_after_first_positive",
         "market_closes_audited",
@@ -993,7 +1071,7 @@ def _write_report(payload: dict[str, Any], report_path: Path) -> None:
                 jpy=row.get("estimated_missed_mfe_jpy"),
             )
         )
-    lines.extend(["", "## Top Loss Close Timing Regrets", "", "| Trade | Lane | Pair | Side | Exit | PL JPY | First plus min | Lag min | MFE pips | TP progress | Capture missed | Est MFE JPY | TP touched |", "|---|---|---|---|---|---:|---:|---:|---:|---:|---|---:|---|"])
+    lines.extend(["", "## Top Loss Close Timing Regrets", "", "| Trade | Lane | Pair | Side | Exit | PL JPY | First plus min | Lag min | MFE pips | TP progress | Capture missed | Counterfactual JPY | Delta JPY | Est MFE JPY | TP touched |", "|---|---|---|---|---|---:|---:|---:|---:|---:|---|---:|---:|---:|---|"])
     top_loss = sorted(
         payload.get("loss_close_regrets") or [],
         key=lambda row: float(row.get("estimated_mfe_jpy_before_loss_close") or 0.0),
@@ -1001,7 +1079,7 @@ def _write_report(payload: dict[str, Any], report_path: Path) -> None:
     )[:20]
     for row in top_loss:
         lines.append(
-            "| `{trade}` | `{lane}` | `{pair}` | `{side}` | `{exit}` | `{pl}` | `{first}` | `{lag}` | `{mfe}` | `{progress}` | `{missed}` | `{jpy}` | `{tp}` |".format(
+            "| `{trade}` | `{lane}` | `{pair}` | `{side}` | `{exit}` | `{pl}` | `{first}` | `{lag}` | `{mfe}` | `{progress}` | `{missed}` | `{cf_jpy}` | `{delta}` | `{jpy}` | `{tp}` |".format(
                 trade=row.get("trade_id"),
                 lane=row.get("lane_id") or "",
                 pair=row.get("pair"),
@@ -1013,6 +1091,8 @@ def _write_report(payload: dict[str, Any], report_path: Path) -> None:
                 mfe=row.get("mfe_pips_before_loss_close"),
                 progress=row.get("tp_progress_before_loss_close"),
                 missed=row.get("profit_capture_missed_before_loss_close"),
+                cf_jpy=row.get("profit_capture_counterfactual_jpy"),
+                delta=row.get("profit_capture_counterfactual_net_improvement_jpy"),
                 jpy=row.get("estimated_mfe_jpy_before_loss_close"),
                 tp=row.get("tp_touched_before_loss_close"),
             )

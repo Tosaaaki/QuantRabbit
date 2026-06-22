@@ -374,11 +374,19 @@ class ExecutionTimingAuditTest(unittest.TestCase):
             self.assertEqual(summary["loss_closes_tp_touched_before_close"], 1)
             self.assertEqual(summary["loss_closes_tp_touched_before_close_rate"], 1.0)
             self.assertAlmostEqual(summary["loss_close_estimated_mfe_jpy"], 110.0)
+            self.assertAlmostEqual(summary["loss_close_actual_pl_jpy"], -100.0)
+            self.assertAlmostEqual(summary["loss_close_counterfactual_profit_capture_pl_jpy"], 100.0)
+            self.assertAlmostEqual(summary["loss_close_counterfactual_profit_capture_delta_jpy"], 200.0)
+            self.assertAlmostEqual(summary["loss_close_counterfactual_profit_capture_jpy"], 100.0)
             self.assertEqual(summary["avg_decision_lag_minutes_after_first_positive"], 5.5)
             row = payload["loss_close_regrets"][0]
             self.assertEqual(row["first_positive_minutes_after_fill"], 0.83)
             self.assertEqual(row["decision_lag_minutes_after_first_positive"], 5.5)
             self.assertEqual(row["mfe_pips_before_loss_close"], 11.0)
+            self.assertEqual(row["profit_capture_counterfactual_exit"], "TAKE_PROFIT_TOUCH")
+            self.assertEqual(row["profit_capture_counterfactual_pips"], 10.0)
+            self.assertAlmostEqual(row["profit_capture_counterfactual_jpy"], 100.0)
+            self.assertAlmostEqual(row["profit_capture_counterfactual_net_improvement_jpy"], 200.0)
 
     def test_stop_loss_close_reports_missed_tp_progress_profit_capture(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -541,10 +549,18 @@ class ExecutionTimingAuditTest(unittest.TestCase):
             self.assertEqual(summary["loss_closes_profit_capture_missed"], 1)
             self.assertEqual(summary["stop_loss_closes_profit_capture_missed"], 1)
             self.assertAlmostEqual(summary["loss_close_estimated_capture_gap_jpy"], 32.0)
+            self.assertAlmostEqual(summary["loss_close_actual_pl_jpy"], -50.0)
+            self.assertAlmostEqual(summary["loss_close_counterfactual_profit_capture_pl_jpy"], 30.0)
+            self.assertAlmostEqual(summary["loss_close_counterfactual_profit_capture_delta_jpy"], 80.0)
+            self.assertAlmostEqual(summary["loss_close_counterfactual_profit_capture_jpy"], 30.0)
             row = payload["loss_close_regrets"][0]
             self.assertEqual(row["mfe_pips_before_loss_close"], 3.2)
             self.assertAlmostEqual(row["tp_progress_before_loss_close"], 0.32)
             self.assertTrue(row["profit_capture_missed_before_loss_close"])
+            self.assertEqual(row["profit_capture_counterfactual_exit"], "TP_PROGRESS_CAPTURE")
+            self.assertEqual(row["profit_capture_counterfactual_pips"], 3.0)
+            self.assertAlmostEqual(row["profit_capture_counterfactual_jpy"], 30.0)
+            self.assertAlmostEqual(row["profit_capture_counterfactual_net_improvement_jpy"], 80.0)
 
     def test_market_close_lookback_is_anchored_to_latest_close_activity(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
