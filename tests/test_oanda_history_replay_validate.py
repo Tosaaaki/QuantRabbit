@@ -115,6 +115,35 @@ class OandaHistoryReplayValidateTest(unittest.TestCase):
 
         self.assertEqual(dirs, [orphan_run.resolve()])
 
+    def test_explicit_history_parent_discovers_nested_multi_month_run(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            history = root / "oanda_history_s5"
+            run = history / "20260622T155928Z"
+            candle_dir = run / "AUD_JPY"
+            candle_dir.mkdir(parents=True)
+            (run / "summary.json").write_text(
+                json.dumps(
+                    {
+                        "output_dir": str(run),
+                        "granularities": ["S5"],
+                        "window": {
+                            "from": "2026-02-22T15:59:19Z",
+                            "to": "2026-06-22T15:59:19Z",
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (candle_dir / "AUD_JPY_S5_BA_20260222T155919Z_20260622T155919Z.jsonl").write_text(
+                "",
+                encoding="utf-8",
+            )
+
+            dirs = replay._history_dirs([history], granularity="S5", auto_min_days=30.0)
+
+        self.assertEqual(dirs, [run])
+
     def test_history_dirs_falls_back_to_latest_when_no_multi_month_suite_exists(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

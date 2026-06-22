@@ -287,7 +287,11 @@ def _history_dirs(
     auto_min_days: float = DEFAULT_AUTO_HISTORY_MIN_DAYS,
 ) -> list[Path]:
     if explicit:
-        return list(explicit)
+        return _explicit_history_dirs(
+            explicit,
+            granularity=str(granularity or "").upper(),
+            min_days=float(auto_min_days),
+        )
     root = Path("logs/replay/oanda_history")
     multi_month = _discover_multi_month_history_dirs(
         root,
@@ -304,6 +308,47 @@ def _history_dirs(
     if not output_dir:
         raise RuntimeError("latest_summary.json has no output_dir; pass --history-dir")
     return [Path(str(output_dir))]
+
+
+def _explicit_history_dirs(
+    explicit: Sequence[Path],
+    *,
+    granularity: str,
+    min_days: float,
+) -> list[Path]:
+    selected: list[Path] = []
+    seen: set[Path] = set()
+    for raw_path in explicit:
+        path = Path(raw_path)
+        discovered = _discover_multi_month_history_dirs(
+            path,
+            granularity=granularity,
+            min_days=min_days,
+        )
+        if discovered:
+            for item in discovered:
+                _append_unique_path(selected, seen, item)
+            continue
+        latest = path / "latest_summary.json"
+        if latest.exists():
+            try:
+                payload = json.loads(latest.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                payload = {}
+            output_dir = payload.get("output_dir")
+            if output_dir:
+                _append_unique_path(selected, seen, Path(str(output_dir)))
+                continue
+        _append_unique_path(selected, seen, path)
+    return selected
+
+
+def _append_unique_path(selected: list[Path], seen: set[Path], path: Path) -> None:
+    resolved = path.resolve()
+    if resolved in seen:
+        return
+    seen.add(resolved)
+    selected.append(path)
 
 
 def _discover_multi_month_history_dirs(
