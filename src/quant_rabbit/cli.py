@@ -3110,7 +3110,7 @@ def main(argv: list[str] | None = None) -> int:
     p_profit_accept.add_argument("--self-improvement-audit", type=Path, default=DEFAULT_SELF_IMPROVEMENT_AUDIT)
     p_profit_accept.add_argument("--capture-economics", type=Path, default=DEFAULT_CAPTURE_ECONOMICS)
     p_profit_accept.add_argument("--execution-ledger-db", type=Path, default=DEFAULT_EXECUTION_LEDGER_DB)
-    p_profit_accept.add_argument("--execution-timing-audit", type=Path, default=DEFAULT_EXECUTION_TIMING_AUDIT)
+    p_profit_accept.add_argument("--execution-timing-audit", type=Path, default=None)
     p_profit_accept.add_argument("--projection-ledger", type=Path, default=DEFAULT_PROJECTION_LEDGER)
     p_profit_accept.add_argument("--bidask-rules", type=Path, default=None)
     p_profit_accept.add_argument(
@@ -3152,6 +3152,7 @@ def main(argv: list[str] | None = None) -> int:
     p_support.add_argument("--profitability-acceptance", type=Path, default=DEFAULT_PROFITABILITY_ACCEPTANCE)
     p_support.add_argument("--execution-timing-audit", type=Path, default=DEFAULT_EXECUTION_TIMING_AUDIT)
     p_support.add_argument("--profit-capture-bot", type=Path, default=DEFAULT_PROFIT_CAPTURE_BOT)
+    p_support.add_argument("--oanda-rotation-mining", type=Path, default=DEFAULT_OANDA_UNIVERSAL_ROTATION_MINING)
     p_support.add_argument("--output", type=Path, default=DEFAULT_TRADER_SUPPORT_BOT)
     p_support.add_argument("--report", type=Path, default=DEFAULT_TRADER_SUPPORT_BOT_REPORT)
 
@@ -5418,11 +5419,14 @@ def main(argv: list[str] | None = None) -> int:
             )
 
             audit_db = _resolve_audit_execution_ledger_db(args.execution_ledger_db)
-            execution_timing_audit = _resolve_audit_sidecar_path(
-                args.execution_timing_audit,
-                default_path=DEFAULT_EXECUTION_TIMING_AUDIT,
-                selected_ledger_path=audit_db,
-            )
+            if args.execution_timing_audit is None:
+                execution_timing_audit = _resolve_audit_sidecar_path(
+                    DEFAULT_EXECUTION_TIMING_AUDIT,
+                    default_path=DEFAULT_EXECUTION_TIMING_AUDIT,
+                    selected_ledger_path=audit_db,
+                )
+            else:
+                execution_timing_audit = args.execution_timing_audit
             summary = ProfitabilityAcceptanceAuditor(
                 output_path=args.output,
                 report_path=args.report,
@@ -5504,6 +5508,7 @@ def main(argv: list[str] | None = None) -> int:
                 profitability_acceptance_path=args.profitability_acceptance,
                 execution_timing_audit_path=args.execution_timing_audit,
                 profit_capture_bot_path=args.profit_capture_bot,
+                oanda_rotation_mining_path=args.oanda_rotation_mining,
                 output_path=args.output,
                 report_path=args.report,
             ).run()

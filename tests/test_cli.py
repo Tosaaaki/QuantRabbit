@@ -239,6 +239,70 @@ class RuntimeLedgerSelectionTest(unittest.TestCase):
             live_timing,
         )
 
+    def test_profitability_acceptance_explicit_default_timing_is_respected(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            dev_timing = root / "dev" / "data" / "execution_timing_audit.json"
+            live_ledger = root / "QuantRabbit-live" / "data" / "execution_ledger.db"
+            live_timing = root / "QuantRabbit-live" / "data" / "execution_timing_audit.json"
+            dev_timing.parent.mkdir(parents=True, exist_ok=True)
+            live_timing.parent.mkdir(parents=True, exist_ok=True)
+            dev_timing.write_text("{}", encoding="utf-8")
+            live_timing.write_text("{}", encoding="utf-8")
+            summary = SimpleNamespace(
+                status="PROFITABILITY_ACCEPTANCE_PASSED",
+                output_path=root / "acceptance.json",
+                report_path=root / "acceptance.md",
+                findings=[],
+                blockers=[],
+                metrics={},
+            )
+            auditor = mock.Mock()
+            auditor.run.return_value = summary
+            stdout = io.StringIO()
+
+            with mock.patch(
+                "quant_rabbit.cli.DEFAULT_EXECUTION_TIMING_AUDIT",
+                dev_timing,
+            ), mock.patch(
+                "quant_rabbit.cli._resolve_audit_execution_ledger_db",
+                return_value=live_ledger,
+            ), mock.patch(
+                "quant_rabbit.profitability_acceptance.ProfitabilityAcceptanceAuditor",
+                return_value=auditor,
+            ), redirect_stdout(stdout):
+                code = main(
+                    [
+                        "profitability-acceptance",
+                        "--order-intents",
+                        str(root / "intents.json"),
+                        "--target-state",
+                        str(root / "target.json"),
+                        "--self-improvement-audit",
+                        str(root / "self_improvement.json"),
+                        "--capture-economics",
+                        str(root / "capture.json"),
+                        "--execution-timing-audit",
+                        str(dev_timing),
+                        "--projection-ledger",
+                        str(root / "projection_ledger.jsonl"),
+                        "--bidask-rules",
+                        str(root / "bidask_rules.json"),
+                        "--oanda-rotation-mining",
+                        str(root / "oanda_rotation.json"),
+                        "--output",
+                        str(summary.output_path),
+                        "--report",
+                        str(summary.report_path),
+                    ]
+                )
+
+        self.assertEqual(code, 0)
+        self.assertEqual(
+            auditor.run.call_args.kwargs["execution_timing_audit_path"],
+            dev_timing,
+        )
+
 
 class CliHelpTest(unittest.TestCase):
     def _write_oanda_firepower_report(

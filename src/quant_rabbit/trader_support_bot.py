@@ -17,6 +17,7 @@ from quant_rabbit.paths import (
     DEFAULT_BROKER_SNAPSHOT,
     DEFAULT_DAILY_TARGET_STATE,
     DEFAULT_EXECUTION_TIMING_AUDIT,
+    DEFAULT_OANDA_UNIVERSAL_ROTATION_MINING,
     DEFAULT_ORDER_INTENTS,
     DEFAULT_POSITION_GUARDIAN_EXECUTION,
     DEFAULT_POSITION_GUARDIAN_HEARTBEAT,
@@ -81,6 +82,7 @@ class TraderSupportBot:
         profitability_acceptance_path: Path = DEFAULT_PROFITABILITY_ACCEPTANCE,
         execution_timing_audit_path: Path = DEFAULT_EXECUTION_TIMING_AUDIT,
         profit_capture_bot_path: Path = DEFAULT_PROFIT_CAPTURE_BOT,
+        oanda_rotation_mining_path: Path = DEFAULT_OANDA_UNIVERSAL_ROTATION_MINING,
         output_path: Path = DEFAULT_TRADER_SUPPORT_BOT,
         report_path: Path = DEFAULT_TRADER_SUPPORT_BOT_REPORT,
         now_utc: datetime | None = None,
@@ -96,6 +98,7 @@ class TraderSupportBot:
         self.profitability_acceptance_path = profitability_acceptance_path
         self.execution_timing_audit_path = execution_timing_audit_path
         self.profit_capture_bot_path = profit_capture_bot_path
+        self.oanda_rotation_mining_path = oanda_rotation_mining_path
         self.output_path = output_path
         self.report_path = report_path
         self.now_utc = (now_utc or datetime.now(timezone.utc)).astimezone(timezone.utc)
@@ -125,6 +128,7 @@ class TraderSupportBot:
         profitability = _read_json(self.profitability_acceptance_path)
         timing = _read_json(self.execution_timing_audit_path)
         profit_capture_bot = _read_json(self.profit_capture_bot_path)
+        oanda_rotation = _read_json(self.oanda_rotation_mining_path)
 
         guardian = _guardian_status(
             now_utc=self.now_utc,
@@ -136,7 +140,7 @@ class TraderSupportBot:
         p0_findings = _p0_findings(self_improvement)
         profit_capture = _profit_capture_summary(self_improvement, timing)
         current_profit_capture = _current_profit_capture_summary(profit_capture_bot)
-        entry = _entry_readiness_summary(intents)
+        entry = _entry_readiness_summary(intents, oanda_rotation=oanda_rotation)
         position = _position_support_summary(position_management, guardian_management, now_utc=self.now_utc)
         acceptance = _acceptance_summary(profitability)
 
@@ -180,6 +184,11 @@ class TraderSupportBot:
             ),
             "oanda_audit_only_local_tp_proof_required_lanes": len(
                 entry["oanda_audit_only_local_tp_proof_required"]
+            ),
+            "oanda_audit_only_with_replay_evidence_lanes": sum(
+                1
+                for item in entry["oanda_audit_only_local_tp_proof_required"]
+                if item.get("oanda_replay_evidence_status") != "MISSING_OANDA_REPLAY_EVIDENCE"
             ),
             "repair_frontier_missing_range_rotation_counterpart_lanes": len(
                 entry["repair_frontier_missing_range_rotation_counterpart"]
@@ -239,6 +248,7 @@ class TraderSupportBot:
                 "profitability_acceptance": str(self.profitability_acceptance_path),
                 "execution_timing_audit": str(self.execution_timing_audit_path),
                 "profit_capture_bot": str(self.profit_capture_bot_path),
+                "oanda_rotation_mining": str(self.oanda_rotation_mining_path),
             },
             "generated_at_utc": generated,
             "status": status,
@@ -594,9 +604,14 @@ def _current_profit_capture_summary(payload: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _entry_readiness_summary(payload: dict[str, Any]) -> dict[str, Any]:
+def _entry_readiness_summary(
+    payload: dict[str, Any],
+    *,
+    oanda_rotation: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     results = payload.get("results") if isinstance(payload.get("results"), list) else []
     live_ready = [item for item in results if item.get("status") == "LIVE_READY"]
+    oanda_evidence_by_vehicle = _oanda_replay_evidence_by_vehicle(oanda_rotation or {})
     codes = Counter()
     repair_frontier: list[dict[str, Any]] = []
     repair_live_ready: list[dict[str, Any]] = []
@@ -617,6 +632,11 @@ def _entry_readiness_summary(payload: dict[str, Any]) -> dict[str, Any]:
         ):
             intent = item.get("intent") if isinstance(item.get("intent"), dict) else {}
             context = intent.get("market_context") if isinstance(intent.get("market_context"), dict) else {}
+            vehicle_key = (
+                metadata.get("positive_rotation_oanda_campaign_matching_vehicle_key")
+                or metadata.get("oanda_campaign_vehicle_key")
+            )
+            replay_evidence = _compact_oanda_replay_evidence(vehicle_key, oanda_evidence_by_vehicle)
             oanda_audit_only_local_tp_proof_required.append(
                 {
                     "lane_id": item.get("lane_id"),
@@ -629,10 +649,10 @@ def _entry_readiness_summary(payload: dict[str, Any]) -> dict[str, Any]:
                     "risk_jpy": _intent_risk_jpy(item, metadata),
                     "capture_take_profit_scope": metadata.get("capture_take_profit_scope"),
                     "capture_take_profit_scope_key": metadata.get("capture_take_profit_scope_key"),
-                    "oanda_vehicle_key": (
-                        metadata.get("positive_rotation_oanda_campaign_matching_vehicle_key")
-                        or metadata.get("oanda_campaign_vehicle_key")
-                    ),
+                    "oanda_vehicle_key": vehicle_key,
+                    "oanda_replay_evidence_status": replay_evidence["evidence_status"],
+                    "oanda_replay_live_permission": replay_evidence["live_permission"],
+                    "oanda_replay_evidence": replay_evidence,
                     "remaining_blocker_codes_after_guardian": [
                         code for code in blocker_codes if code != GUARDIAN_BLOCKER
                     ],
@@ -742,6 +762,74 @@ def _entry_readiness_summary(payload: dict[str, Any]) -> dict[str, Any]:
         ),
         "repair_frontier_remaining_blockers": remaining_repair_blockers,
         "global_unlock_frontier": global_unlock_frontier[:12],
+    }
+
+
+def _oanda_replay_evidence_by_vehicle(payload: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    firepower = payload.get("campaign_firepower") if isinstance(payload.get("campaign_firepower"), dict) else {}
+    sections: list[tuple[int, str, list[Any]]] = []
+    high_precision = firepower.get("high_precision") if isinstance(firepower.get("high_precision"), dict) else {}
+    evidence_queue = firepower.get("evidence_queue") if isinstance(firepower.get("evidence_queue"), dict) else {}
+    sections.append((0, "high_precision", high_precision.get("top_vehicles") or []))
+    sections.append((1, "evidence_queue", evidence_queue.get("top_vehicles") or []))
+    sections.append((2, "live_grade_evidence_queue", payload.get("live_grade_evidence_queue") or []))
+    out: dict[str, dict[str, Any]] = {}
+    seen_priority: dict[str, int] = {}
+    for priority, section, rows in sections:
+        if not isinstance(rows, list):
+            continue
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            vehicle_key = row.get("vehicle_key")
+            if not vehicle_key:
+                continue
+            key = str(vehicle_key)
+            if key in out and seen_priority.get(key, 99) <= priority:
+                continue
+            compact = dict(row)
+            compact["firepower_section"] = row.get("firepower_section") or section
+            out[key] = compact
+            seen_priority[key] = priority
+    return out
+
+
+def _compact_oanda_replay_evidence(
+    vehicle_key: Any,
+    evidence_by_vehicle: dict[str, dict[str, Any]],
+) -> dict[str, Any]:
+    key = str(vehicle_key or "")
+    row = evidence_by_vehicle.get(key)
+    if not row:
+        return {
+            "vehicle_key": key or None,
+            "evidence_status": "MISSING_OANDA_REPLAY_EVIDENCE",
+            "live_permission": False,
+            "live_permission_reason": "No matching OANDA candle replay vehicle was found for this intent key.",
+        }
+    return {
+        "vehicle_key": key,
+        "firepower_section": row.get("firepower_section"),
+        "evidence_status": row.get("evidence_status") or "OANDA_REPLAY_EVIDENCE",
+        "validation_n": row.get("validation_n"),
+        "validation_win_rate": _round_optional(row.get("validation_win_rate"), 6),
+        "validation_win_wilson95_lower": _round_optional(row.get("validation_win_wilson95_lower"), 6),
+        "validation_profit_factor": _round_optional(row.get("validation_profit_factor"), 6),
+        "validation_avg_realized_pips": _round_optional(row.get("validation_avg_realized_pips"), 6),
+        "validation_expectancy_r": _round_optional(row.get("validation_expectancy_r"), 6),
+        "active_days": row.get("active_days"),
+        "positive_day_rate": _round_optional(row.get("positive_day_rate"), 6),
+        "estimated_return_pct_per_active_day_at_observed_frequency": _round_optional(
+            row.get("estimated_return_pct_per_active_day_at_observed_frequency"),
+            6,
+        ),
+        "trades_needed_for_minimum_5pct": row.get("trades_needed_for_minimum_5pct"),
+        "trades_needed_for_target_10pct": row.get("trades_needed_for_target_10pct"),
+        "live_permission": False,
+        "live_permission_reason": (
+            "OANDA candle replay is audit-only until local broker TP proof, current forecast, "
+            "spread, risk, strategy-profile, and gateway checks all pass."
+        ),
     }
 
 
@@ -1738,16 +1826,17 @@ def _render_report(payload: dict[str, Any]) -> str:
     if entry["oanda_audit_only_local_tp_proof_required"]:
         lines.extend(
             [
-                "| Lane | Pair | Side | Method | Scope | Vehicle | Remaining blockers after guardian |",
-                "|---|---|---|---|---|---|---|",
+                "| Lane | Pair | Side | Method | Scope | Vehicle | Replay evidence | Remaining blockers after guardian |",
+                "|---|---|---|---|---|---|---|---|",
             ]
         )
         for item in entry["oanda_audit_only_local_tp_proof_required"][:8]:
             remaining = ", ".join(item["remaining_blocker_codes_after_guardian"]) or "none"
+            replay = _format_oanda_replay_report_cell(item)
             lines.append(
                 f"| `{item['lane_id']}` | `{item['pair']}` | `{item['side']}` | "
                 f"`{item['method']}` | `{item.get('capture_take_profit_scope')}` | "
-                f"`{item.get('oanda_vehicle_key')}` | `{remaining}` |"
+                f"`{item.get('oanda_vehicle_key')}` | {replay} | `{remaining}` |"
             )
     else:
         lines.append("- none")
@@ -1882,6 +1971,21 @@ def _render_report(payload: dict[str, Any]) -> str:
         approval = " approval-required" if action.get("requires_explicit_operator_approval") else ""
         lines.append(f"- `{action['code']}`{approval}: `{action['command']}` — {action['reason']}")
     return "\n".join(lines) + "\n"
+
+
+def _format_oanda_replay_report_cell(item: dict[str, Any]) -> str:
+    evidence = item.get("oanda_replay_evidence") if isinstance(item.get("oanda_replay_evidence"), dict) else {}
+    if not evidence or evidence.get("evidence_status") == "MISSING_OANDA_REPLAY_EVIDENCE":
+        return "`missing`"
+    parts = [
+        f"status={evidence.get('evidence_status')}",
+        f"n={evidence.get('validation_n')}",
+        f"win={evidence.get('validation_win_rate')}",
+        f"pf={evidence.get('validation_profit_factor')}",
+        f"day%={evidence.get('estimated_return_pct_per_active_day_at_observed_frequency')}",
+        f"5%trades={evidence.get('trades_needed_for_minimum_5pct')}",
+    ]
+    return "`" + " ".join(str(part) for part in parts) + "`"
 
 
 def _float(value: Any) -> float:

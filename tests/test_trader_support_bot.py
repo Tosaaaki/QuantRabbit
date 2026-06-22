@@ -357,6 +357,36 @@ class TraderSupportBotTest(unittest.TestCase):
                     ],
                 },
             )
+            oanda_rotation = root / "data" / "oanda_rotation.json"
+            _write_json(
+                oanda_rotation,
+                {
+                    "campaign_firepower": {
+                        "high_precision": {
+                            "top_vehicles": [
+                                {
+                                    "vehicle_key": "GBP_JPY|LONG|range_reversion|tp1_sl1",
+                                    "evidence_status": "HIGH_PRECISION_VALIDATED",
+                                    "pair": "GBP_JPY",
+                                    "side": "LONG",
+                                    "validation_n": 15,
+                                    "validation_win_rate": 0.8,
+                                    "validation_win_wilson95_lower": 0.548141,
+                                    "validation_profit_factor": 4.129446,
+                                    "validation_avg_realized_pips": 4.2,
+                                    "validation_expectancy_r": 0.6,
+                                    "active_days": 6,
+                                    "positive_day_rate": 0.833333,
+                                    "estimated_return_pct_per_active_day_at_observed_frequency": 1.53987,
+                                    "trades_needed_for_minimum_5pct": 9,
+                                    "trades_needed_for_target_10pct": 18,
+                                }
+                            ]
+                        },
+                        "evidence_queue": {"top_vehicles": []},
+                    }
+                },
+            )
             env = _guardian_env(root, active="0")
             with mock.patch.dict(os.environ, env, clear=False):
                 TraderSupportBot(
@@ -371,6 +401,7 @@ class TraderSupportBotTest(unittest.TestCase):
                     profitability_acceptance_path=files["profitability"],
                     execution_timing_audit_path=files["timing"],
                     profit_capture_bot_path=files["profit_capture_bot"],
+                    oanda_rotation_mining_path=oanda_rotation,
                     output_path=files["output"],
                     report_path=files["report"],
                     now_utc=now,
@@ -532,6 +563,13 @@ class TraderSupportBotTest(unittest.TestCase):
             candidate = payload["entry_readiness"]["oanda_audit_only_local_tp_proof_required"][0]
             self.assertEqual(candidate["capture_take_profit_scope"], "MISSING_METHOD_SCOPE")
             self.assertEqual(candidate["oanda_vehicle_key"], "GBP_JPY|LONG|range_reversion|tp1_sl1")
+            self.assertEqual(candidate["oanda_replay_evidence_status"], "HIGH_PRECISION_VALIDATED")
+            self.assertFalse(candidate["oanda_replay_live_permission"])
+            self.assertEqual(candidate["oanda_replay_evidence"]["validation_n"], 15)
+            self.assertEqual(candidate["oanda_replay_evidence"]["validation_win_rate"], 0.8)
+            self.assertEqual(candidate["oanda_replay_evidence"]["validation_profit_factor"], 4.129446)
+            self.assertEqual(candidate["oanda_replay_evidence"]["trades_needed_for_minimum_5pct"], 9)
+            self.assertEqual(payload["metrics"]["oanda_audit_only_with_replay_evidence_lanes"], 1)
             self.assertEqual(
                 candidate["remaining_blocker_codes_after_guardian"],
                 [
@@ -544,6 +582,9 @@ class TraderSupportBotTest(unittest.TestCase):
             report = files["report"].read_text()
             self.assertIn("OANDA Audit-Only Local TP Proof Required", report)
             self.assertIn("MISSING_METHOD_SCOPE", report)
+            self.assertIn("n=15", report)
+            self.assertIn("pf=4.129446", report)
+            self.assertIn("5%trades=9", report)
 
     def test_cli_writes_support_panel_and_returns_blocked_code(self) -> None:
         now = datetime(2026, 6, 22, 12, 15, tzinfo=timezone.utc)
