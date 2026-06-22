@@ -1719,7 +1719,7 @@ def _attached_stop_loss_price(intent: OrderIntent) -> float | None:
     initial_sl_on = os.environ.get("QR_NEW_ENTRY_INITIAL_SL", "").strip() in {
         "1", "true", "TRUE", "yes", "YES",
     }
-    if initial_sl_on or not _trader_sl_repair_disabled():
+    if initial_sl_on or not _trader_sl_repair_disabled() or _requires_intent_stop_on_fill(intent):
         return intent.sl
     disaster_sl = (intent.metadata or {}).get("disaster_sl")
     if disaster_sl is None:
@@ -1728,6 +1728,16 @@ def _attached_stop_loss_price(intent: OrderIntent) -> float | None:
         return float(disaster_sl)
     except (TypeError, ValueError):
         return None
+
+
+def _requires_intent_stop_on_fill(intent: OrderIntent) -> bool:
+    metadata = intent.metadata or {}
+    if metadata.get("broker_stop_loss_mode") == "INTENT_SL":
+        return True
+    return (
+        metadata.get("campaign_role") == "OANDA_FIREPOWER_ROUTE"
+        and metadata.get("positive_rotation_oanda_campaign_firepower_vehicle_match") is True
+    )
 
 
 def _attached_stop_risk_metrics(
@@ -2346,7 +2356,7 @@ def _oanda_order_request(intent: OrderIntent) -> dict[str, Any]:
     initial_sl_on = os.environ.get("QR_NEW_ENTRY_INITIAL_SL", "").strip() in {
         "1", "true", "TRUE", "yes", "YES",
     }
-    if initial_sl_on or not _trader_sl_repair_disabled():
+    if initial_sl_on or not _trader_sl_repair_disabled() or _requires_intent_stop_on_fill(intent):
         order["stopLossOnFill"] = {"price": _price(intent.pair, intent.sl)}
     else:
         # Disaster stop (2026-06-11, operator-approved 「SLの件もやっていい」):

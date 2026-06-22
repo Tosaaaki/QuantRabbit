@@ -250,6 +250,55 @@ class LiveOrderGatewayTest(unittest.TestCase):
             else:
                 os.environ["QR_NEW_ENTRY_INITIAL_SL"] = prior_initial_sl
 
+    def test_sl_free_firepower_route_attaches_intent_stop_for_measured_risk(self) -> None:
+        prior_sl_free = os.environ.get("QR_TRADER_DISABLE_SL_REPAIR")
+        prior_initial_sl = os.environ.get("QR_NEW_ENTRY_INITIAL_SL")
+        os.environ["QR_TRADER_DISABLE_SL_REPAIR"] = "1"
+        os.environ.pop("QR_NEW_ENTRY_INITIAL_SL", None)
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                client = FakeExecutionClient()
+                summary = LiveOrderGateway(
+                    client=client,
+                    strategy_profile=_profile(root),
+                    output_path=root / "request.json",
+                    report_path=root / "report.md",
+                ).run(
+                    intents_path=_intents(
+                        root,
+                        metadata={
+                            "desk": "range_trader",
+                            "campaign_role": "OANDA_FIREPOWER_ROUTE",
+                            "positive_rotation_oanda_campaign_firepower_vehicle_match": True,
+                            "disaster_sl": 1.17000,
+                        },
+                    ),
+                    lane_id="lane:EUR_USD:LONG",
+                )
+
+                self.assertEqual(summary.status, "STAGED")
+                payload = json.loads((root / "request.json").read_text())
+                self.assertEqual(payload["order_request"]["stopLossOnFill"]["price"], "1.17250")
+                self.assertEqual(payload["attached_stop_risk_metrics"]["basis"], "INTENT_SL")
+                self.assertAlmostEqual(
+                    payload["attached_stop_risk_metrics"]["risk_jpy"],
+                    payload["risk_metrics"]["risk_jpy"],
+                )
+                self.assertAlmostEqual(
+                    payload["attached_stop_risk_metrics"]["loss_delta_pips"],
+                    0.0,
+                )
+        finally:
+            if prior_sl_free is None:
+                os.environ.pop("QR_TRADER_DISABLE_SL_REPAIR", None)
+            else:
+                os.environ["QR_TRADER_DISABLE_SL_REPAIR"] = prior_sl_free
+            if prior_initial_sl is None:
+                os.environ.pop("QR_NEW_ENTRY_INITIAL_SL", None)
+            else:
+                os.environ["QR_NEW_ENTRY_INITIAL_SL"] = prior_initial_sl
+
     def test_sl_free_disaster_stop_does_not_block_on_per_trade_tail_cap(self) -> None:
         prior_sl_free = os.environ.get("QR_TRADER_DISABLE_SL_REPAIR")
         prior_initial_sl = os.environ.get("QR_NEW_ENTRY_INITIAL_SL")
@@ -2154,6 +2203,20 @@ class DisasterStopOrderRequestTest(unittest.TestCase):
         os.environ["QR_TRADER_DISABLE_SL_REPAIR"] = "1"
         os.environ["QR_NEW_ENTRY_INITIAL_SL"] = "1"
         order = execution_module._oanda_order_request(self._intent({"disaster_sl": 1.1380}))
+        self.assertEqual(order["stopLossOnFill"]["price"], "1.14700")
+
+    def test_firepower_route_keeps_intent_sl_over_disaster(self) -> None:
+        os.environ["QR_TRADER_DISABLE_SL_REPAIR"] = "1"
+        os.environ.pop("QR_NEW_ENTRY_INITIAL_SL", None)
+        order = execution_module._oanda_order_request(
+            self._intent(
+                {
+                    "campaign_role": "OANDA_FIREPOWER_ROUTE",
+                    "positive_rotation_oanda_campaign_firepower_vehicle_match": True,
+                    "disaster_sl": 1.1380,
+                }
+            )
+        )
         self.assertEqual(order["stopLossOnFill"]["price"], "1.14700")
 
     def test_normal_sl_mode_unchanged(self) -> None:
