@@ -1707,6 +1707,48 @@ class PositionManagerTest(unittest.TestCase):
             self.assertIn("TP-progress profit-take", report)
             self.assertIn("bank high-turnover profit before reversal", report)
 
+    def test_deep_tp_progress_takes_profit_before_extending_runner(self) -> None:
+        # Even if the macro/micro matrix could EXTEND a still-aligned runner,
+        # an attached-TP trade that has already captured the majority of its
+        # planned target should bank the executable profit first. This is the
+        # remaining 472792-style hole: "stretch TP" must not outrank realized
+        # progress while the 5% campaign is still open.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            decision = _decision(root, long_score=160, short_score=120)
+            pair_charts = _tp_progress_extend_pair_charts(root)
+            _write_latest_forecast(root, direction="UP", confidence=0.78)
+            snapshot = _snapshot(
+                BrokerPosition(
+                    trade_id="deep-progress-extend",
+                    pair="EUR_USD",
+                    side=Side.LONG,
+                    units=6000,
+                    entry_price=1.20000,
+                    unrealized_pl_jpy=480,
+                    take_profit=1.20100,
+                    stop_loss=1.19800,
+                ),
+                bid=1.20070,
+                ask=1.20072,
+            )
+
+            result = PositionManager(
+                trader_decision_path=decision,
+                pair_charts_path=pair_charts,
+                output_path=root / "data" / "pm.json",
+                report_path=root / "pm.md",
+                data_root=root,
+            ).run(snapshot)
+
+            self.assertEqual(result.action, ACTION_TAKE_PROFIT_MARKET)
+            self.assertEqual(result.positions[0].action, ACTION_TAKE_PROFIT_MARKET)
+            self.assertIsNone(result.positions[0].recommended_take_profit)
+            report = (root / "pm.md").read_text()
+            self.assertIn("TP-progress profit-take", report)
+            self.assertIn("bank high-turnover profit before reversal", report)
+            self.assertNotIn("extend TP", report)
+
     def test_usd_jpy_short_keeps_tp_when_progress_is_shallow(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -2554,6 +2596,54 @@ def _usd_jpy_tp_progress_pair_charts(root: Path, *, atr_pips: float) -> Path:
                             },
                             {"granularity": "H1", "regime": "RANGE"},
                             {"granularity": "H4", "regime": "RANGE"},
+                        ],
+                    }
+                ]
+            }
+        )
+    )
+    return path
+
+
+def _tp_progress_extend_pair_charts(root: Path) -> Path:
+    path = root / "pair_charts_tp_progress_extend.json"
+    path.write_text(
+        json.dumps(
+            {
+                "charts": [
+                    {
+                        "pair": "EUR_USD",
+                        "chart_story": (
+                            "M1(TREND_UP,ADX=25,ST=+,struct=BOS_UP@1.2004) "
+                            "M5(TREND_UP,ADX=28,ST=+,struct=BOS_UP@1.2005) "
+                            "H1(TREND_UP,ADX=31,ST=+) "
+                            "H4(TREND_UP,ADX=29,ST=+) "
+                            "D(RANGE,ADX=12,ST=+)"
+                        ),
+                        "session": {"current_tag": "LONDON_KILLZONE"},
+                        "views": [
+                            {
+                                "granularity": "M1",
+                                "regime": "TREND_UP",
+                                "indicators": {"atr_pips": 1.0},
+                            },
+                            {
+                                "granularity": "M5",
+                                "regime": "TREND_UP",
+                                "indicators": {"atr_pips": 1.8},
+                            },
+                            {
+                                "granularity": "M15",
+                                "regime": "TREND_UP",
+                                "structure": {
+                                    "liquidity": [
+                                        {"side": "EQ_HIGH", "price": 1.2022, "indices": [1, 2, 3, 4]},
+                                        {"side": "EQ_HIGH", "price": 1.2040, "indices": [5, 6, 7, 8]},
+                                    ]
+                                },
+                            },
+                            {"granularity": "H1", "regime": "TREND_UP"},
+                            {"granularity": "H4", "regime": "TREND_UP"},
                         ],
                     }
                 ]

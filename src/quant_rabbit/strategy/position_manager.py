@@ -1037,6 +1037,14 @@ def _adaptive_tp_action(
         reasons.append(f"PA delta {pa_delta_lane:+.1f} demotes EXTEND→HARVEST")
 
     if action == ACTION_EXTEND_TP:
+        tp_progress_profit_take, tp_progress_reasons = _tp_progress_profit_take_signal(
+            position=position,
+            quote=quote,
+            pair_chart=pair_chart,
+        )
+        reasons.extend(tp_progress_reasons)
+        if tp_progress_profit_take:
+            return ACTION_TAKE_PROFIT_MARKET, None, reasons
         # Market-derived EXTEND target — push TP to the next-but-one
         # structural level beyond the current one (skip the anchor that
         # sits closest to current price, target the one after). No
