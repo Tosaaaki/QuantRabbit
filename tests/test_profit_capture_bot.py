@@ -9,6 +9,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from quant_rabbit.cli import main
+from quant_rabbit.execution_timing_contracts import (
+    TP_PROGRESS_REPAIR_REPLAY_CONTRACT,
+    TP_PROGRESS_REPAIR_REPLAY_FIELD,
+)
 from quant_rabbit.profit_capture_bot import (
     STATUS_BLOCKED,
     STATUS_READY,
@@ -38,10 +42,14 @@ class ProfitCaptureBotTest(unittest.TestCase):
             self.assertEqual(summary.status, STATUS_READY)
             self.assertEqual(payload["metrics"]["bankable_positions"], 1)
             self.assertEqual(payload["metrics"]["historical_counterfactual_profit_capture_delta_jpy"], 446.04)
+            self.assertTrue(payload["metrics"]["historical_repair_replay_contract_present"])
+            self.assertEqual(payload["metrics"]["historical_repair_replay_triggered"], 1)
+            self.assertEqual(payload["metrics"]["historical_repair_replay_delta_jpy"], 466.2)
             self.assertEqual(payload["positions"][0]["gate_status"], "BANKABLE_NOW")
             self.assertGreater(payload["positions"][0]["tp_progress"], 0.3)
             self.assertEqual(payload["history"]["top_misses"][0]["counterfactual_jpy"], 105.84)
             self.assertEqual(payload["history"]["top_misses"][0]["counterfactual_delta_jpy"], 446.04)
+            self.assertEqual(payload["history"]["top_repair_replay_triggers"][0]["repair_counterfactual_jpy"], 126.0)
             self.assertIn("Profit Capture Bot Report", files["report"].read_text())
 
     def test_watch_reports_trigger_when_position_is_not_profitable(self) -> None:
@@ -214,6 +222,9 @@ def _write_fixture(
         files["timing"],
         {
             "generated_at_utc": now.isoformat(),
+            "precision": {
+                TP_PROGRESS_REPAIR_REPLAY_FIELD: TP_PROGRESS_REPAIR_REPLAY_CONTRACT,
+            },
             "summary": {
                 "loss_closes_profit_capture_missed": historical_missed,
                 "stop_loss_closes_profit_capture_missed": historical_missed,
@@ -222,6 +233,10 @@ def _write_fixture(
                 "loss_close_counterfactual_profit_capture_pl_jpy": 105.84 if historical_missed else 0.0,
                 "loss_close_counterfactual_profit_capture_delta_jpy": 446.04 if historical_missed else 0.0,
                 "loss_close_counterfactual_profit_capture_jpy": 105.84 if historical_missed else 0.0,
+                "loss_closes_repair_replay_triggered": historical_missed,
+                "loss_close_repair_replay_profit_capture_jpy": 126.0 if historical_missed else 0.0,
+                "loss_close_repair_replay_counterfactual_pl_jpy": 126.0 if historical_missed else 0.0,
+                "loss_close_repair_replay_delta_jpy": 466.2 if historical_missed else 0.0,
             },
             "loss_close_regrets": [
                 {
@@ -230,11 +245,19 @@ def _write_fixture(
                     "side": "SHORT",
                     "exit_reason": "STOP_LOSS_ORDER",
                     "realized_pl_jpy": -340.2,
+                    "tp_progress_before_loss_close": 0.6071,
                     "profit_capture_missed_before_loss_close": bool(historical_missed),
                     "profit_capture_counterfactual_exit": "TP_PROGRESS_CAPTURE",
                     "profit_capture_counterfactual_pips": 3.0,
                     "profit_capture_counterfactual_jpy": 105.84,
                     "profit_capture_counterfactual_net_improvement_jpy": 446.04,
+                    "repair_replay_triggered_before_loss_close": bool(historical_missed),
+                    "repair_replay_exit": "TP_PROGRESS_PRODUCTION_GATE_REPLAY",
+                    "repair_replay_trigger_at_utc": "2026-06-22T06:45:00+00:00",
+                    "repair_replay_profit_pips": 2.0,
+                    "repair_replay_noise_floor_pips": 1.6,
+                    "repair_replay_counterfactual_jpy": 126.0,
+                    "repair_replay_counterfactual_net_improvement_jpy": 466.2,
                 }
             ],
         },

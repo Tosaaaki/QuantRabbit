@@ -8,6 +8,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from quant_rabbit.execution_timing_contracts import (
+    TP_PROGRESS_REPAIR_REPLAY_CONTRACT,
+    TP_PROGRESS_REPAIR_REPLAY_FIELD,
+)
 from quant_rabbit.execution_timing_audit import BidAskCandle, build_execution_timing_audit
 
 
@@ -150,6 +154,10 @@ class ExecutionTimingAuditTest(unittest.TestCase):
                 candle_fetcher=fetcher,
             )
 
+            self.assertEqual(
+                payload["precision"][TP_PROGRESS_REPAIR_REPLAY_FIELD],
+                TP_PROGRESS_REPAIR_REPLAY_CONTRACT,
+            )
             summary = payload["summary"]
             self.assertEqual(summary["canceled_orders_audited"], 1)
             self.assertEqual(summary["canceled_entry_touched_after_cancel"], 1)
@@ -553,6 +561,9 @@ class ExecutionTimingAuditTest(unittest.TestCase):
             self.assertAlmostEqual(summary["loss_close_counterfactual_profit_capture_pl_jpy"], 30.0)
             self.assertAlmostEqual(summary["loss_close_counterfactual_profit_capture_delta_jpy"], 80.0)
             self.assertAlmostEqual(summary["loss_close_counterfactual_profit_capture_jpy"], 30.0)
+            self.assertEqual(summary["loss_closes_repair_replay_triggered"], 1)
+            self.assertAlmostEqual(summary["loss_close_repair_replay_profit_capture_jpy"], 32.0)
+            self.assertAlmostEqual(summary["loss_close_repair_replay_delta_jpy"], 82.0)
             row = payload["loss_close_regrets"][0]
             self.assertEqual(row["mfe_pips_before_loss_close"], 3.2)
             self.assertAlmostEqual(row["tp_progress_before_loss_close"], 0.32)
@@ -561,6 +572,82 @@ class ExecutionTimingAuditTest(unittest.TestCase):
             self.assertEqual(row["profit_capture_counterfactual_pips"], 3.0)
             self.assertAlmostEqual(row["profit_capture_counterfactual_jpy"], 30.0)
             self.assertAlmostEqual(row["profit_capture_counterfactual_net_improvement_jpy"], 80.0)
+            self.assertTrue(row["repair_replay_triggered_before_loss_close"])
+            self.assertEqual(row["repair_replay_exit"], "TP_PROGRESS_PRODUCTION_GATE_REPLAY")
+            self.assertAlmostEqual(row["repair_replay_profit_pips"], 3.2)
+            self.assertAlmostEqual(row["repair_replay_counterfactual_jpy"], 32.0)
+            self.assertAlmostEqual(row["repair_replay_counterfactual_net_improvement_jpy"], 82.0)
+
+    def test_tp_progress_repair_replay_requires_live_noise_floor(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            db = root / "ledger.db"
+            _make_db(db)
+            with sqlite3.connect(db) as conn:
+                _insert_event(
+                    conn,
+                    "fill-noisy",
+                    ts_utc="2026-06-16T01:00:10Z",
+                    event_type="ORDER_FILLED",
+                    lane_id="range_trader:USD_JPY:SHORT:RANGE_ROTATION",
+                    order_id="o-fill-noisy",
+                    trade_id="t-noisy",
+                    pair="USD_JPY",
+                    side="SHORT",
+                    units=-1000,
+                    price=150.00,
+                )
+                _insert_event(
+                    conn,
+                    "tp-noisy",
+                    ts_utc="2026-06-16T01:00:20Z",
+                    event_type="PROTECTION_CREATED",
+                    trade_id="t-noisy",
+                    pair="USD_JPY",
+                    price=149.90,
+                    raw={"type": "TAKE_PROFIT_ORDER", "tradeID": "t-noisy", "price": "149.90"},
+                )
+                _insert_event(
+                    conn,
+                    "close-noisy",
+                    ts_utc="2026-06-16T01:10:30Z",
+                    event_type="TRADE_CLOSED",
+                    order_id="o-close-noisy",
+                    trade_id="t-noisy",
+                    pair="USD_JPY",
+                    side="SHORT",
+                    units=1000,
+                    price=150.05,
+                    realized_pl_jpy=-50.0,
+                    exit_reason="STOP_LOSS_ORDER",
+                )
+                conn.commit()
+
+            candles = (
+                BidAskCandle(_dt("2026-06-16T01:03:00Z"), 150.080, 149.960, 150.090, 149.968),
+                BidAskCandle(_dt("2026-06-16T01:08:00Z"), 150.030, 149.990, 150.050, 150.010),
+            )
+
+            def fetcher(pair: str, start: datetime, end: datetime, granularity: str) -> tuple[BidAskCandle, ...]:
+                self.assertEqual(pair, "USD_JPY")
+                return tuple(c for c in candles if start <= c.timestamp_utc <= end)
+
+            payload = build_execution_timing_audit(
+                ledger_path=db,
+                snapshot_path=None,
+                output_path=root / "audit.json",
+                report_path=root / "audit.md",
+                now_utc=_dt("2026-06-17T00:00:00Z"),
+                candle_fetcher=fetcher,
+            )
+
+            summary = payload["summary"]
+            self.assertEqual(summary["loss_closes_profit_capture_missed"], 1)
+            self.assertEqual(summary["loss_closes_repair_replay_triggered"], 0)
+            self.assertAlmostEqual(summary["loss_close_repair_replay_counterfactual_pl_jpy"], -50.0)
+            row = payload["loss_close_regrets"][0]
+            self.assertTrue(row["profit_capture_missed_before_loss_close"])
+            self.assertFalse(row["repair_replay_triggered_before_loss_close"])
 
     def test_market_close_lookback_is_anchored_to_latest_close_activity(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

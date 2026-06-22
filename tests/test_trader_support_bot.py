@@ -11,6 +11,10 @@ from pathlib import Path
 from unittest import mock
 
 from quant_rabbit.cli import main
+from quant_rabbit.execution_timing_contracts import (
+    TP_PROGRESS_REPAIR_REPLAY_CONTRACT,
+    TP_PROGRESS_REPAIR_REPLAY_FIELD,
+)
 from quant_rabbit.trader_support_bot import STATUS_BLOCKED, STATUS_READY, TraderSupportBot
 
 
@@ -49,8 +53,11 @@ class TraderSupportBotTest(unittest.TestCase):
             self.assertEqual(payload["metrics"]["repair_basket_guardian_recovery_lanes"], 0)
             self.assertEqual(payload["profit_capture"]["missed_loss_closes"], 2)
             self.assertEqual(payload["metrics"]["profit_capture_counterfactual_delta_jpy"], 1054.02)
+            self.assertEqual(payload["metrics"]["profit_capture_repair_replay_triggered"], 1)
+            self.assertTrue(payload["metrics"]["profit_capture_repair_replay_contract_present"])
+            self.assertEqual(payload["metrics"]["profit_capture_repair_replay_delta_jpy"], 466.2)
             self.assertEqual(payload["profit_capture"]["top_misses"][0]["profit_capture_counterfactual_jpy"], 105.84)
-            self.assertIn("zero loss_closes_profit_capture_missed", payload["profit_capture"]["clearance_condition"])
+            self.assertIn("zero loss_closes_repair_replay_triggered", payload["profit_capture"]["clearance_condition"])
             self.assertEqual(payload["current_profit_capture"]["watch_positions"], 1)
             self.assertEqual(payload["entry_readiness"]["guardian_blocked_lanes"], 2)
             self.assertEqual(payload["metrics"]["global_unlock_frontier_lanes"], 1)
@@ -692,12 +699,24 @@ def _write_fixture(root: Path, *, now: datetime, blocked: bool) -> dict[str, Pat
                     "loss_close_counterfactual_profit_capture_pl_jpy": -4134.177,
                     "loss_close_counterfactual_profit_capture_delta_jpy": 1054.02,
                     "loss_close_counterfactual_profit_capture_jpy": 474.341,
+                    "loss_closes_repair_replay_triggered": 1,
+                    "loss_close_repair_replay_delta_jpy": 466.2,
+                    "loss_close_repair_replay_profit_capture_jpy": 126.0,
                     "top_profit_capture_misses": [
                         {
                             "trade_id": "472792",
                             "pair": "USD_JPY",
                             "profit_capture_counterfactual_jpy": 105.84,
                             "profit_capture_counterfactual_net_improvement_jpy": 446.04,
+                        }
+                    ],
+                    "top_repair_replay_triggers": [
+                        {
+                            "trade_id": "472792",
+                            "pair": "USD_JPY",
+                            "side": "SHORT",
+                            "repair_counterfactual_jpy": 126.0,
+                            "repair_counterfactual_delta_jpy": 466.2,
                         }
                     ],
                 },
@@ -762,10 +781,11 @@ def _write_fixture(root: Path, *, now: datetime, blocked: bool) -> dict[str, Pat
                 "next_action": "prove TP-progress capture repair clean",
                 "evidence": {
                     "loss_closes_profit_capture_missed": 2,
+                    "loss_closes_repair_replay_triggered": 1,
                     "counterfactual_profit_capture_delta_jpy": 1054.02,
                     "counterfactual_profit_capture_jpy": 474.341,
                     "clearance_condition": (
-                        "execution-timing-audit must report zero loss_closes_profit_capture_missed"
+                        "execution-timing-audit must report zero loss_closes_repair_replay_triggered"
                     ),
                     "top_profit_capture_misses": [
                         {
@@ -774,6 +794,15 @@ def _write_fixture(root: Path, *, now: datetime, blocked: bool) -> dict[str, Pat
                             "side": "SHORT",
                             "counterfactual_jpy": 105.84,
                             "counterfactual_delta_jpy": 446.04,
+                        }
+                    ],
+                    "top_repair_replay_triggers": [
+                        {
+                            "trade_id": "472792",
+                            "pair": "USD_JPY",
+                            "side": "SHORT",
+                            "repair_counterfactual_jpy": 126.0,
+                            "repair_counterfactual_delta_jpy": 466.2,
                         }
                     ],
                 },
@@ -987,7 +1016,15 @@ def _write_fixture(root: Path, *, now: datetime, blocked: bool) -> dict[str, Pat
         {
             "generated_at_utc": now.isoformat(),
             "status": "OK",
-            "summary": {"loss_closes_profit_capture_missed": 2 if blocked else 0},
+            "precision": {
+                TP_PROGRESS_REPAIR_REPLAY_FIELD: TP_PROGRESS_REPAIR_REPLAY_CONTRACT,
+            },
+            "summary": {
+                "loss_closes_profit_capture_missed": 2 if blocked else 0,
+                "loss_closes_repair_replay_triggered": 1 if blocked else 0,
+                "loss_close_repair_replay_delta_jpy": 466.2 if blocked else 0.0,
+                "loss_close_repair_replay_profit_capture_jpy": 126.0 if blocked else 0.0,
+            },
         },
     )
     _write_json(
@@ -1001,6 +1038,8 @@ def _write_fixture(root: Path, *, now: datetime, blocked: bool) -> dict[str, Pat
                 "watch_positions": 1,
                 "blocked_positions": 0,
                 "historical_missed_loss_closes": 2 if blocked else 0,
+                "historical_repair_replay_triggered": 1 if blocked else 0,
+                "historical_repair_replay_delta_jpy": 466.2 if blocked else 0.0,
             },
             "positions": [
                 {

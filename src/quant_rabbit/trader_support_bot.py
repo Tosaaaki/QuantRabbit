@@ -9,6 +9,10 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
+from quant_rabbit.execution_timing_contracts import (
+    TP_PROGRESS_REPAIR_REPLAY_CONTRACT,
+    repair_replay_contract_from_payload,
+)
 from quant_rabbit.paths import (
     DEFAULT_BROKER_SNAPSHOT,
     DEFAULT_DAILY_TARGET_STATE,
@@ -186,6 +190,13 @@ class TraderSupportBot:
             "profit_capture_counterfactual_pl_jpy": profit_capture["counterfactual_profit_capture_pl_jpy"],
             "profit_capture_counterfactual_delta_jpy": profit_capture["counterfactual_profit_capture_delta_jpy"],
             "profit_capture_counterfactual_jpy": profit_capture["counterfactual_profit_capture_jpy"],
+            "profit_capture_repair_replay_contract": profit_capture["repair_replay_contract"],
+            "profit_capture_repair_replay_contract_present": profit_capture[
+                "repair_replay_contract_present"
+            ],
+            "profit_capture_repair_replay_triggered": profit_capture["repair_replay_triggered"],
+            "profit_capture_repair_replay_delta_jpy": profit_capture["repair_replay_delta_jpy"],
+            "profit_capture_repair_replay_jpy": profit_capture["repair_replay_jpy"],
             "profit_capture_bankable_positions": current_profit_capture["bankable_positions"],
             "profit_capture_watch_positions": current_profit_capture["watch_positions"],
             "profit_capture_blocked_positions": current_profit_capture["blocked_positions"],
@@ -477,6 +488,8 @@ def _profit_capture_summary(self_improvement: dict[str, Any], timing: dict[str, 
     finding = next((item for item in _p0_findings(self_improvement) if item.get("code") == PROFIT_CAPTURE_MISS), None)
     evidence = finding.get("evidence") if isinstance(finding, dict) and isinstance(finding.get("evidence"), dict) else {}
     summary = timing.get("summary") if isinstance(timing.get("summary"), dict) else {}
+    repair_replay_contract = repair_replay_contract_from_payload(timing)
+    repair_replay_contract_present = repair_replay_contract == TP_PROGRESS_REPAIR_REPLAY_CONTRACT
     missed = evidence.get("loss_closes_profit_capture_missed", summary.get("loss_closes_profit_capture_missed"))
     gap = evidence.get("loss_close_estimated_capture_gap_jpy", summary.get("loss_close_estimated_capture_gap_jpy"))
     actual_pl = evidence.get("loss_close_actual_pl_jpy", summary.get("loss_close_actual_pl_jpy"))
@@ -492,7 +505,31 @@ def _profit_capture_summary(self_improvement: dict[str, Any], timing: dict[str, 
         "loss_close_counterfactual_profit_capture_jpy",
         summary.get("loss_close_counterfactual_profit_capture_jpy"),
     )
+    repair_replay_triggered = evidence.get(
+        "loss_closes_repair_replay_triggered",
+        summary.get("loss_closes_repair_replay_triggered"),
+    )
+    repair_replay_delta = evidence.get(
+        "loss_close_repair_replay_delta_jpy",
+        summary.get("loss_close_repair_replay_delta_jpy"),
+    )
+    repair_replay_jpy = evidence.get(
+        "loss_close_repair_replay_profit_capture_jpy",
+        summary.get("loss_close_repair_replay_profit_capture_jpy"),
+    )
     top = evidence.get("top_profit_capture_misses") if isinstance(evidence.get("top_profit_capture_misses"), list) else []
+    top_repair = (
+        evidence.get("top_repair_replay_triggers")
+        if isinstance(evidence.get("top_repair_replay_triggers"), list)
+        else []
+    )
+    if not top_repair:
+        rows = timing.get("loss_close_regrets") if isinstance(timing.get("loss_close_regrets"), list) else []
+        top_repair = [
+            row
+            for row in rows
+            if isinstance(row, dict) and row.get("repair_replay_triggered_before_loss_close")
+        ][:5]
     return {
         "status": "PROFIT_CAPTURE_REPAIR_REQUIRED" if _float(missed) > 0 else "OK",
         "missed_loss_closes": int(_float(missed)),
@@ -501,13 +538,20 @@ def _profit_capture_summary(self_improvement: dict[str, Any], timing: dict[str, 
         "counterfactual_profit_capture_pl_jpy": _round_optional(counterfactual_pl, 3),
         "counterfactual_profit_capture_delta_jpy": _round_optional(counterfactual_delta, 3),
         "counterfactual_profit_capture_jpy": _round_optional(counterfactual_jpy, 3),
+        "repair_replay_triggered": int(_float(repair_replay_triggered)),
+        "repair_replay_contract": repair_replay_contract,
+        "repair_replay_contract_present": repair_replay_contract_present,
+        "repair_replay_delta_jpy": _round_optional(repair_replay_delta, 3),
+        "repair_replay_jpy": _round_optional(repair_replay_jpy, 3),
         "stop_loss_missed": evidence.get("stop_loss_closes_profit_capture_missed", summary.get("stop_loss_closes_profit_capture_missed")),
         "top_misses": top[:5],
+        "top_repair_replay_triggers": top_repair[:5],
         "message": finding.get("message") if finding else None,
         "next_action": finding.get("next_action") if finding else None,
         "clearance_condition": (
-            "execution-timing-audit reports zero loss_closes_profit_capture_missed in the active audit "
-            "window, and position guardian is proven active before fresh entries resume"
+            "execution-timing-audit reports zero loss_closes_repair_replay_triggered and zero "
+            "loss_closes_profit_capture_missed in the active audit window, and position guardian "
+            "is proven active before fresh entries resume"
             if _float(missed) > 0
             else "no missed TP-progress loss close in the active timing audit"
         ),
@@ -525,6 +569,8 @@ def _current_profit_capture_summary(payload: dict[str, Any]) -> dict[str, Any]:
         "bankable_positions": metrics.get("bankable_positions", 0),
         "watch_positions": metrics.get("watch_positions", 0),
         "blocked_positions": metrics.get("blocked_positions", 0),
+        "historical_repair_replay_triggered": metrics.get("historical_repair_replay_triggered"),
+        "historical_repair_replay_delta_jpy": metrics.get("historical_repair_replay_delta_jpy"),
         "top_gate_statuses": [
             {
                 "trade_id": item.get("trade_id"),
@@ -948,13 +994,16 @@ def _acceptance_clearance_for_code(
         )
     if code == "TP_PROGRESS_REPLAY_REPAIR_UNPROVED":
         return (
-            "execution-timing-audit reports zero loss_closes_profit_capture_missed after the "
-            "TP-progress TAKE_PROFIT_MARKET path and position guardian have had a live window to "
-            "capture executable plus P/L before red closes",
+            "execution-timing-audit reports zero loss_closes_repair_replay_triggered and zero "
+            "loss_closes_profit_capture_missed after the TP-progress TAKE_PROFIT_MARKET path "
+            "and position guardian have had a live window to capture executable plus P/L before red closes",
             "PYTHONPATH=src python3 -m quant_rabbit.cli execution-timing-audit --max-events 80",
             {
                 "loss_closes_profit_capture_missed": evidence.get(
                     "loss_closes_profit_capture_missed"
+                ),
+                "loss_closes_repair_replay_triggered": evidence.get(
+                    "loss_closes_repair_replay_triggered"
                 ),
                 "counterfactual_profit_capture_delta_jpy": _round_optional(
                     evidence.get("counterfactual_profit_capture_delta_jpy"),
@@ -963,6 +1012,24 @@ def _acceptance_clearance_for_code(
                 "counterfactual_profit_capture_jpy": _round_optional(
                     evidence.get("counterfactual_profit_capture_jpy"),
                     3,
+                ),
+                "example_trade_ids": _example_trade_ids_from_top_misses(evidence),
+                "clearance_condition": evidence.get("clearance_condition"),
+            },
+        )
+    if code == "TP_PROGRESS_REPAIR_REPLAY_CONTRACT_MISSING":
+        return (
+            "execution-timing-audit is regenerated by the current runtime and includes "
+            f"{TP_PROGRESS_REPAIR_REPLAY_CONTRACT} before TP-progress repair is judged clean",
+            "PYTHONPATH=src python3 -m quant_rabbit.cli execution-timing-audit --max-events 80",
+            {
+                "loss_closes_profit_capture_missed": evidence.get(
+                    "loss_closes_profit_capture_missed"
+                ),
+                "repair_replay_contract": evidence.get("repair_replay_contract"),
+                "required_repair_replay_contract": evidence.get(
+                    "required_repair_replay_contract",
+                    TP_PROGRESS_REPAIR_REPLAY_CONTRACT,
                 ),
                 "example_trade_ids": _example_trade_ids_from_top_misses(evidence),
                 "clearance_condition": evidence.get("clearance_condition"),
@@ -1225,6 +1292,12 @@ def _profit_capture_miss_message(profit_capture: dict[str, Any]) -> str:
         profit_capture.get("message")
         or f"{profit_capture['missed_loss_closes']} losing close(s) missed TP-progress capture"
     )
+    repair_triggers = int(_float(profit_capture.get("repair_replay_triggered")))
+    if repair_triggers > 0:
+        repair_delta = profit_capture.get("repair_replay_delta_jpy")
+        if repair_delta is None:
+            return f"{message}; production-gate replay triggers={repair_triggers}"
+        return f"{message}; production-gate replay triggers={repair_triggers} delta={repair_delta} JPY"
     delta = profit_capture.get("counterfactual_profit_capture_delta_jpy")
     if delta is None:
         return message
@@ -1363,7 +1436,10 @@ def _operator_actions(
                 "reason": "verify the 7-day loss-close leak window is shrinking before adding turnover",
             }
         )
-    if "TP_PROGRESS_REPLAY_REPAIR_UNPROVED" in repair_codes:
+    if {
+        "TP_PROGRESS_REPLAY_REPAIR_UNPROVED",
+        "TP_PROGRESS_REPAIR_REPLAY_CONTRACT_MISSING",
+    } & repair_codes:
         actions.append(
             {
                 "code": "VERIFY_TP_PROGRESS_REPLAY_REPAIR",
@@ -1469,7 +1545,9 @@ def _render_report(payload: dict[str, Any]) -> str:
         f"| Repair frontier blocked after support | `{entry['repair_frontier_after_support_blocked_lanes']}` |",
         f"| Global unlock frontier lanes | `{len(entry['global_unlock_frontier'])}` |",
         f"| Profit-capture misses | `{profit['missed_loss_closes']}` gap=`{profit['estimated_gap_jpy']}` JPY "
-        f"counterfactual_delta=`{profit['counterfactual_profit_capture_delta_jpy']}` JPY |",
+        f"counterfactual_delta=`{profit['counterfactual_profit_capture_delta_jpy']}` JPY "
+        f"repair_replay_triggered=`{profit['repair_replay_triggered']}` "
+        f"repair_delta=`{profit['repair_replay_delta_jpy']}` JPY |",
         f"| Current profit-capture positions | bankable=`{current_profit['bankable_positions']}` watch=`{current_profit['watch_positions']}` blocked=`{current_profit['blocked_positions']}` |",
         f"| Open trader positions | `{broker['trader_positions']}` upl=`{broker['trader_unrealized_pl_jpy']}` JPY |",
         f"| Target remaining | `{target['remaining_target_jpy']}` JPY |",
@@ -1492,10 +1570,29 @@ def _render_report(payload: dict[str, Any]) -> str:
             f"- Actual loss-close PL JPY: `{profit['actual_loss_close_pl_jpy']}`",
             f"- Counterfactual profit-capture PL JPY: `{profit['counterfactual_profit_capture_pl_jpy']}`",
             f"- Counterfactual profit-capture delta JPY: `{profit['counterfactual_profit_capture_delta_jpy']}`",
+            f"- Production-gate replay triggered: `{profit['repair_replay_triggered']}`",
+            f"- Production-gate replay delta JPY: `{profit['repair_replay_delta_jpy']}`",
             f"- Clearance condition: {profit['clearance_condition']}",
             f"- Verify: `{profit['verification_command']}`",
         ]
     )
+    if profit.get("top_repair_replay_triggers"):
+        lines.extend(
+            [
+                "",
+                "| Repair Trade | Pair | Side | Exit | Trigger UTC | Repair pips | Noise floor | Repair JPY | Delta JPY |",
+                "|---|---|---|---|---|---:|---:|---:|---:|",
+            ]
+        )
+        for item in profit["top_repair_replay_triggers"][:5]:
+            lines.append(
+                f"| `{item.get('trade_id')}` | `{item.get('pair')}` | `{item.get('side')}` | "
+                f"`{item.get('exit_reason')}` | `{item.get('repair_trigger_at_utc') or item.get('repair_replay_trigger_at_utc')}` | "
+                f"`{_round_optional(item.get('repair_profit_pips') or item.get('repair_replay_profit_pips'), 4)}` | "
+                f"`{_round_optional(item.get('repair_noise_floor_pips') or item.get('repair_replay_noise_floor_pips'), 4)}` | "
+                f"`{_round_optional(item.get('repair_counterfactual_jpy') or item.get('repair_replay_counterfactual_jpy'), 3)}` | "
+                f"`{_round_optional(item.get('repair_counterfactual_delta_jpy') or item.get('repair_replay_counterfactual_net_improvement_jpy'), 3)}` |"
+            )
     if profit.get("top_misses"):
         lines.extend(
             [

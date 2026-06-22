@@ -6,6 +6,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from quant_rabbit.execution_timing_contracts import (
+    TP_PROGRESS_REPAIR_REPLAY_CONTRACT,
+    repair_replay_contract_from_payload,
+)
 from quant_rabbit.models import BrokerPosition, Owner, Quote, Side
 from quant_rabbit.paths import (
     DEFAULT_BROKER_SNAPSHOT,
@@ -141,6 +145,18 @@ class ProfitCaptureBot:
             "historical_counterfactual_profit_capture_jpy": history[
                 "counterfactual_profit_capture_jpy"
             ],
+            "historical_repair_replay_contract": history["repair_replay_contract"],
+            "historical_repair_replay_contract_present": history[
+                "repair_replay_contract_present"
+            ],
+            "historical_repair_replay_triggered": history["repair_replay_triggered"],
+            "historical_repair_replay_profit_capture_jpy": history[
+                "repair_replay_profit_capture_jpy"
+            ],
+            "historical_repair_replay_counterfactual_pl_jpy": history[
+                "repair_replay_counterfactual_pl_jpy"
+            ],
+            "historical_repair_replay_delta_jpy": history["repair_replay_delta_jpy"],
         }
         return {
             "artifact_paths": {
@@ -362,6 +378,8 @@ def _capture_trigger(
 
 def _historical_capture_summary(timing: dict[str, Any]) -> dict[str, Any]:
     summary = timing.get("summary") if isinstance(timing.get("summary"), dict) else {}
+    repair_replay_contract = repair_replay_contract_from_payload(timing)
+    repair_replay_contract_present = repair_replay_contract == TP_PROGRESS_REPAIR_REPLAY_CONTRACT
     rows = timing.get("loss_close_regrets") if isinstance(timing.get("loss_close_regrets"), list) else []
     top = [
         {
@@ -370,7 +388,7 @@ def _historical_capture_summary(timing: dict[str, Any]) -> dict[str, Any]:
             "side": row.get("side"),
             "exit_reason": row.get("exit_reason"),
             "realized_pl_jpy": _round(row.get("realized_pl_jpy"), 3),
-            "tp_progress_before_close": _round(row.get("tp_progress_before_close"), 4),
+            "tp_progress_before_close": _round(row.get("tp_progress_before_loss_close"), 4),
             "counterfactual_exit": row.get("profit_capture_counterfactual_exit"),
             "counterfactual_pips": _round(row.get("profit_capture_counterfactual_pips"), 4),
             "counterfactual_jpy": _round(row.get("profit_capture_counterfactual_jpy"), 3),
@@ -382,8 +400,30 @@ def _historical_capture_summary(timing: dict[str, Any]) -> dict[str, Any]:
         for row in rows
         if isinstance(row, dict) and row.get("profit_capture_missed_before_loss_close")
     ][:5]
+    top_repair = [
+        {
+            "trade_id": row.get("trade_id"),
+            "pair": row.get("pair"),
+            "side": row.get("side"),
+            "exit_reason": row.get("exit_reason"),
+            "realized_pl_jpy": _round(row.get("realized_pl_jpy"), 3),
+            "repair_replay_exit": row.get("repair_replay_exit"),
+            "repair_trigger_at_utc": row.get("repair_replay_trigger_at_utc"),
+            "repair_profit_pips": _round(row.get("repair_replay_profit_pips"), 4),
+            "repair_noise_floor_pips": _round(row.get("repair_replay_noise_floor_pips"), 4),
+            "repair_counterfactual_jpy": _round(row.get("repair_replay_counterfactual_jpy"), 3),
+            "repair_counterfactual_delta_jpy": _round(
+                row.get("repair_replay_counterfactual_net_improvement_jpy"),
+                3,
+            ),
+        }
+        for row in rows
+        if isinstance(row, dict) and row.get("repair_replay_triggered_before_loss_close")
+    ][:5]
     return {
         "generated_at_utc": timing.get("generated_at_utc"),
+        "repair_replay_contract": repair_replay_contract,
+        "repair_replay_contract_present": repair_replay_contract_present,
         "missed_loss_closes": int(_float(summary.get("loss_closes_profit_capture_missed"))),
         "missed_stop_loss_closes": int(_float(summary.get("stop_loss_closes_profit_capture_missed"))),
         "estimated_gap_jpy": _round(summary.get("loss_close_estimated_capture_gap_jpy"), 3),
@@ -403,7 +443,21 @@ def _historical_capture_summary(timing: dict[str, Any]) -> dict[str, Any]:
         "avg_decision_lag_minutes_after_first_positive": _round(
             summary.get("avg_decision_lag_minutes_after_first_positive"), 3
         ),
+        "repair_replay_triggered": int(_float(summary.get("loss_closes_repair_replay_triggered"))),
+        "repair_replay_profit_capture_jpy": _round(
+            summary.get("loss_close_repair_replay_profit_capture_jpy"),
+            3,
+        ),
+        "repair_replay_counterfactual_pl_jpy": _round(
+            summary.get("loss_close_repair_replay_counterfactual_pl_jpy"),
+            3,
+        ),
+        "repair_replay_delta_jpy": _round(
+            summary.get("loss_close_repair_replay_delta_jpy"),
+            3,
+        ),
         "top_misses": top,
+        "top_repair_replay_triggers": top_repair,
     }
 
 
@@ -431,6 +485,17 @@ def _blockers(*, positions: list[dict[str, Any]], history: dict[str, Any]) -> li
 
 def _historical_miss_message(history: dict[str, Any]) -> str:
     base = f"{history['missed_loss_closes']} recent loss close(s) missed executable profit capture"
+    repair_triggers = int(history.get("repair_replay_triggered") or 0)
+    if not history.get("repair_replay_contract_present"):
+        return (
+            f"{base}; production-gate replay sidecar is stale/missing "
+            f"{TP_PROGRESS_REPAIR_REPLAY_CONTRACT}"
+        )
+    if repair_triggers > 0:
+        delta = history.get("repair_replay_delta_jpy")
+        if delta is None:
+            return f"{base}; production-gate replay triggers={repair_triggers}"
+        return f"{base}; production-gate replay triggers={repair_triggers} delta={delta} JPY"
     delta = history.get("counterfactual_profit_capture_delta_jpy")
     if delta is None:
         return base
@@ -534,6 +599,20 @@ def _render_report(payload: dict[str, Any]) -> str:
         "- Counterfactual profit-capture delta JPY: "
         f"`{history['counterfactual_profit_capture_delta_jpy']}`"
     )
+    lines.append(f"- Production-gate replay triggers: `{history['repair_replay_triggered']}`")
+    lines.append(f"- Production-gate replay contract: `{history['repair_replay_contract']}`")
+    lines.append(
+        f"- Production-gate replay contract present: `{history['repair_replay_contract_present']}`"
+    )
+    lines.append(f"- Production-gate replay delta JPY: `{history['repair_replay_delta_jpy']}`")
+    if history["top_repair_replay_triggers"]:
+        for item in history["top_repair_replay_triggers"]:
+            lines.append(
+                f"- `{item['trade_id']}` `{item['pair']}` `{item['side']}` "
+                f"{item['exit_reason']} repair_at=`{item.get('repair_trigger_at_utc')}` "
+                f"repair_jpy=`{item.get('repair_counterfactual_jpy')}` "
+                f"delta=`{item.get('repair_counterfactual_delta_jpy')}`"
+            )
     if history["top_misses"]:
         for item in history["top_misses"]:
             lines.append(

@@ -9,6 +9,10 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
+from quant_rabbit.execution_timing_contracts import (
+    TP_PROGRESS_REPAIR_REPLAY_CONTRACT,
+    repair_replay_contract_from_payload,
+)
 from quant_rabbit.forecast_precision import (
     DEFAULT_BIDASK_REPLAY_RULES_PATH,
     projection_precision_edge_summary,
@@ -1225,9 +1229,16 @@ def _execution_timing_loss_close_labels(
         "loss_close_counterfactual_profit_capture_pl_jpy": None,
         "loss_close_counterfactual_profit_capture_delta_jpy": None,
         "loss_close_counterfactual_profit_capture_jpy": None,
+        "loss_closes_repair_replay_triggered": 0,
+        "repair_replay_contract": None,
+        "repair_replay_contract_present": False,
+        "loss_close_repair_replay_counterfactual_pl_jpy": None,
+        "loss_close_repair_replay_delta_jpy": None,
+        "loss_close_repair_replay_profit_capture_jpy": None,
         "loss_market_close_rows": 0,
         "label_counts": {},
         "top_profit_capture_misses": [],
+        "top_repair_replay_triggers": [],
         "read_error": None,
     }
     if path is None:
@@ -1240,6 +1251,11 @@ def _execution_timing_loss_close_labels(
         metrics["read_error"] = f"{type(exc).__name__}: {exc}"
         return {}, metrics
     summary = payload.get("summary") if isinstance(payload.get("summary"), dict) else {}
+    repair_replay_contract = repair_replay_contract_from_payload(payload)
+    metrics["repair_replay_contract"] = repair_replay_contract
+    metrics["repair_replay_contract_present"] = (
+        repair_replay_contract == TP_PROGRESS_REPAIR_REPLAY_CONTRACT
+    )
     metrics["loss_closes_profit_capture_missed"] = int(
         _optional_float(summary.get("loss_closes_profit_capture_missed")) or 0
     )
@@ -1252,6 +1268,18 @@ def _execution_timing_loss_close_labels(
     )
     metrics["loss_close_counterfactual_profit_capture_jpy"] = _optional_float(
         summary.get("loss_close_counterfactual_profit_capture_jpy")
+    )
+    metrics["loss_closes_repair_replay_triggered"] = int(
+        _optional_float(summary.get("loss_closes_repair_replay_triggered")) or 0
+    )
+    metrics["loss_close_repair_replay_counterfactual_pl_jpy"] = _optional_float(
+        summary.get("loss_close_repair_replay_counterfactual_pl_jpy")
+    )
+    metrics["loss_close_repair_replay_delta_jpy"] = _optional_float(
+        summary.get("loss_close_repair_replay_delta_jpy")
+    )
+    metrics["loss_close_repair_replay_profit_capture_jpy"] = _optional_float(
+        summary.get("loss_close_repair_replay_profit_capture_jpy")
     )
     rows = payload.get("market_close_counterfactuals")
     if not isinstance(rows, list):
@@ -1274,30 +1302,55 @@ def _execution_timing_loss_close_labels(
     if not isinstance(regret_rows, list):
         regret_rows = []
     top_misses: list[dict[str, Any]] = []
+    top_repair_triggers: list[dict[str, Any]] = []
     for row in regret_rows:
-        if not isinstance(row, dict) or not row.get("profit_capture_missed_before_loss_close"):
+        if not isinstance(row, dict):
             continue
-        top_misses.append(
-            {
-                "trade_id": row.get("trade_id"),
-                "pair": row.get("pair"),
-                "side": row.get("side"),
-                "exit_reason": row.get("exit_reason"),
-                "realized_pl_jpy": _optional_float(row.get("realized_pl_jpy")),
-                "tp_progress_before_loss_close": _optional_float(
-                    row.get("tp_progress_before_loss_close")
-                ),
-                "counterfactual_exit": row.get("profit_capture_counterfactual_exit"),
-                "counterfactual_jpy": _optional_float(row.get("profit_capture_counterfactual_jpy")),
-                "counterfactual_delta_jpy": _optional_float(
-                    row.get("profit_capture_counterfactual_net_improvement_jpy")
-                ),
-            }
-        )
+        common = {
+            "trade_id": row.get("trade_id"),
+            "pair": row.get("pair"),
+            "side": row.get("side"),
+            "exit_reason": row.get("exit_reason"),
+            "realized_pl_jpy": _optional_float(row.get("realized_pl_jpy")),
+            "tp_progress_before_loss_close": _optional_float(
+                row.get("tp_progress_before_loss_close")
+            ),
+        }
+        if row.get("profit_capture_missed_before_loss_close"):
+            top_misses.append(
+                {
+                    **common,
+                    "counterfactual_exit": row.get("profit_capture_counterfactual_exit"),
+                    "counterfactual_jpy": _optional_float(row.get("profit_capture_counterfactual_jpy")),
+                    "counterfactual_delta_jpy": _optional_float(
+                        row.get("profit_capture_counterfactual_net_improvement_jpy")
+                    ),
+                }
+            )
+        if row.get("repair_replay_triggered_before_loss_close"):
+            top_repair_triggers.append(
+                {
+                    **common,
+                    "repair_replay_exit": row.get("repair_replay_exit"),
+                    "repair_trigger_at_utc": row.get("repair_replay_trigger_at_utc"),
+                    "repair_profit_pips": _optional_float(row.get("repair_replay_profit_pips")),
+                    "repair_tp_progress": _optional_float(row.get("repair_replay_tp_progress")),
+                    "repair_noise_floor_pips": _optional_float(
+                        row.get("repair_replay_noise_floor_pips")
+                    ),
+                    "repair_counterfactual_jpy": _optional_float(
+                        row.get("repair_replay_counterfactual_jpy")
+                    ),
+                    "repair_counterfactual_delta_jpy": _optional_float(
+                        row.get("repair_replay_counterfactual_net_improvement_jpy")
+                    ),
+                }
+            )
     metrics["loaded"] = True
     metrics["generated_at_utc"] = payload.get("generated_at_utc") or payload.get("generated_at")
     metrics["label_counts"] = dict(sorted(counts.items()))
     metrics["top_profit_capture_misses"] = top_misses[:5]
+    metrics["top_repair_replay_triggers"] = top_repair_triggers[:5]
     return labels, metrics
 
 
@@ -1316,28 +1369,85 @@ def _profit_capture_replay_repair_findings(
         "PROFIT_CAPTURE" in code or code == "LOSS_CLOSE_PROFIT_CAPTURE_MISSED"
         for code in self_p0_codes
     )
-    missed = int(_optional_float(timing_metrics.get("loss_closes_profit_capture_missed")) or 0)
+    simple_missed = int(_optional_float(timing_metrics.get("loss_closes_profit_capture_missed")) or 0)
+    repair_replay_missed = int(
+        _optional_float(timing_metrics.get("loss_closes_repair_replay_triggered")) or 0
+    )
+    repair_replay_contract_present = bool(timing_metrics.get("repair_replay_contract_present"))
+    repair_replay_contract_missing = (
+        bool(timing_metrics.get("loaded")) and not repair_replay_contract_present
+    )
+    missed = repair_replay_missed if repair_replay_missed > 0 else simple_missed
     counterfactual_delta = _optional_float(
-        timing_metrics.get("loss_close_counterfactual_profit_capture_delta_jpy")
+        timing_metrics.get("loss_close_repair_replay_delta_jpy")
     )
+    if counterfactual_delta is None:
+        counterfactual_delta = _optional_float(
+            timing_metrics.get("loss_close_counterfactual_profit_capture_delta_jpy")
+        )
     counterfactual_jpy = _optional_float(
-        timing_metrics.get("loss_close_counterfactual_profit_capture_jpy")
+        timing_metrics.get("loss_close_repair_replay_profit_capture_jpy")
     )
+    if counterfactual_jpy is None:
+        counterfactual_jpy = _optional_float(
+            timing_metrics.get("loss_close_counterfactual_profit_capture_jpy")
+        )
     metrics = {
         "execution_timing_loaded": bool(timing_metrics.get("loaded")),
         "execution_timing_generated_at_utc": timing_metrics.get("generated_at_utc"),
-        "loss_closes_profit_capture_missed": missed,
+        "loss_closes_profit_capture_missed": simple_missed,
+        "loss_closes_repair_replay_triggered": repair_replay_missed,
+        "repair_replay_contract": timing_metrics.get("repair_replay_contract"),
+        "repair_replay_contract_present": repair_replay_contract_present,
         "counterfactual_profit_capture_delta_jpy": counterfactual_delta,
         "counterfactual_profit_capture_jpy": counterfactual_jpy,
         "top_profit_capture_misses": timing_metrics.get("top_profit_capture_misses") or [],
+        "top_repair_replay_triggers": timing_metrics.get("top_repair_replay_triggers") or [],
         "self_improvement_profit_capture_context": has_self_profit_capture_context,
         "self_improvement_p0_codes": sorted(self_p0_codes),
         "clearance_condition": (
-            "execution-timing-audit must report zero loss_closes_profit_capture_missed "
-            "after TP-progress TAKE_PROFIT_MARKET / guardian repair has run on live broker truth"
+            "execution-timing-audit must report zero loss_closes_repair_replay_triggered "
+            "and zero loss_closes_profit_capture_missed after TP-progress TAKE_PROFIT_MARKET / "
+            "guardian repair has run on live broker truth"
         ),
-        "replay_repair_proved": bool(timing_metrics.get("loaded")) and missed == 0,
+        "replay_repair_proved": (
+            bool(timing_metrics.get("loaded"))
+            and repair_replay_contract_present
+            and simple_missed == 0
+            and repair_replay_missed == 0
+        ),
     }
+    if (
+        repair_replay_contract_missing
+        and simple_missed > 0
+        and has_self_profit_capture_context
+    ):
+        return metrics, [
+            _finding(
+                priority="P0",
+                code="TP_PROGRESS_REPAIR_REPLAY_CONTRACT_MISSING",
+                message=(
+                    f"{simple_missed} loss close(s) have TP-progress miss evidence, but the active "
+                    "execution-timing-audit sidecar was generated before production-gate replay "
+                    "validation and cannot prove the repair"
+                ),
+                next_action=(
+                    "Regenerate execution-timing-audit with the current runtime until the sidecar "
+                    f"contains {TP_PROGRESS_REPAIR_REPLAY_CONTRACT}, then evaluate "
+                    "loss_closes_repair_replay_triggered and loss_closes_profit_capture_missed."
+                ),
+                evidence={
+                    "loss_closes_profit_capture_missed": simple_missed,
+                    "loss_closes_repair_replay_triggered": repair_replay_missed,
+                    "repair_replay_contract": metrics["repair_replay_contract"],
+                    "required_repair_replay_contract": TP_PROGRESS_REPAIR_REPLAY_CONTRACT,
+                    "counterfactual_profit_capture_delta_jpy": counterfactual_delta,
+                    "counterfactual_profit_capture_jpy": counterfactual_jpy,
+                    "top_profit_capture_misses": metrics["top_profit_capture_misses"],
+                    "clearance_condition": metrics["clearance_condition"],
+                },
+            )
+        ]
     if (
         not metrics["execution_timing_loaded"]
         or missed <= 0
@@ -1356,14 +1466,16 @@ def _profit_capture_replay_repair_findings(
             next_action=(
                 "Do not treat high-turnover trading as repaired by rerunning reports. Keep the "
                 "TP-progress TAKE_PROFIT_MARKET path and position guardian active, then rerun "
-                "execution-timing-audit until loss_closes_profit_capture_missed is zero in the "
-                "active window."
+                "execution-timing-audit until loss_closes_repair_replay_triggered and "
+                "loss_closes_profit_capture_missed are both zero in the active window."
             ),
             evidence={
                 "loss_closes_profit_capture_missed": missed,
+                "loss_closes_repair_replay_triggered": repair_replay_missed,
                 "counterfactual_profit_capture_delta_jpy": counterfactual_delta,
                 "counterfactual_profit_capture_jpy": counterfactual_jpy,
                 "top_profit_capture_misses": metrics["top_profit_capture_misses"],
+                "top_repair_replay_triggers": metrics["top_repair_replay_triggers"],
                 "clearance_condition": metrics["clearance_condition"],
             },
         )

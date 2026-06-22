@@ -22,6 +22,10 @@ from pathlib import Path
 from typing import Any, Callable, Iterable
 
 from quant_rabbit.broker.oanda import OandaReadOnlyClient
+from quant_rabbit.execution_timing_contracts import (
+    TP_PROGRESS_REPAIR_REPLAY_CONTRACT,
+    TP_PROGRESS_REPAIR_REPLAY_FIELD,
+)
 from quant_rabbit.paths import (
     DEFAULT_BROKER_SNAPSHOT,
     DEFAULT_EXECUTION_LEDGER_DB,
@@ -61,6 +65,17 @@ TP_PROGRESS_CAPTURE_THRESHOLD = float(
         "QR_TIMING_PROFIT_CAPTURE_MIN_TP_PROGRESS",
         os.environ.get("QR_TP_PROGRESS_PROFIT_TAKE_MIN_PROGRESS", "0.30"),
     )
+)
+
+# Mirror the live PositionManager TP-progress market-close noise floor. The
+# audit still uses candles, not ticks, so the ATR/spread values are conservative
+# bar-level approximations, but the replay contract now matches the production
+# gate shape instead of a raw MFE threshold.
+TP_PROGRESS_REPAIR_NOISE_MULT = float(
+    os.environ.get("QR_TEMPORARY_EXTREME_MIN_PROFIT_NOISE_MULT", "1.0")
+)
+TP_PROGRESS_REPAIR_ATR_PERIOD = int(
+    os.environ.get("QR_TIMING_PROFIT_CAPTURE_ATR_PERIOD", "14")
 )
 
 
@@ -194,6 +209,7 @@ def build_execution_timing_audit(
             "price_basis": "OANDA_M1_BID_ASK_CANDLES",
             "granularity": granularity,
             "note": "M1 candles prove bar-level opportunity; tick JSONL can refine ordering inside a candle.",
+            TP_PROGRESS_REPAIR_REPLAY_FIELD: TP_PROGRESS_REPAIR_REPLAY_CONTRACT,
         },
         "window": {
             "from_utc": min(cutoff, market_close_cutoff).isoformat(),
@@ -591,6 +607,12 @@ def _audit_loss_close(
         mfe_pips=mfe_pips,
         jpy_per_pip=jpy_per_pip,
     )
+    repair_replay = _profit_capture_repair_replay(
+        close,
+        candles,
+        tp_distance_pips=tp_distance_pips,
+        jpy_per_pip=jpy_per_pip,
+    )
     return {
         "trade_id": close.trade_id,
         "lane_id": close.lane_id,
@@ -624,6 +646,17 @@ def _audit_loss_close(
         "profit_capture_counterfactual_jpy": counterfactual.get("jpy"),
         "profit_capture_counterfactual_net_improvement_jpy": counterfactual.get("net_improvement_jpy"),
         "profit_capture_counterfactual_pl_jpy": counterfactual.get("pl_jpy"),
+        "repair_replay_triggered_before_loss_close": repair_replay.get("triggered"),
+        "repair_replay_exit": repair_replay.get("exit"),
+        "repair_replay_trigger_at_utc": repair_replay.get("trigger_at_utc"),
+        "repair_replay_profit_pips": repair_replay.get("profit_pips"),
+        "repair_replay_tp_progress": repair_replay.get("tp_progress"),
+        "repair_replay_noise_floor_pips": repair_replay.get("noise_floor_pips"),
+        "repair_replay_spread_pips": repair_replay.get("spread_pips"),
+        "repair_replay_m1_atr_pips": repair_replay.get("m1_atr_pips"),
+        "repair_replay_counterfactual_jpy": repair_replay.get("jpy"),
+        "repair_replay_counterfactual_net_improvement_jpy": repair_replay.get("net_improvement_jpy"),
+        "repair_replay_counterfactual_pl_jpy": repair_replay.get("pl_jpy"),
         "jpy_per_pip_estimate": round(jpy_per_pip, 6) if jpy_per_pip is not None else None,
         "candles_available": len(candles),
     }
@@ -659,6 +692,52 @@ def _profit_capture_counterfactual(
         "pl_jpy": capture_jpy,
         "net_improvement_jpy": round(capture_jpy - close.realized_pl_jpy, 4),
     }
+
+
+def _profit_capture_repair_replay(
+    close: _MarketClose,
+    candles: tuple[BidAskCandle, ...],
+    *,
+    tp_distance_pips: float | None,
+    jpy_per_pip: float | None,
+) -> dict[str, Any]:
+    if not candles or tp_distance_pips is None or tp_distance_pips <= 0 or jpy_per_pip is None:
+        return {"triggered": False}
+    progress_gate = max(0.0, min(1.0, TP_PROGRESS_CAPTURE_THRESHOLD))
+    for idx, candle in enumerate(candles):
+        profit_pips = _favorable_delta(close.side, close.entry, candle) * _pip_factor(close.pair)
+        if profit_pips <= 0:
+            continue
+        progress = profit_pips / tp_distance_pips
+        if progress < progress_gate:
+            continue
+        spread_pips = _candle_spread_pips(close.pair, candle)
+        atr_pips = _rolling_mid_range_pips(
+            close.pair,
+            candles,
+            idx,
+            period=TP_PROGRESS_REPAIR_ATR_PERIOD,
+        )
+        if spread_pips is None or spread_pips <= 0 or atr_pips is None or atr_pips <= 0:
+            continue
+        noise_floor = max(spread_pips * TP_PROGRESS_REPAIR_NOISE_MULT, atr_pips)
+        if profit_pips < noise_floor:
+            continue
+        capture_jpy = round(profit_pips * jpy_per_pip, 4)
+        return {
+            "triggered": True,
+            "exit": "TP_PROGRESS_PRODUCTION_GATE_REPLAY",
+            "trigger_at_utc": candle.timestamp_utc.isoformat(),
+            "profit_pips": round(profit_pips, 4),
+            "tp_progress": round(progress, 4),
+            "noise_floor_pips": round(noise_floor, 4),
+            "spread_pips": round(spread_pips, 4),
+            "m1_atr_pips": round(atr_pips, 4),
+            "jpy": capture_jpy,
+            "pl_jpy": capture_jpy,
+            "net_improvement_jpy": round(capture_jpy - close.realized_pl_jpy, 4),
+        }
+    return {"triggered": False}
 
 
 def _audit_market_close_counterfactual(
@@ -789,6 +868,10 @@ def _summary(
     market_sl_after = [row for row in market_close_rows if row.get("sl_touched_after_market_close")]
     actual_loss_close_pl = _sum_known(loss_rows, "realized_pl_jpy")
     counterfactual_loss_close_pl = _counterfactual_loss_close_pl(loss_rows)
+    repair_replay_rows = [
+        row for row in loss_rows if row.get("repair_replay_triggered_before_loss_close")
+    ]
+    repair_replay_pl = _repair_replay_loss_close_pl(loss_rows)
     return {
         "canceled_orders_audited": len(canceled_rows),
         "canceled_entry_touched_after_cancel": len(canceled_entry),
@@ -821,6 +904,19 @@ def _summary(
         "loss_close_counterfactual_profit_capture_jpy": _sum_known(
             loss_capture_missed,
             "profit_capture_counterfactual_jpy",
+        ),
+        "loss_closes_repair_replay_triggered": len(repair_replay_rows),
+        "loss_closes_repair_replay_triggered_rate": _rate(len(repair_replay_rows), len(loss_rows)),
+        "loss_close_repair_replay_profit_capture_jpy": _sum_known(
+            repair_replay_rows,
+            "repair_replay_counterfactual_jpy",
+        ),
+        "loss_close_repair_replay_actual_pl_jpy": actual_loss_close_pl,
+        "loss_close_repair_replay_counterfactual_pl_jpy": repair_replay_pl,
+        "loss_close_repair_replay_delta_jpy": (
+            round(repair_replay_pl - actual_loss_close_pl, 4)
+            if repair_replay_pl is not None and actual_loss_close_pl is not None
+            else None
         ),
         "avg_decision_lag_minutes_after_first_positive": round(sum(lag_values) / len(lag_values), 2) if lag_values else None,
         "max_decision_lag_minutes_after_first_positive": round(max(lag_values), 2) if lag_values else None,
@@ -857,6 +953,22 @@ def _counterfactual_loss_close_pl(loss_rows: list[dict[str, Any]]) -> float | No
     seen = False
     for row in loss_rows:
         value = row.get("profit_capture_counterfactual_pl_jpy")
+        if value is None:
+            value = row.get("realized_pl_jpy")
+        if value is None:
+            continue
+        total += float(value)
+        seen = True
+    return round(total, 4) if seen else None
+
+
+def _repair_replay_loss_close_pl(loss_rows: list[dict[str, Any]]) -> float | None:
+    if not loss_rows:
+        return None
+    total = 0.0
+    seen = False
+    for row in loss_rows:
+        value = row.get("repair_replay_counterfactual_pl_jpy")
         if value is None:
             value = row.get("realized_pl_jpy")
         if value is None:
@@ -1001,6 +1113,12 @@ def _write_report(payload: dict[str, Any], report_path: Path) -> None:
         "loss_close_counterfactual_profit_capture_pl_jpy",
         "loss_close_counterfactual_profit_capture_delta_jpy",
         "loss_close_counterfactual_profit_capture_jpy",
+        "loss_closes_repair_replay_triggered",
+        "loss_closes_repair_replay_triggered_rate",
+        "loss_close_repair_replay_profit_capture_jpy",
+        "loss_close_repair_replay_actual_pl_jpy",
+        "loss_close_repair_replay_counterfactual_pl_jpy",
+        "loss_close_repair_replay_delta_jpy",
         "avg_decision_lag_minutes_after_first_positive",
         "max_decision_lag_minutes_after_first_positive",
         "market_closes_audited",
@@ -1071,7 +1189,7 @@ def _write_report(payload: dict[str, Any], report_path: Path) -> None:
                 jpy=row.get("estimated_missed_mfe_jpy"),
             )
         )
-    lines.extend(["", "## Top Loss Close Timing Regrets", "", "| Trade | Lane | Pair | Side | Exit | PL JPY | First plus min | Lag min | MFE pips | TP progress | Capture missed | Counterfactual JPY | Delta JPY | Est MFE JPY | TP touched |", "|---|---|---|---|---|---:|---:|---:|---:|---:|---|---:|---:|---:|---|"])
+    lines.extend(["", "## Top Loss Close Timing Regrets", "", "| Trade | Lane | Pair | Side | Exit | PL JPY | First plus min | Lag min | MFE pips | TP progress | Capture missed | Repair replay | Repair JPY | Repair delta | Est MFE JPY | TP touched |", "|---|---|---|---|---|---:|---:|---:|---:|---:|---|---|---:|---:|---:|---|"])
     top_loss = sorted(
         payload.get("loss_close_regrets") or [],
         key=lambda row: float(row.get("estimated_mfe_jpy_before_loss_close") or 0.0),
@@ -1079,7 +1197,7 @@ def _write_report(payload: dict[str, Any], report_path: Path) -> None:
     )[:20]
     for row in top_loss:
         lines.append(
-            "| `{trade}` | `{lane}` | `{pair}` | `{side}` | `{exit}` | `{pl}` | `{first}` | `{lag}` | `{mfe}` | `{progress}` | `{missed}` | `{cf_jpy}` | `{delta}` | `{jpy}` | `{tp}` |".format(
+            "| `{trade}` | `{lane}` | `{pair}` | `{side}` | `{exit}` | `{pl}` | `{first}` | `{lag}` | `{mfe}` | `{progress}` | `{missed}` | `{repair}` | `{repair_jpy}` | `{repair_delta}` | `{jpy}` | `{tp}` |".format(
                 trade=row.get("trade_id"),
                 lane=row.get("lane_id") or "",
                 pair=row.get("pair"),
@@ -1091,8 +1209,9 @@ def _write_report(payload: dict[str, Any], report_path: Path) -> None:
                 mfe=row.get("mfe_pips_before_loss_close"),
                 progress=row.get("tp_progress_before_loss_close"),
                 missed=row.get("profit_capture_missed_before_loss_close"),
-                cf_jpy=row.get("profit_capture_counterfactual_jpy"),
-                delta=row.get("profit_capture_counterfactual_net_improvement_jpy"),
+                repair=row.get("repair_replay_triggered_before_loss_close"),
+                repair_jpy=row.get("repair_replay_counterfactual_jpy"),
+                repair_delta=row.get("repair_replay_counterfactual_net_improvement_jpy"),
                 jpy=row.get("estimated_mfe_jpy_before_loss_close"),
                 tp=row.get("tp_touched_before_loss_close"),
             )
@@ -1246,6 +1365,36 @@ def _tp_touched(side: str, tp: float, candle: BidAskCandle) -> bool:
 
 def _sl_touched(side: str, sl: float, candle: BidAskCandle) -> bool:
     return candle.bid_low <= sl if side == "LONG" else candle.ask_high >= sl
+
+
+def _candle_spread_pips(pair: str, candle: BidAskCandle) -> float | None:
+    factor = _pip_factor(pair)
+    spreads = [
+        (candle.ask_high - candle.bid_high) * factor,
+        (candle.ask_low - candle.bid_low) * factor,
+    ]
+    positive = [value for value in spreads if value > 0]
+    return max(positive) if positive else None
+
+
+def _rolling_mid_range_pips(
+    pair: str,
+    candles: tuple[BidAskCandle, ...],
+    idx: int,
+    *,
+    period: int,
+) -> float | None:
+    factor = _pip_factor(pair)
+    start = max(0, idx - max(1, period) + 1)
+    ranges: list[float] = []
+    for candle in candles[start : idx + 1]:
+        mid_high = (candle.bid_high + candle.ask_high) / 2.0
+        mid_low = (candle.bid_low + candle.ask_low) / 2.0
+        if mid_high > mid_low:
+            ranges.append((mid_high - mid_low) * factor)
+    if not ranges:
+        return None
+    return sum(ranges) / len(ranges)
 
 
 def _jpy_per_pip(
