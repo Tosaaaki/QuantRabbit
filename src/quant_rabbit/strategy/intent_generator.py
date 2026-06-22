@@ -4796,6 +4796,9 @@ SELF_IMPROVEMENT_PROFITABILITY_P0_REPAIR_CODE = (
 SELF_IMPROVEMENT_PROFITABILITY_P0_REPAIR_RECENT_LOSS_CODE = (
     "SELF_IMPROVEMENT_P0_REPAIR_RECENT_LANE_LOSS"
 )
+MONTH_SCALE_RESIDUAL_LOSS_REPAIR_BLOCK_CODE = (
+    "MONTH_SCALE_RESIDUAL_LOSS_REPAIR_BLOCKED"
+)
 SELF_IMPROVEMENT_PROFITABILITY_P0_REPAIR_MODE = "TP_HARVEST_REPAIR"
 SELF_IMPROVEMENT_PENDING_EXECUTION_REPAIR_CODE = (
     "SELF_IMPROVEMENT_PENDING_EXECUTION_REPAIR_MODE"
@@ -5004,6 +5007,11 @@ class IntentGenerator:
         self_improvement_profitability_issue = (
             _self_improvement_profitability_p0_issue(self.data_root) if snapshot is not None else None
         )
+        month_scale_residual_issue = (
+            _profitability_acceptance_month_residual_issue(self.data_root)
+            if snapshot is not None
+            else None
+        )
         self_improvement_forecast_issue = (
             _self_improvement_forecast_adverse_path_issue(self.data_root) if snapshot is not None else None
         )
@@ -5039,6 +5047,7 @@ class IntentGenerator:
                         loss_streaks=loss_streaks,
                         repair_loss_streaks=repair_loss_streaks,
                         self_improvement_profitability_issue=self_improvement_profitability_issue,
+                        month_scale_residual_issue=month_scale_residual_issue,
                         self_improvement_forecast_issue=self_improvement_forecast_issue,
                         self_improvement_pending_issue=self_improvement_pending_issue,
                         self_improvement_guardian_issue=self_improvement_guardian_issue,
@@ -5076,6 +5085,7 @@ class IntentGenerator:
         loss_streaks: dict[str, SameDayLossStreak] | None = None,
         repair_loss_streaks: dict[tuple[str, str, str], SameDayLaneLossStreak] | None = None,
         self_improvement_profitability_issue: dict[str, str] | None = None,
+        month_scale_residual_issue: dict[str, Any] | None = None,
         self_improvement_forecast_issue: dict[str, str] | None = None,
         self_improvement_pending_issue: dict[str, str] | None = None,
         self_improvement_guardian_issue: dict[str, str] | None = None,
@@ -5318,9 +5328,17 @@ class IntentGenerator:
                 intent,
                 repair_loss_streaks,
             )
+            repair_residual_issue = _month_scale_residual_repair_issue(
+                intent,
+                month_scale_residual_issue,
+            )
             if repair_recent_loss_issue is not None:
                 risk_issues.append(repair_recent_loss_issue)
                 live_blockers = (*live_blockers, repair_recent_loss_issue["message"])
+                risk_allowed = False
+            elif repair_residual_issue is not None:
+                risk_issues.append(repair_residual_issue)
+                live_blockers = (*live_blockers, repair_residual_issue["message"])
                 risk_allowed = False
             else:
                 intent.metadata["self_improvement_p0_repair_live_ready"] = True
@@ -5364,7 +5382,19 @@ class IntentGenerator:
                 if repair_allowed
                 else None
             )
-            if repair_allowed and repair_recent_loss_issue is None:
+            repair_residual_issue = (
+                _month_scale_residual_repair_issue(
+                    intent,
+                    month_scale_residual_issue,
+                )
+                if repair_allowed
+                else None
+            )
+            if (
+                repair_allowed
+                and repair_recent_loss_issue is None
+                and repair_residual_issue is None
+            ):
                 intent.metadata["self_improvement_p0_repair_live_ready"] = True
                 intent.metadata["self_improvement_p0_repair_mode"] = (
                     SELF_IMPROVEMENT_PROFITABILITY_P0_REPAIR_MODE
@@ -5392,6 +5422,9 @@ class IntentGenerator:
                 if repair_recent_loss_issue is not None:
                     risk_issues.append(repair_recent_loss_issue)
                     live_blockers = (*live_blockers, repair_recent_loss_issue["message"])
+                if repair_residual_issue is not None:
+                    risk_issues.append(repair_residual_issue)
+                    live_blockers = (*live_blockers, repair_residual_issue["message"])
                 risk_issues.append(dict(self_improvement_profitability_issue))
                 live_blockers = (*live_blockers, self_improvement_profitability_issue["message"])
                 risk_allowed = False
@@ -5407,10 +5440,14 @@ class IntentGenerator:
             and intent.order_type != OrderType.MARKET
             and str(intent.metadata.get("position_intent") or "").upper() != "HEDGE"
         ):
+            pending_residual_issue = _month_scale_residual_repair_issue(
+                intent,
+                month_scale_residual_issue,
+            )
             if _self_improvement_pending_execution_repair_allowed(
                 intent,
                 self_improvement_pending_issue,
-            ):
+            ) and pending_residual_issue is None:
                 intent.metadata["self_improvement_pending_execution_repair_live_ready"] = True
                 intent.metadata["self_improvement_pending_execution_repair_mode"] = (
                     SELF_IMPROVEMENT_PROFITABILITY_P0_REPAIR_MODE
@@ -5435,6 +5472,9 @@ class IntentGenerator:
                     }
                 )
             else:
+                if pending_residual_issue is not None:
+                    risk_issues.append(pending_residual_issue)
+                    live_blockers = (*live_blockers, pending_residual_issue["message"])
                 risk_issues.append(dict(self_improvement_pending_issue))
                 live_blockers = (*live_blockers, self_improvement_pending_issue["message"])
                 risk_allowed = False
@@ -8947,6 +8987,144 @@ def _self_improvement_worst_segment_fields(system: dict[str, Any]) -> dict[str, 
     if blocked_segments:
         fields["blocked_profitability_segments"] = blocked_segments[:10]
     return fields
+
+
+def _profitability_acceptance_month_residual_issue(data_root: Path) -> dict[str, Any] | None:
+    """Expose month-scale replay residual loss groups to P0 repair entry gating.
+
+    This is intentionally narrower than a general history ban. It only reads
+    the acceptance artifact's explicit month-scale replay P0 and only blocks
+    the same pair/side/method repair vehicle that the replay says remains net
+    negative after the current TP-progress production gate.
+    """
+
+    path = data_root / "profitability_acceptance.json"
+    if not path.exists():
+        return None
+    try:
+        payload = json.loads(path.read_text())
+    except (OSError, json.JSONDecodeError, ValueError):
+        return None
+    residual_groups = _month_residual_groups_from_acceptance(payload)
+    blocked_segments: list[dict[str, Any]] = []
+    for group in residual_groups:
+        segment = _normalise_month_residual_group(group)
+        if segment is not None:
+            blocked_segments.append(segment)
+    if not blocked_segments:
+        return None
+    worst = blocked_segments[0]
+    label_parts = [
+        f"pair={worst['pair']}",
+        f"side={worst['side']}",
+        f"method={worst['method']}",
+    ]
+    if worst.get("loss_closes") is not None:
+        label_parts.append(f"loss_closes={worst['loss_closes']}")
+    if worst.get("net_jpy") is not None:
+        label_parts.append(f"repair_replay_net={worst['net_jpy']:.2f} JPY")
+    return {
+        "code": MONTH_SCALE_RESIDUAL_LOSS_REPAIR_BLOCK_CODE,
+        "message": (
+            "month-scale TP-progress replay still leaves this repair shape net "
+            "negative; rerun 744h execution-timing/profitability acceptance and "
+            "remove the residual loss group before exposing it as TP_HARVEST_REPAIR "
+            f"({', '.join(label_parts)})"
+        ),
+        "severity": "BLOCK",
+        "blocked_profitability_segments": blocked_segments[:10],
+    }
+
+
+def _month_residual_groups_from_acceptance(payload: dict[str, Any]) -> list[dict[str, Any]]:
+    groups: list[dict[str, Any]] = []
+    has_month_scale_p0 = False
+    findings = payload.get("findings") if isinstance(payload.get("findings"), list) else []
+    for finding in findings:
+        if not isinstance(finding, dict):
+            continue
+        if str(finding.get("priority") or "").upper() != "P0":
+            continue
+        if str(finding.get("code") or "") != "MONTH_SCALE_TP_PROGRESS_REPLAY_STILL_NEGATIVE":
+            continue
+        has_month_scale_p0 = True
+        evidence = finding.get("evidence") if isinstance(finding.get("evidence"), dict) else {}
+        raw_groups = evidence.get("top_repair_replay_residual_groups")
+        if isinstance(raw_groups, list):
+            groups.extend(item for item in raw_groups if isinstance(item, dict))
+    if not has_month_scale_p0:
+        return groups
+    metrics = payload.get("metrics") if isinstance(payload.get("metrics"), dict) else {}
+    replay_metrics = (
+        metrics.get("profit_capture_replay_repair")
+        if isinstance(metrics.get("profit_capture_replay_repair"), dict)
+        else {}
+    )
+    raw_groups = replay_metrics.get("top_repair_replay_residual_groups")
+    if isinstance(raw_groups, list):
+        groups.extend(item for item in raw_groups if isinstance(item, dict))
+    return groups
+
+
+def _normalise_month_residual_group(group: dict[str, Any]) -> dict[str, Any] | None:
+    pair = str(group.get("pair") or "").strip()
+    side = str(group.get("side") or "").strip().upper()
+    method = str(group.get("method") or "").strip().upper()
+    repair_replay_pl = _optional_float(group.get("repair_replay_pl_jpy"))
+    if not pair or not side or not method or repair_replay_pl is None or repair_replay_pl >= 0.0:
+        return None
+    segment: dict[str, Any] = {
+        "pair": pair,
+        "side": side,
+        "method": method,
+        "net_jpy": repair_replay_pl,
+        "exit_reason": str(group.get("exit_reason") or "MARKET_ORDER_TRADE_CLOSE"),
+        "loss_closes": group.get("loss_closes"),
+        "repair_replay_triggered": group.get("repair_replay_triggered"),
+    }
+    examples = group.get("examples") if isinstance(group.get("examples"), list) else []
+    trade_ids = [
+        str(item.get("trade_id"))
+        for item in examples
+        if isinstance(item, dict) and item.get("trade_id")
+    ]
+    if trade_ids:
+        segment["trade_ids"] = trade_ids[:10]
+    block_reasons = group.get("block_reasons")
+    if isinstance(block_reasons, dict):
+        segment["block_reasons"] = dict(block_reasons)
+    return segment
+
+
+def _month_scale_residual_repair_issue(
+    intent: OrderIntent,
+    issue: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    if not isinstance(issue, dict):
+        return None
+    segments = issue.get("blocked_profitability_segments")
+    if not isinstance(segments, list):
+        return None
+    for segment in segments:
+        if not isinstance(segment, dict):
+            continue
+        if not _self_improvement_intent_matches_segment(intent, segment):
+            continue
+        intent.metadata["month_scale_residual_loss_repair_blocked"] = True
+        intent.metadata["month_scale_residual_loss_group"] = {
+            "pair": segment.get("pair"),
+            "side": segment.get("side"),
+            "method": segment.get("method"),
+            "repair_replay_pl_jpy": segment.get("net_jpy"),
+            "loss_closes": segment.get("loss_closes"),
+            "trade_ids": segment.get("trade_ids") or [],
+        }
+        return {
+            "code": MONTH_SCALE_RESIDUAL_LOSS_REPAIR_BLOCK_CODE,
+            "message": str(issue.get("message") or MONTH_SCALE_RESIDUAL_LOSS_REPAIR_BLOCK_CODE),
+            "severity": "BLOCK",
+        }
+    return None
 
 
 def _self_improvement_p0_shadow_live_ready(
