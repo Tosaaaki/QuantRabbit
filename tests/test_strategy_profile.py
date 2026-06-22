@@ -283,6 +283,40 @@ class StrategyProfileTest(unittest.TestCase):
         self.assertEqual(market_issues[0].code, "STRATEGY_NOT_ELIGIBLE")
         self.assertEqual(market_issues[0].severity, "BLOCK")
 
+    def test_oanda_firepower_profile_escape_ignores_current_risk_underpower_warning(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            profile = StrategyProfile.load(_pair_side_profile(Path(tmp), status="BLOCK_UNTIL_NEW_EVIDENCE"))
+            prior = os.environ.get("QR_TRADER_DISABLE_SL_REPAIR")
+            os.environ["QR_TRADER_DISABLE_SL_REPAIR"] = "1"
+            metadata = _oanda_firepower_metadata()
+            metadata.update(
+                {
+                    "positive_rotation_live_ready": True,
+                    "positive_rotation_mode": "OANDA_CAMPAIGN_FIREPOWER_HARVEST",
+                    "positive_rotation_minimum_floor_reachable": False,
+                    "positive_rotation_minimum_floor_reach_basis": (
+                        "OANDA_CAMPAIGN_FIREPOWER_CURRENT_RISK_UNDERPOWERED"
+                    ),
+                    "positive_rotation_oanda_campaign_current_risk_minimum_floor_reachable": False,
+                }
+            )
+            try:
+                issues = profile.validate(
+                    _intent(
+                        "EUR_USD",
+                        method=TradeMethod.RANGE_ROTATION,
+                        order_type=OrderType.LIMIT,
+                        metadata=metadata,
+                    ),
+                    for_live_send=True,
+                )
+            finally:
+                _restore_env("QR_TRADER_DISABLE_SL_REPAIR", prior)
+
+        self.assertEqual(len(issues), 1)
+        self.assertEqual(issues[0].code, "STRATEGY_NOT_ELIGIBLE")
+        self.assertEqual(issues[0].severity, "WARN")
+
     def test_block_until_new_evidence_incomplete_oanda_firepower_still_blocks(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             profile = StrategyProfile.load(_pair_side_profile(Path(tmp), status="BLOCK_UNTIL_NEW_EVIDENCE"))
@@ -588,6 +622,41 @@ class StrategyProfileTest(unittest.TestCase):
                         method=TradeMethod.RANGE_ROTATION,
                         order_type=OrderType.LIMIT,
                         metadata=_oanda_firepower_metadata(pair="GBP_CHF", side="SHORT"),
+                    ),
+                    for_live_send=True,
+                )
+            finally:
+                _restore_env("QR_TRADER_DISABLE_SL_REPAIR", prior)
+
+        self.assertEqual(len(issues), 1)
+        self.assertEqual(issues[0].code, "STRATEGY_PROFILE_MISSING")
+        self.assertEqual(issues[0].severity, "WARN")
+
+    def test_missing_profile_oanda_firepower_escape_ignores_current_risk_underpower_warning(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            profile = StrategyProfile.load(_profile(Path(tmp), status="CANDIDATE"))
+            prior = os.environ.get("QR_TRADER_DISABLE_SL_REPAIR")
+            os.environ["QR_TRADER_DISABLE_SL_REPAIR"] = "1"
+            metadata = _oanda_firepower_metadata(pair="GBP_CHF", side="SHORT")
+            metadata.update(
+                {
+                    "positive_rotation_live_ready": True,
+                    "positive_rotation_mode": "OANDA_CAMPAIGN_FIREPOWER_HARVEST",
+                    "positive_rotation_minimum_floor_reachable": False,
+                    "positive_rotation_minimum_floor_reach_basis": (
+                        "OANDA_CAMPAIGN_FIREPOWER_CURRENT_RISK_UNDERPOWERED"
+                    ),
+                    "positive_rotation_oanda_campaign_current_risk_minimum_floor_reachable": False,
+                }
+            )
+            try:
+                issues = profile.validate(
+                    _intent(
+                        "GBP_CHF",
+                        side=Side.SHORT,
+                        method=TradeMethod.RANGE_ROTATION,
+                        order_type=OrderType.LIMIT,
+                        metadata=metadata,
                     ),
                     for_live_send=True,
                 )

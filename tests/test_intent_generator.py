@@ -225,6 +225,81 @@ def _write_profitability_p0_and_negative_capture(root: Path) -> None:
     )
 
 
+def _write_profitability_p0_with_matching_worst_segment(
+    root: Path,
+    *,
+    close_provenance_net_jpy: dict[str, float],
+) -> None:
+    (root / "self_improvement_audit.json").write_text(
+        json.dumps(
+            {
+                "generated_at_utc": datetime.now(timezone.utc).isoformat(),
+                "findings": [
+                    {
+                        "priority": "P0",
+                        "layer": "profitability",
+                        "code": "PERSISTENT_PROFITABILITY_DISCIPLINE_BLOCKED",
+                        "message": "market-close leakage is still negative",
+                        "evidence": {
+                            "current_streak": 65,
+                            "system_defect_evidence": {
+                                "profit_factor": 0.536,
+                                "expectancy_jpy": -117.4,
+                                "worst_segments": [
+                                    {
+                                        "pair": "EUR_USD",
+                                        "side": "LONG",
+                                        "method": "RANGE_ROTATION",
+                                        "trades": 2,
+                                        "net_jpy": sum(close_provenance_net_jpy.values()),
+                                        "trade_ids": ["T-stop", "T-gateway"],
+                                        "close_provenance_counts": {
+                                            key: 1 for key in close_provenance_net_jpy
+                                        },
+                                        "close_provenance_net_jpy": close_provenance_net_jpy,
+                                    }
+                                ],
+                            },
+                        },
+                    }
+                ],
+            }
+        )
+    )
+    (root / "capture_economics.json").write_text(
+        json.dumps(
+            {
+                "status": "NEGATIVE_EXPECTANCY",
+                "overall": {
+                    "trades": 210,
+                    "avg_win_jpy": 600.0,
+                    "avg_loss_jpy": 1100.0,
+                    "payoff_ratio": 0.545,
+                    "breakeven_payoff_at_win_rate": 0.7,
+                },
+                "by_exit_reason": {
+                    "TAKE_PROFIT_ORDER": {
+                        "trades": 93,
+                        "wins": 93,
+                        "losses": 0,
+                        "avg_win_jpy": 504.0,
+                        "avg_loss_jpy": 0.0,
+                        "expectancy_jpy_per_trade": 504.0,
+                    },
+                    "MARKET_ORDER_TRADE_CLOSE": {
+                        "trades": 84,
+                        "wins": 13,
+                        "losses": 71,
+                        "avg_win_jpy": 218.4,
+                        "avg_loss_jpy": 1095.5,
+                        "expectancy_jpy_per_trade": -892.1,
+                    },
+                },
+            }
+        )
+    )
+
+
 def _oanda_seed_range_campaign(root: Path, *, side: str = "LONG") -> Path:
     path = root / "oanda_range_campaign.json"
     path.write_text(
@@ -8892,6 +8967,93 @@ class IntentGeneratorTest(unittest.TestCase):
             self.assertEqual(firepower_issue["severity"], "WARN")
             self.assertNotIn(POSITIVE_ROTATION_FIREPOWER_BLOCK_CODE, result["live_blocker_codes"])
             self.assertNotIn("SELF_IMPROVEMENT_P0_PROFITABILITY_DISCIPLINE", issue_codes)
+
+    def test_oanda_repair_not_blocked_by_same_segment_stop_loss_memory(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_profitability_p0_with_matching_worst_segment(
+                root,
+                close_provenance_net_jpy={
+                    "STOP_LOSS_ORDER": -280.8,
+                    "GATEWAY_TRADE_CLOSE_SENT": 7.2,
+                },
+            )
+            _write_oanda_campaign_firepower_report(
+                root,
+                pair="EUR_USD",
+                side="LONG",
+                exit_shape="tp2_sl1",
+            )
+            output = root / "intents.json"
+
+            IntentGenerator(
+                campaign_plan=_stamp_campaign_generated_at(
+                    _oanda_seed_range_campaign(root, side="LONG")
+                ),
+                strategy_profile=_strategy(root, status="CANDIDATE"),
+                output_path=output,
+                report_path=root / "intents.md",
+                pair_charts_path=_pair_charts(root),
+                data_root=root,
+                max_loss_jpy=1000.0,
+            ).run(snapshot_path=_snapshot(root))
+
+            payload = json.loads(output.read_text())
+            result = next(
+                item for item in payload["results"]
+                if item["lane_id"] == "range_trader:EUR_USD:LONG:RANGE_ROTATION"
+            )
+            metadata = result["intent"]["metadata"]
+            issue_codes = {issue["code"] for issue in result["risk_issues"]}
+
+            self.assertEqual(result["status"], "LIVE_READY")
+            self.assertTrue(metadata["self_improvement_p0_repair_live_ready"])
+            self.assertEqual(metadata["self_improvement_p0_repair_mode"], "TP_HARVEST_REPAIR")
+            self.assertTrue(metadata["positive_rotation_oanda_campaign_firepower_vehicle_match"])
+            self.assertIn("SELF_IMPROVEMENT_P0_PROFITABILITY_REPAIR_MODE", issue_codes)
+            self.assertNotIn("SELF_IMPROVEMENT_P0_PROFITABILITY_DISCIPLINE", issue_codes)
+            self.assertNotIn("SELF_IMPROVEMENT_P0_PROFITABILITY_DISCIPLINE", result["live_blocker_codes"])
+
+    def test_oanda_repair_still_blocked_by_same_segment_gateway_close_loss(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_profitability_p0_with_matching_worst_segment(
+                root,
+                close_provenance_net_jpy={"GATEWAY_TRADE_CLOSE_SENT": -280.8},
+            )
+            _write_oanda_campaign_firepower_report(
+                root,
+                pair="EUR_USD",
+                side="LONG",
+                exit_shape="tp2_sl1",
+            )
+            output = root / "intents.json"
+
+            IntentGenerator(
+                campaign_plan=_stamp_campaign_generated_at(
+                    _oanda_seed_range_campaign(root, side="LONG")
+                ),
+                strategy_profile=_strategy(root, status="CANDIDATE"),
+                output_path=output,
+                report_path=root / "intents.md",
+                pair_charts_path=_pair_charts(root),
+                data_root=root,
+                max_loss_jpy=1000.0,
+            ).run(snapshot_path=_snapshot(root))
+
+            payload = json.loads(output.read_text())
+            result = next(
+                item for item in payload["results"]
+                if item["lane_id"] == "range_trader:EUR_USD:LONG:RANGE_ROTATION"
+            )
+            metadata = result["intent"]["metadata"]
+            issue_codes = {issue["code"] for issue in result["risk_issues"]}
+
+            self.assertEqual(result["status"], "DRY_RUN_BLOCKED")
+            self.assertNotIn("self_improvement_p0_repair_live_ready", metadata)
+            self.assertTrue(metadata["self_improvement_p0_shadow_live_ready"])
+            self.assertIn("SELF_IMPROVEMENT_P0_PROFITABILITY_DISCIPLINE", issue_codes)
+            self.assertIn("SELF_IMPROVEMENT_P0_PROFITABILITY_DISCIPLINE", result["live_blocker_codes"])
 
     def test_oanda_firepower_seed_repair_requires_matching_vehicle(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

@@ -8353,19 +8353,26 @@ def _self_improvement_worst_segment_fields(system: dict[str, Any]) -> dict[str, 
         raw_method = str(raw_segment.get("method") or "").strip().upper()
         raw_net = _optional_float(raw_segment.get("net_jpy"))
         if raw_pair and raw_side and raw_method and raw_net is not None and raw_net < 0:
+            blocked_segment = {
+                "pair": raw_pair,
+                "side": raw_side,
+                "method": raw_method,
+                "net_jpy": raw_net,
+                "trades": raw_segment.get("trades"),
+                "trade_ids": [
+                    str(item)
+                    for item in raw_segment.get("trade_ids", []) or []
+                    if str(item)
+                ][:10],
+            }
+            provenance_counts = raw_segment.get("close_provenance_counts")
+            if isinstance(provenance_counts, dict):
+                blocked_segment["close_provenance_counts"] = dict(provenance_counts)
+            provenance_net = raw_segment.get("close_provenance_net_jpy")
+            if isinstance(provenance_net, dict):
+                blocked_segment["close_provenance_net_jpy"] = dict(provenance_net)
             blocked_segments.append(
-                {
-                    "pair": raw_pair,
-                    "side": raw_side,
-                    "method": raw_method,
-                    "net_jpy": raw_net,
-                    "trades": raw_segment.get("trades"),
-                    "trade_ids": [
-                        str(item)
-                        for item in raw_segment.get("trade_ids", []) or []
-                        if str(item)
-                    ][:10],
-                }
+                blocked_segment
             )
     pair = str(segment.get("pair") or "").strip()
     side = str(segment.get("side") or "").strip().upper()
@@ -8475,10 +8482,46 @@ def _self_improvement_intent_matches_worst_segment(
         for segment in blocked_segments:
             if not isinstance(segment, dict):
                 continue
-            if _self_improvement_intent_matches_segment(intent, segment):
+            if (
+                _self_improvement_intent_matches_segment(intent, segment)
+                and _self_improvement_segment_has_loss_side_market_close(segment)
+            ):
                 return True
         return False
     return _self_improvement_intent_matches_segment(intent, p0_issue)
+
+
+def _self_improvement_segment_has_loss_side_market_close(segment: dict[str, Any]) -> bool:
+    """Whether a P0 segment is the market-close leak this repair gate targets.
+
+    A same pair/side/method STOP_LOSS_ORDER loss is handled by same-day loss
+    streak sizing and should not suppress an otherwise valid attached-TP HARVEST
+    repair lane. When provenance is missing, keep the legacy fail-closed
+    behavior because we cannot prove the negative segment is unrelated to the
+    market-close leak.
+    """
+
+    provenance_net = segment.get("close_provenance_net_jpy")
+    if isinstance(provenance_net, dict):
+        saw_provenance = False
+        for raw_source, raw_net in provenance_net.items():
+            saw_provenance = True
+            source = str(raw_source or "").upper()
+            net = _optional_float(raw_net)
+            if net is None or net >= 0:
+                continue
+            if source in {"STOP_LOSS_ORDER", "TAKE_PROFIT_ORDER"}:
+                continue
+            if "CLOSE" in source or "GATEWAY" in source:
+                return True
+        return not saw_provenance
+    exit_reason = str(segment.get("exit_reason") or "").upper()
+    net = _optional_float(segment.get("net_jpy") or segment.get("worst_segment_net_jpy"))
+    if exit_reason == "MARKET_ORDER_TRADE_CLOSE":
+        return net is None or net < 0
+    if exit_reason in {"STOP_LOSS_ORDER", "TAKE_PROFIT_ORDER"}:
+        return False
+    return True
 
 
 def _self_improvement_intent_matches_segment(
