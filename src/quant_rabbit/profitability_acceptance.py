@@ -120,6 +120,12 @@ class ProfitabilityAcceptanceAuditor:
             execution_timing_audit_path=execution_timing_audit_path,
             now_utc=generated_at_dt,
         )
+        replay_repair_metrics, replay_repair_findings = _profit_capture_replay_repair_findings(
+            ledger_metrics.get("execution_timing_audit")
+            if isinstance(ledger_metrics.get("execution_timing_audit"), dict)
+            else {},
+            self_metrics=self_metrics,
+        )
         projection_metrics, projection_findings = _projection_precision_findings(projection_ledger_path)
         bidask_metrics, bidask_findings = _bidask_rule_findings(bidask_rules, bidask_rules_path)
         firepower_metrics, firepower_findings = _oanda_campaign_firepower_findings(
@@ -132,6 +138,7 @@ class ProfitabilityAcceptanceAuditor:
         findings.extend(capture_findings)
         findings.extend(capture_freshness_findings)
         findings.extend(ledger_findings)
+        findings.extend(replay_repair_findings)
         findings.extend(projection_findings)
         findings.extend(bidask_findings)
         findings.extend(firepower_findings)
@@ -194,6 +201,7 @@ class ProfitabilityAcceptanceAuditor:
             "capture_economics": capture_metrics,
             "order_capture_freshness": capture_freshness_metrics,
             "execution_ledger_close_leak": ledger_metrics,
+            "profit_capture_replay_repair": replay_repair_metrics,
             "projection_precision": projection_metrics,
             "bidask_replay_rules": bidask_metrics,
             "oanda_campaign_firepower": firepower_metrics,
@@ -1219,6 +1227,7 @@ def _execution_timing_loss_close_labels(
         "loss_close_counterfactual_profit_capture_jpy": None,
         "loss_market_close_rows": 0,
         "label_counts": {},
+        "top_profit_capture_misses": [],
         "read_error": None,
     }
     if path is None:
@@ -1261,10 +1270,104 @@ def _execution_timing_loss_close_labels(
             value = str(row.get(key_name) or "").strip()
             if value:
                 labels[(key_name, value)] = label
+    regret_rows = payload.get("loss_close_regrets")
+    if not isinstance(regret_rows, list):
+        regret_rows = []
+    top_misses: list[dict[str, Any]] = []
+    for row in regret_rows:
+        if not isinstance(row, dict) or not row.get("profit_capture_missed_before_loss_close"):
+            continue
+        top_misses.append(
+            {
+                "trade_id": row.get("trade_id"),
+                "pair": row.get("pair"),
+                "side": row.get("side"),
+                "exit_reason": row.get("exit_reason"),
+                "realized_pl_jpy": _optional_float(row.get("realized_pl_jpy")),
+                "tp_progress_before_loss_close": _optional_float(
+                    row.get("tp_progress_before_loss_close")
+                ),
+                "counterfactual_exit": row.get("profit_capture_counterfactual_exit"),
+                "counterfactual_jpy": _optional_float(row.get("profit_capture_counterfactual_jpy")),
+                "counterfactual_delta_jpy": _optional_float(
+                    row.get("profit_capture_counterfactual_net_improvement_jpy")
+                ),
+            }
+        )
     metrics["loaded"] = True
     metrics["generated_at_utc"] = payload.get("generated_at_utc") or payload.get("generated_at")
     metrics["label_counts"] = dict(sorted(counts.items()))
+    metrics["top_profit_capture_misses"] = top_misses[:5]
     return labels, metrics
+
+
+def _profit_capture_replay_repair_findings(
+    timing_metrics: dict[str, Any],
+    *,
+    self_metrics: dict[str, Any] | None = None,
+) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    self_metrics = self_metrics or {}
+    self_p0_codes = {
+        str(code or "").strip().upper()
+        for code in self_metrics.get("p0_codes", []) or []
+        if str(code or "").strip()
+    }
+    has_self_profit_capture_context = any(
+        "PROFIT_CAPTURE" in code or code == "LOSS_CLOSE_PROFIT_CAPTURE_MISSED"
+        for code in self_p0_codes
+    )
+    missed = int(_optional_float(timing_metrics.get("loss_closes_profit_capture_missed")) or 0)
+    counterfactual_delta = _optional_float(
+        timing_metrics.get("loss_close_counterfactual_profit_capture_delta_jpy")
+    )
+    counterfactual_jpy = _optional_float(
+        timing_metrics.get("loss_close_counterfactual_profit_capture_jpy")
+    )
+    metrics = {
+        "execution_timing_loaded": bool(timing_metrics.get("loaded")),
+        "execution_timing_generated_at_utc": timing_metrics.get("generated_at_utc"),
+        "loss_closes_profit_capture_missed": missed,
+        "counterfactual_profit_capture_delta_jpy": counterfactual_delta,
+        "counterfactual_profit_capture_jpy": counterfactual_jpy,
+        "top_profit_capture_misses": timing_metrics.get("top_profit_capture_misses") or [],
+        "self_improvement_profit_capture_context": has_self_profit_capture_context,
+        "self_improvement_p0_codes": sorted(self_p0_codes),
+        "clearance_condition": (
+            "execution-timing-audit must report zero loss_closes_profit_capture_missed "
+            "after TP-progress TAKE_PROFIT_MARKET / guardian repair has run on live broker truth"
+        ),
+        "replay_repair_proved": bool(timing_metrics.get("loaded")) and missed == 0,
+    }
+    if (
+        not metrics["execution_timing_loaded"]
+        or missed <= 0
+        or not has_self_profit_capture_context
+    ):
+        return metrics, []
+    return metrics, [
+        _finding(
+            priority="P0",
+            code="TP_PROGRESS_REPLAY_REPAIR_UNPROVED",
+            message=(
+                f"{missed} loss close(s) have OANDA candle replay evidence that TP-progress "
+                "profit capture would have improved realized P/L, but the active audit has not "
+                "yet proved the repair clean"
+            ),
+            next_action=(
+                "Do not treat high-turnover trading as repaired by rerunning reports. Keep the "
+                "TP-progress TAKE_PROFIT_MARKET path and position guardian active, then rerun "
+                "execution-timing-audit until loss_closes_profit_capture_missed is zero in the "
+                "active window."
+            ),
+            evidence={
+                "loss_closes_profit_capture_missed": missed,
+                "counterfactual_profit_capture_delta_jpy": counterfactual_delta,
+                "counterfactual_profit_capture_jpy": counterfactual_jpy,
+                "top_profit_capture_misses": metrics["top_profit_capture_misses"],
+                "clearance_condition": metrics["clearance_condition"],
+            },
+        )
+    ]
 
 
 def _loss_close_timing_label(
