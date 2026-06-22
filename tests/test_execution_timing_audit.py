@@ -645,9 +645,99 @@ class ExecutionTimingAuditTest(unittest.TestCase):
             self.assertEqual(summary["loss_closes_profit_capture_missed"], 1)
             self.assertEqual(summary["loss_closes_repair_replay_triggered"], 0)
             self.assertAlmostEqual(summary["loss_close_repair_replay_counterfactual_pl_jpy"], -50.0)
+            self.assertEqual(
+                summary["loss_close_repair_replay_block_reasons"],
+                {"BELOW_NOISE_FLOOR": 1},
+            )
             row = payload["loss_close_regrets"][0]
             self.assertTrue(row["profit_capture_missed_before_loss_close"])
             self.assertFalse(row["repair_replay_triggered_before_loss_close"])
+            self.assertEqual(row["repair_replay_block_reason"], "BELOW_NOISE_FLOOR")
+            self.assertAlmostEqual(row["repair_replay_progress_gate"], 0.3)
+            self.assertAlmostEqual(row["repair_replay_max_profit_pips"], 3.2)
+            self.assertAlmostEqual(row["repair_replay_max_tp_progress"], 0.32)
+            self.assertEqual(row["repair_replay_max_profit_at_utc"], "2026-06-16T01:03:00+00:00")
+            self.assertAlmostEqual(row["repair_replay_candidate_profit_pips"], 3.2)
+            self.assertAlmostEqual(row["repair_replay_candidate_tp_progress"], 0.32)
+            self.assertAlmostEqual(row["repair_replay_candidate_spread_pips"], 1.0)
+            self.assertAlmostEqual(row["repair_replay_candidate_m1_atr_pips"], 12.1)
+            self.assertAlmostEqual(row["repair_replay_candidate_noise_floor_pips"], 12.1)
+
+    def test_tp_progress_repair_replay_reports_missing_noise_inputs(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            db = root / "ledger.db"
+            _make_db(db)
+            with sqlite3.connect(db) as conn:
+                _insert_event(
+                    conn,
+                    "fill-missing-noise",
+                    ts_utc="2026-06-16T01:00:10Z",
+                    event_type="ORDER_FILLED",
+                    lane_id="range_trader:USD_JPY:SHORT:RANGE_ROTATION",
+                    order_id="o-fill-missing-noise",
+                    trade_id="t-missing-noise",
+                    pair="USD_JPY",
+                    side="SHORT",
+                    units=-1000,
+                    price=150.00,
+                )
+                _insert_event(
+                    conn,
+                    "tp-missing-noise",
+                    ts_utc="2026-06-16T01:00:20Z",
+                    event_type="PROTECTION_CREATED",
+                    trade_id="t-missing-noise",
+                    pair="USD_JPY",
+                    price=149.90,
+                    raw={"type": "TAKE_PROFIT_ORDER", "tradeID": "t-missing-noise", "price": "149.90"},
+                )
+                _insert_event(
+                    conn,
+                    "close-missing-noise",
+                    ts_utc="2026-06-16T01:10:30Z",
+                    event_type="TRADE_CLOSED",
+                    order_id="o-close-missing-noise",
+                    trade_id="t-missing-noise",
+                    pair="USD_JPY",
+                    side="SHORT",
+                    units=1000,
+                    price=150.05,
+                    realized_pl_jpy=-50.0,
+                    exit_reason="STOP_LOSS_ORDER",
+                )
+                conn.commit()
+
+            candles = (
+                BidAskCandle(_dt("2026-06-16T01:03:00Z"), 149.960, 149.960, 149.960, 149.960),
+            )
+
+            def fetcher(pair: str, start: datetime, end: datetime, granularity: str) -> tuple[BidAskCandle, ...]:
+                self.assertEqual(pair, "USD_JPY")
+                return tuple(c for c in candles if start <= c.timestamp_utc <= end)
+
+            payload = build_execution_timing_audit(
+                ledger_path=db,
+                snapshot_path=None,
+                output_path=root / "audit.json",
+                report_path=root / "audit.md",
+                now_utc=_dt("2026-06-17T00:00:00Z"),
+                candle_fetcher=fetcher,
+            )
+
+            summary = payload["summary"]
+            self.assertEqual(
+                summary["loss_close_repair_replay_block_reasons"],
+                {"MISSING_SPREAD_OR_ATR": 1},
+            )
+            row = payload["loss_close_regrets"][0]
+            self.assertTrue(row["profit_capture_missed_before_loss_close"])
+            self.assertFalse(row["repair_replay_triggered_before_loss_close"])
+            self.assertEqual(row["repair_replay_block_reason"], "MISSING_SPREAD_OR_ATR")
+            self.assertAlmostEqual(row["repair_replay_candidate_profit_pips"], 4.0)
+            self.assertAlmostEqual(row["repair_replay_candidate_tp_progress"], 0.4)
+            self.assertIsNone(row["repair_replay_candidate_spread_pips"])
+            self.assertIsNone(row["repair_replay_candidate_m1_atr_pips"])
 
     def test_market_close_lookback_is_anchored_to_latest_close_activity(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

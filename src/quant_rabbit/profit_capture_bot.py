@@ -397,6 +397,15 @@ def _historical_capture_summary(timing: dict[str, Any]) -> dict[str, Any]:
                 row.get("profit_capture_counterfactual_net_improvement_jpy"),
                 3,
             ),
+            "repair_replay_block_reason": row.get("repair_replay_block_reason"),
+            "repair_candidate_profit_pips": _round(
+                row.get("repair_replay_candidate_profit_pips"),
+                4,
+            ),
+            "repair_candidate_noise_floor_pips": _round(
+                row.get("repair_replay_candidate_noise_floor_pips"),
+                4,
+            ),
         }
         for row in rows
         if isinstance(row, dict) and row.get("profit_capture_missed_before_loss_close")
@@ -420,6 +429,44 @@ def _historical_capture_summary(timing: dict[str, Any]) -> dict[str, Any]:
         }
         for row in rows
         if isinstance(row, dict) and row.get("repair_replay_triggered_before_loss_close")
+    ][:5]
+    top_repair_blocks = [
+        {
+            "trade_id": row.get("trade_id"),
+            "pair": row.get("pair"),
+            "side": row.get("side"),
+            "exit_reason": row.get("exit_reason"),
+            "realized_pl_jpy": _round(row.get("realized_pl_jpy"), 3),
+            "repair_replay_block_reason": row.get("repair_replay_block_reason"),
+            "repair_max_profit_pips": _round(row.get("repair_replay_max_profit_pips"), 4),
+            "repair_max_tp_progress": _round(row.get("repair_replay_max_tp_progress"), 4),
+            "repair_candidate_profit_pips": _round(
+                row.get("repair_replay_candidate_profit_pips"),
+                4,
+            ),
+            "repair_candidate_tp_progress": _round(
+                row.get("repair_replay_candidate_tp_progress"),
+                4,
+            ),
+            "repair_candidate_spread_pips": _round(
+                row.get("repair_replay_candidate_spread_pips"),
+                4,
+            ),
+            "repair_candidate_m1_atr_pips": _round(
+                row.get("repair_replay_candidate_m1_atr_pips"),
+                4,
+            ),
+            "repair_candidate_noise_floor_pips": _round(
+                row.get("repair_replay_candidate_noise_floor_pips"),
+                4,
+            ),
+        }
+        for row in rows
+        if (
+            isinstance(row, dict)
+            and row.get("profit_capture_missed_before_loss_close")
+            and not row.get("repair_replay_triggered_before_loss_close")
+        )
     ][:5]
     return {
         "generated_at_utc": timing.get("generated_at_utc"),
@@ -457,8 +504,14 @@ def _historical_capture_summary(timing: dict[str, Any]) -> dict[str, Any]:
             summary.get("loss_close_repair_replay_delta_jpy"),
             3,
         ),
+        "repair_replay_block_reasons": (
+            summary.get("loss_close_repair_replay_block_reasons")
+            if isinstance(summary.get("loss_close_repair_replay_block_reasons"), dict)
+            else {}
+        ),
         "top_misses": top,
         "top_repair_replay_triggers": top_repair,
+        "top_repair_replay_blocks": top_repair_blocks,
     }
 
 
@@ -610,6 +663,7 @@ def _render_report(payload: dict[str, Any]) -> str:
         f"- Production-gate replay contract present: `{history['repair_replay_contract_present']}`"
     )
     lines.append(f"- Production-gate replay delta JPY: `{history['repair_replay_delta_jpy']}`")
+    lines.append(f"- Production-gate replay block reasons: `{history['repair_replay_block_reasons']}`")
     if history["top_repair_replay_triggers"]:
         for item in history["top_repair_replay_triggers"]:
             lines.append(
@@ -617,6 +671,14 @@ def _render_report(payload: dict[str, Any]) -> str:
                 f"{item['exit_reason']} repair_at=`{item.get('repair_trigger_at_utc')}` "
                 f"repair_jpy=`{item.get('repair_counterfactual_jpy')}` "
                 f"delta=`{item.get('repair_counterfactual_delta_jpy')}`"
+            )
+    if history["top_repair_replay_blocks"]:
+        for item in history["top_repair_replay_blocks"]:
+            lines.append(
+                f"- `{item['trade_id']}` `{item['pair']}` `{item['side']}` "
+                f"{item['exit_reason']} repair_block=`{item.get('repair_replay_block_reason')}` "
+                f"candidate=`{item.get('repair_candidate_profit_pips')}`p "
+                f"noise=`{item.get('repair_candidate_noise_floor_pips')}`p"
             )
     if history["top_misses"]:
         for item in history["top_misses"]:

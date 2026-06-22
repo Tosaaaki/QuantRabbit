@@ -1995,6 +1995,23 @@ def _profit_capture_miss_findings(
         ),
         reverse=True,
     )
+    repair_block_rows = [
+        row
+        for row in (timing_payload.get("loss_close_regrets") or [])
+        if (
+            isinstance(row, dict)
+            and row.get("profit_capture_missed_before_loss_close")
+            and not row.get("repair_replay_triggered_before_loss_close")
+        )
+    ]
+    repair_block_rows.sort(
+        key=lambda row: float(
+            row.get("profit_capture_counterfactual_net_improvement_jpy")
+            or row.get("estimated_mfe_jpy_before_loss_close")
+            or 0.0
+        ),
+        reverse=True,
+    )
     if not repair_replay_contract_present:
         message = (
             f"{missed} losing close(s) have raw TP-progress capture evidence, but the "
@@ -2068,6 +2085,11 @@ def _profit_capture_miss_findings(
                 "loss_close_repair_replay_delta_jpy": _maybe_float(
                     summary.get("loss_close_repair_replay_delta_jpy")
                 ),
+                "loss_close_repair_replay_block_reasons": (
+                    summary.get("loss_close_repair_replay_block_reasons")
+                    if isinstance(summary.get("loss_close_repair_replay_block_reasons"), dict)
+                    else {}
+                ),
                 "top_profit_capture_misses": [
                     {
                         "trade_id": str(row.get("trade_id") or ""),
@@ -2094,6 +2116,13 @@ def _profit_capture_miss_findings(
                         ),
                         "profit_capture_counterfactual_net_improvement_jpy": _maybe_float(
                             row.get("profit_capture_counterfactual_net_improvement_jpy")
+                        ),
+                        "repair_replay_block_reason": row.get("repair_replay_block_reason"),
+                        "repair_replay_candidate_profit_pips": _maybe_float(
+                            row.get("repair_replay_candidate_profit_pips")
+                        ),
+                        "repair_replay_candidate_noise_floor_pips": _maybe_float(
+                            row.get("repair_replay_candidate_noise_floor_pips")
                         ),
                     }
                     for row in rows[:8]
@@ -2124,6 +2153,39 @@ def _profit_capture_miss_findings(
                         ),
                     }
                     for row in repair_rows[:8]
+                ],
+                "top_repair_replay_blocks": [
+                    {
+                        "trade_id": str(row.get("trade_id") or ""),
+                        "lane_id": str(row.get("lane_id") or ""),
+                        "pair": str(row.get("pair") or ""),
+                        "side": str(row.get("side") or ""),
+                        "exit_reason": str(row.get("exit_reason") or ""),
+                        "realized_pl_jpy": _maybe_float(row.get("realized_pl_jpy")),
+                        "repair_replay_block_reason": row.get("repair_replay_block_reason"),
+                        "repair_replay_max_profit_pips": _maybe_float(
+                            row.get("repair_replay_max_profit_pips")
+                        ),
+                        "repair_replay_max_tp_progress": _maybe_float(
+                            row.get("repair_replay_max_tp_progress")
+                        ),
+                        "repair_replay_candidate_profit_pips": _maybe_float(
+                            row.get("repair_replay_candidate_profit_pips")
+                        ),
+                        "repair_replay_candidate_tp_progress": _maybe_float(
+                            row.get("repair_replay_candidate_tp_progress")
+                        ),
+                        "repair_replay_candidate_spread_pips": _maybe_float(
+                            row.get("repair_replay_candidate_spread_pips")
+                        ),
+                        "repair_replay_candidate_m1_atr_pips": _maybe_float(
+                            row.get("repair_replay_candidate_m1_atr_pips")
+                        ),
+                        "repair_replay_candidate_noise_floor_pips": _maybe_float(
+                            row.get("repair_replay_candidate_noise_floor_pips")
+                        ),
+                    }
+                    for row in repair_block_rows[:8]
                 ],
             },
         )

@@ -16,6 +16,7 @@ from __future__ import annotations
 import json
 import os
 import sqlite3
+from collections import Counter
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -657,6 +658,16 @@ def _audit_loss_close(
         "repair_replay_counterfactual_jpy": repair_replay.get("jpy"),
         "repair_replay_counterfactual_net_improvement_jpy": repair_replay.get("net_improvement_jpy"),
         "repair_replay_counterfactual_pl_jpy": repair_replay.get("pl_jpy"),
+        "repair_replay_block_reason": repair_replay.get("block_reason"),
+        "repair_replay_progress_gate": repair_replay.get("progress_gate"),
+        "repair_replay_max_profit_pips": repair_replay.get("max_profit_pips"),
+        "repair_replay_max_tp_progress": repair_replay.get("max_tp_progress"),
+        "repair_replay_max_profit_at_utc": repair_replay.get("max_profit_at_utc"),
+        "repair_replay_candidate_profit_pips": repair_replay.get("candidate_profit_pips"),
+        "repair_replay_candidate_tp_progress": repair_replay.get("candidate_tp_progress"),
+        "repair_replay_candidate_spread_pips": repair_replay.get("candidate_spread_pips"),
+        "repair_replay_candidate_m1_atr_pips": repair_replay.get("candidate_m1_atr_pips"),
+        "repair_replay_candidate_noise_floor_pips": repair_replay.get("candidate_noise_floor_pips"),
         "jpy_per_pip_estimate": round(jpy_per_pip, 6) if jpy_per_pip is not None else None,
         "candles_available": len(candles),
     }
@@ -701,16 +712,36 @@ def _profit_capture_repair_replay(
     tp_distance_pips: float | None,
     jpy_per_pip: float | None,
 ) -> dict[str, Any]:
-    if not candles or tp_distance_pips is None or tp_distance_pips <= 0 or jpy_per_pip is None:
-        return {"triggered": False}
     progress_gate = max(0.0, min(1.0, TP_PROGRESS_CAPTURE_THRESHOLD))
+    base: dict[str, Any] = {"triggered": False, "progress_gate": round(progress_gate, 4)}
+    if not candles:
+        return {**base, "block_reason": "MISSING_CANDLES"}
+    if tp_distance_pips is None or tp_distance_pips <= 0:
+        return {**base, "block_reason": "MISSING_TP_DISTANCE"}
+    if jpy_per_pip is None:
+        return {**base, "block_reason": "MISSING_JPY_PER_PIP"}
+
+    max_profit: dict[str, Any] | None = None
+    best_candidate: dict[str, Any] | None = None
+    best_noise_candidate: dict[str, Any] | None = None
+    saw_progress_candidate = False
+    saw_missing_noise_inputs = False
+    saw_valid_noise_candidate = False
     for idx, candle in enumerate(candles):
         profit_pips = _favorable_delta(close.side, close.entry, candle) * _pip_factor(close.pair)
         if profit_pips <= 0:
             continue
         progress = profit_pips / tp_distance_pips
+        profit_details = {
+            "profit_pips": profit_pips,
+            "tp_progress": progress,
+            "at_utc": candle.timestamp_utc.isoformat(),
+        }
+        if max_profit is None or profit_pips > float(max_profit["profit_pips"]):
+            max_profit = profit_details
         if progress < progress_gate:
             continue
+        saw_progress_candidate = True
         spread_pips = _candle_spread_pips(close.pair, candle)
         atr_pips = _rolling_mid_range_pips(
             close.pair,
@@ -718,9 +749,24 @@ def _profit_capture_repair_replay(
             idx,
             period=TP_PROGRESS_REPAIR_ATR_PERIOD,
         )
+        candidate_details = {
+            **profit_details,
+            "spread_pips": spread_pips,
+            "m1_atr_pips": atr_pips,
+            "noise_floor_pips": None,
+        }
+        if best_candidate is None or profit_pips > float(best_candidate["profit_pips"]):
+            best_candidate = candidate_details
         if spread_pips is None or spread_pips <= 0 or atr_pips is None or atr_pips <= 0:
+            saw_missing_noise_inputs = True
             continue
         noise_floor = max(spread_pips * TP_PROGRESS_REPAIR_NOISE_MULT, atr_pips)
+        candidate_details["noise_floor_pips"] = noise_floor
+        saw_valid_noise_candidate = True
+        if best_noise_candidate is None or profit_pips > float(best_noise_candidate["profit_pips"]):
+            best_noise_candidate = candidate_details
+        if best_candidate.get("at_utc") == candidate_details["at_utc"]:
+            best_candidate = candidate_details
         if profit_pips < noise_floor:
             continue
         capture_jpy = round(profit_pips * jpy_per_pip, 4)
@@ -736,8 +782,44 @@ def _profit_capture_repair_replay(
             "jpy": capture_jpy,
             "pl_jpy": capture_jpy,
             "net_improvement_jpy": round(capture_jpy - close.realized_pl_jpy, 4),
+            "progress_gate": round(progress_gate, 4),
         }
-    return {"triggered": False}
+    if max_profit is None:
+        return {**base, "block_reason": "NO_PROFIT_CANDIDATE"}
+    result = {
+        **base,
+        "max_profit_pips": round(float(max_profit["profit_pips"]), 4),
+        "max_tp_progress": round(float(max_profit["tp_progress"]), 4),
+        "max_profit_at_utc": max_profit.get("at_utc"),
+    }
+    display_candidate = best_noise_candidate if saw_valid_noise_candidate else best_candidate
+    if display_candidate is not None:
+        result.update(
+            {
+                "candidate_profit_pips": round(float(display_candidate["profit_pips"]), 4),
+                "candidate_tp_progress": round(float(display_candidate["tp_progress"]), 4),
+                "candidate_spread_pips": (
+                    round(float(display_candidate["spread_pips"]), 4)
+                    if display_candidate.get("spread_pips") is not None
+                    else None
+                ),
+                "candidate_m1_atr_pips": (
+                    round(float(display_candidate["m1_atr_pips"]), 4)
+                    if display_candidate.get("m1_atr_pips") is not None
+                    else None
+                ),
+                "candidate_noise_floor_pips": (
+                    round(float(display_candidate["noise_floor_pips"]), 4)
+                    if display_candidate.get("noise_floor_pips") is not None
+                    else None
+                ),
+            }
+        )
+    if not saw_progress_candidate:
+        return {**result, "block_reason": "BELOW_TP_PROGRESS_GATE"}
+    if not saw_valid_noise_candidate and saw_missing_noise_inputs:
+        return {**result, "block_reason": "MISSING_SPREAD_OR_ATR"}
+    return {**result, "block_reason": "BELOW_NOISE_FLOOR"}
 
 
 def _audit_market_close_counterfactual(
@@ -871,6 +953,11 @@ def _summary(
     repair_replay_rows = [
         row for row in loss_rows if row.get("repair_replay_triggered_before_loss_close")
     ]
+    repair_replay_block_reasons = Counter(
+        str(row.get("repair_replay_block_reason") or "UNKNOWN")
+        for row in loss_capture_missed
+        if not row.get("repair_replay_triggered_before_loss_close")
+    )
     repair_replay_pl = _repair_replay_loss_close_pl(loss_rows)
     return {
         "canceled_orders_audited": len(canceled_rows),
@@ -917,6 +1004,9 @@ def _summary(
             round(repair_replay_pl - actual_loss_close_pl, 4)
             if repair_replay_pl is not None and actual_loss_close_pl is not None
             else None
+        ),
+        "loss_close_repair_replay_block_reasons": dict(
+            sorted(repair_replay_block_reasons.items())
         ),
         "avg_decision_lag_minutes_after_first_positive": round(sum(lag_values) / len(lag_values), 2) if lag_values else None,
         "max_decision_lag_minutes_after_first_positive": round(max(lag_values), 2) if lag_values else None,
@@ -1119,6 +1209,7 @@ def _write_report(payload: dict[str, Any], report_path: Path) -> None:
         "loss_close_repair_replay_actual_pl_jpy",
         "loss_close_repair_replay_counterfactual_pl_jpy",
         "loss_close_repair_replay_delta_jpy",
+        "loss_close_repair_replay_block_reasons",
         "avg_decision_lag_minutes_after_first_positive",
         "max_decision_lag_minutes_after_first_positive",
         "market_closes_audited",
@@ -1189,7 +1280,7 @@ def _write_report(payload: dict[str, Any], report_path: Path) -> None:
                 jpy=row.get("estimated_missed_mfe_jpy"),
             )
         )
-    lines.extend(["", "## Top Loss Close Timing Regrets", "", "| Trade | Lane | Pair | Side | Exit | PL JPY | First plus min | Lag min | MFE pips | TP progress | Capture missed | Repair replay | Repair JPY | Repair delta | Est MFE JPY | TP touched |", "|---|---|---|---|---|---:|---:|---:|---:|---:|---|---|---:|---:|---:|---|"])
+    lines.extend(["", "## Top Loss Close Timing Regrets", "", "| Trade | Lane | Pair | Side | Exit | PL JPY | First plus min | Lag min | MFE pips | TP progress | Capture missed | Repair replay | Repair block | Repair JPY | Repair delta | Est MFE JPY | TP touched |", "|---|---|---|---|---|---:|---:|---:|---:|---:|---|---|---|---:|---:|---:|---|"])
     top_loss = sorted(
         payload.get("loss_close_regrets") or [],
         key=lambda row: float(row.get("estimated_mfe_jpy_before_loss_close") or 0.0),
@@ -1197,7 +1288,7 @@ def _write_report(payload: dict[str, Any], report_path: Path) -> None:
     )[:20]
     for row in top_loss:
         lines.append(
-            "| `{trade}` | `{lane}` | `{pair}` | `{side}` | `{exit}` | `{pl}` | `{first}` | `{lag}` | `{mfe}` | `{progress}` | `{missed}` | `{repair}` | `{repair_jpy}` | `{repair_delta}` | `{jpy}` | `{tp}` |".format(
+            "| `{trade}` | `{lane}` | `{pair}` | `{side}` | `{exit}` | `{pl}` | `{first}` | `{lag}` | `{mfe}` | `{progress}` | `{missed}` | `{repair}` | `{repair_block}` | `{repair_jpy}` | `{repair_delta}` | `{jpy}` | `{tp}` |".format(
                 trade=row.get("trade_id"),
                 lane=row.get("lane_id") or "",
                 pair=row.get("pair"),
@@ -1210,6 +1301,7 @@ def _write_report(payload: dict[str, Any], report_path: Path) -> None:
                 progress=row.get("tp_progress_before_loss_close"),
                 missed=row.get("profit_capture_missed_before_loss_close"),
                 repair=row.get("repair_replay_triggered_before_loss_close"),
+                repair_block=row.get("repair_replay_block_reason") or "",
                 repair_jpy=row.get("repair_replay_counterfactual_jpy"),
                 repair_delta=row.get("repair_replay_counterfactual_net_improvement_jpy"),
                 jpy=row.get("estimated_mfe_jpy_before_loss_close"),

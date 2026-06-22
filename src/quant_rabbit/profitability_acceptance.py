@@ -1235,10 +1235,12 @@ def _execution_timing_loss_close_labels(
         "loss_close_repair_replay_counterfactual_pl_jpy": None,
         "loss_close_repair_replay_delta_jpy": None,
         "loss_close_repair_replay_profit_capture_jpy": None,
+        "loss_close_repair_replay_block_reasons": {},
         "loss_market_close_rows": 0,
         "label_counts": {},
         "top_profit_capture_misses": [],
         "top_repair_replay_triggers": [],
+        "top_repair_replay_blocks": [],
         "read_error": None,
     }
     if path is None:
@@ -1281,6 +1283,10 @@ def _execution_timing_loss_close_labels(
     metrics["loss_close_repair_replay_profit_capture_jpy"] = _optional_float(
         summary.get("loss_close_repair_replay_profit_capture_jpy")
     )
+    block_reasons = summary.get("loss_close_repair_replay_block_reasons")
+    metrics["loss_close_repair_replay_block_reasons"] = (
+        dict(block_reasons) if isinstance(block_reasons, dict) else {}
+    )
     rows = payload.get("market_close_counterfactuals")
     if not isinstance(rows, list):
         rows = []
@@ -1303,6 +1309,7 @@ def _execution_timing_loss_close_labels(
         regret_rows = []
     top_misses: list[dict[str, Any]] = []
     top_repair_triggers: list[dict[str, Any]] = []
+    top_repair_blocks: list[dict[str, Any]] = []
     for row in regret_rows:
         if not isinstance(row, dict):
             continue
@@ -1324,6 +1331,50 @@ def _execution_timing_loss_close_labels(
                     "counterfactual_jpy": _optional_float(row.get("profit_capture_counterfactual_jpy")),
                     "counterfactual_delta_jpy": _optional_float(
                         row.get("profit_capture_counterfactual_net_improvement_jpy")
+                    ),
+                    "repair_replay_block_reason": row.get("repair_replay_block_reason"),
+                    "repair_replay_max_profit_pips": _optional_float(
+                        row.get("repair_replay_max_profit_pips")
+                    ),
+                    "repair_replay_max_tp_progress": _optional_float(
+                        row.get("repair_replay_max_tp_progress")
+                    ),
+                    "repair_replay_candidate_profit_pips": _optional_float(
+                        row.get("repair_replay_candidate_profit_pips")
+                    ),
+                    "repair_replay_candidate_noise_floor_pips": _optional_float(
+                        row.get("repair_replay_candidate_noise_floor_pips")
+                    ),
+                }
+            )
+        if (
+            row.get("profit_capture_missed_before_loss_close")
+            and not row.get("repair_replay_triggered_before_loss_close")
+        ):
+            top_repair_blocks.append(
+                {
+                    **common,
+                    "repair_replay_block_reason": row.get("repair_replay_block_reason"),
+                    "repair_replay_max_profit_pips": _optional_float(
+                        row.get("repair_replay_max_profit_pips")
+                    ),
+                    "repair_replay_max_tp_progress": _optional_float(
+                        row.get("repair_replay_max_tp_progress")
+                    ),
+                    "repair_replay_candidate_profit_pips": _optional_float(
+                        row.get("repair_replay_candidate_profit_pips")
+                    ),
+                    "repair_replay_candidate_tp_progress": _optional_float(
+                        row.get("repair_replay_candidate_tp_progress")
+                    ),
+                    "repair_replay_candidate_spread_pips": _optional_float(
+                        row.get("repair_replay_candidate_spread_pips")
+                    ),
+                    "repair_replay_candidate_m1_atr_pips": _optional_float(
+                        row.get("repair_replay_candidate_m1_atr_pips")
+                    ),
+                    "repair_replay_candidate_noise_floor_pips": _optional_float(
+                        row.get("repair_replay_candidate_noise_floor_pips")
                     ),
                 }
             )
@@ -1351,6 +1402,7 @@ def _execution_timing_loss_close_labels(
     metrics["label_counts"] = dict(sorted(counts.items()))
     metrics["top_profit_capture_misses"] = top_misses[:5]
     metrics["top_repair_replay_triggers"] = top_repair_triggers[:5]
+    metrics["top_repair_replay_blocks"] = top_repair_blocks[:5]
     return labels, metrics
 
 
@@ -1403,6 +1455,10 @@ def _profit_capture_replay_repair_findings(
         "counterfactual_profit_capture_jpy": counterfactual_jpy,
         "top_profit_capture_misses": timing_metrics.get("top_profit_capture_misses") or [],
         "top_repair_replay_triggers": timing_metrics.get("top_repair_replay_triggers") or [],
+        "loss_close_repair_replay_block_reasons": (
+            timing_metrics.get("loss_close_repair_replay_block_reasons") or {}
+        ),
+        "top_repair_replay_blocks": timing_metrics.get("top_repair_replay_blocks") or [],
         "self_improvement_profit_capture_context": has_self_profit_capture_context,
         "self_improvement_p0_codes": sorted(self_p0_codes),
         "clearance_condition": (
@@ -1445,6 +1501,10 @@ def _profit_capture_replay_repair_findings(
                     "counterfactual_profit_capture_delta_jpy": counterfactual_delta,
                     "counterfactual_profit_capture_jpy": counterfactual_jpy,
                     "top_profit_capture_misses": metrics["top_profit_capture_misses"],
+                    "loss_close_repair_replay_block_reasons": metrics[
+                        "loss_close_repair_replay_block_reasons"
+                    ],
+                    "top_repair_replay_blocks": metrics["top_repair_replay_blocks"],
                     "clearance_condition": metrics["clearance_condition"],
                 },
             )
@@ -1476,6 +1536,10 @@ def _profit_capture_replay_repair_findings(
                 "counterfactual_profit_capture_jpy": counterfactual_jpy,
                 "top_profit_capture_misses": metrics["top_profit_capture_misses"],
                 "top_repair_replay_triggers": metrics["top_repair_replay_triggers"],
+                "loss_close_repair_replay_block_reasons": metrics[
+                    "loss_close_repair_replay_block_reasons"
+                ],
+                "top_repair_replay_blocks": metrics["top_repair_replay_blocks"],
                 "clearance_condition": metrics["clearance_condition"],
             },
         )
