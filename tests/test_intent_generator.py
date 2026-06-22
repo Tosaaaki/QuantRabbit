@@ -1657,6 +1657,82 @@ class IntentGeneratorTest(unittest.TestCase):
             self.assertEqual(metadata["virtual_take_profit_reward_risk"], 3.0)
             self.assertGreater(intent["units"], 0)
 
+    def test_oanda_campaign_vehicle_reprice_rejects_range_box_break(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_oanda_campaign_firepower_report(root, exit_shape="tp3_sl1")
+            campaign = _oanda_seed_range_campaign(root)
+            campaign_payload = json.loads(campaign.read_text())
+            campaign_payload["lanes"][0].update(
+                {
+                    "oanda_campaign_vehicle_key": "EUR_USD|LONG|range_reversion|tp3_sl1",
+                    "oanda_campaign_vehicle_keys": ["EUR_USD|LONG|range_reversion|tp3_sl1"],
+                    "oanda_campaign_exit_shape": "tp3_sl1",
+                    "oanda_campaign_exit_shapes": ["tp3_sl1"],
+                }
+            )
+            campaign.write_text(json.dumps(campaign_payload))
+            pair_charts = root / "pair_charts_narrow.json"
+            pair_charts.write_text(
+                json.dumps(
+                    {
+                        "charts": [
+                            {
+                                "pair": "EUR_USD",
+                                "views": [
+                                    {
+                                        "granularity": "M5",
+                                        "indicators": {
+                                            "atr_pips": 8.0,
+                                            "bb_lower": 1.1710,
+                                            "bb_upper": 1.1720,
+                                            "bb_middle": 1.1715,
+                                            "donchian_low": 1.1707,
+                                            "donchian_high": 1.1720,
+                                            "vwap": 1.1715,
+                                            "avwap_anchor": 1.1714,
+                                            "avwap_lower_1sd": 1.1712,
+                                            "avwap_upper_1sd": 1.1719,
+                                            "linreg_channel_lower": 1.1709,
+                                            "linreg_channel_upper": 1.1720,
+                                            "swing_low": 1.1705,
+                                            "swing_high": 1.1720,
+                                        },
+                                    }
+                                ],
+                            }
+                        ]
+                    }
+                )
+            )
+            output = root / "intents.json"
+
+            IntentGenerator(
+                campaign_plan=_stamp_campaign_generated_at(campaign),
+                strategy_profile=_strategy(root, status="CANDIDATE"),
+                output_path=output,
+                report_path=root / "intents.md",
+                pair_charts_path=pair_charts,
+                data_root=root,
+                max_loss_jpy=1000.0,
+            ).run(snapshot_path=_snapshot(root))
+
+            payload = json.loads(output.read_text())
+            result = next(
+                item for item in payload["results"]
+                if item["lane_id"] == "range_trader:EUR_USD:LONG:RANGE_ROTATION"
+            )
+            intent = result["intent"]
+            metadata = intent["metadata"]
+
+            self.assertEqual(intent["entry"], 1.17306)
+            self.assertFalse(metadata["oanda_campaign_vehicle_reprice_applied"])
+            self.assertEqual(
+                metadata["oanda_campaign_vehicle_reprice_apply_rejected_status"],
+                "RANGE_BOX_CONTRACT_BROKEN",
+            )
+            self.assertNotIn("oanda_campaign_vehicle_reprice_applied_entry", metadata)
+
     def test_capture_tp_proven_keeps_firepower_warn_for_non_matching_oanda_route(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -8942,10 +9018,30 @@ class IntentGeneratorTest(unittest.TestCase):
                 metadata["positive_rotation_mode"],
                 POSITIVE_ROTATION_OANDA_CAMPAIGN_FIREPOWER_MODE,
             )
+            expected_current_risk_pct = result["risk_metrics"]["risk_jpy"] / 173958.1237 * 100.0
+            self.assertEqual(
+                metadata["positive_rotation_oanda_campaign_current_risk_basis"],
+                "ACTUAL_ORDER_RISK",
+            )
+            self.assertAlmostEqual(
+                metadata["positive_rotation_oanda_campaign_current_risk_jpy"],
+                result["risk_metrics"]["risk_jpy"],
+                places=4,
+            )
+            self.assertAlmostEqual(
+                metadata["sizing_actual_risk_jpy"],
+                result["risk_metrics"]["risk_jpy"],
+                places=4,
+            )
+            self.assertLess(metadata["sizing_actual_risk_cap_utilization"], 1.0)
             self.assertAlmostEqual(
                 metadata["positive_rotation_oanda_campaign_current_risk_pct"],
-                0.239943,
+                expected_current_risk_pct,
                 places=5,
+            )
+            self.assertLess(
+                metadata["positive_rotation_oanda_campaign_current_risk_pct"],
+                0.239943,
             )
             self.assertFalse(
                 metadata["positive_rotation_oanda_campaign_current_risk_minimum_floor_reachable"]
@@ -12127,6 +12223,95 @@ class ExhaustionRangeChaseTest(unittest.TestCase):
 
         self.assertNotIn("RANGE_ROTATION_BROADER_LOCATION_CHASE", codes)
         self.assertNotIn("EXHAUSTION_RANGE_CHASE", codes)
+
+    def test_oanda_firepower_short_limit_can_use_one_broader_edge_horizon(self) -> None:
+        from quant_rabbit.strategy.intent_generator import _method_context_issues
+
+        intent = self._intent(
+            side="SHORT",
+            sigma_mult=None,
+            price_pct_24h=0.80,
+            method="RANGE_ROTATION",
+            order_type="LIMIT",
+            entry=1.16500,
+            metadata_extra={
+                "price_percentile_7d": 0.29,
+                "entry_price_percentile_24h": 0.88,
+                "entry_price_percentile_7d": 0.32,
+                "forecast_direction": "RANGE",
+                "forecast_confidence": 0.76,
+                "forecast_raw_confidence": 0.90,
+                "geometry_model": "RANGE_RAIL_LIMIT",
+                "forecast_range_low_price": 1.15820,
+                "forecast_range_high_price": 1.16620,
+                "range_entry_side": "resistance",
+                "range_tp_is_inside_box": True,
+                "range_sl_outside_box": True,
+                "range_breakout_direction": None,
+                "attach_take_profit_on_fill": True,
+                "tp_execution_mode": "ATTACHED_TECHNICAL_TP",
+                "tp_target_intent": "HARVEST",
+                "opportunity_mode": "HARVEST",
+                "positive_rotation_live_ready": True,
+                "positive_rotation_mode": POSITIVE_ROTATION_OANDA_CAMPAIGN_FIREPOWER_MODE,
+                "positive_rotation_oanda_campaign_firepower_vehicle_match": True,
+                "positive_rotation_oanda_campaign_minimum_floor_reachable": True,
+                "tf_regime_map": {
+                    "M5": {"nearest_support": 1.16270, "nearest_resistance": 1.16520},
+                    "M15": {"nearest_support": 1.16190, "nearest_resistance": 1.16580},
+                },
+            },
+        )
+        codes = {issue["code"] for issue in _method_context_issues(intent)}
+
+        self.assertNotIn("RANGE_ROTATION_BROADER_LOCATION_CHASE", codes)
+        self.assertEqual(
+            intent.metadata["range_rotation_broader_location_override"],
+            "OANDA_CAMPAIGN_FIREPOWER_SINGLE_HORIZON_EDGE",
+        )
+
+    def test_oanda_firepower_short_limit_at_opposite_extreme_still_blocks(self) -> None:
+        from quant_rabbit.strategy.intent_generator import _method_context_issues
+
+        intent = self._intent(
+            side="SHORT",
+            sigma_mult=None,
+            price_pct_24h=0.80,
+            method="RANGE_ROTATION",
+            order_type="LIMIT",
+            entry=1.16500,
+            metadata_extra={
+                "price_percentile_7d": 0.02,
+                "entry_price_percentile_24h": 0.88,
+                "entry_price_percentile_7d": 0.03,
+                "forecast_direction": "RANGE",
+                "forecast_confidence": 0.76,
+                "forecast_raw_confidence": 0.90,
+                "geometry_model": "RANGE_RAIL_LIMIT",
+                "forecast_range_low_price": 1.15820,
+                "forecast_range_high_price": 1.16620,
+                "range_entry_side": "resistance",
+                "range_tp_is_inside_box": True,
+                "range_sl_outside_box": True,
+                "range_breakout_direction": None,
+                "attach_take_profit_on_fill": True,
+                "tp_execution_mode": "ATTACHED_TECHNICAL_TP",
+                "tp_target_intent": "HARVEST",
+                "opportunity_mode": "HARVEST",
+                "positive_rotation_live_ready": True,
+                "positive_rotation_mode": POSITIVE_ROTATION_OANDA_CAMPAIGN_FIREPOWER_MODE,
+                "positive_rotation_oanda_campaign_firepower_vehicle_match": True,
+                "positive_rotation_oanda_campaign_minimum_floor_reachable": True,
+                "tf_regime_map": {
+                    "M5": {"nearest_support": 1.16270, "nearest_resistance": 1.16520},
+                    "M15": {"nearest_support": 1.16190, "nearest_resistance": 1.16580},
+                },
+            },
+        )
+        codes = {issue["code"] for issue in _method_context_issues(intent)}
+
+        self.assertIn("RANGE_ROTATION_BROADER_LOCATION_CHASE", codes)
+        self.assertNotIn("range_rotation_broader_location_override", intent.metadata)
 
     def test_range_rotation_long_at_broader_premium_blocks(self) -> None:
         from quant_rabbit.strategy.intent_generator import _method_context_issues

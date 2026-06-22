@@ -5113,6 +5113,8 @@ class IntentGenerator:
             snapshot,
             for_live_send=False,
         )
+        if risk.metrics is not None:
+            intent.metadata.update(_actual_sizing_risk_metadata(intent, risk.metrics))
         strategy_profile_evidence = strategy_profile.issue_evidence(intent) if strategy_profile else None
         strategy_issues = tuple(
             issues_to_dicts(
@@ -7263,9 +7265,11 @@ def _annotate_oanda_campaign_current_risk_firepower(
 
     The packaged OANDA campaign artifact is expressed at
     `per_trade_risk_pct_lens` (normally a 1% risk lens). Live orders often run
-    smaller because the loss-asymmetry guard caps `max_loss_jpy`. A 1%-lens
+    smaller because the loss-asymmetry guard caps `max_loss_jpy`, broker
+    lot rounding can leave that cap partly unused, and margin can bind before
+    the loss cap. A 1%-lens
     target proof must therefore not be reported as today's 5% route until it is
-    rescaled to the current `max_loss_jpy / start_balance_jpy` risk lens.
+    rescaled to the current executable order risk lens.
     """
 
     root = data_root or (ROOT / "data")
@@ -7279,16 +7283,19 @@ def _annotate_oanda_campaign_current_risk_firepower(
     if not isinstance(payload, dict):
         return None
     start_balance = _optional_float(payload.get("start_balance_jpy"))
+    actual_risk_jpy = _optional_float(metadata.get("sizing_actual_risk_jpy"))
     max_loss_jpy = _optional_float(metadata.get("max_loss_jpy"))
     lens_pct = _optional_float(
         metadata.get("positive_rotation_oanda_campaign_per_trade_risk_pct_lens")
     )
-    if start_balance is None or start_balance <= 0 or max_loss_jpy is None or max_loss_jpy <= 0:
+    risk_jpy = actual_risk_jpy if actual_risk_jpy is not None and actual_risk_jpy > 0 else max_loss_jpy
+    risk_basis = "ACTUAL_ORDER_RISK" if actual_risk_jpy is not None and actual_risk_jpy > 0 else "MAX_LOSS_CAP"
+    if start_balance is None or start_balance <= 0 or risk_jpy is None or risk_jpy <= 0:
         return None
     if lens_pct is None or lens_pct <= 0:
         return None
 
-    current_risk_pct = (max_loss_jpy / start_balance) * 100.0
+    current_risk_pct = (risk_jpy / start_balance) * 100.0
     risk_scale = current_risk_pct / lens_pct
     aggregate_return = _optional_float(
         metadata.get("positive_rotation_oanda_campaign_estimated_return_pct_per_active_day")
@@ -7327,6 +7334,7 @@ def _annotate_oanda_campaign_current_risk_firepower(
         else 0
     )
     metrics: dict[str, float | bool | int | None] = {
+        "current_risk_jpy": round(risk_jpy, 4),
         "current_risk_pct": round(current_risk_pct, 6),
         "risk_scale": round(risk_scale, 6),
         "estimated_return_pct_per_active_day": (
@@ -7347,6 +7355,8 @@ def _annotate_oanda_campaign_current_risk_firepower(
     }
     metadata.update(
         {
+            "positive_rotation_oanda_campaign_current_risk_jpy": metrics["current_risk_jpy"],
+            "positive_rotation_oanda_campaign_current_risk_basis": risk_basis,
             "positive_rotation_oanda_campaign_current_risk_pct": metrics["current_risk_pct"],
             "positive_rotation_oanda_campaign_current_risk_scale": metrics["risk_scale"],
             "positive_rotation_oanda_campaign_current_risk_estimated_return_pct_per_active_day": (
@@ -7379,6 +7389,27 @@ def _annotate_oanda_campaign_current_risk_firepower(
         }
     )
     return metrics
+
+
+def _actual_sizing_risk_metadata(intent: OrderIntent, metrics: Any) -> dict[str, Any]:
+    """Record executable order risk separately from the configured cap."""
+
+    metadata = intent.metadata or {}
+    max_loss_jpy = _optional_float(metadata.get("max_loss_jpy"))
+    risk_jpy = max(0.0, float(metrics.risk_jpy))
+    reward_jpy = max(0.0, float(metrics.reward_jpy))
+    out: dict[str, Any] = {
+        "sizing_actual_risk_jpy": round(risk_jpy, 4),
+        "sizing_actual_reward_jpy": round(reward_jpy, 4),
+        "sizing_actual_loss_pips": round(max(0.0, float(metrics.loss_pips)), 4),
+        "sizing_actual_reward_pips": round(max(0.0, float(metrics.reward_pips)), 4),
+        "sizing_actual_units": int(intent.units),
+        "sizing_actual_risk_basis": "RISK_ENGINE_VALIDATED_ORDER",
+    }
+    if max_loss_jpy is not None and max_loss_jpy > 0:
+        out["sizing_actual_risk_cap_jpy"] = round(max_loss_jpy, 4)
+        out["sizing_actual_risk_cap_utilization"] = round(risk_jpy / max_loss_jpy, 6)
+    return out
 
 
 def _oanda_campaign_firepower_harvest_rotation_allowed(
@@ -7910,29 +7941,69 @@ def _intent_from_lane(
                 confirmed_reprice_metadata.get("oanda_campaign_vehicle_reprice_status")
                 == "MATCHED_CURRENT_GEOMETRY"
             ):
-                confirmed_reprice_metadata.update(
-                    {
-                        "oanda_campaign_vehicle_reprice_applied": True,
-                        "oanda_campaign_vehicle_reprice_original_entry": original_entry,
-                        "oanda_campaign_vehicle_reprice_applied_entry": entry,
-                        "oanda_campaign_vehicle_reprice_original_reward_risk": (
-                            vehicle_reprice_metadata.get(
-                                "oanda_campaign_vehicle_reprice_current_reward_risk"
-                            )
-                        ),
-                        "oanda_campaign_vehicle_reprice_applied_reward_risk": (
-                            confirmed_reprice_metadata.get(
-                                "oanda_campaign_vehicle_reprice_current_reward_risk"
-                            )
-                        ),
-                        "oanda_campaign_vehicle_reprice_applied_reason": (
-                            vehicle_reprice_metadata.get(
-                                "oanda_campaign_vehicle_reprice_reason"
-                            )
-                        ),
-                    }
+                confirmed_range_metadata = _geometry_metadata(
+                    pair,
+                    side,
+                    order_type,
+                    quote,
+                    entry=entry,
+                    tp=tp,
+                    sl=sl,
+                    range_indicators=range_indicators if method == TradeMethod.RANGE_ROTATION else None,
+                    chart_indicators=range_indicators,
+                    chart_context=chart_context,
+                    atr_pips=atr_pips,
                 )
-                vehicle_reprice_metadata = confirmed_reprice_metadata
+                range_box_ok = (
+                    method != TradeMethod.RANGE_ROTATION
+                    or (
+                        confirmed_range_metadata.get("range_tp_is_inside_box") is True
+                        and confirmed_range_metadata.get("range_sl_outside_box") is True
+                    )
+                )
+                if range_box_ok:
+                    confirmed_reprice_metadata.update(
+                        {
+                            "oanda_campaign_vehicle_reprice_applied": True,
+                            "oanda_campaign_vehicle_reprice_original_entry": original_entry,
+                            "oanda_campaign_vehicle_reprice_applied_entry": entry,
+                            "oanda_campaign_vehicle_reprice_original_reward_risk": (
+                                vehicle_reprice_metadata.get(
+                                    "oanda_campaign_vehicle_reprice_current_reward_risk"
+                                )
+                            ),
+                            "oanda_campaign_vehicle_reprice_applied_reward_risk": (
+                                confirmed_reprice_metadata.get(
+                                    "oanda_campaign_vehicle_reprice_current_reward_risk"
+                                )
+                            ),
+                            "oanda_campaign_vehicle_reprice_applied_reason": (
+                                vehicle_reprice_metadata.get(
+                                    "oanda_campaign_vehicle_reprice_reason"
+                                )
+                            ),
+                        }
+                    )
+                    vehicle_reprice_metadata = confirmed_reprice_metadata
+                else:
+                    entry = original_entry
+                    tp = original_tp
+                    sl = original_sl
+                    tp_execution_metadata = original_tp_execution_metadata
+                    position_metadata = original_position_metadata
+                    recovery_target_units = original_recovery_target_units
+                    vehicle_reprice_metadata.update(
+                        {
+                            "oanda_campaign_vehicle_reprice_applied": False,
+                            "oanda_campaign_vehicle_reprice_apply_rejected_status": (
+                                "RANGE_BOX_CONTRACT_BROKEN"
+                            ),
+                            "oanda_campaign_vehicle_reprice_apply_rejected_reason": (
+                                "confirmed OANDA vehicle reprice would move RANGE TP outside "
+                                "the current box or leave SL inside it"
+                            ),
+                        }
+                    )
             else:
                 entry = original_entry
                 tp = original_tp
@@ -9187,9 +9258,58 @@ def _range_rotation_chases_broader_location(intent: OrderIntent, metadata: dict[
     ]
     if not percentiles:
         return False
+    if _range_rotation_oanda_firepower_broader_location_override(intent, metadata):
+        return False
     if intent.side == Side.SHORT:
         return any(value <= BREAKOUT_FAILURE_RETEST_MIDPOINT for value in percentiles)
     return any(value >= BREAKOUT_FAILURE_RETEST_MIDPOINT for value in percentiles)
+
+
+def _range_rotation_oanda_firepower_broader_location_override(
+    intent: OrderIntent,
+    metadata: dict[str, Any],
+) -> bool:
+    """Allow a short-horizon OANDA HARVEST rail fade when one broad edge matches.
+
+    The generic broader-location guard blocks if *any* horizon is on the wrong
+    side. That is correct for ordinary range lanes, but too strict for an
+    audited short-horizon HARVEST LIMIT: a 24h upper-rail short can be valid
+    even if the 7d range is still below midpoint, as long as it is not at the
+    opposite extreme and all current range/forecast/TP gates are intact.
+    """
+
+    if intent.order_type != OrderType.LIMIT:
+        return False
+    if not _oanda_campaign_firepower_positive_rotation_allowed(intent):
+        return False
+    if not _is_range_rotation_forecast_metadata(metadata):
+        return False
+    confidence = _optional_float(metadata.get("forecast_confidence"))
+    if confidence is None or confidence < _forecast_live_min_confidence(metadata):
+        return False
+    if not _range_forecast_box_present(metadata):
+        return False
+    if not _range_rotation_rail_side_matches_metadata(side=intent.side, metadata=metadata):
+        return False
+    if metadata.get("range_tp_is_inside_box") is not True:
+        return False
+    if metadata.get("range_sl_outside_box") is not True:
+        return False
+    if str(metadata.get("range_breakout_direction") or "").upper() in {"UP", "DOWN"}:
+        return False
+    if not _range_firepower_entry_at_broader_edge(intent, metadata):
+        return False
+    if _structural_retest_entry_at_broader_extreme(intent, metadata):
+        return False
+    metadata["range_rotation_broader_location_override"] = (
+        "OANDA_CAMPAIGN_FIREPOWER_SINGLE_HORIZON_EDGE"
+    )
+    metadata["range_rotation_broader_location_override_basis"] = (
+        "current LIMIT HARVEST rail geometry matches an audited OANDA firepower "
+        "vehicle and at least one broad location horizon is at the correct fade "
+        "edge while no horizon is at the opposite extreme"
+    )
+    return True
 
 
 def _gate_location_percentile(intent: OrderIntent, metadata: dict[str, Any], horizon: str) -> float | None:
