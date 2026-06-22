@@ -1783,7 +1783,7 @@ class AutoTradeCycleTest(unittest.TestCase):
             self.assertEqual(canceled, ())
             self.assertEqual(client.orders_canceled, [])
 
-    def test_gpt_cancel_helper_preserves_pending_inside_recorded_thesis_horizon(self) -> None:
+    def test_gpt_cancel_helper_cancels_self_improvement_review_inside_recorded_thesis_horizon(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             now = datetime.now(timezone.utc)
@@ -1881,8 +1881,8 @@ class AutoTradeCycleTest(unittest.TestCase):
 
             canceled = cycle._cancel_gpt_pending_orders(gpt_summary, send=True)
 
-            self.assertEqual(canceled, ())
-            self.assertEqual(client.orders_canceled, [])
+            self.assertEqual(canceled, ("horizon-pending",))
+            self.assertEqual(client.orders_canceled, ["horizon-pending"])
 
     def test_trader_pending_order_can_add_verified_basket_when_risk_is_known(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -2509,6 +2509,89 @@ class AutoTradeCycleTest(unittest.TestCase):
                     os.environ["QR_NEW_ENTRY_INITIAL_SL"] = prior_initial_sl
 
             self.assertEqual(filtered, ())
+
+    def test_gpt_trade_cancel_filter_forces_self_improvement_review_order(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            now = datetime.now(timezone.utc)
+            lane_id = "range_trader:GBP_CHF:SHORT:RANGE_ROTATION"
+            pending = BrokerOrder(
+                order_id="audit-review-pending",
+                pair="GBP_CHF",
+                order_type="LIMIT",
+                price=1.06846,
+                state="PENDING",
+                units=-1000,
+                owner=Owner.TRADER,
+                raw={
+                    "clientExtensions": {
+                        "comment": f"qr-vnext lane={lane_id} desk=range_trader role=OANDA_FIREPOWER_ROUTE"
+                    },
+                    "createTime": now.isoformat(),
+                    "takeProfitOnFill": {"price": "1.06686"},
+                    "stopLossOnFill": {"price": "1.07002"},
+                },
+            )
+            intents_path = root / "intents.json"
+            intents_path.write_text(
+                json.dumps(
+                    {
+                        "results": [
+                            {
+                                "lane_id": lane_id,
+                                "status": "LIVE_READY",
+                                "intent": {
+                                    "pair": "GBP_CHF",
+                                    "side": "SHORT",
+                                    "order_type": "LIMIT",
+                                    "units": 1000,
+                                    "entry": 1.06846,
+                                    "tp": 1.06686,
+                                    "sl": 1.07002,
+                                },
+                                "risk_metrics": {"spread_pips": 2.0},
+                            }
+                        ]
+                    }
+                )
+                + "\n"
+            )
+            self_improvement_path = root / "self_improvement_audit.json"
+            self_improvement_path.write_text(
+                json.dumps(
+                    {
+                        "findings": [
+                            {
+                                "code": "PENDING_ENTRY_CANCEL_REVIEW_REQUIRED",
+                                "evidence": {
+                                    "cancel_review_order_ids": ["audit-review-pending"],
+                                },
+                            }
+                        ]
+                    }
+                )
+                + "\n"
+            )
+            client = FakeCycleClient(
+                BrokerSnapshot(
+                    fetched_at_utc=now,
+                    orders=(pending,),
+                    quotes={
+                        "GBP_CHF": Quote("GBP_CHF", 1.06820, 1.06835, timestamp_utc=now),
+                        "USD_JPY": Quote("USD_JPY", 157.0, 157.01, timestamp_utc=now),
+                    },
+                )
+            )
+
+            filtered = _filtered_gpt_trade_cancel_order_ids(
+                client=client,
+                intents_path=intents_path,
+                lane_ids=(lane_id,),
+                cancel_order_ids=(pending.order_id,),
+                self_improvement_audit_path=self_improvement_path,
+            )
+
+            self.assertEqual(filtered, ("audit-review-pending",))
 
     def test_gpt_trade_preserves_recent_cancel_regret_pending_for_other_lane(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

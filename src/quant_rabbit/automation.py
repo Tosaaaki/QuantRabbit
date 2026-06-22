@@ -648,6 +648,9 @@ def _filtered_gpt_trade_cancel_order_ids(
     }
     filtered: list[str] = []
     for order_id in cancel_order_ids:
+        if str(order_id) in force_cancel_order_ids:
+            filtered.append(str(order_id))
+            continue
         order = orders_by_id.get(str(order_id))
         if order is not None:
             if _should_preserve_gpt_trade_cancel(
@@ -663,11 +666,6 @@ def _filtered_gpt_trade_cancel_order_ids(
                     candidates=candidates,
                     snapshot=snapshot,
                 )
-            ):
-                continue
-            if str(order_id) in force_cancel_order_ids and _pending_order_has_current_pair_side(
-                order,
-                intents_payload,
             ):
                 continue
         filtered.append(str(order_id))
@@ -4024,25 +4022,40 @@ class AutoTradeCycle:
         canceled: list[str] = []
         already = set(already_canceled)
         allowed = set(allowed_order_ids) if allowed_order_ids is not None else None
+        force_cancel_order_ids = _self_improvement_pending_cancel_review_order_ids(
+            self.gpt_self_improvement_audit_path
+            or (self.intents_path.parent / DEFAULT_SELF_IMPROVEMENT_AUDIT.name)
+        )
         preserved_current_thesis_ids: set[str] = set()
         preserved_active_recorded_thesis_ids: set[str] = set()
         if gpt_summary.action == "CANCEL_PENDING" and self.intents_path.exists():
             try:
                 snapshot = self._load_snapshot_artifact()
-                preserved_current_thesis_ids = set(
+                visible_current_thesis_ids = set(
                     _pending_cancel_ids_with_visible_current_thesis(
                         snapshot,
                         intents_path=self.intents_path,
                         cancel_order_ids=gpt_summary.cancel_order_ids,
                     )
                 )
+                visible_live_ready_thesis_ids = set(
+                    _pending_cancel_ids_with_visible_current_thesis(
+                        snapshot,
+                        intents_path=self.intents_path,
+                        cancel_order_ids=gpt_summary.cancel_order_ids,
+                        live_ready_only=True,
+                    )
+                )
+                preserved_current_thesis_ids = (
+                    visible_current_thesis_ids - force_cancel_order_ids
+                ) | (visible_live_ready_thesis_ids & force_cancel_order_ids)
                 preserved_active_recorded_thesis_ids = set(
                     _pending_cancel_ids_with_active_recorded_thesis(
                         snapshot,
                         data_root=self.intents_path.parent,
                         cancel_order_ids=gpt_summary.cancel_order_ids,
                     )
-                )
+                ) - force_cancel_order_ids
             except (OSError, ValueError, json.JSONDecodeError):
                 preserved_current_thesis_ids = set()
                 preserved_active_recorded_thesis_ids = set()
@@ -4497,6 +4510,7 @@ def _pending_cancel_ids_with_visible_current_thesis(
     *,
     intents_path: Path,
     cancel_order_ids: tuple[str, ...],
+    live_ready_only: bool = False,
 ) -> tuple[str, ...]:
     cancel_set = {str(order_id) for order_id in cancel_order_ids if str(order_id)}
     if not cancel_set:
@@ -4505,14 +4519,19 @@ def _pending_cancel_ids_with_visible_current_thesis(
         intents_payload = json.loads(intents_path.read_text())
     except (OSError, json.JSONDecodeError, ValueError):
         return ()
-    current_pair_sides = {
-        (
-            str((item.get("intent") or {}).get("pair") or ""),
-            str((item.get("intent") or {}).get("side") or "").upper(),
+    current_pair_sides: set[tuple[str, str]] = set()
+    for item in intents_payload.get("results", []) or []:
+        if not isinstance(item, dict) or not isinstance(item.get("intent"), dict):
+            continue
+        if live_ready_only and str(item.get("status") or "") != "LIVE_READY":
+            continue
+        intent = item.get("intent") or {}
+        current_pair_sides.add(
+            (
+                str(intent.get("pair") or ""),
+                str(intent.get("side") or "").upper(),
+            )
         )
-        for item in intents_payload.get("results", []) or []
-        if isinstance(item, dict) and isinstance(item.get("intent"), dict)
-    }
     if not current_pair_sides:
         return ()
     preserved: list[str] = []
