@@ -22,6 +22,7 @@ from quant_rabbit.strategy.intent_generator import (
     POSITIVE_ROTATION_PROOF_COLLECTION_WARN_CODE,
     RANGE_TARGET_SPREAD_CUSHION_MULT,
     SELF_IMPROVEMENT_PROFITABILITY_P0_REPAIR_RECENT_LOSS_CODE,
+    _annotate_oanda_campaign_current_risk_firepower,
     _append_current_range_phase_lanes,
     _append_forecast_seed_lanes,
     _forecast_context_payload,
@@ -9650,6 +9651,47 @@ class IntentGeneratorTest(unittest.TestCase):
             issue_codes = {issue["code"] for issue in result["risk_issues"]}
             self.assertIn(POSITIVE_ROTATION_FIREPOWER_BLOCK_CODE, issue_codes)
             self.assertIn(POSITIVE_ROTATION_FIREPOWER_BLOCK_CODE, result["live_blocker_codes"])
+
+    def test_oanda_firepower_current_risk_rejects_aggregate_without_matching_vehicle(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "daily_target_state.json").write_text(
+                json.dumps(
+                    {
+                        "status": "PURSUE_TARGET",
+                        "start_balance_jpy": 173958.1237,
+                        "remaining_minimum_jpy": 3000.0,
+                        "remaining_target_jpy": 19353.8438,
+                        "target_trades_per_day": 30,
+                    }
+                )
+            )
+            metadata = {
+                "sizing_actual_risk_jpy": 1000.0,
+                "max_loss_jpy": 1000.0,
+                "positive_rotation_oanda_campaign_per_trade_risk_pct_lens": 1.0,
+                "positive_rotation_oanda_campaign_estimated_return_pct_per_active_day": 30.0,
+                "positive_rotation_oanda_campaign_matching_vehicle_estimated_return_pct_per_active_day": None,
+                "positive_rotation_oanda_campaign_weighted_return_pct_per_trade_at_risk_lens": 0.64,
+                "positive_rotation_oanda_campaign_firepower_vehicle_match": False,
+            }
+
+            metrics = _annotate_oanda_campaign_current_risk_firepower(
+                metadata,
+                data_root=root,
+            )
+
+            self.assertIsNotNone(metrics)
+            assert metrics is not None
+            self.assertEqual(metrics["estimated_return_basis"], "NO_MATCHING_VEHICLE")
+            self.assertIsNone(metrics["estimated_return_pct_per_active_day"])
+            self.assertGreater(metrics["aggregate_estimated_return_pct_per_active_day"], 0)
+            self.assertFalse(metrics["minimum_floor_reachable"])
+            self.assertFalse(
+                metadata["positive_rotation_oanda_campaign_current_risk_minimum_floor_reachable"]
+            )
 
     def test_oanda_repair_not_blocked_by_same_segment_stop_loss_memory(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

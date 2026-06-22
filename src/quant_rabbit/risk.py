@@ -751,12 +751,7 @@ def _loss_asymmetry_oanda_campaign_firepower_min_lot_shape_allowed(
             "positive_rotation_oanda_campaign_matching_vehicle_estimated_return_pct_per_active_day"
         )
     )
-    aggregate_return = _to_float(
-        metadata.get("positive_rotation_oanda_campaign_estimated_return_pct_per_active_day")
-    )
-    if (matching_return is None or matching_return <= 0) and (
-        aggregate_return is None or aggregate_return <= 0
-    ):
+    if matching_return is None or matching_return <= 0:
         return False
     min_lot_loss = _to_float(metadata.get("positive_rotation_oanda_campaign_min_lot_loss_jpy"))
     effective_cap = _to_float(metadata.get("loss_asymmetry_guard_effective_max_loss_jpy"))
@@ -836,9 +831,6 @@ def _loss_asymmetry_oanda_campaign_firepower_relaxed_shape_allowed(
             "positive_rotation_oanda_campaign_matching_vehicle_estimated_return_pct_per_active_day"
         )
     )
-    aggregate_return = _to_float(
-        metadata.get("positive_rotation_oanda_campaign_estimated_return_pct_per_active_day")
-    )
     weighted_return = _to_float(
         metadata.get(
             "positive_rotation_oanda_campaign_normal_cap_weighted_return_pct_per_trade"
@@ -847,10 +839,8 @@ def _loss_asymmetry_oanda_campaign_firepower_relaxed_shape_allowed(
     return (
         weighted_return is not None
         and weighted_return > 0
-        and (
-            (matching_return is not None and matching_return > 0)
-            or (aggregate_return is not None and aggregate_return > 0)
-        )
+        and matching_return is not None
+        and matching_return > 0
     )
 
 

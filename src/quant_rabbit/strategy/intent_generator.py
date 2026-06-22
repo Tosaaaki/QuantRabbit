@@ -6216,12 +6216,7 @@ def _loss_asymmetry_oanda_campaign_firepower_min_lot_plan(
     matching_return = _optional_float(
         oanda_firepower.get("matching_vehicle_estimated_return_pct_per_active_day")
     )
-    aggregate_return = _optional_float(
-        lane.get("oanda_campaign_estimated_return_pct_per_active_day")
-    )
-    if (matching_return is None or matching_return <= 0) and (
-        aggregate_return is None or aggregate_return <= 0
-    ):
+    if matching_return is None or matching_return <= 0:
         return None, {}
     normal_cap_units = _risk_budgeted_units(
         pair,
@@ -7453,6 +7448,11 @@ def _annotate_oanda_campaign_firepower_metadata(
     metadata: dict[str, Any],
     oanda_firepower: dict[str, Any],
 ) -> None:
+    vehicle_match = oanda_firepower["vehicle_match"] is True
+    aggregate_minimum_reachable = oanda_firepower["minimum_floor_reachable"] is True
+    aggregate_target_reachable = oanda_firepower["target_reachable"] is True
+    executable_minimum_reachable = vehicle_match and aggregate_minimum_reachable
+    executable_target_reachable = vehicle_match and aggregate_target_reachable
     metadata.update(
         {
             "positive_rotation_oanda_campaign_firepower_source": oanda_firepower["source"],
@@ -7491,11 +7491,23 @@ def _annotate_oanda_campaign_firepower_metadata(
             "positive_rotation_oanda_campaign_trades_needed_for_target_10pct": (
                 oanda_firepower["trades_needed_for_target_10pct_at_weighted_expectancy"]
             ),
+            "positive_rotation_oanda_campaign_aggregate_minimum_floor_reachable": (
+                aggregate_minimum_reachable
+            ),
+            "positive_rotation_oanda_campaign_aggregate_target_reachable": (
+                aggregate_target_reachable
+            ),
             "positive_rotation_oanda_campaign_minimum_floor_reachable": (
-                oanda_firepower["minimum_floor_reachable"]
+                executable_minimum_reachable
             ),
             "positive_rotation_oanda_campaign_target_reachable": (
-                oanda_firepower["target_reachable"]
+                executable_target_reachable
+            ),
+            "positive_rotation_oanda_campaign_executable_minimum_floor_reachable": (
+                executable_minimum_reachable
+            ),
+            "positive_rotation_oanda_campaign_executable_target_reachable": (
+                executable_target_reachable
             ),
             "positive_rotation_oanda_campaign_firepower_vehicle_match": (
                 oanda_firepower["vehicle_match"]
@@ -7604,20 +7616,36 @@ def _annotate_oanda_campaign_current_risk_firepower(
     adjusted_aggregate = aggregate_return * risk_scale if aggregate_return is not None else None
     adjusted_matching = matching_return * risk_scale if matching_return is not None else None
     adjusted_weighted = weighted_return * risk_scale if weighted_return is not None else None
-    route_return = adjusted_matching if matching_return is not None else adjusted_aggregate
-    route_return_basis = "MATCHING_VEHICLE" if matching_return is not None else "AGGREGATE_FALLBACK"
+    vehicle_match = metadata.get("positive_rotation_oanda_campaign_firepower_vehicle_match") is True
+    has_matching_return = (
+        vehicle_match
+        and adjusted_matching is not None
+        and adjusted_matching > 0
+    )
+    route_return = adjusted_matching if has_matching_return else None
+    route_return_basis = (
+        "MATCHING_VEHICLE"
+        if has_matching_return
+        else ("MATCHING_VEHICLE_RETURN_MISSING" if vehicle_match else "NO_MATCHING_VEHICLE")
+    )
     remaining_minimum_jpy = max(0.0, _optional_float(payload.get("remaining_minimum_jpy")) or 0.0)
     remaining_target_jpy = max(0.0, _optional_float(payload.get("remaining_target_jpy")) or 0.0)
     remaining_minimum_pct = (remaining_minimum_jpy / start_balance) * 100.0
     remaining_target_pct = (remaining_target_jpy / start_balance) * 100.0
     minimum_reachable = (
         route_return is not None
-        and route_return >= remaining_minimum_pct
-    ) if remaining_minimum_pct > 0 else True
+        and (
+            remaining_minimum_pct <= 0
+            or route_return >= remaining_minimum_pct
+        )
+    )
     target_reachable = (
         route_return is not None
-        and route_return >= remaining_target_pct
-    ) if remaining_target_pct > 0 else True
+        and (
+            remaining_target_pct <= 0
+            or route_return >= remaining_target_pct
+        )
+    )
     required_minimum_trades_from_weighted = (
         math.ceil(remaining_minimum_pct / adjusted_weighted)
         if remaining_minimum_pct > 0 and adjusted_weighted is not None and adjusted_weighted > 0
@@ -7764,10 +7792,7 @@ def _oanda_campaign_firepower_harvest_rotation_allowed(
     matching_return = _optional_float(
         oanda_firepower.get("matching_vehicle_estimated_return_pct_per_active_day")
     )
-    aggregate_return = _optional_float(metadata.get("oanda_campaign_estimated_return_pct_per_active_day"))
-    if (matching_return is None or matching_return <= 0) and (
-        aggregate_return is None or aggregate_return <= 0
-    ):
+    if matching_return is None or matching_return <= 0:
         return False
     return True
 
