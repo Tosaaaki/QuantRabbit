@@ -5206,6 +5206,15 @@ class IntentGenerator:
             if matrix_reject_issue["message"] not in live_blockers:
                 live_blockers = (*live_blockers, matrix_reject_issue["message"])
             risk_allowed = False
+        positive_rotation_issue = _capture_positive_rotation_live_issue(
+            intent,
+            data_root=data_root or self.data_root,
+        )
+        if positive_rotation_issue is not None:
+            risk_issues.append(positive_rotation_issue)
+            if positive_rotation_issue.get("severity") == "BLOCK":
+                live_blockers = (*live_blockers, positive_rotation_issue["message"])
+                risk_allowed = False
         context_issues = _method_context_issues(intent)
         if context_issues:
             risk_issues.extend(context_issues)
@@ -5226,15 +5235,6 @@ class IntentGenerator:
         if loss_streak_issues:
             risk_issues.extend(loss_streak_issues)
             if any(issue.get("severity") == "BLOCK" for issue in loss_streak_issues):
-                risk_allowed = False
-        positive_rotation_issue = _capture_positive_rotation_live_issue(
-            intent,
-            data_root=data_root or self.data_root,
-        )
-        if positive_rotation_issue is not None:
-            risk_issues.append(positive_rotation_issue)
-            if positive_rotation_issue.get("severity") == "BLOCK":
-                live_blockers = (*live_blockers, positive_rotation_issue["message"])
                 risk_allowed = False
         positive_rotation_firepower_issue = _positive_rotation_daily_firepower_issue(
             intent,
@@ -8567,6 +8567,8 @@ def _range_forming_higher_tf_trend_conflict_issue(
         return None
     if _range_forming_predictive_range_thesis_is_strong(intent, metadata):
         return None
+    if _range_forming_oanda_firepower_range_thesis_is_strong(intent, metadata):
+        return None
     side = intent.side.value
     chart_bias = str(metadata.get("chart_direction_bias") or "").upper()
     matrix_reject_count = _optional_int(metadata.get("matrix_reject_count")) or 0
@@ -8636,6 +8638,71 @@ def _range_forming_predictive_range_thesis_is_strong(
     if str(metadata.get("range_breakout_direction") or "").upper() in {"UP", "DOWN"}:
         return False
     return True
+
+
+def _range_forming_oanda_firepower_range_thesis_is_strong(
+    intent: OrderIntent,
+    metadata: dict[str, Any],
+) -> bool:
+    """True for audited range-edge firepower that can trade before HTF labels turn.
+
+    This does not grant live permission by itself. It only prevents the
+    RANGE_FORMING HTF-trend guard from discarding a current OANDA-validated
+    non-market HARVEST rail fade whose forecast/range geometry and broad
+    location already match the live gates.
+    """
+
+    if intent.order_type != OrderType.LIMIT:
+        return False
+    if not _oanda_campaign_firepower_positive_rotation_allowed(intent):
+        return False
+    if not _is_range_rotation_forecast_metadata(metadata):
+        return False
+    confidence = _optional_float(metadata.get("forecast_confidence"))
+    if confidence is None or confidence < _forecast_live_min_confidence(metadata):
+        return False
+    if not _range_forecast_box_present(metadata):
+        return False
+    if not _range_rotation_rail_side_matches_metadata(side=intent.side, metadata=metadata):
+        return False
+    if metadata.get("range_tp_is_inside_box") is not True:
+        return False
+    if metadata.get("range_sl_outside_box") is not True:
+        return False
+    if str(metadata.get("range_breakout_direction") or "").upper() in {"UP", "DOWN"}:
+        return False
+    if _range_rotation_chases_broader_location(intent, metadata):
+        return False
+    if not _range_firepower_entry_at_broader_edge(intent, metadata):
+        return False
+
+    metadata["range_forming_htf_conflict_override"] = "OANDA_CAMPAIGN_FIREPOWER_RANGE_EDGE"
+    metadata["range_forming_htf_conflict_override_basis"] = (
+        "current LIMIT HARVEST rail geometry matches an audited OANDA campaign "
+        "firepower vehicle at the correct broader range edge; all other forecast, "
+        "spread, strategy, risk, broker-truth, and gateway gates remain active"
+    )
+    return True
+
+
+def _range_firepower_entry_at_broader_edge(
+    intent: OrderIntent,
+    metadata: dict[str, Any],
+) -> bool:
+    percentiles = [
+        value
+        for value in (
+            _gate_location_percentile(intent, metadata, "24h"),
+            _gate_location_percentile(intent, metadata, "7d"),
+        )
+        if value is not None
+    ]
+    if not percentiles:
+        return False
+    edge = FORECAST_SUPPORT_RANGE_EDGE_CHASE_POSITION
+    if intent.side == Side.SHORT:
+        return any(value >= edge for value in percentiles)
+    return any(value <= 1.0 - edge for value in percentiles)
 
 
 # A support/resistance box midpoint is the geometry boundary between "at the

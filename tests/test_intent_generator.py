@@ -12007,6 +12007,104 @@ class ExhaustionRangeChaseTest(unittest.TestCase):
 
         self.assertIn("RANGE_FORMING_HTF_TREND_CONFLICT", codes)
 
+    def test_range_forming_oanda_firepower_edge_bypasses_htf_conflict_guard(self) -> None:
+        from quant_rabbit.strategy.intent_generator import _method_context_issues
+
+        intent = self._intent(
+            side="SHORT",
+            sigma_mult=None,
+            price_pct_24h=0.96,
+            method="RANGE_ROTATION",
+            order_type="LIMIT",
+            entry=1.16100,
+            metadata_extra={
+                "range_phase": "RANGE_FORMING",
+                "chart_direction_bias": "LONG",
+                "matrix_reject_count": 4,
+                "forecast_direction": "RANGE",
+                "forecast_confidence": 0.55,
+                "forecast_raw_confidence": 0.91,
+                "forecast_component_scores": {"UP": 83.0, "DOWN": 48.0, "RANGE": 26.5, "EITHER": 0.0},
+                "geometry_model": "RANGE_RAIL_LIMIT",
+                "forecast_range_low_price": 1.15820,
+                "forecast_range_high_price": 1.16120,
+                "range_entry_side": "resistance",
+                "range_tp_is_inside_box": True,
+                "range_sl_outside_box": True,
+                "range_breakout_direction": None,
+                "entry_price_percentile_24h": 0.96,
+                "entry_price_percentile_7d": 1.0,
+                "attach_take_profit_on_fill": True,
+                "tp_execution_mode": "ATTACHED_TECHNICAL_TP",
+                "tp_target_intent": "HARVEST",
+                "opportunity_mode": "HARVEST",
+                "positive_rotation_live_ready": True,
+                "positive_rotation_mode": POSITIVE_ROTATION_OANDA_CAMPAIGN_FIREPOWER_MODE,
+                "positive_rotation_oanda_campaign_firepower_vehicle_match": True,
+                "positive_rotation_oanda_campaign_minimum_floor_reachable": True,
+                "tf_regime_map": {
+                    "H1": {"classification": "TREND_UP", "adx": 22.3},
+                    "H4": {"classification": "TREND_UP", "adx": 37.3},
+                    "M5": {"nearest_support": 1.15980, "nearest_resistance": 1.16120},
+                    "M15": {"nearest_support": 1.15890, "nearest_resistance": 1.16130},
+                },
+            },
+        )
+        codes = {issue["code"] for issue in _method_context_issues(intent)}
+
+        self.assertNotIn("RANGE_FORMING_HTF_TREND_CONFLICT", codes)
+        self.assertEqual(
+            intent.metadata["range_forming_htf_conflict_override"],
+            "OANDA_CAMPAIGN_FIREPOWER_RANGE_EDGE",
+        )
+
+    def test_range_forming_oanda_firepower_without_broader_edge_still_blocks(self) -> None:
+        from quant_rabbit.strategy.intent_generator import _method_context_issues
+
+        intent = self._intent(
+            side="SHORT",
+            sigma_mult=None,
+            price_pct_24h=0.56,
+            method="RANGE_ROTATION",
+            order_type="LIMIT",
+            entry=1.16100,
+            metadata_extra={
+                "range_phase": "RANGE_FORMING",
+                "chart_direction_bias": "LONG",
+                "matrix_reject_count": 4,
+                "forecast_direction": "RANGE",
+                "forecast_confidence": 0.55,
+                "forecast_raw_confidence": 0.91,
+                "geometry_model": "RANGE_RAIL_LIMIT",
+                "forecast_range_low_price": 1.15820,
+                "forecast_range_high_price": 1.16120,
+                "range_entry_side": "resistance",
+                "range_tp_is_inside_box": True,
+                "range_sl_outside_box": True,
+                "range_breakout_direction": None,
+                "entry_price_percentile_24h": 0.56,
+                "entry_price_percentile_7d": 0.58,
+                "attach_take_profit_on_fill": True,
+                "tp_execution_mode": "ATTACHED_TECHNICAL_TP",
+                "tp_target_intent": "HARVEST",
+                "opportunity_mode": "HARVEST",
+                "positive_rotation_live_ready": True,
+                "positive_rotation_mode": POSITIVE_ROTATION_OANDA_CAMPAIGN_FIREPOWER_MODE,
+                "positive_rotation_oanda_campaign_firepower_vehicle_match": True,
+                "positive_rotation_oanda_campaign_minimum_floor_reachable": True,
+                "tf_regime_map": {
+                    "H1": {"classification": "TREND_UP", "adx": 22.3},
+                    "H4": {"classification": "TREND_UP", "adx": 37.3},
+                    "M5": {"nearest_support": 1.15980, "nearest_resistance": 1.16120},
+                    "M15": {"nearest_support": 1.15890, "nearest_resistance": 1.16130},
+                },
+            },
+        )
+        codes = {issue["code"] for issue in _method_context_issues(intent)}
+
+        self.assertIn("RANGE_FORMING_HTF_TREND_CONFLICT", codes)
+        self.assertNotIn("range_forming_htf_conflict_override", intent.metadata)
+
     def test_range_forming_trend_aligned_rotation_passes_htf_conflict_guard(self) -> None:
         from quant_rabbit.strategy.intent_generator import _method_context_issues
 
