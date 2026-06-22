@@ -5082,13 +5082,17 @@ class ConsolidatedCycleCommandTest(unittest.TestCase):
             sidecars = [" ".join(s["argv"]) for s in sidecar_specs]
         self.assertIn("profit-partial-close", sidecars)
         self.assertNotIn("profit-partial-close --send --confirm-live", sidecars)
+        self.assertIn("position-execution", sidecars)
+        self.assertNotIn("position-execution --send --confirm-live", sidecars)
         self.assertLess(sidecars.index("forecast-persistence-check"), sidecars.index("position-management"))
-        self.assertLess(sidecars.index("position-management"), sidecars.index("memory-health"))
+        self.assertLess(sidecars.index("position-management"), sidecars.index("position-execution"))
+        self.assertLess(sidecars.index("position-execution"), sidecars.index("memory-health"))
         self.assertLess(sidecars.index("memory-health"), sidecars.index("self-improvement-audit"))
         self.assertLess(sidecars.index("self-improvement-audit"), sidecars.index("profitability-acceptance"))
         self.assertEqual(sidecars[-1], "profitability-acceptance")
         sidecars_by_step = {" ".join(s["argv"]): s for s in sidecar_specs}
         self.assertTrue(sidecars_by_step["position-management"]["required"])
+        self.assertFalse(sidecars_by_step["position-execution"]["required"])
         self.assertTrue(sidecars_by_step["memory-health"]["required"])
         self.assertTrue(sidecars_by_step["profitability-acceptance"]["required"])
         self.assertEqual(sidecars_by_step["profitability-acceptance"]["ok_rcs"], [0, 2])
@@ -5096,6 +5100,7 @@ class ConsolidatedCycleCommandTest(unittest.TestCase):
         with mock.patch.dict(os.environ, {"QR_LIVE_ENABLED": "1"}, clear=False):
             sidecars_live = [" ".join(s["argv"]) for s in _cycle_sidecar_steps()]
         self.assertIn("profit-partial-close --send --confirm-live", sidecars_live)
+        self.assertIn("position-execution --send --confirm-live", sidecars_live)
 
 
     def test_direct_autotrade_audit_sidecars_run_without_wrapper_lock(self) -> None:

@@ -295,7 +295,8 @@ QR_LIVE_ENABLED=1 ./scripts/run-autotrade-live.sh \
 #   broker-snapshot → tp-rebalance → execution-ledger-sync → broker-snapshot
 #   → profit-partial-close → verify-projections → position-thesis-check
 #   → thesis-evolution-check → forecast-persistence-check
-#   → position-management → memory-health → self-improvement-audit → profitability-acceptance
+#   → position-management → position-execution → memory-health
+#   → self-improvement-audit → profitability-acceptance
 # and prints one compact digest.
 #
 # Semantics preserved from the per-step skeleton:
@@ -323,8 +324,11 @@ QR_LIVE_ENABLED=1 ./scripts/run-autotrade-live.sh \
 #   until a later memory-health pass; otherwise the route can freeze on a
 #   missing-thesis state that the same cycle already knows how to repair.
 # - position-management is regenerated against the post-gateway broker
-#   snapshot before self-improvement-audit so the next route does not inherit a
-#   stale open-position sidecar P0.
+#   snapshot, then position-execution consumes any profit-only
+#   TAKE_PROFIT_MARKET / TP-update decision through PositionProtectionGateway.
+#   This is the full-cycle fallback for fast TP-progress wins when the separate
+#   launchd position guardian is inactive or skipped under the live lock. Live
+#   sends still require QR_LIVE_ENABLED=1 plus --send --confirm-live.
 # - memory-health BLOCK does not grant/deny a trade by itself;
 #   trader-prompt-route reads it for the next cycle's routing.
 # - self-improvement-audit is recalculated after the post-gateway snapshot and

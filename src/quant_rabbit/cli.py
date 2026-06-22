@@ -2078,9 +2078,11 @@ def _cycle_sidecar_steps() -> list[dict[str, Any]]:
     """Step list mirroring docs/SKILL_trader.md '6. Protection sidecars'."""
     live = os.environ.get("QR_LIVE_ENABLED") == "1"
     profit_partial = ["profit-partial-close"]
+    position_execution = ["position-execution"]
     if live:
         # Same triple gate the SKILL line uses: env + --send + --confirm-live.
         profit_partial += ["--send", "--confirm-live"]
+        position_execution += ["--send", "--confirm-live"]
     return [
         {"argv": ["broker-snapshot", "--output", "data/broker_snapshot.json"], "required": True},
         {"argv": ["tp-rebalance"], "required": False},
@@ -2096,6 +2098,13 @@ def _cycle_sidecar_steps() -> list[dict[str, Any]]:
         # the audit correctly leaves POSITION_MANAGEMENT_STALE as a persistent
         # P0 even after the protection sidecar phase completes.
         {"argv": ["position-management"], "required": True},
+        # PositionManager can emit profit-only TAKE_PROFIT_MARKET / TP-update
+        # actions after the post-gateway broker refresh. Persisting the decision
+        # without executing it leaves fast TP-progress wins dependent on the
+        # separate launchd guardian, which can be inactive or skipped under the
+        # live lock. Run the gateway here as the full-cycle fallback; live sends
+        # still require QR_LIVE_ENABLED plus --send --confirm-live.
+        {"argv": position_execution, "required": False},
         {"argv": ["memory-health"], "required": True},
         {"argv": ["self-improvement-audit"], "required": False, "ok_rcs": [0, 2]},
         {"argv": ["profitability-acceptance"], "required": True, "ok_rcs": [0, 2]},

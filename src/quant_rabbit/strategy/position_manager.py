@@ -175,12 +175,13 @@ TEMPORARY_EXTREME_DISTRIBUTION_PCT = float(os.environ.get("QR_TEMPORARY_EXTREME_
 # giveback has shown up as late loss-close lag in execution_timing_audit.
 MFE_GIVEBACK_TAKE_FRACTION = float(os.environ.get("QR_MFE_GIVEBACK_TAKE_FRACTION", "0.50"))
 MFE_GIVEBACK_MIN_EVIDENCE = int(os.environ.get("QR_MFE_GIVEBACK_MIN_EVIDENCE", "2"))
-# High-turnover harvest lane: once an attached-TP trade has already earned most
-# of its planned executable reward, bank it instead of requiring a later local
-# top/bottom or giveback signal. This reuses the existing TP-progress contract so
-# shallow attached-TP runners are still protected from spread-paid micro-scalps.
+# High-turnover harvest lane: once an attached-TP trade has cleared executable
+# noise and has made material progress toward a small target, bank it instead of
+# requiring a later local top/bottom or giveback signal. This gate is deliberately
+# earlier than broker-side BE/profit-lock: market-close harvest pays the current
+# executable spread, so the separate noise floor still blocks tiny positive ticks.
 TP_PROGRESS_PROFIT_TAKE_MIN_PROGRESS = float(
-    os.environ.get("QR_TP_PROGRESS_PROFIT_TAKE_MIN_PROGRESS", str(PROFIT_BREAK_EVEN_MIN_TP_PROGRESS))
+    os.environ.get("QR_TP_PROGRESS_PROFIT_TAKE_MIN_PROGRESS", "0.30")
 )
 
 

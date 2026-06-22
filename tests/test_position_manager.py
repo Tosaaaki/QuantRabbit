@@ -1749,7 +1749,11 @@ class PositionManagerTest(unittest.TestCase):
             self.assertIn("bank high-turnover profit before reversal", report)
             self.assertNotIn("extend TP", report)
 
-    def test_usd_jpy_short_keeps_tp_when_progress_is_shallow(self) -> None:
+    def test_usd_jpy_short_takes_profit_after_noise_cleared_early_tp_progress(self) -> None:
+        # The same 472792 path first cleared execution noise around 30% TP
+        # progress for several minutes before the 60% window appeared for only
+        # two S5 bars. The high-turnover TP-progress lane should bank that
+        # positive executable P/L instead of waiting for a later flash window.
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             decision = _decision(root, long_score=100, short_score=100)
@@ -1777,10 +1781,44 @@ class PositionManagerTest(unittest.TestCase):
                 data_root=root,
             ).run(snapshot)
 
+            self.assertEqual(result.action, ACTION_TAKE_PROFIT_MARKET)
+            self.assertEqual(result.positions[0].action, ACTION_TAKE_PROFIT_MARKET)
+            report = (root / "pm.md").read_text()
+            self.assertIn("TP-progress profit-take", report)
+            self.assertIn("TP progress 30%", report)
+
+    def test_usd_jpy_short_keeps_tp_when_profit_is_inside_execution_noise(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            decision = _decision(root, long_score=100, short_score=100)
+            pair_charts = _usd_jpy_tp_progress_pair_charts(root, atr_pips=1.2)
+            snapshot = _snapshot(
+                BrokerPosition(
+                    trade_id="inside-noise",
+                    pair="USD_JPY",
+                    side=Side.SHORT,
+                    units=6300,
+                    entry_price=161.692,
+                    unrealized_pl_jpy=75.6,
+                    take_profit=161.636,
+                    stop_loss=161.745,
+                ),
+                usd_jpy_bid=161.665,
+                usd_jpy_ask=161.680,
+            )
+
+            result = PositionManager(
+                trader_decision_path=decision,
+                pair_charts_path=pair_charts,
+                output_path=root / "data" / "pm.json",
+                report_path=root / "pm.md",
+                data_root=root,
+            ).run(snapshot)
+
             self.assertNotEqual(result.positions[0].action, ACTION_TAKE_PROFIT_MARKET)
             report = (root / "pm.md").read_text()
             self.assertIn("TP-progress profit-take skipped", report)
-            self.assertIn("keep broker TP", report)
+            self.assertIn("market noise floor", report)
 
     def test_profitable_long_local_swing_top_does_not_wait_for_full_spread_pullback(self) -> None:
         # The live 2026-06-12 USD_CAD sidecar saw the local top logic but
