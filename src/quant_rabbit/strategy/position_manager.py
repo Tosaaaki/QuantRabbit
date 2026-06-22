@@ -175,6 +175,13 @@ TEMPORARY_EXTREME_DISTRIBUTION_PCT = float(os.environ.get("QR_TEMPORARY_EXTREME_
 # giveback has shown up as late loss-close lag in execution_timing_audit.
 MFE_GIVEBACK_TAKE_FRACTION = float(os.environ.get("QR_MFE_GIVEBACK_TAKE_FRACTION", "0.50"))
 MFE_GIVEBACK_MIN_EVIDENCE = int(os.environ.get("QR_MFE_GIVEBACK_MIN_EVIDENCE", "2"))
+# High-turnover harvest lane: once an attached-TP trade has already earned most
+# of its planned executable reward, bank it instead of requiring a later local
+# top/bottom or giveback signal. This reuses the existing TP-progress contract so
+# shallow attached-TP runners are still protected from spread-paid micro-scalps.
+TP_PROGRESS_PROFIT_TAKE_MIN_PROGRESS = float(
+    os.environ.get("QR_TP_PROGRESS_PROFIT_TAKE_MIN_PROGRESS", str(PROFIT_BREAK_EVEN_MIN_TP_PROGRESS))
+)
 
 
 @dataclass(frozen=True)
@@ -1142,7 +1149,79 @@ def _adaptive_tp_action(
     else:
         reasons.append("HOLD (mixed signal)")
 
+    if action == ACTION_HOLD_PROTECTED:
+        tp_progress_profit_take, tp_progress_reasons = _tp_progress_profit_take_signal(
+            position=position,
+            quote=quote,
+            pair_chart=pair_chart,
+        )
+        reasons.extend(tp_progress_reasons)
+        if tp_progress_profit_take:
+            return ACTION_TAKE_PROFIT_MARKET, None, reasons
+
     return action, new_tp, reasons
+
+
+def _tp_progress_profit_take_signal(
+    *,
+    position: BrokerPosition,
+    quote,
+    pair_chart: dict[str, Any] | None,
+) -> tuple[bool, list[str]]:
+    """Bank a fast attached-TP win after enough executable TP progress.
+
+    This is profit-side only. It handles the high-turnover failure mode where a
+    position reaches most of its broker TP, then reverses before the TP order
+    fills. The signal still requires current executable profit to clear current
+    M1/spread noise so tiny positive ticks are not laundered into market closes.
+    """
+
+    if position.unrealized_pl_jpy <= 0:
+        return False, []
+    if position.take_profit is None:
+        return False, []
+    if quote is None:
+        return False, ["TP-progress profit-take skipped: quote missing"]
+    if not isinstance(pair_chart, dict):
+        return False, ["TP-progress profit-take skipped: pair chart missing"]
+
+    profit_pips = _executable_profit_pips(position, quote)
+    spread_pips = _spread_pips(position.pair, quote)
+    m1 = _view_by_timeframe(pair_chart, "M1")
+    m1_atr = _indicator_float(m1, "atr_pips") if isinstance(m1, dict) else None
+    if profit_pips is None or profit_pips <= 0:
+        return False, ["TP-progress profit-take skipped: executable profit is not positive"]
+    if spread_pips is None or spread_pips <= 0:
+        return False, ["TP-progress profit-take skipped: spread missing"]
+    if m1_atr is None or m1_atr <= 0:
+        return False, ["TP-progress profit-take skipped: M1 ATR missing"]
+
+    min_profit_pips = max(spread_pips * TEMPORARY_EXTREME_MIN_PROFIT_NOISE_MULT, m1_atr)
+    if profit_pips < min_profit_pips:
+        return False, [
+            f"TP-progress profit-take skipped: executable profit {profit_pips:.1f}pip < "
+            f"market noise floor {min_profit_pips:.1f}pip"
+        ]
+
+    tp_pips = _position_tp_pips(position)
+    if tp_pips is None or tp_pips <= 0:
+        return False, ["TP-progress profit-take skipped: attached TP distance unavailable"]
+    progress = profit_pips / tp_pips
+    progress_gate = max(0.0, min(1.0, TP_PROGRESS_PROFIT_TAKE_MIN_PROGRESS))
+    if progress < progress_gate:
+        return False, [
+            f"TP-progress profit-take skipped: TP progress {progress:.0%} "
+            f"({profit_pips:.1f}/{tp_pips:.1f}pip) < {progress_gate:.0%}; keep broker TP"
+        ]
+
+    return True, [
+        (
+            f"TP-progress profit-take: executable profit {profit_pips:.1f}pip "
+            f"clears market noise floor {min_profit_pips:.1f}pip and TP progress "
+            f"{progress:.0%} >= {progress_gate:.0%}; bank high-turnover profit before reversal"
+        ),
+        "post-close re-entry discipline: refresh broker truth and require a fresh LIVE_READY pullback/retest lane before re-entering",
+    ]
 
 
 def _temporary_extreme_profit_take_signal(

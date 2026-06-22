@@ -1669,6 +1669,77 @@ class PositionManagerTest(unittest.TestCase):
             self.assertIn("TP progress", report)
             self.assertIn("keep broker TP", report)
 
+    def test_usd_jpy_short_takes_profit_after_majority_tp_progress(self) -> None:
+        # 2026-06-22 USD_JPY 472792 reached +3.4pip, about 61% of the attached
+        # TP distance, then reversed into SL. High-turnover lanes need a
+        # profit-side trigger at deep TP progress instead of waiting for a later
+        # local-top/giveback detector.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            decision = _decision(root, long_score=100, short_score=100)
+            pair_charts = _usd_jpy_tp_progress_pair_charts(root, atr_pips=1.2)
+            snapshot = _snapshot(
+                BrokerPosition(
+                    trade_id="472792",
+                    pair="USD_JPY",
+                    side=Side.SHORT,
+                    units=6300,
+                    entry_price=161.692,
+                    unrealized_pl_jpy=214.2,
+                    take_profit=161.636,
+                    stop_loss=161.745,
+                ),
+                usd_jpy_bid=161.643,
+                usd_jpy_ask=161.658,
+            )
+
+            result = PositionManager(
+                trader_decision_path=decision,
+                pair_charts_path=pair_charts,
+                output_path=root / "data" / "pm.json",
+                report_path=root / "pm.md",
+                data_root=root,
+            ).run(snapshot)
+
+            self.assertEqual(result.action, ACTION_TAKE_PROFIT_MARKET)
+            self.assertEqual(result.positions[0].action, ACTION_TAKE_PROFIT_MARKET)
+            report = (root / "pm.md").read_text()
+            self.assertIn("TP-progress profit-take", report)
+            self.assertIn("bank high-turnover profit before reversal", report)
+
+    def test_usd_jpy_short_keeps_tp_when_progress_is_shallow(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            decision = _decision(root, long_score=100, short_score=100)
+            pair_charts = _usd_jpy_tp_progress_pair_charts(root, atr_pips=1.2)
+            snapshot = _snapshot(
+                BrokerPosition(
+                    trade_id="shallow-progress",
+                    pair="USD_JPY",
+                    side=Side.SHORT,
+                    units=6300,
+                    entry_price=161.692,
+                    unrealized_pl_jpy=107.1,
+                    take_profit=161.636,
+                    stop_loss=161.745,
+                ),
+                usd_jpy_bid=161.660,
+                usd_jpy_ask=161.675,
+            )
+
+            result = PositionManager(
+                trader_decision_path=decision,
+                pair_charts_path=pair_charts,
+                output_path=root / "data" / "pm.json",
+                report_path=root / "pm.md",
+                data_root=root,
+            ).run(snapshot)
+
+            self.assertNotEqual(result.positions[0].action, ACTION_TAKE_PROFIT_MARKET)
+            report = (root / "pm.md").read_text()
+            self.assertIn("TP-progress profit-take skipped", report)
+            self.assertIn("keep broker TP", report)
+
     def test_profitable_long_local_swing_top_does_not_wait_for_full_spread_pullback(self) -> None:
         # The live 2026-06-12 USD_CAD sidecar saw the local top logic but
         # skipped because pullback was still smaller than the spread/ATR floor.
@@ -2448,6 +2519,44 @@ def _mfe_giveback_pair_charts(root: Path) -> Path:
                         ],
                     }
                 ],
+            }
+        )
+    )
+    return path
+
+
+def _usd_jpy_tp_progress_pair_charts(root: Path, *, atr_pips: float) -> Path:
+    path = root / "pair_charts_usd_jpy_tp_progress.json"
+    path.write_text(
+        json.dumps(
+            {
+                "charts": [
+                    {
+                        "pair": "USD_JPY",
+                        "chart_story": (
+                            "M1(RANGE,ADX=12,ST=-) "
+                            "M5(RANGE,ADX=14,ST=-) "
+                            "H1(RANGE,ADX=15,ST=-) "
+                            "H4(RANGE,ADX=16,ST=-) "
+                            "D(RANGE,ADX=10,ST=-)"
+                        ),
+                        "session": {"current_tag": "LONDON_KILLZONE"},
+                        "views": [
+                            {
+                                "granularity": "M1",
+                                "regime": "RANGE",
+                                "indicators": {"atr_pips": atr_pips},
+                            },
+                            {
+                                "granularity": "M5",
+                                "regime": "RANGE",
+                                "indicators": {"atr_pips": max(atr_pips, 2.0)},
+                            },
+                            {"granularity": "H1", "regime": "RANGE"},
+                            {"granularity": "H4", "regime": "RANGE"},
+                        ],
+                    }
+                ]
             }
         )
     )
