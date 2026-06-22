@@ -65,13 +65,17 @@ class TraderSupportBotTest(unittest.TestCase):
             self.assertEqual(payload["metrics"]["acceptance_evidence_collection_count"], 1)
             self.assertEqual(
                 repair_plan["evidence_collection_items"][0]["code"],
-                "BIDASK_CONTRARIAN_EDGE_NOT_DAILY_STABLE",
+                "BIDASK_REPLAY_SUPPORT_NOT_DAILY_STABLE",
+            )
+            self.assertEqual(
+                repair_plan["evidence_collection_items"][0]["evidence_summary"]["rank_only_support_rules"],
+                2,
             )
             self.assertEqual(
                 repair_plan["evidence_collection_items"][0]["evidence_summary"]["rank_only_examples"][0][
                     "daily_stability_gap"
-                ]["missing_active_days"],
-                1,
+                ]["missing_positive_days_at_current_requirement"],
+                2,
             )
             self.assertEqual(
                 [item["code"] for item in repair_plan["items"]],
@@ -118,7 +122,7 @@ class TraderSupportBotTest(unittest.TestCase):
             self.assertIn("Counterfactual profit-capture delta JPY", report)
             self.assertIn("Acceptance Repair Plan", report)
             self.assertIn("Acceptance Evidence Collection", report)
-            self.assertIn("BIDASK_CONTRARIAN_EDGE_NOT_DAILY_STABLE", report)
+            self.assertIn("BIDASK_REPLAY_SUPPORT_NOT_DAILY_STABLE", report)
             self.assertIn("Repair Frontier Blockers After Support", report)
             self.assertIn("FORECAST_CONTEXT_REQUIRED_FOR_LIVE", report)
             self.assertIn("472792", report)
@@ -744,13 +748,26 @@ def _write_fixture(root: Path, *, now: datetime, blocked: bool) -> dict[str, Pat
             },
             {
                 "priority": "P1",
-                "code": "BIDASK_CONTRARIAN_EDGE_NOT_DAILY_STABLE",
-                "message": "1 S5 contrarian replay edge exists but remains rank-only",
+                "code": "BIDASK_REPLAY_SUPPORT_NOT_DAILY_STABLE",
+                "message": "2 S5 bid/ask replay support rules exist but remain rank-only",
                 "next_action": "fetch more OANDA BA candles and rerun bid/ask replay",
                 "evidence": {
+                    "support_rules": 2,
+                    "daily_stable_support_rules": 0,
+                    "rank_only_support_rules": 2,
+                    "edge_rules": 1,
+                    "daily_stable_edge_rules": 0,
+                    "rank_only_edge_rules": 1,
                     "contrarian_edge_rules": 1,
                     "daily_stable_contrarian_edge_rules": 0,
                     "rank_only_contrarian_edge_rules": 1,
+                    "negative_rules": 1,
+                    "price_truth_coverage": {
+                        "status": "PRICE_TRUTH_OK",
+                        "adoption_level": "FULL_REPLAY_READY",
+                        "evaluated_rows": 650,
+                        "missing_price_truth_samples": 0,
+                    },
                     "daily_stability_requirements": {
                         "min_active_days": 3,
                         "max_daily_sample_share": 0.7,
@@ -769,6 +786,26 @@ def _write_fixture(root: Path, *, now: datetime, blocked: bool) -> dict[str, Pat
                         "--stable-min-positive-day-rate 0.6666666667"
                     ),
                     "rank_only_examples": [
+                        {
+                            "name": "EUR_USD_DOWN_S5_BIDASK_HARVEST_TP5_SL7",
+                            "pair": "EUR_USD",
+                            "granularity": "S5",
+                            "forecast_direction": None,
+                            "direction": "DOWN",
+                            "samples": 226,
+                            "active_days": 5,
+                            "positive_day_rate": 0.4,
+                            "daily_stability_status": "DAILY_SAMPLE_CONCENTRATED",
+                            "optimized_profit_factor": 3.34,
+                            "daily_stability_gap": {
+                                "reasons": [
+                                    "NEEDS_LESS_DAILY_SAMPLE_CONCENTRATION",
+                                    "NEEDS_HIGHER_POSITIVE_DAY_RATE",
+                                ],
+                                "missing_active_days": 0,
+                                "missing_positive_days_at_current_requirement": 2,
+                            },
+                        },
                         {
                             "name": "AUD_JPY_UP_FADE_TO_DOWN_RANK_ONLY",
                             "pair": "AUD_JPY",
@@ -836,9 +873,22 @@ def _write_fixture(root: Path, *, now: datetime, blocked: bool) -> dict[str, Pat
                     },
                 },
                 "bidask_replay_rules": {
+                    "support_rules": 2,
+                    "daily_stable_support_rules": 0,
+                    "rank_only_support_rules": 2,
+                    "edge_rules": 1,
+                    "daily_stable_edge_rules": 0,
+                    "rank_only_edge_rules": 1,
                     "contrarian_edge_rules": 1,
                     "daily_stable_contrarian_edge_rules": 0,
                     "rank_only_contrarian_edge_rules": 1,
+                    "negative_rules": 1,
+                    "price_truth_coverage": {
+                        "status": "PRICE_TRUTH_OK",
+                        "adoption_level": "FULL_REPLAY_READY",
+                        "evaluated_rows": 650,
+                        "missing_price_truth_samples": 0,
+                    },
                     "daily_stability_requirements": {
                         "min_active_days": 3,
                         "max_daily_sample_share": 0.7,
@@ -857,6 +907,25 @@ def _write_fixture(root: Path, *, now: datetime, blocked: bool) -> dict[str, Pat
                         "--stable-min-positive-day-rate 0.6666666667"
                     ),
                     "rank_only_examples": [
+                        {
+                            "name": "EUR_USD_DOWN_S5_BIDASK_HARVEST_TP5_SL7",
+                            "pair": "EUR_USD",
+                            "granularity": "S5",
+                            "forecast_direction": None,
+                            "direction": "DOWN",
+                            "samples": 226,
+                            "active_days": 5,
+                            "positive_day_rate": 0.4,
+                            "daily_stability_status": "DAILY_SAMPLE_CONCENTRATED",
+                            "daily_stability_gap": {
+                                "reasons": [
+                                    "NEEDS_LESS_DAILY_SAMPLE_CONCENTRATION",
+                                    "NEEDS_HIGHER_POSITIVE_DAY_RATE",
+                                ],
+                                "missing_active_days": 0,
+                                "missing_positive_days_at_current_requirement": 2,
+                            },
+                        },
                         {
                             "name": "AUD_JPY_UP_FADE_TO_DOWN_RANK_ONLY",
                             "pair": "AUD_JPY",

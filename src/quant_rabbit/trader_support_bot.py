@@ -795,7 +795,10 @@ def _acceptance_repair_plan(payload: dict[str, Any]) -> dict[str, Any]:
         item
         for item in findings
         if isinstance(item, dict)
-        and str(item.get("code") or "") in {"BIDASK_CONTRARIAN_EDGE_NOT_DAILY_STABLE"}
+        and str(item.get("code") or "") in {
+            "BIDASK_REPLAY_SUPPORT_NOT_DAILY_STABLE",
+            "BIDASK_CONTRARIAN_EDGE_NOT_DAILY_STABLE",
+        }
     ]
     fallback_blockers = payload.get("blockers") if isinstance(payload.get("blockers"), list) else []
     metrics = payload.get("metrics") if isinstance(payload.get("metrics"), dict) else {}
@@ -943,7 +946,7 @@ def _acceptance_clearance_for_code(
                 "example_trade_ids": _example_trade_ids(evidence),
             },
         )
-    if code == "BIDASK_CONTRARIAN_EDGE_NOT_DAILY_STABLE":
+    if code in {"BIDASK_REPLAY_SUPPORT_NOT_DAILY_STABLE", "BIDASK_CONTRARIAN_EDGE_NOT_DAILY_STABLE"}:
         bidask = metrics.get("bidask_replay_rules") if isinstance(metrics.get("bidask_replay_rules"), dict) else {}
         bidask = bidask or evidence
         examples = bidask.get("rank_only_examples") if isinstance(bidask.get("rank_only_examples"), list) else []
@@ -952,15 +955,33 @@ def _acceptance_clearance_for_code(
             "--forecast-history data/forecast_history.jsonl "
             "--granularity S5"
         )
+        if code == "BIDASK_REPLAY_SUPPORT_NOT_DAILY_STABLE":
+            condition = (
+                "at least one bid/ask replay support rule graduates from rank-only to live-grade DAILY_STABLE "
+                "after fresh multi-week OANDA BA candle replay; until then these candidates are advisory "
+                "ranking evidence and cannot be counted as high-turn daily firepower"
+            )
+        else:
+            condition = (
+                "at least one bid/ask contrarian replay rule graduates from rank-only to DAILY_STABLE after "
+                "fresh multi-week OANDA BA candle replay; until then weak forecast inversion is advisory ranking "
+                "evidence and cannot be counted as live-grade turnover firepower"
+            )
         return (
-            "at least one bid/ask contrarian replay rule graduates from rank-only to DAILY_STABLE after "
-            "fresh multi-week OANDA BA candle replay; until then weak forecast inversion is advisory ranking "
-            "evidence and cannot be counted as live-grade turnover firepower",
+            condition,
             str(validation_command),
             {
+                "support_rules": bidask.get("support_rules"),
+                "daily_stable_support_rules": bidask.get("daily_stable_support_rules"),
+                "rank_only_support_rules": bidask.get("rank_only_support_rules"),
+                "edge_rules": bidask.get("edge_rules"),
+                "daily_stable_edge_rules": bidask.get("daily_stable_edge_rules"),
+                "rank_only_edge_rules": bidask.get("rank_only_edge_rules"),
                 "contrarian_edge_rules": bidask.get("contrarian_edge_rules"),
                 "daily_stable_contrarian_edge_rules": bidask.get("daily_stable_contrarian_edge_rules"),
                 "rank_only_contrarian_edge_rules": bidask.get("rank_only_contrarian_edge_rules"),
+                "negative_rules": bidask.get("negative_rules"),
+                "price_truth_coverage": bidask.get("price_truth_coverage"),
                 "daily_stability_requirements": bidask.get("daily_stability_requirements"),
                 "history_fetch_command": bidask.get("history_fetch_command"),
                 "rank_only_examples": examples[:3],
@@ -1271,7 +1292,7 @@ def _operator_actions(
                     "code": "FETCH_BIDASK_REPLAY_HISTORY",
                     "command": str(history_fetch),
                     "requires_explicit_operator_approval": False,
-                    "reason": "read-only OANDA BA candle fetch for rank-only contrarian replay validation",
+                    "reason": "read-only OANDA BA candle fetch for rank-only bid/ask replay validation",
                 }
             )
         validation_command = first_evidence.get("verification_command")
@@ -1281,7 +1302,7 @@ def _operator_actions(
                     "code": "VALIDATE_BIDASK_REPLAY_HISTORY",
                     "command": str(validation_command),
                     "requires_explicit_operator_approval": False,
-                    "reason": "rerun historical bid/ask replay before treating forecast inversion as live-grade",
+                    "reason": "rerun historical bid/ask replay before treating replay support as live-grade",
                 }
             )
     repair_codes = {str(item.get("code")) for item in repair_items if isinstance(item, dict)}

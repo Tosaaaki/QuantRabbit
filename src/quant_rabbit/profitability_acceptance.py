@@ -1418,22 +1418,60 @@ def _projection_precision_findings(path: Path) -> tuple[dict[str, Any], list[dic
 
 
 def _bidask_rule_findings(payload: dict[str, Any], path: Path) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    edge_rules = [
+        item for item in payload.get("edge_rules") or [] if isinstance(item, dict)
+    ]
     contrarian_rules = [
         item for item in payload.get("contrarian_edge_rules") or [] if isinstance(item, dict)
     ]
-    daily_stable = [
-        item
-        for item in contrarian_rules
-        if str(item.get("daily_stability_status") or "").upper() == "DAILY_STABLE"
+    negative_rules = [
+        item for item in payload.get("negative_rules") or [] if isinstance(item, dict)
     ]
-    rank_only = [item for item in contrarian_rules if item not in daily_stable]
+    daily_stable_edges = [item for item in edge_rules if _bidask_rule_is_live_grade(item)]
+    daily_stable_contrarian = [
+        item for item in contrarian_rules if _bidask_rule_is_live_grade(item)
+    ]
+    rank_only_edges = [item for item in edge_rules if not _bidask_rule_is_live_grade(item)]
+    rank_only_contrarian = [
+        item for item in contrarian_rules if not _bidask_rule_is_live_grade(item)
+    ]
+    support_rules = [*edge_rules, *contrarian_rules]
+    daily_stable_support = [*daily_stable_edges, *daily_stable_contrarian]
+    rank_only = [*rank_only_edges, *rank_only_contrarian]
+    rank_only.sort(
+        key=lambda item: (
+            float(_optional_float(item.get("optimized_profit_factor")) or 0.0),
+            int(_optional_float(item.get("samples")) or 0),
+        ),
+        reverse=True,
+    )
     rank_only_examples = [_bidask_rank_only_example(item) for item in rank_only[:5]]
     fetch_command, validation_command = _bidask_replay_verification_commands(rank_only)
+    adoption = payload.get("adoption_summary") if isinstance(payload.get("adoption_summary"), dict) else {}
+    truth = (
+        payload.get("price_truth_coverage")
+        if isinstance(payload.get("price_truth_coverage"), dict)
+        else {}
+    )
     metrics = {
         "path": str(path),
+        "edge_rules": len(edge_rules),
+        "daily_stable_edge_rules": len(daily_stable_edges),
+        "rank_only_edge_rules": len(rank_only_edges),
         "contrarian_edge_rules": len(contrarian_rules),
-        "daily_stable_contrarian_edge_rules": len(daily_stable),
-        "rank_only_contrarian_edge_rules": len(rank_only),
+        "daily_stable_contrarian_edge_rules": len(daily_stable_contrarian),
+        "rank_only_contrarian_edge_rules": len(rank_only_contrarian),
+        "support_rules": len(support_rules),
+        "daily_stable_support_rules": len(daily_stable_support),
+        "rank_only_support_rules": len(rank_only),
+        "negative_rules": len(negative_rules),
+        "adoption_summary": adoption,
+        "price_truth_coverage": {
+            "status": truth.get("status"),
+            "adoption_level": truth.get("adoption_level"),
+            "evaluated_rows": truth.get("evaluated_rows"),
+            "missing_price_truth_samples": truth.get("missing_price_truth_samples"),
+        },
         "daily_stability_requirements": {
             "min_active_days": BIDASK_REPLAY_STABLE_MIN_ACTIVE_DAYS,
             "max_daily_sample_share": BIDASK_REPLAY_STABLE_MAX_DAILY_SAMPLE_SHARE,
@@ -1443,14 +1481,30 @@ def _bidask_rule_findings(payload: dict[str, Any], path: Path) -> tuple[dict[str
         "history_fetch_command": fetch_command,
         "replay_validation_command": validation_command,
     }
-    if rank_only and not daily_stable:
+    if rank_only and not daily_stable_support:
+        return metrics, [
+            _finding(
+                priority="P1",
+                code="BIDASK_REPLAY_SUPPORT_NOT_DAILY_STABLE",
+                message=(
+                    f"{len(rank_only)} S5 bid/ask replay support rule(s) exist, but none are "
+                    "daily-stable enough for live-grade high-turn firepower"
+                ),
+                next_action=(
+                    "Keep bid/ask replay support as rank-only until multi-day stability, positive-day "
+                    "rate, sample distribution, and execution geometry clear the live thresholds."
+                ),
+                evidence=metrics,
+            )
+        ]
+    if rank_only_contrarian and not daily_stable_contrarian:
         return metrics, [
             _finding(
                 priority="P1",
                 code="BIDASK_CONTRARIAN_EDGE_NOT_DAILY_STABLE",
                 message=(
-                    f"{len(rank_only)} S5 contrarian replay edge(s) exist, but none are daily-stable "
-                    "enough for live-grade inversion"
+                    f"{len(rank_only_contrarian)} S5 contrarian replay edge(s) exist, but none are "
+                    "daily-stable enough for live-grade inversion"
                 ),
                 next_action=(
                     "Keep weak forecast inversion as rank-only until multi-day stability, positive-day "
@@ -1462,7 +1516,18 @@ def _bidask_rule_findings(payload: dict[str, Any], path: Path) -> tuple[dict[str
     return metrics, []
 
 
+def _bidask_rule_is_live_grade(item: dict[str, Any]) -> bool:
+    if bool(item.get("live_grade")):
+        return True
+    if str(item.get("adoption_status") or "").upper() == "LIVE_GRADE_DAILY_STABLE":
+        return True
+    return str(item.get("daily_stability_status") or "").upper() == "DAILY_STABLE"
+
+
 def _bidask_rank_only_example(item: dict[str, Any]) -> dict[str, Any]:
+    gap = item.get("daily_stability_gap")
+    if not isinstance(gap, dict):
+        gap = _bidask_daily_stability_gap(item)
     return {
         "name": item.get("name"),
         "pair": item.get("pair"),
@@ -1475,11 +1540,13 @@ def _bidask_rank_only_example(item: dict[str, Any]) -> dict[str, Any]:
         "positive_day_rate": item.get("positive_day_rate"),
         "max_daily_sample_share": item.get("max_daily_sample_share"),
         "daily_stability_status": item.get("daily_stability_status"),
+        "adoption_status": item.get("adoption_status"),
+        "adoption_blockers": item.get("adoption_blockers"),
         "optimized_profit_factor": item.get("optimized_profit_factor"),
         "optimized_win_rate": item.get("optimized_win_rate"),
         "optimized_take_profit_pips": item.get("optimized_take_profit_pips"),
         "optimized_stop_loss_pips": item.get("optimized_stop_loss_pips"),
-        "daily_stability_gap": _bidask_daily_stability_gap(item),
+        "daily_stability_gap": gap,
     }
 
 

@@ -642,6 +642,44 @@ class CliHelpTest(unittest.TestCase):
             bidask.write_text(
                 json.dumps(
                     {
+                        "adoption_summary": {
+                            "live_grade_support_rules": 0,
+                            "rank_only_support_rules": 2,
+                            "negative_block_rules": 1,
+                        },
+                        "price_truth_coverage": {
+                            "status": "PRICE_TRUTH_OK",
+                            "adoption_level": "FULL_REPLAY_READY",
+                            "evaluated_rows": 650,
+                            "missing_price_truth_samples": 0,
+                        },
+                        "edge_rules": [
+                            {
+                                "name": "EUR_USD_DOWN_S5_BIDASK_HARVEST_TP5_SL7",
+                                "pair": "EUR_USD",
+                                "direction": "DOWN",
+                                "samples": 226,
+                                "active_days": 5,
+                                "positive_day_rate": 0.4,
+                                "max_daily_sample_share": 0.969,
+                                "daily_stability_status": "DAILY_SAMPLE_CONCENTRATED",
+                                "adoption_status": "RANK_ONLY_NOT_DAILY_STABLE",
+                                "adoption_blockers": [
+                                    "DAILY_SAMPLE_CONCENTRATED",
+                                    "NEEDS_LESS_DAILY_SAMPLE_CONCENTRATION",
+                                    "NEEDS_HIGHER_POSITIVE_DAY_RATE",
+                                ],
+                                "optimized_profit_factor": 3.34,
+                                "daily_stability_gap": {
+                                    "reasons": [
+                                        "NEEDS_LESS_DAILY_SAMPLE_CONCENTRATION",
+                                        "NEEDS_HIGHER_POSITIVE_DAY_RATE",
+                                    ],
+                                    "missing_active_days": 0,
+                                    "missing_positive_days_at_current_requirement": 2,
+                                },
+                            }
+                        ],
                         "contrarian_edge_rules": [
                             {
                                 "name": "AUD_JPY_UP_FADE_TO_DOWN_RANK_ONLY",
@@ -651,10 +689,35 @@ class CliHelpTest(unittest.TestCase):
                                 "samples": 40,
                                 "active_days": 2,
                                 "positive_day_rate": 0.5,
+                                "max_daily_sample_share": 0.95,
                                 "daily_stability_status": "INSUFFICIENT_ACTIVE_DAYS",
+                                "adoption_status": "RANK_ONLY_NOT_DAILY_STABLE",
+                                "adoption_blockers": [
+                                    "INSUFFICIENT_ACTIVE_DAYS",
+                                    "NEEDS_MORE_ACTIVE_DAYS",
+                                    "NEEDS_LESS_DAILY_SAMPLE_CONCENTRATION",
+                                    "NEEDS_HIGHER_POSITIVE_DAY_RATE",
+                                ],
                                 "optimized_profit_factor": 2.31,
+                                "daily_stability_gap": {
+                                    "reasons": [
+                                        "NEEDS_MORE_ACTIVE_DAYS",
+                                        "NEEDS_LESS_DAILY_SAMPLE_CONCENTRATION",
+                                        "NEEDS_HIGHER_POSITIVE_DAY_RATE",
+                                    ],
+                                    "missing_active_days": 1,
+                                    "missing_positive_days_at_current_requirement": 1,
+                                },
                             }
-                        ]
+                        ],
+                        "negative_rules": [
+                            {
+                                "name": "AUD_JPY_UP_S5_BIDASK_NEGATIVE_EXPECTANCY",
+                                "pair": "AUD_JPY",
+                                "direction": "UP",
+                                "samples": 135,
+                            }
+                        ],
                     }
                 )
             )
@@ -728,23 +791,23 @@ class CliHelpTest(unittest.TestCase):
         self.assertIn("RECENT_GATEWAY_LOSS_MARKET_CLOSE_LEAK", codes)
         self.assertIn("UNVERIFIED_LOSS_SIDE_MARKET_CLOSE_RECONCILED", codes)
         self.assertIn("PROJECTION_HEADLINE_PRECISION_ECONOMIC_GAP", codes)
-        self.assertIn("BIDASK_CONTRARIAN_EDGE_NOT_DAILY_STABLE", codes)
+        self.assertIn("BIDASK_REPLAY_SUPPORT_NOT_DAILY_STABLE", codes)
         self.assertIn("NO_LIVE_READY_TARGET_COVERAGE", codes)
         self.assertIn("REPAIR_FRONTIER_BLOCKED", codes)
         bidask_metrics = payload["metrics"]["bidask_replay_rules"]
+        self.assertEqual(bidask_metrics["support_rules"], 2)
+        self.assertEqual(bidask_metrics["daily_stable_support_rules"], 0)
+        self.assertEqual(bidask_metrics["rank_only_support_rules"], 2)
+        self.assertEqual(bidask_metrics["edge_rules"], 1)
+        self.assertEqual(bidask_metrics["rank_only_edge_rules"], 1)
+        self.assertEqual(bidask_metrics["negative_rules"], 1)
+        self.assertEqual(bidask_metrics["price_truth_coverage"]["status"], "PRICE_TRUTH_OK")
         self.assertEqual(bidask_metrics["daily_stability_requirements"]["min_active_days"], 3)
-        self.assertIn("oanda_history_fetch.py --pairs AUD_JPY", bidask_metrics["history_fetch_command"])
+        self.assertIn("oanda_history_fetch.py --pairs AUD_JPY,EUR_USD", bidask_metrics["history_fetch_command"])
         self.assertIn("--stable-min-active-days 3", bidask_metrics["replay_validation_command"])
-        self.assertEqual(
-            bidask_metrics["rank_only_examples"][0]["daily_stability_gap"]["missing_active_days"],
-            1,
-        )
-        self.assertEqual(
-            bidask_metrics["rank_only_examples"][0]["daily_stability_gap"][
-                "missing_positive_days_at_current_requirement"
-            ],
-            1,
-        )
+        examples_by_pair = {item["pair"]: item for item in bidask_metrics["rank_only_examples"]}
+        self.assertEqual(examples_by_pair["EUR_USD"]["daily_stability_gap"]["missing_active_days"], 0)
+        self.assertEqual(examples_by_pair["AUD_JPY"]["daily_stability_gap"]["missing_active_days"], 1)
         frontier = payload["metrics"]["order_intents"]["repair_frontier"]
         self.assertEqual(frontier["candidate_count"], 1)
         self.assertEqual(frontier["live_ready_count"], 0)
