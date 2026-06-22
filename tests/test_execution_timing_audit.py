@@ -380,6 +380,98 @@ class ExecutionTimingAuditTest(unittest.TestCase):
             self.assertEqual(row["decision_lag_minutes_after_first_positive"], 5.5)
             self.assertEqual(row["mfe_pips_before_loss_close"], 11.0)
 
+    def test_market_close_lookback_is_anchored_to_latest_close_activity(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            db = root / "ledger.db"
+            _make_db(db)
+            with sqlite3.connect(db) as conn:
+                _insert_event(
+                    conn,
+                    "fill-old-loss",
+                    ts_utc="2026-06-15T03:00:00Z",
+                    event_type="ORDER_FILLED",
+                    lane_id="lane:old-loss",
+                    order_id="o-old-fill",
+                    trade_id="t-old-loss",
+                    pair="USD_JPY",
+                    side="LONG",
+                    units=1000,
+                    price=150.00,
+                )
+                _insert_event(
+                    conn,
+                    "close-old-loss",
+                    ts_utc="2026-06-15T03:55:58Z",
+                    event_type="TRADE_CLOSED",
+                    order_id="o-old-close",
+                    trade_id="t-old-loss",
+                    pair="USD_JPY",
+                    side="LONG",
+                    units=1000,
+                    price=149.90,
+                    realized_pl_jpy=-100.0,
+                    exit_reason="MARKET_ORDER_TRADE_CLOSE",
+                )
+                _insert_event(
+                    conn,
+                    "fill-latest",
+                    ts_utc="2026-06-19T14:00:00Z",
+                    event_type="ORDER_FILLED",
+                    lane_id="lane:latest",
+                    order_id="o-latest-fill",
+                    trade_id="t-latest",
+                    pair="USD_JPY",
+                    side="LONG",
+                    units=1000,
+                    price=150.00,
+                )
+                _insert_event(
+                    conn,
+                    "close-latest",
+                    ts_utc="2026-06-19T14:22:09Z",
+                    event_type="TRADE_CLOSED",
+                    order_id="o-latest-close",
+                    trade_id="t-latest",
+                    pair="USD_JPY",
+                    side="LONG",
+                    units=1000,
+                    price=150.03,
+                    realized_pl_jpy=30.0,
+                    exit_reason="MARKET_ORDER_TRADE_CLOSE",
+                )
+                conn.commit()
+
+            candles = (
+                BidAskCandle(_dt("2026-06-15T03:01:00Z"), 150.02, 149.99, 150.03, 150.00),
+                BidAskCandle(_dt("2026-06-15T03:56:00Z"), 150.08, 149.89, 150.09, 149.90),
+                BidAskCandle(_dt("2026-06-19T14:23:00Z"), 150.06, 150.01, 150.07, 150.02),
+            )
+
+            def fetcher(pair: str, start: datetime, end: datetime, granularity: str) -> tuple[BidAskCandle, ...]:
+                self.assertEqual(pair, "USD_JPY")
+                return tuple(c for c in candles if start <= c.timestamp_utc <= end)
+
+            payload = build_execution_timing_audit(
+                ledger_path=db,
+                snapshot_path=None,
+                output_path=root / "audit.json",
+                report_path=root / "audit.md",
+                now_utc=_dt("2026-06-22T05:07:51Z"),
+                candle_fetcher=fetcher,
+            )
+
+            loss_rows = {row["trade_id"]: row for row in payload["loss_close_regrets"]}
+            market_rows = {row["trade_id"]: row for row in payload["market_close_counterfactuals"]}
+            self.assertIn("t-old-loss", loss_rows)
+            self.assertIn("t-old-loss", market_rows)
+            self.assertEqual(payload["summary"]["loss_market_closes_audited"], 1)
+            self.assertEqual(market_rows["t-old-loss"]["post_close_path_label"], "LOSS_CLOSE_MAY_HAVE_BEEN_PREMATURE")
+            self.assertEqual(
+                payload["window"]["market_close_from_utc"],
+                "2026-06-12T14:22:09+00:00",
+            )
+
     def test_market_close_counterfactual_splits_followthrough_from_risk_containment(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

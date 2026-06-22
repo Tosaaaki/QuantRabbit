@@ -44,6 +44,9 @@ from quant_rabbit.certification import DryRunCertifier
 from quant_rabbit.completion import CompletionAuditor
 from quant_rabbit.coverage import CoverageOptimizer
 from quant_rabbit.execution_ledger import ExecutionLedger
+from quant_rabbit.execution_timing_audit import (
+    DEFAULT_LOOKBACK_HOURS as DEFAULT_EXECUTION_TIMING_LOOKBACK_HOURS,
+)
 from quant_rabbit.execution_replay import ExecutionReplayer
 from quant_rabbit.legacy.importer import LegacyImporter
 from quant_rabbit.learning import PostTradeLearner
@@ -3293,7 +3296,7 @@ def main(argv: list[str] | None = None) -> int:
     p_timing.add_argument("--snapshot", type=Path, default=DEFAULT_BROKER_SNAPSHOT)
     p_timing.add_argument("--output", type=Path, default=DEFAULT_EXECUTION_TIMING_AUDIT)
     p_timing.add_argument("--report", type=Path, default=DEFAULT_EXECUTION_TIMING_AUDIT_REPORT)
-    p_timing.add_argument("--lookback-hours", type=float, default=168.0)
+    p_timing.add_argument("--lookback-hours", type=float, default=DEFAULT_EXECUTION_TIMING_LOOKBACK_HOURS)
     p_timing.add_argument("--post-cancel-hours", type=float, default=6.0)
     p_timing.add_argument("--post-close-hours", type=float, default=6.0)
     p_timing.add_argument("--granularity", default="M1")

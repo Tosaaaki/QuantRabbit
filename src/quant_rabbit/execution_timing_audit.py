@@ -116,11 +116,13 @@ def build_execution_timing_audit(
     """Build and persist the execution timing audit payload."""
 
     now = _normalize_utc(now_utc or datetime.now(timezone.utc))
-    cutoff = now - timedelta(hours=float(lookback_hours))
+    lookback_delta = timedelta(hours=float(lookback_hours))
+    cutoff = now - lookback_delta
     home_conversions = _home_conversions_from_snapshot(snapshot_path)
-    canceled, market_closes = _load_candidates(
+    canceled, market_closes, market_close_cutoff, market_close_anchor = _load_candidates(
         ledger_path=ledger_path,
         cutoff=cutoff,
+        lookback_delta=lookback_delta,
         max_events=max_events,
     )
     windows = _candidate_windows(
@@ -182,7 +184,10 @@ def build_execution_timing_audit(
             "note": "M1 candles prove bar-level opportunity; tick JSONL can refine ordering inside a candle.",
         },
         "window": {
-            "from_utc": cutoff.isoformat(),
+            "from_utc": min(cutoff, market_close_cutoff).isoformat(),
+            "canceled_from_utc": cutoff.isoformat(),
+            "market_close_from_utc": market_close_cutoff.isoformat(),
+            "market_close_anchor_utc": market_close_anchor.isoformat() if market_close_anchor else None,
             "to_utc": now.isoformat(),
             "lookback_hours": float(lookback_hours),
             "post_cancel_hours": float(post_cancel_hours),
@@ -246,10 +251,11 @@ def _load_candidates(
     *,
     ledger_path: Path,
     cutoff: datetime,
+    lookback_delta: timedelta,
     max_events: int | None,
-) -> tuple[list[_CanceledOrder], list[_MarketClose]]:
+) -> tuple[list[_CanceledOrder], list[_MarketClose], datetime, datetime | None]:
     if not ledger_path.exists():
-        return [], []
+        return [], [], cutoff, None
     with sqlite3.connect(f"file:{ledger_path}?mode=ro", uri=True) as conn:
         conn.row_factory = sqlite3.Row
         accepted = [_row_dict(row) for row in conn.execute("SELECT * FROM execution_events WHERE event_type='ORDER_ACCEPTED'")]
@@ -261,6 +267,14 @@ def _load_candidates(
             _row_dict(row)
             for row in conn.execute("SELECT * FROM execution_events WHERE event_type='GATEWAY_TRADE_CLOSE_SENT'")
         ]
+    market_close_anchor = _latest_market_close_timestamp(closed)
+    market_close_cutoff = cutoff
+    if market_close_anchor is not None:
+        # Profitability acceptance judges leakage over the trading week ending
+        # at the latest market close. Match that anchor here so older closes in
+        # the same acceptance window do not become UNCLASSIFIED timing leaks
+        # after a quiet weekend or paused market.
+        market_close_cutoff = min(cutoff, market_close_anchor - lookback_delta)
     cancels_by_order: dict[str, dict[str, Any]] = {}
     for row in canceled:
         oid = str(row.get("order_id") or "")
@@ -330,7 +344,7 @@ def _load_candidates(
     market_close_candidates: list[_MarketClose] = []
     for row in closed:
         close_at = _parse_utc(row.get("ts_utc"))
-        if close_at is None or close_at < cutoff:
+        if close_at is None or close_at < market_close_cutoff:
             continue
         if str(row.get("exit_reason") or "").upper() != "MARKET_ORDER_TRADE_CLOSE":
             continue
@@ -375,7 +389,18 @@ def _load_candidates(
     if max_events is not None and max_events > 0:
         canceled_candidates = canceled_candidates[:max_events]
         market_close_candidates = market_close_candidates[:max_events]
-    return canceled_candidates, market_close_candidates
+    return canceled_candidates, market_close_candidates, market_close_cutoff, market_close_anchor
+
+
+def _latest_market_close_timestamp(rows: Iterable[dict[str, Any]]) -> datetime | None:
+    latest: datetime | None = None
+    for row in rows:
+        if str(row.get("exit_reason") or "").upper() != "MARKET_ORDER_TRADE_CLOSE":
+            continue
+        ts = _parse_utc(row.get("ts_utc"))
+        if ts is not None and (latest is None or ts > latest):
+            latest = ts
+    return latest
 
 
 def _candidate_windows(
