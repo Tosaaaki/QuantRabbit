@@ -21,6 +21,7 @@ from quant_rabbit.cli import (
     _pre_entry_projection_verification_if_required,
     _refresh_current_forecast_history,
     _resolve_audit_execution_ledger_db,
+    _resolve_audit_sidecar_path,
     _run_direct_autotrade_audit_sidecars,
     _snapshot_from_json,
     _snapshot_to_json,
@@ -114,6 +115,129 @@ class RuntimeLedgerSelectionTest(unittest.TestCase):
             )
 
         self.assertEqual(resolved, explicit_ledger)
+
+    def test_default_audit_sidecar_follows_selected_live_ledger(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            dev_ledger = root / "dev" / "data" / "execution_ledger.db"
+            dev_timing = root / "dev" / "data" / "execution_timing_audit.json"
+            live_ledger = root / "QuantRabbit-live" / "data" / "execution_ledger.db"
+            live_timing = root / "QuantRabbit-live" / "data" / "execution_timing_audit.json"
+            dev_timing.parent.mkdir(parents=True, exist_ok=True)
+            live_timing.parent.mkdir(parents=True, exist_ok=True)
+            dev_timing.write_text("{}", encoding="utf-8")
+            live_timing.write_text("{}", encoding="utf-8")
+
+            resolved = _resolve_audit_sidecar_path(
+                dev_timing,
+                default_path=dev_timing,
+                selected_ledger_path=live_ledger,
+                default_ledger_path=dev_ledger,
+            )
+
+        self.assertEqual(resolved, live_timing)
+
+    def test_explicit_audit_sidecar_is_respected(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            dev_ledger = root / "dev" / "data" / "execution_ledger.db"
+            dev_timing = root / "dev" / "data" / "execution_timing_audit.json"
+            explicit_timing = root / "custom" / "execution_timing_audit.json"
+            live_ledger = root / "QuantRabbit-live" / "data" / "execution_ledger.db"
+            live_timing = root / "QuantRabbit-live" / "data" / "execution_timing_audit.json"
+            explicit_timing.parent.mkdir(parents=True, exist_ok=True)
+            live_timing.parent.mkdir(parents=True, exist_ok=True)
+            explicit_timing.write_text("{}", encoding="utf-8")
+            live_timing.write_text("{}", encoding="utf-8")
+
+            resolved = _resolve_audit_sidecar_path(
+                explicit_timing,
+                default_path=dev_timing,
+                selected_ledger_path=live_ledger,
+                default_ledger_path=dev_ledger,
+            )
+
+        self.assertEqual(resolved, explicit_timing)
+
+    def test_default_audit_sidecar_keeps_requested_when_live_sidecar_missing(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            dev_ledger = root / "dev" / "data" / "execution_ledger.db"
+            dev_timing = root / "dev" / "data" / "execution_timing_audit.json"
+            live_ledger = root / "QuantRabbit-live" / "data" / "execution_ledger.db"
+            dev_timing.parent.mkdir(parents=True, exist_ok=True)
+            dev_timing.write_text("{}", encoding="utf-8")
+
+            resolved = _resolve_audit_sidecar_path(
+                dev_timing,
+                default_path=dev_timing,
+                selected_ledger_path=live_ledger,
+                default_ledger_path=dev_ledger,
+            )
+
+        self.assertEqual(resolved, dev_timing)
+
+    def test_profitability_acceptance_default_timing_follows_resolved_live_ledger(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            dev_timing = root / "dev" / "data" / "execution_timing_audit.json"
+            live_ledger = root / "QuantRabbit-live" / "data" / "execution_ledger.db"
+            live_timing = root / "QuantRabbit-live" / "data" / "execution_timing_audit.json"
+            dev_timing.parent.mkdir(parents=True, exist_ok=True)
+            live_timing.parent.mkdir(parents=True, exist_ok=True)
+            dev_timing.write_text("{}", encoding="utf-8")
+            live_timing.write_text("{}", encoding="utf-8")
+            summary = SimpleNamespace(
+                status="PROFITABILITY_ACCEPTANCE_PASSED",
+                output_path=root / "acceptance.json",
+                report_path=root / "acceptance.md",
+                findings=[],
+                blockers=[],
+                metrics={},
+            )
+            auditor = mock.Mock()
+            auditor.run.return_value = summary
+            stdout = io.StringIO()
+
+            with mock.patch(
+                "quant_rabbit.cli.DEFAULT_EXECUTION_TIMING_AUDIT",
+                dev_timing,
+            ), mock.patch(
+                "quant_rabbit.cli._resolve_audit_execution_ledger_db",
+                return_value=live_ledger,
+            ), mock.patch(
+                "quant_rabbit.profitability_acceptance.ProfitabilityAcceptanceAuditor",
+                return_value=auditor,
+            ), redirect_stdout(stdout):
+                code = main(
+                    [
+                        "profitability-acceptance",
+                        "--order-intents",
+                        str(root / "intents.json"),
+                        "--target-state",
+                        str(root / "target.json"),
+                        "--self-improvement-audit",
+                        str(root / "self_improvement.json"),
+                        "--capture-economics",
+                        str(root / "capture.json"),
+                        "--projection-ledger",
+                        str(root / "projection_ledger.jsonl"),
+                        "--bidask-rules",
+                        str(root / "bidask_rules.json"),
+                        "--oanda-rotation-mining",
+                        str(root / "oanda_rotation.json"),
+                        "--output",
+                        str(summary.output_path),
+                        "--report",
+                        str(summary.report_path),
+                    ]
+                )
+
+        self.assertEqual(code, 0)
+        self.assertEqual(
+            auditor.run.call_args.kwargs["execution_timing_audit_path"],
+            live_timing,
+        )
 
 
 class CliHelpTest(unittest.TestCase):

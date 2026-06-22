@@ -1424,6 +1424,28 @@ def _resolve_audit_execution_ledger_db(
     return requested
 
 
+def _resolve_audit_sidecar_path(
+    requested_path: Path,
+    *,
+    default_path: Path,
+    selected_ledger_path: Path,
+    default_ledger_path: Path = DEFAULT_EXECUTION_LEDGER_DB,
+) -> Path:
+    """Keep default ledger-derived audit artifacts on the same runtime root."""
+    requested = Path(requested_path)
+    if not _same_filesystem_path(requested, default_path):
+        return requested
+    selected_ledger = Path(selected_ledger_path)
+    if _same_filesystem_path(selected_ledger, default_ledger_path):
+        return requested
+    if selected_ledger.name != default_ledger_path.name:
+        return requested
+    candidate = selected_ledger.parent / default_path.name
+    if candidate.exists():
+        return candidate
+    return requested
+
+
 def _same_filesystem_path(left: Path, right: Path) -> bool:
     try:
         return left.resolve() == right.resolve()
@@ -5183,6 +5205,11 @@ def main(argv: list[str] | None = None) -> int:
             )
 
             audit_db = _resolve_audit_execution_ledger_db(args.execution_ledger_db)
+            execution_timing_audit = _resolve_audit_sidecar_path(
+                args.execution_timing_audit,
+                default_path=DEFAULT_EXECUTION_TIMING_AUDIT,
+                selected_ledger_path=audit_db,
+            )
             summary = ProfitabilityAcceptanceAuditor(
                 output_path=args.output,
                 report_path=args.report,
@@ -5192,7 +5219,7 @@ def main(argv: list[str] | None = None) -> int:
                 self_improvement_path=args.self_improvement_audit,
                 capture_economics_path=args.capture_economics,
                 execution_ledger_path=audit_db,
-                execution_timing_audit_path=args.execution_timing_audit,
+                execution_timing_audit_path=execution_timing_audit,
                 projection_ledger_path=args.projection_ledger,
                 bidask_rules_path=args.bidask_rules or DEFAULT_BIDASK_REPLAY_RULES_PATH,
                 oanda_rotation_mining_path=args.oanda_rotation_mining,
