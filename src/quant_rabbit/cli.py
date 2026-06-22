@@ -2620,6 +2620,11 @@ def _cycle_digest(*, kind: str, step_results: list[dict[str, Any]], aborted: boo
             if isinstance(profitability_acceptance.get("target_firepower"), dict)
             else {}
         )
+        acceptance_repair_plan = (
+            profitability_acceptance.get("repair_plan")
+            if isinstance(profitability_acceptance.get("repair_plan"), dict)
+            else {}
+        )
         current_profit_capture = (
             trader_support.get("current_profit_capture")
             if isinstance(trader_support.get("current_profit_capture"), dict)
@@ -2646,6 +2651,12 @@ def _cycle_digest(*, kind: str, step_results: list[dict[str, Any]], aborted: boo
                 "target_firepower_minimum_5pct_estimated_reachable"
             ),
             "target_firepower_best_bucket": target_firepower.get("best_bucket"),
+            "acceptance_repair_p0_count": acceptance_repair_plan.get("p0_count"),
+            "acceptance_repair_codes": [
+                item.get("code")
+                for item in acceptance_repair_plan.get("items", []) or []
+                if isinstance(item, dict)
+            ][:8],
             "top_blocker_codes": [
                 item.get("code")
                 for item in trader_support.get("blockers", []) or []

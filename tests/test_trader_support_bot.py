@@ -46,6 +46,7 @@ class TraderSupportBotTest(unittest.TestCase):
             self.assertIn("LOSS_CLOSE_PROFIT_CAPTURE_MISSED", codes)
             self.assertFalse(payload["metrics"]["send_fresh_entries_allowed"])
             self.assertEqual(payload["profit_capture"]["missed_loss_closes"], 2)
+            self.assertIn("zero loss_closes_profit_capture_missed", payload["profit_capture"]["clearance_condition"])
             self.assertEqual(payload["current_profit_capture"]["watch_positions"], 1)
             self.assertEqual(payload["entry_readiness"]["guardian_blocked_lanes"], 2)
             self.assertEqual(payload["metrics"]["global_unlock_frontier_lanes"], 1)
@@ -54,6 +55,17 @@ class TraderSupportBotTest(unittest.TestCase):
             self.assertEqual(unlock["remaining_blocker_codes_after_global_unlock"], [])
             self.assertTrue(payload["profitability_acceptance"]["target_firepower"]["minimum_5pct_estimated_reachable"])
             self.assertEqual(payload["profitability_acceptance"]["target_firepower"]["best_bucket"], "high_precision")
+            repair_plan = payload["profitability_acceptance"]["repair_plan"]
+            self.assertEqual(repair_plan["p0_count"], 2)
+            self.assertIn("Rerunning profitability-acceptance alone", repair_plan["loop_breaker"])
+            self.assertEqual(
+                [item["code"] for item in repair_plan["items"]],
+                ["RECENT_GATEWAY_LOSS_MARKET_CLOSE_LEAK", "LOSS_CLOSE_GATE_EVIDENCE_MISSING"],
+            )
+            self.assertEqual(
+                repair_plan["items"][1]["evidence_summary"]["example_trade_ids"],
+                ["472743"],
+            )
             repair = payload["entry_readiness"]["repair_frontier"][0]
             self.assertEqual(
                 repair["remaining_blocker_codes_after_guardian_and_repair_exemption"],
@@ -61,13 +73,18 @@ class TraderSupportBotTest(unittest.TestCase):
             )
             action_codes = {item["code"] for item in payload["operator_actions"]}
             self.assertIn("CHECK_POSITION_GUARDIAN_PREFLIGHT", action_codes)
+            self.assertIn("FOLLOW_ACCEPTANCE_REPAIR_PLAN", action_codes)
+            self.assertIn("VERIFY_CLOSE_GATE_EVIDENCE", action_codes)
+            self.assertIn("RECHECK_LOSS_CLOSE_LEAK_WINDOW", action_codes)
             self.assertIn("WORK_GLOBAL_UNLOCK_FRONTIER", action_codes)
             self.assertIn("WORK_TARGET_FIREPOWER_BLOCKERS", action_codes)
             self.assertTrue(
                 any(item["code"] == "LOAD_POSITION_GUARDIAN_ONLY_IF_APPROVED" and item["requires_explicit_operator_approval"]
                     for item in payload["operator_actions"])
             )
-            self.assertIn("Trader Support Bot Report", files["report"].read_text())
+            report = files["report"].read_text()
+            self.assertIn("Trader Support Bot Report", report)
+            self.assertIn("Acceptance Repair Plan", report)
 
     def test_ready_when_guardian_heartbeat_is_fresh_and_live_lane_exists(self) -> None:
         now = datetime(2026, 6, 22, 12, 15, tzinfo=timezone.utc)
@@ -346,18 +363,63 @@ def _write_fixture(root: Path, *, now: datetime, blocked: bool) -> dict[str, Pat
         ]
         self_improvement_status = "SELF_IMPROVEMENT_BLOCKED"
         profitability_status = "PROFITABILITY_ACCEPTANCE_BLOCKED"
-        profitability_blockers = ["SELF_IMPROVEMENT_P0_PRESENT"]
+        profitability_blockers = [
+            "RECENT_GATEWAY_LOSS_MARKET_CLOSE_LEAK: 1 loss-side close remains inside the window",
+            "LOSS_CLOSE_GATE_EVIDENCE_MISSING: 1 close lacks evidence",
+        ]
+        profitability_findings = [
+            {
+                "priority": "P0",
+                "code": "RECENT_GATEWAY_LOSS_MARKET_CLOSE_LEAK",
+                "message": "1 loss-side gateway market close remains inside the 7-day window",
+                "next_action": "recheck timing leak window",
+                "evidence": {
+                    "recent_leak_loss_closes": 1,
+                    "recent_leak_loss_net_jpy": -1380.8,
+                    "latest_loss_close_ts_utc": (now - timedelta(days=2)).isoformat(),
+                    "recent_loss_timing_label_counts": {"LOSS_CLOSE_MAY_HAVE_BEEN_PREMATURE": 1},
+                    "examples": [
+                        {
+                            "trade_id": "472743",
+                            "pair": "NZD_USD",
+                            "side": "LONG",
+                            "ts_utc": (now - timedelta(days=2)).isoformat(),
+                        }
+                    ],
+                },
+            },
+            {
+                "priority": "P0",
+                "code": "LOSS_CLOSE_GATE_EVIDENCE_MISSING",
+                "message": "1 recent GPT loss-side market close lacks passing durable close_gate_evidence",
+                "next_action": "persist close gate evidence",
+                "evidence": {
+                    "recent_close_gate_unverified_loss_closes": 1,
+                    "recent_close_gate_unverified_loss_net_jpy": -1380.8,
+                    "examples": [
+                        {
+                            "trade_id": "472743",
+                            "pair": "NZD_USD",
+                            "side": "LONG",
+                            "ts_utc": (now - timedelta(days=2)).isoformat(),
+                        }
+                    ],
+                },
+            },
+        ]
     else:
         findings = []
         self_improvement_status = "SELF_IMPROVEMENT_OK"
         profitability_status = "PROFITABILITY_ACCEPTANCE_PASSED"
         profitability_blockers = []
+        profitability_findings = []
     _write_json(files["self_improvement"], {"status": self_improvement_status, "findings": findings})
     _write_json(
         files["profitability"],
         {
             "status": profitability_status,
             "blockers": profitability_blockers,
+            "findings": profitability_findings,
             "metrics": {
                 "capture_economics": {},
                 "oanda_campaign_firepower": {

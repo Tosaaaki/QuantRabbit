@@ -5335,6 +5335,13 @@ class ConsolidatedCycleCommandTest(unittest.TestCase):
                             ],
                         },
                         "profitability_acceptance": {
+                            "repair_plan": {
+                                "p0_count": 2,
+                                "items": [
+                                    {"code": "RECENT_GATEWAY_LOSS_MARKET_CLOSE_LEAK"},
+                                    {"code": "LOSS_CLOSE_GATE_EVIDENCE_MISSING"},
+                                ],
+                            },
                             "target_firepower": {
                                 "status": "VERIFIED_TARGET_10_ROUTE_ESTIMATED",
                                 "best_bucket": "high_precision",
@@ -5360,6 +5367,11 @@ class ConsolidatedCycleCommandTest(unittest.TestCase):
         self.assertEqual(support["target_firepower_status"], "VERIFIED_TARGET_10_ROUTE_ESTIMATED")
         self.assertTrue(support["target_firepower_minimum_5pct_estimated_reachable"])
         self.assertEqual(support["target_firepower_best_bucket"], "high_precision")
+        self.assertEqual(support["acceptance_repair_p0_count"], 2)
+        self.assertEqual(
+            support["acceptance_repair_codes"],
+            ["RECENT_GATEWAY_LOSS_MARKET_CLOSE_LEAK", "LOSS_CLOSE_GATE_EVIDENCE_MISSING"],
+        )
         self.assertEqual(
             support["top_blocker_codes"],
             ["POSITION_GUARDIAN_INACTIVE", "LOSS_CLOSE_PROFIT_CAPTURE_MISSED"],

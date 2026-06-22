@@ -5,7 +5,7 @@ import os
 import subprocess
 from collections import Counter
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -38,6 +38,7 @@ GLOBAL_UNLOCK_BLOCKERS = {
     "SELF_IMPROVEMENT_P0_PROFITABILITY_DISCIPLINE",
     "NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION",
 }
+ACCEPTANCE_LEAK_LOOKBACK_DAYS = 7
 
 
 @dataclass(frozen=True)
@@ -457,6 +458,13 @@ def _profit_capture_summary(self_improvement: dict[str, Any], timing: dict[str, 
         "top_misses": top[:5],
         "message": finding.get("message") if finding else None,
         "next_action": finding.get("next_action") if finding else None,
+        "clearance_condition": (
+            "execution-timing-audit reports zero loss_closes_profit_capture_missed in the active audit "
+            "window, and position guardian is proven active before fresh entries resume"
+            if _float(missed) > 0
+            else "no missed TP-progress loss close in the active timing audit"
+        ),
+        "verification_command": "PYTHONPATH=src python3 -m quant_rabbit.cli execution-timing-audit --max-events 80",
     }
 
 
@@ -631,7 +639,221 @@ def _acceptance_summary(payload: dict[str, Any]) -> dict[str, Any]:
         "blockers": blockers[:8],
         "capture_economics": capture,
         "target_firepower": _target_firepower_summary(firepower),
+        "repair_plan": _acceptance_repair_plan(payload),
     }
+
+
+def _acceptance_repair_plan(payload: dict[str, Any]) -> dict[str, Any]:
+    findings = payload.get("findings") if isinstance(payload.get("findings"), list) else []
+    p0_findings = [
+        item
+        for item in findings
+        if isinstance(item, dict) and str(item.get("priority") or "").upper() == "P0"
+    ]
+    fallback_blockers = payload.get("blockers") if isinstance(payload.get("blockers"), list) else []
+    metrics = payload.get("metrics") if isinstance(payload.get("metrics"), dict) else {}
+    items: list[dict[str, Any]] = []
+    if p0_findings:
+        for finding in p0_findings[:12]:
+            items.append(_acceptance_repair_item(finding, metrics))
+    elif fallback_blockers:
+        for blocker in fallback_blockers[:12]:
+            code, message = _split_blocker(str(blocker))
+            items.append(
+                _acceptance_repair_item(
+                    {
+                        "priority": "P0",
+                        "code": code,
+                        "message": message,
+                        "next_action": "Inspect profitability_acceptance findings for the concrete red invariant.",
+                        "evidence": {},
+                    },
+                    metrics,
+                )
+            )
+    commands: list[str] = []
+    seen = set()
+    for item in items:
+        command = item.get("verification_command")
+        if not command or command in seen:
+            continue
+        seen.add(command)
+        commands.append(str(command))
+    return {
+        "status": payload.get("status"),
+        "p0_count": len(p0_findings) if p0_findings else len(fallback_blockers),
+        "items": items,
+        "next_verification_commands": commands[:8],
+        "loop_breaker": (
+            "Rerunning profitability-acceptance alone cannot clear these P0s; the listed proof condition "
+            "must change first."
+            if items
+            else "No acceptance P0 repair item is active."
+        ),
+    }
+
+
+def _acceptance_repair_item(finding: dict[str, Any], metrics: dict[str, Any]) -> dict[str, Any]:
+    code = str(finding.get("code") or "UNKNOWN_ACCEPTANCE_BLOCKER")
+    evidence = finding.get("evidence") if isinstance(finding.get("evidence"), dict) else {}
+    condition, command, summary = _acceptance_clearance_for_code(code, evidence, metrics)
+    return {
+        "code": code,
+        "priority": str(finding.get("priority") or "P0"),
+        "message": finding.get("message"),
+        "next_action": finding.get("next_action"),
+        "clearance_condition": condition,
+        "verification_command": command,
+        "evidence_summary": summary,
+    }
+
+
+def _acceptance_clearance_for_code(
+    code: str,
+    evidence: dict[str, Any],
+    metrics: dict[str, Any],
+) -> tuple[str, str, dict[str, Any]]:
+    if code == "SELF_IMPROVEMENT_P0_PRESENT":
+        p0_findings = evidence.get("p0_findings") if isinstance(evidence.get("p0_findings"), list) else []
+        p0_codes = [
+            str(item.get("code"))
+            for item in p0_findings
+            if isinstance(item, dict) and item.get("code")
+        ]
+        return (
+            "self_improvement_audit has zero P0 findings, or the only remaining discipline finding has "
+            "been demoted by verified clean gateway close recovery",
+            "PYTHONPATH=src python3 -m quant_rabbit.cli self-improvement-audit",
+            {"current_p0_codes": p0_codes[:8], "current_p0_count": len(p0_codes) or None},
+        )
+    if code == "NEGATIVE_EXPECTANCY_ACTIVE":
+        capture = metrics.get("capture_economics") if isinstance(metrics.get("capture_economics"), dict) else {}
+        capture = capture or evidence
+        overall = capture.get("overall") if isinstance(capture.get("overall"), dict) else capture
+        return (
+            "capture_economics.status is no longer NEGATIVE_EXPECTANCY, or entries are limited to exact "
+            "TP-proven repair/harvest shapes with positive expectancy evidence",
+            "PYTHONPATH=src python3 -m quant_rabbit.cli capture-economics",
+            {
+                "status": capture.get("status"),
+                "expectancy_jpy_per_trade": _round_optional(
+                    overall.get("expectancy_jpy_per_trade"),
+                    3,
+                ),
+                "net_jpy": _round_optional(overall.get("net_jpy"), 3),
+                "trades": overall.get("trades"),
+                "profit_factor": _round_optional(overall.get("profit_factor"), 3),
+            },
+        )
+    if code == "MARKET_CLOSE_LEAK_DOMINATES_TP_EDGE":
+        segments = evidence.get("segments") if isinstance(evidence.get("segments"), list) else []
+        return (
+            "no TP-proven segment remains net-damaged by MARKET_ORDER_TRADE_CLOSE leakage; preserve broker TP "
+            "and guardian capture instead of scaling market-close loss paths",
+            "PYTHONPATH=src python3 -m quant_rabbit.cli capture-economics",
+            {"damaged_segments": len(segments), "top_segments": segments[:3]},
+        )
+    if code == "RECENT_GATEWAY_LOSS_MARKET_CLOSE_LEAK":
+        latest = evidence.get("latest_loss_close_ts_utc") or _latest_ts_from_examples(evidence)
+        return (
+            "recent_leak_loss_closes is zero inside the 7-day acceptance window, or each loss-side market "
+            "close has contained-risk timing plus durable gateway/GPT close proof",
+            "PYTHONPATH=src python3 -m quant_rabbit.cli execution-timing-audit --max-events 80",
+            {
+                "recent_leak_loss_closes": evidence.get("recent_leak_loss_closes"),
+                "recent_leak_loss_net_jpy": _round_optional(evidence.get("recent_leak_loss_net_jpy"), 3),
+                "latest_loss_close_ts_utc": latest,
+                "earliest_auto_clear_if_no_new_leak_utc": _plus_days_iso(
+                    latest,
+                    ACCEPTANCE_LEAK_LOOKBACK_DAYS,
+                ),
+                "timing_labels": evidence.get("recent_loss_timing_label_counts"),
+            },
+        )
+    if code == "LOSS_CLOSE_GATE_EVIDENCE_MISSING":
+        latest = _latest_ts_from_examples(evidence)
+        return (
+            "every recent GPT loss-side market close has PASS close_gate_evidence in verification_observations, "
+            "or the missing-evidence closes age out of the 7-day acceptance window without new leaks",
+            "PYTHONPATH=src python3 -m quant_rabbit.cli verification-ledger-audit",
+            {
+                "missing_close_gate_evidence": evidence.get("recent_close_gate_unverified_loss_closes"),
+                "missing_close_gate_net_jpy": _round_optional(
+                    evidence.get("recent_close_gate_unverified_loss_net_jpy"),
+                    3,
+                ),
+                "latest_missing_evidence_ts_utc": latest,
+                "earliest_auto_clear_if_no_new_missing_utc": _plus_days_iso(
+                    latest,
+                    ACCEPTANCE_LEAK_LOOKBACK_DAYS,
+                ),
+                "example_trade_ids": _example_trade_ids(evidence),
+            },
+        )
+    if code == "EXECUTION_LEDGER_GATEWAY_RECEIPT_STREAM_STALE":
+        return (
+            "execution_ledger gateway receipt stream is fresh enough to classify recent broker market-close "
+            "truth against local GPT/gateway receipts",
+            "PYTHONPATH=src python3 -m quant_rabbit.cli verification-ledger-audit",
+            {
+                "gateway_event_stream_lag_minutes": evidence.get("gateway_event_stream_lag_minutes"),
+                "latest_gateway_market_close_ts_utc": evidence.get("latest_gateway_market_close_ts_utc"),
+            },
+        )
+    return (
+        "the named acceptance P0 finding disappears from profitability_acceptance after its evidence metric changes",
+        "PYTHONPATH=src python3 -m quant_rabbit.cli profitability-acceptance",
+        {key: evidence.get(key) for key in sorted(evidence)[:6]},
+    )
+
+
+def _split_blocker(raw: str) -> tuple[str, str]:
+    if ":" not in raw:
+        return raw.strip() or "UNKNOWN_ACCEPTANCE_BLOCKER", raw.strip()
+    code, message = raw.split(":", 1)
+    return code.strip() or "UNKNOWN_ACCEPTANCE_BLOCKER", message.strip()
+
+
+def _latest_ts_from_examples(evidence: dict[str, Any]) -> str | None:
+    examples = evidence.get("examples") if isinstance(evidence.get("examples"), list) else []
+    latest: datetime | None = None
+    latest_raw: str | None = None
+    for item in examples:
+        if not isinstance(item, dict):
+            continue
+        raw = (
+            item.get("ts_utc")
+            or item.get("closed_at_utc")
+            or item.get("trade_close_ts_utc")
+            or item.get("timestamp_utc")
+        )
+        parsed = _parse_utc(raw)
+        if parsed is None:
+            continue
+        if latest is None or parsed > latest:
+            latest = parsed
+            latest_raw = parsed.isoformat()
+    return latest_raw
+
+
+def _plus_days_iso(value: Any, days: int) -> str | None:
+    parsed = _parse_utc(value)
+    if parsed is None:
+        return None
+    return (parsed + timedelta(days=days)).isoformat()
+
+
+def _example_trade_ids(evidence: dict[str, Any]) -> list[str]:
+    examples = evidence.get("examples") if isinstance(evidence.get("examples"), list) else []
+    trade_ids: list[str] = []
+    for item in examples:
+        if not isinstance(item, dict):
+            continue
+        trade_id = item.get("trade_id")
+        if trade_id is None:
+            continue
+        trade_ids.append(str(trade_id))
+    return trade_ids[:8]
 
 
 def _target_firepower_summary(payload: dict[str, Any]) -> dict[str, Any]:
@@ -830,6 +1052,39 @@ def _operator_actions(
                 "reason": "inspect red/green acceptance invariants before increasing turnover",
             }
         )
+    repair_plan = acceptance.get("repair_plan") if isinstance(acceptance.get("repair_plan"), dict) else {}
+    repair_items = repair_plan.get("items") if isinstance(repair_plan.get("items"), list) else []
+    if repair_items:
+        actions.append(
+            {
+                "code": "FOLLOW_ACCEPTANCE_REPAIR_PLAN",
+                "command": "PYTHONPATH=src python3 -m quant_rabbit.cli trader-support-bot",
+                "requires_explicit_operator_approval": False,
+                "reason": (
+                    "use profitability_acceptance.repair_plan clearance conditions; rerunning acceptance "
+                    "alone will loop until those proof metrics change"
+                ),
+            }
+        )
+    repair_codes = {str(item.get("code")) for item in repair_items if isinstance(item, dict)}
+    if "LOSS_CLOSE_GATE_EVIDENCE_MISSING" in repair_codes:
+        actions.append(
+            {
+                "code": "VERIFY_CLOSE_GATE_EVIDENCE",
+                "command": "PYTHONPATH=src python3 -m quant_rabbit.cli verification-ledger-audit",
+                "requires_explicit_operator_approval": False,
+                "reason": "confirm future GPT loss-side closes have durable PASS close_gate_evidence",
+            }
+        )
+    if "RECENT_GATEWAY_LOSS_MARKET_CLOSE_LEAK" in repair_codes:
+        actions.append(
+            {
+                "code": "RECHECK_LOSS_CLOSE_LEAK_WINDOW",
+                "command": "PYTHONPATH=src python3 -m quant_rabbit.cli execution-timing-audit --max-events 80",
+                "requires_explicit_operator_approval": False,
+                "reason": "verify the 7-day loss-close leak window is shrinking before adding turnover",
+            }
+        )
     if entry.get("global_unlock_frontier"):
         actions.append(
             {
@@ -884,6 +1139,7 @@ def _render_report(payload: dict[str, Any]) -> str:
     broker = payload["broker"]
     target = payload["target"]
     firepower = payload["profitability_acceptance"].get("target_firepower", {})
+    acceptance_repair = payload["profitability_acceptance"].get("repair_plan", {})
     lines = [
         "# Trader Support Bot Report",
         "",
@@ -918,6 +1174,12 @@ def _render_report(payload: dict[str, Any]) -> str:
         lines.append("- none")
     lines.extend(
         [
+            "",
+            "## Profit Capture Repair",
+            "",
+            f"- Status: `{profit['status']}`",
+            f"- Clearance condition: {profit['clearance_condition']}",
+            f"- Verify: `{profit['verification_command']}`",
             "",
             "## Guardian",
             "",
@@ -984,6 +1246,23 @@ def _render_report(payload: dict[str, Any]) -> str:
                 f"- `{label}` return/day=`{bucket.get('estimated_return_pct_per_active_day_at_observed_frequency')}` "
                 f"trades_needed_5pct=`{bucket.get('trades_needed_for_minimum_5pct_at_weighted_expectancy')}` "
                 f"vehicles=`{bucket.get('top_vehicle_keys')}`"
+            )
+    else:
+        lines.append("- none")
+    lines.extend(["", "## Acceptance Repair Plan", ""])
+    if acceptance_repair.get("items"):
+        lines.append(f"- Loop breaker: {acceptance_repair.get('loop_breaker')}")
+        lines.extend(
+            [
+                "",
+                "| Code | Clearance condition | Verify |",
+                "|---|---|---|",
+            ]
+        )
+        for item in acceptance_repair["items"][:8]:
+            lines.append(
+                f"| `{item['code']}` | {item['clearance_condition']} | "
+                f"`{item['verification_command']}` |"
             )
     else:
         lines.append("- none")
