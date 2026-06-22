@@ -433,6 +433,7 @@ def route_trader_prompts(
         other_repair_reasons = tuple(
             reason for reason in self_improvement_repair_reasons if reason not in pending_cancel_review_reasons
         )
+        p0_repair_live_ready_lanes = _self_improvement_p0_repair_live_ready_lane_ids(intents)
         if pending_entry_reasons and live_ready_lanes and pending_cancel_review_reasons and not other_repair_reasons:
             return _build_route(
                 BRANCH_ENTRY,
@@ -444,6 +445,24 @@ def route_trader_prompts(
                     "write TRADE with cancel_order_ids for stale/lower-priority pending entries because CANCEL_PENDING alone "
                     "is rejected while executable replacement risk exists",
                     *self_improvement_repair_reasons,
+                ),
+                include_content=include_content,
+            )
+        if pending_entry_reasons and p0_repair_live_ready_lanes:
+            return _build_route(
+                BRANCH_ENTRY,
+                (
+                    *carry_reasons,
+                    *advisory_close_review_reasons,
+                    *pending_entry_reasons,
+                    (
+                        "self-improvement profitability P0 has repair-mode LIVE_READY lane(s) while trader-owned "
+                        "pending entry risk remains fillable; write TRADE only for the attached-TP HARVEST repair "
+                        "basket, include cancel_order_ids for stale/lower-priority pending entries, and let the "
+                        "gateway preserve any equivalent broker-anchored pending entry: "
+                        + ", ".join(p0_repair_live_ready_lanes[:3])
+                    ),
+                    *_self_improvement_p0_repair_context_reasons(self_improvement_repair_reasons),
                 ),
                 include_content=include_content,
             )
@@ -460,7 +479,6 @@ def route_trader_prompts(
                 ),
                 include_content=include_content,
             )
-        p0_repair_live_ready_lanes = _self_improvement_p0_repair_live_ready_lane_ids(intents)
         if p0_repair_live_ready_lanes:
             return _build_route(
                 BRANCH_ENTRY,
@@ -488,6 +506,25 @@ def route_trader_prompts(
         profitability_acceptance_path=profitability_acceptance_path,
     )
     if _target_open(target_state) and profitability_acceptance_repair_reasons:
+        p0_repair_live_ready_lanes = _self_improvement_p0_repair_live_ready_lane_ids(intents)
+        if pending_entry_reasons and p0_repair_live_ready_lanes:
+            return _build_route(
+                BRANCH_ENTRY,
+                (
+                    *carry_reasons,
+                    *advisory_close_review_reasons,
+                    *pending_entry_reasons,
+                    (
+                        "profitability acceptance P0 remains active with current repair-mode LIVE_READY lane(s); "
+                        "write TRADE only for the attached-TP HARVEST repair basket, include cancel_order_ids for "
+                        "stale/lower-priority pending entries, and let the gateway preserve any equivalent "
+                        "broker-anchored pending entry: "
+                        + ", ".join(p0_repair_live_ready_lanes[:3])
+                    ),
+                    *_profitability_acceptance_p0_context_reasons(profitability_acceptance_repair_reasons),
+                ),
+                include_content=include_content,
+            )
         if pending_entry_reasons:
             return _build_route(
                 BRANCH_POSITION,
@@ -501,7 +538,6 @@ def route_trader_prompts(
                 ),
                 include_content=include_content,
             )
-        p0_repair_live_ready_lanes = _self_improvement_p0_repair_live_ready_lane_ids(intents)
         if p0_repair_live_ready_lanes:
             return _build_route(
                 BRANCH_ENTRY,

@@ -272,6 +272,71 @@ class TraderPromptRouteTest(unittest.TestCase):
         self.assertTrue(any("attached-TP HARVEST repair basket" in reason for reason in route.reasons))
         self.assertTrue(any("MARKET_CLOSE_LEAK_DOMINATES_TP_EDGE remains active as repair context" in reason for reason in route.reasons))
 
+    def test_profitability_acceptance_p0_with_pending_and_repair_live_ready_routes_to_entry(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root)
+            snapshot = json.loads(files["snapshot"].read_text())
+            snapshot["orders"] = [
+                {
+                    "order_id": "472779",
+                    "pair": "GBP_CHF",
+                    "order_type": "LIMIT",
+                    "state": "PENDING",
+                    "units": -1000,
+                    "owner": "trader",
+                    "trade_id": None,
+                }
+            ]
+            files["snapshot"].write_text(json.dumps(snapshot))
+            intents = json.loads(files["intents"].read_text())
+            intents["results"][0]["lane_id"] = "range_trader:GBP_CHF:SHORT:RANGE_ROTATION"
+            intents["results"][0]["intent"] = {
+                "pair": "GBP_CHF",
+                "side": "SHORT",
+                "order_type": "LIMIT",
+                "metadata": {
+                    "self_improvement_p0_repair_live_ready": True,
+                    "self_improvement_p0_repair_mode": "TP_HARVEST_REPAIR",
+                },
+            }
+            files["intents"].write_text(json.dumps(intents))
+            now = datetime.now(timezone.utc).isoformat()
+            files["profitability_acceptance"].write_text(
+                json.dumps(
+                    {
+                        "generated_at_utc": now,
+                        "status": "PROFITABILITY_ACCEPTANCE_BLOCKED",
+                        "findings": [
+                            {
+                                "priority": "P0",
+                                "code": "NEGATIVE_EXPECTANCY_ACTIVE",
+                                "message": "capture economics is still NEGATIVE_EXPECTANCY",
+                                "evidence": {
+                                    "trades": 221,
+                                    "expectancy_jpy_per_trade": -168.4,
+                                    "payoff_ratio": 0.415,
+                                },
+                            }
+                        ],
+                        "metrics": {
+                            "order_intents": {
+                                "generated_at_utc": intents["generated_at_utc"],
+                            }
+                        },
+                    }
+                )
+            )
+
+            route = route_trader_prompts(**_route_paths(files), decision_response_path=None)
+
+        self.assertEqual(route.branch, BRANCH_ENTRY)
+        self.assertTrue(any("472779" in reason for reason in route.reasons))
+        self.assertTrue(any("profitability acceptance P0 remains active" in reason for reason in route.reasons))
+        self.assertTrue(any("include cancel_order_ids" in reason for reason in route.reasons))
+        self.assertTrue(any("gateway preserve any equivalent" in reason for reason in route.reasons))
+        self.assertTrue(any("range_trader:GBP_CHF:SHORT:RANGE_ROTATION" in reason for reason in route.reasons))
+
     def test_projection_p0_routes_to_learning_repair_before_entry(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -475,6 +540,65 @@ class TraderPromptRouteTest(unittest.TestCase):
         self.assertEqual(route.branch, BRANCH_POSITION)
         self.assertTrue(any("trader pending entry order(s) occupy the gateway entry slot" in reason for reason in route.reasons))
         self.assertTrue(any("write CANCEL_PENDING" in reason for reason in route.reasons))
+
+    def test_profitability_p0_with_pending_and_repair_live_ready_routes_to_entry(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root)
+            snapshot = json.loads(files["snapshot"].read_text())
+            snapshot["orders"] = [
+                {
+                    "order_id": "472779",
+                    "pair": "GBP_CHF",
+                    "order_type": "LIMIT",
+                    "state": "PENDING",
+                    "units": -1000,
+                    "owner": "trader",
+                    "trade_id": None,
+                }
+            ]
+            files["snapshot"].write_text(json.dumps(snapshot))
+            intents = json.loads(files["intents"].read_text())
+            intents["results"][0]["lane_id"] = "range_trader:GBP_CHF:SHORT:RANGE_ROTATION"
+            intents["results"][0]["intent"] = {
+                "pair": "GBP_CHF",
+                "side": "SHORT",
+                "order_type": "LIMIT",
+                "metadata": {
+                    "self_improvement_p0_repair_live_ready": True,
+                    "self_improvement_p0_repair_mode": "TP_HARVEST_REPAIR",
+                },
+            }
+            files["intents"].write_text(json.dumps(intents))
+            files["self_improvement_audit"].write_text(
+                json.dumps(
+                    {
+                        "generated_at_utc": datetime.now(timezone.utc).isoformat(),
+                        "status": "SELF_IMPROVEMENT_BLOCKED",
+                        "findings": [
+                            {
+                                "priority": "P0",
+                                "layer": "profitability",
+                                "code": "PERSISTENT_PROFITABILITY_DISCIPLINE_BLOCKED",
+                                "message": "profitability discipline has failed for 65 consecutive audit run(s)",
+                                "evidence": {
+                                    "current_streak": 65,
+                                    "system_defect_evidence": {"profit_factor": 0.536},
+                                },
+                            }
+                        ],
+                    }
+                )
+            )
+
+            route = route_trader_prompts(**_route_paths(files), decision_response_path=None)
+
+        self.assertEqual(route.branch, BRANCH_ENTRY)
+        self.assertTrue(any("472779" in reason for reason in route.reasons))
+        self.assertTrue(any("repair-mode LIVE_READY lane" in reason for reason in route.reasons))
+        self.assertTrue(any("include cancel_order_ids" in reason for reason in route.reasons))
+        self.assertTrue(any("gateway preserve any equivalent" in reason for reason in route.reasons))
+        self.assertTrue(any("range_trader:GBP_CHF:SHORT:RANGE_ROTATION" in reason for reason in route.reasons))
 
     def test_pending_cancel_review_p0_with_live_ready_routes_to_entry_replacement(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
