@@ -44,6 +44,7 @@ OANDA_AUDIT_ONLY_LOCAL_TP_PROOF_REQUIRED = "OANDA_CAMPAIGN_AUDIT_ONLY_LOCAL_TP_P
 OANDA_AUDIT_ONLY_REPLAY_HISTORY_GRANULARITIES = "S5,M5"
 FORECAST_FRONTIER_EVIDENCE_WAIT_STATUS = "FORECAST_FRONTIER_WAITING_FOR_LIVE_PRECISION_EVIDENCE"
 PROTECTIVE_FRONTIER_GUARDRAIL_STATUS = "FRONTIER_PROTECTIVE_GUARDRAIL_ACTIVE"
+BIDASK_REPLAY_WAIT_STATUS = "BIDASK_REPLAY_WAITING_FOR_FORECAST_SAMPLE_COVERAGE"
 FORECAST_FRONTIER_BLOCKER_CODES = {
     "FORECAST_NOT_EXECUTABLE_FOR_LIVE",
     "TELEMETRY_FORECAST_NOT_EXECUTABLE_FOR_LIVE",
@@ -1257,6 +1258,31 @@ def _acceptance_repair_item(finding: dict[str, Any], metrics: dict[str, Any]) ->
     }
 
 
+def _bidask_price_truth_fetch_required(bidask: dict[str, Any]) -> bool:
+    price_truth = (
+        bidask.get("price_truth_coverage")
+        if isinstance(bidask.get("price_truth_coverage"), dict)
+        else {}
+    )
+    status = str(price_truth.get("status") or "").upper()
+    missing_samples = _float(price_truth.get("missing_price_truth_samples"))
+    missing_windows = _float(price_truth.get("missing_price_window_group_count"))
+    fetch_count = _float(price_truth.get("history_fetch_command_count"))
+    if status == "PRICE_TRUTH_OK" and missing_samples <= 0 and missing_windows <= 0 and fetch_count <= 0:
+        return False
+    if status in {"PARTIAL_PRICE_TRUTH", "PRICE_TRUTH_PARTIAL", "MISSING_PRICE_TRUTH"}:
+        return True
+    if missing_samples > 0 or missing_windows > 0 or fetch_count > 0:
+        return True
+    return bool(bidask.get("history_fetch_command")) and status != "PRICE_TRUTH_OK"
+
+
+def _bidask_summary_requires_price_truth_fetch(summary: dict[str, Any]) -> bool:
+    if "price_truth_fetch_required" in summary:
+        return bool(summary.get("price_truth_fetch_required"))
+    return _bidask_price_truth_fetch_required(summary)
+
+
 def _acceptance_clearance_for_code(
     code: str,
     evidence: dict[str, Any],
@@ -1520,12 +1546,13 @@ def _acceptance_clearance_for_code(
         bidask = metrics.get("bidask_replay_rules") if isinstance(metrics.get("bidask_replay_rules"), dict) else {}
         bidask = bidask or evidence
         examples = bidask.get("rank_only_examples") if isinstance(bidask.get("rank_only_examples"), list) else []
+        price_truth_fetch_required = _bidask_price_truth_fetch_required(bidask)
         validation_command = bidask.get("replay_validation_command") or (
             "python3 scripts/oanda_history_replay_validate.py "
             "--forecast-history data/forecast_history.jsonl "
             "--granularity S5"
         )
-        if code == "BIDASK_REPLAY_PRICE_TRUTH_PARTIAL":
+        if code == "BIDASK_REPLAY_PRICE_TRUTH_PARTIAL" or price_truth_fetch_required:
             condition = (
                 "missing OANDA bid/ask price-truth windows are fetched and the refreshed replay "
                 "report either reaches PRICE_TRUTH_OK or proves that any remaining candidate is "
@@ -1533,20 +1560,29 @@ def _acceptance_clearance_for_code(
             )
         elif code == "BIDASK_REPLAY_SUPPORT_NOT_DAILY_STABLE":
             condition = (
-                "at least one bid/ask replay support rule graduates from rank-only to live-grade DAILY_STABLE "
-                "after fresh multi-week OANDA BA candle replay; until then these candidates are advisory "
-                "ranking evidence and cannot be counted as high-turn daily firepower"
+                "OANDA bid/ask price truth is already complete; wait for additional forecast_history "
+                "coverage or new candidate days, then rerun replay validation and require at least one "
+                "support rule to graduate from rank-only to live-grade DAILY_STABLE before counting it "
+                "as high-turn daily firepower"
             )
         else:
             condition = (
-                "at least one bid/ask contrarian replay rule graduates from rank-only to DAILY_STABLE after "
-                "fresh multi-week OANDA BA candle replay; until then weak forecast inversion is advisory ranking "
-                "evidence and cannot be counted as live-grade turnover firepower"
+                "OANDA bid/ask price truth is already complete; wait for additional forecast_history "
+                "coverage or new candidate days, then rerun replay validation and require at least one "
+                "contrarian replay rule to graduate from rank-only to DAILY_STABLE before counting weak "
+                "forecast inversion as live-grade turnover firepower"
             )
+        history_fetch_command = bidask.get("history_fetch_command") if price_truth_fetch_required else None
         return (
             condition,
             str(validation_command),
             {
+                "replay_evidence_status": (
+                    "PRICE_TRUTH_FETCH_REQUIRED"
+                    if price_truth_fetch_required
+                    else BIDASK_REPLAY_WAIT_STATUS
+                ),
+                "price_truth_fetch_required": price_truth_fetch_required,
                 "support_rules": bidask.get("support_rules"),
                 "daily_stable_support_rules": bidask.get("daily_stable_support_rules"),
                 "rank_only_support_rules": bidask.get("rank_only_support_rules"),
@@ -1559,7 +1595,10 @@ def _acceptance_clearance_for_code(
                 "negative_rules": bidask.get("negative_rules"),
                 "price_truth_coverage": bidask.get("price_truth_coverage"),
                 "daily_stability_requirements": bidask.get("daily_stability_requirements"),
-                "history_fetch_command": bidask.get("history_fetch_command"),
+                "history_fetch_command": history_fetch_command,
+                "stale_history_fetch_command_suppressed": (
+                    not price_truth_fetch_required and bool(bidask.get("history_fetch_command"))
+                ),
                 "history_fetch_command_count": (
                     (bidask.get("price_truth_coverage") or {}).get("history_fetch_command_count")
                     if isinstance(bidask.get("price_truth_coverage"), dict)
@@ -1574,6 +1613,10 @@ def _acceptance_clearance_for_code(
                     (bidask.get("price_truth_coverage") or {}).get("missing_price_window_group_count")
                     if isinstance(bidask.get("price_truth_coverage"), dict)
                     else None
+                ),
+                "under_sampled_pair_direction_count": bidask.get("under_sampled_pair_direction_count"),
+                "under_sampled_missing_evaluated_samples": bidask.get(
+                    "under_sampled_missing_evaluated_samples"
                 ),
                 "rank_only_examples": examples[:3],
             },
@@ -1944,8 +1987,9 @@ def _operator_actions(
             if isinstance(first_evidence.get("evidence_summary"), dict)
             else {}
         )
+        price_truth_fetch_required = _bidask_summary_requires_price_truth_fetch(summary)
         history_fetch = summary.get("history_fetch_command")
-        if history_fetch:
+        if history_fetch and price_truth_fetch_required:
             actions.append(
                 {
                     "code": "FETCH_BIDASK_REPLAY_HISTORY",
@@ -1955,7 +1999,7 @@ def _operator_actions(
                 }
             )
         validation_command = first_evidence.get("verification_command")
-        if validation_command:
+        if validation_command and price_truth_fetch_required:
             actions.append(
                 {
                     "code": "VALIDATE_BIDASK_REPLAY_HISTORY",
@@ -2435,24 +2479,36 @@ def _build_repair_requests(
     if evidence_items:
         first = evidence_items[0]
         summary = first.get("evidence_summary") if isinstance(first.get("evidence_summary"), dict) else {}
+        price_truth_fetch_required = _bidask_summary_requires_price_truth_fetch(summary)
         requests.append(
             _repair_request(
                 code="COLLECT_BIDASK_REPLAY_EVIDENCE",
                 priority=str(first.get("priority") or "P1"),
-                status="READY_FOR_READ_ONLY_EVIDENCE_COLLECTION",
+                status=(
+                    "READY_FOR_READ_ONLY_EVIDENCE_COLLECTION"
+                    if price_truth_fetch_required
+                    else BIDASK_REPLAY_WAIT_STATUS
+                ),
                 source_findings=[str(item.get("code")) for item in evidence_items if item.get("code")],
                 problem=(
-                    "Bid/ask replay support is still rank-only or partially missing price truth, so it cannot "
-                    "be counted as live-grade high-turn firepower."
+                    "Bid/ask replay support is partially missing OANDA price truth, so it cannot be "
+                    "counted as live-grade high-turn firepower."
+                    if price_truth_fetch_required
+                    else "Bid/ask replay price truth is complete, but support remains rank-only because "
+                    "forecast sample coverage or daily stability is not yet strong enough."
                 ),
                 why_now=(
-                    "Historical replay may expose usable short-horizon edges, but only after spread-included "
-                    "OANDA BA candles prove daily-stable economics."
+                    "Historical replay may expose usable short-horizon edges, but only after missing "
+                    "spread-included OANDA BA candles are fetched and replayed."
+                    if price_truth_fetch_required
+                    else "Repeating the same candle fetch cannot create more forecast_history samples or "
+                    "repair daily concentration; wait for new forecast evidence before treating these "
+                    "rank-only rules as operational firepower."
                 ),
                 evidence_summary=summary,
                 clearance_conditions=[first.get("clearance_condition")],
                 verification_commands=[
-                    summary.get("history_fetch_command"),
+                    summary.get("history_fetch_command") if price_truth_fetch_required else None,
                     first.get("verification_command"),
                 ],
                 suggested_files=[

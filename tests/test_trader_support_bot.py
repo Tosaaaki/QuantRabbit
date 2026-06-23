@@ -218,8 +218,10 @@ class TraderSupportBotTest(unittest.TestCase):
             evidence_request = next(
                 item for item in repair_requests if item["code"] == "COLLECT_BIDASK_REPLAY_EVIDENCE"
             )
-            self.assertEqual(evidence_request["status"], "READY_FOR_READ_ONLY_EVIDENCE_COLLECTION")
-            self.assertIn("oanda_history_fetch.py", " ".join(evidence_request["verification_commands"]))
+            self.assertEqual(evidence_request["status"], "BIDASK_REPLAY_WAITING_FOR_FORECAST_SAMPLE_COVERAGE")
+            self.assertNotIn("oanda_history_fetch.py", " ".join(evidence_request["verification_commands"]))
+            self.assertFalse(evidence_request["evidence_summary"]["price_truth_fetch_required"])
+            self.assertTrue(evidence_request["evidence_summary"]["stale_history_fetch_command_suppressed"])
             self.assertEqual(
                 repair_plan["evidence_collection_items"][0]["code"],
                 "BIDASK_REPLAY_SUPPORT_NOT_DAILY_STABLE",
@@ -271,8 +273,8 @@ class TraderSupportBotTest(unittest.TestCase):
             action_codes = {item["code"] for item in payload["operator_actions"]}
             self.assertIn("CHECK_POSITION_GUARDIAN_PREFLIGHT", action_codes)
             self.assertIn("FOLLOW_ACCEPTANCE_REPAIR_PLAN", action_codes)
-            self.assertIn("FETCH_BIDASK_REPLAY_HISTORY", action_codes)
-            self.assertIn("VALIDATE_BIDASK_REPLAY_HISTORY", action_codes)
+            self.assertNotIn("FETCH_BIDASK_REPLAY_HISTORY", action_codes)
+            self.assertNotIn("VALIDATE_BIDASK_REPLAY_HISTORY", action_codes)
             self.assertIn("VERIFY_CLOSE_GATE_EVIDENCE", action_codes)
             self.assertIn("RECHECK_LOSS_CLOSE_LEAK_WINDOW", action_codes)
             self.assertIn("VERIFY_TP_PROGRESS_REPLAY_REPAIR", action_codes)

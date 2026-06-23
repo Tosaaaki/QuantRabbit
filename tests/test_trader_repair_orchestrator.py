@@ -11,6 +11,7 @@ from pathlib import Path
 from quant_rabbit.cli import main
 from quant_rabbit.trader_repair_orchestrator import (
     STATUS_APPROVAL_REQUIRED,
+    STATUS_BLOCKED,
     STATUS_READY,
     TraderRepairOrchestrator,
 )
@@ -629,6 +630,51 @@ class TraderRepairOrchestratorTest(unittest.TestCase):
                 "REVIEW_CLOSE_GATE_EVIDENCE_FAILURES",
                 payload["queue_summary"]["waiting_request_codes"],
             )
+
+    def test_bidask_forecast_sample_wait_is_not_codex_implementation_work(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            support = root / "support.json"
+            output = root / "orchestrator.json"
+            report = root / "orchestrator.md"
+            _write_support(
+                support,
+                [
+                    _request(
+                        "COLLECT_BIDASK_REPLAY_EVIDENCE",
+                        priority="P1",
+                        status="BIDASK_REPLAY_WAITING_FOR_FORECAST_SAMPLE_COVERAGE",
+                        evidence_summary={
+                            "price_truth_fetch_required": False,
+                            "price_truth_coverage": {
+                                "status": "PRICE_TRUTH_OK",
+                                "missing_price_truth_samples": 0,
+                                "missing_price_window_group_count": 0,
+                                "history_fetch_command_count": 0,
+                            },
+                        },
+                    ),
+                ],
+            )
+
+            summary = TraderRepairOrchestrator(
+                support_bot_path=support,
+                output_path=output,
+                report_path=report,
+                trader_request="bidask replay",
+            ).run()
+
+            self.assertEqual(summary.status, STATUS_BLOCKED)
+            payload = json.loads(output.read_text())
+            bidask = payload["queue"][0]
+            self.assertEqual(bidask["automation_status"], "WAITING_FOR_LIVE_EVIDENCE_WINDOW")
+            self.assertEqual(payload["selected_request"], {})
+            self.assertEqual(payload["actionable_requests"], [])
+            self.assertIn(
+                "COLLECT_BIDASK_REPLAY_EVIDENCE",
+                payload["queue_summary"]["waiting_request_codes"],
+            )
+            self.assertEqual(payload["codex_work_order"]["status"], "NO_ACTIONABLE_CODEX_WORK")
 
 
 def _write_support(path: Path, requests: list[dict[str, object]]) -> None:
