@@ -81,7 +81,27 @@ class TraderRepairOrchestratorTest(unittest.TestCase):
             self.assertEqual(contract["forbidden_direct_actions"], REPAIR_AUTOMATION_FORBIDDEN_DIRECT_ACTIONS)
             self.assertFalse(contract["quant_rabbit_code_may_call_model_api"])
             self.assertIn("Order send", contract["orders_closes_launchd_policy"])
-            self.assertIn("REPAIR_TP_PROGRESS_PROFIT_CAPTURE_REPLAY", report.read_text())
+            self.assertEqual(
+                payload["queue_summary"]["selected_request_code"],
+                "REPAIR_TP_PROGRESS_PROFIT_CAPTURE_REPLAY",
+            )
+            self.assertEqual(payload["approval_boundary"]["live_side_effects_allowed"], [])
+            self.assertTrue(payload["approval_boundary"]["read_only_until_gateway_or_operator_approval"])
+            self.assertEqual(
+                payload["approval_boundary"]["existing_gateway_paths"]["order_send"],
+                "LiveOrderGateway",
+            )
+            work_order = payload["codex_work_order"]
+            self.assertEqual(work_order["status"], "READY_FOR_CODEX_IMPLEMENTATION")
+            self.assertEqual(work_order["selected_request_code"], "REPAIR_TP_PROGRESS_PROFIT_CAPTURE_REPLAY")
+            self.assertIn("regression_tests_for_the_named_failure", work_order["deliverables"])
+            self.assertIn("git_commit_with_codex_attribution", work_order["deliverables"])
+            self.assertTrue(work_order["commit_and_live_sync_required"])
+            self.assertFalse(work_order["quant_rabbit_code_may_call_model_api"])
+            self.assertIn("Do not send orders", work_order["automation_prompt"])
+            report_text = report.read_text()
+            self.assertIn("REPAIR_TP_PROGRESS_PROFIT_CAPTURE_REPLAY", report_text)
+            self.assertIn("Codex Work Order", report_text)
 
     def test_only_approval_required_requests_return_diagnostic_code(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -120,6 +140,8 @@ class TraderRepairOrchestratorTest(unittest.TestCase):
             self.assertEqual(payload["actionable_requests"], [])
             self.assertEqual(payload["approval_required_requests"][0]["automation_status"], "WAITING_FOR_OPERATOR_APPROVAL")
             self.assertIn("launchd_load", payload["approval_required_requests"][0]["automation_contract"]["requires_explicit_operator_approval_for"])
+            self.assertEqual(payload["codex_work_order"]["status"], "NO_ACTIONABLE_CODEX_WORK")
+            self.assertEqual(payload["codex_work_order"]["approval_boundary"]["live_side_effects_allowed"], [])
 
     def test_recovers_repair_queue_from_embedded_support_payload(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

@@ -95,6 +95,8 @@ class TraderRepairOrchestrator:
         actionable = [item for item in queue if item["automation_status"] == "READY_FOR_CODEX_IMPLEMENTATION"]
         approval_required = [item for item in queue if item["automation_status"] == "WAITING_FOR_OPERATOR_APPROVAL"]
         selected = _select_request(actionable, trader_request=self.trader_request)
+        execution_contract = _execution_contract()
+        approval_boundary = _approval_boundary(execution_contract)
         if actionable:
             status = STATUS_READY
         elif approval_required:
@@ -117,6 +119,13 @@ class TraderRepairOrchestrator:
             "queue": queue,
             "actionable_requests": actionable,
             "approval_required_requests": approval_required,
+            "queue_summary": {
+                "selected_request_code": selected.get("code") if selected else None,
+                "actionable_request_codes": [str(item.get("code")) for item in actionable if item.get("code")],
+                "approval_required_request_codes": [
+                    str(item.get("code")) for item in approval_required if item.get("code")
+                ],
+            },
             "metrics": {
                 "repair_request_count": len(queue),
                 "actionable_request_count": len(actionable),
@@ -126,7 +135,17 @@ class TraderRepairOrchestrator:
                 "repair_request_source": request_source,
                 "recovered_from_embedded_support": recovered_from_embedded_support,
             },
-            "execution_contract": _execution_contract(),
+            "execution_contract": execution_contract,
+            "approval_boundary": approval_boundary,
+            "codex_work_order": _codex_work_order(
+                selected,
+                status=status,
+                trader_request=self.trader_request,
+                execution_contract=execution_contract,
+                approval_boundary=approval_boundary,
+                output_path=self.output_path,
+                report_path=self.report_path,
+            ),
             "read_only": True,
             "live_side_effects": [],
         }
@@ -165,6 +184,84 @@ def _execution_contract() -> dict[str, Any]:
         "orders_closes_launchd_policy": (
             "Order send, order cancel, position close, and launchd load/reload must go through "
             "explicit operator approval or the existing gateway path. This orchestrator is never live permission."
+        ),
+    }
+
+
+def _approval_boundary(execution_contract: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "read_only_until_gateway_or_operator_approval": True,
+        "live_side_effects_allowed": [],
+        "requires_explicit_operator_approval_for": list(
+            execution_contract.get("requires_explicit_operator_approval_for") or []
+        ),
+        "forbidden_direct_actions": list(execution_contract.get("forbidden_direct_actions") or []),
+        "existing_gateway_paths": {
+            "order_send": "LiveOrderGateway",
+            "order_cancel": "LiveOrderGateway",
+            "position_close": "PositionProtectionGateway",
+            "launchd_load_or_reload": "operator_explicit_approval_after_preflight",
+        },
+        "quant_rabbit_code_may_call_model_api": False,
+        "policy": execution_contract.get("orders_closes_launchd_policy"),
+    }
+
+
+def _codex_work_order(
+    selected: dict[str, Any],
+    *,
+    status: str,
+    trader_request: str,
+    execution_contract: dict[str, Any],
+    approval_boundary: dict[str, Any],
+    output_path: Path,
+    report_path: Path,
+) -> dict[str, Any]:
+    if not selected:
+        return {
+            "status": "NO_ACTIONABLE_CODEX_WORK",
+            "orchestrator_status": status,
+            "trader_request": trader_request,
+            "reason": "No selected READY_FOR_CODEX_IMPLEMENTATION request is available.",
+            "approval_boundary": approval_boundary,
+        }
+    return {
+        "status": selected.get("automation_status"),
+        "orchestrator_status": status,
+        "selected_request_code": selected.get("code"),
+        "priority": selected.get("priority"),
+        "trader_request": trader_request,
+        "objective": selected.get("problem"),
+        "why_now": selected.get("why_now"),
+        "source_findings": selected.get("source_findings") or [],
+        "suggested_files": selected.get("suggested_files") or [],
+        "required_tests": selected.get("required_tests") or [],
+        "targeted_test_commands": selected.get("targeted_test_commands") or [],
+        "verification_commands": selected.get("verification_commands") or [],
+        "final_verification_commands": selected.get("final_verification_commands") or [],
+        "implementation_loop": selected.get("implementation_loop") or [],
+        "deliverables": [
+            "code_patch_or_documented_no_code_change",
+            "regression_tests_for_the_named_failure",
+            "positive_path_tests_for_the_allowed_shape",
+            "updated_runtime_contract_docs_when_behavior_changes",
+            "passing_targeted_tests",
+            "passing_required_verification_commands",
+            "passing_full_unittest_discover",
+            "git_commit_with_codex_attribution",
+            "verified_live_runtime_sync",
+        ],
+        "artifact_paths": {
+            "orchestrator_json": str(output_path),
+            "orchestrator_report": str(report_path),
+        },
+        "commit_and_live_sync_required": bool(execution_contract.get("commit_and_live_sync_required", True)),
+        "quant_rabbit_code_may_call_model_api": False,
+        "approval_boundary": approval_boundary,
+        "automation_prompt": (
+            "Implement the selected QuantRabbit repair using the suggested files and tests. "
+            "Do not send orders, cancel orders, close positions, mutate launchd, or add model API calls "
+            "inside QuantRabbit code; those actions require the existing gateway path or explicit operator approval."
         ),
     }
 
@@ -340,6 +437,8 @@ def _render_report(payload: dict[str, Any]) -> str:
     selected = payload.get("selected_request") if isinstance(payload.get("selected_request"), dict) else {}
     metrics = payload.get("metrics") if isinstance(payload.get("metrics"), dict) else {}
     contract = payload.get("execution_contract") if isinstance(payload.get("execution_contract"), dict) else {}
+    work_order = payload.get("codex_work_order") if isinstance(payload.get("codex_work_order"), dict) else {}
+    boundary = payload.get("approval_boundary") if isinstance(payload.get("approval_boundary"), dict) else {}
     lines = [
         "# Trader Repair Orchestrator Report",
         "",
@@ -362,6 +461,17 @@ def _render_report(payload: dict[str, Any]) -> str:
         f"- Commit and live sync required: `{contract.get('commit_and_live_sync_required')}`",
         f"- QuantRabbit code may call model API: `{contract.get('quant_rabbit_code_may_call_model_api')}`",
         f"- Policy: {contract.get('orders_closes_launchd_policy')}",
+        "",
+        "## Codex Work Order",
+        "",
+        f"- Status: `{work_order.get('status')}`",
+        f"- Objective: {work_order.get('objective')}",
+        f"- Deliverables: `{', '.join(work_order.get('deliverables') or [])}`",
+        f"- Final verification: `{', '.join(work_order.get('final_verification_commands') or [])}`",
+        f"- Commit and live sync required: `{work_order.get('commit_and_live_sync_required')}`",
+        f"- Read-only until gateway or approval: `{boundary.get('read_only_until_gateway_or_operator_approval')}`",
+        f"- Approval required for: `{', '.join(boundary.get('requires_explicit_operator_approval_for') or [])}`",
+        f"- Existing gateway paths: `{json.dumps(boundary.get('existing_gateway_paths') or {}, ensure_ascii=False, sort_keys=True)}`",
         "",
         "## Queue",
         "",
