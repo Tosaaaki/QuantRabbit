@@ -18,6 +18,7 @@ from quant_rabbit.paths import (
     DEFAULT_DAILY_TARGET_STATE,
     DEFAULT_EXECUTION_TIMING_AUDIT,
     DEFAULT_OANDA_UNIVERSAL_ROTATION_MINING,
+    DEFAULT_OANDA_UNIVERSAL_ROTATION_PACKAGED_RULES,
     DEFAULT_ORDER_INTENTS,
     DEFAULT_POSITION_GUARDIAN_EXECUTION,
     DEFAULT_POSITION_GUARDIAN_HEARTBEAT,
@@ -28,6 +29,7 @@ from quant_rabbit.paths import (
     DEFAULT_SELF_IMPROVEMENT_AUDIT,
     DEFAULT_TRADER_SUPPORT_BOT,
     DEFAULT_TRADER_SUPPORT_BOT_REPORT,
+    effective_oanda_universal_rotation_path,
 )
 
 
@@ -129,6 +131,7 @@ class TraderSupportBot:
         execution_timing_audit_path: Path = DEFAULT_EXECUTION_TIMING_AUDIT,
         profit_capture_bot_path: Path = DEFAULT_PROFIT_CAPTURE_BOT,
         oanda_rotation_mining_path: Path = DEFAULT_OANDA_UNIVERSAL_ROTATION_MINING,
+        oanda_rotation_packaged_path: Path = DEFAULT_OANDA_UNIVERSAL_ROTATION_PACKAGED_RULES,
         output_path: Path = DEFAULT_TRADER_SUPPORT_BOT,
         report_path: Path = DEFAULT_TRADER_SUPPORT_BOT_REPORT,
         now_utc: datetime | None = None,
@@ -145,6 +148,7 @@ class TraderSupportBot:
         self.execution_timing_audit_path = execution_timing_audit_path
         self.profit_capture_bot_path = profit_capture_bot_path
         self.oanda_rotation_mining_path = oanda_rotation_mining_path
+        self.oanda_rotation_packaged_path = oanda_rotation_packaged_path
         self.output_path = output_path
         self.report_path = report_path
         self.now_utc = (now_utc or datetime.now(timezone.utc)).astimezone(timezone.utc)
@@ -174,7 +178,11 @@ class TraderSupportBot:
         profitability = _read_json(self.profitability_acceptance_path)
         timing = _read_json(self.execution_timing_audit_path)
         profit_capture_bot = _read_json(self.profit_capture_bot_path)
-        oanda_rotation = _read_json(self.oanda_rotation_mining_path)
+        oanda_rotation_effective_path = effective_oanda_universal_rotation_path(
+            self.oanda_rotation_mining_path,
+            self.oanda_rotation_packaged_path,
+        )
+        oanda_rotation = _read_json(oanda_rotation_effective_path)
 
         guardian = _guardian_status(
             now_utc=self.now_utc,
@@ -321,6 +329,8 @@ class TraderSupportBot:
                 "execution_timing_audit": str(self.execution_timing_audit_path),
                 "profit_capture_bot": str(self.profit_capture_bot_path),
                 "oanda_rotation_mining": str(self.oanda_rotation_mining_path),
+                "oanda_rotation_packaged": str(self.oanda_rotation_packaged_path),
+                "oanda_rotation_effective": str(oanda_rotation_effective_path),
             },
             "generated_at_utc": generated,
             "status": status,

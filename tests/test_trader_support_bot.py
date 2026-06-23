@@ -1377,6 +1377,127 @@ class TraderSupportBotTest(unittest.TestCase):
             self.assertIn("pf=4.129446", report)
             self.assertIn("5%trades=9", report)
 
+    def test_oanda_audit_only_candidate_reads_preserved_packaged_runtime_artifact(self) -> None:
+        now = datetime(2026, 6, 22, 12, 15, tzinfo=timezone.utc)
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _write_fixture(root, now=now, blocked=True)
+            _write_json(
+                files["intents"],
+                {
+                    "generated_at_utc": now.isoformat(),
+                    "results": [
+                        {
+                            "lane_id": "range_trader:AUD_USD:LONG:RANGE_ROTATION",
+                            "status": "DRY_RUN_BLOCKED",
+                            "live_blocker_codes": [
+                                "OANDA_CAMPAIGN_AUDIT_ONLY_LOCAL_TP_PROOF_REQUIRED",
+                                "POSITION_GUARDIAN_INACTIVE_FOR_PROFIT_CAPTURE",
+                            ],
+                            "intent": {
+                                "pair": "AUD_USD",
+                                "side": "LONG",
+                                "order_type": "LIMIT",
+                                "market_context": {"method": "RANGE_ROTATION"},
+                                "metadata": {
+                                    "positive_rotation_oanda_campaign_audit_only": True,
+                                    "positive_rotation_oanda_campaign_matching_vehicle_key": (
+                                        "AUD_USD|LONG|range_reversion|tp1_sl1"
+                                    ),
+                                    "capture_take_profit_scope": "MISSING_METHOD_SCOPE",
+                                    "capture_take_profit_scope_key": (
+                                        "AUD_USD|LONG|RANGE_ROTATION|TAKE_PROFIT_ORDER"
+                                    ),
+                                },
+                            },
+                        }
+                    ],
+                },
+            )
+            latest = (
+                root
+                / "logs"
+                / "reports"
+                / "forecast_improvement"
+                / "oanda_universal_rotation_mining_latest.json"
+            )
+            packaged = root / "src" / "quant_rabbit" / "oanda_universal_rotation_precision_rules.json"
+            latest.parent.mkdir(parents=True, exist_ok=True)
+            packaged.parent.mkdir(parents=True, exist_ok=True)
+            _write_json(
+                latest,
+                {
+                    "generated_at_utc": "2026-06-23T10:09:16Z",
+                    "campaign_firepower": {
+                        "high_precision": {"top_vehicles": []},
+                        "evidence_queue": {"top_vehicles": []},
+                    },
+                },
+            )
+            _write_json(
+                packaged,
+                {
+                    "generated_at_utc": "2026-06-23T10:09:16Z",
+                    "source_report": (
+                        "logs/reports/forecast_improvement/"
+                        "oanda_universal_rotation_mining_latest.json"
+                    ),
+                    "campaign_firepower_preserved_from_existing": True,
+                    "campaign_firepower": {
+                        "high_precision": {
+                            "top_vehicles": [
+                                {
+                                    "vehicle_key": "AUD_USD|LONG|range_reversion|tp1_sl1",
+                                    "evidence_status": "HIGH_PRECISION_VALIDATED",
+                                    "pair": "AUD_USD",
+                                    "side": "LONG",
+                                    "validation_n": 21,
+                                    "validation_win_rate": 0.714286,
+                                    "validation_profit_factor": 3.04137,
+                                    "validation_avg_realized_pips": 1.997279,
+                                    "validation_expectancy_r": 0.465228,
+                                    "active_days": 12,
+                                    "positive_day_rate": 0.583333,
+                                    "estimated_return_pct_per_active_day_at_observed_frequency": 0.814149,
+                                    "trades_needed_for_minimum_5pct": 11,
+                                    "trades_needed_for_target_10pct": 22,
+                                }
+                            ]
+                        },
+                        "evidence_queue": {"top_vehicles": []},
+                    },
+                },
+            )
+            env = _guardian_env(root, active="0")
+            with mock.patch.dict(os.environ, env, clear=False):
+                TraderSupportBot(
+                    broker_snapshot_path=files["broker"],
+                    order_intents_path=files["intents"],
+                    target_state_path=files["target"],
+                    position_management_path=files["position_management"],
+                    position_guardian_management_path=files["guardian_management"],
+                    position_guardian_execution_path=files["guardian_execution"],
+                    position_guardian_heartbeat_path=files["guardian_heartbeat"],
+                    self_improvement_audit_path=files["self_improvement"],
+                    profitability_acceptance_path=files["profitability"],
+                    execution_timing_audit_path=files["timing"],
+                    profit_capture_bot_path=files["profit_capture_bot"],
+                    oanda_rotation_mining_path=latest,
+                    oanda_rotation_packaged_path=packaged,
+                    output_path=files["output"],
+                    report_path=files["report"],
+                    now_utc=now,
+                ).run()
+
+            payload = json.loads(files["output"].read_text())
+            candidate = payload["entry_readiness"]["oanda_audit_only_local_tp_proof_required"][0]
+
+            self.assertEqual(payload["artifact_paths"]["oanda_rotation_effective"], str(packaged))
+            self.assertEqual(candidate["oanda_vehicle_key"], "AUD_USD|LONG|range_reversion|tp1_sl1")
+            self.assertEqual(candidate["oanda_replay_evidence_status"], "HIGH_PRECISION_VALIDATED")
+            self.assertEqual(candidate["oanda_replay_evidence"]["validation_n"], 21)
+            self.assertEqual(payload["metrics"]["oanda_audit_only_with_replay_evidence_lanes"], 1)
+
     def test_cli_writes_support_panel_and_returns_blocked_code(self) -> None:
         now = datetime(2026, 6, 22, 12, 15, tzinfo=timezone.utc)
         with tempfile.TemporaryDirectory() as tmp:
