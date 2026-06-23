@@ -2702,6 +2702,13 @@ def _cycle_digest(*, kind: str, step_results: list[dict[str, Any]], aborted: boo
             or [],
             "repair_frontier_lanes": metrics.get("repair_frontier_lanes"),
             "global_unlock_frontier_lanes": metrics.get("global_unlock_frontier_lanes"),
+            "oanda_audit_only_local_tp_proof_required_lanes": metrics.get(
+                "oanda_audit_only_local_tp_proof_required_lanes"
+            ),
+            "oanda_audit_only_local_tp_proof_required_lane_ids": metrics.get(
+                "oanda_audit_only_local_tp_proof_required_lane_ids"
+            )
+            or [],
             "target_firepower_status": metrics.get("target_firepower_status"),
             "target_firepower_minimum_5pct_estimated_reachable": metrics.get(
                 "target_firepower_minimum_5pct_estimated_reachable"
@@ -2723,12 +2730,28 @@ def _cycle_digest(*, kind: str, step_results: list[dict[str, Any]], aborted: boo
                 for item in trader_support.get("operator_actions", []) or []
                 if isinstance(item, dict)
             ][:8],
+            "oanda_audit_only_operator_action_codes": [
+                item.get("code")
+                for item in trader_support.get("operator_actions", []) or []
+                if isinstance(item, dict)
+                and item.get("code")
+                in {
+                    "MINE_LOCAL_TP_PROOF_FOR_OANDA_AUDIT_ONLY",
+                    "VALIDATE_OANDA_AUDIT_ONLY_BIDASK_REPLAY",
+                    "MINE_OANDA_AUDIT_ONLY_CAMPAIGN_FIREPOWER",
+                    "PACKAGE_OANDA_AUDIT_ONLY_FIREPOWER_RULES_AFTER_REVIEW",
+                    "RERUN_INTENTS_AFTER_OANDA_AUDIT_ONLY_REPLAY",
+                }
+            ],
             "top_profit_capture_misses": profit_capture.get("top_misses", [])[:3],
             "current_profit_capture_gate_statuses": current_profit_capture.get("top_gate_statuses", [])[:3],
             "repair_live_ready": entry.get("repair_live_ready", [])[:4],
             "repair_basket_guardian_recovery": entry.get("repair_basket_guardian_recovery", [])[:4],
             "repair_frontier": entry.get("repair_frontier", [])[:4],
             "global_unlock_frontier": entry.get("global_unlock_frontier", [])[:4],
+            "oanda_audit_only_local_tp_proof_required": entry.get(
+                "oanda_audit_only_local_tp_proof_required", []
+            )[:4],
         }
 
     return digest

@@ -5634,6 +5634,10 @@ class ConsolidatedCycleCommandTest(unittest.TestCase):
                             ],
                             "repair_frontier_lanes": 8,
                             "global_unlock_frontier_lanes": 1,
+                            "oanda_audit_only_local_tp_proof_required_lanes": 1,
+                            "oanda_audit_only_local_tp_proof_required_lane_ids": [
+                                "range_trader:GBP_JPY:LONG:RANGE_ROTATION"
+                            ],
                             "target_firepower_status": "VERIFIED_TARGET_10_ROUTE_ESTIMATED",
                             "target_firepower_minimum_5pct_estimated_reachable": True,
                         },
@@ -5648,6 +5652,15 @@ class ConsolidatedCycleCommandTest(unittest.TestCase):
                         "operator_actions": [
                             {"code": "CHECK_POSITION_GUARDIAN_PREFLIGHT"},
                             {"code": "LOAD_POSITION_GUARDIAN_ONLY_IF_APPROVED"},
+                            {"code": "READ_ACCEPTANCE_BLOCKERS"},
+                            {"code": "FOLLOW_ACCEPTANCE_REPAIR_PLAN"},
+                            {"code": "VERIFY_CLOSE_GATE_EVIDENCE"},
+                            {"code": "RECHECK_LOSS_CLOSE_LEAK_WINDOW"},
+                            {"code": "VERIFY_TP_PROGRESS_REPLAY_REPAIR"},
+                            {"code": "WORK_GLOBAL_UNLOCK_FRONTIER"},
+                            {"code": "WORK_REPAIR_FRONTIER_REMAINING_BLOCKERS"},
+                            {"code": "MINE_LOCAL_TP_PROOF_FOR_OANDA_AUDIT_ONLY"},
+                            {"code": "VALIDATE_OANDA_AUDIT_ONLY_BIDASK_REPLAY"},
                         ],
                         "profit_capture": {
                             "top_misses": [{"trade_id": "472792", "pair": "USD_JPY"}],
@@ -5684,6 +5697,18 @@ class ConsolidatedCycleCommandTest(unittest.TestCase):
                                 {
                                     "lane_id": "range_trader:NZD_CAD:LONG:RANGE_ROTATION",
                                     "remaining_blocker_codes_after_global_unlock": [],
+                                }
+                            ],
+                            "oanda_audit_only_local_tp_proof_required": [
+                                {
+                                    "lane_id": "range_trader:GBP_JPY:LONG:RANGE_ROTATION",
+                                    "pair": "GBP_JPY",
+                                    "side": "LONG",
+                                    "method": "RANGE_ROTATION",
+                                    "oanda_vehicle_key": "GBP_JPY|LONG|range_reversion|tp1_sl1",
+                                    "remaining_blocker_codes_after_guardian": [
+                                        "OANDA_CAMPAIGN_AUDIT_ONLY_LOCAL_TP_PROOF_REQUIRED"
+                                    ],
                                 }
                             ],
                         },
@@ -5724,6 +5749,11 @@ class ConsolidatedCycleCommandTest(unittest.TestCase):
         )
         self.assertEqual(support["repair_frontier_lanes"], 8)
         self.assertEqual(support["global_unlock_frontier_lanes"], 1)
+        self.assertEqual(support["oanda_audit_only_local_tp_proof_required_lanes"], 1)
+        self.assertEqual(
+            support["oanda_audit_only_local_tp_proof_required_lane_ids"],
+            ["range_trader:GBP_JPY:LONG:RANGE_ROTATION"],
+        )
         self.assertEqual(support["target_firepower_status"], "VERIFIED_TARGET_10_ROUTE_ESTIMATED")
         self.assertTrue(support["target_firepower_minimum_5pct_estimated_reachable"])
         self.assertEqual(support["target_firepower_best_bucket"], "high_precision")
@@ -5738,7 +5768,23 @@ class ConsolidatedCycleCommandTest(unittest.TestCase):
         )
         self.assertEqual(
             support["operator_action_codes"],
-            ["CHECK_POSITION_GUARDIAN_PREFLIGHT", "LOAD_POSITION_GUARDIAN_ONLY_IF_APPROVED"],
+            [
+                "CHECK_POSITION_GUARDIAN_PREFLIGHT",
+                "LOAD_POSITION_GUARDIAN_ONLY_IF_APPROVED",
+                "READ_ACCEPTANCE_BLOCKERS",
+                "FOLLOW_ACCEPTANCE_REPAIR_PLAN",
+                "VERIFY_CLOSE_GATE_EVIDENCE",
+                "RECHECK_LOSS_CLOSE_LEAK_WINDOW",
+                "VERIFY_TP_PROGRESS_REPLAY_REPAIR",
+                "WORK_GLOBAL_UNLOCK_FRONTIER",
+            ],
+        )
+        self.assertEqual(
+            support["oanda_audit_only_operator_action_codes"],
+            [
+                "MINE_LOCAL_TP_PROOF_FOR_OANDA_AUDIT_ONLY",
+                "VALIDATE_OANDA_AUDIT_ONLY_BIDASK_REPLAY",
+            ],
         )
         self.assertEqual(support["top_profit_capture_misses"][0]["trade_id"], "472792")
         self.assertEqual(
@@ -5762,6 +5808,10 @@ class ConsolidatedCycleCommandTest(unittest.TestCase):
         self.assertEqual(
             support["global_unlock_frontier"][0]["lane_id"],
             "range_trader:NZD_CAD:LONG:RANGE_ROTATION",
+        )
+        self.assertEqual(
+            support["oanda_audit_only_local_tp_proof_required"][0]["lane_id"],
+            "range_trader:GBP_JPY:LONG:RANGE_ROTATION",
         )
 
     def test_cycle_digest_summarizes_profit_capture_bot(self) -> None:
