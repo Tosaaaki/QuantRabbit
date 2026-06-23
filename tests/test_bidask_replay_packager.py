@@ -36,9 +36,14 @@ class BidAskReplayPackagerTest(unittest.TestCase):
                 "candidate_rule_validation_blocked": False,
                 "global_currency_validation_blocked": True,
                 "evaluated_rows": 650,
+                "unscorable_no_market_rows": 12,
+                "pending_future_truth_rows": 4,
                 "history_files": 140,
                 "history_candles": 330150,
                 "missing_price_truth_samples": 0,
+                "missing_price_window_group_count": 0,
+                "unscorable_no_market_window_group_count": 2,
+                "pending_future_truth_window_group_count": 1,
                 "all_currency_sample_coverage_status": "UNDER_SAMPLED",
                 "under_sampled_pair_direction_count": 1,
                 "under_sampled_pair_directions": ["GBP_USD:DOWN"],
@@ -71,6 +76,7 @@ class BidAskReplayPackagerTest(unittest.TestCase):
                 "pair_count": 28,
                 "pair_direction_count": 42,
                 "unscorable_no_market_samples": 12,
+                "pending_future_truth_samples": 4,
                 "under_sampled_pair_directions": [{"pair": "GBP_USD"}],
             },
             "precision_rules": {
@@ -122,6 +128,11 @@ class BidAskReplayPackagerTest(unittest.TestCase):
         )
         self.assertEqual(packaged["price_truth_coverage"]["status"], "PRICE_TRUTH_OK")
         self.assertEqual(packaged["price_truth_coverage"]["evaluated_rows"], 650)
+        self.assertEqual(packaged["price_truth_coverage"]["pending_future_truth_rows"], 4)
+        self.assertEqual(
+            packaged["price_truth_coverage"]["pending_future_truth_window_group_count"],
+            1,
+        )
         self.assertEqual(
             packaged["price_truth_coverage"]["history_fetch_command_count"],
             1,
@@ -143,6 +154,10 @@ class BidAskReplayPackagerTest(unittest.TestCase):
         self.assertEqual(
             packaged["forecast_sample_coverage_summary"]["under_sampled_pair_directions"],
             1,
+        )
+        self.assertEqual(
+            packaged["forecast_sample_coverage_summary"]["pending_future_truth_samples"],
+            4,
         )
 
     def test_package_payload_rejects_partial_price_truth_by_default(self) -> None:

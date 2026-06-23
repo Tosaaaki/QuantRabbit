@@ -768,11 +768,16 @@ class OandaHistoryReplayValidateTest(unittest.TestCase):
             cycle_id=None,
         )
 
-        results, score_stats, no_market_rows = replay._score_forecasts([row], {})
+        results, score_stats, no_market_rows, pending_rows = replay._score_forecasts(
+            [row],
+            {},
+            now_utc=datetime(2026, 6, 23, tzinfo=timezone.utc),
+        )
         coverage = replay._forecast_sample_coverage(
             [row],
             results,
             unscorable_no_market_rows=no_market_rows,
+            pending_future_truth_rows=pending_rows,
             min_directional_samples=1,
             min_active_days=1,
         )
@@ -798,6 +803,130 @@ class OandaHistoryReplayValidateTest(unittest.TestCase):
         self.assertEqual(truth["status"], "NO_SCORABLE_MARKET_FORECAST_ROWS")
         self.assertEqual(truth["missing_price_truth_samples"], 0)
         self.assertIn("FORECAST_ROWS_DURING_BROKER_NO_MARKET_WINDOW", truth["warnings"])
+
+    def test_weekend_close_crossing_windows_are_not_price_truth_missing(self) -> None:
+        rows = [
+            replay.ForecastRow(
+                source_index=1,
+                timestamp_utc=datetime(2026, 5, 22, 21, 5, tzinfo=timezone.utc),
+                pair="GBP_USD",
+                direction="DOWN",
+                confidence=0.8,
+                current_price=None,
+                target_price=None,
+                invalidation_price=None,
+                horizon_min=240,
+                cycle_id=None,
+            ),
+            replay.ForecastRow(
+                source_index=2,
+                timestamp_utc=datetime(2026, 6, 7, 18, 34, tzinfo=timezone.utc),
+                pair="EUR_JPY",
+                direction="UP",
+                confidence=0.8,
+                current_price=None,
+                target_price=None,
+                invalidation_price=None,
+                horizon_min=60,
+                cycle_id=None,
+            ),
+            replay.ForecastRow(
+                source_index=3,
+                timestamp_utc=datetime(2026, 6, 5, 20, 54, tzinfo=timezone.utc),
+                pair="USD_JPY",
+                direction="UP",
+                confidence=0.8,
+                current_price=None,
+                target_price=None,
+                invalidation_price=None,
+                horizon_min=15,
+                cycle_id=None,
+            ),
+        ]
+
+        results, score_stats, no_market_rows, pending_rows = replay._score_forecasts(
+            rows,
+            {},
+            now_utc=datetime(2026, 6, 23, tzinfo=timezone.utc),
+        )
+        coverage = replay._forecast_sample_coverage(
+            rows,
+            results,
+            unscorable_no_market_rows=no_market_rows,
+            pending_future_truth_rows=pending_rows,
+            min_directional_samples=1,
+            min_active_days=1,
+        )
+        truth = replay._price_truth_coverage(
+            load_stats={"raw_directional_rows": 3, "deduped_directional_rows": 3},
+            candle_stats={"history_files": 0, "history_candles": 0},
+            score_stats=score_stats,
+            sample_coverage=coverage,
+            granularity="S5",
+            edge_min_samples=1,
+            now_utc=datetime(2026, 6, 23, tzinfo=timezone.utc),
+        )
+
+        self.assertEqual(results, [])
+        self.assertEqual(score_stats["missing_price_window_groups"], [])
+        self.assertEqual(score_stats["unscorable_no_market_rows"], 3)
+        self.assertEqual(
+            sorted(group["pairs"][0] for group in score_stats["unscorable_no_market_window_groups"]),
+            ["EUR_JPY", "GBP_USD", "USD_JPY"],
+        )
+        self.assertEqual(truth["missing_price_truth_samples"], 0)
+        self.assertEqual(truth["history_fetch_command_count"], 0)
+        self.assertNotIn("FETCH_MISSING_PRICE_TRUTH", truth["blockers"])
+
+    def test_future_horizon_is_pending_not_price_truth_missing(self) -> None:
+        row = replay.ForecastRow(
+            source_index=1,
+            timestamp_utc=datetime(2026, 6, 23, 16, 34, tzinfo=timezone.utc),
+            pair="AUD_CAD",
+            direction="UP",
+            confidence=0.8,
+            current_price=None,
+            target_price=None,
+            invalidation_price=None,
+            horizon_min=90,
+            cycle_id=None,
+        )
+        now = datetime(2026, 6, 23, 16, 59, tzinfo=timezone.utc)
+
+        results, score_stats, no_market_rows, pending_rows = replay._score_forecasts(
+            [row],
+            {},
+            now_utc=now,
+        )
+        coverage = replay._forecast_sample_coverage(
+            [row],
+            results,
+            unscorable_no_market_rows=no_market_rows,
+            pending_future_truth_rows=pending_rows,
+            min_directional_samples=1,
+            min_active_days=1,
+        )
+        truth = replay._price_truth_coverage(
+            load_stats={"raw_directional_rows": 1, "deduped_directional_rows": 1},
+            candle_stats={"history_files": 0, "history_candles": 0},
+            score_stats=score_stats,
+            sample_coverage=coverage,
+            granularity="S5",
+            edge_min_samples=1,
+            now_utc=now,
+        )
+
+        self.assertEqual(results, [])
+        self.assertEqual(score_stats["missing_price_window_groups"], [])
+        self.assertEqual(score_stats["pending_future_truth_rows"], 1)
+        self.assertEqual(score_stats["pending_future_truth_window_groups"][0]["pairs"], ["AUD_CAD"])
+        gap = coverage["under_sampled_pair_directions"][0]
+        self.assertIn("PENDING_FUTURE_TRUTH_WINDOW", gap["coverage_gap_reasons"])
+        self.assertNotIn("PRICE_TRUTH_WINDOW_MISSING", gap["coverage_gap_reasons"])
+        self.assertEqual(truth["missing_price_truth_samples"], 0)
+        self.assertEqual(truth["history_fetch_command_count"], 0)
+        self.assertIn("FORECAST_ROWS_WITH_PENDING_FUTURE_TRUTH_WINDOW", truth["warnings"])
+        self.assertNotIn("FETCH_MISSING_PRICE_TRUTH", truth["blockers"])
 
     def test_price_truth_coverage_blocks_empty_history_validation(self) -> None:
         truth = replay._price_truth_coverage(

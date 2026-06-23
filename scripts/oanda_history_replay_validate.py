@@ -18,9 +18,10 @@ import re
 import statistics
 import sys
 from dataclasses import dataclass, replace
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, time, timedelta, timezone
 from pathlib import Path
 from typing import Any, Iterable, Sequence
+from zoneinfo import ZoneInfo
 
 ROOT = Path(__file__).resolve().parents[1]
 SRC_ROOT = ROOT / "src"
@@ -55,6 +56,7 @@ DEFAULT_STABLE_MIN_POSITIVE_DAY_RATE = 2.0 / 3.0
 # they exist. The value is an audit coverage floor, not a market edge threshold.
 DEFAULT_AUTO_HISTORY_MIN_DAYS = 30.0
 JST = timezone(timedelta(hours=9), "JST")
+NEW_YORK = ZoneInfo("America/New_York")
 _HISTORY_FILE_WINDOW_RE = re.compile(
     r"_(?P<granularity>[A-Z0-9]+)_BA_"
     r"(?P<start>\d{8}T\d{6}Z)_(?P<end>\d{8}T\d{6}Z)\.jsonl(?:\.gz)?$"
@@ -104,7 +106,12 @@ def main() -> int:
         granularity=args.granularity,
         windows_by_pair=_forecast_truth_windows(rows),
     )
-    results, score_stats, unscorable_no_market_rows = _score_forecasts(rows, candles_by_pair)
+    validation_now = datetime.now(timezone.utc)
+    results, score_stats, unscorable_no_market_rows, pending_future_truth_rows = _score_forecasts(
+        rows,
+        candles_by_pair,
+        now_utc=validation_now,
+    )
     contrarian_results = [
         item for item in (_contrarian_row(row) for row in results)
         if item is not None
@@ -197,6 +204,7 @@ def main() -> int:
         rows,
         results,
         unscorable_no_market_rows=unscorable_no_market_rows,
+        pending_future_truth_rows=pending_future_truth_rows,
         min_directional_samples=args.edge_min_samples,
         min_active_days=args.stable_min_active_days,
     )
@@ -207,6 +215,7 @@ def main() -> int:
         sample_coverage=sample_coverage,
         granularity=args.granularity,
         edge_min_samples=args.edge_min_samples,
+        now_utc=validation_now,
     )
 
     report = {
@@ -689,30 +698,34 @@ def _dedupe_key(
 def _score_forecasts(
     rows: Sequence[ForecastRow],
     candles_by_pair: dict[str, list[QuoteCandle]],
-) -> tuple[list[dict[str, Any]], dict[str, Any], list[ForecastRow]]:
+    *,
+    now_utc: datetime | None = None,
+) -> tuple[list[dict[str, Any]], dict[str, Any], list[ForecastRow], list[ForecastRow]]:
     results: list[dict[str, Any]] = []
     skipped_no_pair = 0
     skipped_no_window = 0
     missing_windows: list[ForecastRow] = []
     unscorable_no_market: list[ForecastRow] = []
+    pending_future_truth: list[ForecastRow] = []
+    now = (now_utc or datetime.now(timezone.utc)).astimezone(timezone.utc)
     for row in rows:
+        if _forecast_truth_end(row) > now:
+            pending_future_truth.append(row)
+            continue
+        if _is_likely_fx_no_market_window(row):
+            unscorable_no_market.append(row)
+            continue
         candles = candles_by_pair.get(row.pair)
         if not candles:
-            if _is_likely_fx_no_market_window(row):
-                unscorable_no_market.append(row)
-            else:
-                skipped_no_pair += 1
-                missing_windows.append(row)
+            skipped_no_pair += 1
+            missing_windows.append(row)
             continue
         times = [c.timestamp_utc for c in candles]
         start = bisect.bisect_left(times, row.timestamp_utc)
-        end = bisect.bisect_right(times, row.timestamp_utc + timedelta(minutes=row.horizon_min))
+        end = bisect.bisect_right(times, _forecast_truth_end(row))
         if start >= len(candles) or end <= start:
-            if _is_likely_fx_no_market_window(row):
-                unscorable_no_market.append(row)
-            else:
-                skipped_no_window += 1
-                missing_windows.append(row)
+            skipped_no_window += 1
+            missing_windows.append(row)
             continue
         window = candles[start:end]
         scored = _score_one(row, window)
@@ -727,8 +740,11 @@ def _score_forecasts(
             "missing_price_window_groups": _missing_price_window_groups(missing_windows),
             "unscorable_no_market_rows": len(unscorable_no_market),
             "unscorable_no_market_window_groups": _missing_price_window_groups(unscorable_no_market),
+            "pending_future_truth_rows": len(pending_future_truth),
+            "pending_future_truth_window_groups": _missing_price_window_groups(pending_future_truth),
         },
         unscorable_no_market,
+        pending_future_truth,
     )
 
 
@@ -736,13 +752,35 @@ def _is_likely_fx_no_market_window(row: ForecastRow) -> bool:
     """Identify forecast windows where OANDA has no FX candles to fetch.
 
     This is a broker-session data-quality classification, not a trading edge
-    threshold. Keep it conservative: full Saturday UTC windows are unscorable
-    because retail FX markets do not print normal OANDA candles then.
+    threshold. Retail FX is normally closed from Friday 17:00 New York time
+    until Sunday 17:00 New York time, so forecasts emitted during that interval
+    should not keep generating missing-candle fetch work.
     """
 
     start = row.timestamp_utc.astimezone(timezone.utc)
-    end = (row.timestamp_utc + timedelta(minutes=row.horizon_min)).astimezone(timezone.utc)
-    return start.date() == end.date() and start.weekday() == 5
+    end = _forecast_truth_end(row)
+    if end <= start:
+        return False
+    local_start = start.astimezone(NEW_YORK)
+    local_end = end.astimezone(NEW_YORK)
+    date = local_start.date() - timedelta(days=7)
+    last_date = local_end.date() + timedelta(days=7)
+    while date <= last_date:
+        if date.weekday() == 4:
+            close_start = datetime.combine(date, time(17, 0), tzinfo=NEW_YORK).astimezone(timezone.utc)
+            close_end = datetime.combine(
+                date + timedelta(days=2),
+                time(17, 0),
+                tzinfo=NEW_YORK,
+            ).astimezone(timezone.utc)
+            if start < close_end and end > close_start:
+                return True
+        date += timedelta(days=1)
+    return False
+
+
+def _forecast_truth_end(row: ForecastRow) -> datetime:
+    return row.timestamp_utc.astimezone(timezone.utc) + timedelta(minutes=row.horizon_min)
 
 
 def _forecast_sample_coverage(
@@ -750,6 +788,7 @@ def _forecast_sample_coverage(
     results: Sequence[dict[str, Any]],
     *,
     unscorable_no_market_rows: Sequence[ForecastRow] | None = None,
+    pending_future_truth_rows: Sequence[ForecastRow] | None = None,
     min_directional_samples: int,
     min_active_days: int,
 ) -> dict[str, Any]:
@@ -766,6 +805,11 @@ def _forecast_sample_coverage(
         (row.pair, row.direction) for row in no_market_rows
     )
     no_market_pair_counts: collections.Counter[str] = collections.Counter(row.pair for row in no_market_rows)
+    pending_rows = list(pending_future_truth_rows or [])
+    pending_counts: collections.Counter[tuple[str, str]] = collections.Counter(
+        (row.pair, row.direction) for row in pending_rows
+    )
+    pending_pair_counts: collections.Counter[str] = collections.Counter(row.pair for row in pending_rows)
 
     evaluated_counts: collections.Counter[tuple[str, str]] = collections.Counter(
         (str(row.get("pair") or "").upper(), str(row.get("direction") or "").upper())
@@ -790,9 +834,13 @@ def _forecast_sample_coverage(
             "forecast_samples": count,
             "evaluated_samples": pair_evaluated_counts.get(pair, 0),
             "unscorable_no_market_samples": no_market_pair_counts.get(pair, 0),
+            "pending_future_truth_samples": pending_pair_counts.get(pair, 0),
             "missing_price_truth_samples": max(
                 0,
-                count - pair_evaluated_counts.get(pair, 0) - no_market_pair_counts.get(pair, 0),
+                count
+                - pair_evaluated_counts.get(pair, 0)
+                - no_market_pair_counts.get(pair, 0)
+                - pending_pair_counts.get(pair, 0),
             ),
             "missing_evaluated_samples_to_min_directional": max(
                 0,
@@ -811,6 +859,7 @@ def _forecast_sample_coverage(
         forecast_active_days = len(forecast_days.get((pair, direction), set()))
         evaluated_active_days = len(evaluated_days.get((pair, direction), set()))
         unscorable_no_market_samples = no_market_counts.get((pair, direction), 0)
+        pending_future_truth_samples = pending_counts.get((pair, direction), 0)
         gaps: list[str] = []
         if evaluated_samples < min_directional_samples:
             gaps.append("INSUFFICIENT_EVALUATED_SAMPLES")
@@ -818,12 +867,17 @@ def _forecast_sample_coverage(
             gaps.append("INSUFFICIENT_ACTIVE_DAYS")
         missing_price_truth_samples = max(
             0,
-            forecast_samples - evaluated_samples - unscorable_no_market_samples,
+            forecast_samples
+            - evaluated_samples
+            - unscorable_no_market_samples
+            - pending_future_truth_samples,
         )
         if missing_price_truth_samples > 0 and gaps:
             gaps.append("PRICE_TRUTH_WINDOW_MISSING")
         if unscorable_no_market_samples > 0:
             gaps.append("NO_MARKET_SESSION_UNSCORABLE")
+        if pending_future_truth_samples > 0:
+            gaps.append("PENDING_FUTURE_TRUTH_WINDOW")
         if not gaps:
             continue
         under_sampled.append(
@@ -835,6 +889,7 @@ def _forecast_sample_coverage(
                 "evaluated_samples": evaluated_samples,
                 "evaluated_active_days": evaluated_active_days,
                 "unscorable_no_market_samples": unscorable_no_market_samples,
+                "pending_future_truth_samples": pending_future_truth_samples,
                 "missing_price_truth_samples": missing_price_truth_samples,
                 "missing_evaluated_samples": max(0, min_directional_samples - evaluated_samples),
                 "missing_active_days": max(0, min_active_days - evaluated_active_days),
@@ -855,6 +910,7 @@ def _forecast_sample_coverage(
         "pair_count": len(pair_counts),
         "pair_direction_count": len(all_keys),
         "unscorable_no_market_samples": len(no_market_rows),
+        "pending_future_truth_samples": len(pending_rows),
         "pairs": pair_rows,
         "under_sampled_pair_directions": under_sampled,
     }
@@ -868,6 +924,7 @@ def _price_truth_coverage(
     sample_coverage: dict[str, Any],
     granularity: str,
     edge_min_samples: int,
+    now_utc: datetime | None = None,
 ) -> dict[str, Any]:
     """Summarize whether replay has enough bid/ask truth to be adoption evidence."""
 
@@ -879,6 +936,8 @@ def _price_truth_coverage(
     missing_groups = list(score_stats.get("missing_price_window_groups") or [])
     no_market_groups = list(score_stats.get("unscorable_no_market_window_groups") or [])
     no_market_rows = _int_metric(score_stats.get("unscorable_no_market_rows"))
+    pending_future_groups = list(score_stats.get("pending_future_truth_window_groups") or [])
+    pending_future_rows = _int_metric(score_stats.get("pending_future_truth_rows"))
     pair_rows = list(sample_coverage.get("pairs") or [])
     under_sampled = list(sample_coverage.get("under_sampled_pair_directions") or [])
     missing_truth_samples = sum(
@@ -914,6 +973,9 @@ def _price_truth_coverage(
     elif evaluated_rows <= 0 and no_market_rows >= deduped_rows and missing_truth_samples <= 0:
         status = "NO_SCORABLE_MARKET_FORECAST_ROWS"
         reason = "Directional forecast rows exist only in broker no-market windows."
+    elif evaluated_rows <= 0 and no_market_rows + pending_future_rows >= deduped_rows and missing_truth_samples <= 0:
+        status = "NO_SCORABLE_MATURE_MARKET_FORECAST_ROWS"
+        reason = "Directional forecast rows are only broker no-market windows or still waiting for future truth."
     elif history_files <= 0:
         status = "NO_PRICE_HISTORY_FILES"
         reason = "No local OANDA bid/ask candle files matched the forecast pairs, granularity, and windows."
@@ -938,6 +1000,7 @@ def _price_truth_coverage(
         "NO_PRICE_HISTORY_FILES",
         "NO_PRICE_CANDLES_LOADED",
         "NO_EVALUATED_PRICE_TRUTH",
+        "NO_SCORABLE_MATURE_MARKET_FORECAST_ROWS",
         "INSUFFICIENT_EVALUATED_SAMPLES",
     }
     global_blocked = status != "PRICE_TRUTH_OK" or bool(under_sampled)
@@ -959,11 +1022,13 @@ def _price_truth_coverage(
     warnings: list[str] = []
     if no_market_rows > 0:
         warnings.append("FORECAST_ROWS_DURING_BROKER_NO_MARKET_WINDOW")
-    now_utc = datetime.now(timezone.utc)
+    if pending_future_rows > 0:
+        warnings.append("FORECAST_ROWS_WITH_PENDING_FUTURE_TRUTH_WINDOW")
+    now = (now_utc or datetime.now(timezone.utc)).astimezone(timezone.utc)
     history_fetch_commands = _history_fetch_commands(
         missing_groups,
         granularity,
-        now_utc=now_utc,
+        now_utc=now,
     )
 
     return {
@@ -978,6 +1043,7 @@ def _price_truth_coverage(
         "deduped_directional_rows": deduped_rows,
         "evaluated_rows": evaluated_rows,
         "unscorable_no_market_rows": no_market_rows,
+        "pending_future_truth_rows": pending_future_rows,
         "required_min_evaluated_rows": int(edge_min_samples),
         "history_files": history_files,
         "history_candles": history_candles,
@@ -985,9 +1051,11 @@ def _price_truth_coverage(
         "missing_price_window_group_count": len(missing_groups),
         "unscorable_no_market_window_group_count": len(no_market_groups),
         "unscorable_no_market_window_groups": no_market_groups[:12],
+        "pending_future_truth_window_group_count": len(pending_future_groups),
+        "pending_future_truth_window_groups": pending_future_groups[:12],
         "future_price_truth_window_group_count": _future_missing_window_group_count(
             missing_groups,
-            now_utc=now_utc,
+            now_utc=now,
         ),
         "missing_pairs": missing_pairs,
         "missing_pair_directions": missing_pair_directions[:24],
@@ -1001,7 +1069,7 @@ def _price_truth_coverage(
         "history_fetch_command": _history_fetch_command(
             missing_groups,
             granularity,
-            now_utc=now_utc,
+            now_utc=now,
         ),
     }
 

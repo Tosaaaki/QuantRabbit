@@ -41,12 +41,14 @@ TRUTH_FIELDS = (
     "deduped_directional_rows",
     "evaluated_rows",
     "unscorable_no_market_rows",
+    "pending_future_truth_rows",
     "required_min_evaluated_rows",
     "history_files",
     "history_candles",
     "missing_price_truth_samples",
     "missing_price_window_group_count",
     "unscorable_no_market_window_group_count",
+    "pending_future_truth_window_group_count",
     "future_price_truth_window_group_count",
     "missing_pairs",
     "missing_pair_directions",
@@ -121,7 +123,8 @@ def package_payload(
         "truth_source": payload.get("truth_source"),
         "price_truth_coverage": _copy_fields(truth, TRUTH_FIELDS),
         "forecast_sample_coverage_summary": _forecast_sample_coverage_summary(
-            payload.get("forecast_sample_coverage")
+            payload.get("forecast_sample_coverage"),
+            truth,
         ),
         "selection": copy.deepcopy(precision.get("selection") or {}),
         "adoption_summary": copy.deepcopy(precision.get("adoption_summary") or {}),
@@ -142,10 +145,13 @@ def _history_dirs(raw: Any) -> list[str]:
     return [str(item) for item in raw if str(item).strip()]
 
 
-def _forecast_sample_coverage_summary(raw: Any) -> dict[str, Any]:
+def _forecast_sample_coverage_summary(raw: Any, truth: dict[str, Any] | None = None) -> dict[str, Any]:
     if not isinstance(raw, dict):
         return {}
     under_sampled = raw.get("under_sampled_pair_directions")
+    pending_future = raw.get("pending_future_truth_samples")
+    if pending_future is None and isinstance(truth, dict):
+        pending_future = truth.get("pending_future_truth_rows")
     return {
         "min_directional_samples_for_precision_rule": raw.get(
             "min_directional_samples_for_precision_rule"
@@ -154,6 +160,7 @@ def _forecast_sample_coverage_summary(raw: Any) -> dict[str, Any]:
         "pair_count": raw.get("pair_count"),
         "pair_direction_count": raw.get("pair_direction_count"),
         "unscorable_no_market_samples": raw.get("unscorable_no_market_samples"),
+        "pending_future_truth_samples": pending_future,
         "under_sampled_pair_directions": len(under_sampled) if isinstance(under_sampled, list) else 0,
     }
 
