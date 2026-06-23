@@ -141,6 +141,87 @@ class OandaUniversalRotationPackagerTest(unittest.TestCase):
         self.assertEqual(len(rows), 1)
         self.assertEqual(rows[0]["pair"], "USD_JPY")
 
+    def test_preserves_broader_campaign_firepower_when_latest_report_is_narrower(self) -> None:
+        payload = {
+            "generated_at_utc": "2026-06-23T06:34:34Z",
+            "history_pairs": 2,
+            "scored_outcomes": 59232,
+            "high_precision_multi_confluence_count": 44,
+            "high_precision_pair_confluence_count": 0,
+            "qualified_multi_confluence_count": 1141,
+            "qualified_pair_confluence_count": 72,
+            "campaign_firepower": {
+                "status": "VERIFIED_MINIMUM_5_ROUTE_ESTIMATED",
+                "high_precision": {
+                    "unique_vehicle_count": 8,
+                    "estimated_return_pct_per_active_day_at_observed_frequency": 8.57,
+                },
+            },
+            "high_precision_inversion_selectors": [],
+        }
+        existing = {
+            "source_report": "logs/reports/forecast_improvement/oanda_universal_rotation_mining_latest.json",
+            "summary": {
+                "high_precision_multi_confluence_count": 149,
+                "high_precision_pair_confluence_count": 17,
+                "qualified_multi_confluence_count": 8292,
+                "qualified_pair_confluence_count": 629,
+            },
+            "campaign_firepower": {
+                "status": "VERIFIED_TARGET_10_ROUTE_ESTIMATED",
+                "high_precision": {
+                    "unique_vehicle_count": 24,
+                    "estimated_return_pct_per_active_day_at_observed_frequency": 29.03,
+                },
+            },
+            "high_precision_inversion_selectors": [
+                {
+                    "pair": "GBP_CHF",
+                    "side": "SHORT",
+                    "shape": "range_reversion",
+                    "validation_n": 30,
+                }
+            ],
+        }
+
+        packaged = packager.package_payload(payload, source_report=Path("latest.json"))
+        packager.preserve_existing_rule_rows(packaged, existing)
+        packager.preserve_existing_campaign_firepower(packaged, existing)
+
+        self.assertTrue(packaged["campaign_firepower_preserved_from_existing"])
+        self.assertEqual(packaged["campaign_firepower"]["status"], "VERIFIED_TARGET_10_ROUTE_ESTIMATED")
+        self.assertEqual(packaged["campaign_firepower"]["high_precision"]["unique_vehicle_count"], 24)
+        self.assertEqual(packaged["campaign_firepower_source_report"], existing["source_report"])
+        self.assertEqual(packaged["high_precision_inversion_selectors"], existing["high_precision_inversion_selectors"])
+        self.assertEqual(packaged["summary"]["history_pairs"], 2)
+
+    def test_uses_latest_campaign_firepower_when_report_is_not_narrower(self) -> None:
+        payload = {
+            "generated_at_utc": "2026-06-23T06:34:34Z",
+            "high_precision_multi_confluence_count": 200,
+            "qualified_multi_confluence_count": 9000,
+            "campaign_firepower": {
+                "status": "VERIFIED_MINIMUM_5_ROUTE_ESTIMATED",
+                "high_precision": {"unique_vehicle_count": 8},
+            },
+        }
+        existing = {
+            "summary": {
+                "high_precision_multi_confluence_count": 149,
+                "qualified_multi_confluence_count": 8292,
+            },
+            "campaign_firepower": {
+                "status": "VERIFIED_TARGET_10_ROUTE_ESTIMATED",
+                "high_precision": {"unique_vehicle_count": 24},
+            },
+        }
+
+        packaged = packager.package_payload(payload, source_report=Path("latest.json"))
+        packager.preserve_existing_campaign_firepower(packaged, existing)
+
+        self.assertNotIn("campaign_firepower_preserved_from_existing", packaged)
+        self.assertEqual(packaged["campaign_firepower"]["status"], "VERIFIED_MINIMUM_5_ROUTE_ESTIMATED")
+
 
 if __name__ == "__main__":
     unittest.main()

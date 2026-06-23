@@ -1423,6 +1423,9 @@
     "status": "VERIFIED_TARGET_10_ROUTE_ESTIMATED",
     "target_return_pct": 10.0
   },
+  "campaign_firepower_preservation_reason": "new mining report has a narrower qualified universe; preserving existing broader audit-only firepower instead of shrinking runtime evidence",
+  "campaign_firepower_preserved_from_existing": true,
+  "campaign_firepower_source_report": "logs/reports/forecast_improvement/oanda_universal_rotation_mining_latest.json",
   "config": {
     "inversion_selector_confluence_sizes": [
       2,
@@ -1437,7 +1440,7 @@
       4
     ]
   },
-  "generated_at_utc": "2026-06-22T04:37:43.612782Z",
+  "generated_at_utc": "2026-06-23T06:34:34.386016Z",
   "generated_from": "scripts/oanda_universal_rotation_miner.py",
   "high_precision_directional_selectors": [],
   "high_precision_inversion_selectors": [],
@@ -14751,11 +14754,13 @@
   "summary": {
     "high_precision_directional_selector_count": 0,
     "high_precision_inversion_selector_count": 0,
-    "high_precision_multi_confluence_count": 149,
-    "high_precision_pair_confluence_count": 17,
-    "qualified_directional_selector_count": 38,
-    "qualified_inversion_selector_count": 20,
-    "qualified_multi_confluence_count": 8292,
-    "qualified_pair_confluence_count": 629
+    "high_precision_multi_confluence_count": 44,
+    "high_precision_pair_confluence_count": 0,
+    "history_pairs": 2,
+    "qualified_directional_selector_count": 3,
+    "qualified_inversion_selector_count": 1,
+    "qualified_multi_confluence_count": 1141,
+    "qualified_pair_confluence_count": 72,
+    "scored_outcomes": 59232
   }
 }

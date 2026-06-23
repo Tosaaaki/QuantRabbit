@@ -100,13 +100,15 @@ def main() -> int:
     args = _parse_args()
     payload = json.loads(args.source_report.read_text(encoding="utf-8"))
     packaged = package_payload(payload, source_report=args.source_report)
-    if args.output.exists():
+    preserve_path = args.preserve_from or args.output
+    if preserve_path.exists():
         try:
-            existing = json.loads(args.output.read_text(encoding="utf-8"))
+            existing = json.loads(preserve_path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError, ValueError):
             existing = {}
         if isinstance(existing, dict):
             preserve_existing_rule_rows(packaged, existing)
+            preserve_existing_campaign_firepower(packaged, existing)
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(
         json.dumps(packaged, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
@@ -120,6 +122,11 @@ def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--source-report", type=Path, default=DEFAULT_SOURCE_REPORT)
     parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT)
+    parser.add_argument(
+        "--preserve-from",
+        type=Path,
+        help="existing packaged rules to preserve broader coverage from; defaults to --output",
+    )
     return parser.parse_args()
 
 
@@ -148,6 +155,7 @@ def preserve_existing_rule_rows(packaged: dict[str, Any], existing: dict[str, An
     summary = packaged.get("summary")
     if not isinstance(summary, dict):
         return
+    narrower_report = _packaged_report_is_narrower(packaged, existing)
     for section in RULE_SECTIONS:
         current_rows = packaged.get(section)
         existing_rows = existing.get(section)
@@ -155,14 +163,74 @@ def preserve_existing_rule_rows(packaged: dict[str, Any], existing: dict[str, An
             continue
         if len(current_rows) >= len(existing_rows):
             continue
+        if narrower_report:
+            packaged[section] = existing_rows
+            continue
         available_count = _optional_int(summary.get(_count_key_for_section(section)))
         if available_count is None or available_count < len(existing_rows):
             continue
         packaged[section] = existing_rows
 
 
+def preserve_existing_campaign_firepower(packaged: dict[str, Any], existing: dict[str, Any]) -> None:
+    """Keep broader campaign-firepower proof when packaging a narrower mining run."""
+
+    current_firepower = packaged.get("campaign_firepower")
+    existing_firepower = existing.get("campaign_firepower")
+    if not isinstance(current_firepower, dict) or not isinstance(existing_firepower, dict):
+        return
+    if not _packaged_report_is_narrower(packaged, existing):
+        return
+    current_vehicles = _firepower_unique_vehicle_count(current_firepower)
+    existing_vehicles = _firepower_unique_vehicle_count(existing_firepower)
+    if existing_vehicles is None:
+        return
+    if current_vehicles is not None and current_vehicles >= existing_vehicles:
+        return
+    packaged["campaign_firepower"] = existing_firepower
+    packaged["campaign_firepower_preserved_from_existing"] = True
+    packaged["campaign_firepower_preservation_reason"] = (
+        "new mining report has a narrower qualified universe; preserving existing "
+        "broader audit-only firepower instead of shrinking runtime evidence"
+    )
+    if existing.get("source_report"):
+        packaged["campaign_firepower_source_report"] = existing.get("source_report")
+
+
+def _packaged_report_is_narrower(packaged: dict[str, Any], existing: dict[str, Any]) -> bool:
+    current_summary = packaged.get("summary") if isinstance(packaged.get("summary"), dict) else {}
+    existing_summary = existing.get("summary") if isinstance(existing.get("summary"), dict) else {}
+    for key in (
+        "high_precision_multi_confluence_count",
+        "high_precision_pair_confluence_count",
+        "qualified_multi_confluence_count",
+        "qualified_pair_confluence_count",
+    ):
+        current_count = _optional_int(current_summary.get(key))
+        existing_count = _optional_int(existing_summary.get(key))
+        if current_count is None or existing_count is None:
+            continue
+        if current_count < existing_count:
+            return True
+    return False
+
+
+def _firepower_unique_vehicle_count(firepower: dict[str, Any]) -> int | None:
+    high_precision = firepower.get("high_precision")
+    if not isinstance(high_precision, dict):
+        return None
+    count = _optional_int(high_precision.get("unique_vehicle_count"))
+    if count is not None:
+        return count
+    top = high_precision.get("top_vehicles")
+    return len(top) if isinstance(top, list) else None
+
+
 def _summary(payload: dict[str, Any]) -> dict[str, Any]:
     summary: dict[str, Any] = {}
+    for key in ("history_pairs", "scored_outcomes"):
+        if key in payload:
+            summary[key] = payload[key]
     for key in COUNT_KEYS:
         if key in payload:
             summary[key] = payload[key]

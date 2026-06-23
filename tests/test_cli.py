@@ -5832,6 +5832,12 @@ class ConsolidatedCycleCommandTest(unittest.TestCase):
                             ],
                             "target_firepower_status": "VERIFIED_TARGET_10_ROUTE_ESTIMATED",
                             "target_firepower_minimum_5pct_estimated_reachable": True,
+                            "target_firepower_operational_minimum_5pct_reachable": False,
+                            "target_firepower_operational_blocker_codes": [
+                                "POSITION_GUARDIAN_INACTIVE",
+                                "NO_LIVE_READY_LANES",
+                                "FRESH_ENTRY_SEND_NOT_ALLOWED",
+                            ],
                             "repair_request_count": 2,
                             "repair_request_codes": [
                                 "REPAIR_CLOSE_GATE_EVIDENCE_PERSISTENCE",
@@ -5972,6 +5978,15 @@ class ConsolidatedCycleCommandTest(unittest.TestCase):
         )
         self.assertEqual(support["target_firepower_status"], "VERIFIED_TARGET_10_ROUTE_ESTIMATED")
         self.assertTrue(support["target_firepower_minimum_5pct_estimated_reachable"])
+        self.assertFalse(support["target_firepower_operational_minimum_5pct_reachable"])
+        self.assertEqual(
+            support["target_firepower_operational_blocker_codes"],
+            [
+                "POSITION_GUARDIAN_INACTIVE",
+                "NO_LIVE_READY_LANES",
+                "FRESH_ENTRY_SEND_NOT_ALLOWED",
+            ],
+        )
         self.assertEqual(support["target_firepower_best_bucket"], "high_precision")
         self.assertEqual(support["acceptance_repair_p0_count"], 2)
         self.assertEqual(

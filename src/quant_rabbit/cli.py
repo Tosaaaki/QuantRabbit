@@ -2849,6 +2849,13 @@ def _cycle_digest(*, kind: str, step_results: list[dict[str, Any]], aborted: boo
             "target_firepower_minimum_5pct_estimated_reachable": metrics.get(
                 "target_firepower_minimum_5pct_estimated_reachable"
             ),
+            "target_firepower_operational_minimum_5pct_reachable": metrics.get(
+                "target_firepower_operational_minimum_5pct_reachable"
+            ),
+            "target_firepower_operational_blocker_codes": metrics.get(
+                "target_firepower_operational_blocker_codes"
+            )
+            or [],
             "target_firepower_best_bucket": target_firepower.get("best_bucket"),
             "acceptance_repair_p0_count": acceptance_repair_plan.get("p0_count"),
             "acceptance_repair_codes": [

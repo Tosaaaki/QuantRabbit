@@ -156,6 +156,19 @@ class TraderSupportBotTest(unittest.TestCase):
             self.assertEqual(unlock["lane_id"], "range_trader:NZD_CAD:LONG:RANGE_ROTATION")
             self.assertEqual(unlock["remaining_blocker_codes_after_global_unlock"], [])
             self.assertTrue(payload["profitability_acceptance"]["target_firepower"]["minimum_5pct_estimated_reachable"])
+            self.assertFalse(
+                payload["profitability_acceptance"]["target_firepower"][
+                    "operational_minimum_5pct_reachable"
+                ]
+            )
+            self.assertIn(
+                "POSITION_GUARDIAN_INACTIVE",
+                payload["profitability_acceptance"]["target_firepower"]["operational_blocker_codes"],
+            )
+            self.assertIn(
+                "FRESH_ENTRY_SEND_NOT_ALLOWED",
+                payload["profitability_acceptance"]["target_firepower"]["operational_blocker_codes"],
+            )
             self.assertEqual(payload["profitability_acceptance"]["target_firepower"]["best_bucket"], "high_precision")
             repair_plan = payload["profitability_acceptance"]["repair_plan"]
             self.assertEqual(repair_plan["p0_count"], 3)

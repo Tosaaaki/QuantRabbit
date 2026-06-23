@@ -200,6 +200,17 @@ class TraderSupportBot:
             bool(entry["repair_live_ready"])
             and (not guardian["required"] or bool(guardian["active"]))
         )
+        _annotate_operational_target_firepower(
+            acceptance["target_firepower"],
+            audit_minimum_reachable=bool(
+                acceptance["target_firepower"]["minimum_5pct_estimated_reachable"]
+            ),
+            send_allowed=send_allowed,
+            status=status,
+            blockers=blockers,
+            guardian=guardian,
+            entry=entry,
+        )
         metrics = {
             "send_fresh_entries_allowed": send_allowed,
             "repair_basket_send_allowed": repair_basket_send_allowed,
@@ -252,6 +263,12 @@ class TraderSupportBot:
             ],
             "target_firepower_target_10pct_estimated_reachable": acceptance["target_firepower"][
                 "target_10pct_estimated_reachable"
+            ],
+            "target_firepower_operational_minimum_5pct_reachable": acceptance["target_firepower"][
+                "operational_minimum_5pct_reachable"
+            ],
+            "target_firepower_operational_blocker_codes": acceptance["target_firepower"][
+                "operational_blocker_codes"
             ],
             "acceptance_evidence_collection_count": len(
                 acceptance["repair_plan"].get("evidence_collection_items", [])
@@ -1527,10 +1544,50 @@ def _target_firepower_summary(payload: dict[str, Any]) -> dict[str, Any]:
         "minimum_5pct_estimated_reachable": bool(estimated_return >= minimum),
         "target_10pct_estimated_reachable": bool(estimated_return >= target),
         "audit_only_no_live_permission": True,
+        "operational_minimum_5pct_reachable": False,
+        "operational_blocker_codes": ["OPERATIONAL_CONTEXT_NOT_EVALUATED"],
+        "operational_basis": "audit-only firepower has no live permission until support gates are clear",
         "high_precision": high_precision,
         "evidence_queue": evidence_queue,
         "contract": payload.get("contract"),
     }
+
+
+def _annotate_operational_target_firepower(
+    target_firepower: dict[str, Any],
+    *,
+    audit_minimum_reachable: bool,
+    send_allowed: bool,
+    status: str,
+    blockers: list[dict[str, Any]],
+    guardian: dict[str, Any],
+    entry: dict[str, Any],
+) -> None:
+    operational_blockers: list[str] = []
+    if not audit_minimum_reachable:
+        operational_blockers.append("AUDIT_FIREPOWER_BELOW_5PCT")
+    if status != STATUS_READY:
+        operational_blockers.extend(
+            str(item.get("code") or "UNKNOWN_SUPPORT_BLOCKER")
+            for item in blockers
+            if isinstance(item, dict)
+        )
+    if guardian.get("required") and not guardian.get("active"):
+        operational_blockers.append("POSITION_GUARDIAN_INACTIVE")
+    if _float(entry.get("live_ready_lanes")) <= 0:
+        operational_blockers.append("NO_LIVE_READY_LANES")
+    if not send_allowed:
+        operational_blockers.append("FRESH_ENTRY_SEND_NOT_ALLOWED")
+    operational_blockers = list(dict.fromkeys(item for item in operational_blockers if item))
+    target_firepower["operational_minimum_5pct_reachable"] = bool(
+        audit_minimum_reachable and send_allowed and not operational_blockers
+    )
+    target_firepower["operational_blocker_codes"] = operational_blockers
+    target_firepower["operational_basis"] = (
+        "live-ready support gates clear and audit firepower clears 5% floor"
+        if target_firepower["operational_minimum_5pct_reachable"]
+        else "audit-only firepower is blocked from live use until support gates clear"
+    )
 
 
 def _firepower_bucket_summary(raw: Any) -> dict[str, Any]:
@@ -2398,6 +2455,7 @@ def _render_report(payload: dict[str, Any]) -> str:
         f"| Open trader positions | `{broker['trader_positions']}` upl=`{broker['trader_unrealized_pl_jpy']}` JPY |",
         f"| Target remaining | `{target['remaining_target_jpy']}` JPY |",
         f"| Firepower 5% audit estimate | `{firepower.get('minimum_5pct_estimated_reachable')}` best=`{firepower.get('best_bucket')}` |",
+        f"| Firepower 5% operational reachable | `{firepower.get('operational_minimum_5pct_reachable')}` blockers=`{firepower.get('operational_blocker_codes')}` |",
         "",
         "## Blockers",
         "",
