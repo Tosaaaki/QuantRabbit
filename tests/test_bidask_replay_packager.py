@@ -32,13 +32,17 @@ class BidAskReplayPackagerTest(unittest.TestCase):
             "price_truth_coverage": {
                 "status": "PRICE_TRUTH_OK",
                 "reason": "All samples scored.",
-                "adoption_level": "FULL_REPLAY_READY",
+                "adoption_level": "PAIR_LOCAL_RANK_ONLY",
                 "candidate_rule_validation_blocked": False,
-                "global_currency_validation_blocked": False,
+                "global_currency_validation_blocked": True,
                 "evaluated_rows": 650,
                 "history_files": 140,
                 "history_candles": 330150,
                 "missing_price_truth_samples": 0,
+                "all_currency_sample_coverage_status": "UNDER_SAMPLED",
+                "under_sampled_pair_direction_count": 1,
+                "under_sampled_pair_directions": ["GBP_USD:DOWN"],
+                "under_sampled_missing_evaluated_samples": 29,
                 "history_fetch_command": (
                     "PYTHONPATH=src python3 scripts/oanda_history_fetch.py "
                     "--pairs AUD_USD --granularities S5 --price BA "
@@ -125,6 +129,14 @@ class BidAskReplayPackagerTest(unittest.TestCase):
         self.assertEqual(
             packaged["price_truth_coverage"]["history_fetch_commands"][0]["pairs"],
             ["AUD_USD"],
+        )
+        self.assertEqual(
+            packaged["price_truth_coverage"]["all_currency_sample_coverage_status"],
+            "UNDER_SAMPLED",
+        )
+        self.assertEqual(
+            packaged["price_truth_coverage"]["under_sampled_pair_directions"],
+            ["GBP_USD:DOWN"],
         )
         self.assertEqual(packaged["adoption_summary"]["rank_only_support_rules"], 3)
         self.assertEqual(packaged["edge_rules"][0]["adoption_status"], "RANK_ONLY_NOT_DAILY_STABLE")

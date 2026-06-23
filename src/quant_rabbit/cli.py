@@ -2426,6 +2426,15 @@ def _profitability_acceptance_digest_summary(payload: dict[str, Any]) -> dict[st
             ),
             "history_fetch_command_count": price_truth.get("history_fetch_command_count"),
             "history_fetch_command_mode": price_truth.get("history_fetch_command_mode"),
+            "all_currency_sample_coverage_status": price_truth.get(
+                "all_currency_sample_coverage_status"
+            ),
+            "under_sampled_pair_direction_count": price_truth.get(
+                "under_sampled_pair_direction_count"
+            ),
+            "global_currency_validation_blocked": price_truth.get(
+                "global_currency_validation_blocked"
+            ),
             "has_live_grade_support": adoption.get("has_live_grade_support"),
             "live_grade_support_rules": adoption.get("live_grade_support_rules"),
             "rank_only_support_rules": adoption.get("rank_only_support_rules"),

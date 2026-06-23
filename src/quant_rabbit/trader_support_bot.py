@@ -43,12 +43,14 @@ RANGE_ROTATION_COUNTERPART_MISSING = "RANGE_ROTATION_COUNTERPART_MISSING"
 OANDA_AUDIT_ONLY_LOCAL_TP_PROOF_REQUIRED = "OANDA_CAMPAIGN_AUDIT_ONLY_LOCAL_TP_PROOF_REQUIRED"
 OANDA_AUDIT_ONLY_REPLAY_HISTORY_GRANULARITIES = "S5,M5"
 FORECAST_FRONTIER_EVIDENCE_WAIT_STATUS = "FORECAST_FRONTIER_WAITING_FOR_LIVE_PRECISION_EVIDENCE"
+PROTECTIVE_FRONTIER_GUARDRAIL_STATUS = "FRONTIER_PROTECTIVE_GUARDRAIL_ACTIVE"
 FORECAST_FRONTIER_BLOCKER_CODES = {
     "FORECAST_NOT_EXECUTABLE_FOR_LIVE",
     "TELEMETRY_FORECAST_NOT_EXECUTABLE_FOR_LIVE",
     "FORECAST_CONFIDENCE_REQUIRED_FOR_LIVE",
 }
 FRONTIER_GUARDRAIL_BLOCKER_CODES = {
+    "REWARD_RISK_TOO_LOW",
     "EXHAUSTION_RANGE_CHASE",
     "BREAKOUT_FAILURE_STOP_CHASES_FAILED_SIDE",
     "BREAKOUT_FAILURE_MARKET_NOT_RETESTED",
@@ -1087,6 +1089,10 @@ def _frontier_blocker_sort_key(row: dict[str, Any]) -> tuple[int, int, float, st
         -_float(row.get("reward_jpy")),
         code,
     )
+
+
+def _frontier_blocker_is_protective_guardrail(row: dict[str, Any]) -> bool:
+    return str(row.get("code") or "") in FRONTIER_GUARDRAIL_BLOCKER_CODES
 
 
 def _intent_metadata(item: dict[str, Any]) -> dict[str, Any]:
@@ -2472,21 +2478,28 @@ def _build_repair_requests(
         top = frontier_blockers[0] if isinstance(frontier_blockers[0], dict) else {}
         code = str(top.get("code") or "UNKNOWN_REPAIR_FRONTIER_BLOCKER")
         waits_for_forecast_evidence = _frontier_blocker_waits_for_live_precision_evidence(top)
+        protective_guardrail_active = _frontier_blocker_is_protective_guardrail(top)
         frontier_status = (
             FORECAST_FRONTIER_EVIDENCE_WAIT_STATUS
             if waits_for_forecast_evidence
+            else PROTECTIVE_FRONTIER_GUARDRAIL_STATUS
+            if protective_guardrail_active
             else "READY_FOR_CODE_OR_EVIDENCE_REPAIR"
         )
         frontier_problem = (
             "Repair-frontier lanes are forecast-blocked because current forecasts are not executable "
             "and supporting historical projections are not live-precision proof yet."
             if waits_for_forecast_evidence
+            else "Repair-frontier lanes are blocked by protective geometry or chase guards; this is not a Codex gate-loosening task."
+            if protective_guardrail_active
             else "After global support gates are removed, repair-frontier lanes still have lane-local blockers."
         )
         frontier_why_now = (
             "This prevents rank-only or long-lead historical projections from being promoted into live entries "
             "before bid/ask replay or fresh live evidence proves the forecast is tradable now."
             if waits_for_forecast_evidence
+            else "The current example is a bad entry shape; relaxing reward/risk or chase blockers would recreate the loss loop."
+            if protective_guardrail_active
             else "This is the next non-guardian blocker that would keep high-turn repair baskets from becoming executable."
         )
         frontier_clearance = (
@@ -2495,6 +2508,11 @@ def _build_repair_requests(
                 "Until then, collect read-only OANDA bid/ask replay evidence instead of editing entry gates to force LIVE_READY.",
             ]
             if waits_for_forecast_evidence
+            else [
+                f"{code} remains a protective guard until a fresh lane has valid reward/risk, retest geometry, and no chase-pattern blockers.",
+                "Do not edit common entry gates to force this blocked lane live-ready; generate or wait for a better-shaped lane instead.",
+            ]
+            if protective_guardrail_active
             else [
                 f"{code} disappears from repair_frontier_remaining_blockers or gains a tested downgrade path."
             ]

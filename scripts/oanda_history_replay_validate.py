@@ -897,6 +897,16 @@ def _price_truth_coverage(
         for item in under_sampled
         if "PRICE_TRUTH_WINDOW_MISSING" in (item.get("coverage_gap_reasons") or [])
     ]
+    under_sampled_pair_directions = [
+        f"{item.get('pair')}:{item.get('direction')}"
+        for item in under_sampled
+        if item.get("pair") and item.get("direction")
+    ]
+    under_sampled_missing_samples = sum(
+        max(0, _int_metric(item.get("missing_evaluated_samples")))
+        for item in under_sampled
+    )
+    sample_coverage_status = "UNDER_SAMPLED" if under_sampled else "OK"
 
     if raw_rows <= 0 or deduped_rows <= 0:
         status = "NO_DIRECTIONAL_FORECAST_ROWS"
@@ -930,7 +940,7 @@ def _price_truth_coverage(
         "NO_EVALUATED_PRICE_TRUTH",
         "INSUFFICIENT_EVALUATED_SAMPLES",
     }
-    global_blocked = status != "PRICE_TRUTH_OK"
+    global_blocked = status != "PRICE_TRUTH_OK" or bool(under_sampled)
     if candidate_blocked:
         adoption_level = "NO_REPLAY_EVIDENCE"
     elif global_blocked:
@@ -944,6 +954,8 @@ def _price_truth_coverage(
         blockers.append("DO_NOT_CLAIM_ALL_CURRENCY_VALIDATION")
     if missing_truth_samples > 0:
         blockers.append("FETCH_MISSING_PRICE_TRUTH")
+    if under_sampled and missing_truth_samples <= 0:
+        blockers.append("COLLECT_MORE_FORECAST_SAMPLES")
     warnings: list[str] = []
     if no_market_rows > 0:
         warnings.append("FORECAST_ROWS_DURING_BROKER_NO_MARKET_WINDOW")
@@ -979,6 +991,10 @@ def _price_truth_coverage(
         ),
         "missing_pairs": missing_pairs,
         "missing_pair_directions": missing_pair_directions[:24],
+        "all_currency_sample_coverage_status": sample_coverage_status,
+        "under_sampled_pair_direction_count": len(under_sampled_pair_directions),
+        "under_sampled_pair_directions": under_sampled_pair_directions[:24],
+        "under_sampled_missing_evaluated_samples": under_sampled_missing_samples,
         "history_fetch_command_mode": "WINDOWED",
         "history_fetch_command_count": len(history_fetch_commands),
         "history_fetch_commands": history_fetch_commands,
@@ -2242,6 +2258,9 @@ def _markdown(report: dict[str, Any]) -> str:
             f"- unscorable_no_market_window_groups: {truth.get('unscorable_no_market_window_group_count')}",
             f"- future_price_truth_window_groups: {truth.get('future_price_truth_window_group_count')}",
             f"- missing_pairs: {', '.join(truth.get('missing_pairs') or []) or 'none'}",
+            f"- all_currency_sample_coverage_status: {truth.get('all_currency_sample_coverage_status')}",
+            f"- under_sampled_pair_direction_count: {truth.get('under_sampled_pair_direction_count')}",
+            f"- under_sampled_missing_evaluated_samples: {truth.get('under_sampled_missing_evaluated_samples')}",
             f"- history_fetch_command_mode: {truth.get('history_fetch_command_mode')}",
             f"- history_fetch_command_count: {truth.get('history_fetch_command_count')}",
         ]

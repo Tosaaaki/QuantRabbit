@@ -23,7 +23,7 @@
         "NEEDS_HIGHER_POSITIVE_DAY_RATE"
       ],
       "adoption_status": "RANK_ONLY_NOT_DAILY_STABLE",
-      "audit_report": "logs/reports/forecast_improvement/oanda_history_replay_validate_20260623T063212Z.json",
+      "audit_report": "logs/reports/forecast_improvement/oanda_history_replay_validate_20260623T090635Z.json",
       "avg_daily_realized_pips": 56.75,
       "avg_daily_samples": 20.0,
       "avg_final_pips": 4.8425,
@@ -94,7 +94,7 @@
         "NEEDS_HIGHER_POSITIVE_DAY_RATE"
       ],
       "adoption_status": "RANK_ONLY_NOT_DAILY_STABLE",
-      "audit_report": "logs/reports/forecast_improvement/oanda_history_replay_validate_20260623T063212Z.json",
+      "audit_report": "logs/reports/forecast_improvement/oanda_history_replay_validate_20260623T090635Z.json",
       "avg_daily_realized_pips": 56.75,
       "avg_daily_samples": 20.0,
       "avg_final_pips": 4.8425,
@@ -167,7 +167,7 @@
         "NEEDS_HIGHER_POSITIVE_DAY_RATE"
       ],
       "adoption_status": "RANK_ONLY_NOT_DAILY_STABLE",
-      "audit_report": "logs/reports/forecast_improvement/oanda_history_replay_validate_20260623T063212Z.json",
+      "audit_report": "logs/reports/forecast_improvement/oanda_history_replay_validate_20260623T090635Z.json",
       "avg_daily_realized_pips": 116.76,
       "avg_daily_samples": 45.2,
       "avg_final_pips": 2.3425,
@@ -228,7 +228,7 @@
     "under_sampled_pair_directions": 48,
     "unscorable_no_market_samples": 12
   },
-  "generated_at_utc": "2026-06-23T06:32:12.681391Z",
+  "generated_at_utc": "2026-06-23T09:06:35.039938Z",
   "generated_from": "scripts/oanda_history_replay_validate.py",
   "granularity": "S5",
   "history_dirs": [
@@ -237,7 +237,7 @@
     "logs/replay/oanda_history/20260623T041751Z",
     "logs/replay/oanda_history/20260623T061558Z",
     "logs/replay/oanda_history/20260623T061609Z",
-    "logs/replay/oanda_history/20260623T020613Z"
+    "logs/replay/oanda_history/20260623T085130Z"
   ],
   "negative_rules": [
     {
@@ -246,7 +246,7 @@
         "NEGATIVE_EXPECTANCY"
       ],
       "adoption_status": "LIVE_BLOCK_NEGATIVE_EXPECTANCY",
-      "audit_report": "logs/reports/forecast_improvement/oanda_history_replay_validate_20260623T063212Z.json",
+      "audit_report": "logs/reports/forecast_improvement/oanda_history_replay_validate_20260623T090635Z.json",
       "avg_daily_realized_pips": -45.0,
       "avg_daily_samples": 22.5,
       "avg_final_pips": -6.4356,
@@ -299,13 +299,17 @@
   ],
   "packaged_by": "scripts/package_bidask_replay_precision_rules.py",
   "price_truth_coverage": {
-    "adoption_level": "FULL_REPLAY_READY",
-    "blockers": [],
+    "adoption_level": "PAIR_LOCAL_RANK_ONLY",
+    "all_currency_sample_coverage_status": "UNDER_SAMPLED",
+    "blockers": [
+      "DO_NOT_CLAIM_ALL_CURRENCY_VALIDATION",
+      "COLLECT_MORE_FORECAST_SAMPLES"
+    ],
     "candidate_rule_validation_blocked": false,
     "deduped_directional_rows": 662,
     "evaluated_rows": 650,
     "future_price_truth_window_group_count": 0,
-    "global_currency_validation_blocked": false,
+    "global_currency_validation_blocked": true,
     "history_candles": 346548,
     "history_fetch_command": null,
     "history_fetch_command_count": 0,
@@ -320,6 +324,34 @@
     "reason": "All loaded forecast samples have local bid/ask candle truth for this replay window.",
     "required_min_evaluated_rows": 30,
     "status": "PRICE_TRUTH_OK",
+    "under_sampled_missing_evaluated_samples": 1121,
+    "under_sampled_pair_direction_count": 48,
+    "under_sampled_pair_directions": [
+      "AUD_CAD:UP",
+      "EUR_GBP:UP",
+      "GBP_CHF:UP",
+      "NZD_CAD:UP",
+      "EUR_NZD:UP",
+      "GBP_USD:UP",
+      "USD_JPY:UP",
+      "USD_CHF:DOWN",
+      "EUR_CHF:UP",
+      "EUR_USD:UP",
+      "USD_CAD:DOWN",
+      "EUR_JPY:UP",
+      "GBP_CHF:DOWN",
+      "USD_JPY:DOWN",
+      "AUD_NZD:UP",
+      "GBP_AUD:DOWN",
+      "GBP_JPY:UP",
+      "EUR_NZD:DOWN",
+      "GBP_JPY:DOWN",
+      "GBP_CAD:DOWN",
+      "EUR_CHF:DOWN",
+      "AUD_CHF:UP",
+      "CAD_CHF:DOWN",
+      "GBP_CAD:UP"
+    ],
     "unscorable_no_market_rows": 12,
     "unscorable_no_market_window_group_count": 1,
     "warnings": [

@@ -906,6 +906,56 @@ class OandaHistoryReplayValidateTest(unittest.TestCase):
         self.assertNotIn("DO_NOT_PROMOTE_PRECISION_RULE", truth["blockers"])
         self.assertIn("DO_NOT_CLAIM_ALL_CURRENCY_VALIDATION", truth["blockers"])
 
+    def test_price_truth_ok_still_blocks_all_currency_claim_when_samples_are_thin(self) -> None:
+        truth = replay._price_truth_coverage(
+            load_stats={"raw_directional_rows": 40, "deduped_directional_rows": 40},
+            candle_stats={"history_files": 28, "history_candles": 5000},
+            score_stats={
+                "evaluated_rows": 40,
+                "missing_price_window_groups": [],
+            },
+            sample_coverage={
+                "pairs": [
+                    {
+                        "pair": "AUD_JPY",
+                        "forecast_samples": 35,
+                        "evaluated_samples": 35,
+                        "missing_price_truth_samples": 0,
+                    },
+                    {
+                        "pair": "GBP_USD",
+                        "forecast_samples": 5,
+                        "evaluated_samples": 5,
+                        "missing_price_truth_samples": 0,
+                    },
+                ],
+                "under_sampled_pair_directions": [
+                    {
+                        "pair": "GBP_USD",
+                        "direction": "DOWN",
+                        "missing_evaluated_samples": 25,
+                        "coverage_gap_reasons": [
+                            "INSUFFICIENT_EVALUATED_SAMPLES",
+                            "INSUFFICIENT_ACTIVE_DAYS",
+                        ],
+                    }
+                ],
+            },
+            granularity="S5",
+            edge_min_samples=30,
+        )
+
+        self.assertEqual(truth["status"], "PRICE_TRUTH_OK")
+        self.assertEqual(truth["adoption_level"], "PAIR_LOCAL_RANK_ONLY")
+        self.assertFalse(truth["candidate_rule_validation_blocked"])
+        self.assertTrue(truth["global_currency_validation_blocked"])
+        self.assertEqual(truth["all_currency_sample_coverage_status"], "UNDER_SAMPLED")
+        self.assertEqual(truth["under_sampled_pair_direction_count"], 1)
+        self.assertEqual(truth["under_sampled_pair_directions"], ["GBP_USD:DOWN"])
+        self.assertIn("DO_NOT_CLAIM_ALL_CURRENCY_VALIDATION", truth["blockers"])
+        self.assertIn("COLLECT_MORE_FORECAST_SAMPLES", truth["blockers"])
+        self.assertNotIn("FETCH_MISSING_PRICE_TRUTH", truth["blockers"])
+
     def test_history_fetch_command_clamps_future_window_to_now(self) -> None:
         command = replay._history_fetch_command(
             [

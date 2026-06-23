@@ -2360,6 +2360,13 @@ def _bidask_rule_findings(payload: dict[str, Any], path: Path) -> tuple[dict[str
             "history_fetch_command_mode": truth.get("history_fetch_command_mode"),
             "missing_pairs": truth.get("missing_pairs"),
             "missing_pair_directions": truth.get("missing_pair_directions"),
+            "all_currency_sample_coverage_status": truth.get("all_currency_sample_coverage_status"),
+            "under_sampled_pair_direction_count": truth.get("under_sampled_pair_direction_count"),
+            "under_sampled_pair_directions": truth.get("under_sampled_pair_directions"),
+            "under_sampled_missing_evaluated_samples": truth.get(
+                "under_sampled_missing_evaluated_samples"
+            ),
+            "global_currency_validation_blocked": truth.get("global_currency_validation_blocked"),
             "warnings": truth.get("warnings"),
         },
         "daily_stability_requirements": {
@@ -2386,6 +2393,23 @@ def _bidask_rule_findings(payload: dict[str, Any], path: Path) -> tuple[dict[str
                 next_action=(
                     "Run the published OANDA read-only history fetch command(s), rerun "
                     "oanda_history_replay_validate, then package the refreshed bid/ask rules."
+                ),
+                evidence=metrics,
+            )
+        )
+    elif bool(truth.get("global_currency_validation_blocked")):
+        findings.append(
+            _finding(
+                priority="P1",
+                code="BIDASK_REPLAY_ALL_CURRENCY_SAMPLE_COVERAGE_THIN",
+                message=(
+                    "S5 bid/ask replay has price truth for loaded samples, but pair-direction "
+                    "sample coverage is too thin to claim all-currency high-turn readiness"
+                ),
+                next_action=(
+                    "Collect more live forecast samples or replay-covered forecast history across the "
+                    "under-sampled pair-directions, then rerun oanda_history_replay_validate and package "
+                    "the refreshed rules."
                 ),
                 evidence=metrics,
             )
