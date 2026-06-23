@@ -25,6 +25,46 @@ STATUS_READY = "READY_FOR_CODEX_REPAIR"
 STATUS_APPROVAL_REQUIRED = "OPERATOR_APPROVAL_REQUIRED"
 STATUS_NO_REQUESTS = "NO_REPAIR_REQUESTS"
 STATUS_BLOCKED = "ORCHESTRATOR_BLOCKED"
+AUTOMATION_READY = "READY_FOR_CODEX_IMPLEMENTATION"
+AUTOMATION_OPERATOR_APPROVAL = "WAITING_FOR_OPERATOR_APPROVAL"
+AUTOMATION_LIVE_EVIDENCE_WINDOW = "WAITING_FOR_LIVE_EVIDENCE_WINDOW"
+AUTOMATION_EVIDENCE = "WAITING_FOR_EVIDENCE"
+NON_ACTIONABLE_REPAIR_STATUSES = {
+    "HISTORICAL_ACCEPTANCE_WINDOW_ACTIVE",
+}
+CODEX_ACTIONABLE_REPAIR_STATUSES = {
+    "READY_FOR_CODE_REPAIR",
+    "READY_FOR_CODE_OR_EVIDENCE_REPAIR",
+    "READY_FOR_READ_ONLY_EVIDENCE_COLLECTION",
+}
+REPAIR_DEPENDENCY_RANK = {
+    "REPAIR_TP_PROGRESS_PROFIT_CAPTURE_REPLAY": 0,
+    "RESTORE_POSITION_GUARDIAN_AFTER_PREFLIGHT": 1,
+    "REPAIR_CLOSE_GATE_EVIDENCE_PERSISTENCE": 2,
+    "REPAIR_MONTH_SCALE_RESIDUAL_ENTRY_QUALITY": 3,
+    "REPAIR_FRONTIER_LANE_BLOCKER": 4,
+    "COLLECT_BIDASK_REPLAY_EVIDENCE": 5,
+    "REVIEW_CLOSE_GATE_EVIDENCE_FAILURES": 90,
+}
+REPAIR_SELECTION_REASONS = {
+    "REPAIR_TP_PROGRESS_PROFIT_CAPTURE_REPLAY": (
+        "Direct TP-progress profit-capture repair outranks residual-entry scaling because "
+        "TAKE_PROFIT_ORDER gains are still being erased by later loss-side market closes."
+    ),
+    "REPAIR_CLOSE_GATE_EVIDENCE_PERSISTENCE": (
+        "Close-gate evidence persistence is a loss-leak repair, but it follows the direct "
+        "TP-progress capture path when both are actionable."
+    ),
+    "REPAIR_MONTH_SCALE_RESIDUAL_ENTRY_QUALITY": (
+        "Residual entry-quality repair is scaling work after TP-progress capture and close "
+        "discipline have a proved live path."
+    ),
+    "REVIEW_CLOSE_GATE_EVIDENCE_FAILURES": (
+        "Historical BLOCK close-gate evidence must wait for future PASS evidence or age-out; "
+        "Codex must not synthesize PASS for old closes."
+    ),
+}
+
 
 @dataclass(frozen=True)
 class TraderRepairOrchestratorSummary:
@@ -92,8 +132,13 @@ class TraderRepairOrchestrator:
                 recovered_from_embedded_support = True
         queue = [_queue_item(item, trader_request=self.trader_request) for item in requests]
         queue.sort(key=_queue_sort_key)
-        actionable = [item for item in queue if item["automation_status"] == "READY_FOR_CODEX_IMPLEMENTATION"]
-        approval_required = [item for item in queue if item["automation_status"] == "WAITING_FOR_OPERATOR_APPROVAL"]
+        actionable = [item for item in queue if item["automation_status"] == AUTOMATION_READY]
+        approval_required = [item for item in queue if item["automation_status"] == AUTOMATION_OPERATOR_APPROVAL]
+        waiting = [
+            item
+            for item in queue
+            if item["automation_status"] not in {AUTOMATION_READY, AUTOMATION_OPERATOR_APPROVAL}
+        ]
         selected = _select_request(actionable, trader_request=self.trader_request)
         execution_contract = _execution_contract()
         approval_boundary = _approval_boundary(execution_contract)
@@ -125,11 +170,13 @@ class TraderRepairOrchestrator:
                 "approval_required_request_codes": [
                     str(item.get("code")) for item in approval_required if item.get("code")
                 ],
+                "waiting_request_codes": [str(item.get("code")) for item in waiting if item.get("code")],
             },
             "metrics": {
                 "repair_request_count": len(queue),
                 "actionable_request_count": len(actionable),
                 "approval_required_request_count": len(approval_required),
+                "waiting_request_count": len(waiting),
                 "selected_request_code": selected.get("code") if selected else None,
                 "support_status": support.get("status"),
                 "repair_request_source": request_source,
@@ -230,6 +277,9 @@ def _codex_work_order(
         "orchestrator_status": status,
         "selected_request_code": selected.get("code"),
         "priority": selected.get("priority"),
+        "repair_status": selected.get("repair_status"),
+        "dependency_rank": selected.get("dependency_rank"),
+        "selection_reason": selected.get("selection_reason"),
         "trader_request": trader_request,
         "objective": selected.get("problem"),
         "why_now": selected.get("why_now"),
@@ -281,15 +331,18 @@ def _queue_item(request: dict[str, Any], *, trader_request: str) -> dict[str, An
     if not forbidden_actions:
         forbidden_actions = list(REPAIR_AUTOMATION_FORBIDDEN_DIRECT_ACTIONS)
 
-    automation_status = "WAITING_FOR_OPERATOR_APPROVAL" if explicit else "READY_FOR_CODEX_IMPLEMENTATION"
+    automation_status = _automation_status(request, requires_explicit_operator_approval=explicit)
     verification_commands = _dedupe_strings(request.get("verification_commands"))
     targeted_tests = _targeted_test_commands(request.get("suggested_files"))
+    dependency_rank = _dependency_rank(request.get("code"))
     return {
         "code": request.get("code"),
         "priority": request.get("priority"),
         "source_findings": _dedupe_strings(request.get("source_findings")),
         "repair_status": request.get("status"),
         "automation_status": automation_status,
+        "dependency_rank": dependency_rank,
+        "selection_reason": _selection_reason(request.get("code")),
         "match_score": _match_score(request, trader_request),
         "requires_explicit_operator_approval": explicit,
         "problem": request.get("problem"),
@@ -325,10 +378,19 @@ def _queue_item(request: dict[str, Any], *, trader_request: str) -> dict[str, An
                 "verify_live_head_matches_promoted_commit",
             ]
             if not explicit
+            and automation_status == AUTOMATION_READY
             else [
                 "run_preflight_read_only_checks",
-                "wait_for_explicit_operator_approval",
-                "execute_only_the_approved_gateway_or_launchd_action",
+                (
+                    "wait_for_explicit_operator_approval"
+                    if automation_status == AUTOMATION_OPERATOR_APPROVAL
+                    else "wait_for_required_live_evidence_or_acceptance_window"
+                ),
+                (
+                    "execute_only_the_approved_gateway_or_launchd_action"
+                    if automation_status == AUTOMATION_OPERATOR_APPROVAL
+                    else "refresh_support_artifacts_without_live_side_effects"
+                ),
                 "refresh_support_artifacts",
             ]
         ),
@@ -351,18 +413,62 @@ def _select_request(queue: list[dict[str, Any]], *, trader_request: str) -> dict
     if not queue:
         return {}
     if trader_request.strip():
-        return max(queue, key=lambda item: (int(item.get("match_score") or 0), -_priority_rank(item.get("priority"))))
+        return min(
+            queue,
+            key=lambda item: (
+                -int(item.get("match_score") or 0),
+                _priority_rank(item.get("priority")),
+                _dependency_rank(item.get("code")),
+                str(item.get("code") or ""),
+            ),
+        )
     return queue[0]
 
 
-def _queue_sort_key(item: dict[str, Any]) -> tuple[int, int, int, str]:
-    approval_rank = 1 if item.get("requires_explicit_operator_approval") else 0
+def _queue_sort_key(item: dict[str, Any]) -> tuple[int, int, int, int, str]:
+    automation_rank = _automation_rank(item.get("automation_status"))
     priority_rank = _priority_rank(item.get("priority"))
     return (
-        approval_rank,
+        automation_rank,
         priority_rank,
+        _dependency_rank(item.get("code")),
         -int(item.get("match_score") or 0),
         str(item.get("code") or ""),
+    )
+
+
+def _automation_status(
+    request: dict[str, Any],
+    *,
+    requires_explicit_operator_approval: bool,
+) -> str:
+    if requires_explicit_operator_approval:
+        return AUTOMATION_OPERATOR_APPROVAL
+    status = str(request.get("status") or "").upper()
+    if status in NON_ACTIONABLE_REPAIR_STATUSES:
+        return AUTOMATION_LIVE_EVIDENCE_WINDOW
+    if status in CODEX_ACTIONABLE_REPAIR_STATUSES or status.startswith("READY_FOR_CODE"):
+        return AUTOMATION_READY
+    return AUTOMATION_EVIDENCE
+
+
+def _automation_rank(value: Any) -> int:
+    status = str(value or "")
+    if status == AUTOMATION_READY:
+        return 0
+    if status == AUTOMATION_OPERATOR_APPROVAL:
+        return 1
+    return 2
+
+
+def _dependency_rank(code: Any) -> int:
+    return REPAIR_DEPENDENCY_RANK.get(str(code or ""), 50)
+
+
+def _selection_reason(code: Any) -> str:
+    return REPAIR_SELECTION_REASONS.get(
+        str(code or ""),
+        "Repair queue position is based on automation status, priority, dependency rank, request match, and code.",
     )
 
 
@@ -455,6 +561,7 @@ def _render_report(payload: dict[str, Any]) -> str:
         f"- Selected request: `{selected.get('code') if selected else None}`",
         f"- Actionable requests: `{metrics.get('actionable_request_count')}`",
         f"- Approval-required requests: `{metrics.get('approval_required_request_count')}`",
+        f"- Waiting requests: `{metrics.get('waiting_request_count')}`",
         f"- Repair request source: `{metrics.get('repair_request_source')}`",
         f"- Recovered from embedded support: `{metrics.get('recovered_from_embedded_support')}`",
         f"- Read only: `{payload.get('read_only')}`",
@@ -472,6 +579,7 @@ def _render_report(payload: dict[str, Any]) -> str:
         "## Codex Work Order",
         "",
         f"- Status: `{work_order.get('status')}`",
+        f"- Selection reason: {work_order.get('selection_reason')}",
         f"- Objective: {work_order.get('objective')}",
         f"- Evidence summary keys: `{', '.join(sorted((work_order.get('evidence_summary') or {}).keys()))}`",
         f"- Deliverables: `{', '.join(work_order.get('deliverables') or [])}`",
@@ -488,15 +596,16 @@ def _render_report(payload: dict[str, Any]) -> str:
     if queue:
         lines.extend(
             [
-                "| Code | Priority | Automation | Match | Verify |",
-                "|---|---|---|---:|---|",
+                "| Code | Priority | Automation | Match | Dependency | Verify |",
+                "|---|---|---|---:|---:|---|",
             ]
         )
         for item in queue[:12]:
             verify = ", ".join(f"`{command}`" for command in item.get("verification_commands", [])[:2]) or "none"
             lines.append(
                 f"| `{item.get('code')}` | `{item.get('priority')}` | "
-                f"`{item.get('automation_status')}` | `{item.get('match_score')}` | {verify} |"
+                f"`{item.get('automation_status')}` | `{item.get('match_score')}` | "
+                f"`{item.get('dependency_rank')}` | {verify} |"
             )
     else:
         lines.append("- none")
@@ -507,6 +616,8 @@ def _render_report(payload: dict[str, Any]) -> str:
                 "## Selected Request",
                 "",
                 f"- Code: `{selected.get('code')}`",
+                f"- Dependency rank: `{selected.get('dependency_rank')}`",
+                f"- Selection reason: {selected.get('selection_reason')}",
                 f"- Problem: {selected.get('problem')}",
                 f"- Why now: {selected.get('why_now')}",
                 f"- Suggested files: `{', '.join(selected.get('suggested_files') or [])}`",

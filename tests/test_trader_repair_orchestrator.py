@@ -109,6 +109,8 @@ class TraderRepairOrchestratorTest(unittest.TestCase):
             work_order = payload["codex_work_order"]
             self.assertEqual(work_order["status"], "READY_FOR_CODEX_IMPLEMENTATION")
             self.assertEqual(work_order["selected_request_code"], "REPAIR_TP_PROGRESS_PROFIT_CAPTURE_REPLAY")
+            self.assertEqual(work_order["dependency_rank"], 0)
+            self.assertIn("TP-progress", work_order["selection_reason"])
             self.assertIn("regression_tests_for_the_named_failure", work_order["deliverables"])
             self.assertIn("git_commit_with_codex_attribution", work_order["deliverables"])
             self.assertTrue(work_order["commit_and_live_sync_required"])
@@ -124,6 +126,7 @@ class TraderRepairOrchestratorTest(unittest.TestCase):
             self.assertIn("REPAIR_TP_PROGRESS_PROFIT_CAPTURE_REPLAY", report_text)
             self.assertIn("Codex Work Order", report_text)
             self.assertIn("Evidence summary keys", report_text)
+            self.assertIn("Dependency", report_text)
 
     def test_only_approval_required_requests_return_diagnostic_code(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -241,6 +244,173 @@ class TraderRepairOrchestratorTest(unittest.TestCase):
             )
             self.assertIn("embedded_support_payload", report.read_text())
 
+    def test_direct_tp_capture_repair_beats_residual_when_request_match_ties(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            support = root / "support.json"
+            output = root / "orchestrator.json"
+            report = root / "orchestrator.md"
+            _write_support(
+                support,
+                [
+                    _request(
+                        "REPAIR_MONTH_SCALE_RESIDUAL_ENTRY_QUALITY",
+                        priority="P0",
+                        suggested_files=[
+                            "src/quant_rabbit/strategy/intent_generator.py",
+                            "tests/test_intent_generator.py",
+                        ],
+                    ),
+                    _request(
+                        "REPAIR_CLOSE_GATE_EVIDENCE_PERSISTENCE",
+                        priority="P0",
+                        suggested_files=[
+                            "src/quant_rabbit/gpt_trader.py",
+                            "tests/test_gpt_trader.py",
+                        ],
+                    ),
+                    _request(
+                        "REPAIR_TP_PROGRESS_PROFIT_CAPTURE_REPLAY",
+                        priority="P0",
+                        suggested_files=[
+                            "src/quant_rabbit/strategy/position_manager.py",
+                            "tests/test_trader_support_bot.py",
+                        ],
+                    ),
+                ],
+            )
+
+            summary = TraderRepairOrchestrator(
+                support_bot_path=support,
+                output_path=output,
+                report_path=report,
+                trader_request="利益をプラスで決済するBot/修正",
+            ).run()
+
+            self.assertEqual(summary.status, STATUS_READY)
+            payload = json.loads(output.read_text())
+            self.assertEqual(
+                payload["selected_request"]["code"],
+                "REPAIR_TP_PROGRESS_PROFIT_CAPTURE_REPLAY",
+            )
+            self.assertEqual(payload["selected_request"]["dependency_rank"], 0)
+            self.assertEqual(
+                [item["code"] for item in payload["actionable_requests"][:3]],
+                [
+                    "REPAIR_TP_PROGRESS_PROFIT_CAPTURE_REPLAY",
+                    "REPAIR_CLOSE_GATE_EVIDENCE_PERSISTENCE",
+                    "REPAIR_MONTH_SCALE_RESIDUAL_ENTRY_QUALITY",
+                ],
+            )
+
+    def test_specific_trader_request_can_select_residual_repair(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            support = root / "support.json"
+            output = root / "orchestrator.json"
+            report = root / "orchestrator.md"
+            _write_support(
+                support,
+                [
+                    _request("REPAIR_TP_PROGRESS_PROFIT_CAPTURE_REPLAY", priority="P0"),
+                    _request("REPAIR_MONTH_SCALE_RESIDUAL_ENTRY_QUALITY", priority="P0"),
+                ],
+            )
+
+            TraderRepairOrchestrator(
+                support_bot_path=support,
+                output_path=output,
+                report_path=report,
+                trader_request="residual method month",
+            ).run()
+
+            payload = json.loads(output.read_text())
+            self.assertEqual(
+                payload["selected_request"]["code"],
+                "REPAIR_MONTH_SCALE_RESIDUAL_ENTRY_QUALITY",
+            )
+
+    def test_cli_accepts_trader_request_alias(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            support = root / "support.json"
+            output = root / "orchestrator.json"
+            report = root / "orchestrator.md"
+            _write_support(
+                support,
+                [
+                    _request("REPAIR_TP_PROGRESS_PROFIT_CAPTURE_REPLAY", priority="P0"),
+                    _request("REPAIR_MONTH_SCALE_RESIDUAL_ENTRY_QUALITY", priority="P0"),
+                ],
+            )
+
+            stdout = io.StringIO()
+            with redirect_stdout(stdout):
+                code = main(
+                    [
+                        "trader-repair-orchestrator",
+                        "--trader-support-bot",
+                        str(support),
+                        "--output",
+                        str(output),
+                        "--report",
+                        str(report),
+                        "--trader-request",
+                        "residual method month",
+                    ]
+                )
+
+            self.assertEqual(code, 0)
+            self.assertEqual(
+                json.loads(output.read_text())["selected_request"]["code"],
+                "REPAIR_MONTH_SCALE_RESIDUAL_ENTRY_QUALITY",
+            )
+            self.assertEqual(json.loads(stdout.getvalue())["selected_request_code"], "REPAIR_MONTH_SCALE_RESIDUAL_ENTRY_QUALITY")
+
+    def test_historical_acceptance_window_is_not_codex_implementation_work(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            support = root / "support.json"
+            output = root / "orchestrator.json"
+            report = root / "orchestrator.md"
+            _write_support(
+                support,
+                [
+                    _request(
+                        "REVIEW_CLOSE_GATE_EVIDENCE_FAILURES",
+                        priority="P0",
+                        status="HISTORICAL_ACCEPTANCE_WINDOW_ACTIVE",
+                    ),
+                    _request("REPAIR_TP_PROGRESS_PROFIT_CAPTURE_REPLAY", priority="P0"),
+                ],
+            )
+
+            summary = TraderRepairOrchestrator(
+                support_bot_path=support,
+                output_path=output,
+                report_path=report,
+                trader_request="close evidence",
+            ).run()
+
+            self.assertEqual(summary.status, STATUS_READY)
+            payload = json.loads(output.read_text())
+            review = next(
+                item for item in payload["queue"] if item["code"] == "REVIEW_CLOSE_GATE_EVIDENCE_FAILURES"
+            )
+            self.assertEqual(review["automation_status"], "WAITING_FOR_LIVE_EVIDENCE_WINDOW")
+            self.assertEqual(
+                payload["selected_request"]["code"],
+                "REPAIR_TP_PROGRESS_PROFIT_CAPTURE_REPLAY",
+            )
+            self.assertNotIn(
+                "REVIEW_CLOSE_GATE_EVIDENCE_FAILURES",
+                [item["code"] for item in payload["actionable_requests"]],
+            )
+            self.assertIn(
+                "REVIEW_CLOSE_GATE_EVIDENCE_FAILURES",
+                payload["queue_summary"]["waiting_request_codes"],
+            )
+
 
 def _write_support(path: Path, requests: list[dict[str, object]]) -> None:
     path.write_text(
@@ -262,6 +432,7 @@ def _request(
     code: str,
     *,
     priority: str,
+    status: str = "READY_FOR_CODE_REPAIR",
     suggested_files: list[str] | None = None,
     verification_commands: list[str] | None = None,
     requires_explicit_operator_approval: bool = False,
@@ -270,7 +441,7 @@ def _request(
     return {
         "code": code,
         "priority": priority,
-        "status": "READY_FOR_CODE_REPAIR",
+        "status": status,
         "source_findings": [code.replace("REPAIR_", "")],
         "problem": f"{code} problem",
         "why_now": f"{code} why now",

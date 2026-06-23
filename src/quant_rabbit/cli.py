@@ -3390,6 +3390,8 @@ def main(argv: list[str] | None = None) -> int:
     p_repair_orchestrator.add_argument("--trader-support-bot", type=Path, default=DEFAULT_TRADER_SUPPORT_BOT)
     p_repair_orchestrator.add_argument(
         "--request",
+        "--trader-request",
+        dest="request",
         default=None,
         help="Optional trader request text used to prioritize the repair queue.",
     )
