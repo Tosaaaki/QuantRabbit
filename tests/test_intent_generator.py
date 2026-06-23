@@ -246,7 +246,25 @@ def _write_month_scale_residual_acceptance(
     side: str = "LONG",
     method: str = "RANGE_ROTATION",
     repair_replay_pl_jpy: float = -2333.8215,
+    extra_groups: list[dict] | None = None,
 ) -> None:
+    primary_group = {
+        "pair": pair,
+        "side": side,
+        "method": method,
+        "exit_reason": "MARKET_ORDER_TRADE_CLOSE",
+        "loss_closes": 1,
+        "repair_replay_pl_jpy": repair_replay_pl_jpy,
+        "block_reasons": {"BELOW_TP_PROGRESS_GATE": 1},
+        "examples": [
+            {
+                "trade_id": "472071",
+                "lane_id": f"test:{pair}:{side}:{method}",
+                "repair_replay_pl_jpy": repair_replay_pl_jpy,
+            }
+        ],
+    }
+    groups = [*(extra_groups or []), primary_group]
     (root / "profitability_acceptance.json").write_text(
         json.dumps(
             {
@@ -260,39 +278,13 @@ def _write_month_scale_residual_acceptance(
                         "evidence": {
                             "window_lookback_hours": 744.0,
                             "repair_replay_counterfactual_pl_jpy": -13824.5957,
-                            "top_repair_replay_residual_groups": [
-                                {
-                                    "pair": pair,
-                                    "side": side,
-                                    "method": method,
-                                    "exit_reason": "MARKET_ORDER_TRADE_CLOSE",
-                                    "loss_closes": 1,
-                                    "repair_replay_pl_jpy": repair_replay_pl_jpy,
-                                    "block_reasons": {"BELOW_TP_PROGRESS_GATE": 1},
-                                    "examples": [
-                                        {
-                                            "trade_id": "472071",
-                                            "lane_id": f"test:{pair}:{side}:{method}",
-                                            "repair_replay_pl_jpy": repair_replay_pl_jpy,
-                                        }
-                                    ],
-                                }
-                            ],
+                            "top_repair_replay_residual_groups": groups,
                         },
                     }
                 ],
                 "metrics": {
                     "profit_capture_replay_repair": {
-                        "top_repair_replay_residual_groups": [
-                            {
-                                "pair": pair,
-                                "side": side,
-                                "method": method,
-                                "exit_reason": "MARKET_ORDER_TRADE_CLOSE",
-                                "loss_closes": 1,
-                                "repair_replay_pl_jpy": repair_replay_pl_jpy,
-                            }
-                        ]
+                        "top_repair_replay_residual_groups": groups
                     }
                 },
             }
@@ -9951,6 +9943,62 @@ class IntentGeneratorTest(unittest.TestCase):
             self.assertTrue(metadata["self_improvement_p0_repair_live_ready"])
             self.assertNotIn(MONTH_SCALE_RESIDUAL_LOSS_REPAIR_BLOCK_CODE, issue_codes)
             self.assertNotIn("SELF_IMPROVEMENT_P0_PROFITABILITY_DISCIPLINE", issue_codes)
+
+    def test_month_scale_residual_group_message_names_matching_segment_not_worst_global_group(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_month_scale_residual_acceptance(
+                root,
+                pair="EUR_USD",
+                side="LONG",
+                method="RANGE_ROTATION",
+                repair_replay_pl_jpy=-2333.8215,
+                extra_groups=[
+                    {
+                        "pair": "GBP_USD",
+                        "side": "LONG",
+                        "method": "BREAKOUT_FAILURE",
+                        "exit_reason": "MARKET_ORDER_TRADE_CLOSE",
+                        "loss_closes": 1,
+                        "repair_replay_pl_jpy": -2981.8961,
+                        "block_reasons": {"BELOW_TP_PROGRESS_GATE": 1},
+                        "examples": [
+                            {
+                                "trade_id": "472070",
+                                "lane_id": "test:GBP_USD:LONG:BREAKOUT_FAILURE",
+                                "repair_replay_pl_jpy": -2981.8961,
+                            }
+                        ],
+                    }
+                ],
+            )
+            output = root / "intents.json"
+
+            IntentGenerator(
+                campaign_plan=_range_campaign(root),
+                strategy_profile=_strategy(root, status="CANDIDATE"),
+                output_path=output,
+                report_path=root / "intents.md",
+                pair_charts_path=_pair_charts(root),
+                data_root=root,
+                max_loss_jpy=1000.0,
+            ).run(snapshot_path=_snapshot(root))
+
+            payload = json.loads(output.read_text())
+            result = next(
+                item
+                for item in payload["results"]
+                if item["lane_id"] == "range_trader:EUR_USD:LONG:RANGE_ROTATION"
+            )
+            issue = next(
+                item
+                for item in result["risk_issues"]
+                if item["code"] == MONTH_SCALE_RESIDUAL_LOSS_REPAIR_BLOCK_CODE
+            )
+
+            self.assertIn("pair=EUR_USD", issue["message"])
+            self.assertIn("method=RANGE_ROTATION", issue["message"])
+            self.assertNotIn("pair=GBP_USD", issue["message"])
 
     def test_month_scale_residual_metrics_without_p0_does_not_block_harvest_repair_entry(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

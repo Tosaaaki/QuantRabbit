@@ -1368,6 +1368,47 @@ class GPTTraderBrainTest(unittest.TestCase):
             codes = {issue["code"] for issue in payload["verification_issues"]}
             self.assertIn("UNKNOWN_EVIDENCE_REF", codes)
 
+    def test_accepts_known_profitability_acceptance_replay_repair_ref_alias(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root)
+            files["profitability_acceptance"].write_text(
+                json.dumps(
+                    {
+                        "generated_at_utc": datetime.now(timezone.utc).isoformat(),
+                        "status": "PROFITABILITY_ACCEPTANCE_BLOCKED",
+                        "findings": [
+                            {
+                                "priority": "P0",
+                                "code": "TP_PROGRESS_REPLAY_REPAIR_UNPROVED",
+                                "message": "TP-progress repair is still unproved",
+                            }
+                        ],
+                    }
+                )
+            )
+            decision = _request_evidence_decision()
+            decision["evidence_refs"].append(
+                "profitability:acceptance:TP_PROGRESS_REPAIR_REPLAY_UNPROVED"
+            )
+            brain = _brain(root, files, decision)
+
+            brain.run(snapshot_path=files["snapshot"])
+
+            payload = json.loads((root / "gpt_decision.json").read_text())
+            codes = {issue["code"] for issue in payload["verification_issues"]}
+            refs = payload["input_packet"]["allowed_evidence_refs"]
+            p0_findings = payload["input_packet"]["profitability_acceptance"]["p0_findings"]
+            self.assertNotIn("UNKNOWN_EVIDENCE_REF", codes)
+            self.assertIn(
+                "profitability:acceptance:TP_PROGRESS_REPAIR_REPLAY_UNPROVED",
+                refs,
+            )
+            self.assertIn(
+                "profitability:acceptance:TP_PROGRESS_REPAIR_REPLAY_UNPROVED",
+                p0_findings[0]["evidence_ref_aliases"],
+            )
+
     def test_rejects_disabled_option_skew_evidence_ref(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

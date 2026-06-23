@@ -9285,15 +9285,7 @@ def _profitability_acceptance_month_residual_issue(data_root: Path) -> dict[str,
     if not blocked_segments:
         return None
     worst = blocked_segments[0]
-    label_parts = [
-        f"pair={worst['pair']}",
-        f"side={worst['side']}",
-        f"method={worst['method']}",
-    ]
-    if worst.get("loss_closes") is not None:
-        label_parts.append(f"loss_closes={worst['loss_closes']}")
-    if worst.get("net_jpy") is not None:
-        label_parts.append(f"repair_replay_net={worst['net_jpy']:.2f} JPY")
+    label_parts = _month_residual_segment_label_parts(worst)
     return {
         "code": MONTH_SCALE_RESIDUAL_LOSS_REPAIR_BLOCK_CODE,
         "message": (
@@ -9507,6 +9499,19 @@ def _normalise_month_residual_group(group: dict[str, Any]) -> dict[str, Any] | N
     return segment
 
 
+def _month_residual_segment_label_parts(segment: dict[str, Any]) -> list[str]:
+    label_parts = [
+        f"pair={segment['pair']}",
+        f"side={segment['side']}",
+        f"method={segment['method']}",
+    ]
+    if segment.get("loss_closes") is not None:
+        label_parts.append(f"loss_closes={segment['loss_closes']}")
+    if segment.get("net_jpy") is not None:
+        label_parts.append(f"repair_replay_net={segment['net_jpy']:.2f} JPY")
+    return label_parts
+
+
 def _month_scale_residual_repair_issue(
     intent: OrderIntent,
     issue: dict[str, Any] | None,
@@ -9530,10 +9535,24 @@ def _month_scale_residual_repair_issue(
             "loss_closes": segment.get("loss_closes"),
             "trade_ids": segment.get("trade_ids") or [],
         }
+        label_parts = _month_residual_segment_label_parts(segment)
         return {
             "code": MONTH_SCALE_RESIDUAL_LOSS_REPAIR_BLOCK_CODE,
-            "message": str(issue.get("message") or MONTH_SCALE_RESIDUAL_LOSS_REPAIR_BLOCK_CODE),
+            "message": (
+                "month-scale TP-progress replay still leaves this pair/side/method "
+                "net negative; rerun 744h execution-timing/profitability acceptance "
+                "and remove the matching residual loss group before exposing it as "
+                f"a live entry or TP_HARVEST_REPAIR ({', '.join(label_parts)})"
+            ),
             "severity": "BLOCK",
+            "blocked_profitability_segment": {
+                "pair": segment.get("pair"),
+                "side": segment.get("side"),
+                "method": segment.get("method"),
+                "repair_replay_pl_jpy": segment.get("net_jpy"),
+                "loss_closes": segment.get("loss_closes"),
+                "trade_ids": segment.get("trade_ids") or [],
+            },
         }
     return None
 

@@ -1407,6 +1407,12 @@ ALLOWED_METHODS = ("TREND_CONTINUATION", "RANGE_ROTATION", "BREAKOUT_FAILURE", "
 ALLOWED_SPECIALIST_ROLES = ("macro_news", "indicator", "flow_levels", "risk_audit", "strategy", "portfolio_context")
 OPERATOR_PRECEDENT_EVIDENCE_REF = "operator:precedent"
 MANUAL_MARKET_CONTEXT_EVIDENCE_REF = "manual:market_context"
+PROFITABILITY_ACCEPTANCE_REF_ALIASES = {
+    # Historical receipts occasionally swapped "replay" and "repair" in this
+    # finding name. Keep the alias explicit so UNKNOWN_EVIDENCE_REF still
+    # rejects unrelated invented profitability refs.
+    "TP_PROGRESS_REPLAY_REPAIR_UNPROVED": ("TP_PROGRESS_REPAIR_REPLAY_UNPROVED",),
+}
 FORBIDDEN_SPECIALIST_AUTHORITY_FIELDS = (
     "action",
     "selected_lane_id",
@@ -3781,6 +3787,8 @@ def _allowed_refs(
             code = str(finding.get("code") or "").strip()
             if code:
                 refs.append(f"profitability:acceptance:{code}")
+                for alias in PROFITABILITY_ACCEPTANCE_REF_ALIASES.get(code, ()):
+                    refs.append(f"profitability:acceptance:{alias}")
     if execution_timing_audit:
         refs.extend(
             [
@@ -4111,9 +4119,14 @@ def _profitability_acceptance_packet(payload: dict[str, Any] | None) -> dict[str
         if str(finding.get("priority") or "").upper() != "P0":
             continue
         code = str(finding.get("code") or "").strip()
+        aliases = [
+            f"profitability:acceptance:{alias}"
+            for alias in PROFITABILITY_ACCEPTANCE_REF_ALIASES.get(code, ())
+        ]
         p0_findings.append(
             {
                 "evidence_ref": f"profitability:acceptance:{code}",
+                "evidence_ref_aliases": aliases,
                 **_small_dict(
                     finding,
                     (
