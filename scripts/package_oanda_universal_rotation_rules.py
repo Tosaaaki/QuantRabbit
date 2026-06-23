@@ -109,6 +109,7 @@ def main() -> int:
         if isinstance(existing, dict):
             preserve_existing_rule_rows(packaged, existing)
             preserve_existing_campaign_firepower(packaged, existing)
+            preserve_existing_scope_metadata(packaged, existing)
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(
         json.dumps(packaged, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
@@ -150,7 +151,13 @@ def package_payload(payload: dict[str, Any], *, source_report: Path) -> dict[str
 
 
 def preserve_existing_rule_rows(packaged: dict[str, Any], existing: dict[str, Any]) -> None:
-    """Avoid shrinking packaged forecast rules when the source is a top-N excerpt."""
+    """Avoid shrinking packaged forecast rules when the source is a top-N excerpt.
+
+    A focused mining run may contain new rows for a narrow pair subset while the
+    existing packaged artifact still covers a broader qualified universe. Keep
+    the broader rows and merge in the focused rows instead of choosing between
+    "new but narrow" and "broad but stale".
+    """
 
     summary = packaged.get("summary")
     if not isinstance(summary, dict):
@@ -161,15 +168,15 @@ def preserve_existing_rule_rows(packaged: dict[str, Any], existing: dict[str, An
         existing_rows = existing.get(section)
         if not isinstance(current_rows, list) or not isinstance(existing_rows, list):
             continue
-        if len(current_rows) >= len(existing_rows):
-            continue
         if narrower_report:
-            packaged[section] = existing_rows
+            packaged[section] = _merge_rule_rows(current_rows, existing_rows)
+            continue
+        if len(current_rows) >= len(existing_rows):
             continue
         available_count = _optional_int(summary.get(_count_key_for_section(section)))
         if available_count is None or available_count < len(existing_rows):
             continue
-        packaged[section] = existing_rows
+        packaged[section] = _merge_rule_rows(current_rows, existing_rows)
 
 
 def preserve_existing_campaign_firepower(packaged: dict[str, Any], existing: dict[str, Any]) -> None:
@@ -195,6 +202,30 @@ def preserve_existing_campaign_firepower(packaged: dict[str, Any], existing: dic
     )
     if existing.get("source_report"):
         packaged["campaign_firepower_source_report"] = existing.get("source_report")
+
+
+def preserve_existing_scope_metadata(packaged: dict[str, Any], existing: dict[str, Any]) -> None:
+    """Keep report-scope metadata from narrowing when rows/firepower are preserved."""
+
+    if not _packaged_report_is_narrower(packaged, existing):
+        return
+    current_summary = packaged.get("summary") if isinstance(packaged.get("summary"), dict) else {}
+    existing_summary = existing.get("summary") if isinstance(existing.get("summary"), dict) else {}
+    if existing_summary:
+        packaged["narrow_source_summary"] = current_summary
+        packaged["summary"] = _merge_scope_summary(current_summary, existing_summary)
+    current_config = packaged.get("config") if isinstance(packaged.get("config"), dict) else {}
+    existing_config = existing.get("config") if isinstance(existing.get("config"), dict) else {}
+    if existing_config:
+        packaged["narrow_source_config"] = current_config
+        packaged["config"] = _merge_scope_config(current_config, existing_config)
+    packaged["scope_metadata_preserved_from_existing"] = True
+    packaged["scope_metadata_preservation_reason"] = (
+        "new mining report has a narrower qualified universe; preserving broader "
+        "summary/config scope so audit-only runtime evidence is not downgraded"
+    )
+    if existing.get("source_report"):
+        packaged["scope_metadata_source_report"] = existing.get("source_report")
 
 
 def _packaged_report_is_narrower(packaged: dict[str, Any], existing: dict[str, Any]) -> bool:
@@ -224,6 +255,99 @@ def _firepower_unique_vehicle_count(firepower: dict[str, Any]) -> int | None:
         return count
     top = high_precision.get("top_vehicles")
     return len(top) if isinstance(top, list) else None
+
+
+def _merge_rule_rows(current_rows: list[Any], existing_rows: list[Any]) -> list[Any]:
+    merged: list[Any] = []
+    index_by_key: dict[tuple[Any, ...], int] = {}
+    for row in existing_rows:
+        key = _rule_row_key(row)
+        index_by_key[key] = len(merged)
+        merged.append(row)
+    for row in current_rows:
+        key = _rule_row_key(row)
+        if key in index_by_key:
+            merged[index_by_key[key]] = row
+            continue
+        index_by_key[key] = len(merged)
+        merged.append(row)
+    return merged
+
+
+def _rule_row_key(row: Any) -> tuple[Any, ...]:
+    if not isinstance(row, dict):
+        return ("raw", repr(row))
+    key_fields = (
+        "pair",
+        "side",
+        "selected_side",
+        "source_side",
+        "shape",
+        "source_shape",
+        "exit_shape",
+        "confluence",
+        "confluence_size",
+        "feature_a",
+        "feature_b",
+        "feature_c",
+        "feature_d",
+        "feature_e",
+        "feature_f",
+        "feature_g",
+        "feature_h",
+    )
+    return tuple((field, _normalise_key_value(row.get(field))) for field in key_fields)
+
+
+def _normalise_key_value(value: Any) -> Any:
+    if isinstance(value, list):
+        return tuple(_normalise_key_value(item) for item in value)
+    if isinstance(value, dict):
+        return tuple(sorted((key, _normalise_key_value(item)) for key, item in value.items()))
+    return value
+
+
+def _merge_scope_summary(current: dict[str, Any], existing: dict[str, Any]) -> dict[str, Any]:
+    merged = dict(current)
+    for key in ("history_pairs", "scored_outcomes", *COUNT_KEYS):
+        current_count = _optional_int(current.get(key))
+        existing_count = _optional_int(existing.get(key))
+        if existing_count is None:
+            continue
+        if current_count is None or existing_count > current_count:
+            merged[key] = existing.get(key)
+    for key, value in existing.items():
+        if key not in merged:
+            merged[key] = value
+    return merged
+
+
+def _merge_scope_config(current: dict[str, Any], existing: dict[str, Any]) -> dict[str, Any]:
+    merged = dict(current)
+    for key, value in existing.items():
+        if key in {"multi_confluence_sizes", "inversion_selector_confluence_sizes"}:
+            merged[key] = _merge_numeric_lists(current.get(key), value)
+            continue
+        if key not in merged or merged.get(key) in (None, "", []):
+            merged[key] = value
+            continue
+        if current.get(key) != value:
+            merged[key] = value
+    return merged
+
+
+def _merge_numeric_lists(current: Any, existing: Any) -> list[Any]:
+    values: list[Any] = []
+    for source in (existing, current):
+        if not isinstance(source, list):
+            continue
+        for item in source:
+            if item not in values:
+                values.append(item)
+    try:
+        return sorted(values)
+    except TypeError:
+        return values
 
 
 def _summary(payload: dict[str, Any]) -> dict[str, Any]:

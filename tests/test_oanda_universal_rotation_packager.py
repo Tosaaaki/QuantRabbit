@@ -113,6 +113,48 @@ class OandaUniversalRotationPackagerTest(unittest.TestCase):
         self.assertEqual(len(rows), 2)
         self.assertEqual(rows[1]["pair"], "GBP_JPY")
 
+    def test_merges_focused_rows_when_latest_report_is_narrower(self) -> None:
+        packaged = packager.package_payload(
+            {
+                "high_precision_multi_confluence_count": 12,
+                "qualified_multi_confluence_count": 120,
+                "high_precision_multi_confluences": [
+                    {
+                        "pair": "AUD_USD",
+                        "side": "SHORT",
+                        "shape": "range_reversion",
+                        "exit_shape": "tp1p25_sl1",
+                        "feature_a": "session:rollover",
+                        "validation_n": 15,
+                        "validation_win_rate": 0.8667,
+                    }
+                ],
+            },
+            source_report=Path("focused.json"),
+        )
+        existing = {
+            "summary": {
+                "high_precision_multi_confluence_count": 149,
+                "qualified_multi_confluence_count": 8292,
+            },
+            "high_precision_multi_confluences": [
+                {
+                    "pair": "GBP_JPY",
+                    "side": "LONG",
+                    "shape": "trend_continuation",
+                    "exit_shape": "tp1_sl1",
+                    "feature_a": "session:london_open",
+                    "validation_n": 24,
+                }
+            ],
+        }
+
+        packager.preserve_existing_rule_rows(packaged, existing)
+
+        rows = packaged["high_precision_multi_confluences"]
+        self.assertEqual({row["pair"] for row in rows}, {"AUD_USD", "GBP_JPY"})
+        self.assertEqual(rows[1]["pair"], "AUD_USD")
+
     def test_does_not_preserve_existing_rule_rows_when_summary_confirms_smaller_universe(self) -> None:
         packaged = packager.package_payload(
             {
@@ -187,6 +229,7 @@ class OandaUniversalRotationPackagerTest(unittest.TestCase):
         packaged = packager.package_payload(payload, source_report=Path("latest.json"))
         packager.preserve_existing_rule_rows(packaged, existing)
         packager.preserve_existing_campaign_firepower(packaged, existing)
+        packager.preserve_existing_scope_metadata(packaged, existing)
 
         self.assertTrue(packaged["campaign_firepower_preserved_from_existing"])
         self.assertEqual(packaged["campaign_firepower"]["status"], "VERIFIED_TARGET_10_ROUTE_ESTIMATED")
@@ -194,6 +237,50 @@ class OandaUniversalRotationPackagerTest(unittest.TestCase):
         self.assertEqual(packaged["campaign_firepower_source_report"], existing["source_report"])
         self.assertEqual(packaged["high_precision_inversion_selectors"], existing["high_precision_inversion_selectors"])
         self.assertEqual(packaged["summary"]["history_pairs"], 2)
+        self.assertEqual(packaged["summary"]["high_precision_multi_confluence_count"], 149)
+        self.assertEqual(packaged["summary"]["qualified_pair_confluence_count"], 629)
+        self.assertTrue(packaged["scope_metadata_preserved_from_existing"])
+        self.assertEqual(packaged["narrow_source_summary"]["history_pairs"], 2)
+
+    def test_preserves_broader_config_when_latest_report_is_narrower(self) -> None:
+        packaged = packager.package_payload(
+            {
+                "high_precision_multi_confluence_count": 12,
+                "qualified_multi_confluence_count": 120,
+                "config": {
+                    "min_positive_day_rate": 0.6,
+                    "multi_confluence_sizes": [3],
+                    "inversion_selector_confluence_sizes": [2],
+                },
+                "high_precision_multi_confluences": [],
+            },
+            source_report=Path("focused.json"),
+        )
+        existing = {
+            "source_report": "logs/reports/forecast_improvement/oanda_universal_rotation_mining_latest.json",
+            "summary": {
+                "high_precision_multi_confluence_count": 149,
+                "qualified_multi_confluence_count": 8292,
+            },
+            "config": {
+                "min_positive_day_rate": 0.55,
+                "min_validation_win_rate": 0.52,
+                "multi_confluence_sizes": [3, 4],
+                "inversion_selector_confluence_sizes": [2, 3],
+            },
+        }
+
+        packager.preserve_existing_scope_metadata(packaged, existing)
+
+        self.assertEqual(packaged["config"]["min_positive_day_rate"], 0.55)
+        self.assertEqual(packaged["config"]["min_validation_win_rate"], 0.52)
+        self.assertEqual(packaged["config"]["multi_confluence_sizes"], [3, 4])
+        self.assertEqual(packaged["config"]["inversion_selector_confluence_sizes"], [2, 3])
+        self.assertEqual(packaged["narrow_source_config"]["multi_confluence_sizes"], [3])
+        self.assertEqual(
+            packaged["scope_metadata_source_report"],
+            existing["source_report"],
+        )
 
     def test_uses_latest_campaign_firepower_when_report_is_not_narrower(self) -> None:
         payload = {

@@ -674,6 +674,66 @@ class ForecastPrecisionConfluenceTest(unittest.TestCase):
         )
         self.assertEqual(assessment["score_delta"], 10.0)
 
+    def test_oanda_universal_rotation_dynamic_report_cannot_downgrade_static_rank_edge(self) -> None:
+        metadata = {
+            "forecast_direction": "DOWN",
+            "chart_direction_bias": "SHORT",
+            "m5_atr_percentile_100": 0.82,
+            "session_bucket": "ASIA",
+            "tp_execution_mode": "ATTACHED_TECHNICAL_TP",
+            "tp_target_intent": "HARVEST",
+            "opportunity_mode": "HARVEST",
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            rules_path = Path(tmp) / "oanda_universal_rotation_mining_latest.json"
+            rules_path.write_text(
+                json.dumps(
+                    {
+                        "generated_at_utc": "2026-06-23T07:33:49Z",
+                        "high_precision_pair_confluences": [
+                            {
+                                "pair": "GBP_USD",
+                                "shape": "range_reversion",
+                                "side": "SHORT",
+                                "exit_shape": "tp1_sl1",
+                                "feature_a": "atr_regime:high",
+                                "feature_b": "session:asia",
+                                "qualification": "PASS",
+                                "train_n": 62,
+                                "train_win_rate": 0.483871,
+                                "validation_n": 27,
+                                "validation_win_rate": 0.777778,
+                                "validation_win_wilson95_lower": 0.592427,
+                                "validation_avg_realized_pips": 4.158995,
+                                "validation_avg_realized_atr": 0.522118,
+                                "validation_profit_factor": 3.580386,
+                                "active_days": 7,
+                                "positive_day_rate": 1.0,
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            assessment = oanda_universal_rotation_precision_assessment(
+                metadata,
+                pair="GBP_USD",
+                side="SHORT",
+                order_type="LIMIT",
+                method="RANGE_ROTATION",
+                entry=1.30000,
+                take_profit=1.29950,
+                stop_loss=1.30070,
+                rules_path=rules_path,
+            )
+
+        support = assessment["primary_rank_support"]
+        self.assertEqual(support["validation_samples"], 30)
+        self.assertEqual(support["rank_score_bonus"], 10.0)
+        self.assertNotIn("rule_source_section", support)
+        self.assertEqual(assessment["score_delta"], 10.0)
+
     def test_oanda_universal_rotation_loads_latest_mining_report_pair_confluence(self) -> None:
         metadata = {
             "forecast_direction": "UP",

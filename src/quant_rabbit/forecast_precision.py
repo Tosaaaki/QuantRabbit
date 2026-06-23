@@ -797,10 +797,10 @@ def _merge_oanda_universal_rotation_rules(
     )
 
 
-def _oanda_universal_rotation_rule_sort_key(rule: dict[str, Any]) -> tuple[int, float, float, float, float, int]:
+def _oanda_universal_rotation_rule_sort_key(rule: dict[str, Any]) -> tuple[float, float, float, float, int, int]:
     return (
-        1 if rule.get("rule_set_source") else 0,
         float(rule.get("rank_score_bonus") or 0.0),
+        1 if rule.get("rule_set_source") else 0,
         float(rule.get("capital_efficiency_score") or 0.0),
         float(rule.get("validation_win_wilson95_lower") or 0.0),
         float(rule.get("validation_profit_factor") or 0.0),
