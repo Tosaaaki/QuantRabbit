@@ -7111,6 +7111,50 @@ class IntentGeneratorTest(unittest.TestCase):
         weak_issue = _forecast_live_readiness_issue(intent, weak_metadata, TradeMethod.RANGE_ROTATION)
         self.assertEqual(weak_issue["code"], "FORECAST_CONFIDENCE_REQUIRED_FOR_LIVE")
 
+    def test_range_forecast_allows_tp_proven_breakout_failure_limit_for_live_context(self) -> None:
+        from quant_rabbit.models import MarketContext, OrderIntent, OrderType, Side, TradeMethod
+        from quant_rabbit.strategy.intent_generator import _forecast_live_readiness_issue
+
+        os.environ["QR_REQUIRE_FORECAST_FOR_LIVE"] = "1"
+        metadata = {
+            "forecast_direction": "RANGE",
+            "forecast_confidence": 0.54,
+            "attach_take_profit_on_fill": True,
+            "tp_execution_mode": "ATTACHED_TECHNICAL_TP",
+            "tp_target_intent": "HARVEST",
+            "opportunity_mode": "HARVEST",
+            "positive_rotation_mode": "TP_PROVEN_HARVEST",
+            "positive_rotation_live_ready": True,
+            "positive_rotation_pessimistic_expectancy_jpy": 180.0,
+            "capture_take_profit_scope": "PAIR_SIDE_METHOD",
+            "capture_take_profit_scope_key": "EUR_USD|LONG|BREAKOUT_FAILURE|TAKE_PROFIT_ORDER",
+            "capture_take_profit_trades": 20,
+            "capture_take_profit_losses": 0,
+            "capture_take_profit_expectancy_jpy": 591.5,
+        }
+        intent = OrderIntent(
+            pair="EUR_USD",
+            side=Side.LONG,
+            order_type=OrderType.LIMIT,
+            units=4000,
+            entry=1.1619,
+            tp=1.1633,
+            sl=1.1601,
+            thesis="tp-proven failed-break fade",
+            market_context=MarketContext(
+                regime="RANGE current; BREAKOUT_FAILURE campaign lane",
+                narrative="failed-break fade has exact local broker TP proof",
+                chart_story="support reclaim inside the box",
+                method=TradeMethod.BREAKOUT_FAILURE,
+                invalidation="support fails",
+            ),
+            metadata=metadata,
+        )
+
+        self.assertIsNone(
+            _forecast_live_readiness_issue(intent, metadata, TradeMethod.BREAKOUT_FAILURE)
+        )
+
     def test_range_limit_uses_same_side_unselected_projection_support(self) -> None:
         from quant_rabbit.models import MarketContext, OrderIntent, OrderType, Side, TradeMethod
         from quant_rabbit.strategy.intent_generator import _forecast_live_readiness_issue

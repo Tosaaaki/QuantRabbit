@@ -1628,6 +1628,53 @@ class RiskEngineTest(unittest.TestCase):
         self.assertFalse(decision.allowed)
         self.assertIn("RANGE_FORECAST_REQUIRES_RANGE_ROTATION", {issue.code for issue in decision.issues})
 
+    def test_range_forecast_allows_exact_tp_proven_breakout_failure_limit(self) -> None:
+        intent = OrderIntent(
+            pair="EUR_USD",
+            side=Side.LONG,
+            order_type=OrderType.LIMIT,
+            units=1000,
+            entry=1.17300,
+            tp=1.17500,
+            sl=1.17200,
+            thesis="tp_proven_failed_break_fade_inside_range",
+            market_context=MarketContext(
+                regime="RANGE current; failed-break fade at support",
+                narrative="range forecast plus exact broker-TP proof for the passive fade",
+                chart_story="failed breakdown reclaimed support",
+                method=TradeMethod.BREAKOUT_FAILURE,
+                invalidation="support fails",
+            ),
+            metadata={
+                "forecast_direction": "RANGE",
+                "forecast_confidence": 0.72,
+                "attach_take_profit_on_fill": True,
+                "tp_execution_mode": "ATTACHED_TECHNICAL_TP",
+                "tp_target_intent": "HARVEST",
+                "opportunity_mode": "HARVEST",
+                "positive_rotation_mode": "TP_PROVEN_HARVEST",
+                "positive_rotation_live_ready": True,
+                "positive_rotation_pessimistic_expectancy_jpy": 180.0,
+                "capture_take_profit_scope": "PAIR_SIDE_METHOD",
+                "capture_take_profit_scope_key": "EUR_USD|LONG|BREAKOUT_FAILURE|TAKE_PROFIT_ORDER",
+                "capture_take_profit_trades": 20,
+                "capture_take_profit_losses": 0,
+                "capture_take_profit_expectancy_jpy": 591.5,
+            },
+        )
+
+        decision = _capped_engine(live_enabled=True).validate(
+            intent,
+            snapshot(),
+            for_live_send=True,
+        )
+
+        self.assertTrue(decision.allowed, decision.block_reasons)
+        self.assertNotIn(
+            "RANGE_FORECAST_REQUIRES_RANGE_ROTATION",
+            {issue.code for issue in decision.issues},
+        )
+
     def test_range_forecast_blocks_opposite_unselected_projection_for_live_send(self) -> None:
         intent = OrderIntent(
             pair="EUR_USD",

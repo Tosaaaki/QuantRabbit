@@ -1674,6 +1674,8 @@ def _forecast_range_method_issues(
     method = intent.market_context.method if intent.market_context is not None else None
     if method == TradeMethod.RANGE_ROTATION:
         return []
+    if _range_forecast_tp_proven_breakout_failure_allowed(intent, method):
+        return []
     if (
         _intent_declares_recovery_hedge(intent)
         and str(metadata.get("hedge_timing_class") or "").upper() == "REVERSAL"
@@ -1690,6 +1692,59 @@ def _forecast_range_method_issues(
             severity=severity,
         )
     ]
+
+
+def _range_forecast_tp_proven_breakout_failure_allowed(
+    intent: OrderIntent,
+    method: TradeMethod | None,
+) -> bool:
+    """Allow only the exact broker-TP-proven failed-break fade inside RANGE.
+
+    A RANGE forecast still must not authorize generic trend/failure chasing.
+    The exception is the already realized TP_PROVEN_HARVEST BREAKOUT_FAILURE
+    LIMIT shape: it is a passive failed-break fade with exact pair/side/method
+    TAKE_PROFIT_ORDER proof and positive Wilson-stressed expectancy.
+    """
+
+    if method != TradeMethod.BREAKOUT_FAILURE:
+        return False
+    if intent.order_type == OrderType.MARKET:
+        return False
+    metadata = intent.metadata or {}
+    if str(metadata.get("position_intent") or "NEW").upper() == "HEDGE":
+        return False
+    if metadata.get("attach_take_profit_on_fill") is not True:
+        return False
+    if str(metadata.get("tp_execution_mode") or "").upper() != "ATTACHED_TECHNICAL_TP":
+        return False
+    if str(metadata.get("tp_target_intent") or "").upper() != "HARVEST":
+        return False
+    if str(metadata.get("opportunity_mode") or "").upper() != "HARVEST":
+        return False
+    if str(metadata.get("positive_rotation_mode") or "").upper() != "TP_PROVEN_HARVEST":
+        return False
+    if metadata.get("positive_rotation_live_ready") is not True:
+        return False
+    if str(metadata.get("capture_take_profit_scope") or "").upper() != "PAIR_SIDE_METHOD":
+        return False
+    expected_scope = (
+        f"{intent.pair}|{intent.side.value}|{method.value}|TAKE_PROFIT_ORDER"
+    ).upper()
+    if str(metadata.get("capture_take_profit_scope_key") or "").upper() != expected_scope:
+        return False
+    tp_trades = int(_to_float(metadata.get("capture_take_profit_trades")) or 0)
+    if tp_trades < LOSS_ASYMMETRY_TP_RELAX_MIN_EXIT_TRADES:
+        return False
+    tp_losses = int(_to_float(metadata.get("capture_take_profit_losses")) or 0)
+    if tp_losses != 0:
+        return False
+    tp_expectancy = _to_float(metadata.get("capture_take_profit_expectancy_jpy"))
+    if tp_expectancy is None or tp_expectancy <= 0:
+        return False
+    pessimistic = _to_float(metadata.get("positive_rotation_pessimistic_expectancy_jpy"))
+    if pessimistic is None or pessimistic <= 0:
+        return False
+    return True
 
 
 @dataclass(frozen=True)

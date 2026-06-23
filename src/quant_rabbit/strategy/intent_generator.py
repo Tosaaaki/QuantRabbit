@@ -10716,7 +10716,18 @@ def _forecast_live_readiness_issue(
         return None
     direction = str(metadata.get("forecast_direction") or "").upper()
     confidence = _optional_float(metadata.get("forecast_confidence"))
-    min_confidence = _forecast_live_min_confidence(metadata)
+    range_tp_proven_breakout_failure = _range_forecast_tp_proven_breakout_failure_allowed(
+        intent,
+        metadata,
+        method,
+    )
+    if range_tp_proven_breakout_failure:
+        min_confidence = min(
+            _forecast_seed_min_confidence(),
+            FORECAST_RANGE_ROTATION_MIN_CONFIDENCE,
+        )
+    else:
+        min_confidence = _forecast_live_min_confidence(metadata)
     recovery_reversal_override = _reversal_recovery_chart_forecast_override(intent, metadata)
     recovery_reversal_hedge = (
         _is_hedge_recovery_metadata(metadata)
@@ -10758,6 +10769,7 @@ def _forecast_live_readiness_issue(
     if (
         direction == "RANGE"
         and method != TradeMethod.RANGE_ROTATION
+        and not range_tp_proven_breakout_failure
         and not (
             _is_hedge_recovery_metadata(metadata)
             and str(metadata.get("hedge_timing_class") or "").upper() == "REVERSAL"
@@ -10803,6 +10815,53 @@ def _forecast_live_readiness_issue(
     if weak_calibration_issue is not None:
         return weak_calibration_issue
     return None
+
+
+def _range_forecast_tp_proven_breakout_failure_allowed(
+    intent: OrderIntent,
+    metadata: dict[str, Any],
+    method: TradeMethod | None,
+) -> bool:
+    """Allow only exact TP-proven failed-break fades under RANGE forecasts."""
+
+    if method != TradeMethod.BREAKOUT_FAILURE:
+        return False
+    if intent.order_type == OrderType.MARKET:
+        return False
+    if str(metadata.get("position_intent") or "NEW").upper() == "HEDGE":
+        return False
+    if metadata.get("attach_take_profit_on_fill") is not True:
+        return False
+    if str(metadata.get("tp_execution_mode") or "").upper() != "ATTACHED_TECHNICAL_TP":
+        return False
+    if str(metadata.get("tp_target_intent") or "").upper() != "HARVEST":
+        return False
+    if str(metadata.get("opportunity_mode") or "").upper() != "HARVEST":
+        return False
+    if str(metadata.get("positive_rotation_mode") or "").upper() != "TP_PROVEN_HARVEST":
+        return False
+    if metadata.get("positive_rotation_live_ready") is not True:
+        return False
+    if not _capture_take_profit_scope_matches_values(
+        pair=intent.pair,
+        side=intent.side,
+        method=method,
+        metadata=metadata,
+    ):
+        return False
+    tp_trades = int(_optional_float(metadata.get("capture_take_profit_trades")) or 0)
+    if tp_trades < LOSS_ASYMMETRY_TP_RELAX_MIN_EXIT_TRADES:
+        return False
+    tp_losses = int(_optional_float(metadata.get("capture_take_profit_losses")) or 0)
+    if tp_losses != 0:
+        return False
+    tp_expectancy = _optional_float(metadata.get("capture_take_profit_expectancy_jpy"))
+    if tp_expectancy is None or tp_expectancy <= 0:
+        return False
+    pessimistic = _optional_float(metadata.get("positive_rotation_pessimistic_expectancy_jpy"))
+    if pessimistic is None or pessimistic <= 0:
+        return False
+    return True
 
 
 def _forecast_directional_hit_rate_issue(
