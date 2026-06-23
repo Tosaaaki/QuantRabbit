@@ -23,7 +23,7 @@
         "NEEDS_HIGHER_POSITIVE_DAY_RATE"
       ],
       "adoption_status": "RANK_ONLY_NOT_DAILY_STABLE",
-      "audit_report": "logs/reports/forecast_improvement/oanda_history_replay_validate_20260623T150148Z.json",
+      "audit_report": "logs/reports/forecast_improvement/oanda_history_replay_validate_20260623T155504Z.json",
       "avg_daily_realized_pips": 56.75,
       "avg_daily_samples": 20.0,
       "avg_final_pips": 4.8425,
@@ -94,7 +94,7 @@
         "NEEDS_HIGHER_POSITIVE_DAY_RATE"
       ],
       "adoption_status": "RANK_ONLY_NOT_DAILY_STABLE",
-      "audit_report": "logs/reports/forecast_improvement/oanda_history_replay_validate_20260623T150148Z.json",
+      "audit_report": "logs/reports/forecast_improvement/oanda_history_replay_validate_20260623T155504Z.json",
       "avg_daily_realized_pips": 56.75,
       "avg_daily_samples": 20.0,
       "avg_final_pips": 4.8425,
@@ -167,7 +167,7 @@
         "NEEDS_HIGHER_POSITIVE_DAY_RATE"
       ],
       "adoption_status": "RANK_ONLY_NOT_DAILY_STABLE",
-      "audit_report": "logs/reports/forecast_improvement/oanda_history_replay_validate_20260623T150148Z.json",
+      "audit_report": "logs/reports/forecast_improvement/oanda_history_replay_validate_20260623T155504Z.json",
       "avg_daily_realized_pips": 96.9667,
       "avg_daily_samples": 38.0,
       "avg_final_pips": 2.3965,
@@ -228,7 +228,7 @@
     "under_sampled_pair_directions": 48,
     "unscorable_no_market_samples": 12
   },
-  "generated_at_utc": "2026-06-23T15:01:48.012560Z",
+  "generated_at_utc": "2026-06-23T15:55:04.296020Z",
   "generated_from": "scripts/oanda_history_replay_validate.py",
   "granularity": "S5",
   "history_dirs": [
@@ -247,7 +247,8 @@
     "logs/replay/oanda_history/20260623T121003Z",
     "logs/replay/oanda_history/20260623T125134Z",
     "logs/replay/oanda_history/20260623T142103Z",
-    "logs/replay/oanda_history/20260623T143203Z"
+    "logs/replay/oanda_history/20260623T143203Z",
+    "logs/replay/oanda_history/20260623T155043Z"
   ],
   "negative_rules": [
     {
@@ -256,7 +257,7 @@
         "NEGATIVE_EXPECTANCY"
       ],
       "adoption_status": "LIVE_BLOCK_NEGATIVE_EXPECTANCY",
-      "audit_report": "logs/reports/forecast_improvement/oanda_history_replay_validate_20260623T150148Z.json",
+      "audit_report": "logs/reports/forecast_improvement/oanda_history_replay_validate_20260623T155504Z.json",
       "avg_daily_realized_pips": -45.0,
       "avg_daily_samples": 22.5,
       "avg_final_pips": -6.4356,
@@ -316,25 +317,25 @@
       "COLLECT_MORE_FORECAST_SAMPLES"
     ],
     "candidate_rule_validation_blocked": false,
-    "deduped_directional_rows": 682,
-    "evaluated_rows": 670,
+    "deduped_directional_rows": 687,
+    "evaluated_rows": 675,
     "future_price_truth_window_group_count": 0,
     "global_currency_validation_blocked": true,
-    "history_candles": 358702,
+    "history_candles": 359657,
     "history_fetch_command": null,
     "history_fetch_command_count": 0,
     "history_fetch_command_mode": "WINDOWED",
     "history_fetch_commands": [],
-    "history_files": 85,
+    "history_files": 90,
     "missing_pair_directions": [],
     "missing_pairs": [],
     "missing_price_truth_samples": 0,
     "missing_price_window_group_count": 0,
-    "raw_directional_rows": 1347,
+    "raw_directional_rows": 1352,
     "reason": "All loaded forecast samples have local bid/ask candle truth for this replay window.",
     "required_min_evaluated_rows": 30,
     "status": "PRICE_TRUTH_OK",
-    "under_sampled_missing_evaluated_samples": 1103,
+    "under_sampled_missing_evaluated_samples": 1098,
     "under_sampled_pair_direction_count": 48,
     "under_sampled_pair_directions": [
       "EUR_GBP:UP",
@@ -353,12 +354,12 @@
       "GBP_JPY:UP",
       "EUR_NZD:DOWN",
       "AUD_CAD:UP",
-      "GBP_JPY:DOWN",
-      "AUD_NZD:UP",
       "GBP_CAD:DOWN",
       "EUR_CHF:DOWN",
       "AUD_CHF:UP",
+      "AUD_NZD:UP",
       "GBP_CAD:UP",
+      "GBP_JPY:DOWN",
       "NZD_JPY:DOWN",
       "USD_CAD:UP"
     ],
