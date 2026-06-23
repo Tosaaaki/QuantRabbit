@@ -113,9 +113,22 @@ def main() -> int:
         except (OSError, json.JSONDecodeError, ValueError):
             existing = {}
         if isinstance(existing, dict):
-            preserve_existing_rule_rows(packaged, existing)
-            preserve_existing_campaign_firepower(packaged, existing)
-            preserve_existing_scope_metadata(packaged, existing)
+            report_is_narrower = _packaged_report_is_narrower(packaged, existing)
+            preserve_existing_campaign_firepower(
+                packaged,
+                existing,
+                report_is_narrower=report_is_narrower,
+            )
+            preserve_existing_scope_metadata(
+                packaged,
+                existing,
+                report_is_narrower=report_is_narrower,
+            )
+            preserve_existing_rule_rows(
+                packaged,
+                existing,
+                report_is_narrower=report_is_narrower,
+            )
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(
         json.dumps(packaged, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
@@ -340,7 +353,12 @@ def _days_needed(target_return_pct: float, return_per_active_day_pct: float) -> 
     return round(target_return_pct / return_per_active_day_pct, 6)
 
 
-def preserve_existing_rule_rows(packaged: dict[str, Any], existing: dict[str, Any]) -> None:
+def preserve_existing_rule_rows(
+    packaged: dict[str, Any],
+    existing: dict[str, Any],
+    *,
+    report_is_narrower: bool | None = None,
+) -> None:
     """Avoid shrinking packaged forecast rules when the source is a top-N excerpt.
 
     A focused mining run may contain new rows for a narrow pair subset while the
@@ -352,7 +370,11 @@ def preserve_existing_rule_rows(packaged: dict[str, Any], existing: dict[str, An
     summary = packaged.get("summary")
     if not isinstance(summary, dict):
         return
-    narrower_report = _packaged_report_is_narrower(packaged, existing)
+    narrower_report = (
+        _packaged_report_is_narrower(packaged, existing)
+        if report_is_narrower is None
+        else report_is_narrower
+    )
     for section in RULE_SECTIONS:
         current_rows = packaged.get(section)
         existing_rows = existing.get(section)
@@ -371,14 +393,24 @@ def preserve_existing_rule_rows(packaged: dict[str, Any], existing: dict[str, An
         _preserve_section_summary_count(section, packaged, existing)
 
 
-def preserve_existing_campaign_firepower(packaged: dict[str, Any], existing: dict[str, Any]) -> None:
+def preserve_existing_campaign_firepower(
+    packaged: dict[str, Any],
+    existing: dict[str, Any],
+    *,
+    report_is_narrower: bool | None = None,
+) -> None:
     """Keep broader campaign-firepower proof when packaging a narrower mining run."""
 
     current_firepower = packaged.get("campaign_firepower")
     existing_firepower = existing.get("campaign_firepower")
     if not isinstance(current_firepower, dict) or not isinstance(existing_firepower, dict):
         return
-    if not _packaged_report_is_narrower(packaged, existing):
+    narrower_report = (
+        _packaged_report_is_narrower(packaged, existing)
+        if report_is_narrower is None
+        else report_is_narrower
+    )
+    if not narrower_report:
         return
     current_vehicles = _firepower_unique_vehicle_count(current_firepower)
     existing_vehicles = _firepower_unique_vehicle_count(existing_firepower)
@@ -396,10 +428,20 @@ def preserve_existing_campaign_firepower(packaged: dict[str, Any], existing: dic
         packaged["campaign_firepower_source_report"] = existing.get("source_report")
 
 
-def preserve_existing_scope_metadata(packaged: dict[str, Any], existing: dict[str, Any]) -> None:
+def preserve_existing_scope_metadata(
+    packaged: dict[str, Any],
+    existing: dict[str, Any],
+    *,
+    report_is_narrower: bool | None = None,
+) -> None:
     """Keep report-scope metadata from narrowing when rows/firepower are preserved."""
 
-    if not _packaged_report_is_narrower(packaged, existing):
+    narrower_report = (
+        _packaged_report_is_narrower(packaged, existing)
+        if report_is_narrower is None
+        else report_is_narrower
+    )
+    if not narrower_report:
         return
     current_summary = packaged.get("summary") if isinstance(packaged.get("summary"), dict) else {}
     existing_summary = existing.get("summary") if isinstance(existing.get("summary"), dict) else {}

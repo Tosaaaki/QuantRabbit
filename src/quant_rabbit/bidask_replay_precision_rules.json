@@ -23,7 +23,7 @@
         "NEEDS_HIGHER_POSITIVE_DAY_RATE"
       ],
       "adoption_status": "RANK_ONLY_NOT_DAILY_STABLE",
-      "audit_report": "logs/reports/forecast_improvement/oanda_history_replay_validate_20260623T090635Z.json",
+      "audit_report": "logs/reports/forecast_improvement/oanda_history_replay_validate_20260623T100458Z.json",
       "avg_daily_realized_pips": 56.75,
       "avg_daily_samples": 20.0,
       "avg_final_pips": 4.8425,
@@ -94,7 +94,7 @@
         "NEEDS_HIGHER_POSITIVE_DAY_RATE"
       ],
       "adoption_status": "RANK_ONLY_NOT_DAILY_STABLE",
-      "audit_report": "logs/reports/forecast_improvement/oanda_history_replay_validate_20260623T090635Z.json",
+      "audit_report": "logs/reports/forecast_improvement/oanda_history_replay_validate_20260623T100458Z.json",
       "avg_daily_realized_pips": 56.75,
       "avg_daily_samples": 20.0,
       "avg_final_pips": 4.8425,
@@ -167,7 +167,7 @@
         "NEEDS_HIGHER_POSITIVE_DAY_RATE"
       ],
       "adoption_status": "RANK_ONLY_NOT_DAILY_STABLE",
-      "audit_report": "logs/reports/forecast_improvement/oanda_history_replay_validate_20260623T090635Z.json",
+      "audit_report": "logs/reports/forecast_improvement/oanda_history_replay_validate_20260623T100458Z.json",
       "avg_daily_realized_pips": 116.76,
       "avg_daily_samples": 45.2,
       "avg_final_pips": 2.3425,
@@ -228,7 +228,7 @@
     "under_sampled_pair_directions": 48,
     "unscorable_no_market_samples": 12
   },
-  "generated_at_utc": "2026-06-23T09:06:35.039938Z",
+  "generated_at_utc": "2026-06-23T10:04:58.625505Z",
   "generated_from": "scripts/oanda_history_replay_validate.py",
   "granularity": "S5",
   "history_dirs": [
@@ -237,7 +237,8 @@
     "logs/replay/oanda_history/20260623T041751Z",
     "logs/replay/oanda_history/20260623T061558Z",
     "logs/replay/oanda_history/20260623T061609Z",
-    "logs/replay/oanda_history/20260623T085130Z"
+    "logs/replay/oanda_history/20260623T085130Z",
+    "logs/replay/oanda_history/20260623T094031Z"
   ],
   "negative_rules": [
     {
@@ -246,7 +247,7 @@
         "NEGATIVE_EXPECTANCY"
       ],
       "adoption_status": "LIVE_BLOCK_NEGATIVE_EXPECTANCY",
-      "audit_report": "logs/reports/forecast_improvement/oanda_history_replay_validate_20260623T090635Z.json",
+      "audit_report": "logs/reports/forecast_improvement/oanda_history_replay_validate_20260623T100458Z.json",
       "avg_daily_realized_pips": -45.0,
       "avg_daily_samples": 22.5,
       "avg_final_pips": -6.4356,
@@ -315,7 +316,7 @@
     "history_fetch_command_count": 0,
     "history_fetch_command_mode": "WINDOWED",
     "history_fetch_commands": [],
-    "history_files": 42,
+    "history_files": 46,
     "missing_pair_directions": [],
     "missing_pairs": [],
     "missing_price_truth_samples": 0,

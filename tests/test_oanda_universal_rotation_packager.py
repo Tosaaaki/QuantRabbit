@@ -370,6 +370,132 @@ class OandaUniversalRotationPackagerTest(unittest.TestCase):
         self.assertTrue(packaged["scope_metadata_preserved_from_existing"])
         self.assertEqual(packaged["narrow_source_summary"]["history_pairs"], 2)
 
+    def test_preservation_uses_original_scope_before_rule_rows_expand_counts(self) -> None:
+        payload = {
+            "generated_at_utc": "2026-06-23T10:09:16Z",
+            "history_pairs": 2,
+            "high_precision_multi_confluence_count": 44,
+            "high_precision_pair_confluence_count": 0,
+            "qualified_multi_confluence_count": 1139,
+            "qualified_pair_confluence_count": 73,
+            "campaign_firepower": {
+                "status": "VERIFIED_MINIMUM_5_ROUTE_ESTIMATED",
+                "high_precision": {
+                    "unique_vehicle_count": 8,
+                    "estimated_return_pct_per_active_day_at_observed_frequency": 8.57,
+                },
+            },
+            "high_precision_multi_confluences": [
+                {
+                    "pair": "GBP_JPY",
+                    "side": "LONG",
+                    "shape": "trend_continuation",
+                    "exit_shape": "tp1_sl1",
+                    "feature_a": "session:london_open",
+                    "validation_n": 24,
+                }
+            ],
+            "qualified_multi_confluences": [
+                {
+                    "pair": "GBP_JPY",
+                    "side": "SHORT",
+                    "shape": "range_reversion",
+                    "exit_shape": "tp1_sl1",
+                    "feature_a": "session:london_ny_overlap",
+                    "validation_n": 21,
+                }
+            ],
+        }
+        existing = {
+            "source_report": "merged_oanda_universal_rotation_reports",
+            "summary": {
+                "history_pairs": 8,
+                "high_precision_multi_confluence_count": 44,
+                "high_precision_pair_confluence_count": 6,
+                "qualified_multi_confluence_count": 1684,
+                "qualified_pair_confluence_count": 327,
+            },
+            "campaign_firepower": {
+                "status": "VERIFIED_TARGET_10_ROUTE_ESTIMATED",
+                "high_precision": {
+                    "unique_vehicle_count": 19,
+                    "estimated_return_pct_per_active_day_at_observed_frequency": 26.9,
+                },
+            },
+            "high_precision_multi_confluences": [
+                {
+                    "pair": "AUD_USD",
+                    "side": "SHORT",
+                    "shape": "range_reversion",
+                    "exit_shape": "tp1_sl1",
+                    "feature_a": "session:rollover",
+                    "validation_n": 16,
+                }
+            ],
+            "high_precision_pair_confluences": [
+                {
+                    "pair": "AUD_USD",
+                    "side": "SHORT",
+                    "shape": "range_reversion",
+                    "exit_shape": "tp1_sl1",
+                    "feature_a": "session:rollover",
+                    "validation_n": 16,
+                }
+            ],
+            "qualified_multi_confluences": [
+                {
+                    "pair": "AUD_USD",
+                    "side": "SHORT",
+                    "shape": "range_reversion",
+                    "exit_shape": "tp1_sl1",
+                    "feature_a": "session:rollover",
+                    "validation_n": 16,
+                }
+            ],
+            "qualified_pair_confluences": [
+                {
+                    "pair": "AUD_USD",
+                    "side": "SHORT",
+                    "shape": "range_reversion",
+                    "exit_shape": "tp1_sl1",
+                    "feature_a": "session:rollover",
+                    "validation_n": 16,
+                }
+            ],
+        }
+
+        packaged = packager.package_payload(payload, source_report=Path("focused.json"))
+        report_is_narrower = packager._packaged_report_is_narrower(packaged, existing)
+        self.assertTrue(report_is_narrower)
+
+        packager.preserve_existing_campaign_firepower(
+            packaged,
+            existing,
+            report_is_narrower=report_is_narrower,
+        )
+        packager.preserve_existing_scope_metadata(
+            packaged,
+            existing,
+            report_is_narrower=report_is_narrower,
+        )
+        packager.preserve_existing_rule_rows(
+            packaged,
+            existing,
+            report_is_narrower=report_is_narrower,
+        )
+
+        self.assertTrue(packaged["campaign_firepower_preserved_from_existing"])
+        self.assertEqual(packaged["campaign_firepower"]["status"], "VERIFIED_TARGET_10_ROUTE_ESTIMATED")
+        self.assertEqual(packaged["campaign_firepower"]["high_precision"]["unique_vehicle_count"], 19)
+        self.assertTrue(packaged["scope_metadata_preserved_from_existing"])
+        self.assertEqual(packaged["summary"]["history_pairs"], 8)
+        self.assertEqual(packaged["narrow_source_summary"]["history_pairs"], 2)
+        self.assertEqual(
+            {row["pair"] for row in packaged["high_precision_multi_confluences"]},
+            {"AUD_USD", "GBP_JPY"},
+        )
+        self.assertEqual(packaged["summary"]["high_precision_pair_confluence_count"], 6)
+
     def test_preserves_broader_config_when_latest_report_is_narrower(self) -> None:
         packaged = packager.package_payload(
             {
