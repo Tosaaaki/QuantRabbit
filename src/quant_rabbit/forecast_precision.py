@@ -1514,6 +1514,78 @@ def bidask_replay_precision_support(
     return support if isinstance(support, dict) else None
 
 
+def bidask_replay_precision_geometry_candidate(
+    metadata: dict[str, Any],
+    *,
+    pair: str,
+    side: str,
+    order_type: str | None,
+    method: str | None,
+    rules_path: str | Path | None = None,
+) -> dict[str, Any] | None:
+    """Return the live-grade S5 bid/ask replay TP/SL geometry to emit.
+
+    `bidask_replay_precision_support` validates an already-priced order. This
+    helper is the inverse: if the current forecast bucket and pair/side match a
+    DAILY_STABLE replay edge, return the audited TP/SL grid so intent
+    generation can build the same vehicle instead of accidentally changing the
+    evidence-backed shape.
+    """
+
+    if not isinstance(metadata, dict):
+        return None
+    if str(order_type or "").upper() == "MARKET":
+        return None
+    if str(metadata.get("tp_execution_mode") or "").upper() != "ATTACHED_TECHNICAL_TP":
+        return None
+    if str(metadata.get("tp_target_intent") or "").upper() != "HARVEST":
+        return None
+    if str(metadata.get("opportunity_mode") or "").upper() not in {"", "HARVEST"}:
+        return None
+
+    normalized_pair = str(pair or "").upper()
+    normalized_side = str(side or "").upper()
+    normalized_direction = str(metadata.get("forecast_direction") or "").upper()
+    chart_bias = str(metadata.get("chart_direction_bias") or "").upper()
+    edge_rules, _negative_rules, contrarian_rules, _rule_source = _bidask_replay_rule_sets(rules_path)
+
+    matches: list[dict[str, Any]] = []
+    if not chart_bias or chart_bias == normalized_side:
+        for rule in edge_rules:
+            if not _bidask_replay_rule_is_daily_stable(rule):
+                continue
+            if not _bidask_replay_rule_matches(rule, normalized_pair, normalized_side, normalized_direction):
+                continue
+            matches.append(_bidask_replay_geometry_payload(rule))
+
+    for rule in contrarian_rules:
+        if not _bidask_replay_rule_is_daily_stable(rule):
+            continue
+        if not _bidask_replay_contrarian_rule_matches(
+            rule,
+            normalized_pair,
+            normalized_side,
+            normalized_direction,
+            metadata,
+        ):
+            continue
+        matches.append(_bidask_replay_geometry_payload(rule))
+
+    if not matches:
+        return None
+    candidate = max(
+        matches,
+        key=lambda item: (
+            float(item.get("optimized_profit_factor") or 0.0),
+            float(item.get("avg_daily_realized_pips") or 0.0),
+            float(item.get("directional_hit_rate") or 0.0),
+            int(item.get("samples") or 0),
+        ),
+    )
+    candidate["matched_precision_rule_count"] = len(matches)
+    return candidate
+
+
 def bidask_replay_negative_precision_issue(
     metadata: dict[str, Any],
     *,
@@ -2224,6 +2296,16 @@ def _bidask_replay_rule_payload(rule: dict[str, Any]) -> dict[str, Any]:
         "rule_set_source",
     )
     return {key: rule[key] for key in keys if key in rule}
+
+
+def _bidask_replay_geometry_payload(rule: dict[str, Any]) -> dict[str, Any]:
+    payload = _bidask_replay_rule_payload(rule)
+    payload["scalp_tp_pips"] = float(rule["optimized_take_profit_pips"])
+    payload["scalp_stop_pips"] = float(rule["optimized_stop_loss_pips"])
+    payload["min_target_pips"] = float(rule["min_target_pips"])
+    payload["max_target_pips"] = float(rule["max_target_pips"])
+    payload["max_stop_pips"] = float(rule["max_stop_pips"])
+    return payload
 
 
 def _oanda_universal_rotation_feature_values(

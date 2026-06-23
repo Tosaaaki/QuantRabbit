@@ -11,6 +11,7 @@ import quant_rabbit.forecast_precision as forecast_precision
 from quant_rabbit.forecast_precision import (
     bidask_replay_negative_precision_issue,
     bidask_replay_precision_assessment,
+    bidask_replay_precision_geometry_candidate,
     bidask_replay_precision_support,
     oanda_universal_rotation_precision_assessment,
     projection_precision_edge_summary,
@@ -282,6 +283,103 @@ class ForecastPrecisionConfluenceTest(unittest.TestCase):
             )["name"],
             "GBP_USD_UP_H61_240m_FADE_TO_DOWN_S5_BIDASK_CONTRARIAN_HARVEST_TP10_SL7",
         )
+
+    def test_bidask_replay_geometry_candidate_requires_daily_stable_live_grade(self) -> None:
+        metadata = {
+            "forecast_direction": "UP",
+            "forecast_confidence": 0.80,
+            "forecast_horizon_min": 90,
+            "chart_direction_bias": "LONG",
+            "tp_execution_mode": "ATTACHED_TECHNICAL_TP",
+            "tp_target_intent": "HARVEST",
+            "opportunity_mode": "HARVEST",
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            rules_path = Path(tmp) / "rules.json"
+            base_rule = {
+                "name": "AUD_JPY_UP_FADE_TO_DOWN_S5_BIDASK_CONTRARIAN_HARVEST_TP10_SL7",
+                "pair": "AUD_JPY",
+                "side": "SHORT",
+                "direction": "DOWN",
+                "forecast_direction": "UP",
+                "faded_direction": "UP",
+                "contrarian_edge": True,
+                "horizon_bucket": "61-240m",
+                "confidence_bucket": "0.75-0.90",
+                "granularity": "S5",
+                "samples": 124,
+                "directional_hit_rate": 0.76,
+                "avg_final_pips": 5.8,
+                "avg_mfe_pips": 12.0,
+                "avg_mae_pips": 4.5,
+                "optimized_take_profit_pips": 10.0,
+                "optimized_stop_loss_pips": 7.0,
+                "optimized_avg_realized_pips": 2.4,
+                "optimized_win_rate": 0.70,
+                "optimized_profit_factor": 2.5,
+                "active_days": 4,
+                "positive_day_rate": 0.75,
+                "min_target_pips": 9.8,
+                "max_target_pips": 10.5,
+                "max_stop_pips": 7.2,
+            }
+            rules_path.write_text(
+                json.dumps(
+                    {
+                        "schema_version": 1,
+                        "generated_at_utc": "2026-06-22T00:00:00Z",
+                        "generated_from": "unit-test",
+                        "edge_rules": [],
+                        "negative_rules": [],
+                        "contrarian_edge_rules": [
+                            {**base_rule, "daily_stability_status": "RANK_ONLY"}
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            self.assertIsNone(
+                bidask_replay_precision_geometry_candidate(
+                    metadata,
+                    pair="AUD_JPY",
+                    side="SHORT",
+                    order_type="LIMIT",
+                    method="BREAKOUT_FAILURE",
+                    rules_path=rules_path,
+                )
+            )
+
+            stable_path = Path(tmp) / "stable_rules.json"
+            stable_path.write_text(
+                json.dumps(
+                    {
+                        "schema_version": 1,
+                        "generated_at_utc": "2026-06-22T00:00:00Z",
+                        "generated_from": "unit-test",
+                        "edge_rules": [],
+                        "negative_rules": [],
+                        "contrarian_edge_rules": [
+                            {**base_rule, "daily_stability_status": "DAILY_STABLE"}
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            candidate = bidask_replay_precision_geometry_candidate(
+                metadata,
+                pair="AUD_JPY",
+                side="SHORT",
+                order_type="LIMIT",
+                method="BREAKOUT_FAILURE",
+                rules_path=stable_path,
+            )
+
+        self.assertIsNotNone(candidate)
+        assert candidate is not None
+        self.assertEqual(candidate["name"], base_rule["name"])
+        self.assertEqual(candidate["scalp_tp_pips"], 10.0)
+        self.assertEqual(candidate["scalp_stop_pips"], 7.0)
+        self.assertEqual(candidate["daily_stability_status"], "DAILY_STABLE")
 
     def test_bidask_replay_contrarian_support_fades_losing_forecast_bucket(self) -> None:
         metadata = {

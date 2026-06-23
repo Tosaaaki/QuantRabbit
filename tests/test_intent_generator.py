@@ -805,6 +805,123 @@ class IntentGeneratorTest(unittest.TestCase):
             self.assertEqual(kept["forecast_direction"], "DOWN")
             self.assertNotIn("forecast_watch_only", kept)
 
+    def test_bidask_replay_precision_seed_adds_exact_limit_harvest_lane(self) -> None:
+        from quant_rabbit.strategy.intent_generator import _order_variants_for
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            rules_path = root / "bidask_live_grade.json"
+            rules_path.write_text(
+                json.dumps(
+                    {
+                        "schema_version": 1,
+                        "generated_at_utc": "2026-06-22T00:00:00Z",
+                        "generated_from": "unit-test",
+                        "edge_rules": [],
+                        "negative_rules": [],
+                        "contrarian_edge_rules": [
+                            {
+                                "name": "AUD_JPY_UP_FADE_TO_DOWN_S5_BIDASK_CONTRARIAN_HARVEST_TP10_SL7",
+                                "pair": "AUD_JPY",
+                                "side": "SHORT",
+                                "direction": "DOWN",
+                                "forecast_direction": "UP",
+                                "faded_direction": "UP",
+                                "contrarian_edge": True,
+                                "confidence_bucket": "0.75-0.90",
+                                "horizon_bucket": "61-240m",
+                                "granularity": "S5",
+                                "samples": 124,
+                                "directional_hit_rate": 0.76,
+                                "avg_final_pips": 5.8,
+                                "avg_mfe_pips": 12.0,
+                                "avg_mae_pips": 4.5,
+                                "optimized_take_profit_pips": 10.0,
+                                "optimized_stop_loss_pips": 7.0,
+                                "optimized_avg_realized_pips": 2.4,
+                                "optimized_win_rate": 0.70,
+                                "optimized_profit_factor": 2.5,
+                                "daily_stability_status": "DAILY_STABLE",
+                                "active_days": 4,
+                                "positive_day_rate": 0.75,
+                                "min_target_pips": 9.8,
+                                "max_target_pips": 10.5,
+                                "max_stop_pips": 7.2,
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            source = {
+                "desk": "range_trader",
+                "pair": "AUD_JPY",
+                "direction": "LONG",
+                "method": TradeMethod.RANGE_ROTATION.value,
+                "adoption": "ORDER_INTENT_REQUIRED",
+                "campaign_role": "BASE_ROUTE",
+                "reason": "source lane",
+                "required_receipt": "build a current non-market receipt",
+                "blockers": [],
+            }
+            forecast = SimpleNamespace(
+                direction="UP",
+                confidence=0.80,
+                raw_confidence=0.80,
+                calibration_multiplier=1.0,
+                current_price=114.289,
+                target_price=114.389,
+                invalidation_price=114.189,
+                range_low_price=None,
+                range_high_price=None,
+                range_width_pips=None,
+                horizon_min=90,
+                rationale_summary="UP forecast bucket has audited fade edge",
+                drivers_for=[],
+                drivers_against=[],
+                component_scores={},
+                market_support={},
+            )
+            snapshot = BrokerSnapshot(
+                fetched_at_utc=datetime(2026, 6, 22, tzinfo=timezone.utc),
+                quotes={"AUD_JPY": Quote("AUD_JPY", bid=114.288, ask=114.290)},
+            )
+            charts = {"AUD_JPY": {"confluence": {"score_balance": "LONG_LEAN"}}}
+
+            with (
+                bidask_rules_env(rules_path),
+                patch(
+                    "quant_rabbit.strategy.intent_generator._forecast_seed_for_pair",
+                    return_value=forecast,
+                ),
+                patch(
+                    "quant_rabbit.strategy.intent_generator._forecast_seed_methods",
+                    return_value=[],
+                ),
+                patch(
+                    "quant_rabbit.strategy.intent_generator._record_forecast_seed_telemetry",
+                ),
+            ):
+                lanes = _append_forecast_seed_lanes(
+                    [source],
+                    charts,
+                    snapshot,
+                    data_root=root,
+                    forecast_cycle_id="cycle-1",
+                )
+
+        seed = lanes[0]
+        self.assertTrue(seed["bidask_replay_precision_seed"])
+        self.assertEqual(seed["desk"], "failure_trader")
+        self.assertEqual(seed["pair"], "AUD_JPY")
+        self.assertEqual(seed["direction"], "SHORT")
+        self.assertEqual(seed["method"], TradeMethod.BREAKOUT_FAILURE.value)
+        self.assertEqual(_order_variants_for(seed), (OrderType.LIMIT,))
+        self.assertEqual(seed["forecast_direction"], "UP")
+        self.assertIn("attached broker TP and SL geometry", seed["required_receipt"])
+        self.assertEqual(seed["bidask_replay_precision_seed_rule"]["scalp_tp_pips"], 10.0)
+        self.assertEqual(seed["bidask_replay_precision_seed_rule"]["scalp_stop_pips"], 7.0)
+
     def test_unclear_zero_forecast_seed_is_kept_for_auditable_blocker(self) -> None:
         from quant_rabbit.strategy.directional_forecaster import DirectionalForecast
         from quant_rabbit.strategy.intent_generator import _forecast_seed_for_pair
@@ -7345,6 +7462,82 @@ class IntentGeneratorTest(unittest.TestCase):
             )
         self.assertNotIn("bidask_replay_precision_live_ready", contrarian_metadata)
         self.assertNotIn("bidask_replay_precision_support", contrarian_metadata)
+
+    def test_bidask_replay_geometry_plan_emits_audited_limit_tp_sl_grid(self) -> None:
+        from quant_rabbit.models import OrderType, Side, TradeMethod
+        from quant_rabbit.strategy.intent_generator import _bidask_replay_precision_geometry_plan
+
+        with tempfile.TemporaryDirectory() as tmp:
+            rules_path = Path(tmp) / "bidask_live_grade.json"
+            rules_path.write_text(
+                json.dumps(
+                    {
+                        "schema_version": 1,
+                        "generated_at_utc": "2026-06-22T00:00:00Z",
+                        "generated_from": "unit-test",
+                        "edge_rules": [],
+                        "negative_rules": [],
+                        "contrarian_edge_rules": [
+                            {
+                                "name": "AUD_JPY_UP_FADE_TO_DOWN_S5_BIDASK_CONTRARIAN_HARVEST_TP10_SL7",
+                                "pair": "AUD_JPY",
+                                "side": "SHORT",
+                                "direction": "DOWN",
+                                "forecast_direction": "UP",
+                                "faded_direction": "UP",
+                                "contrarian_edge": True,
+                                "confidence_bucket": "0.75-0.90",
+                                "horizon_bucket": "61-240m",
+                                "granularity": "S5",
+                                "samples": 124,
+                                "directional_hit_rate": 0.76,
+                                "avg_final_pips": 5.8,
+                                "avg_mfe_pips": 12.0,
+                                "avg_mae_pips": 4.5,
+                                "optimized_take_profit_pips": 10.0,
+                                "optimized_stop_loss_pips": 7.0,
+                                "optimized_avg_realized_pips": 2.4,
+                                "optimized_win_rate": 0.70,
+                                "optimized_profit_factor": 2.5,
+                                "daily_stability_status": "DAILY_STABLE",
+                                "active_days": 4,
+                                "positive_day_rate": 0.75,
+                                "min_target_pips": 9.8,
+                                "max_target_pips": 10.5,
+                                "max_stop_pips": 7.2,
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            with bidask_rules_env(rules_path):
+                tp, sl, metadata = _bidask_replay_precision_geometry_plan(
+                    pair="AUD_JPY",
+                    side=Side.SHORT,
+                    method=TradeMethod.BREAKOUT_FAILURE,
+                    order_type=OrderType.LIMIT,
+                    entry=114.289,
+                    tp=114.239,
+                    sl=114.389,
+                    chart_context={"chart_direction_bias": "LONG"},
+                    tp_execution_metadata={
+                        "tp_execution_mode": "ATTACHED_TECHNICAL_TP",
+                        "tp_target_intent": "HARVEST",
+                        "opportunity_mode": "HARVEST",
+                    },
+                    forecast_direction="UP",
+                    forecast_confidence=0.80,
+                    forecast_horizon_min=90,
+                )
+
+        self.assertEqual(tp, 114.189)
+        self.assertEqual(sl, 114.359)
+        self.assertTrue(metadata["bidask_replay_precision_geometry"])
+        self.assertEqual(metadata["tp_target_source"], "BIDASK_REPLAY_PRECISION")
+        self.assertEqual(metadata["bidask_replay_precision_geometry_tp_pips"], 10.0)
+        self.assertEqual(metadata["bidask_replay_precision_geometry_stop_pips"], 7.0)
 
     def test_directional_forecast_weak_hit_rate_blocks_live_readiness(self) -> None:
         from quant_rabbit.models import MarketContext, OrderIntent, OrderType, Side, TradeMethod

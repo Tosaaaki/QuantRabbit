@@ -14,6 +14,7 @@ from typing import Any, Iterable, Sequence
 from quant_rabbit.instruments import DEFAULT_TRADER_PAIRS, instrument_pip_factor
 from quant_rabbit.forecast_precision import (
     bidask_replay_negative_precision_issue,
+    bidask_replay_precision_geometry_candidate,
     bidask_replay_precision_support,
     hit_rate_wilson_lower,
     support_signal_clears_live_precision,
@@ -692,6 +693,10 @@ FORECAST_WATCH_MIN_CHART_SCORE = _env_float(
 # directional bias.
 POST_HARVEST_REENTRY_LOOKBACK_MIN = _env_float("QR_POST_HARVEST_REENTRY_LOOKBACK_MIN", 90.0, minimum=5.0)
 POST_HARVEST_REENTRY_MAX_SEEDS = _env_int("QR_POST_HARVEST_REENTRY_MAX_SEEDS", 8, minimum=0)
+# Live-grade S5 bid/ask replay edges are candidate-surface seeds. They are not
+# live permission by themselves; the generated LIMIT still has to pass the same
+# RiskEngine, strategy, spread, guardian, profitability, and gateway checks.
+BIDASK_REPLAY_PRECISION_MAX_SEEDS = _env_int("QR_BIDASK_REPLAY_PRECISION_MAX_SEEDS", 8, minimum=0)
 # Matrix-supported repair seeding is a candidate-surface repair, not live
 # permission. A pair/side must have support from at least three independent
 # market-context layers so a repair lane cannot be born from a single spread
@@ -3002,6 +3007,29 @@ def _append_forecast_seed_lanes(
         )
         for lane in lanes
     ]
+    precision_seeds = _bidask_replay_precision_seed_lanes(
+        lanes,
+        charts,
+        forecasts_by_pair,
+        source_by_pair=source_by_pair,
+        existing_by_key=existing_by_key,
+        cycle_id=forecast_cycle_id,
+    )
+    if precision_seeds:
+        precision_keys = {
+            (lane.get("desk"), lane.get("pair"), lane.get("direction"), lane.get("method"))
+            for lane in precision_seeds
+        }
+        seeds = precision_seeds + [
+            lane
+            for lane in seeds
+            if (lane.get("desk"), lane.get("pair"), lane.get("direction"), lane.get("method"))
+            not in precision_keys
+        ]
+        seeded_keys = precision_keys | {
+            (lane.get("desk"), lane.get("pair"), lane.get("direction"), lane.get("method"))
+            for lane in seeds
+        }
     if not seeds:
         return lanes
     return seeds + [
@@ -3009,6 +3037,126 @@ def _append_forecast_seed_lanes(
         for lane in lanes
         if (lane.get("desk"), lane.get("pair"), lane.get("direction"), lane.get("method")) not in seeded_keys
     ]
+
+
+def _bidask_replay_precision_seed_lanes(
+    lanes: list[dict[str, Any]],
+    charts: dict[str, dict[str, Any]] | None,
+    forecasts_by_pair: dict[str, Any],
+    *,
+    source_by_pair: dict[str, dict[str, Any]],
+    existing_by_key: dict[tuple[Any, Any, Any, Any], dict[str, Any]],
+    cycle_id: str | None,
+) -> list[dict[str, Any]]:
+    if BIDASK_REPLAY_PRECISION_MAX_SEEDS <= 0 or charts is None:
+        return []
+    out: list[dict[str, Any]] = []
+    seen: set[tuple[str, str, str, str]] = set()
+    for pair, forecast in sorted(forecasts_by_pair.items()):
+        chart_context = _chart_context_for(pair, charts)
+        forecast_payload = _forecast_context_payload(forecast, cycle_id=cycle_id)
+        base_metadata = {
+            **chart_context,
+            **forecast_payload,
+            "tp_execution_mode": "ATTACHED_TECHNICAL_TP",
+            "tp_target_intent": "HARVEST",
+            "opportunity_mode": "HARVEST",
+        }
+        for side in (Side.LONG.value, Side.SHORT.value):
+            candidate = bidask_replay_precision_geometry_candidate(
+                base_metadata,
+                pair=pair,
+                side=side,
+                order_type=OrderType.LIMIT.value,
+                method=TradeMethod.BREAKOUT_FAILURE.value,
+            )
+            if candidate is None:
+                continue
+            key = ("failure_trader", pair, side, TradeMethod.BREAKOUT_FAILURE.value)
+            if key in seen:
+                continue
+            source = (
+                _source_lane_for_pair_side(existing_by_key, pair, side)
+                or source_by_pair.get(pair)
+                or next((lane for lane in lanes if str(lane.get("pair") or "") == pair), None)
+            )
+            out.append(
+                _bidask_replay_precision_seed_lane(
+                    source,
+                    pair=pair,
+                    side=side,
+                    forecast=forecast,
+                    cycle_id=cycle_id,
+                    candidate=candidate,
+                )
+            )
+            seen.add(key)
+            if len(out) >= BIDASK_REPLAY_PRECISION_MAX_SEEDS:
+                return out
+    return out
+
+
+def _bidask_replay_precision_seed_lane(
+    source: dict[str, Any] | None,
+    *,
+    pair: str,
+    side: str,
+    forecast: Any,
+    cycle_id: str | None,
+    candidate: dict[str, Any],
+) -> dict[str, Any]:
+    lane = _without_oanda_campaign_firepower_identity(source or {})
+    tp_pips = _optional_float(candidate.get("scalp_tp_pips"))
+    stop_pips = _optional_float(candidate.get("scalp_stop_pips"))
+    rr = (tp_pips / stop_pips) if tp_pips is not None and stop_pips and stop_pips > 0 else 1.0
+    tp_pips_text = f"{tp_pips:g}" if tp_pips is not None else "unknown"
+    stop_pips_text = f"{stop_pips:g}" if stop_pips is not None else "unknown"
+    rule_name = str(candidate.get("name") or "bidask_replay_precision")
+    forecast_direction = str(getattr(forecast, "direction", "") or "").upper()
+    faded_direction = str(candidate.get("faded_direction") or candidate.get("forecast_direction") or "").upper()
+    is_contrarian = bool(candidate.get("contrarian_edge"))
+    basis = (
+        f"fade forecast {faded_direction} into {candidate.get('direction')}"
+        if is_contrarian
+        else f"trade forecast {forecast_direction}"
+    )
+    lane.update(
+        {
+            "desk": "failure_trader",
+            "pair": pair,
+            "direction": side,
+            "method": TradeMethod.BREAKOUT_FAILURE.value,
+            "adoption": "TRIGGER_RECEIPT_REQUIRED",
+            "campaign_role": (
+                "BIDASK_REPLAY_CONTRARIAN_HARVEST"
+                if is_contrarian
+                else "BIDASK_REPLAY_PRECISION_HARVEST"
+            ),
+            "reason": (
+                f"{lane.get('reason') or 'S5 bid/ask replay precision seed'}; "
+                f"{rule_name} {basis} n={int(candidate.get('samples') or 0)} "
+                f"hit={float(candidate.get('directional_hit_rate') or 0.0):.2f} "
+                f"PF={float(candidate.get('optimized_profit_factor') or 0.0):.2f} "
+                f"daily_positive={float(candidate.get('positive_day_rate') or 0.0):.2f}"
+            ),
+            "required_receipt": (
+                "S5 bid/ask replay precision lane: use only a passive LIMIT retest "
+                "with attached broker TP and SL geometry matching the audited replay grid; "
+                "no market chase and no alternate TP/SL shape."
+            ),
+            "target_reward_risk": round(rr, 3),
+            "blockers": list(lane.get("blockers") or []),
+            "story_examples": [
+                f"bidask replay {rule_name}: TP{tp_pips_text}/SL{stop_pips_text}, "
+                f"PF={float(candidate.get('optimized_profit_factor') or 0.0):.2f}"
+            ],
+            "bidask_replay_precision_seed": True,
+            "bidask_replay_precision_limit_only": True,
+            "bidask_replay_precision_seed_rule": candidate,
+            **_forecast_context_payload(forecast, cycle_id=cycle_id),
+        }
+    )
+    return lane
 
 
 def _record_forecast_seed_telemetry(
@@ -5955,6 +6103,8 @@ def _variant_lane_id(
 
 def _order_variants_for(lane: dict[str, Any]) -> tuple[OrderType, ...]:
     method = TradeMethod.parse(str(lane["method"]))
+    if lane.get("bidask_replay_precision_limit_only"):
+        return (OrderType.LIMIT,)
     base = _order_type_for(method)
     variants: list[OrderType] = []
     if method == TradeMethod.BREAKOUT_FAILURE:
@@ -8391,6 +8541,22 @@ def _intent_from_lane(
     )
     if precision_geometry_metadata:
         tp_execution_metadata.update(precision_geometry_metadata)
+    tp, sl, bidask_geometry_metadata = _bidask_replay_precision_geometry_plan(
+        pair=pair,
+        side=side,
+        method=method,
+        order_type=order_type,
+        entry=entry,
+        tp=tp,
+        sl=sl,
+        chart_context=chart_context,
+        tp_execution_metadata=tp_execution_metadata,
+        forecast_direction=lane.get("forecast_direction"),
+        forecast_confidence=lane.get("forecast_confidence"),
+        forecast_horizon_min=lane.get("forecast_horizon_min"),
+    )
+    if bidask_geometry_metadata:
+        tp_execution_metadata.update(bidask_geometry_metadata)
     vehicle_reprice_metadata = _oanda_campaign_vehicle_shape_reprice_metadata(
         lane=lane,
         pair=pair,
@@ -8490,6 +8656,22 @@ def _intent_from_lane(
             )
             if precision_geometry_metadata:
                 tp_execution_metadata.update(precision_geometry_metadata)
+            tp, sl, bidask_geometry_metadata = _bidask_replay_precision_geometry_plan(
+                pair=pair,
+                side=side,
+                method=method,
+                order_type=order_type,
+                entry=entry,
+                tp=tp,
+                sl=sl,
+                chart_context=chart_context,
+                tp_execution_metadata=tp_execution_metadata,
+                forecast_direction=lane.get("forecast_direction"),
+                forecast_confidence=lane.get("forecast_confidence"),
+                forecast_horizon_min=lane.get("forecast_horizon_min"),
+            )
+            if bidask_geometry_metadata:
+                tp_execution_metadata.update(bidask_geometry_metadata)
             confirmed_reprice_metadata = _oanda_campaign_vehicle_shape_reprice_metadata(
                 lane=lane,
                 pair=pair,
@@ -8781,6 +8963,8 @@ def _intent_from_lane(
             "post_harvest_closed_at_utc": lane.get("post_harvest_closed_at_utc"),
             "post_harvest_age_minutes": lane.get("post_harvest_age_minutes"),
             "post_harvest_source": lane.get("post_harvest_source"),
+            "bidask_replay_precision_seed": bool(lane.get("bidask_replay_precision_seed")),
+            "bidask_replay_precision_seed_rule": lane.get("bidask_replay_precision_seed_rule"),
             "oanda_campaign_firepower_seed": bool(lane.get("oanda_campaign_firepower_seed")),
             "oanda_campaign_vehicle_key": lane.get("oanda_campaign_vehicle_key"),
             "oanda_campaign_vehicle_count": lane.get("oanda_campaign_vehicle_count"),
@@ -12641,6 +12825,116 @@ def _technical_harvest_precision_geometry_plan(
         "tp_target_reason": precision_reason,
         "opportunity_mode": "HARVEST",
         "opportunity_mode_reason": f"technical_harvest_precision={candidate['name']}",
+        "opportunity_mode_reward_risk": round(reward_risk, 3),
+        "virtual_take_profit": new_tp,
+        "virtual_take_profit_reward_risk": round(reward_risk, 3),
+        "tp_target_distance_pips": round(target_distance_pips, 3),
+    }
+
+
+def _bidask_replay_precision_geometry_plan(
+    *,
+    pair: str,
+    side: Side,
+    method: TradeMethod,
+    order_type: OrderType,
+    entry: float,
+    tp: float,
+    sl: float,
+    chart_context: dict[str, Any] | None,
+    tp_execution_metadata: dict[str, Any],
+    forecast_direction: object | None,
+    forecast_confidence: object | None,
+    forecast_horizon_min: object | None,
+) -> tuple[float, float, dict[str, Any]]:
+    metadata = {
+        **(chart_context or {}),
+        **tp_execution_metadata,
+    }
+    if forecast_direction is not None:
+        metadata["forecast_direction"] = forecast_direction
+    if forecast_confidence is not None:
+        metadata["forecast_confidence"] = forecast_confidence
+    if forecast_horizon_min is not None:
+        metadata["forecast_horizon_min"] = forecast_horizon_min
+    candidate = bidask_replay_precision_geometry_candidate(
+        metadata,
+        pair=pair,
+        side=side.value,
+        order_type=order_type.value,
+        method=method.value,
+    )
+    if candidate is None:
+        return tp, sl, {}
+
+    pip_factor = PIP_FACTORS[pair]
+    pip = 1.0 / pip_factor
+    target_pips = float(candidate["scalp_tp_pips"])
+    stop_pips = float(candidate["scalp_stop_pips"])
+    direction = 1.0 if side == Side.LONG else -1.0
+    new_tp = _round_price(pair, entry + direction * target_pips * pip)
+    new_sl = _round_price(pair, entry - direction * stop_pips * pip)
+
+    target_distance_pips = abs(new_tp - entry) * pip_factor
+    min_target_pips = float(candidate.get("min_target_pips") or target_pips)
+    if target_distance_pips < min_target_pips:
+        tick = _broker_price_tick_pips(pair) / pip_factor
+        new_tp = _round_price(pair, new_tp + direction * tick)
+        target_distance_pips = abs(new_tp - entry) * pip_factor
+    stop_distance_pips = abs(new_sl - entry) * pip_factor
+    max_target_pips = float(candidate.get("max_target_pips") or target_pips)
+    max_stop_pips = float(candidate.get("max_stop_pips") or stop_pips)
+    if (
+        target_distance_pips < min_target_pips
+        or target_distance_pips > max_target_pips
+        or stop_distance_pips <= 0.0
+        or stop_distance_pips > max_stop_pips
+    ):
+        return tp, sl, {}
+
+    reward_risk = target_distance_pips / stop_distance_pips if stop_distance_pips > 0 else 0.0
+    previous_target_pips = abs(tp - entry) * pip_factor
+    previous_stop_pips = abs(sl - entry) * pip_factor
+    prior_reason = str(tp_execution_metadata.get("tp_target_reason") or "").strip()
+    precision_reason = (
+        f"audited S5 bid/ask replay rule {candidate['name']} "
+        f"hit_rate={float(candidate.get('directional_hit_rate') or 0.0):.4f}, "
+        f"PF={float(candidate.get('optimized_profit_factor') or 0.0):.4f}, "
+        f"positive_day_rate={float(candidate.get('positive_day_rate') or 0.0):.4f}, "
+        f"samples={int(candidate.get('samples') or 0)}; generated HARVEST geometry "
+        f"{previous_target_pips:.1f}pip target/{previous_stop_pips:.1f}pip stop overridden to "
+        f"{target_distance_pips:.1f}pip target/{stop_distance_pips:.1f}pip stop"
+    )
+    if prior_reason:
+        precision_reason = f"{prior_reason}; {precision_reason}"
+
+    support_payload = dict(candidate)
+    return new_tp, new_sl, {
+        "bidask_replay_precision_geometry": True,
+        "bidask_replay_precision_geometry_rule": candidate["name"],
+        "bidask_replay_precision_geometry_support": support_payload,
+        "bidask_replay_precision_geometry_tp_pips": round(target_distance_pips, 3),
+        "bidask_replay_precision_geometry_stop_pips": round(stop_distance_pips, 3),
+        "bidask_replay_precision_geometry_previous_target_pips": round(previous_target_pips, 3),
+        "bidask_replay_precision_geometry_previous_stop_pips": round(previous_stop_pips, 3),
+        "bidask_replay_precision_geometry_hit_rate": round(
+            float(candidate.get("directional_hit_rate") or 0.0),
+            4,
+        ),
+        "bidask_replay_precision_geometry_profit_factor": round(
+            float(candidate.get("optimized_profit_factor") or 0.0),
+            4,
+        ),
+        "bidask_replay_precision_geometry_positive_day_rate": round(
+            float(candidate.get("positive_day_rate") or 0.0),
+            4,
+        ),
+        "bidask_replay_precision_geometry_samples": int(candidate.get("samples") or 0),
+        "bidask_replay_precision_geometry_audit_report": candidate.get("audit_report"),
+        "tp_target_source": "BIDASK_REPLAY_PRECISION",
+        "tp_target_reason": precision_reason,
+        "opportunity_mode": "HARVEST",
+        "opportunity_mode_reason": f"bidask_replay_precision={candidate['name']}",
         "opportunity_mode_reward_risk": round(reward_risk, 3),
         "virtual_take_profit": new_tp,
         "virtual_take_profit_reward_risk": round(reward_risk, 3),
