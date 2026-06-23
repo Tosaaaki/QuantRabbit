@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import argparse
 import collections
+import gzip
 import itertools
 import json
 import math
@@ -353,7 +354,7 @@ def _parse_inversion_selector_sizes(value: str) -> tuple[int, ...]:
 
 def _discover_m5_files(root: Path, history_glob: str, *, pairs: set[str]) -> list[Path]:
     by_pair: dict[str, Path] = {}
-    for path in sorted(root.rglob(history_glob)):
+    for path in _iter_history_paths(root, history_glob):
         pair = path.parent.name.upper()
         if pair not in pairs:
             continue
@@ -361,6 +362,18 @@ def _discover_m5_files(root: Path, history_glob: str, *, pairs: set[str]) -> lis
         if current is None or path.stat().st_mtime > current.stat().st_mtime:
             by_pair[pair] = path
     return [by_pair[pair] for pair in sorted(by_pair)]
+
+
+def _iter_history_paths(root: Path, history_glob: str) -> list[Path]:
+    patterns = [history_glob]
+    if history_glob.endswith(".jsonl"):
+        patterns.append(f"{history_glob}.gz")
+    paths: dict[Path, Path] = {}
+    for pattern in patterns:
+        for path in root.rglob(pattern):
+            if path.name.endswith(".jsonl") or path.name.endswith(".jsonl.gz"):
+                paths[path.resolve()] = path
+    return [paths[key] for key in sorted(paths, key=lambda item: str(item))]
 
 
 def _score_files(
@@ -413,7 +426,7 @@ def _score_files(
 
 def _load_ba_candles(path: Path) -> list[BaOhlc]:
     candles: list[BaOhlc] = []
-    with path.open(encoding="utf-8") as handle:
+    with _open_history_text(path) as handle:
         for line in handle:
             if not line.strip():
                 continue
@@ -444,6 +457,12 @@ def _load_ba_candles(path: Path) -> list[BaOhlc]:
                 continue
     candles.sort(key=lambda item: item.timestamp_utc)
     return candles
+
+
+def _open_history_text(path: Path):
+    if path.name.endswith(".gz"):
+        return gzip.open(path, mode="rt", encoding="utf-8")
+    return path.open(encoding="utf-8")
 
 
 def _score_pair(

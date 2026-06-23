@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import gzip
 import json
 import os
 import sys
@@ -1033,6 +1034,29 @@ class OandaHistoryReplayValidateTest(unittest.TestCase):
 
         self.assertEqual(stats["history_raw_rows"], 2)
         self.assertEqual(stats["history_filtered_rows"], 1)
+
+    def test_load_candles_reads_compressed_history_files(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            history = Path(tmp) / "history"
+            pair_dir = history / "EUR_USD"
+            pair_dir.mkdir(parents=True)
+            path = pair_dir / "EUR_USD_S5_BA_20260619T000000Z_20260619T010000Z.jsonl.gz"
+            row = {
+                "pair": "EUR_USD",
+                "granularity": "S5",
+                "time": "2026-06-19T00:00:00Z",
+                "bid": {"o": "1.1000", "h": "1.1001", "l": "1.0999", "c": "1.1000"},
+                "ask": {"o": "1.1002", "h": "1.1003", "l": "1.1001", "c": "1.1002"},
+            }
+            with gzip.open(path, "wt", encoding="utf-8") as handle:
+                handle.write(json.dumps(row) + "\n")
+
+            candles, stats = replay._load_candles([history], granularity="S5")
+
+        self.assertEqual(stats["history_files"], 1)
+        self.assertEqual(stats["history_raw_rows"], 1)
+        self.assertIn("EUR_USD", candles)
+        self.assertEqual(len(candles["EUR_USD"]), 1)
         self.assertEqual(stats["history_candles"], 1)
         self.assertEqual([c.timestamp_utc.isoformat() for c in candles["EUR_USD"]], ["2026-06-19T00:00:00+00:00"])
 

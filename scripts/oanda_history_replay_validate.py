@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 import bisect
 import collections
+import gzip
 import json
 import math
 import re
@@ -56,7 +57,7 @@ DEFAULT_AUTO_HISTORY_MIN_DAYS = 30.0
 JST = timezone(timedelta(hours=9), "JST")
 _HISTORY_FILE_WINDOW_RE = re.compile(
     r"_(?P<granularity>[A-Z0-9]+)_BA_"
-    r"(?P<start>\d{8}T\d{6}Z)_(?P<end>\d{8}T\d{6}Z)\.jsonl$"
+    r"(?P<start>\d{8}T\d{6}Z)_(?P<end>\d{8}T\d{6}Z)\.jsonl(?:\.gz)?$"
 )
 
 
@@ -402,7 +403,7 @@ def _discover_multi_month_history_dirs(
             continue
         seen.add(resolved)
         selected.append(output_dir)
-    for candle_path in sorted(root.glob(f"**/*_{granularity}_BA_*.jsonl")):
+    for candle_path in sorted(root.glob(f"**/*_{granularity}_BA_*.jsonl*")):
         days = _history_file_window_days(candle_path, granularity=granularity)
         if days is None or days < min_days:
             continue
@@ -475,12 +476,14 @@ def _load_candles(
     filtered = 0
     skipped = 0
     for history_dir in history_dirs:
-        for path in sorted(history_dir.glob(f"*/*_{granularity}_BA_*.jsonl")):
+        for path in sorted(history_dir.glob(f"*/*_{granularity}_BA_*.jsonl*")):
+            if not _is_supported_history_file(path):
+                continue
             path_pair = path.parent.name.upper()
             if windows_by_pair is not None and path_pair not in windows_by_pair:
                 continue
             files += 1
-            with path.open(encoding="utf-8") as handle:
+            with _open_history_text(path) as handle:
                 for line in handle:
                     if not line.strip():
                         continue
@@ -514,6 +517,17 @@ def _load_candles(
         "history_pairs": len(sorted_by_pair),
         "history_candles": sum(len(items) for items in sorted_by_pair.values()),
     }
+
+
+def _is_supported_history_file(path: Path) -> bool:
+    name = path.name
+    return name.endswith(".jsonl") or name.endswith(".jsonl.gz")
+
+
+def _open_history_text(path: Path):
+    if path.name.endswith(".gz"):
+        return gzip.open(path, mode="rt", encoding="utf-8")
+    return path.open(encoding="utf-8")
 
 
 def _forecast_truth_windows(rows: Sequence[ForecastRow]) -> dict[str, list[tuple[datetime, datetime]]]:

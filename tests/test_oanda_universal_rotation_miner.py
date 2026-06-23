@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import importlib.util
+import gzip
+import json
 import os
 import subprocess
 import sys
+import tempfile
 import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -59,6 +62,33 @@ class OandaUniversalRotationMinerTest(unittest.TestCase):
         self.assertEqual(miner._parse_inversion_selector_sizes("3,2,3"), (2, 3))
         with self.assertRaises(ValueError):
             miner._parse_inversion_selector_sizes("1")
+
+    def test_discovers_and_reads_compressed_m5_history(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            pair_dir = root / "20260622T155928Z" / "EUR_USD"
+            pair_dir.mkdir(parents=True)
+            path = pair_dir / "EUR_USD_M5_BA_20260316T000000Z_20260620T000000Z.jsonl.gz"
+            row = {
+                "time": "2026-06-19T00:00:00Z",
+                "complete": True,
+                "volume": 1,
+                "bid": {"o": "1.1000", "h": "1.1001", "l": "1.0999", "c": "1.1000"},
+                "ask": {"o": "1.1002", "h": "1.1003", "l": "1.1001", "c": "1.1002"},
+            }
+            with gzip.open(path, "wt", encoding="utf-8") as handle:
+                handle.write(json.dumps(row) + "\n")
+
+            files = miner._discover_m5_files(
+                root,
+                "EUR_USD_M5_BA_20260316T000000Z_20260620T000000Z.jsonl",
+                pairs={"EUR_USD"},
+            )
+            candles = miner._load_ba_candles(files[0])
+
+        self.assertEqual(files, [path])
+        self.assertEqual(len(candles), 1)
+        self.assertAlmostEqual(candles[0].ask_c, 1.1002)
 
     def test_score_exit_uses_spread_floor_for_take_profit_and_stop(self) -> None:
         start = datetime(2026, 6, 1, tzinfo=timezone.utc)
