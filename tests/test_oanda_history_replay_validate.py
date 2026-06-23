@@ -34,7 +34,7 @@ def _candle(ts: str, *, bid_o: float, bid_h: float, bid_l: float, bid_c: float, 
 
 
 class OandaHistoryReplayValidateTest(unittest.TestCase):
-    def test_history_dirs_prefers_multi_month_suite_over_short_latest(self) -> None:
+    def test_history_dirs_keeps_multi_month_suite_and_windowed_overlays(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             history = root / "logs" / "replay" / "oanda_history"
@@ -88,7 +88,7 @@ class OandaHistoryReplayValidateTest(unittest.TestCase):
             finally:
                 os.chdir(previous)
 
-        self.assertEqual(dirs, [long_run])
+        self.assertEqual(dirs, [long_run, short_run])
 
     def test_history_dirs_discovers_orphan_multi_month_run_from_filenames(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

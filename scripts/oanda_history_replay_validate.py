@@ -319,7 +319,13 @@ def _history_dirs(
         min_days=float(auto_min_days),
     )
     if multi_month:
-        return multi_month
+        selected: list[Path] = []
+        seen: set[Path] = set()
+        for item in multi_month:
+            _append_unique_path(selected, seen, item)
+        for item in _discover_history_summary_dirs(root, granularity=str(granularity or "").upper()):
+            _append_unique_path(selected, seen, item)
+        return selected
     latest = Path("logs/replay/oanda_history/latest_summary.json")
     if not latest.exists():
         raise FileNotFoundError("missing logs/replay/oanda_history/latest_summary.json; pass --history-dir")
