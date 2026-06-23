@@ -155,6 +155,7 @@ class TraderRepairOrchestrator:
             "generated_at_utc": self.now_utc.isoformat(),
             "status": status,
             "trader_request": self.trader_request,
+            "selected_request_code": selected.get("code") if selected else None,
             "artifact_paths": {
                 "trader_support_bot": str(self.support_bot_path),
                 "output": str(self.output_path),
@@ -320,7 +321,8 @@ def _codex_work_order(
 
 def _queue_item(request: dict[str, Any], *, trader_request: str) -> dict[str, Any]:
     contract = request.get("automation_contract") if isinstance(request.get("automation_contract"), dict) else {}
-    explicit = bool(request.get("requires_explicit_operator_approval"))
+    dependency_wait = _approval_dependency_wait(request)
+    explicit = bool(request.get("requires_explicit_operator_approval")) or dependency_wait is not None
     allowed_actions = [str(item) for item in contract.get("codex_may_execute", []) or []]
     approval_actions = [str(item) for item in contract.get("requires_explicit_operator_approval_for", []) or []]
     forbidden_actions = [str(item) for item in contract.get("forbidden_direct_actions", []) or []]
@@ -345,6 +347,7 @@ def _queue_item(request: dict[str, Any], *, trader_request: str) -> dict[str, An
         "selection_reason": _selection_reason(request.get("code")),
         "match_score": _match_score(request, trader_request),
         "requires_explicit_operator_approval": explicit,
+        "approval_dependency": dependency_wait,
         "problem": request.get("problem"),
         "why_now": request.get("why_now"),
         "evidence_summary": (
@@ -450,6 +453,39 @@ def _automation_status(
     if status in CODEX_ACTIONABLE_REPAIR_STATUSES or status.startswith("READY_FOR_CODE"):
         return AUTOMATION_READY
     return AUTOMATION_EVIDENCE
+
+
+def _approval_dependency_wait(request: dict[str, Any]) -> dict[str, Any] | None:
+    code = str(request.get("code") or "")
+    if code != "REPAIR_TP_PROGRESS_PROFIT_CAPTURE_REPLAY":
+        return None
+    evidence = request.get("evidence_summary") if isinstance(request.get("evidence_summary"), dict) else {}
+    source_findings = set(_dedupe_strings(request.get("source_findings")))
+    if not evidence.get("guardian_profit_capture_inactive"):
+        return None
+    replay_triggered = _optional_positive(evidence.get("loss_closes_repair_replay_triggered"))
+    if "TP_PROGRESS_REPAIR_REPLAY_NOT_DEPLOYED" not in source_findings and not replay_triggered:
+        return None
+    return {
+        "code": "RESTORE_POSITION_GUARDIAN_AFTER_PREFLIGHT",
+        "reason": (
+            "TP-progress production-gate replay is already present, but the repaired "
+            "path cannot be proved while position guardian is inactive; loading or "
+            "reloading launchd needs explicit operator approval."
+        ),
+        "clearance": (
+            "Run scripts/install-position-guardian.sh --check, receive explicit "
+            "operator approval to load/reload guardian, then wait for a fresh "
+            "heartbeat and rerun execution-timing-audit after a live evidence window."
+        ),
+    }
+
+
+def _optional_positive(value: Any) -> bool:
+    try:
+        return float(value) > 0.0
+    except (TypeError, ValueError):
+        return False
 
 
 def _automation_rank(value: Any) -> int:

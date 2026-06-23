@@ -100,6 +100,10 @@ class TraderRepairOrchestratorTest(unittest.TestCase):
                 payload["queue_summary"]["selected_request_code"],
                 "REPAIR_TP_PROGRESS_PROFIT_CAPTURE_REPLAY",
             )
+            self.assertEqual(
+                payload["selected_request_code"],
+                "REPAIR_TP_PROGRESS_PROFIT_CAPTURE_REPLAY",
+            )
             self.assertEqual(payload["approval_boundary"]["live_side_effects_allowed"], [])
             self.assertTrue(payload["approval_boundary"]["read_only_until_gateway_or_operator_approval"])
             self.assertEqual(
@@ -302,6 +306,67 @@ class TraderRepairOrchestratorTest(unittest.TestCase):
                     "REPAIR_MONTH_SCALE_RESIDUAL_ENTRY_QUALITY",
                 ],
             )
+
+    def test_guardian_blocked_tp_capture_repair_does_not_loop_as_codex_code_work(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            support = root / "support.json"
+            output = root / "orchestrator.json"
+            report = root / "orchestrator.md"
+            _write_support(
+                support,
+                [
+                    _request(
+                        "REPAIR_TP_PROGRESS_PROFIT_CAPTURE_REPLAY",
+                        priority="P0",
+                        evidence_summary={
+                            "guardian_profit_capture_inactive": True,
+                            "loss_closes_repair_replay_triggered": 13,
+                            "repair_replay_contract": "TP_PROGRESS_PRODUCTION_GATE_REPLAY_V1",
+                        },
+                    ),
+                    _request(
+                        "REPAIR_MONTH_SCALE_RESIDUAL_ENTRY_QUALITY",
+                        priority="P0",
+                        suggested_files=[
+                            "src/quant_rabbit/strategy/intent_generator.py",
+                            "tests/test_intent_generator.py",
+                        ],
+                    ),
+                ],
+            )
+
+            summary = TraderRepairOrchestrator(
+                support_bot_path=support,
+                output_path=output,
+                report_path=report,
+            ).run()
+
+            self.assertEqual(summary.status, STATUS_READY)
+            payload = json.loads(output.read_text())
+            tp_repair = next(
+                item
+                for item in payload["queue"]
+                if item["code"] == "REPAIR_TP_PROGRESS_PROFIT_CAPTURE_REPLAY"
+            )
+            self.assertEqual(tp_repair["automation_status"], "WAITING_FOR_OPERATOR_APPROVAL")
+            self.assertEqual(
+                tp_repair["approval_dependency"]["code"],
+                "RESTORE_POSITION_GUARDIAN_AFTER_PREFLIGHT",
+            )
+            self.assertNotIn(
+                "REPAIR_TP_PROGRESS_PROFIT_CAPTURE_REPLAY",
+                [item["code"] for item in payload["actionable_requests"]],
+            )
+            self.assertIn(
+                "REPAIR_TP_PROGRESS_PROFIT_CAPTURE_REPLAY",
+                [item["code"] for item in payload["approval_required_requests"]],
+            )
+            self.assertEqual(
+                payload["selected_request"]["code"],
+                "REPAIR_MONTH_SCALE_RESIDUAL_ENTRY_QUALITY",
+            )
+            self.assertEqual(payload["selected_request_code"], "REPAIR_MONTH_SCALE_RESIDUAL_ENTRY_QUALITY")
 
     def test_specific_trader_request_can_select_residual_repair(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
