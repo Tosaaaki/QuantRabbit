@@ -23,7 +23,7 @@
         "NEEDS_HIGHER_POSITIVE_DAY_RATE"
       ],
       "adoption_status": "RANK_ONLY_NOT_DAILY_STABLE",
-      "audit_report": "logs/reports/forecast_improvement/oanda_history_replay_validate_20260623T121402Z.json",
+      "audit_report": "logs/reports/forecast_improvement/oanda_history_replay_validate_20260623T123122Z.json",
       "avg_daily_realized_pips": 56.75,
       "avg_daily_samples": 20.0,
       "avg_final_pips": 4.8425,
@@ -38,7 +38,7 @@
         "current_positive_day_rate": 0.5,
         "max_allowed_daily_sample_share": 0.7,
         "missing_active_days": 1,
-        "missing_positive_days_at_current_requirement": 2,
+        "missing_positive_days_at_current_requirement": 1,
         "reasons": [
           "NEEDS_MORE_ACTIVE_DAYS",
           "NEEDS_LESS_DAILY_SAMPLE_CONCENTRATION",
@@ -46,7 +46,7 @@
         ],
         "required_active_days": 3,
         "required_positive_day_rate": 0.6667,
-        "required_positive_days_at_current_requirement": 3,
+        "required_positive_days_at_current_requirement": 2,
         "status": "INSUFFICIENT_ACTIVE_DAYS"
       },
       "daily_stability_status": "INSUFFICIENT_ACTIVE_DAYS",
@@ -94,7 +94,7 @@
         "NEEDS_HIGHER_POSITIVE_DAY_RATE"
       ],
       "adoption_status": "RANK_ONLY_NOT_DAILY_STABLE",
-      "audit_report": "logs/reports/forecast_improvement/oanda_history_replay_validate_20260623T121402Z.json",
+      "audit_report": "logs/reports/forecast_improvement/oanda_history_replay_validate_20260623T123122Z.json",
       "avg_daily_realized_pips": 56.75,
       "avg_daily_samples": 20.0,
       "avg_final_pips": 4.8425,
@@ -109,7 +109,7 @@
         "current_positive_day_rate": 0.5,
         "max_allowed_daily_sample_share": 0.7,
         "missing_active_days": 1,
-        "missing_positive_days_at_current_requirement": 2,
+        "missing_positive_days_at_current_requirement": 1,
         "reasons": [
           "NEEDS_MORE_ACTIVE_DAYS",
           "NEEDS_LESS_DAILY_SAMPLE_CONCENTRATION",
@@ -117,7 +117,7 @@
         ],
         "required_active_days": 3,
         "required_positive_day_rate": 0.6667,
-        "required_positive_days_at_current_requirement": 3,
+        "required_positive_days_at_current_requirement": 2,
         "status": "INSUFFICIENT_ACTIVE_DAYS"
       },
       "daily_stability_status": "INSUFFICIENT_ACTIVE_DAYS",
@@ -167,7 +167,7 @@
         "NEEDS_HIGHER_POSITIVE_DAY_RATE"
       ],
       "adoption_status": "RANK_ONLY_NOT_DAILY_STABLE",
-      "audit_report": "logs/reports/forecast_improvement/oanda_history_replay_validate_20260623T121402Z.json",
+      "audit_report": "logs/reports/forecast_improvement/oanda_history_replay_validate_20260623T123122Z.json",
       "avg_daily_realized_pips": 116.76,
       "avg_daily_samples": 45.2,
       "avg_final_pips": 2.3425,
@@ -228,18 +228,18 @@
     "under_sampled_pair_directions": 48,
     "unscorable_no_market_samples": 12
   },
-  "generated_at_utc": "2026-06-23T12:14:02.327737Z",
+  "generated_at_utc": "2026-06-23T12:31:22.839329Z",
   "generated_from": "scripts/oanda_history_replay_validate.py",
   "granularity": "S5",
   "history_dirs": [
     "logs/replay/oanda_history/20260622T222509Z",
     "logs/replay/oanda_history/20260623T012327Z",
-    "logs/replay/oanda_history/20260623T020613Z",
     "logs/replay/oanda_history/20260623T041751Z",
     "logs/replay/oanda_history/20260623T061558Z",
     "logs/replay/oanda_history/20260623T061609Z",
     "logs/replay/oanda_history/20260623T085130Z",
     "logs/replay/oanda_history/20260623T094031Z",
+    "logs/replay/oanda_history/20260623T020613Z",
     "logs/replay/oanda_history/20260623T110657Z",
     "logs/replay/oanda_history/20260623T112757Z",
     "logs/replay/oanda_history/20260623T121003Z"
@@ -251,7 +251,7 @@
         "NEGATIVE_EXPECTANCY"
       ],
       "adoption_status": "LIVE_BLOCK_NEGATIVE_EXPECTANCY",
-      "audit_report": "logs/reports/forecast_improvement/oanda_history_replay_validate_20260623T121402Z.json",
+      "audit_report": "logs/reports/forecast_improvement/oanda_history_replay_validate_20260623T123122Z.json",
       "avg_daily_realized_pips": -45.0,
       "avg_daily_samples": 22.5,
       "avg_final_pips": -6.4356,
@@ -265,14 +265,14 @@
         "current_positive_day_rate": 0.0,
         "max_allowed_daily_sample_share": 0.7,
         "missing_active_days": 0,
-        "missing_positive_days_at_current_requirement": 5,
+        "missing_positive_days_at_current_requirement": 4,
         "reasons": [
           "NEEDS_LESS_DAILY_SAMPLE_CONCENTRATION",
           "NEEDS_HIGHER_POSITIVE_DAY_RATE"
         ],
         "required_active_days": 3,
         "required_positive_day_rate": 0.6667,
-        "required_positive_days_at_current_requirement": 5,
+        "required_positive_days_at_current_requirement": 4,
         "status": "DAILY_SAMPLE_CONCENTRATED"
       },
       "daily_stability_status": "DAILY_SAMPLE_CONCENTRATED",
@@ -573,7 +573,7 @@
         "current_positive_day_rate": 0.5,
         "max_allowed_daily_sample_share": 0.7,
         "missing_active_days": 1,
-        "missing_positive_days_at_current_requirement": 2,
+        "missing_positive_days_at_current_requirement": 1,
         "reasons": [
           "NEEDS_MORE_ACTIVE_DAYS",
           "NEEDS_LESS_DAILY_SAMPLE_CONCENTRATION",
@@ -581,7 +581,7 @@
         ],
         "required_active_days": 3,
         "required_positive_day_rate": 0.6667,
-        "required_positive_days_at_current_requirement": 3,
+        "required_positive_days_at_current_requirement": 2,
         "status": "INSUFFICIENT_ACTIVE_DAYS"
       },
       "daily_stability_status": "INSUFFICIENT_ACTIVE_DAYS",
@@ -624,7 +624,7 @@
         "current_positive_day_rate": 0.5,
         "max_allowed_daily_sample_share": 0.7,
         "missing_active_days": 1,
-        "missing_positive_days_at_current_requirement": 2,
+        "missing_positive_days_at_current_requirement": 1,
         "reasons": [
           "NEEDS_MORE_ACTIVE_DAYS",
           "NEEDS_LESS_DAILY_SAMPLE_CONCENTRATION",
@@ -632,7 +632,7 @@
         ],
         "required_active_days": 3,
         "required_positive_day_rate": 0.6667,
-        "required_positive_days_at_current_requirement": 3,
+        "required_positive_days_at_current_requirement": 2,
         "status": "INSUFFICIENT_ACTIVE_DAYS"
       },
       "daily_stability_status": "INSUFFICIENT_ACTIVE_DAYS",
@@ -675,7 +675,7 @@
     "negative_min_samples": 30,
     "stable_max_daily_sample_share": 0.7,
     "stable_min_active_days": 3,
-    "stable_min_positive_day_rate": 0.6666666667
+    "stable_min_positive_day_rate": 0.6666666666666666
   },
   "source_report": "logs/reports/forecast_improvement/oanda_history_replay_validate_latest.json",
   "truth_source": "local OANDA S5 bid/ask candles; UP entry=ask/exit=bid, DOWN entry=bid/exit=ask; same-candle TP+SL ambiguity counts as stop-first loss"
