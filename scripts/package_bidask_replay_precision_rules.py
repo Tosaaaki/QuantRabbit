@@ -33,6 +33,7 @@ RULE_SECTIONS = (
 TRUTH_FIELDS = (
     "status",
     "reason",
+    "blockers",
     "adoption_level",
     "candidate_rule_validation_blocked",
     "global_currency_validation_blocked",
@@ -47,6 +48,13 @@ TRUTH_FIELDS = (
     "missing_price_window_group_count",
     "unscorable_no_market_window_group_count",
     "future_price_truth_window_group_count",
+    "missing_pairs",
+    "missing_pair_directions",
+    "history_fetch_command",
+    "history_fetch_command_count",
+    "history_fetch_command_mode",
+    "history_fetch_commands",
+    "warnings",
 )
 
 

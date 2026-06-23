@@ -2018,6 +2018,7 @@ def _bidask_rule_findings(payload: dict[str, Any], path: Path) -> tuple[dict[str
         if isinstance(payload.get("price_truth_coverage"), dict)
         else {}
     )
+    truth_status = str(truth.get("status") or "").upper()
     metrics = {
         "path": str(path),
         "edge_rules": len(edge_rules),
@@ -2036,6 +2037,13 @@ def _bidask_rule_findings(payload: dict[str, Any], path: Path) -> tuple[dict[str
             "adoption_level": truth.get("adoption_level"),
             "evaluated_rows": truth.get("evaluated_rows"),
             "missing_price_truth_samples": truth.get("missing_price_truth_samples"),
+            "missing_price_window_group_count": truth.get("missing_price_window_group_count"),
+            "history_fetch_command": truth.get("history_fetch_command"),
+            "history_fetch_command_count": truth.get("history_fetch_command_count"),
+            "history_fetch_command_mode": truth.get("history_fetch_command_mode"),
+            "missing_pairs": truth.get("missing_pairs"),
+            "missing_pair_directions": truth.get("missing_pair_directions"),
+            "warnings": truth.get("warnings"),
         },
         "daily_stability_requirements": {
             "min_active_days": BIDASK_REPLAY_STABLE_MIN_ACTIVE_DAYS,
@@ -2047,8 +2055,26 @@ def _bidask_rule_findings(payload: dict[str, Any], path: Path) -> tuple[dict[str
         "history_fetch_command": fetch_command,
         "replay_validation_command": validation_command,
     }
+    findings: list[dict[str, Any]] = []
+    if truth_status and truth_status != "PRICE_TRUTH_OK":
+        findings.append(
+            _finding(
+                priority="P1",
+                code="BIDASK_REPLAY_PRICE_TRUTH_PARTIAL",
+                message=(
+                    "S5 bid/ask replay rules still have partial OANDA price-truth coverage; "
+                    "high-turn firepower remains reproducible only for the locally covered "
+                    "samples until the missing windows are fetched and validation is rerun"
+                ),
+                next_action=(
+                    "Run the published OANDA read-only history fetch command(s), rerun "
+                    "oanda_history_replay_validate, then package the refreshed bid/ask rules."
+                ),
+                evidence=metrics,
+            )
+        )
     if rank_only and not daily_stable_support:
-        return metrics, [
+        findings.append(
             _finding(
                 priority="P1",
                 code="BIDASK_REPLAY_SUPPORT_NOT_DAILY_STABLE",
@@ -2062,9 +2088,9 @@ def _bidask_rule_findings(payload: dict[str, Any], path: Path) -> tuple[dict[str
                 ),
                 evidence=metrics,
             )
-        ]
-    if rank_only_contrarian and not daily_stable_contrarian:
-        return metrics, [
+        )
+    elif rank_only_contrarian and not daily_stable_contrarian:
+        findings.append(
             _finding(
                 priority="P1",
                 code="BIDASK_CONTRARIAN_EDGE_NOT_DAILY_STABLE",
@@ -2078,8 +2104,8 @@ def _bidask_rule_findings(payload: dict[str, Any], path: Path) -> tuple[dict[str
                 ),
                 evidence=metrics,
             )
-        ]
-    return metrics, []
+        )
+    return metrics, findings
 
 
 def _bidask_rule_is_live_grade(item: dict[str, Any]) -> bool:
@@ -2159,16 +2185,26 @@ def _bidask_replay_verification_commands(
     rank_only: list[dict[str, Any]],
     payload: dict[str, Any],
 ) -> tuple[str | None, str | None]:
-    if not rank_only:
-        return None, None
+    truth = (
+        payload.get("price_truth_coverage")
+        if isinstance(payload.get("price_truth_coverage"), dict)
+        else {}
+    )
     pairs = sorted({str(item.get("pair") or "").upper() for item in rank_only if item.get("pair")})
     granularities = sorted({str(item.get("granularity") or "S5").upper() for item in rank_only})
+    if not granularities:
+        granularity = str(payload.get("granularity") or "S5").upper()
+        granularities = [granularity] if granularity else ["S5"]
     granularities_arg = ",".join(granularities)
     primary_granularity = granularities[0] if granularities else "S5"
-    fetch_command = None
+    fetch_command = (
+        str(truth.get("history_fetch_command"))
+        if str(truth.get("history_fetch_command") or "").strip()
+        else None
+    )
     if pairs:
         pairs_arg = ",".join(pairs)
-        fetch_command = (
+        fetch_command = fetch_command or (
             "python3 scripts/oanda_history_fetch.py "
             f"--pairs {pairs_arg} --granularities {granularities_arg} --price BA "
             f"--days {BIDASK_REPLAY_HISTORY_FETCH_DAYS} --output-dir logs/replay/oanda_history"

@@ -39,6 +39,27 @@ class BidAskReplayPackagerTest(unittest.TestCase):
                 "history_files": 140,
                 "history_candles": 330150,
                 "missing_price_truth_samples": 0,
+                "history_fetch_command": (
+                    "PYTHONPATH=src python3 scripts/oanda_history_fetch.py "
+                    "--pairs AUD_USD --granularities S5 --price BA "
+                    "--from 2026-06-01T00:00:00Z --to 2026-06-02T00:00:00Z "
+                    "--output-dir logs/replay/oanda_history"
+                ),
+                "history_fetch_command_count": 1,
+                "history_fetch_command_mode": "WINDOWED",
+                "history_fetch_commands": [
+                    {
+                        "date": "2026-06-01",
+                        "pairs": ["AUD_USD"],
+                        "forecast_rows_missing_truth": 12,
+                        "command": (
+                            "PYTHONPATH=src python3 scripts/oanda_history_fetch.py "
+                            "--pairs AUD_USD --granularities S5 --price BA "
+                            "--from 2026-06-01T00:00:00Z --to 2026-06-02T00:00:00Z "
+                            "--output-dir logs/replay/oanda_history"
+                        ),
+                    }
+                ],
             },
             "forecast_sample_coverage": {
                 "min_directional_samples_for_precision_rule": 30,
@@ -97,6 +118,14 @@ class BidAskReplayPackagerTest(unittest.TestCase):
         )
         self.assertEqual(packaged["price_truth_coverage"]["status"], "PRICE_TRUTH_OK")
         self.assertEqual(packaged["price_truth_coverage"]["evaluated_rows"], 650)
+        self.assertEqual(
+            packaged["price_truth_coverage"]["history_fetch_command_count"],
+            1,
+        )
+        self.assertEqual(
+            packaged["price_truth_coverage"]["history_fetch_commands"][0]["pairs"],
+            ["AUD_USD"],
+        )
         self.assertEqual(packaged["adoption_summary"]["rank_only_support_rules"], 3)
         self.assertEqual(packaged["edge_rules"][0]["adoption_status"], "RANK_ONLY_NOT_DAILY_STABLE")
         self.assertEqual(

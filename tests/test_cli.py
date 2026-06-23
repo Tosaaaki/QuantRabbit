@@ -33,6 +33,7 @@ from quant_rabbit.models import AccountSummary, BrokerOrder, BrokerSnapshot, Own
 from quant_rabbit.paths import DEFAULT_CAPTURE_ECONOMICS, DEFAULT_EXECUTION_LEDGER_DB, DEFAULT_MARKET_CONTEXT_MATRIX
 from quant_rabbit.profitability_acceptance import (
     ProfitabilityAcceptanceAuditor,
+    _bidask_rule_findings,
     _execution_ledger_close_findings,
     _order_intent_metrics,
 )
@@ -2481,6 +2482,61 @@ class CliHelpTest(unittest.TestCase):
         self.assertEqual(
             frontier["examples"][1]["blocker_codes"],
             ["FORECAST_CONFIDENCE_REQUIRED_FOR_LIVE", "RANGE_PHASE_NOT_ROTATION"],
+        )
+
+    def test_bidask_partial_price_truth_remains_evidence_collection_even_with_live_grade_support(self) -> None:
+        fetch_command = (
+            "PYTHONPATH=src python3 scripts/oanda_history_fetch.py "
+            "--pairs AUD_USD,USD_JPY --granularities S5 --price BA "
+            "--from 2026-06-01T00:00:00Z --to 2026-06-02T00:00:00Z "
+            "--output-dir logs/replay/oanda_history"
+        )
+        payload = {
+            "granularity": "S5",
+            "history_dirs": ["logs/replay/oanda_history/20260622T222509Z"],
+            "adoption_summary": {
+                "live_grade_support_rules": 1,
+                "rank_only_support_rules": 0,
+                "negative_block_rules": 0,
+            },
+            "price_truth_coverage": {
+                "status": "PARTIAL_PRICE_TRUTH",
+                "adoption_level": "PAIR_LOCAL_RANK_ONLY",
+                "evaluated_rows": 18502,
+                "missing_price_truth_samples": 21847,
+                "missing_price_window_group_count": 26,
+                "history_fetch_command": fetch_command,
+                "history_fetch_command_count": 26,
+                "history_fetch_command_mode": "WINDOWED",
+                "missing_pairs": ["AUD_USD", "USD_JPY"],
+                "missing_pair_directions": ["AUD_USD:UP", "USD_JPY:DOWN"],
+            },
+            "edge_rules": [],
+            "contrarian_edge_rules": [
+                {
+                    "name": "AUD_USD_DOWN_H61_240m_FADE_TO_UP_S5_BIDASK_CONTRARIAN_HARVEST_TP10_SL7",
+                    "pair": "AUD_USD",
+                    "direction": "UP",
+                    "side": "LONG",
+                    "granularity": "S5",
+                    "samples": 67,
+                    "active_days": 3,
+                    "live_grade": True,
+                    "adoption_status": "LIVE_GRADE_DAILY_STABLE",
+                }
+            ],
+            "negative_rules": [],
+        }
+
+        metrics, findings = _bidask_rule_findings(payload, Path("bidask_rules.json"))
+
+        codes = [item["code"] for item in findings]
+        self.assertEqual(codes, ["BIDASK_REPLAY_PRICE_TRUTH_PARTIAL"])
+        self.assertEqual(metrics["history_fetch_command"], fetch_command)
+        self.assertEqual(metrics["price_truth_coverage"]["history_fetch_command_count"], 26)
+        self.assertEqual(
+            findings[0]["evidence"]["price_truth_coverage"]["missing_pair_directions"],
+            ["AUD_USD:UP", "USD_JPY:DOWN"],
         )
 
     def test_profitability_acceptance_passes_when_profit_invariants_are_clear(self) -> None:

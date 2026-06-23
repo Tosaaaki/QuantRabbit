@@ -251,6 +251,107 @@ class TraderSupportBotTest(unittest.TestCase):
             self.assertEqual(payload["entry_readiness"]["live_ready_lanes"], 1)
             self.assertIn("RUN_NEXT_TRADER_CYCLE", {item["code"] for item in payload["operator_actions"]})
 
+    def test_bidask_partial_price_truth_evidence_exposes_exact_fetch_command(self) -> None:
+        now = datetime(2026, 6, 22, 12, 15, tzinfo=timezone.utc)
+        fetch_command = (
+            "PYTHONPATH=src python3 scripts/oanda_history_fetch.py "
+            "--pairs AUD_USD,USD_JPY --granularities S5 --price BA "
+            "--from 2026-06-01T00:00:00Z --to 2026-06-02T00:00:00Z "
+            "--output-dir logs/replay/oanda_history"
+        )
+        replay_command = (
+            "PYTHONPATH=src python3 scripts/oanda_history_replay_validate.py "
+            "--forecast-history data/forecast_history.jsonl --granularity S5 "
+            "--auto-history-min-days 30"
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _write_fixture(root, now=now, blocked=True)
+            _write_json(
+                files["profitability"],
+                {
+                    "status": "PROFITABILITY_ACCEPTANCE_ACTION_REQUIRED",
+                    "blockers": [],
+                    "findings": [
+                        {
+                            "priority": "P1",
+                            "code": "BIDASK_REPLAY_PRICE_TRUTH_PARTIAL",
+                            "message": "S5 bid/ask replay rules still have partial OANDA price-truth coverage",
+                            "next_action": "fetch missing OANDA BA windows and rerun replay validation",
+                            "evidence": {},
+                        }
+                    ],
+                    "metrics": {
+                        "capture_economics": {},
+                        "bidask_replay_rules": {
+                            "support_rules": 1,
+                            "daily_stable_support_rules": 1,
+                            "rank_only_support_rules": 0,
+                            "edge_rules": 0,
+                            "daily_stable_edge_rules": 0,
+                            "rank_only_edge_rules": 0,
+                            "contrarian_edge_rules": 1,
+                            "daily_stable_contrarian_edge_rules": 1,
+                            "rank_only_contrarian_edge_rules": 0,
+                            "negative_rules": 0,
+                            "price_truth_coverage": {
+                                "status": "PARTIAL_PRICE_TRUTH",
+                                "adoption_level": "PAIR_LOCAL_RANK_ONLY",
+                                "evaluated_rows": 18502,
+                                "missing_price_truth_samples": 21847,
+                                "missing_price_window_group_count": 26,
+                                "history_fetch_command_count": 26,
+                                "history_fetch_command_mode": "WINDOWED",
+                                "missing_pair_directions": ["AUD_USD:UP", "USD_JPY:DOWN"],
+                            },
+                            "daily_stability_requirements": {
+                                "min_active_days": 3,
+                                "max_daily_sample_share": 0.7,
+                                "min_positive_day_rate": 2.0 / 3.0,
+                            },
+                            "history_fetch_command": fetch_command,
+                            "replay_validation_command": replay_command,
+                            "rank_only_examples": [],
+                        },
+                    },
+                },
+            )
+            env = _guardian_env(root, active="0")
+            with mock.patch.dict(os.environ, env, clear=False):
+                summary = TraderSupportBot(
+                    broker_snapshot_path=files["broker"],
+                    order_intents_path=files["intents"],
+                    target_state_path=files["target"],
+                    position_management_path=files["position_management"],
+                    position_guardian_management_path=files["guardian_management"],
+                    position_guardian_execution_path=files["guardian_execution"],
+                    position_guardian_heartbeat_path=files["guardian_heartbeat"],
+                    self_improvement_audit_path=files["self_improvement"],
+                    profitability_acceptance_path=files["profitability"],
+                    execution_timing_audit_path=files["timing"],
+                    profit_capture_bot_path=files["profit_capture_bot"],
+                    output_path=files["output"],
+                    report_path=files["report"],
+                    now_utc=now,
+                ).run()
+
+            payload = json.loads(files["output"].read_text())
+            self.assertEqual(summary.status, STATUS_BLOCKED)
+            repair_plan = payload["profitability_acceptance"]["repair_plan"]
+            self.assertEqual(payload["metrics"]["acceptance_evidence_collection_count"], 1)
+            self.assertEqual(
+                repair_plan["evidence_collection_items"][0]["code"],
+                "BIDASK_REPLAY_PRICE_TRUTH_PARTIAL",
+            )
+            evidence_summary = repair_plan["evidence_collection_items"][0]["evidence_summary"]
+            self.assertEqual(evidence_summary["history_fetch_command"], fetch_command)
+            self.assertEqual(evidence_summary["history_fetch_command_count"], 26)
+            self.assertEqual(evidence_summary["history_fetch_command_mode"], "WINDOWED")
+            self.assertEqual(evidence_summary["missing_price_window_group_count"], 26)
+            action_by_code = {item["code"]: item for item in payload["operator_actions"]}
+            self.assertEqual(action_by_code["FETCH_BIDASK_REPLAY_HISTORY"]["command"], fetch_command)
+            self.assertEqual(action_by_code["VALIDATE_BIDASK_REPLAY_HISTORY"]["command"], replay_command)
+
     def test_repair_basket_allowed_even_when_acceptance_panel_is_blocked(self) -> None:
         now = datetime(2026, 6, 22, 12, 15, tzinfo=timezone.utc)
         with tempfile.TemporaryDirectory() as tmp:

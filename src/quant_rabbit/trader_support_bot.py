@@ -1001,6 +1001,7 @@ def _acceptance_repair_plan(payload: dict[str, Any]) -> dict[str, Any]:
         for item in findings
         if isinstance(item, dict)
         and str(item.get("code") or "") in {
+            "BIDASK_REPLAY_PRICE_TRUTH_PARTIAL",
             "BIDASK_REPLAY_SUPPORT_NOT_DAILY_STABLE",
             "BIDASK_CONTRARIAN_EDGE_NOT_DAILY_STABLE",
         }
@@ -1268,7 +1269,11 @@ def _acceptance_clearance_for_code(
                 "clearance_condition": evidence.get("clearance_condition"),
             },
         )
-    if code in {"BIDASK_REPLAY_SUPPORT_NOT_DAILY_STABLE", "BIDASK_CONTRARIAN_EDGE_NOT_DAILY_STABLE"}:
+    if code in {
+        "BIDASK_REPLAY_PRICE_TRUTH_PARTIAL",
+        "BIDASK_REPLAY_SUPPORT_NOT_DAILY_STABLE",
+        "BIDASK_CONTRARIAN_EDGE_NOT_DAILY_STABLE",
+    }:
         bidask = metrics.get("bidask_replay_rules") if isinstance(metrics.get("bidask_replay_rules"), dict) else {}
         bidask = bidask or evidence
         examples = bidask.get("rank_only_examples") if isinstance(bidask.get("rank_only_examples"), list) else []
@@ -1277,7 +1282,13 @@ def _acceptance_clearance_for_code(
             "--forecast-history data/forecast_history.jsonl "
             "--granularity S5"
         )
-        if code == "BIDASK_REPLAY_SUPPORT_NOT_DAILY_STABLE":
+        if code == "BIDASK_REPLAY_PRICE_TRUTH_PARTIAL":
+            condition = (
+                "missing OANDA bid/ask price-truth windows are fetched and the refreshed replay "
+                "report either reaches PRICE_TRUTH_OK or proves that any remaining candidate is "
+                "only rank/audit evidence"
+            )
+        elif code == "BIDASK_REPLAY_SUPPORT_NOT_DAILY_STABLE":
             condition = (
                 "at least one bid/ask replay support rule graduates from rank-only to live-grade DAILY_STABLE "
                 "after fresh multi-week OANDA BA candle replay; until then these candidates are advisory "
@@ -1306,6 +1317,21 @@ def _acceptance_clearance_for_code(
                 "price_truth_coverage": bidask.get("price_truth_coverage"),
                 "daily_stability_requirements": bidask.get("daily_stability_requirements"),
                 "history_fetch_command": bidask.get("history_fetch_command"),
+                "history_fetch_command_count": (
+                    (bidask.get("price_truth_coverage") or {}).get("history_fetch_command_count")
+                    if isinstance(bidask.get("price_truth_coverage"), dict)
+                    else None
+                ),
+                "history_fetch_command_mode": (
+                    (bidask.get("price_truth_coverage") or {}).get("history_fetch_command_mode")
+                    if isinstance(bidask.get("price_truth_coverage"), dict)
+                    else None
+                ),
+                "missing_price_window_group_count": (
+                    (bidask.get("price_truth_coverage") or {}).get("missing_price_window_group_count")
+                    if isinstance(bidask.get("price_truth_coverage"), dict)
+                    else None
+                ),
                 "rank_only_examples": examples[:3],
             },
         )
