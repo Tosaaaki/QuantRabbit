@@ -412,17 +412,15 @@ def preserve_existing_campaign_firepower(
     )
     if not narrower_report:
         return
-    current_vehicles = _firepower_unique_vehicle_count(current_firepower)
-    existing_vehicles = _firepower_unique_vehicle_count(existing_firepower)
-    if existing_vehicles is None:
+    if not _campaign_firepower_bucket_shrank(current_firepower, existing_firepower):
         return
-    if current_vehicles is not None and current_vehicles >= existing_vehicles:
-        return
-    packaged["campaign_firepower"] = existing_firepower
+    merged_firepower = _merge_existing_campaign_firepower(current_firepower, existing_firepower)
+    packaged["campaign_firepower"] = merged_firepower or existing_firepower
     packaged["campaign_firepower_preserved_from_existing"] = True
     packaged["campaign_firepower_preservation_reason"] = (
-        "new mining report has a narrower qualified universe; preserving existing "
-        "broader audit-only firepower instead of shrinking runtime evidence"
+        "new mining report has a narrower qualified universe or a smaller firepower "
+        "bucket; preserving existing broader audit-only firepower instead of "
+        "shrinking runtime evidence"
     )
     source_report = existing.get("campaign_firepower_source_report") or existing.get("source_report")
     if source_report:
@@ -514,14 +512,55 @@ def _preserve_section_summary_count(
 
 
 def _firepower_unique_vehicle_count(firepower: dict[str, Any]) -> int | None:
-    high_precision = firepower.get("high_precision")
-    if not isinstance(high_precision, dict):
+    return _firepower_bucket_unique_vehicle_count(firepower, bucket="high_precision")
+
+
+def _firepower_bucket_unique_vehicle_count(firepower: dict[str, Any], *, bucket: str) -> int | None:
+    section = firepower.get(bucket)
+    if not isinstance(section, dict):
         return None
-    count = _optional_int(high_precision.get("unique_vehicle_count"))
+    count = _optional_int(section.get("unique_vehicle_count"))
     if count is not None:
         return count
-    top = high_precision.get("top_vehicles")
+    top = section.get("top_vehicles")
     return len(top) if isinstance(top, list) else None
+
+
+def _campaign_firepower_bucket_shrank(
+    current_firepower: dict[str, Any],
+    existing_firepower: dict[str, Any],
+) -> bool:
+    for bucket in ("high_precision", "evidence_queue"):
+        existing_count = _firepower_bucket_unique_vehicle_count(existing_firepower, bucket=bucket)
+        if existing_count is None:
+            continue
+        current_count = _firepower_bucket_unique_vehicle_count(current_firepower, bucket=bucket)
+        if current_count is None or current_count < existing_count:
+            return True
+    return False
+
+
+def _merge_existing_campaign_firepower(
+    current_firepower: dict[str, Any],
+    existing_firepower: dict[str, Any],
+) -> dict[str, Any] | None:
+    merged = _merge_campaign_firepower(
+        [
+            {"campaign_firepower": existing_firepower},
+            {"campaign_firepower": current_firepower},
+        ]
+    )
+    if not any(
+        (merged.get(bucket) or {}).get("top_vehicles")
+        for bucket in ("high_precision", "evidence_queue")
+    ):
+        return None
+    for key in ("per_trade_risk_pct_lens",):
+        if key in current_firepower:
+            merged[key] = current_firepower[key]
+        elif key in existing_firepower:
+            merged[key] = existing_firepower[key]
+    return merged
 
 
 def _merge_rule_rows(current_rows: list[Any], existing_rows: list[Any]) -> list[Any]:

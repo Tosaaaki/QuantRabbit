@@ -505,6 +505,127 @@ class OandaUniversalRotationPackagerTest(unittest.TestCase):
         )
         self.assertEqual(packaged["summary"]["high_precision_pair_confluence_count"], 6)
 
+    def test_preserves_broader_campaign_evidence_queue_when_high_precision_is_unchanged(self) -> None:
+        payload = {
+            "generated_at_utc": "2026-06-23T13:03:24Z",
+            "high_precision_multi_confluence_count": 155,
+            "high_precision_pair_confluence_count": 6,
+            "qualified_multi_confluence_count": 5302,
+            "qualified_pair_confluence_count": 327,
+            "campaign_firepower": {
+                "status": "VERIFIED_TARGET_10_ROUTE_ESTIMATED",
+                "per_trade_risk_pct_lens": 0.35,
+                "high_precision": {
+                    "top_vehicles": [
+                        {
+                            "vehicle_key": "USD_JPY|LONG|range_reversion|tp1_sl1",
+                            "pair": "USD_JPY",
+                            "side": "LONG",
+                            "shape": "range_reversion",
+                            "exit_shape": "tp1_sl1",
+                            "estimated_return_pct_per_active_day_at_observed_frequency": 12.0,
+                            "estimated_return_pct_per_trade_at_risk_lens": 0.8,
+                            "observed_attempts_per_active_day": 15.0,
+                        }
+                    ]
+                },
+                "evidence_queue": {
+                    "top_vehicles": [
+                        {
+                            "vehicle_key": "USD_JPY|SHORT|range_reversion|tp1_sl1",
+                            "pair": "USD_JPY",
+                            "side": "SHORT",
+                            "shape": "range_reversion",
+                            "exit_shape": "tp1_sl1",
+                            "estimated_return_pct_per_active_day_at_observed_frequency": 1.2,
+                            "estimated_return_pct_per_trade_at_risk_lens": 0.4,
+                            "observed_attempts_per_active_day": 3.0,
+                        }
+                    ]
+                },
+            },
+        }
+        existing = {
+            "source_report": "merged_oanda_universal_rotation_reports",
+            "summary": {
+                "high_precision_multi_confluence_count": 149,
+                "high_precision_pair_confluence_count": 6,
+                "qualified_multi_confluence_count": 8292,
+                "qualified_pair_confluence_count": 629,
+            },
+            "campaign_firepower": {
+                "status": "VERIFIED_TARGET_10_ROUTE_ESTIMATED",
+                "high_precision": {
+                    "top_vehicles": [
+                        {
+                            "vehicle_key": "USD_JPY|LONG|range_reversion|tp1_sl1",
+                            "pair": "USD_JPY",
+                            "side": "LONG",
+                            "shape": "range_reversion",
+                            "exit_shape": "tp1_sl1",
+                            "estimated_return_pct_per_active_day_at_observed_frequency": 10.0,
+                            "estimated_return_pct_per_trade_at_risk_lens": 0.7,
+                            "observed_attempts_per_active_day": 14.0,
+                        }
+                    ]
+                },
+                "evidence_queue": {
+                    "top_vehicles": [
+                        {
+                            "vehicle_key": "USD_JPY|SHORT|range_reversion|tp1_sl1",
+                            "pair": "USD_JPY",
+                            "side": "SHORT",
+                            "shape": "range_reversion",
+                            "exit_shape": "tp1_sl1",
+                            "estimated_return_pct_per_active_day_at_observed_frequency": 1.0,
+                            "estimated_return_pct_per_trade_at_risk_lens": 0.3,
+                            "observed_attempts_per_active_day": 3.0,
+                        },
+                        {
+                            "vehicle_key": "GBP_USD|SHORT|range_reversion|tp1_sl1",
+                            "pair": "GBP_USD",
+                            "side": "SHORT",
+                            "shape": "range_reversion",
+                            "exit_shape": "tp1_sl1",
+                            "estimated_return_pct_per_active_day_at_observed_frequency": 1.4,
+                            "estimated_return_pct_per_trade_at_risk_lens": 0.35,
+                            "observed_attempts_per_active_day": 4.0,
+                        },
+                        {
+                            "vehicle_key": "AUD_USD|SHORT|range_reversion|tp1_sl1",
+                            "pair": "AUD_USD",
+                            "side": "SHORT",
+                            "shape": "range_reversion",
+                            "exit_shape": "tp1_sl1",
+                            "estimated_return_pct_per_active_day_at_observed_frequency": 1.6,
+                            "estimated_return_pct_per_trade_at_risk_lens": 0.4,
+                            "observed_attempts_per_active_day": 4.0,
+                        },
+                    ]
+                },
+            },
+        }
+
+        packaged = packager.package_payload(payload, source_report=Path("focused.json"))
+        report_is_narrower = packager._packaged_report_is_narrower(packaged, existing)
+        self.assertTrue(report_is_narrower)
+
+        packager.preserve_existing_campaign_firepower(
+            packaged,
+            existing,
+            report_is_narrower=report_is_narrower,
+        )
+
+        self.assertTrue(packaged["campaign_firepower_preserved_from_existing"])
+        self.assertEqual(packaged["campaign_firepower"]["high_precision"]["unique_vehicle_count"], 1)
+        self.assertEqual(packaged["campaign_firepower"]["evidence_queue"]["unique_vehicle_count"], 3)
+        self.assertEqual(packaged["campaign_firepower"]["evidence_queue"]["pair_count"], 3)
+        self.assertEqual(packaged["campaign_firepower"]["per_trade_risk_pct_lens"], 0.35)
+        self.assertEqual(
+            {row["pair"] for row in packaged["campaign_firepower"]["evidence_queue"]["top_vehicles"]},
+            {"AUD_USD", "GBP_USD", "USD_JPY"},
+        )
+
     def test_preserves_broader_config_when_latest_report_is_narrower(self) -> None:
         packaged = packager.package_payload(
             {
