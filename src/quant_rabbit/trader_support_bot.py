@@ -45,9 +45,14 @@ RANGE_ROTATION_COUNTERPART_MISSING = "RANGE_ROTATION_COUNTERPART_MISSING"
 OANDA_AUDIT_ONLY_LOCAL_TP_PROOF_REQUIRED = "OANDA_CAMPAIGN_AUDIT_ONLY_LOCAL_TP_PROOF_REQUIRED"
 OANDA_AUDIT_ONLY_REPLAY_HISTORY_GRANULARITIES = "S5,M5"
 FORECAST_FRONTIER_EVIDENCE_WAIT_STATUS = "FORECAST_FRONTIER_WAITING_FOR_LIVE_PRECISION_EVIDENCE"
+FRONTIER_QUOTE_FRESHNESS_WAIT_STATUS = "FRONTIER_WAITING_FOR_FRESH_QUOTE"
 PROTECTIVE_FRONTIER_GUARDRAIL_STATUS = "FRONTIER_PROTECTIVE_GUARDRAIL_ACTIVE"
 BIDASK_REPLAY_WAIT_STATUS = "BIDASK_REPLAY_WAITING_FOR_FORECAST_SAMPLE_COVERAGE"
 TP_PROGRESS_GUARDIAN_WAIT_STATUS = "WAITING_FOR_POSITION_GUARDIAN_LIVE_EVIDENCE"
+QUOTE_FRESHNESS_BLOCKER_CODES = {
+    "STALE_QUOTE",
+    "TELEMETRY_FORECAST_QUOTE_STALE_FOR_LIVE",
+}
 FORECAST_FRONTIER_BLOCKER_CODES = {
     "FORECAST_NOT_EXECUTABLE_FOR_LIVE",
     "TELEMETRY_FORECAST_NOT_EXECUTABLE_FOR_LIVE",
@@ -1088,7 +1093,9 @@ def _repair_frontier_remaining_blockers(repair_frontier: list[dict[str, Any]]) -
 
 def _frontier_blocker_sort_key(row: dict[str, Any]) -> tuple[int, int, float, str]:
     code = str(row.get("code") or "")
-    if _frontier_blocker_waits_for_live_precision_evidence(row):
+    if _frontier_blocker_waits_for_quote_refresh(row):
+        causal_rank = 0
+    elif _frontier_blocker_waits_for_live_precision_evidence(row):
         causal_rank = 0
     elif code == OANDA_AUDIT_ONLY_LOCAL_TP_PROOF_REQUIRED:
         causal_rank = 1
@@ -1106,6 +1113,10 @@ def _frontier_blocker_sort_key(row: dict[str, Any]) -> tuple[int, int, float, st
 
 def _frontier_blocker_is_protective_guardrail(row: dict[str, Any]) -> bool:
     return str(row.get("code") or "") in FRONTIER_GUARDRAIL_BLOCKER_CODES
+
+
+def _frontier_blocker_waits_for_quote_refresh(row: dict[str, Any]) -> bool:
+    return str(row.get("code") or "") in QUOTE_FRESHNESS_BLOCKER_CODES
 
 
 def _intent_metadata(item: dict[str, Any]) -> dict[str, Any]:
@@ -2568,58 +2579,80 @@ def _build_repair_requests(
     if frontier_blockers:
         top = frontier_blockers[0] if isinstance(frontier_blockers[0], dict) else {}
         code = str(top.get("code") or "UNKNOWN_REPAIR_FRONTIER_BLOCKER")
+        waits_for_quote_refresh = _frontier_blocker_waits_for_quote_refresh(top)
         waits_for_forecast_evidence = _frontier_blocker_waits_for_live_precision_evidence(top)
         protective_guardrail_active = _frontier_blocker_is_protective_guardrail(top)
-        frontier_status = (
-            FORECAST_FRONTIER_EVIDENCE_WAIT_STATUS
-            if waits_for_forecast_evidence
-            else PROTECTIVE_FRONTIER_GUARDRAIL_STATUS
-            if protective_guardrail_active
-            else "READY_FOR_CODE_OR_EVIDENCE_REPAIR"
-        )
-        frontier_problem = (
-            "Repair-frontier lanes are forecast-blocked because current forecasts are not executable "
-            "and supporting historical projections are not live-precision proof yet."
-            if waits_for_forecast_evidence
-            else "Repair-frontier lanes are blocked by protective geometry or chase guards; this is not a Codex gate-loosening task."
-            if protective_guardrail_active
-            else "After global support gates are removed, repair-frontier lanes still have lane-local blockers."
-        )
-        frontier_why_now = (
-            "This prevents rank-only or long-lead historical projections from being promoted into live entries "
-            "before bid/ask replay or fresh live evidence proves the forecast is tradable now."
-            if waits_for_forecast_evidence
-            else "The current example is a bad entry shape; relaxing reward/risk or chase blockers would recreate the loss loop."
-            if protective_guardrail_active
-            else "This is the next non-guardian blocker that would keep high-turn repair baskets from becoming executable."
-        )
-        frontier_clearance = (
-            [
+        if waits_for_quote_refresh:
+            frontier_status = FRONTIER_QUOTE_FRESHNESS_WAIT_STATUS
+            frontier_problem = (
+                "Repair-frontier lanes are blocked because the current broker quote or forecast telemetry "
+                "quote is stale."
+            )
+            frontier_why_now = (
+                "Quote freshness is runtime broker truth, not strategy code; forcing the gate through "
+                "stale prices would turn a transient refresh wait into live entry risk."
+            )
+            frontier_clearance = [
+                f"{code} clears only after broker snapshot and generated intents use a quote inside the live freshness window.",
+                "Do not loosen RiskEngine quote freshness or common entry gates; refresh broker truth and regenerate intents instead.",
+            ]
+            frontier_verification_commands = [
+                "PYTHONPATH=src python3 -m quant_rabbit.cli broker-snapshot --output data/broker_snapshot.json",
+                "PYTHONPATH=src python3 -m quant_rabbit.cli generate-intents --snapshot data/broker_snapshot.json --reuse-market-artifacts",
+                "PYTHONPATH=src python3 -m quant_rabbit.cli trader-support-bot",
+            ]
+        elif waits_for_forecast_evidence:
+            frontier_status = FORECAST_FRONTIER_EVIDENCE_WAIT_STATUS
+            frontier_problem = (
+                "Repair-frontier lanes are forecast-blocked because current forecasts are not executable "
+                "and supporting historical projections are not live-precision proof yet."
+            )
+            frontier_why_now = (
+                "This prevents rank-only or long-lead historical projections from being promoted into live "
+                "entries before bid/ask replay or fresh live evidence proves the forecast is tradable now."
+            )
+            frontier_clearance = [
                 f"{code} clears only after current forecasts become executable, or bid/ask replay/live evidence marks the supporting projection live_precision_ok.",
                 "Until then, collect read-only OANDA bid/ask replay evidence instead of editing entry gates to force LIVE_READY.",
             ]
-            if waits_for_forecast_evidence
-            else [
-                f"{code} remains a protective guard until a fresh lane has valid reward/risk, retest geometry, and no chase-pattern blockers.",
-                "Do not edit common entry gates to force this blocked lane live-ready; generate or wait for a better-shaped lane instead.",
-            ]
-            if protective_guardrail_active
-            else [
-                f"{code} disappears from repair_frontier_remaining_blockers or gains a tested downgrade path."
-            ]
-        )
-        frontier_verification_commands = (
-            [
+            frontier_verification_commands = [
                 "PYTHONPATH=src python3 -m quant_rabbit.cli trader-support-bot",
                 "PYTHONPATH=src python3 scripts/oanda_history_replay_validate.py --forecast-history data/forecast_history.jsonl --granularity S5 --auto-history-min-days 30",
                 "PYTHONPATH=src python3 -m quant_rabbit.cli generate-intents --reuse-market-artifacts",
             ]
-            if waits_for_forecast_evidence
-            else [
+        elif protective_guardrail_active:
+            frontier_status = PROTECTIVE_FRONTIER_GUARDRAIL_STATUS
+            frontier_problem = (
+                "Repair-frontier lanes are blocked by protective geometry or chase guards; this is not a "
+                "Codex gate-loosening task."
+            )
+            frontier_why_now = (
+                "The current example is a bad entry shape; relaxing reward/risk or chase blockers would "
+                "recreate the loss loop."
+            )
+            frontier_clearance = [
+                f"{code} remains a protective guard until a fresh lane has valid reward/risk, retest geometry, and no chase-pattern blockers.",
+                "Do not edit common entry gates to force this blocked lane live-ready; generate or wait for a better-shaped lane instead.",
+            ]
+            frontier_verification_commands = [
                 "PYTHONPATH=src python3 -m quant_rabbit.cli trader-support-bot",
                 "PYTHONPATH=src python3 -m quant_rabbit.cli generate-intents --reuse-market-artifacts",
             ]
-        )
+        else:
+            frontier_status = "READY_FOR_CODE_OR_EVIDENCE_REPAIR"
+            frontier_problem = (
+                "After global support gates are removed, repair-frontier lanes still have lane-local blockers."
+            )
+            frontier_why_now = (
+                "This is the next non-guardian blocker that would keep high-turn repair baskets from becoming executable."
+            )
+            frontier_clearance = [
+                f"{code} disappears from repair_frontier_remaining_blockers or gains a tested downgrade path."
+            ]
+            frontier_verification_commands = [
+                "PYTHONPATH=src python3 -m quant_rabbit.cli trader-support-bot",
+                "PYTHONPATH=src python3 -m quant_rabbit.cli generate-intents --reuse-market-artifacts",
+            ]
         requests.append(
             _repair_request(
                 code="REPAIR_FRONTIER_LANE_BLOCKER",

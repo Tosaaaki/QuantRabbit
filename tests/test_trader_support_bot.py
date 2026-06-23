@@ -16,6 +16,7 @@ from quant_rabbit.execution_timing_contracts import (
     TP_PROGRESS_REPAIR_REPLAY_FIELD,
 )
 from quant_rabbit.trader_support_bot import (
+    FRONTIER_QUOTE_FRESHNESS_WAIT_STATUS,
     STATUS_BLOCKED,
     STATUS_READY,
     TP_PROGRESS_GUARDIAN_WAIT_STATUS,
@@ -822,6 +823,81 @@ class TraderSupportBotTest(unittest.TestCase):
                 "oanda_history_replay_validate.py",
                 " ".join(request["verification_commands"]),
             )
+
+    def test_frontier_stale_quote_waits_for_fresh_broker_truth(self) -> None:
+        now = datetime(2026, 6, 23, 23, 35, tzinfo=timezone.utc)
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _write_fixture(root, now=now, blocked=True)
+            _write_json(
+                files["intents"],
+                {
+                    "generated_at_utc": now.isoformat(),
+                    "results": [
+                        {
+                            "lane_id": "failure_trader:EUR_USD:LONG:BREAKOUT_FAILURE:LIMIT",
+                            "status": "DRY_RUN_BLOCKED",
+                            "live_blocker_codes": [
+                                "POSITION_GUARDIAN_INACTIVE_FOR_PROFIT_CAPTURE",
+                                "SELF_IMPROVEMENT_P0_PROFITABILITY_DISCIPLINE",
+                                "STALE_QUOTE",
+                                "TELEMETRY_FORECAST_QUOTE_STALE_FOR_LIVE",
+                            ],
+                            "intent": {
+                                "pair": "EUR_USD",
+                                "side": "LONG",
+                                "order_type": "LIMIT",
+                                "market_context": {"method": "BREAKOUT_FAILURE"},
+                                "metadata": {
+                                    "self_improvement_p0_repair_live_ready": True,
+                                    "self_improvement_p0_repair_mode": "TP_HARVEST_REPAIR",
+                                    "sizing_actual_reward_jpy": 205.605,
+                                    "sizing_actual_risk_jpy": 92.548,
+                                    "positive_rotation_mode": "OANDA_CAMPAIGN_FIREPOWER_HARVEST",
+                                    "capture_take_profit_trades": 20,
+                                    "capture_take_profit_wins": 20,
+                                    "capture_take_profit_losses": 0,
+                                    "capture_take_profit_expectancy_jpy": 591.5,
+                                },
+                            },
+                            "risk_metrics": {"reward_jpy": 205.605, "risk_jpy": 92.548},
+                        }
+                    ],
+                },
+            )
+            env = _guardian_env(root, active="0")
+            with mock.patch.dict(os.environ, env, clear=False):
+                TraderSupportBot(
+                    broker_snapshot_path=files["broker"],
+                    order_intents_path=files["intents"],
+                    target_state_path=files["target"],
+                    position_management_path=files["position_management"],
+                    position_guardian_management_path=files["guardian_management"],
+                    position_guardian_execution_path=files["guardian_execution"],
+                    position_guardian_heartbeat_path=files["guardian_heartbeat"],
+                    self_improvement_audit_path=files["self_improvement"],
+                    profitability_acceptance_path=files["profitability"],
+                    execution_timing_audit_path=files["timing"],
+                    profit_capture_bot_path=files["profit_capture_bot"],
+                    output_path=files["output"],
+                    report_path=files["report"],
+                    now_utc=now,
+                ).run()
+
+            payload = json.loads(files["output"].read_text())
+            top = payload["metrics"]["repair_frontier_after_support_top_blockers"][0]
+            request = next(
+                item for item in payload["repair_requests"] if item["code"] == "REPAIR_FRONTIER_LANE_BLOCKER"
+            )
+
+            self.assertEqual(top["code"], "STALE_QUOTE")
+            self.assertEqual(request["status"], FRONTIER_QUOTE_FRESHNESS_WAIT_STATUS)
+            self.assertEqual(request["source_findings"], ["STALE_QUOTE"])
+            self.assertIn("broker quote", request["problem"])
+            self.assertIn("runtime broker truth", request["why_now"])
+            self.assertIn("Do not loosen RiskEngine quote freshness", " ".join(request["clearance_conditions"]))
+            self.assertIn("broker-snapshot", " ".join(request["verification_commands"]))
+            self.assertNotIn("oanda_history_replay_validate.py", " ".join(request["verification_commands"]))
 
     def test_frontier_reward_risk_guardrail_is_not_code_repair(self) -> None:
         now = datetime(2026, 6, 22, 12, 15, tzinfo=timezone.utc)
