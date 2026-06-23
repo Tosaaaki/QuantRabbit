@@ -1175,17 +1175,83 @@ class ForecastPrecisionConfluenceTest(unittest.TestCase):
         self.assertEqual(assessment["score_delta"], 7.0)
 
     def test_packaged_oanda_universal_rotation_contains_inversion_selectors(self) -> None:
-        metadata = {
-            "forecast_direction": "UP",
-            "chart_direction_bias": "LONG",
-            "m5_atr_percentile_100": 0.80,
-            "oanda_m5_bar_range": "normal",
-            "oanda_m5_spread_regime": "mid",
-            "session_bucket": "NY",
-            "tp_execution_mode": "ATTACHED_TECHNICAL_TP",
-            "tp_target_intent": "HARVEST",
-            "opportunity_mode": "HARVEST",
-        }
+        packaged_payload = json.loads(
+            forecast_precision.PACKAGED_OANDA_UNIVERSAL_ROTATION_RULES_PATH.read_text(
+                encoding="utf-8"
+            )
+        )
+        def _metadata_for_packaged_inversion_row(item: dict[str, object]) -> dict[str, str] | None:
+            selected_side = item.get("selected_side")
+            if selected_side not in {"LONG", "SHORT"}:
+                return None
+            out = {
+                "forecast_direction": "UP" if selected_side == "LONG" else "DOWN",
+                "chart_direction_bias": str(selected_side),
+                "tp_execution_mode": "ATTACHED_TECHNICAL_TP",
+                "tp_target_intent": "HARVEST",
+                "opportunity_mode": "HARVEST",
+            }
+            for feature_key in (
+                "feature_a",
+                "feature_b",
+                "feature_c",
+                "feature_d",
+                "feature_e",
+                "feature_f",
+                "feature_g",
+                "feature_h",
+            ):
+                feature = item.get(feature_key)
+                if not feature:
+                    continue
+                name, _, bucket = str(feature).partition(":")
+                if not bucket:
+                    return None
+                if name == "atr_regime":
+                    out["oanda_m5_atr_regime"] = bucket
+                elif name == "spread_regime":
+                    out["oanda_m5_spread_regime"] = bucket
+                elif name == "bar_range":
+                    out["oanda_m5_bar_range"] = bucket
+                elif name == "range_pos":
+                    out["oanda_m5_range_pos_bucket"] = bucket
+                elif name in {"body", "fast_mom", "slow_mom"}:
+                    out[f"oanda_m5_{name}"] = bucket
+                elif name in {"body_abs", "fast_mom_abs", "slow_mom_abs"}:
+                    out[f"oanda_m5_{name}"] = bucket
+                elif name == "session":
+                    out["session_bucket"] = bucket.upper()
+                elif name in {"wick_reject", "failed_break"}:
+                    out[f"oanda_m5_{name}_{str(selected_side).lower()}"] = bucket
+                else:
+                    return None
+            return out
+
+        row = None
+        metadata = None
+        for item in packaged_payload.get("qualified_inversion_selectors") or []:
+            if item.get("qualification") != "PASS" or item.get("shape") != "trend_continuation":
+                continue
+            candidate_metadata = _metadata_for_packaged_inversion_row(item)
+            if candidate_metadata is None:
+                continue
+            row = item
+            metadata = candidate_metadata
+            break
+        self.assertIsNotNone(row)
+        self.assertIsNotNone(metadata)
+        assert row is not None
+        assert metadata is not None
+
+        side = row["selected_side"]
+        entry = 150.00 if str(row["pair"]).endswith("_JPY") else 1.10000
+        pip = 0.01 if str(row["pair"]).endswith("_JPY") else 0.0001
+        if side == "LONG":
+            take_profit = entry + (12.5 * pip)
+            stop_loss = entry - (10.0 * pip)
+        else:
+            take_profit = entry - (12.5 * pip)
+            stop_loss = entry + (10.0 * pip)
 
         forecast_precision._load_oanda_universal_rotation_rule_set.cache_clear()
         with (
@@ -1202,20 +1268,20 @@ class ForecastPrecisionConfluenceTest(unittest.TestCase):
         ):
             assessment = oanda_universal_rotation_precision_assessment(
                 metadata,
-                pair="EUR_USD",
-                side="LONG",
+                pair=row["pair"],
+                side=side,
                 order_type="LIMIT",
                 method="TREND_CONTINUATION",
-                entry=1.10000,
-                take_profit=1.10125,
-                stop_loss=1.09900,
+                entry=entry,
+                take_profit=take_profit,
+                stop_loss=stop_loss,
             )
         forecast_precision._load_oanda_universal_rotation_rule_set.cache_clear()
 
         support = assessment["primary_rank_support"]
         self.assertIsNotNone(support)
         self.assertEqual(support["rule_source_section"], "qualified_inversion_selectors")
-        self.assertEqual(support["source_side"], "SHORT")
+        self.assertEqual(support["source_side"], row["source_side"])
         self.assertLess(support["source_validation_avg_realized_atr"], 0.0)
         self.assertGreater(support["validation_inversion_edge_atr"], 0.0)
         self.assertEqual(support["rank_score_bonus"], 7.0)
