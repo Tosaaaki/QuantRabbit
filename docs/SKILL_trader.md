@@ -107,7 +107,8 @@ PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli trader-prompt-route
 # optimize-coverage → ai-attack-advice →
 # learning/execution-timing/manual-market-context/operator-precedent/verification audits →
 # generate-predictive-limits → position sidecars → memory-health →
-# profit-capture-bot → self-improvement-audit → profitability-acceptance → trader-support-bot) in one
+# profit-capture-bot → self-improvement-audit → profitability-acceptance →
+# trader-support-bot → trader-repair-orchestrator) in one
 # process, in the same order and with the same arguments the per-step
 # skeleton used (`cli._cycle_refresh_steps` is the canonical list), then
 # prints ONE compact digest including the re-routed prompt branch.
@@ -291,7 +292,8 @@ QR_LIVE_ENABLED=1 ./scripts/run-autotrade-live.sh \
 # projection/position/audit repair subset, including `position-management`
 # followed by `position-execution` when management succeeds, then
 # `profit-capture-bot` → `memory-health` → `self-improvement-audit` →
-# `profitability-acceptance` → `trader-support-bot`. It preserves the original
+# `profitability-acceptance` → `trader-support-bot` →
+# `trader-repair-orchestrator`. It preserves the original
 # wrapper exit code and avoids carrying a stale P0 into the next route.
 # Do not run a second routine `cycle-sidecars` after the wrapper unless the
 # wrapper was intentionally called with `QR_RUN_POST_GATEWAY_SIDECARS=0` for
@@ -303,6 +305,7 @@ QR_LIVE_ENABLED=1 ./scripts/run-autotrade-live.sh \
 #   → thesis-evolution-check → forecast-persistence-check
 #   → position-management → position-execution → profit-capture-bot → memory-health
 #   → self-improvement-audit → profitability-acceptance → trader-support-bot
+#   → trader-repair-orchestrator
 # and prints one compact digest.
 #
 # Semantics preserved from the per-step skeleton:
@@ -367,6 +370,12 @@ QR_LIVE_ENABLED=1 ./scripts/run-autotrade-live.sh \
 #   profit-capture misses, fresh-entry send allowed flag, repair-frontier lanes,
 #   and explicit operator actions. It
 #   never loads launchd, sends orders, closes positions, or cancels entries.
+# - trader-repair-orchestrator is read-only and runs after trader-support-bot.
+#   It converts `repair_requests` into a Codex repair queue with suggested
+#   files, test commands, verification commands, commit/live-sync requirement,
+#   and the hard boundary that orders, cancels, closes, and launchd load/reload
+#   require explicit approval or an existing gateway path. It grants no live
+#   permission and does not call model APIs from QuantRabbit code.
 # Manual recovery only:
 # QR_RUN_POST_GATEWAY_SIDECARS=0 QR_LIVE_ENABLED=1 ./scripts/run-autotrade-live.sh ...
 # QR_LIVE_ENABLED=1 PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli cycle-sidecars

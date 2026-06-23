@@ -131,6 +131,8 @@ from quant_rabbit.paths import (
     DEFAULT_TRADER_SETTINGS,
     DEFAULT_TRADER_OVERRIDES,
     DEFAULT_TRADER_DECISION,
+    DEFAULT_TRADER_REPAIR_ORCHESTRATOR,
+    DEFAULT_TRADER_REPAIR_ORCHESTRATOR_REPORT,
     DEFAULT_TRADER_SUPPORT_BOT,
     DEFAULT_TRADER_SUPPORT_BOT_REPORT,
     DEFAULT_CROSS_ASSET_SNAPSHOT,
@@ -2102,6 +2104,7 @@ def _cycle_refresh_steps(daily_risk_pct: str) -> list[dict[str, Any]]:
         {"argv": ["self-improvement-audit"], "required": False, "ok_rcs": [0, 2]},
         {"argv": ["profitability-acceptance"], "required": True, "ok_rcs": [0, 2]},
         {"argv": ["trader-support-bot"], "required": True, "ok_rcs": [0, 2]},
+        {"argv": ["trader-repair-orchestrator"], "required": True, "ok_rcs": [0, 2]},
     ]
 
 
@@ -2141,6 +2144,7 @@ def _cycle_sidecar_steps() -> list[dict[str, Any]]:
         {"argv": ["self-improvement-audit"], "required": False, "ok_rcs": [0, 2]},
         {"argv": ["profitability-acceptance"], "required": True, "ok_rcs": [0, 2]},
         {"argv": ["trader-support-bot"], "required": True, "ok_rcs": [0, 2]},
+        {"argv": ["trader-repair-orchestrator"], "required": True, "ok_rcs": [0, 2]},
     ]
 
 
@@ -2162,6 +2166,7 @@ def _post_autotrade_failure_sidecar_steps() -> list[dict[str, Any]]:
         {"argv": ["self-improvement-audit"], "required": False, "ok_rcs": [0, 2]},
         {"argv": ["profitability-acceptance"], "required": True, "ok_rcs": [0, 2]},
         {"argv": ["trader-support-bot"], "required": True, "ok_rcs": [0, 2]},
+        {"argv": ["trader-repair-orchestrator"], "required": True, "ok_rcs": [0, 2]},
     ]
 
 
@@ -2185,6 +2190,7 @@ def _direct_autotrade_audit_sidecar_steps() -> list[dict[str, Any]]:
         {"argv": ["self-improvement-audit"], "required": False, "ok_rcs": [0, 2]},
         {"argv": ["profitability-acceptance"], "required": True, "ok_rcs": [0, 2]},
         {"argv": ["trader-support-bot"], "required": True, "ok_rcs": [0, 2]},
+        {"argv": ["trader-repair-orchestrator"], "required": True, "ok_rcs": [0, 2]},
     ]
 
 
@@ -2885,6 +2891,35 @@ def _cycle_digest(*, kind: str, step_results: list[dict[str, Any]], aborted: boo
             "repair_requests": trader_support.get("repair_requests", [])[:4],
         }
 
+    trader_repair = _read_json_quiet(DEFAULT_TRADER_REPAIR_ORCHESTRATOR)
+    if isinstance(trader_repair, dict):
+        selected = (
+            trader_repair.get("selected_request")
+            if isinstance(trader_repair.get("selected_request"), dict)
+            else {}
+        )
+        metrics = (
+            trader_repair.get("metrics")
+            if isinstance(trader_repair.get("metrics"), dict)
+            else {}
+        )
+        digest["trader_repair_orchestrator"] = {
+            "generated_at_utc": trader_repair.get("generated_at_utc"),
+            "status": trader_repair.get("status"),
+            "trader_request": trader_repair.get("trader_request"),
+            "selected_request_code": metrics.get("selected_request_code") or selected.get("code"),
+            "actionable_request_count": metrics.get("actionable_request_count"),
+            "approval_required_request_count": metrics.get("approval_required_request_count"),
+            "queue_codes": [
+                item.get("code")
+                for item in trader_repair.get("queue", []) or []
+                if isinstance(item, dict)
+            ][:8],
+            "selected_targeted_test_commands": selected.get("targeted_test_commands") or [],
+            "selected_verification_commands": selected.get("verification_commands") or [],
+            "live_side_effects": trader_repair.get("live_side_effects") or [],
+        }
+
     return digest
 
 
@@ -3347,6 +3382,19 @@ def main(argv: list[str] | None = None) -> int:
     p_support.add_argument("--oanda-rotation-mining", type=Path, default=DEFAULT_OANDA_UNIVERSAL_ROTATION_MINING)
     p_support.add_argument("--output", type=Path, default=DEFAULT_TRADER_SUPPORT_BOT)
     p_support.add_argument("--report", type=Path, default=DEFAULT_TRADER_SUPPORT_BOT_REPORT)
+
+    p_repair_orchestrator = sub.add_parser(
+        "trader-repair-orchestrator",
+        help="Write a Codex-executable repair queue from the trader support bot contract.",
+    )
+    p_repair_orchestrator.add_argument("--trader-support-bot", type=Path, default=DEFAULT_TRADER_SUPPORT_BOT)
+    p_repair_orchestrator.add_argument(
+        "--request",
+        default=None,
+        help="Optional trader request text used to prioritize the repair queue.",
+    )
+    p_repair_orchestrator.add_argument("--output", type=Path, default=DEFAULT_TRADER_REPAIR_ORCHESTRATOR)
+    p_repair_orchestrator.add_argument("--report", type=Path, default=DEFAULT_TRADER_REPAIR_ORCHESTRATOR_REPORT)
 
     p_exec_replay = sub.add_parser("replay-execution", help="Replay live-ready order receipts over a quote path.")
     p_exec_replay.add_argument("--intents", type=Path, default=DEFAULT_ORDER_INTENTS)
@@ -5730,6 +5778,38 @@ def main(argv: list[str] | None = None) -> int:
                     "blockers": summary.blockers,
                     "operator_actions": summary.operator_actions,
                     "metrics": summary.metrics,
+                },
+                ensure_ascii=False,
+                indent=2,
+                sort_keys=True,
+            )
+        )
+        return 0 if summary.status == STATUS_READY else 2
+    if args.command == "trader-repair-orchestrator":
+        try:
+            from quant_rabbit.trader_repair_orchestrator import (
+                STATUS_READY,
+                TraderRepairOrchestrator,
+            )
+
+            summary = TraderRepairOrchestrator(
+                support_bot_path=args.trader_support_bot,
+                output_path=args.output,
+                report_path=args.report,
+                trader_request=args.request,
+            ).run()
+        except (OSError, json.JSONDecodeError, ValueError) as exc:
+            print(json.dumps({"error": str(exc)}, ensure_ascii=False, indent=2, sort_keys=True))
+            return 3
+        print(
+            json.dumps(
+                {
+                    "status": summary.status,
+                    "output_path": str(summary.output_path),
+                    "report_path": str(summary.report_path),
+                    "selected_request_code": summary.selected_request_code,
+                    "actionable_request_count": summary.actionable_request_count,
+                    "approval_required_request_count": summary.approval_required_request_count,
                 },
                 ensure_ascii=False,
                 indent=2,
