@@ -222,6 +222,8 @@ class TraderSupportBotTest(unittest.TestCase):
             self.assertNotIn("oanda_history_fetch.py", " ".join(evidence_request["verification_commands"]))
             self.assertFalse(evidence_request["evidence_summary"]["price_truth_fetch_required"])
             self.assertTrue(evidence_request["evidence_summary"]["stale_history_fetch_command_suppressed"])
+            self.assertEqual(evidence_request["evidence_summary"]["under_sampled_pair_direction_count"], 48)
+            self.assertEqual(evidence_request["evidence_summary"]["under_sampled_missing_evaluated_samples"], 1121)
             self.assertEqual(
                 repair_plan["evidence_collection_items"][0]["code"],
                 "BIDASK_REPLAY_SUPPORT_NOT_DAILY_STABLE",
@@ -1653,6 +1655,8 @@ def _write_fixture(root: Path, *, now: datetime, blocked: bool) -> dict[str, Pat
                         "adoption_level": "FULL_REPLAY_READY",
                         "evaluated_rows": 650,
                         "missing_price_truth_samples": 0,
+                        "under_sampled_pair_direction_count": 48,
+                        "under_sampled_missing_evaluated_samples": 1121,
                     },
                     "daily_stability_requirements": {
                         "min_active_days": 3,
@@ -1774,6 +1778,8 @@ def _write_fixture(root: Path, *, now: datetime, blocked: bool) -> dict[str, Pat
                         "adoption_level": "FULL_REPLAY_READY",
                         "evaluated_rows": 650,
                         "missing_price_truth_samples": 0,
+                        "under_sampled_pair_direction_count": 48,
+                        "under_sampled_missing_evaluated_samples": 1121,
                     },
                     "daily_stability_requirements": {
                         "min_active_days": 3,

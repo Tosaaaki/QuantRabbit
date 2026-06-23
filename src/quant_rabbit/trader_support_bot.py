@@ -1546,6 +1546,11 @@ def _acceptance_clearance_for_code(
         bidask = metrics.get("bidask_replay_rules") if isinstance(metrics.get("bidask_replay_rules"), dict) else {}
         bidask = bidask or evidence
         examples = bidask.get("rank_only_examples") if isinstance(bidask.get("rank_only_examples"), list) else []
+        price_truth = (
+            bidask.get("price_truth_coverage")
+            if isinstance(bidask.get("price_truth_coverage"), dict)
+            else {}
+        )
         price_truth_fetch_required = _bidask_price_truth_fetch_required(bidask)
         validation_command = bidask.get("replay_validation_command") or (
             "python3 scripts/oanda_history_replay_validate.py "
@@ -1599,24 +1604,18 @@ def _acceptance_clearance_for_code(
                 "stale_history_fetch_command_suppressed": (
                     not price_truth_fetch_required and bool(bidask.get("history_fetch_command"))
                 ),
-                "history_fetch_command_count": (
-                    (bidask.get("price_truth_coverage") or {}).get("history_fetch_command_count")
-                    if isinstance(bidask.get("price_truth_coverage"), dict)
-                    else None
+                "history_fetch_command_count": price_truth.get("history_fetch_command_count"),
+                "history_fetch_command_mode": price_truth.get("history_fetch_command_mode"),
+                "missing_price_window_group_count": price_truth.get("missing_price_window_group_count"),
+                "under_sampled_pair_direction_count": (
+                    bidask.get("under_sampled_pair_direction_count")
+                    if bidask.get("under_sampled_pair_direction_count") is not None
+                    else price_truth.get("under_sampled_pair_direction_count")
                 ),
-                "history_fetch_command_mode": (
-                    (bidask.get("price_truth_coverage") or {}).get("history_fetch_command_mode")
-                    if isinstance(bidask.get("price_truth_coverage"), dict)
-                    else None
-                ),
-                "missing_price_window_group_count": (
-                    (bidask.get("price_truth_coverage") or {}).get("missing_price_window_group_count")
-                    if isinstance(bidask.get("price_truth_coverage"), dict)
-                    else None
-                ),
-                "under_sampled_pair_direction_count": bidask.get("under_sampled_pair_direction_count"),
-                "under_sampled_missing_evaluated_samples": bidask.get(
-                    "under_sampled_missing_evaluated_samples"
+                "under_sampled_missing_evaluated_samples": (
+                    bidask.get("under_sampled_missing_evaluated_samples")
+                    if bidask.get("under_sampled_missing_evaluated_samples") is not None
+                    else price_truth.get("under_sampled_missing_evaluated_samples")
                 ),
                 "rank_only_examples": examples[:3],
             },
