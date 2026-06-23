@@ -159,6 +159,220 @@ class VerificationLedgerTest(unittest.TestCase):
             self.assertGreater(payload["measurements_inserted"], 0)
             self.assertTrue((root / "verification.json").exists())
 
+    def test_backfills_close_gate_evidence_from_gateway_receipts(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root)
+            db_path = root / "execution_ledger.db"
+            _seed_execution_events(db_path)
+            decision_path = root / "gpt_trader_decision.accepted.json"
+            receipt_payload = {
+                "generated_at_utc": "2026-06-21T00:00:00+00:00",
+                "status": "ACCEPTED",
+                "decision": {
+                    "action": "CLOSE",
+                    "close_trade_ids": ["T-100"],
+                },
+                "close_gate_evidence": [
+                    {
+                        "trade_id": "T-100",
+                        "pair": "EUR_USD",
+                        "side": "LONG",
+                        "unrealized_pl_jpy": -125.0,
+                        "loss_side_close": True,
+                        "gate_a_invalidated": True,
+                        "gate_a_reason": "fresh position_thesis REVIEW_CLOSE",
+                        "gate_b_standing_authorized": True,
+                        "gate_b_explicit_operator_authorized": False,
+                        "explicit_gate_b_required": False,
+                        "profitability_p0_context_required": True,
+                        "profitability_p0_context_cited": True,
+                        "timing_audit_required": True,
+                        "timing_evidence_cited": True,
+                        "hard_timing_gate_required": False,
+                        "same_direction_support_conflict": None,
+                    }
+                ],
+            }
+            with sqlite3.connect(db_path) as conn:
+                conn.execute(
+                    """
+                    CREATE TABLE gateway_receipts (
+                        receipt_uid TEXT PRIMARY KEY,
+                        ts_utc TEXT,
+                        kind TEXT,
+                        status TEXT,
+                        sent INTEGER,
+                        lane_id TEXT,
+                        lane_ids_json TEXT,
+                        path TEXT,
+                        payload_json TEXT,
+                        inserted_at_utc TEXT
+                    )
+                    """
+                )
+                conn.execute(
+                    """
+                    INSERT INTO gateway_receipts(
+                        receipt_uid, ts_utc, kind, status, sent, lane_id,
+                        lane_ids_json, path, payload_json, inserted_at_utc
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        "receipt:T-100",
+                        "2026-06-21T00:00:00+00:00",
+                        "gpt_decision",
+                        "ACCEPTED",
+                        0,
+                        None,
+                        "[]",
+                        str(decision_path),
+                        json.dumps(receipt_payload),
+                        "2026-06-21T00:00:01+00:00",
+                    ),
+                )
+
+            VerificationLedger(
+                db_path=db_path,
+                output_path=root / "verification.json",
+                report_path=root / "verification.md",
+            ).run(
+                snapshot_path=files["snapshot"],
+                order_intents_path=files["intents"],
+                gpt_decision_path=files["gpt"],
+                live_order_path=files["live_order"],
+                position_execution_path=files["position_execution"],
+                thesis_evolution_path=files["thesis_evolution"],
+                position_thesis_path=files["position_thesis"],
+                forecast_persistence_path=files["forecast_persistence"],
+                ai_backtest_path=files["ai_backtest"],
+                outcome_mart_path=files["outcome_mart"],
+                post_trade_learning_path=files["post_trade_learning"],
+                ai_attack_advice_path=files["ai_attack_advice"],
+                learning_audit_path=files["learning_audit"],
+                now=datetime(2026, 6, 21, 0, 5, tzinfo=timezone.utc),
+            )
+
+            with sqlite3.connect(db_path) as conn:
+                row = conn.execute(
+                    """
+                    SELECT ts_utc, source, source_path, status, severity, evidence_json
+                    FROM verification_observations
+                    WHERE check_name='close_gate_evidence'
+                      AND subject_id='T-100'
+                    """
+                ).fetchone()
+
+        self.assertIsNotNone(row)
+        self.assertEqual(row[0], "2026-06-21T00:00:00+00:00")
+        self.assertEqual(row[1], "gpt_decision")
+        self.assertEqual(row[2], str(decision_path))
+        self.assertEqual(row[3:5], ("PASS", "INFO"))
+        self.assertEqual(json.loads(row[5])["gate_a_reason"], "fresh position_thesis REVIEW_CLOSE")
+
+    def test_marks_accepted_gpt_close_missing_close_gate_evidence_from_ledger_event(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root)
+            db_path = root / "execution_ledger.db"
+            with sqlite3.connect(db_path) as conn:
+                conn.executescript(
+                    """
+                    CREATE TABLE sync_state (
+                        key TEXT PRIMARY KEY,
+                        value TEXT NOT NULL,
+                        updated_at_utc TEXT NOT NULL
+                    );
+                    CREATE TABLE execution_events (
+                        event_uid TEXT,
+                        ts_utc TEXT NOT NULL,
+                        event_type TEXT NOT NULL,
+                        trade_id TEXT,
+                        pair TEXT,
+                        side TEXT,
+                        exit_reason TEXT,
+                        realized_pl_jpy REAL,
+                        raw_json TEXT
+                    );
+                    """
+                )
+                conn.execute(
+                    """
+                    INSERT INTO sync_state(key, value, updated_at_utc)
+                    VALUES ('last_oanda_transaction_id', '104', '2026-06-21T00:00:00+00:00')
+                    """
+                )
+                conn.execute(
+                    """
+                    INSERT INTO execution_events(
+                        event_uid, ts_utc, event_type, trade_id, pair, side,
+                        exit_reason, realized_pl_jpy, raw_json
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        "gateway:gpt_decision:missing:T-missing",
+                        "2026-06-21T00:00:00+00:00",
+                        "GATEWAY_GPT_CLOSE_ACCEPTED",
+                        "T-missing",
+                        "EUR_USD",
+                        "LONG",
+                        "GPT_CLOSE_ACCEPTED",
+                        None,
+                        json.dumps(
+                            {
+                                "generated_at_utc": "2026-06-21T00:00:00+00:00",
+                                "status": "ACCEPTED",
+                                "decision": {
+                                    "action": "CLOSE",
+                                    "close_trade_ids": ["T-missing"],
+                                },
+                                "verification_issues": [],
+                            }
+                        ),
+                    ),
+                )
+
+            VerificationLedger(
+                db_path=db_path,
+                output_path=root / "verification.json",
+                report_path=root / "verification.md",
+            ).run(
+                snapshot_path=files["snapshot"],
+                order_intents_path=files["intents"],
+                gpt_decision_path=files["gpt"],
+                live_order_path=files["live_order"],
+                position_execution_path=files["position_execution"],
+                thesis_evolution_path=files["thesis_evolution"],
+                position_thesis_path=files["position_thesis"],
+                forecast_persistence_path=files["forecast_persistence"],
+                ai_backtest_path=files["ai_backtest"],
+                outcome_mart_path=files["outcome_mart"],
+                post_trade_learning_path=files["post_trade_learning"],
+                ai_attack_advice_path=files["ai_attack_advice"],
+                learning_audit_path=files["learning_audit"],
+                now=datetime(2026, 6, 21, 0, 5, tzinfo=timezone.utc),
+            )
+
+            with sqlite3.connect(db_path) as conn:
+                row = conn.execute(
+                    """
+                    SELECT ts_utc, source, status, severity, evidence_json
+                    FROM verification_observations
+                    WHERE check_name='close_gate_evidence'
+                      AND subject_id='T-missing'
+                    """
+                ).fetchone()
+
+        self.assertIsNotNone(row)
+        self.assertEqual(row[0], "2026-06-21T00:00:00+00:00")
+        self.assertEqual(row[1], "execution_ledger")
+        self.assertEqual(row[2:4], ("BLOCK", "BLOCK"))
+        evidence = json.loads(row[4])
+        self.assertEqual(evidence["reason"], "close_gate_evidence_missing")
+        self.assertEqual(evidence["event_uid"], "gateway:gpt_decision:missing:T-missing")
+
 
 def _fixtures(root: Path) -> dict[str, Path]:
     now = "2026-06-03T00:00:00+00:00"

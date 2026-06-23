@@ -209,6 +209,13 @@ class VerificationLedger:
                 payloads["broker_snapshot"].payload,
             )
         )
+        observations.extend(
+            _ledger_close_gate_observations(
+                self.db_path,
+                inserted_at_utc=run_id,
+            )
+        )
+        observations = _dedupe_observations(observations)
 
         effect = _effect_metrics(self.db_path, window_hours=window_hours, now=clock)
         measurements = _measurements_from_effect(run_id, window_hours=window_hours, effect=effect)
@@ -637,22 +644,301 @@ def _gpt_decision_observations(run_id: str, path: Path, payload: dict[str, Any] 
     for idx, evidence in enumerate(close_gate_evidence):
         if not isinstance(evidence, dict):
             continue
-        trade_id = str(evidence.get("trade_id") or idx)
-        status_label = _close_gate_evidence_status(evidence)
         observations.append(
-            _observation(
-                run_id=run_id,
+            _close_gate_evidence_observation(
+                ts_utc=str(payload.get("generated_at_utc") or run_id),
                 source="gpt_decision",
                 source_path=path,
-                subject_type="close_gate",
-                subject_id=trade_id,
-                check_name="close_gate_evidence",
-                status=status_label,
-                severity="INFO" if status_label == "PASS" else "BLOCK",
+                trade_id=str(evidence.get("trade_id") or idx),
+                index=idx,
                 evidence=evidence,
+                inserted_at_utc=run_id,
             )
         )
     return observations
+
+
+def _ledger_close_gate_observations(db_path: Path, *, inserted_at_utc: str) -> list[dict[str, Any]]:
+    if not db_path.exists():
+        return []
+    collected: list[dict[str, Any]] = []
+    try:
+        with sqlite3.connect(db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            tables = {
+                str(row[0])
+                for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
+            }
+            if "gateway_receipts" in tables:
+                collected.extend(_gateway_receipt_close_gate_observations(conn, inserted_at_utc=inserted_at_utc))
+            if "execution_events" in tables:
+                collected.extend(_execution_event_close_gate_observations(conn, inserted_at_utc=inserted_at_utc))
+    except sqlite3.Error:
+        return []
+    return _dedupe_observations(collected)
+
+
+def _gateway_receipt_close_gate_observations(
+    conn: sqlite3.Connection,
+    *,
+    inserted_at_utc: str,
+) -> list[dict[str, Any]]:
+    columns = _table_columns(conn, "gateway_receipts")
+    required = {"ts_utc", "kind", "path", "payload_json"}
+    if not required.issubset(columns):
+        return []
+    rows = conn.execute(
+        """
+        SELECT ts_utc, path, payload_json
+        FROM gateway_receipts
+        WHERE kind = 'gpt_decision'
+        ORDER BY ts_utc ASC
+        """
+    ).fetchall()
+    observations: list[dict[str, Any]] = []
+    for row in rows:
+        payload = _json_dict(row["payload_json"])
+        if payload is None:
+            continue
+        ts_utc = str(payload.get("generated_at_utc") or row["ts_utc"] or inserted_at_utc)
+        source_path = str(row["path"] or "")
+        observations.extend(
+            _close_gate_observations_from_payload(
+                payload,
+                ts_utc=ts_utc,
+                source="gpt_decision",
+                source_path=source_path or None,
+                inserted_at_utc=inserted_at_utc,
+            )
+        )
+        observations.extend(
+            _missing_close_gate_observations_from_payload(
+                payload,
+                ts_utc=ts_utc,
+                source="gpt_decision",
+                source_path=source_path or None,
+                inserted_at_utc=inserted_at_utc,
+                context={},
+            )
+        )
+    return observations
+
+
+def _execution_event_close_gate_observations(
+    conn: sqlite3.Connection,
+    *,
+    inserted_at_utc: str,
+) -> list[dict[str, Any]]:
+    columns = _table_columns(conn, "execution_events")
+    if "event_type" not in columns or "ts_utc" not in columns:
+        return []
+    event_uid_select = "event_uid" if "event_uid" in columns else "NULL AS event_uid"
+    trade_id_select = "trade_id" if "trade_id" in columns else "NULL AS trade_id"
+    raw_json_select = "raw_json" if "raw_json" in columns else "NULL AS raw_json"
+    rows = conn.execute(
+        f"""
+        SELECT {event_uid_select}, ts_utc, {trade_id_select}, {raw_json_select}
+        FROM execution_events
+        WHERE event_type = 'GATEWAY_GPT_CLOSE_ACCEPTED'
+        ORDER BY ts_utc ASC
+        """
+    ).fetchall()
+    observations: list[dict[str, Any]] = []
+    for row in rows:
+        trade_id = str(row["trade_id"] or "").strip()
+        payload = _json_dict(row["raw_json"])
+        if payload is None:
+            payload = {
+                "generated_at_utc": row["ts_utc"],
+                "status": "ACCEPTED",
+                "decision": {"action": "CLOSE", "close_trade_ids": [trade_id] if trade_id else []},
+            }
+        elif trade_id and not _payload_close_trade_ids(payload):
+            payload = dict(payload)
+            payload["status"] = payload.get("status") or "ACCEPTED"
+            payload["decision"] = {"action": "CLOSE", "close_trade_ids": [trade_id]}
+        ts_utc = str(payload.get("generated_at_utc") or row["ts_utc"] or inserted_at_utc)
+        context = {"event_uid": row["event_uid"]} if row["event_uid"] else {}
+        observations.extend(
+            _close_gate_observations_from_payload(
+                payload,
+                ts_utc=ts_utc,
+                source="execution_ledger",
+                source_path=None,
+                inserted_at_utc=inserted_at_utc,
+            )
+        )
+        observations.extend(
+            _missing_close_gate_observations_from_payload(
+                payload,
+                ts_utc=ts_utc,
+                source="execution_ledger",
+                source_path=None,
+                inserted_at_utc=inserted_at_utc,
+                context=context,
+            )
+        )
+    return observations
+
+
+def _close_gate_observations_from_payload(
+    payload: dict[str, Any],
+    *,
+    ts_utc: str,
+    source: str,
+    source_path: Path | str | None,
+    inserted_at_utc: str,
+) -> list[dict[str, Any]]:
+    close_gate_evidence = (
+        payload.get("close_gate_evidence")
+        if isinstance(payload.get("close_gate_evidence"), list)
+        else []
+    )
+    observations: list[dict[str, Any]] = []
+    for idx, evidence in enumerate(close_gate_evidence):
+        if not isinstance(evidence, dict):
+            continue
+        observations.append(
+            _close_gate_evidence_observation(
+                ts_utc=ts_utc,
+                source=source,
+                source_path=source_path,
+                trade_id=str(evidence.get("trade_id") or idx),
+                index=idx,
+                evidence=evidence,
+                inserted_at_utc=inserted_at_utc,
+            )
+        )
+    return observations
+
+
+def _missing_close_gate_observations_from_payload(
+    payload: dict[str, Any],
+    *,
+    ts_utc: str,
+    source: str,
+    source_path: Path | str | None,
+    inserted_at_utc: str,
+    context: dict[str, Any],
+) -> list[dict[str, Any]]:
+    close_trade_ids = _payload_close_trade_ids(payload)
+    if not close_trade_ids:
+        return []
+    close_gate_evidence = (
+        payload.get("close_gate_evidence")
+        if isinstance(payload.get("close_gate_evidence"), list)
+        else []
+    )
+    evidence_trade_ids = {
+        str(item.get("trade_id") or "").strip()
+        for item in close_gate_evidence
+        if isinstance(item, dict)
+    }
+    observations: list[dict[str, Any]] = []
+    for trade_id in close_trade_ids:
+        if trade_id in evidence_trade_ids:
+            continue
+        observations.append(
+            _close_gate_missing_observation(
+                ts_utc=ts_utc,
+                source=source,
+                source_path=source_path,
+                trade_id=trade_id,
+                inserted_at_utc=inserted_at_utc,
+                context=context,
+            )
+        )
+    return observations
+
+
+def _payload_close_trade_ids(payload: dict[str, Any]) -> list[str]:
+    status = str(payload.get("status") or "").upper()
+    decision = payload.get("decision") if isinstance(payload.get("decision"), dict) else payload
+    action = str(decision.get("action") or "").upper() if isinstance(decision, dict) else ""
+    if status != "ACCEPTED" or action != "CLOSE":
+        return []
+    close_trade_ids = decision.get("close_trade_ids") if isinstance(decision.get("close_trade_ids"), list) else []
+    return list(dict.fromkeys(str(item or "").strip() for item in close_trade_ids if str(item or "").strip()))
+
+
+def _close_gate_evidence_observation(
+    *,
+    ts_utc: str,
+    source: str,
+    source_path: Path | str | None,
+    trade_id: str,
+    index: int,
+    evidence: dict[str, Any],
+    inserted_at_utc: str,
+) -> dict[str, Any]:
+    status_label = _close_gate_evidence_status(evidence)
+    subject_id = str(trade_id or index)
+    return {
+        "observation_uid": f"verification:close_gate_evidence:{ts_utc}:{subject_id}:{index}",
+        "ts_utc": ts_utc,
+        "source": source,
+        "source_path": str(source_path) if source_path else None,
+        "subject_type": "close_gate",
+        "subject_id": subject_id,
+        "check_name": "close_gate_evidence",
+        "status": status_label,
+        "severity": "INFO" if status_label == "PASS" else "BLOCK",
+        "metric_value": None,
+        "metric_unit": None,
+        "evidence_json": _json(evidence),
+        "inserted_at_utc": inserted_at_utc,
+    }
+
+
+def _close_gate_missing_observation(
+    *,
+    ts_utc: str,
+    source: str,
+    source_path: Path | str | None,
+    trade_id: str,
+    inserted_at_utc: str,
+    context: dict[str, Any],
+) -> dict[str, Any]:
+    evidence = {
+        "reason": "close_gate_evidence_missing",
+        "trade_id": trade_id,
+        "message": "accepted GPT CLOSE receipt lacks durable close_gate_evidence for this trade_id",
+    }
+    evidence.update({key: value for key, value in context.items() if value})
+    return {
+        "observation_uid": f"verification:close_gate_evidence_missing:{ts_utc}:{trade_id}",
+        "ts_utc": ts_utc,
+        "source": source,
+        "source_path": str(source_path) if source_path else None,
+        "subject_type": "close_gate",
+        "subject_id": trade_id,
+        "check_name": "close_gate_evidence",
+        "status": "BLOCK",
+        "severity": "BLOCK",
+        "metric_value": None,
+        "metric_unit": None,
+        "evidence_json": _json(evidence),
+        "inserted_at_utc": inserted_at_utc,
+    }
+
+
+def _table_columns(conn: sqlite3.Connection, table: str) -> set[str]:
+    try:
+        return {str(row[1]) for row in conn.execute(f"PRAGMA table_info({table})").fetchall()}
+    except sqlite3.Error:
+        return set()
+
+
+def _json_dict(value: Any) -> dict[str, Any] | None:
+    if isinstance(value, dict):
+        return value
+    if not isinstance(value, str) or not value.strip():
+        return None
+    try:
+        payload = json.loads(value)
+    except json.JSONDecodeError:
+        return None
+    return payload if isinstance(payload, dict) else None
 
 
 def _close_gate_evidence_status(evidence: dict[str, Any]) -> str:
@@ -683,6 +969,16 @@ def _close_gate_evidence_status(evidence: dict[str, Any]) -> str:
     ):
         return "BLOCK"
     return "PASS"
+
+
+def _dedupe_observations(observations: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    by_uid: dict[str, dict[str, Any]] = {}
+    for item in observations:
+        uid = str(item.get("observation_uid") or "")
+        if not uid:
+            continue
+        by_uid[uid] = item
+    return list(by_uid.values())
 
 
 def _gateway_observations(
