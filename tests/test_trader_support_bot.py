@@ -18,6 +18,7 @@ from quant_rabbit.execution_timing_contracts import (
 from quant_rabbit.trader_support_bot import (
     STATUS_BLOCKED,
     STATUS_READY,
+    TP_PROGRESS_GUARDIAN_WAIT_STATUS,
     TraderSupportBot,
     _acceptance_clearance_for_code,
 )
@@ -209,6 +210,13 @@ class TraderSupportBotTest(unittest.TestCase):
                 "model_api_call_from_quantrabbit_code",
                 close_gate_request["automation_contract"]["forbidden_direct_actions"],
             )
+            tp_request = next(
+                item
+                for item in repair_requests
+                if item["code"] == "REPAIR_TP_PROGRESS_PROFIT_CAPTURE_REPLAY"
+            )
+            self.assertEqual(tp_request["status"], TP_PROGRESS_GUARDIAN_WAIT_STATUS)
+            self.assertTrue(tp_request["requires_explicit_operator_approval"])
             guardian_request = next(
                 item for item in repair_requests if item["code"] == "RESTORE_POSITION_GUARDIAN_AFTER_PREFLIGHT"
             )

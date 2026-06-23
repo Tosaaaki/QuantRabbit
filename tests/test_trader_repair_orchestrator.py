@@ -191,17 +191,7 @@ class TraderRepairOrchestratorTest(unittest.TestCase):
                             "heartbeat_fresh": False,
                         },
                         "profit_capture": {},
-                        "entry_readiness": {
-                            "repair_frontier_remaining_blockers": [
-                                {
-                                    "code": "FORECAST_NOT_EXECUTABLE_FOR_LIVE",
-                                    "count": 2,
-                                    "example_lane_ids": [
-                                        "failure_trader:EUR_USD:LONG:BREAKOUT_FAILURE"
-                                    ],
-                                }
-                            ]
-                        },
+                        "entry_readiness": {},
                         "profitability_acceptance": {
                             "repair_plan": {
                                 "items": [
@@ -235,13 +225,15 @@ class TraderRepairOrchestratorTest(unittest.TestCase):
                 trader_request="利確 bot を直して",
             ).run()
 
-            self.assertEqual(summary.status, STATUS_READY)
+            self.assertEqual(summary.status, STATUS_APPROVAL_REQUIRED)
             payload = json.loads(output.read_text())
             self.assertEqual(payload["metrics"]["repair_request_source"], "embedded_support_payload")
             self.assertTrue(payload["metrics"]["recovered_from_embedded_support"])
-            self.assertEqual(
-                payload["selected_request"]["code"],
+            self.assertEqual(payload["selected_request"], {})
+            self.assertEqual(payload["actionable_requests"], [])
+            self.assertIn(
                 "REPAIR_TP_PROGRESS_PROFIT_CAPTURE_REPLAY",
+                [item["code"] for item in payload["approval_required_requests"]],
             )
             self.assertIn(
                 "RESTORE_POSITION_GUARDIAN_AFTER_PREFLIGHT",

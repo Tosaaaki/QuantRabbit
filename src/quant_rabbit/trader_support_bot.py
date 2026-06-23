@@ -47,6 +47,7 @@ OANDA_AUDIT_ONLY_REPLAY_HISTORY_GRANULARITIES = "S5,M5"
 FORECAST_FRONTIER_EVIDENCE_WAIT_STATUS = "FORECAST_FRONTIER_WAITING_FOR_LIVE_PRECISION_EVIDENCE"
 PROTECTIVE_FRONTIER_GUARDRAIL_STATUS = "FRONTIER_PROTECTIVE_GUARDRAIL_ACTIVE"
 BIDASK_REPLAY_WAIT_STATUS = "BIDASK_REPLAY_WAITING_FOR_FORECAST_SAMPLE_COVERAGE"
+TP_PROGRESS_GUARDIAN_WAIT_STATUS = "WAITING_FOR_POSITION_GUARDIAN_LIVE_EVIDENCE"
 FORECAST_FRONTIER_BLOCKER_CODES = {
     "FORECAST_NOT_EXECUTABLE_FOR_LIVE",
     "TELEMETRY_FORECAST_NOT_EXECUTABLE_FOR_LIVE",
@@ -2356,11 +2357,29 @@ def _build_repair_requests(
     ]
     if tp_codes:
         top_item = item_by_code[tp_codes[0]]
+        tp_evidence = (
+            top_item.get("evidence_summary")
+            if isinstance(top_item.get("evidence_summary"), dict)
+            else {}
+        )
+        tp_contract_missing = "TP_PROGRESS_REPAIR_REPLAY_CONTRACT_MISSING" in tp_codes
+        tp_waits_for_guardian = (
+            not tp_contract_missing
+            and (
+                "TP_PROGRESS_REPAIR_REPLAY_NOT_DEPLOYED" in tp_codes
+                or bool(tp_evidence.get("guardian_profit_capture_inactive"))
+                or bool(guardian.get("required") and not guardian.get("active"))
+            )
+        )
         requests.append(
             _repair_request(
                 code="REPAIR_TP_PROGRESS_PROFIT_CAPTURE_REPLAY",
                 priority="P0",
-                status="READY_FOR_CODE_REPAIR",
+                status=(
+                    TP_PROGRESS_GUARDIAN_WAIT_STATUS
+                    if tp_waits_for_guardian
+                    else "READY_FOR_CODE_REPAIR"
+                ),
                 source_findings=tp_codes,
                 problem=(
                     "Historical losing closes still show executable TP-progress profit that was not "
@@ -2370,7 +2389,7 @@ def _build_repair_requests(
                     "Adding entry frequency before this capture path is proved clean repeats the "
                     "known TAKE_PROFIT_ORDER plus / MARKET_ORDER_TRADE_CLOSE minus leak."
                 ),
-                evidence_summary=top_item.get("evidence_summary"),
+                evidence_summary=tp_evidence,
                 clearance_conditions=[
                     item_by_code[code].get("clearance_condition")
                     for code in tp_codes
@@ -2394,6 +2413,7 @@ def _build_repair_requests(
                     "Positive path: production-gate replay reports zero loss_closes_repair_replay_triggered after the capture repair.",
                     "Safety path: support/profit-capture bots remain read-only and do not close positions directly.",
                 ],
+                requires_explicit_operator_approval=tp_waits_for_guardian,
             )
         )
 
