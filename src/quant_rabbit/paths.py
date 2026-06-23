@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import json
 import os
+from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -80,6 +83,92 @@ DEFAULT_OANDA_UNIVERSAL_ROTATION_MINING = (
 DEFAULT_OANDA_UNIVERSAL_ROTATION_PACKAGED_RULES = (
     ROOT / "src" / "quant_rabbit" / "oanda_universal_rotation_precision_rules.json"
 )
+
+
+def effective_oanda_universal_rotation_path(latest_path: Path, packaged_path: Path) -> Path:
+    """Choose the OANDA rotation evidence file without discarding preserved scope.
+
+    Focused mining runs can update the latest log with a narrow pair subset. The
+    packaged runtime artifact may already have merged that focused run while
+    preserving broader validated campaign evidence. Prefer it only when it
+    explicitly says preserved scope was used and is at least as fresh as latest.
+    """
+
+    if _prefer_packaged_oanda_universal_rotation(latest_path, packaged_path):
+        return packaged_path
+    if latest_path.exists():
+        return latest_path
+    if packaged_path.exists():
+        return packaged_path
+    return latest_path
+
+
+def _prefer_packaged_oanda_universal_rotation(latest_path: Path, packaged_path: Path) -> bool:
+    if not packaged_path.exists():
+        return False
+    if not latest_path.exists():
+        return True
+    packaged = _load_json_object(packaged_path)
+    if packaged is None:
+        return False
+    if (
+        packaged.get("campaign_firepower_preserved_from_existing") is not True
+        and packaged.get("scope_metadata_preserved_from_existing") is not True
+    ):
+        return False
+    if not _packaged_source_matches_latest(packaged, packaged_path, latest_path):
+        return False
+    latest = _load_json_object(latest_path)
+    if latest is None:
+        return False
+    latest_generated_at = _parse_generated_at(latest.get("generated_at_utc"))
+    packaged_generated_at = _parse_generated_at(packaged.get("generated_at_utc"))
+    if latest_generated_at is None or packaged_generated_at is None:
+        return False
+    return packaged_generated_at >= latest_generated_at
+
+
+def _packaged_source_matches_latest(
+    packaged: dict[str, Any],
+    packaged_path: Path,
+    latest_path: Path,
+) -> bool:
+    source_report = packaged.get("source_report")
+    if not isinstance(source_report, str) or not source_report.strip():
+        return False
+    source_path = Path(source_report)
+    if not source_path.is_absolute():
+        source_path = _repo_root_for_packaged_oanda_path(packaged_path) / source_path
+    try:
+        return source_path.resolve(strict=False) == latest_path.resolve(strict=False)
+    except OSError:
+        return source_path == latest_path
+
+
+def _repo_root_for_packaged_oanda_path(packaged_path: Path) -> Path:
+    if packaged_path.parent.name == "quant_rabbit" and packaged_path.parent.parent.name == "src":
+        return packaged_path.parent.parent.parent
+    return packaged_path.parent
+
+
+def _load_json_object(path: Path) -> dict[str, Any] | None:
+    try:
+        payload = json.loads(path.read_text())
+    except (OSError, json.JSONDecodeError, ValueError):
+        return None
+    return payload if isinstance(payload, dict) else None
+
+
+def _parse_generated_at(value: Any) -> datetime | None:
+    if not isinstance(value, str) or not value.strip():
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
 DEFAULT_EXECUTION_TIMING_AUDIT = ROOT / "data" / "execution_timing_audit.json"
 DEFAULT_EXECUTION_TIMING_AUDIT_REPORT = ROOT / "docs" / "execution_timing_audit_report.md"
 DEFAULT_MANUAL_HISTORY_2025 = ROOT / "data" / "manual_history_2025_mining.json"

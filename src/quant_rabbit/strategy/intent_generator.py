@@ -37,6 +37,7 @@ from quant_rabbit.paths import (
     DEFAULT_PAIR_CHARTS,
     DEFAULT_STRATEGY_PROFILE,
     ROOT,
+    effective_oanda_universal_rotation_path,
 )
 from quant_rabbit.analysis.market_context_matrix import matrix_summary_for_intent
 from quant_rabbit.risk import (
@@ -7030,27 +7031,27 @@ def _positive_rotation_confidence_metrics(metadata: dict[str, Any]) -> dict[str,
 
 def _oanda_campaign_firepower_path_for_data_root(data_root: Path | None) -> Path | None:
     if data_root is None:
-        if DEFAULT_OANDA_UNIVERSAL_ROTATION_MINING.exists():
-            return DEFAULT_OANDA_UNIVERSAL_ROTATION_MINING
-        return (
-            DEFAULT_OANDA_UNIVERSAL_ROTATION_PACKAGED_RULES
-            if DEFAULT_OANDA_UNIVERSAL_ROTATION_PACKAGED_RULES.exists()
-            else None
+        path = effective_oanda_universal_rotation_path(
+            DEFAULT_OANDA_UNIVERSAL_ROTATION_MINING,
+            DEFAULT_OANDA_UNIVERSAL_ROTATION_PACKAGED_RULES,
         )
+        return path if path.exists() else None
     repo_root = data_root.parent if data_root.name == "data" else data_root
-    candidates = (
+    latest_candidates = (
         data_root / DEFAULT_OANDA_UNIVERSAL_ROTATION_MINING.name,
         repo_root
         / "logs"
         / "reports"
         / "forecast_improvement"
         / DEFAULT_OANDA_UNIVERSAL_ROTATION_MINING.name,
-        repo_root / "src" / "quant_rabbit" / DEFAULT_OANDA_UNIVERSAL_ROTATION_PACKAGED_RULES.name,
     )
-    for candidate in candidates:
-        if candidate.exists():
-            return candidate
-    return None
+    latest = next(
+        (candidate for candidate in latest_candidates if candidate.exists()),
+        latest_candidates[0],
+    )
+    packaged = repo_root / "src" / "quant_rabbit" / DEFAULT_OANDA_UNIVERSAL_ROTATION_PACKAGED_RULES.name
+    path = effective_oanda_universal_rotation_path(latest, packaged)
+    return path if path.exists() else None
 
 
 def _oanda_campaign_firepower_evidence(

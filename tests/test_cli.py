@@ -35,6 +35,7 @@ from quant_rabbit.profitability_acceptance import (
     ProfitabilityAcceptanceAuditor,
     _bidask_rule_findings,
     _execution_ledger_close_findings,
+    _oanda_rotation_mining_effective_path,
     _order_intent_metrics,
 )
 from quant_rabbit.strategy.intent_generator import _snapshot_from_json as _intent_snapshot_from_json
@@ -317,6 +318,9 @@ class CliHelpTest(unittest.TestCase):
         evidence_queue_count: int = 0,
         high_precision_daily_return_pct: float = 5.4,
         evidence_queue_daily_return_pct: float = 0.0,
+        generated_at_utc: str = "2026-06-21T00:00:00Z",
+        preserved_from_existing: bool = False,
+        source_report: str | None = None,
     ) -> None:
         def section(count: int, daily_return_pct: float, status_label: str) -> dict[str, object]:
             top_vehicles = []
@@ -343,30 +347,31 @@ class CliHelpTest(unittest.TestCase):
                 "top_vehicles": top_vehicles,
             }
 
-        path.write_text(
-            json.dumps(
-                {
-                    "generated_at_utc": "2026-06-21T00:00:00Z",
-                    "campaign_firepower": {
-                        "contract": "audit-only firepower estimate; live gates still decide",
-                        "per_trade_risk_pct_lens": 1.0,
-                        "minimum_return_pct": 5.0,
-                        "target_return_pct": 10.0,
-                        "status": status,
-                        "high_precision": section(
-                            high_precision_count,
-                            high_precision_daily_return_pct,
-                            "HIGH_PRECISION_VALIDATED",
-                        ),
-                        "evidence_queue": section(
-                            evidence_queue_count,
-                            evidence_queue_daily_return_pct,
-                            "EVIDENCE_COLLECTION_ONLY",
-                        ),
-                    },
-                }
-            )
-        )
+        payload: dict[str, object] = {
+            "generated_at_utc": generated_at_utc,
+            "campaign_firepower": {
+                "contract": "audit-only firepower estimate; live gates still decide",
+                "per_trade_risk_pct_lens": 1.0,
+                "minimum_return_pct": 5.0,
+                "target_return_pct": 10.0,
+                "status": status,
+                "high_precision": section(
+                    high_precision_count,
+                    high_precision_daily_return_pct,
+                    "HIGH_PRECISION_VALIDATED",
+                ),
+                "evidence_queue": section(
+                    evidence_queue_count,
+                    evidence_queue_daily_return_pct,
+                    "EVIDENCE_COLLECTION_ONLY",
+                ),
+            },
+        }
+        if preserved_from_existing:
+            payload["campaign_firepower_preserved_from_existing"] = True
+        if source_report is not None:
+            payload["source_report"] = source_report
+        path.write_text(json.dumps(payload))
 
     def _adverse_partial_close_files(self, root: Path) -> tuple[Path, Path]:
         snapshot = root / "snapshot.json"
@@ -2466,6 +2471,47 @@ class CliHelpTest(unittest.TestCase):
             firepower = payload["metrics"]["oanda_campaign_firepower"]
             self.assertEqual(firepower["path"], str(packaged))
             self.assertEqual(firepower["status"], "VERIFIED_TARGET_10_ROUTE_ESTIMATED")
+
+    def test_profitability_acceptance_prefers_fresh_preserved_packaged_oanda_firepower(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            latest = (
+                root
+                / "logs"
+                / "reports"
+                / "forecast_improvement"
+                / "oanda_universal_rotation_mining_latest.json"
+            )
+            packaged = root / "src" / "quant_rabbit" / "oanda_universal_rotation_precision_rules.json"
+            latest.parent.mkdir(parents=True, exist_ok=True)
+            packaged.parent.mkdir(parents=True, exist_ok=True)
+            self._write_oanda_firepower_report(
+                latest,
+                status="VERIFIED_MINIMUM_5_ROUTE_ESTIMATED",
+                high_precision_count=1,
+                high_precision_daily_return_pct=6.0,
+                generated_at_utc="2026-06-23T10:09:16Z",
+            )
+            self._write_oanda_firepower_report(
+                packaged,
+                status="VERIFIED_TARGET_10_ROUTE_ESTIMATED",
+                high_precision_count=19,
+                high_precision_daily_return_pct=26.9,
+                generated_at_utc="2026-06-23T10:09:16Z",
+                preserved_from_existing=True,
+                source_report="logs/reports/forecast_improvement/oanda_universal_rotation_mining_latest.json",
+            )
+
+            with mock.patch(
+                "quant_rabbit.profitability_acceptance.DEFAULT_OANDA_UNIVERSAL_ROTATION_MINING",
+                latest,
+            ), mock.patch(
+                "quant_rabbit.profitability_acceptance.DEFAULT_OANDA_UNIVERSAL_ROTATION_PACKAGED_RULES",
+                packaged,
+            ):
+                path = _oanda_rotation_mining_effective_path(latest)
+
+            self.assertEqual(path, packaged)
 
     def test_profitability_acceptance_order_metrics_prefers_live_blocker_codes(self) -> None:
         metrics = _order_intent_metrics(

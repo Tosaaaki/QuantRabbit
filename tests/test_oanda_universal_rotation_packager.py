@@ -331,6 +331,8 @@ class OandaUniversalRotationPackagerTest(unittest.TestCase):
         }
         existing = {
             "source_report": "logs/reports/forecast_improvement/oanda_universal_rotation_mining_latest.json",
+            "campaign_firepower_source_report": "merged_oanda_universal_rotation_reports",
+            "scope_metadata_source_report": "merged_oanda_universal_rotation_reports",
             "summary": {
                 "high_precision_multi_confluence_count": 149,
                 "high_precision_pair_confluence_count": 17,
@@ -362,12 +364,19 @@ class OandaUniversalRotationPackagerTest(unittest.TestCase):
         self.assertTrue(packaged["campaign_firepower_preserved_from_existing"])
         self.assertEqual(packaged["campaign_firepower"]["status"], "VERIFIED_TARGET_10_ROUTE_ESTIMATED")
         self.assertEqual(packaged["campaign_firepower"]["high_precision"]["unique_vehicle_count"], 24)
-        self.assertEqual(packaged["campaign_firepower_source_report"], existing["source_report"])
+        self.assertEqual(
+            packaged["campaign_firepower_source_report"],
+            existing["campaign_firepower_source_report"],
+        )
         self.assertEqual(packaged["high_precision_inversion_selectors"], existing["high_precision_inversion_selectors"])
         self.assertEqual(packaged["summary"]["history_pairs"], 2)
         self.assertEqual(packaged["summary"]["high_precision_multi_confluence_count"], 149)
         self.assertEqual(packaged["summary"]["qualified_pair_confluence_count"], 629)
         self.assertTrue(packaged["scope_metadata_preserved_from_existing"])
+        self.assertEqual(
+            packaged["scope_metadata_source_report"],
+            existing["scope_metadata_source_report"],
+        )
         self.assertEqual(packaged["narrow_source_summary"]["history_pairs"], 2)
 
     def test_preservation_uses_original_scope_before_rule_rows_expand_counts(self) -> None:

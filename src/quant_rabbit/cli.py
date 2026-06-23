@@ -174,6 +174,7 @@ from quant_rabbit.paths import (
     DEFAULT_NEWS_HEALTH_REPORT,
     DEFAULT_OUTCOME_MART,
     DEFAULT_OUTCOME_MART_REPORT,
+    effective_oanda_universal_rotation_path,
 )
 from quant_rabbit.gpt_trader import DEFAULT_GPT_MAX_LANES, GPTTraderBrain, StaticTraderProvider
 from quant_rabbit.instruments import DEFAULT_CONTEXT_ASSETS, DEFAULT_TRADER_PAIRS_ARG
@@ -380,11 +381,10 @@ OANDA_CAMPAIGN_FIREPOWER_REFRESH_STATUSES = {
 
 def _oanda_rotation_mining_path_for_campaign_plan(campaign_plan_path: Path) -> Path | None:
     if _paths_equivalent(campaign_plan_path, DEFAULT_CAMPAIGN_PLAN):
-        if DEFAULT_OANDA_UNIVERSAL_ROTATION_MINING.exists():
-            return DEFAULT_OANDA_UNIVERSAL_ROTATION_MINING
-        if DEFAULT_OANDA_UNIVERSAL_ROTATION_PACKAGED_RULES.exists():
-            return DEFAULT_OANDA_UNIVERSAL_ROTATION_PACKAGED_RULES
-        return DEFAULT_OANDA_UNIVERSAL_ROTATION_MINING
+        return effective_oanda_universal_rotation_path(
+            DEFAULT_OANDA_UNIVERSAL_ROTATION_MINING,
+            DEFAULT_OANDA_UNIVERSAL_ROTATION_PACKAGED_RULES,
+        )
     return None
 
 

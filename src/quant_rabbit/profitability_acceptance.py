@@ -30,6 +30,7 @@ from quant_rabbit.paths import (
     DEFAULT_PROFITABILITY_ACCEPTANCE_REPORT,
     DEFAULT_PROJECTION_LEDGER,
     DEFAULT_SELF_IMPROVEMENT_AUDIT,
+    effective_oanda_universal_rotation_path,
 )
 from quant_rabbit.risk import (
     FORECAST_LIVE_PRECISION_MIN_SAMPLES,
@@ -257,15 +258,18 @@ def _paths_equivalent(left: Path, right: Path) -> bool:
 
 
 def _oanda_rotation_mining_effective_path(path: Path) -> Path:
-    """Use the tracked packaged OANDA audit when the non-tracked latest is absent."""
+    """Use packaged OANDA audit when it is the effective default evidence."""
 
-    if path.exists():
-        return path
     if (
         _paths_equivalent(path, DEFAULT_OANDA_UNIVERSAL_ROTATION_MINING)
         and DEFAULT_OANDA_UNIVERSAL_ROTATION_PACKAGED_RULES.exists()
     ):
-        return DEFAULT_OANDA_UNIVERSAL_ROTATION_PACKAGED_RULES
+        return effective_oanda_universal_rotation_path(
+            DEFAULT_OANDA_UNIVERSAL_ROTATION_MINING,
+            DEFAULT_OANDA_UNIVERSAL_ROTATION_PACKAGED_RULES,
+        )
+    if path.exists():
+        return path
     return path
 
 

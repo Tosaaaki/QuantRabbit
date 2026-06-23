@@ -15,6 +15,7 @@ from quant_rabbit.paths import (
     DEFAULT_OANDA_UNIVERSAL_ROTATION_MINING,
     DEFAULT_OANDA_UNIVERSAL_ROTATION_PACKAGED_RULES,
     DEFAULT_STRATEGY_PROFILE,
+    effective_oanda_universal_rotation_path,
 )
 
 
@@ -171,11 +172,10 @@ class CampaignPlanner:
         if self.oanda_rotation_mining is not None:
             return self.oanda_rotation_mining
         if _paths_equivalent(self.plan_path, DEFAULT_CAMPAIGN_PLAN):
-            if DEFAULT_OANDA_UNIVERSAL_ROTATION_MINING.exists():
-                return DEFAULT_OANDA_UNIVERSAL_ROTATION_MINING
-            if DEFAULT_OANDA_UNIVERSAL_ROTATION_PACKAGED_RULES.exists():
-                return DEFAULT_OANDA_UNIVERSAL_ROTATION_PACKAGED_RULES
-            return DEFAULT_OANDA_UNIVERSAL_ROTATION_MINING
+            return effective_oanda_universal_rotation_path(
+                DEFAULT_OANDA_UNIVERSAL_ROTATION_MINING,
+                DEFAULT_OANDA_UNIVERSAL_ROTATION_PACKAGED_RULES,
+            )
         return None
 
     def _build_lanes(

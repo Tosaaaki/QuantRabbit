@@ -424,8 +424,9 @@ def preserve_existing_campaign_firepower(
         "new mining report has a narrower qualified universe; preserving existing "
         "broader audit-only firepower instead of shrinking runtime evidence"
     )
-    if existing.get("source_report"):
-        packaged["campaign_firepower_source_report"] = existing.get("source_report")
+    source_report = existing.get("campaign_firepower_source_report") or existing.get("source_report")
+    if source_report:
+        packaged["campaign_firepower_source_report"] = source_report
 
 
 def preserve_existing_scope_metadata(
@@ -458,8 +459,9 @@ def preserve_existing_scope_metadata(
         "new mining report has a narrower qualified universe; preserving broader "
         "summary/config scope so audit-only runtime evidence is not downgraded"
     )
-    if existing.get("source_report"):
-        packaged["scope_metadata_source_report"] = existing.get("source_report")
+    source_report = existing.get("scope_metadata_source_report") or existing.get("source_report")
+    if source_report:
+        packaged["scope_metadata_source_report"] = source_report
 
 
 def _packaged_report_is_narrower(packaged: dict[str, Any], existing: dict[str, Any]) -> bool:

@@ -1674,6 +1674,46 @@ class IntentGeneratorTest(unittest.TestCase):
 
             self.assertEqual(path, packaged)
 
+    def test_oanda_campaign_firepower_path_prefers_fresh_preserved_packaged_artifact(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            latest = (
+                root
+                / "logs"
+                / "reports"
+                / "forecast_improvement"
+                / "oanda_universal_rotation_mining_latest.json"
+            )
+            packaged = root / "src" / "quant_rabbit" / "oanda_universal_rotation_precision_rules.json"
+            latest.parent.mkdir(parents=True, exist_ok=True)
+            packaged.parent.mkdir(parents=True, exist_ok=True)
+            latest.write_text(
+                json.dumps(
+                    {
+                        "generated_at_utc": "2026-06-23T10:09:16Z",
+                        "campaign_firepower": {
+                            "status": "VERIFIED_MINIMUM_5_ROUTE_ESTIMATED",
+                        },
+                    }
+                )
+            )
+            packaged.write_text(
+                json.dumps(
+                    {
+                        "generated_at_utc": "2026-06-23T10:09:16Z",
+                        "source_report": "logs/reports/forecast_improvement/oanda_universal_rotation_mining_latest.json",
+                        "campaign_firepower_preserved_from_existing": True,
+                        "campaign_firepower": {
+                            "status": "VERIFIED_TARGET_10_ROUTE_ESTIMATED",
+                        },
+                    }
+                )
+            )
+
+            path = _oanda_campaign_firepower_path_for_data_root(root)
+
+            self.assertEqual(path, packaged)
+
     def test_matching_oanda_campaign_firepower_can_lift_avg_win_cap_to_min_lot(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
