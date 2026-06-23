@@ -14,10 +14,12 @@ from unittest import mock
 
 from quant_rabbit.cli import (
     DIRECT_AUTOTRADE_AUDIT_SIDECARS_DIGEST,
+    POST_AUTOTRADE_FAILURE_SIDECARS_DIGEST,
     _LIVE_RUNTIME_COMMANDS,
     _SL_FREE_RUNTIME_DEFAULTS,
     _auto_refresh_market_evidence_if_required,
     _direct_autotrade_audit_sidecar_steps,
+    _post_autotrade_failure_sidecar_steps,
     _pre_entry_projection_verification_if_required,
     _refresh_current_forecast_history,
     _resolve_audit_execution_ledger_db,
@@ -4913,6 +4915,7 @@ class LiveRuntimeBootstrapTest(unittest.TestCase):
                     # sidecar calls must see identical SL-free defaults.
                     "cycle-refresh",
                     "cycle-sidecars",
+                    "post-autotrade-failure-sidecars",
                     # memory-health audits live routing memory before
                     # entry/verify routing and must use the same SL-free
                     # defaults when classifying broker snapshot state.
@@ -5154,6 +5157,44 @@ class ConsolidatedCycleCommandTest(unittest.TestCase):
     Network-dependent steps are not exercised here; behavior parity with the
     SKILL_trader.md skeleton is asserted at the step-list level.
     """
+
+    def test_post_autotrade_failure_sidecars_cover_profit_capture_acceptance_and_support(self) -> None:
+        original_live = os.environ.get("QR_LIVE_ENABLED")
+        os.environ["QR_LIVE_ENABLED"] = "1"
+        try:
+            steps = _post_autotrade_failure_sidecar_steps()
+        finally:
+            if original_live is None:
+                os.environ.pop("QR_LIVE_ENABLED", None)
+            else:
+                os.environ["QR_LIVE_ENABLED"] = original_live
+
+        argv = [tuple(step["argv"]) for step in steps]
+
+        self.assertIn(("position-execution", "--send", "--confirm-live"), argv)
+        self.assertIn(("profit-capture-bot",), argv)
+        self.assertIn(("profitability-acceptance",), argv)
+        self.assertIn(("trader-support-bot",), argv)
+        self.assertLess(
+            argv.index(("position-execution", "--send", "--confirm-live")),
+            argv.index(("profit-capture-bot",)),
+        )
+        self.assertLess(argv.index(("profit-capture-bot",)), argv.index(("memory-health",)))
+        self.assertLess(
+            argv.index(("self-improvement-audit",)),
+            argv.index(("profitability-acceptance",)),
+        )
+        self.assertLess(
+            argv.index(("profitability-acceptance",)),
+            argv.index(("trader-support-bot",)),
+        )
+
+    def test_post_autotrade_failure_sidecars_is_live_runtime_command(self) -> None:
+        self.assertIn("post-autotrade-failure-sidecars", _LIVE_RUNTIME_COMMANDS)
+        self.assertEqual(
+            POST_AUTOTRADE_FAILURE_SIDECARS_DIGEST.name,
+            "post_autotrade_failure_sidecars_digest.json",
+        )
 
     def test_run_cycle_steps_isolates_failures_and_aborts_on_required(self) -> None:
         from quant_rabbit.cli import _run_cycle_steps

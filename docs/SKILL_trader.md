@@ -286,11 +286,13 @@ QR_LIVE_ENABLED=1 ./scripts/run-autotrade-live.sh \
 # verifier completion but position sidecars / memory-health / self-improvement
 # still point at the pre-gateway snapshot. When `autotrade-cycle` exits
 # non-zero after refreshing broker truth, the wrapper does NOT run the full
-# broker/order sidecar list; it runs the projection/position/audit repair
-# subset, including `position-management` followed by `position-execution`
-# when management succeeds, then `profit-capture-bot` → `memory-health` →
-# `self-improvement-audit` → `profitability-acceptance` → `trader-support-bot`. It preserves the
-# original exit code and avoids carrying a stale P0 into the next route.
+# broker/order sidecar list; it calls the canonical
+# `post-autotrade-failure-sidecars` command. That command runs the
+# projection/position/audit repair subset, including `position-management`
+# followed by `position-execution` when management succeeds, then
+# `profit-capture-bot` → `memory-health` → `self-improvement-audit` →
+# `profitability-acceptance` → `trader-support-bot`. It preserves the original
+# wrapper exit code and avoids carrying a stale P0 into the next route.
 # Do not run a second routine `cycle-sidecars` after the wrapper unless the
 # wrapper was intentionally called with `QR_RUN_POST_GATEWAY_SIDECARS=0` for
 # diagnostics.

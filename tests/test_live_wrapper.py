@@ -183,15 +183,8 @@ class LiveWrapperTest(unittest.TestCase):
             payload = capture.read_text()
             self.assertIn("<-m><quant_rabbit.cli><autotrade-cycle>", payload)
             self.assertNotIn("<-m><quant_rabbit.cli><cycle-sidecars>", payload)
-            self.assertIn("<-m><quant_rabbit.cli><verify-projections>", payload)
-            self.assertIn("<-m><quant_rabbit.cli><position-thesis-check>", payload)
-            self.assertIn("<-m><quant_rabbit.cli><thesis-evolution-check>", payload)
-            self.assertIn("<-m><quant_rabbit.cli><forecast-persistence-check>", payload)
-            self.assertIn("<-m><quant_rabbit.cli><position-management>", payload)
-            self.assertIn("<-m><quant_rabbit.cli><position-execution><--send><--confirm-live>", payload)
-            self.assertIn("<-m><quant_rabbit.cli><memory-health>", payload)
-            self.assertIn("<-m><quant_rabbit.cli><self-improvement-audit>", payload)
-            self.assertIn("refreshing projection, position, and audit sidecars under live lock", result.stderr)
+            self.assertIn("<-m><quant_rabbit.cli><post-autotrade-failure-sidecars>", payload)
+            self.assertIn("refreshing failure-repair sidecars under live lock", result.stderr)
 
     def test_sync_failure_continues_when_runtime_is_current_with_report_drift(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

@@ -1278,6 +1278,7 @@ _LIVE_RUNTIME_COMMANDS: frozenset[str] = frozenset(
         # daily-target-state calls classify TP-only runners consistently.
         "cycle-refresh",
         "cycle-sidecars",
+        "post-autotrade-failure-sidecars",
     }
 )
 
@@ -2011,6 +2012,7 @@ def _write_json(path: Path, payload: dict[str, Any]) -> None:
 # ---------------------------------------------------------------------------
 
 DIRECT_AUTOTRADE_AUDIT_SIDECARS_DIGEST = ROOT / "data" / "direct_autotrade_audit_sidecars_digest.json"
+POST_AUTOTRADE_FAILURE_SIDECARS_DIGEST = ROOT / "data" / "post_autotrade_failure_sidecars_digest.json"
 
 
 def _cycle_refresh_steps(daily_risk_pct: str) -> list[dict[str, Any]]:
@@ -2133,6 +2135,27 @@ def _cycle_sidecar_steps() -> list[dict[str, Any]]:
         # separate launchd guardian, which can be inactive or skipped under the
         # live lock. Run the gateway here as the full-cycle fallback; live sends
         # still require QR_LIVE_ENABLED plus --send --confirm-live.
+        {"argv": position_execution, "required": False},
+        {"argv": ["profit-capture-bot"], "required": True, "ok_rcs": [0, 2]},
+        {"argv": ["memory-health"], "required": True},
+        {"argv": ["self-improvement-audit"], "required": False, "ok_rcs": [0, 2]},
+        {"argv": ["profitability-acceptance"], "required": True, "ok_rcs": [0, 2]},
+        {"argv": ["trader-support-bot"], "required": True, "ok_rcs": [0, 2]},
+    ]
+
+
+def _post_autotrade_failure_sidecar_steps() -> list[dict[str, Any]]:
+    """Repair-state refresh used by the live wrapper after non-zero cycles."""
+    live = os.environ.get("QR_LIVE_ENABLED") == "1"
+    position_execution = ["position-execution"]
+    if live:
+        position_execution += ["--send", "--confirm-live"]
+    return [
+        {"argv": ["verify-projections"], "required": False},
+        {"argv": ["position-thesis-check"], "required": False},
+        {"argv": ["thesis-evolution-check"], "required": False},
+        {"argv": ["forecast-persistence-check"], "required": False},
+        {"argv": ["position-management"], "required": True},
         {"argv": position_execution, "required": False},
         {"argv": ["profit-capture-bot"], "required": True, "ok_rcs": [0, 2]},
         {"argv": ["memory-health"], "required": True},
@@ -3576,6 +3599,17 @@ def main(argv: list[str] | None = None) -> int:
         help="Where to persist the digest JSON (also printed to stdout).",
     )
 
+    p_post_failure_sidecars = sub.add_parser(
+        "post-autotrade-failure-sidecars",
+        help="Run the live-wrapper non-zero autotrade repair sidecar step list in one process.",
+    )
+    p_post_failure_sidecars.add_argument(
+        "--digest-output",
+        type=Path,
+        default=POST_AUTOTRADE_FAILURE_SIDECARS_DIGEST,
+        help="Where to persist the digest JSON (also printed to stdout).",
+    )
+
     args = parser.parse_args(argv)
 
     # SL-free runtime defaults: every cli command that touches sizing /
@@ -3724,7 +3758,7 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 0
 
-    if args.command in ("cycle-refresh", "cycle-sidecars"):
+    if args.command in ("cycle-refresh", "cycle-sidecars", "post-autotrade-failure-sidecars"):
         try:
             lock_token = _acquire_cycle_runtime_lock(args.command)
         except _LiveRuntimeLockBusy as exc:
@@ -3734,9 +3768,12 @@ def main(argv: list[str] | None = None) -> int:
             if args.command == "cycle-refresh":
                 steps = _cycle_refresh_steps(str(args.daily_risk_pct))
                 kind = "cycle_refresh_digest"
-            else:
+            elif args.command == "cycle-sidecars":
                 steps = _cycle_sidecar_steps()
                 kind = "cycle_sidecars_digest"
+            else:
+                steps = _post_autotrade_failure_sidecar_steps()
+                kind = "post_autotrade_failure_sidecars_digest"
             step_results, aborted = _run_cycle_steps(steps)
             digest = _cycle_digest(kind=kind, step_results=step_results, aborted=aborted)
             if args.command == "cycle-refresh":
