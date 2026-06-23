@@ -90,6 +90,81 @@ class OandaUniversalRotationMinerTest(unittest.TestCase):
         self.assertEqual(len(candles), 1)
         self.assertAlmostEqual(candles[0].ask_c, 1.1002)
 
+    def test_default_history_glob_matches_rolling_oanda_windows(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            pair_dir = root / "20260623T041751Z" / "GBP_JPY"
+            pair_dir.mkdir(parents=True)
+            path = pair_dir / "GBP_JPY_M5_BA_20260223T041751Z_20260623T041751Z.jsonl"
+            path.write_text("", encoding="utf-8")
+
+            files = miner._discover_m5_files(
+                root,
+                miner.DEFAULT_HISTORY_GLOB,
+                pairs={"GBP_JPY"},
+            )
+
+        self.assertEqual(files, [path])
+
+    def test_select_history_files_applies_deterministic_pair_shards(self) -> None:
+        files = [
+            Path("/tmp/root/run/AUD_USD/AUD_USD_M5_BA.jsonl"),
+            Path("/tmp/root/run/EUR_JPY/EUR_JPY_M5_BA.jsonl"),
+            Path("/tmp/root/run/GBP_JPY/GBP_JPY_M5_BA.jsonl"),
+            Path("/tmp/root/run/USD_JPY/USD_JPY_M5_BA.jsonl"),
+        ]
+
+        first = miner._select_history_files(files, pair_shards=2, pair_shard_index=0)
+        second = miner._select_history_files(files, pair_shards=2, pair_shard_index=1)
+        capped = miner._select_history_files(
+            files,
+            pair_shards=1,
+            pair_shard_index=0,
+            max_history_pairs=2,
+        )
+
+        self.assertEqual([path.parent.name for path in first], ["AUD_USD", "GBP_JPY"])
+        self.assertEqual([path.parent.name for path in second], ["EUR_JPY", "USD_JPY"])
+        self.assertEqual([path.parent.name for path in capped], ["AUD_USD", "EUR_JPY"])
+
+    def test_select_history_files_rejects_invalid_resource_args(self) -> None:
+        files = [Path("/tmp/root/run/USD_JPY/USD_JPY_M5_BA.jsonl")]
+
+        with self.assertRaises(ValueError):
+            miner._select_history_files(files, pair_shards=0, pair_shard_index=0)
+        with self.assertRaises(ValueError):
+            miner._select_history_files(files, pair_shards=2, pair_shard_index=2)
+        with self.assertRaises(ValueError):
+            miner._select_history_files(files, pair_shards=1, pair_shard_index=0, max_history_pairs=-1)
+
+    def test_history_selection_stats_marks_partial_pair_scan(self) -> None:
+        discovered = [
+            Path("/tmp/root/run/AUD_USD/AUD_USD_M5_BA.jsonl"),
+            Path("/tmp/root/run/EUR_JPY/EUR_JPY_M5_BA.jsonl"),
+            Path("/tmp/root/run/GBP_JPY/GBP_JPY_M5_BA.jsonl"),
+        ]
+        selected = discovered[:1]
+
+        stats = miner._history_selection_stats(
+            discovered,
+            selected,
+            pair_shards=3,
+            pair_shard_index=0,
+            max_history_pairs=0,
+        )
+
+        self.assertEqual(stats["history_files_discovered"], 3)
+        self.assertEqual(stats["history_pairs_discovered"], 3)
+        self.assertEqual(
+            stats["history_pairs_discovered_order"],
+            ["AUD_USD", "EUR_JPY", "GBP_JPY"],
+        )
+        self.assertEqual(
+            stats["history_pair_selection"]["selected_pairs"],
+            ["AUD_USD"],
+        )
+        self.assertTrue(stats["history_pair_selection"]["is_partial_pair_scan"])
+
     def test_score_exit_uses_spread_floor_for_take_profit_and_stop(self) -> None:
         start = datetime(2026, 6, 1, tzinfo=timezone.utc)
         candles = [

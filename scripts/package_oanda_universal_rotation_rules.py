@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 from pathlib import Path
 from typing import Any
 
@@ -98,8 +99,13 @@ ROW_FIELDS = (
 
 def main() -> int:
     args = _parse_args()
-    payload = json.loads(args.source_report.read_text(encoding="utf-8"))
-    packaged = package_payload(payload, source_report=args.source_report)
+    source_reports = args.source_report or [DEFAULT_SOURCE_REPORT]
+    payloads = [json.loads(path.read_text(encoding="utf-8")) for path in source_reports]
+    payload = payloads[0] if len(payloads) == 1 else merge_payloads(payloads, source_reports=source_reports)
+    packaged = package_payload(payload, source_report=source_reports[0])
+    if len(source_reports) > 1:
+        packaged["source_report"] = "merged_oanda_universal_rotation_reports"
+        packaged["source_reports"] = [str(path) for path in source_reports]
     preserve_path = args.preserve_from or args.output
     if preserve_path.exists():
         try:
@@ -121,7 +127,15 @@ def main() -> int:
 
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--source-report", type=Path, default=DEFAULT_SOURCE_REPORT)
+    parser.add_argument(
+        "--source-report",
+        type=Path,
+        action="append",
+        help=(
+            "mining report to package; may be repeated to merge deterministic pair-shard reports. "
+            "Defaults to logs/reports/forecast_improvement/oanda_universal_rotation_mining_latest.json"
+        ),
+    )
     parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT)
     parser.add_argument(
         "--preserve-from",
@@ -129,6 +143,66 @@ def _parse_args() -> argparse.Namespace:
         help="existing packaged rules to preserve broader coverage from; defaults to --output",
     )
     return parser.parse_args()
+
+
+def merge_payloads(payloads: list[dict[str, Any]], *, source_reports: list[Path]) -> dict[str, Any]:
+    if not payloads:
+        raise ValueError("no OANDA universal rotation payloads to merge")
+    merged: dict[str, Any] = {
+        "generated_at_utc": max(
+            str(payload.get("generated_at_utc") or "") for payload in payloads
+        ),
+        "generated_from": "scripts/oanda_universal_rotation_miner.py",
+        "merged_by": "scripts/package_oanda_universal_rotation_rules.py",
+        "source_reports": [str(path) for path in source_reports],
+    }
+    for key in ("source", "truth_source", "contract"):
+        value = next((payload.get(key) for payload in payloads if payload.get(key)), None)
+        if value is not None:
+            merged[key] = value
+    config: dict[str, Any] = {}
+    for payload in payloads:
+        payload_config = payload.get("config")
+        if isinstance(payload_config, dict):
+            config = _merge_scope_config(payload_config, config)
+    if config:
+        merged["config"] = config
+    for key in ("history_files", "history_pairs", "scored_outcomes", "inversion_scored_outcomes", *COUNT_KEYS):
+        merged[key] = sum(_optional_int(payload.get(key)) or 0 for payload in payloads)
+    for key in ("history_files_discovered", "history_pairs_discovered"):
+        values = [_optional_int(payload.get(key)) for payload in payloads]
+        values = [value for value in values if value is not None]
+        if values:
+            merged[key] = max(values)
+    discovered_pairs: list[Any] = []
+    selected_pairs: list[Any] = []
+    for payload in payloads:
+        for pair in payload.get("history_pairs_discovered_order") or []:
+            if pair not in discovered_pairs:
+                discovered_pairs.append(pair)
+        selection = payload.get("history_pair_selection")
+        if isinstance(selection, dict):
+            for pair in selection.get("selected_pairs") or []:
+                if pair not in selected_pairs:
+                    selected_pairs.append(pair)
+    if discovered_pairs:
+        merged["history_pairs_discovered_order"] = discovered_pairs
+    if selected_pairs:
+        merged["history_pair_selection"] = {
+            "selected_pairs": selected_pairs,
+            "selected_pair_count": len(selected_pairs),
+            "is_partial_pair_scan": len(selected_pairs) < len(discovered_pairs) if discovered_pairs else False,
+            "source_report_count": len(payloads),
+        }
+    for section in RULE_SECTIONS:
+        rows: list[Any] = []
+        for payload in payloads:
+            rows = _merge_rule_rows(list(payload.get(section) or []), rows)
+        merged[section] = rows
+    campaign_firepower = _merge_campaign_firepower(payloads)
+    if campaign_firepower:
+        merged["campaign_firepower"] = campaign_firepower
+    return merged
 
 
 def package_payload(payload: dict[str, Any], *, source_report: Path) -> dict[str, Any]:
@@ -150,6 +224,122 @@ def package_payload(payload: dict[str, Any], *, source_report: Path) -> dict[str
     return packaged
 
 
+def _merge_campaign_firepower(payloads: list[dict[str, Any]]) -> dict[str, Any]:
+    high_precision_vehicles = _unique_firepower_vehicles(payloads, bucket="high_precision")
+    evidence_queue_vehicles = _unique_firepower_vehicles(payloads, bucket="evidence_queue")
+    high_precision = _merge_firepower_bucket(high_precision_vehicles)
+    evidence_queue = _merge_firepower_bucket(evidence_queue_vehicles)
+    status = "NO_VERIFIED_FIREPOWER"
+    if (high_precision.get("estimated_return_pct_per_active_day_at_observed_frequency") or 0.0) >= 10.0:
+        status = "VERIFIED_TARGET_10_ROUTE_ESTIMATED"
+    elif (high_precision.get("estimated_return_pct_per_active_day_at_observed_frequency") or 0.0) >= 5.0:
+        status = "VERIFIED_MINIMUM_5_ROUTE_ESTIMATED"
+    elif high_precision.get("unique_vehicle_count"):
+        status = "VERIFIED_EDGE_BUT_DAILY_TARGET_SHORTFALL"
+    elif evidence_queue.get("unique_vehicle_count"):
+        status = "EVIDENCE_QUEUE_ONLY_NO_VERIFIED_FIREPOWER"
+    return {
+        "contract": (
+            "audit-only merged firepower estimate from pair-shard validation evidence; "
+            "it does not grant live permission, size orders, or waive gateway gates"
+        ),
+        "minimum_return_pct": 5.0,
+        "target_return_pct": 10.0,
+        "status": status,
+        "high_precision": high_precision,
+        "evidence_queue": evidence_queue,
+    }
+
+
+def _unique_firepower_vehicles(payloads: list[dict[str, Any]], *, bucket: str) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    index_by_key: dict[tuple[Any, ...], int] = {}
+    for payload in payloads:
+        firepower = payload.get("campaign_firepower")
+        if not isinstance(firepower, dict):
+            continue
+        section = firepower.get(bucket)
+        if not isinstance(section, dict):
+            continue
+        for row in section.get("top_vehicles") or []:
+            if not isinstance(row, dict):
+                continue
+            key = _firepower_vehicle_key(row)
+            if key in index_by_key:
+                rows[index_by_key[key]] = row
+                continue
+            index_by_key[key] = len(rows)
+            rows.append(row)
+    rows.sort(
+        key=lambda row: (
+            float(row.get("estimated_return_pct_per_active_day_at_observed_frequency") or 0.0),
+            float(row.get("validation_expectancy_r") or 0.0),
+            float(row.get("validation_win_rate") or 0.0),
+        ),
+        reverse=True,
+    )
+    return rows
+
+
+def _firepower_vehicle_key(row: dict[str, Any]) -> tuple[Any, ...]:
+    if row.get("vehicle_key"):
+        return ("vehicle_key", row.get("vehicle_key"), row.get("confluence"))
+    return (
+        row.get("pair"),
+        row.get("side"),
+        row.get("firepower_side"),
+        row.get("shape"),
+        row.get("exit_shape"),
+        row.get("confluence"),
+    )
+
+
+def _merge_firepower_bucket(vehicles: list[dict[str, Any]]) -> dict[str, Any]:
+    total_daily_return = sum(
+        float(row.get("estimated_return_pct_per_active_day_at_observed_frequency") or 0.0)
+        for row in vehicles
+    )
+    total_attempts = sum(float(row.get("observed_attempts_per_active_day") or 0.0) for row in vehicles)
+    weighted_return_numerator = sum(
+        float(row.get("estimated_return_pct_per_trade_at_risk_lens") or 0.0)
+        * max(float(row.get("observed_attempts_per_active_day") or 0.0), 1.0)
+        for row in vehicles
+    )
+    weighted_return_denominator = sum(
+        max(float(row.get("observed_attempts_per_active_day") or 0.0), 1.0)
+        for row in vehicles
+    )
+    weighted_return = (
+        weighted_return_numerator / weighted_return_denominator
+        if weighted_return_denominator > 0.0
+        else 0.0
+    )
+    return {
+        "unique_vehicle_count": len(vehicles),
+        "pair_count": len({row.get("pair") for row in vehicles if row.get("pair")}),
+        "estimated_return_pct_per_active_day_at_observed_frequency": round(total_daily_return, 6),
+        "observed_attempts_per_active_day": round(total_attempts, 6),
+        "weighted_return_pct_per_trade_at_risk_lens": round(weighted_return, 6),
+        "trades_needed_for_minimum_5pct_at_weighted_expectancy": _trades_needed(5.0, weighted_return),
+        "trades_needed_for_target_10pct_at_weighted_expectancy": _trades_needed(10.0, weighted_return),
+        "active_days_needed_for_minimum_5pct_at_observed_frequency": _days_needed(5.0, total_daily_return),
+        "active_days_needed_for_target_10pct_at_observed_frequency": _days_needed(10.0, total_daily_return),
+        "top_vehicles": vehicles,
+    }
+
+
+def _trades_needed(target_return_pct: float, return_per_trade_pct: float) -> int | None:
+    if return_per_trade_pct <= 0.0:
+        return None
+    return int(math.ceil(target_return_pct / return_per_trade_pct))
+
+
+def _days_needed(target_return_pct: float, return_per_active_day_pct: float) -> float | None:
+    if return_per_active_day_pct <= 0.0:
+        return None
+    return round(target_return_pct / return_per_active_day_pct, 6)
+
+
 def preserve_existing_rule_rows(packaged: dict[str, Any], existing: dict[str, Any]) -> None:
     """Avoid shrinking packaged forecast rules when the source is a top-N excerpt.
 
@@ -168,8 +358,9 @@ def preserve_existing_rule_rows(packaged: dict[str, Any], existing: dict[str, An
         existing_rows = existing.get(section)
         if not isinstance(current_rows, list) or not isinstance(existing_rows, list):
             continue
-        if narrower_report:
+        if narrower_report or _packaged_section_is_narrower(section, packaged, existing):
             packaged[section] = _merge_rule_rows(current_rows, existing_rows)
+            _preserve_section_summary_count(section, packaged, existing)
             continue
         if len(current_rows) >= len(existing_rows):
             continue
@@ -177,6 +368,7 @@ def preserve_existing_rule_rows(packaged: dict[str, Any], existing: dict[str, An
         if available_count is None or available_count < len(existing_rows):
             continue
         packaged[section] = _merge_rule_rows(current_rows, existing_rows)
+        _preserve_section_summary_count(section, packaged, existing)
 
 
 def preserve_existing_campaign_firepower(packaged: dict[str, Any], existing: dict[str, Any]) -> None:
@@ -246,6 +438,37 @@ def _packaged_report_is_narrower(packaged: dict[str, Any], existing: dict[str, A
     return False
 
 
+def _packaged_section_is_narrower(
+    section: str,
+    packaged: dict[str, Any],
+    existing: dict[str, Any],
+) -> bool:
+    current_summary = packaged.get("summary") if isinstance(packaged.get("summary"), dict) else {}
+    existing_summary = existing.get("summary") if isinstance(existing.get("summary"), dict) else {}
+    key = _count_key_for_section(section)
+    current_count = _optional_int(current_summary.get(key))
+    existing_count = _optional_int(existing_summary.get(key))
+    if existing_count is not None and (current_count is None or current_count < existing_count):
+        return True
+    return False
+
+
+def _preserve_section_summary_count(
+    section: str,
+    packaged: dict[str, Any],
+    existing: dict[str, Any],
+) -> None:
+    summary = packaged.get("summary")
+    existing_summary = existing.get("summary")
+    if not isinstance(summary, dict) or not isinstance(existing_summary, dict):
+        return
+    key = _count_key_for_section(section)
+    current_count = _optional_int(summary.get(key))
+    existing_count = _optional_int(existing_summary.get(key))
+    if existing_count is not None and (current_count is None or existing_count > current_count):
+        summary[key] = existing_count
+
+
 def _firepower_unique_vehicle_count(firepower: dict[str, Any]) -> int | None:
     high_precision = firepower.get("high_precision")
     if not isinstance(high_precision, dict):
@@ -309,7 +532,15 @@ def _normalise_key_value(value: Any) -> Any:
 
 def _merge_scope_summary(current: dict[str, Any], existing: dict[str, Any]) -> dict[str, Any]:
     merged = dict(current)
-    for key in ("history_pairs", "scored_outcomes", *COUNT_KEYS):
+    for key in (
+        "history_files",
+        "history_pairs",
+        "history_files_discovered",
+        "history_pairs_discovered",
+        "scored_outcomes",
+        "inversion_scored_outcomes",
+        *COUNT_KEYS,
+    ):
         current_count = _optional_int(current.get(key))
         existing_count = _optional_int(existing.get(key))
         if existing_count is None:
@@ -352,7 +583,16 @@ def _merge_numeric_lists(current: Any, existing: Any) -> list[Any]:
 
 def _summary(payload: dict[str, Any]) -> dict[str, Any]:
     summary: dict[str, Any] = {}
-    for key in ("history_pairs", "scored_outcomes"):
+    for key in (
+        "history_files",
+        "history_pairs",
+        "history_files_discovered",
+        "history_pairs_discovered",
+        "history_pairs_discovered_order",
+        "history_pair_selection",
+        "scored_outcomes",
+        "inversion_scored_outcomes",
+    ):
         if key in payload:
             summary[key] = payload[key]
     for key in COUNT_KEYS:

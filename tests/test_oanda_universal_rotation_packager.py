@@ -85,6 +85,134 @@ class OandaUniversalRotationPackagerTest(unittest.TestCase):
         self.assertNotIn("blockers", row)
         self.assertNotIn("all_n", row)
 
+    def test_merge_payloads_combines_pair_shard_reports_for_packaging(self) -> None:
+        first = {
+            "generated_at_utc": "2026-06-23T08:00:00Z",
+            "history_files": 1,
+            "history_pairs": 1,
+            "history_files_discovered": 2,
+            "history_pairs_discovered": 2,
+            "history_pairs_discovered_order": ["AUD_USD", "USD_JPY"],
+            "history_pair_selection": {"selected_pairs": ["AUD_USD"]},
+            "scored_outcomes": 100,
+            "inversion_scored_outcomes": 100,
+            "high_precision_multi_confluence_count": 1,
+            "qualified_multi_confluence_count": 4,
+            "config": {
+                "min_positive_day_rate": 0.55,
+                "multi_confluence_sizes": [3],
+            },
+            "high_precision_multi_confluences": [
+                {
+                    "pair": "AUD_USD",
+                    "side": "LONG",
+                    "shape": "range_reversion",
+                    "exit_shape": "tp1_sl1",
+                    "confluence": "session:ny + atr_regime:high + body:flat",
+                    "confluence_size": 3,
+                    "validation_n": 20,
+                    "validation_win_rate": 0.75,
+                    "validation_avg_realized_atr": 0.6,
+                }
+            ],
+            "campaign_firepower": {
+                "high_precision": {
+                    "top_vehicles": [
+                        {
+                            "vehicle_key": "AUD_USD|LONG|range_reversion|tp1_sl1",
+                            "pair": "AUD_USD",
+                            "side": "LONG",
+                            "shape": "range_reversion",
+                            "exit_shape": "tp1_sl1",
+                            "confluence": "session:ny + atr_regime:high + body:flat",
+                            "estimated_return_pct_per_active_day_at_observed_frequency": 3.0,
+                            "estimated_return_pct_per_trade_at_risk_lens": 0.6,
+                            "observed_attempts_per_active_day": 5.0,
+                        }
+                    ]
+                },
+                "evidence_queue": {"top_vehicles": []},
+            },
+        }
+        second = {
+            "generated_at_utc": "2026-06-23T08:01:00Z",
+            "history_files": 1,
+            "history_pairs": 1,
+            "history_files_discovered": 2,
+            "history_pairs_discovered": 2,
+            "history_pairs_discovered_order": ["AUD_USD", "USD_JPY"],
+            "history_pair_selection": {"selected_pairs": ["USD_JPY"]},
+            "scored_outcomes": 200,
+            "inversion_scored_outcomes": 200,
+            "high_precision_multi_confluence_count": 1,
+            "qualified_multi_confluence_count": 5,
+            "config": {
+                "min_validation_win_rate": 0.52,
+                "multi_confluence_sizes": [4],
+            },
+            "high_precision_multi_confluences": [
+                {
+                    "pair": "USD_JPY",
+                    "side": "SHORT",
+                    "shape": "pullback_continuation",
+                    "exit_shape": "tp1.25_sl1",
+                    "confluence": "session:london + atr_regime:mid + body:flat + wick_reject:1",
+                    "confluence_size": 4,
+                    "validation_n": 22,
+                    "validation_win_rate": 0.77,
+                    "validation_avg_realized_atr": 0.55,
+                }
+            ],
+            "campaign_firepower": {
+                "high_precision": {
+                    "top_vehicles": [
+                        {
+                            "vehicle_key": "USD_JPY|SHORT|pullback_continuation|tp1.25_sl1",
+                            "pair": "USD_JPY",
+                            "side": "SHORT",
+                            "shape": "pullback_continuation",
+                            "exit_shape": "tp1.25_sl1",
+                            "confluence": "session:london + atr_regime:mid + body:flat + wick_reject:1",
+                            "estimated_return_pct_per_active_day_at_observed_frequency": 2.5,
+                            "estimated_return_pct_per_trade_at_risk_lens": 0.5,
+                            "observed_attempts_per_active_day": 5.0,
+                        }
+                    ]
+                },
+                "evidence_queue": {"top_vehicles": []},
+            },
+        }
+
+        merged = packager.merge_payloads(
+            [first, second],
+            source_reports=[Path("shard0.json"), Path("shard1.json")],
+        )
+        packaged = packager.package_payload(merged, source_report=Path("merged.json"))
+
+        self.assertEqual(merged["history_pairs"], 2)
+        self.assertEqual(merged["history_pairs_discovered"], 2)
+        self.assertEqual(merged["history_pair_selection"]["selected_pairs"], ["AUD_USD", "USD_JPY"])
+        self.assertEqual(merged["scored_outcomes"], 300)
+        self.assertEqual(merged["high_precision_multi_confluence_count"], 2)
+        self.assertEqual(merged["qualified_multi_confluence_count"], 9)
+        self.assertEqual(merged["config"]["multi_confluence_sizes"], [3, 4])
+        self.assertEqual(merged["campaign_firepower"]["status"], "VERIFIED_MINIMUM_5_ROUTE_ESTIMATED")
+        self.assertEqual(
+            merged["campaign_firepower"]["high_precision"][
+                "estimated_return_pct_per_active_day_at_observed_frequency"
+            ],
+            5.5,
+        )
+        self.assertEqual(packaged["summary"]["history_pairs_discovered"], 2)
+        self.assertEqual(
+            packaged["summary"]["history_pair_selection"]["selected_pairs"],
+            ["AUD_USD", "USD_JPY"],
+        )
+        self.assertEqual(
+            {row["pair"] for row in packaged["high_precision_multi_confluences"]},
+            {"AUD_USD", "USD_JPY"},
+        )
+
     def test_preserves_existing_rule_rows_when_latest_report_is_top_n_excerpt(self) -> None:
         packaged = packager.package_payload(
             {
@@ -306,6 +434,51 @@ class OandaUniversalRotationPackagerTest(unittest.TestCase):
         packaged = packager.package_payload(payload, source_report=Path("latest.json"))
         packager.preserve_existing_campaign_firepower(packaged, existing)
 
+        self.assertNotIn("campaign_firepower_preserved_from_existing", packaged)
+        self.assertEqual(packaged["campaign_firepower"]["status"], "VERIFIED_MINIMUM_5_ROUTE_ESTIMATED")
+
+    def test_preserves_section_rows_when_selector_scope_is_narrower(self) -> None:
+        packaged = packager.package_payload(
+            {
+                "high_precision_multi_confluence_count": 200,
+                "qualified_multi_confluence_count": 9000,
+                "qualified_inversion_selector_count": 0,
+                "qualified_inversion_selectors": [],
+                "campaign_firepower": {
+                    "status": "VERIFIED_MINIMUM_5_ROUTE_ESTIMATED",
+                    "high_precision": {"unique_vehicle_count": 8},
+                },
+            },
+            source_report=Path("merged_shards.json"),
+        )
+        existing = {
+            "summary": {
+                "high_precision_multi_confluence_count": 44,
+                "qualified_multi_confluence_count": 1385,
+                "qualified_inversion_selector_count": 1,
+            },
+            "qualified_inversion_selectors": [
+                {
+                    "pair": "EUR_USD",
+                    "source_side": "SHORT",
+                    "selected_side": "LONG",
+                    "shape": "trend_continuation",
+                    "exit_shape": "tp1_sl1",
+                    "validation_inversion_edge_atr": 0.4,
+                }
+            ],
+            "campaign_firepower": {
+                "status": "VERIFIED_TARGET_10_ROUTE_ESTIMATED",
+                "high_precision": {"unique_vehicle_count": 24},
+            },
+        }
+
+        packager.preserve_existing_rule_rows(packaged, existing)
+        packager.preserve_existing_campaign_firepower(packaged, existing)
+
+        self.assertEqual(len(packaged["qualified_inversion_selectors"]), 1)
+        self.assertEqual(packaged["qualified_inversion_selectors"][0]["pair"], "EUR_USD")
+        self.assertEqual(packaged["summary"]["qualified_inversion_selector_count"], 1)
         self.assertNotIn("campaign_firepower_preserved_from_existing", packaged)
         self.assertEqual(packaged["campaign_firepower"]["status"], "VERIFIED_MINIMUM_5_ROUTE_ESTIMATED")
 

@@ -42,7 +42,7 @@ from quant_rabbit.instruments import DEFAULT_TRADER_PAIRS, instrument_pip_factor
 JST = timezone(timedelta(hours=9), "JST")
 DEFAULT_HISTORY_ROOT = Path("logs/replay/oanda_history")
 DEFAULT_OUTPUT_DIR = Path("logs/reports/forecast_improvement")
-DEFAULT_HISTORY_GLOB = "*_M5_BA_20260316T000000Z_20260620T000000Z.jsonl"
+DEFAULT_HISTORY_GLOB = "*_M5_BA_*.jsonl"
 
 # These are audit-label boundaries that convert normalized continuous market
 # state into repeatable buckets. Runtime entries still have to pass current
@@ -68,6 +68,9 @@ DEFAULT_HIGH_PRECISION_MIN_WIN_RATE = 0.70
 DEFAULT_HIGH_PRECISION_MIN_WILSON_LOWER = 0.50
 DEFAULT_TRAIN_FRACTION = 0.70
 DEFAULT_TOP = 30
+DEFAULT_PAIR_SHARDS = 1
+DEFAULT_PAIR_SHARD_INDEX = 0
+DEFAULT_MAX_HISTORY_PAIRS = 0
 DEFAULT_DIRECTIONAL_SELECTOR_MIN_SAMPLES = 60
 DEFAULT_MULTI_CONFLUENCE_SIZES = (3, 4)
 DEFAULT_INVERSION_SELECTOR_CONFLUENCE_SIZES = (2, 3)
@@ -163,7 +166,13 @@ def main() -> int:
     latest_json = out_dir / "oanda_universal_rotation_mining_latest.json"
     latest_md = out_dir / "oanda_universal_rotation_mining_latest.md"
 
-    files = _discover_m5_files(args.history_root, args.history_glob, pairs=pairs)
+    discovered_files = _discover_m5_files(args.history_root, args.history_glob, pairs=pairs)
+    files = _select_history_files(
+        discovered_files,
+        pair_shards=args.pair_shards,
+        pair_shard_index=args.pair_shard_index,
+        max_history_pairs=args.max_history_pairs,
+    )
     rows, inversion_rows, load_stats = _score_files(
         files,
         exit_shapes=exit_shapes,
@@ -173,6 +182,15 @@ def main() -> int:
         max_spread_atr=args.max_spread_atr,
         tp_spread_floor=args.tp_spread_floor,
         sl_spread_floor=args.sl_spread_floor,
+    )
+    load_stats.update(
+        _history_selection_stats(
+            discovered_files,
+            files,
+            pair_shards=args.pair_shards,
+            pair_shard_index=args.pair_shard_index,
+            max_history_pairs=args.max_history_pairs,
+        )
     )
     report = _build_report(
         rows,
@@ -288,6 +306,27 @@ def _parse_args() -> argparse.Namespace:
             "from validation expectancy R; it does not size live orders or waive live gates."
         ),
     )
+    parser.add_argument(
+        "--pair-shards",
+        type=int,
+        default=DEFAULT_PAIR_SHARDS,
+        help=(
+            "split discovered pairs into N deterministic shards. Use this to run all-pair "
+            "OANDA mining in bounded memory and merge shard evidence afterwards."
+        ),
+    )
+    parser.add_argument(
+        "--pair-shard-index",
+        type=int,
+        default=DEFAULT_PAIR_SHARD_INDEX,
+        help="zero-based pair shard index to process when --pair-shards is greater than 1",
+    )
+    parser.add_argument(
+        "--max-history-pairs",
+        type=int,
+        default=DEFAULT_MAX_HISTORY_PAIRS,
+        help="optional resource cap after shard selection; 0 means no pair cap",
+    )
     parser.add_argument("--top", type=int, default=DEFAULT_TOP)
     return parser.parse_args()
 
@@ -362,6 +401,58 @@ def _discover_m5_files(root: Path, history_glob: str, *, pairs: set[str]) -> lis
         if current is None or path.stat().st_mtime > current.stat().st_mtime:
             by_pair[pair] = path
     return [by_pair[pair] for pair in sorted(by_pair)]
+
+
+def _select_history_files(
+    files: Sequence[Path],
+    *,
+    pair_shards: int = DEFAULT_PAIR_SHARDS,
+    pair_shard_index: int = DEFAULT_PAIR_SHARD_INDEX,
+    max_history_pairs: int = DEFAULT_MAX_HISTORY_PAIRS,
+) -> list[Path]:
+    if pair_shards < 1:
+        raise ValueError("--pair-shards must be >= 1")
+    if pair_shard_index < 0 or pair_shard_index >= pair_shards:
+        raise ValueError("--pair-shard-index must be between 0 and --pair-shards - 1")
+    if max_history_pairs < 0:
+        raise ValueError("--max-history-pairs must be >= 0")
+    selected = [
+        path
+        for index, path in enumerate(files)
+        if index % pair_shards == pair_shard_index
+    ]
+    if max_history_pairs:
+        selected = selected[:max_history_pairs]
+    return selected
+
+
+def _history_selection_stats(
+    discovered_files: Sequence[Path],
+    selected_files: Sequence[Path],
+    *,
+    pair_shards: int,
+    pair_shard_index: int,
+    max_history_pairs: int,
+) -> dict[str, Any]:
+    discovered_pairs = [path.parent.name.upper() for path in discovered_files]
+    selected_pairs = [path.parent.name.upper() for path in selected_files]
+    return {
+        "history_files_discovered": len(discovered_files),
+        "history_pairs_discovered": len(set(discovered_pairs)),
+        "history_pairs_discovered_order": discovered_pairs,
+        "history_pair_selection": {
+            "pair_shards": pair_shards,
+            "pair_shard_index": pair_shard_index,
+            "max_history_pairs": max_history_pairs,
+            "selected_pairs": selected_pairs,
+            "selected_pair_count": len(set(selected_pairs)),
+            "is_partial_pair_scan": (
+                pair_shards > 1
+                or bool(max_history_pairs)
+                or len(set(selected_pairs)) < len(set(discovered_pairs))
+            ),
+        },
+    }
 
 
 def _iter_history_paths(root: Path, history_glob: str) -> list[Path]:
