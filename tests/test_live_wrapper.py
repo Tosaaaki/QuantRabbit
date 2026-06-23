@@ -164,7 +164,7 @@ class LiveWrapperTest(unittest.TestCase):
             self.assertIn("<-m><quant_rabbit.cli><cycle-sidecars>", payload)
             self.assertIn("refreshing post-gateway sidecars under live lock", result.stderr)
 
-    def test_failed_cycle_runs_projection_position_and_audit_sidecars(self) -> None:
+    def test_failed_cycle_runs_canonical_failure_sidecar_command_only(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             capture = root / "capture.json"
@@ -184,6 +184,10 @@ class LiveWrapperTest(unittest.TestCase):
             self.assertIn("<-m><quant_rabbit.cli><autotrade-cycle>", payload)
             self.assertNotIn("<-m><quant_rabbit.cli><cycle-sidecars>", payload)
             self.assertIn("<-m><quant_rabbit.cli><post-autotrade-failure-sidecars>", payload)
+            self.assertEqual(
+                _captured_cli_commands(payload),
+                ["autotrade-cycle", "post-autotrade-failure-sidecars"],
+            )
             self.assertIn("refreshing failure-repair sidecars under live lock", result.stderr)
 
     def test_sync_failure_continues_when_runtime_is_current_with_report_drift(self) -> None:
@@ -491,6 +495,15 @@ def _init_git(root: Path) -> None:
 
 def _run(args: list[str], *, cwd: Path) -> subprocess.CompletedProcess[str]:
     return subprocess.run(args, cwd=cwd, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
+
+
+def _captured_cli_commands(payload: str) -> list[str]:
+    marker = "ARGV=<-m><quant_rabbit.cli><"
+    commands: list[str] = []
+    for line in payload.splitlines():
+        if line.startswith(marker):
+            commands.append(line[len(marker) :].split(">", 1)[0])
+    return commands
 
 
 def _restore_env(name: str, value: str | None) -> None:
