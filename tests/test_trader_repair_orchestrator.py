@@ -395,6 +395,55 @@ class TraderRepairOrchestratorTest(unittest.TestCase):
                 "REPAIR_MONTH_SCALE_RESIDUAL_ENTRY_QUALITY",
             )
 
+    def test_residual_repair_waits_for_replay_when_current_intents_already_block_it(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            support = root / "support.json"
+            output = root / "orchestrator.json"
+            report = root / "orchestrator.md"
+            _write_support(
+                support,
+                [
+                    _request(
+                        "REPAIR_MONTH_SCALE_RESIDUAL_ENTRY_QUALITY",
+                        priority="P0",
+                        status="RESIDUAL_GROUPS_ALREADY_BLOCKED_WAITING_FOR_REPLAY",
+                        evidence_summary={
+                            "current_residual_block_status": {
+                                "current_residual_blocked_intents_count": 5,
+                                "status": "CURRENT_INTENTS_BLOCK_RESIDUAL_GROUPS_WAIT_FOR_744H_REPLAY",
+                            }
+                        },
+                    ),
+                    _request("REPAIR_FRONTIER_LANE_BLOCKER", priority="P1"),
+                ],
+            )
+
+            summary = TraderRepairOrchestrator(
+                support_bot_path=support,
+                output_path=output,
+                report_path=report,
+                trader_request="residual method month",
+            ).run()
+
+            self.assertEqual(summary.status, STATUS_READY)
+            payload = json.loads(output.read_text())
+            residual = next(
+                item
+                for item in payload["queue"]
+                if item["code"] == "REPAIR_MONTH_SCALE_RESIDUAL_ENTRY_QUALITY"
+            )
+            self.assertEqual(residual["automation_status"], "WAITING_FOR_LIVE_EVIDENCE_WINDOW")
+            self.assertEqual(payload["selected_request"]["code"], "REPAIR_FRONTIER_LANE_BLOCKER")
+            self.assertIn(
+                "REPAIR_MONTH_SCALE_RESIDUAL_ENTRY_QUALITY",
+                payload["queue_summary"]["waiting_request_codes"],
+            )
+            self.assertNotIn(
+                "REPAIR_MONTH_SCALE_RESIDUAL_ENTRY_QUALITY",
+                [item["code"] for item in payload["actionable_requests"]],
+            )
+
     def test_cli_accepts_trader_request_alias(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

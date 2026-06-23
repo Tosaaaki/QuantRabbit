@@ -374,6 +374,119 @@ class TraderSupportBotTest(unittest.TestCase):
         self.assertEqual(request["evidence_summary"]["not_passing_close_gate_evidence"], 1)
         self.assertEqual(request["evidence_summary"]["missing_close_gate_evidence"], 0)
 
+    def test_month_scale_residual_repair_waits_when_current_intents_are_already_blocked(self) -> None:
+        now = datetime(2026, 6, 22, 12, 15, tzinfo=timezone.utc)
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _write_fixture(root, now=now, blocked=True)
+            _write_json(
+                files["intents"],
+                {
+                    "generated_at_utc": now.isoformat(),
+                    "results": [
+                        {
+                            "lane_id": "range_trader:EUR_USD:LONG:RANGE_ROTATION",
+                            "status": "DRY_RUN_BLOCKED",
+                            "live_blocker_codes": [
+                                "POSITION_GUARDIAN_INACTIVE_FOR_PROFIT_CAPTURE",
+                                "MONTH_SCALE_ENTRY_QUALITY_RESIDUAL_BLOCKED",
+                            ],
+                            "intent": {
+                                "pair": "EUR_USD",
+                                "side": "LONG",
+                                "order_type": "LIMIT",
+                                "market_context": {"method": "RANGE_ROTATION"},
+                                "metadata": {
+                                    "month_scale_residual_loss_group": {
+                                        "pair": "EUR_USD",
+                                        "side": "LONG",
+                                        "method": "RANGE_ROTATION",
+                                        "residual_scope": "ENTRY_QUALITY_OR_CLOSE_RESIDUAL",
+                                        "repair_replay_pl_jpy": -2333.8215,
+                                    }
+                                },
+                            },
+                        }
+                    ],
+                },
+            )
+            _write_json(
+                files["profitability"],
+                {
+                    "status": "PROFITABILITY_ACCEPTANCE_BLOCKED",
+                    "blockers": [
+                        "MONTH_SCALE_TP_PROGRESS_REPLAY_STILL_NEGATIVE: replay remains negative",
+                    ],
+                    "findings": [
+                        {
+                            "priority": "P0",
+                            "code": "MONTH_SCALE_TP_PROGRESS_REPLAY_STILL_NEGATIVE",
+                            "message": "month-scale replay remains negative after TP-progress repair",
+                            "next_action": "wait for replay evidence after residual blocks are active",
+                            "evidence": {
+                                "window_lookback_hours": 744.0,
+                                "loss_closes_profit_capture_missed": 14,
+                                "loss_closes_repair_replay_triggered": 13,
+                                "repair_replay_counterfactual_pl_jpy": -13824.5957,
+                                "top_repair_replay_residual_groups": [
+                                    {
+                                        "pair": "EUR_USD",
+                                        "side": "LONG",
+                                        "method": "RANGE_ROTATION",
+                                        "residual_scope": "ENTRY_QUALITY_OR_CLOSE_RESIDUAL",
+                                        "repair_replay_pl_jpy": -2333.8215,
+                                    }
+                                ],
+                            },
+                        }
+                    ],
+                    "metrics": {
+                        "capture_economics": {},
+                        "oanda_campaign_firepower": {},
+                    },
+                },
+            )
+            env = _guardian_env(root, active="0")
+            with mock.patch.dict(os.environ, env, clear=False):
+                summary = TraderSupportBot(
+                    broker_snapshot_path=files["broker"],
+                    order_intents_path=files["intents"],
+                    target_state_path=files["target"],
+                    position_management_path=files["position_management"],
+                    position_guardian_management_path=files["guardian_management"],
+                    position_guardian_execution_path=files["guardian_execution"],
+                    position_guardian_heartbeat_path=files["guardian_heartbeat"],
+                    self_improvement_audit_path=files["self_improvement"],
+                    profitability_acceptance_path=files["profitability"],
+                    execution_timing_audit_path=files["timing"],
+                    profit_capture_bot_path=files["profit_capture_bot"],
+                    output_path=files["output"],
+                    report_path=files["report"],
+                    now_utc=now,
+                ).run()
+
+            payload = json.loads(files["output"].read_text())
+
+        self.assertEqual(summary.status, STATUS_BLOCKED)
+        self.assertEqual(payload["metrics"]["month_scale_residual_blocked_intent_count"], 1)
+        self.assertEqual(payload["entry_readiness"]["month_scale_residual_blocked_intent_count"], 1)
+        request = next(
+            item
+            for item in payload["repair_requests"]
+            if item["code"] == "REPAIR_MONTH_SCALE_RESIDUAL_ENTRY_QUALITY"
+        )
+        self.assertEqual(
+            request["status"],
+            "RESIDUAL_GROUPS_ALREADY_BLOCKED_WAITING_FOR_REPLAY",
+        )
+        block_status = request["evidence_summary"]["current_residual_block_status"]
+        self.assertEqual(block_status["current_residual_blocked_intents_count"], 1)
+        self.assertEqual(block_status["top_residual_groups_with_current_blocked_intent"], 1)
+        self.assertEqual(
+            block_status["status"],
+            "CURRENT_INTENTS_BLOCK_RESIDUAL_GROUPS_WAIT_FOR_744H_REPLAY",
+        )
+
     def test_ready_when_guardian_heartbeat_is_fresh_and_live_lane_exists(self) -> None:
         now = datetime(2026, 6, 22, 12, 15, tzinfo=timezone.utc)
         with tempfile.TemporaryDirectory() as tmp:

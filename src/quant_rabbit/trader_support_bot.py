@@ -42,6 +42,10 @@ RANGE_ROTATION_METHOD = "RANGE_ROTATION"
 RANGE_ROTATION_COUNTERPART_MISSING = "RANGE_ROTATION_COUNTERPART_MISSING"
 OANDA_AUDIT_ONLY_LOCAL_TP_PROOF_REQUIRED = "OANDA_CAMPAIGN_AUDIT_ONLY_LOCAL_TP_PROOF_REQUIRED"
 OANDA_AUDIT_ONLY_REPLAY_HISTORY_GRANULARITIES = "S5,M5"
+MONTH_SCALE_RESIDUAL_BLOCKER_CODES = {
+    "MONTH_SCALE_RESIDUAL_LOSS_REPAIR_BLOCKED",
+    "MONTH_SCALE_ENTRY_QUALITY_RESIDUAL_BLOCKED",
+}
 REPAIR_EXEMPTION_CODES = {PERSISTENT_DISCIPLINE, "SELF_IMPROVEMENT_P0_PROFITABILITY_DISCIPLINE"}
 GLOBAL_UNLOCK_BLOCKERS = {
     GUARDIAN_BLOCKER,
@@ -238,6 +242,7 @@ class TraderSupportBot:
             "repair_frontier_after_support_blocked_lanes": entry["repair_frontier_after_support_blocked_lanes"],
             "repair_frontier_after_support_top_blockers": entry["repair_frontier_remaining_blockers"],
             "global_unlock_frontier_lanes": len(entry["global_unlock_frontier"]),
+            "month_scale_residual_blocked_intent_count": entry["month_scale_residual_blocked_intent_count"],
             "profit_capture_missed_loss_closes": profit_capture["missed_loss_closes"],
             "profit_capture_estimated_gap_jpy": profit_capture["estimated_gap_jpy"],
             "profit_capture_actual_loss_close_pl_jpy": profit_capture["actual_loss_close_pl_jpy"],
@@ -670,12 +675,29 @@ def _entry_readiness_summary(
     repair_frontier_missing_range_rotation_counterpart: list[dict[str, Any]] = []
     oanda_audit_only_local_tp_proof_required: list[dict[str, Any]] = []
     global_unlock_frontier: list[dict[str, Any]] = []
+    month_scale_residual_blocked_intents: list[dict[str, Any]] = []
     range_rotation_counterparts = _range_rotation_counterparts(results)
     for item in results:
         for code in item.get("live_blocker_codes") or []:
             codes[str(code)] += 1
         blocker_codes = [str(code) for code in item.get("live_blocker_codes") or []]
         metadata = _intent_metadata(item)
+        residual_blockers = [code for code in blocker_codes if code in MONTH_SCALE_RESIDUAL_BLOCKER_CODES]
+        if residual_blockers:
+            intent = item.get("intent") if isinstance(item.get("intent"), dict) else {}
+            context = intent.get("market_context") if isinstance(intent.get("market_context"), dict) else {}
+            month_scale_residual_blocked_intents.append(
+                {
+                    "lane_id": item.get("lane_id"),
+                    "status": item.get("status"),
+                    "pair": intent.get("pair"),
+                    "side": intent.get("side"),
+                    "method": context.get("method"),
+                    "order_type": intent.get("order_type"),
+                    "blocker_codes": residual_blockers,
+                    "residual_group": metadata.get("month_scale_residual_loss_group"),
+                }
+            )
         if (
             metadata.get("positive_rotation_oanda_campaign_audit_only") is True
             or OANDA_AUDIT_ONLY_LOCAL_TP_PROOF_REQUIRED in blocker_codes
@@ -802,6 +824,7 @@ def _entry_readiness_summary(
     repair_frontier_missing_range_rotation_counterpart.sort(key=lambda item: _float(item.get("reward_jpy")), reverse=True)
     oanda_audit_only_local_tp_proof_required.sort(key=lambda item: _float(item.get("reward_jpy")), reverse=True)
     global_unlock_frontier.sort(key=lambda item: _float(item.get("reward_jpy")), reverse=True)
+    month_scale_residual_blocked_intents.sort(key=lambda item: str(item.get("lane_id") or ""))
     remaining_repair_blockers = _repair_frontier_remaining_blockers(repair_frontier)
     return {
         "generated_at_utc": payload.get("generated_at_utc"),
@@ -824,6 +847,8 @@ def _entry_readiness_summary(
         ),
         "repair_frontier_remaining_blockers": remaining_repair_blockers,
         "global_unlock_frontier": global_unlock_frontier[:12],
+        "month_scale_residual_blocked_intents": month_scale_residual_blocked_intents[:12],
+        "month_scale_residual_blocked_intent_count": len(month_scale_residual_blocked_intents),
     }
 
 
@@ -2165,11 +2190,27 @@ def _build_repair_requests(
 
     if "MONTH_SCALE_TP_PROGRESS_REPLAY_STILL_NEGATIVE" in item_by_code:
         item = item_by_code["MONTH_SCALE_TP_PROGRESS_REPLAY_STILL_NEGATIVE"]
+        residual_block_status = _month_scale_residual_block_status(
+            item.get("evidence_summary"),
+            entry,
+        )
+        residual_request_status = (
+            "RESIDUAL_GROUPS_ALREADY_BLOCKED_WAITING_FOR_REPLAY"
+            if residual_block_status["current_residual_blocked_intents_count"]
+            else "READY_FOR_CODE_REPAIR"
+        )
+        evidence_summary = item.get("evidence_summary")
+        if not isinstance(evidence_summary, dict):
+            evidence_summary = {}
+        evidence_summary = {
+            **evidence_summary,
+            "current_residual_block_status": residual_block_status,
+        }
         requests.append(
             _repair_request(
                 code="REPAIR_MONTH_SCALE_RESIDUAL_ENTRY_QUALITY",
                 priority="P0",
-                status="READY_FOR_CODE_REPAIR",
+                status=residual_request_status,
                 source_findings=["MONTH_SCALE_TP_PROGRESS_REPLAY_STILL_NEGATIVE"],
                 problem=(
                     "Month-scale replay remains net negative after TP-progress repair; residual "
@@ -2179,7 +2220,7 @@ def _build_repair_requests(
                     "The daily target cannot be scaled by frequency while the 744h production-gate replay "
                     "is still negative for the active residual groups."
                 ),
-                evidence_summary=item.get("evidence_summary"),
+                evidence_summary=evidence_summary,
                 clearance_conditions=[item.get("clearance_condition")],
                 verification_commands=[item.get("verification_command")],
                 suggested_files=[
@@ -2318,6 +2359,70 @@ def _build_repair_requests(
         )
 
     return _unique_repair_requests(requests)
+
+
+def _month_scale_residual_block_status(
+    evidence_summary: Any,
+    entry: dict[str, Any],
+) -> dict[str, Any]:
+    evidence = evidence_summary if isinstance(evidence_summary, dict) else {}
+    current_blocked = (
+        entry.get("month_scale_residual_blocked_intents")
+        if isinstance(entry.get("month_scale_residual_blocked_intents"), list)
+        else []
+    )
+    blocked_rows = [item for item in current_blocked if isinstance(item, dict)]
+    blocker_counts: Counter[str] = Counter()
+    for item in blocked_rows:
+        for code in item.get("blocker_codes") or []:
+            if str(code).strip():
+                blocker_counts[str(code)] += 1
+    residual_groups = (
+        evidence.get("top_repair_replay_residual_groups")
+        if isinstance(evidence.get("top_repair_replay_residual_groups"), list)
+        else []
+    )
+    group_keys = [
+        _residual_group_key(group)
+        for group in residual_groups
+        if isinstance(group, dict) and _residual_group_key(group) is not None
+    ]
+    blocked_keys = {
+        _residual_group_key(item)
+        for item in blocked_rows
+        if _residual_group_key(item) is not None
+    }
+    matched_keys = [key for key in group_keys if key in blocked_keys]
+    return {
+        "current_residual_blocked_intents_count": len(blocked_rows),
+        "current_residual_blocker_counts": dict(blocker_counts),
+        "current_residual_blocked_examples": blocked_rows[:5],
+        "top_residual_group_count": len(group_keys),
+        "top_residual_groups_with_current_blocked_intent": len(matched_keys),
+        "top_residual_groups_without_current_intent": [
+            "|".join(key) for key in group_keys if key not in blocked_keys
+        ][:8],
+        "status": (
+            "CURRENT_INTENTS_BLOCK_RESIDUAL_GROUPS_WAIT_FOR_744H_REPLAY"
+            if blocked_rows
+            else "NO_CURRENT_RESIDUAL_BLOCKED_INTENTS"
+        ),
+        "clearance_condition": (
+            "Rerun execution-timing-audit --lookback-hours 744 --post-close-hours 6 and "
+            "profitability-acceptance; if month-scale replay is still negative after current "
+            "residual blockers are active, inspect the next unblocked residual frontier instead "
+            "of reimplementing the same block."
+        ),
+    }
+
+
+def _residual_group_key(item: dict[str, Any]) -> tuple[str, str, str] | None:
+    pair = str(item.get("pair") or "").upper()
+    side = str(item.get("side") or "").upper()
+    method = str(item.get("method") or "").upper()
+    if not pair or not side or not method:
+        return None
+    return pair, side, method
 
 
 def _repair_request(

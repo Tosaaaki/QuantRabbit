@@ -31,6 +31,7 @@ AUTOMATION_LIVE_EVIDENCE_WINDOW = "WAITING_FOR_LIVE_EVIDENCE_WINDOW"
 AUTOMATION_EVIDENCE = "WAITING_FOR_EVIDENCE"
 NON_ACTIONABLE_REPAIR_STATUSES = {
     "HISTORICAL_ACCEPTANCE_WINDOW_ACTIVE",
+    "RESIDUAL_GROUPS_ALREADY_BLOCKED_WAITING_FOR_REPLAY",
 }
 CODEX_ACTIONABLE_REPAIR_STATUSES = {
     "READY_FOR_CODE_REPAIR",
@@ -57,7 +58,8 @@ REPAIR_SELECTION_REASONS = {
     ),
     "REPAIR_MONTH_SCALE_RESIDUAL_ENTRY_QUALITY": (
         "Residual entry-quality repair is scaling work after TP-progress capture and close "
-        "discipline have a proved live path."
+        "discipline have a proved live path; if matching current intents are already blocked, "
+        "Codex must wait for a 744h replay instead of reimplementing the same block."
     ),
     "REVIEW_CLOSE_GATE_EVIDENCE_FAILURES": (
         "Historical BLOCK close-gate evidence must wait for future PASS evidence or age-out; "
