@@ -42,6 +42,12 @@ RANGE_ROTATION_METHOD = "RANGE_ROTATION"
 RANGE_ROTATION_COUNTERPART_MISSING = "RANGE_ROTATION_COUNTERPART_MISSING"
 OANDA_AUDIT_ONLY_LOCAL_TP_PROOF_REQUIRED = "OANDA_CAMPAIGN_AUDIT_ONLY_LOCAL_TP_PROOF_REQUIRED"
 OANDA_AUDIT_ONLY_REPLAY_HISTORY_GRANULARITIES = "S5,M5"
+FORECAST_FRONTIER_EVIDENCE_WAIT_STATUS = "FORECAST_FRONTIER_WAITING_FOR_LIVE_PRECISION_EVIDENCE"
+FORECAST_FRONTIER_BLOCKER_CODES = {
+    "FORECAST_NOT_EXECUTABLE_FOR_LIVE",
+    "TELEMETRY_FORECAST_NOT_EXECUTABLE_FOR_LIVE",
+    "FORECAST_CONFIDENCE_REQUIRED_FOR_LIVE",
+}
 MONTH_SCALE_RESIDUAL_BLOCKER_CODES = {
     "MONTH_SCALE_RESIDUAL_LOSS_REPAIR_BLOCKED",
     "MONTH_SCALE_ENTRY_QUALITY_RESIDUAL_BLOCKED",
@@ -785,6 +791,9 @@ def _entry_readiness_summary(
             }
             if tp_proof:
                 repair_item["tp_proof"] = tp_proof
+            forecast_support = _forecast_frontier_support_summary(metadata)
+            if forecast_support:
+                repair_item["forecast_support"] = forecast_support
             if (
                 RANGE_FORECAST_ROTATION_BLOCKER in blocker_codes
                 and str(context.get("method") or "").upper() != RANGE_ROTATION_METHOD
@@ -952,10 +961,65 @@ def _range_rotation_counterparts(results: list[dict[str, Any]]) -> dict[tuple[An
     return counterparts
 
 
+def _forecast_frontier_support_summary(metadata: dict[str, Any]) -> dict[str, Any]:
+    support = (
+        metadata.get("forecast_market_support")
+        if isinstance(metadata.get("forecast_market_support"), dict)
+        else {}
+    )
+    unselected = (
+        support.get("unselected_signals")
+        if isinstance(support.get("unselected_signals"), list)
+        else []
+    )
+    top_signal = next((item for item in unselected if isinstance(item, dict)), {})
+    summary: dict[str, Any] = {}
+    for key in (
+        "forecast_direction",
+        "forecast_confidence",
+        "forecast_horizon_min",
+        "forecast_market_support_ok",
+        "forecast_market_support_reason",
+    ):
+        if metadata.get(key) is not None:
+            summary[key] = metadata.get(key)
+    if support:
+        if "forecast_market_support_ok" not in summary and support.get("ok") is not None:
+            summary["forecast_market_support_ok"] = support.get("ok")
+        if "forecast_market_support_reason" not in summary and support.get("reason"):
+            summary["forecast_market_support_reason"] = support.get("reason")
+        for key in (
+            "unselected_projection_count",
+            "best_unselected_hit_rate",
+            "best_unselected_samples",
+        ):
+            if support.get(key) is not None:
+                summary[key] = support.get(key)
+    if top_signal:
+        signal_summary: dict[str, Any] = {}
+        for key in (
+            "name",
+            "direction",
+            "live_precision_ok",
+            "lead_time_min",
+            "hit_rate",
+            "economic_hit_rate",
+            "samples",
+            "calibration_samples",
+            "confidence",
+        ):
+            if top_signal.get(key) is not None:
+                signal_summary[key] = top_signal.get(key)
+        if signal_summary:
+            summary["top_unselected_signal"] = signal_summary
+    return summary
+
+
 def _repair_frontier_remaining_blockers(repair_frontier: list[dict[str, Any]]) -> list[dict[str, Any]]:
     counts: Counter[str] = Counter()
     reward_by_code: Counter[str] = Counter()
     examples: dict[str, list[str]] = defaultdict(list)
+    forecast_examples: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for item in repair_frontier:
         lane_id = str(item.get("lane_id") or "")
         reward = _float(item.get("reward_jpy"))
@@ -969,16 +1033,31 @@ def _repair_frontier_remaining_blockers(repair_frontier: list[dict[str, Any]]) -
             reward_by_code[code] += reward
             if lane_id and len(examples[code]) < 3:
                 examples[code].append(lane_id)
+            if (
+                code in FORECAST_FRONTIER_BLOCKER_CODES
+                and isinstance(item.get("forecast_support"), dict)
+                and len(forecast_examples[code]) < 3
+            ):
+                forecast_examples[code].append(
+                    {
+                        "lane_id": lane_id,
+                        "pair": item.get("pair"),
+                        "side": item.get("side"),
+                        "method": item.get("method"),
+                        "forecast_support": item.get("forecast_support"),
+                    }
+                )
     rows = []
     for code, count in counts.most_common(12):
-        rows.append(
-            {
-                "code": code,
-                "count": count,
-                "reward_jpy": _round_optional(reward_by_code[code], 3),
-                "example_lane_ids": examples[code],
-            }
-        )
+        row = {
+            "code": code,
+            "count": count,
+            "reward_jpy": _round_optional(reward_by_code[code], 3),
+            "example_lane_ids": examples[code],
+        }
+        if forecast_examples.get(code):
+            row["forecast_support_examples"] = forecast_examples[code]
+        rows.append(row)
     return rows
 
 
@@ -2033,6 +2112,44 @@ def _operator_actions(
     return unique
 
 
+def _frontier_blocker_waits_for_live_precision_evidence(top: dict[str, Any]) -> bool:
+    code = str(top.get("code") or "")
+    if code not in FORECAST_FRONTIER_BLOCKER_CODES:
+        return False
+    examples = (
+        top.get("forecast_support_examples")
+        if isinstance(top.get("forecast_support_examples"), list)
+        else []
+    )
+    supports = [
+        item.get("forecast_support")
+        for item in examples
+        if isinstance(item, dict) and isinstance(item.get("forecast_support"), dict)
+    ]
+    if not supports:
+        return False
+    has_wait_signal = False
+    for support in supports:
+        if support.get("forecast_market_support_ok") is True:
+            return False
+        top_signal = (
+            support.get("top_unselected_signal")
+            if isinstance(support.get("top_unselected_signal"), dict)
+            else {}
+        )
+        if top_signal.get("live_precision_ok") is True:
+            return False
+        reason = str(support.get("forecast_market_support_reason") or "").lower()
+        direction = str(support.get("forecast_direction") or "").upper()
+        if top_signal.get("live_precision_ok") is False:
+            has_wait_signal = True
+        if "unselected" in reason or "no executable direction" in reason:
+            has_wait_signal = True
+        if direction in {"UNCLEAR", "RANGE", ""}:
+            has_wait_signal = True
+    return has_wait_signal
+
+
 def _build_repair_requests(
     *,
     guardian: dict[str, Any],
@@ -2326,28 +2443,60 @@ def _build_repair_requests(
     if frontier_blockers:
         top = frontier_blockers[0] if isinstance(frontier_blockers[0], dict) else {}
         code = str(top.get("code") or "UNKNOWN_REPAIR_FRONTIER_BLOCKER")
+        waits_for_forecast_evidence = _frontier_blocker_waits_for_live_precision_evidence(top)
+        frontier_status = (
+            FORECAST_FRONTIER_EVIDENCE_WAIT_STATUS
+            if waits_for_forecast_evidence
+            else "READY_FOR_CODE_OR_EVIDENCE_REPAIR"
+        )
+        frontier_problem = (
+            "Repair-frontier lanes are forecast-blocked because current forecasts are not executable "
+            "and supporting historical projections are not live-precision proof yet."
+            if waits_for_forecast_evidence
+            else "After global support gates are removed, repair-frontier lanes still have lane-local blockers."
+        )
+        frontier_why_now = (
+            "This prevents rank-only or long-lead historical projections from being promoted into live entries "
+            "before bid/ask replay or fresh live evidence proves the forecast is tradable now."
+            if waits_for_forecast_evidence
+            else "This is the next non-guardian blocker that would keep high-turn repair baskets from becoming executable."
+        )
+        frontier_clearance = (
+            [
+                f"{code} clears only after current forecasts become executable, or bid/ask replay/live evidence marks the supporting projection live_precision_ok.",
+                "Until then, collect read-only OANDA bid/ask replay evidence instead of editing entry gates to force LIVE_READY.",
+            ]
+            if waits_for_forecast_evidence
+            else [
+                f"{code} disappears from repair_frontier_remaining_blockers or gains a tested downgrade path."
+            ]
+        )
+        frontier_verification_commands = (
+            [
+                "PYTHONPATH=src python3 -m quant_rabbit.cli trader-support-bot",
+                "PYTHONPATH=src python3 scripts/oanda_history_replay_validate.py --forecast-history data/forecast_history.jsonl --granularity S5 --auto-history-min-days 30",
+                "PYTHONPATH=src python3 -m quant_rabbit.cli generate-intents --reuse-market-artifacts",
+            ]
+            if waits_for_forecast_evidence
+            else [
+                "PYTHONPATH=src python3 -m quant_rabbit.cli trader-support-bot",
+                "PYTHONPATH=src python3 -m quant_rabbit.cli generate-intents --reuse-market-artifacts",
+            ]
+        )
         requests.append(
             _repair_request(
                 code="REPAIR_FRONTIER_LANE_BLOCKER",
                 priority="P1",
-                status="READY_FOR_CODE_OR_EVIDENCE_REPAIR",
+                status=frontier_status,
                 source_findings=[code],
-                problem=(
-                    "After global support gates are removed, repair-frontier lanes still have lane-local blockers."
-                ),
-                why_now=(
-                    "This is the next non-guardian blocker that would keep high-turn repair baskets from becoming executable."
-                ),
+                problem=frontier_problem,
+                why_now=frontier_why_now,
                 evidence_summary=top,
-                clearance_conditions=[
-                    f"{code} disappears from repair_frontier_remaining_blockers or gains a tested downgrade path."
-                ],
-                verification_commands=[
-                    "PYTHONPATH=src python3 -m quant_rabbit.cli trader-support-bot",
-                    "PYTHONPATH=src python3 -m quant_rabbit.cli generate-intents --reuse-market-artifacts",
-                ],
+                clearance_conditions=frontier_clearance,
+                verification_commands=frontier_verification_commands,
                 suggested_files=[
                     "src/quant_rabbit/strategy/intent_generator.py",
+                    "scripts/oanda_history_replay_validate.py",
                     "tests/test_intent_generator.py",
                     "tests/test_trader_support_bot.py",
                 ],

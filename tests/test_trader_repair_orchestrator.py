@@ -444,6 +444,62 @@ class TraderRepairOrchestratorTest(unittest.TestCase):
                 [item["code"] for item in payload["actionable_requests"]],
             )
 
+    def test_forecast_frontier_waits_and_selects_bidask_evidence_collection(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            support = root / "support.json"
+            output = root / "orchestrator.json"
+            report = root / "orchestrator.md"
+            _write_support(
+                support,
+                [
+                    _request(
+                        "REPAIR_FRONTIER_LANE_BLOCKER",
+                        priority="P1",
+                        status="FORECAST_FRONTIER_WAITING_FOR_LIVE_PRECISION_EVIDENCE",
+                        evidence_summary={
+                            "code": "FORECAST_NOT_EXECUTABLE_FOR_LIVE",
+                            "forecast_support_examples": [
+                                {
+                                    "lane_id": "failure_trader:EUR_USD:LONG:BREAKOUT_FAILURE",
+                                    "forecast_support": {
+                                        "forecast_direction": "UNCLEAR",
+                                        "forecast_market_support_ok": False,
+                                        "top_unselected_signal": {"live_precision_ok": False},
+                                    },
+                                }
+                            ],
+                        },
+                    ),
+                    _request(
+                        "COLLECT_BIDASK_REPLAY_EVIDENCE",
+                        priority="P1",
+                        status="READY_FOR_READ_ONLY_EVIDENCE_COLLECTION",
+                    ),
+                ],
+            )
+
+            summary = TraderRepairOrchestrator(
+                support_bot_path=support,
+                output_path=output,
+                report_path=report,
+                trader_request="frontier forecast",
+            ).run()
+
+            self.assertEqual(summary.status, STATUS_READY)
+            payload = json.loads(output.read_text())
+            frontier = next(item for item in payload["queue"] if item["code"] == "REPAIR_FRONTIER_LANE_BLOCKER")
+            self.assertEqual(frontier["automation_status"], "WAITING_FOR_LIVE_EVIDENCE_WINDOW")
+            self.assertEqual(payload["selected_request"]["code"], "COLLECT_BIDASK_REPLAY_EVIDENCE")
+            self.assertIn(
+                "REPAIR_FRONTIER_LANE_BLOCKER",
+                payload["queue_summary"]["waiting_request_codes"],
+            )
+            self.assertNotIn(
+                "REPAIR_FRONTIER_LANE_BLOCKER",
+                [item["code"] for item in payload["actionable_requests"]],
+            )
+
     def test_cli_accepts_trader_request_alias(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

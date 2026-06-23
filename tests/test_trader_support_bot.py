@@ -623,6 +623,106 @@ class TraderSupportBotTest(unittest.TestCase):
             self.assertEqual(action_by_code["FETCH_BIDASK_REPLAY_HISTORY"]["command"], fetch_command)
             self.assertEqual(action_by_code["VALIDATE_BIDASK_REPLAY_HISTORY"]["command"], replay_command)
 
+    def test_forecast_frontier_waits_for_live_precision_evidence(self) -> None:
+        now = datetime(2026, 6, 22, 12, 15, tzinfo=timezone.utc)
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _write_fixture(root, now=now, blocked=True)
+            _write_json(
+                files["intents"],
+                {
+                    "generated_at_utc": now.isoformat(),
+                    "results": [
+                        {
+                            "lane_id": "failure_trader:EUR_USD:LONG:BREAKOUT_FAILURE",
+                            "status": "DRY_RUN_BLOCKED",
+                            "live_blocker_codes": [
+                                "POSITION_GUARDIAN_INACTIVE_FOR_PROFIT_CAPTURE",
+                                "SELF_IMPROVEMENT_P0_PROFITABILITY_DISCIPLINE",
+                                "FORECAST_NOT_EXECUTABLE_FOR_LIVE",
+                            ],
+                            "intent": {
+                                "pair": "EUR_USD",
+                                "side": "LONG",
+                                "order_type": "LIMIT",
+                                "market_context": {"method": "BREAKOUT_FAILURE"},
+                                "metadata": {
+                                    "self_improvement_p0_repair_live_ready": True,
+                                    "self_improvement_p0_repair_mode": "TP_HARVEST_REPAIR",
+                                    "sizing_actual_reward_jpy": 1640.0,
+                                    "sizing_actual_risk_jpy": 520.0,
+                                    "forecast_direction": "UNCLEAR",
+                                    "forecast_confidence": 0.046,
+                                    "forecast_horizon_min": 0,
+                                    "forecast_market_support_ok": False,
+                                    "forecast_market_support_reason": (
+                                        "forecast UNCLEAR has no executable direction; audited projection unselected"
+                                    ),
+                                    "forecast_market_support": {
+                                        "ok": False,
+                                        "reason": (
+                                            "forecast UNCLEAR has no executable direction; audited projection unselected"
+                                        ),
+                                        "unselected_projection_count": 1,
+                                        "best_unselected_hit_rate": 0.919,
+                                        "best_unselected_samples": 74,
+                                        "unselected_signals": [
+                                            {
+                                                "name": "macro_event_nowcast_inflation",
+                                                "direction": "DOWN",
+                                                "live_precision_ok": False,
+                                                "lead_time_min": 3208.0,
+                                                "hit_rate": 0.919,
+                                                "calibration_samples": 74,
+                                                "confidence": 0.79,
+                                            }
+                                        ],
+                                    },
+                                },
+                            },
+                            "risk_metrics": {"reward_jpy": 1640.0, "risk_jpy": 520.0},
+                        }
+                    ],
+                },
+            )
+            env = _guardian_env(root, active="0")
+            with mock.patch.dict(os.environ, env, clear=False):
+                TraderSupportBot(
+                    broker_snapshot_path=files["broker"],
+                    order_intents_path=files["intents"],
+                    target_state_path=files["target"],
+                    position_management_path=files["position_management"],
+                    position_guardian_management_path=files["guardian_management"],
+                    position_guardian_execution_path=files["guardian_execution"],
+                    position_guardian_heartbeat_path=files["guardian_heartbeat"],
+                    self_improvement_audit_path=files["self_improvement"],
+                    profitability_acceptance_path=files["profitability"],
+                    execution_timing_audit_path=files["timing"],
+                    profit_capture_bot_path=files["profit_capture_bot"],
+                    output_path=files["output"],
+                    report_path=files["report"],
+                    now_utc=now,
+                ).run()
+
+            payload = json.loads(files["output"].read_text())
+            top = payload["metrics"]["repair_frontier_after_support_top_blockers"][0]
+            request = next(
+                item for item in payload["repair_requests"] if item["code"] == "REPAIR_FRONTIER_LANE_BLOCKER"
+            )
+
+            self.assertEqual(top["code"], "FORECAST_NOT_EXECUTABLE_FOR_LIVE")
+            support = top["forecast_support_examples"][0]["forecast_support"]
+            self.assertEqual(support["forecast_direction"], "UNCLEAR")
+            self.assertFalse(support["top_unselected_signal"]["live_precision_ok"])
+            self.assertEqual(
+                request["status"],
+                "FORECAST_FRONTIER_WAITING_FOR_LIVE_PRECISION_EVIDENCE",
+            )
+            self.assertIn(
+                "oanda_history_replay_validate.py",
+                " ".join(request["verification_commands"]),
+            )
+
     def test_repair_basket_allowed_even_when_acceptance_panel_is_blocked(self) -> None:
         now = datetime(2026, 6, 22, 12, 15, tzinfo=timezone.utc)
         with tempfile.TemporaryDirectory() as tmp:
