@@ -930,10 +930,14 @@ class TraderSupportBotTest(unittest.TestCase):
                 "--pairs GBP_JPY",
                 action_by_code["MINE_OANDA_AUDIT_ONLY_CAMPAIGN_FIREPOWER"]["command"],
             )
-            self.assertTrue(
+            self.assertFalse(
                 action_by_code["PACKAGE_OANDA_AUDIT_ONLY_FIREPOWER_RULES_AFTER_REVIEW"][
                     "requires_explicit_operator_approval"
                 ]
+            )
+            self.assertIn(
+                "test, commit, and sync",
+                action_by_code["PACKAGE_OANDA_AUDIT_ONLY_FIREPOWER_RULES_AFTER_REVIEW"]["reason"],
             )
             report = files["report"].read_text()
             self.assertIn("OANDA Audit-Only Local TP Proof Required", report)
