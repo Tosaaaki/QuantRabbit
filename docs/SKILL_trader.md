@@ -374,8 +374,11 @@ QR_LIVE_ENABLED=1 ./scripts/run-autotrade-live.sh \
 #   It converts `repair_requests` into a Codex repair queue with suggested
 #   files, test commands, verification commands, commit/live-sync requirement,
 #   and the hard boundary that orders, cancels, closes, and launchd load/reload
-#   require explicit approval or an existing gateway path. It grants no live
-#   permission and does not call model APIs from QuantRabbit code.
+#   require explicit approval or an existing gateway path. If a blocked support
+#   artifact is older and lacks top-level `repair_requests`, it rebuilds the
+#   queue from embedded acceptance/guardian/frontier evidence instead of
+#   returning `NO_REPAIR_REQUESTS`. It grants no live permission and does not
+#   call model APIs from QuantRabbit code.
 # Manual recovery only:
 # QR_RUN_POST_GATEWAY_SIDECARS=0 QR_LIVE_ENABLED=1 ./scripts/run-autotrade-live.sh ...
 # QR_LIVE_ENABLED=1 PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli cycle-sidecars

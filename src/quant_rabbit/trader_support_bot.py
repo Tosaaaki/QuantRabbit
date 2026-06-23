@@ -2291,6 +2291,40 @@ def _repair_request(
     }
 
 
+def repair_requests_from_support_payload(payload: dict[str, Any]) -> list[dict[str, Any]]:
+    """Rebuild repair requests from an already-written support-bot payload.
+
+    Older or partially refreshed support artifacts can contain embedded
+    acceptance/guardian/frontier evidence while missing the top-level
+    `repair_requests` array. The repair orchestrator uses this to avoid
+    treating a blocked support panel as "no repair work".
+    """
+    if not isinstance(payload, dict):
+        return []
+    guardian = payload.get("guardian") if isinstance(payload.get("guardian"), dict) else {}
+    profit_capture = (
+        payload.get("profit_capture") if isinstance(payload.get("profit_capture"), dict) else {}
+    )
+    entry = (
+        payload.get("entry_readiness")
+        if isinstance(payload.get("entry_readiness"), dict)
+        else {}
+    )
+    acceptance = (
+        payload.get("profitability_acceptance")
+        if isinstance(payload.get("profitability_acceptance"), dict)
+        else {}
+    )
+    if not any((guardian, profit_capture, entry, acceptance)):
+        return []
+    return _build_repair_requests(
+        guardian=guardian,
+        profit_capture=profit_capture,
+        entry=entry,
+        acceptance=acceptance,
+    )
+
+
 def _unique_repair_requests(requests: list[dict[str, Any]]) -> list[dict[str, Any]]:
     seen: set[str] = set()
     unique: list[dict[str, Any]] = []

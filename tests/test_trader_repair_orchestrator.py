@@ -121,6 +121,82 @@ class TraderRepairOrchestratorTest(unittest.TestCase):
             self.assertEqual(payload["approval_required_requests"][0]["automation_status"], "WAITING_FOR_OPERATOR_APPROVAL")
             self.assertIn("launchd_load", payload["approval_required_requests"][0]["automation_contract"]["requires_explicit_operator_approval_for"])
 
+    def test_recovers_repair_queue_from_embedded_support_payload(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            support = root / "support.json"
+            output = root / "orchestrator.json"
+            report = root / "orchestrator.md"
+            support.write_text(
+                json.dumps(
+                    {
+                        "status": "SUPPORT_BLOCKED",
+                        "guardian": {
+                            "required": True,
+                            "active": False,
+                            "active_source": "launchd",
+                            "launchd_loaded": False,
+                            "heartbeat_fresh": False,
+                        },
+                        "profit_capture": {},
+                        "entry_readiness": {
+                            "repair_frontier_remaining_blockers": [
+                                {
+                                    "code": "FORECAST_NOT_EXECUTABLE_FOR_LIVE",
+                                    "count": 2,
+                                    "example_lane_ids": [
+                                        "failure_trader:EUR_USD:LONG:BREAKOUT_FAILURE"
+                                    ],
+                                }
+                            ]
+                        },
+                        "profitability_acceptance": {
+                            "repair_plan": {
+                                "items": [
+                                    {
+                                        "code": "TP_PROGRESS_REPAIR_REPLAY_NOT_DEPLOYED",
+                                        "priority": "P0",
+                                        "message": "guardian inactive",
+                                        "clearance_condition": "prove guardian capture",
+                                        "verification_command": "scripts/install-position-guardian.sh --status",
+                                        "evidence_summary": {
+                                            "loss_closes_repair_replay_triggered": 13
+                                        },
+                                    }
+                                ],
+                                "evidence_collection_items": [],
+                            }
+                        },
+                    },
+                    ensure_ascii=False,
+                    indent=2,
+                    sort_keys=True,
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            summary = TraderRepairOrchestrator(
+                support_bot_path=support,
+                output_path=output,
+                report_path=report,
+                trader_request="利確 bot を直して",
+            ).run()
+
+            self.assertEqual(summary.status, STATUS_READY)
+            payload = json.loads(output.read_text())
+            self.assertEqual(payload["metrics"]["repair_request_source"], "embedded_support_payload")
+            self.assertTrue(payload["metrics"]["recovered_from_embedded_support"])
+            self.assertEqual(
+                payload["selected_request"]["code"],
+                "REPAIR_TP_PROGRESS_PROFIT_CAPTURE_REPLAY",
+            )
+            self.assertIn(
+                "RESTORE_POSITION_GUARDIAN_AFTER_PREFLIGHT",
+                [item["code"] for item in payload["approval_required_requests"]],
+            )
+            self.assertIn("embedded_support_payload", report.read_text())
+
 
 def _write_support(path: Path, requests: list[dict[str, object]]) -> None:
     path.write_text(

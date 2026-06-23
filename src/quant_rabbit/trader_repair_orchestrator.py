@@ -16,6 +16,7 @@ from quant_rabbit.trader_support_bot import (
     REPAIR_AUTOMATION_ALLOWED_ACTIONS,
     REPAIR_AUTOMATION_EXPLICIT_APPROVAL_ACTIONS,
     REPAIR_AUTOMATION_FORBIDDEN_DIRECT_ACTIONS,
+    repair_requests_from_support_payload,
 )
 
 
@@ -81,6 +82,14 @@ class TraderRepairOrchestrator:
         support = _read_json(self.support_bot_path)
         raw_requests = support.get("repair_requests") if isinstance(support.get("repair_requests"), list) else []
         requests = [item for item in raw_requests if isinstance(item, dict)]
+        request_source = "top_level_repair_requests"
+        recovered_from_embedded_support = False
+        if not requests:
+            recovered_requests = repair_requests_from_support_payload(support)
+            if recovered_requests:
+                requests = recovered_requests
+                request_source = "embedded_support_payload"
+                recovered_from_embedded_support = True
         queue = [_queue_item(item, trader_request=self.trader_request) for item in requests]
         queue.sort(key=_queue_sort_key)
         actionable = [item for item in queue if item["automation_status"] == "READY_FOR_CODEX_IMPLEMENTATION"]
@@ -114,6 +123,8 @@ class TraderRepairOrchestrator:
                 "approval_required_request_count": len(approval_required),
                 "selected_request_code": selected.get("code") if selected else None,
                 "support_status": support.get("status"),
+                "repair_request_source": request_source,
+                "recovered_from_embedded_support": recovered_from_embedded_support,
             },
             "execution_contract": _execution_contract(),
             "read_only": True,
@@ -338,6 +349,8 @@ def _render_report(payload: dict[str, Any]) -> str:
         f"- Selected request: `{selected.get('code') if selected else None}`",
         f"- Actionable requests: `{metrics.get('actionable_request_count')}`",
         f"- Approval-required requests: `{metrics.get('approval_required_request_count')}`",
+        f"- Repair request source: `{metrics.get('repair_request_source')}`",
+        f"- Recovered from embedded support: `{metrics.get('recovered_from_embedded_support')}`",
         f"- Read only: `{payload.get('read_only')}`",
         f"- Live side effects: `{len(payload.get('live_side_effects') or [])}`",
         "",
