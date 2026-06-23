@@ -2220,7 +2220,12 @@ def _frontier_blocker_waits_for_live_precision_evidence(top: dict[str, Any]) -> 
         direction = str(support.get("forecast_direction") or "").upper()
         if top_signal.get("live_precision_ok") is False:
             has_wait_signal = True
-        if "unselected" in reason or "no executable direction" in reason:
+        if (
+            "unselected" in reason
+            or "no executable direction" in reason
+            or "no current projection" in reason
+            or "audited support floors" in reason
+        ):
             has_wait_signal = True
         if direction in {"UNCLEAR", "RANGE", ""}:
             has_wait_signal = True

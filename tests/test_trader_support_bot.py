@@ -728,6 +728,93 @@ class TraderSupportBotTest(unittest.TestCase):
                 " ".join(request["verification_commands"]),
             )
 
+    def test_forecast_confidence_frontier_with_no_current_projection_waits_for_evidence(self) -> None:
+        now = datetime(2026, 6, 23, 14, 5, tzinfo=timezone.utc)
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _write_fixture(root, now=now, blocked=True)
+            _write_json(
+                files["intents"],
+                {
+                    "generated_at_utc": now.isoformat(),
+                    "results": [
+                        {
+                            "lane_id": "failure_trader:EUR_USD:SHORT:BREAKOUT_FAILURE",
+                            "status": "DRY_RUN_BLOCKED",
+                            "live_blocker_codes": [
+                                "POSITION_GUARDIAN_INACTIVE_FOR_PROFIT_CAPTURE",
+                                "SELF_IMPROVEMENT_P0_PROFITABILITY_DISCIPLINE",
+                                "FORECAST_CONFIDENCE_REQUIRED_FOR_LIVE",
+                            ],
+                            "intent": {
+                                "pair": "EUR_USD",
+                                "side": "SHORT",
+                                "order_type": "STOP-ENTRY",
+                                "market_context": {"method": "BREAKOUT_FAILURE"},
+                                "metadata": {
+                                    "self_improvement_p0_repair_live_ready": True,
+                                    "self_improvement_p0_repair_mode": "TP_HARVEST_REPAIR",
+                                    "sizing_actual_reward_jpy": 1378.988,
+                                    "sizing_actual_risk_jpy": 391.684,
+                                    "forecast_direction": "DOWN",
+                                    "forecast_confidence": 0.33,
+                                    "forecast_horizon_min": 1440,
+                                    "forecast_market_support_ok": False,
+                                    "forecast_market_support_reason": (
+                                        "no current projection clears audited support floors"
+                                    ),
+                                    "forecast_market_support": {
+                                        "ok": False,
+                                        "reason": "no current projection clears audited support floors",
+                                        "unselected_projection_count": 0,
+                                        "best_unselected_samples": 0,
+                                        "unselected_signals": [],
+                                    },
+                                },
+                            },
+                            "risk_metrics": {"reward_jpy": 1378.988, "risk_jpy": 391.684},
+                        }
+                    ],
+                },
+            )
+            env = _guardian_env(root, active="0")
+            with mock.patch.dict(os.environ, env, clear=False):
+                TraderSupportBot(
+                    broker_snapshot_path=files["broker"],
+                    order_intents_path=files["intents"],
+                    target_state_path=files["target"],
+                    position_management_path=files["position_management"],
+                    position_guardian_management_path=files["guardian_management"],
+                    position_guardian_execution_path=files["guardian_execution"],
+                    position_guardian_heartbeat_path=files["guardian_heartbeat"],
+                    self_improvement_audit_path=files["self_improvement"],
+                    profitability_acceptance_path=files["profitability"],
+                    execution_timing_audit_path=files["timing"],
+                    profit_capture_bot_path=files["profit_capture_bot"],
+                    output_path=files["output"],
+                    report_path=files["report"],
+                    now_utc=now,
+                ).run()
+
+            payload = json.loads(files["output"].read_text())
+            request = next(
+                item for item in payload["repair_requests"] if item["code"] == "REPAIR_FRONTIER_LANE_BLOCKER"
+            )
+
+            self.assertEqual(
+                request["status"],
+                "FORECAST_FRONTIER_WAITING_FOR_LIVE_PRECISION_EVIDENCE",
+            )
+            self.assertEqual(request["source_findings"], ["FORECAST_CONFIDENCE_REQUIRED_FOR_LIVE"])
+            reason = request["evidence_summary"]["forecast_support_examples"][0]["forecast_support"][
+                "forecast_market_support_reason"
+            ]
+            self.assertIn("no current projection", reason)
+            self.assertIn(
+                "oanda_history_replay_validate.py",
+                " ".join(request["verification_commands"]),
+            )
+
     def test_frontier_reward_risk_guardrail_is_not_code_repair(self) -> None:
         now = datetime(2026, 6, 22, 12, 15, tzinfo=timezone.utc)
         with tempfile.TemporaryDirectory() as tmp:
