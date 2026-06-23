@@ -337,7 +337,16 @@ class TraderSupportBotTest(unittest.TestCase):
                                 "metadata": {
                                     "self_improvement_p0_repair_live_ready": True,
                                     "self_improvement_p0_repair_mode": "TP_HARVEST_REPAIR",
-                                    "positive_rotation_mode": "OANDA_CAMPAIGN_FIREPOWER_HARVEST",
+                                    "positive_rotation_mode": "TP_PROVEN_HARVEST",
+                                    "positive_rotation_pessimistic_expectancy_jpy": 327.2788,
+                                    "capture_take_profit_scope": "PAIR_SIDE_METHOD",
+                                    "capture_take_profit_scope_key": (
+                                        "GBP_JPY|SHORT|RANGE_ROTATION|TAKE_PROFIT_ORDER"
+                                    ),
+                                    "capture_take_profit_trades": 20,
+                                    "capture_take_profit_wins": 20,
+                                    "capture_take_profit_losses": 0,
+                                    "capture_take_profit_expectancy_jpy": 591.5,
                                 },
                             },
                             "risk_metrics": {"reward_jpy": 1362.0, "risk_jpy": 1362.0},
@@ -376,8 +385,19 @@ class TraderSupportBotTest(unittest.TestCase):
             self.assertEqual(candidate["reward_jpy"], 1362.0)
             self.assertEqual(candidate["risk_jpy"], 1362.0)
             self.assertEqual(candidate["remaining_blocker_codes_after_guardian_and_repair_exemption"], [])
+            self.assertEqual(candidate["tp_proof"]["capture_take_profit_trades"], 20)
+            self.assertEqual(candidate["tp_proof"]["capture_take_profit_losses"], 0)
+            self.assertEqual(candidate["tp_proof"]["capture_take_profit_expectancy_jpy"], 591.5)
+            self.assertEqual(
+                candidate["tp_proof"]["positive_rotation_pessimistic_expectancy_jpy"],
+                327.2788,
+            )
+            unlock = payload["entry_readiness"]["global_unlock_frontier"][0]
+            self.assertEqual(unlock["tp_proof"]["positive_rotation_mode"], "TP_PROVEN_HARVEST")
             report = files["report"].read_text()
-            self.assertIn("Repair lanes after guardian recovery", report)
+            self.assertIn("Guardian Recovery Candidates", report)
+            self.assertIn("trades=20 losses=0", report)
+            self.assertIn("pess_exp_jpy=327.279", report)
 
     def test_range_forecast_non_rotation_repair_is_superseded_by_range_counterpart(self) -> None:
         now = datetime(2026, 6, 22, 12, 15, tzinfo=timezone.utc)

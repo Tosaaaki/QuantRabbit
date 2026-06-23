@@ -668,27 +668,29 @@ def _entry_readiness_summary(
                     ),
                 }
             )
+        tp_proof = _tp_proof_summary(metadata)
         if str(item.get("status") or "") != "LIVE_READY" and blocker_codes:
             remaining_after_global = [code for code in blocker_codes if code not in GLOBAL_UNLOCK_BLOCKERS]
             if not remaining_after_global:
                 intent = item.get("intent") if isinstance(item.get("intent"), dict) else {}
                 context = intent.get("market_context") if isinstance(intent.get("market_context"), dict) else {}
-                global_unlock_frontier.append(
-                    {
-                        "lane_id": item.get("lane_id"),
-                        "status": item.get("status"),
-                        "pair": intent.get("pair"),
-                        "side": intent.get("side"),
-                        "method": context.get("method"),
-                        "order_type": intent.get("order_type"),
-                        "reward_jpy": _intent_reward_jpy(item, metadata),
-                        "risk_jpy": _intent_risk_jpy(item, metadata),
-                        "global_blocker_codes": blocker_codes,
-                        "remaining_blocker_codes_after_global_unlock": remaining_after_global,
-                        "repair_mode": metadata.get("self_improvement_p0_repair_mode")
-                        or metadata.get("positive_rotation_mode"),
-                    }
-                )
+                unlock_item = {
+                    "lane_id": item.get("lane_id"),
+                    "status": item.get("status"),
+                    "pair": intent.get("pair"),
+                    "side": intent.get("side"),
+                    "method": context.get("method"),
+                    "order_type": intent.get("order_type"),
+                    "reward_jpy": _intent_reward_jpy(item, metadata),
+                    "risk_jpy": _intent_risk_jpy(item, metadata),
+                    "global_blocker_codes": blocker_codes,
+                    "remaining_blocker_codes_after_global_unlock": remaining_after_global,
+                    "repair_mode": metadata.get("self_improvement_p0_repair_mode")
+                    or metadata.get("positive_rotation_mode"),
+                }
+                if tp_proof:
+                    unlock_item["tp_proof"] = tp_proof
+                global_unlock_frontier.append(unlock_item)
         if metadata.get("self_improvement_p0_repair_live_ready") is True:
             exempt = set(REPAIR_EXEMPTION_CODES)
             remaining_after_support = [
@@ -710,6 +712,8 @@ def _entry_readiness_summary(
                 "blocker_codes": blocker_codes,
                 "remaining_blocker_codes_after_guardian_and_repair_exemption": remaining_after_support,
             }
+            if tp_proof:
+                repair_item["tp_proof"] = tp_proof
             if (
                 RANGE_FORECAST_ROTATION_BLOCKER in blocker_codes
                 and str(context.get("method") or "").upper() != RANGE_ROTATION_METHOD
@@ -772,6 +776,25 @@ def _entry_readiness_summary(
         "repair_frontier_remaining_blockers": remaining_repair_blockers,
         "global_unlock_frontier": global_unlock_frontier[:12],
     }
+
+
+def _tp_proof_summary(metadata: dict[str, Any]) -> dict[str, Any]:
+    keys = (
+        "positive_rotation_mode",
+        "positive_rotation_pessimistic_expectancy_jpy",
+        "capture_take_profit_scope",
+        "capture_take_profit_scope_key",
+        "capture_take_profit_trades",
+        "capture_take_profit_wins",
+        "capture_take_profit_losses",
+        "capture_take_profit_expectancy_jpy",
+        "capture_take_profit_avg_win_jpy",
+        "capture_take_profit_avg_loss_jpy",
+    )
+    summary = {key: metadata.get(key) for key in keys if metadata.get(key) is not None}
+    if not summary:
+        return {}
+    return summary
 
 
 def _oanda_replay_evidence_by_vehicle(payload: dict[str, Any]) -> dict[str, dict[str, Any]]:
@@ -1938,6 +1961,25 @@ def _render_report(payload: dict[str, Any]) -> str:
             lines.append(f"- `{item['code']}`: `{item['count']}`")
     else:
         lines.append("- none")
+    lines.extend(["", "## Guardian Recovery Candidates", ""])
+    if entry["repair_basket_guardian_recovery"]:
+        lines.extend(
+            [
+                "| Lane | Pair | Side | Method | Reward JPY | TP proof | Remaining blockers after guardian |",
+                "|---|---|---|---|---:|---|---|",
+            ]
+        )
+        for item in entry["repair_basket_guardian_recovery"][:8]:
+            remaining = ", ".join(
+                item["remaining_blocker_codes_after_guardian_and_repair_exemption"]
+            ) or "none"
+            tp_proof = _format_tp_proof_report_cell(item.get("tp_proof"))
+            lines.append(
+                f"| `{item['lane_id']}` | `{item['pair']}` | `{item['side']}` | "
+                f"`{item['method']}` | `{item['reward_jpy']}` | {tp_proof} | `{remaining}` |"
+            )
+    else:
+        lines.append("- none")
     lines.extend(["", "## Repair Frontier Blockers After Support", ""])
     if entry["repair_frontier_remaining_blockers"]:
         lines.extend(
@@ -2032,15 +2074,16 @@ def _render_report(payload: dict[str, Any]) -> str:
     if entry["global_unlock_frontier"]:
         lines.extend(
             [
-                "| Lane | Pair | Side | Method | Reward JPY | Global blockers |",
-                "|---|---|---|---|---:|---|",
+                "| Lane | Pair | Side | Method | Reward JPY | TP proof | Global blockers |",
+                "|---|---|---|---|---:|---|---|",
             ]
         )
         for item in entry["global_unlock_frontier"][:8]:
             blockers = ", ".join(item["global_blocker_codes"]) or "none"
+            tp_proof = _format_tp_proof_report_cell(item.get("tp_proof"))
             lines.append(
                 f"| `{item['lane_id']}` | `{item['pair']}` | `{item['side']}` | "
-                f"`{item['method']}` | `{item['reward_jpy']}` | `{blockers}` |"
+                f"`{item['method']}` | `{item['reward_jpy']}` | {tp_proof} | `{blockers}` |"
             )
     else:
         lines.append("- none")
@@ -2141,6 +2184,31 @@ def _format_oanda_replay_report_cell(item: dict[str, Any]) -> str:
         f"5%trades={evidence.get('trades_needed_for_minimum_5pct')}",
     ]
     return "`" + " ".join(str(part) for part in parts) + "`"
+
+
+def _format_tp_proof_report_cell(value: Any) -> str:
+    proof = value if isinstance(value, dict) else {}
+    if not proof:
+        return "`missing`"
+    parts: list[str] = []
+    mode = proof.get("positive_rotation_mode")
+    if mode is not None:
+        parts.append(f"mode={mode}")
+    scope = proof.get("capture_take_profit_scope")
+    if scope is not None:
+        parts.append(f"scope={scope}")
+    trades = proof.get("capture_take_profit_trades")
+    losses = proof.get("capture_take_profit_losses")
+    if trades is not None or losses is not None:
+        parts.append(f"trades={trades}")
+        parts.append(f"losses={losses}")
+    expectancy = _round_optional(proof.get("capture_take_profit_expectancy_jpy"), 3)
+    if expectancy is not None:
+        parts.append(f"tp_exp_jpy={expectancy}")
+    pessimistic = _round_optional(proof.get("positive_rotation_pessimistic_expectancy_jpy"), 3)
+    if pessimistic is not None:
+        parts.append(f"pess_exp_jpy={pessimistic}")
+    return "`" + " ".join(parts) + "`" if parts else "`missing`"
 
 
 def _float(value: Any) -> float:
