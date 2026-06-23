@@ -49,6 +49,29 @@ GLOBAL_UNLOCK_BLOCKERS = {
     "NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION",
 }
 ACCEPTANCE_LEAK_LOOKBACK_DAYS = 7
+REPAIR_REQUEST_CONTRACT_VERSION = "trader_support_repair_request_v1"
+REPAIR_AUTOMATION_ALLOWED_ACTIONS = [
+    "read_artifacts",
+    "edit_code",
+    "edit_tests",
+    "edit_runtime_contract_docs",
+    "run_unit_tests",
+    "commit",
+    "sync_live_runtime",
+]
+REPAIR_AUTOMATION_EXPLICIT_APPROVAL_ACTIONS = [
+    "order_send",
+    "order_cancel",
+    "position_close",
+    "launchd_load",
+    "launchd_reload",
+]
+REPAIR_AUTOMATION_FORBIDDEN_DIRECT_ACTIONS = [
+    "direct_oanda_order_write",
+    "direct_oanda_trade_close",
+    "direct_launchd_mutation",
+    "model_api_call_from_quantrabbit_code",
+]
 
 
 @dataclass(frozen=True)
@@ -162,6 +185,12 @@ class TraderSupportBot:
             entry=entry,
             acceptance=acceptance,
         )
+        repair_requests = _build_repair_requests(
+            guardian=guardian,
+            profit_capture=profit_capture,
+            entry=entry,
+            acceptance=acceptance,
+        )
         send_allowed = (
             status == STATUS_READY
             and bool(entry["live_ready_lanes"])
@@ -227,6 +256,8 @@ class TraderSupportBot:
             "acceptance_evidence_collection_count": len(
                 acceptance["repair_plan"].get("evidence_collection_items", [])
             ),
+            "repair_request_count": len(repair_requests),
+            "repair_request_codes": [item["code"] for item in repair_requests],
             "repair_basket_lane_ids": [item["lane_id"] for item in entry["repair_live_ready"]],
             "repair_basket_guardian_recovery_lane_ids": [
                 item["lane_id"] for item in entry["repair_basket_guardian_recovery"]
@@ -255,6 +286,7 @@ class TraderSupportBot:
             "status": status,
             "blockers": blockers,
             "operator_actions": actions,
+            "repair_requests": repair_requests,
             "metrics": metrics,
             "guardian": guardian,
             "broker": broker_summary,
@@ -1862,6 +1894,334 @@ def _operator_actions(
     return unique
 
 
+def _build_repair_requests(
+    *,
+    guardian: dict[str, Any],
+    profit_capture: dict[str, Any],
+    entry: dict[str, Any],
+    acceptance: dict[str, Any],
+) -> list[dict[str, Any]]:
+    repair_plan = acceptance.get("repair_plan") if isinstance(acceptance.get("repair_plan"), dict) else {}
+    raw_items = repair_plan.get("items") if isinstance(repair_plan.get("items"), list) else []
+    items = [item for item in raw_items if isinstance(item, dict)]
+    item_by_code = {str(item.get("code")): item for item in items if item.get("code")}
+    raw_evidence_items = (
+        repair_plan.get("evidence_collection_items")
+        if isinstance(repair_plan.get("evidence_collection_items"), list)
+        else []
+    )
+    evidence_items = [item for item in raw_evidence_items if isinstance(item, dict)]
+    requests: list[dict[str, Any]] = []
+
+    if "LOSS_CLOSE_GATE_EVIDENCE_MISSING" in item_by_code:
+        item = item_by_code["LOSS_CLOSE_GATE_EVIDENCE_MISSING"]
+        requests.append(
+            _repair_request(
+                code="REPAIR_CLOSE_GATE_EVIDENCE_PERSISTENCE",
+                priority="P0",
+                status="READY_FOR_CODE_REPAIR",
+                source_findings=[
+                    code
+                    for code in (
+                        "LOSS_CLOSE_GATE_EVIDENCE_MISSING",
+                        "RECENT_GATEWAY_LOSS_MARKET_CLOSE_LEAK",
+                    )
+                    if code in item_by_code
+                ],
+                problem=(
+                    "Loss-side market closes can remain unverified because durable close_gate_evidence "
+                    "is missing from the verification ledger."
+                ),
+                why_now=(
+                    "Profitability acceptance will keep blocking high-turn scaling until every recent "
+                    "GPT/gateway loss close has PASS close_gate_evidence or ages out."
+                ),
+                evidence_summary=item.get("evidence_summary"),
+                clearance_conditions=[item.get("clearance_condition")],
+                verification_commands=[item.get("verification_command")],
+                suggested_files=[
+                    "src/quant_rabbit/gpt_trader.py",
+                    "src/quant_rabbit/verification_ledger.py",
+                    "src/quant_rabbit/profitability_acceptance.py",
+                    "tests/test_gpt_trader.py",
+                    "tests/test_verification_ledger.py",
+                    "tests/test_cli.py",
+                ],
+                required_tests=[
+                    "Regression: a GPT loss-side close without PASS close_gate_evidence remains blocked.",
+                    "Positive path: a contained GPT loss-side close with matching PASS close_gate_evidence clears the acceptance blocker.",
+                    "Ledger path: close_gate_evidence is written to verification_observations for accepted and rejected CLOSE receipts.",
+                ],
+            )
+        )
+
+    tp_codes = [
+        code
+        for code in (
+            "TP_PROGRESS_REPAIR_REPLAY_NOT_DEPLOYED",
+            "TP_PROGRESS_REPLAY_REPAIR_UNPROVED",
+            "TP_PROGRESS_REPAIR_REPLAY_CONTRACT_MISSING",
+        )
+        if code in item_by_code
+    ]
+    if tp_codes:
+        top_item = item_by_code[tp_codes[0]]
+        requests.append(
+            _repair_request(
+                code="REPAIR_TP_PROGRESS_PROFIT_CAPTURE_REPLAY",
+                priority="P0",
+                status="READY_FOR_CODE_REPAIR",
+                source_findings=tp_codes,
+                problem=(
+                    "Historical losing closes still show executable TP-progress profit that was not "
+                    "captured before the close turned red."
+                ),
+                why_now=(
+                    "Adding entry frequency before this capture path is proved clean repeats the "
+                    "known TAKE_PROFIT_ORDER plus / MARKET_ORDER_TRADE_CLOSE minus leak."
+                ),
+                evidence_summary=top_item.get("evidence_summary"),
+                clearance_conditions=[
+                    item_by_code[code].get("clearance_condition")
+                    for code in tp_codes
+                    if isinstance(item_by_code.get(code), dict)
+                ],
+                verification_commands=[
+                    item_by_code[code].get("verification_command")
+                    for code in tp_codes
+                    if isinstance(item_by_code.get(code), dict)
+                ],
+                suggested_files=[
+                    "src/quant_rabbit/profit_capture_bot.py",
+                    "src/quant_rabbit/execution_timing_audit.py",
+                    "src/quant_rabbit/strategy/position_manager.py",
+                    "src/quant_rabbit/strategy/position_protection_gateway.py",
+                    "tests/test_execution_timing_audit.py",
+                    "tests/test_trader_support_bot.py",
+                ],
+                required_tests=[
+                    "Regression: TP-progress winner that later closes red is surfaced as repair_replay_triggered.",
+                    "Positive path: production-gate replay reports zero loss_closes_repair_replay_triggered after the capture repair.",
+                    "Safety path: support/profit-capture bots remain read-only and do not close positions directly.",
+                ],
+            )
+        )
+
+    if "MONTH_SCALE_TP_PROGRESS_REPLAY_STILL_NEGATIVE" in item_by_code:
+        item = item_by_code["MONTH_SCALE_TP_PROGRESS_REPLAY_STILL_NEGATIVE"]
+        requests.append(
+            _repair_request(
+                code="REPAIR_MONTH_SCALE_RESIDUAL_ENTRY_QUALITY",
+                priority="P0",
+                status="READY_FOR_CODE_REPAIR",
+                source_findings=["MONTH_SCALE_TP_PROGRESS_REPLAY_STILL_NEGATIVE"],
+                problem=(
+                    "Month-scale replay remains net negative after TP-progress repair; residual "
+                    "pair/side/method groups must be blocked, reclassified, or given a tested escape."
+                ),
+                why_now=(
+                    "The daily target cannot be scaled by frequency while the 744h production-gate replay "
+                    "is still negative for the active residual groups."
+                ),
+                evidence_summary=item.get("evidence_summary"),
+                clearance_conditions=[item.get("clearance_condition")],
+                verification_commands=[item.get("verification_command")],
+                suggested_files=[
+                    "src/quant_rabbit/execution_timing_audit.py",
+                    "src/quant_rabbit/profitability_acceptance.py",
+                    "src/quant_rabbit/strategy/intent_generator.py",
+                    "tests/test_execution_timing_audit.py",
+                    "tests/test_profitability_acceptance_replay_repair.py",
+                    "tests/test_intent_generator.py",
+                ],
+                required_tests=[
+                    "Regression: a matching residual pair/side/method cannot become LIVE_READY while month replay is negative.",
+                    "Positive path: a non-matching pair/side/method with current evidence is not blocked by the residual group.",
+                    "Metric path: TP-progress residuals and entry-quality residuals stay split in acceptance evidence.",
+                ],
+            )
+        )
+
+    if guardian.get("required") and not guardian.get("active"):
+        requests.append(
+            _repair_request(
+                code="RESTORE_POSITION_GUARDIAN_AFTER_PREFLIGHT",
+                priority="P0",
+                status="OPERATOR_APPROVAL_REQUIRED",
+                source_findings=["POSITION_GUARDIAN_INACTIVE_FOR_PROFIT_CAPTURE"],
+                problem=(
+                    "Fresh entries are blocked because the fast position guardian is not proven active "
+                    "with a fresh heartbeat."
+                ),
+                why_now=(
+                    "The guardian is the between-cycle support path that should bank TP-progress profit "
+                    "before it reverses into a later market-close loss."
+                ),
+                evidence_summary={
+                    "active": guardian.get("active"),
+                    "active_source": guardian.get("active_source"),
+                    "launchd_loaded": guardian.get("launchd_loaded"),
+                    "heartbeat_fresh": guardian.get("heartbeat_fresh"),
+                    "heartbeat_age_seconds": guardian.get("heartbeat_age_seconds"),
+                },
+                clearance_conditions=[
+                    "scripts/install-position-guardian.sh --check passes, then an operator explicitly approves load/reload and heartbeat becomes fresh."
+                ],
+                verification_commands=[
+                    "scripts/install-position-guardian.sh --check",
+                    "scripts/install-position-guardian.sh --status",
+                ],
+                suggested_files=[
+                    "scripts/install-position-guardian.sh",
+                    "scripts/run-position-guardian-live.sh",
+                    "tests/test_position_guardian_install.py",
+                ],
+                required_tests=[
+                    "Preflight blocks unsynced live runtime before launchd can be loaded.",
+                    "Support bot shows guardian recovery candidates without loading launchd itself.",
+                ],
+                requires_explicit_operator_approval=True,
+            )
+        )
+
+    if evidence_items:
+        first = evidence_items[0]
+        summary = first.get("evidence_summary") if isinstance(first.get("evidence_summary"), dict) else {}
+        requests.append(
+            _repair_request(
+                code="COLLECT_BIDASK_REPLAY_EVIDENCE",
+                priority=str(first.get("priority") or "P1"),
+                status="READY_FOR_READ_ONLY_EVIDENCE_COLLECTION",
+                source_findings=[str(item.get("code")) for item in evidence_items if item.get("code")],
+                problem=(
+                    "Bid/ask replay support is still rank-only or partially missing price truth, so it cannot "
+                    "be counted as live-grade high-turn firepower."
+                ),
+                why_now=(
+                    "Historical replay may expose usable short-horizon edges, but only after spread-included "
+                    "OANDA BA candles prove daily-stable economics."
+                ),
+                evidence_summary=summary,
+                clearance_conditions=[first.get("clearance_condition")],
+                verification_commands=[
+                    summary.get("history_fetch_command"),
+                    first.get("verification_command"),
+                ],
+                suggested_files=[
+                    "scripts/oanda_history_fetch.py",
+                    "scripts/oanda_history_replay_validate.py",
+                    "scripts/oanda_universal_rotation_miner.py",
+                    "src/quant_rabbit/profitability_acceptance.py",
+                    "tests/test_trader_support_bot.py",
+                ],
+                required_tests=[
+                    "Read-only fetch/validation commands are surfaced without granting live permission.",
+                    "Rank-only replay rules cannot clear profitability acceptance until daily-stable requirements pass.",
+                ],
+            )
+        )
+
+    frontier_blockers = (
+        entry.get("repair_frontier_remaining_blockers")
+        if isinstance(entry.get("repair_frontier_remaining_blockers"), list)
+        else []
+    )
+    if frontier_blockers:
+        top = frontier_blockers[0] if isinstance(frontier_blockers[0], dict) else {}
+        code = str(top.get("code") or "UNKNOWN_REPAIR_FRONTIER_BLOCKER")
+        requests.append(
+            _repair_request(
+                code="REPAIR_FRONTIER_LANE_BLOCKER",
+                priority="P1",
+                status="READY_FOR_CODE_OR_EVIDENCE_REPAIR",
+                source_findings=[code],
+                problem=(
+                    "After global support gates are removed, repair-frontier lanes still have lane-local blockers."
+                ),
+                why_now=(
+                    "This is the next non-guardian blocker that would keep high-turn repair baskets from becoming executable."
+                ),
+                evidence_summary=top,
+                clearance_conditions=[
+                    f"{code} disappears from repair_frontier_remaining_blockers or gains a tested downgrade path."
+                ],
+                verification_commands=[
+                    "PYTHONPATH=src python3 -m quant_rabbit.cli trader-support-bot",
+                    "PYTHONPATH=src python3 -m quant_rabbit.cli generate-intents --reuse-market-artifacts",
+                ],
+                suggested_files=[
+                    "src/quant_rabbit/strategy/intent_generator.py",
+                    "tests/test_intent_generator.py",
+                    "tests/test_trader_support_bot.py",
+                ],
+                required_tests=[
+                    "Regression: the original invalid blocker shape remains blocked.",
+                    "Positive path: a current valid repair-frontier lane is allowed or explicitly downgraded with an escape condition.",
+                ],
+            )
+        )
+
+    return _unique_repair_requests(requests)
+
+
+def _repair_request(
+    *,
+    code: str,
+    priority: str,
+    status: str,
+    source_findings: list[str],
+    problem: str,
+    why_now: str,
+    evidence_summary: Any,
+    clearance_conditions: list[Any],
+    verification_commands: list[Any],
+    suggested_files: list[str],
+    required_tests: list[str],
+    requires_explicit_operator_approval: bool = False,
+) -> dict[str, Any]:
+    return {
+        "contract_version": REPAIR_REQUEST_CONTRACT_VERSION,
+        "code": code,
+        "priority": priority,
+        "status": status,
+        "source_findings": [str(item) for item in source_findings if str(item)],
+        "problem": problem,
+        "why_now": why_now,
+        "evidence_summary": evidence_summary if isinstance(evidence_summary, dict) else {},
+        "clearance_conditions": [str(item) for item in clearance_conditions if item],
+        "verification_commands": list(dict.fromkeys(str(item) for item in verification_commands if item)),
+        "suggested_files": suggested_files,
+        "required_tests": required_tests,
+        "automation_contract": {
+            "codex_may_execute": REPAIR_AUTOMATION_ALLOWED_ACTIONS,
+            "commit_and_live_sync_required": True,
+            "quant_rabbit_code_may_call_model_api": False,
+            "live_side_effects_allowed": [],
+            "requires_explicit_operator_approval_for": REPAIR_AUTOMATION_EXPLICIT_APPROVAL_ACTIONS,
+            "forbidden_direct_actions": REPAIR_AUTOMATION_FORBIDDEN_DIRECT_ACTIONS,
+            "orders_closes_launchd_policy": (
+                "Order send, order cancel, position close, and launchd load/reload must go through "
+                "explicit operator approval or the existing gateway path; a repair request alone is never live permission."
+            ),
+        },
+        "requires_explicit_operator_approval": requires_explicit_operator_approval,
+        "read_only": True,
+        "live_side_effects": [],
+    }
+
+
+def _unique_repair_requests(requests: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    seen: set[str] = set()
+    unique: list[dict[str, Any]] = []
+    for request in requests:
+        code = str(request.get("code") or "")
+        if not code or code in seen:
+            continue
+        seen.add(code)
+        unique.append(request)
+    return unique[:12]
+
+
 def _render_report(payload: dict[str, Any]) -> str:
     guardian = payload["guardian"]
     entry = payload["entry_readiness"]
@@ -1912,6 +2272,33 @@ def _render_report(payload: dict[str, Any]) -> str:
     if payload["blockers"]:
         for blocker in payload["blockers"]:
             lines.append(f"- `{blocker['severity']}` `{blocker['code']}`: {blocker['message']}")
+    else:
+        lines.append("- none")
+    lines.extend(["", "## Repair Requests", ""])
+    repair_requests = (
+        payload.get("repair_requests") if isinstance(payload.get("repair_requests"), list) else []
+    )
+    if repair_requests:
+        lines.extend(
+            [
+                "| Code | Status | Source | Verify |",
+                "|---|---|---|---|",
+            ]
+        )
+        for request in repair_requests[:8]:
+            source = ", ".join(f"`{code}`" for code in request.get("source_findings", []) or []) or "none"
+            verify = ", ".join(
+                f"`{command}`" for command in request.get("verification_commands", [])[:2]
+            ) or "none"
+            approval = " approval-required" if request.get("requires_explicit_operator_approval") else ""
+            lines.append(
+                f"| `{request.get('code')}` | `{request.get('status')}`{approval} | {source} | {verify} |"
+            )
+        lines.append("")
+        lines.append(
+            "- Automation contract: Codex may edit code/tests/docs, run tests, commit, and sync live; "
+            "orders, cancels, closes, and launchd changes require explicit approval or the existing gateway path."
+        )
     else:
         lines.append("- none")
     lines.extend(

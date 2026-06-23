@@ -2807,6 +2807,12 @@ def _cycle_digest(*, kind: str, step_results: list[dict[str, Any]], aborted: boo
             "generated_at_utc": trader_support.get("generated_at_utc"),
             "status": trader_support.get("status"),
             "send_fresh_entries_allowed": metrics.get("send_fresh_entries_allowed"),
+            "repair_request_count": metrics.get("repair_request_count"),
+            "repair_request_codes": metrics.get("repair_request_codes") or [
+                item.get("code")
+                for item in trader_support.get("repair_requests", []) or []
+                if isinstance(item, dict)
+            ][:8],
             "guardian_active": metrics.get("guardian_active"),
             "guardian_heartbeat_fresh": metrics.get("guardian_heartbeat_fresh"),
             "guardian_active_source": guardian.get("active_source"),
@@ -2876,6 +2882,7 @@ def _cycle_digest(*, kind: str, step_results: list[dict[str, Any]], aborted: boo
             "oanda_audit_only_local_tp_proof_required": entry.get(
                 "oanda_audit_only_local_tp_proof_required", []
             )[:4],
+            "repair_requests": trader_support.get("repair_requests", [])[:4],
         }
 
     return digest

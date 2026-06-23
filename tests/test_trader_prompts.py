@@ -220,6 +220,13 @@ class TraderPromptRouteTest(unittest.TestCase):
         self.assertTrue(any("position-guardian recovery" in reason for reason in route.reasons))
         self.assertTrue(any("range_trader:GBP_JPY:SHORT:RANGE_ROTATION" in reason for reason in route.reasons))
         self.assertTrue(any("LOAD_POSITION_GUARDIAN_ONLY_IF_APPROVED (explicit approval)" in reason for reason in route.reasons))
+        self.assertTrue(
+            any(
+                "machine-readable repair request" in reason
+                and "RESTORE_POSITION_GUARDIAN_AFTER_PREFLIGHT" in reason
+                for reason in route.reasons
+            )
+        )
 
     def test_support_bot_global_unlock_frontier_is_carried_into_learning_route(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -4154,6 +4161,14 @@ def _write_support_guardian_recovery(files: dict[str, Path]) -> None:
                         "code": "LOAD_POSITION_GUARDIAN_ONLY_IF_APPROVED",
                         "requires_explicit_operator_approval": True,
                     },
+                ],
+                "repair_requests": [
+                    {
+                        "code": "RESTORE_POSITION_GUARDIAN_AFTER_PREFLIGHT",
+                        "priority": "P0",
+                        "status": "OPERATOR_APPROVAL_REQUIRED",
+                        "requires_explicit_operator_approval": True,
+                    }
                 ],
                 "live_side_effects": [],
             }

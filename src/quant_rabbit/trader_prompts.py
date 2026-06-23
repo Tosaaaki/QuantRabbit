@@ -249,7 +249,12 @@ def route_trader_prompts(
     trader_support = _trader_support_bot_payload(trader_support_bot_path)
     support_guardian_recovery_reasons = _trader_support_guardian_recovery_reasons(trader_support)
     support_global_unlock_reasons = _trader_support_global_unlock_reasons(trader_support)
-    support_repair_context_reasons = (*support_guardian_recovery_reasons, *support_global_unlock_reasons)
+    support_repair_request_reasons = _trader_support_repair_request_reasons(trader_support)
+    support_repair_context_reasons = (
+        *support_guardian_recovery_reasons,
+        *support_global_unlock_reasons,
+        *support_repair_request_reasons,
+    )
 
     position_sidecar_reasons = _position_management_sidecar_refresh_reasons(
         snapshot,
@@ -742,6 +747,34 @@ def _trader_support_guardian_recovery_reasons(payload: dict[str, Any]) -> tuple[
     return (
         "trader-support-bot shows TP_HARVEST_REPAIR lane(s) blocked only by position-guardian recovery; "
         "do not add unrelated indicators or resend generic entries before resolving guardian proof "
+        f"({'; '.join(details)})",
+    )
+
+
+def _trader_support_repair_request_reasons(payload: dict[str, Any]) -> tuple[str, ...]:
+    if not payload:
+        return ()
+    raw_requests = payload.get("repair_requests")
+    requests = [item for item in (raw_requests if isinstance(raw_requests, list) else []) if isinstance(item, dict)]
+    if not requests:
+        return ()
+    codes = [str(item.get("code")) for item in requests if str(item.get("code") or "")]
+    priorities = [str(item.get("priority")) for item in requests if str(item.get("priority") or "")]
+    approval_codes = [
+        str(item.get("code"))
+        for item in requests
+        if item.get("requires_explicit_operator_approval") is True and str(item.get("code") or "")
+    ]
+    details = [
+        "repair_requests=" + ",".join(dict.fromkeys(codes[:5])),
+        "priorities=" + ",".join(dict.fromkeys(priorities[:3])),
+        "support_bot=data/trader_support_bot.json",
+    ]
+    if approval_codes:
+        details.append("explicit_approval_required=" + ",".join(dict.fromkeys(approval_codes[:3])))
+    return (
+        "trader-support-bot published machine-readable repair request(s); use these as the next Codex "
+        "automation input before adding unrelated tactics "
         f"({'; '.join(details)})",
     )
 

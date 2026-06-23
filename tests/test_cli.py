@@ -5696,6 +5696,11 @@ class ConsolidatedCycleCommandTest(unittest.TestCase):
                             ],
                             "target_firepower_status": "VERIFIED_TARGET_10_ROUTE_ESTIMATED",
                             "target_firepower_minimum_5pct_estimated_reachable": True,
+                            "repair_request_count": 2,
+                            "repair_request_codes": [
+                                "REPAIR_CLOSE_GATE_EVIDENCE_PERSISTENCE",
+                                "RESTORE_POSITION_GUARDIAN_AFTER_PREFLIGHT",
+                            ],
                         },
                         "guardian": {
                             "active_source": "plist_missing",
@@ -5717,6 +5722,17 @@ class ConsolidatedCycleCommandTest(unittest.TestCase):
                             {"code": "WORK_REPAIR_FRONTIER_REMAINING_BLOCKERS"},
                             {"code": "MINE_LOCAL_TP_PROOF_FOR_OANDA_AUDIT_ONLY"},
                             {"code": "VALIDATE_OANDA_AUDIT_ONLY_BIDASK_REPLAY"},
+                        ],
+                        "repair_requests": [
+                            {
+                                "code": "REPAIR_CLOSE_GATE_EVIDENCE_PERSISTENCE",
+                                "status": "READY_FOR_CODE_REPAIR",
+                            },
+                            {
+                                "code": "RESTORE_POSITION_GUARDIAN_AFTER_PREFLIGHT",
+                                "status": "OPERATOR_APPROVAL_REQUIRED",
+                                "requires_explicit_operator_approval": True,
+                            },
                         ],
                         "profit_capture": {
                             "top_misses": [{"trade_id": "472792", "pair": "USD_JPY"}],
@@ -5792,6 +5808,14 @@ class ConsolidatedCycleCommandTest(unittest.TestCase):
         support = digest["trader_support_bot"]
         self.assertEqual(support["status"], "SUPPORT_BLOCKED")
         self.assertFalse(support["send_fresh_entries_allowed"])
+        self.assertEqual(support["repair_request_count"], 2)
+        self.assertEqual(
+            support["repair_request_codes"],
+            [
+                "REPAIR_CLOSE_GATE_EVIDENCE_PERSISTENCE",
+                "RESTORE_POSITION_GUARDIAN_AFTER_PREFLIGHT",
+            ],
+        )
         self.assertFalse(support["guardian_active"])
         self.assertEqual(support["guardian_active_source"], "plist_missing")
         self.assertEqual(support["profit_capture_missed_loss_closes"], 2)
@@ -5856,6 +5880,10 @@ class ConsolidatedCycleCommandTest(unittest.TestCase):
                 "remaining_blocker_codes_after_guardian_and_repair_exemption"
             ],
             [],
+        )
+        self.assertEqual(
+            support["repair_requests"][0]["code"],
+            "REPAIR_CLOSE_GATE_EVIDENCE_PERSISTENCE",
         )
         self.assertEqual(
             support["repair_frontier"][0]["remaining_blocker_codes_after_guardian_and_repair_exemption"],

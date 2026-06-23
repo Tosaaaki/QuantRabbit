@@ -145,6 +145,52 @@ class TraderSupportBotTest(unittest.TestCase):
             self.assertEqual(repair_plan["p0_count"], 3)
             self.assertIn("Rerunning profitability-acceptance alone", repair_plan["loop_breaker"])
             self.assertEqual(payload["metrics"]["acceptance_evidence_collection_count"], 1)
+            self.assertEqual(payload["metrics"]["repair_request_count"], 5)
+            self.assertEqual(
+                payload["metrics"]["repair_request_codes"],
+                [
+                    "REPAIR_CLOSE_GATE_EVIDENCE_PERSISTENCE",
+                    "REPAIR_TP_PROGRESS_PROFIT_CAPTURE_REPLAY",
+                    "RESTORE_POSITION_GUARDIAN_AFTER_PREFLIGHT",
+                    "COLLECT_BIDASK_REPLAY_EVIDENCE",
+                    "REPAIR_FRONTIER_LANE_BLOCKER",
+                ],
+            )
+            repair_requests = payload["repair_requests"]
+            self.assertEqual(
+                [item["code"] for item in repair_requests],
+                payload["metrics"]["repair_request_codes"],
+            )
+            close_gate_request = repair_requests[0]
+            self.assertEqual(close_gate_request["status"], "READY_FOR_CODE_REPAIR")
+            self.assertEqual(
+                close_gate_request["source_findings"],
+                ["LOSS_CLOSE_GATE_EVIDENCE_MISSING", "RECENT_GATEWAY_LOSS_MARKET_CLOSE_LEAK"],
+            )
+            self.assertEqual(close_gate_request["live_side_effects"], [])
+            self.assertEqual(
+                close_gate_request["automation_contract"]["live_side_effects_allowed"],
+                [],
+            )
+            self.assertIn(
+                "position_close",
+                close_gate_request["automation_contract"]["requires_explicit_operator_approval_for"],
+            )
+            self.assertIn(
+                "model_api_call_from_quantrabbit_code",
+                close_gate_request["automation_contract"]["forbidden_direct_actions"],
+            )
+            guardian_request = next(
+                item for item in repair_requests if item["code"] == "RESTORE_POSITION_GUARDIAN_AFTER_PREFLIGHT"
+            )
+            self.assertTrue(guardian_request["requires_explicit_operator_approval"])
+            self.assertEqual(guardian_request["status"], "OPERATOR_APPROVAL_REQUIRED")
+            self.assertIn("launchd_load", guardian_request["automation_contract"]["requires_explicit_operator_approval_for"])
+            evidence_request = next(
+                item for item in repair_requests if item["code"] == "COLLECT_BIDASK_REPLAY_EVIDENCE"
+            )
+            self.assertEqual(evidence_request["status"], "READY_FOR_READ_ONLY_EVIDENCE_COLLECTION")
+            self.assertIn("oanda_history_fetch.py", " ".join(evidence_request["verification_commands"]))
             self.assertEqual(
                 repair_plan["evidence_collection_items"][0]["code"],
                 "BIDASK_REPLAY_SUPPORT_NOT_DAILY_STABLE",
@@ -211,6 +257,9 @@ class TraderSupportBotTest(unittest.TestCase):
             report = files["report"].read_text()
             self.assertIn("Trader Support Bot Report", report)
             self.assertIn("Counterfactual profit-capture delta JPY", report)
+            self.assertIn("Repair Requests", report)
+            self.assertIn("REPAIR_CLOSE_GATE_EVIDENCE_PERSISTENCE", report)
+            self.assertIn("RESTORE_POSITION_GUARDIAN_AFTER_PREFLIGHT", report)
             self.assertIn("Acceptance Repair Plan", report)
             self.assertIn("Acceptance Evidence Collection", report)
             self.assertIn("BIDASK_REPLAY_SUPPORT_NOT_DAILY_STABLE", report)
@@ -247,6 +296,8 @@ class TraderSupportBotTest(unittest.TestCase):
             self.assertTrue(payload["guardian"]["active"])
             self.assertTrue(payload["guardian"]["heartbeat_fresh"])
             self.assertTrue(payload["metrics"]["send_fresh_entries_allowed"])
+            self.assertEqual(payload["metrics"]["repair_request_count"], 0)
+            self.assertEqual(payload["repair_requests"], [])
             self.assertFalse(payload["metrics"]["repair_basket_send_allowed"])
             self.assertEqual(payload["entry_readiness"]["live_ready_lanes"], 1)
             self.assertIn("RUN_NEXT_TRADER_CYCLE", {item["code"] for item in payload["operator_actions"]})
