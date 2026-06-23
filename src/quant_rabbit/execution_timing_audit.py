@@ -960,6 +960,17 @@ def _summary(
     )
     repair_replay_pl = _repair_replay_loss_close_pl(loss_rows)
     repair_replay_residual_groups = _repair_replay_residual_groups(loss_rows)
+    tp_progress_repair_residual_groups = _repair_replay_residual_groups(
+        loss_rows,
+        scope_filter={
+            "TP_PROGRESS_REPAIR_TRIGGERED",
+            "TP_PROGRESS_DIAGNOSTIC_BLOCKED",
+        },
+    )
+    entry_quality_residual_groups = _repair_replay_residual_groups(
+        loss_rows,
+        scope_filter={"ENTRY_QUALITY_OR_CLOSE_RESIDUAL"},
+    )
     return {
         "canceled_orders_audited": len(canceled_rows),
         "canceled_entry_touched_after_cancel": len(canceled_entry),
@@ -1010,6 +1021,8 @@ def _summary(
             sorted(repair_replay_block_reasons.items())
         ),
         "top_repair_replay_residual_groups": repair_replay_residual_groups,
+        "top_tp_progress_repair_residual_groups": tp_progress_repair_residual_groups,
+        "top_entry_quality_residual_groups": entry_quality_residual_groups,
         "avg_decision_lag_minutes_after_first_positive": round(sum(lag_values) / len(lag_values), 2) if lag_values else None,
         "max_decision_lag_minutes_after_first_positive": round(max(lag_values), 2) if lag_values else None,
         "market_closes_audited": len(market_close_rows),
@@ -1070,8 +1083,12 @@ def _repair_replay_loss_close_pl(loss_rows: list[dict[str, Any]]) -> float | Non
     return round(total, 4) if seen else None
 
 
-def _repair_replay_residual_groups(loss_rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    groups: dict[tuple[str, str, str, str], dict[str, Any]] = {}
+def _repair_replay_residual_groups(
+    loss_rows: list[dict[str, Any]],
+    *,
+    scope_filter: set[str] | None = None,
+) -> list[dict[str, Any]]:
+    groups: dict[tuple[str, str, str, str, str], dict[str, Any]] = {}
     for row in loss_rows:
         actual = row.get("realized_pl_jpy")
         if actual is None:
@@ -1089,7 +1106,10 @@ def _repair_replay_residual_groups(loss_rows: list[dict[str, Any]]) -> list[dict
         side = str(row.get("side") or "UNKNOWN")
         method = _lane_method(str(row.get("lane_id") or ""))
         exit_reason = str(row.get("exit_reason") or "UNKNOWN")
-        key = (pair, side, method, exit_reason)
+        residual_scope = _repair_replay_residual_scope(row)
+        if scope_filter is not None and residual_scope not in scope_filter:
+            continue
+        key = (residual_scope, pair, side, method, exit_reason)
         group = groups.setdefault(
             key,
             {
@@ -1097,6 +1117,7 @@ def _repair_replay_residual_groups(loss_rows: list[dict[str, Any]]) -> list[dict
                 "side": side,
                 "method": method,
                 "exit_reason": exit_reason,
+                "residual_scope": residual_scope,
                 "loss_closes": 0,
                 "actual_pl_jpy": 0.0,
                 "repair_replay_pl_jpy": 0.0,
@@ -1172,6 +1193,14 @@ def _repair_replay_residual_groups(loss_rows: list[dict[str, Any]]) -> list[dict
         )
     )
     return rows[:10]
+
+
+def _repair_replay_residual_scope(row: dict[str, Any]) -> str:
+    if row.get("repair_replay_triggered_before_loss_close"):
+        return "TP_PROGRESS_REPAIR_TRIGGERED"
+    if row.get("profit_capture_missed_before_loss_close"):
+        return "TP_PROGRESS_DIAGNOSTIC_BLOCKED"
+    return "ENTRY_QUALITY_OR_CLOSE_RESIDUAL"
 
 
 def _canceled_order_regret_by_shape(rows: list[dict[str, Any]]) -> dict[str, Any]:
@@ -1317,6 +1346,8 @@ def _write_report(payload: dict[str, Any], report_path: Path) -> None:
         "loss_close_repair_replay_delta_jpy",
         "loss_close_repair_replay_block_reasons",
         "top_repair_replay_residual_groups",
+        "top_tp_progress_repair_residual_groups",
+        "top_entry_quality_residual_groups",
         "avg_decision_lag_minutes_after_first_positive",
         "max_decision_lag_minutes_after_first_positive",
         "market_closes_audited",

@@ -657,6 +657,7 @@ class ExecutionTimingAuditTest(unittest.TestCase):
                         "side": "SHORT",
                         "method": "RANGE_ROTATION",
                         "exit_reason": "STOP_LOSS_ORDER",
+                        "residual_scope": "TP_PROGRESS_DIAGNOSTIC_BLOCKED",
                         "loss_closes": 1,
                         "actual_pl_jpy": -50.0,
                         "repair_replay_pl_jpy": -50.0,
@@ -676,6 +677,11 @@ class ExecutionTimingAuditTest(unittest.TestCase):
                     }
                 ],
             )
+            self.assertEqual(
+                summary["top_tp_progress_repair_residual_groups"],
+                summary["top_repair_replay_residual_groups"],
+            )
+            self.assertEqual(summary["top_entry_quality_residual_groups"], [])
             row = payload["loss_close_regrets"][0]
             self.assertTrue(row["profit_capture_missed_before_loss_close"])
             self.assertFalse(row["repair_replay_triggered_before_loss_close"])

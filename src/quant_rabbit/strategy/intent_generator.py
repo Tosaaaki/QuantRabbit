@@ -5007,6 +5007,9 @@ SELF_IMPROVEMENT_PROFITABILITY_P0_REPAIR_RECENT_LOSS_CODE = (
 MONTH_SCALE_RESIDUAL_LOSS_REPAIR_BLOCK_CODE = (
     "MONTH_SCALE_RESIDUAL_LOSS_REPAIR_BLOCKED"
 )
+MONTH_SCALE_ENTRY_QUALITY_RESIDUAL_BLOCK_CODE = (
+    "MONTH_SCALE_ENTRY_QUALITY_RESIDUAL_BLOCKED"
+)
 MONTH_SCALE_LOSS_CLOSE_REPLAY_MIN_HOURS = 24.0 * 30.0
 SELF_IMPROVEMENT_PROFITABILITY_P0_REPAIR_MODE = "TP_HARVEST_REPAIR"
 SELF_IMPROVEMENT_PENDING_EXECUTION_REPAIR_CODE = (
@@ -9312,9 +9315,7 @@ def _month_residual_groups_from_acceptance(payload: dict[str, Any]) -> list[dict
             continue
         has_month_scale_p0 = True
         evidence = finding.get("evidence") if isinstance(finding.get("evidence"), dict) else {}
-        raw_groups = evidence.get("top_repair_replay_residual_groups")
-        if isinstance(raw_groups, list):
-            groups.extend(item for item in raw_groups if isinstance(item, dict))
+        groups.extend(_month_residual_groups_from_replay_metrics(evidence))
     if not has_month_scale_p0:
         return groups
     metrics = payload.get("metrics") if isinstance(payload.get("metrics"), dict) else {}
@@ -9323,7 +9324,24 @@ def _month_residual_groups_from_acceptance(payload: dict[str, Any]) -> list[dict
         if isinstance(metrics.get("profit_capture_replay_repair"), dict)
         else {}
     )
-    raw_groups = replay_metrics.get("top_repair_replay_residual_groups")
+    groups.extend(_month_residual_groups_from_replay_metrics(replay_metrics))
+    return groups
+
+
+def _month_residual_groups_from_replay_metrics(metrics: dict[str, Any]) -> list[dict[str, Any]]:
+    groups: list[dict[str, Any]] = []
+    typed_keys = (
+        "top_tp_progress_repair_residual_groups",
+        "top_entry_quality_residual_groups",
+    )
+    typed_present = any(key in metrics for key in typed_keys)
+    if typed_present:
+        for key in typed_keys:
+            raw_groups = metrics.get(key)
+            if isinstance(raw_groups, list):
+                groups.extend(item for item in raw_groups if isinstance(item, dict))
+        return groups
+    raw_groups = metrics.get("top_repair_replay_residual_groups")
     if isinstance(raw_groups, list):
         groups.extend(item for item in raw_groups if isinstance(item, dict))
     return groups
@@ -9350,6 +9368,9 @@ def _month_residual_groups_from_timing_audit(data_root: Path) -> list[dict[str, 
     replay_pl = _optional_float(summary.get("loss_close_repair_replay_counterfactual_pl_jpy"))
     if replay_pl is None or replay_pl >= 0.0:
         return []
+    typed_groups = _month_residual_groups_from_replay_metrics(summary)
+    if typed_groups:
+        return typed_groups
     raw_groups = summary.get("top_repair_replay_residual_groups")
     if isinstance(raw_groups, list) and raw_groups:
         return [group for group in raw_groups if isinstance(group, dict)]
@@ -9364,7 +9385,7 @@ def _month_residual_groups_from_timing_audit(data_root: Path) -> list[dict[str, 
 
 
 def _month_residual_groups_from_timing_rows(rows: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
-    groups: dict[tuple[str, str, str, str], dict[str, Any]] = {}
+    groups: dict[tuple[str, str, str, str, str], dict[str, Any]] = {}
     for row in rows:
         actual = _optional_float(row.get("realized_pl_jpy"))
         if actual is None or actual >= 0.0:
@@ -9378,7 +9399,8 @@ def _month_residual_groups_from_timing_rows(rows: Iterable[dict[str, Any]]) -> l
         side = str(row.get("side") or "UNKNOWN").strip().upper()
         method = _method_from_lane_id(str(row.get("lane_id") or ""))
         exit_reason = str(row.get("exit_reason") or "UNKNOWN").strip().upper()
-        key = (pair, side, method, exit_reason)
+        residual_scope = _month_residual_scope_from_timing_row(row)
+        key = (residual_scope, pair, side, method, exit_reason)
         group = groups.setdefault(
             key,
             {
@@ -9386,6 +9408,7 @@ def _month_residual_groups_from_timing_rows(rows: Iterable[dict[str, Any]]) -> l
                 "side": side,
                 "method": method,
                 "exit_reason": exit_reason,
+                "residual_scope": residual_scope,
                 "loss_closes": 0,
                 "actual_pl_jpy": 0.0,
                 "repair_replay_pl_jpy": 0.0,
@@ -9462,6 +9485,14 @@ def _month_residual_groups_from_timing_rows(rows: Iterable[dict[str, Any]]) -> l
     return result[:10]
 
 
+def _month_residual_scope_from_timing_row(row: dict[str, Any]) -> str:
+    if row.get("repair_replay_triggered_before_loss_close"):
+        return "TP_PROGRESS_REPAIR_TRIGGERED"
+    if row.get("profit_capture_missed_before_loss_close"):
+        return "TP_PROGRESS_DIAGNOSTIC_BLOCKED"
+    return "ENTRY_QUALITY_OR_CLOSE_RESIDUAL"
+
+
 def _method_from_lane_id(lane_id: str) -> str:
     parts = [part for part in str(lane_id or "").split(":") if part]
     if len(parts) >= 4:
@@ -9476,12 +9507,18 @@ def _normalise_month_residual_group(group: dict[str, Any]) -> dict[str, Any] | N
     repair_replay_pl = _optional_float(group.get("repair_replay_pl_jpy"))
     if not pair or not side or not method or repair_replay_pl is None or repair_replay_pl >= 0.0:
         return None
+    residual_scope = (
+        str(group.get("residual_scope") or "TP_PROGRESS_REPAIR_RESIDUAL")
+        .strip()
+        .upper()
+    )
     segment: dict[str, Any] = {
         "pair": pair,
         "side": side,
         "method": method,
         "net_jpy": repair_replay_pl,
         "exit_reason": str(group.get("exit_reason") or "MARKET_ORDER_TRADE_CLOSE"),
+        "residual_scope": residual_scope,
         "loss_closes": group.get("loss_closes"),
         "repair_replay_triggered": group.get("repair_replay_triggered"),
     }
@@ -9531,24 +9568,41 @@ def _month_scale_residual_repair_issue(
             "pair": segment.get("pair"),
             "side": segment.get("side"),
             "method": segment.get("method"),
+            "residual_scope": segment.get("residual_scope"),
             "repair_replay_pl_jpy": segment.get("net_jpy"),
             "loss_closes": segment.get("loss_closes"),
             "trade_ids": segment.get("trade_ids") or [],
         }
         label_parts = _month_residual_segment_label_parts(segment)
-        return {
-            "code": MONTH_SCALE_RESIDUAL_LOSS_REPAIR_BLOCK_CODE,
-            "message": (
+        residual_scope = str(segment.get("residual_scope") or "").upper()
+        entry_quality_residual = residual_scope == "ENTRY_QUALITY_OR_CLOSE_RESIDUAL"
+        code = (
+            MONTH_SCALE_ENTRY_QUALITY_RESIDUAL_BLOCK_CODE
+            if entry_quality_residual
+            else MONTH_SCALE_RESIDUAL_LOSS_REPAIR_BLOCK_CODE
+        )
+        message = (
+            "month-scale replay still leaves this pair/side/method net negative "
+            "without a TP-progress production-gate profit candidate; improve entry "
+            "selection, TP geometry, or close-gate evidence before exposing it as "
+            f"a live entry or TP_HARVEST_REPAIR ({', '.join(label_parts)})"
+            if entry_quality_residual
+            else (
                 "month-scale TP-progress replay still leaves this pair/side/method "
                 "net negative; rerun 744h execution-timing/profitability acceptance "
                 "and remove the matching residual loss group before exposing it as "
                 f"a live entry or TP_HARVEST_REPAIR ({', '.join(label_parts)})"
-            ),
+            )
+        )
+        return {
+            "code": code,
+            "message": message,
             "severity": "BLOCK",
             "blocked_profitability_segment": {
                 "pair": segment.get("pair"),
                 "side": segment.get("side"),
                 "method": segment.get("method"),
+                "residual_scope": segment.get("residual_scope"),
                 "repair_replay_pl_jpy": segment.get("net_jpy"),
                 "loss_closes": segment.get("loss_closes"),
                 "trade_ids": segment.get("trade_ids") or [],

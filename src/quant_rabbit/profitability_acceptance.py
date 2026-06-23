@@ -1251,6 +1251,8 @@ def _execution_timing_loss_close_labels(
         "top_repair_replay_triggers": [],
         "top_repair_replay_blocks": [],
         "top_repair_replay_residual_groups": [],
+        "top_tp_progress_repair_residual_groups": [],
+        "top_entry_quality_residual_groups": [],
         "read_error": None,
     }
     if path is None:
@@ -1424,11 +1426,22 @@ def _execution_timing_loss_close_labels(
     metrics["top_repair_replay_residual_groups"] = _top_repair_replay_residual_groups(
         residual_groups
     )
+    metrics["top_tp_progress_repair_residual_groups"] = _top_repair_replay_residual_groups(
+        residual_groups,
+        scope_filter={
+            "TP_PROGRESS_REPAIR_TRIGGERED",
+            "TP_PROGRESS_DIAGNOSTIC_BLOCKED",
+        },
+    )
+    metrics["top_entry_quality_residual_groups"] = _top_repair_replay_residual_groups(
+        residual_groups,
+        scope_filter={"ENTRY_QUALITY_OR_CLOSE_RESIDUAL"},
+    )
     return labels, metrics
 
 
 def _add_repair_replay_residual_group(
-    groups: dict[tuple[str, str, str, str], dict[str, Any]],
+    groups: dict[tuple[str, str, str, str, str], dict[str, Any]],
     row: dict[str, Any],
 ) -> None:
     actual = _optional_float(row.get("realized_pl_jpy"))
@@ -1444,7 +1457,8 @@ def _add_repair_replay_residual_group(
     lane_id = str(row.get("lane_id") or "")
     method = _method_from_lane_id(lane_id) or "UNKNOWN"
     exit_reason = str(row.get("exit_reason") or "UNKNOWN")
-    key = (pair, side, method, exit_reason)
+    residual_scope = _repair_replay_residual_scope(row)
+    key = (residual_scope, pair, side, method, exit_reason)
     item = groups.setdefault(
         key,
         {
@@ -1452,6 +1466,7 @@ def _add_repair_replay_residual_group(
             "side": side,
             "method": method,
             "exit_reason": exit_reason,
+            "residual_scope": residual_scope,
             "loss_closes": 0,
             "actual_pl_jpy": 0.0,
             "repair_replay_pl_jpy": 0.0,
@@ -1489,11 +1504,23 @@ def _add_repair_replay_residual_group(
         )
 
 
+def _repair_replay_residual_scope(row: dict[str, Any]) -> str:
+    if row.get("repair_replay_triggered_before_loss_close"):
+        return "TP_PROGRESS_REPAIR_TRIGGERED"
+    if row.get("profit_capture_missed_before_loss_close"):
+        return "TP_PROGRESS_DIAGNOSTIC_BLOCKED"
+    return "ENTRY_QUALITY_OR_CLOSE_RESIDUAL"
+
+
 def _top_repair_replay_residual_groups(
-    groups: dict[tuple[str, str, str, str], dict[str, Any]]
+    groups: dict[tuple[str, str, str, str, str], dict[str, Any]],
+    *,
+    scope_filter: set[str] | None = None,
 ) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     for item in groups.values():
+        if scope_filter is not None and item.get("residual_scope") not in scope_filter:
+            continue
         rows.append(
             {
                 **item,
@@ -1638,6 +1665,12 @@ def _profit_capture_replay_repair_findings(
         "top_repair_replay_residual_groups": (
             timing_metrics.get("top_repair_replay_residual_groups") or []
         ),
+        "top_tp_progress_repair_residual_groups": (
+            timing_metrics.get("top_tp_progress_repair_residual_groups") or []
+        ),
+        "top_entry_quality_residual_groups": (
+            timing_metrics.get("top_entry_quality_residual_groups") or []
+        ),
         "loss_close_repair_replay_block_reasons": (
             timing_metrics.get("loss_close_repair_replay_block_reasons") or {}
         ),
@@ -1710,9 +1743,10 @@ def _profit_capture_replay_repair_findings(
                     "loss-side closes, but the replayed loss-close P/L is still net negative"
                 ),
                 next_action=(
-                    "Do not increase high-turnover entries from this repair alone. Improve the "
-                    "loss-close decision path, close-gate evidence, or entry selection until "
-                    "month-scale production-gate replay is non-negative."
+                    "Do not increase high-turnover entries from this repair alone. Split the "
+                    "remaining residuals into TP-progress replay residuals and entry-quality "
+                    "residuals, then improve the matching close-gate evidence, entry selection, "
+                    "or exit geometry until month-scale production-gate replay is non-negative."
                 ),
                 evidence={
                     "window_lookback_hours": window_lookback_hours,
@@ -1727,6 +1761,12 @@ def _profit_capture_replay_repair_findings(
                     "top_repair_replay_blocks": metrics["top_repair_replay_blocks"],
                     "top_repair_replay_residual_groups": metrics[
                         "top_repair_replay_residual_groups"
+                    ],
+                    "top_tp_progress_repair_residual_groups": metrics[
+                        "top_tp_progress_repair_residual_groups"
+                    ],
+                    "top_entry_quality_residual_groups": metrics[
+                        "top_entry_quality_residual_groups"
                     ],
                 },
             )

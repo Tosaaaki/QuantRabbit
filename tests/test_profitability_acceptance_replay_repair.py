@@ -311,9 +311,68 @@ class ProfitabilityAcceptanceReplayRepairTest(unittest.TestCase):
         self.assertEqual(groups[0]["side"], "LONG")
         self.assertEqual(groups[0]["method"], "BREAKOUT_FAILURE")
         self.assertEqual(groups[0]["exit_reason"], "MARKET_ORDER_TRADE_CLOSE")
+        self.assertEqual(groups[0]["residual_scope"], "ENTRY_QUALITY_OR_CLOSE_RESIDUAL")
         self.assertEqual(groups[0]["loss_closes"], 1)
         self.assertEqual(groups[0]["repair_replay_pl_jpy"], -2981.8961)
         self.assertEqual(groups[0]["block_reasons"], {"BELOW_TP_PROGRESS_GATE": 1})
+        self.assertEqual(metrics["top_entry_quality_residual_groups"], groups)
+        self.assertEqual(metrics["top_tp_progress_repair_residual_groups"], [])
+
+    def test_timing_audit_splits_tp_progress_and_entry_quality_residuals(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "execution_timing_audit.json"
+            path.write_text(
+                json.dumps(
+                    {
+                        "generated_at_utc": "2026-06-22T17:10:24+00:00",
+                        "window": {"lookback_hours": 744.0},
+                        "precision": {
+                            TP_PROGRESS_REPAIR_REPLAY_FIELD: (
+                                TP_PROGRESS_REPAIR_REPLAY_CONTRACT
+                            )
+                        },
+                        "summary": {
+                            "loss_close_actual_pl_jpy": -1500.0,
+                            "loss_close_repair_replay_counterfactual_pl_jpy": -1250.0,
+                        },
+                        "loss_close_regrets": [
+                            {
+                                "trade_id": "tp-blocked",
+                                "pair": "AUD_NZD",
+                                "side": "SHORT",
+                                "lane_id": "range_trader:AUD_NZD:SHORT:RANGE_ROTATION",
+                                "exit_reason": "MARKET_ORDER_TRADE_CLOSE",
+                                "realized_pl_jpy": -500.0,
+                                "repair_replay_counterfactual_pl_jpy": -250.0,
+                                "profit_capture_missed_before_loss_close": True,
+                                "repair_replay_block_reason": "BELOW_NOISE_FLOOR",
+                            },
+                            {
+                                "trade_id": "entry-residual",
+                                "pair": "GBP_USD",
+                                "side": "LONG",
+                                "lane_id": "failure_trader:GBP_USD:LONG:BREAKOUT_FAILURE",
+                                "exit_reason": "MARKET_ORDER_TRADE_CLOSE",
+                                "realized_pl_jpy": -1000.0,
+                                "repair_replay_counterfactual_pl_jpy": -1000.0,
+                                "repair_replay_block_reason": "NO_PROFIT_CANDIDATE",
+                            },
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            _labels, metrics = _execution_timing_loss_close_labels(path)
+
+        tp_groups = metrics["top_tp_progress_repair_residual_groups"]
+        entry_groups = metrics["top_entry_quality_residual_groups"]
+        self.assertEqual(len(tp_groups), 1)
+        self.assertEqual(tp_groups[0]["pair"], "AUD_NZD")
+        self.assertEqual(tp_groups[0]["residual_scope"], "TP_PROGRESS_DIAGNOSTIC_BLOCKED")
+        self.assertEqual(len(entry_groups), 1)
+        self.assertEqual(entry_groups[0]["pair"], "GBP_USD")
+        self.assertEqual(entry_groups[0]["residual_scope"], "ENTRY_QUALITY_OR_CLOSE_RESIDUAL")
 
 
 if __name__ == "__main__":

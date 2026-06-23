@@ -16,6 +16,7 @@ from quant_rabbit.strategy.intent_generator import (
     IntentGenerator,
     LOSS_ASYMMETRY_OANDA_CAMPAIGN_FIREPOWER_MIN_LOT_MODE,
     LOSS_ASYMMETRY_OANDA_CAMPAIGN_FIREPOWER_RELAXED_MODE,
+    MONTH_SCALE_ENTRY_QUALITY_RESIDUAL_BLOCK_CODE,
     MONTH_SCALE_RESIDUAL_LOSS_REPAIR_BLOCK_CODE,
     OANDA_CAMPAIGN_AUDIT_ONLY_LOCAL_TP_PROOF_REQUIRED_CODE,
     POSITIVE_ROTATION_OANDA_CAMPAIGN_FIREPOWER_MODE,
@@ -246,6 +247,7 @@ def _write_month_scale_residual_acceptance(
     side: str = "LONG",
     method: str = "RANGE_ROTATION",
     repair_replay_pl_jpy: float = -2333.8215,
+    residual_scope: str | None = None,
     extra_groups: list[dict] | None = None,
 ) -> None:
     primary_group = {
@@ -264,6 +266,8 @@ def _write_month_scale_residual_acceptance(
             }
         ],
     }
+    if residual_scope is not None:
+        primary_group["residual_scope"] = residual_scope
     groups = [*(extra_groups or []), primary_group]
     (root / "profitability_acceptance.json").write_text(
         json.dumps(
@@ -9794,6 +9798,59 @@ class IntentGeneratorTest(unittest.TestCase):
             self.assertIn(
                 MONTH_SCALE_RESIDUAL_LOSS_REPAIR_BLOCK_CODE,
                 result["live_blocker_codes"],
+            )
+
+    def test_month_scale_entry_quality_residual_group_uses_specific_blocker(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_month_scale_residual_acceptance(
+                root,
+                pair="EUR_USD",
+                side="LONG",
+                method="RANGE_ROTATION",
+                residual_scope="ENTRY_QUALITY_OR_CLOSE_RESIDUAL",
+            )
+            output = root / "intents.json"
+
+            summary = IntentGenerator(
+                campaign_plan=_range_campaign(root),
+                strategy_profile=_strategy(root, status="CANDIDATE"),
+                output_path=output,
+                report_path=root / "intents.md",
+                pair_charts_path=_pair_charts(root),
+                data_root=root,
+                max_loss_jpy=1000.0,
+            ).run(snapshot_path=_snapshot(root))
+
+            payload = json.loads(output.read_text())
+            result = next(
+                item
+                for item in payload["results"]
+                if item["lane_id"] == "range_trader:EUR_USD:LONG:RANGE_ROTATION"
+            )
+            metadata = result["intent"]["metadata"]
+            issue_codes = {issue["code"] for issue in result["risk_issues"]}
+            issue = next(
+                item
+                for item in result["risk_issues"]
+                if item["code"] == MONTH_SCALE_ENTRY_QUALITY_RESIDUAL_BLOCK_CODE
+            )
+
+            self.assertEqual(summary.live_ready, 0)
+            self.assertEqual(result["status"], "DRY_RUN_BLOCKED")
+            self.assertEqual(
+                metadata["month_scale_residual_loss_group"]["residual_scope"],
+                "ENTRY_QUALITY_OR_CLOSE_RESIDUAL",
+            )
+            self.assertIn(MONTH_SCALE_ENTRY_QUALITY_RESIDUAL_BLOCK_CODE, issue_codes)
+            self.assertIn(
+                MONTH_SCALE_ENTRY_QUALITY_RESIDUAL_BLOCK_CODE,
+                result["live_blocker_codes"],
+            )
+            self.assertNotIn(MONTH_SCALE_RESIDUAL_LOSS_REPAIR_BLOCK_CODE, issue_codes)
+            self.assertIn(
+                "without a TP-progress production-gate profit candidate",
+                issue["message"],
             )
 
     def test_month_scale_timing_artifact_blocks_matching_harvest_repair_before_acceptance_refresh(self) -> None:
