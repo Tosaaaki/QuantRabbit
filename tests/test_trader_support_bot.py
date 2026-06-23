@@ -639,6 +639,7 @@ class TraderSupportBotTest(unittest.TestCase):
                             "live_blocker_codes": [
                                 "POSITION_GUARDIAN_INACTIVE_FOR_PROFIT_CAPTURE",
                                 "SELF_IMPROVEMENT_P0_PROFITABILITY_DISCIPLINE",
+                                "EXHAUSTION_RANGE_CHASE",
                                 "FORECAST_NOT_EXECUTABLE_FOR_LIVE",
                             ],
                             "intent": {

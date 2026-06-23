@@ -48,6 +48,15 @@ FORECAST_FRONTIER_BLOCKER_CODES = {
     "TELEMETRY_FORECAST_NOT_EXECUTABLE_FOR_LIVE",
     "FORECAST_CONFIDENCE_REQUIRED_FOR_LIVE",
 }
+FRONTIER_GUARDRAIL_BLOCKER_CODES = {
+    "EXHAUSTION_RANGE_CHASE",
+    "BREAKOUT_FAILURE_STOP_CHASES_FAILED_SIDE",
+    "BREAKOUT_FAILURE_MARKET_NOT_RETESTED",
+    "PATTERN_REVERSAL_CHASE",
+    "RANGE_ROTATION_BROADER_LOCATION_CHASE",
+    "RANGE_MARKET_NOT_AT_RAIL",
+    "TREND_MARKET_NOT_OPERATING_TREND",
+}
 MONTH_SCALE_RESIDUAL_BLOCKER_CODES = {
     "MONTH_SCALE_RESIDUAL_LOSS_REPAIR_BLOCKED",
     "MONTH_SCALE_ENTRY_QUALITY_RESIDUAL_BLOCKED",
@@ -1058,7 +1067,26 @@ def _repair_frontier_remaining_blockers(repair_frontier: list[dict[str, Any]]) -
         if forecast_examples.get(code):
             row["forecast_support_examples"] = forecast_examples[code]
         rows.append(row)
+    rows.sort(key=_frontier_blocker_sort_key)
     return rows
+
+
+def _frontier_blocker_sort_key(row: dict[str, Any]) -> tuple[int, int, float, str]:
+    code = str(row.get("code") or "")
+    if _frontier_blocker_waits_for_live_precision_evidence(row):
+        causal_rank = 0
+    elif code == OANDA_AUDIT_ONLY_LOCAL_TP_PROOF_REQUIRED:
+        causal_rank = 1
+    elif code in FRONTIER_GUARDRAIL_BLOCKER_CODES:
+        causal_rank = 4
+    else:
+        causal_rank = 2
+    return (
+        causal_rank,
+        -int(row.get("count") or 0),
+        -_float(row.get("reward_jpy")),
+        code,
+    )
 
 
 def _intent_metadata(item: dict[str, Any]) -> dict[str, Any]:
