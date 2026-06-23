@@ -678,6 +678,10 @@ def _execution_ledger_close_findings(
         "recent_unverified_loss_net_jpy": 0.0,
         "recent_close_gate_unverified_loss_closes": 0,
         "recent_close_gate_unverified_loss_net_jpy": 0.0,
+        "recent_close_gate_missing_loss_closes": 0,
+        "recent_close_gate_missing_loss_net_jpy": 0.0,
+        "recent_close_gate_not_passing_loss_closes": 0,
+        "recent_close_gate_not_passing_loss_net_jpy": 0.0,
         "recent_loss_by_lane": [],
         "recent_leak_loss_by_lane": [],
         "latest_gateway_market_close_ts_utc": None,
@@ -692,6 +696,8 @@ def _execution_ledger_close_findings(
         "recent_contained_risk_loss_examples": [],
         "recent_unverified_loss_examples": [],
         "recent_close_gate_unverified_loss_examples": [],
+        "recent_close_gate_missing_loss_examples": [],
+        "recent_close_gate_not_passing_loss_examples": [],
     }
     if not path.exists():
         return metrics, []
@@ -965,6 +971,16 @@ def _execution_ledger_close_findings(
         if str(row.get("gateway_exit_reason") or "").strip().upper() == "GPT_CLOSE"
         and row.get("has_passing_close_gate_evidence") is not True
     ]
+    recent_close_gate_missing_losses = [
+        row
+        for row in recent_close_gate_unverified_losses
+        if row.get("has_close_gate_evidence") is not True
+    ]
+    recent_close_gate_not_passing_losses = [
+        row
+        for row in recent_close_gate_unverified_losses
+        if row.get("has_close_gate_evidence") is True
+    ]
     metrics["recent_gateway_market_closes"] = len(recent)
     metrics["recent_loss_closes"] = len(recent_losses)
     metrics["recent_loss_net_jpy"] = round(
@@ -996,6 +1012,16 @@ def _execution_ledger_close_findings(
     metrics["recent_close_gate_unverified_loss_closes"] = len(recent_close_gate_unverified_losses)
     metrics["recent_close_gate_unverified_loss_net_jpy"] = round(
         sum(float(row.get("realized_pl_jpy") or 0.0) for row in recent_close_gate_unverified_losses),
+        4,
+    )
+    metrics["recent_close_gate_missing_loss_closes"] = len(recent_close_gate_missing_losses)
+    metrics["recent_close_gate_missing_loss_net_jpy"] = round(
+        sum(float(row.get("realized_pl_jpy") or 0.0) for row in recent_close_gate_missing_losses),
+        4,
+    )
+    metrics["recent_close_gate_not_passing_loss_closes"] = len(recent_close_gate_not_passing_losses)
+    metrics["recent_close_gate_not_passing_loss_net_jpy"] = round(
+        sum(float(row.get("realized_pl_jpy") or 0.0) for row in recent_close_gate_not_passing_losses),
         4,
     )
     metrics["recent_loss_by_lane"] = _loss_close_by_lane(recent_losses)
@@ -1092,6 +1118,46 @@ def _execution_ledger_close_findings(
             key=lambda row: float(row.get("realized_pl_jpy") or 0.0),
         )[:5]
     ]
+    metrics["recent_close_gate_missing_loss_examples"] = [
+        {
+            "ts_utc": row.get("ts_utc"),
+            "trade_id": row.get("trade_id"),
+            "order_id": row.get("order_id"),
+            "pair": row.get("pair"),
+            "side": row.get("side"),
+            "lane_id": row.get("lane_id"),
+            "realized_pl_jpy": row.get("realized_pl_jpy"),
+            "gateway_exit_reason": row.get("gateway_exit_reason"),
+            "close_provenance": row.get("close_provenance"),
+            "timing_path_label": row.get("timing_path_label"),
+            "has_close_gate_evidence": row.get("has_close_gate_evidence"),
+            "has_passing_close_gate_evidence": row.get("has_passing_close_gate_evidence"),
+        }
+        for row in sorted(
+            recent_close_gate_missing_losses,
+            key=lambda row: float(row.get("realized_pl_jpy") or 0.0),
+        )[:5]
+    ]
+    metrics["recent_close_gate_not_passing_loss_examples"] = [
+        {
+            "ts_utc": row.get("ts_utc"),
+            "trade_id": row.get("trade_id"),
+            "order_id": row.get("order_id"),
+            "pair": row.get("pair"),
+            "side": row.get("side"),
+            "lane_id": row.get("lane_id"),
+            "realized_pl_jpy": row.get("realized_pl_jpy"),
+            "gateway_exit_reason": row.get("gateway_exit_reason"),
+            "close_provenance": row.get("close_provenance"),
+            "timing_path_label": row.get("timing_path_label"),
+            "has_close_gate_evidence": row.get("has_close_gate_evidence"),
+            "has_passing_close_gate_evidence": row.get("has_passing_close_gate_evidence"),
+        }
+        for row in sorted(
+            recent_close_gate_not_passing_losses,
+            key=lambda row: float(row.get("realized_pl_jpy") or 0.0),
+        )[:5]
+    ]
     if not recent_losses:
         return metrics, []
     findings: list[dict[str, Any]] = []
@@ -1170,19 +1236,18 @@ def _execution_ledger_close_findings(
                 },
             )
         )
-    if recent_close_gate_unverified_losses:
+    if recent_close_gate_missing_losses:
         findings.append(
             _finding(
                 priority="P0",
                 code="LOSS_CLOSE_GATE_EVIDENCE_MISSING",
                 message=(
-                    f"{len(recent_close_gate_unverified_losses)} recent GPT loss-side market close(s) "
-                    "lack passing durable close_gate_evidence in verification_observations"
+                    f"{len(recent_close_gate_missing_losses)} recent GPT loss-side market close(s) "
+                    "lack durable close_gate_evidence in verification_observations"
                 ),
                 next_action=(
-                    "Do not treat these loss closes as proved Gate A/B discipline. Persist "
-                    "gpt-trader close_gate_evidence into execution_ledger verification_observations "
-                    "before acceptance can clear the loss-side market-close leak."
+                    "Persist gpt-trader close_gate_evidence into execution_ledger verification_observations "
+                    "for accepted CLOSE receipts. Do not treat missing evidence as proved Gate A/B discipline."
                 ),
                 evidence={
                     "recent_close_gate_unverified_loss_closes": metrics[
@@ -1191,7 +1256,50 @@ def _execution_ledger_close_findings(
                     "recent_close_gate_unverified_loss_net_jpy": metrics[
                         "recent_close_gate_unverified_loss_net_jpy"
                     ],
-                    "examples": metrics["recent_close_gate_unverified_loss_examples"],
+                    "recent_close_gate_missing_loss_closes": metrics[
+                        "recent_close_gate_missing_loss_closes"
+                    ],
+                    "recent_close_gate_missing_loss_net_jpy": metrics[
+                        "recent_close_gate_missing_loss_net_jpy"
+                    ],
+                    "recent_close_gate_not_passing_loss_closes": metrics[
+                        "recent_close_gate_not_passing_loss_closes"
+                    ],
+                    "examples": metrics["recent_close_gate_missing_loss_examples"],
+                },
+            )
+        )
+    if recent_close_gate_not_passing_losses:
+        findings.append(
+            _finding(
+                priority="P0",
+                code="LOSS_CLOSE_GATE_EVIDENCE_NOT_PASSING",
+                message=(
+                    f"{len(recent_close_gate_not_passing_losses)} recent GPT loss-side market close(s) "
+                    "have durable close_gate_evidence, but no PASS close_gate_evidence"
+                ),
+                next_action=(
+                    "Do not synthesize PASS for historical closes. Future loss-side closes must persist "
+                    "PASS close_gate_evidence, or these failed-evidence closes must age out of the 7-day "
+                    "acceptance window without new leaks."
+                ),
+                evidence={
+                    "recent_close_gate_unverified_loss_closes": metrics[
+                        "recent_close_gate_unverified_loss_closes"
+                    ],
+                    "recent_close_gate_unverified_loss_net_jpy": metrics[
+                        "recent_close_gate_unverified_loss_net_jpy"
+                    ],
+                    "recent_close_gate_not_passing_loss_closes": metrics[
+                        "recent_close_gate_not_passing_loss_closes"
+                    ],
+                    "recent_close_gate_not_passing_loss_net_jpy": metrics[
+                        "recent_close_gate_not_passing_loss_net_jpy"
+                    ],
+                    "recent_close_gate_missing_loss_closes": metrics[
+                        "recent_close_gate_missing_loss_closes"
+                    ],
+                    "examples": metrics["recent_close_gate_not_passing_loss_examples"],
                 },
             )
         )

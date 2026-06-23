@@ -1167,17 +1167,55 @@ def _acceptance_clearance_for_code(
     if code == "LOSS_CLOSE_GATE_EVIDENCE_MISSING":
         latest = _latest_ts_from_examples(evidence)
         return (
-            "every recent GPT loss-side market close has PASS close_gate_evidence in verification_observations, "
+            "every recent GPT loss-side market close has durable close_gate_evidence in verification_observations, "
             "or the missing-evidence closes age out of the 7-day acceptance window without new leaks",
             "PYTHONPATH=src python3 -m quant_rabbit.cli verification-ledger-audit",
             {
-                "missing_close_gate_evidence": evidence.get("recent_close_gate_unverified_loss_closes"),
+                "missing_close_gate_evidence": evidence.get(
+                    "recent_close_gate_missing_loss_closes",
+                    evidence.get("recent_close_gate_unverified_loss_closes"),
+                ),
                 "missing_close_gate_net_jpy": _round_optional(
-                    evidence.get("recent_close_gate_unverified_loss_net_jpy"),
+                    evidence.get(
+                        "recent_close_gate_missing_loss_net_jpy",
+                        evidence.get("recent_close_gate_unverified_loss_net_jpy"),
+                    ),
                     3,
+                ),
+                "not_passing_close_gate_evidence": evidence.get(
+                    "recent_close_gate_not_passing_loss_closes"
                 ),
                 "latest_missing_evidence_ts_utc": latest,
                 "earliest_auto_clear_if_no_new_missing_utc": _plus_days_iso(
+                    latest,
+                    ACCEPTANCE_LEAK_LOOKBACK_DAYS,
+                ),
+                "example_trade_ids": _example_trade_ids(evidence),
+            },
+        )
+    if code == "LOSS_CLOSE_GATE_EVIDENCE_NOT_PASSING":
+        latest = _latest_ts_from_examples(evidence)
+        return (
+            "every recent GPT loss-side market close has PASS close_gate_evidence in verification_observations, "
+            "or the failed-evidence closes age out of the 7-day acceptance window without new leaks",
+            "PYTHONPATH=src python3 -m quant_rabbit.cli verification-ledger-audit",
+            {
+                "not_passing_close_gate_evidence": evidence.get(
+                    "recent_close_gate_not_passing_loss_closes",
+                    evidence.get("recent_close_gate_unverified_loss_closes"),
+                ),
+                "not_passing_close_gate_net_jpy": _round_optional(
+                    evidence.get(
+                        "recent_close_gate_not_passing_loss_net_jpy",
+                        evidence.get("recent_close_gate_unverified_loss_net_jpy"),
+                    ),
+                    3,
+                ),
+                "missing_close_gate_evidence": evidence.get(
+                    "recent_close_gate_missing_loss_closes"
+                ),
+                "latest_not_passing_evidence_ts_utc": latest,
+                "earliest_auto_clear_if_no_new_not_passing_utc": _plus_days_iso(
                     latest,
                     ACCEPTANCE_LEAK_LOOKBACK_DAYS,
                 ),
@@ -1951,6 +1989,48 @@ def _build_repair_requests(
                     "Regression: a GPT loss-side close without PASS close_gate_evidence remains blocked.",
                     "Positive path: a contained GPT loss-side close with matching PASS close_gate_evidence clears the acceptance blocker.",
                     "Ledger path: close_gate_evidence is written to verification_observations for accepted and rejected CLOSE receipts.",
+                ],
+            )
+        )
+
+    if "LOSS_CLOSE_GATE_EVIDENCE_NOT_PASSING" in item_by_code:
+        item = item_by_code["LOSS_CLOSE_GATE_EVIDENCE_NOT_PASSING"]
+        requests.append(
+            _repair_request(
+                code="REVIEW_CLOSE_GATE_EVIDENCE_FAILURES",
+                priority="P0",
+                status="HISTORICAL_ACCEPTANCE_WINDOW_ACTIVE",
+                source_findings=[
+                    code
+                    for code in (
+                        "LOSS_CLOSE_GATE_EVIDENCE_NOT_PASSING",
+                        "RECENT_GATEWAY_LOSS_MARKET_CLOSE_LEAK",
+                    )
+                    if code in item_by_code
+                ],
+                problem=(
+                    "Recent GPT loss-side market closes now have durable close_gate_evidence, but that "
+                    "evidence is BLOCK rather than PASS."
+                ),
+                why_now=(
+                    "A code-repair loop must not synthesize PASS for historical closes. Acceptance remains "
+                    "red until the failed-evidence closes age out or future GPT closes prove Gate A/B with PASS."
+                ),
+                evidence_summary=item.get("evidence_summary"),
+                clearance_conditions=[item.get("clearance_condition")],
+                verification_commands=[item.get("verification_command")],
+                suggested_files=[
+                    "src/quant_rabbit/gpt_trader.py",
+                    "src/quant_rabbit/verification_ledger.py",
+                    "src/quant_rabbit/profitability_acceptance.py",
+                    "tests/test_gpt_trader.py",
+                    "tests/test_verification_ledger.py",
+                    "tests/test_cli.py",
+                ],
+                required_tests=[
+                    "Regression: historical BLOCK close_gate_evidence remains a P0 acceptance blocker.",
+                    "Positive path: a future contained GPT loss-side close with PASS close_gate_evidence clears this blocker.",
+                    "Loop guard: support bot does not label already-persisted BLOCK evidence as a persistence code repair.",
                 ],
             )
         )

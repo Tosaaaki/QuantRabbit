@@ -267,6 +267,84 @@ class TraderSupportBotTest(unittest.TestCase):
             self.assertIn("FORECAST_CONTEXT_REQUIRED_FOR_LIVE", report)
             self.assertIn("472792", report)
 
+    def test_close_gate_block_evidence_does_not_request_persistence_repair(self) -> None:
+        now = datetime(2026, 6, 22, 12, 15, tzinfo=timezone.utc)
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _write_fixture(root, now=now, blocked=True)
+            _write_json(
+                files["profitability"],
+                {
+                    "status": "PROFITABILITY_ACCEPTANCE_BLOCKED",
+                    "blockers": [
+                        "LOSS_CLOSE_GATE_EVIDENCE_NOT_PASSING: 1 close has BLOCK evidence",
+                    ],
+                    "findings": [
+                        {
+                            "priority": "P0",
+                            "code": "LOSS_CLOSE_GATE_EVIDENCE_NOT_PASSING",
+                            "message": "1 recent GPT loss-side market close has durable close_gate_evidence, but no PASS close_gate_evidence",
+                            "next_action": "wait for clean window or future PASS evidence",
+                            "evidence": {
+                                "recent_close_gate_unverified_loss_closes": 1,
+                                "recent_close_gate_unverified_loss_net_jpy": -1380.8,
+                                "recent_close_gate_not_passing_loss_closes": 1,
+                                "recent_close_gate_not_passing_loss_net_jpy": -1380.8,
+                                "recent_close_gate_missing_loss_closes": 0,
+                                "examples": [
+                                    {
+                                        "trade_id": "472743",
+                                        "pair": "NZD_USD",
+                                        "side": "LONG",
+                                        "ts_utc": (now - timedelta(days=2)).isoformat(),
+                                        "has_close_gate_evidence": True,
+                                        "has_passing_close_gate_evidence": False,
+                                    }
+                                ],
+                            },
+                        }
+                    ],
+                    "metrics": {
+                        "capture_economics": {},
+                        "oanda_campaign_firepower": {},
+                    },
+                },
+            )
+            env = _guardian_env(root, active="0")
+            with mock.patch.dict(os.environ, env, clear=False):
+                summary = TraderSupportBot(
+                    broker_snapshot_path=files["broker"],
+                    order_intents_path=files["intents"],
+                    target_state_path=files["target"],
+                    position_management_path=files["position_management"],
+                    position_guardian_management_path=files["guardian_management"],
+                    position_guardian_execution_path=files["guardian_execution"],
+                    position_guardian_heartbeat_path=files["guardian_heartbeat"],
+                    self_improvement_audit_path=files["self_improvement"],
+                    profitability_acceptance_path=files["profitability"],
+                    execution_timing_audit_path=files["timing"],
+                    profit_capture_bot_path=files["profit_capture_bot"],
+                    output_path=files["output"],
+                    report_path=files["report"],
+                    now_utc=now,
+                ).run()
+
+            payload = json.loads(files["output"].read_text())
+
+        self.assertEqual(summary.status, STATUS_BLOCKED)
+        codes = payload["metrics"]["repair_request_codes"]
+        self.assertNotIn("REPAIR_CLOSE_GATE_EVIDENCE_PERSISTENCE", codes)
+        self.assertIn("REVIEW_CLOSE_GATE_EVIDENCE_FAILURES", codes)
+        request = next(
+            item
+            for item in payload["repair_requests"]
+            if item["code"] == "REVIEW_CLOSE_GATE_EVIDENCE_FAILURES"
+        )
+        self.assertEqual(request["status"], "HISTORICAL_ACCEPTANCE_WINDOW_ACTIVE")
+        self.assertEqual(request["source_findings"], ["LOSS_CLOSE_GATE_EVIDENCE_NOT_PASSING"])
+        self.assertEqual(request["evidence_summary"]["not_passing_close_gate_evidence"], 1)
+        self.assertEqual(request["evidence_summary"]["missing_close_gate_evidence"], 0)
+
     def test_ready_when_guardian_heartbeat_is_fresh_and_live_lane_exists(self) -> None:
         now = datetime(2026, 6, 22, 12, 15, tzinfo=timezone.utc)
         with tempfile.TemporaryDirectory() as tmp:
