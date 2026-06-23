@@ -42,6 +42,15 @@ class TraderRepairOrchestratorTest(unittest.TestCase):
                         verification_commands=[
                             "PYTHONPATH=src python3 -m quant_rabbit.cli execution-timing-audit --max-events 80"
                         ],
+                        evidence_summary={
+                            "top_entry_quality_residual_method_rollups": [
+                                {
+                                    "method": "RANGE_ROTATION",
+                                    "pair_count": 7,
+                                    "repair_replay_pl_jpy": -10269.1823,
+                                }
+                            ]
+                        },
                     ),
                     _request(
                         "RESTORE_POSITION_GUARDIAN_AFTER_PREFLIGHT",
@@ -67,6 +76,12 @@ class TraderRepairOrchestratorTest(unittest.TestCase):
             self.assertEqual(
                 payload["selected_request"]["automation_status"],
                 "READY_FOR_CODEX_IMPLEMENTATION",
+            )
+            self.assertEqual(
+                payload["selected_request"]["evidence_summary"][
+                    "top_entry_quality_residual_method_rollups"
+                ][0]["method"],
+                "RANGE_ROTATION",
             )
             self.assertIn(
                 "PYTHONPATH=src python3 -m unittest tests.test_profit_capture_bot -v",
@@ -98,10 +113,17 @@ class TraderRepairOrchestratorTest(unittest.TestCase):
             self.assertIn("git_commit_with_codex_attribution", work_order["deliverables"])
             self.assertTrue(work_order["commit_and_live_sync_required"])
             self.assertFalse(work_order["quant_rabbit_code_may_call_model_api"])
+            self.assertEqual(
+                work_order["evidence_summary"][
+                    "top_entry_quality_residual_method_rollups"
+                ][0]["pair_count"],
+                7,
+            )
             self.assertIn("Do not send orders", work_order["automation_prompt"])
             report_text = report.read_text()
             self.assertIn("REPAIR_TP_PROGRESS_PROFIT_CAPTURE_REPLAY", report_text)
             self.assertIn("Codex Work Order", report_text)
+            self.assertIn("Evidence summary keys", report_text)
 
     def test_only_approval_required_requests_return_diagnostic_code(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -243,6 +265,7 @@ def _request(
     suggested_files: list[str] | None = None,
     verification_commands: list[str] | None = None,
     requires_explicit_operator_approval: bool = False,
+    evidence_summary: dict[str, object] | None = None,
 ) -> dict[str, object]:
     return {
         "code": code,
@@ -251,6 +274,7 @@ def _request(
         "source_findings": [code.replace("REPAIR_", "")],
         "problem": f"{code} problem",
         "why_now": f"{code} why now",
+        "evidence_summary": evidence_summary or {},
         "clearance_conditions": [f"{code} clears"],
         "verification_commands": verification_commands or ["PYTHONPATH=src python3 -m quant_rabbit.cli trader-support-bot"],
         "suggested_files": suggested_files or ["tests/test_trader_support_bot.py"],

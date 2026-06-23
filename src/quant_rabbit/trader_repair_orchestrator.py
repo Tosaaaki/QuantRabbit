@@ -234,6 +234,8 @@ def _codex_work_order(
         "objective": selected.get("problem"),
         "why_now": selected.get("why_now"),
         "source_findings": selected.get("source_findings") or [],
+        "evidence_summary": selected.get("evidence_summary") or {},
+        "clearance_conditions": selected.get("clearance_conditions") or [],
         "suggested_files": selected.get("suggested_files") or [],
         "required_tests": selected.get("required_tests") or [],
         "targeted_test_commands": selected.get("targeted_test_commands") or [],
@@ -292,6 +294,11 @@ def _queue_item(request: dict[str, Any], *, trader_request: str) -> dict[str, An
         "requires_explicit_operator_approval": explicit,
         "problem": request.get("problem"),
         "why_now": request.get("why_now"),
+        "evidence_summary": (
+            request.get("evidence_summary")
+            if isinstance(request.get("evidence_summary"), dict)
+            else {}
+        ),
         "clearance_conditions": _dedupe_strings(request.get("clearance_conditions")),
         "verification_commands": verification_commands,
         "suggested_files": _dedupe_strings(request.get("suggested_files")),
@@ -466,6 +473,7 @@ def _render_report(payload: dict[str, Any]) -> str:
         "",
         f"- Status: `{work_order.get('status')}`",
         f"- Objective: {work_order.get('objective')}",
+        f"- Evidence summary keys: `{', '.join(sorted((work_order.get('evidence_summary') or {}).keys()))}`",
         f"- Deliverables: `{', '.join(work_order.get('deliverables') or [])}`",
         f"- Final verification: `{', '.join(work_order.get('final_verification_commands') or [])}`",
         f"- Commit and live sync required: `{work_order.get('commit_and_live_sync_required')}`",

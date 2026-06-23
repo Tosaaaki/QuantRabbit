@@ -1361,6 +1361,9 @@ def _execution_timing_loss_close_labels(
         "top_repair_replay_residual_groups": [],
         "top_tp_progress_repair_residual_groups": [],
         "top_entry_quality_residual_groups": [],
+        "top_repair_replay_residual_method_rollups": [],
+        "top_tp_progress_repair_residual_method_rollups": [],
+        "top_entry_quality_residual_method_rollups": [],
         "read_error": None,
     }
     if path is None:
@@ -1545,6 +1548,24 @@ def _execution_timing_loss_close_labels(
         residual_groups,
         scope_filter={"ENTRY_QUALITY_OR_CLOSE_RESIDUAL"},
     )
+    metrics["top_repair_replay_residual_method_rollups"] = (
+        _top_repair_replay_residual_method_rollups(residual_groups)
+    )
+    metrics["top_tp_progress_repair_residual_method_rollups"] = (
+        _top_repair_replay_residual_method_rollups(
+            residual_groups,
+            scope_filter={
+                "TP_PROGRESS_REPAIR_TRIGGERED",
+                "TP_PROGRESS_DIAGNOSTIC_BLOCKED",
+            },
+        )
+    )
+    metrics["top_entry_quality_residual_method_rollups"] = (
+        _top_repair_replay_residual_method_rollups(
+            residual_groups,
+            scope_filter={"ENTRY_QUALITY_OR_CLOSE_RESIDUAL"},
+        )
+    )
     return labels, metrics
 
 
@@ -1668,6 +1689,136 @@ def _top_repair_replay_residual_groups(
     return rows[:10]
 
 
+def _top_repair_replay_residual_method_rollups(
+    groups: dict[tuple[str, str, str, str, str], dict[str, Any]],
+    *,
+    scope_filter: set[str] | None = None,
+) -> list[dict[str, Any]]:
+    rollups: dict[tuple[str, str], dict[str, Any]] = {}
+    for group in groups.values():
+        residual_scope = str(group.get("residual_scope") or "UNKNOWN")
+        if scope_filter is not None and residual_scope not in scope_filter:
+            continue
+        method = str(group.get("method") or "UNKNOWN")
+        key = (residual_scope, method)
+        item = rollups.setdefault(
+            key,
+            {
+                "residual_scope": residual_scope,
+                "method": method,
+                "group_count": 0,
+                "loss_closes": 0,
+                "actual_pl_jpy": 0.0,
+                "repair_replay_pl_jpy": 0.0,
+                "repair_replay_delta_jpy": 0.0,
+                "repair_replay_triggered": 0,
+                "block_reasons": {},
+                "exit_reasons": {},
+                "pairs": {},
+                "sides": {},
+                "examples": [],
+            },
+        )
+        loss_closes = int(group.get("loss_closes") or 0)
+        item["group_count"] = int(item["group_count"]) + 1
+        item["loss_closes"] = int(item["loss_closes"]) + loss_closes
+        item["actual_pl_jpy"] = float(item["actual_pl_jpy"]) + float(
+            group.get("actual_pl_jpy") or 0.0
+        )
+        item["repair_replay_pl_jpy"] = float(item["repair_replay_pl_jpy"]) + float(
+            group.get("repair_replay_pl_jpy") or 0.0
+        )
+        item["repair_replay_delta_jpy"] = float(item["repair_replay_delta_jpy"]) + float(
+            group.get("repair_replay_delta_jpy") or 0.0
+        )
+        item["repair_replay_triggered"] = int(item["repair_replay_triggered"]) + int(
+            group.get("repair_replay_triggered") or 0
+        )
+        pair = str(group.get("pair") or "UNKNOWN")
+        side = str(group.get("side") or "UNKNOWN")
+        exit_reason = str(group.get("exit_reason") or "UNKNOWN")
+        pair_counts = item["pairs"]
+        side_counts = item["sides"]
+        exit_counts = item["exit_reasons"]
+        if isinstance(pair_counts, dict):
+            pair_counts[pair] = int(pair_counts.get(pair) or 0) + loss_closes
+        if isinstance(side_counts, dict):
+            side_counts[side] = int(side_counts.get(side) or 0) + loss_closes
+        if isinstance(exit_counts, dict):
+            exit_counts[exit_reason] = int(exit_counts.get(exit_reason) or 0) + loss_closes
+        source_reasons = (
+            group.get("block_reasons") if isinstance(group.get("block_reasons"), dict) else {}
+        )
+        reasons = item["block_reasons"]
+        if isinstance(reasons, dict):
+            for reason, count in source_reasons.items():
+                reasons[str(reason)] = int(reasons.get(str(reason)) or 0) + int(count or 0)
+        examples = item["examples"]
+        source_examples = group.get("examples") if isinstance(group.get("examples"), list) else []
+        if isinstance(examples, list):
+            for example in source_examples:
+                if not isinstance(example, dict) or len(examples) >= 3:
+                    break
+                examples.append({**example, "pair": pair, "side": side, "method": method})
+
+    rows: list[dict[str, Any]] = []
+    for item in rollups.values():
+        pair_counts = item.get("pairs") if isinstance(item.get("pairs"), dict) else {}
+        side_counts = item.get("sides") if isinstance(item.get("sides"), dict) else {}
+        exit_counts = item.get("exit_reasons") if isinstance(item.get("exit_reasons"), dict) else {}
+        rows.append(
+            {
+                "residual_scope": item["residual_scope"],
+                "method": item["method"],
+                "group_count": int(item.get("group_count") or 0),
+                "pair_count": len(pair_counts),
+                "pairs": sorted(pair_counts),
+                "side_count": len(side_counts),
+                "sides": sorted(side_counts),
+                "exit_reasons": dict(
+                    sorted(
+                        ((str(reason), int(count)) for reason, count in exit_counts.items()),
+                        key=lambda part: (-part[1], part[0]),
+                    )
+                ),
+                "loss_closes": int(item.get("loss_closes") or 0),
+                "actual_pl_jpy": round(float(item.get("actual_pl_jpy") or 0.0), 4),
+                "repair_replay_pl_jpy": round(
+                    float(item.get("repair_replay_pl_jpy") or 0.0),
+                    4,
+                ),
+                "repair_replay_delta_jpy": round(
+                    float(item.get("repair_replay_delta_jpy") or 0.0),
+                    4,
+                ),
+                "repair_replay_triggered": int(item.get("repair_replay_triggered") or 0),
+                "block_reasons": dict(
+                    sorted(
+                        (
+                            (str(reason), int(count))
+                            for reason, count in (
+                                item.get("block_reasons")
+                                if isinstance(item.get("block_reasons"), dict)
+                                else {}
+                            ).items()
+                        ),
+                        key=lambda part: (-part[1], part[0]),
+                    )
+                ),
+                "examples": item.get("examples") if isinstance(item.get("examples"), list) else [],
+            }
+        )
+    rows.sort(
+        key=lambda item: (
+            float(item.get("repair_replay_pl_jpy") or 0.0),
+            -int(item.get("pair_count") or 0),
+            str(item.get("residual_scope") or ""),
+            str(item.get("method") or ""),
+        )
+    )
+    return rows[:10]
+
+
 def _profit_capture_replay_repair_findings(
     timing_metrics: dict[str, Any],
     *,
@@ -1779,6 +1930,15 @@ def _profit_capture_replay_repair_findings(
         "top_entry_quality_residual_groups": (
             timing_metrics.get("top_entry_quality_residual_groups") or []
         ),
+        "top_repair_replay_residual_method_rollups": (
+            timing_metrics.get("top_repair_replay_residual_method_rollups") or []
+        ),
+        "top_tp_progress_repair_residual_method_rollups": (
+            timing_metrics.get("top_tp_progress_repair_residual_method_rollups") or []
+        ),
+        "top_entry_quality_residual_method_rollups": (
+            timing_metrics.get("top_entry_quality_residual_method_rollups") or []
+        ),
         "loss_close_repair_replay_block_reasons": (
             timing_metrics.get("loss_close_repair_replay_block_reasons") or {}
         ),
@@ -1875,6 +2035,15 @@ def _profit_capture_replay_repair_findings(
                     ],
                     "top_entry_quality_residual_groups": metrics[
                         "top_entry_quality_residual_groups"
+                    ],
+                    "top_repair_replay_residual_method_rollups": metrics[
+                        "top_repair_replay_residual_method_rollups"
+                    ],
+                    "top_tp_progress_repair_residual_method_rollups": metrics[
+                        "top_tp_progress_repair_residual_method_rollups"
+                    ],
+                    "top_entry_quality_residual_method_rollups": metrics[
+                        "top_entry_quality_residual_method_rollups"
                     ],
                 },
             )

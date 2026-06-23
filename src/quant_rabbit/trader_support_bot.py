@@ -1272,6 +1272,21 @@ def _acceptance_clearance_for_code(
             if isinstance(evidence.get("top_repair_replay_residual_groups"), list)
             else []
         )
+        residual_method_rollups = (
+            evidence.get("top_repair_replay_residual_method_rollups")
+            if isinstance(evidence.get("top_repair_replay_residual_method_rollups"), list)
+            else []
+        )
+        tp_progress_method_rollups = (
+            evidence.get("top_tp_progress_repair_residual_method_rollups")
+            if isinstance(evidence.get("top_tp_progress_repair_residual_method_rollups"), list)
+            else []
+        )
+        entry_quality_method_rollups = (
+            evidence.get("top_entry_quality_residual_method_rollups")
+            if isinstance(evidence.get("top_entry_quality_residual_method_rollups"), list)
+            else []
+        )
         return (
             "month-scale production-gate replay is non-negative, or the top residual "
             "pair/side/method groups are removed by close-gate, TP-capture, or entry-selection "
@@ -1298,6 +1313,9 @@ def _acceptance_clearance_for_code(
                     3,
                 ),
                 "top_repair_replay_residual_groups": residual_groups[:3],
+                "top_repair_replay_residual_method_rollups": residual_method_rollups[:3],
+                "top_tp_progress_repair_residual_method_rollups": tp_progress_method_rollups[:3],
+                "top_entry_quality_residual_method_rollups": entry_quality_method_rollups[:3],
             },
         )
     if code == "TP_PROGRESS_REPAIR_REPLAY_NOT_DEPLOYED":

@@ -75,6 +75,18 @@ class TraderSupportBotTest(unittest.TestCase):
                 "block_reasons": {"BELOW_TP_PROGRESS_GATE": 1},
             }
         ]
+        method_rollups = [
+            {
+                "residual_scope": "ENTRY_QUALITY_OR_CLOSE_RESIDUAL",
+                "method": "BREAKOUT_FAILURE",
+                "pair_count": 2,
+                "pairs": ["EUR_GBP", "GBP_USD"],
+                "side_count": 2,
+                "sides": ["LONG", "SHORT"],
+                "loss_closes": 2,
+                "repair_replay_pl_jpy": -3872.9794,
+            }
+        ]
         condition, command, summary = _acceptance_clearance_for_code(
             "MONTH_SCALE_TP_PROGRESS_REPLAY_STILL_NEGATIVE",
             {
@@ -85,6 +97,8 @@ class TraderSupportBotTest(unittest.TestCase):
                 "active_counterfactual_profit_capture_pl_jpy": -13824.5957,
                 "counterfactual_profit_capture_delta_jpy": 18775.1646,
                 "top_repair_replay_residual_groups": residual_groups,
+                "top_repair_replay_residual_method_rollups": method_rollups,
+                "top_entry_quality_residual_method_rollups": method_rollups,
             },
             {},
         )
@@ -93,6 +107,8 @@ class TraderSupportBotTest(unittest.TestCase):
         self.assertIn("--lookback-hours 744", command)
         self.assertEqual(summary["repair_replay_counterfactual_pl_jpy"], -13824.596)
         self.assertEqual(summary["top_repair_replay_residual_groups"], residual_groups)
+        self.assertEqual(summary["top_repair_replay_residual_method_rollups"], method_rollups)
+        self.assertEqual(summary["top_entry_quality_residual_method_rollups"], method_rollups)
 
     def test_blocks_when_guardian_is_inactive_and_profit_capture_was_missed(self) -> None:
         now = datetime(2026, 6, 22, 12, 15, tzinfo=timezone.utc)

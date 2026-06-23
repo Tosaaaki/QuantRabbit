@@ -288,6 +288,16 @@ class ProfitabilityAcceptanceReplayRepairTest(unittest.TestCase):
                                 "repair_replay_block_reason": "BELOW_TP_PROGRESS_GATE",
                             },
                             {
+                                "trade_id": "entry-residual-cross-pair",
+                                "pair": "EUR_GBP",
+                                "side": "SHORT",
+                                "lane_id": "failure_trader:EUR_GBP:SHORT:BREAKOUT_FAILURE",
+                                "exit_reason": "MARKET_ORDER_TRADE_CLOSE",
+                                "realized_pl_jpy": -891.0833,
+                                "repair_replay_counterfactual_pl_jpy": -891.0833,
+                                "repair_replay_block_reason": "NO_PROFIT_CANDIDATE",
+                            },
+                            {
                                 "trade_id": "would-clear",
                                 "pair": "USD_JPY",
                                 "side": "SHORT",
@@ -306,7 +316,7 @@ class ProfitabilityAcceptanceReplayRepairTest(unittest.TestCase):
             _labels, metrics = _execution_timing_loss_close_labels(path)
 
         groups = metrics["top_repair_replay_residual_groups"]
-        self.assertEqual(len(groups), 1)
+        self.assertEqual(len(groups), 2)
         self.assertEqual(groups[0]["pair"], "GBP_USD")
         self.assertEqual(groups[0]["side"], "LONG")
         self.assertEqual(groups[0]["method"], "BREAKOUT_FAILURE")
@@ -317,6 +327,25 @@ class ProfitabilityAcceptanceReplayRepairTest(unittest.TestCase):
         self.assertEqual(groups[0]["block_reasons"], {"BELOW_TP_PROGRESS_GATE": 1})
         self.assertEqual(metrics["top_entry_quality_residual_groups"], groups)
         self.assertEqual(metrics["top_tp_progress_repair_residual_groups"], [])
+        method_rollups = metrics["top_entry_quality_residual_method_rollups"]
+        self.assertEqual(len(method_rollups), 1)
+        self.assertEqual(method_rollups[0]["residual_scope"], "ENTRY_QUALITY_OR_CLOSE_RESIDUAL")
+        self.assertEqual(method_rollups[0]["method"], "BREAKOUT_FAILURE")
+        self.assertEqual(method_rollups[0]["pair_count"], 2)
+        self.assertEqual(method_rollups[0]["pairs"], ["EUR_GBP", "GBP_USD"])
+        self.assertEqual(method_rollups[0]["side_count"], 2)
+        self.assertEqual(method_rollups[0]["sides"], ["LONG", "SHORT"])
+        self.assertEqual(method_rollups[0]["loss_closes"], 2)
+        self.assertEqual(method_rollups[0]["repair_replay_pl_jpy"], -3872.9794)
+        self.assertEqual(
+            method_rollups[0]["block_reasons"],
+            {"BELOW_TP_PROGRESS_GATE": 1, "NO_PROFIT_CANDIDATE": 1},
+        )
+        self.assertEqual(
+            metrics["top_repair_replay_residual_method_rollups"],
+            method_rollups,
+        )
+        self.assertEqual(metrics["top_tp_progress_repair_residual_method_rollups"], [])
 
     def test_timing_audit_splits_tp_progress_and_entry_quality_residuals(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -373,6 +402,14 @@ class ProfitabilityAcceptanceReplayRepairTest(unittest.TestCase):
         self.assertEqual(len(entry_groups), 1)
         self.assertEqual(entry_groups[0]["pair"], "GBP_USD")
         self.assertEqual(entry_groups[0]["residual_scope"], "ENTRY_QUALITY_OR_CLOSE_RESIDUAL")
+        tp_rollups = metrics["top_tp_progress_repair_residual_method_rollups"]
+        entry_rollups = metrics["top_entry_quality_residual_method_rollups"]
+        self.assertEqual(len(tp_rollups), 1)
+        self.assertEqual(tp_rollups[0]["method"], "RANGE_ROTATION")
+        self.assertEqual(tp_rollups[0]["residual_scope"], "TP_PROGRESS_DIAGNOSTIC_BLOCKED")
+        self.assertEqual(len(entry_rollups), 1)
+        self.assertEqual(entry_rollups[0]["method"], "BREAKOUT_FAILURE")
+        self.assertEqual(entry_rollups[0]["residual_scope"], "ENTRY_QUALITY_OR_CLOSE_RESIDUAL")
 
 
 if __name__ == "__main__":

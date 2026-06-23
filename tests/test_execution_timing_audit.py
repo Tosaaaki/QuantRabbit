@@ -682,6 +682,45 @@ class ExecutionTimingAuditTest(unittest.TestCase):
                 summary["top_repair_replay_residual_groups"],
             )
             self.assertEqual(summary["top_entry_quality_residual_groups"], [])
+            self.assertEqual(
+                summary["top_tp_progress_repair_residual_method_rollups"],
+                [
+                    {
+                        "residual_scope": "TP_PROGRESS_DIAGNOSTIC_BLOCKED",
+                        "method": "RANGE_ROTATION",
+                        "group_count": 1,
+                        "pair_count": 1,
+                        "pairs": ["USD_JPY"],
+                        "side_count": 1,
+                        "sides": ["SHORT"],
+                        "exit_reasons": {"STOP_LOSS_ORDER": 1},
+                        "loss_closes": 1,
+                        "actual_pl_jpy": -50.0,
+                        "repair_replay_pl_jpy": -50.0,
+                        "repair_replay_delta_jpy": 0.0,
+                        "repair_replay_triggered": 0,
+                        "block_reasons": {"BELOW_NOISE_FLOOR": 1},
+                        "examples": [
+                            {
+                                "trade_id": "t-noisy",
+                                "lane_id": "range_trader:USD_JPY:SHORT:RANGE_ROTATION",
+                                "actual_pl_jpy": -50.0,
+                                "repair_replay_pl_jpy": -50.0,
+                                "repair_replay_triggered": False,
+                                "repair_replay_block_reason": "BELOW_NOISE_FLOOR",
+                                "pair": "USD_JPY",
+                                "side": "SHORT",
+                                "method": "RANGE_ROTATION",
+                            }
+                        ],
+                    }
+                ],
+            )
+            self.assertEqual(
+                summary["top_repair_replay_residual_method_rollups"],
+                summary["top_tp_progress_repair_residual_method_rollups"],
+            )
+            self.assertEqual(summary["top_entry_quality_residual_method_rollups"], [])
             row = payload["loss_close_regrets"][0]
             self.assertTrue(row["profit_capture_missed_before_loss_close"])
             self.assertFalse(row["repair_replay_triggered_before_loss_close"])

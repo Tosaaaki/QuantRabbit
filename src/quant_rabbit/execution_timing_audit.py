@@ -959,15 +959,15 @@ def _summary(
         if not row.get("repair_replay_triggered_before_loss_close")
     )
     repair_replay_pl = _repair_replay_loss_close_pl(loss_rows)
-    repair_replay_residual_groups = _repair_replay_residual_groups(loss_rows)
-    tp_progress_repair_residual_groups = _repair_replay_residual_groups(
+    repair_replay_residual_groups = _repair_replay_residual_group_rows(loss_rows)
+    tp_progress_repair_residual_groups = _repair_replay_residual_group_rows(
         loss_rows,
         scope_filter={
             "TP_PROGRESS_REPAIR_TRIGGERED",
             "TP_PROGRESS_DIAGNOSTIC_BLOCKED",
         },
     )
-    entry_quality_residual_groups = _repair_replay_residual_groups(
+    entry_quality_residual_groups = _repair_replay_residual_group_rows(
         loss_rows,
         scope_filter={"ENTRY_QUALITY_OR_CLOSE_RESIDUAL"},
     )
@@ -1020,9 +1020,18 @@ def _summary(
         "loss_close_repair_replay_block_reasons": dict(
             sorted(repair_replay_block_reasons.items())
         ),
-        "top_repair_replay_residual_groups": repair_replay_residual_groups,
-        "top_tp_progress_repair_residual_groups": tp_progress_repair_residual_groups,
-        "top_entry_quality_residual_groups": entry_quality_residual_groups,
+        "top_repair_replay_residual_groups": repair_replay_residual_groups[:10],
+        "top_tp_progress_repair_residual_groups": tp_progress_repair_residual_groups[:10],
+        "top_entry_quality_residual_groups": entry_quality_residual_groups[:10],
+        "top_repair_replay_residual_method_rollups": _repair_replay_residual_method_rollups(
+            repair_replay_residual_groups
+        ),
+        "top_tp_progress_repair_residual_method_rollups": _repair_replay_residual_method_rollups(
+            tp_progress_repair_residual_groups
+        ),
+        "top_entry_quality_residual_method_rollups": _repair_replay_residual_method_rollups(
+            entry_quality_residual_groups
+        ),
         "avg_decision_lag_minutes_after_first_positive": round(sum(lag_values) / len(lag_values), 2) if lag_values else None,
         "max_decision_lag_minutes_after_first_positive": round(max(lag_values), 2) if lag_values else None,
         "market_closes_audited": len(market_close_rows),
@@ -1084,6 +1093,14 @@ def _repair_replay_loss_close_pl(loss_rows: list[dict[str, Any]]) -> float | Non
 
 
 def _repair_replay_residual_groups(
+    loss_rows: list[dict[str, Any]],
+    *,
+    scope_filter: set[str] | None = None,
+) -> list[dict[str, Any]]:
+    return _repair_replay_residual_group_rows(loss_rows, scope_filter=scope_filter)[:10]
+
+
+def _repair_replay_residual_group_rows(
     loss_rows: list[dict[str, Any]],
     *,
     scope_filter: set[str] | None = None,
@@ -1189,6 +1206,138 @@ def _repair_replay_residual_groups(
             float(item.get("actual_pl_jpy") or 0.0),
             str(item.get("pair") or ""),
             str(item.get("side") or ""),
+            str(item.get("method") or ""),
+        )
+    )
+    return rows
+
+
+def _repair_replay_residual_method_rollups(
+    groups: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    rollups: dict[tuple[str, str], dict[str, Any]] = {}
+    for group in groups:
+        residual_scope = str(group.get("residual_scope") or "UNKNOWN")
+        method = str(group.get("method") or "UNKNOWN")
+        key = (residual_scope, method)
+        item = rollups.setdefault(
+            key,
+            {
+                "residual_scope": residual_scope,
+                "method": method,
+                "group_count": 0,
+                "loss_closes": 0,
+                "actual_pl_jpy": 0.0,
+                "repair_replay_pl_jpy": 0.0,
+                "repair_replay_delta_jpy": 0.0,
+                "repair_replay_triggered": 0,
+                "block_reasons": {},
+                "exit_reasons": {},
+                "pairs": {},
+                "sides": {},
+                "examples": [],
+            },
+        )
+        item["group_count"] = int(item["group_count"]) + 1
+        item["loss_closes"] = int(item["loss_closes"]) + int(group.get("loss_closes") or 0)
+        item["actual_pl_jpy"] = float(item["actual_pl_jpy"]) + float(
+            group.get("actual_pl_jpy") or 0.0
+        )
+        item["repair_replay_pl_jpy"] = float(item["repair_replay_pl_jpy"]) + float(
+            group.get("repair_replay_pl_jpy") or 0.0
+        )
+        item["repair_replay_delta_jpy"] = float(item["repair_replay_delta_jpy"]) + float(
+            group.get("repair_replay_delta_jpy") or 0.0
+        )
+        item["repair_replay_triggered"] = int(item["repair_replay_triggered"]) + int(
+            group.get("repair_replay_triggered") or 0
+        )
+        pair = str(group.get("pair") or "UNKNOWN")
+        side = str(group.get("side") or "UNKNOWN")
+        exit_reason = str(group.get("exit_reason") or "UNKNOWN")
+        pair_counts = item["pairs"]
+        side_counts = item["sides"]
+        exit_counts = item["exit_reasons"]
+        if isinstance(pair_counts, dict):
+            pair_counts[pair] = int(pair_counts.get(pair) or 0) + int(group.get("loss_closes") or 0)
+        if isinstance(side_counts, dict):
+            side_counts[side] = int(side_counts.get(side) or 0) + int(group.get("loss_closes") or 0)
+        if isinstance(exit_counts, dict):
+            exit_counts[exit_reason] = int(exit_counts.get(exit_reason) or 0) + int(
+                group.get("loss_closes") or 0
+            )
+        reasons = item["block_reasons"]
+        source_reasons = group.get("block_reasons") if isinstance(group.get("block_reasons"), dict) else {}
+        if isinstance(reasons, dict):
+            for reason, count in source_reasons.items():
+                reasons[str(reason)] = int(reasons.get(str(reason)) or 0) + int(count or 0)
+        examples = item["examples"]
+        group_examples = group.get("examples") if isinstance(group.get("examples"), list) else []
+        if isinstance(examples, list):
+            for example in group_examples:
+                if not isinstance(example, dict) or len(examples) >= 3:
+                    break
+                examples.append(
+                    {
+                        **example,
+                        "pair": pair,
+                        "side": side,
+                        "method": method,
+                    }
+                )
+
+    rows: list[dict[str, Any]] = []
+    for item in rollups.values():
+        pair_counts = item.get("pairs") if isinstance(item.get("pairs"), dict) else {}
+        side_counts = item.get("sides") if isinstance(item.get("sides"), dict) else {}
+        exit_counts = item.get("exit_reasons") if isinstance(item.get("exit_reasons"), dict) else {}
+        rows.append(
+            {
+                "residual_scope": item["residual_scope"],
+                "method": item["method"],
+                "group_count": int(item.get("group_count") or 0),
+                "pair_count": len(pair_counts),
+                "pairs": sorted(pair_counts),
+                "side_count": len(side_counts),
+                "sides": sorted(side_counts),
+                "exit_reasons": dict(
+                    sorted(
+                        ((str(reason), int(count)) for reason, count in exit_counts.items()),
+                        key=lambda part: (-part[1], part[0]),
+                    )
+                ),
+                "loss_closes": int(item.get("loss_closes") or 0),
+                "actual_pl_jpy": round(float(item.get("actual_pl_jpy") or 0.0), 4),
+                "repair_replay_pl_jpy": round(
+                    float(item.get("repair_replay_pl_jpy") or 0.0),
+                    4,
+                ),
+                "repair_replay_delta_jpy": round(
+                    float(item.get("repair_replay_delta_jpy") or 0.0),
+                    4,
+                ),
+                "repair_replay_triggered": int(item.get("repair_replay_triggered") or 0),
+                "block_reasons": dict(
+                    sorted(
+                        (
+                            (str(reason), int(count))
+                            for reason, count in (
+                                item.get("block_reasons")
+                                if isinstance(item.get("block_reasons"), dict)
+                                else {}
+                            ).items()
+                        ),
+                        key=lambda part: (-part[1], part[0]),
+                    )
+                ),
+                "examples": item.get("examples") if isinstance(item.get("examples"), list) else [],
+            }
+        )
+    rows.sort(
+        key=lambda item: (
+            float(item.get("repair_replay_pl_jpy") or 0.0),
+            -int(item.get("pair_count") or 0),
+            str(item.get("residual_scope") or ""),
             str(item.get("method") or ""),
         )
     )
@@ -1348,6 +1497,9 @@ def _write_report(payload: dict[str, Any], report_path: Path) -> None:
         "top_repair_replay_residual_groups",
         "top_tp_progress_repair_residual_groups",
         "top_entry_quality_residual_groups",
+        "top_repair_replay_residual_method_rollups",
+        "top_tp_progress_repair_residual_method_rollups",
+        "top_entry_quality_residual_method_rollups",
         "avg_decision_lag_minutes_after_first_positive",
         "max_decision_lag_minutes_after_first_positive",
         "market_closes_audited",
