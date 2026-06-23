@@ -2310,6 +2310,124 @@ def _intent_live_blocker_codes_for_digest(result: dict[str, Any]) -> list[str]:
     return codes
 
 
+def _profitability_acceptance_digest_summary(payload: dict[str, Any]) -> dict[str, Any]:
+    metrics = payload.get("metrics") if isinstance(payload.get("metrics"), dict) else {}
+    findings = payload.get("findings") if isinstance(payload.get("findings"), list) else []
+    finding_counts: dict[str, int] = {}
+    for item in findings:
+        if not isinstance(item, dict):
+            continue
+        priority = str(item.get("priority") or "UNKNOWN").upper()
+        finding_counts[priority] = finding_counts.get(priority, 0) + 1
+    metric_counts = (
+        metrics.get("finding_counts")
+        if isinstance(metrics.get("finding_counts"), dict)
+        else {}
+    )
+    blockers = payload.get("blockers") if isinstance(payload.get("blockers"), list) else []
+    capture = (
+        metrics.get("capture_economics")
+        if isinstance(metrics.get("capture_economics"), dict)
+        else {}
+    )
+    capture_overall = (
+        capture.get("overall")
+        if isinstance(capture.get("overall"), dict)
+        else {}
+    )
+    order_metrics = (
+        metrics.get("order_intents")
+        if isinstance(metrics.get("order_intents"), dict)
+        else {}
+    )
+    firepower = (
+        metrics.get("oanda_campaign_firepower")
+        if isinstance(metrics.get("oanda_campaign_firepower"), dict)
+        else {}
+    )
+    high_precision = (
+        firepower.get("high_precision")
+        if isinstance(firepower.get("high_precision"), dict)
+        else {}
+    )
+    bidask = (
+        metrics.get("bidask_replay_rules")
+        if isinstance(metrics.get("bidask_replay_rules"), dict)
+        else {}
+    )
+    price_truth = (
+        bidask.get("price_truth_coverage")
+        if isinstance(bidask.get("price_truth_coverage"), dict)
+        else {}
+    )
+    adoption = (
+        bidask.get("adoption_summary")
+        if isinstance(bidask.get("adoption_summary"), dict)
+        else {}
+    )
+
+    return {
+        "generated_at_utc": payload.get("generated_at_utc"),
+        "status": payload.get("status"),
+        "finding_counts": {
+            "P0": metric_counts.get("P0", finding_counts.get("P0", 0)),
+            "P1": metric_counts.get("P1", finding_counts.get("P1", 0)),
+            "P2": metric_counts.get("P2", finding_counts.get("P2", 0)),
+        },
+        "p0_codes": [
+            item.get("code")
+            for item in findings
+            if isinstance(item, dict)
+            and str(item.get("priority") or "").upper() == "P0"
+        ][:8],
+        "p1_codes": [
+            item.get("code")
+            for item in findings
+            if isinstance(item, dict)
+            and str(item.get("priority") or "").upper() == "P1"
+        ][:8],
+        "top_findings": [
+            {
+                "priority": item.get("priority"),
+                "code": item.get("code"),
+                "message": item.get("message"),
+            }
+            for item in findings
+            if isinstance(item, dict)
+        ][:8],
+        "blockers": blockers[:8],
+        "capture_economics_status": capture.get("status"),
+        "capture_expectancy_jpy_per_trade": capture_overall.get("expectancy_jpy_per_trade"),
+        "capture_profit_factor": capture_overall.get("profit_factor"),
+        "order_live_ready": order_metrics.get("live_ready"),
+        "order_lanes": order_metrics.get("lanes"),
+        "target_firepower": {
+            "status": firepower.get("status"),
+            "target_open": firepower.get("target_open"),
+            "minimum_return_pct": firepower.get("minimum_return_pct"),
+            "target_return_pct": firepower.get("target_return_pct"),
+            "high_precision_required_trades_per_day": high_precision.get(
+                "required_trades_per_day_at_observed_expectancy"
+            ),
+        },
+        "bidask_replay_price_truth": {
+            "status": price_truth.get("status"),
+            "adoption_level": price_truth.get("adoption_level"),
+            "evaluated_rows": price_truth.get("evaluated_rows"),
+            "missing_price_truth_samples": price_truth.get("missing_price_truth_samples"),
+            "missing_price_window_group_count": price_truth.get(
+                "missing_price_window_group_count"
+            ),
+            "history_fetch_command_count": price_truth.get("history_fetch_command_count"),
+            "history_fetch_command_mode": price_truth.get("history_fetch_command_mode"),
+            "has_live_grade_support": adoption.get("has_live_grade_support"),
+            "live_grade_support_rules": adoption.get("live_grade_support_rules"),
+            "rank_only_support_rules": adoption.get("rank_only_support_rules"),
+            "negative_block_rules": adoption.get("negative_block_rules"),
+        },
+    }
+
+
 def _cycle_digest(*, kind: str, step_results: list[dict[str, Any]], aborted: bool) -> dict[str, Any]:
     """Compact single-read packet for the scheduled trader.
 
@@ -2644,6 +2762,12 @@ def _cycle_digest(*, kind: str, step_results: list[dict[str, Any]], aborted: boo
                 if isinstance(item, dict)
             ][:8],
         }
+
+    profitability_acceptance = _read_json_quiet(DEFAULT_PROFITABILITY_ACCEPTANCE)
+    if isinstance(profitability_acceptance, dict):
+        digest["profitability_acceptance"] = _profitability_acceptance_digest_summary(
+            profitability_acceptance
+        )
 
     trader_support = _read_json_quiet(DEFAULT_TRADER_SUPPORT_BOT)
     if isinstance(trader_support, dict):

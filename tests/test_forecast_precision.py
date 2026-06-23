@@ -231,10 +231,11 @@ class ForecastPrecisionConfluenceTest(unittest.TestCase):
         self.assertEqual(assessment["score_delta"], 18.0)
         self.assertEqual(assessment["rule_source"]["generated_from"], "unit-test")
 
-    def test_bidask_replay_uses_live_grade_gbpusd_contrarian_edge(self) -> None:
+    def test_bidask_replay_exposes_rank_only_audjpy_contrarian_without_live_support(self) -> None:
         metadata = {
             "forecast_direction": "UP",
-            "forecast_horizon_min": 90,
+            "forecast_confidence": 0.80,
+            "forecast_horizon_min": 45,
             "chart_direction_bias": "SHORT",
             "tp_execution_mode": "ATTACHED_TECHNICAL_TP",
             "tp_target_intent": "HARVEST",
@@ -243,45 +244,43 @@ class ForecastPrecisionConfluenceTest(unittest.TestCase):
 
         assessment = bidask_replay_precision_assessment(
             metadata,
-            pair="GBP_USD",
+            pair="AUD_JPY",
             side="SHORT",
             order_type="LIMIT",
             method="BREAKOUT_FAILURE",
-            entry=1.30000,
-            take_profit=1.29900,
-            stop_loss=1.30070,
+            entry=114.289,
+            take_profit=114.189,
+            stop_loss=114.359,
         )
 
-        self.assertEqual(
-            assessment["primary_support"]["name"],
-            "GBP_USD_UP_H61_240m_FADE_TO_DOWN_S5_BIDASK_CONTRARIAN_HARVEST_TP10_SL7",
-        )
-        self.assertTrue(assessment["primary_support"]["contrarian_edge"])
-        self.assertEqual(assessment["primary_support"]["direction"], "DOWN")
-        self.assertEqual(assessment["score_delta"], 18.0)
+        self.assertIsNone(assessment["primary_support"])
         self.assertEqual(
             assessment["primary_rank_support"]["name"],
-            "GBP_USD_UP_H61_240m_FADE_TO_DOWN_S5_BIDASK_CONTRARIAN_HARVEST_TP10_SL7",
+            "AUD_JPY_UP_H31_60m_C0p75_0p90_FADE_TO_DOWN_S5_BIDASK_CONTRARIAN_HARVEST_TP10_SL7",
         )
+        self.assertTrue(assessment["primary_rank_support"]["contrarian_edge"])
+        self.assertFalse(assessment["primary_rank_support"]["live_grade"])
+        self.assertEqual(assessment["primary_rank_support"]["direction"], "DOWN")
         self.assertEqual(assessment["primary_rank_support"]["current_target_pips"], 10.0)
         self.assertEqual(assessment["primary_rank_support"]["current_stop_pips"], 7.0)
-        self.assertEqual(assessment["primary_rank_support"]["optimized_profit_factor"], 2.5714)
+        self.assertEqual(assessment["primary_rank_support"]["optimized_profit_factor"], 2.3182)
         self.assertEqual(
             assessment["primary_rank_support"]["adoption_status"],
-            "LIVE_GRADE_DAILY_STABLE",
+            "RANK_ONLY_NOT_DAILY_STABLE",
         )
-        self.assertEqual(
+        self.assertIn("INSUFFICIENT_ACTIVE_DAYS", assessment["primary_rank_support"]["adoption_blockers"])
+        self.assertEqual(assessment["score_delta"], 6.0)
+        self.assertIsNone(
             bidask_replay_precision_support(
                 metadata,
-                pair="GBP_USD",
+                pair="AUD_JPY",
                 side="SHORT",
                 order_type="LIMIT",
                 method="BREAKOUT_FAILURE",
-                entry=1.30000,
-                take_profit=1.29900,
-                stop_loss=1.30070,
-            )["name"],
-            "GBP_USD_UP_H61_240m_FADE_TO_DOWN_S5_BIDASK_CONTRARIAN_HARVEST_TP10_SL7",
+                entry=114.289,
+                take_profit=114.189,
+                stop_loss=114.359,
+            )
         )
 
     def test_bidask_replay_geometry_candidate_requires_daily_stable_live_grade(self) -> None:
@@ -512,7 +511,7 @@ class ForecastPrecisionConfluenceTest(unittest.TestCase):
 
         self.assertEqual(issue["name"], "AUD_JPY_UP_S5_BIDASK_NEGATIVE_EXPECTANCY")
         self.assertTrue(issue["blocks_live_support"])
-        self.assertEqual(issue["samples"], 1223)
+        self.assertEqual(issue["samples"], 135)
 
     def test_holdout_confluence_adds_rotation_support_without_live_override(self) -> None:
         metadata = {

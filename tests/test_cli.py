@@ -5870,6 +5870,112 @@ class ConsolidatedCycleCommandTest(unittest.TestCase):
             "range_trader:GBP_JPY:LONG:RANGE_ROTATION",
         )
 
+    def test_cycle_digest_summarizes_profitability_acceptance_top_level(self) -> None:
+        from quant_rabbit.cli import _cycle_digest
+
+        with tempfile.TemporaryDirectory() as tmp:
+            acceptance_path = Path(tmp) / "profitability_acceptance.json"
+            acceptance_path.write_text(
+                json.dumps(
+                    {
+                        "generated_at_utc": "2026-06-23T01:21:28+00:00",
+                        "status": "PROFITABILITY_ACCEPTANCE_BLOCKED",
+                        "findings": [
+                            {
+                                "priority": "P0",
+                                "code": "MARKET_CLOSE_LEAK_DOMINATES_TP_EDGE",
+                                "message": "market close leakage dominates TP edge",
+                            },
+                            {
+                                "priority": "P0",
+                                "code": "LOSS_CLOSE_GATE_EVIDENCE_MISSING",
+                                "message": "loss close evidence is missing",
+                            },
+                            {
+                                "priority": "P1",
+                                "code": "BIDASK_REPLAY_PRICE_TRUTH_PARTIAL",
+                                "message": "S5 bid/ask truth is partial",
+                            },
+                        ],
+                        "blockers": [
+                            "MARKET_CLOSE_LEAK_DOMINATES_TP_EDGE: market close leakage dominates TP edge",
+                            "LOSS_CLOSE_GATE_EVIDENCE_MISSING: loss close evidence is missing",
+                        ],
+                        "metrics": {
+                            "finding_counts": {"P0": 2, "P1": 1, "P2": 0},
+                            "capture_economics": {
+                                "status": "NEGATIVE_EXPECTANCY",
+                                "overall": {
+                                    "expectancy_jpy_per_trade": -66.2,
+                                    "profit_factor": 0.839,
+                                },
+                            },
+                            "order_intents": {"lanes": 83, "live_ready": 0},
+                            "oanda_campaign_firepower": {
+                                "status": "VERIFIED_TARGET_10_ROUTE_ESTIMATED",
+                                "target_open": True,
+                                "minimum_return_pct": 5.0,
+                                "target_return_pct": 10.0,
+                                "high_precision": {
+                                    "required_trades_per_day_at_observed_expectancy": 18.4,
+                                },
+                            },
+                            "bidask_replay_rules": {
+                                "price_truth_coverage": {
+                                    "status": "PARTIAL_PRICE_TRUTH",
+                                    "adoption_level": "PAIR_LOCAL_RANK_ONLY",
+                                    "evaluated_rows": 18502,
+                                    "missing_price_truth_samples": 21847,
+                                    "missing_price_window_group_count": 26,
+                                    "history_fetch_command_count": 26,
+                                    "history_fetch_command_mode": "WINDOWED",
+                                },
+                                "adoption_summary": {
+                                    "has_live_grade_support": True,
+                                    "live_grade_support_rules": 5,
+                                    "rank_only_support_rules": 0,
+                                    "negative_block_rules": 40,
+                                },
+                            },
+                        },
+                    }
+                )
+            )
+
+            with mock.patch("quant_rabbit.cli.DEFAULT_PROFITABILITY_ACCEPTANCE", acceptance_path):
+                digest = _cycle_digest(kind="cycle_sidecars_digest", step_results=[], aborted=False)
+
+        acceptance = digest["profitability_acceptance"]
+        self.assertEqual(acceptance["status"], "PROFITABILITY_ACCEPTANCE_BLOCKED")
+        self.assertEqual(acceptance["finding_counts"], {"P0": 2, "P1": 1, "P2": 0})
+        self.assertEqual(
+            acceptance["p0_codes"],
+            ["MARKET_CLOSE_LEAK_DOMINATES_TP_EDGE", "LOSS_CLOSE_GATE_EVIDENCE_MISSING"],
+        )
+        self.assertEqual(
+            acceptance["p1_codes"],
+            ["BIDASK_REPLAY_PRICE_TRUTH_PARTIAL"],
+        )
+        self.assertEqual(acceptance["capture_economics_status"], "NEGATIVE_EXPECTANCY")
+        self.assertEqual(acceptance["order_live_ready"], 0)
+        self.assertEqual(
+            acceptance["target_firepower"]["status"],
+            "VERIFIED_TARGET_10_ROUTE_ESTIMATED",
+        )
+        self.assertEqual(
+            acceptance["target_firepower"]["high_precision_required_trades_per_day"],
+            18.4,
+        )
+        self.assertEqual(
+            acceptance["bidask_replay_price_truth"]["status"],
+            "PARTIAL_PRICE_TRUTH",
+        )
+        self.assertEqual(
+            acceptance["bidask_replay_price_truth"]["history_fetch_command_count"],
+            26,
+        )
+        self.assertTrue(acceptance["bidask_replay_price_truth"]["has_live_grade_support"])
+
     def test_cycle_digest_summarizes_profit_capture_bot(self) -> None:
         from quant_rabbit.cli import _cycle_digest
 
