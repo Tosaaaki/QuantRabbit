@@ -130,9 +130,20 @@ class TraderRepairOrchestratorTest(unittest.TestCase):
                 7,
             )
             self.assertIn("Do not send orders", work_order["automation_prompt"])
+            loop_prompt = payload["loop_engineering_prompt"]
+            self.assertEqual(loop_prompt["version"], "loop_engineering_prompt_v1")
+            self.assertEqual(
+                loop_prompt["current_state"]["selected_request_code"],
+                "REPAIR_TP_PROGRESS_PROFIT_CAPTURE_REPLAY",
+            )
+            self.assertIn("implementation work", loop_prompt["current_hypothesis"])
+            self.assertIn("Commit", " ".join(loop_prompt["next_loop"]))
+            self.assertIn("market returns", loop_prompt["prompt_text"])
+            self.assertFalse(loop_prompt["approval_boundary"]["quant_rabbit_code_may_call_model_api"])
             report_text = report.read_text()
             self.assertIn("REPAIR_TP_PROGRESS_PROFIT_CAPTURE_REPLAY", report_text)
             self.assertIn("Codex Work Order", report_text)
+            self.assertIn("Loop Engineering Prompt", report_text)
             self.assertIn("Evidence summary keys", report_text)
             self.assertIn("Dependency", report_text)
 
@@ -175,6 +186,13 @@ class TraderRepairOrchestratorTest(unittest.TestCase):
             self.assertIn("launchd_load", payload["approval_required_requests"][0]["automation_contract"]["requires_explicit_operator_approval_for"])
             self.assertEqual(payload["codex_work_order"]["status"], "NO_ACTIONABLE_CODEX_WORK")
             self.assertEqual(payload["codex_work_order"]["approval_boundary"]["live_side_effects_allowed"], [])
+            loop_prompt = payload["loop_engineering_prompt"]
+            self.assertEqual(
+                loop_prompt["current_state"]["approval_required_request_codes"],
+                ["RESTORE_POSITION_GUARDIAN_AFTER_PREFLIGHT"],
+            )
+            self.assertIn("approval-bound", loop_prompt["current_hypothesis"])
+            self.assertIn("explicit operator approval", " ".join(loop_prompt["next_loop"]))
 
     def test_recovers_repair_queue_from_embedded_support_payload(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -820,6 +838,14 @@ class TraderRepairOrchestratorTest(unittest.TestCase):
                 payload["queue_summary"]["waiting_request_codes"],
             )
             self.assertEqual(payload["codex_work_order"]["status"], "NO_ACTIONABLE_CODEX_WORK")
+            loop_prompt = payload["loop_engineering_prompt"]
+            self.assertEqual(
+                loop_prompt["current_state"]["waiting_request_codes"],
+                ["COLLECT_BIDASK_REPLAY_EVIDENCE"],
+            )
+            self.assertIn("evidence-window work", loop_prompt["current_hypothesis"])
+            self.assertIn("waiting for evidence", " ".join(loop_prompt["next_loop"]))
+            self.assertIn("trader-repair-orchestrator", " ".join(loop_prompt["verification_commands"]))
 
 
 def _write_support(path: Path, requests: list[dict[str, object]]) -> None:

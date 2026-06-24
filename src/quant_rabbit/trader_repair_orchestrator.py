@@ -27,6 +27,7 @@ from quant_rabbit.trader_support_bot import (
 
 
 CONTRACT_VERSION = "trader_repair_orchestrator_v1"
+LOOP_ENGINEERING_PROMPT_VERSION = "loop_engineering_prompt_v1"
 STATUS_READY = "READY_FOR_CODEX_REPAIR"
 STATUS_APPROVAL_REQUIRED = "OPERATOR_APPROVAL_REQUIRED"
 STATUS_NO_REQUESTS = "NO_REPAIR_REQUESTS"
@@ -177,6 +178,17 @@ class TraderRepairOrchestrator:
             status = STATUS_BLOCKED
         else:
             status = STATUS_NO_REQUESTS
+        loop_prompt = _loop_engineering_prompt(
+            support=support,
+            queue=queue,
+            actionable=actionable,
+            approval_required=approval_required,
+            waiting=waiting,
+            selected=selected,
+            status=status,
+            trader_request=self.trader_request,
+            approval_boundary=approval_boundary,
+        )
         payload = {
             "contract_version": CONTRACT_VERSION,
             "generated_at_utc": self.now_utc.isoformat(),
@@ -212,6 +224,7 @@ class TraderRepairOrchestrator:
             },
             "execution_contract": execution_contract,
             "approval_boundary": approval_boundary,
+            "loop_engineering_prompt": loop_prompt,
             "codex_work_order": _codex_work_order(
                 selected,
                 status=status,
@@ -280,6 +293,246 @@ def _approval_boundary(execution_contract: dict[str, Any]) -> dict[str, Any]:
         "quant_rabbit_code_may_call_model_api": False,
         "policy": execution_contract.get("orders_closes_launchd_policy"),
     }
+
+
+def _loop_engineering_prompt(
+    *,
+    support: dict[str, Any],
+    queue: list[dict[str, Any]],
+    actionable: list[dict[str, Any]],
+    approval_required: list[dict[str, Any]],
+    waiting: list[dict[str, Any]],
+    selected: dict[str, Any],
+    status: str,
+    trader_request: str,
+    approval_boundary: dict[str, Any],
+) -> dict[str, Any]:
+    """Build the continuously updated prompt for the 5% campaign repair loop."""
+
+    target = support.get("target") if isinstance(support.get("target"), dict) else {}
+    guardian = support.get("guardian") if isinstance(support.get("guardian"), dict) else {}
+    entry = support.get("entry_readiness") if isinstance(support.get("entry_readiness"), dict) else {}
+    acceptance = (
+        support.get("profitability_acceptance")
+        if isinstance(support.get("profitability_acceptance"), dict)
+        else {}
+    )
+    target_firepower = (
+        acceptance.get("target_firepower")
+        if isinstance(acceptance.get("target_firepower"), dict)
+        else {}
+    )
+    current_state = {
+        "orchestrator_status": status,
+        "support_status": support.get("status"),
+        "support_generated_at_utc": support.get("generated_at_utc"),
+        "campaign_day_jst": target.get("campaign_day_jst"),
+        "target_status": target.get("status"),
+        "minimum_progress_pct": target.get("minimum_progress_pct"),
+        "remaining_minimum_jpy": target.get("remaining_minimum_jpy"),
+        "progress_pct": target.get("progress_pct"),
+        "remaining_target_jpy": target.get("remaining_target_jpy"),
+        "target_trades_per_day": target.get("target_trades_per_day"),
+        "guardian_active": guardian.get("active"),
+        "guardian_active_source": guardian.get("active_source"),
+        "guardian_heartbeat_status": guardian.get("heartbeat_status"),
+        "live_ready_lanes": entry.get("live_ready_lanes"),
+        "guardian_blocked_lanes": entry.get("guardian_blocked_lanes"),
+        "profitability_acceptance_status": acceptance.get("status"),
+        "profitability_blockers": list(acceptance.get("blockers") or [])[:8],
+        "operational_minimum_5pct_reachable": target_firepower.get(
+            "operational_minimum_5pct_reachable"
+        ),
+        "audit_minimum_5pct_estimated_reachable": target_firepower.get(
+            "minimum_5pct_estimated_reachable"
+        ),
+        "operational_blocker_codes": list(target_firepower.get("operational_blocker_codes") or [])[:12],
+        "selected_request_code": selected.get("code") if selected else None,
+        "actionable_request_codes": _queue_codes(actionable),
+        "approval_required_request_codes": _queue_codes(approval_required),
+        "waiting_request_codes": _queue_codes(waiting),
+    }
+    current_hypothesis = _loop_current_hypothesis(
+        actionable=actionable,
+        approval_required=approval_required,
+        waiting=waiting,
+        selected=selected,
+        current_state=current_state,
+    )
+    next_loop = _loop_next_steps(
+        actionable=actionable,
+        approval_required=approval_required,
+        waiting=waiting,
+        selected=selected,
+    )
+    verification_commands = _loop_verification_commands(
+        selected=selected,
+        approval_required=approval_required,
+        waiting=waiting,
+    )
+    anti_loop_rules = [
+        "Do not treat audit-only 5% firepower as operational reachability unless operational_minimum_5pct_reachable is true.",
+        "Do not rerun profitability-acceptance as the fix unless an input artifact, gateway proof, or live evidence window changed first.",
+        "Do not lower MIN_PRODUCTION_LOT_UNITS, bypass MARGIN_TOO_THIN_FOR_MIN_LOT, synthesize PASS close evidence, or loosen protective market-structure guards without a failing regression and a positive-path test.",
+        "Do not send orders, cancel orders, close positions, mutate launchd, or call model APIs from QuantRabbit code outside the existing gateway or explicit operator approval boundary.",
+        "If the top item is waiting for live evidence, collect or wait for the named evidence; do not reimplement the same already-blocking guard.",
+    ]
+    self_review_questions = [
+        "What single blocker currently prevents operational 5% reachability, and is it causal rather than merely frequent?",
+        "Does the next action change broker state, launchd state, order state, or position state? If yes, which approved gateway or explicit operator approval covers it?",
+        "Am I trying to recover profit by increasing churn while capture economics is negative, or by preserving a TP-proven HARVEST shape?",
+        "What evidence would prove this loop iteration worked, and which command will refresh that evidence?",
+        "What is the strongest counterargument that the current blocker is actually a correct protective guardrail?",
+    ]
+    prompt_text = _render_loop_prompt_text(
+        current_state=current_state,
+        current_hypothesis=current_hypothesis,
+        next_loop=next_loop,
+        verification_commands=verification_commands,
+        self_review_questions=self_review_questions,
+        anti_loop_rules=anti_loop_rules,
+        trader_request=trader_request,
+    )
+    return {
+        "version": LOOP_ENGINEERING_PROMPT_VERSION,
+        "objective": (
+            "Drive QuantRabbit toward the daily 5% minimum from starting equity by repeatedly "
+            "selecting the highest-causal blocker, taking only approved code/evidence actions, "
+            "and verifying that operational reachability improves without bypassing broker truth."
+        ),
+        "trader_request": trader_request,
+        "current_state": current_state,
+        "current_hypothesis": current_hypothesis,
+        "next_loop": next_loop,
+        "verification_commands": verification_commands,
+        "self_review_questions": self_review_questions,
+        "anti_loop_rules": anti_loop_rules,
+        "approval_boundary": approval_boundary,
+        "prompt_text": prompt_text,
+    }
+
+
+def _queue_codes(items: list[dict[str, Any]]) -> list[str]:
+    return [str(item.get("code")) for item in items if item.get("code")]
+
+
+def _loop_current_hypothesis(
+    *,
+    actionable: list[dict[str, Any]],
+    approval_required: list[dict[str, Any]],
+    waiting: list[dict[str, Any]],
+    selected: dict[str, Any],
+    current_state: dict[str, Any],
+) -> str:
+    if selected:
+        return (
+            f"The next useful loop is implementation work on {selected.get('code')}: "
+            f"{selected.get('problem')}"
+        )
+    if approval_required:
+        item = approval_required[0]
+        return (
+            f"The next blocker is approval-bound, not Codex code work: {item.get('code')} "
+            f"({item.get('problem')})."
+        )
+    if waiting:
+        item = waiting[0]
+        return (
+            f"The next blocker is evidence-window work: {item.get('code')} "
+            f"({item.get('repair_status')}). Do not edit gates until the clearance evidence changes."
+        )
+    if current_state.get("live_ready_lanes") == 0:
+        return "The target is open but no LIVE_READY lanes exist; refresh support evidence and rank live blocker families."
+    return "No repair request is queued; continue broker-truth refresh, support bot generation, and acceptance checks."
+
+
+def _loop_next_steps(
+    *,
+    actionable: list[dict[str, Any]],
+    approval_required: list[dict[str, Any]],
+    waiting: list[dict[str, Any]],
+    selected: dict[str, Any],
+) -> list[str]:
+    if selected:
+        return [
+            "Read the selected request evidence and suggested files before editing.",
+            "Implement the smallest code/test/doc change that directly clears the selected clearance condition.",
+            "Run targeted tests and listed verification commands; do not count report reruns as repair unless the underlying evidence changed.",
+            "Commit with Codex attribution, sync live runtime, and verify live HEAD matches the promoted commit.",
+        ]
+    if approval_required:
+        first = approval_required[0]
+        return [
+            f"Run read-only preflight/status checks for {first.get('code')}.",
+            "Do not load/reload launchd, send/cancel orders, or close positions without explicit operator approval or an existing gateway path.",
+            "After approval-bound state changes externally, rerun trader-support-bot and trader-repair-orchestrator to regenerate this prompt.",
+        ]
+    if waiting:
+        first = waiting[0]
+        return [
+            f"Treat {first.get('code')} as waiting for evidence, not implementation.",
+            "Run only the listed read-only verification/evidence commands and compare the new artifact against the clearance condition.",
+            "If the same blocker repeats unchanged, move to the next actionable request or report the live-evidence wait instead of rewriting the same guard.",
+        ]
+    return [
+        "Refresh trader-support-bot and trader-repair-orchestrator.",
+        "If the target remains open with no LIVE_READY lanes, rank blocker families before proposing code.",
+    ]
+
+
+def _loop_verification_commands(
+    *,
+    selected: dict[str, Any],
+    approval_required: list[dict[str, Any]],
+    waiting: list[dict[str, Any]],
+) -> list[str]:
+    raw: list[str] = []
+    if selected:
+        raw.extend(_dedupe_strings(selected.get("final_verification_commands")))
+    else:
+        for item in [*approval_required[:2], *waiting[:3]]:
+            raw.extend(_dedupe_strings(item.get("verification_commands")))
+    raw.extend(
+        [
+            "PYTHONPATH=src python3 -m quant_rabbit.cli trader-support-bot",
+            "PYTHONPATH=src python3 -m quant_rabbit.cli trader-repair-orchestrator",
+        ]
+    )
+    return _dedupe_strings(raw)
+
+
+def _render_loop_prompt_text(
+    *,
+    current_state: dict[str, Any],
+    current_hypothesis: str,
+    next_loop: list[str],
+    verification_commands: list[str],
+    self_review_questions: list[str],
+    anti_loop_rules: list[str],
+    trader_request: str,
+) -> str:
+    lines = [
+        "QuantRabbit loop engineering prompt:",
+        "",
+        "Goal: pursue the 5% daily minimum as an audit/repair obligation, not as a promise of market returns.",
+        f"Trader request: {trader_request or '(none)'}",
+        f"State: orchestrator={current_state.get('orchestrator_status')}, "
+        f"target={current_state.get('target_status')}, live_ready={current_state.get('live_ready_lanes')}, "
+        f"guardian_active={current_state.get('guardian_active')}, "
+        f"operational_5pct={current_state.get('operational_minimum_5pct_reachable')}, "
+        f"audit_5pct={current_state.get('audit_minimum_5pct_estimated_reachable')}.",
+        f"Hypothesis: {current_hypothesis}",
+        "",
+        "Next loop:",
+    ]
+    lines.extend(f"- {item}" for item in next_loop)
+    lines.extend(["", "Self-review questions:"])
+    lines.extend(f"- {item}" for item in self_review_questions)
+    lines.extend(["", "Anti-loop rules:"])
+    lines.extend(f"- {item}" for item in anti_loop_rules)
+    lines.extend(["", "Verification commands:"])
+    lines.extend(f"- {item}" for item in verification_commands)
+    return "\n".join(lines)
 
 
 def _codex_work_order(
@@ -620,6 +873,16 @@ def _render_report(payload: dict[str, Any]) -> str:
     contract = payload.get("execution_contract") if isinstance(payload.get("execution_contract"), dict) else {}
     work_order = payload.get("codex_work_order") if isinstance(payload.get("codex_work_order"), dict) else {}
     boundary = payload.get("approval_boundary") if isinstance(payload.get("approval_boundary"), dict) else {}
+    loop_prompt = (
+        payload.get("loop_engineering_prompt")
+        if isinstance(payload.get("loop_engineering_prompt"), dict)
+        else {}
+    )
+    loop_state = (
+        loop_prompt.get("current_state")
+        if isinstance(loop_prompt.get("current_state"), dict)
+        else {}
+    )
     lines = [
         "# Trader Repair Orchestrator Report",
         "",
@@ -656,6 +919,25 @@ def _render_report(payload: dict[str, Any]) -> str:
         f"- Read-only until gateway or approval: `{boundary.get('read_only_until_gateway_or_operator_approval')}`",
         f"- Approval required for: `{', '.join(boundary.get('requires_explicit_operator_approval_for') or [])}`",
         f"- Existing gateway paths: `{json.dumps(boundary.get('existing_gateway_paths') or {}, ensure_ascii=False, sort_keys=True)}`",
+        "",
+        "## Loop Engineering Prompt",
+        "",
+        f"- Version: `{loop_prompt.get('version')}`",
+        f"- Objective: {loop_prompt.get('objective')}",
+        f"- Hypothesis: {loop_prompt.get('current_hypothesis')}",
+        f"- Operational 5pct reachable: `{loop_state.get('operational_minimum_5pct_reachable')}`",
+        f"- Audit 5pct estimated reachable: `{loop_state.get('audit_minimum_5pct_estimated_reachable')}`",
+        f"- Live-ready lanes: `{loop_state.get('live_ready_lanes')}`",
+        f"- Guardian active: `{loop_state.get('guardian_active')}`",
+        f"- Actionable: `{', '.join(loop_state.get('actionable_request_codes') or [])}`",
+        f"- Approval required: `{', '.join(loop_state.get('approval_required_request_codes') or [])}`",
+        f"- Waiting: `{', '.join(loop_state.get('waiting_request_codes') or [])}`",
+        f"- Next loop: `{'; '.join(loop_prompt.get('next_loop') or [])}`",
+        f"- Verification: `{', '.join(loop_prompt.get('verification_commands') or [])}`",
+        "",
+        "```text",
+        str(loop_prompt.get("prompt_text") or ""),
+        "```",
         "",
         "## Queue",
         "",

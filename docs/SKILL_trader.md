@@ -374,9 +374,13 @@ QR_LIVE_ENABLED=1 ./scripts/run-autotrade-live.sh \
 #   It converts `repair_requests` into a Codex repair queue with suggested
 #   files, test commands, verification commands, commit/live-sync requirement,
 #   and a top-level `codex_work_order` that an external Codex automation can
-#   consume directly. The work order repeats the hard boundary that orders,
-#   cancels, closes, and launchd load/reload require explicit approval or an
-#   existing gateway path. If a blocked support artifact is older and lacks
+#   consume directly. It also writes `loop_engineering_prompt`, the
+#   continuously updated 5% campaign repair prompt: current operational
+#   reachability, selected/waiting blocker, next loop, self-review questions,
+#   anti-loop rules, and verification commands. The prompt is guidance for
+#   Codex repair/evidence work, not live permission. The work order repeats the
+#   hard boundary that orders, cancels, closes, and launchd load/reload require
+#   explicit approval or an existing gateway path. If a blocked support artifact is older and lacks
 #   top-level `repair_requests`, it rebuilds the queue from embedded
 #   acceptance/guardian/frontier evidence instead of returning
 #   `NO_REPAIR_REQUESTS`. It grants no live permission and does not call model
