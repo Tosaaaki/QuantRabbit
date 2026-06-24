@@ -724,6 +724,29 @@ def _execution_ledger_close_findings(
             gateway_raw_json_select = (
                 "g.raw_json AS gateway_raw_json" if "raw_json" in columns else "NULL AS gateway_raw_json"
             )
+            accepted_gpt_close_raw_json_select = (
+                """
+                    (
+                        SELECT accepted.raw_json
+                        FROM execution_events accepted
+                        WHERE accepted.event_type = 'GATEWAY_GPT_CLOSE_ACCEPTED'
+                          AND accepted.trade_id = g.trade_id
+                          AND accepted.ts_utc <= g.ts_utc
+                          AND NOT EXISTS (
+                              SELECT 1
+                              FROM execution_events newer_accepted
+                              WHERE newer_accepted.event_type = 'GATEWAY_GPT_CLOSE_ACCEPTED'
+                                AND newer_accepted.trade_id = g.trade_id
+                                AND newer_accepted.ts_utc > accepted.ts_utc
+                                AND newer_accepted.ts_utc <= g.ts_utc
+                          )
+                        ORDER BY accepted.ts_utc DESC
+                        LIMIT 1
+                    ) AS accepted_gpt_close_raw_json
+                """
+                if "raw_json" in columns
+                else "NULL AS accepted_gpt_close_raw_json"
+            )
             verification_columns = (
                 {
                     str(row[1])
@@ -868,7 +891,25 @@ def _execution_ledger_close_findings(
                         WHERE accepted.event_type = 'GATEWAY_GPT_CLOSE_ACCEPTED'
                           AND COALESCE(accepted.trade_id, '') != ''
                           AND accepted.trade_id = g.trade_id
-                    ) AS has_gpt_close_accepted
+                    ) AS has_gpt_close_accepted,
+                    (
+                        SELECT accepted.ts_utc
+                        FROM execution_events accepted
+                        WHERE accepted.event_type = 'GATEWAY_GPT_CLOSE_ACCEPTED'
+                          AND accepted.trade_id = g.trade_id
+                          AND accepted.ts_utc <= g.ts_utc
+                          AND NOT EXISTS (
+                              SELECT 1
+                              FROM execution_events newer_accepted
+                              WHERE newer_accepted.event_type = 'GATEWAY_GPT_CLOSE_ACCEPTED'
+                                AND newer_accepted.trade_id = g.trade_id
+                                AND newer_accepted.ts_utc > accepted.ts_utc
+                                AND newer_accepted.ts_utc <= g.ts_utc
+                          )
+                        ORDER BY accepted.ts_utc DESC
+                        LIMIT 1
+                    ) AS accepted_gpt_close_ts_utc,
+                    {accepted_gpt_close_raw_json_select}
                 FROM gateway_closes g
                 INNER JOIN execution_events c
                   ON c.event_type = 'TRADE_CLOSED'
@@ -925,6 +966,10 @@ def _execution_ledger_close_findings(
             has_gateway_close_sent=bool(row["has_gateway_close_sent"]),
             has_gpt_close_accepted=bool(row["has_gpt_close_accepted"]),
         )
+        accepted_evidence = _accepted_close_gate_evidence_summary(
+            row["accepted_gpt_close_raw_json"],
+            trade_id=str(row["trade_id"] or ""),
+        )
         parsed.append(
             {
                 "ts": ts,
@@ -940,6 +985,10 @@ def _execution_ledger_close_findings(
                 "close_provenance": close_provenance,
                 "has_close_gate_evidence": bool(row["has_close_gate_evidence"]),
                 "has_passing_close_gate_evidence": bool(row["has_passing_close_gate_evidence"]),
+                "accepted_gpt_close_ts_utc": row["accepted_gpt_close_ts_utc"],
+                "accepted_receipt_has_close_gate_evidence": accepted_evidence["has_trade_evidence"],
+                "accepted_receipt_has_any_close_gate_evidence": accepted_evidence["has_any_evidence"],
+                "accepted_receipt_close_gate_evidence_count": accepted_evidence["evidence_count"],
             }
         )
     metrics["gateway_market_closes"] = len(parsed)
@@ -1006,6 +1055,16 @@ def _execution_ledger_close_findings(
         for row in recent_close_gate_unverified_losses
         if row.get("has_close_gate_evidence") is not True
     ]
+    recent_close_gate_missing_receipt_evidence_present_losses = [
+        row
+        for row in recent_close_gate_missing_losses
+        if row.get("accepted_receipt_has_close_gate_evidence") is True
+    ]
+    recent_close_gate_missing_receipt_evidence_absent_losses = [
+        row
+        for row in recent_close_gate_missing_losses
+        if row.get("accepted_receipt_has_close_gate_evidence") is not True
+    ]
     recent_close_gate_not_passing_losses = [
         row
         for row in recent_close_gate_unverified_losses
@@ -1047,6 +1106,26 @@ def _execution_ledger_close_findings(
     metrics["recent_close_gate_missing_loss_closes"] = len(recent_close_gate_missing_losses)
     metrics["recent_close_gate_missing_loss_net_jpy"] = round(
         sum(float(row.get("realized_pl_jpy") or 0.0) for row in recent_close_gate_missing_losses),
+        4,
+    )
+    metrics["recent_close_gate_missing_receipt_evidence_present_loss_closes"] = len(
+        recent_close_gate_missing_receipt_evidence_present_losses
+    )
+    metrics["recent_close_gate_missing_receipt_evidence_present_loss_net_jpy"] = round(
+        sum(
+            float(row.get("realized_pl_jpy") or 0.0)
+            for row in recent_close_gate_missing_receipt_evidence_present_losses
+        ),
+        4,
+    )
+    metrics["recent_close_gate_missing_receipt_evidence_absent_loss_closes"] = len(
+        recent_close_gate_missing_receipt_evidence_absent_losses
+    )
+    metrics["recent_close_gate_missing_receipt_evidence_absent_loss_net_jpy"] = round(
+        sum(
+            float(row.get("realized_pl_jpy") or 0.0)
+            for row in recent_close_gate_missing_receipt_evidence_absent_losses
+        ),
         4,
     )
     metrics["recent_close_gate_not_passing_loss_closes"] = len(recent_close_gate_not_passing_losses)
@@ -1162,6 +1241,16 @@ def _execution_ledger_close_findings(
             "timing_path_label": row.get("timing_path_label"),
             "has_close_gate_evidence": row.get("has_close_gate_evidence"),
             "has_passing_close_gate_evidence": row.get("has_passing_close_gate_evidence"),
+            "accepted_gpt_close_ts_utc": row.get("accepted_gpt_close_ts_utc"),
+            "accepted_receipt_has_close_gate_evidence": row.get(
+                "accepted_receipt_has_close_gate_evidence"
+            ),
+            "accepted_receipt_has_any_close_gate_evidence": row.get(
+                "accepted_receipt_has_any_close_gate_evidence"
+            ),
+            "accepted_receipt_close_gate_evidence_count": row.get(
+                "accepted_receipt_close_gate_evidence_count"
+            ),
         }
         for row in sorted(
             recent_close_gate_missing_losses,
@@ -1294,6 +1383,18 @@ def _execution_ledger_close_findings(
                     ],
                     "recent_close_gate_not_passing_loss_closes": metrics[
                         "recent_close_gate_not_passing_loss_closes"
+                    ],
+                    "recent_close_gate_missing_receipt_evidence_present_loss_closes": metrics[
+                        "recent_close_gate_missing_receipt_evidence_present_loss_closes"
+                    ],
+                    "recent_close_gate_missing_receipt_evidence_present_loss_net_jpy": metrics[
+                        "recent_close_gate_missing_receipt_evidence_present_loss_net_jpy"
+                    ],
+                    "recent_close_gate_missing_receipt_evidence_absent_loss_closes": metrics[
+                        "recent_close_gate_missing_receipt_evidence_absent_loss_closes"
+                    ],
+                    "recent_close_gate_missing_receipt_evidence_absent_loss_net_jpy": metrics[
+                        "recent_close_gate_missing_receipt_evidence_absent_loss_net_jpy"
                     ],
                     "examples": metrics["recent_close_gate_missing_loss_examples"],
                 },
@@ -2229,6 +2330,27 @@ def _method_from_lane_id(lane_id: str | None) -> str | None:
     if len(parts) >= 4:
         return parts[3]
     return None
+
+
+def _accepted_close_gate_evidence_summary(raw_json: Any, *, trade_id: str) -> dict[str, Any]:
+    payload = _json_dict(raw_json)
+    close_gate_evidence = (
+        payload.get("close_gate_evidence")
+        if isinstance(payload.get("close_gate_evidence"), list)
+        else []
+    )
+    evidence_count = sum(1 for item in close_gate_evidence if isinstance(item, dict))
+    trade_key = str(trade_id or "").strip()
+    has_trade_evidence = any(
+        str(item.get("trade_id") or "").strip() == trade_key
+        for item in close_gate_evidence
+        if isinstance(item, dict)
+    )
+    return {
+        "has_any_evidence": evidence_count > 0,
+        "has_trade_evidence": has_trade_evidence,
+        "evidence_count": evidence_count,
+    }
 
 
 def _json_dict(value: Any) -> dict[str, Any]:

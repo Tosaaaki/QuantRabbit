@@ -627,6 +627,89 @@ class TraderSupportBotTest(unittest.TestCase):
         self.assertEqual(request["evidence_summary"]["not_passing_close_gate_evidence"], 1)
         self.assertEqual(request["evidence_summary"]["missing_close_gate_evidence"], 0)
 
+    def test_receipt_missing_close_gate_evidence_waits_for_historical_window(self) -> None:
+        now = datetime(2026, 6, 22, 12, 15, tzinfo=timezone.utc)
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _write_fixture(root, now=now, blocked=True)
+            _write_json(
+                files["profitability"],
+                {
+                    "status": "PROFITABILITY_ACCEPTANCE_BLOCKED",
+                    "blockers": [
+                        "LOSS_CLOSE_GATE_EVIDENCE_MISSING: 1 close lacks evidence",
+                    ],
+                    "findings": [
+                        {
+                            "priority": "P0",
+                            "code": "LOSS_CLOSE_GATE_EVIDENCE_MISSING",
+                            "message": "1 recent GPT loss-side market close lacks durable close_gate_evidence",
+                            "next_action": "wait for clean window or future PASS evidence",
+                            "evidence": {
+                                "recent_close_gate_unverified_loss_closes": 1,
+                                "recent_close_gate_unverified_loss_net_jpy": -1380.8,
+                                "recent_close_gate_missing_loss_closes": 1,
+                                "recent_close_gate_missing_loss_net_jpy": -1380.8,
+                                "recent_close_gate_not_passing_loss_closes": 0,
+                                "recent_close_gate_missing_receipt_evidence_present_loss_closes": 0,
+                                "recent_close_gate_missing_receipt_evidence_present_loss_net_jpy": 0.0,
+                                "recent_close_gate_missing_receipt_evidence_absent_loss_closes": 1,
+                                "recent_close_gate_missing_receipt_evidence_absent_loss_net_jpy": -1380.8,
+                                "examples": [
+                                    {
+                                        "trade_id": "472743",
+                                        "pair": "NZD_USD",
+                                        "side": "LONG",
+                                        "ts_utc": (now - timedelta(days=2)).isoformat(),
+                                        "has_close_gate_evidence": False,
+                                        "has_passing_close_gate_evidence": False,
+                                        "accepted_receipt_has_close_gate_evidence": False,
+                                    }
+                                ],
+                            },
+                        }
+                    ],
+                    "metrics": {
+                        "capture_economics": {},
+                        "oanda_campaign_firepower": {},
+                    },
+                },
+            )
+            env = _guardian_env(root, active="0")
+            with mock.patch.dict(os.environ, env, clear=False):
+                summary = TraderSupportBot(
+                    broker_snapshot_path=files["broker"],
+                    order_intents_path=files["intents"],
+                    target_state_path=files["target"],
+                    position_management_path=files["position_management"],
+                    position_guardian_management_path=files["guardian_management"],
+                    position_guardian_execution_path=files["guardian_execution"],
+                    position_guardian_heartbeat_path=files["guardian_heartbeat"],
+                    self_improvement_audit_path=files["self_improvement"],
+                    profitability_acceptance_path=files["profitability"],
+                    execution_timing_audit_path=files["timing"],
+                    profit_capture_bot_path=files["profit_capture_bot"],
+                    output_path=files["output"],
+                    report_path=files["report"],
+                    now_utc=now,
+                ).run()
+
+            payload = json.loads(files["output"].read_text())
+
+        self.assertEqual(summary.status, STATUS_BLOCKED)
+        codes = payload["metrics"]["repair_request_codes"]
+        self.assertNotIn("REPAIR_CLOSE_GATE_EVIDENCE_PERSISTENCE", codes)
+        self.assertIn("REVIEW_CLOSE_GATE_EVIDENCE_FAILURES", codes)
+        request = next(
+            item
+            for item in payload["repair_requests"]
+            if item["code"] == "REVIEW_CLOSE_GATE_EVIDENCE_FAILURES"
+        )
+        self.assertEqual(request["status"], "HISTORICAL_ACCEPTANCE_WINDOW_ACTIVE")
+        self.assertEqual(request["source_findings"], ["LOSS_CLOSE_GATE_EVIDENCE_MISSING"])
+        self.assertEqual(request["evidence_summary"]["missing_receipt_evidence_absent"], 1)
+        self.assertEqual(request["evidence_summary"]["missing_receipt_evidence_present"], 0)
+
     def test_month_scale_residual_repair_waits_when_current_intents_are_already_blocked(self) -> None:
         now = datetime(2026, 6, 22, 12, 15, tzinfo=timezone.utc)
         with tempfile.TemporaryDirectory() as tmp:

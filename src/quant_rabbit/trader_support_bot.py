@@ -2028,6 +2028,24 @@ def _acceptance_clearance_for_code(
                 "not_passing_close_gate_evidence": evidence.get(
                     "recent_close_gate_not_passing_loss_closes"
                 ),
+                "missing_receipt_evidence_present": evidence.get(
+                    "recent_close_gate_missing_receipt_evidence_present_loss_closes"
+                ),
+                "missing_receipt_evidence_present_net_jpy": _round_optional(
+                    evidence.get(
+                        "recent_close_gate_missing_receipt_evidence_present_loss_net_jpy"
+                    ),
+                    3,
+                ),
+                "missing_receipt_evidence_absent": evidence.get(
+                    "recent_close_gate_missing_receipt_evidence_absent_loss_closes"
+                ),
+                "missing_receipt_evidence_absent_net_jpy": _round_optional(
+                    evidence.get(
+                        "recent_close_gate_missing_receipt_evidence_absent_loss_net_jpy"
+                    ),
+                    3,
+                ),
                 "latest_missing_evidence_ts_utc": latest,
                 "earliest_auto_clear_if_no_new_missing_utc": _plus_days_iso(
                     latest,
@@ -3428,45 +3446,102 @@ def _build_repair_requests(
 
     if "LOSS_CLOSE_GATE_EVIDENCE_MISSING" in item_by_code:
         item = item_by_code["LOSS_CLOSE_GATE_EVIDENCE_MISSING"]
-        requests.append(
-            _repair_request(
-                code="REPAIR_CLOSE_GATE_EVIDENCE_PERSISTENCE",
-                priority="P0",
-                status="READY_FOR_CODE_REPAIR",
-                source_findings=[
-                    code
-                    for code in (
-                        "LOSS_CLOSE_GATE_EVIDENCE_MISSING",
-                        "RECENT_GATEWAY_LOSS_MARKET_CLOSE_LEAK",
-                    )
-                    if code in item_by_code
-                ],
-                problem=(
-                    "Loss-side market closes can remain unverified because durable close_gate_evidence "
-                    "is missing from the verification ledger."
-                ),
-                why_now=(
-                    "Profitability acceptance will keep blocking high-turn scaling until every recent "
-                    "GPT/gateway loss close has PASS close_gate_evidence or ages out."
-                ),
-                evidence_summary=item.get("evidence_summary"),
-                clearance_conditions=[item.get("clearance_condition")],
-                verification_commands=[item.get("verification_command")],
-                suggested_files=[
-                    "src/quant_rabbit/gpt_trader.py",
-                    "src/quant_rabbit/verification_ledger.py",
-                    "src/quant_rabbit/profitability_acceptance.py",
-                    "tests/test_gpt_trader.py",
-                    "tests/test_verification_ledger.py",
-                    "tests/test_cli.py",
-                ],
-                required_tests=[
-                    "Regression: a GPT loss-side close without PASS close_gate_evidence remains blocked.",
-                    "Positive path: a contained GPT loss-side close with matching PASS close_gate_evidence clears the acceptance blocker.",
-                    "Ledger path: close_gate_evidence is written to verification_observations for accepted and rejected CLOSE receipts.",
-                ],
-            )
+        evidence_summary = (
+            item.get("evidence_summary")
+            if isinstance(item.get("evidence_summary"), dict)
+            else {}
         )
+        missing_with_receipt_evidence = _int_like(
+            evidence_summary.get("missing_receipt_evidence_present")
+        )
+        missing_without_receipt_evidence = _int_like(
+            evidence_summary.get("missing_receipt_evidence_absent")
+        )
+        missing_breakdown_known = (
+            "missing_receipt_evidence_present" in evidence_summary
+            or "missing_receipt_evidence_absent" in evidence_summary
+        )
+        if missing_breakdown_known and missing_with_receipt_evidence <= 0 and missing_without_receipt_evidence > 0:
+            requests.append(
+                _repair_request(
+                    code="REVIEW_CLOSE_GATE_EVIDENCE_FAILURES",
+                    priority="P0",
+                    status="HISTORICAL_ACCEPTANCE_WINDOW_ACTIVE",
+                    source_findings=[
+                        code
+                        for code in (
+                            "LOSS_CLOSE_GATE_EVIDENCE_MISSING",
+                            "RECENT_GATEWAY_LOSS_MARKET_CLOSE_LEAK",
+                        )
+                        if code in item_by_code
+                    ],
+                    problem=(
+                        "Recent loss-side GPT closes lack durable close_gate_evidence because the "
+                        "accepted close receipts themselves did not contain evidence."
+                    ),
+                    why_now=(
+                        "A code-repair loop must not synthesize evidence for historical closes. "
+                        "Acceptance remains red until these missing-evidence closes age out or "
+                        "future loss-side closes carry PASS evidence."
+                    ),
+                    evidence_summary=evidence_summary,
+                    clearance_conditions=[item.get("clearance_condition")],
+                    verification_commands=[item.get("verification_command")],
+                    suggested_files=[
+                        "src/quant_rabbit/gpt_trader.py",
+                        "src/quant_rabbit/automation.py",
+                        "src/quant_rabbit/verification_ledger.py",
+                        "tests/test_gpt_trader.py",
+                        "tests/test_autotrade_cycle.py",
+                        "tests/test_verification_ledger.py",
+                    ],
+                    required_tests=[
+                        "Regression: an accepted GPT loss-side close without close_gate_evidence is blocked before broker close.",
+                        "Positive path: a future contained GPT loss-side close with PASS close_gate_evidence clears this blocker.",
+                        "Loop guard: support bot labels historical receipt-missing close evidence as an acceptance-window wait, not code repair.",
+                    ],
+                )
+            )
+        else:
+            requests.append(
+                _repair_request(
+                    code="REPAIR_CLOSE_GATE_EVIDENCE_PERSISTENCE",
+                    priority="P0",
+                    status="READY_FOR_CODE_REPAIR",
+                    source_findings=[
+                        code
+                        for code in (
+                            "LOSS_CLOSE_GATE_EVIDENCE_MISSING",
+                            "RECENT_GATEWAY_LOSS_MARKET_CLOSE_LEAK",
+                        )
+                        if code in item_by_code
+                    ],
+                    problem=(
+                        "Loss-side market closes can remain unverified because durable close_gate_evidence "
+                        "is missing from the verification ledger."
+                    ),
+                    why_now=(
+                        "Profitability acceptance will keep blocking high-turn scaling until every recent "
+                        "GPT/gateway loss close has PASS close_gate_evidence or ages out."
+                    ),
+                    evidence_summary=evidence_summary,
+                    clearance_conditions=[item.get("clearance_condition")],
+                    verification_commands=[item.get("verification_command")],
+                    suggested_files=[
+                        "src/quant_rabbit/gpt_trader.py",
+                        "src/quant_rabbit/verification_ledger.py",
+                        "src/quant_rabbit/profitability_acceptance.py",
+                        "tests/test_gpt_trader.py",
+                        "tests/test_verification_ledger.py",
+                        "tests/test_cli.py",
+                    ],
+                    required_tests=[
+                        "Regression: a GPT loss-side close without PASS close_gate_evidence remains blocked.",
+                        "Positive path: a contained GPT loss-side close with matching PASS close_gate_evidence clears the acceptance blocker.",
+                        "Ledger path: close_gate_evidence is written to verification_observations for accepted and rejected CLOSE receipts.",
+                    ],
+                )
+            )
 
     if "LOSS_CLOSE_GATE_EVIDENCE_NOT_PASSING" in item_by_code:
         item = item_by_code["LOSS_CLOSE_GATE_EVIDENCE_NOT_PASSING"]

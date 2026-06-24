@@ -1352,6 +1352,137 @@ class CliHelpTest(unittest.TestCase):
         self.assertIn("LOSS_CLOSE_GATE_EVIDENCE_MISSING", codes)
         self.assertEqual(metrics["recent_contained_risk_loss_closes"], 1)
         self.assertEqual(metrics["recent_close_gate_unverified_loss_closes"], 1)
+        self.assertEqual(
+            metrics["recent_close_gate_missing_receipt_evidence_present_loss_closes"],
+            0,
+        )
+        self.assertEqual(
+            metrics["recent_close_gate_missing_receipt_evidence_absent_loss_closes"],
+            1,
+        )
+
+    def test_profitability_acceptance_flags_persistence_gap_when_receipt_has_close_gate_evidence(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            ledger = root / "execution_ledger.db"
+            timing = root / "execution_timing_audit.json"
+            with sqlite3.connect(ledger) as conn:
+                conn.execute(
+                    """
+                    CREATE TABLE execution_events (
+                        ts_utc TEXT,
+                        event_type TEXT,
+                        trade_id TEXT,
+                        order_id TEXT,
+                        lane_id TEXT,
+                        pair TEXT,
+                        side TEXT,
+                        realized_pl_jpy REAL,
+                        exit_reason TEXT,
+                        raw_json TEXT
+                    )
+                    """
+                )
+                conn.executemany(
+                    """
+                    INSERT INTO execution_events (
+                        ts_utc, event_type, trade_id, order_id, lane_id, pair, side,
+                        realized_pl_jpy, exit_reason, raw_json
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    [
+                        (
+                            "2026-06-21T00:00:00+00:00",
+                            "GATEWAY_GPT_CLOSE_ACCEPTED",
+                            "T-contained",
+                            None,
+                            "trend_trader:EUR_CHF:LONG:TREND_CONTINUATION",
+                            "EUR_CHF",
+                            "LONG",
+                            None,
+                            "GPT_CLOSE_ACCEPTED",
+                            json.dumps(
+                                {
+                                    "status": "ACCEPTED",
+                                    "decision": {
+                                        "action": "CLOSE",
+                                        "close_trade_ids": ["T-contained"],
+                                    },
+                                    "close_gate_evidence": [
+                                        {
+                                            "trade_id": "T-contained",
+                                            "gate_a_invalidated": True,
+                                            "gate_b_standing_authorized": True,
+                                            "profitability_p0_context_required": True,
+                                            "profitability_p0_context_cited": True,
+                                            "timing_audit_required": True,
+                                            "timing_evidence_cited": True,
+                                        }
+                                    ],
+                                }
+                            ),
+                        ),
+                        (
+                            "2026-06-21T00:01:30+00:00",
+                            "GATEWAY_TRADE_CLOSE_SENT",
+                            "T-contained",
+                            "O-contained",
+                            "trend_trader:EUR_CHF:LONG:TREND_CONTINUATION",
+                            "EUR_CHF",
+                            "LONG",
+                            None,
+                            "GPT_CLOSE",
+                            "{}",
+                        ),
+                        (
+                            "2026-06-21T00:01:35+00:00",
+                            "TRADE_CLOSED",
+                            "T-contained",
+                            "O-contained",
+                            "trend_trader:EUR_CHF:LONG:TREND_CONTINUATION",
+                            "EUR_CHF",
+                            "LONG",
+                            -1019.78,
+                            "MARKET_ORDER_TRADE_CLOSE",
+                            "{}",
+                        ),
+                    ],
+                )
+            timing.write_text(
+                json.dumps(
+                    {
+                        "generated_at_utc": "2026-06-21T01:00:00+00:00",
+                        "market_close_counterfactuals": [
+                            {
+                                "trade_id": "T-contained",
+                                "order_id": "O-contained",
+                                "post_close_path_label": "LOSS_CLOSE_CONTAINED_RISK",
+                            }
+                        ],
+                    }
+                )
+            )
+
+            metrics, findings = _execution_ledger_close_findings(
+                ledger,
+                execution_timing_audit_path=timing,
+            )
+
+        codes = {item["code"] for item in findings}
+        self.assertIn("LOSS_CLOSE_GATE_EVIDENCE_MISSING", codes)
+        self.assertEqual(metrics["recent_close_gate_missing_loss_closes"], 1)
+        self.assertEqual(
+            metrics["recent_close_gate_missing_receipt_evidence_present_loss_closes"],
+            1,
+        )
+        self.assertEqual(
+            metrics["recent_close_gate_missing_receipt_evidence_absent_loss_closes"],
+            0,
+        )
+        example = metrics["recent_close_gate_missing_loss_examples"][0]
+        self.assertTrue(example["accepted_receipt_has_close_gate_evidence"])
+        self.assertEqual(example["accepted_receipt_close_gate_evidence_count"], 1)
 
     def test_profitability_acceptance_accepts_contained_gpt_loss_close_with_close_gate_evidence(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
