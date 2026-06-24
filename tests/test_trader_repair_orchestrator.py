@@ -265,6 +265,102 @@ class TraderRepairOrchestratorTest(unittest.TestCase):
                 loop_prompt["prompt_text"],
             )
 
+    def test_loop_prompt_embeds_profitability_rca_summary(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            support = root / "support.json"
+            output = root / "orchestrator.json"
+            report = root / "orchestrator.md"
+            support.write_text(
+                json.dumps(
+                    {
+                        "status": "SUPPORT_BLOCKED",
+                        "target": {"status": "PURSUE_TARGET"},
+                        "entry_readiness": {"live_ready_lanes": 0},
+                        "profitability_acceptance": {
+                            "status": "PROFITABILITY_ACCEPTANCE_BLOCKED",
+                            "blockers": [
+                                (
+                                    "NEGATIVE_EXPECTANCY_ACTIVE: capture economics "
+                                    "is still NEGATIVE_EXPECTANCY"
+                                ),
+                                (
+                                    "MARKET_CLOSE_LEAK_DOMINATES_TP_EDGE: "
+                                    "TP-proven segment damaged by market-close leakage"
+                                ),
+                            ],
+                            "capture_economics": {
+                                "status": "NEGATIVE_EXPECTANCY",
+                                "overall": {
+                                    "expectancy_jpy_per_trade": -162.0,
+                                    "net_jpy": -36278.3,
+                                    "trades": 224,
+                                },
+                                "take_profit": {
+                                    "expectancy_jpy_per_trade": 508.4,
+                                    "net_jpy": 48804.8,
+                                    "trades": 96,
+                                },
+                                "market_close": {
+                                    "expectancy_jpy_per_trade": -815.9,
+                                    "net_jpy": -75879.8,
+                                    "trades": 93,
+                                },
+                                "tp_proven_market_close_leak_segments": 1,
+                            },
+                            "target_firepower": {
+                                "operational_minimum_5pct_reachable": False,
+                                "minimum_5pct_estimated_reachable": True,
+                                "operational_blocker_codes": [
+                                    "LOSS_CLOSE_PROFIT_CAPTURE_MISSED",
+                                    "NO_LIVE_READY_LANES",
+                                ],
+                            },
+                        },
+                        "repair_requests": [
+                            _request(
+                                "REPAIR_TP_PROGRESS_PROFIT_CAPTURE_REPLAY",
+                                priority="P0",
+                                status=TP_PROGRESS_LIVE_EVIDENCE_WAIT_STATUS,
+                            )
+                        ],
+                    },
+                    ensure_ascii=False,
+                    indent=2,
+                    sort_keys=True,
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            TraderRepairOrchestrator(
+                support_bot_path=support,
+                output_path=output,
+                report_path=report,
+            ).run()
+
+            payload = json.loads(output.read_text())
+            loop_prompt = payload["loop_engineering_prompt"]
+            rca = loop_prompt["current_state"]["profitability_rca_summary"]
+            self.assertEqual(rca["capture_economics_status"], "NEGATIVE_EXPECTANCY")
+            self.assertEqual(rca["overall_expectancy_jpy_per_trade"], -162.0)
+            self.assertEqual(rca["take_profit_expectancy_jpy_per_trade"], 508.4)
+            self.assertEqual(rca["market_close_expectancy_jpy_per_trade"], -815.9)
+            self.assertEqual(
+                rca["acceptance_blocker_codes"],
+                [
+                    "NEGATIVE_EXPECTANCY_ACTIVE",
+                    "MARKET_CLOSE_LEAK_DOMINATES_TP_EDGE",
+                ],
+            )
+            self.assertFalse(rca["operational_minimum_5pct_reachable"])
+            self.assertTrue(rca["audit_minimum_5pct_estimated_reachable"])
+            self.assertIn("Profitability RCA: capture=NEGATIVE_EXPECTANCY", loop_prompt["prompt_text"])
+            self.assertIn("overall_exp_jpy=-162.0", loop_prompt["prompt_text"])
+            self.assertIn("tp_exp_jpy=508.4", loop_prompt["prompt_text"])
+            self.assertIn("market_close_exp_jpy=-815.9", loop_prompt["prompt_text"])
+            self.assertIn("NEGATIVE_EXPECTANCY_ACTIVE", loop_prompt["prompt_text"])
+
     def test_loop_prompt_marks_order_intents_older_than_broker_snapshot_as_stale(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

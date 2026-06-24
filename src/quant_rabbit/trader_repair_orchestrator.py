@@ -387,6 +387,10 @@ def _loop_engineering_prompt(
         entry=entry,
         queue=queue,
     )
+    current_state["profitability_rca_summary"] = _profitability_rca_summary(
+        acceptance=acceptance,
+        target_firepower=target_firepower,
+    )
     artifact_contradictions = _artifact_contradictions(current_state)
     current_state["artifact_contradictions"] = artifact_contradictions
     current_state["artifact_contradiction_codes"] = [
@@ -716,6 +720,15 @@ def _support_blocker_codes(value: Any) -> list[str]:
     return _dedupe_strings(codes)
 
 
+def _prefixed_blocker_codes(value: Any) -> list[str]:
+    codes: list[str] = []
+    for item in _dedupe_strings(value):
+        code = item.split(":", 1)[0].strip()
+        if code:
+            codes.append(code)
+    return _dedupe_strings(codes)
+
+
 def _artifact_contradictions(current_state: dict[str, Any]) -> list[dict[str, Any]]:
     contradictions: list[dict[str, Any]] = []
     guardian_active = current_state.get("guardian_active") is True
@@ -904,6 +917,8 @@ def _render_loop_prompt_text(
         f"support_blockers={', '.join(current_state.get('support_blocker_codes') or []) or '(none)'}.",
         "Execution frontier: "
         f"{_render_execution_frontier_for_prompt(current_state.get('execution_frontier'))}.",
+        "Profitability RCA: "
+        f"{_render_profitability_rca_for_prompt(current_state.get('profitability_rca_summary'))}.",
         "Approval required details: "
         f"{_render_approval_details_for_prompt(current_state.get('approval_required_details'))}.",
         "Artifact contradictions: "
@@ -991,6 +1006,84 @@ def _render_execution_frontier_for_prompt(value: Any) -> str:
         text = ", ".join(part for part in unknown_parts if part)
         if text:
             parts.append(text)
+    return "; ".join(parts) if parts else "(none)"
+
+
+def _profitability_rca_summary(
+    *,
+    acceptance: dict[str, Any],
+    target_firepower: dict[str, Any],
+) -> dict[str, Any]:
+    capture = (
+        acceptance.get("capture_economics")
+        if isinstance(acceptance.get("capture_economics"), dict)
+        else {}
+    )
+    overall = capture.get("overall") if isinstance(capture.get("overall"), dict) else {}
+    take_profit = (
+        capture.get("take_profit") if isinstance(capture.get("take_profit"), dict) else {}
+    )
+    market_close = (
+        capture.get("market_close") if isinstance(capture.get("market_close"), dict) else {}
+    )
+    summary = {
+        "profitability_acceptance_status": acceptance.get("status"),
+        "capture_economics_status": capture.get("status"),
+        "overall_expectancy_jpy_per_trade": overall.get("expectancy_jpy_per_trade"),
+        "overall_net_jpy": overall.get("net_jpy"),
+        "overall_trades": overall.get("trades"),
+        "take_profit_expectancy_jpy_per_trade": take_profit.get("expectancy_jpy_per_trade"),
+        "take_profit_net_jpy": take_profit.get("net_jpy"),
+        "take_profit_trades": take_profit.get("trades"),
+        "market_close_expectancy_jpy_per_trade": market_close.get("expectancy_jpy_per_trade"),
+        "market_close_net_jpy": market_close.get("net_jpy"),
+        "market_close_trades": market_close.get("trades"),
+        "tp_proven_market_close_leak_segments": capture.get(
+            "tp_proven_market_close_leak_segments"
+        ),
+        "acceptance_blocker_codes": _prefixed_blocker_codes(acceptance.get("blockers"))[:8],
+        "operational_minimum_5pct_reachable": target_firepower.get(
+            "operational_minimum_5pct_reachable"
+        ),
+        "audit_minimum_5pct_estimated_reachable": target_firepower.get(
+            "minimum_5pct_estimated_reachable"
+        ),
+        "operational_blocker_codes": list(
+            target_firepower.get("operational_blocker_codes") or []
+        )[:8],
+    }
+    return {key: value for key, value in summary.items() if value not in (None, [], {})}
+
+
+def _render_profitability_rca_for_prompt(value: Any) -> str:
+    if not isinstance(value, dict) or not value:
+        return "(none)"
+    parts: list[str] = []
+    capture_status = value.get("capture_economics_status") or value.get(
+        "profitability_acceptance_status"
+    )
+    if capture_status:
+        parts.append(f"capture={capture_status}")
+    for key, label in [
+        ("overall_expectancy_jpy_per_trade", "overall_exp_jpy"),
+        ("overall_net_jpy", "overall_net_jpy"),
+        ("take_profit_expectancy_jpy_per_trade", "tp_exp_jpy"),
+        ("take_profit_net_jpy", "tp_net_jpy"),
+        ("market_close_expectancy_jpy_per_trade", "market_close_exp_jpy"),
+        ("market_close_net_jpy", "market_close_net_jpy"),
+    ]:
+        metric = value.get(key)
+        if metric is not None:
+            parts.append(f"{label}={metric}")
+    leak_segments = value.get("tp_proven_market_close_leak_segments")
+    if leak_segments is not None:
+        parts.append(f"tp_market_close_leak_segments={leak_segments}")
+    acceptance_blockers = _dedupe_strings(value.get("acceptance_blocker_codes"))[:4]
+    if acceptance_blockers:
+        parts.append("acceptance_blockers=" + ",".join(acceptance_blockers))
+    operational_blockers = _dedupe_strings(value.get("operational_blocker_codes"))[:4]
+    if operational_blockers:
+        parts.append("operational_blockers=" + ",".join(operational_blockers))
     return "; ".join(parts) if parts else "(none)"
 
 
