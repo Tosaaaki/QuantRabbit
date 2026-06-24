@@ -23,7 +23,6 @@ from quant_rabbit.trader_support_bot import (
     OANDA_AUDIT_ONLY_LOCAL_TP_EDGE_REQUEST,
     OANDA_AUDIT_ONLY_LOCAL_TP_PROOF_UNPROVED_STATUS,
     ORDER_INTENTS_ARTIFACT_REFRESH_WAIT_STATUS,
-    POSITION_GUARDIAN_LOCK_WAIT_STATUS,
     STATUS_BLOCKED,
     STATUS_READY,
     TP_PROGRESS_GUARDIAN_WAIT_STATUS,
@@ -466,6 +465,8 @@ class TraderSupportBotTest(unittest.TestCase):
             self.assertEqual(payload["guardian"]["active_source"], "live_runtime_lock_busy")
             self.assertTrue(payload["guardian"]["live_runtime_lock_active"])
             self.assertEqual(payload["guardian"]["live_runtime_lock_command"], "cycle-refresh")
+            blocker_codes = {item["code"] for item in payload["blockers"]}
+            self.assertNotIn("POSITION_GUARDIAN_INACTIVE", blocker_codes)
             action_codes = {item["code"] for item in payload["operator_actions"]}
             self.assertIn("WAIT_FOR_LIVE_RUNTIME_LOCK_RELEASE", action_codes)
             self.assertNotIn("LOAD_POSITION_GUARDIAN_ONLY_IF_APPROVED", action_codes)
@@ -474,16 +475,18 @@ class TraderSupportBotTest(unittest.TestCase):
                 for item in payload["repair_requests"]
                 if item["code"] == "REPAIR_TP_PROGRESS_PROFIT_CAPTURE_REPLAY"
             )
-            self.assertEqual(tp_request["status"], POSITION_GUARDIAN_LOCK_WAIT_STATUS)
+            self.assertEqual(tp_request["status"], TP_PROGRESS_GUARDIAN_WAIT_STATUS)
             self.assertFalse(tp_request["requires_explicit_operator_approval"])
             self.assertTrue(tp_request["evidence_summary"]["current_guardian_live_runtime_lock_active"])
-            guardian_request = next(
-                item
-                for item in payload["repair_requests"]
-                if item["code"] == "RESTORE_POSITION_GUARDIAN_AFTER_PREFLIGHT"
+            self.assertTrue(
+                tp_request["evidence_summary"]["current_guardian_deferred_by_live_runtime_lock"]
             )
-            self.assertEqual(guardian_request["status"], POSITION_GUARDIAN_LOCK_WAIT_STATUS)
-            self.assertFalse(guardian_request["requires_explicit_operator_approval"])
+            repair_request_codes = {item["code"] for item in payload["repair_requests"]}
+            self.assertNotIn("RESTORE_POSITION_GUARDIAN_AFTER_PREFLIGHT", repair_request_codes)
+            self.assertNotIn(
+                "RESTORE_POSITION_GUARDIAN_AFTER_PREFLIGHT",
+                payload["metrics"]["repair_request_codes"],
+            )
 
     def test_env_active_guardian_stale_during_live_runtime_lock_waits_without_load_approval(self) -> None:
         now = datetime(2026, 6, 24, 14, 42, tzinfo=timezone.utc)
@@ -531,6 +534,8 @@ class TraderSupportBotTest(unittest.TestCase):
             self.assertEqual(payload["guardian"]["env_active"], "1")
             self.assertTrue(payload["guardian"]["live_runtime_lock_active"])
             self.assertEqual(payload["guardian"]["live_runtime_lock_command"], "run-autotrade-live")
+            blocker_codes = {item["code"] for item in payload["blockers"]}
+            self.assertNotIn("POSITION_GUARDIAN_INACTIVE", blocker_codes)
             action_codes = {item["code"] for item in payload["operator_actions"]}
             self.assertIn("WAIT_FOR_LIVE_RUNTIME_LOCK_RELEASE", action_codes)
             self.assertNotIn("LOAD_POSITION_GUARDIAN_ONLY_IF_APPROVED", action_codes)
@@ -539,15 +544,17 @@ class TraderSupportBotTest(unittest.TestCase):
                 for item in payload["repair_requests"]
                 if item["code"] == "REPAIR_TP_PROGRESS_PROFIT_CAPTURE_REPLAY"
             )
-            self.assertEqual(tp_request["status"], POSITION_GUARDIAN_LOCK_WAIT_STATUS)
+            self.assertEqual(tp_request["status"], TP_PROGRESS_GUARDIAN_WAIT_STATUS)
             self.assertFalse(tp_request["requires_explicit_operator_approval"])
-            guardian_request = next(
-                item
-                for item in payload["repair_requests"]
-                if item["code"] == "RESTORE_POSITION_GUARDIAN_AFTER_PREFLIGHT"
+            self.assertTrue(
+                tp_request["evidence_summary"]["current_guardian_deferred_by_live_runtime_lock"]
             )
-            self.assertEqual(guardian_request["status"], POSITION_GUARDIAN_LOCK_WAIT_STATUS)
-            self.assertFalse(guardian_request["requires_explicit_operator_approval"])
+            repair_request_codes = {item["code"] for item in payload["repair_requests"]}
+            self.assertNotIn("RESTORE_POSITION_GUARDIAN_AFTER_PREFLIGHT", repair_request_codes)
+            self.assertNotIn(
+                "RESTORE_POSITION_GUARDIAN_AFTER_PREFLIGHT",
+                payload["metrics"]["repair_request_codes"],
+            )
 
     def test_close_gate_block_evidence_does_not_request_persistence_repair(self) -> None:
         now = datetime(2026, 6, 22, 12, 15, tzinfo=timezone.utc)

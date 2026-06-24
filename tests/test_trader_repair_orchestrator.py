@@ -22,7 +22,6 @@ from quant_rabbit.trader_support_bot import (
     FRONTIER_QUOTE_FRESHNESS_WAIT_STATUS,
     OANDA_AUDIT_ONLY_LOCAL_TP_EDGE_REQUEST,
     OANDA_AUDIT_ONLY_LOCAL_TP_PROOF_UNPROVED_STATUS,
-    POSITION_GUARDIAN_LOCK_WAIT_STATUS,
     REPAIR_AUTOMATION_ALLOWED_ACTIONS,
     REPAIR_AUTOMATION_EXPLICIT_APPROVAL_ACTIONS,
     REPAIR_AUTOMATION_FORBIDDEN_DIRECT_ACTIONS,
@@ -804,7 +803,7 @@ class TraderRepairOrchestratorTest(unittest.TestCase):
                 payload["queue_summary"]["waiting_request_codes"],
             )
 
-    def test_tp_guardian_lock_wait_does_not_become_load_approval_dependency(self) -> None:
+    def test_runtime_lock_busy_tp_wait_does_not_emit_restore_dependency(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             support = root / "support.json"
@@ -816,7 +815,7 @@ class TraderRepairOrchestratorTest(unittest.TestCase):
                     _request(
                         "REPAIR_TP_PROGRESS_PROFIT_CAPTURE_REPLAY",
                         priority="P0",
-                        status=POSITION_GUARDIAN_LOCK_WAIT_STATUS,
+                        status=TP_PROGRESS_GUARDIAN_WAIT_STATUS,
                         source_findings=[
                             "TP_PROGRESS_REPAIR_REPLAY_NOT_DEPLOYED",
                             "TP_PROGRESS_REPLAY_REPAIR_UNPROVED",
@@ -833,12 +832,6 @@ class TraderRepairOrchestratorTest(unittest.TestCase):
                             "repair_replay_contract": "TP_PROGRESS_PRODUCTION_GATE_REPLAY_V1",
                         },
                     ),
-                    _request(
-                        "RESTORE_POSITION_GUARDIAN_AFTER_PREFLIGHT",
-                        priority="P0",
-                        status=POSITION_GUARDIAN_LOCK_WAIT_STATUS,
-                        requires_explicit_operator_approval=False,
-                    ),
                 ],
             )
 
@@ -852,6 +845,10 @@ class TraderRepairOrchestratorTest(unittest.TestCase):
             payload = json.loads(output.read_text())
             self.assertEqual(payload["approval_required_requests"], [])
             self.assertEqual(payload["actionable_requests"], [])
+            self.assertNotIn(
+                "RESTORE_POSITION_GUARDIAN_AFTER_PREFLIGHT",
+                [item["code"] for item in payload["queue"]],
+            )
             tp_repair = next(
                 item
                 for item in payload["queue"]
@@ -860,7 +857,7 @@ class TraderRepairOrchestratorTest(unittest.TestCase):
             self.assertEqual(tp_repair["automation_status"], "WAITING_FOR_LIVE_EVIDENCE_WINDOW")
             self.assertIsNone(tp_repair["approval_dependency"])
             self.assertIn(
-                "RESTORE_POSITION_GUARDIAN_AFTER_PREFLIGHT",
+                "REPAIR_TP_PROGRESS_PROFIT_CAPTURE_REPLAY",
                 payload["queue_summary"]["waiting_request_codes"],
             )
 

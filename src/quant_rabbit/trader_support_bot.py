@@ -2432,7 +2432,7 @@ def _annotate_operational_target_firepower(
             for item in blockers
             if isinstance(item, dict)
         )
-    if guardian.get("required") and not guardian.get("active"):
+    if _guardian_counts_as_inactive_for_support(guardian):
         operational_blockers.append("POSITION_GUARDIAN_INACTIVE")
     if _float(entry.get("live_ready_lanes")) <= 0:
         operational_blockers.append("NO_LIVE_READY_LANES")
@@ -2511,17 +2511,13 @@ def _build_blockers(
     acceptance: dict[str, Any],
 ) -> list[dict[str, Any]]:
     blockers: list[dict[str, Any]] = []
-    if guardian["required"] and not guardian["active"]:
-        waiting_for_runtime_lock = _guardian_waits_for_live_runtime_lock(guardian)
+    if _guardian_counts_as_inactive_for_support(guardian):
         blockers.append(
             {
                 "code": "POSITION_GUARDIAN_INACTIVE",
                 "severity": "P0",
                 "message": (
-                    "position guardian heartbeat is stale while the live runtime lock is active; "
-                    "fresh entries stay blocked until the lock releases and the next heartbeat lands"
-                    if waiting_for_runtime_lock
-                    else "position guardian is required but not proven active with a fresh heartbeat; "
+                    "position guardian is required but not proven active with a fresh heartbeat; "
                     "fresh entries stay blocked because plus P/L can reverse between full cycles"
                 ),
             }
@@ -2795,6 +2791,14 @@ def _guardian_waits_for_live_runtime_lock(guardian: dict[str, Any]) -> bool:
         and guardian.get("launchd_loaded")
         and not guardian.get("heartbeat_fresh")
         and guardian.get("live_runtime_lock_active")
+    )
+
+
+def _guardian_counts_as_inactive_for_support(guardian: dict[str, Any]) -> bool:
+    return bool(
+        guardian.get("required")
+        and not guardian.get("active")
+        and not _guardian_waits_for_live_runtime_lock(guardian)
     )
 
 
@@ -3602,7 +3606,7 @@ def _build_repair_requests(
             if isinstance(top_item.get("evidence_summary"), dict)
             else {}
         )
-        current_guardian_inactive = bool(guardian.get("required") and not guardian.get("active"))
+        current_guardian_inactive = _guardian_counts_as_inactive_for_support(guardian)
         current_guardian_lock_wait = _guardian_waits_for_live_runtime_lock(guardian)
         tp_has_replay_triggers = int(_float(tp_evidence.get("loss_closes_repair_replay_triggered"))) > 0
         tp_contract_missing = "TP_PROGRESS_REPAIR_REPLAY_CONTRACT_MISSING" in tp_codes
@@ -3637,9 +3641,7 @@ def _build_repair_requests(
                 code="REPAIR_TP_PROGRESS_PROFIT_CAPTURE_REPLAY",
                 priority="P0",
                 status=(
-                    POSITION_GUARDIAN_LOCK_WAIT_STATUS
-                    if current_guardian_lock_wait
-                    else TP_PROGRESS_GUARDIAN_WAIT_STATUS
+                    TP_PROGRESS_GUARDIAN_WAIT_STATUS
                     if tp_wait_status
                     else "READY_FOR_CODE_REPAIR"
                 ),
@@ -3662,6 +3664,7 @@ def _build_repair_requests(
                     "current_guardian_live_runtime_lock_age_seconds": guardian.get(
                         "live_runtime_lock_age_seconds"
                     ),
+                    "current_guardian_deferred_by_live_runtime_lock": current_guardian_lock_wait,
                     "guardian_inactive_evidence_status": (
                         "STALE_CURRENT_GUARDIAN_ACTIVE"
                         if tp_evidence.get("guardian_profit_capture_inactive")
@@ -3746,19 +3749,15 @@ def _build_repair_requests(
             )
         )
 
-    if guardian.get("required") and not guardian.get("active"):
-        waiting_for_runtime_lock = _guardian_waits_for_live_runtime_lock(guardian)
+    if _guardian_counts_as_inactive_for_support(guardian):
         requests.append(
             _repair_request(
                 code="RESTORE_POSITION_GUARDIAN_AFTER_PREFLIGHT",
                 priority="P0",
-                status=POSITION_GUARDIAN_LOCK_WAIT_STATUS if waiting_for_runtime_lock else "OPERATOR_APPROVAL_REQUIRED",
+                status="OPERATOR_APPROVAL_REQUIRED",
                 source_findings=["POSITION_GUARDIAN_INACTIVE_FOR_PROFIT_CAPTURE"],
                 problem=(
-                    "Fresh entries are blocked because the fast position guardian heartbeat is stale while "
-                    "the live runtime lock is active."
-                    if waiting_for_runtime_lock
-                    else "Fresh entries are blocked because the fast position guardian is not proven active "
+                    "Fresh entries are blocked because the fast position guardian is not proven active "
                     "with a fresh heartbeat."
                 ),
                 why_now=(
@@ -3776,11 +3775,7 @@ def _build_repair_requests(
                     "live_runtime_lock_age_seconds": guardian.get("live_runtime_lock_age_seconds"),
                 },
                 clearance_conditions=[
-                    (
-                        "the active live runtime lock releases, then launchd writes a fresh position_guardian heartbeat without load/reload."
-                        if waiting_for_runtime_lock
-                        else "scripts/install-position-guardian.sh --check passes, then an operator explicitly approves load/reload and heartbeat becomes fresh."
-                    )
+                    "scripts/install-position-guardian.sh --check passes, then an operator explicitly approves load/reload and heartbeat becomes fresh."
                 ],
                 verification_commands=[
                     "scripts/install-position-guardian.sh --check",
@@ -3796,9 +3791,9 @@ def _build_repair_requests(
                 required_tests=[
                     "Preflight blocks unsynced live runtime before launchd can be loaded.",
                     "Support bot shows guardian recovery candidates without loading launchd itself.",
-                    "Guardian stale heartbeat caused by an active live runtime lock is classified as a wait, not load/reload approval.",
+                    "Guardian stale heartbeat without an active live runtime lock requires explicit operator approval before load/reload.",
                 ],
-                requires_explicit_operator_approval=not waiting_for_runtime_lock,
+                requires_explicit_operator_approval=True,
             )
         )
 
