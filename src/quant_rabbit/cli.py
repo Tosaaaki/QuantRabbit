@@ -908,23 +908,7 @@ def _memory_health_count_and_samples(value: object) -> tuple[int, list[str]]:
     return len(items), samples
 
 
-def _refresh_snapshot_after_market_evidence_if_required(
-    *,
-    market_evidence_refresh: dict[str, Any] | None,
-    snapshot_path: Path | None,
-) -> dict[str, Any] | None:
-    """Refresh broker truth after slow market-context fetches.
-
-    Market evidence refresh can spend minutes fetching charts/news/context.
-    Pricing intents against the pre-refresh snapshot then makes forecast
-    telemetry stale as soon as memory-health compares it to broker truth.
-    """
-    if (market_evidence_refresh or {}).get("status") != "REFRESHED":
-        return None
-    if _running_under_test_harness() and os.environ.get("QR_LIVE_ENABLED") != "1":
-        return None
-    if snapshot_path is None:
-        return None
+def _broker_snapshot_refresh(snapshot_path: Path) -> dict[str, Any]:
     pairs: tuple[str, ...] = tuple(
         part.strip().upper()
         for part in DEFAULT_TRADER_PAIRS_ARG.split(",")
@@ -956,6 +940,120 @@ def _refresh_snapshot_after_market_evidence_if_required(
         "orders": len(snapshot.orders),
         "quotes": len(snapshot.quotes),
     }
+
+
+def _refresh_snapshot_after_market_evidence_if_required(
+    *,
+    market_evidence_refresh: dict[str, Any] | None,
+    snapshot_path: Path | None,
+) -> dict[str, Any] | None:
+    """Refresh broker truth after slow market-context fetches.
+
+    Market evidence refresh can spend minutes fetching charts/news/context.
+    Pricing intents against the pre-refresh snapshot then makes forecast
+    telemetry stale as soon as memory-health compares it to broker truth.
+    """
+    if (market_evidence_refresh or {}).get("status") != "REFRESHED":
+        return None
+    if _running_under_test_harness() and os.environ.get("QR_LIVE_ENABLED") != "1":
+        return None
+    if snapshot_path is None:
+        return None
+    return _broker_snapshot_refresh(snapshot_path)
+
+
+def _snapshot_quote_freshness(
+    snapshot_path: Path,
+    *,
+    now_utc: datetime | None = None,
+) -> dict[str, Any]:
+    now = (now_utc or datetime.now(timezone.utc)).astimezone(timezone.utc)
+    try:
+        payload = json.loads(snapshot_path.read_text())
+    except (OSError, json.JSONDecodeError) as exc:
+        return {"status": "UNREADABLE", "fresh": False, "error": str(exc)}
+
+    quote_payload = payload.get("quotes") or {}
+    if not isinstance(quote_payload, dict) or not quote_payload:
+        return {"status": "NO_QUOTES", "fresh": False, "quote_count": 0}
+
+    fallback_ts = _forecast_emission_time_from_snapshot(payload)
+    max_age: float | None = None
+    oldest_pair = ""
+    missing_timestamp_pairs: list[str] = []
+    for pair, quote_data in quote_payload.items():
+        if not isinstance(quote_data, dict):
+            continue
+        quote_ts = _parse_utc_datetime(quote_data.get("timestamp_utc")) or fallback_ts
+        if quote_ts is None:
+            missing_timestamp_pairs.append(str(pair))
+            continue
+        age = max(0.0, (now - quote_ts).total_seconds())
+        if max_age is None or age > max_age:
+            max_age = age
+            oldest_pair = str(pair)
+
+    max_quote_age = float(RiskPolicy().max_quote_age_seconds)
+    refresh_threshold = max(1.0, max_quote_age * 0.5)
+    if max_age is None:
+        return {
+            "status": "NO_QUOTE_TIMESTAMPS",
+            "fresh": False,
+            "quote_count": len(quote_payload),
+            "missing_timestamp_pairs": missing_timestamp_pairs[:8],
+            "max_quote_age_contract_seconds": max_quote_age,
+            "refresh_threshold_seconds": refresh_threshold,
+        }
+
+    fresh = max_age <= refresh_threshold
+    return {
+        "status": "FRESH" if fresh else "STALE",
+        "fresh": fresh,
+        "quote_count": len(quote_payload),
+        "oldest_pair": oldest_pair,
+        "max_quote_age_seconds": round(max_age, 3),
+        "max_quote_age_contract_seconds": max_quote_age,
+        "refresh_threshold_seconds": refresh_threshold,
+        "missing_timestamp_pairs": missing_timestamp_pairs[:8],
+    }
+
+
+def _refresh_snapshot_before_intent_generation_if_required(
+    *,
+    telemetry_required: bool,
+    snapshot_path: Path | None,
+) -> dict[str, Any] | None:
+    """Keep quote truth fresh after slow pre-entry telemetry checks.
+
+    `generate-intents` already refreshes after market evidence, but projection
+    verification and campaign replanning can still consume the entire live
+    quote-age budget before `IntentGenerator` validates risk. Refreshing here
+    is read-only broker truth, not a relaxation of the STALE_QUOTE guard.
+    """
+    if not telemetry_required:
+        return None
+    if _running_under_test_harness() and os.environ.get("QR_LIVE_ENABLED") != "1":
+        return None
+    if snapshot_path is None or not snapshot_path.exists():
+        return None
+
+    freshness = _snapshot_quote_freshness(snapshot_path)
+    if freshness.get("fresh"):
+        return {
+            **freshness,
+            "status": "SKIPPED",
+            "reason": "snapshot_quotes_fresh_for_intent_generation",
+            "snapshot_path": str(snapshot_path),
+        }
+
+    refreshed = _broker_snapshot_refresh(snapshot_path)
+    refreshed.update(
+        {
+            "reason": "pre_intent_snapshot_stale_after_preflight",
+            "freshness_before_refresh": freshness,
+        }
+    )
+    return refreshed
 
 
 def _partial_close_receipt_actions(
@@ -4212,6 +4310,10 @@ def main(argv: list[str] | None = None) -> int:
                 )
             )
             return 2
+        pre_intent_snapshot_refresh = _refresh_snapshot_before_intent_generation_if_required(
+            telemetry_required=telemetry_required,
+            snapshot_path=args.snapshot,
+        )
         if (
             telemetry_required
             and (not _running_under_test_harness() or os.environ.get("QR_LIVE_ENABLED") == "1")
@@ -4267,6 +4369,7 @@ def main(argv: list[str] | None = None) -> int:
                     "live_ready": summary.live_ready,
                     "market_evidence_refresh": market_evidence_refresh,
                     "memory_health_refresh": memory_health_refresh,
+                    "pre_intent_snapshot_refresh": pre_intent_snapshot_refresh,
                     "snapshot_refresh": snapshot_refresh,
                     "projection_verification": projection_verification,
                 },

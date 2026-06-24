@@ -4200,12 +4200,15 @@ class CliHelpTest(unittest.TestCase):
             intents = data_root / "order_intents.json"
             memory = data_root / "memory_health.json"
             memory_report = docs_root / "memory_health_report.md"
+            fresh_ts = datetime.now(timezone.utc).isoformat()
             snapshot.write_text(
                 json.dumps(
                     {
-                        "fetched_at_utc": "2026-06-16T09:46:24+00:00",
-                        "account": {"fetched_at_utc": "2026-06-16T09:46:24+00:00"},
-                        "quotes": {"EUR_USD": {"bid": 1.1, "ask": 1.1001}},
+                        "fetched_at_utc": fresh_ts,
+                        "account": {"fetched_at_utc": fresh_ts},
+                        "quotes": {
+                            "EUR_USD": {"bid": 1.1, "ask": 1.1001, "timestamp_utc": fresh_ts}
+                        },
                     }
                 )
             )
@@ -4651,11 +4654,14 @@ class CliHelpTest(unittest.TestCase):
             root = Path(tmp)
             snapshot = root / "data" / "broker_snapshot.json"
             snapshot.parent.mkdir()
+            fresh_ts = datetime.now(timezone.utc).isoformat()
             snapshot.write_text(
                 json.dumps(
                     {
-                        "fetched_at_utc": "2026-06-02T01:00:00+00:00",
-                        "quotes": {"EUR_USD": {"bid": 1.1, "ask": 1.1001}},
+                        "fetched_at_utc": fresh_ts,
+                        "quotes": {
+                            "EUR_USD": {"bid": 1.1, "ask": 1.1001, "timestamp_utc": fresh_ts}
+                        },
                     }
                 )
             )
@@ -4798,7 +4804,7 @@ class CliHelpTest(unittest.TestCase):
                 dry_run_passed=0,
                 live_ready=0,
             )
-            fresh_at = datetime(2026, 6, 2, 1, 5, tzinfo=timezone.utc)
+            fresh_at = datetime.now(timezone.utc)
             fresh_snapshot = BrokerSnapshot(
                 fetched_at_utc=fresh_at,
                 quotes={"EUR_USD": Quote("EUR_USD", 1.1002, 1.1004, fresh_at)},
@@ -4856,7 +4862,7 @@ class CliHelpTest(unittest.TestCase):
             data_root = root / "data"
             data_root.mkdir()
             old_ts = "2026-06-02T01:00:00+00:00"
-            fresh_at = datetime(2026, 6, 2, 1, 5, tzinfo=timezone.utc)
+            fresh_at = datetime.now(timezone.utc)
             snapshot = data_root / "broker_snapshot.json"
             campaign = data_root / "daily_campaign_plan.json"
             target = data_root / "daily_target_state.json"
@@ -4989,16 +4995,113 @@ class CliHelpTest(unittest.TestCase):
         self.assertEqual(payload["campaign_refresh"]["status"], "REFRESHED")
         self.assertIn("daily_target_state_newer", payload["campaign_refresh"]["refresh_reasons"])
 
+    def test_generate_intents_refreshes_stale_snapshot_after_projection_preflight(self) -> None:
+        calls: list[str] = []
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            data_root = root / "data"
+            data_root.mkdir()
+            stale_at = datetime.now(timezone.utc) - timedelta(seconds=60)
+            fresh_at = datetime.now(timezone.utc)
+            snapshot = data_root / "broker_snapshot.json"
+            snapshot.write_text(
+                json.dumps(
+                    {
+                        "fetched_at_utc": stale_at.isoformat(),
+                        "quotes": {
+                            "EUR_USD": {
+                                "bid": 1.1,
+                                "ask": 1.1001,
+                                "timestamp_utc": stale_at.isoformat(),
+                            }
+                        },
+                    }
+                )
+            )
+            summary = SimpleNamespace(
+                output_path=data_root / "order_intents.json",
+                report_path=root / "docs" / "order_intents_report.md",
+                candidates_seen=1,
+                generated=1,
+                needs_snapshot=False,
+                dry_run_passed=1,
+                live_ready=1,
+            )
+            fresh_snapshot = BrokerSnapshot(
+                fetched_at_utc=fresh_at,
+                quotes={"EUR_USD": Quote("EUR_USD", 1.1002, 1.1004, fresh_at)},
+            )
+
+            def projection_preflight(**_: object) -> dict[str, str]:
+                calls.append("projection")
+                return {"status": "OK"}
+
+            def snapshot_refresh(*_: object, **__: object) -> BrokerSnapshot:
+                calls.append("snapshot_refresh")
+                return fresh_snapshot
+
+            def generator_run(**_: object) -> SimpleNamespace:
+                calls.append("generator")
+                return summary
+
+            stdout = io.StringIO()
+            with mock.patch.dict(os.environ, {}, clear=True), mock.patch(
+                "quant_rabbit.cli._running_under_test_harness", return_value=False
+            ), mock.patch(
+                "quant_rabbit.cli._auto_refresh_market_evidence_if_required",
+                return_value={"status": "SKIPPED", "reason": "test"},
+            ), mock.patch(
+                "quant_rabbit.cli._pre_entry_execution_ledger_sync_if_required",
+                return_value=None,
+            ), mock.patch(
+                "quant_rabbit.cli._pre_entry_projection_verification_if_required",
+                side_effect=projection_preflight,
+            ), mock.patch("quant_rabbit.cli.OandaReadOnlyClient") as client_cls, mock.patch(
+                "quant_rabbit.cli.IntentGenerator"
+            ) as generator_cls, redirect_stdout(stdout):
+                client_cls.return_value.snapshot.side_effect = snapshot_refresh
+                generator_cls.return_value.run.side_effect = generator_run
+                code = main(
+                    [
+                        "generate-intents",
+                        "--campaign-plan",
+                        str(data_root / "daily_campaign_plan.json"),
+                        "--strategy-profile",
+                        str(data_root / "strategy_profile.json"),
+                        "--snapshot",
+                        str(snapshot),
+                        "--output",
+                        str(summary.output_path),
+                        "--report",
+                        str(summary.report_path),
+                        "--no-refresh-market-story",
+                    ]
+                )
+                refreshed = json.loads(snapshot.read_text())
+
+        self.assertEqual(code, 0)
+        self.assertEqual(calls, ["projection", "snapshot_refresh", "generator"])
+        self.assertEqual(refreshed["fetched_at_utc"], fresh_at.isoformat())
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(payload["pre_intent_snapshot_refresh"]["status"], "REFRESHED")
+        self.assertEqual(
+            payload["pre_intent_snapshot_refresh"]["freshness_before_refresh"]["status"],
+            "STALE",
+        )
+
     def test_generate_intents_delegates_pre_entry_forecast_to_intent_generator(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             snapshot = root / "data" / "broker_snapshot.json"
             snapshot.parent.mkdir()
+            fresh_ts = datetime.now(timezone.utc).isoformat()
             snapshot.write_text(
                 json.dumps(
                     {
-                        "fetched_at_utc": "2026-06-02T01:00:00+00:00",
-                        "quotes": {"EUR_USD": {"bid": 1.1, "ask": 1.1001}},
+                        "fetched_at_utc": fresh_ts,
+                        "quotes": {
+                            "EUR_USD": {"bid": 1.1, "ask": 1.1001, "timestamp_utc": fresh_ts}
+                        },
                     }
                 )
             )
