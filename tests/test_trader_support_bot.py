@@ -1936,6 +1936,62 @@ class TraderSupportBotTest(unittest.TestCase):
             self.assertIn("pf=4.129446", report)
             self.assertIn("5%trades=9", report)
 
+            history_pair_dir = (
+                root / "logs" / "replay" / "oanda_history" / "20260622T121500Z" / "GBP_JPY"
+            )
+            history_pair_dir.mkdir(parents=True)
+            start = (now - timedelta(days=120)).strftime("%Y%m%dT%H%M%SZ")
+            end = now.strftime("%Y%m%dT%H%M%SZ")
+            for granularity in ("S5", "M5"):
+                (history_pair_dir / f"GBP_JPY_{granularity}_BA_{start}_{end}.jsonl").write_text(
+                    "{}\n",
+                    encoding="utf-8",
+                )
+
+            with mock.patch.dict(os.environ, env, clear=False):
+                TraderSupportBot(
+                    broker_snapshot_path=files["broker"],
+                    order_intents_path=files["intents"],
+                    target_state_path=files["target"],
+                    position_management_path=files["position_management"],
+                    position_guardian_management_path=files["guardian_management"],
+                    position_guardian_execution_path=files["guardian_execution"],
+                    position_guardian_heartbeat_path=files["guardian_heartbeat"],
+                    self_improvement_audit_path=files["self_improvement"],
+                    profitability_acceptance_path=files["profitability"],
+                    execution_timing_audit_path=files["timing"],
+                    profit_capture_bot_path=files["profit_capture_bot"],
+                    oanda_rotation_mining_path=oanda_rotation,
+                    output_path=files["output"],
+                    report_path=files["report"],
+                    now_utc=now,
+                ).run()
+
+            covered_payload = json.loads(files["output"].read_text())
+            covered_request_by_code = {
+                item["code"]: item for item in covered_payload["repair_requests"]
+            }
+            covered_oanda_request = covered_request_by_code[OANDA_AUDIT_ONLY_LOCAL_TP_EDGE_REQUEST]
+            covered_action_codes = {
+                item["code"] for item in covered_payload["operator_actions"]
+            }
+            covered_commands = " ".join(covered_oanda_request["verification_commands"])
+
+            self.assertEqual(
+                covered_payload["oanda_history_coverage"]["status"],
+                "LOCAL_HISTORY_COMPLETE",
+            )
+            self.assertEqual(covered_payload["oanda_history_coverage"]["fetch_commands"], [])
+            self.assertNotIn("MINE_LOCAL_TP_PROOF_FOR_OANDA_AUDIT_ONLY", covered_action_codes)
+            self.assertNotIn("oanda_history_fetch.py", covered_commands)
+            self.assertIn("oanda_history_replay_validate.py", covered_commands)
+            self.assertIn("oanda_universal_rotation_miner.py", covered_commands)
+            self.assertEqual(
+                covered_oanda_request["evidence_summary"]["history_coverage"]["covered_pairs_by_granularity"],
+                {"S5": ["GBP_JPY"], "M5": ["GBP_JPY"]},
+            )
+            self.assertIn("LOCAL_HISTORY_COMPLETE", files["report"].read_text())
+
     def test_opposite_position_counterfactual_that_clears_5pct_becomes_p0_repair_request(self) -> None:
         now = datetime(2026, 6, 24, 10, 22, tzinfo=timezone.utc)
         with tempfile.TemporaryDirectory() as tmp:

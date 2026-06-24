@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 from collections import Counter, defaultdict
 from dataclasses import dataclass
@@ -30,6 +31,7 @@ from quant_rabbit.paths import (
     DEFAULT_SELF_IMPROVEMENT_AUDIT,
     DEFAULT_TRADER_SUPPORT_BOT,
     DEFAULT_TRADER_SUPPORT_BOT_REPORT,
+    ROOT,
     effective_oanda_universal_rotation_path,
 )
 from quant_rabbit.risk import (
@@ -50,6 +52,8 @@ RANGE_ROTATION_METHOD = "RANGE_ROTATION"
 RANGE_ROTATION_COUNTERPART_MISSING = "RANGE_ROTATION_COUNTERPART_MISSING"
 OANDA_AUDIT_ONLY_LOCAL_TP_PROOF_REQUIRED = "OANDA_CAMPAIGN_AUDIT_ONLY_LOCAL_TP_PROOF_REQUIRED"
 OANDA_AUDIT_ONLY_LOCAL_TP_EDGE_REQUEST = "PROVE_OANDA_AUDIT_ONLY_LOCAL_TP_EDGE"
+OANDA_AUDIT_ONLY_REPLAY_HISTORY_DAYS = 120
+OANDA_AUDIT_ONLY_REPLAY_HISTORY_MIN_COVERED_DAYS = 119.0
 DIRECTIONAL_INVERSION_COUNTERFACTUAL_REQUEST = "REPAIR_DIRECTIONAL_INVERSION_COUNTERFACTUAL"
 DIRECTIONAL_INVERSION_REPLAY_WAIT_STATUS = "WAITING_FOR_DIRECTIONAL_INVERSION_REPLAY_EVIDENCE"
 DIRECTIONAL_INVERSION_REPLAY_REJECTED = "CONTRARIAN_REPLAY_REJECTED"
@@ -64,6 +68,11 @@ DIRECTIONAL_INVERSION_REPLAY_SECTIONS = (
 DIRECTIONAL_INVERSION_MIN_REPLAY_SAMPLES = 2
 DIRECTIONAL_INVERSION_MIN_ACTIVE_DAYS = 2
 OANDA_AUDIT_ONLY_REPLAY_HISTORY_GRANULARITIES = "S5,M5"
+OANDA_AUDIT_ONLY_REPLAY_HISTORY_ROOT = ROOT / "logs" / "replay" / "oanda_history"
+OANDA_HISTORY_FILENAME_RE = re.compile(
+    r"^(?P<pair>[A-Z]{3}_[A-Z]{3})_(?P<granularity>S5|M5)_BA_"
+    r"(?P<start>\d{8}T\d{6}Z)_(?P<end>\d{8}T\d{6}Z)\.jsonl$"
+)
 FORECAST_FRONTIER_EVIDENCE_WAIT_STATUS = "FORECAST_FRONTIER_WAITING_FOR_LIVE_PRECISION_EVIDENCE"
 FRONTIER_QUOTE_FRESHNESS_WAIT_STATUS = "FRONTIER_WAITING_FOR_FRESH_QUOTE"
 FRONTIER_MARGIN_CAPACITY_WAIT_STATUS = "FRONTIER_MARGIN_CAPACITY_WAIT"
@@ -164,6 +173,7 @@ class TraderSupportBot:
         oanda_rotation_mining_path: Path = DEFAULT_OANDA_UNIVERSAL_ROTATION_MINING,
         oanda_rotation_packaged_path: Path = DEFAULT_OANDA_UNIVERSAL_ROTATION_PACKAGED_RULES,
         bidask_replay_validation_path: Path | None = None,
+        oanda_history_root: Path | None = None,
         output_path: Path = DEFAULT_TRADER_SUPPORT_BOT,
         report_path: Path = DEFAULT_TRADER_SUPPORT_BOT_REPORT,
         now_utc: datetime | None = None,
@@ -189,6 +199,13 @@ class TraderSupportBot:
         self.bidask_replay_validation_path = bidask_replay_validation_path or DEFAULT_BIDASK_REPLAY_VALIDATION
         self._read_bidask_replay_validation = (
             bidask_replay_validation_path is not None or output_path == DEFAULT_TRADER_SUPPORT_BOT
+        )
+        self.oanda_history_root = (
+            oanda_history_root
+            if oanda_history_root is not None
+            else OANDA_AUDIT_ONLY_REPLAY_HISTORY_ROOT
+            if output_path == DEFAULT_TRADER_SUPPORT_BOT
+            else output_path.parent.parent / "logs" / "replay" / "oanda_history"
         )
         self.output_path = output_path
         self.report_path = report_path
@@ -254,6 +271,14 @@ class TraderSupportBot:
         profit_capture = _profit_capture_summary(self_improvement, timing)
         current_profit_capture = _current_profit_capture_summary(profit_capture_bot)
         entry = _entry_readiness_summary(intents, oanda_rotation=oanda_rotation)
+        oanda_history_coverage = _oanda_audit_only_history_coverage(
+            [
+                str(item.get("pair"))
+                for item in entry["oanda_audit_only_local_tp_proof_required"]
+                if isinstance(item, dict) and item.get("pair")
+            ],
+            history_root=self.oanda_history_root,
+        )
         position = _position_support_summary(position_management, guardian_management, now_utc=self.now_utc)
         acceptance = _acceptance_summary(profitability)
 
@@ -274,6 +299,7 @@ class TraderSupportBot:
             entry=entry,
             acceptance=acceptance,
             broker=broker_summary,
+            oanda_history_coverage=oanda_history_coverage,
         )
         repair_requests = _build_repair_requests(
             guardian=guardian,
@@ -282,6 +308,7 @@ class TraderSupportBot:
             acceptance=acceptance,
             broker=broker_summary,
             target=target_summary,
+            oanda_history_coverage=oanda_history_coverage,
         )
         send_allowed = (
             status == STATUS_READY
@@ -417,6 +444,7 @@ class TraderSupportBot:
                 "oanda_rotation_packaged": str(self.oanda_rotation_packaged_path),
                 "oanda_rotation_effective": str(oanda_rotation_effective_path),
                 "bidask_replay_validation": str(self.bidask_replay_validation_path),
+                "oanda_history_root": str(self.oanda_history_root),
             },
             "generated_at_utc": generated,
             "status": status,
@@ -430,6 +458,7 @@ class TraderSupportBot:
             "profit_capture": profit_capture,
             "current_profit_capture": current_profit_capture,
             "entry_readiness": entry,
+            "oanda_history_coverage": oanda_history_coverage,
             "position_support": position,
             "self_improvement": {
                 "status": self_improvement.get("status") if isinstance(self_improvement, dict) else None,
@@ -2355,6 +2384,172 @@ def _profit_capture_miss_message(profit_capture: dict[str, Any]) -> str:
     return f"{message}; conservative candle counterfactual delta={delta} JPY"
 
 
+def _oanda_audit_only_history_coverage(pairs: list[str], *, history_root: Path) -> dict[str, Any]:
+    required_pairs = sorted({str(pair).upper() for pair in pairs if str(pair or "").strip()})
+    required_granularities = [
+        item.strip().upper()
+        for item in OANDA_AUDIT_ONLY_REPLAY_HISTORY_GRANULARITIES.split(",")
+        if item.strip()
+    ]
+    if not required_pairs:
+        return {
+            "status": "NOT_REQUIRED",
+            "history_root": str(history_root),
+            "required_pairs": [],
+            "required_granularities": required_granularities,
+            "covered_pairs_by_granularity": {granularity: [] for granularity in required_granularities},
+            "missing_pairs_by_granularity": {granularity: [] for granularity in required_granularities},
+            "fetch_commands": [],
+            "complete": True,
+        }
+
+    best_files: dict[tuple[str, str], dict[str, Any]] = {}
+    if history_root.exists():
+        for path in history_root.rglob("*.jsonl"):
+            match = OANDA_HISTORY_FILENAME_RE.match(path.name)
+            if not match:
+                continue
+            pair = match.group("pair")
+            granularity = match.group("granularity")
+            if pair not in required_pairs or granularity not in required_granularities:
+                continue
+            row = _oanda_history_file_summary(path, match)
+            if row is None:
+                continue
+            key = (pair, granularity)
+            current = best_files.get(key)
+            if current is None or _oanda_history_file_rank(row) > _oanda_history_file_rank(current):
+                best_files[key] = row
+
+    covered: dict[str, list[str]] = {}
+    missing: dict[str, list[str]] = {}
+    selected_files: list[dict[str, Any]] = []
+    for granularity in required_granularities:
+        covered[granularity] = []
+        missing[granularity] = []
+        for pair in required_pairs:
+            row = best_files.get((pair, granularity))
+            if row and _float(row.get("history_days")) >= OANDA_AUDIT_ONLY_REPLAY_HISTORY_MIN_COVERED_DAYS:
+                covered[granularity].append(pair)
+                selected_files.append(row)
+            else:
+                missing[granularity].append(pair)
+
+    fetch_commands = _oanda_history_fetch_commands(missing)
+    complete = not fetch_commands
+    return {
+        "status": "LOCAL_HISTORY_COMPLETE" if complete else "PRICE_TRUTH_FETCH_REQUIRED",
+        "history_root": str(history_root),
+        "required_pairs": required_pairs,
+        "required_granularities": required_granularities,
+        "required_history_days": OANDA_AUDIT_ONLY_REPLAY_HISTORY_DAYS,
+        "minimum_covered_history_days": OANDA_AUDIT_ONLY_REPLAY_HISTORY_MIN_COVERED_DAYS,
+        "covered_pairs_by_granularity": covered,
+        "missing_pairs_by_granularity": missing,
+        "selected_files": selected_files,
+        "fetch_commands": fetch_commands,
+        "complete": complete,
+    }
+
+
+def _oanda_history_file_summary(path: Path, match: re.Match[str]) -> dict[str, Any] | None:
+    start = _parse_oanda_history_filename_time(match.group("start"))
+    end = _parse_oanda_history_filename_time(match.group("end"))
+    if start is None or end is None or end <= start:
+        return None
+    try:
+        size_bytes = path.stat().st_size
+    except OSError:
+        size_bytes = 0
+    return {
+        "pair": match.group("pair"),
+        "granularity": match.group("granularity"),
+        "start_utc": start.isoformat(),
+        "end_utc": end.isoformat(),
+        "history_days": round((end - start).total_seconds() / 86400.0, 6),
+        "size_bytes": size_bytes,
+        "path": str(path),
+    }
+
+
+def _parse_oanda_history_filename_time(value: str) -> datetime | None:
+    try:
+        return datetime.strptime(value, "%Y%m%dT%H%M%SZ").replace(tzinfo=timezone.utc)
+    except ValueError:
+        return None
+
+
+def _oanda_history_file_rank(row: dict[str, Any]) -> tuple[float, str, int]:
+    return (
+        _float(row.get("history_days")),
+        str(row.get("end_utc") or ""),
+        int(_float(row.get("size_bytes"))),
+    )
+
+
+def _oanda_history_fetch_command(*, pairs: list[str], granularities: str) -> str:
+    pair_arg = ",".join(sorted({str(pair) for pair in pairs if str(pair)})) or "EUR_USD"
+    return (
+        "PYTHONPATH=src python3 scripts/oanda_history_fetch.py "
+        f"--pairs {pair_arg} --granularities {granularities} --price BA "
+        f"--days {OANDA_AUDIT_ONLY_REPLAY_HISTORY_DAYS} --output-dir logs/replay/oanda_history"
+    )
+
+
+def _oanda_history_fetch_commands(missing_pairs_by_granularity: dict[str, list[str]]) -> list[str]:
+    granularities_by_pair_set: dict[tuple[str, ...], list[str]] = defaultdict(list)
+    for granularity, pairs in missing_pairs_by_granularity.items():
+        pair_set = tuple(sorted({str(pair) for pair in pairs if str(pair)}))
+        if pair_set:
+            granularities_by_pair_set[pair_set].append(str(granularity))
+    return [
+        _oanda_history_fetch_command(
+            pairs=list(pair_set),
+            granularities=",".join(granularities),
+        )
+        for pair_set, granularities in granularities_by_pair_set.items()
+    ]
+
+
+def _usable_oanda_history_coverage(
+    coverage: dict[str, Any] | None,
+    pairs: list[str],
+) -> dict[str, Any]:
+    required_pairs = sorted({str(pair).upper() for pair in pairs if str(pair or "").strip()})
+    if isinstance(coverage, dict) and coverage.get("required_pairs") == required_pairs:
+        return coverage
+    return _oanda_audit_only_missing_history_coverage(required_pairs)
+
+
+def _oanda_audit_only_missing_history_coverage(pairs: list[str]) -> dict[str, Any]:
+    required_pairs = sorted({str(pair).upper() for pair in pairs if str(pair or "").strip()})
+    required_granularities = [
+        item.strip().upper()
+        for item in OANDA_AUDIT_ONLY_REPLAY_HISTORY_GRANULARITIES.split(",")
+        if item.strip()
+    ]
+    return {
+        "status": "PRICE_TRUTH_FETCH_REQUIRED",
+        "history_root": str(OANDA_AUDIT_ONLY_REPLAY_HISTORY_ROOT),
+        "required_pairs": required_pairs,
+        "required_granularities": required_granularities,
+        "required_history_days": OANDA_AUDIT_ONLY_REPLAY_HISTORY_DAYS,
+        "minimum_covered_history_days": OANDA_AUDIT_ONLY_REPLAY_HISTORY_MIN_COVERED_DAYS,
+        "covered_pairs_by_granularity": {granularity: [] for granularity in required_granularities},
+        "missing_pairs_by_granularity": {
+            granularity: required_pairs for granularity in required_granularities
+        },
+        "selected_files": [],
+        "fetch_commands": [
+            _oanda_history_fetch_command(
+                pairs=required_pairs,
+                granularities=OANDA_AUDIT_ONLY_REPLAY_HISTORY_GRANULARITIES,
+            )
+        ],
+        "complete": False,
+    }
+
+
 def _operator_actions(
     *,
     status: str,
@@ -2364,6 +2559,7 @@ def _operator_actions(
     entry: dict[str, Any],
     acceptance: dict[str, Any],
     broker: dict[str, Any] | None = None,
+    oanda_history_coverage: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     broker = broker if isinstance(broker, dict) else {}
     actions: list[dict[str, Any]] = [
@@ -2564,22 +2760,21 @@ def _operator_actions(
             }
         )
         pair_arg = ",".join(pairs) if pairs else "EUR_USD"
-        actions.append(
-            {
-                "code": "MINE_LOCAL_TP_PROOF_FOR_OANDA_AUDIT_ONLY",
-                "command": (
-                    "PYTHONPATH=src python3 scripts/oanda_history_fetch.py "
-                    f"--pairs {pair_arg} --granularities {OANDA_AUDIT_ONLY_REPLAY_HISTORY_GRANULARITIES} --price BA "
-                    "--days 120 --output-dir logs/replay/oanda_history"
-                ),
-                "requires_explicit_operator_approval": False,
-                "reason": (
-                    "OANDA campaign firepower is audit-only for these lanes; fetch both S5 truth for "
-                    "forecast replay and M5 truth for universal-rotation mining before treating the "
-                    "candidate as improved evidence"
-                ),
-            }
-        )
+        coverage = _usable_oanda_history_coverage(oanda_history_coverage, pairs)
+        fetch_commands = coverage.get("fetch_commands") if isinstance(coverage, dict) else []
+        if fetch_commands:
+            for fetch_command in fetch_commands:
+                actions.append(
+                    {
+                        "code": "MINE_LOCAL_TP_PROOF_FOR_OANDA_AUDIT_ONLY",
+                        "command": str(fetch_command),
+                        "requires_explicit_operator_approval": False,
+                        "reason": (
+                            "OANDA campaign firepower is audit-only for these lanes; fetch only missing "
+                            "spread-included candle truth before treating the candidate as improved evidence"
+                        ),
+                    }
+                )
         actions.append(
             {
                 "code": "VALIDATE_OANDA_AUDIT_ONLY_BIDASK_REPLAY",
@@ -2784,6 +2979,7 @@ def _build_repair_requests(
     acceptance: dict[str, Any],
     broker: dict[str, Any] | None = None,
     target: dict[str, Any] | None = None,
+    oanda_history_coverage: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     broker = broker if isinstance(broker, dict) else {}
     target = target if isinstance(target, dict) else {}
@@ -3222,6 +3418,12 @@ def _build_repair_requests(
     if oanda_local_tp_candidates:
         pairs = sorted({str(item.get("pair")) for item in oanda_local_tp_candidates if item.get("pair")})
         pair_arg = ",".join(pairs) if pairs else "EUR_USD"
+        history_coverage = _usable_oanda_history_coverage(oanda_history_coverage, pairs)
+        fetch_commands = (
+            history_coverage.get("fetch_commands")
+            if isinstance(history_coverage.get("fetch_commands"), list)
+            else []
+        )
         source_findings = [
             OANDA_AUDIT_ONLY_LOCAL_TP_PROOF_REQUIRED,
             *[
@@ -3262,6 +3464,7 @@ def _build_repair_requests(
                         3,
                     ),
                     "target_firepower": target_firepower,
+                    "history_coverage": history_coverage,
                     "local_tp_proof_required": True,
                     "historical_replay_can_clear_local_tp_proof": False,
                 },
@@ -3280,11 +3483,7 @@ def _build_repair_requests(
                     ),
                 ],
                 verification_commands=[
-                    (
-                        "PYTHONPATH=src python3 scripts/oanda_history_fetch.py "
-                        f"--pairs {pair_arg} --granularities {OANDA_AUDIT_ONLY_REPLAY_HISTORY_GRANULARITIES} "
-                        "--price BA --days 120 --output-dir logs/replay/oanda_history"
-                    ),
+                    *fetch_commands,
                     (
                         "PYTHONPATH=src python3 scripts/oanda_history_replay_validate.py "
                         "--history-dir logs/replay/oanda_history --granularity S5"
@@ -3636,6 +3835,11 @@ def repair_requests_from_support_payload(payload: dict[str, Any]) -> list[dict[s
     )
     broker = payload.get("broker") if isinstance(payload.get("broker"), dict) else {}
     target = payload.get("target") if isinstance(payload.get("target"), dict) else {}
+    oanda_history_coverage = (
+        payload.get("oanda_history_coverage")
+        if isinstance(payload.get("oanda_history_coverage"), dict)
+        else None
+    )
     if not any((guardian, profit_capture, entry, acceptance, broker, target)):
         return []
     return _build_repair_requests(
@@ -3645,6 +3849,7 @@ def repair_requests_from_support_payload(payload: dict[str, Any]) -> list[dict[s
         acceptance=acceptance,
         broker=broker,
         target=target,
+        oanda_history_coverage=oanda_history_coverage,
     )
 
 
@@ -3903,6 +4108,22 @@ def _render_report(payload: dict[str, Any]) -> str:
         lines.append("- none")
     lines.extend(["", "## OANDA Audit-Only Local TP Proof Required", ""])
     if entry["oanda_audit_only_local_tp_proof_required"]:
+        history_coverage = (
+            payload.get("oanda_history_coverage")
+            if isinstance(payload.get("oanda_history_coverage"), dict)
+            else {}
+        )
+        missing_history = history_coverage.get("missing_pairs_by_granularity")
+        if isinstance(missing_history, dict):
+            missing_bits = [
+                f"{granularity}:{','.join(pairs) or 'none'}"
+                for granularity, pairs in missing_history.items()
+                if isinstance(pairs, list)
+            ]
+            lines.append(
+                f"- Local OANDA history coverage: `{history_coverage.get('status')}`; missing "
+                f"{'; '.join(missing_bits) or 'none'}."
+            )
         lines.append(
             "- These candidates still lack live-grade replay or local TP proof. Escape condition: "
             "exact pair/side/method TAKE_PROFIT_ORDER proof with positive expectancy, zero TP "
