@@ -273,6 +273,7 @@ class TraderSupportBot:
             profit_capture=profit_capture,
             entry=entry,
             acceptance=acceptance,
+            broker=broker_summary,
         )
         repair_requests = _build_repair_requests(
             guardian=guardian,
@@ -2362,7 +2363,9 @@ def _operator_actions(
     profit_capture: dict[str, Any],
     entry: dict[str, Any],
     acceptance: dict[str, Any],
+    broker: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
+    broker = broker if isinstance(broker, dict) else {}
     actions: list[dict[str, Any]] = [
         {
             "code": "REFRESH_SUPPORT_PANEL",
@@ -2410,6 +2413,18 @@ def _operator_actions(
                 "command": "PYTHONPATH=src python3 -m quant_rabbit.cli cycle-refresh --daily-risk-pct 10",
                 "requires_explicit_operator_approval": False,
                 "reason": "refresh forecasts, intents, sidecar audits, and route from current broker truth",
+            }
+        )
+    if int(_float(broker.get("unknown_owner_positions"))) > 0:
+        actions.append(
+            {
+                "code": "REVIEW_UNKNOWN_OWNER_EXPOSURE",
+                "command": "PYTHONPATH=src python3 -m quant_rabbit.cli trader-support-bot",
+                "requires_explicit_operator_approval": False,
+                "reason": (
+                    "broker truth includes manual/tagless exposure that is TP-managed only; "
+                    "classify, adopt, or manually resolve it before treating margin capacity as repairable"
+                ),
             }
         )
     if acceptance.get("status") == "PROFITABILITY_ACCEPTANCE_BLOCKED":
@@ -2783,6 +2798,64 @@ def _build_repair_requests(
     )
     evidence_items = [item for item in raw_evidence_items if isinstance(item, dict)]
     requests: list[dict[str, Any]] = []
+
+    unknown_positions = (
+        broker.get("unknown_owner_position_examples")
+        if isinstance(broker.get("unknown_owner_position_examples"), list)
+        else []
+    )
+    if int(_float(broker.get("unknown_owner_positions"))) > 0:
+        requests.append(
+            _repair_request(
+                code="REVIEW_UNKNOWN_OWNER_EXPOSURE",
+                priority="P1",
+                status="OPERATOR_REVIEW_REQUIRED",
+                source_findings=[
+                    "BROKER_TRUTH_UNKNOWN_OWNER_EXPOSURE",
+                    *[
+                        str(item.get("code"))
+                        for item in entry.get("repair_frontier_remaining_blockers", [])
+                        if isinstance(item, dict) and item.get("code") == "MARGIN_TOO_THIN_FOR_MIN_LOT"
+                    ],
+                ],
+                problem=(
+                    "Broker truth includes manual/tagless exposure. It is TP-managed only by contract, "
+                    "so the trader cannot assume that margin capacity, loss-close permission, or lane "
+                    "ownership will be available for fresh-entry repair work."
+                ),
+                why_now=(
+                    "Daily 5% firepower estimates can be mathematically reachable while operational "
+                    "capacity is consumed by an unclassified live position. Codex should surface this "
+                    "as an operator classification/adoption step instead of loosening margin or forecast gates."
+                ),
+                evidence_summary={
+                    "unknown_owner_positions": broker.get("unknown_owner_positions"),
+                    "examples": unknown_positions[:5],
+                    "margin_available_jpy": broker.get("margin_available_jpy"),
+                    "nav_jpy": broker.get("nav_jpy"),
+                },
+                clearance_conditions=[
+                    "Operator confirms the exposure is intentionally manual/tagless, adopts it into a supported owner path, or resolves it through the approved live gateway/manual workflow.",
+                    "After classification, rerun broker-snapshot, generate-intents, trader-support-bot, and profitability-acceptance before treating margin blockers as repairable.",
+                ],
+                verification_commands=[
+                    "PYTHONPATH=src python3 -m quant_rabbit.cli broker-snapshot --output data/broker_snapshot.json",
+                    "PYTHONPATH=src python3 -m quant_rabbit.cli trader-support-bot",
+                ],
+                suggested_files=[
+                    "src/quant_rabbit/broker/client.py",
+                    "src/quant_rabbit/strategy/position_manager.py",
+                    "src/quant_rabbit/trader_support_bot.py",
+                    "tests/test_trader_support_bot.py",
+                ],
+                required_tests=[
+                    "Manual/tagless exposure is surfaced as operator review without granting close, cancel, or order permission.",
+                    "Support still keeps normal fresh-entry gates unchanged; unknown exposure does not become an implicit live permission or forced close.",
+                    "Margin-thin repair guidance points to classification/adoption instead of loosening min-lot or risk caps.",
+                ],
+                requires_explicit_operator_approval=True,
+            )
+        )
 
     inversion_counterfactuals = (
         broker.get("directional_inversion_counterfactuals")

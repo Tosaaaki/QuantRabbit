@@ -576,6 +576,69 @@ class TraderSupportBotTest(unittest.TestCase):
             self.assertEqual(payload["entry_readiness"]["live_ready_lanes"], 1)
             self.assertIn("RUN_NEXT_TRADER_CYCLE", {item["code"] for item in payload["operator_actions"]})
 
+    def test_unknown_owner_exposure_is_operator_review_without_send_gate_change(self) -> None:
+        now = datetime(2026, 6, 24, 12, 55, tzinfo=timezone.utc)
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _write_fixture(root, now=now, blocked=False)
+            _write_json(
+                files["broker"],
+                {
+                    "fetched_at_utc": now.isoformat(),
+                    "account": {
+                        "balance_jpy": 174356.528,
+                        "nav_jpy": 170000.0,
+                        "margin_available_jpy": 12000.0,
+                    },
+                    "positions": [
+                        {
+                            "trade_id": "472802",
+                            "pair": "EUR_USD",
+                            "side": "LONG",
+                            "owner": "unknown",
+                            "units": 20000,
+                            "unrealized_pl_jpy": -500.0,
+                            "take_profit": 1.13834,
+                            "stop_loss": None,
+                        }
+                    ],
+                    "orders": [],
+                },
+            )
+            env = _guardian_env(root, active="1")
+            with mock.patch.dict(os.environ, env, clear=False):
+                TraderSupportBot(
+                    broker_snapshot_path=files["broker"],
+                    order_intents_path=files["intents"],
+                    target_state_path=files["target"],
+                    position_management_path=files["position_management"],
+                    position_guardian_management_path=files["guardian_management"],
+                    position_guardian_execution_path=files["guardian_execution"],
+                    position_guardian_heartbeat_path=files["guardian_heartbeat"],
+                    self_improvement_audit_path=files["self_improvement"],
+                    profitability_acceptance_path=files["profitability"],
+                    execution_timing_audit_path=files["timing"],
+                    profit_capture_bot_path=files["profit_capture_bot"],
+                    output_path=files["output"],
+                    report_path=files["report"],
+                    now_utc=now,
+                ).run()
+
+            payload = json.loads(files["output"].read_text())
+            action_codes = {item["code"] for item in payload["operator_actions"]}
+            request_by_code = {item["code"]: item for item in payload["repair_requests"]}
+
+            self.assertEqual(payload["metrics"]["unknown_owner_positions"], 1)
+            self.assertTrue(payload["metrics"]["send_fresh_entries_allowed"])
+            self.assertIn("REVIEW_UNKNOWN_OWNER_EXPOSURE", action_codes)
+            self.assertIn("REVIEW_UNKNOWN_OWNER_EXPOSURE", request_by_code)
+            request = request_by_code["REVIEW_UNKNOWN_OWNER_EXPOSURE"]
+            self.assertEqual(request["priority"], "P1")
+            self.assertEqual(request["status"], "OPERATOR_REVIEW_REQUIRED")
+            self.assertTrue(request["requires_explicit_operator_approval"])
+            self.assertEqual(request["evidence_summary"]["examples"][0]["trade_id"], "472802")
+            self.assertIn("BROKER_TRUTH_UNKNOWN_OWNER_EXPOSURE", request["source_findings"])
+
     def test_bidask_partial_price_truth_evidence_exposes_exact_fetch_command(self) -> None:
         now = datetime(2026, 6, 22, 12, 15, tzinfo=timezone.utc)
         fetch_command = (
