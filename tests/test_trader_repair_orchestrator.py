@@ -27,6 +27,7 @@ from quant_rabbit.trader_support_bot import (
     REPAIR_AUTOMATION_EXPLICIT_APPROVAL_ACTIONS,
     REPAIR_AUTOMATION_FORBIDDEN_DIRECT_ACTIONS,
     TP_PROGRESS_GUARDIAN_WAIT_STATUS,
+    TP_PROGRESS_LIVE_EVIDENCE_WAIT_STATUS,
 )
 
 
@@ -1395,6 +1396,41 @@ class TraderRepairOrchestratorTest(unittest.TestCase):
             self.assertIn("evidence-window work", loop_prompt["current_hypothesis"])
             self.assertIn("waiting for evidence", " ".join(loop_prompt["next_loop"]))
             self.assertIn("trader-repair-orchestrator", " ".join(loop_prompt["verification_commands"]))
+
+    def test_tp_progress_live_evidence_waiting_status_is_non_actionable(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            support = root / "support.json"
+            output = root / "orchestrator.json"
+            report = root / "orchestrator.md"
+            _write_support(
+                support,
+                [
+                    _request(
+                        "REPAIR_TP_PROGRESS_PROFIT_CAPTURE_REPLAY",
+                        priority="P0",
+                        status=TP_PROGRESS_LIVE_EVIDENCE_WAIT_STATUS,
+                    ),
+                ],
+            )
+
+            summary = TraderRepairOrchestrator(
+                support_bot_path=support,
+                output_path=output,
+                report_path=report,
+            ).run()
+
+            payload = json.loads(output.read_text())
+            self.assertEqual(summary.status, STATUS_BLOCKED)
+            self.assertEqual(payload["codex_work_order"]["status"], "NO_ACTIONABLE_CODEX_WORK")
+            waiting = payload["queue"][0]
+            self.assertEqual(waiting["code"], "REPAIR_TP_PROGRESS_PROFIT_CAPTURE_REPLAY")
+            self.assertEqual(waiting["repair_status"], TP_PROGRESS_LIVE_EVIDENCE_WAIT_STATUS)
+            self.assertEqual(waiting["automation_status"], "WAITING_FOR_LIVE_EVIDENCE_WINDOW")
+            self.assertEqual(
+                payload["queue_summary"]["waiting_request_codes"],
+                ["REPAIR_TP_PROGRESS_PROFIT_CAPTURE_REPLAY"],
+            )
 
 
 def _write_support(path: Path, requests: list[dict[str, object]]) -> None:

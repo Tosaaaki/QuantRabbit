@@ -88,6 +88,7 @@ ORDER_INTENTS_ARTIFACT_REFRESH_WAIT_STATUS = "ORDER_INTENTS_ARTIFACT_REFRESH_REQ
 PROTECTIVE_FRONTIER_GUARDRAIL_STATUS = "FRONTIER_PROTECTIVE_GUARDRAIL_ACTIVE"
 BIDASK_REPLAY_WAIT_STATUS = "BIDASK_REPLAY_WAITING_FOR_FORECAST_SAMPLE_COVERAGE"
 TP_PROGRESS_GUARDIAN_WAIT_STATUS = "WAITING_FOR_POSITION_GUARDIAN_LIVE_EVIDENCE"
+TP_PROGRESS_LIVE_EVIDENCE_WAIT_STATUS = "WAITING_FOR_LIVE_EVIDENCE_WINDOW"
 POSITION_GUARDIAN_LOCK_WAIT_STATUS = "WAITING_FOR_POSITION_GUARDIAN_LOCK_RELEASE"
 QUOTE_FRESHNESS_BLOCKER_CODES = {
     "STALE_QUOTE",
@@ -3677,7 +3678,6 @@ def _build_repair_requests(
                 or current_guardian_lock_wait
             )
         )
-        tp_wait_status = tp_waits_for_operator_guardian or tp_waits_for_live_evidence
         verification_commands = [
             item_by_code[code].get("verification_command")
             for code in tp_codes
@@ -3688,15 +3688,20 @@ def _build_repair_requests(
                 MONTH_SCALE_EXECUTION_TIMING_AUDIT_COMMAND,
                 "PYTHONPATH=src python3 -m quant_rabbit.cli profitability-acceptance",
             ]
+        tp_request_status = (
+            TP_PROGRESS_GUARDIAN_WAIT_STATUS
+            if tp_waits_for_operator_guardian
+            else POSITION_GUARDIAN_LOCK_WAIT_STATUS
+            if current_guardian_lock_wait
+            else TP_PROGRESS_LIVE_EVIDENCE_WAIT_STATUS
+            if tp_waits_for_live_evidence
+            else "READY_FOR_CODE_REPAIR"
+        )
         requests.append(
             _repair_request(
                 code="REPAIR_TP_PROGRESS_PROFIT_CAPTURE_REPLAY",
                 priority="P0",
-                status=(
-                    TP_PROGRESS_GUARDIAN_WAIT_STATUS
-                    if tp_wait_status
-                    else "READY_FOR_CODE_REPAIR"
-                ),
+                status=tp_request_status,
                 source_findings=tp_codes,
                 problem=(
                     "Historical losing closes still show executable TP-progress profit that was not "

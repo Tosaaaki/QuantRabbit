@@ -26,7 +26,9 @@ from quant_rabbit.trader_support_bot import (
     ORDER_INTENTS_ARTIFACT_REFRESH_WAIT_STATUS,
     STATUS_BLOCKED,
     STATUS_READY,
+    POSITION_GUARDIAN_LOCK_WAIT_STATUS,
     TP_PROGRESS_GUARDIAN_WAIT_STATUS,
+    TP_PROGRESS_LIVE_EVIDENCE_WAIT_STATUS,
     TraderSupportBot,
     _acceptance_clearance_for_code,
     _guardian_status,
@@ -354,7 +356,7 @@ class TraderSupportBotTest(unittest.TestCase):
                 for item in payload["repair_requests"]
                 if item["code"] == "REPAIR_TP_PROGRESS_PROFIT_CAPTURE_REPLAY"
             )
-            self.assertEqual(tp_request["status"], TP_PROGRESS_GUARDIAN_WAIT_STATUS)
+            self.assertEqual(tp_request["status"], TP_PROGRESS_LIVE_EVIDENCE_WAIT_STATUS)
             self.assertFalse(tp_request["requires_explicit_operator_approval"])
             self.assertIn(
                 "execution-timing-audit --lookback-hours 744 --post-close-hours 6",
@@ -407,7 +409,7 @@ class TraderSupportBotTest(unittest.TestCase):
                 for item in payload["repair_requests"]
                 if item["code"] == "REPAIR_TP_PROGRESS_PROFIT_CAPTURE_REPLAY"
             )
-            self.assertEqual(tp_request["status"], TP_PROGRESS_GUARDIAN_WAIT_STATUS)
+            self.assertEqual(tp_request["status"], TP_PROGRESS_LIVE_EVIDENCE_WAIT_STATUS)
             self.assertFalse(tp_request["requires_explicit_operator_approval"])
             self.assertIn("TP_PROGRESS_REPAIR_REPLAY_NOT_DEPLOYED", tp_request["source_findings"])
             self.assertIn("TP_PROGRESS_REPLAY_REPAIR_UNPROVED", tp_request["source_findings"])
@@ -484,7 +486,7 @@ class TraderSupportBotTest(unittest.TestCase):
                 for item in payload["repair_requests"]
                 if item["code"] == "REPAIR_TP_PROGRESS_PROFIT_CAPTURE_REPLAY"
             )
-            self.assertEqual(tp_request["status"], TP_PROGRESS_GUARDIAN_WAIT_STATUS)
+            self.assertEqual(tp_request["status"], POSITION_GUARDIAN_LOCK_WAIT_STATUS)
             self.assertFalse(tp_request["requires_explicit_operator_approval"])
             self.assertTrue(tp_request["evidence_summary"]["current_guardian_live_runtime_lock_active"])
             self.assertTrue(
@@ -553,7 +555,7 @@ class TraderSupportBotTest(unittest.TestCase):
                 for item in payload["repair_requests"]
                 if item["code"] == "REPAIR_TP_PROGRESS_PROFIT_CAPTURE_REPLAY"
             )
-            self.assertEqual(tp_request["status"], TP_PROGRESS_GUARDIAN_WAIT_STATUS)
+            self.assertEqual(tp_request["status"], POSITION_GUARDIAN_LOCK_WAIT_STATUS)
             self.assertFalse(tp_request["requires_explicit_operator_approval"])
             self.assertTrue(
                 tp_request["evidence_summary"]["current_guardian_deferred_by_live_runtime_lock"]
