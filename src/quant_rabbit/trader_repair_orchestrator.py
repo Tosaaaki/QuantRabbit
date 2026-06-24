@@ -318,6 +318,9 @@ def _loop_engineering_prompt(
     target = support.get("target") if isinstance(support.get("target"), dict) else {}
     guardian = support.get("guardian") if isinstance(support.get("guardian"), dict) else {}
     entry = support.get("entry_readiness") if isinstance(support.get("entry_readiness"), dict) else {}
+    artifact_freshness = (
+        entry.get("artifact_freshness") if isinstance(entry.get("artifact_freshness"), dict) else {}
+    )
     acceptance = (
         support.get("profitability_acceptance")
         if isinstance(support.get("profitability_acceptance"), dict)
@@ -349,6 +352,12 @@ def _loop_engineering_prompt(
         "guardian_live_runtime_lock_age_seconds": guardian.get("live_runtime_lock_age_seconds"),
         "live_ready_lanes": entry.get("live_ready_lanes"),
         "guardian_blocked_lanes": entry.get("guardian_blocked_lanes"),
+        "order_intents_stale_against_broker_snapshot": artifact_freshness.get(
+            "order_intents_stale_against_broker_snapshot"
+        ),
+        "order_intents_generated_at_utc": artifact_freshness.get("order_intents_generated_at_utc"),
+        "broker_snapshot_fetched_at_utc": artifact_freshness.get("broker_snapshot_fetched_at_utc"),
+        "order_intents_staleness_seconds": artifact_freshness.get("order_intents_staleness_seconds"),
         "profitability_acceptance_status": acceptance.get("status"),
         "profitability_blockers": list(acceptance.get("blockers") or [])[:8],
         "operational_minimum_5pct_reachable": target_firepower.get(
@@ -578,6 +587,23 @@ def _artifact_contradictions(current_state: dict[str, Any]) -> list[dict[str, An
                     "support proves position guardian active, but order_intents still carries "
                     f"{guardian_blocked_lanes} guardian-inactive blocker(s); treat those counts "
                     "as stale until intents/support/orchestrator are regenerated from the same evidence packet"
+                ),
+                "refresh_commands": [
+                    "PYTHONPATH=src python3 -m quant_rabbit.cli generate-intents --snapshot data/broker_snapshot.json --reuse-market-artifacts",
+                    "PYTHONPATH=src python3 -m quant_rabbit.cli trader-support-bot",
+                    "PYTHONPATH=src python3 -m quant_rabbit.cli trader-repair-orchestrator",
+                ],
+            }
+        )
+    if current_state.get("order_intents_stale_against_broker_snapshot") is True:
+        contradictions.append(
+            {
+                "code": "ORDER_INTENTS_STALE_AGAINST_BROKER_SNAPSHOT",
+                "message": (
+                    "broker_snapshot is fresher than order_intents "
+                    f"(broker={current_state.get('broker_snapshot_fetched_at_utc')}, "
+                    f"intents={current_state.get('order_intents_generated_at_utc')}); "
+                    "refresh generated intents before treating live-ready counts or repair-frontier blockers as causal"
                 ),
                 "refresh_commands": [
                     "PYTHONPATH=src python3 -m quant_rabbit.cli generate-intents --snapshot data/broker_snapshot.json --reuse-market-artifacts",

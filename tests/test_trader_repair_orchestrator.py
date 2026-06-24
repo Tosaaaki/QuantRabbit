@@ -264,6 +264,94 @@ class TraderRepairOrchestratorTest(unittest.TestCase):
                 loop_prompt["prompt_text"],
             )
 
+    def test_loop_prompt_marks_order_intents_older_than_broker_snapshot_as_stale(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            support = root / "support.json"
+            output = root / "orchestrator.json"
+            report = root / "orchestrator.md"
+            requests = [
+                _request(
+                    "REPAIR_FRONTIER_LANE_BLOCKER",
+                    priority="P1",
+                    status="ORDER_INTENTS_ARTIFACT_REFRESH_REQUIRED",
+                    source_findings=[
+                        "ORDER_INTENTS_STALE_AGAINST_BROKER_SNAPSHOT",
+                        "MARGIN_TOO_THIN_FOR_MIN_LOT",
+                    ],
+                    verification_commands=[
+                        "PYTHONPATH=src python3 -m quant_rabbit.cli generate-intents --snapshot data/broker_snapshot.json --reuse-market-artifacts",
+                        "PYTHONPATH=src python3 -m quant_rabbit.cli trader-support-bot",
+                    ],
+                )
+            ]
+            support.write_text(
+                json.dumps(
+                    {
+                        "status": "SUPPORT_BLOCKED",
+                        "blockers": [
+                            {"code": "NO_LIVE_READY_LANES", "severity": "P1"},
+                            {
+                                "code": "ORDER_INTENTS_STALE_AGAINST_BROKER_SNAPSHOT",
+                                "severity": "P1",
+                            },
+                        ],
+                        "target": {"status": "PURSUE_TARGET"},
+                        "guardian": {"active": True, "active_source": "launchd+heartbeat"},
+                        "entry_readiness": {
+                            "live_ready_lanes": 0,
+                            "guardian_blocked_lanes": 0,
+                            "artifact_freshness": {
+                                "status": "ORDER_INTENTS_ARTIFACT_REFRESH_REQUIRED",
+                                "order_intents_generated_at_utc": "2026-06-24T15:21:06+00:00",
+                                "broker_snapshot_fetched_at_utc": "2026-06-24T15:24:56+00:00",
+                                "order_intents_staleness_seconds": 230.0,
+                                "order_intents_stale_against_broker_snapshot": True,
+                            },
+                        },
+                        "profitability_acceptance": {
+                            "status": "PROFITABILITY_ACCEPTANCE_BLOCKED",
+                            "target_firepower": {
+                                "operational_minimum_5pct_reachable": False,
+                                "minimum_5pct_estimated_reachable": True,
+                            },
+                        },
+                        "repair_requests": requests,
+                    },
+                    ensure_ascii=False,
+                    indent=2,
+                    sort_keys=True,
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            summary = TraderRepairOrchestrator(
+                support_bot_path=support,
+                output_path=output,
+                report_path=report,
+            ).run()
+
+            self.assertEqual(summary.status, STATUS_BLOCKED)
+            payload = json.loads(output.read_text())
+            loop_prompt = payload["loop_engineering_prompt"]
+            state = loop_prompt["current_state"]
+            self.assertEqual(
+                state["artifact_contradiction_codes"],
+                ["ORDER_INTENTS_STALE_AGAINST_BROKER_SNAPSHOT"],
+            )
+            self.assertIn("ORDER_INTENTS_STALE_AGAINST_BROKER_SNAPSHOT", state["support_blocker_codes"])
+            self.assertIn("Resolve artifact contradictions", loop_prompt["next_loop"][0])
+            self.assertIn(
+                "generate-intents --snapshot data/broker_snapshot.json --reuse-market-artifacts",
+                " ".join(loop_prompt["verification_commands"]),
+            )
+            self.assertIn(
+                "Artifact contradictions: ORDER_INTENTS_STALE_AGAINST_BROKER_SNAPSHOT",
+                loop_prompt["prompt_text"],
+            )
+            self.assertEqual(payload["codex_work_order"]["status"], "NO_ACTIONABLE_CODEX_WORK")
+
     def test_loop_prompt_does_not_mark_guardian_blockers_stale_when_guardian_is_inactive(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

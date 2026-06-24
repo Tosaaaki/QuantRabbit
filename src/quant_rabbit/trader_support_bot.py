@@ -82,6 +82,7 @@ OANDA_HISTORY_FILENAME_RE = re.compile(
 FORECAST_FRONTIER_EVIDENCE_WAIT_STATUS = "FORECAST_FRONTIER_WAITING_FOR_LIVE_PRECISION_EVIDENCE"
 FRONTIER_QUOTE_FRESHNESS_WAIT_STATUS = "FRONTIER_WAITING_FOR_FRESH_QUOTE"
 FRONTIER_MARGIN_CAPACITY_WAIT_STATUS = "FRONTIER_MARGIN_CAPACITY_WAIT"
+ORDER_INTENTS_ARTIFACT_REFRESH_WAIT_STATUS = "ORDER_INTENTS_ARTIFACT_REFRESH_REQUIRED"
 PROTECTIVE_FRONTIER_GUARDRAIL_STATUS = "FRONTIER_PROTECTIVE_GUARDRAIL_ACTIVE"
 BIDASK_REPLAY_WAIT_STATUS = "BIDASK_REPLAY_WAITING_FOR_FORECAST_SAMPLE_COVERAGE"
 TP_PROGRESS_GUARDIAN_WAIT_STATUS = "WAITING_FOR_POSITION_GUARDIAN_LIVE_EVIDENCE"
@@ -278,6 +279,11 @@ class TraderSupportBot:
         profit_capture = _profit_capture_summary(self_improvement, timing)
         current_profit_capture = _current_profit_capture_summary(profit_capture_bot)
         entry = _entry_readiness_summary(intents, oanda_rotation=oanda_rotation)
+        artifact_freshness = _artifact_freshness_summary(
+            broker=broker_summary,
+            entry=entry,
+        )
+        entry["artifact_freshness"] = artifact_freshness
         oanda_history_coverage = _oanda_audit_only_history_coverage(
             [
                 str(item.get("pair"))
@@ -363,6 +369,12 @@ class TraderSupportBot:
             "repair_frontier_after_support_clear_lanes": entry["repair_frontier_after_support_clear_lanes"],
             "repair_frontier_after_support_blocked_lanes": entry["repair_frontier_after_support_blocked_lanes"],
             "repair_frontier_after_support_top_blockers": entry["repair_frontier_remaining_blockers"],
+            "order_intents_stale_against_broker_snapshot": artifact_freshness[
+                "order_intents_stale_against_broker_snapshot"
+            ],
+            "order_intents_staleness_seconds": artifact_freshness["order_intents_staleness_seconds"],
+            "order_intents_generated_at_utc": artifact_freshness["order_intents_generated_at_utc"],
+            "broker_snapshot_fetched_at_utc": artifact_freshness["broker_snapshot_fetched_at_utc"],
             "global_unlock_frontier_lanes": len(entry["global_unlock_frontier"]),
             "month_scale_residual_blocked_intent_count": entry["month_scale_residual_blocked_intent_count"],
             "profit_capture_missed_loss_closes": profit_capture["missed_loss_closes"],
@@ -792,6 +804,51 @@ def _broker_summary(
             target=target,
             oanda_rotation=oanda_rotation,
             bidask_replay_validation=bidask_replay_validation,
+        ),
+    }
+
+
+def _artifact_freshness_summary(
+    *,
+    broker: dict[str, Any],
+    entry: dict[str, Any],
+) -> dict[str, Any]:
+    intents_generated_raw = entry.get("generated_at_utc")
+    broker_fetched_raw = broker.get("fetched_at_utc")
+    intents_generated = _parse_utc(intents_generated_raw)
+    broker_fetched = _parse_utc(broker_fetched_raw)
+    staleness_seconds: float | None = None
+    stale = False
+    status = "ARTIFACT_FRESHNESS_UNKNOWN"
+    reason = "order_intents or broker snapshot timestamp is unavailable"
+    if intents_generated is not None and broker_fetched is not None:
+        staleness_seconds = (broker_fetched - intents_generated).total_seconds()
+        stale = staleness_seconds > 1.0
+        if stale:
+            status = ORDER_INTENTS_ARTIFACT_REFRESH_WAIT_STATUS
+            reason = (
+                "broker_snapshot was fetched after order_intents was generated; "
+                "regenerate intents before treating LIVE_READY or repair-frontier blockers as current"
+            )
+        else:
+            status = "ORDER_INTENTS_ALIGNED_WITH_BROKER_SNAPSHOT"
+            reason = "order_intents is generated from the current broker evidence packet"
+    return {
+        "status": status,
+        "order_intents_generated_at_utc": intents_generated_raw,
+        "broker_snapshot_fetched_at_utc": broker_fetched_raw,
+        "order_intents_stale_against_broker_snapshot": stale,
+        "order_intents_staleness_seconds": _round_optional(staleness_seconds, 3),
+        "refresh_required": stale,
+        "reason": reason,
+        "refresh_commands": (
+            [
+                "PYTHONPATH=src python3 -m quant_rabbit.cli generate-intents --snapshot data/broker_snapshot.json --reuse-market-artifacts",
+                "PYTHONPATH=src python3 -m quant_rabbit.cli trader-support-bot",
+                "PYTHONPATH=src python3 -m quant_rabbit.cli trader-repair-orchestrator",
+            ]
+            if stale
+            else []
         ),
     }
 
@@ -2358,6 +2415,11 @@ def _annotate_operational_target_firepower(
         operational_blockers.append("POSITION_GUARDIAN_INACTIVE")
     if _float(entry.get("live_ready_lanes")) <= 0:
         operational_blockers.append("NO_LIVE_READY_LANES")
+    artifact_freshness = (
+        entry.get("artifact_freshness") if isinstance(entry.get("artifact_freshness"), dict) else {}
+    )
+    if artifact_freshness.get("order_intents_stale_against_broker_snapshot"):
+        operational_blockers.append("ORDER_INTENTS_STALE_AGAINST_BROKER_SNAPSHOT")
     if not send_allowed:
         operational_blockers.append("FRESH_ENTRY_SEND_NOT_ALLOWED")
     operational_blockers = list(dict.fromkeys(item for item in operational_blockers if item))
@@ -2464,13 +2526,31 @@ def _build_blockers(
             }
         )
     if target.get("target_open") and entry["live_ready_lanes"] == 0:
+        artifact_freshness = (
+            entry.get("artifact_freshness") if isinstance(entry.get("artifact_freshness"), dict) else {}
+        )
+        stale_intents = bool(artifact_freshness.get("order_intents_stale_against_broker_snapshot"))
         blockers.append(
             {
                 "code": "NO_LIVE_READY_LANES",
                 "severity": "P1",
-                "message": "daily target is open but no lane is LIVE_READY",
+                "message": (
+                    "daily target is open but no lane is LIVE_READY; order_intents is older than "
+                    "broker_snapshot, so refresh the evidence packet before treating blocker counts as current"
+                    if stale_intents
+                    else "daily target is open but no lane is LIVE_READY"
+                ),
             }
         )
+        if stale_intents:
+            blockers.append(
+                {
+                    "code": "ORDER_INTENTS_STALE_AGAINST_BROKER_SNAPSHOT",
+                    "severity": "P1",
+                    "message": artifact_freshness.get("reason")
+                    or "broker_snapshot is fresher than order_intents",
+                }
+            )
     if str(acceptance.get("status") or "") not in {"", "PROFITABILITY_ACCEPTANCE_PASSED", "PASSED"}:
         blockers.append(
             {
@@ -2759,6 +2839,18 @@ def _operator_actions(
                 "command": "PYTHONPATH=src python3 -m quant_rabbit.cli execution-timing-audit --max-events 80",
                 "requires_explicit_operator_approval": False,
                 "reason": "recompute TP-progress misses and confirm capture gap is shrinking",
+            }
+        )
+    artifact_freshness = (
+        entry.get("artifact_freshness") if isinstance(entry.get("artifact_freshness"), dict) else {}
+    )
+    if artifact_freshness.get("order_intents_stale_against_broker_snapshot"):
+        actions.append(
+            {
+                "code": "REGENERATE_INTENTS_FROM_CURRENT_BROKER_SNAPSHOT",
+                "command": "PYTHONPATH=src python3 -m quant_rabbit.cli generate-intents --snapshot data/broker_snapshot.json --reuse-market-artifacts",
+                "requires_explicit_operator_approval": False,
+                "reason": "order_intents is older than broker_snapshot; refresh intents before ranking live blockers",
             }
         )
     if entry["live_ready_lanes"] == 0:
@@ -3835,11 +3927,45 @@ def _build_repair_requests(
     if frontier_blockers:
         top = frontier_blockers[0] if isinstance(frontier_blockers[0], dict) else {}
         code = str(top.get("code") or "UNKNOWN_REPAIR_FRONTIER_BLOCKER")
+        artifact_freshness = (
+            entry.get("artifact_freshness") if isinstance(entry.get("artifact_freshness"), dict) else {}
+        )
+        waits_for_artifact_refresh = bool(
+            artifact_freshness.get("order_intents_stale_against_broker_snapshot")
+        )
         waits_for_quote_refresh = _frontier_blocker_waits_for_quote_refresh(top)
         waits_for_forecast_evidence = _frontier_blocker_waits_for_live_precision_evidence(top)
         waits_for_margin_capacity = _frontier_blocker_waits_for_margin_capacity(top)
         protective_guardrail_active = _frontier_blocker_is_protective_guardrail(top)
-        if waits_for_quote_refresh:
+        frontier_evidence_summary = top
+        source_findings = [code]
+        if waits_for_artifact_refresh:
+            frontier_status = ORDER_INTENTS_ARTIFACT_REFRESH_WAIT_STATUS
+            frontier_problem = (
+                "Repair-frontier lanes were generated before the current broker snapshot, so the "
+                "top blocker ranking may be artifact-stale."
+            )
+            frontier_why_now = (
+                "Broker truth changed after order_intents was generated; treating the stale blocker "
+                "as causal can send the repair loop into margin or gate work that may no longer apply."
+            )
+            frontier_clearance = [
+                "Regenerate order_intents from the current broker_snapshot before selecting frontier repair work.",
+                "After regeneration, rerun trader-support-bot and trader-repair-orchestrator from the same evidence packet.",
+            ]
+            frontier_verification_commands = list(
+                artifact_freshness.get("refresh_commands")
+                or [
+                    "PYTHONPATH=src python3 -m quant_rabbit.cli generate-intents --snapshot data/broker_snapshot.json --reuse-market-artifacts",
+                    "PYTHONPATH=src python3 -m quant_rabbit.cli trader-support-bot",
+                ]
+            )
+            frontier_evidence_summary = {
+                **top,
+                "artifact_freshness": artifact_freshness,
+            }
+            source_findings = ["ORDER_INTENTS_STALE_AGAINST_BROKER_SNAPSHOT", code]
+        elif waits_for_quote_refresh:
             frontier_status = FRONTIER_QUOTE_FRESHNESS_WAIT_STATUS
             frontier_problem = (
                 "Repair-frontier lanes are blocked because the current broker quote or forecast telemetry "
@@ -3936,10 +4062,10 @@ def _build_repair_requests(
                 code="REPAIR_FRONTIER_LANE_BLOCKER",
                 priority="P1",
                 status=frontier_status,
-                source_findings=[code],
+                source_findings=source_findings,
                 problem=frontier_problem,
                 why_now=frontier_why_now,
-                evidence_summary=top,
+                evidence_summary=frontier_evidence_summary,
                 clearance_conditions=frontier_clearance,
                 verification_commands=frontier_verification_commands,
                 suggested_files=[
@@ -4150,6 +4276,7 @@ def _render_report(payload: dict[str, Any]) -> str:
         f"| Guardian active | `{guardian['active']}` source=`{guardian['active_source']}` |",
         f"| Guardian heartbeat fresh | `{guardian['heartbeat_fresh']}` age=`{guardian['heartbeat_age_seconds']}`s |",
         f"| LIVE_READY lanes | `{entry['live_ready_lanes']}` / `{entry['lanes']}` |",
+        f"| Order intents freshness | `{entry.get('artifact_freshness', {}).get('status')}` staleness=`{entry.get('artifact_freshness', {}).get('order_intents_staleness_seconds')}`s |",
         f"| Repair LIVE_READY lanes | `{len(entry['repair_live_ready'])}` |",
         f"| Repair lanes after guardian recovery | `{len(entry['repair_basket_guardian_recovery'])}` |",
         f"| Repair frontier lanes | `{len(entry['repair_frontier'])}` |",
