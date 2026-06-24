@@ -725,6 +725,62 @@ class LiveOrderGatewayTest(unittest.TestCase):
             codes = {issue["code"] for issue in payload["risk_issues"]}
             self.assertNotIn("SELF_IMPROVEMENT_P0_BLOCKS_LIVE_ORDER", codes)
 
+    def test_profit_capture_miss_p0_allows_tp_harvest_repair_lane_staging(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            audit = root / "self_improvement.json"
+            audit.write_text(
+                json.dumps(
+                    {
+                        "generated_at_utc": datetime.now(timezone.utc).isoformat(),
+                        "status": "SELF_IMPROVEMENT_BLOCKED",
+                        "findings": [
+                            {
+                                "priority": "P0",
+                                "layer": "execution_quality",
+                                "code": "LOSS_CLOSE_PROFIT_CAPTURE_MISSED",
+                                "message": (
+                                    "13 losing close(s) had production-gate replay proof "
+                                    "that TP-progress capture was executable before closing red"
+                                ),
+                            }
+                        ],
+                    }
+                )
+            )
+            intents = _intents(
+                root,
+                metadata={
+                    "desk": "range_trader",
+                    "campaign_role": "NOW",
+                    "positive_rotation_mode": "TP_PROOF_COLLECTION_HARVEST",
+                    "positive_rotation_pessimistic_expectancy_jpy": 215.6,
+                    "self_improvement_p0_repair_live_ready": True,
+                    "self_improvement_p0_repair_mode": "TP_HARVEST_REPAIR",
+                    "self_improvement_p0_repair_blocker_code": (
+                        "NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION"
+                    ),
+                    "capture_take_profit_trades": 6,
+                    "capture_take_profit_wins": 6,
+                    "capture_take_profit_losses": 0,
+                    "capture_take_profit_expectancy_jpy": 992.7,
+                },
+            )
+            client = FakeExecutionClient()
+            summary = LiveOrderGateway(
+                client=client,
+                strategy_profile=_profile(root),
+                output_path=root / "request.json",
+                report_path=root / "report.md",
+                self_improvement_audit=audit,
+            ).run(intents_path=intents, lane_id="lane:EUR_USD:LONG")
+
+            self.assertEqual(summary.status, "STAGED")
+            self.assertFalse(summary.sent)
+            payload = json.loads((root / "request.json").read_text())
+            codes = {issue["code"] for issue in payload["risk_issues"]}
+            self.assertNotIn("SELF_IMPROVEMENT_P0_BLOCKS_LIVE_ORDER", codes)
+
     def test_self_improvement_p0_blocks_underpowered_oanda_repair_lane_staging(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

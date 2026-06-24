@@ -725,6 +725,56 @@ class GPTTraderBrainTest(unittest.TestCase):
             lane = payload["input_packet"]["lanes"][0]
             self.assertTrue(lane["self_improvement"]["self_improvement_p0_repair_live_ready"])
 
+    def test_accepts_trade_for_profit_capture_miss_p0_repair_lane(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root)
+            intents = json.loads(files["intents"].read_text())
+            intent = intents["results"][0]["intent"]
+            intent["order_type"] = "LIMIT"
+            intent["market_context"]["method"] = "BREAKOUT_FAILURE"
+            metadata = intent.setdefault("metadata", {})
+            metadata.update(
+                {
+                    "opportunity_mode": "HARVEST",
+                    "tp_execution_mode": "ATTACHED_TECHNICAL_TP",
+                    "tp_target_intent": "HARVEST",
+                    "tp_target_source": "OPERATING_HARVEST_FLOOR",
+                    "positive_rotation_mode": "TP_PROOF_COLLECTION_HARVEST",
+                    "positive_rotation_pessimistic_expectancy_jpy": 215.6,
+                    "self_improvement_p0_repair_live_ready": True,
+                    "self_improvement_p0_repair_mode": "TP_HARVEST_REPAIR",
+                    "self_improvement_p0_repair_blocker_code": (
+                        "NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION"
+                    ),
+                    "capture_take_profit_scope": "PAIR_SIDE_METHOD",
+                    "capture_take_profit_scope_key": "EUR_USD|LONG|BREAKOUT_FAILURE|TAKE_PROFIT_ORDER",
+                    "capture_take_profit_trades": 6,
+                    "capture_take_profit_wins": 6,
+                    "capture_take_profit_losses": 0,
+                    "capture_take_profit_expectancy_jpy": 992.7,
+                }
+            )
+            files["intents"].write_text(json.dumps(intents))
+            files["self_improvement_audit"].write_text(json.dumps(_self_improvement_profit_capture_miss_p0()))
+            decision = _trade_decision(method="BREAKOUT_FAILURE")
+            decision["evidence_refs"].extend(
+                [
+                    "self_improvement:audit",
+                    "self_improvement:finding:LOSS_CLOSE_PROFIT_CAPTURE_MISSED",
+                ]
+            )
+            brain = _brain(root, files, decision)
+
+            summary = brain.run(snapshot_path=files["snapshot"])
+
+            self.assertEqual(summary.status, "ACCEPTED")
+            payload = json.loads((root / "gpt_decision.json").read_text())
+            codes = {issue["code"] for issue in payload["verification_issues"]}
+            self.assertNotIn("SELF_IMPROVEMENT_P0_BLOCKS_TRADE", codes)
+            lane = payload["input_packet"]["lanes"][0]
+            self.assertTrue(lane["self_improvement"]["self_improvement_p0_repair_live_ready"])
+
     def test_rejects_underpowered_oanda_self_improvement_repair_lane(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -4180,6 +4230,30 @@ def _self_improvement_profitability_p0() -> dict:
                             }
                         ],
                     },
+                },
+            }
+        ],
+    }
+
+
+def _self_improvement_profit_capture_miss_p0() -> dict:
+    return {
+        "generated_at_utc": datetime.now(timezone.utc).isoformat(),
+        "status": "SELF_IMPROVEMENT_BLOCKED",
+        "p0_findings": 1,
+        "findings": [
+            {
+                "priority": "P0",
+                "layer": "execution_quality",
+                "code": "LOSS_CLOSE_PROFIT_CAPTURE_MISSED",
+                "message": (
+                    "13 losing close(s) had production-gate replay proof that "
+                    "TP-progress capture was executable before closing red"
+                ),
+                "evidence": {
+                    "loss_closes_profit_capture_missed": 13,
+                    "loss_closes_repair_replay_triggered": 13,
+                    "loss_close_repair_replay_delta_jpy": 18768.834,
                 },
             }
         ],

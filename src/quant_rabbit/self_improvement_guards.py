@@ -1,8 +1,9 @@
 """Shared self-improvement gates for fresh entry risk.
 
 These helpers convert audit diagnoses into executable no-new-risk blockers.
-They do not relax any P0 gate; they only hard-block a repeated, high-confidence
-root-cause diagnosis before it can leak through a lower layer.
+They also centralize the narrow TP_HARVEST_REPAIR exceptions so the verifier,
+gateway, and support surfaces do not disagree about which P0 a repair basket
+is allowed to address.
 """
 
 from __future__ import annotations
@@ -38,6 +39,13 @@ PENDING_EXECUTION_LIFECYCLE_SUPPORT_CODES = frozenset(
 )
 
 PROFITABILITY_DISCIPLINE_BLOCKED_CODE = "PERSISTENT_PROFITABILITY_DISCIPLINE_BLOCKED"
+PROFIT_CAPTURE_MISS_CODE = "LOSS_CLOSE_PROFIT_CAPTURE_MISSED"
+TP_HARVEST_REPAIR_EXEMPT_P0_CODES = frozenset(
+    {
+        PROFITABILITY_DISCIPLINE_BLOCKED_CODE,
+        PROFIT_CAPTURE_MISS_CODE,
+    }
+)
 OANDA_CAMPAIGN_FIREPOWER_REPAIR_MODE = "OANDA_CAMPAIGN_FIREPOWER_HARVEST"
 OANDA_CAMPAIGN_CURRENT_RISK_UNDERPOWERED_BASIS = (
     "OANDA_CAMPAIGN_FIREPOWER_CURRENT_RISK_UNDERPOWERED"
@@ -275,6 +283,12 @@ def oanda_firepower_repair_current_risk_reaches_minimum(
     if current_risk_reachable is False and not normal_cap_reachable:
         return False
     return True
+
+
+def p0_code_exempted_by_tp_harvest_repair(code: str, *, p0_repair_selected: bool) -> bool:
+    if not p0_repair_selected:
+        return False
+    return str(code or "").strip() in TP_HARVEST_REPAIR_EXEMPT_P0_CODES
 
 
 def _oanda_firepower_normal_cap_weighted_pace_reaches_minimum(

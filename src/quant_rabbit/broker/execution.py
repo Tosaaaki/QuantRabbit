@@ -47,6 +47,7 @@ from quant_rabbit.self_improvement_guards import (
     forecast_adverse_path_new_risk_blocker,
     intent_matches_profitability_worst_segment,
     oanda_firepower_repair_current_risk_reaches_minimum,
+    p0_code_exempted_by_tp_harvest_repair,
     profitability_p0_worst_segment,
 )
 from quant_rabbit.strategy.intent_generator import (
@@ -2213,7 +2214,10 @@ def _self_improvement_gateway_issues(
         if str(item.get("priority") or "").upper() != "P0":
             continue
         code = str(item.get("code") or "SELF_IMPROVEMENT_P0")
-        if code == "PERSISTENT_PROFITABILITY_DISCIPLINE_BLOCKED" and p0_repair_selected:
+        if p0_code_exempted_by_tp_harvest_repair(
+            code,
+            p0_repair_selected=p0_repair_selected,
+        ):
             continue
         if code == "LATEST_GPT_DECISION_STALE" and verification_postdates_audit:
             # The decision being staged was verified ACCEPTED after this audit
