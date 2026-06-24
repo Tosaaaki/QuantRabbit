@@ -83,6 +83,7 @@ def main() -> int:
         "errors": [],
         "total_rows": 0,
         "total_requests": 0,
+        "dry_run": bool(args.dry_run),
     }
 
     for pair in pairs:
@@ -105,9 +106,10 @@ def main() -> int:
 
     summary_path = run_dir / "summary.json"
     summary_path.write_text(json.dumps(summary, ensure_ascii=False, indent=2, sort_keys=True), encoding="utf-8")
-    latest_path = args.output_dir / "latest_summary.json"
-    latest_path.parent.mkdir(parents=True, exist_ok=True)
-    latest_path.write_text(summary_path.read_text(encoding="utf-8"), encoding="utf-8")
+    if not args.dry_run and not summary["errors"]:
+        latest_path = args.output_dir / "latest_summary.json"
+        latest_path.parent.mkdir(parents=True, exist_ok=True)
+        latest_path.write_text(summary_path.read_text(encoding="utf-8"), encoding="utf-8")
     print(f"wrote {summary_path}")
     print(f"rows={summary['total_rows']} requests={summary['total_requests']} errors={len(summary['errors'])}")
     return 1 if summary["errors"] else 0
@@ -196,6 +198,8 @@ def _fetch_task(
         "from": _iso(task.start),
         "to": _iso(task.end),
         "path": str(file_path),
+        "partial_path": None,
+        "published": False,
         "windows": len(windows),
         "requests": 0,
         "rows": 0,
@@ -206,7 +210,11 @@ def _fetch_task(
         return summary
 
     seen_times: set[str] = set()
-    with file_path.open("w", encoding="utf-8") as handle:
+    tmp_path = file_path.with_name(f"{file_path.name}.tmp")
+    partial_path = file_path.with_name(f"{file_path.name}.partial")
+    tmp_path.unlink(missing_ok=True)
+    partial_path.unlink(missing_ok=True)
+    with tmp_path.open("w", encoding="utf-8") as handle:
         for window_start, window_end in windows:
             payload = _get_candles_with_retry(
                 client,
@@ -242,6 +250,12 @@ def _fetch_task(
                 summary["rows"] += 1
             if sleep_seconds > 0:
                 time.sleep(sleep_seconds)
+    if summary["errors"]:
+        tmp_path.replace(partial_path)
+        summary["partial_path"] = str(partial_path)
+    else:
+        tmp_path.replace(file_path)
+        summary["published"] = True
     return summary
 
 

@@ -132,9 +132,73 @@ class OandaHistoryFetchTest(unittest.TestCase):
 
             self.assertGreater(summary["requests"], 1)
             self.assertEqual(summary["rows"], 1)
+            self.assertTrue(summary["published"])
             rows = Path(summary["path"]).read_text(encoding="utf-8").splitlines()
             self.assertEqual(len(rows), 1)
             self.assertEqual(json.loads(rows[0])["time"], "2026-06-01T00:00:00.000000000Z")
+
+    def test_fetch_task_keeps_failed_fetch_out_of_jsonl_discovery(self) -> None:
+        class FailingClient:
+            def get_json(self, _path, _query):
+                raise TimeoutError("simulated OANDA timeout")
+
+        start = datetime(2026, 6, 1, tzinfo=timezone.utc)
+        end = start + timedelta(minutes=3)
+        task = hist.FetchTask(pair="EUR_USD", granularity="M1", start=start, end=end, price="BA")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            summary = hist._fetch_task(
+                FailingClient(),
+                task,
+                run_dir=Path(tmp),
+                max_candles_per_request=2,
+                sleep_seconds=0.0,
+                retries=1,
+                include_incomplete=False,
+                dry_run=False,
+            )
+
+            self.assertFalse(summary["published"])
+            self.assertTrue(summary["errors"])
+            self.assertFalse(Path(summary["path"]).exists())
+            self.assertIsNotNone(summary["partial_path"])
+            self.assertTrue(Path(summary["partial_path"]).exists())
+            self.assertTrue(str(summary["partial_path"]).endswith(".jsonl.partial"))
+
+    def test_dry_run_does_not_update_latest_summary(self) -> None:
+        repo = Path(__file__).resolve().parents[1]
+        script = repo / "scripts" / "oanda_history_fetch.py"
+        env = os.environ.copy()
+        env["QR_OANDA_TOKEN"] = "dummy-token"
+        env["QR_OANDA_ACCOUNT_ID"] = "dummy-account"
+
+        with tempfile.TemporaryDirectory() as tmp:
+            output_dir = Path(tmp) / "history"
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    str(script),
+                    "--pairs",
+                    "EUR_USD",
+                    "--granularities",
+                    "M5",
+                    "--days",
+                    "1",
+                    "--output-dir",
+                    str(output_dir),
+                    "--dry-run",
+                ],
+                cwd=repo,
+                capture_output=True,
+                text=True,
+                env=env,
+                timeout=10,
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertFalse((output_dir / "latest_summary.json").exists())
+            summaries = list(output_dir.glob("*/summary.json"))
+            self.assertEqual(len(summaries), 1)
 
 
 if __name__ == "__main__":
