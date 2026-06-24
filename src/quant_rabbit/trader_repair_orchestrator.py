@@ -370,6 +370,7 @@ def _loop_engineering_prompt(
             and waiting_p0
             and _priority_rank(selected.get("priority")) > _priority_rank(waiting_p0[0].get("priority"))
         ),
+        "approval_required_details": _approval_required_details(approval_required),
     }
     artifact_contradictions = _artifact_contradictions(current_state)
     current_state["artifact_contradictions"] = artifact_contradictions
@@ -457,6 +458,98 @@ def _queue_codes(items: list[dict[str, Any]]) -> list[str]:
 
 def _p0_requests(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return [item for item in items if _priority_rank(item.get("priority")) == 0]
+
+
+def _approval_required_details(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    details: list[dict[str, Any]] = []
+    for item in items[:5]:
+        evidence = item.get("evidence_summary") if isinstance(item.get("evidence_summary"), dict) else {}
+        examples = evidence.get("examples") if isinstance(evidence.get("examples"), list) else []
+        compact_examples: list[dict[str, Any]] = []
+        for example in examples[:3]:
+            if not isinstance(example, dict):
+                continue
+            compact_examples.append(
+                {
+                    key: example.get(key)
+                    for key in [
+                        "trade_id",
+                        "pair",
+                        "side",
+                        "units",
+                        "owner",
+                        "take_profit",
+                        "stop_loss",
+                        "unrealized_pl_jpy",
+                    ]
+                    if example.get(key) is not None
+                }
+            )
+        detail = {
+            "code": item.get("code"),
+            "status": item.get("repair_status") or item.get("status"),
+            "problem": item.get("problem"),
+            "clearance_conditions": _dedupe_strings(item.get("clearance_conditions"))[:3],
+            "examples": compact_examples,
+        }
+        details.append({key: value for key, value in detail.items() if value})
+    return details
+
+
+def _approval_action_summary(item: dict[str, Any]) -> str:
+    details = _approval_required_details([item])
+    if not details:
+        return f"Run read-only preflight/status checks for {item.get('code')}."
+    detail = details[0]
+    code = detail.get("code") or item.get("code")
+    example_text = _format_approval_examples(detail.get("examples"))
+    clearance = _format_approval_clearance(detail.get("clearance_conditions"))
+    suffix = " ".join(part for part in [example_text, clearance] if part)
+    if suffix:
+        return f"Run read-only preflight/status checks for {code}: {suffix}"
+    return f"Run read-only preflight/status checks for {code}."
+
+
+def _format_approval_examples(value: Any) -> str:
+    if not isinstance(value, list) or not value:
+        return ""
+    parts: list[str] = []
+    for example in value[:3]:
+        if not isinstance(example, dict):
+            continue
+        trade = example.get("trade_id")
+        pair = example.get("pair")
+        side = example.get("side")
+        units = example.get("units")
+        owner = example.get("owner")
+        tp = example.get("take_profit")
+        sl = example.get("stop_loss")
+        pl = example.get("unrealized_pl_jpy")
+        fragment = " ".join(str(item) for item in [pair, side] if item)
+        if units is not None:
+            fragment = f"{fragment} {units}u".strip()
+        if trade:
+            fragment = f"trade_id={trade} {fragment}".strip()
+        if owner:
+            fragment = f"{fragment} owner={owner}".strip()
+        if tp is not None:
+            fragment = f"{fragment} TP={tp}".strip()
+        if sl is not None:
+            fragment = f"{fragment} SL={sl}".strip()
+        if pl is not None:
+            fragment = f"{fragment} unrealized_jpy={pl}".strip()
+        if fragment:
+            parts.append(fragment)
+    if not parts:
+        return ""
+    return "approval target(s): " + "; ".join(parts) + "."
+
+
+def _format_approval_clearance(value: Any) -> str:
+    conditions = [item.rstrip(" .") for item in _dedupe_strings(value)]
+    if not conditions:
+        return ""
+    return "clearance: " + " / ".join(conditions[:2]) + "."
 
 
 def _support_blocker_codes(value: Any) -> list[str]:
@@ -580,7 +673,7 @@ def _loop_next_steps(
     if approval_required:
         first = approval_required[0]
         return [
-            f"Run read-only preflight/status checks for {first.get('code')}.",
+            _approval_action_summary(first),
             "Do not load/reload launchd, send/cancel orders, or close positions without explicit operator approval or an existing gateway path.",
             "After approval-bound state changes externally, rerun trader-support-bot and trader-repair-orchestrator to regenerate this prompt.",
         ]
@@ -642,6 +735,8 @@ def _render_loop_prompt_text(
         f"Queue: selected={current_state.get('selected_request_code')}, "
         f"waiting_p0={', '.join(current_state.get('waiting_p0_request_codes') or []) or '(none)'}, "
         f"support_blockers={', '.join(current_state.get('support_blocker_codes') or []) or '(none)'}.",
+        "Approval required details: "
+        f"{_render_approval_details_for_prompt(current_state.get('approval_required_details'))}.",
         "Artifact contradictions: "
         f"{', '.join(current_state.get('artifact_contradiction_codes') or []) or '(none)'}.",
         f"Hypothesis: {current_hypothesis}",
@@ -656,6 +751,23 @@ def _render_loop_prompt_text(
     lines.extend(["", "Verification commands:"])
     lines.extend(f"- {item}" for item in verification_commands)
     return "\n".join(lines)
+
+
+def _render_approval_details_for_prompt(value: Any) -> str:
+    if not isinstance(value, list) or not value:
+        return "(none)"
+    rendered: list[str] = []
+    for detail in value[:3]:
+        if not isinstance(detail, dict):
+            continue
+        code = detail.get("code")
+        examples = _format_approval_examples(detail.get("examples"))
+        clearance = _format_approval_clearance(detail.get("clearance_conditions"))
+        parts = [str(code)] if code else []
+        parts.extend(part for part in [examples, clearance] if part)
+        if parts:
+            rendered.append(" ".join(parts))
+    return " | ".join(rendered) if rendered else "(none)"
 
 
 def _codex_work_order(

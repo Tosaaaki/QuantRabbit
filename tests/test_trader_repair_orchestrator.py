@@ -357,6 +357,66 @@ class TraderRepairOrchestratorTest(unittest.TestCase):
             self.assertIn("approval-bound", loop_prompt["current_hypothesis"])
             self.assertIn("explicit operator approval", " ".join(loop_prompt["next_loop"]))
 
+    def test_loop_prompt_surfaces_approval_bound_unknown_owner_trade_details(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            support = root / "support.json"
+            output = root / "orchestrator.json"
+            report = root / "orchestrator.md"
+            _write_support(
+                support,
+                [
+                    _request(
+                        "REVIEW_UNKNOWN_OWNER_EXPOSURE",
+                        priority="P1",
+                        status="OPERATOR_REVIEW_REQUIRED",
+                        requires_explicit_operator_approval=True,
+                        source_findings=[
+                            "BROKER_TRUTH_UNKNOWN_OWNER_EXPOSURE",
+                            "MARGIN_TOO_THIN_FOR_MIN_LOT",
+                        ],
+                        evidence_summary={
+                            "unknown_owner_positions": 1,
+                            "examples": [
+                                {
+                                    "trade_id": "472802",
+                                    "pair": "EUR_USD",
+                                    "side": "LONG",
+                                    "units": 20000,
+                                    "owner": "unknown",
+                                    "take_profit": 1.13834,
+                                    "stop_loss": None,
+                                    "unrealized_pl_jpy": -11765.663,
+                                }
+                            ],
+                            "margin_available_jpy": 16001.268,
+                            "nav_jpy": 162590.792,
+                        },
+                    )
+                ],
+            )
+
+            summary = TraderRepairOrchestrator(
+                support_bot_path=support,
+                output_path=output,
+                report_path=report,
+            ).run()
+
+            self.assertEqual(summary.status, STATUS_APPROVAL_REQUIRED)
+            payload = json.loads(output.read_text())
+            self.assertEqual(payload["actionable_requests"], [])
+            self.assertEqual(payload["codex_work_order"]["status"], "NO_ACTIONABLE_CODEX_WORK")
+            self.assertEqual(payload["approval_boundary"]["live_side_effects_allowed"], [])
+            loop_prompt = payload["loop_engineering_prompt"]
+            details = loop_prompt["current_state"]["approval_required_details"]
+            self.assertEqual(details[0]["code"], "REVIEW_UNKNOWN_OWNER_EXPOSURE")
+            self.assertEqual(details[0]["examples"][0]["trade_id"], "472802")
+            self.assertEqual(details[0]["examples"][0]["owner"], "unknown")
+            self.assertIn("trade_id=472802", loop_prompt["prompt_text"])
+            self.assertIn("EUR_USD LONG 20000u", loop_prompt["prompt_text"])
+            self.assertIn("clearance:", loop_prompt["prompt_text"])
+            self.assertIn("approval target", loop_prompt["next_loop"][0])
+
     def test_directional_inversion_without_repeated_replay_evidence_is_not_codex_ready(self) -> None:
         now = datetime(2026, 6, 24, 11, 30, tzinfo=timezone.utc)
         with tempfile.TemporaryDirectory() as tmp:
