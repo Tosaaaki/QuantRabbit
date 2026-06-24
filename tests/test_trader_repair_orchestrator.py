@@ -17,6 +17,7 @@ from quant_rabbit.trader_repair_orchestrator import (
 )
 from quant_rabbit.trader_support_bot import (
     DIRECTIONAL_INVERSION_COUNTERFACTUAL_REQUEST,
+    DIRECTIONAL_INVERSION_REPLAY_WAIT_STATUS,
     FRONTIER_MARGIN_CAPACITY_WAIT_STATUS,
     FRONTIER_QUOTE_FRESHNESS_WAIT_STATUS,
     REPAIR_AUTOMATION_ALLOWED_ACTIONS,
@@ -193,6 +194,58 @@ class TraderRepairOrchestratorTest(unittest.TestCase):
             )
             self.assertIn("approval-bound", loop_prompt["current_hypothesis"])
             self.assertIn("explicit operator approval", " ".join(loop_prompt["next_loop"]))
+
+    def test_directional_inversion_without_repeated_replay_evidence_is_not_codex_ready(self) -> None:
+        now = datetime(2026, 6, 24, 11, 30, tzinfo=timezone.utc)
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            support = root / "support.json"
+            output = root / "orchestrator.json"
+            report = root / "orchestrator.md"
+            _write_support(
+                support,
+                [
+                    _request(
+                        DIRECTIONAL_INVERSION_COUNTERFACTUAL_REQUEST,
+                        priority="P0",
+                        status=DIRECTIONAL_INVERSION_REPLAY_WAIT_STATUS,
+                        source_findings=[
+                            "BROKER_TRUTH_OPPOSITE_SIDE_WOULD_CLEAR_MINIMUM_5PCT",
+                            "DIRECTIONAL_INVERSION_REPLAY_EVIDENCE_MISSING",
+                        ],
+                        evidence_summary={
+                            "counterfactuals": [
+                                {
+                                    "pair": "EUR_USD",
+                                    "actual_side": "LONG",
+                                    "opposite_side": "SHORT",
+                                    "would_clear_minimum_5pct": True,
+                                    "has_repeated_spread_included_inversion_evidence": False,
+                                }
+                            ]
+                        },
+                    )
+                ],
+            )
+
+            summary = TraderRepairOrchestrator(
+                support_bot_path=support,
+                output_path=output,
+                report_path=report,
+                now_utc=now,
+            ).run()
+
+            payload = json.loads(output.read_text())
+            self.assertEqual(summary.status, STATUS_BLOCKED)
+            self.assertEqual(payload["actionable_requests"], [])
+            self.assertEqual(payload["codex_work_order"]["status"], "NO_ACTIONABLE_CODEX_WORK")
+            waiting = payload["queue"][0]
+            self.assertEqual(waiting["code"], DIRECTIONAL_INVERSION_COUNTERFACTUAL_REQUEST)
+            self.assertEqual(waiting["automation_status"], "WAITING_FOR_LIVE_EVIDENCE_WINDOW")
+            self.assertEqual(
+                payload["loop_engineering_prompt"]["current_state"]["waiting_request_codes"],
+                [DIRECTIONAL_INVERSION_COUNTERFACTUAL_REQUEST],
+            )
 
     def test_recovers_repair_queue_from_embedded_support_payload(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -871,6 +924,7 @@ def _request(
     status: str = "READY_FOR_CODE_REPAIR",
     suggested_files: list[str] | None = None,
     verification_commands: list[str] | None = None,
+    source_findings: list[str] | None = None,
     requires_explicit_operator_approval: bool = False,
     evidence_summary: dict[str, object] | None = None,
 ) -> dict[str, object]:
@@ -878,7 +932,7 @@ def _request(
         "code": code,
         "priority": priority,
         "status": status,
-        "source_findings": [code.replace("REPAIR_", "")],
+        "source_findings": source_findings or [code.replace("REPAIR_", "")],
         "problem": f"{code} problem",
         "why_now": f"{code} why now",
         "evidence_summary": evidence_summary or {},
