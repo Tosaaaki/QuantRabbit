@@ -233,7 +233,7 @@ class TraderSupportBot:
             else {"_missing": True, "_path": str(oanda_rotation_effective_path)}
         )
         bidask_replay_validation = (
-            _read_json(self.bidask_replay_validation_path)
+            _read_bidask_replay_validation(self.bidask_replay_validation_path)
             if self._read_bidask_replay_validation
             else {"_missing": True, "_path": str(self.bidask_replay_validation_path)}
         )
@@ -460,6 +460,40 @@ def _parse_utc(value: Any) -> datetime | None:
     if parsed.tzinfo is None:
         parsed = parsed.replace(tzinfo=timezone.utc)
     return parsed.astimezone(timezone.utc)
+
+
+def _read_bidask_replay_validation(path: Path) -> dict[str, Any]:
+    payload = _read_json(path)
+    if payload.get("_missing"):
+        return payload
+    payload = dict(payload)
+    payload.setdefault("_path", str(path))
+    history: list[dict[str, Any]] = []
+    seen: set[Path] = set()
+    candidates = [path]
+    if path.parent.exists():
+        candidates.extend(sorted(path.parent.glob("oanda_history_replay_validate_*.json")))
+    for candidate in candidates:
+        resolved = candidate.resolve()
+        if resolved in seen or not candidate.exists():
+            continue
+        seen.add(resolved)
+        try:
+            item = _read_json(candidate)
+        except (OSError, json.JSONDecodeError, ValueError):
+            continue
+        if item.get("_missing"):
+            continue
+        item = dict(item)
+        item["_path"] = str(candidate)
+        history.append(item)
+    if history:
+        history.sort(
+            key=lambda item: _parse_utc(item.get("generated_at_utc")) or datetime.min.replace(tzinfo=timezone.utc),
+            reverse=True,
+        )
+        payload["_validation_history"] = history
+    return payload
 
 
 def _age_seconds(value: Any, *, now_utc: datetime) -> float | None:
@@ -838,11 +872,12 @@ def _directional_inversion_replay_verification(
 ) -> dict[str, Any] | None:
     if not isinstance(validation, dict) or validation.get("_missing"):
         return None
-    precision = validation.get("precision_rules")
-    if not isinstance(precision, dict):
-        return None
     pair = str(item.get("pair") or "").upper()
     if not pair:
+        return None
+    validation = _bidask_replay_validation_for_pair(validation, pair)
+    precision = validation.get("precision_rules")
+    if not isinstance(precision, dict):
         return None
     pair_filter = _upper_string_list(validation.get("pair_filter"))
     history_pairs = _upper_string_list(validation.get("history_pairs"))
@@ -852,6 +887,7 @@ def _directional_inversion_replay_verification(
             "status": "PAIR_NOT_IN_REPLAY_SCOPE",
             "pair": pair,
             "generated_at_utc": validation.get("generated_at_utc"),
+            "source_path": validation.get("_path"),
             "pair_filter": pair_filter,
             "history_pairs": history_pairs[:12],
         }
@@ -872,6 +908,7 @@ def _directional_inversion_replay_verification(
         "status": status,
         "pair": pair,
         "generated_at_utc": validation.get("generated_at_utc"),
+        "source_path": validation.get("_path"),
         "granularity": validation.get("granularity"),
         "pair_filter": pair_filter,
         "evaluated_rows": validation.get("evaluated_rows"),
@@ -886,6 +923,26 @@ def _directional_inversion_replay_verification(
         "negative_rules": len(negative_rules),
         "negative_rule_names": [str(rule.get("name")) for rule in negative_rules[:5] if rule.get("name")],
     }
+
+
+def _bidask_replay_validation_for_pair(validation: dict[str, Any], pair: str) -> dict[str, Any]:
+    history = validation.get("_validation_history")
+    if not isinstance(history, list):
+        return validation
+    for item in history:
+        if isinstance(item, dict) and _bidask_replay_validation_in_scope(item, pair):
+            return item
+    return validation
+
+
+def _bidask_replay_validation_in_scope(validation: dict[str, Any], pair: str) -> bool:
+    pair_filter = _upper_string_list(validation.get("pair_filter"))
+    if pair_filter:
+        return pair in pair_filter
+    history_pairs = _upper_string_list(validation.get("history_pairs"))
+    if history_pairs:
+        return pair in history_pairs
+    return True
 
 
 def _upper_string_list(value: Any) -> list[str]:
