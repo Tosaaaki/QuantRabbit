@@ -381,6 +381,10 @@ def _loop_engineering_prompt(
         ),
         "approval_required_details": _approval_required_details(approval_required),
     }
+    current_state["execution_frontier"] = _execution_frontier_summary(
+        entry=entry,
+        queue=queue,
+    )
     artifact_contradictions = _artifact_contradictions(current_state)
     current_state["artifact_contradictions"] = artifact_contradictions
     current_state["artifact_contradiction_codes"] = [
@@ -431,6 +435,7 @@ def _loop_engineering_prompt(
         "Is any blocker contradicted by fresher support state, and did I refresh the stale artifact before treating it as causal?",
         "Am I trying to recover profit by increasing churn while capture economics is negative, or by preserving a TP-proven HARVEST shape?",
         "What evidence would prove this loop iteration worked, and which command will refresh that evidence?",
+        "Is a TP-proven lane blocked only by margin or broker exposure, and would clearing it require broker-state change outside Codex?",
         "What is the strongest counterargument that the current blocker is actually a correct protective guardrail?",
     ]
     prompt_text = _render_loop_prompt_text(
@@ -503,6 +508,140 @@ def _approval_required_details(items: list[dict[str, Any]]) -> list[dict[str, An
         }
         details.append({key: value for key, value in detail.items() if value})
     return details
+
+
+def _execution_frontier_summary(
+    *,
+    entry: dict[str, Any],
+    queue: list[dict[str, Any]],
+) -> dict[str, Any]:
+    repair_frontier = (
+        entry.get("repair_frontier") if isinstance(entry.get("repair_frontier"), list) else []
+    )
+    global_unlock_frontier = (
+        entry.get("global_unlock_frontier")
+        if isinstance(entry.get("global_unlock_frontier"), list)
+        else []
+    )
+    remaining_blockers = (
+        entry.get("repair_frontier_remaining_blockers")
+        if isinstance(entry.get("repair_frontier_remaining_blockers"), list)
+        else []
+    )
+    summary: dict[str, Any] = {
+        "repair_frontier_lanes": len(repair_frontier),
+        "repair_frontier_top_lanes": [
+            _compact_frontier_lane(item)
+            for item in repair_frontier[:3]
+            if isinstance(item, dict)
+        ],
+        "repair_frontier_top_blockers": [
+            _compact_frontier_blocker(item)
+            for item in remaining_blockers[:5]
+            if isinstance(item, dict)
+        ],
+        "global_unlock_frontier_lanes": len(global_unlock_frontier),
+        "global_unlock_frontier_top_lanes": [
+            _compact_frontier_lane(item)
+            for item in global_unlock_frontier[:3]
+            if isinstance(item, dict)
+        ],
+    }
+    unknown_owner = _unknown_owner_context(queue)
+    if unknown_owner:
+        summary["unknown_owner_context"] = unknown_owner
+    return summary
+
+
+def _compact_frontier_lane(item: dict[str, Any]) -> dict[str, Any]:
+    tp_proof = item.get("tp_proof") if isinstance(item.get("tp_proof"), dict) else {}
+    compact = {
+        "lane_id": item.get("lane_id"),
+        "pair": item.get("pair"),
+        "side": item.get("side"),
+        "method": item.get("method"),
+        "order_type": item.get("order_type"),
+        "status": item.get("status"),
+        "repair_mode": item.get("repair_mode"),
+        "reward_jpy": item.get("reward_jpy"),
+        "risk_jpy": item.get("risk_jpy"),
+        "remaining_blocker_codes": (
+            item.get("remaining_blocker_codes_after_guardian_and_repair_exemption")
+            or item.get("remaining_blocker_codes_after_global_unlock")
+            or item.get("blocker_codes")
+            or item.get("global_blocker_codes")
+        ),
+        "tp_proof": {
+            key: tp_proof.get(key)
+            for key in [
+                "positive_rotation_mode",
+                "capture_take_profit_scope",
+                "capture_take_profit_scope_key",
+                "capture_take_profit_trades",
+                "capture_take_profit_losses",
+                "positive_rotation_pessimistic_expectancy_jpy",
+            ]
+            if tp_proof.get(key) is not None
+        },
+    }
+    return {key: value for key, value in compact.items() if value not in (None, [], {})}
+
+
+def _compact_frontier_blocker(item: dict[str, Any]) -> dict[str, Any]:
+    compact = {
+        "code": item.get("code"),
+        "count": item.get("count"),
+        "example_lane_ids": item.get("example_lane_ids"),
+        "reward_jpy": item.get("reward_jpy"),
+    }
+    return {key: value for key, value in compact.items() if value not in (None, [], {})}
+
+
+def _unknown_owner_context(queue: list[dict[str, Any]]) -> dict[str, Any]:
+    request = next(
+        (
+            item
+            for item in queue
+            if str(item.get("code") or "") == "REVIEW_UNKNOWN_OWNER_EXPOSURE"
+        ),
+        None,
+    )
+    if not request:
+        return {}
+    evidence = (
+        request.get("evidence_summary")
+        if isinstance(request.get("evidence_summary"), dict)
+        else {}
+    )
+    examples = evidence.get("examples") if isinstance(evidence.get("examples"), list) else []
+    compact_examples: list[dict[str, Any]] = []
+    for example in examples[:3]:
+        if not isinstance(example, dict):
+            continue
+        compact_examples.append(
+            {
+                key: example.get(key)
+                for key in [
+                    "trade_id",
+                    "pair",
+                    "side",
+                    "units",
+                    "owner",
+                    "take_profit",
+                    "stop_loss",
+                    "unrealized_pl_jpy",
+                ]
+                if example.get(key) is not None
+            }
+        )
+    context = {
+        "status": request.get("repair_status") or request.get("status"),
+        "unknown_owner_positions": evidence.get("unknown_owner_positions"),
+        "margin_available_jpy": evidence.get("margin_available_jpy"),
+        "nav_jpy": evidence.get("nav_jpy"),
+        "examples": compact_examples,
+    }
+    return {key: value for key, value in context.items() if value not in (None, [], {})}
 
 
 def _approval_action_summary(item: dict[str, Any]) -> str:
@@ -761,6 +900,8 @@ def _render_loop_prompt_text(
         f"Queue: selected={current_state.get('selected_request_code')}, "
         f"waiting_p0={', '.join(current_state.get('waiting_p0_request_codes') or []) or '(none)'}, "
         f"support_blockers={', '.join(current_state.get('support_blocker_codes') or []) or '(none)'}.",
+        "Execution frontier: "
+        f"{_render_execution_frontier_for_prompt(current_state.get('execution_frontier'))}.",
         "Approval required details: "
         f"{_render_approval_details_for_prompt(current_state.get('approval_required_details'))}.",
         "Artifact contradictions: "
@@ -777,6 +918,84 @@ def _render_loop_prompt_text(
     lines.extend(["", "Verification commands:"])
     lines.extend(f"- {item}" for item in verification_commands)
     return "\n".join(lines)
+
+
+def _render_execution_frontier_for_prompt(value: Any) -> str:
+    if not isinstance(value, dict):
+        return "(none)"
+    parts: list[str] = []
+    repair_lanes = value.get("repair_frontier_top_lanes")
+    if isinstance(repair_lanes, list) and repair_lanes:
+        top = repair_lanes[0] if isinstance(repair_lanes[0], dict) else {}
+        lane_id = top.get("lane_id")
+        blockers = ", ".join(_dedupe_strings(top.get("remaining_blocker_codes")))
+        tp_proof = top.get("tp_proof") if isinstance(top.get("tp_proof"), dict) else {}
+        proof_bits = [
+            str(tp_proof.get("positive_rotation_mode") or ""),
+            _format_optional_count("tp_trades", tp_proof.get("capture_take_profit_trades")),
+        ]
+        proof_text = "/".join(part for part in proof_bits if part)
+        detail = f"repair_top={lane_id}" if lane_id else "repair_top=(unknown)"
+        if blockers:
+            detail += f" blocked_by={blockers}"
+        if proof_text:
+            detail += f" proof={proof_text}"
+        parts.append(detail)
+    blocker_rows = value.get("repair_frontier_top_blockers")
+    if isinstance(blocker_rows, list) and blocker_rows:
+        blocker_parts: list[str] = []
+        for item in blocker_rows[:3]:
+            if not isinstance(item, dict) or not item.get("code"):
+                continue
+            count = item.get("count")
+            examples = ", ".join(_dedupe_strings(item.get("example_lane_ids"))[:2])
+            text = str(item.get("code"))
+            if count is not None:
+                text += f"({count})"
+            if examples:
+                text += f": {examples}"
+            blocker_parts.append(text)
+        if blocker_parts:
+            parts.append("frontier_blockers=" + " | ".join(blocker_parts))
+    global_lanes = value.get("global_unlock_frontier_top_lanes")
+    if isinstance(global_lanes, list) and global_lanes:
+        top = global_lanes[0] if isinstance(global_lanes[0], dict) else {}
+        lane_id = top.get("lane_id")
+        tp_proof = top.get("tp_proof") if isinstance(top.get("tp_proof"), dict) else {}
+        scope = tp_proof.get("capture_take_profit_scope")
+        if lane_id:
+            parts.append(f"global_unlock_top={lane_id} tp_scope={scope or 'unknown'}")
+    unknown = value.get("unknown_owner_context")
+    if isinstance(unknown, dict) and unknown:
+        unknown_parts = [
+            _format_optional_count("unknown_owner_positions", unknown.get("unknown_owner_positions")),
+            _format_optional_count("margin_available_jpy", unknown.get("margin_available_jpy")),
+        ]
+        examples = unknown.get("examples") if isinstance(unknown.get("examples"), list) else []
+        if examples and isinstance(examples[0], dict):
+            example = examples[0]
+            fragment = " ".join(
+                str(item)
+                for item in [
+                    example.get("pair"),
+                    example.get("side"),
+                    f"{example.get('units')}u" if example.get("units") is not None else None,
+                    f"trade_id={example.get('trade_id')}" if example.get("trade_id") else None,
+                ]
+                if item
+            )
+            if fragment:
+                unknown_parts.append(f"example={fragment}")
+        text = ", ".join(part for part in unknown_parts if part)
+        if text:
+            parts.append(text)
+    return "; ".join(parts) if parts else "(none)"
+
+
+def _format_optional_count(label: str, value: Any) -> str:
+    if value is None:
+        return ""
+    return f"{label}={value}"
 
 
 def _render_approval_details_for_prompt(value: Any) -> str:

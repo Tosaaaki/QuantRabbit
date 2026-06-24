@@ -488,6 +488,7 @@ class TraderRepairOrchestratorTest(unittest.TestCase):
                     )
                 ],
             )
+            _add_execution_frontier_fixture(support)
 
             summary = TraderRepairOrchestrator(
                 support_bot_path=support,
@@ -514,6 +515,23 @@ class TraderRepairOrchestratorTest(unittest.TestCase):
             self.assertFalse(review["requires_explicit_operator_approval"])
             self.assertIn("evidence-window work", loop_prompt["current_hypothesis"])
             self.assertNotIn("approval target", loop_prompt["prompt_text"])
+            frontier = loop_prompt["current_state"]["execution_frontier"]
+            self.assertEqual(
+                frontier["repair_frontier_top_lanes"][0]["lane_id"],
+                "failure_trader:EUR_USD:LONG:BREAKOUT_FAILURE:LIMIT",
+            )
+            self.assertEqual(
+                frontier["repair_frontier_top_blockers"][0]["code"],
+                "MARGIN_TOO_THIN_FOR_MIN_LOT",
+            )
+            self.assertEqual(
+                frontier["unknown_owner_context"]["unknown_owner_positions"],
+                1,
+            )
+            self.assertIn("Execution frontier:", loop_prompt["prompt_text"])
+            self.assertIn("TP_PROVEN_HARVEST", loop_prompt["prompt_text"])
+            self.assertIn("MARGIN_TOO_THIN_FOR_MIN_LOT", loop_prompt["prompt_text"])
+            self.assertIn("unknown_owner_positions=1", loop_prompt["prompt_text"])
 
     def test_directional_inversion_without_repeated_replay_evidence_is_not_codex_ready(self) -> None:
         now = datetime(2026, 6, 24, 11, 30, tzinfo=timezone.utc)
@@ -1390,6 +1408,66 @@ def _write_support(path: Path, requests: list[dict[str, object]]) -> None:
             sort_keys=True,
         )
         + "\n",
+        encoding="utf-8",
+    )
+
+
+def _add_execution_frontier_fixture(path: Path) -> None:
+    payload = json.loads(path.read_text())
+    payload["entry_readiness"] = {
+        "repair_frontier": [
+            {
+                "lane_id": "failure_trader:EUR_USD:LONG:BREAKOUT_FAILURE:LIMIT",
+                "pair": "EUR_USD",
+                "side": "LONG",
+                "method": "BREAKOUT_FAILURE",
+                "order_type": "LIMIT",
+                "status": "DRY_RUN_BLOCKED",
+                "repair_mode": "TP_HARVEST_REPAIR",
+                "remaining_blocker_codes_after_guardian_and_repair_exemption": [
+                    "MARGIN_TOO_THIN_FOR_MIN_LOT"
+                ],
+                "tp_proof": {
+                    "positive_rotation_mode": "TP_PROVEN_HARVEST",
+                    "capture_take_profit_scope": "PAIR_SIDE_METHOD",
+                    "capture_take_profit_scope_key": (
+                        "EUR_USD|LONG|BREAKOUT_FAILURE|TAKE_PROFIT_ORDER"
+                    ),
+                    "capture_take_profit_trades": 20,
+                    "capture_take_profit_losses": 0,
+                    "positive_rotation_pessimistic_expectancy_jpy": 335.3837,
+                },
+            }
+        ],
+        "repair_frontier_remaining_blockers": [
+            {
+                "code": "MARGIN_TOO_THIN_FOR_MIN_LOT",
+                "count": 1,
+                "example_lane_ids": ["failure_trader:EUR_USD:LONG:BREAKOUT_FAILURE:LIMIT"],
+            }
+        ],
+        "global_unlock_frontier": [
+            {
+                "lane_id": "range_trader:AUD_CAD:LONG:RANGE_ROTATION",
+                "pair": "AUD_CAD",
+                "side": "LONG",
+                "method": "RANGE_ROTATION",
+                "order_type": "LIMIT",
+                "remaining_blocker_codes_after_global_unlock": [],
+                "global_blocker_codes": [
+                    "NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION"
+                ],
+                "tp_proof": {
+                    "capture_take_profit_scope": "MISSING_METHOD_EXIT",
+                    "capture_take_profit_scope_key": (
+                        "AUD_CAD|LONG|RANGE_ROTATION|TAKE_PROFIT_ORDER"
+                    ),
+                },
+            }
+        ],
+    }
+    path.write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
     )
 
