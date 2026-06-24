@@ -3730,6 +3730,72 @@ class RiskEngineTest(unittest.TestCase):
         self.assertFalse(decision.allowed)
         self.assertIn("REWARD_RISK_TOO_LOW", {issue.code for issue in decision.issues})
 
+    def test_spread_floor_boundary_tolerates_decimal_rounding(self) -> None:
+        snap = snapshot()
+        snap = replace(
+            snap,
+            quotes={
+                **snap.quotes,
+                "EUR_USD": Quote("EUR_USD", bid=1.13550, ask=1.13558, timestamp_utc=snap.fetched_at_utc),
+            },
+        )
+        intent = OrderIntent(
+            pair="EUR_USD",
+            side=Side.SHORT,
+            order_type=OrderType.LIMIT,
+            units=4000,
+            entry=1.13582,
+            tp=1.13532,
+            sl=1.13622,
+            thesis="spread floor boundary should not fail on float noise",
+            market_context=MarketContext(
+                regime="M5 failed break retest",
+                narrative="short-cycle failed-break harvest at the spread floor",
+                chart_story="retest rejection with attached TP",
+                method=TradeMethod.BREAKOUT_FAILURE,
+                invalidation="SL trades",
+            ),
+        )
+
+        decision = _capped_engine(policy=RiskPolicy(max_loss_jpy=1000.0)).validate(intent, snap)
+
+        codes = {issue.code for issue in decision.issues}
+        self.assertTrue(decision.allowed, decision.block_reasons)
+        self.assertNotIn("STOP_TOO_THIN_FOR_SPREAD", codes)
+        self.assertNotIn("TARGET_TOO_THIN_FOR_SPREAD", codes)
+
+    def test_spread_floor_still_blocks_materially_thin_stop(self) -> None:
+        snap = snapshot()
+        snap = replace(
+            snap,
+            quotes={
+                **snap.quotes,
+                "EUR_USD": Quote("EUR_USD", bid=1.13550, ask=1.13558, timestamp_utc=snap.fetched_at_utc),
+            },
+        )
+        intent = OrderIntent(
+            pair="EUR_USD",
+            side=Side.SHORT,
+            order_type=OrderType.LIMIT,
+            units=4000,
+            entry=1.13582,
+            tp=1.13532,
+            sl=1.136219,
+            thesis="materially thin stop must stay blocked",
+            market_context=MarketContext(
+                regime="M5 failed break retest",
+                narrative="short-cycle failed-break harvest below the spread floor",
+                chart_story="retest rejection with attached TP",
+                method=TradeMethod.BREAKOUT_FAILURE,
+                invalidation="SL trades",
+            ),
+        )
+
+        decision = _capped_engine(policy=RiskPolicy(max_loss_jpy=1000.0)).validate(intent, snap)
+
+        self.assertFalse(decision.allowed)
+        self.assertIn("STOP_TOO_THIN_FOR_SPREAD", {issue.code for issue in decision.issues})
+
     def test_zero_units_keep_geometry_reward_risk_diagnostic(self) -> None:
         intent = OrderIntent(
             pair="EUR_USD",

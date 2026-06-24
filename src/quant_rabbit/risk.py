@@ -131,6 +131,7 @@ OANDA_CAMPAIGN_FIREPOWER_TARGET_OK_STATUSES = {
 OANDA_CAMPAIGN_EXIT_SHAPE_RR_REL_TOLERANCE = 0.10
 OANDA_CAMPAIGN_EXIT_SHAPE_RR_ABS_TOLERANCE = 0.05
 CAPTURE_ECONOMICS_STALE_BLOCK_CODE = "CAPTURE_ECONOMICS_STALE"
+SPREAD_FLOOR_COMPARISON_EPSILON_PIPS = 1e-6
 
 
 def _min_lot_test_override_active() -> bool:
@@ -313,6 +314,10 @@ def _spread_session_multiplier(intent: OrderIntent) -> float:
     metadata = intent.metadata or {}
     tag_raw = metadata.get("session_current_tag") or metadata.get("session_bucket")
     return _spread_session_multiplier_from_tag(tag_raw)
+
+
+def _below_spread_floor(distance_pips: float, floor_pips: float) -> bool:
+    return distance_pips + SPREAD_FLOOR_COMPARISON_EPSILON_PIPS < floor_pips
 
 
 def _uses_range_reward_floor(intent: OrderIntent, regime_state: str) -> bool:
@@ -2271,7 +2276,7 @@ class RiskEngine:
         countertrend_low_rr_issue = _range_countertrend_low_rr_issue(intent, metrics, self.policy)
         if countertrend_low_rr_issue is not None:
             issues.append(countertrend_low_rr_issue)
-        if metrics.reward_pips < spread_pips * self.policy.min_target_spread_multiple:
+        if _below_spread_floor(metrics.reward_pips, spread_pips * self.policy.min_target_spread_multiple):
             issues.append(
                 RiskIssue(
                     "TARGET_TOO_THIN_FOR_SPREAD",
@@ -2279,7 +2284,7 @@ class RiskEngine:
                     f"{self.policy.min_target_spread_multiple:.1f}x spread {spread_pips:.1f}pip",
                 )
             )
-        if metrics.loss_pips < spread_pips * self.policy.min_stop_spread_multiple:
+        if _below_spread_floor(metrics.loss_pips, spread_pips * self.policy.min_stop_spread_multiple):
             issues.append(
                 RiskIssue(
                     "STOP_TOO_THIN_FOR_SPREAD",
@@ -2801,7 +2806,7 @@ class RiskEngine:
                         severity=severity,
                     )
                 )
-            elif target_pips < target_floor:
+            elif _below_spread_floor(target_pips, target_floor):
                 issues.append(
                     RiskIssue(
                         "FORECAST_TARGET_TOO_THIN_FOR_SPREAD",
@@ -2830,7 +2835,7 @@ class RiskEngine:
                         severity=severity,
                     )
                 )
-            elif invalidation_pips < invalidation_floor:
+            elif _below_spread_floor(invalidation_pips, invalidation_floor):
                 issues.append(
                     RiskIssue(
                         "FORECAST_INVALIDATION_TOO_THIN_FOR_SPREAD",
