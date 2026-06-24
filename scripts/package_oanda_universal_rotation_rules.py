@@ -375,13 +375,24 @@ def preserve_existing_rule_rows(
         if report_is_narrower is None
         else report_is_narrower
     )
+    preservation_metadata = {
+        "preserved_from_source_report": existing.get("source_report"),
+        "preserved_from_generated_at_utc": existing.get("generated_at_utc"),
+        "preserved_during_packaging_source_report": packaged.get("source_report"),
+        "preserved_during_packaging_generated_at_utc": packaged.get("generated_at_utc"),
+    }
     for section in RULE_SECTIONS:
         current_rows = packaged.get(section)
         existing_rows = existing.get(section)
         if not isinstance(current_rows, list) or not isinstance(existing_rows, list):
             continue
         if narrower_report or _packaged_section_is_narrower(section, packaged, existing):
-            packaged[section] = _merge_rule_rows(current_rows, existing_rows)
+            packaged[section] = _merge_rule_rows(
+                current_rows,
+                existing_rows,
+                annotate_existing_only=True,
+                preservation_metadata=preservation_metadata,
+            )
             _preserve_section_summary_count(section, packaged, existing)
             continue
         if len(current_rows) >= len(existing_rows):
@@ -389,7 +400,12 @@ def preserve_existing_rule_rows(
         available_count = _optional_int(summary.get(_count_key_for_section(section)))
         if available_count is None or available_count < len(existing_rows):
             continue
-        packaged[section] = _merge_rule_rows(current_rows, existing_rows)
+        packaged[section] = _merge_rule_rows(
+            current_rows,
+            existing_rows,
+            annotate_existing_only=True,
+            preservation_metadata=preservation_metadata,
+        )
         _preserve_section_summary_count(section, packaged, existing)
 
 
@@ -563,13 +579,23 @@ def _merge_existing_campaign_firepower(
     return merged
 
 
-def _merge_rule_rows(current_rows: list[Any], existing_rows: list[Any]) -> list[Any]:
+def _merge_rule_rows(
+    current_rows: list[Any],
+    existing_rows: list[Any],
+    *,
+    annotate_existing_only: bool = False,
+    preservation_metadata: dict[str, Any] | None = None,
+) -> list[Any]:
     merged: list[Any] = []
     index_by_key: dict[tuple[Any, ...], int] = {}
     for row in existing_rows:
         key = _rule_row_key(row)
         index_by_key[key] = len(merged)
-        merged.append(row)
+        merged.append(
+            _annotated_preserved_row(row, preservation_metadata)
+            if annotate_existing_only
+            else row
+        )
     for row in current_rows:
         key = _rule_row_key(row)
         if key in index_by_key:
@@ -578,6 +604,22 @@ def _merge_rule_rows(current_rows: list[Any], existing_rows: list[Any]) -> list[
         index_by_key[key] = len(merged)
         merged.append(row)
     return merged
+
+
+def _annotated_preserved_row(
+    row: Any,
+    preservation_metadata: dict[str, Any] | None,
+) -> Any:
+    if not isinstance(row, dict):
+        return row
+    metadata = preservation_metadata or {}
+    out = dict(row)
+    out["preserved_from_existing_packaged_artifact"] = True
+    out["preserved_because_narrow_source"] = True
+    for key, value in metadata.items():
+        if value is not None:
+            out.setdefault(key, value)
+    return out
 
 
 def _rule_row_key(row: Any) -> tuple[Any, ...]:

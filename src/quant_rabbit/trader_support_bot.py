@@ -61,6 +61,9 @@ DIRECTIONAL_INVERSION_REPLAY_LIVE_SUPPORTED = "CONTRARIAN_REPLAY_LIVE_GRADE_SUPP
 DIRECTIONAL_INVERSION_REPLAY_RANK_ONLY = "CONTRARIAN_REPLAY_RANK_ONLY"
 DIRECTIONAL_INVERSION_REPLAY_EVIDENCE_PRESENT = "REPEATED_SPREAD_INCLUDED_EVIDENCE_PRESENT"
 DIRECTIONAL_INVERSION_REPLAY_EVIDENCE_MISSING = "MISSING_REPEATED_SPREAD_INCLUDED_EVIDENCE"
+DIRECTIONAL_INVERSION_REPLAY_PRESERVED_REQUIRES_REFRESH = (
+    "PRESERVED_SPREAD_INCLUDED_EVIDENCE_REQUIRES_REFRESH"
+)
 DIRECTIONAL_INVERSION_REPLAY_SECTIONS = (
     "high_precision_inversion_selectors",
     "qualified_inversion_selectors",
@@ -778,15 +781,33 @@ def _directional_inversion_counterfactuals(
         )
         if replay_verification is not None:
             row["replay_verification"] = replay_verification
-        inversion_evidence = _matching_inversion_replay_evidence(row, oanda_rotation)
-        row["has_repeated_spread_included_inversion_evidence"] = bool(inversion_evidence)
-        row["inversion_replay_evidence_status"] = (
-            DIRECTIONAL_INVERSION_REPLAY_EVIDENCE_PRESENT
-            if inversion_evidence is not None
-            else DIRECTIONAL_INVERSION_REPLAY_EVIDENCE_MISSING
+        inversion_evidence = _matching_inversion_replay_evidence(
+            row,
+            oanda_rotation,
+            allow_preserved=False,
         )
+        preserved_inversion_evidence = (
+            None
+            if inversion_evidence is not None
+            else _matching_inversion_replay_evidence(
+                row,
+                oanda_rotation,
+                allow_preserved=True,
+            )
+        )
+        row["has_repeated_spread_included_inversion_evidence"] = bool(inversion_evidence)
+        if inversion_evidence is not None:
+            row["inversion_replay_evidence_status"] = DIRECTIONAL_INVERSION_REPLAY_EVIDENCE_PRESENT
+        elif preserved_inversion_evidence is not None:
+            row["inversion_replay_evidence_status"] = (
+                DIRECTIONAL_INVERSION_REPLAY_PRESERVED_REQUIRES_REFRESH
+            )
+        else:
+            row["inversion_replay_evidence_status"] = DIRECTIONAL_INVERSION_REPLAY_EVIDENCE_MISSING
         if inversion_evidence is not None:
             row["inversion_replay_evidence"] = inversion_evidence
+        elif preserved_inversion_evidence is not None:
+            row["preserved_inversion_replay_evidence"] = preserved_inversion_evidence
         rows.append(row)
     rows.sort(
         key=lambda item: (
@@ -801,6 +822,8 @@ def _directional_inversion_counterfactuals(
 def _matching_inversion_replay_evidence(
     item: dict[str, Any],
     oanda_rotation: dict[str, Any] | None,
+    *,
+    allow_preserved: bool = False,
 ) -> dict[str, Any] | None:
     if not isinstance(oanda_rotation, dict):
         return None
@@ -822,6 +845,9 @@ def _matching_inversion_replay_evidence(
             source_side = str(row.get("source_side") or row.get("actual_side") or "").upper()
             selected_side = str(row.get("selected_side") or row.get("opposite_side") or row.get("side") or "").upper()
             if source_side != actual_side or selected_side != opposite_side:
+                continue
+            preserved_from_existing = _oanda_rotation_row_is_preserved(row)
+            if preserved_from_existing and not allow_preserved:
                 continue
             if not (row.get("source_shape") or row.get("shape") or row.get("method")):
                 continue
@@ -860,6 +886,15 @@ def _matching_inversion_replay_evidence(
                     "active_days": row.get("active_days"),
                     "positive_day_rate": row.get("positive_day_rate"),
                     "validation_inversion_edge_atr": row.get("validation_inversion_edge_atr"),
+                    "preserved_from_existing_packaged_artifact": preserved_from_existing,
+                    "preserved_from_source_report": row.get("preserved_from_source_report"),
+                    "preserved_from_generated_at_utc": row.get("preserved_from_generated_at_utc"),
+                    "preserved_during_packaging_source_report": row.get(
+                        "preserved_during_packaging_source_report"
+                    ),
+                    "preserved_during_packaging_generated_at_utc": row.get(
+                        "preserved_during_packaging_generated_at_utc"
+                    ),
                 }
             )
     if not candidates:
@@ -879,6 +914,13 @@ def _matching_inversion_replay_evidence(
         if key.startswith("_sort_") or key == "_section_rank":
             best.pop(key, None)
     return best
+
+
+def _oanda_rotation_row_is_preserved(row: dict[str, Any]) -> bool:
+    return bool(
+        row.get("preserved_from_existing_packaged_artifact")
+        or row.get("preserved_because_narrow_source")
+    )
 
 
 def _directional_inversion_counterfactual_has_viable_replay_path(item: dict[str, Any]) -> bool:

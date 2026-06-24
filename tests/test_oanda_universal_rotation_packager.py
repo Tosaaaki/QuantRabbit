@@ -282,6 +282,10 @@ class OandaUniversalRotationPackagerTest(unittest.TestCase):
         rows = packaged["high_precision_multi_confluences"]
         self.assertEqual({row["pair"] for row in rows}, {"AUD_USD", "GBP_JPY"})
         self.assertEqual(rows[1]["pair"], "AUD_USD")
+        self.assertEqual(rows[0]["pair"], "GBP_JPY")
+        self.assertTrue(rows[0]["preserved_from_existing_packaged_artifact"])
+        self.assertTrue(rows[0]["preserved_because_narrow_source"])
+        self.assertNotIn("preserved_from_existing_packaged_artifact", rows[1])
 
     def test_does_not_preserve_existing_rule_rows_when_summary_confirms_smaller_universe(self) -> None:
         packaged = packager.package_payload(
@@ -368,7 +372,14 @@ class OandaUniversalRotationPackagerTest(unittest.TestCase):
             packaged["campaign_firepower_source_report"],
             existing["campaign_firepower_source_report"],
         )
-        self.assertEqual(packaged["high_precision_inversion_selectors"], existing["high_precision_inversion_selectors"])
+        preserved_inversion = packaged["high_precision_inversion_selectors"][0]
+        self.assertEqual(preserved_inversion["pair"], "GBP_CHF")
+        self.assertTrue(preserved_inversion["preserved_from_existing_packaged_artifact"])
+        self.assertTrue(preserved_inversion["preserved_because_narrow_source"])
+        self.assertEqual(
+            preserved_inversion["preserved_from_source_report"],
+            existing["source_report"],
+        )
         self.assertEqual(packaged["summary"]["history_pairs"], 2)
         self.assertEqual(packaged["summary"]["high_precision_multi_confluence_count"], 149)
         self.assertEqual(packaged["summary"]["qualified_pair_confluence_count"], 629)
