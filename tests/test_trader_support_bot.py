@@ -485,6 +485,70 @@ class TraderSupportBotTest(unittest.TestCase):
             self.assertEqual(guardian_request["status"], POSITION_GUARDIAN_LOCK_WAIT_STATUS)
             self.assertFalse(guardian_request["requires_explicit_operator_approval"])
 
+    def test_env_active_guardian_stale_during_live_runtime_lock_waits_without_load_approval(self) -> None:
+        now = datetime(2026, 6, 24, 14, 42, tzinfo=timezone.utc)
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _write_fixture(root, now=now, blocked=True)
+            lock_dir = root / ".quant_rabbit_live.lock"
+            lock_dir.mkdir()
+            (lock_dir / "pid").write_text(f"{os.getpid()}\n", encoding="utf-8")
+            (lock_dir / "command").write_text("run-autotrade-live\n", encoding="utf-8")
+            (lock_dir / "started_at_utc").write_text(
+                (now - timedelta(minutes=5)).isoformat() + "\n",
+                encoding="utf-8",
+            )
+            plist = root / "com.quantrabbit.position-guardian.plist"
+            plist.write_text("<plist />\n", encoding="utf-8")
+            stale = (now - timedelta(minutes=6)).isoformat()
+            _write_json(files["guardian_execution"], {"generated_at_utc": stale, "status": "NO_ACTION"})
+            _write_json(files["guardian_heartbeat"], {"generated_at_utc": stale, "status": "NO_POSITION"})
+            env = {
+                **_guardian_env(root, active="1"),
+                "QR_AUTOTRADE_LOCK_DIR": str(lock_dir),
+            }
+            with mock.patch.dict(os.environ, env, clear=False):
+                TraderSupportBot(
+                    broker_snapshot_path=files["broker"],
+                    order_intents_path=files["intents"],
+                    target_state_path=files["target"],
+                    position_management_path=files["position_management"],
+                    position_guardian_management_path=files["guardian_management"],
+                    position_guardian_execution_path=files["guardian_execution"],
+                    position_guardian_heartbeat_path=files["guardian_heartbeat"],
+                    self_improvement_audit_path=files["self_improvement"],
+                    profitability_acceptance_path=files["profitability"],
+                    execution_timing_audit_path=files["timing"],
+                    profit_capture_bot_path=files["profit_capture_bot"],
+                    output_path=files["output"],
+                    report_path=files["report"],
+                    now_utc=now,
+                ).run()
+
+            payload = json.loads(files["output"].read_text())
+            self.assertFalse(payload["guardian"]["active"])
+            self.assertEqual(payload["guardian"]["active_source"], "live_runtime_lock_busy")
+            self.assertEqual(payload["guardian"]["env_active"], "1")
+            self.assertTrue(payload["guardian"]["live_runtime_lock_active"])
+            self.assertEqual(payload["guardian"]["live_runtime_lock_command"], "run-autotrade-live")
+            action_codes = {item["code"] for item in payload["operator_actions"]}
+            self.assertIn("WAIT_FOR_LIVE_RUNTIME_LOCK_RELEASE", action_codes)
+            self.assertNotIn("LOAD_POSITION_GUARDIAN_ONLY_IF_APPROVED", action_codes)
+            tp_request = next(
+                item
+                for item in payload["repair_requests"]
+                if item["code"] == "REPAIR_TP_PROGRESS_PROFIT_CAPTURE_REPLAY"
+            )
+            self.assertEqual(tp_request["status"], POSITION_GUARDIAN_LOCK_WAIT_STATUS)
+            self.assertFalse(tp_request["requires_explicit_operator_approval"])
+            guardian_request = next(
+                item
+                for item in payload["repair_requests"]
+                if item["code"] == "RESTORE_POSITION_GUARDIAN_AFTER_PREFLIGHT"
+            )
+            self.assertEqual(guardian_request["status"], POSITION_GUARDIAN_LOCK_WAIT_STATUS)
+            self.assertFalse(guardian_request["requires_explicit_operator_approval"])
+
     def test_close_gate_block_evidence_does_not_request_persistence_repair(self) -> None:
         now = datetime(2026, 6, 22, 12, 15, tzinfo=timezone.utc)
         with tempfile.TemporaryDirectory() as tmp:

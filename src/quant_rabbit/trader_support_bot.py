@@ -619,8 +619,11 @@ def _guardian_status(*, now_utc: datetime, execution_path: Path, heartbeat_path:
     if env_active_raw is not None:
         env_active = _truthy(env_active_raw)
         status["env_active"] = env_active_raw
+        status["launchd_loaded"] = bool(env_active)
         status["active_source"] = "env+heartbeat"
         status["active"] = bool(env_active and (heartbeat["fresh"] or not heartbeat_required))
+        if env_active and heartbeat_required and not heartbeat["fresh"]:
+            status["active_source"] = "live_runtime_lock_busy" if runtime_lock["active"] else "stale_heartbeat"
         return status
     if not plist.exists():
         status["active_source"] = "plist_missing"
