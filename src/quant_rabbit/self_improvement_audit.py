@@ -32,6 +32,8 @@ from quant_rabbit.paths import (
     DEFAULT_MARKET_CONTEXT_MATRIX,
     DEFAULT_MEMORY_HEALTH,
     DEFAULT_ORDER_INTENTS,
+    DEFAULT_POSITION_GUARDIAN_EXECUTION,
+    DEFAULT_POSITION_GUARDIAN_HEARTBEAT,
     DEFAULT_POSITION_GUARDIAN_MANAGEMENT,
     DEFAULT_POSITION_MANAGEMENT,
     DEFAULT_PROJECTION_LEDGER,
@@ -40,6 +42,7 @@ from quant_rabbit.paths import (
     DEFAULT_SELF_IMPROVEMENT_HISTORY_DB,
     DEFAULT_TRADER_DECISION,
     DEFAULT_VERIFICATION_LEDGER,
+    ROOT,
 )
 from quant_rabbit.risk import DEFAULT_SPECS
 
@@ -1330,10 +1333,7 @@ def _position_guardian_runtime_status() -> dict[str, Any]:
         minimum=interval,
     )
     heartbeat_required = _truthy_env("QR_POSITION_GUARDIAN_REQUIRE_HEARTBEAT", default=True)
-    heartbeat_paths = [
-        _env_path("QR_POSITION_GUARDIAN_EXECUTION", Path("data/position_guardian_execution.json")),
-        _env_path("QR_POSITION_GUARDIAN_HEARTBEAT", Path("data/position_guardian.json")),
-    ]
+    heartbeat_paths = _position_guardian_heartbeat_candidates()
     heartbeat = _freshest_guardian_heartbeat(heartbeat_paths, max_age_seconds=heartbeat_max_age)
     live_runtime_lock = _live_runtime_lock_status()
     status: dict[str, Any] = {
@@ -1431,6 +1431,50 @@ def _env_path(name: str, default: Path) -> Path:
     if path.is_absolute():
         return path
     return Path.cwd() / path
+
+
+def _position_guardian_heartbeat_candidates() -> list[Path]:
+    execution_env = os.environ.get("QR_POSITION_GUARDIAN_EXECUTION")
+    heartbeat_env = os.environ.get("QR_POSITION_GUARDIAN_HEARTBEAT")
+    execution_path = _env_path("QR_POSITION_GUARDIAN_EXECUTION", DEFAULT_POSITION_GUARDIAN_EXECUTION)
+    heartbeat_path = _env_path("QR_POSITION_GUARDIAN_HEARTBEAT", DEFAULT_POSITION_GUARDIAN_HEARTBEAT)
+    paths = [execution_path, heartbeat_path]
+    live_root = _default_live_root()
+    if execution_env is None and _same_path(execution_path, DEFAULT_POSITION_GUARDIAN_EXECUTION):
+        paths.append(live_root / "data" / DEFAULT_POSITION_GUARDIAN_EXECUTION.name)
+    if heartbeat_env is None and _same_path(heartbeat_path, DEFAULT_POSITION_GUARDIAN_HEARTBEAT):
+        paths.append(live_root / "data" / DEFAULT_POSITION_GUARDIAN_HEARTBEAT.name)
+    return _dedupe_paths(paths)
+
+
+def _default_live_root() -> Path:
+    raw = os.environ.get("QR_SYNC_LIVE_ROOT")
+    if raw:
+        return Path(raw).expanduser()
+    return ROOT.parent / "QuantRabbit-live"
+
+
+def _dedupe_paths(paths: list[Path]) -> list[Path]:
+    seen: set[str] = set()
+    out: list[Path] = []
+    for path in paths:
+        key = _path_key(path)
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(path)
+    return out
+
+
+def _same_path(left: Path, right: Path) -> bool:
+    return _path_key(left) == _path_key(right)
+
+
+def _path_key(path: Path) -> str:
+    try:
+        return str(path.expanduser().resolve())
+    except OSError:
+        return str(path.expanduser().absolute())
 
 
 def _freshest_guardian_heartbeat(paths: list[Path], *, max_age_seconds: int) -> dict[str, Any]:

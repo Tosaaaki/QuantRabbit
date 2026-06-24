@@ -30,6 +30,7 @@ from quant_rabbit.self_improvement_audit import (
     _normalized_pending_order_type,
     _profit_capture_miss_findings,
     _profitability_findings,
+    _position_guardian_runtime_status,
     _projection_expired,
     _report_perspective_alignment_text,
     _root_cause_focus,
@@ -450,6 +451,105 @@ class SelfImprovementAuditorTest(unittest.TestCase):
         self.assertTrue(guardian["launchd_loaded"])
         self.assertTrue(guardian["heartbeat_fresh"])
         self.assertTrue(guardian["active"])
+
+    def test_position_guardian_default_source_paths_read_live_heartbeat(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source_data = root / "source" / "data"
+            live_data = root / "live" / "data"
+            live_data.mkdir(parents=True)
+            live_heartbeat = live_data / "position_guardian.json"
+            live_heartbeat.write_text(
+                json.dumps(
+                    {
+                        "generated_at_utc": datetime.now(timezone.utc).isoformat(),
+                        "status": "NO_POSITION",
+                    }
+                )
+            )
+            source_execution = source_data / "position_guardian_execution.json"
+            source_heartbeat = source_data / "position_guardian.json"
+            plist = root / "com.quantrabbit.position-guardian.plist"
+            plist.write_text("<plist/>")
+
+            with (
+                mock.patch(
+                    "quant_rabbit.self_improvement_audit.DEFAULT_POSITION_GUARDIAN_EXECUTION",
+                    source_execution,
+                ),
+                mock.patch(
+                    "quant_rabbit.self_improvement_audit.DEFAULT_POSITION_GUARDIAN_HEARTBEAT",
+                    source_heartbeat,
+                ),
+                mock.patch.dict(
+                    os.environ,
+                    {
+                        "QR_SYNC_LIVE_ROOT": str(root / "live"),
+                        "QR_POSITION_GUARDIAN_PLIST": str(plist),
+                        "QR_REQUIRE_POSITION_GUARDIAN_ACTIVE": "1",
+                        "QR_POSITION_GUARDIAN_INTERVAL": "30",
+                        "QR_POSITION_GUARDIAN_HEARTBEAT_MAX_AGE_SECONDS": "120",
+                    },
+                    clear=False,
+                ),
+                mock.patch(
+                    "quant_rabbit.self_improvement_audit.subprocess.run",
+                    return_value=mock.Mock(returncode=0),
+                ),
+            ):
+                os.environ.pop("QR_POSITION_GUARDIAN_EXECUTION", None)
+                os.environ.pop("QR_POSITION_GUARDIAN_HEARTBEAT", None)
+                guardian = _position_guardian_runtime_status()
+
+        self.assertTrue(guardian["active"])
+        self.assertEqual(guardian["active_source"], "launchd+heartbeat")
+        self.assertTrue(guardian["heartbeat_fresh"])
+        self.assertEqual(guardian["heartbeat_path"], str(live_heartbeat))
+        self.assertIn(str(live_heartbeat), guardian["heartbeat_candidates"])
+
+    def test_position_guardian_custom_paths_do_not_fall_back_to_live_heartbeat(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            live_data = root / "live" / "data"
+            live_data.mkdir(parents=True)
+            (live_data / "position_guardian.json").write_text(
+                json.dumps(
+                    {
+                        "generated_at_utc": datetime.now(timezone.utc).isoformat(),
+                        "status": "NO_POSITION",
+                    }
+                )
+            )
+            custom_execution = root / "custom" / "position_guardian_execution.json"
+            custom_heartbeat = root / "custom" / "position_guardian.json"
+            plist = root / "com.quantrabbit.position-guardian.plist"
+            plist.write_text("<plist/>")
+
+            with (
+                mock.patch.dict(
+                    os.environ,
+                    {
+                        "QR_SYNC_LIVE_ROOT": str(root / "live"),
+                        "QR_POSITION_GUARDIAN_PLIST": str(plist),
+                        "QR_REQUIRE_POSITION_GUARDIAN_ACTIVE": "1",
+                        "QR_POSITION_GUARDIAN_EXECUTION": str(custom_execution),
+                        "QR_POSITION_GUARDIAN_HEARTBEAT": str(custom_heartbeat),
+                        "QR_POSITION_GUARDIAN_INTERVAL": "30",
+                        "QR_POSITION_GUARDIAN_HEARTBEAT_MAX_AGE_SECONDS": "120",
+                    },
+                    clear=False,
+                ),
+                mock.patch(
+                    "quant_rabbit.self_improvement_audit.subprocess.run",
+                    return_value=mock.Mock(returncode=0),
+                ),
+            ):
+                guardian = _position_guardian_runtime_status()
+
+        self.assertFalse(guardian["active"])
+        self.assertEqual(guardian["active_source"], "stale_heartbeat")
+        self.assertIsNone(guardian["heartbeat_path"])
+        self.assertNotIn(str(live_data / "position_guardian.json"), guardian["heartbeat_candidates"])
 
     def test_projection_expiry_uses_live_telemetry_grace(self) -> None:
         grace = timedelta(seconds=PROJECTION_PENDING_EXPIRY_GRACE_SECONDS)
