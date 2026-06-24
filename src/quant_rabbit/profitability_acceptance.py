@@ -724,6 +724,29 @@ def _execution_ledger_close_findings(
             gateway_raw_json_select = (
                 "g.raw_json AS gateway_raw_json" if "raw_json" in columns else "NULL AS gateway_raw_json"
             )
+            verification_columns = (
+                {
+                    str(row[1])
+                    for row in conn.execute(
+                        "PRAGMA table_info(verification_observations)"
+                    ).fetchall()
+                }
+                if "verification_observations" in tables
+                else set()
+            )
+            close_gate_real_evidence_filter = (
+                """
+                          AND (
+                              v.evidence_json IS NULL
+                              OR instr(
+                                  replace(v.evidence_json, ' ', ''),
+                                  '"reason":"close_gate_evidence_missing"'
+                              ) = 0
+                          )
+                """
+                if "evidence_json" in verification_columns
+                else ""
+            )
             if "verification_observations" in tables:
                 close_gate_select = """
                     EXISTS (
@@ -731,6 +754,7 @@ def _execution_ledger_close_findings(
                         FROM verification_observations v
                         WHERE v.check_name = 'close_gate_evidence'
                           AND v.subject_id = g.trade_id
+                          {close_gate_real_evidence_filter}
                           AND (
                               v.ts_utc = g.ts_utc
                               OR EXISTS (
@@ -777,7 +801,9 @@ def _execution_ledger_close_findings(
                               )
                           )
                     ) AS has_passing_close_gate_evidence
-                """
+                """.format(
+                    close_gate_real_evidence_filter=close_gate_real_evidence_filter
+                )
             else:
                 close_gate_select = """
                     0 AS has_close_gate_evidence,

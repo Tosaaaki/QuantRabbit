@@ -1582,6 +1582,134 @@ class CliHelpTest(unittest.TestCase):
         self.assertEqual(metrics["recent_close_gate_missing_loss_closes"], 0)
         self.assertEqual(metrics["recent_close_gate_not_passing_loss_closes"], 1)
 
+    def test_profitability_acceptance_treats_missing_close_gate_sentinel_as_missing(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            ledger = root / "execution_ledger.db"
+            timing = root / "execution_timing_audit.json"
+            with sqlite3.connect(ledger) as conn:
+                conn.execute(
+                    """
+                    CREATE TABLE execution_events (
+                        ts_utc TEXT,
+                        event_type TEXT,
+                        trade_id TEXT,
+                        order_id TEXT,
+                        lane_id TEXT,
+                        pair TEXT,
+                        side TEXT,
+                        realized_pl_jpy REAL,
+                        exit_reason TEXT,
+                        raw_json TEXT
+                    )
+                    """
+                )
+                conn.execute(
+                    """
+                    CREATE TABLE verification_observations (
+                        ts_utc TEXT,
+                        subject_id TEXT,
+                        check_name TEXT,
+                        status TEXT,
+                        evidence_json TEXT
+                    )
+                    """
+                )
+                conn.executemany(
+                    """
+                    INSERT INTO execution_events (
+                        ts_utc, event_type, trade_id, order_id, lane_id, pair, side,
+                        realized_pl_jpy, exit_reason, raw_json
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    [
+                        (
+                            "2026-06-21T00:00:00+00:00",
+                            "GATEWAY_GPT_CLOSE_ACCEPTED",
+                            "T-contained",
+                            None,
+                            "trend_trader:EUR_CHF:LONG:TREND_CONTINUATION",
+                            "EUR_CHF",
+                            "LONG",
+                            None,
+                            "GPT_CLOSE_ACCEPTED",
+                            "{}",
+                        ),
+                        (
+                            "2026-06-21T00:01:30+00:00",
+                            "GATEWAY_TRADE_CLOSE_SENT",
+                            "T-contained",
+                            "O-contained",
+                            "trend_trader:EUR_CHF:LONG:TREND_CONTINUATION",
+                            "EUR_CHF",
+                            "LONG",
+                            None,
+                            "GPT_CLOSE",
+                            "{}",
+                        ),
+                        (
+                            "2026-06-21T00:01:35+00:00",
+                            "TRADE_CLOSED",
+                            "T-contained",
+                            "O-contained",
+                            "trend_trader:EUR_CHF:LONG:TREND_CONTINUATION",
+                            "EUR_CHF",
+                            "LONG",
+                            -1019.78,
+                            "MARKET_ORDER_TRADE_CLOSE",
+                            "{}",
+                        ),
+                    ],
+                )
+                conn.execute(
+                    """
+                    INSERT INTO verification_observations (
+                        ts_utc, subject_id, check_name, status, evidence_json
+                    )
+                    VALUES (?, ?, ?, ?, ?)
+                    """,
+                    (
+                        "2026-06-21T00:00:00+00:00",
+                        "T-contained",
+                        "close_gate_evidence",
+                        "BLOCK",
+                        json.dumps(
+                            {
+                                "reason": "close_gate_evidence_missing",
+                                "trade_id": "T-contained",
+                            }
+                        ),
+                    ),
+                )
+            timing.write_text(
+                json.dumps(
+                    {
+                        "generated_at_utc": "2026-06-21T01:00:00+00:00",
+                        "market_close_counterfactuals": [
+                            {
+                                "trade_id": "T-contained",
+                                "order_id": "O-contained",
+                                "post_close_path_label": "LOSS_CLOSE_CONTAINED_RISK",
+                            }
+                        ],
+                    }
+                )
+            )
+
+            metrics, findings = _execution_ledger_close_findings(
+                ledger,
+                execution_timing_audit_path=timing,
+            )
+
+        codes = {item["code"] for item in findings}
+        self.assertIn("LOSS_CLOSE_GATE_EVIDENCE_MISSING", codes)
+        self.assertNotIn("LOSS_CLOSE_GATE_EVIDENCE_NOT_PASSING", codes)
+        self.assertEqual(metrics["recent_contained_risk_loss_closes"], 1)
+        self.assertEqual(metrics["recent_close_gate_unverified_loss_closes"], 1)
+        self.assertEqual(metrics["recent_close_gate_missing_loss_closes"], 1)
+        self.assertEqual(metrics["recent_close_gate_not_passing_loss_closes"], 0)
+
     def test_profitability_acceptance_matches_close_gate_evidence_at_gpt_accept_time(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
