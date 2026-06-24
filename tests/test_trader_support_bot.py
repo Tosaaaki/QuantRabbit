@@ -916,8 +916,8 @@ class TraderSupportBotTest(unittest.TestCase):
             self.assertIn("REVIEW_UNKNOWN_OWNER_EXPOSURE", request_by_code)
             request = request_by_code["REVIEW_UNKNOWN_OWNER_EXPOSURE"]
             self.assertEqual(request["priority"], "P1")
-            self.assertEqual(request["status"], "OPERATOR_REVIEW_REQUIRED")
-            self.assertTrue(request["requires_explicit_operator_approval"])
+            self.assertEqual(request["status"], "OPERATOR_REVIEW_RECOMMENDED")
+            self.assertFalse(request["requires_explicit_operator_approval"])
             self.assertEqual(request["evidence_summary"]["examples"][0]["trade_id"], "472802")
             self.assertIn("BROKER_TRUTH_UNKNOWN_OWNER_EXPOSURE", request["source_findings"])
 

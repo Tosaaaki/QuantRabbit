@@ -445,7 +445,7 @@ class TraderRepairOrchestratorTest(unittest.TestCase):
             self.assertIn("approval-bound", loop_prompt["current_hypothesis"])
             self.assertIn("explicit operator approval", " ".join(loop_prompt["next_loop"]))
 
-    def test_loop_prompt_surfaces_approval_bound_unknown_owner_trade_details(self) -> None:
+    def test_loop_prompt_keeps_unknown_owner_review_out_of_approval_boundary(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             support = root / "support.json"
@@ -455,10 +455,16 @@ class TraderRepairOrchestratorTest(unittest.TestCase):
                 support,
                 [
                     _request(
+                        "REPAIR_TP_PROGRESS_PROFIT_CAPTURE_REPLAY",
+                        priority="P0",
+                        status=TP_PROGRESS_GUARDIAN_WAIT_STATUS,
+                        evidence_summary={"loss_closes_repair_replay_triggered": 13},
+                    ),
+                    _request(
                         "REVIEW_UNKNOWN_OWNER_EXPOSURE",
                         priority="P1",
-                        status="OPERATOR_REVIEW_REQUIRED",
-                        requires_explicit_operator_approval=True,
+                        status="OPERATOR_REVIEW_RECOMMENDED",
+                        requires_explicit_operator_approval=False,
                         source_findings=[
                             "BROKER_TRUTH_UNKNOWN_OWNER_EXPOSURE",
                             "MARGIN_TOO_THIN_FOR_MIN_LOT",
@@ -490,20 +496,25 @@ class TraderRepairOrchestratorTest(unittest.TestCase):
                 report_path=report,
             ).run()
 
-            self.assertEqual(summary.status, STATUS_APPROVAL_REQUIRED)
+            self.assertEqual(summary.status, STATUS_BLOCKED)
             payload = json.loads(output.read_text())
             self.assertEqual(payload["actionable_requests"], [])
+            self.assertEqual(payload["approval_required_requests"], [])
             self.assertEqual(payload["codex_work_order"]["status"], "NO_ACTIONABLE_CODEX_WORK")
             self.assertEqual(payload["approval_boundary"]["live_side_effects_allowed"], [])
             loop_prompt = payload["loop_engineering_prompt"]
-            details = loop_prompt["current_state"]["approval_required_details"]
-            self.assertEqual(details[0]["code"], "REVIEW_UNKNOWN_OWNER_EXPOSURE")
-            self.assertEqual(details[0]["examples"][0]["trade_id"], "472802")
-            self.assertEqual(details[0]["examples"][0]["owner"], "unknown")
-            self.assertIn("trade_id=472802", loop_prompt["prompt_text"])
-            self.assertIn("EUR_USD LONG 20000u", loop_prompt["prompt_text"])
-            self.assertIn("clearance:", loop_prompt["prompt_text"])
-            self.assertIn("approval target", loop_prompt["next_loop"][0])
+            self.assertEqual(loop_prompt["current_state"]["approval_required_details"], [])
+            self.assertEqual(loop_prompt["current_state"]["approval_required_request_codes"], [])
+            self.assertEqual(
+                loop_prompt["current_state"]["primary_waiting_p0_request_code"],
+                "REPAIR_TP_PROGRESS_PROFIT_CAPTURE_REPLAY",
+            )
+            self.assertIn("REVIEW_UNKNOWN_OWNER_EXPOSURE", payload["queue_summary"]["waiting_request_codes"])
+            review = next(item for item in payload["queue"] if item["code"] == "REVIEW_UNKNOWN_OWNER_EXPOSURE")
+            self.assertEqual(review["automation_status"], "WAITING_FOR_EVIDENCE")
+            self.assertFalse(review["requires_explicit_operator_approval"])
+            self.assertIn("evidence-window work", loop_prompt["current_hypothesis"])
+            self.assertNotIn("approval target", loop_prompt["prompt_text"])
 
     def test_directional_inversion_without_repeated_replay_evidence_is_not_codex_ready(self) -> None:
         now = datetime(2026, 6, 24, 11, 30, tzinfo=timezone.utc)

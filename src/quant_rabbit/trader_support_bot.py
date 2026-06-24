@@ -3295,7 +3295,7 @@ def _build_repair_requests(
             _repair_request(
                 code="REVIEW_UNKNOWN_OWNER_EXPOSURE",
                 priority="P1",
-                status="OPERATOR_REVIEW_REQUIRED",
+                status="OPERATOR_REVIEW_RECOMMENDED",
                 source_findings=[
                     "BROKER_TRUTH_UNKNOWN_OWNER_EXPOSURE",
                     *[
@@ -3305,14 +3305,15 @@ def _build_repair_requests(
                     ],
                 ],
                 problem=(
-                    "Broker truth includes manual/tagless exposure. It is TP-managed only by contract, "
-                    "so the trader cannot assume that margin capacity, loss-close permission, or lane "
-                    "ownership will be available for fresh-entry repair work."
+                    "Broker truth includes manual/tagless exposure. It is TP-managed only by contract "
+                    "and is not a fresh-entry send gate by itself; broker-truth margin capacity still "
+                    "flows through normal intent and gateway risk checks."
                 ),
                 why_now=(
-                    "Daily 5% firepower estimates can be mathematically reachable while operational "
-                    "capacity is consumed by an unclassified live position. Codex should surface this "
-                    "as an operator classification/adoption step instead of loosening margin or forecast gates."
+                    "Daily 5% firepower estimates can be mathematically reachable while broker margin "
+                    "is consumed by a tagless live position. Codex should surface this as read-only "
+                    "operator context without treating review itself as approval-bound code work or "
+                    "loosening margin, min-lot, or forecast gates."
                 ),
                 evidence_summary={
                     "unknown_owner_positions": broker.get("unknown_owner_positions"),
@@ -3321,8 +3322,8 @@ def _build_repair_requests(
                     "nav_jpy": broker.get("nav_jpy"),
                 },
                 clearance_conditions=[
-                    "Operator confirms the exposure is intentionally manual/tagless, adopts it into a supported owner path, or resolves it through the approved live gateway/manual workflow.",
-                    "After classification, rerun broker-snapshot, generate-intents, trader-support-bot, and profitability-acceptance before treating margin blockers as repairable.",
+                    "If the operator changes this exposure externally or adopts it into a supported owner path, rerun broker-snapshot, generate-intents, trader-support-bot, and profitability-acceptance before treating margin blockers as current.",
+                    "Do not close, stop-loss, cancel, or otherwise mutate this manual/tagless exposure from the repair queue; only existing approved gateways or explicit operator action may change live broker state.",
                 ],
                 verification_commands=[
                     "PYTHONPATH=src python3 -m quant_rabbit.cli broker-snapshot --output data/broker_snapshot.json",
@@ -3335,11 +3336,11 @@ def _build_repair_requests(
                     "tests/test_trader_support_bot.py",
                 ],
                 required_tests=[
-                    "Manual/tagless exposure is surfaced as operator review without granting close, cancel, or order permission.",
-                    "Support still keeps normal fresh-entry gates unchanged; unknown exposure does not become an implicit live permission or forced close.",
-                    "Margin-thin repair guidance points to classification/adoption instead of loosening min-lot or risk caps.",
+                    "Manual/tagless exposure is surfaced as read-only operator context without becoming an approval-bound Codex repair.",
+                    "Support still keeps normal fresh-entry gates unchanged; unknown exposure does not become an implicit live permission, forced close, or fresh-entry blocker.",
+                    "Margin-thin guidance continues to rely on broker-truth margin, min-lot, and risk caps instead of loosening them.",
                 ],
-                requires_explicit_operator_approval=True,
+                requires_explicit_operator_approval=False,
             )
         )
 
