@@ -1486,6 +1486,57 @@ def _forecast_range_unselected_projection_support_allows_side(
     return False
 
 
+def _forecast_unclear_unselected_projection_support_allows_side(
+    intent: OrderIntent,
+    metadata: dict,
+    support: dict,
+) -> bool:
+    """Mirror intent_generator's UNCLEAR forecast passive LIMIT override."""
+    if intent.side not in {Side.LONG, Side.SHORT}:
+        return False
+    if intent.order_type != OrderType.LIMIT:
+        return False
+    if str(metadata.get("forecast_direction") or "").upper() != "UNCLEAR":
+        return False
+    chart_direction_bias = str(metadata.get("chart_direction_bias") or "").upper()
+    if chart_direction_bias and chart_direction_bias != intent.side.value:
+        return False
+    expected_direction = "UP" if intent.side == Side.LONG else "DOWN"
+    opposite_direction = "DOWN" if expected_direction == "UP" else "UP"
+    forecast_horizon_min = _to_float(metadata.get("forecast_horizon_min"))
+    signals = support.get("unselected_signals")
+    if not isinstance(signals, list):
+        return False
+    has_same_side_signal = False
+    for signal in signals:
+        if not isinstance(signal, dict):
+            continue
+        signal_direction = str(signal.get("direction") or "").upper()
+        if signal_direction not in {"UP", "DOWN"}:
+            continue
+        if not _support_signal_within_forecast_horizon(
+            signal,
+            forecast_horizon_min=forecast_horizon_min,
+        ):
+            continue
+        signal_confidence = _to_float(signal.get("confidence")) or 0.0
+        hit_rate = _to_float(signal.get("hit_rate")) or 0.0
+        samples = _to_int(signal.get("samples")) or 0
+        strong_enough = (
+            signal_confidence >= FORECAST_MARKET_SUPPORT_MIN_SIGNAL_CONFIDENCE
+            and hit_rate >= FORECAST_MARKET_SUPPORT_MIN_DIRECTIONAL_HIT_RATE
+            and samples >= FORECAST_MARKET_SUPPORT_MIN_SAMPLES
+            and _forecast_support_signal_clears_live_precision(signal)
+        )
+        if not strong_enough:
+            continue
+        if signal_direction == opposite_direction:
+            return False
+        if signal_direction == expected_direction:
+            has_same_side_signal = True
+    return has_same_side_signal
+
+
 def _forecast_range_confidence_issues(
     intent: OrderIntent,
     *,
@@ -1622,6 +1673,9 @@ def _forecast_executable_live_readiness_issues(
     ):
         return []
     confidence = _to_float(metadata.get("forecast_confidence"))
+    support = _forecast_market_support(metadata)
+    if _forecast_unclear_unselected_projection_support_allows_side(intent, metadata, support):
+        return []
     return [
         RiskIssue(
             "FORECAST_NOT_EXECUTABLE_FOR_LIVE",

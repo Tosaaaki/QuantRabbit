@@ -16,6 +16,7 @@ from quant_rabbit.execution_timing_contracts import (
     TP_PROGRESS_REPAIR_REPLAY_FIELD,
 )
 from quant_rabbit.trader_support_bot import (
+    FORECAST_FRONTIER_EVIDENCE_WAIT_STATUS,
     FRONTIER_QUOTE_FRESHNESS_WAIT_STATUS,
     STATUS_BLOCKED,
     STATUS_READY,
@@ -823,6 +824,214 @@ class TraderSupportBotTest(unittest.TestCase):
                 "oanda_history_replay_validate.py",
                 " ".join(request["verification_commands"]),
             )
+
+    def test_unclear_forecast_frontier_live_precision_for_non_executable_shape_waits(self) -> None:
+        now = datetime(2026, 6, 23, 23, 55, tzinfo=timezone.utc)
+        forecast_support = {
+            "forecast_direction": "UNCLEAR",
+            "forecast_confidence": 0.0,
+            "forecast_horizon_min": 0,
+            "forecast_market_support_ok": False,
+            "forecast_market_support_reason": (
+                "forecast UNCLEAR has no executable direction; audited projection unselected"
+            ),
+            "forecast_market_support": {
+                "ok": False,
+                "reason": "forecast UNCLEAR has no executable direction; audited projection unselected",
+                "unselected_projection_count": 1,
+                "best_unselected_hit_rate": 1.0,
+                "best_unselected_samples": 36,
+                "unselected_signals": [
+                    {
+                        "name": "macro_event_nowcast_employment",
+                        "direction": "DOWN",
+                        "confidence": 0.6865,
+                        "hit_rate": 1.0,
+                        "samples": 36,
+                        "live_precision_ok": True,
+                    }
+                ],
+            },
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _write_fixture(root, now=now, blocked=True)
+            _write_json(
+                files["intents"],
+                {
+                    "generated_at_utc": now.isoformat(),
+                    "results": [
+                        {
+                            "lane_id": "failure_trader:EUR_USD:SHORT:BREAKOUT_FAILURE",
+                            "status": "DRY_RUN_BLOCKED",
+                            "live_blocker_codes": [
+                                "POSITION_GUARDIAN_INACTIVE_FOR_PROFIT_CAPTURE",
+                                "FORECAST_NOT_EXECUTABLE_FOR_LIVE",
+                            ],
+                            "intent": {
+                                "pair": "EUR_USD",
+                                "side": "SHORT",
+                                "order_type": "STOP-ENTRY",
+                                "market_context": {"method": "BREAKOUT_FAILURE"},
+                                "metadata": {
+                                    **forecast_support,
+                                    "self_improvement_p0_repair_live_ready": True,
+                                    "self_improvement_p0_repair_mode": "TP_HARVEST_REPAIR",
+                                    "sizing_actual_reward_jpy": 407.925,
+                                    "sizing_actual_risk_jpy": 401.45,
+                                },
+                            },
+                            "risk_metrics": {"reward_jpy": 407.925, "risk_jpy": 401.45},
+                        },
+                        {
+                            "lane_id": "failure_trader:EUR_USD:LONG:BREAKOUT_FAILURE:LIMIT",
+                            "status": "DRY_RUN_BLOCKED",
+                            "live_blocker_codes": [
+                                "POSITION_GUARDIAN_INACTIVE_FOR_PROFIT_CAPTURE",
+                                "FORECAST_NOT_EXECUTABLE_FOR_LIVE",
+                            ],
+                            "intent": {
+                                "pair": "EUR_USD",
+                                "side": "LONG",
+                                "order_type": "LIMIT",
+                                "market_context": {"method": "BREAKOUT_FAILURE"},
+                                "metadata": {
+                                    **forecast_support,
+                                    "self_improvement_p0_repair_live_ready": True,
+                                    "self_improvement_p0_repair_mode": "TP_HARVEST_REPAIR",
+                                    "sizing_actual_reward_jpy": 103.6,
+                                    "sizing_actual_risk_jpy": 100.363,
+                                },
+                            },
+                            "risk_metrics": {"reward_jpy": 103.6, "risk_jpy": 100.363},
+                        },
+                    ],
+                },
+            )
+            env = _guardian_env(root, active="0")
+            with mock.patch.dict(os.environ, env, clear=False):
+                TraderSupportBot(
+                    broker_snapshot_path=files["broker"],
+                    order_intents_path=files["intents"],
+                    target_state_path=files["target"],
+                    position_management_path=files["position_management"],
+                    position_guardian_management_path=files["guardian_management"],
+                    position_guardian_execution_path=files["guardian_execution"],
+                    position_guardian_heartbeat_path=files["guardian_heartbeat"],
+                    self_improvement_audit_path=files["self_improvement"],
+                    profitability_acceptance_path=files["profitability"],
+                    execution_timing_audit_path=files["timing"],
+                    profit_capture_bot_path=files["profit_capture_bot"],
+                    output_path=files["output"],
+                    report_path=files["report"],
+                    now_utc=now,
+                ).run()
+
+            payload = json.loads(files["output"].read_text())
+            request = next(
+                item for item in payload["repair_requests"] if item["code"] == "REPAIR_FRONTIER_LANE_BLOCKER"
+            )
+
+            self.assertEqual(request["status"], FORECAST_FRONTIER_EVIDENCE_WAIT_STATUS)
+            self.assertEqual(request["source_findings"], ["FORECAST_NOT_EXECUTABLE_FOR_LIVE"])
+
+    def test_unclear_forecast_frontier_same_side_limit_mismatch_stays_actionable(self) -> None:
+        now = datetime(2026, 6, 23, 23, 56, tzinfo=timezone.utc)
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _write_fixture(root, now=now, blocked=True)
+            _write_json(
+                files["intents"],
+                {
+                    "generated_at_utc": now.isoformat(),
+                    "results": [
+                        {
+                            "lane_id": "failure_trader:EUR_USD:SHORT:BREAKOUT_FAILURE:LIMIT",
+                            "status": "DRY_RUN_BLOCKED",
+                            "live_blocker_codes": [
+                                "POSITION_GUARDIAN_INACTIVE_FOR_PROFIT_CAPTURE",
+                                "FORECAST_NOT_EXECUTABLE_FOR_LIVE",
+                            ],
+                            "intent": {
+                                "pair": "EUR_USD",
+                                "side": "SHORT",
+                                "order_type": "LIMIT",
+                                "market_context": {"method": "BREAKOUT_FAILURE"},
+                                "metadata": {
+                                    "self_improvement_p0_repair_live_ready": True,
+                                    "self_improvement_p0_repair_mode": "TP_HARVEST_REPAIR",
+                                    "sizing_actual_reward_jpy": 414.4,
+                                    "sizing_actual_risk_jpy": 401.45,
+                                    "forecast_direction": "UNCLEAR",
+                                    "forecast_confidence": 0.0,
+                                    "forecast_horizon_min": 0,
+                                    "forecast_market_support_ok": False,
+                                    "forecast_market_support_reason": (
+                                        "forecast UNCLEAR has no executable direction; audited projection unselected"
+                                    ),
+                                    "forecast_market_support": {
+                                        "ok": False,
+                                        "reason": (
+                                            "forecast UNCLEAR has no executable direction; audited projection unselected"
+                                        ),
+                                        "unselected_projection_count": 1,
+                                        "best_unselected_hit_rate": 1.0,
+                                        "best_unselected_samples": 36,
+                                        "unselected_signals": [
+                                            {
+                                                "name": "volatility_timing_probe",
+                                                "direction": "EITHER",
+                                                "confidence": 0.91,
+                                                "hit_rate": 0.78,
+                                                "samples": 44,
+                                                "live_precision_ok": True,
+                                            },
+                                            {
+                                                "name": "macro_event_nowcast_employment",
+                                                "direction": "DOWN",
+                                                "confidence": 0.6865,
+                                                "hit_rate": 1.0,
+                                                "samples": 36,
+                                                "live_precision_ok": True,
+                                            }
+                                        ],
+                                    },
+                                },
+                            },
+                            "risk_metrics": {"reward_jpy": 414.4, "risk_jpy": 401.45},
+                        }
+                    ],
+                },
+            )
+            env = _guardian_env(root, active="0")
+            with mock.patch.dict(os.environ, env, clear=False):
+                TraderSupportBot(
+                    broker_snapshot_path=files["broker"],
+                    order_intents_path=files["intents"],
+                    target_state_path=files["target"],
+                    position_management_path=files["position_management"],
+                    position_guardian_management_path=files["guardian_management"],
+                    position_guardian_execution_path=files["guardian_execution"],
+                    position_guardian_heartbeat_path=files["guardian_heartbeat"],
+                    self_improvement_audit_path=files["self_improvement"],
+                    profitability_acceptance_path=files["profitability"],
+                    execution_timing_audit_path=files["timing"],
+                    profit_capture_bot_path=files["profit_capture_bot"],
+                    output_path=files["output"],
+                    report_path=files["report"],
+                    now_utc=now,
+                ).run()
+
+            payload = json.loads(files["output"].read_text())
+            request = next(
+                item for item in payload["repair_requests"] if item["code"] == "REPAIR_FRONTIER_LANE_BLOCKER"
+            )
+
+            support = request["evidence_summary"]["forecast_support_examples"][0]["forecast_support"]
+            self.assertEqual(support["top_unselected_signal"]["direction"], "EITHER")
+            self.assertEqual(support["unselected_signal_examples"][1]["direction"], "DOWN")
+            self.assertEqual(request["status"], "READY_FOR_CODE_OR_EVIDENCE_REPAIR")
+            self.assertEqual(request["source_findings"], ["FORECAST_NOT_EXECUTABLE_FOR_LIVE"])
 
     def test_frontier_stale_quote_waits_for_fresh_broker_truth(self) -> None:
         now = datetime(2026, 6, 23, 23, 35, tzinfo=timezone.utc)

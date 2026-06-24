@@ -990,6 +990,55 @@ class RiskEngineTest(unittest.TestCase):
         self.assertFalse(live.allowed)
         self.assertEqual(live_codes["FORECAST_NOT_EXECUTABLE_FOR_LIVE"], "BLOCK")
 
+    def test_unclear_forecast_limit_allows_same_side_unselected_projection_support_for_live_send(self) -> None:
+        intent = OrderIntent(
+            pair="EUR_USD",
+            side=Side.SHORT,
+            order_type=OrderType.LIMIT,
+            units=1000,
+            entry=1.17400,
+            tp=1.17330,
+            sl=1.17450,
+            thesis="passive_limit_can_use_same_side_unselected_projection",
+            market_context=MarketContext(
+                regime="BREAKOUT_FAILURE rejection retest",
+                narrative="failed upside break rejects with audited unselected projection support",
+                chart_story="seller response near resistance",
+                method=TradeMethod.BREAKOUT_FAILURE,
+                invalidation="resistance recaptures on M5 bodies",
+            ),
+            metadata={
+                "forecast_direction": "UNCLEAR",
+                "forecast_confidence": 0.0,
+                "chart_direction_bias": "SHORT",
+                "forecast_market_support": {
+                    "ok": False,
+                    "direction": "UNCLEAR",
+                    "unselected_projection_count": 1,
+                    "unselected_signals": [
+                        {
+                            "name": "macro_event_nowcast_employment",
+                            "direction": "DOWN",
+                            "confidence": 0.6865,
+                            "hit_rate": 1.0,
+                            "hit_rate_wilson_lower": 0.9036,
+                            "economic_hit_rate": 1.0,
+                            "economic_hit_rate_wilson_lower": 0.9036,
+                            "economic_samples": 36,
+                            "samples": 36,
+                            "live_precision_ok": True,
+                        }
+                    ],
+                },
+            },
+        )
+
+        decision = _capped_engine(live_enabled=True).validate(intent, snapshot(), for_live_send=True)
+
+        codes = {issue.code for issue in decision.issues}
+        self.assertTrue(decision.allowed, decision.block_reasons)
+        self.assertNotIn("FORECAST_NOT_EXECUTABLE_FOR_LIVE", codes)
+
     def test_low_confidence_same_side_directional_forecast_blocks_live_send_without_support(self) -> None:
         intent = OrderIntent(
             pair="EUR_USD",

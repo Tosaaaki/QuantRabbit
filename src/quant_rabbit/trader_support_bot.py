@@ -31,6 +31,11 @@ from quant_rabbit.paths import (
     DEFAULT_TRADER_SUPPORT_BOT_REPORT,
     effective_oanda_universal_rotation_path,
 )
+from quant_rabbit.risk import (
+    FORECAST_MARKET_SUPPORT_MIN_DIRECTIONAL_HIT_RATE,
+    FORECAST_MARKET_SUPPORT_MIN_SAMPLES,
+    FORECAST_MARKET_SUPPORT_MIN_SIGNAL_CONFIDENCE,
+)
 
 
 STATUS_READY = "SUPPORT_READY"
@@ -1025,6 +1030,29 @@ def _forecast_frontier_support_summary(metadata: dict[str, Any]) -> dict[str, An
             if support.get(key) is not None:
                 summary[key] = support.get(key)
     if top_signal:
+        signal_summaries = []
+        for signal in unselected[:3]:
+            if not isinstance(signal, dict):
+                continue
+            signal_summary: dict[str, Any] = {}
+            for key in (
+                "name",
+                "direction",
+                "live_precision_ok",
+                "lead_time_min",
+                "hit_rate",
+                "economic_hit_rate",
+                "samples",
+                "calibration_samples",
+                "economic_samples",
+                "confidence",
+            ):
+                if signal.get(key) is not None:
+                    signal_summary[key] = signal.get(key)
+            if signal_summary:
+                signal_summaries.append(signal_summary)
+        if signal_summaries:
+            summary["unselected_signal_examples"] = signal_summaries
         signal_summary: dict[str, Any] = {}
         for key in (
             "name",
@@ -1035,6 +1063,7 @@ def _forecast_frontier_support_summary(metadata: dict[str, Any]) -> dict[str, An
             "economic_hit_rate",
             "samples",
             "calibration_samples",
+            "economic_samples",
             "confidence",
         ):
             if top_signal.get(key) is not None:
@@ -1073,6 +1102,7 @@ def _repair_frontier_remaining_blockers(repair_frontier: list[dict[str, Any]]) -
                         "pair": item.get("pair"),
                         "side": item.get("side"),
                         "method": item.get("method"),
+                        "order_type": item.get("order_type"),
                         "forecast_support": item.get("forecast_support"),
                     }
                 )
@@ -2221,15 +2251,16 @@ def _frontier_blocker_waits_for_live_precision_evidence(top: dict[str, Any]) -> 
         if isinstance(top.get("forecast_support_examples"), list)
         else []
     )
-    supports = [
-        item.get("forecast_support")
+    if not any(
+        isinstance(item, dict) and isinstance(item.get("forecast_support"), dict)
         for item in examples
-        if isinstance(item, dict) and isinstance(item.get("forecast_support"), dict)
-    ]
-    if not supports:
+    ):
         return False
     has_wait_signal = False
-    for support in supports:
+    for example in examples:
+        if not isinstance(example, dict) or not isinstance(example.get("forecast_support"), dict):
+            continue
+        support = example["forecast_support"]
         if support.get("forecast_market_support_ok") is True:
             return False
         top_signal = (
@@ -2237,11 +2268,16 @@ def _frontier_blocker_waits_for_live_precision_evidence(top: dict[str, Any]) -> 
             if isinstance(support.get("top_unselected_signal"), dict)
             else {}
         )
-        if top_signal.get("live_precision_ok") is True:
+        if top_signal.get("live_precision_ok") is True and _forecast_example_has_actionable_unclear_limit_support(
+            example,
+            support,
+        ):
             return False
         reason = str(support.get("forecast_market_support_reason") or "").lower()
         direction = str(support.get("forecast_direction") or "").upper()
         if top_signal.get("live_precision_ok") is False:
+            has_wait_signal = True
+        if top_signal.get("live_precision_ok") is True:
             has_wait_signal = True
         if (
             "unselected" in reason
@@ -2253,6 +2289,56 @@ def _frontier_blocker_waits_for_live_precision_evidence(top: dict[str, Any]) -> 
         if direction in {"UNCLEAR", "RANGE", ""}:
             has_wait_signal = True
     return has_wait_signal
+
+
+def _forecast_example_has_actionable_unclear_limit_support(
+    example: dict[str, Any],
+    support: dict[str, Any],
+) -> bool:
+    direction = str(support.get("forecast_direction") or "").upper()
+    if direction != "UNCLEAR":
+        return False
+    if str(example.get("order_type") or "").upper() != "LIMIT":
+        return False
+    side = str(example.get("side") or "").upper()
+    expected_signal_direction = "UP" if side == "LONG" else "DOWN" if side == "SHORT" else ""
+    if not expected_signal_direction:
+        return False
+    opposite_signal_direction = "DOWN" if expected_signal_direction == "UP" else "UP"
+    signals = (
+        support.get("unselected_signal_examples")
+        if isinstance(support.get("unselected_signal_examples"), list)
+        else []
+    )
+    top_signal = support.get("top_unselected_signal")
+    if not signals and isinstance(top_signal, dict):
+        signals = [top_signal]
+    has_same_side_signal = False
+    for signal in signals:
+        if not isinstance(signal, dict) or not _forecast_frontier_signal_strong_enough(signal):
+            continue
+        signal_direction = str(signal.get("direction") or "").upper()
+        if signal_direction == opposite_signal_direction:
+            return False
+        if signal_direction == expected_signal_direction:
+            has_same_side_signal = True
+    return has_same_side_signal
+
+
+def _forecast_frontier_signal_strong_enough(signal: dict[str, Any]) -> bool:
+    samples = _int_like(
+        signal.get("samples")
+        if signal.get("samples") is not None
+        else signal.get("calibration_samples")
+        if signal.get("calibration_samples") is not None
+        else signal.get("economic_samples")
+    )
+    return (
+        signal.get("live_precision_ok") is True
+        and _float(signal.get("confidence")) >= FORECAST_MARKET_SUPPORT_MIN_SIGNAL_CONFIDENCE
+        and _float(signal.get("hit_rate")) >= FORECAST_MARKET_SUPPORT_MIN_DIRECTIONAL_HIT_RATE
+        and samples >= FORECAST_MARKET_SUPPORT_MIN_SAMPLES
+    )
 
 
 def _build_repair_requests(
@@ -3244,6 +3330,13 @@ def _float(value: Any) -> float:
         return float(value)
     except (TypeError, ValueError):
         return 0.0
+
+
+def _int_like(value: Any) -> int:
+    try:
+        return int(float(value))
+    except (TypeError, ValueError):
+        return 0
 
 
 def _round_optional(value: Any, digits: int) -> float | None:
