@@ -8,6 +8,7 @@ import unittest
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 from unittest import mock
 
@@ -6315,6 +6316,138 @@ class AutoTradeCycleTest(unittest.TestCase):
             profile_payload = json.loads(profile.read_text())
             self.assertEqual(profile_payload["profiles"][0]["status"], "RISK_REPAIR_CANDIDATE")
             self.assertFalse((root / "promotion.md").exists())
+
+    def test_refresh_and_reprice_refreshes_stale_snapshot_after_projection_preflight(self) -> None:
+        calls: list[str] = []
+
+        class SequenceClient:
+            def __init__(self, snapshots: list[BrokerSnapshot]) -> None:
+                self.snapshots = list(snapshots)
+                self.snapshot_calls: list[tuple[str, ...]] = []
+
+            def snapshot(self, pairs: tuple[str, ...]) -> BrokerSnapshot:
+                calls.append("snapshot")
+                self.snapshot_calls.append(pairs)
+                if not self.snapshots:
+                    raise AssertionError("unexpected snapshot refresh")
+                return _with_account(self.snapshots.pop(0))
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            now = datetime.now(timezone.utc)
+            stale = now - timedelta(seconds=60)
+            stale_snapshot = BrokerSnapshot(
+                fetched_at_utc=stale,
+                quotes={
+                    "EUR_USD": Quote("EUR_USD", 1.17298, 1.17306, timestamp_utc=stale),
+                    "USD_JPY": Quote("USD_JPY", 157.000, 157.004, timestamp_utc=stale),
+                },
+            )
+            fresh_snapshot = BrokerSnapshot(
+                fetched_at_utc=now,
+                quotes={
+                    "EUR_USD": Quote("EUR_USD", 1.17302, 1.17310, timestamp_utc=now),
+                    "USD_JPY": Quote("USD_JPY", 157.010, 157.014, timestamp_utc=now),
+                },
+            )
+            snapshot_path = root / "snapshot.json"
+            intents_path = root / "intents.json"
+            target_state = _open_target_state(root)
+            target_summary = SimpleNamespace(
+                status="PURSUE_TARGET",
+                remaining_target_jpy=10_000.0,
+                progress_pct=0.0,
+            )
+
+            def projection_preflight(_cycle: AutoTradeCycle, _snapshot: BrokerSnapshot) -> dict[str, str]:
+                calls.append("projection")
+                return {"status": "OK"}
+
+            def campaign_refresh(_cycle: AutoTradeCycle, _target: object) -> None:
+                calls.append("campaign")
+
+            def generator_run(*, snapshot_path: Path, **_: object) -> SimpleNamespace:
+                calls.append("generator")
+                payload = json.loads(snapshot_path.read_text())
+                self.assertEqual(payload["fetched_at_utc"], now.isoformat())
+                intents_path.write_text(json.dumps({"generated_at_utc": now.isoformat(), "results": []}) + "\n")
+                return SimpleNamespace(live_ready=0)
+
+            client = SequenceClient([stale_snapshot, fresh_snapshot])
+            no_trade_decision = TraderDecision(
+                action=ACTION_NO_TRADE,
+                selected_lane_id=None,
+                generated_at_utc=now.isoformat(),
+                reason="no live-ready test lanes",
+                scores=(),
+                positions=0,
+                orders=0,
+            )
+
+            with mock.patch.object(
+                AutoTradeCycle,
+                "_update_target_state",
+                autospec=True,
+                return_value=target_summary,
+            ), mock.patch.object(
+                AutoTradeCycle,
+                "_verify_projection_preflight",
+                autospec=True,
+                side_effect=projection_preflight,
+            ), mock.patch.object(
+                AutoTradeCycle,
+                "_refresh_campaign_plan",
+                autospec=True,
+                side_effect=campaign_refresh,
+            ), mock.patch.object(
+                AutoTradeCycle,
+                "_receipt_promoter",
+                autospec=True,
+            ) as receipt_promoter, mock.patch.object(
+                AutoTradeCycle,
+                "_brain",
+                autospec=True,
+            ) as brain, mock.patch(
+                "quant_rabbit.automation.IntentGenerator"
+            ) as generator_cls:
+                receipt_promoter.return_value.run.return_value = SimpleNamespace(promoted=0)
+                brain.return_value.run.return_value = no_trade_decision
+                generator_cls.return_value.run.side_effect = generator_run
+                summary = AutoTradeCycle(
+                    client=client,
+                    snapshot_path=snapshot_path,
+                    intents_path=intents_path,
+                    intent_report_path=root / "intents.md",
+                    decision_path=root / "decision.json",
+                    decision_report_path=root / "decision.md",
+                    gpt_decision_path=root / "gpt_decision.json",
+                    gpt_decision_report_path=root / "gpt_decision.md",
+                    gpt_attack_advice_path=root / "attack_missing.json",
+                    position_management_path=root / "pm.json",
+                    position_management_report_path=root / "pm.md",
+                    position_execution_path=root / "pe.json",
+                    position_execution_report_path=root / "pe.md",
+                    live_order_output_path=root / "live_order.json",
+                    live_order_report_path=root / "live_order.md",
+                    report_path=root / "report.md",
+                    campaign_plan_path=_campaign(root),
+                    strategy_profile_path=_candidate_profile(root),
+                    market_story_profile_path=_stories(root),
+                    receipt_promotion_report_path=root / "promotion.md",
+                    target_state_path=target_state,
+                    target_report_path=root / "target.md",
+                    gpt_target_state_path=target_state,
+                    refresh_market_story=False,
+                    live_enabled=True,
+                    max_loss_jpy=1_500,
+                ).run(send=False)
+
+            report = (root / "report.md").read_text()
+
+        self.assertEqual(summary.status, ACTION_NO_TRADE)
+        self.assertEqual(calls, ["snapshot", "projection", "campaign", "snapshot", "generator"])
+        self.assertEqual(len(client.snapshot_calls), 2)
+        self.assertIn("Pre-intent snapshot refresh: status=`REFRESHED`", report)
 
 
 class FakeCycleClient:

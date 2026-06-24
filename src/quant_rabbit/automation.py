@@ -214,6 +214,69 @@ def _snapshot_refresh_pairs(snapshot: object) -> tuple[str, ...]:
     return tuple(sorted(pairs))
 
 
+def _snapshot_quote_freshness(snapshot: object, *, now_utc: datetime | None = None) -> dict[str, Any]:
+    now = now_utc or datetime.now(timezone.utc)
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=timezone.utc)
+    else:
+        now = now.astimezone(timezone.utc)
+    quotes = getattr(snapshot, "quotes", {}) or {}
+    if not quotes:
+        return {"status": "NO_QUOTES", "fresh": False, "quote_count": 0}
+
+    fallback_ts = getattr(snapshot, "fetched_at_utc", None)
+    if isinstance(fallback_ts, datetime):
+        if fallback_ts.tzinfo is None:
+            fallback_ts = fallback_ts.replace(tzinfo=timezone.utc)
+        else:
+            fallback_ts = fallback_ts.astimezone(timezone.utc)
+    else:
+        fallback_ts = None
+
+    max_age: float | None = None
+    oldest_pair = ""
+    missing_timestamp_pairs: list[str] = []
+    for pair, quote in quotes.items():
+        quote_ts = getattr(quote, "timestamp_utc", None)
+        if isinstance(quote_ts, datetime):
+            if quote_ts.tzinfo is None:
+                quote_ts = quote_ts.replace(tzinfo=timezone.utc)
+            else:
+                quote_ts = quote_ts.astimezone(timezone.utc)
+        else:
+            quote_ts = fallback_ts
+        if quote_ts is None:
+            missing_timestamp_pairs.append(str(pair))
+            continue
+        age = max(0.0, (now - quote_ts).total_seconds())
+        if max_age is None or age > max_age:
+            max_age = age
+            oldest_pair = str(pair)
+
+    max_quote_age = float(RiskPolicy().max_quote_age_seconds)
+    refresh_threshold = max(1.0, max_quote_age * 0.5)
+    if max_age is None:
+        return {
+            "status": "NO_QUOTE_TIMESTAMPS",
+            "fresh": False,
+            "quote_count": len(quotes),
+            "missing_timestamp_pairs": missing_timestamp_pairs[:8],
+            "max_quote_age_contract_seconds": max_quote_age,
+            "refresh_threshold_seconds": refresh_threshold,
+        }
+    fresh = max_age <= refresh_threshold
+    return {
+        "status": "FRESH" if fresh else "STALE",
+        "fresh": fresh,
+        "quote_count": len(quotes),
+        "oldest_pair": oldest_pair,
+        "max_quote_age_seconds": round(max_age, 3),
+        "max_quote_age_contract_seconds": max_quote_age,
+        "refresh_threshold_seconds": refresh_threshold,
+        "missing_timestamp_pairs": missing_timestamp_pairs[:8],
+    }
+
+
 def _projection_atr_pips_by_pair(pair_charts_path: Path) -> dict[str, float]:
     if not pair_charts_path.exists():
         return {}
@@ -1394,6 +1457,7 @@ class AutoTradeCycle:
         self.max_loss_pct = max_loss_pct
         self.risk_equity_jpy = risk_equity_jpy
         self._projection_preflight_summary: dict[str, Any] | None = None
+        self._pre_intent_snapshot_refresh_summary: dict[str, Any] | None = None
         self._ai_test_bot_backtest_refreshed = False
         self._suppress_gateway_receipt_recording = False
         self._stale_gpt_handoff_reason: str | None = None
@@ -1704,6 +1768,15 @@ class AutoTradeCycle:
             intent_summary = self._load_intent_summary_artifact()
         else:
             self._refresh_campaign_plan(target_summary)
+            refreshed_snapshot = self._refresh_snapshot_before_intent_pricing_if_required(snapshot, pairs)
+            if refreshed_snapshot is not snapshot:
+                snapshot = refreshed_snapshot
+                target_summary = self._update_target_state(snapshot) or target_summary
+                positions = len(snapshot.positions)
+                trader_positions = _trader_position_count(snapshot)
+                orders = len(snapshot.orders)
+                pending_entries = _pending_entry_order_count(snapshot)
+                resolved_max_loss_jpy = self._resolve_max_loss_jpy(snapshot)
             intent_summary = self._intent_generator(max_loss_jpy=resolved_max_loss_jpy).run(snapshot_path=self.snapshot_path)
         position_decision = None
         position_execution = None
@@ -2175,6 +2248,15 @@ class AutoTradeCycle:
             promotion_summary = self._receipt_promoter().run()
         if promotion_summary.promoted and not self.reuse_market_artifacts:
             self._refresh_campaign_plan(target_summary)
+            refreshed_snapshot = self._refresh_snapshot_before_intent_pricing_if_required(snapshot, pairs)
+            if refreshed_snapshot is not snapshot:
+                snapshot = refreshed_snapshot
+                target_summary = self._update_target_state(snapshot) or target_summary
+                positions = len(snapshot.positions)
+                trader_positions = _trader_position_count(snapshot)
+                orders = len(snapshot.orders)
+                pending_entries = _pending_entry_order_count(snapshot)
+                resolved_max_loss_jpy = self._resolve_max_loss_jpy(snapshot)
             intent_summary = self._intent_generator(max_loss_jpy=resolved_max_loss_jpy).run(snapshot_path=self.snapshot_path)
         decision = self._brain().run(snapshot)
         deterministic_lane_id = decision.selected_lane_id if decision.action == ACTION_SEND_ENTRY else None
@@ -2308,6 +2390,13 @@ class AutoTradeCycle:
                             positions = len(snapshot.positions)
                             orders = len(snapshot.orders)
                             self._refresh_campaign_plan(target_summary)
+                            refreshed_snapshot = self._refresh_snapshot_before_intent_pricing_if_required(snapshot, pairs)
+                            if refreshed_snapshot is not snapshot:
+                                snapshot = refreshed_snapshot
+                                target_summary = self._update_target_state(snapshot) or target_summary
+                                positions = len(snapshot.positions)
+                                orders = len(snapshot.orders)
+                                resolved_max_loss_jpy = self._resolve_max_loss_jpy(snapshot)
                             intent_summary = self._intent_generator(max_loss_jpy=resolved_max_loss_jpy).run(
                                 snapshot_path=self.snapshot_path,
                                 max_candidates=12,
@@ -3046,6 +3135,16 @@ class AutoTradeCycle:
                 f"counts=`{preflight.get('resolution_counts')}` "
                 f"error=`{preflight.get('error') or 'none'}`"
             )
+        if self._pre_intent_snapshot_refresh_summary is not None:
+            refresh = self._pre_intent_snapshot_refresh_summary
+            freshness = refresh.get("freshness_before_refresh") or refresh
+            lines.append(
+                "- Pre-intent snapshot refresh: "
+                f"status=`{refresh.get('status')}` "
+                f"reason=`{refresh.get('reason') or 'none'}` "
+                f"oldest_pair=`{freshness.get('oldest_pair') or 'none'}` "
+                f"max_quote_age_seconds=`{freshness.get('max_quote_age_seconds')}`"
+            )
         if summary.status == "GPT_REQUIRED_FOR_LIVE_SEND":
             lines.append(
                 "- Live entry blocker: `--send` requires `--use-gpt-trader --gpt-decision-response ...`; "
@@ -3096,6 +3195,31 @@ class AutoTradeCycle:
         self.snapshot_path.parent.mkdir(parents=True, exist_ok=True)
         self.snapshot_path.write_text(_snapshot_to_json(snapshot) + "\n")
         return snapshot
+
+    def _refresh_snapshot_before_intent_pricing_if_required(self, snapshot, pairs: tuple[str, ...]):
+        freshness = _snapshot_quote_freshness(snapshot)
+        if freshness.get("fresh"):
+            self._pre_intent_snapshot_refresh_summary = {
+                **freshness,
+                "status": "SKIPPED",
+                "reason": "snapshot_quotes_fresh_for_intent_pricing",
+                "snapshot_path": str(self.snapshot_path),
+            }
+            return snapshot
+
+        refresh_pairs = _snapshot_refresh_pairs(snapshot) or pairs
+        refreshed = self._refresh_snapshot(refresh_pairs)
+        self._pre_intent_snapshot_refresh_summary = {
+            "status": "REFRESHED",
+            "reason": "pre_intent_snapshot_stale_after_cycle_preflight",
+            "snapshot_path": str(self.snapshot_path),
+            "fetched_at_utc": refreshed.fetched_at_utc.isoformat(),
+            "positions": len(refreshed.positions),
+            "orders": len(refreshed.orders),
+            "quotes": len(refreshed.quotes),
+            "freshness_before_refresh": freshness,
+        }
+        return refreshed
 
     def _refresh_live_position_snapshot(self, snapshot):
         # `--reuse-market-artifacts` pins the decision packet, but position
