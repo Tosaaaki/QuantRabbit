@@ -857,6 +857,8 @@ def _approval_dependency_wait(request: dict[str, Any]) -> dict[str, Any] | None:
     if code != "REPAIR_TP_PROGRESS_PROFIT_CAPTURE_REPLAY":
         return None
     evidence = request.get("evidence_summary") if isinstance(request.get("evidence_summary"), dict) else {}
+    if evidence.get("current_guardian_active") is True and evidence.get("current_guardian_heartbeat_fresh") is True:
+        return None
     source_findings = set(_dedupe_strings(request.get("source_findings")))
     if not evidence.get("guardian_profit_capture_inactive"):
         return None

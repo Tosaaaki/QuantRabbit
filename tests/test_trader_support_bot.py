@@ -351,6 +351,64 @@ class TraderSupportBotTest(unittest.TestCase):
                 " ".join(tp_request["verification_commands"]),
             )
 
+    def test_stale_tp_not_deployed_evidence_does_not_require_operator_when_guardian_active(self) -> None:
+        now = datetime(2026, 6, 24, 8, 45, tzinfo=timezone.utc)
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _write_fixture(root, now=now, blocked=True)
+            profitability = json.loads(files["profitability"].read_text())
+            findings = profitability["findings"]
+            unproved = next(item for item in findings if item["code"] == "TP_PROGRESS_REPLAY_REPAIR_UNPROVED")
+            stale_not_deployed = {
+                **unproved,
+                "code": "TP_PROGRESS_REPAIR_REPLAY_NOT_DEPLOYED",
+                "message": "stale guardian inactive evidence",
+                "evidence": {
+                    **unproved["evidence"],
+                    "guardian_profit_capture_inactive": True,
+                    "repair_replay_contract": TP_PROGRESS_REPAIR_REPLAY_CONTRACT,
+                },
+            }
+            findings.insert(0, stale_not_deployed)
+            _write_json(files["profitability"], profitability)
+
+            env = _guardian_env(root, active="1")
+            with mock.patch.dict(os.environ, env, clear=False):
+                TraderSupportBot(
+                    broker_snapshot_path=files["broker"],
+                    order_intents_path=files["intents"],
+                    target_state_path=files["target"],
+                    position_management_path=files["position_management"],
+                    position_guardian_management_path=files["guardian_management"],
+                    position_guardian_execution_path=files["guardian_execution"],
+                    position_guardian_heartbeat_path=files["guardian_heartbeat"],
+                    self_improvement_audit_path=files["self_improvement"],
+                    profitability_acceptance_path=files["profitability"],
+                    execution_timing_audit_path=files["timing"],
+                    profit_capture_bot_path=files["profit_capture_bot"],
+                    output_path=files["output"],
+                    report_path=files["report"],
+                    now_utc=now,
+                ).run()
+
+            payload = json.loads(files["output"].read_text())
+            tp_request = next(
+                item
+                for item in payload["repair_requests"]
+                if item["code"] == "REPAIR_TP_PROGRESS_PROFIT_CAPTURE_REPLAY"
+            )
+            self.assertEqual(tp_request["status"], TP_PROGRESS_GUARDIAN_WAIT_STATUS)
+            self.assertFalse(tp_request["requires_explicit_operator_approval"])
+            self.assertIn("TP_PROGRESS_REPAIR_REPLAY_NOT_DEPLOYED", tp_request["source_findings"])
+            self.assertIn("TP_PROGRESS_REPLAY_REPAIR_UNPROVED", tp_request["source_findings"])
+            self.assertTrue(tp_request["evidence_summary"]["guardian_profit_capture_inactive"])
+            self.assertTrue(tp_request["evidence_summary"]["current_guardian_active"])
+            self.assertTrue(tp_request["evidence_summary"]["current_guardian_heartbeat_fresh"])
+            self.assertEqual(
+                tp_request["evidence_summary"]["guardian_inactive_evidence_status"],
+                "STALE_CURRENT_GUARDIAN_ACTIVE",
+            )
+
     def test_close_gate_block_evidence_does_not_request_persistence_repair(self) -> None:
         now = datetime(2026, 6, 22, 12, 15, tzinfo=timezone.utc)
         with tempfile.TemporaryDirectory() as tmp:

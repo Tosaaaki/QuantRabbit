@@ -596,6 +596,54 @@ class TraderRepairOrchestratorTest(unittest.TestCase):
             )
             self.assertEqual(payload["selected_request_code"], "REPAIR_MONTH_SCALE_RESIDUAL_ENTRY_QUALITY")
 
+    def test_stale_tp_guardian_inactive_evidence_waits_when_current_guardian_active(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            support = root / "support.json"
+            output = root / "orchestrator.json"
+            report = root / "orchestrator.md"
+            _write_support(
+                support,
+                [
+                    _request(
+                        "REPAIR_TP_PROGRESS_PROFIT_CAPTURE_REPLAY",
+                        priority="P0",
+                        status=TP_PROGRESS_GUARDIAN_WAIT_STATUS,
+                        source_findings=[
+                            "TP_PROGRESS_REPAIR_REPLAY_NOT_DEPLOYED",
+                            "TP_PROGRESS_REPLAY_REPAIR_UNPROVED",
+                        ],
+                        evidence_summary={
+                            "guardian_profit_capture_inactive": True,
+                            "current_guardian_active": True,
+                            "current_guardian_heartbeat_fresh": True,
+                            "guardian_inactive_evidence_status": "STALE_CURRENT_GUARDIAN_ACTIVE",
+                            "loss_closes_repair_replay_triggered": 13,
+                            "repair_replay_contract": "TP_PROGRESS_PRODUCTION_GATE_REPLAY_V1",
+                        },
+                    ),
+                ],
+            )
+
+            summary = TraderRepairOrchestrator(
+                support_bot_path=support,
+                output_path=output,
+                report_path=report,
+            ).run()
+
+            self.assertEqual(summary.status, STATUS_BLOCKED)
+            payload = json.loads(output.read_text())
+            tp_repair = payload["queue"][0]
+            self.assertEqual(tp_repair["code"], "REPAIR_TP_PROGRESS_PROFIT_CAPTURE_REPLAY")
+            self.assertEqual(tp_repair["automation_status"], "WAITING_FOR_LIVE_EVIDENCE_WINDOW")
+            self.assertIsNone(tp_repair["approval_dependency"])
+            self.assertEqual(payload["approval_required_requests"], [])
+            self.assertEqual(payload["selected_request"], {})
+            self.assertIn(
+                "REPAIR_TP_PROGRESS_PROFIT_CAPTURE_REPLAY",
+                payload["queue_summary"]["waiting_request_codes"],
+            )
+
     def test_specific_trader_request_can_select_residual_repair(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

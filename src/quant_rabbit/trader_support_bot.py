@@ -3339,19 +3339,20 @@ def _build_repair_requests(
             if isinstance(top_item.get("evidence_summary"), dict)
             else {}
         )
+        current_guardian_inactive = bool(guardian.get("required") and not guardian.get("active"))
+        tp_has_replay_triggers = int(_float(tp_evidence.get("loss_closes_repair_replay_triggered"))) > 0
         tp_contract_missing = "TP_PROGRESS_REPAIR_REPLAY_CONTRACT_MISSING" in tp_codes
-        tp_waits_for_operator_guardian = (
-            not tp_contract_missing
-            and (
-                "TP_PROGRESS_REPAIR_REPLAY_NOT_DEPLOYED" in tp_codes
-                or bool(tp_evidence.get("guardian_profit_capture_inactive"))
-                or bool(guardian.get("required") and not guardian.get("active"))
-            )
-        )
+        tp_waits_for_operator_guardian = not tp_contract_missing and current_guardian_inactive
         tp_waits_for_live_evidence = (
             not tp_contract_missing
-            and "TP_PROGRESS_REPLAY_REPAIR_UNPROVED" in tp_codes
-            and int(_float(tp_evidence.get("loss_closes_repair_replay_triggered"))) > 0
+            and tp_has_replay_triggers
+            and (
+                "TP_PROGRESS_REPLAY_REPAIR_UNPROVED" in tp_codes
+                or (
+                    "TP_PROGRESS_REPAIR_REPLAY_NOT_DEPLOYED" in tp_codes
+                    and not current_guardian_inactive
+                )
+            )
         )
         tp_wait_status = tp_waits_for_operator_guardian or tp_waits_for_live_evidence
         verification_commands = [
@@ -3382,7 +3383,18 @@ def _build_repair_requests(
                     "Adding entry frequency before this capture path is proved clean repeats the "
                     "known TAKE_PROFIT_ORDER plus / MARKET_ORDER_TRADE_CLOSE minus leak."
                 ),
-                evidence_summary=tp_evidence,
+                evidence_summary={
+                    **tp_evidence,
+                    "current_guardian_active": guardian.get("active"),
+                    "current_guardian_active_source": guardian.get("active_source"),
+                    "current_guardian_heartbeat_fresh": guardian.get("heartbeat_fresh"),
+                    "guardian_inactive_evidence_status": (
+                        "STALE_CURRENT_GUARDIAN_ACTIVE"
+                        if tp_evidence.get("guardian_profit_capture_inactive")
+                        and guardian.get("active")
+                        else None
+                    ),
+                },
                 clearance_conditions=[
                     item_by_code[code].get("clearance_condition")
                     for code in tp_codes
