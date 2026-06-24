@@ -8039,10 +8039,9 @@ def _oanda_campaign_firepower_harvest_rotation_allowed(
 ) -> bool:
     """Allow a verified OANDA firepower seed to repair capture/P0 deadlock.
 
-    This is intentionally not a live-permission grant. It only says the
-    negative-expectancy repair gate may treat the current attached-TP HARVEST
-    receipt as a statistically audited rotation candidate. Forecast, spread,
-    strategy-profile, risk, broker truth, and gateway checks still decide.
+    This only verifies the audited exact-shape vehicle. Live permission is
+    decided later by current-risk / normal-cap firepower and the usual
+    forecast, spread, strategy-profile, risk, broker-truth, and gateway gates.
     """
 
     metadata = intent.metadata or {}
@@ -8067,6 +8066,13 @@ def _oanda_campaign_firepower_harvest_rotation_allowed(
 
 
 def _oanda_campaign_firepower_positive_rotation_allowed(intent: OrderIntent) -> bool:
+    """Return true for exact-shape OANDA firepower edge carveouts.
+
+    This is shared by method-context guards that only need to know whether the
+    HARVEST rail fade has audited range firepower. Executable P0 repair uses
+    the stricter `_oanda_campaign_firepower_live_repair_allowed` gate below.
+    """
+
     metadata = intent.metadata or {}
     if not _non_market_attached_harvest_shape(intent):
         return False
@@ -8082,6 +8088,32 @@ def _oanda_campaign_firepower_positive_rotation_allowed(intent: OrderIntent) -> 
     if metadata.get("positive_rotation_oanda_campaign_minimum_floor_reachable") is not True:
         return False
     return True
+
+
+def _oanda_campaign_firepower_live_repair_allowed(intent: OrderIntent) -> bool:
+    if not _oanda_campaign_firepower_positive_rotation_allowed(intent):
+        return False
+    metadata = intent.metadata or {}
+    if metadata.get("positive_rotation_oanda_campaign_live_permission") is not True:
+        return False
+    if metadata.get("positive_rotation_oanda_campaign_local_tp_proof_required") is True:
+        return False
+    return True
+
+
+def _oanda_campaign_firepower_live_grade_basis(
+    metadata: dict[str, Any],
+    current_firepower: dict[str, Any] | None,
+) -> str | None:
+    """Return the exact-shape firepower basis that may replace local TP proof."""
+
+    if current_firepower is None:
+        return None
+    if current_firepower.get("minimum_floor_reachable") is True:
+        return "OANDA_CAMPAIGN_FIREPOWER_CURRENT_RISK"
+    if _oanda_campaign_normal_cap_current_risk_reaches_floor(metadata, current_firepower):
+        return "OANDA_CAMPAIGN_FIREPOWER_NORMAL_CAP_WEIGHTED_PACE"
+    return None
 
 
 def _oanda_campaign_normal_cap_current_risk_reaches_floor(
@@ -8365,9 +8397,39 @@ def _capture_positive_rotation_live_issue(
             metadata,
             data_root=data_root,
         )
+        live_grade_basis = _oanda_campaign_firepower_live_grade_basis(
+            metadata,
+            current_firepower,
+        )
         metadata["positive_rotation_mode"] = POSITIVE_ROTATION_OANDA_CAMPAIGN_FIREPOWER_MODE
+        if live_grade_basis is not None:
+            metadata["positive_rotation_live_ready"] = True
+            metadata["positive_rotation_oanda_campaign_audit_only"] = False
+            metadata["positive_rotation_oanda_campaign_live_permission"] = True
+            metadata["positive_rotation_oanda_campaign_local_tp_proof_required"] = False
+            metadata["positive_rotation_oanda_campaign_live_permission_reason"] = (
+                "exact non-market attached-TP HARVEST vehicle matches OANDA "
+                "campaign firepower and reaches the 5% floor after current-risk "
+                "or normal-cap scaling"
+            )
+            metadata["positive_rotation_minimum_floor_reachable"] = True
+            metadata["positive_rotation_minimum_floor_reach_basis"] = live_grade_basis
+            if current_firepower is not None and current_firepower.get("target_reachable") is True:
+                metadata["positive_rotation_target_reachable"] = True
+                metadata["positive_rotation_target_reach_basis"] = live_grade_basis
+            metadata["positive_rotation_basis"] = (
+                "capture_economics is negative overall and local broker-TP scope "
+                "is missing, but this non-market attached-TP HARVEST receipt "
+                "matches an OANDA campaign_firepower high-precision vehicle. "
+                "The vehicle remains exact-shape only, and the current-risk / "
+                "normal-cap firepower check proves the remaining 5% floor is "
+                "reachable without bypassing forecast, telemetry, spread, "
+                "strategy, guardian, broker-truth, or gateway gates."
+            )
+            return None
         metadata["positive_rotation_live_ready"] = False
         metadata["positive_rotation_oanda_campaign_audit_only"] = True
+        metadata["positive_rotation_oanda_campaign_live_permission"] = False
         metadata["positive_rotation_oanda_campaign_local_tp_proof_required"] = True
         if current_firepower is None:
             metadata["positive_rotation_basis"] = (
@@ -8432,11 +8494,12 @@ def _capture_positive_rotation_live_issue(
         return {
             "code": OANDA_CAMPAIGN_AUDIT_ONLY_LOCAL_TP_PROOF_REQUIRED_CODE,
             "message": (
-                "OANDA campaign firepower is historical audit evidence only; under "
-                "NEGATIVE_EXPECTANCY it may rank and size mining candidates, but it "
-                "cannot make a repair/live lane executable until this exact "
-                "pair/side/method has positive local TAKE_PROFIT_ORDER expectancy, "
-                "zero TP losses, and positive Wilson-stressed expectancy."
+                "OANDA campaign firepower is not live-grade for this receipt yet; "
+                "under NEGATIVE_EXPECTANCY it may rank and size mining candidates, "
+                "but it cannot make a repair/live lane executable until this exact "
+                "HARVEST vehicle either has positive local TAKE_PROFIT_ORDER proof "
+                "or reaches the 5% floor through exact-shape OANDA bid/ask replay "
+                "after current-risk / normal-cap scaling."
             ),
             "severity": "BLOCK",
         }
@@ -9658,15 +9721,17 @@ def _self_improvement_profitability_p0_repair_allowed(
     """Allow only TP-backed, non-market HARVEST receipts to repair a P0 deadlock.
 
     The profitability P0 is caused by market-close leakage, while
-    capture_economics can prove broker TP exits are positive. This escape path
-    therefore stays narrow: no MARKET entries, no TP-less runners, no uncapped
-    weak/no-TP risk, no entries against current direction bias for thin-proof
-    collection, and no bypass of any other live-readiness gate.
+    capture_economics or exact-shape OANDA firepower can prove bounded HARVEST
+    exits are positive. This escape path therefore stays narrow: no MARKET
+    entries, no TP-less runners, no uncapped weak/no-TP risk, no entries against
+    current direction bias for thin-proof collection, and no bypass of any other
+    live-readiness gate.
     """
 
     if not (
         _tp_proven_harvest_rotation_allowed(intent)
         or _tp_proof_collection_harvest_rotation_allowed(intent)
+        or _oanda_campaign_firepower_live_repair_allowed(intent)
     ):
         return False
     if not oanda_firepower_repair_current_risk_reaches_minimum(intent.metadata):

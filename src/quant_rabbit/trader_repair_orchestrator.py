@@ -83,7 +83,8 @@ REPAIR_SELECTION_REASONS = {
     OANDA_AUDIT_ONLY_LOCAL_TP_EDGE_REQUEST: (
         "OANDA audit-only forecast candidates are actionable as read-only precision work: "
         "fetch bid/ask truth, validate replay, mine exact vehicles, package reviewed rules, "
-        "and keep live permission blocked until local TP receipts prove the edge."
+        "and keep live permission blocked until local TP receipts or live-grade current-risk "
+        "firepower prove the exact HARVEST edge."
     ),
     "REVIEW_CLOSE_GATE_EVIDENCE_FAILURES": (
         "Historical BLOCK close-gate evidence must wait for future PASS evidence or age-out; "

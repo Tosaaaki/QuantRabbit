@@ -10277,19 +10277,20 @@ class IntentGeneratorTest(unittest.TestCase):
 
             self.assertEqual(summary.live_ready, 0)
             self.assertEqual(result["status"], "DRY_RUN_BLOCKED")
-            self.assertFalse(metadata["positive_rotation_live_ready"])
+            self.assertTrue(metadata["positive_rotation_live_ready"])
             self.assertEqual(
                 metadata["positive_rotation_mode"],
                 POSITIVE_ROTATION_OANDA_CAMPAIGN_FIREPOWER_MODE,
             )
-            self.assertTrue(metadata["positive_rotation_oanda_campaign_audit_only"])
-            self.assertTrue(metadata["positive_rotation_oanda_campaign_local_tp_proof_required"])
+            self.assertFalse(metadata["positive_rotation_oanda_campaign_audit_only"])
+            self.assertTrue(metadata["positive_rotation_oanda_campaign_live_permission"])
+            self.assertFalse(metadata["positive_rotation_oanda_campaign_local_tp_proof_required"])
             self.assertEqual(
                 metadata["positive_rotation_minimum_floor_reach_basis"],
-                "OANDA_CAMPAIGN_FIREPOWER_CURRENT_RISK_UNDERPOWERED",
+                "OANDA_CAMPAIGN_FIREPOWER_NORMAL_CAP_WEIGHTED_PACE",
             )
-            self.assertNotIn("self_improvement_p0_repair_live_ready", metadata)
-            self.assertIn(OANDA_CAMPAIGN_AUDIT_ONLY_LOCAL_TP_PROOF_REQUIRED_CODE, issue_codes)
+            self.assertTrue(metadata["self_improvement_p0_repair_live_ready"])
+            self.assertNotIn(OANDA_CAMPAIGN_AUDIT_ONLY_LOCAL_TP_PROOF_REQUIRED_CODE, issue_codes)
             self.assertIn("POSITION_GUARDIAN_INACTIVE_FOR_PROFIT_CAPTURE", issue_codes)
             self.assertNotIn("SELF_IMPROVEMENT_P0_PROFITABILITY_DISCIPLINE", issue_codes)
             self.assertIn(
@@ -10342,8 +10343,8 @@ class IntentGeneratorTest(unittest.TestCase):
             metadata = result["intent"]["metadata"]
             issue_codes = {issue["code"] for issue in result["risk_issues"]}
 
-            self.assertEqual(summary.live_ready, 0)
-            self.assertEqual(result["status"], "DRY_RUN_BLOCKED")
+            self.assertEqual(summary.live_ready, 1)
+            self.assertEqual(result["status"], "LIVE_READY")
             self.assertEqual(
                 metadata["loss_asymmetry_guard_mode"],
                 LOSS_ASYMMETRY_OANDA_CAMPAIGN_FIREPOWER_RELAXED_MODE,
@@ -10365,9 +10366,18 @@ class IntentGeneratorTest(unittest.TestCase):
                 metadata["positive_rotation_oanda_campaign_normal_cap_required_minimum_trades"],
                 metadata["positive_rotation_oanda_campaign_normal_cap_target_trades_per_day"],
             )
+            self.assertTrue(metadata["positive_rotation_live_ready"])
+            self.assertFalse(metadata["positive_rotation_oanda_campaign_audit_only"])
+            self.assertTrue(metadata["positive_rotation_oanda_campaign_live_permission"])
+            self.assertFalse(metadata["positive_rotation_oanda_campaign_local_tp_proof_required"])
+            self.assertEqual(
+                metadata["positive_rotation_minimum_floor_reach_basis"],
+                "OANDA_CAMPAIGN_FIREPOWER_NORMAL_CAP_WEIGHTED_PACE",
+            )
+            self.assertTrue(metadata["self_improvement_p0_repair_live_ready"])
             self.assertNotIn("LOSS_ASYMMETRY_GUARD_EXCEEDED", issue_codes)
-            self.assertIn(OANDA_CAMPAIGN_AUDIT_ONLY_LOCAL_TP_PROOF_REQUIRED_CODE, issue_codes)
-            self.assertIn("SELF_IMPROVEMENT_P0_PROFITABILITY_DISCIPLINE", issue_codes)
+            self.assertNotIn(OANDA_CAMPAIGN_AUDIT_ONLY_LOCAL_TP_PROOF_REQUIRED_CODE, issue_codes)
+            self.assertNotIn("SELF_IMPROVEMENT_P0_PROFITABILITY_DISCIPLINE", issue_codes)
 
     def test_oanda_firepower_seed_does_not_relax_when_daily_floor_is_missing(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

@@ -862,9 +862,9 @@ def _entry_readiness_summary(
                     "local_tp_proof_clearance_condition": (
                         "exact PAIR_SIDE_METHOD TAKE_PROFIT_ORDER receipts for this "
                         "pair/side/method must show positive expectancy, zero TP losses, "
-                        "and positive Wilson-stressed expectancy; OANDA candle replay can "
-                        "rank/mine the candidate but cannot by itself clear the local "
-                        "broker-TP proof gate"
+                        "and positive Wilson-stressed expectancy, unless the exact "
+                        "OANDA HARVEST vehicle has already been promoted to live-grade "
+                        "by current-risk or normal-cap 5% firepower scaling"
                     ),
                 }
             )
@@ -2845,13 +2845,14 @@ def _build_repair_requests(
                 source_findings=list(dict.fromkeys(source_findings)),
                 problem=(
                     "OANDA audit-only forecast/rotation candidates may help the 5% target, but they "
-                    "are not local TP-proven live edges yet."
+                    "are not local TP-proven or live-grade replay edges yet."
                 ),
                 why_now=(
                     "This turns the loop from repeating forecast blockers into a concrete precision "
                     "improvement path: fetch spread-included bid/ask truth, validate forecast_history, "
                     "mine the exact pair/side/method vehicles, package reviewed rules, then require "
-                    "local TAKE_PROFIT_ORDER proof before live permission."
+                    "either local TAKE_PROFIT_ORDER proof or current-risk / normal-cap 5% firepower "
+                    "promotion before live permission."
                 ),
                 evidence_summary={
                     "candidate_count": len(oanda_local_tp_candidates),
@@ -2869,8 +2870,9 @@ def _build_repair_requests(
                     (
                         "For each promoted candidate, exact pair/side/method TAKE_PROFIT_ORDER local "
                         "receipts must show positive expectancy, zero TP losses, and positive "
-                        "Wilson-stressed expectancy; OANDA replay can rank/mine but cannot alone "
-                        "clear live permission."
+                        "Wilson-stressed expectancy, or the exact OANDA HARVEST vehicle must clear "
+                        "current-risk / normal-cap 5% firepower scaling. Replay that does not clear "
+                        "that live-grade test remains read-only."
                     ),
                     (
                         "After packaging reviewed replay rules, rerun profitability-acceptance, "
@@ -2912,7 +2914,7 @@ def _build_repair_requests(
                     "tests/test_oanda_universal_rotation_miner.py",
                 ],
                 required_tests=[
-                    "Regression: OANDA audit-only candidates remain blocked from live permission without exact local TP proof.",
+                    "Regression: OANDA audit-only candidates remain blocked from live permission without exact local TP proof or live-grade current-risk firepower.",
                     "Positive path: support/orchestrator emits a Codex-readable precision work order with fetch, replay, mining, packaging, and refresh commands.",
                     "Safety path: read-only replay evidence does not send orders, close positions, mutate launchd, or bypass forecast/risk gates.",
                 ],
@@ -3500,10 +3502,10 @@ def _render_report(payload: dict[str, Any]) -> str:
     lines.extend(["", "## OANDA Audit-Only Local TP Proof Required", ""])
     if entry["oanda_audit_only_local_tp_proof_required"]:
         lines.append(
-            "- Historical replay can rank and mine these candidates, but it does not by itself "
-            "clear the local TP proof gate; the escape condition is exact pair/side/method "
-            "TAKE_PROFIT_ORDER proof with positive expectancy, zero TP losses, and positive "
-            "Wilson-stressed expectancy."
+            "- These candidates still lack live-grade replay or local TP proof. Escape condition: "
+            "exact pair/side/method TAKE_PROFIT_ORDER proof with positive expectancy, zero TP "
+            "losses, and positive Wilson-stressed expectancy, or exact OANDA HARVEST vehicle "
+            "promotion through current-risk / normal-cap 5% firepower scaling."
         )
         lines.append("")
         lines.extend(
