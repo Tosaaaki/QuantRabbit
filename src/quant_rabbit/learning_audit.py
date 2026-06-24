@@ -30,10 +30,12 @@ MIN_EXIT_REASON_DIAGNOSTIC_SAMPLE = 3
 _INFLUENCE_LIMITS = {
     "ai_backtest_certified_positive_edge": 25.0,
     "ai_backtest_research_positive_edge": 8.0,
+    "oanda_universal_rotation_rank_edge": 20.0,
     "ai_backtest_negative_edge": -25.0,
     "outcome_mart_walk_forward_positive_edge": 15.0,
     "outcome_mart_unvalidated_positive_edge": 4.0,
     "outcome_mart_negative_edge": -15.0,
+    "projection_economic_precision_rank_edge": 14.0,
 }
 
 

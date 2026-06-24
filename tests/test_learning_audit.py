@@ -48,6 +48,56 @@ class LearningAuditorTest(unittest.TestCase):
                 ).fetchone()
             self.assertEqual(row, ("LEARNING_AUDIT_WARN", 1, 8.0))
 
+    def test_allows_rank_only_projection_and_oanda_learning_influences_within_limits(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root, ai_status="RESEARCH_PROFITABLE_NOT_CERTIFIED")
+            _write_rank_only_attack_advice(files["ai_attack_advice"])
+            db = root / "execution_ledger.db"
+            _seed_execution_events(db)
+
+            summary = LearningAuditor(
+                db_path=db,
+                output_path=root / "learning_audit.json",
+                report_path=root / "learning_audit.md",
+            ).run(
+                ai_backtest_path=files["ai_backtest"],
+                outcome_mart_path=files["outcome_mart"],
+                post_trade_learning_path=files["post_trade_learning"],
+                ai_attack_advice_path=files["ai_attack_advice"],
+                now=datetime(2026, 6, 3, 0, 0, tzinfo=timezone.utc),
+            )
+
+            self.assertEqual(summary.status, "LEARNING_AUDIT_WARN")
+            self.assertEqual(summary.blockers, 0)
+            self.assertEqual(summary.total_learning_score_delta, 34.0)
+            payload = json.loads((root / "learning_audit.json").read_text())
+            self.assertFalse(any("unknown or excessive score delta" in item for item in payload["blockers"]))
+
+    def test_blocks_rank_only_projection_learning_influence_above_limit(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root, ai_status="RESEARCH_PROFITABLE_NOT_CERTIFIED")
+            _write_rank_only_attack_advice(files["ai_attack_advice"], projection_delta=14.1)
+            db = root / "execution_ledger.db"
+            _seed_execution_events(db)
+
+            summary = LearningAuditor(
+                db_path=db,
+                output_path=root / "learning_audit.json",
+                report_path=root / "learning_audit.md",
+            ).run(
+                ai_backtest_path=files["ai_backtest"],
+                outcome_mart_path=files["outcome_mart"],
+                post_trade_learning_path=files["post_trade_learning"],
+                ai_attack_advice_path=files["ai_attack_advice"],
+                now=datetime(2026, 6, 3, 0, 0, tzinfo=timezone.utc),
+            )
+
+            self.assertEqual(summary.status, "LEARNING_AUDIT_BLOCKED")
+            payload = json.loads((root / "learning_audit.json").read_text())
+            self.assertTrue(any("unknown or excessive score delta" in item for item in payload["blockers"]))
+
     def test_blocks_research_influence_when_backtest_is_not_allowed(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -307,6 +357,52 @@ def _write_negative_attack_advice(path: Path) -> None:
                                 "outcomes": 8,
                                 "validation_outcomes": 2,
                             }
+                        ],
+                    }
+                ],
+            }
+        )
+    )
+
+
+def _write_rank_only_attack_advice(path: Path, *, projection_delta: float = 14.0) -> None:
+    oanda_delta = 20.0
+    path.write_text(
+        json.dumps(
+            {
+                "status": "ATTACK_PARTIAL",
+                "read_only": True,
+                "live_permission": False,
+                "recommended_now_lane_ids": ["lane:EUR_USD:SHORT"],
+                "lanes": [
+                    {
+                        "lane_id": "lane:EUR_USD:SHORT",
+                        "score": 90.0,
+                        "learning_score_delta": projection_delta + oanda_delta,
+                        "learning_influences": [
+                            "projection_economic_precision_rank_edge",
+                            "oanda_universal_rotation_rank_edge",
+                        ],
+                        "learning_influence_details": [
+                            {
+                                "source": "projection_ledger",
+                                "influence": "projection_economic_precision_rank_edge",
+                                "score_delta": projection_delta,
+                                "rank_only": True,
+                                "signal_name": "bb_squeeze_expansion_imminent",
+                                "economic_samples": 100,
+                                "economic_hit_rate_wilson_lower": 0.9155,
+                            },
+                            {
+                                "source": "oanda_universal_rotation",
+                                "influence": "oanda_universal_rotation_rank_edge",
+                                "score_delta": oanda_delta,
+                                "raw_score_delta": oanda_delta,
+                                "rank_only": True,
+                                "rule_name": "EUR_USD_SHORT_M5_ROTATION",
+                                "validation_samples": 24,
+                                "validation_wilson95_lower": 0.72,
+                            },
                         ],
                     }
                 ],
