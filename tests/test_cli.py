@@ -5924,6 +5924,52 @@ class ConsolidatedCycleCommandTest(unittest.TestCase):
                 self.assertFalse(lock_dir.exists())
                 self.assertNotIn("QR_AUTOTRADE_LOCK_HELD", os.environ)
 
+    def test_cycle_runtime_lock_acquires_when_held_env_has_no_lock(self) -> None:
+        from quant_rabbit.cli import _acquire_cycle_runtime_lock, _release_cycle_runtime_lock
+
+        with tempfile.TemporaryDirectory() as tmp:
+            lock_dir = Path(tmp) / "lock"
+            stderr = io.StringIO()
+            with mock.patch.dict(
+                os.environ,
+                {"QR_AUTOTRADE_LOCK_DIR": str(lock_dir), "QR_AUTOTRADE_LOCK_HELD": "1"},
+                clear=False,
+            ):
+                with redirect_stderr(stderr):
+                    token = _acquire_cycle_runtime_lock("cycle-sidecars")
+                try:
+                    self.assertIsNotNone(token)
+                    self.assertTrue(lock_dir.exists())
+                    self.assertEqual((lock_dir / "command").read_text().strip(), "cycle-sidecars")
+                    self.assertEqual(os.environ.get("QR_AUTOTRADE_LOCK_HELD"), "1")
+                    self.assertIn("lock ownership is not valid", stderr.getvalue())
+                finally:
+                    _release_cycle_runtime_lock(token)
+
+                self.assertFalse(lock_dir.exists())
+                self.assertNotIn("QR_AUTOTRADE_LOCK_HELD", os.environ)
+
+    def test_cycle_runtime_lock_keeps_valid_held_env_lock(self) -> None:
+        from quant_rabbit.cli import _acquire_cycle_runtime_lock
+
+        with tempfile.TemporaryDirectory() as tmp:
+            lock_dir = Path(tmp) / "lock"
+            lock_dir.mkdir()
+            (lock_dir / "pid").write_text(f"{os.getpid()}\n")
+            (lock_dir / "command").write_text("run-autotrade-live\n")
+
+            with mock.patch.dict(
+                os.environ,
+                {"QR_AUTOTRADE_LOCK_DIR": str(lock_dir), "QR_AUTOTRADE_LOCK_HELD": "1"},
+                clear=False,
+            ):
+                token = _acquire_cycle_runtime_lock("cycle-sidecars")
+
+                self.assertIsNone(token)
+                self.assertTrue(lock_dir.exists())
+                self.assertEqual((lock_dir / "command").read_text().strip(), "run-autotrade-live")
+                self.assertEqual(os.environ.get("QR_AUTOTRADE_LOCK_HELD"), "1")
+
     def test_cycle_refresh_steps_mirror_skill_skeleton(self) -> None:
         from quant_rabbit.cli import _cycle_refresh_steps, _cycle_sidecar_steps
 

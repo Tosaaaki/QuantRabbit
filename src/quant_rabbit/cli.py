@@ -1436,10 +1436,17 @@ class _LiveRuntimeLockBusy(RuntimeError):
 
 def _acquire_cycle_runtime_lock(command: str) -> tuple[Path, str | None] | None:
     """Acquire the shared live-cycle lock for consolidated runtime commands."""
-    if os.environ.get("QR_AUTOTRADE_LOCK_HELD") == "1":
-        return None
     lock_dir = Path(os.environ.get("QR_AUTOTRADE_LOCK_DIR") or DEFAULT_AUTOTRADE_LOCK_DIR)
     old_held = os.environ.get("QR_AUTOTRADE_LOCK_HELD")
+    restore_held = old_held
+    if old_held == "1":
+        if _cycle_runtime_lock_env_is_valid(lock_dir):
+            return None
+        sys.stderr.write(
+            "[qr-vnext] QR_AUTOTRADE_LOCK_HELD=1 but live runtime lock ownership "
+            f"is not valid; acquiring {command} lock.\n"
+        )
+        restore_held = None
     try:
         lock_dir.parent.mkdir(parents=True, exist_ok=True)
         lock_dir.mkdir()
@@ -1464,7 +1471,7 @@ def _acquire_cycle_runtime_lock(command: str) -> tuple[Path, str | None] | None:
     (lock_dir / "command").write_text(f"{command}\n")
     (lock_dir / "started_at_utc").write_text(f"{datetime.now(timezone.utc).isoformat()}\n")
     os.environ["QR_AUTOTRADE_LOCK_HELD"] = "1"
-    return lock_dir, old_held
+    return lock_dir, restore_held
 
 
 def _release_cycle_runtime_lock(token: tuple[Path, str | None] | None) -> None:
@@ -1483,6 +1490,13 @@ def _cycle_runtime_lock_pid(lock_dir: Path) -> int | None:
         return int((lock_dir / "pid").read_text().strip())
     except (OSError, ValueError):
         return None
+
+
+def _cycle_runtime_lock_env_is_valid(lock_dir: Path) -> bool:
+    existing_pid = _cycle_runtime_lock_pid(lock_dir)
+    if existing_pid is None or not _pid_is_running(existing_pid):
+        return False
+    return existing_pid in {os.getpid(), os.getppid()}
 
 
 def _pid_is_running(pid: int) -> bool:
