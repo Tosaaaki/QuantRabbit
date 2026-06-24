@@ -598,6 +598,7 @@ def _compact_frontier_blocker(item: dict[str, Any]) -> dict[str, Any]:
         "code": item.get("code"),
         "count": item.get("count"),
         "example_lane_ids": item.get("example_lane_ids"),
+        "co_blocker_codes": item.get("co_blocker_codes"),
         "reward_jpy": item.get("reward_jpy"),
     }
     return {key: value for key, value in compact.items() if value not in (None, [], {})}
@@ -966,11 +967,14 @@ def _render_execution_frontier_for_prompt(value: Any) -> str:
                 continue
             count = item.get("count")
             examples = ", ".join(_dedupe_strings(item.get("example_lane_ids"))[:2])
+            co_blockers = ", ".join(_dedupe_strings(item.get("co_blocker_codes"))[:3])
             text = str(item.get("code"))
             if count is not None:
                 text += f"({count})"
             if examples:
                 text += f": {examples}"
+            if co_blockers:
+                text += f" co_blocked_by={co_blockers}"
             blocker_parts.append(text)
         if blocker_parts:
             parts.append("frontier_blockers=" + " | ".join(blocker_parts))

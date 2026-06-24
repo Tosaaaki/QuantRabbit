@@ -1762,6 +1762,7 @@ def _repair_frontier_remaining_blockers(repair_frontier: list[dict[str, Any]]) -
     counts: Counter[str] = Counter()
     reward_by_code: Counter[str] = Counter()
     examples: dict[str, list[str]] = defaultdict(list)
+    co_blockers_by_code: dict[str, Counter[str]] = defaultdict(Counter)
     forecast_examples: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for item in repair_frontier:
         lane_id = str(item.get("lane_id") or "")
@@ -1774,6 +1775,8 @@ def _repair_frontier_remaining_blockers(repair_frontier: list[dict[str, Any]]) -
         for code in sorted(set(remaining)):
             counts[code] += 1
             reward_by_code[code] += reward
+            for other in sorted(set(remaining) - {code}):
+                co_blockers_by_code[code][other] += 1
             if lane_id and len(examples[code]) < 3:
                 examples[code].append(lane_id)
             if (
@@ -1801,6 +1804,15 @@ def _repair_frontier_remaining_blockers(repair_frontier: list[dict[str, Any]]) -
         }
         if forecast_examples.get(code):
             row["forecast_support_examples"] = forecast_examples[code]
+        co_blockers = [
+            other
+            for other, _ in sorted(
+                co_blockers_by_code[code].items(),
+                key=lambda pair: (-pair[1], pair[0]),
+            )[:6]
+        ]
+        if co_blockers:
+            row["co_blocker_codes"] = co_blockers
         rows.append(row)
     rows.sort(key=_frontier_blocker_sort_key)
     return rows

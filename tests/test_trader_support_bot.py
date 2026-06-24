@@ -1554,6 +1554,8 @@ class TraderSupportBotTest(unittest.TestCase):
                                 "POSITION_GUARDIAN_INACTIVE_FOR_PROFIT_CAPTURE",
                                 "SELF_IMPROVEMENT_P0_PROFITABILITY_DISCIPLINE",
                                 "STALE_QUOTE",
+                                "SPREAD_TOO_WIDE",
+                                "TARGET_TOO_THIN_FOR_SPREAD",
                                 "TELEMETRY_FORECAST_QUOTE_STALE_FOR_LIVE",
                             ],
                             "intent": {
@@ -1604,6 +1606,9 @@ class TraderSupportBotTest(unittest.TestCase):
             )
 
             self.assertEqual(top["code"], "STALE_QUOTE")
+            self.assertIn("SPREAD_TOO_WIDE", top["co_blocker_codes"])
+            self.assertIn("TARGET_TOO_THIN_FOR_SPREAD", top["co_blocker_codes"])
+            self.assertIn("TELEMETRY_FORECAST_QUOTE_STALE_FOR_LIVE", top["co_blocker_codes"])
             self.assertEqual(request["status"], FRONTIER_QUOTE_FRESHNESS_WAIT_STATUS)
             self.assertEqual(request["source_findings"], ["STALE_QUOTE"])
             self.assertIn("broker quote", request["problem"])

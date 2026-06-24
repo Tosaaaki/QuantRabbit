@@ -629,6 +629,7 @@ class TraderRepairOrchestratorTest(unittest.TestCase):
             self.assertIn("Execution frontier:", loop_prompt["prompt_text"])
             self.assertIn("TP_PROVEN_HARVEST", loop_prompt["prompt_text"])
             self.assertIn("MARGIN_TOO_THIN_FOR_MIN_LOT", loop_prompt["prompt_text"])
+            self.assertIn("co_blocked_by=SPREAD_TOO_WIDE", loop_prompt["prompt_text"])
             self.assertIn("unknown_owner_positions=1", loop_prompt["prompt_text"])
 
     def test_directional_inversion_without_repeated_replay_evidence_is_not_codex_ready(self) -> None:
@@ -1575,6 +1576,7 @@ def _add_execution_frontier_fixture(path: Path) -> None:
         "repair_frontier_remaining_blockers": [
             {
                 "code": "MARGIN_TOO_THIN_FOR_MIN_LOT",
+                "co_blocker_codes": ["SPREAD_TOO_WIDE", "TARGET_TOO_THIN_FOR_SPREAD"],
                 "count": 1,
                 "example_lane_ids": ["failure_trader:EUR_USD:LONG:BREAKOUT_FAILURE:LIMIT"],
             }
