@@ -335,6 +335,41 @@ class OandaHistoryReplayValidateTest(unittest.TestCase):
         self.assertAlmostEqual(contrarian["final_pips"], 2.0)
         self.assertTrue(contrarian["final_direction_hit"])
 
+    def test_load_forecasts_filters_pairs_for_targeted_replay(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "forecast_history.jsonl"
+            path.write_text(
+                "\n".join(
+                    [
+                        json.dumps(
+                            {
+                                "timestamp_utc": "2026-06-19T00:00:00Z",
+                                "pair": "EUR_USD",
+                                "direction": "DOWN",
+                                "confidence": 0.72,
+                            }
+                        ),
+                        json.dumps(
+                            {
+                                "timestamp_utc": "2026-06-19T00:01:00Z",
+                                "pair": "GBP_JPY",
+                                "direction": "UP",
+                                "confidence": 0.66,
+                            }
+                        ),
+                    ]
+                ),
+                encoding="utf-8",
+            )
+
+            rows, stats = replay._load_forecasts(path, pairs=replay._parse_pair_filter("EUR_USD"))
+
+        self.assertEqual([row.pair for row in rows], ["EUR_USD"])
+        self.assertEqual(stats["raw_directional_rows"], 2)
+        self.assertEqual(stats["pair_filter"], ["EUR_USD"])
+        self.assertEqual(stats["skipped_pair_filter_rows"], 1)
+        self.assertEqual(stats["deduped_directional_rows"], 1)
+
     def test_same_candle_tp_and_sl_counts_as_stop_first(self) -> None:
         row = {
             "pair": "EUR_USD",

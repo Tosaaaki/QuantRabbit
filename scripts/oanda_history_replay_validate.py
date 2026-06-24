@@ -100,7 +100,8 @@ def main() -> int:
         granularity=args.granularity,
         auto_min_days=args.auto_history_min_days,
     )
-    rows, load_stats = _load_forecasts(args.forecast_history)
+    pair_filter = _parse_pair_filter(args.pairs)
+    rows, load_stats = _load_forecasts(args.forecast_history, pairs=pair_filter)
     candles_by_pair, candle_stats = _load_candles(
         history_dirs,
         granularity=args.granularity,
@@ -264,6 +265,11 @@ def main() -> int:
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--forecast-history", type=Path, default=Path("data/forecast_history.jsonl"))
+    parser.add_argument(
+        "--pairs",
+        default="",
+        help="optional comma-separated pair filter, e.g. EUR_USD,GBP_JPY",
+    )
     parser.add_argument("--history-dir", type=Path, action="append")
     parser.add_argument("--granularity", default="S5")
     parser.add_argument("--output-dir", type=Path, default=Path("logs/reports/forecast_improvement"))
@@ -298,6 +304,22 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--stable-max-daily-sample-share", type=float, default=DEFAULT_STABLE_MAX_DAILY_SAMPLE_SHARE)
     parser.add_argument("--stable-min-positive-day-rate", type=float, default=DEFAULT_STABLE_MIN_POSITIVE_DAY_RATE)
     return parser.parse_args()
+
+
+def _parse_pair_filter(value: str | Sequence[str] | None) -> set[str]:
+    if value is None:
+        return set()
+    if isinstance(value, str):
+        parts = value.split(",")
+    else:
+        parts = []
+        for item in value:
+            parts.extend(str(item).split(","))
+    return {
+        part.strip().upper()
+        for part in parts
+        if part.strip()
+    }
 
 
 def _history_dirs(
@@ -615,10 +637,12 @@ def _ohlc_from_payload(payload: object) -> Ohlc | None:
         return None
 
 
-def _load_forecasts(path: Path) -> tuple[list[ForecastRow], dict[str, Any]]:
+def _load_forecasts(path: Path, *, pairs: set[str] | None = None) -> tuple[list[ForecastRow], dict[str, Any]]:
+    pair_filter = {str(item).upper() for item in (pairs or set()) if str(item).strip()}
     rows: list[ForecastRow] = []
     seen: set[tuple[Any, ...]] = set()
     raw_directional = 0
+    skipped_pair_filter = 0
     skipped_duplicate = 0
     skipped_invalid = 0
     with path.open(encoding="utf-8") as handle:
@@ -638,6 +662,9 @@ def _load_forecasts(path: Path) -> tuple[list[ForecastRow], dict[str, Any]]:
             pair = str(payload.get("pair") or "").upper().strip()
             if timestamp is None or not pair:
                 skipped_invalid += 1
+                continue
+            if pair_filter and pair not in pair_filter:
+                skipped_pair_filter += 1
                 continue
             confidence = _safe_float(payload.get("confidence"))
             target = _safe_float(payload.get("target_price"))
@@ -672,6 +699,8 @@ def _load_forecasts(path: Path) -> tuple[list[ForecastRow], dict[str, Any]]:
             )
     return rows, {
         "raw_directional_rows": raw_directional,
+        "pair_filter": sorted(pair_filter),
+        "skipped_pair_filter_rows": skipped_pair_filter,
         "deduped_directional_rows": len(rows),
         "skipped_duplicate_rows": skipped_duplicate,
         "skipped_invalid_rows": skipped_invalid,
