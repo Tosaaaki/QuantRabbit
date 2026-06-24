@@ -51,6 +51,7 @@ OANDA_AUDIT_ONLY_LOCAL_TP_PROOF_REQUIRED = "OANDA_CAMPAIGN_AUDIT_ONLY_LOCAL_TP_P
 OANDA_AUDIT_ONLY_REPLAY_HISTORY_GRANULARITIES = "S5,M5"
 FORECAST_FRONTIER_EVIDENCE_WAIT_STATUS = "FORECAST_FRONTIER_WAITING_FOR_LIVE_PRECISION_EVIDENCE"
 FRONTIER_QUOTE_FRESHNESS_WAIT_STATUS = "FRONTIER_WAITING_FOR_FRESH_QUOTE"
+FRONTIER_MARGIN_CAPACITY_WAIT_STATUS = "FRONTIER_MARGIN_CAPACITY_WAIT"
 PROTECTIVE_FRONTIER_GUARDRAIL_STATUS = "FRONTIER_PROTECTIVE_GUARDRAIL_ACTIVE"
 BIDASK_REPLAY_WAIT_STATUS = "BIDASK_REPLAY_WAITING_FOR_FORECAST_SAMPLE_COVERAGE"
 TP_PROGRESS_GUARDIAN_WAIT_STATUS = "WAITING_FOR_POSITION_GUARDIAN_LIVE_EVIDENCE"
@@ -62,6 +63,9 @@ FORECAST_FRONTIER_BLOCKER_CODES = {
     "FORECAST_NOT_EXECUTABLE_FOR_LIVE",
     "TELEMETRY_FORECAST_NOT_EXECUTABLE_FOR_LIVE",
     "FORECAST_CONFIDENCE_REQUIRED_FOR_LIVE",
+}
+FRONTIER_MARGIN_CAPACITY_BLOCKER_CODES = {
+    "MARGIN_TOO_THIN_FOR_MIN_LOT",
 }
 FRONTIER_GUARDRAIL_BLOCKER_CODES = {
     "BIDASK_REPLAY_NEGATIVE_EXPECTANCY_FOR_LIVE",
@@ -1127,6 +1131,8 @@ def _frontier_blocker_sort_key(row: dict[str, Any]) -> tuple[int, int, float, st
         causal_rank = 0
     elif _frontier_blocker_waits_for_live_precision_evidence(row):
         causal_rank = 0
+    elif _frontier_blocker_waits_for_margin_capacity(row):
+        causal_rank = 1
     elif code == OANDA_AUDIT_ONLY_LOCAL_TP_PROOF_REQUIRED:
         causal_rank = 1
     elif code in FRONTIER_GUARDRAIL_BLOCKER_CODES:
@@ -1147,6 +1153,10 @@ def _frontier_blocker_is_protective_guardrail(row: dict[str, Any]) -> bool:
 
 def _frontier_blocker_waits_for_quote_refresh(row: dict[str, Any]) -> bool:
     return str(row.get("code") or "") in QUOTE_FRESHNESS_BLOCKER_CODES
+
+
+def _frontier_blocker_waits_for_margin_capacity(row: dict[str, Any]) -> bool:
+    return str(row.get("code") or "") in FRONTIER_MARGIN_CAPACITY_BLOCKER_CODES
 
 
 def _intent_metadata(item: dict[str, Any]) -> dict[str, Any]:
@@ -2667,6 +2677,7 @@ def _build_repair_requests(
         code = str(top.get("code") or "UNKNOWN_REPAIR_FRONTIER_BLOCKER")
         waits_for_quote_refresh = _frontier_blocker_waits_for_quote_refresh(top)
         waits_for_forecast_evidence = _frontier_blocker_waits_for_live_precision_evidence(top)
+        waits_for_margin_capacity = _frontier_blocker_waits_for_margin_capacity(top)
         protective_guardrail_active = _frontier_blocker_is_protective_guardrail(top)
         if waits_for_quote_refresh:
             frontier_status = FRONTIER_QUOTE_FRESHNESS_WAIT_STATUS
@@ -2705,6 +2716,27 @@ def _build_repair_requests(
                 "PYTHONPATH=src python3 -m quant_rabbit.cli trader-support-bot",
                 "PYTHONPATH=src python3 scripts/oanda_history_replay_validate.py --forecast-history data/forecast_history.jsonl --granularity S5 --auto-history-min-days 30",
                 "PYTHONPATH=src python3 -m quant_rabbit.cli generate-intents --reuse-market-artifacts",
+            ]
+        elif waits_for_margin_capacity:
+            frontier_status = FRONTIER_MARGIN_CAPACITY_WAIT_STATUS
+            frontier_problem = (
+                "Repair-frontier lanes are blocked by the minimum production lot and current margin capacity, "
+                "not by a missing Codex code path."
+            )
+            frontier_why_now = (
+                "The 1000u floor prevents structurally spread-dominated micro orders; lowering it to force a "
+                "repair lane live would recreate the sub-lot loss loop."
+            )
+            frontier_clearance = [
+                f"{code} clears only when free margin, daily risk budget, and current geometry can fund at least the minimum production lot.",
+                "Wait for open positions to harvest TP/free margin, reduce other broker exposure through approved paths, or regenerate intents after broker truth changes.",
+                "Do not lower MIN_PRODUCTION_LOT_UNITS, bypass RiskEngine, or emit sub-1000u live receipts as a repair.",
+            ]
+            frontier_verification_commands = [
+                "PYTHONPATH=src python3 -m quant_rabbit.cli broker-snapshot --output data/broker_snapshot.json",
+                "PYTHONPATH=src python3 -m quant_rabbit.cli daily-target-state --snapshot data/broker_snapshot.json --daily-risk-pct 10",
+                "PYTHONPATH=src python3 -m quant_rabbit.cli generate-intents --snapshot data/broker_snapshot.json --reuse-market-artifacts",
+                "PYTHONPATH=src python3 -m quant_rabbit.cli trader-support-bot",
             ]
         elif protective_guardrail_active:
             frontier_status = PROTECTIVE_FRONTIER_GUARDRAIL_STATUS

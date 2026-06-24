@@ -1173,6 +1173,85 @@ class TraderSupportBotTest(unittest.TestCase):
         self.assertIn("bad entry shape", request["why_now"])
         self.assertIn("Do not edit common entry gates", " ".join(request["clearance_conditions"]))
 
+    def test_frontier_min_lot_margin_floor_is_capacity_wait_not_code_repair(self) -> None:
+        now = datetime(2026, 6, 24, 8, 15, tzinfo=timezone.utc)
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _write_fixture(root, now=now, blocked=True)
+            _write_json(
+                files["intents"],
+                {
+                    "generated_at_utc": now.isoformat(),
+                    "results": [
+                        {
+                            "lane_id": "failure_trader:EUR_USD:LONG:BREAKOUT_FAILURE:LIMIT",
+                            "status": "DRY_RUN_BLOCKED",
+                            "live_blocker_codes": [
+                                "POSITION_GUARDIAN_INACTIVE_FOR_PROFIT_CAPTURE",
+                                "SELF_IMPROVEMENT_P0_PROFITABILITY_DISCIPLINE",
+                                "MARGIN_TOO_THIN_FOR_MIN_LOT",
+                            ],
+                            "live_blockers": [
+                                (
+                                    "available margin headroom can only fund 861u for EUR_USD; "
+                                    "refusing to emit a sub-1000u receipt"
+                                )
+                            ],
+                            "intent": {
+                                "pair": "EUR_USD",
+                                "side": "LONG",
+                                "order_type": "LIMIT",
+                                "market_context": {"method": "BREAKOUT_FAILURE"},
+                                "metadata": {
+                                    "self_improvement_p0_repair_live_ready": True,
+                                    "self_improvement_p0_repair_mode": "TP_HARVEST_REPAIR",
+                                    "broker_margin_free_units": 861,
+                                    "sizing_actual_reward_jpy": 0.0,
+                                    "sizing_actual_risk_jpy": 0.0,
+                                },
+                            },
+                            "risk_metrics": {
+                                "reward_jpy": 0.0,
+                                "risk_jpy": 0.0,
+                                "margin_available_jpy": 19806.2474,
+                                "margin_budget_jpy": 6337.5959,
+                            },
+                        }
+                    ],
+                },
+            )
+            env = _guardian_env(root, active="1")
+            with mock.patch.dict(os.environ, env, clear=False):
+                TraderSupportBot(
+                    broker_snapshot_path=files["broker"],
+                    order_intents_path=files["intents"],
+                    target_state_path=files["target"],
+                    position_management_path=files["position_management"],
+                    position_guardian_management_path=files["guardian_management"],
+                    position_guardian_execution_path=files["guardian_execution"],
+                    position_guardian_heartbeat_path=files["guardian_heartbeat"],
+                    self_improvement_audit_path=files["self_improvement"],
+                    profitability_acceptance_path=files["profitability"],
+                    execution_timing_audit_path=files["timing"],
+                    profit_capture_bot_path=files["profit_capture_bot"],
+                    output_path=files["output"],
+                    report_path=files["report"],
+                    now_utc=now,
+                ).run()
+
+            payload = json.loads(files["output"].read_text())
+            top = payload["metrics"]["repair_frontier_after_support_top_blockers"][0]
+            request = next(
+                item for item in payload["repair_requests"] if item["code"] == "REPAIR_FRONTIER_LANE_BLOCKER"
+            )
+
+        self.assertEqual(top["code"], "MARGIN_TOO_THIN_FOR_MIN_LOT")
+        self.assertEqual(request["status"], "FRONTIER_MARGIN_CAPACITY_WAIT")
+        self.assertEqual(request["source_findings"], ["MARGIN_TOO_THIN_FOR_MIN_LOT"])
+        self.assertIn("minimum production lot", request["problem"])
+        self.assertIn("free margin", " ".join(request["clearance_conditions"]))
+        self.assertIn("Do not lower", " ".join(request["clearance_conditions"]))
+
     def test_frontier_bidask_negative_replay_guardrail_is_not_code_repair(self) -> None:
         now = datetime(2026, 6, 23, 23, 10, tzinfo=timezone.utc)
         with tempfile.TemporaryDirectory() as tmp:
