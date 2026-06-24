@@ -228,6 +228,64 @@ def _external_live_runtime_lock(snapshot_path: Path) -> dict[str, Any] | None:
             pass
     return evidence
 
+
+def _read_text_file(path: Path) -> str | None:
+    try:
+        text = path.read_text(encoding="utf-8").strip()
+    except OSError:
+        return None
+    return text or None
+
+
+def _read_int_file(path: Path) -> int | None:
+    raw = _read_text_file(path)
+    if raw is None:
+        return None
+    try:
+        return int(raw)
+    except (TypeError, ValueError):
+        return None
+
+
+def _live_runtime_lock_status() -> dict[str, Any]:
+    """Return shared full-cycle lock state for guardian heartbeat interpretation."""
+
+    lock_dir = Path(os.environ.get("QR_AUTOTRADE_LOCK_DIR") or (Path.cwd() / ".quant_rabbit_live.lock"))
+    held_by_current_process = os.environ.get("QR_AUTOTRADE_LOCK_HELD") == "1"
+    pid = _read_int_file(lock_dir / "pid")
+    command = _read_text_file(lock_dir / "command")
+    started_at = _read_text_file(lock_dir / "started_at_utc")
+    active = bool(held_by_current_process)
+    stale = False
+    if pid is not None:
+        try:
+            os.kill(pid, 0)
+            active = True
+        except ProcessLookupError:
+            stale = True
+        except PermissionError:
+            active = True
+    age = None
+    if started_at:
+        try:
+            started_dt = datetime.fromisoformat(started_at.replace("Z", "+00:00"))
+            if started_dt.tzinfo is None:
+                started_dt = started_dt.replace(tzinfo=timezone.utc)
+            age = max(0.0, (datetime.now(timezone.utc) - started_dt.astimezone(timezone.utc)).total_seconds())
+        except ValueError:
+            age = None
+    return {
+        "path": str(lock_dir),
+        "exists": lock_dir.exists(),
+        "active": active,
+        "stale": stale,
+        "held_by_current_process": held_by_current_process,
+        "pid": pid if pid is not None else (os.getpid() if held_by_current_process else None),
+        "command": command,
+        "started_at_utc": started_at,
+        "age_seconds": round(age, 3) if age is not None else None,
+    }
+
 # Forecast-level calibration is the feedback loop for "why did the final
 # direction call miss?". Ten samples matches the projection-ledger calibration
 # sample floor, and the hit-rate floor is an audit warning, not a trade gate.
@@ -1277,6 +1335,7 @@ def _position_guardian_runtime_status() -> dict[str, Any]:
         _env_path("QR_POSITION_GUARDIAN_HEARTBEAT", Path("data/position_guardian.json")),
     ]
     heartbeat = _freshest_guardian_heartbeat(heartbeat_paths, max_age_seconds=heartbeat_max_age)
+    live_runtime_lock = _live_runtime_lock_status()
     status: dict[str, Any] = {
         "required": _truthy_env("QR_REQUIRE_POSITION_GUARDIAN_ACTIVE", default=False),
         "active": False,
@@ -1294,6 +1353,12 @@ def _position_guardian_runtime_status() -> dict[str, Any]:
         "heartbeat_source": heartbeat.get("source"),
         "heartbeat_status": heartbeat.get("status"),
         "heartbeat_candidates": [str(path) for path in heartbeat_paths],
+        "live_runtime_lock": live_runtime_lock,
+        "live_runtime_lock_active": live_runtime_lock.get("active"),
+        "live_runtime_lock_command": live_runtime_lock.get("command"),
+        "live_runtime_lock_age_seconds": live_runtime_lock.get("age_seconds"),
+        "live_runtime_lock_pid": live_runtime_lock.get("pid"),
+        "live_runtime_lock_held_by_current_process": live_runtime_lock.get("held_by_current_process"),
     }
     if raw_active is not None:
         status["active"] = bool(_truthy_value(raw_active) and (heartbeat.get("fresh") or not heartbeat_required))
@@ -1320,7 +1385,9 @@ def _position_guardian_runtime_status() -> dict[str, Any]:
         status["launchd_loaded"] = True
         status["active"] = bool(heartbeat.get("fresh") or not heartbeat_required)
         if heartbeat_required and not heartbeat.get("fresh"):
-            status["active_source"] = "stale_heartbeat"
+            status["active_source"] = (
+                "live_runtime_lock_busy" if live_runtime_lock.get("active") else "stale_heartbeat"
+            )
         return status
     try:
         print_proc = subprocess.run(
@@ -1338,7 +1405,7 @@ def _position_guardian_runtime_status() -> dict[str, Any]:
     status["launchd_loaded"] = loaded
     status["active"] = bool(loaded and (heartbeat.get("fresh") or not heartbeat_required))
     if loaded and heartbeat_required and not heartbeat.get("fresh"):
-        status["active_source"] = "stale_heartbeat"
+        status["active_source"] = "live_runtime_lock_busy" if live_runtime_lock.get("active") else "stale_heartbeat"
     return status
 
 
@@ -2305,6 +2372,8 @@ def _position_guardian_profit_capture_findings(
     profit_capture_miss_active: bool,
 ) -> list[dict[str, Any]]:
     if not guardian_status.get("required") or guardian_status.get("active"):
+        return []
+    if guardian_status.get("active_source") == "live_runtime_lock_busy":
         return []
     current_exposure_surface = (
         live_ready_lanes > 0
