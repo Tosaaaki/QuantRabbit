@@ -5907,6 +5907,38 @@ class ConsolidatedCycleCommandTest(unittest.TestCase):
             self.assertFalse(digest.exists())
             self.assertIn("refusing cycle-refresh overlap", stderr.getvalue())
 
+    def test_generate_intents_refuses_live_runtime_lock_overlap(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            lock_dir = Path(tmp) / "lock"
+            lock_dir.mkdir()
+            (lock_dir / "pid").write_text(f"{os.getpid()}\n")
+            (lock_dir / "command").write_text("cycle-refresh\n")
+            stderr = io.StringIO()
+
+            with mock.patch.dict(os.environ, {"QR_AUTOTRADE_LOCK_DIR": str(lock_dir)}, clear=False), mock.patch(
+                "quant_rabbit.cli._running_under_test_harness", return_value=False
+            ), redirect_stderr(stderr):
+                rc = main(["generate-intents"])
+
+            self.assertEqual(rc, 75)
+            self.assertIn("refusing generate-intents artifact/report overlap", stderr.getvalue())
+
+    def test_artifact_writer_allows_valid_inherited_live_runtime_lock(self) -> None:
+        from quant_rabbit.cli import _live_artifact_writer_overlap_error
+
+        with tempfile.TemporaryDirectory() as tmp:
+            lock_dir = Path(tmp) / "lock"
+            lock_dir.mkdir()
+            (lock_dir / "pid").write_text(f"{os.getpid()}\n")
+            (lock_dir / "command").write_text("cycle-refresh\n")
+
+            with mock.patch.dict(
+                os.environ,
+                {"QR_AUTOTRADE_LOCK_DIR": str(lock_dir), "QR_AUTOTRADE_LOCK_HELD": "1"},
+                clear=False,
+            ), mock.patch("quant_rabbit.cli._running_under_test_harness", return_value=False):
+                self.assertIsNone(_live_artifact_writer_overlap_error("generate-intents"))
+
     def test_cycle_runtime_lock_restores_env_and_removes_lock(self) -> None:
         from quant_rabbit.cli import _acquire_cycle_runtime_lock, _release_cycle_runtime_lock
 

@@ -1382,6 +1382,82 @@ _LIVE_RUNTIME_COMMANDS: frozenset[str] = frozenset(
     }
 )
 
+_LIVE_ARTIFACT_WRITER_COMMANDS: frozenset[str] = frozenset(
+    {
+        "autotrade-cycle",
+        "gpt-trader-decision",
+        "stage-live-order",
+        "broker-snapshot",
+        "daily-target-state",
+        "execution-ledger-sync",
+        "import-legacy",
+        "mine-strategy",
+        "pair-charts",
+        "cross-asset-snapshot",
+        "context-asset-charts",
+        "flow-snapshot",
+        "currency-strength",
+        "levels-snapshot",
+        "economic-calendar",
+        "cot-snapshot",
+        "option-skew",
+        "market-context-matrix",
+        "news-snapshot",
+        "mine-market-stories",
+        "news-health",
+        "daily-review",
+        "tp-rebalance",
+        "verify-projections",
+        "capture-economics",
+        "execution-timing-audit",
+        "generate-intents",
+        "optimize-coverage",
+        "ai-attack-advice",
+        "learning-audit",
+        "manual-market-context-audit",
+        "operator-precedent-audit",
+        "verification-ledger-audit",
+        "generate-predictive-limits",
+        "position-thesis-check",
+        "thesis-evolution-check",
+        "forecast-persistence-check",
+        "position-management",
+        "position-execution",
+        "profit-partial-close",
+        "profit-capture-bot",
+        "memory-health",
+        "self-improvement-audit",
+        "profitability-acceptance",
+        "trader-support-bot",
+        "trader-repair-orchestrator",
+    }
+)
+
+
+def _live_artifact_writer_overlap_error(command: str) -> str | None:
+    if command not in _LIVE_ARTIFACT_WRITER_COMMANDS:
+        return None
+    if _running_under_test_harness() and os.environ.get("QR_LIVE_ENABLED") != "1":
+        return None
+
+    lock_dir = Path(os.environ.get("QR_AUTOTRADE_LOCK_DIR") or DEFAULT_AUTOTRADE_LOCK_DIR)
+    if os.environ.get("QR_AUTOTRADE_LOCK_HELD") == "1" and _cycle_runtime_lock_env_is_valid(lock_dir):
+        return None
+
+    existing_pid = _cycle_runtime_lock_pid(lock_dir)
+    if existing_pid is None or not _pid_is_running(existing_pid):
+        return None
+
+    try:
+        lock_command = (lock_dir / "command").read_text().strip()
+    except OSError:
+        lock_command = ""
+    detail = f" command={lock_command}" if lock_command else ""
+    return (
+        f"[qr-vnext] live runtime lock is active pid={existing_pid}{detail}; "
+        f"refusing {command} artifact/report overlap."
+    )
+
 
 _AUTOTRADE_EXIT_ZERO_STATUSES: frozenset[str] = frozenset(
     {
@@ -3976,6 +4052,11 @@ def main(argv: list[str] | None = None) -> int:
         args.command in _LIVE_RUNTIME_COMMANDS and not _running_under_test_harness()
     ):
         _bootstrap_sl_free_defaults()
+
+    overlap_error = _live_artifact_writer_overlap_error(args.command)
+    if overlap_error is not None:
+        sys.stderr.write(f"{overlap_error}\n")
+        return 75
 
     if args.command == "capture-economics":
         from quant_rabbit.capture_economics import (
