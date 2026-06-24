@@ -310,6 +310,43 @@ class TraderSupportBotTest(unittest.TestCase):
             self.assertIn("FORECAST_CONTEXT_REQUIRED_FOR_LIVE", report)
             self.assertIn("472792", report)
 
+    def test_tp_progress_unproved_waits_for_live_evidence_when_guardian_is_active(self) -> None:
+        now = datetime(2026, 6, 24, 8, 30, tzinfo=timezone.utc)
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _write_fixture(root, now=now, blocked=True)
+            env = _guardian_env(root, active="1")
+            with mock.patch.dict(os.environ, env, clear=False):
+                TraderSupportBot(
+                    broker_snapshot_path=files["broker"],
+                    order_intents_path=files["intents"],
+                    target_state_path=files["target"],
+                    position_management_path=files["position_management"],
+                    position_guardian_management_path=files["guardian_management"],
+                    position_guardian_execution_path=files["guardian_execution"],
+                    position_guardian_heartbeat_path=files["guardian_heartbeat"],
+                    self_improvement_audit_path=files["self_improvement"],
+                    profitability_acceptance_path=files["profitability"],
+                    execution_timing_audit_path=files["timing"],
+                    profit_capture_bot_path=files["profit_capture_bot"],
+                    output_path=files["output"],
+                    report_path=files["report"],
+                    now_utc=now,
+                ).run()
+
+            payload = json.loads(files["output"].read_text())
+            tp_request = next(
+                item
+                for item in payload["repair_requests"]
+                if item["code"] == "REPAIR_TP_PROGRESS_PROFIT_CAPTURE_REPLAY"
+            )
+            self.assertEqual(tp_request["status"], TP_PROGRESS_GUARDIAN_WAIT_STATUS)
+            self.assertFalse(tp_request["requires_explicit_operator_approval"])
+            self.assertIn(
+                "execution-timing-audit --lookback-hours 744 --post-close-hours 6",
+                " ".join(tp_request["verification_commands"]),
+            )
+
     def test_close_gate_block_evidence_does_not_request_persistence_repair(self) -> None:
         now = datetime(2026, 6, 22, 12, 15, tzinfo=timezone.utc)
         with tempfile.TemporaryDirectory() as tmp:

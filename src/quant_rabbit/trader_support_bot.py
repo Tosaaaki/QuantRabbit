@@ -2103,6 +2103,7 @@ def _operator_actions(
                     "PYTHONPATH=src python3 -m quant_rabbit.cli execution-timing-audit "
                     "--lookback-hours 744 --post-close-hours 6"
                     if {
+                        "TP_PROGRESS_REPLAY_REPAIR_UNPROVED",
                         "MONTH_SCALE_LOSS_CLOSE_REPLAY_REQUIRED",
                         "MONTH_SCALE_TP_PROGRESS_REPLAY_STILL_NEGATIVE",
                     }
@@ -2471,7 +2472,7 @@ def _build_repair_requests(
             else {}
         )
         tp_contract_missing = "TP_PROGRESS_REPAIR_REPLAY_CONTRACT_MISSING" in tp_codes
-        tp_waits_for_guardian = (
+        tp_waits_for_operator_guardian = (
             not tp_contract_missing
             and (
                 "TP_PROGRESS_REPAIR_REPLAY_NOT_DEPLOYED" in tp_codes
@@ -2479,13 +2480,29 @@ def _build_repair_requests(
                 or bool(guardian.get("required") and not guardian.get("active"))
             )
         )
+        tp_waits_for_live_evidence = (
+            not tp_contract_missing
+            and "TP_PROGRESS_REPLAY_REPAIR_UNPROVED" in tp_codes
+            and int(_float(tp_evidence.get("loss_closes_repair_replay_triggered"))) > 0
+        )
+        tp_wait_status = tp_waits_for_operator_guardian or tp_waits_for_live_evidence
+        verification_commands = [
+            item_by_code[code].get("verification_command")
+            for code in tp_codes
+            if isinstance(item_by_code.get(code), dict)
+        ]
+        if tp_waits_for_live_evidence:
+            verification_commands = [
+                "PYTHONPATH=src python3 -m quant_rabbit.cli execution-timing-audit --lookback-hours 744 --post-close-hours 6",
+                "PYTHONPATH=src python3 -m quant_rabbit.cli profitability-acceptance",
+            ]
         requests.append(
             _repair_request(
                 code="REPAIR_TP_PROGRESS_PROFIT_CAPTURE_REPLAY",
                 priority="P0",
                 status=(
                     TP_PROGRESS_GUARDIAN_WAIT_STATUS
-                    if tp_waits_for_guardian
+                    if tp_wait_status
                     else "READY_FOR_CODE_REPAIR"
                 ),
                 source_findings=tp_codes,
@@ -2503,11 +2520,7 @@ def _build_repair_requests(
                     for code in tp_codes
                     if isinstance(item_by_code.get(code), dict)
                 ],
-                verification_commands=[
-                    item_by_code[code].get("verification_command")
-                    for code in tp_codes
-                    if isinstance(item_by_code.get(code), dict)
-                ],
+                verification_commands=verification_commands,
                 suggested_files=[
                     "src/quant_rabbit/profit_capture_bot.py",
                     "src/quant_rabbit/execution_timing_audit.py",
@@ -2521,7 +2534,7 @@ def _build_repair_requests(
                     "Positive path: production-gate replay reports zero loss_closes_repair_replay_triggered after the capture repair.",
                     "Safety path: support/profit-capture bots remain read-only and do not close positions directly.",
                 ],
-                requires_explicit_operator_approval=tp_waits_for_guardian,
+                requires_explicit_operator_approval=tp_waits_for_operator_guardian,
             )
         )
 
