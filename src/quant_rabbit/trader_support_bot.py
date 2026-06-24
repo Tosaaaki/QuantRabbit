@@ -85,6 +85,7 @@ FRONTIER_MARGIN_CAPACITY_WAIT_STATUS = "FRONTIER_MARGIN_CAPACITY_WAIT"
 PROTECTIVE_FRONTIER_GUARDRAIL_STATUS = "FRONTIER_PROTECTIVE_GUARDRAIL_ACTIVE"
 BIDASK_REPLAY_WAIT_STATUS = "BIDASK_REPLAY_WAITING_FOR_FORECAST_SAMPLE_COVERAGE"
 TP_PROGRESS_GUARDIAN_WAIT_STATUS = "WAITING_FOR_POSITION_GUARDIAN_LIVE_EVIDENCE"
+POSITION_GUARDIAN_LOCK_WAIT_STATUS = "WAITING_FOR_POSITION_GUARDIAN_LOCK_RELEASE"
 QUOTE_FRESHNESS_BLOCKER_CODES = {
     "STALE_QUOTE",
     "TELEMETRY_FORECAST_QUOTE_STALE_FOR_LIVE",
@@ -578,6 +579,7 @@ def _guardian_status(*, now_utc: datetime, execution_path: Path, heartbeat_path:
         Path(os.environ.get("QR_POSITION_GUARDIAN_HEARTBEAT", str(heartbeat_path))).expanduser(),
     ]
     heartbeat = _freshest_guardian_heartbeat(paths, now_utc=now_utc, max_age=max_age)
+    runtime_lock = _live_runtime_lock_status(now_utc=now_utc)
     env_active_raw = os.environ.get("QR_POSITION_GUARDIAN_ACTIVE")
 
     status: dict[str, Any] = {
@@ -596,6 +598,11 @@ def _guardian_status(*, now_utc: datetime, execution_path: Path, heartbeat_path:
         "heartbeat_path": heartbeat["path"],
         "heartbeat_status": heartbeat["status"],
         "heartbeat_candidates": [str(path) for path in paths],
+        "live_runtime_lock": runtime_lock,
+        "live_runtime_lock_active": runtime_lock["active"],
+        "live_runtime_lock_command": runtime_lock["command"],
+        "live_runtime_lock_age_seconds": runtime_lock["age_seconds"],
+        "live_runtime_lock_pid": runtime_lock["pid"],
     }
     if env_active_raw is not None:
         env_active = _truthy(env_active_raw)
@@ -614,8 +621,67 @@ def _guardian_status(*, now_utc: datetime, execution_path: Path, heartbeat_path:
         status["active_source"] = "launchctl_unavailable"
     status["active"] = bool(loaded["loaded"] and (heartbeat["fresh"] or not heartbeat_required))
     if loaded["loaded"] and heartbeat_required and not heartbeat["fresh"]:
-        status["active_source"] = "stale_heartbeat"
+        status["active_source"] = "live_runtime_lock_busy" if runtime_lock["active"] else "stale_heartbeat"
     return status
+
+
+def _live_runtime_lock_status(*, now_utc: datetime) -> dict[str, Any]:
+    lock_dir = Path(
+        os.environ.get("QR_AUTOTRADE_LOCK_DIR") or str(ROOT / ".quant_rabbit_live.lock")
+    ).expanduser()
+    held_by_current_process = os.environ.get("QR_AUTOTRADE_LOCK_HELD") == "1"
+    pid = _read_int_file(lock_dir / "pid")
+    command = _read_text_file(lock_dir / "command")
+    started_at = _read_text_file(lock_dir / "started_at_utc")
+    active = bool(held_by_current_process)
+    stale = False
+    if pid is not None:
+        if _process_is_running(pid):
+            active = True
+        else:
+            stale = True
+    age = _age_seconds(started_at, now_utc=now_utc) if started_at else None
+    return {
+        "path": str(lock_dir),
+        "exists": lock_dir.exists(),
+        "active": active,
+        "stale": stale,
+        "held_by_current_process": held_by_current_process,
+        "pid": pid if pid is not None else (os.getpid() if held_by_current_process else None),
+        "command": command,
+        "started_at_utc": started_at,
+        "age_seconds": round(age, 3) if age is not None else None,
+    }
+
+
+def _read_text_file(path: Path) -> str | None:
+    try:
+        value = path.read_text().strip()
+    except OSError:
+        return None
+    return value or None
+
+
+def _read_int_file(path: Path) -> int | None:
+    value = _read_text_file(path)
+    if value is None:
+        return None
+    try:
+        return int(value)
+    except ValueError:
+        return None
+
+
+def _process_is_running(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    except OSError:
+        return False
+    return True
 
 
 def _launchd_loaded(label: str) -> dict[str, Any]:
@@ -2363,12 +2429,16 @@ def _build_blockers(
 ) -> list[dict[str, Any]]:
     blockers: list[dict[str, Any]] = []
     if guardian["required"] and not guardian["active"]:
+        waiting_for_runtime_lock = _guardian_waits_for_live_runtime_lock(guardian)
         blockers.append(
             {
                 "code": "POSITION_GUARDIAN_INACTIVE",
                 "severity": "P0",
                 "message": (
-                    "position guardian is required but not proven active with a fresh heartbeat; "
+                    "position guardian heartbeat is stale while the live runtime lock is active; "
+                    "fresh entries stay blocked until the lock releases and the next heartbeat lands"
+                    if waiting_for_runtime_lock
+                    else "position guardian is required but not proven active with a fresh heartbeat; "
                     "fresh entries stay blocked because plus P/L can reverse between full cycles"
                 ),
             }
@@ -2617,6 +2687,16 @@ def _oanda_audit_only_candidates_have_clearable_replay(
     return any(_oanda_audit_only_candidate_has_clearable_replay(candidate) for candidate in candidates)
 
 
+def _guardian_waits_for_live_runtime_lock(guardian: dict[str, Any]) -> bool:
+    return bool(
+        guardian.get("required")
+        and not guardian.get("active")
+        and guardian.get("launchd_loaded")
+        and not guardian.get("heartbeat_fresh")
+        and guardian.get("live_runtime_lock_active")
+    )
+
+
 def _operator_actions(
     *,
     status: str,
@@ -2652,14 +2732,26 @@ def _operator_actions(
                     "requires_explicit_operator_approval": False,
                     "reason": "show plist, launchd, and heartbeat state without changing live services",
                 },
+            ]
+        )
+        if _guardian_waits_for_live_runtime_lock(guardian):
+            actions.append(
+                {
+                    "code": "WAIT_FOR_LIVE_RUNTIME_LOCK_RELEASE",
+                    "command": "PYTHONPATH=src python3 -m quant_rabbit.cli trader-support-bot",
+                    "requires_explicit_operator_approval": False,
+                    "reason": "guardian launchd is loaded, but heartbeat is stale because another live runtime cycle currently owns the shared lock",
+                }
+            )
+        else:
+            actions.append(
                 {
                     "code": "LOAD_POSITION_GUARDIAN_ONLY_IF_APPROVED",
                     "command": "scripts/install-position-guardian.sh",
                     "requires_explicit_operator_approval": True,
                     "reason": "loading launchd changes live support services and must be explicit",
-                },
-            ]
-        )
+                }
+            )
     if profit_capture["missed_loss_closes"] > 0:
         actions.append(
             {
@@ -3340,9 +3432,12 @@ def _build_repair_requests(
             else {}
         )
         current_guardian_inactive = bool(guardian.get("required") and not guardian.get("active"))
+        current_guardian_lock_wait = _guardian_waits_for_live_runtime_lock(guardian)
         tp_has_replay_triggers = int(_float(tp_evidence.get("loss_closes_repair_replay_triggered"))) > 0
         tp_contract_missing = "TP_PROGRESS_REPAIR_REPLAY_CONTRACT_MISSING" in tp_codes
-        tp_waits_for_operator_guardian = not tp_contract_missing and current_guardian_inactive
+        tp_waits_for_operator_guardian = (
+            not tp_contract_missing and current_guardian_inactive and not current_guardian_lock_wait
+        )
         tp_waits_for_live_evidence = (
             not tp_contract_missing
             and tp_has_replay_triggers
@@ -3352,6 +3447,7 @@ def _build_repair_requests(
                     "TP_PROGRESS_REPAIR_REPLAY_NOT_DEPLOYED" in tp_codes
                     and not current_guardian_inactive
                 )
+                or current_guardian_lock_wait
             )
         )
         tp_wait_status = tp_waits_for_operator_guardian or tp_waits_for_live_evidence
@@ -3370,7 +3466,9 @@ def _build_repair_requests(
                 code="REPAIR_TP_PROGRESS_PROFIT_CAPTURE_REPLAY",
                 priority="P0",
                 status=(
-                    TP_PROGRESS_GUARDIAN_WAIT_STATUS
+                    POSITION_GUARDIAN_LOCK_WAIT_STATUS
+                    if current_guardian_lock_wait
+                    else TP_PROGRESS_GUARDIAN_WAIT_STATUS
                     if tp_wait_status
                     else "READY_FOR_CODE_REPAIR"
                 ),
@@ -3388,10 +3486,18 @@ def _build_repair_requests(
                     "current_guardian_active": guardian.get("active"),
                     "current_guardian_active_source": guardian.get("active_source"),
                     "current_guardian_heartbeat_fresh": guardian.get("heartbeat_fresh"),
+                    "current_guardian_live_runtime_lock_active": guardian.get("live_runtime_lock_active"),
+                    "current_guardian_live_runtime_lock_command": guardian.get("live_runtime_lock_command"),
+                    "current_guardian_live_runtime_lock_age_seconds": guardian.get(
+                        "live_runtime_lock_age_seconds"
+                    ),
                     "guardian_inactive_evidence_status": (
                         "STALE_CURRENT_GUARDIAN_ACTIVE"
                         if tp_evidence.get("guardian_profit_capture_inactive")
                         and guardian.get("active")
+                        else "CURRENT_GUARDIAN_LOCK_BUSY"
+                        if tp_evidence.get("guardian_profit_capture_inactive")
+                        and current_guardian_lock_wait
                         else None
                     ),
                 },
@@ -3470,14 +3576,18 @@ def _build_repair_requests(
         )
 
     if guardian.get("required") and not guardian.get("active"):
+        waiting_for_runtime_lock = _guardian_waits_for_live_runtime_lock(guardian)
         requests.append(
             _repair_request(
                 code="RESTORE_POSITION_GUARDIAN_AFTER_PREFLIGHT",
                 priority="P0",
-                status="OPERATOR_APPROVAL_REQUIRED",
+                status=POSITION_GUARDIAN_LOCK_WAIT_STATUS if waiting_for_runtime_lock else "OPERATOR_APPROVAL_REQUIRED",
                 source_findings=["POSITION_GUARDIAN_INACTIVE_FOR_PROFIT_CAPTURE"],
                 problem=(
-                    "Fresh entries are blocked because the fast position guardian is not proven active "
+                    "Fresh entries are blocked because the fast position guardian heartbeat is stale while "
+                    "the live runtime lock is active."
+                    if waiting_for_runtime_lock
+                    else "Fresh entries are blocked because the fast position guardian is not proven active "
                     "with a fresh heartbeat."
                 ),
                 why_now=(
@@ -3490,24 +3600,34 @@ def _build_repair_requests(
                     "launchd_loaded": guardian.get("launchd_loaded"),
                     "heartbeat_fresh": guardian.get("heartbeat_fresh"),
                     "heartbeat_age_seconds": guardian.get("heartbeat_age_seconds"),
+                    "live_runtime_lock_active": guardian.get("live_runtime_lock_active"),
+                    "live_runtime_lock_command": guardian.get("live_runtime_lock_command"),
+                    "live_runtime_lock_age_seconds": guardian.get("live_runtime_lock_age_seconds"),
                 },
                 clearance_conditions=[
-                    "scripts/install-position-guardian.sh --check passes, then an operator explicitly approves load/reload and heartbeat becomes fresh."
+                    (
+                        "the active live runtime lock releases, then launchd writes a fresh position_guardian heartbeat without load/reload."
+                        if waiting_for_runtime_lock
+                        else "scripts/install-position-guardian.sh --check passes, then an operator explicitly approves load/reload and heartbeat becomes fresh."
+                    )
                 ],
                 verification_commands=[
                     "scripts/install-position-guardian.sh --check",
                     "scripts/install-position-guardian.sh --status",
+                    "PYTHONPATH=src python3 -m quant_rabbit.cli trader-support-bot",
                 ],
                 suggested_files=[
                     "scripts/install-position-guardian.sh",
                     "scripts/run-position-guardian-live.sh",
                     "tests/test_position_guardian_install.py",
+                    "tests/test_trader_support_bot.py",
                 ],
                 required_tests=[
                     "Preflight blocks unsynced live runtime before launchd can be loaded.",
                     "Support bot shows guardian recovery candidates without loading launchd itself.",
+                    "Guardian stale heartbeat caused by an active live runtime lock is classified as a wait, not load/reload approval.",
                 ],
-                requires_explicit_operator_approval=True,
+                requires_explicit_operator_approval=not waiting_for_runtime_lock,
             )
         )
 

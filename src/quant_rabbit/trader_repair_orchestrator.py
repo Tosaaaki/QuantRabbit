@@ -20,6 +20,7 @@ from quant_rabbit.trader_support_bot import (
     FRONTIER_QUOTE_FRESHNESS_WAIT_STATUS,
     OANDA_AUDIT_ONLY_LOCAL_TP_EDGE_REQUEST,
     OANDA_AUDIT_ONLY_LOCAL_TP_PROOF_UNPROVED_STATUS,
+    POSITION_GUARDIAN_LOCK_WAIT_STATUS,
     REPAIR_AUTOMATION_ALLOWED_ACTIONS,
     REPAIR_AUTOMATION_EXPLICIT_APPROVAL_ACTIONS,
     REPAIR_AUTOMATION_FORBIDDEN_DIRECT_ACTIONS,
@@ -49,6 +50,7 @@ NON_ACTIONABLE_REPAIR_STATUSES = {
     BIDASK_REPLAY_WAIT_STATUS,
     DIRECTIONAL_INVERSION_REPLAY_WAIT_STATUS,
     OANDA_AUDIT_ONLY_LOCAL_TP_PROOF_UNPROVED_STATUS,
+    POSITION_GUARDIAN_LOCK_WAIT_STATUS,
 }
 CODEX_ACTIONABLE_REPAIR_STATUSES = {
     "READY_FOR_CODE_REPAIR",
@@ -342,6 +344,9 @@ def _loop_engineering_prompt(
         "guardian_active": guardian.get("active"),
         "guardian_active_source": guardian.get("active_source"),
         "guardian_heartbeat_status": guardian.get("heartbeat_status"),
+        "guardian_live_runtime_lock_active": guardian.get("live_runtime_lock_active"),
+        "guardian_live_runtime_lock_command": guardian.get("live_runtime_lock_command"),
+        "guardian_live_runtime_lock_age_seconds": guardian.get("live_runtime_lock_age_seconds"),
         "live_ready_lanes": entry.get("live_ready_lanes"),
         "guardian_blocked_lanes": entry.get("guardian_blocked_lanes"),
         "profitability_acceptance_status": acceptance.get("status"),
@@ -631,6 +636,7 @@ def _render_loop_prompt_text(
         f"State: orchestrator={current_state.get('orchestrator_status')}, "
         f"target={current_state.get('target_status')}, live_ready={current_state.get('live_ready_lanes')}, "
         f"guardian_active={current_state.get('guardian_active')}, "
+        f"guardian_lock={current_state.get('guardian_live_runtime_lock_active')}, "
         f"operational_5pct={current_state.get('operational_minimum_5pct_reachable')}, "
         f"audit_5pct={current_state.get('audit_minimum_5pct_estimated_reachable')}.",
         f"Queue: selected={current_state.get('selected_request_code')}, "
@@ -858,6 +864,11 @@ def _approval_dependency_wait(request: dict[str, Any]) -> dict[str, Any] | None:
         return None
     evidence = request.get("evidence_summary") if isinstance(request.get("evidence_summary"), dict) else {}
     if evidence.get("current_guardian_active") is True and evidence.get("current_guardian_heartbeat_fresh") is True:
+        return None
+    if (
+        evidence.get("current_guardian_live_runtime_lock_active") is True
+        or evidence.get("current_guardian_active_source") == "live_runtime_lock_busy"
+    ):
         return None
     source_findings = set(_dedupe_strings(request.get("source_findings")))
     if not evidence.get("guardian_profit_capture_inactive"):

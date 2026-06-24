@@ -22,6 +22,7 @@ from quant_rabbit.trader_support_bot import (
     FRONTIER_QUOTE_FRESHNESS_WAIT_STATUS,
     OANDA_AUDIT_ONLY_LOCAL_TP_EDGE_REQUEST,
     OANDA_AUDIT_ONLY_LOCAL_TP_PROOF_UNPROVED_STATUS,
+    POSITION_GUARDIAN_LOCK_WAIT_STATUS,
     REPAIR_AUTOMATION_ALLOWED_ACTIONS,
     REPAIR_AUTOMATION_EXPLICIT_APPROVAL_ACTIONS,
     REPAIR_AUTOMATION_FORBIDDEN_DIRECT_ACTIONS,
@@ -641,6 +642,66 @@ class TraderRepairOrchestratorTest(unittest.TestCase):
             self.assertEqual(payload["selected_request"], {})
             self.assertIn(
                 "REPAIR_TP_PROGRESS_PROFIT_CAPTURE_REPLAY",
+                payload["queue_summary"]["waiting_request_codes"],
+            )
+
+    def test_tp_guardian_lock_wait_does_not_become_load_approval_dependency(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            support = root / "support.json"
+            output = root / "orchestrator.json"
+            report = root / "orchestrator.md"
+            _write_support(
+                support,
+                [
+                    _request(
+                        "REPAIR_TP_PROGRESS_PROFIT_CAPTURE_REPLAY",
+                        priority="P0",
+                        status=POSITION_GUARDIAN_LOCK_WAIT_STATUS,
+                        source_findings=[
+                            "TP_PROGRESS_REPAIR_REPLAY_NOT_DEPLOYED",
+                            "TP_PROGRESS_REPLAY_REPAIR_UNPROVED",
+                        ],
+                        evidence_summary={
+                            "guardian_profit_capture_inactive": True,
+                            "current_guardian_active": False,
+                            "current_guardian_active_source": "live_runtime_lock_busy",
+                            "current_guardian_heartbeat_fresh": False,
+                            "current_guardian_live_runtime_lock_active": True,
+                            "current_guardian_live_runtime_lock_command": "cycle-refresh",
+                            "guardian_inactive_evidence_status": "CURRENT_GUARDIAN_LOCK_BUSY",
+                            "loss_closes_repair_replay_triggered": 13,
+                            "repair_replay_contract": "TP_PROGRESS_PRODUCTION_GATE_REPLAY_V1",
+                        },
+                    ),
+                    _request(
+                        "RESTORE_POSITION_GUARDIAN_AFTER_PREFLIGHT",
+                        priority="P0",
+                        status=POSITION_GUARDIAN_LOCK_WAIT_STATUS,
+                        requires_explicit_operator_approval=False,
+                    ),
+                ],
+            )
+
+            summary = TraderRepairOrchestrator(
+                support_bot_path=support,
+                output_path=output,
+                report_path=report,
+            ).run()
+
+            self.assertEqual(summary.status, STATUS_BLOCKED)
+            payload = json.loads(output.read_text())
+            self.assertEqual(payload["approval_required_requests"], [])
+            self.assertEqual(payload["actionable_requests"], [])
+            tp_repair = next(
+                item
+                for item in payload["queue"]
+                if item["code"] == "REPAIR_TP_PROGRESS_PROFIT_CAPTURE_REPLAY"
+            )
+            self.assertEqual(tp_repair["automation_status"], "WAITING_FOR_LIVE_EVIDENCE_WINDOW")
+            self.assertIsNone(tp_repair["approval_dependency"])
+            self.assertIn(
+                "RESTORE_POSITION_GUARDIAN_AFTER_PREFLIGHT",
                 payload["queue_summary"]["waiting_request_codes"],
             )
 
