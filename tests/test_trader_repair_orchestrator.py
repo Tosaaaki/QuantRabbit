@@ -21,6 +21,7 @@ from quant_rabbit.trader_support_bot import (
     FRONTIER_MARGIN_CAPACITY_WAIT_STATUS,
     FRONTIER_QUOTE_FRESHNESS_WAIT_STATUS,
     OANDA_AUDIT_ONLY_LOCAL_TP_EDGE_REQUEST,
+    OANDA_AUDIT_ONLY_LOCAL_TP_PROOF_UNPROVED_STATUS,
     REPAIR_AUTOMATION_ALLOWED_ACTIONS,
     REPAIR_AUTOMATION_EXPLICIT_APPROVAL_ACTIONS,
     REPAIR_AUTOMATION_FORBIDDEN_DIRECT_ACTIONS,
@@ -1006,6 +1007,57 @@ class TraderRepairOrchestratorTest(unittest.TestCase):
                 "REVIEW_CLOSE_GATE_EVIDENCE_FAILURES",
                 payload["queue_summary"]["waiting_request_codes"],
             )
+
+    def test_oanda_audit_only_unproved_wait_is_not_codex_work(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            support = root / "support.json"
+            output = root / "orchestrator.json"
+            report = root / "orchestrator.md"
+            _write_support(
+                support,
+                [
+                    _request(
+                        OANDA_AUDIT_ONLY_LOCAL_TP_EDGE_REQUEST,
+                        priority="P1",
+                        status=OANDA_AUDIT_ONLY_LOCAL_TP_PROOF_UNPROVED_STATUS,
+                        evidence_summary={
+                            "history_complete": True,
+                            "historical_replay_can_clear_local_tp_proof": False,
+                            "read_only_replay_loop_exhausted": True,
+                            "history_coverage": {
+                                "status": "LOCAL_HISTORY_COMPLETE",
+                                "fetch_commands": [],
+                                "complete": True,
+                            },
+                        },
+                    ),
+                ],
+            )
+
+            summary = TraderRepairOrchestrator(
+                support_bot_path=support,
+                output_path=output,
+                report_path=report,
+                trader_request="oanda proof",
+            ).run()
+
+            self.assertEqual(summary.status, STATUS_BLOCKED)
+            payload = json.loads(output.read_text())
+            oanda = payload["queue"][0]
+            self.assertEqual(oanda["code"], OANDA_AUDIT_ONLY_LOCAL_TP_EDGE_REQUEST)
+            self.assertEqual(oanda["automation_status"], "WAITING_FOR_LIVE_EVIDENCE_WINDOW")
+            self.assertEqual(payload["selected_request"], {})
+            self.assertEqual(payload["actionable_requests"], [])
+            self.assertIn(
+                OANDA_AUDIT_ONLY_LOCAL_TP_EDGE_REQUEST,
+                payload["queue_summary"]["waiting_request_codes"],
+            )
+            self.assertEqual(payload["codex_work_order"]["status"], "NO_ACTIONABLE_CODEX_WORK")
+            loop_prompt = payload["loop_engineering_prompt"]
+            self.assertIn("evidence-window work", loop_prompt["current_hypothesis"])
+            self.assertIn("validate/mine/package", " ".join(loop_prompt["anti_loop_rules"]))
+            self.assertIn("waiting for evidence", " ".join(loop_prompt["next_loop"]))
 
     def test_bidask_forecast_sample_wait_is_not_codex_implementation_work(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

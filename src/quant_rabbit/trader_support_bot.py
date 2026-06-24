@@ -52,6 +52,9 @@ RANGE_ROTATION_METHOD = "RANGE_ROTATION"
 RANGE_ROTATION_COUNTERPART_MISSING = "RANGE_ROTATION_COUNTERPART_MISSING"
 OANDA_AUDIT_ONLY_LOCAL_TP_PROOF_REQUIRED = "OANDA_CAMPAIGN_AUDIT_ONLY_LOCAL_TP_PROOF_REQUIRED"
 OANDA_AUDIT_ONLY_LOCAL_TP_EDGE_REQUEST = "PROVE_OANDA_AUDIT_ONLY_LOCAL_TP_EDGE"
+OANDA_AUDIT_ONLY_LOCAL_TP_PROOF_UNPROVED_STATUS = (
+    "OANDA_AUDIT_ONLY_LOCAL_TP_PROOF_UNPROVED"
+)
 OANDA_AUDIT_ONLY_REPLAY_HISTORY_DAYS = 120
 OANDA_AUDIT_ONLY_REPLAY_HISTORY_MIN_COVERED_DAYS = 119.0
 DIRECTIONAL_INVERSION_COUNTERFACTUAL_REQUEST = "REPAIR_DIRECTIONAL_INVERSION_COUNTERFACTUAL"
@@ -2592,6 +2595,28 @@ def _oanda_audit_only_missing_history_coverage(pairs: list[str]) -> dict[str, An
     }
 
 
+def _oanda_history_coverage_is_complete(history_coverage: dict[str, Any]) -> bool:
+    fetch_commands = (
+        history_coverage.get("fetch_commands")
+        if isinstance(history_coverage.get("fetch_commands"), list)
+        else []
+    )
+    return bool(history_coverage.get("complete")) and not fetch_commands
+
+
+def _oanda_audit_only_candidate_has_clearable_replay(candidate: dict[str, Any]) -> bool:
+    return bool(
+        candidate.get("historical_replay_can_clear_local_tp_proof")
+        or candidate.get("oanda_replay_live_permission")
+    )
+
+
+def _oanda_audit_only_candidates_have_clearable_replay(
+    candidates: list[dict[str, Any]],
+) -> bool:
+    return any(_oanda_audit_only_candidate_has_clearable_replay(candidate) for candidate in candidates)
+
+
 def _operator_actions(
     *,
     status: str,
@@ -2794,16 +2819,19 @@ def _operator_actions(
             }
         )
     if entry.get("oanda_audit_only_local_tp_proof_required"):
+        candidates = _oanda_audit_only_local_tp_candidates(entry)
         pairs = sorted(
             {
                 str(item.get("pair"))
-                for item in entry["oanda_audit_only_local_tp_proof_required"]
+                for item in candidates
                 if item.get("pair")
             }
         )
         pair_arg = ",".join(pairs) if pairs else "EUR_USD"
         coverage = _usable_oanda_history_coverage(oanda_history_coverage, pairs)
         fetch_commands = coverage.get("fetch_commands") if isinstance(coverage, dict) else []
+        history_complete = _oanda_history_coverage_is_complete(coverage)
+        replay_can_clear = _oanda_audit_only_candidates_have_clearable_replay(candidates)
         if fetch_commands:
             for fetch_command in fetch_commands:
                 actions.append(
@@ -2817,58 +2845,73 @@ def _operator_actions(
                         ),
                     }
                 )
-        actions.append(
-            {
-                "code": "VALIDATE_OANDA_AUDIT_ONLY_BIDASK_REPLAY",
-                "command": (
-                    "PYTHONPATH=src python3 scripts/oanda_history_replay_validate.py "
-                    "--history-dir logs/replay/oanda_history --granularity S5"
-                ),
-                "requires_explicit_operator_approval": False,
-                "reason": (
-                    "score forecast_history against local OANDA S5 bid/ask candles with spread included; "
-                    "this proves whether the prediction side actually made money on historical candles"
-                ),
-            }
-        )
-        actions.append(
-            {
-                "code": "MINE_OANDA_AUDIT_ONLY_CAMPAIGN_FIREPOWER",
-                "command": (
-                    "PYTHONPATH=src python3 scripts/oanda_universal_rotation_miner.py "
-                    "--history-root logs/replay/oanda_history --history-glob '*_M5_BA_*.jsonl' "
-                    f"--pairs {pair_arg}"
-                ),
-                "requires_explicit_operator_approval": False,
-                "reason": (
-                    "rerun the multi-month M5 bid/ask candle miner for the audit-only pairs so "
-                    "improved range/failed-break/pullback vehicles are tested before reinsertion"
-                ),
-            }
-        )
-        actions.append(
-            {
-                "code": "PACKAGE_OANDA_AUDIT_ONLY_FIREPOWER_RULES_AFTER_REVIEW",
-                "command": "PYTHONPATH=src python3 scripts/package_oanda_universal_rotation_rules.py",
-                "requires_explicit_operator_approval": False,
-                "reason": (
-                    "packages mined OANDA replay rows into the tracked runtime rule artifact; "
-                    "Codex may run this after reviewing mining evidence, then test, commit, and sync "
-                    "before live runtime uses the new evidence"
-                ),
-            }
-        )
-        actions.append(
-            {
-                "code": "RERUN_INTENTS_AFTER_OANDA_AUDIT_ONLY_REPLAY",
-                "command": "PYTHONPATH=src python3 -m quant_rabbit.cli cycle-refresh --daily-risk-pct 10",
-                "requires_explicit_operator_approval": False,
-                "reason": (
-                    "rerun the full evidence/intents/acceptance loop after replay mining so improved "
-                    "evidence is revalidated instead of leaving the old blocked packet in place"
-                ),
-            }
-        )
+        if history_complete and not replay_can_clear:
+            actions.append(
+                {
+                    "code": "WAIT_FOR_OANDA_AUDIT_ONLY_LOCAL_TP_PROOF",
+                    "command": "PYTHONPATH=src python3 -m quant_rabbit.cli trader-support-bot",
+                    "requires_explicit_operator_approval": False,
+                    "reason": (
+                        "local OANDA S5/M5 history is already complete and the latest replay did not "
+                        "clear local TP proof; wait for new TAKE_PROFIT_ORDER receipts, new forecast/"
+                        "candle evidence, or live-grade HARVEST promotion before rerunning the replay "
+                        "mining/package loop"
+                    ),
+                }
+            )
+        else:
+            actions.append(
+                {
+                    "code": "VALIDATE_OANDA_AUDIT_ONLY_BIDASK_REPLAY",
+                    "command": (
+                        "PYTHONPATH=src python3 scripts/oanda_history_replay_validate.py "
+                        "--history-dir logs/replay/oanda_history --granularity S5"
+                    ),
+                    "requires_explicit_operator_approval": False,
+                    "reason": (
+                        "score forecast_history against local OANDA S5 bid/ask candles with spread included; "
+                        "this proves whether the prediction side actually made money on historical candles"
+                    ),
+                }
+            )
+            actions.append(
+                {
+                    "code": "MINE_OANDA_AUDIT_ONLY_CAMPAIGN_FIREPOWER",
+                    "command": (
+                        "PYTHONPATH=src python3 scripts/oanda_universal_rotation_miner.py "
+                        "--history-root logs/replay/oanda_history --history-glob '*_M5_BA_*.jsonl' "
+                        f"--pairs {pair_arg}"
+                    ),
+                    "requires_explicit_operator_approval": False,
+                    "reason": (
+                        "rerun the multi-month M5 bid/ask candle miner for the audit-only pairs so "
+                        "improved range/failed-break/pullback vehicles are tested before reinsertion"
+                    ),
+                }
+            )
+            actions.append(
+                {
+                    "code": "PACKAGE_OANDA_AUDIT_ONLY_FIREPOWER_RULES_AFTER_REVIEW",
+                    "command": "PYTHONPATH=src python3 scripts/package_oanda_universal_rotation_rules.py",
+                    "requires_explicit_operator_approval": False,
+                    "reason": (
+                        "packages mined OANDA replay rows into the tracked runtime rule artifact; "
+                        "Codex may run this after reviewing mining evidence, then test, commit, and sync "
+                        "before live runtime uses the new evidence"
+                    ),
+                }
+            )
+            actions.append(
+                {
+                    "code": "RERUN_INTENTS_AFTER_OANDA_AUDIT_ONLY_REPLAY",
+                    "command": "PYTHONPATH=src python3 -m quant_rabbit.cli cycle-refresh --daily-risk-pct 10",
+                    "requires_explicit_operator_approval": False,
+                    "reason": (
+                        "rerun the full evidence/intents/acceptance loop after replay mining so improved "
+                        "evidence is revalidated instead of leaving the old blocked packet in place"
+                    ),
+                }
+            )
     target_firepower = acceptance.get("target_firepower") if isinstance(acceptance.get("target_firepower"), dict) else {}
     if target_firepower.get("minimum_5pct_estimated_reachable"):
         actions.append(
@@ -3480,23 +3523,65 @@ def _build_repair_requests(
             if isinstance(acceptance.get("target_firepower"), dict)
             else {}
         )
+        history_complete = _oanda_history_coverage_is_complete(history_coverage)
+        replay_can_clear = _oanda_audit_only_candidates_have_clearable_replay(oanda_local_tp_candidates)
+        replay_loop_exhausted = history_complete and not replay_can_clear
+        request_status = (
+            OANDA_AUDIT_ONLY_LOCAL_TP_PROOF_UNPROVED_STATUS
+            if replay_loop_exhausted
+            else "READY_FOR_READ_ONLY_EVIDENCE_COLLECTION"
+        )
+        request_why_now = (
+            "The missing OANDA candle-truth collection has already been completed, and the "
+            "latest replay still cannot clear local TP proof for these audit-only candidates. "
+            "Repeating validate/mine/package with the same inputs is a loop bug; wait for new "
+            "TAKE_PROFIT_ORDER receipts, new forecast/candle evidence, or exact HARVEST vehicle "
+            "promotion before making this Codex-actionable again."
+            if replay_loop_exhausted
+            else (
+                "This turns the loop from repeating forecast blockers into a concrete precision "
+                "improvement path: fetch spread-included bid/ask truth, validate forecast_history, "
+                "mine the exact pair/side/method vehicles, package reviewed rules, then require "
+                "either local TAKE_PROFIT_ORDER proof or current-risk / normal-cap 5% firepower "
+                "promotion before live permission."
+            )
+        )
+        request_verification_commands = (
+            [
+                "PYTHONPATH=src python3 -m quant_rabbit.cli profitability-acceptance",
+                "PYTHONPATH=src python3 -m quant_rabbit.cli trader-support-bot",
+                "PYTHONPATH=src python3 -m quant_rabbit.cli trader-repair-orchestrator --trader-request forecast",
+            ]
+            if replay_loop_exhausted
+            else [
+                *fetch_commands,
+                (
+                    "PYTHONPATH=src python3 scripts/oanda_history_replay_validate.py "
+                    "--history-dir logs/replay/oanda_history --granularity S5"
+                ),
+                (
+                    "PYTHONPATH=src python3 scripts/oanda_universal_rotation_miner.py "
+                    "--history-root logs/replay/oanda_history --history-glob '*_M5_BA_*.jsonl' "
+                    f"--pairs {pair_arg}"
+                ),
+                "PYTHONPATH=src python3 scripts/package_oanda_universal_rotation_rules.py",
+                "PYTHONPATH=src python3 -m quant_rabbit.cli profitability-acceptance",
+                "PYTHONPATH=src python3 -m quant_rabbit.cli generate-intents --reuse-market-artifacts",
+                "PYTHONPATH=src python3 -m quant_rabbit.cli trader-support-bot",
+                "PYTHONPATH=src python3 -m quant_rabbit.cli trader-repair-orchestrator --trader-request forecast",
+            ]
+        )
         requests.append(
             _repair_request(
                 code=OANDA_AUDIT_ONLY_LOCAL_TP_EDGE_REQUEST,
                 priority="P1",
-                status="READY_FOR_READ_ONLY_EVIDENCE_COLLECTION",
+                status=request_status,
                 source_findings=list(dict.fromkeys(source_findings)),
                 problem=(
                     "OANDA audit-only forecast/rotation candidates may help the 5% target, but they "
                     "are not local TP-proven or live-grade replay edges yet."
                 ),
-                why_now=(
-                    "This turns the loop from repeating forecast blockers into a concrete precision "
-                    "improvement path: fetch spread-included bid/ask truth, validate forecast_history, "
-                    "mine the exact pair/side/method vehicles, package reviewed rules, then require "
-                    "either local TAKE_PROFIT_ORDER proof or current-risk / normal-cap 5% firepower "
-                    "promotion before live permission."
-                ),
+                why_now=request_why_now,
                 evidence_summary={
                     "candidate_count": len(oanda_local_tp_candidates),
                     "pairs": pairs,
@@ -3508,7 +3593,16 @@ def _build_repair_requests(
                     "target_firepower": target_firepower,
                     "history_coverage": history_coverage,
                     "local_tp_proof_required": True,
-                    "historical_replay_can_clear_local_tp_proof": False,
+                    "history_complete": history_complete,
+                    "historical_replay_can_clear_local_tp_proof": replay_can_clear,
+                    "read_only_replay_loop_exhausted": replay_loop_exhausted,
+                    "next_evidence_required": (
+                        "new local TAKE_PROFIT_ORDER receipts, new forecast/candle evidence, "
+                        "or exact OANDA HARVEST vehicle promotion to current-risk / normal-cap "
+                        "5% live-grade firepower"
+                        if replay_loop_exhausted
+                        else None
+                    ),
                 },
                 clearance_conditions=[
                     (
@@ -3519,28 +3613,19 @@ def _build_repair_requests(
                         "that live-grade test remains read-only."
                     ),
                     (
-                        "After packaging reviewed replay rules, rerun profitability-acceptance, "
-                        "generate-intents, trader-support-bot, and trader-repair-orchestrator; "
-                        "the old forecast blocker packet must not be reused."
+                        "Do not rerun the same OANDA validate/mine/package loop while local S5/M5 "
+                        "history is complete and read-only replay cannot clear the proof; wait for "
+                        "new local TP receipts, new forecast/candle evidence, or an exact HARVEST "
+                        "vehicle promotion before reclassifying this request as Codex-actionable."
+                        if replay_loop_exhausted
+                        else (
+                            "After packaging reviewed replay rules, rerun profitability-acceptance, "
+                            "generate-intents, trader-support-bot, and trader-repair-orchestrator; "
+                            "the old forecast blocker packet must not be reused."
+                        )
                     ),
                 ],
-                verification_commands=[
-                    *fetch_commands,
-                    (
-                        "PYTHONPATH=src python3 scripts/oanda_history_replay_validate.py "
-                        "--history-dir logs/replay/oanda_history --granularity S5"
-                    ),
-                    (
-                        "PYTHONPATH=src python3 scripts/oanda_universal_rotation_miner.py "
-                        "--history-root logs/replay/oanda_history --history-glob '*_M5_BA_*.jsonl' "
-                        f"--pairs {pair_arg}"
-                    ),
-                    "PYTHONPATH=src python3 scripts/package_oanda_universal_rotation_rules.py",
-                    "PYTHONPATH=src python3 -m quant_rabbit.cli profitability-acceptance",
-                    "PYTHONPATH=src python3 -m quant_rabbit.cli generate-intents --reuse-market-artifacts",
-                    "PYTHONPATH=src python3 -m quant_rabbit.cli trader-support-bot",
-                    "PYTHONPATH=src python3 -m quant_rabbit.cli trader-repair-orchestrator --trader-request forecast",
-                ],
+                verification_commands=request_verification_commands,
                 suggested_files=[
                     "scripts/oanda_history_fetch.py",
                     "scripts/oanda_history_replay_validate.py",
@@ -4155,6 +4240,10 @@ def _render_report(payload: dict[str, Any]) -> str:
             if isinstance(payload.get("oanda_history_coverage"), dict)
             else {}
         )
+        history_complete = _oanda_history_coverage_is_complete(history_coverage)
+        replay_can_clear = _oanda_audit_only_candidates_have_clearable_replay(
+            entry["oanda_audit_only_local_tp_proof_required"]
+        )
         missing_history = history_coverage.get("missing_pairs_by_granularity")
         if isinstance(missing_history, dict):
             missing_bits = [
@@ -4165,6 +4254,12 @@ def _render_report(payload: dict[str, Any]) -> str:
             lines.append(
                 f"- Local OANDA history coverage: `{history_coverage.get('status')}`; missing "
                 f"{'; '.join(missing_bits) or 'none'}."
+            )
+        if history_complete and not replay_can_clear:
+            lines.append(
+                "- Local OANDA history is complete and the current replay still cannot clear "
+                "local TP proof. Do not rerun validate/mine/package until new local TP receipts, "
+                "new forecast/candle evidence, or exact HARVEST live-grade promotion changes the inputs."
             )
         lines.append(
             "- These candidates still lack live-grade replay or local TP proof. Escape condition: "

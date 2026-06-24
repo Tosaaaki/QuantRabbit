@@ -21,6 +21,7 @@ from quant_rabbit.trader_support_bot import (
     FORECAST_FRONTIER_EVIDENCE_WAIT_STATUS,
     FRONTIER_QUOTE_FRESHNESS_WAIT_STATUS,
     OANDA_AUDIT_ONLY_LOCAL_TP_EDGE_REQUEST,
+    OANDA_AUDIT_ONLY_LOCAL_TP_PROOF_UNPROVED_STATUS,
     STATUS_BLOCKED,
     STATUS_READY,
     TP_PROGRESS_GUARDIAN_WAIT_STATUS,
@@ -1983,14 +1984,33 @@ class TraderSupportBotTest(unittest.TestCase):
             )
             self.assertEqual(covered_payload["oanda_history_coverage"]["fetch_commands"], [])
             self.assertNotIn("MINE_LOCAL_TP_PROOF_FOR_OANDA_AUDIT_ONLY", covered_action_codes)
+            self.assertNotIn("VALIDATE_OANDA_AUDIT_ONLY_BIDASK_REPLAY", covered_action_codes)
+            self.assertNotIn("MINE_OANDA_AUDIT_ONLY_CAMPAIGN_FIREPOWER", covered_action_codes)
+            self.assertNotIn("PACKAGE_OANDA_AUDIT_ONLY_FIREPOWER_RULES_AFTER_REVIEW", covered_action_codes)
+            self.assertNotIn("RERUN_INTENTS_AFTER_OANDA_AUDIT_ONLY_REPLAY", covered_action_codes)
+            self.assertIn("WAIT_FOR_OANDA_AUDIT_ONLY_LOCAL_TP_PROOF", covered_action_codes)
+            self.assertEqual(
+                covered_oanda_request["status"],
+                OANDA_AUDIT_ONLY_LOCAL_TP_PROOF_UNPROVED_STATUS,
+            )
+            self.assertTrue(
+                covered_oanda_request["evidence_summary"]["read_only_replay_loop_exhausted"]
+            )
+            self.assertTrue(covered_oanda_request["evidence_summary"]["history_complete"])
+            self.assertFalse(
+                covered_oanda_request["evidence_summary"]["historical_replay_can_clear_local_tp_proof"]
+            )
             self.assertNotIn("oanda_history_fetch.py", covered_commands)
-            self.assertIn("oanda_history_replay_validate.py", covered_commands)
-            self.assertIn("oanda_universal_rotation_miner.py", covered_commands)
+            self.assertNotIn("oanda_history_replay_validate.py", covered_commands)
+            self.assertNotIn("oanda_universal_rotation_miner.py", covered_commands)
+            self.assertNotIn("package_oanda_universal_rotation_rules.py", covered_commands)
             self.assertEqual(
                 covered_oanda_request["evidence_summary"]["history_coverage"]["covered_pairs_by_granularity"],
                 {"S5": ["GBP_JPY"], "M5": ["GBP_JPY"]},
             )
-            self.assertIn("LOCAL_HISTORY_COMPLETE", files["report"].read_text())
+            covered_report = files["report"].read_text()
+            self.assertIn("LOCAL_HISTORY_COMPLETE", covered_report)
+            self.assertIn("Do not rerun validate/mine/package", covered_report)
 
     def test_opposite_position_counterfactual_that_clears_5pct_becomes_p0_repair_request(self) -> None:
         now = datetime(2026, 6, 24, 10, 22, tzinfo=timezone.utc)
