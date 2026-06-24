@@ -65,8 +65,8 @@ QR_LIVE_ENABLED=1 ./scripts/run-autotrade-live.sh \
   completion even when the action is WAIT or the receipt is rejected.
   `run-autotrade-live.sh` calls `cycle-sidecars`, which refreshes broker truth
   first so newly filled or existing trades are visible, then runs TP/profit
-  protection and the remaining sidecars in one process. Do not run the sidecar
-  steps individually.
+  protection, reprices `order_intents`, and runs the remaining support sidecars
+  in one process. Do not run the sidecar steps individually.
 
 ## Report
 

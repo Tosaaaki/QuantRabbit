@@ -290,7 +290,8 @@ QR_LIVE_ENABLED=1 ./scripts/run-autotrade-live.sh \
 # broker/order sidecar list; it calls the canonical
 # `post-autotrade-failure-sidecars` command. That command runs the
 # projection/position/audit repair subset, including `position-management`
-# followed by `position-execution` when management succeeds, then
+# followed by `position-execution` when management succeeds, then reprices
+# `order_intents` with `generate-intents --reuse-market-artifacts` before
 # `profit-capture-bot` → `memory-health` → `self-improvement-audit` →
 # `profitability-acceptance` → `trader-support-bot` →
 # `trader-repair-orchestrator`. It preserves the original
@@ -303,7 +304,8 @@ QR_LIVE_ENABLED=1 ./scripts/run-autotrade-live.sh \
 #   broker-snapshot → tp-rebalance → execution-ledger-sync → broker-snapshot
 #   → profit-partial-close → verify-projections → position-thesis-check
 #   → thesis-evolution-check → forecast-persistence-check
-#   → position-management → position-execution → profit-capture-bot → memory-health
+#   → position-management → position-execution → generate-intents --reuse-market-artifacts
+#   → profit-capture-bot → memory-health
 #   → self-improvement-audit → profitability-acceptance → trader-support-bot
 #   → trader-repair-orchestrator
 # and prints one compact digest.

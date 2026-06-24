@@ -5396,12 +5396,17 @@ class ConsolidatedCycleCommandTest(unittest.TestCase):
         argv = [tuple(step["argv"]) for step in steps]
 
         self.assertIn(("position-execution", "--send", "--confirm-live"), argv)
+        self.assertIn(("generate-intents", "--snapshot", "data/broker_snapshot.json", "--reuse-market-artifacts"), argv)
         self.assertIn(("profit-capture-bot",), argv)
         self.assertIn(("profitability-acceptance",), argv)
         self.assertIn(("trader-support-bot",), argv)
         self.assertIn(("trader-repair-orchestrator",), argv)
         self.assertLess(
             argv.index(("position-execution", "--send", "--confirm-live")),
+            argv.index(("generate-intents", "--snapshot", "data/broker_snapshot.json", "--reuse-market-artifacts")),
+        )
+        self.assertLess(
+            argv.index(("generate-intents", "--snapshot", "data/broker_snapshot.json", "--reuse-market-artifacts")),
             argv.index(("profit-capture-bot",)),
         )
         self.assertLess(argv.index(("profit-capture-bot",)), argv.index(("memory-health",)))
@@ -5642,7 +5647,9 @@ class ConsolidatedCycleCommandTest(unittest.TestCase):
         self.assertNotIn("position-execution --send --confirm-live", sidecars)
         self.assertLess(sidecars.index("forecast-persistence-check"), sidecars.index("position-management"))
         self.assertLess(sidecars.index("position-management"), sidecars.index("position-execution"))
-        self.assertLess(sidecars.index("position-execution"), sidecars.index("profit-capture-bot"))
+        self.assertIn(intent_step, sidecars)
+        self.assertLess(sidecars.index("position-execution"), sidecars.index(intent_step))
+        self.assertLess(sidecars.index(intent_step), sidecars.index("profit-capture-bot"))
         self.assertLess(sidecars.index("profit-capture-bot"), sidecars.index("memory-health"))
         self.assertLess(sidecars.index("memory-health"), sidecars.index("self-improvement-audit"))
         self.assertLess(sidecars.index("self-improvement-audit"), sidecars.index("profitability-acceptance"))
@@ -5650,6 +5657,7 @@ class ConsolidatedCycleCommandTest(unittest.TestCase):
         self.assertLess(sidecars.index("trader-support-bot"), sidecars.index("trader-repair-orchestrator"))
         self.assertEqual(sidecars[-1], "trader-repair-orchestrator")
         sidecars_by_step = {" ".join(s["argv"]): s for s in sidecar_specs}
+        self.assertTrue(sidecars_by_step[intent_step]["required"])
         self.assertTrue(sidecars_by_step["position-management"]["required"])
         self.assertFalse(sidecars_by_step["position-execution"]["required"])
         self.assertTrue(sidecars_by_step["profit-capture-bot"]["required"])
@@ -5697,9 +5705,12 @@ class ConsolidatedCycleCommandTest(unittest.TestCase):
         direct_sidecars = [" ".join(s["argv"]) for s in _direct_autotrade_audit_sidecar_steps()]
         direct_sidecar_specs = {" ".join(s["argv"]): s for s in _direct_autotrade_audit_sidecar_steps()}
         self.assertEqual(direct_sidecars[0], "verify-projections")
+        intent_step = "generate-intents --snapshot data/broker_snapshot.json --reuse-market-artifacts"
+        self.assertIn(intent_step, direct_sidecars)
         self.assertLess(direct_sidecars.index("verify-projections"), direct_sidecars.index("memory-health"))
         self.assertLess(direct_sidecars.index("verify-projections"), direct_sidecars.index("self-improvement-audit"))
-        self.assertLess(direct_sidecars.index("position-management"), direct_sidecars.index("profit-capture-bot"))
+        self.assertLess(direct_sidecars.index("position-management"), direct_sidecars.index(intent_step))
+        self.assertLess(direct_sidecars.index(intent_step), direct_sidecars.index("profit-capture-bot"))
         self.assertLess(direct_sidecars.index("profit-capture-bot"), direct_sidecars.index("memory-health"))
         self.assertLess(direct_sidecars.index("self-improvement-audit"), direct_sidecars.index("profitability-acceptance"))
         self.assertLess(direct_sidecars.index("profitability-acceptance"), direct_sidecars.index("trader-support-bot"))
@@ -5707,6 +5718,7 @@ class ConsolidatedCycleCommandTest(unittest.TestCase):
         self.assertEqual(direct_sidecars[-1], "trader-repair-orchestrator")
         self.assertTrue(direct_sidecar_specs["profitability-acceptance"]["required"])
         self.assertEqual(direct_sidecar_specs["profitability-acceptance"]["ok_rcs"], [0, 2])
+        self.assertTrue(direct_sidecar_specs[intent_step]["required"])
         self.assertTrue(direct_sidecar_specs["profit-capture-bot"]["required"])
         self.assertEqual(direct_sidecar_specs["profit-capture-bot"]["ok_rcs"], [0, 2])
         self.assertTrue(direct_sidecar_specs["trader-support-bot"]["required"])

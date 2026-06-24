@@ -2017,6 +2017,10 @@ DIRECT_AUTOTRADE_AUDIT_SIDECARS_DIGEST = ROOT / "data" / "direct_autotrade_audit
 POST_AUTOTRADE_FAILURE_SIDECARS_DIGEST = ROOT / "data" / "post_autotrade_failure_sidecars_digest.json"
 
 
+def _reuse_market_artifact_intent_args() -> list[str]:
+    return ["generate-intents", "--snapshot", "data/broker_snapshot.json", "--reuse-market-artifacts"]
+
+
 def _cycle_refresh_steps(daily_risk_pct: str) -> list[dict[str, Any]]:
     """Step list mirroring docs/SKILL_trader.md '2. Refresh evidence'.
 
@@ -2084,10 +2088,7 @@ def _cycle_refresh_steps(daily_risk_pct: str) -> list[dict[str, Any]]:
             "required": False,
             "timeout_seconds": DEFAULT_EXECUTION_TIMING_AUDIT_CYCLE_TIMEOUT_SECONDS,
         },
-        {
-            "argv": ["generate-intents", "--snapshot", "data/broker_snapshot.json", "--reuse-market-artifacts"],
-            "required": True,
-        },
+        {"argv": _reuse_market_artifact_intent_args(), "required": True},
         {"argv": ["optimize-coverage"], "required": False},
         {"argv": ["ai-attack-advice"], "required": False},
         {"argv": ["learning-audit"], "required": False},
@@ -2139,6 +2140,10 @@ def _cycle_sidecar_steps() -> list[dict[str, Any]]:
         # live lock. Run the gateway here as the full-cycle fallback; live sends
         # still require QR_LIVE_ENABLED plus --send --confirm-live.
         {"argv": position_execution, "required": False},
+        # Post-gateway sidecars refresh broker truth after cycle-refresh priced
+        # entries. Reprice intents before acceptance/support so the loop does
+        # not rank stale LIVE_READY/frontier blockers as repair work.
+        {"argv": _reuse_market_artifact_intent_args(), "required": True},
         {"argv": ["profit-capture-bot"], "required": True, "ok_rcs": [0, 2]},
         {"argv": ["memory-health"], "required": True},
         {"argv": ["self-improvement-audit"], "required": False, "ok_rcs": [0, 2]},
@@ -2161,6 +2166,7 @@ def _post_autotrade_failure_sidecar_steps() -> list[dict[str, Any]]:
         {"argv": ["forecast-persistence-check"], "required": False},
         {"argv": ["position-management"], "required": True},
         {"argv": position_execution, "required": False},
+        {"argv": _reuse_market_artifact_intent_args(), "required": True},
         {"argv": ["profit-capture-bot"], "required": True, "ok_rcs": [0, 2]},
         {"argv": ["memory-health"], "required": True},
         {"argv": ["self-improvement-audit"], "required": False, "ok_rcs": [0, 2]},
@@ -2185,6 +2191,7 @@ def _direct_autotrade_audit_sidecar_steps() -> list[dict[str, Any]]:
         {"argv": ["thesis-evolution-check"], "required": False},
         {"argv": ["forecast-persistence-check"], "required": False},
         {"argv": ["position-management"], "required": True},
+        {"argv": _reuse_market_artifact_intent_args(), "required": True},
         {"argv": ["profit-capture-bot"], "required": True, "ok_rcs": [0, 2]},
         {"argv": ["memory-health"], "required": True},
         {"argv": ["self-improvement-audit"], "required": False, "ok_rcs": [0, 2]},
