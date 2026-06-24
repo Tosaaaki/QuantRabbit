@@ -1985,11 +1985,101 @@ class TraderSupportBotTest(unittest.TestCase):
             self.assertIn("Repair basket send allowed", report)
             self.assertIn("Repair LIVE_READY lanes", report)
 
+    def test_tp_harvest_repair_basket_allows_profit_capture_p0_it_repairs(self) -> None:
+        now = datetime(2026, 6, 22, 12, 15, tzinfo=timezone.utc)
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _write_fixture(root, now=now, blocked=True)
+            _write_json(
+                files["self_improvement"],
+                {
+                    "generated_at_utc": now.isoformat(),
+                    "findings": [
+                        {
+                            "priority": "P0",
+                            "code": "LOSS_CLOSE_PROFIT_CAPTURE_MISSED",
+                            "message": "TP-progress profit capture is still unproved",
+                        }
+                    ],
+                },
+            )
+            _write_json(
+                files["intents"],
+                {
+                    "generated_at_utc": now.isoformat(),
+                    "results": [
+                        {
+                            "lane_id": "range_trader:GBP_JPY:SHORT:RANGE_ROTATION",
+                            "status": "LIVE_READY",
+                            "live_blocker_codes": [],
+                            "intent": {
+                                "pair": "GBP_JPY",
+                                "side": "SHORT",
+                                "order_type": "LIMIT",
+                                "market_context": {"method": "RANGE_ROTATION"},
+                                "metadata": {
+                                    "self_improvement_p0_repair_live_ready": True,
+                                    "self_improvement_p0_repair_mode": "TP_HARVEST_REPAIR",
+                                    "positive_rotation_mode": "TP_PROVEN_HARVEST",
+                                    "capture_take_profit_trades": 20,
+                                    "capture_take_profit_wins": 20,
+                                    "capture_take_profit_losses": 0,
+                                    "capture_take_profit_expectancy_jpy": 591.5,
+                                },
+                            },
+                        }
+                    ],
+                },
+            )
+            env = _guardian_env(root, active="1")
+            with mock.patch.dict(os.environ, env, clear=False):
+                summary = TraderSupportBot(
+                    broker_snapshot_path=files["broker"],
+                    order_intents_path=files["intents"],
+                    target_state_path=files["target"],
+                    position_management_path=files["position_management"],
+                    position_guardian_management_path=files["guardian_management"],
+                    position_guardian_execution_path=files["guardian_execution"],
+                    position_guardian_heartbeat_path=files["guardian_heartbeat"],
+                    self_improvement_audit_path=files["self_improvement"],
+                    profitability_acceptance_path=files["profitability"],
+                    execution_timing_audit_path=files["timing"],
+                    profit_capture_bot_path=files["profit_capture_bot"],
+                    output_path=files["output"],
+                    report_path=files["report"],
+                    now_utc=now,
+                ).run()
+
+            payload = json.loads(files["output"].read_text())
+            self.assertEqual(summary.status, STATUS_BLOCKED)
+            self.assertFalse(payload["metrics"]["send_fresh_entries_allowed"])
+            self.assertTrue(payload["metrics"]["repair_basket_send_allowed"])
+            self.assertEqual(payload["metrics"]["repair_basket_self_improvement_blocker_codes"], [])
+            self.assertEqual(payload["metrics"]["repair_live_ready_lanes"], 1)
+
     def test_repair_basket_blocked_by_non_exempt_self_improvement_p0(self) -> None:
         now = datetime(2026, 6, 22, 12, 15, tzinfo=timezone.utc)
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             files = _write_fixture(root, now=now, blocked=True)
+            _write_json(
+                files["self_improvement"],
+                {
+                    "generated_at_utc": now.isoformat(),
+                    "findings": [
+                        {
+                            "priority": "P0",
+                            "code": "LOSS_CLOSE_PROFIT_CAPTURE_MISSED",
+                            "message": "TP-progress profit capture is still unproved",
+                        },
+                        {
+                            "priority": "P0",
+                            "code": "UNVERIFIED_LOSS_SIDE_MARKET_CLOSE_RECONCILED",
+                            "message": "a loss-side close remains unverified",
+                        },
+                    ],
+                },
+            )
             _write_json(
                 files["intents"],
                 {
@@ -2043,10 +2133,7 @@ class TraderSupportBotTest(unittest.TestCase):
             self.assertFalse(payload["metrics"]["repair_basket_send_allowed"])
             self.assertEqual(
                 payload["metrics"]["repair_basket_self_improvement_blocker_codes"],
-                [
-                    "LOSS_CLOSE_PROFIT_CAPTURE_MISSED",
-                    "POSITION_GUARDIAN_INACTIVE_FOR_PROFIT_CAPTURE",
-                ],
+                ["UNVERIFIED_LOSS_SIDE_MARKET_CLOSE_RECONCILED"],
             )
             self.assertEqual(payload["metrics"]["repair_live_ready_lanes"], 1)
 

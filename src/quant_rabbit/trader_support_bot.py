@@ -49,6 +49,7 @@ GUARDIAN_BLOCKER = "POSITION_GUARDIAN_INACTIVE_FOR_PROFIT_CAPTURE"
 PROFIT_CAPTURE_MISS = "LOSS_CLOSE_PROFIT_CAPTURE_MISSED"
 PERSISTENT_DISCIPLINE = "PERSISTENT_PROFITABILITY_DISCIPLINE_BLOCKED"
 REPAIR_BASKET_SELF_IMPROVEMENT_EXEMPT_P0_CODES = frozenset({PERSISTENT_DISCIPLINE})
+TP_HARVEST_REPAIR_MODE = "TP_HARVEST_REPAIR"
 RANGE_FORECAST_ROTATION_BLOCKER = "RANGE_FORECAST_REQUIRES_RANGE_ROTATION"
 RANGE_ROTATION_METHOD = "RANGE_ROTATION"
 RANGE_ROTATION_COUNTERPART_MISSING = "RANGE_ROTATION_COUNTERPART_MISSING"
@@ -332,7 +333,8 @@ class TraderSupportBot:
             and (not guardian["required"] or bool(guardian["active"]))
         )
         repair_basket_self_improvement_blockers = _repair_basket_self_improvement_blockers(
-            p0_findings
+            p0_findings,
+            entry["repair_live_ready"],
         )
         repair_basket_send_allowed = (
             bool(entry["repair_live_ready"])
@@ -1250,7 +1252,11 @@ def _p0_findings(payload: dict[str, Any]) -> list[dict[str, Any]]:
     ]
 
 
-def _repair_basket_self_improvement_blockers(p0_findings: list[dict[str, Any]]) -> list[str]:
+def _repair_basket_self_improvement_blockers(
+    p0_findings: list[dict[str, Any]],
+    repair_live_ready: list[dict[str, Any]] | None = None,
+) -> list[str]:
+    profit_capture_repair_ready = _has_tp_harvest_repair_basket(repair_live_ready)
     blockers: list[str] = []
     for item in p0_findings:
         if not isinstance(item, dict):
@@ -1258,8 +1264,21 @@ def _repair_basket_self_improvement_blockers(p0_findings: list[dict[str, Any]]) 
         code = str(item.get("code") or "SELF_IMPROVEMENT_P0").strip()
         if not code or code in REPAIR_BASKET_SELF_IMPROVEMENT_EXEMPT_P0_CODES:
             continue
+        if code == PROFIT_CAPTURE_MISS and profit_capture_repair_ready:
+            continue
         blockers.append(code)
     return list(dict.fromkeys(blockers))
+
+
+def _has_tp_harvest_repair_basket(repair_live_ready: list[dict[str, Any]] | None) -> bool:
+    if not repair_live_ready:
+        return False
+    return any(
+        isinstance(item, dict)
+        and item.get("status") == "LIVE_READY"
+        and item.get("repair_mode") == TP_HARVEST_REPAIR_MODE
+        for item in repair_live_ready
+    )
 
 
 def _profit_capture_summary(self_improvement: dict[str, Any], timing: dict[str, Any]) -> dict[str, Any]:
