@@ -12,6 +12,7 @@ from unittest import mock
 
 from quant_rabbit.cli import main
 from quant_rabbit.execution_timing_contracts import (
+    MONTH_SCALE_EXECUTION_TIMING_AUDIT_COMMAND,
     TP_PROGRESS_REPAIR_REPLAY_CONTRACT,
     TP_PROGRESS_REPAIR_REPLAY_FIELD,
 )
@@ -299,6 +300,13 @@ class TraderSupportBotTest(unittest.TestCase):
             self.assertIn("WORK_GLOBAL_UNLOCK_FRONTIER", action_codes)
             self.assertIn("WORK_REPAIR_FRONTIER_REMAINING_BLOCKERS", action_codes)
             self.assertIn("WORK_TARGET_FIREPOWER_BLOCKERS", action_codes)
+            actions_by_code = {item["code"]: item["command"] for item in payload["operator_actions"]}
+            for action_code in (
+                "RECHECK_TIMING_CAPTURE_MISSES",
+                "RECHECK_LOSS_CLOSE_LEAK_WINDOW",
+                "VERIFY_TP_PROGRESS_REPLAY_REPAIR",
+            ):
+                self.assertEqual(actions_by_code[action_code], MONTH_SCALE_EXECUTION_TIMING_AUDIT_COMMAND)
             self.assertTrue(
                 any(item["code"] == "LOAD_POSITION_GUARDIAN_ONLY_IF_APPROVED" and item["requires_explicit_operator_approval"]
                     for item in payload["operator_actions"])

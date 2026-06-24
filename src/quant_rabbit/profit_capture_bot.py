@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from quant_rabbit.execution_timing_contracts import (
+    MONTH_SCALE_EXECUTION_TIMING_AUDIT_COMMAND,
     TP_PROGRESS_REPAIR_REPLAY_CONTRACT,
     repair_replay_contract_from_payload,
 )
@@ -585,7 +586,7 @@ def _operator_actions(
         actions.append(
             {
                 "code": "REFRESH_EXECUTION_TIMING_AUDIT",
-                "command": "PYTHONPATH=src python3 -m quant_rabbit.cli execution-timing-audit --max-events 80",
+                "command": MONTH_SCALE_EXECUTION_TIMING_AUDIT_COMMAND,
                 "requires_explicit_operator_approval": False,
                 "reason": "confirm historical TP-progress misses are shrinking after repairs",
             }

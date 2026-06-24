@@ -10,6 +10,7 @@ from pathlib import Path
 
 from quant_rabbit.cli import main
 from quant_rabbit.execution_timing_contracts import (
+    MONTH_SCALE_EXECUTION_TIMING_AUDIT_COMMAND,
     TP_PROGRESS_REPAIR_REPLAY_CONTRACT,
     TP_PROGRESS_REPAIR_REPLAY_FIELD,
 )
@@ -50,6 +51,11 @@ class ProfitCaptureBotTest(unittest.TestCase):
             self.assertEqual(payload["history"]["top_misses"][0]["counterfactual_jpy"], 105.84)
             self.assertEqual(payload["history"]["top_misses"][0]["counterfactual_delta_jpy"], 446.04)
             self.assertEqual(payload["history"]["top_repair_replay_triggers"][0]["repair_counterfactual_jpy"], 126.0)
+            actions_by_code = {item["code"]: item["command"] for item in payload["operator_actions"]}
+            self.assertEqual(
+                actions_by_code["REFRESH_EXECUTION_TIMING_AUDIT"],
+                MONTH_SCALE_EXECUTION_TIMING_AUDIT_COMMAND,
+            )
             self.assertIn("Profit Capture Bot Report", files["report"].read_text())
 
     def test_watch_reports_trigger_when_position_is_not_profitable(self) -> None:

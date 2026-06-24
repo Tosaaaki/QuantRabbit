@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from quant_rabbit.cli import main
+from quant_rabbit.execution_timing_contracts import MONTH_SCALE_EXECUTION_TIMING_AUDIT_COMMAND
 from quant_rabbit.trader_repair_orchestrator import (
     STATUS_APPROVAL_REQUIRED,
     STATUS_BLOCKED,
@@ -48,7 +49,7 @@ class TraderRepairOrchestratorTest(unittest.TestCase):
                             "tests/test_profit_capture_bot.py",
                         ],
                         verification_commands=[
-                            "PYTHONPATH=src python3 -m quant_rabbit.cli execution-timing-audit --max-events 80"
+                            MONTH_SCALE_EXECUTION_TIMING_AUDIT_COMMAND
                         ],
                         evidence_summary={
                             "top_entry_quality_residual_method_rollups": [
