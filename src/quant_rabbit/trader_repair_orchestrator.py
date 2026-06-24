@@ -14,8 +14,10 @@ from quant_rabbit.paths import (
 )
 from quant_rabbit.trader_support_bot import (
     BIDASK_REPLAY_WAIT_STATUS,
+    DIRECTIONAL_INVERSION_COUNTERFACTUAL_REQUEST,
     FRONTIER_MARGIN_CAPACITY_WAIT_STATUS,
     FRONTIER_QUOTE_FRESHNESS_WAIT_STATUS,
+    OANDA_AUDIT_ONLY_LOCAL_TP_EDGE_REQUEST,
     REPAIR_AUTOMATION_ALLOWED_ACTIONS,
     REPAIR_AUTOMATION_EXPLICIT_APPROVAL_ACTIONS,
     REPAIR_AUTOMATION_FORBIDDEN_DIRECT_ACTIONS,
@@ -51,10 +53,12 @@ CODEX_ACTIONABLE_REPAIR_STATUSES = {
 REPAIR_DEPENDENCY_RANK = {
     "REPAIR_TP_PROGRESS_PROFIT_CAPTURE_REPLAY": 0,
     "RESTORE_POSITION_GUARDIAN_AFTER_PREFLIGHT": 1,
-    "REPAIR_CLOSE_GATE_EVIDENCE_PERSISTENCE": 2,
-    "REPAIR_MONTH_SCALE_RESIDUAL_ENTRY_QUALITY": 3,
-    "REPAIR_FRONTIER_LANE_BLOCKER": 4,
-    "COLLECT_BIDASK_REPLAY_EVIDENCE": 5,
+    DIRECTIONAL_INVERSION_COUNTERFACTUAL_REQUEST: 2,
+    "REPAIR_CLOSE_GATE_EVIDENCE_PERSISTENCE": 3,
+    "REPAIR_MONTH_SCALE_RESIDUAL_ENTRY_QUALITY": 4,
+    "REPAIR_FRONTIER_LANE_BLOCKER": 5,
+    OANDA_AUDIT_ONLY_LOCAL_TP_EDGE_REQUEST: 6,
+    "COLLECT_BIDASK_REPLAY_EVIDENCE": 7,
     "REVIEW_CLOSE_GATE_EVIDENCE_FAILURES": 90,
 }
 REPAIR_SELECTION_REASONS = {
@@ -66,10 +70,20 @@ REPAIR_SELECTION_REASONS = {
         "Close-gate evidence persistence is a loss-leak repair, but it follows the direct "
         "TP-progress capture path when both are actionable."
     ),
+    DIRECTIONAL_INVERSION_COUNTERFACTUAL_REQUEST: (
+        "A broker-truth opposite-side counterfactual would clear the 5% minimum target, so "
+        "Codex must audit forecast inversion and opposite-lane suppression before adding "
+        "unrelated entry frequency."
+    ),
     "REPAIR_MONTH_SCALE_RESIDUAL_ENTRY_QUALITY": (
         "Residual entry-quality repair is scaling work after TP-progress capture and close "
         "discipline have a proved live path; if matching current intents are already blocked, "
         "Codex must wait for a 744h replay instead of reimplementing the same block."
+    ),
+    OANDA_AUDIT_ONLY_LOCAL_TP_EDGE_REQUEST: (
+        "OANDA audit-only forecast candidates are actionable as read-only precision work: "
+        "fetch bid/ask truth, validate replay, mine exact vehicles, package reviewed rules, "
+        "and keep live permission blocked until local TP receipts prove the edge."
     ),
     "REVIEW_CLOSE_GATE_EVIDENCE_FAILURES": (
         "Historical BLOCK close-gate evidence must wait for future PASS evidence or age-out; "
@@ -562,6 +576,11 @@ def _terms(text: str) -> list[str]:
         "証拠": "evidence",
         "検証": "verification",
         "ガーディアン": "guardian",
+        "予測": "forecast",
+        "精度": "precision",
+        "逆": "inversion",
+        "反対": "opposite",
+        "目標": "target",
     }
     expanded: list[str] = []
     for token in tokens:

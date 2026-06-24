@@ -16,6 +16,7 @@ from quant_rabbit.trader_repair_orchestrator import (
     TraderRepairOrchestrator,
 )
 from quant_rabbit.trader_support_bot import (
+    DIRECTIONAL_INVERSION_COUNTERFACTUAL_REQUEST,
     FRONTIER_MARGIN_CAPACITY_WAIT_STATUS,
     FRONTIER_QUOTE_FRESHNESS_WAIT_STATUS,
     REPAIR_AUTOMATION_ALLOWED_ACTIONS,
@@ -437,6 +438,58 @@ class TraderRepairOrchestratorTest(unittest.TestCase):
             self.assertNotIn(
                 "REPAIR_MONTH_SCALE_RESIDUAL_ENTRY_QUALITY",
                 [item["code"] for item in payload["actionable_requests"]],
+            )
+
+    def test_directional_inversion_counterfactual_is_selected_for_forecast_request(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            support = root / "support.json"
+            output = root / "orchestrator.json"
+            report = root / "orchestrator.md"
+            _write_support(
+                support,
+                [
+                    _request("REPAIR_TP_PROGRESS_PROFIT_CAPTURE_REPLAY", priority="P0"),
+                    _request(
+                        DIRECTIONAL_INVERSION_COUNTERFACTUAL_REQUEST,
+                        priority="P0",
+                        status="READY_FOR_CODE_OR_EVIDENCE_REPAIR",
+                        evidence_summary={
+                            "counterfactuals": [
+                                {
+                                    "trade_id": "472802",
+                                    "pair": "EUR_USD",
+                                    "actual_side": "LONG",
+                                    "opposite_side": "SHORT",
+                                    "opposite_gross_counterfactual_pl_jpy": 12090.085,
+                                    "would_clear_minimum_5pct": True,
+                                }
+                            ]
+                        },
+                        suggested_files=[
+                            "src/quant_rabbit/trader_support_bot.py",
+                            "tests/test_trader_support_bot.py",
+                        ],
+                    ),
+                ],
+            )
+
+            summary = TraderRepairOrchestrator(
+                support_bot_path=support,
+                output_path=output,
+                report_path=report,
+                trader_request="予測 精度 逆 5%",
+            ).run()
+
+            self.assertEqual(summary.status, STATUS_READY)
+            payload = json.loads(output.read_text())
+            self.assertEqual(payload["selected_request"]["code"], DIRECTIONAL_INVERSION_COUNTERFACTUAL_REQUEST)
+            self.assertEqual(payload["codex_work_order"]["status"], "READY_FOR_CODEX_IMPLEMENTATION")
+            self.assertEqual(payload["codex_work_order"]["selected_request_code"], DIRECTIONAL_INVERSION_COUNTERFACTUAL_REQUEST)
+            self.assertIn("opposite-side counterfactual", payload["codex_work_order"]["selection_reason"])
+            self.assertIn(
+                "PYTHONPATH=src python3 -m unittest tests.test_trader_support_bot -v",
+                payload["codex_work_order"]["targeted_test_commands"],
             )
 
     def test_forecast_frontier_waits_and_selects_bidask_evidence_collection(self) -> None:

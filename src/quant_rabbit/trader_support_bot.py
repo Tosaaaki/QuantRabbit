@@ -48,6 +48,8 @@ RANGE_FORECAST_ROTATION_BLOCKER = "RANGE_FORECAST_REQUIRES_RANGE_ROTATION"
 RANGE_ROTATION_METHOD = "RANGE_ROTATION"
 RANGE_ROTATION_COUNTERPART_MISSING = "RANGE_ROTATION_COUNTERPART_MISSING"
 OANDA_AUDIT_ONLY_LOCAL_TP_PROOF_REQUIRED = "OANDA_CAMPAIGN_AUDIT_ONLY_LOCAL_TP_PROOF_REQUIRED"
+OANDA_AUDIT_ONLY_LOCAL_TP_EDGE_REQUEST = "PROVE_OANDA_AUDIT_ONLY_LOCAL_TP_EDGE"
+DIRECTIONAL_INVERSION_COUNTERFACTUAL_REQUEST = "REPAIR_DIRECTIONAL_INVERSION_COUNTERFACTUAL"
 OANDA_AUDIT_ONLY_REPLAY_HISTORY_GRANULARITIES = "S5,M5"
 FORECAST_FRONTIER_EVIDENCE_WAIT_STATUS = "FORECAST_FRONTIER_WAITING_FOR_LIVE_PRECISION_EVIDENCE"
 FRONTIER_QUOTE_FRESHNESS_WAIT_STATUS = "FRONTIER_WAITING_FOR_FRESH_QUOTE"
@@ -205,8 +207,8 @@ class TraderSupportBot:
             execution_path=self.position_guardian_execution_path,
             heartbeat_path=self.position_guardian_heartbeat_path,
         )
-        broker_summary = _broker_summary(broker)
         target_summary = _target_summary(target)
+        broker_summary = _broker_summary(broker, target=target_summary)
         p0_findings = _p0_findings(self_improvement)
         profit_capture = _profit_capture_summary(self_improvement, timing)
         current_profit_capture = _current_profit_capture_summary(profit_capture_bot)
@@ -236,6 +238,8 @@ class TraderSupportBot:
             profit_capture=profit_capture,
             entry=entry,
             acceptance=acceptance,
+            broker=broker_summary,
+            target=target_summary,
         )
         send_allowed = (
             status == STATUS_READY
@@ -302,6 +306,16 @@ class TraderSupportBot:
             "profit_capture_watch_positions": current_profit_capture["watch_positions"],
             "profit_capture_blocked_positions": current_profit_capture["blocked_positions"],
             "open_trader_positions": broker_summary["trader_positions"],
+            "open_positions": broker_summary["positions"],
+            "unknown_owner_positions": broker_summary["unknown_owner_positions"],
+            "directional_inversion_counterfactual_count": len(
+                broker_summary["directional_inversion_counterfactuals"]
+            ),
+            "directional_inversion_counterfactual_minimum_5pct_count": sum(
+                1
+                for item in broker_summary["directional_inversion_counterfactuals"]
+                if item.get("would_clear_minimum_5pct")
+            ),
             "target_remaining_jpy": target_summary["remaining_target_jpy"],
             "profitability_status": acceptance["status"],
             "target_firepower_status": acceptance["target_firepower"]["status"],
@@ -536,10 +550,11 @@ def _freshest_guardian_heartbeat(paths: list[Path], *, now_utc: datetime, max_ag
     return best
 
 
-def _broker_summary(payload: dict[str, Any]) -> dict[str, Any]:
+def _broker_summary(payload: dict[str, Any], *, target: dict[str, Any] | None = None) -> dict[str, Any]:
     positions = payload.get("positions") if isinstance(payload.get("positions"), list) else []
     orders = payload.get("orders") if isinstance(payload.get("orders"), list) else []
     trader_positions = [item for item in positions if str(item.get("owner") or "").lower() == "trader"]
+    target = target if isinstance(target, dict) else {}
     rows = []
     for item in trader_positions:
         rows.append(
@@ -553,6 +568,10 @@ def _broker_summary(payload: dict[str, Any]) -> dict[str, Any]:
                 "stop_loss": item.get("stop_loss"),
             }
         )
+    open_rows = [_compact_open_position(item) for item in positions[:12] if isinstance(item, dict)]
+    unknown_positions = [
+        item for item in open_rows if str(item.get("owner") or "").lower() not in {"trader", "bot"}
+    ]
     account = payload.get("account") if isinstance(payload.get("account"), dict) else {}
     return {
         "fetched_at_utc": payload.get("fetched_at_utc") or account.get("fetched_at_utc"),
@@ -568,7 +587,72 @@ def _broker_summary(payload: dict[str, Any]) -> dict[str, Any]:
         "nav_jpy": _round_optional(account.get("nav_jpy"), 3),
         "margin_available_jpy": _round_optional(account.get("margin_available_jpy"), 3),
         "open_trader_positions": rows,
+        "open_positions": open_rows,
+        "unknown_owner_positions": len(unknown_positions),
+        "unknown_owner_position_examples": unknown_positions[:5],
+        "directional_inversion_counterfactuals": _directional_inversion_counterfactuals(
+            open_rows,
+            target=target,
+        ),
     }
+
+
+def _compact_open_position(item: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "trade_id": item.get("trade_id"),
+        "pair": item.get("pair"),
+        "side": item.get("side"),
+        "units": item.get("units"),
+        "owner": item.get("owner"),
+        "unrealized_pl_jpy": _round_optional(item.get("unrealized_pl_jpy"), 3),
+        "take_profit": item.get("take_profit") or item.get("take_profit_price"),
+        "stop_loss": item.get("stop_loss") or item.get("stop_loss_price"),
+    }
+
+
+def _directional_inversion_counterfactuals(
+    positions: list[dict[str, Any]],
+    *,
+    target: dict[str, Any],
+) -> list[dict[str, Any]]:
+    remaining_minimum = _float(target.get("remaining_minimum_jpy"))
+    minimum_target = _float(target.get("minimum_target_jpy"))
+    minimum_needed = remaining_minimum if remaining_minimum > 0 else minimum_target
+    rows: list[dict[str, Any]] = []
+    for item in positions:
+        upl = _float(item.get("unrealized_pl_jpy"))
+        if upl >= 0:
+            continue
+        side = str(item.get("side") or "").upper()
+        opposite = "SHORT" if side == "LONG" else "LONG" if side == "SHORT" else "UNKNOWN"
+        counterfactual_profit = -upl
+        rows.append(
+            {
+                "trade_id": item.get("trade_id"),
+                "pair": item.get("pair"),
+                "actual_side": side or item.get("side"),
+                "opposite_side": opposite,
+                "units": item.get("units"),
+                "owner": item.get("owner"),
+                "actual_unrealized_pl_jpy": _round_optional(upl, 3),
+                "opposite_gross_counterfactual_pl_jpy": _round_optional(counterfactual_profit, 3),
+                "remaining_minimum_jpy": _round_optional(remaining_minimum, 3),
+                "minimum_target_jpy": _round_optional(minimum_target, 3),
+                "would_clear_minimum_5pct": bool(minimum_needed > 0 and counterfactual_profit >= minimum_needed),
+                "counterfactual_basis": (
+                    "gross sign-flip of current broker-truth unrealized P/L; requires spread-included "
+                    "entry timing replay before it can become a live inversion rule"
+                ),
+            }
+        )
+    rows.sort(
+        key=lambda item: (
+            not bool(item.get("would_clear_minimum_5pct")),
+            -_float(item.get("opposite_gross_counterfactual_pl_jpy")),
+            str(item.get("pair") or ""),
+        )
+    )
+    return rows[:12]
 
 
 def _target_summary(payload: dict[str, Any]) -> dict[str, Any]:
@@ -578,6 +662,7 @@ def _target_summary(payload: dict[str, Any]) -> dict[str, Any]:
         "target_open": str(payload.get("status") or "") == "PURSUE_TARGET",
         "progress_pct": _round_optional(payload.get("progress_pct"), 4),
         "minimum_progress_pct": _round_optional(payload.get("minimum_progress_pct"), 4),
+        "minimum_target_jpy": _round_optional(payload.get("minimum_target_jpy"), 3),
         "remaining_minimum_jpy": _round_optional(payload.get("remaining_minimum_jpy"), 3),
         "remaining_target_jpy": _round_optional(payload.get("remaining_target_jpy"), 3),
         "realized_pl_jpy": _round_optional(payload.get("realized_pl_jpy"), 3),
@@ -2352,13 +2437,28 @@ def _forecast_frontier_signal_strong_enough(signal: dict[str, Any]) -> bool:
     )
 
 
+def _oanda_audit_only_local_tp_candidates(entry: dict[str, Any]) -> list[dict[str, Any]]:
+    candidates = (
+        entry.get("oanda_audit_only_local_tp_proof_required")
+        if isinstance(entry.get("oanda_audit_only_local_tp_proof_required"), list)
+        else []
+    )
+    rows = [item for item in candidates if isinstance(item, dict)]
+    rows.sort(key=lambda item: _float(item.get("reward_jpy")), reverse=True)
+    return rows
+
+
 def _build_repair_requests(
     *,
     guardian: dict[str, Any],
     profit_capture: dict[str, Any],
     entry: dict[str, Any],
     acceptance: dict[str, Any],
+    broker: dict[str, Any] | None = None,
+    target: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
+    broker = broker if isinstance(broker, dict) else {}
+    target = target if isinstance(target, dict) else {}
     repair_plan = acceptance.get("repair_plan") if isinstance(acceptance.get("repair_plan"), dict) else {}
     raw_items = repair_plan.get("items") if isinstance(repair_plan.get("items"), list) else []
     items = [item for item in raw_items if isinstance(item, dict)]
@@ -2370,6 +2470,94 @@ def _build_repair_requests(
     )
     evidence_items = [item for item in raw_evidence_items if isinstance(item, dict)]
     requests: list[dict[str, Any]] = []
+
+    inversion_counterfactuals = (
+        broker.get("directional_inversion_counterfactuals")
+        if isinstance(broker.get("directional_inversion_counterfactuals"), list)
+        else []
+    )
+    target_clearing_inversions = [
+        item
+        for item in inversion_counterfactuals
+        if isinstance(item, dict) and item.get("would_clear_minimum_5pct")
+    ]
+    if target_clearing_inversions:
+        pairs = sorted({str(item.get("pair")) for item in target_clearing_inversions if item.get("pair")})
+        requests.append(
+            _repair_request(
+                code=DIRECTIONAL_INVERSION_COUNTERFACTUAL_REQUEST,
+                priority="P0",
+                status="READY_FOR_CODE_OR_EVIDENCE_REPAIR",
+                source_findings=[
+                    "BROKER_TRUTH_OPPOSITE_SIDE_WOULD_CLEAR_MINIMUM_5PCT",
+                    *[
+                        str(code)
+                        for blocker in entry.get("repair_frontier_remaining_blockers", [])
+                        if isinstance(blocker, dict)
+                        for code in [blocker.get("code")]
+                        if code
+                    ],
+                ],
+                problem=(
+                    "A current broker-truth losing position has an opposite-side gross P/L "
+                    "counterfactual large enough to clear the daily 5% minimum target."
+                ),
+                why_now=(
+                    "This is the direct version of the operator complaint: repeating TP/leak summaries "
+                    "misses the simple directional failure. Codex must test whether the system should "
+                    "have selected, inverted, or at least elevated the opposite-side forecast lane before "
+                    "adding unrelated entry frequency."
+                ),
+                evidence_summary={
+                    "target": {
+                        "campaign_day_jst": target.get("campaign_day_jst"),
+                        "minimum_target_jpy": target.get("minimum_target_jpy"),
+                        "remaining_minimum_jpy": target.get("remaining_minimum_jpy"),
+                        "remaining_target_jpy": target.get("remaining_target_jpy"),
+                    },
+                    "counterfactuals": target_clearing_inversions[:8],
+                    "pairs": pairs,
+                    "repair_frontier_remaining_blockers": entry.get("repair_frontier_remaining_blockers", [])[:8],
+                },
+                clearance_conditions=[
+                    (
+                        "Build a read-only inversion audit over forecast_history/projection_ledger and "
+                        "spread-included OANDA candles; only repeated pair/side/method evidence may "
+                        "promote an inversion rule."
+                    ),
+                    (
+                        "The current invalid chase and low-reward shapes must remain blocked; a "
+                        "directional inversion repair cannot bypass RiskEngine, strategy profile, "
+                        "margin, forecast telemetry freshness, TP proof, or gateway validation."
+                    ),
+                ],
+                verification_commands=[
+                    "PYTHONPATH=src python3 -m quant_rabbit.cli trader-support-bot",
+                    (
+                        "PYTHONPATH=src python3 scripts/oanda_history_replay_validate.py "
+                        f"--forecast-history data/forecast_history.jsonl --pairs {','.join(pairs) if pairs else 'EUR_USD'} "
+                        "--granularity S5 --auto-history-min-days 30"
+                    ),
+                    "PYTHONPATH=src python3 -m quant_rabbit.cli generate-intents --reuse-market-artifacts",
+                    "PYTHONPATH=src python3 -m quant_rabbit.cli trader-repair-orchestrator --trader-request forecast",
+                ],
+                suggested_files=[
+                    "src/quant_rabbit/strategy/directional_forecaster.py",
+                    "src/quant_rabbit/strategy/intent_generator.py",
+                    "src/quant_rabbit/forecast_precision.py",
+                    "src/quant_rabbit/trader_support_bot.py",
+                    "tests/test_directional_forecaster.py",
+                    "tests/test_intent_generator.py",
+                    "tests/test_trader_support_bot.py",
+                    "tests/test_trader_repair_orchestrator.py",
+                ],
+                required_tests=[
+                    "Regression: a one-off losing position does not blindly invert live direction without repeated audited evidence.",
+                    "Positive path: broker-truth opposite-side counterfactual that clears the daily 5% minimum becomes a P0 Codex repair request.",
+                    "Safety path: invalid opposite-side lanes remain blocked by forecast, chase, reward/risk, margin, TP-proof, and gateway gates until the audited escape clears.",
+                ],
+            )
+        )
 
     if "LOSS_CLOSE_GATE_EVIDENCE_MISSING" in item_by_code:
         item = item_by_code["LOSS_CLOSE_GATE_EVIDENCE_MISSING"]
@@ -2628,6 +2816,106 @@ def _build_repair_requests(
                     "Support bot shows guardian recovery candidates without loading launchd itself.",
                 ],
                 requires_explicit_operator_approval=True,
+            )
+        )
+
+    oanda_local_tp_candidates = _oanda_audit_only_local_tp_candidates(entry)
+    if oanda_local_tp_candidates:
+        pairs = sorted({str(item.get("pair")) for item in oanda_local_tp_candidates if item.get("pair")})
+        pair_arg = ",".join(pairs) if pairs else "EUR_USD"
+        source_findings = [
+            OANDA_AUDIT_ONLY_LOCAL_TP_PROOF_REQUIRED,
+            *[
+                str(code)
+                for item in oanda_local_tp_candidates
+                for code in item.get("remaining_blocker_codes_after_guardian", [])
+                if code
+            ],
+        ]
+        target_firepower = (
+            acceptance.get("target_firepower")
+            if isinstance(acceptance.get("target_firepower"), dict)
+            else {}
+        )
+        requests.append(
+            _repair_request(
+                code=OANDA_AUDIT_ONLY_LOCAL_TP_EDGE_REQUEST,
+                priority="P1",
+                status="READY_FOR_READ_ONLY_EVIDENCE_COLLECTION",
+                source_findings=list(dict.fromkeys(source_findings)),
+                problem=(
+                    "OANDA audit-only forecast/rotation candidates may help the 5% target, but they "
+                    "are not local TP-proven live edges yet."
+                ),
+                why_now=(
+                    "This turns the loop from repeating forecast blockers into a concrete precision "
+                    "improvement path: fetch spread-included bid/ask truth, validate forecast_history, "
+                    "mine the exact pair/side/method vehicles, package reviewed rules, then require "
+                    "local TAKE_PROFIT_ORDER proof before live permission."
+                ),
+                evidence_summary={
+                    "candidate_count": len(oanda_local_tp_candidates),
+                    "pairs": pairs,
+                    "top_candidates": oanda_local_tp_candidates[:8],
+                    "top_reward_jpy": _round_optional(
+                        max((_float(item.get("reward_jpy")) for item in oanda_local_tp_candidates), default=0.0),
+                        3,
+                    ),
+                    "target_firepower": target_firepower,
+                    "local_tp_proof_required": True,
+                    "historical_replay_can_clear_local_tp_proof": False,
+                },
+                clearance_conditions=[
+                    (
+                        "For each promoted candidate, exact pair/side/method TAKE_PROFIT_ORDER local "
+                        "receipts must show positive expectancy, zero TP losses, and positive "
+                        "Wilson-stressed expectancy; OANDA replay can rank/mine but cannot alone "
+                        "clear live permission."
+                    ),
+                    (
+                        "After packaging reviewed replay rules, rerun profitability-acceptance, "
+                        "generate-intents, trader-support-bot, and trader-repair-orchestrator; "
+                        "the old forecast blocker packet must not be reused."
+                    ),
+                ],
+                verification_commands=[
+                    (
+                        "PYTHONPATH=src python3 scripts/oanda_history_fetch.py "
+                        f"--pairs {pair_arg} --granularities {OANDA_AUDIT_ONLY_REPLAY_HISTORY_GRANULARITIES} "
+                        "--price BA --days 120 --output-dir logs/replay/oanda_history"
+                    ),
+                    (
+                        "PYTHONPATH=src python3 scripts/oanda_history_replay_validate.py "
+                        "--history-dir logs/replay/oanda_history --granularity S5"
+                    ),
+                    (
+                        "PYTHONPATH=src python3 scripts/oanda_universal_rotation_miner.py "
+                        "--history-root logs/replay/oanda_history --history-glob '*_M5_BA_*.jsonl' "
+                        f"--pairs {pair_arg}"
+                    ),
+                    "PYTHONPATH=src python3 scripts/package_oanda_universal_rotation_rules.py",
+                    "PYTHONPATH=src python3 -m quant_rabbit.cli profitability-acceptance",
+                    "PYTHONPATH=src python3 -m quant_rabbit.cli generate-intents --reuse-market-artifacts",
+                    "PYTHONPATH=src python3 -m quant_rabbit.cli trader-support-bot",
+                    "PYTHONPATH=src python3 -m quant_rabbit.cli trader-repair-orchestrator --trader-request forecast",
+                ],
+                suggested_files=[
+                    "scripts/oanda_history_fetch.py",
+                    "scripts/oanda_history_replay_validate.py",
+                    "scripts/oanda_universal_rotation_miner.py",
+                    "scripts/package_oanda_universal_rotation_rules.py",
+                    "src/quant_rabbit/forecast_precision.py",
+                    "src/quant_rabbit/strategy/intent_generator.py",
+                    "src/quant_rabbit/trader_support_bot.py",
+                    "tests/test_trader_support_bot.py",
+                    "tests/test_trader_repair_orchestrator.py",
+                    "tests/test_oanda_universal_rotation_miner.py",
+                ],
+                required_tests=[
+                    "Regression: OANDA audit-only candidates remain blocked from live permission without exact local TP proof.",
+                    "Positive path: support/orchestrator emits a Codex-readable precision work order with fetch, replay, mining, packaging, and refresh commands.",
+                    "Safety path: read-only replay evidence does not send orders, close positions, mutate launchd, or bypass forecast/risk gates.",
+                ],
             )
         )
 
@@ -2945,13 +3233,17 @@ def repair_requests_from_support_payload(payload: dict[str, Any]) -> list[dict[s
         if isinstance(payload.get("profitability_acceptance"), dict)
         else {}
     )
-    if not any((guardian, profit_capture, entry, acceptance)):
+    broker = payload.get("broker") if isinstance(payload.get("broker"), dict) else {}
+    target = payload.get("target") if isinstance(payload.get("target"), dict) else {}
+    if not any((guardian, profit_capture, entry, acceptance, broker, target)):
         return []
     return _build_repair_requests(
         guardian=guardian,
         profit_capture=profit_capture,
         entry=entry,
         acceptance=acceptance,
+        broker=broker,
+        target=target,
     )
 
 
@@ -3007,7 +3299,9 @@ def _render_report(payload: dict[str, Any]) -> str:
         f"repair_replay_triggered=`{profit['repair_replay_triggered']}` "
         f"repair_delta=`{profit['repair_replay_delta_jpy']}` JPY |",
         f"| Current profit-capture positions | bankable=`{current_profit['bankable_positions']}` watch=`{current_profit['watch_positions']}` blocked=`{current_profit['blocked_positions']}` |",
+        f"| Open positions | `{broker['positions']}` unknown_owner=`{broker.get('unknown_owner_positions')}` |",
         f"| Open trader positions | `{broker['trader_positions']}` upl=`{broker['trader_unrealized_pl_jpy']}` JPY |",
+        f"| Directional inversion 5% counterfactuals | `{sum(1 for item in broker.get('directional_inversion_counterfactuals', []) if item.get('would_clear_minimum_5pct'))}` |",
         f"| Target remaining | `{target['remaining_target_jpy']}` JPY |",
         f"| Firepower 5% audit estimate | `{firepower.get('minimum_5pct_estimated_reachable')}` best=`{firepower.get('best_bucket')}` |",
         f"| Firepower 5% operational reachable | `{firepower.get('operational_minimum_5pct_reachable')}` blockers=`{firepower.get('operational_blocker_codes')}` |",
@@ -3110,6 +3404,39 @@ def _render_report(payload: dict[str, Any]) -> str:
             f"- Launchd loaded: `{guardian['launchd_loaded']}`",
             f"- Heartbeat path: `{guardian['heartbeat_path']}`",
             f"- Heartbeat generated: `{guardian['heartbeat_generated_at_utc']}`",
+            "",
+            "## Directional Inversion Counterfactuals",
+            "",
+        ]
+    )
+    inversion_rows = (
+        broker.get("directional_inversion_counterfactuals")
+        if isinstance(broker.get("directional_inversion_counterfactuals"), list)
+        else []
+    )
+    if inversion_rows:
+        lines.extend(
+            [
+                "| Trade | Owner | Pair | Actual | Opposite | Actual UPL JPY | Opposite gross JPY | Clears 5% minimum |",
+                "|---|---|---|---|---|---:|---:|---|",
+            ]
+        )
+        for item in inversion_rows[:8]:
+            lines.append(
+                f"| `{item.get('trade_id')}` | `{item.get('owner')}` | `{item.get('pair')}` | "
+                f"`{item.get('actual_side')}` | `{item.get('opposite_side')}` | "
+                f"`{item.get('actual_unrealized_pl_jpy')}` | "
+                f"`{item.get('opposite_gross_counterfactual_pl_jpy')}` | "
+                f"`{item.get('would_clear_minimum_5pct')}` |"
+            )
+        lines.append("")
+        lines.append(
+            "- Counterfactuals are gross sign-flips of current broker-truth unrealized P/L; they are repair evidence, not live inversion permission."
+        )
+    else:
+        lines.append("- none")
+    lines.extend(
+        [
             "",
             "## Top Intent Blockers",
             "",
