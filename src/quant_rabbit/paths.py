@@ -80,6 +80,9 @@ DEFAULT_PROFITABILITY_ACCEPTANCE_REPORT = ROOT / "docs" / "profitability_accepta
 DEFAULT_OANDA_UNIVERSAL_ROTATION_MINING = (
     ROOT / "logs" / "reports" / "forecast_improvement" / "oanda_universal_rotation_mining_latest.json"
 )
+DEFAULT_BIDASK_REPLAY_VALIDATION = (
+    ROOT / "logs" / "reports" / "forecast_improvement" / "oanda_history_replay_validate_latest.json"
+)
 DEFAULT_OANDA_UNIVERSAL_ROTATION_PACKAGED_RULES = (
     ROOT / "src" / "quant_rabbit" / "oanda_universal_rotation_precision_rules.json"
 )

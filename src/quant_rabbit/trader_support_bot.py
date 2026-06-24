@@ -14,6 +14,7 @@ from quant_rabbit.execution_timing_contracts import (
     repair_replay_contract_from_payload,
 )
 from quant_rabbit.paths import (
+    DEFAULT_BIDASK_REPLAY_VALIDATION,
     DEFAULT_BROKER_SNAPSHOT,
     DEFAULT_DAILY_TARGET_STATE,
     DEFAULT_EXECUTION_TIMING_AUDIT,
@@ -50,6 +51,18 @@ RANGE_ROTATION_COUNTERPART_MISSING = "RANGE_ROTATION_COUNTERPART_MISSING"
 OANDA_AUDIT_ONLY_LOCAL_TP_PROOF_REQUIRED = "OANDA_CAMPAIGN_AUDIT_ONLY_LOCAL_TP_PROOF_REQUIRED"
 OANDA_AUDIT_ONLY_LOCAL_TP_EDGE_REQUEST = "PROVE_OANDA_AUDIT_ONLY_LOCAL_TP_EDGE"
 DIRECTIONAL_INVERSION_COUNTERFACTUAL_REQUEST = "REPAIR_DIRECTIONAL_INVERSION_COUNTERFACTUAL"
+DIRECTIONAL_INVERSION_REPLAY_WAIT_STATUS = "WAITING_FOR_DIRECTIONAL_INVERSION_REPLAY_EVIDENCE"
+DIRECTIONAL_INVERSION_REPLAY_REJECTED = "CONTRARIAN_REPLAY_REJECTED"
+DIRECTIONAL_INVERSION_REPLAY_LIVE_SUPPORTED = "CONTRARIAN_REPLAY_LIVE_GRADE_SUPPORTED"
+DIRECTIONAL_INVERSION_REPLAY_RANK_ONLY = "CONTRARIAN_REPLAY_RANK_ONLY"
+DIRECTIONAL_INVERSION_REPLAY_EVIDENCE_PRESENT = "REPEATED_SPREAD_INCLUDED_EVIDENCE_PRESENT"
+DIRECTIONAL_INVERSION_REPLAY_EVIDENCE_MISSING = "MISSING_REPEATED_SPREAD_INCLUDED_EVIDENCE"
+DIRECTIONAL_INVERSION_REPLAY_SECTIONS = (
+    "high_precision_inversion_selectors",
+    "qualified_inversion_selectors",
+)
+DIRECTIONAL_INVERSION_MIN_REPLAY_SAMPLES = 2
+DIRECTIONAL_INVERSION_MIN_ACTIVE_DAYS = 2
 OANDA_AUDIT_ONLY_REPLAY_HISTORY_GRANULARITIES = "S5,M5"
 FORECAST_FRONTIER_EVIDENCE_WAIT_STATUS = "FORECAST_FRONTIER_WAITING_FOR_LIVE_PRECISION_EVIDENCE"
 FRONTIER_QUOTE_FRESHNESS_WAIT_STATUS = "FRONTIER_WAITING_FOR_FRESH_QUOTE"
@@ -150,6 +163,7 @@ class TraderSupportBot:
         profit_capture_bot_path: Path = DEFAULT_PROFIT_CAPTURE_BOT,
         oanda_rotation_mining_path: Path = DEFAULT_OANDA_UNIVERSAL_ROTATION_MINING,
         oanda_rotation_packaged_path: Path = DEFAULT_OANDA_UNIVERSAL_ROTATION_PACKAGED_RULES,
+        bidask_replay_validation_path: Path | None = None,
         output_path: Path = DEFAULT_TRADER_SUPPORT_BOT,
         report_path: Path = DEFAULT_TRADER_SUPPORT_BOT_REPORT,
         now_utc: datetime | None = None,
@@ -167,6 +181,15 @@ class TraderSupportBot:
         self.profit_capture_bot_path = profit_capture_bot_path
         self.oanda_rotation_mining_path = oanda_rotation_mining_path
         self.oanda_rotation_packaged_path = oanda_rotation_packaged_path
+        self._read_oanda_rotation = (
+            output_path == DEFAULT_TRADER_SUPPORT_BOT
+            or oanda_rotation_mining_path != DEFAULT_OANDA_UNIVERSAL_ROTATION_MINING
+            or oanda_rotation_packaged_path != DEFAULT_OANDA_UNIVERSAL_ROTATION_PACKAGED_RULES
+        )
+        self.bidask_replay_validation_path = bidask_replay_validation_path or DEFAULT_BIDASK_REPLAY_VALIDATION
+        self._read_bidask_replay_validation = (
+            bidask_replay_validation_path is not None or output_path == DEFAULT_TRADER_SUPPORT_BOT
+        )
         self.output_path = output_path
         self.report_path = report_path
         self.now_utc = (now_utc or datetime.now(timezone.utc)).astimezone(timezone.utc)
@@ -196,11 +219,24 @@ class TraderSupportBot:
         profitability = _read_json(self.profitability_acceptance_path)
         timing = _read_json(self.execution_timing_audit_path)
         profit_capture_bot = _read_json(self.profit_capture_bot_path)
-        oanda_rotation_effective_path = effective_oanda_universal_rotation_path(
-            self.oanda_rotation_mining_path,
-            self.oanda_rotation_packaged_path,
+        oanda_rotation_effective_path = (
+            effective_oanda_universal_rotation_path(
+                self.oanda_rotation_mining_path,
+                self.oanda_rotation_packaged_path,
+            )
+            if self._read_oanda_rotation
+            else self.oanda_rotation_mining_path
         )
-        oanda_rotation = _read_json(oanda_rotation_effective_path)
+        oanda_rotation = (
+            _read_json(oanda_rotation_effective_path)
+            if self._read_oanda_rotation
+            else {"_missing": True, "_path": str(oanda_rotation_effective_path)}
+        )
+        bidask_replay_validation = (
+            _read_json(self.bidask_replay_validation_path)
+            if self._read_bidask_replay_validation
+            else {"_missing": True, "_path": str(self.bidask_replay_validation_path)}
+        )
 
         guardian = _guardian_status(
             now_utc=self.now_utc,
@@ -208,7 +244,12 @@ class TraderSupportBot:
             heartbeat_path=self.position_guardian_heartbeat_path,
         )
         target_summary = _target_summary(target)
-        broker_summary = _broker_summary(broker, target=target_summary)
+        broker_summary = _broker_summary(
+            broker,
+            target=target_summary,
+            oanda_rotation=oanda_rotation,
+            bidask_replay_validation=bidask_replay_validation,
+        )
         p0_findings = _p0_findings(self_improvement)
         profit_capture = _profit_capture_summary(self_improvement, timing)
         current_profit_capture = _current_profit_capture_summary(profit_capture_bot)
@@ -316,6 +357,19 @@ class TraderSupportBot:
                 for item in broker_summary["directional_inversion_counterfactuals"]
                 if item.get("would_clear_minimum_5pct")
             ),
+            "directional_inversion_counterfactual_actionable_count": sum(
+                1
+                for item in broker_summary["directional_inversion_counterfactuals"]
+                if _directional_inversion_counterfactual_is_actionable(item)
+            ),
+            "directional_inversion_counterfactual_replay_rejected_count": sum(
+                1
+                for item in broker_summary["directional_inversion_counterfactuals"]
+                if (
+                    isinstance(item.get("replay_verification"), dict)
+                    and item["replay_verification"].get("status") == DIRECTIONAL_INVERSION_REPLAY_REJECTED
+                )
+            ),
             "target_remaining_jpy": target_summary["remaining_target_jpy"],
             "profitability_status": acceptance["status"],
             "target_firepower_status": acceptance["target_firepower"]["status"],
@@ -361,6 +415,7 @@ class TraderSupportBot:
                 "oanda_rotation_mining": str(self.oanda_rotation_mining_path),
                 "oanda_rotation_packaged": str(self.oanda_rotation_packaged_path),
                 "oanda_rotation_effective": str(oanda_rotation_effective_path),
+                "bidask_replay_validation": str(self.bidask_replay_validation_path),
             },
             "generated_at_utc": generated,
             "status": status,
@@ -550,7 +605,13 @@ def _freshest_guardian_heartbeat(paths: list[Path], *, now_utc: datetime, max_ag
     return best
 
 
-def _broker_summary(payload: dict[str, Any], *, target: dict[str, Any] | None = None) -> dict[str, Any]:
+def _broker_summary(
+    payload: dict[str, Any],
+    *,
+    target: dict[str, Any] | None = None,
+    oanda_rotation: dict[str, Any] | None = None,
+    bidask_replay_validation: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     positions = payload.get("positions") if isinstance(payload.get("positions"), list) else []
     orders = payload.get("orders") if isinstance(payload.get("orders"), list) else []
     trader_positions = [item for item in positions if str(item.get("owner") or "").lower() == "trader"]
@@ -593,6 +654,8 @@ def _broker_summary(payload: dict[str, Any], *, target: dict[str, Any] | None = 
         "directional_inversion_counterfactuals": _directional_inversion_counterfactuals(
             open_rows,
             target=target,
+            oanda_rotation=oanda_rotation,
+            bidask_replay_validation=bidask_replay_validation,
         ),
     }
 
@@ -614,6 +677,8 @@ def _directional_inversion_counterfactuals(
     positions: list[dict[str, Any]],
     *,
     target: dict[str, Any],
+    oanda_rotation: dict[str, Any] | None = None,
+    bidask_replay_validation: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     remaining_minimum = _float(target.get("remaining_minimum_jpy"))
     minimum_target = _float(target.get("minimum_target_jpy"))
@@ -626,25 +691,39 @@ def _directional_inversion_counterfactuals(
         side = str(item.get("side") or "").upper()
         opposite = "SHORT" if side == "LONG" else "LONG" if side == "SHORT" else "UNKNOWN"
         counterfactual_profit = -upl
-        rows.append(
-            {
-                "trade_id": item.get("trade_id"),
-                "pair": item.get("pair"),
-                "actual_side": side or item.get("side"),
-                "opposite_side": opposite,
-                "units": item.get("units"),
-                "owner": item.get("owner"),
-                "actual_unrealized_pl_jpy": _round_optional(upl, 3),
-                "opposite_gross_counterfactual_pl_jpy": _round_optional(counterfactual_profit, 3),
-                "remaining_minimum_jpy": _round_optional(remaining_minimum, 3),
-                "minimum_target_jpy": _round_optional(minimum_target, 3),
-                "would_clear_minimum_5pct": bool(minimum_needed > 0 and counterfactual_profit >= minimum_needed),
-                "counterfactual_basis": (
-                    "gross sign-flip of current broker-truth unrealized P/L; requires spread-included "
-                    "entry timing replay before it can become a live inversion rule"
-                ),
-            }
+        row = {
+            "trade_id": item.get("trade_id"),
+            "pair": item.get("pair"),
+            "actual_side": side or item.get("side"),
+            "opposite_side": opposite,
+            "units": item.get("units"),
+            "owner": item.get("owner"),
+            "actual_unrealized_pl_jpy": _round_optional(upl, 3),
+            "opposite_gross_counterfactual_pl_jpy": _round_optional(counterfactual_profit, 3),
+            "remaining_minimum_jpy": _round_optional(remaining_minimum, 3),
+            "minimum_target_jpy": _round_optional(minimum_target, 3),
+            "would_clear_minimum_5pct": bool(minimum_needed > 0 and counterfactual_profit >= minimum_needed),
+            "counterfactual_basis": (
+                "gross sign-flip of current broker-truth unrealized P/L; requires spread-included "
+                "entry timing replay before it can become a live inversion rule"
+            ),
+        }
+        replay_verification = _directional_inversion_replay_verification(
+            row,
+            bidask_replay_validation,
         )
+        if replay_verification is not None:
+            row["replay_verification"] = replay_verification
+        inversion_evidence = _matching_inversion_replay_evidence(row, oanda_rotation)
+        row["has_repeated_spread_included_inversion_evidence"] = bool(inversion_evidence)
+        row["inversion_replay_evidence_status"] = (
+            DIRECTIONAL_INVERSION_REPLAY_EVIDENCE_PRESENT
+            if inversion_evidence is not None
+            else DIRECTIONAL_INVERSION_REPLAY_EVIDENCE_MISSING
+        )
+        if inversion_evidence is not None:
+            row["inversion_replay_evidence"] = inversion_evidence
+        rows.append(row)
     rows.sort(
         key=lambda item: (
             not bool(item.get("would_clear_minimum_5pct")),
@@ -653,6 +732,183 @@ def _directional_inversion_counterfactuals(
         )
     )
     return rows[:12]
+
+
+def _matching_inversion_replay_evidence(
+    item: dict[str, Any],
+    oanda_rotation: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    if not isinstance(oanda_rotation, dict):
+        return None
+    pair = str(item.get("pair") or "").upper()
+    actual_side = str(item.get("actual_side") or "").upper()
+    opposite_side = str(item.get("opposite_side") or "").upper()
+    if not pair or not actual_side or not opposite_side:
+        return None
+    candidates: list[dict[str, Any]] = []
+    for section_rank, section in enumerate(DIRECTIONAL_INVERSION_REPLAY_SECTIONS):
+        rows = oanda_rotation.get(section) if isinstance(oanda_rotation.get(section), list) else []
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            if str(row.get("pair") or "").upper() != pair:
+                continue
+            if str(row.get("qualification") or "").upper() != "PASS":
+                continue
+            source_side = str(row.get("source_side") or row.get("actual_side") or "").upper()
+            selected_side = str(row.get("selected_side") or row.get("opposite_side") or row.get("side") or "").upper()
+            if source_side != actual_side or selected_side != opposite_side:
+                continue
+            if not (row.get("source_shape") or row.get("shape") or row.get("method")):
+                continue
+            if _float(row.get("validation_n") or row.get("all_n")) < DIRECTIONAL_INVERSION_MIN_REPLAY_SAMPLES:
+                continue
+            if _float(row.get("active_days")) < DIRECTIONAL_INVERSION_MIN_ACTIVE_DAYS:
+                continue
+            if _float(row.get("validation_profit_factor") or row.get("all_profit_factor")) <= 1.0:
+                continue
+            if _float(row.get("validation_inversion_edge_atr") or row.get("validation_avg_realized_atr")) <= 0.0:
+                continue
+            candidates.append(
+                {
+                    "_section_rank": section_rank,
+                    "_sort_validation_n": _float(row.get("validation_n") or row.get("all_n")),
+                    "_sort_profit_factor": _float(
+                        row.get("validation_profit_factor") or row.get("all_profit_factor")
+                    ),
+                    "_sort_win_rate": _float(row.get("validation_win_rate") or row.get("all_win_rate")),
+                    "_sort_active_days": _float(row.get("active_days")),
+                    "_sort_edge_atr": _float(
+                        row.get("validation_inversion_edge_atr") or row.get("validation_avg_realized_atr")
+                    ),
+                    "source_section": section,
+                    "pair": pair,
+                    "source_side": source_side,
+                    "selected_side": selected_side,
+                    "source_shape": row.get("source_shape"),
+                    "shape": row.get("shape"),
+                    "method": row.get("method"),
+                    "exit_shape": row.get("exit_shape"),
+                    "qualification": row.get("qualification"),
+                    "validation_n": row.get("validation_n"),
+                    "validation_win_rate": row.get("validation_win_rate"),
+                    "validation_profit_factor": row.get("validation_profit_factor"),
+                    "active_days": row.get("active_days"),
+                    "positive_day_rate": row.get("positive_day_rate"),
+                    "validation_inversion_edge_atr": row.get("validation_inversion_edge_atr"),
+                }
+            )
+    if not candidates:
+        return None
+    candidates.sort(
+        key=lambda row: (
+            int(row["_section_rank"]),
+            -_float(row["_sort_validation_n"]),
+            -_float(row["_sort_profit_factor"]),
+            -_float(row["_sort_win_rate"]),
+            -_float(row["_sort_active_days"]),
+            -_float(row["_sort_edge_atr"]),
+        )
+    )
+    best = dict(candidates[0])
+    for key in list(best):
+        if key.startswith("_sort_") or key == "_section_rank":
+            best.pop(key, None)
+    return best
+
+
+def _directional_inversion_counterfactual_has_viable_replay_path(item: dict[str, Any]) -> bool:
+    if not item.get("would_clear_minimum_5pct"):
+        return False
+    replay = item.get("replay_verification")
+    if isinstance(replay, dict) and replay.get("status") == DIRECTIONAL_INVERSION_REPLAY_REJECTED:
+        return False
+    return True
+
+
+def _directional_inversion_counterfactual_is_actionable(item: dict[str, Any]) -> bool:
+    return _directional_inversion_counterfactual_has_viable_replay_path(item) and bool(
+        item.get("has_repeated_spread_included_inversion_evidence")
+    )
+
+
+def _directional_inversion_replay_verification(
+    item: dict[str, Any],
+    validation: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    if not isinstance(validation, dict) or validation.get("_missing"):
+        return None
+    precision = validation.get("precision_rules")
+    if not isinstance(precision, dict):
+        return None
+    pair = str(item.get("pair") or "").upper()
+    if not pair:
+        return None
+    pair_filter = _upper_string_list(validation.get("pair_filter"))
+    history_pairs = _upper_string_list(validation.get("history_pairs"))
+    in_scope = pair in pair_filter if pair_filter else (pair in history_pairs if history_pairs else True)
+    if not in_scope:
+        return {
+            "status": "PAIR_NOT_IN_REPLAY_SCOPE",
+            "pair": pair,
+            "generated_at_utc": validation.get("generated_at_utc"),
+            "pair_filter": pair_filter,
+            "history_pairs": history_pairs[:12],
+        }
+
+    contrarian_rules = _rules_for_pair(precision.get("contrarian_edge_rules"), pair)
+    daily_stable_contrarian_rules = _rules_for_pair(precision.get("daily_stable_contrarian_edge_rules"), pair)
+    negative_rules = _rules_for_pair(precision.get("negative_rules"), pair)
+    adoption = precision.get("adoption_summary") if isinstance(precision.get("adoption_summary"), dict) else {}
+    if daily_stable_contrarian_rules:
+        status = DIRECTIONAL_INVERSION_REPLAY_LIVE_SUPPORTED
+    elif contrarian_rules:
+        status = DIRECTIONAL_INVERSION_REPLAY_RANK_ONLY
+    elif negative_rules:
+        status = DIRECTIONAL_INVERSION_REPLAY_REJECTED
+    else:
+        status = "CONTRARIAN_REPLAY_NO_PAIR_SUPPORT"
+    return {
+        "status": status,
+        "pair": pair,
+        "generated_at_utc": validation.get("generated_at_utc"),
+        "granularity": validation.get("granularity"),
+        "pair_filter": pair_filter,
+        "evaluated_rows": validation.get("evaluated_rows"),
+        "price_truth_status": (
+            validation.get("price_truth_coverage", {}).get("status")
+            if isinstance(validation.get("price_truth_coverage"), dict)
+            else None
+        ),
+        "adoption_summary": adoption,
+        "contrarian_edge_rules": len(contrarian_rules),
+        "daily_stable_contrarian_edge_rules": len(daily_stable_contrarian_rules),
+        "negative_rules": len(negative_rules),
+        "negative_rule_names": [str(rule.get("name")) for rule in negative_rules[:5] if rule.get("name")],
+    }
+
+
+def _upper_string_list(value: Any) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    return [str(item).upper() for item in value if str(item or "").strip()]
+
+
+def _rules_for_pair(value: Any, pair: str) -> list[dict[str, Any]]:
+    if not isinstance(value, list):
+        return []
+    return [item for item in value if isinstance(item, dict) and _rule_pair(item) == pair]
+
+
+def _rule_pair(rule: dict[str, Any]) -> str | None:
+    raw_pair = rule.get("pair") or rule.get("instrument")
+    if isinstance(raw_pair, str) and raw_pair.strip():
+        return raw_pair.upper()
+    name = str(rule.get("name") or "").upper()
+    parts = name.split("_")
+    if len(parts) >= 2 and parts[0] and parts[1]:
+        return f"{parts[0]}_{parts[1]}"
+    return None
 
 
 def _target_summary(payload: dict[str, Any]) -> dict[str, Any]:
@@ -2479,17 +2735,30 @@ def _build_repair_requests(
     target_clearing_inversions = [
         item
         for item in inversion_counterfactuals
-        if isinstance(item, dict) and item.get("would_clear_minimum_5pct")
+        if isinstance(item, dict) and _directional_inversion_counterfactual_has_viable_replay_path(item)
     ]
     if target_clearing_inversions:
         pairs = sorted({str(item.get("pair")) for item in target_clearing_inversions if item.get("pair")})
+        has_repeated_inversion_evidence = any(
+            bool(item.get("has_repeated_spread_included_inversion_evidence"))
+            for item in target_clearing_inversions
+        )
         requests.append(
             _repair_request(
                 code=DIRECTIONAL_INVERSION_COUNTERFACTUAL_REQUEST,
                 priority="P0",
-                status="READY_FOR_CODE_OR_EVIDENCE_REPAIR",
+                status=(
+                    "READY_FOR_CODE_OR_EVIDENCE_REPAIR"
+                    if has_repeated_inversion_evidence
+                    else DIRECTIONAL_INVERSION_REPLAY_WAIT_STATUS
+                ),
                 source_findings=[
                     "BROKER_TRUTH_OPPOSITE_SIDE_WOULD_CLEAR_MINIMUM_5PCT",
+                    (
+                        "DIRECTIONAL_INVERSION_REPLAY_EVIDENCE_PRESENT"
+                        if has_repeated_inversion_evidence
+                        else "DIRECTIONAL_INVERSION_REPLAY_EVIDENCE_MISSING"
+                    ),
                     *[
                         str(code)
                         for blocker in entry.get("repair_frontier_remaining_blockers", [])
@@ -3419,17 +3688,20 @@ def _render_report(payload: dict[str, Any]) -> str:
     if inversion_rows:
         lines.extend(
             [
-                "| Trade | Owner | Pair | Actual | Opposite | Actual UPL JPY | Opposite gross JPY | Clears 5% minimum |",
-                "|---|---|---|---|---|---:|---:|---|",
+                "| Trade | Owner | Pair | Actual | Opposite | Actual UPL JPY | Opposite gross JPY | Clears 5% minimum | Replay status | Evidence status |",
+                "|---|---|---|---|---|---:|---:|---|---|---|",
             ]
         )
         for item in inversion_rows[:8]:
+            replay = item.get("replay_verification") if isinstance(item.get("replay_verification"), dict) else {}
             lines.append(
                 f"| `{item.get('trade_id')}` | `{item.get('owner')}` | `{item.get('pair')}` | "
                 f"`{item.get('actual_side')}` | `{item.get('opposite_side')}` | "
                 f"`{item.get('actual_unrealized_pl_jpy')}` | "
                 f"`{item.get('opposite_gross_counterfactual_pl_jpy')}` | "
-                f"`{item.get('would_clear_minimum_5pct')}` |"
+                f"`{item.get('would_clear_minimum_5pct')}` | "
+                f"`{replay.get('status') or 'UNVERIFIED'}` | "
+                f"`{item.get('inversion_replay_evidence_status')}` |"
             )
         lines.append("")
         lines.append(

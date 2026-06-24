@@ -3396,6 +3396,7 @@ def main(argv: list[str] | None = None) -> int:
     p_support.add_argument("--execution-timing-audit", type=Path, default=DEFAULT_EXECUTION_TIMING_AUDIT)
     p_support.add_argument("--profit-capture-bot", type=Path, default=DEFAULT_PROFIT_CAPTURE_BOT)
     p_support.add_argument("--oanda-rotation-mining", type=Path, default=DEFAULT_OANDA_UNIVERSAL_ROTATION_MINING)
+    p_support.add_argument("--bidask-replay-validation", type=Path, default=None)
     p_support.add_argument("--output", type=Path, default=DEFAULT_TRADER_SUPPORT_BOT)
     p_support.add_argument("--report", type=Path, default=DEFAULT_TRADER_SUPPORT_BOT_REPORT)
 
@@ -5781,6 +5782,7 @@ def main(argv: list[str] | None = None) -> int:
                 execution_timing_audit_path=args.execution_timing_audit,
                 profit_capture_bot_path=args.profit_capture_bot,
                 oanda_rotation_mining_path=args.oanda_rotation_mining,
+                bidask_replay_validation_path=args.bidask_replay_validation,
                 output_path=args.output,
                 report_path=args.report,
             ).run()

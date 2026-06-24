@@ -17,6 +17,7 @@ from quant_rabbit.execution_timing_contracts import (
 )
 from quant_rabbit.trader_support_bot import (
     DIRECTIONAL_INVERSION_COUNTERFACTUAL_REQUEST,
+    DIRECTIONAL_INVERSION_REPLAY_WAIT_STATUS,
     FORECAST_FRONTIER_EVIDENCE_WAIT_STATUS,
     FRONTIER_QUOTE_FRESHNESS_WAIT_STATUS,
     OANDA_AUDIT_ONLY_LOCAL_TP_EDGE_REQUEST,
@@ -1259,6 +1260,8 @@ class TraderSupportBotTest(unittest.TestCase):
                     ],
                 },
             )
+            oanda_rotation = root / "data" / "oanda_rotation.json"
+            _write_json(oanda_rotation, {"generated_at_utc": now.isoformat()})
             env = _guardian_env(root, active="1")
             with mock.patch.dict(os.environ, env, clear=False):
                 TraderSupportBot(
@@ -1273,6 +1276,8 @@ class TraderSupportBotTest(unittest.TestCase):
                     profitability_acceptance_path=files["profitability"],
                     execution_timing_audit_path=files["timing"],
                     profit_capture_bot_path=files["profit_capture_bot"],
+                    oanda_rotation_mining_path=oanda_rotation,
+                    oanda_rotation_packaged_path=oanda_rotation,
                     output_path=files["output"],
                     report_path=files["report"],
                     now_utc=now,
@@ -1976,14 +1981,262 @@ class TraderSupportBotTest(unittest.TestCase):
             self.assertEqual(counterfactual["actual_side"], "LONG")
             self.assertEqual(counterfactual["opposite_side"], "SHORT")
             self.assertTrue(counterfactual["would_clear_minimum_5pct"])
+            self.assertFalse(counterfactual["has_repeated_spread_included_inversion_evidence"])
             self.assertEqual(request["priority"], "P0")
-            self.assertEqual(request["status"], "READY_FOR_CODE_OR_EVIDENCE_REPAIR")
+            self.assertEqual(request["status"], DIRECTIONAL_INVERSION_REPLAY_WAIT_STATUS)
             self.assertIn("BROKER_TRUTH_OPPOSITE_SIDE_WOULD_CLEAR_MINIMUM_5PCT", request["source_findings"])
+            self.assertIn("DIRECTIONAL_INVERSION_REPLAY_EVIDENCE_MISSING", request["source_findings"])
             self.assertIn("EUR_USD", request["verification_commands"][1])
             report = files["report"].read_text()
             self.assertIn("Directional Inversion Counterfactuals", report)
             self.assertIn("472802", report)
             self.assertIn("12090.085", report)
+
+    def test_opposite_position_counterfactual_with_repeated_inversion_evidence_is_ready(self) -> None:
+        now = datetime(2026, 6, 24, 10, 22, tzinfo=timezone.utc)
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _write_fixture(root, now=now, blocked=True)
+            _write_json(
+                files["broker"],
+                {
+                    "fetched_at_utc": now.isoformat(),
+                    "account": {
+                        "balance_jpy": 174356.528,
+                        "nav_jpy": 162266.4429,
+                        "margin_available_jpy": 15683.9684,
+                    },
+                    "positions": [
+                        {
+                            "trade_id": "472802",
+                            "pair": "EUR_USD",
+                            "side": "LONG",
+                            "owner": "unknown",
+                            "units": 20000,
+                            "unrealized_pl_jpy": -12090.0851,
+                            "take_profit": None,
+                            "stop_loss": None,
+                        }
+                    ],
+                    "orders": [],
+                },
+            )
+            _write_json(
+                files["target"],
+                {
+                    "status": "PURSUE_TARGET",
+                    "campaign_day_jst": "2026-06-24",
+                    "start_balance_jpy": 174356.528,
+                    "minimum_return_pct": 5.0,
+                    "minimum_target_jpy": 8717.83,
+                    "remaining_minimum_jpy": 8717.83,
+                    "remaining_target_jpy": 17435.65,
+                    "progress_pct": 0.0,
+                    "minimum_progress_pct": 0.0,
+                    "target_trades_per_day": 30,
+                },
+            )
+            _write_json(
+                files["intents"],
+                {
+                    "generated_at_utc": now.isoformat(),
+                    "results": [
+                        {
+                            "lane_id": "failure_trader:EUR_USD:SHORT:BREAKOUT_FAILURE",
+                            "status": "DRY_RUN_BLOCKED",
+                            "live_blocker_codes": [
+                                "EXHAUSTION_RANGE_CHASE",
+                                "FORECAST_NOT_EXECUTABLE_FOR_LIVE",
+                                "TELEMETRY_FORECAST_NOT_EXECUTABLE_FOR_LIVE",
+                            ],
+                            "intent": {
+                                "pair": "EUR_USD",
+                                "side": "SHORT",
+                                "order_type": "STOP-ENTRY",
+                                "market_context": {"method": "BREAKOUT_FAILURE"},
+                                "metadata": {
+                                    "self_improvement_p0_repair_live_ready": True,
+                                    "self_improvement_p0_repair_mode": "TP_HARVEST_REPAIR",
+                                    "forecast_direction": "UNCLEAR",
+                                    "forecast_confidence": 0.0,
+                                    "sizing_actual_reward_jpy": 1385.6599,
+                                    "sizing_actual_risk_jpy": 408.405,
+                                },
+                            },
+                            "risk_metrics": {"reward_jpy": 1385.6599, "risk_jpy": 408.405},
+                        }
+                    ],
+                },
+            )
+            oanda_rotation = root / "data" / "oanda_rotation.json"
+            _write_json(
+                oanda_rotation,
+                {
+                    "generated_at_utc": now.isoformat(),
+                    "qualified_inversion_selectors": [
+                        {
+                            "pair": "EUR_USD",
+                            "source_side": "LONG",
+                            "selected_side": "SHORT",
+                            "source_shape": "breakout_failure",
+                            "shape": "breakout_failure",
+                            "exit_shape": "tp1_sl1",
+                            "qualification": "PASS",
+                            "validation_n": 34,
+                            "validation_win_rate": 0.647,
+                            "validation_profit_factor": 1.62,
+                            "active_days": 8,
+                            "positive_day_rate": 0.75,
+                            "validation_inversion_edge_atr": 0.19,
+                        }
+                    ],
+                },
+            )
+            env = _guardian_env(root, active="1")
+            with mock.patch.dict(os.environ, env, clear=False):
+                TraderSupportBot(
+                    broker_snapshot_path=files["broker"],
+                    order_intents_path=files["intents"],
+                    target_state_path=files["target"],
+                    position_management_path=files["position_management"],
+                    position_guardian_management_path=files["guardian_management"],
+                    position_guardian_execution_path=files["guardian_execution"],
+                    position_guardian_heartbeat_path=files["guardian_heartbeat"],
+                    self_improvement_audit_path=files["self_improvement"],
+                    profitability_acceptance_path=files["profitability"],
+                    execution_timing_audit_path=files["timing"],
+                    profit_capture_bot_path=files["profit_capture_bot"],
+                    oanda_rotation_mining_path=oanda_rotation,
+                    oanda_rotation_packaged_path=oanda_rotation,
+                    output_path=files["output"],
+                    report_path=files["report"],
+                    now_utc=now,
+                ).run()
+
+            payload = json.loads(files["output"].read_text())
+            counterfactual = payload["broker"]["directional_inversion_counterfactuals"][0]
+            request = next(
+                item for item in payload["repair_requests"] if item["code"] == DIRECTIONAL_INVERSION_COUNTERFACTUAL_REQUEST
+            )
+
+            self.assertTrue(counterfactual["has_repeated_spread_included_inversion_evidence"])
+            self.assertEqual(counterfactual["inversion_replay_evidence"]["source_section"], "qualified_inversion_selectors")
+            self.assertEqual(request["status"], "READY_FOR_CODE_OR_EVIDENCE_REPAIR")
+            self.assertIn("DIRECTIONAL_INVERSION_REPLAY_EVIDENCE_PRESENT", request["source_findings"])
+
+    def test_rejected_bidask_replay_prevents_directional_inversion_repair_loop(self) -> None:
+        now = datetime(2026, 6, 24, 11, 12, tzinfo=timezone.utc)
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _write_fixture(root, now=now, blocked=True)
+            replay = (
+                root
+                / "logs"
+                / "reports"
+                / "forecast_improvement"
+                / "oanda_history_replay_validate_latest.json"
+            )
+            replay.parent.mkdir(parents=True, exist_ok=True)
+            _write_json(
+                files["broker"],
+                {
+                    "fetched_at_utc": now.isoformat(),
+                    "account": {
+                        "balance_jpy": 174356.528,
+                        "nav_jpy": 162266.4429,
+                        "margin_available_jpy": 15683.9684,
+                    },
+                    "positions": [
+                        {
+                            "trade_id": "472802",
+                            "pair": "EUR_USD",
+                            "side": "LONG",
+                            "owner": "unknown",
+                            "units": 20000,
+                            "unrealized_pl_jpy": -12090.0851,
+                            "take_profit": None,
+                            "stop_loss": None,
+                        }
+                    ],
+                    "orders": [],
+                },
+            )
+            _write_json(
+                files["target"],
+                {
+                    "status": "PURSUE_TARGET",
+                    "campaign_day_jst": "2026-06-24",
+                    "start_balance_jpy": 174356.528,
+                    "minimum_return_pct": 5.0,
+                    "minimum_target_jpy": 8717.83,
+                    "remaining_minimum_jpy": 8717.83,
+                    "remaining_target_jpy": 17435.65,
+                    "progress_pct": 0.0,
+                    "minimum_progress_pct": 0.0,
+                    "target_trades_per_day": 30,
+                },
+            )
+            _write_json(
+                replay,
+                {
+                    "generated_at_utc": now.isoformat(),
+                    "granularity": "S5",
+                    "pair_filter": ["EUR_USD"],
+                    "evaluated_rows": 2885,
+                    "price_truth_coverage": {"status": "PARTIAL_PRICE_TRUTH"},
+                    "precision_rules": {
+                        "adoption_summary": {
+                            "has_live_grade_support": False,
+                            "has_rank_only_support": False,
+                            "live_grade_support_rules": 0,
+                            "rank_only_support_rules": 0,
+                            "negative_block_rules": 1,
+                        },
+                        "contrarian_edge_rules": [],
+                        "daily_stable_contrarian_edge_rules": [],
+                        "negative_rules": [
+                            {
+                                "name": "EUR_USD_UP_S5_BIDASK_NEGATIVE_EXPECTANCY",
+                                "pair": "EUR_USD",
+                            }
+                        ],
+                    },
+                },
+            )
+            env = _guardian_env(root, active="1")
+            with mock.patch.dict(os.environ, env, clear=False):
+                TraderSupportBot(
+                    broker_snapshot_path=files["broker"],
+                    order_intents_path=files["intents"],
+                    target_state_path=files["target"],
+                    position_management_path=files["position_management"],
+                    position_guardian_management_path=files["guardian_management"],
+                    position_guardian_execution_path=files["guardian_execution"],
+                    position_guardian_heartbeat_path=files["guardian_heartbeat"],
+                    self_improvement_audit_path=files["self_improvement"],
+                    profitability_acceptance_path=files["profitability"],
+                    execution_timing_audit_path=files["timing"],
+                    profit_capture_bot_path=files["profit_capture_bot"],
+                    bidask_replay_validation_path=replay,
+                    output_path=files["output"],
+                    report_path=files["report"],
+                    now_utc=now,
+                ).run()
+
+            payload = json.loads(files["output"].read_text())
+            counterfactual = payload["broker"]["directional_inversion_counterfactuals"][0]
+            self.assertTrue(counterfactual["would_clear_minimum_5pct"])
+            self.assertEqual(
+                counterfactual["replay_verification"]["status"],
+                "CONTRARIAN_REPLAY_REJECTED",
+            )
+            self.assertEqual(payload["metrics"]["directional_inversion_counterfactual_actionable_count"], 0)
+            self.assertEqual(payload["metrics"]["directional_inversion_counterfactual_replay_rejected_count"], 1)
+            self.assertNotIn(
+                DIRECTIONAL_INVERSION_COUNTERFACTUAL_REQUEST,
+                [item["code"] for item in payload["repair_requests"]],
+            )
+            self.assertIn("CONTRARIAN_REPLAY_REJECTED", files["report"].read_text())
 
     def test_oanda_audit_only_candidate_reads_preserved_packaged_runtime_artifact(self) -> None:
         now = datetime(2026, 6, 22, 12, 15, tzinfo=timezone.utc)
