@@ -48,6 +48,7 @@ GUARDIAN_LABEL = "com.quantrabbit.position-guardian"
 GUARDIAN_BLOCKER = "POSITION_GUARDIAN_INACTIVE_FOR_PROFIT_CAPTURE"
 PROFIT_CAPTURE_MISS = "LOSS_CLOSE_PROFIT_CAPTURE_MISSED"
 PERSISTENT_DISCIPLINE = "PERSISTENT_PROFITABILITY_DISCIPLINE_BLOCKED"
+REPAIR_BASKET_SELF_IMPROVEMENT_EXEMPT_P0_CODES = frozenset({PERSISTENT_DISCIPLINE})
 RANGE_FORECAST_ROTATION_BLOCKER = "RANGE_FORECAST_REQUIRES_RANGE_ROTATION"
 RANGE_ROTATION_METHOD = "RANGE_ROTATION"
 RANGE_ROTATION_COUNTERPART_MISSING = "RANGE_ROTATION_COUNTERPART_MISSING"
@@ -329,9 +330,13 @@ class TraderSupportBot:
             and bool(entry["live_ready_lanes"])
             and (not guardian["required"] or bool(guardian["active"]))
         )
+        repair_basket_self_improvement_blockers = _repair_basket_self_improvement_blockers(
+            p0_findings
+        )
         repair_basket_send_allowed = (
             bool(entry["repair_live_ready"])
             and (not guardian["required"] or bool(guardian["active"]))
+            and not repair_basket_self_improvement_blockers
         )
         _annotate_operational_target_firepower(
             acceptance["target_firepower"],
@@ -347,6 +352,7 @@ class TraderSupportBot:
         metrics = {
             "send_fresh_entries_allowed": send_allowed,
             "repair_basket_send_allowed": repair_basket_send_allowed,
+            "repair_basket_self_improvement_blocker_codes": repair_basket_self_improvement_blockers,
             "guardian_active": guardian["active"],
             "guardian_heartbeat_fresh": guardian["heartbeat_fresh"],
             "live_ready_lanes": entry["live_ready_lanes"],
@@ -1241,6 +1247,18 @@ def _p0_findings(payload: dict[str, Any]) -> list[dict[str, Any]]:
         for item in findings
         if str(item.get("priority") or "").upper() == "P0"
     ]
+
+
+def _repair_basket_self_improvement_blockers(p0_findings: list[dict[str, Any]]) -> list[str]:
+    blockers: list[str] = []
+    for item in p0_findings:
+        if not isinstance(item, dict):
+            continue
+        code = str(item.get("code") or "SELF_IMPROVEMENT_P0").strip()
+        if not code or code in REPAIR_BASKET_SELF_IMPROVEMENT_EXEMPT_P0_CODES:
+            continue
+        blockers.append(code)
+    return list(dict.fromkeys(blockers))
 
 
 def _profit_capture_summary(self_improvement: dict[str, Any], timing: dict[str, Any]) -> dict[str, Any]:
