@@ -355,6 +355,57 @@ class SelfImprovementAuditorTest(unittest.TestCase):
         self.assertTrue(guardian["live_runtime_lock_held_by_current_process"])
         self.assertEqual(guardian["live_runtime_lock_command"], "cycle-refresh")
 
+    def test_env_active_guardian_stale_heartbeat_during_live_lock_suppresses_inactive_p0(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(
+                root,
+                active_position=False,
+                live_ready_market_rr=1.4,
+                closed_pls=(120.0, 90.0, 60.0),
+            )
+            heartbeat = root / "position_guardian_execution.json"
+            heartbeat.write_text(
+                json.dumps(
+                    {
+                        "generated_at_utc": (_NOW - timedelta(minutes=10)).isoformat(),
+                        "status": "NO_ACTION",
+                    }
+                )
+            )
+            lock_dir = root / ".quant_rabbit_live.lock"
+            lock_dir.mkdir()
+            (lock_dir / "pid").write_text(str(os.getpid()))
+            (lock_dir / "command").write_text("run-autotrade-live")
+            (lock_dir / "started_at_utc").write_text((_NOW - timedelta(minutes=5)).isoformat())
+            with mock.patch.dict(
+                os.environ,
+                {
+                    "QR_REQUIRE_POSITION_GUARDIAN_ACTIVE": "1",
+                    "QR_POSITION_GUARDIAN_ACTIVE": "1",
+                    "QR_POSITION_GUARDIAN_EXECUTION": str(heartbeat),
+                    "QR_POSITION_GUARDIAN_HEARTBEAT": str(root / "missing_position_guardian.json"),
+                    "QR_POSITION_GUARDIAN_INTERVAL": "30",
+                    "QR_POSITION_GUARDIAN_HEARTBEAT_MAX_AGE_SECONDS": "120",
+                    "QR_AUTOTRADE_LOCK_HELD": "1",
+                    "QR_AUTOTRADE_LOCK_DIR": str(lock_dir),
+                },
+                clear=False,
+            ):
+                _run(files, now=_NOW)
+            payload = json.loads(files["output"].read_text())
+
+        codes = {item["code"] for item in payload["findings"]}
+        self.assertNotIn("POSITION_GUARDIAN_INACTIVE_FOR_PROFIT_CAPTURE", codes)
+        guardian = payload["runtime"]["position_guardian"]
+        self.assertFalse(guardian["heartbeat_fresh"])
+        self.assertFalse(guardian["active"])
+        self.assertEqual(guardian["env_active"], "1")
+        self.assertEqual(guardian["active_source"], "live_runtime_lock_busy")
+        self.assertTrue(guardian["live_runtime_lock_active"])
+        self.assertTrue(guardian["live_runtime_lock_held_by_current_process"])
+        self.assertEqual(guardian["live_runtime_lock_command"], "run-autotrade-live")
+
     def test_loaded_position_guardian_with_fresh_heartbeat_suppresses_inactive_p0(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

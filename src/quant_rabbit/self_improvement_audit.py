@@ -1361,9 +1361,14 @@ def _position_guardian_runtime_status() -> dict[str, Any]:
         "live_runtime_lock_held_by_current_process": live_runtime_lock.get("held_by_current_process"),
     }
     if raw_active is not None:
-        status["active"] = bool(_truthy_value(raw_active) and (heartbeat.get("fresh") or not heartbeat_required))
+        env_active = _truthy_value(raw_active)
+        status["active"] = bool(env_active and (heartbeat.get("fresh") or not heartbeat_required))
         status["active_source"] = "env+heartbeat"
         status["env_active"] = raw_active
+        if env_active and heartbeat_required and not heartbeat.get("fresh"):
+            status["active_source"] = (
+                "live_runtime_lock_busy" if live_runtime_lock.get("active") else "stale_heartbeat"
+            )
         return status
     if not plist.exists():
         status["active_source"] = "plist_missing"
