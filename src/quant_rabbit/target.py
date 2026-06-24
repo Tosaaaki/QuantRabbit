@@ -509,7 +509,10 @@ class DailyTargetLedger:
 
     def _write_state(self, state: DailyTargetSnapshot) -> None:
         self.state_path.parent.mkdir(parents=True, exist_ok=True)
-        self.state_path.write_text(json.dumps(asdict(state), ensure_ascii=False, indent=2, sort_keys=True) + "\n")
+        payload = asdict(state)
+        payload["as_of_utc"] = state.generated_at_utc
+        payload["campaign_day"] = state.campaign_day_jst
+        self.state_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n")
 
     def _write_report(self, state: DailyTargetSnapshot) -> None:
         self.report_path.parent.mkdir(parents=True, exist_ok=True)

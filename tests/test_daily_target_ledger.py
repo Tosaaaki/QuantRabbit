@@ -62,6 +62,25 @@ class DailyTargetLedgerTest(unittest.TestCase):
             self.assertIn("Minimum daily floor", (root / "target.md").read_text())
             self.assertIn("Remaining target", (root / "target.md").read_text())
 
+    def test_state_writes_canonical_campaign_day_and_as_of_aliases(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+
+            DailyTargetLedger(
+                state_path=root / "target.json",
+                report_path=root / "target.md",
+            ).run(
+                start_balance_jpy=200_000,
+                realized_pl_jpy=0,
+                daily_risk_budget_jpy=500,
+                now_utc=datetime(2026, 6, 24, 6, 0, tzinfo=timezone.utc),
+            )
+
+            payload = json.loads((root / "target.json").read_text())
+            self.assertEqual(payload["campaign_day"], "2026-06-24")
+            self.assertEqual(payload["campaign_day"], payload["campaign_day_jst"])
+            self.assertEqual(payload["as_of_utc"], payload["generated_at_utc"])
+
     def test_accepts_absolute_target_profit_jpy_as_equity_derived_return(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
