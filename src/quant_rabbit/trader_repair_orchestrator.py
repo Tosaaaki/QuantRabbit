@@ -364,6 +364,11 @@ def _loop_engineering_prompt(
             and _priority_rank(selected.get("priority")) > _priority_rank(waiting_p0[0].get("priority"))
         ),
     }
+    artifact_contradictions = _artifact_contradictions(current_state)
+    current_state["artifact_contradictions"] = artifact_contradictions
+    current_state["artifact_contradiction_codes"] = [
+        str(item.get("code")) for item in artifact_contradictions if item.get("code")
+    ]
     current_hypothesis = _loop_current_hypothesis(
         actionable=actionable,
         approval_required=approval_required,
@@ -377,14 +382,26 @@ def _loop_engineering_prompt(
         waiting=waiting,
         selected=selected,
     )
+    if artifact_contradictions:
+        next_loop.insert(
+            0,
+            "Resolve artifact contradictions before using blocker counts: "
+            + "; ".join(str(item.get("message")) for item in artifact_contradictions if item.get("message")),
+        )
     verification_commands = _loop_verification_commands(
         selected=selected,
         approval_required=approval_required,
         waiting=waiting,
     )
+    if artifact_contradictions:
+        refresh_commands: list[str] = []
+        for item in artifact_contradictions:
+            refresh_commands.extend(_dedupe_strings(item.get("refresh_commands")))
+        verification_commands = _dedupe_strings([*refresh_commands, *verification_commands])
     anti_loop_rules = [
         "Do not treat audit-only 5% firepower as operational reachability unless operational_minimum_5pct_reachable is true.",
         "If the selected actionable request is lower priority than a waiting P0 blocker, treat it as auxiliary evidence work, not as clearing the P0 or proving operational 5%.",
+        "If fresher support state contradicts intent blocker counts, classify that blocker as artifact-stale and refresh the evidence packet before selecting repair work from it.",
         "Do not rerun profitability-acceptance as the fix unless an input artifact, gateway proof, or live evidence window changed first.",
         "Do not lower MIN_PRODUCTION_LOT_UNITS, bypass MARGIN_TOO_THIN_FOR_MIN_LOT, synthesize PASS close evidence, or loosen protective market-structure guards without a failing regression and a positive-path test.",
         "Do not send orders, cancel orders, close positions, mutate launchd, or call model APIs from QuantRabbit code outside the existing gateway or explicit operator approval boundary.",
@@ -393,6 +410,7 @@ def _loop_engineering_prompt(
     self_review_questions = [
         "What single blocker currently prevents operational 5% reachability, and is it causal rather than merely frequent?",
         "Does the next action change broker state, launchd state, order state, or position state? If yes, which approved gateway or explicit operator approval covers it?",
+        "Is any blocker contradicted by fresher support state, and did I refresh the stale artifact before treating it as causal?",
         "Am I trying to recover profit by increasing churn while capture economics is negative, or by preserving a TP-proven HARVEST shape?",
         "What evidence would prove this loop iteration worked, and which command will refresh that evidence?",
         "What is the strongest counterargument that the current blocker is actually a correct protective guardrail?",
@@ -445,6 +463,37 @@ def _support_blocker_codes(value: Any) -> list[str]:
         if code:
             codes.append(str(code))
     return _dedupe_strings(codes)
+
+
+def _artifact_contradictions(current_state: dict[str, Any]) -> list[dict[str, Any]]:
+    contradictions: list[dict[str, Any]] = []
+    guardian_active = current_state.get("guardian_active") is True
+    guardian_blocked_lanes = _optional_positive_int(current_state.get("guardian_blocked_lanes"))
+    if guardian_active and guardian_blocked_lanes > 0:
+        contradictions.append(
+            {
+                "code": "GUARDIAN_ACTIVE_BUT_INTENTS_CARRY_GUARDIAN_BLOCKERS",
+                "message": (
+                    "support proves position guardian active, but order_intents still carries "
+                    f"{guardian_blocked_lanes} guardian-inactive blocker(s); treat those counts "
+                    "as stale until intents/support/orchestrator are regenerated from the same evidence packet"
+                ),
+                "refresh_commands": [
+                    "PYTHONPATH=src python3 -m quant_rabbit.cli generate-intents --snapshot data/broker_snapshot.json --reuse-market-artifacts",
+                    "PYTHONPATH=src python3 -m quant_rabbit.cli trader-support-bot",
+                    "PYTHONPATH=src python3 -m quant_rabbit.cli trader-repair-orchestrator",
+                ],
+            }
+        )
+    return contradictions
+
+
+def _optional_positive_int(value: Any) -> int:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return 0
+    return max(parsed, 0)
 
 
 def _loop_current_hypothesis(
@@ -584,6 +633,8 @@ def _render_loop_prompt_text(
         f"Queue: selected={current_state.get('selected_request_code')}, "
         f"waiting_p0={', '.join(current_state.get('waiting_p0_request_codes') or []) or '(none)'}, "
         f"support_blockers={', '.join(current_state.get('support_blocker_codes') or []) or '(none)'}.",
+        "Artifact contradictions: "
+        f"{', '.join(current_state.get('artifact_contradiction_codes') or []) or '(none)'}.",
         f"Hypothesis: {current_hypothesis}",
         "",
         "Next loop:",
@@ -992,6 +1043,7 @@ def _render_report(payload: dict[str, Any]) -> str:
         f"- Audit 5pct estimated reachable: `{loop_state.get('audit_minimum_5pct_estimated_reachable')}`",
         f"- Live-ready lanes: `{loop_state.get('live_ready_lanes')}`",
         f"- Guardian active: `{loop_state.get('guardian_active')}`",
+        f"- Artifact contradictions: `{', '.join(loop_state.get('artifact_contradiction_codes') or [])}`",
         f"- Actionable: `{', '.join(loop_state.get('actionable_request_codes') or [])}`",
         f"- Approval required: `{', '.join(loop_state.get('approval_required_request_codes') or [])}`",
         f"- Waiting: `{', '.join(loop_state.get('waiting_request_codes') or [])}`",

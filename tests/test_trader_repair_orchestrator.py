@@ -183,7 +183,15 @@ class TraderRepairOrchestratorTest(unittest.TestCase):
                             {"code": "NO_LIVE_READY_LANES", "severity": "P1"},
                         ],
                         "target": {"status": "PURSUE_TARGET"},
-                        "entry_readiness": {"live_ready_lanes": 0},
+                        "guardian": {
+                            "active": True,
+                            "active_source": "launchd+heartbeat",
+                            "heartbeat_status": "NO_POSITION",
+                        },
+                        "entry_readiness": {
+                            "live_ready_lanes": 0,
+                            "guardian_blocked_lanes": 98,
+                        },
                         "profitability_acceptance": {
                             "status": "PROFITABILITY_ACCEPTANCE_BLOCKED",
                             "target_firepower": {
@@ -227,6 +235,16 @@ class TraderRepairOrchestratorTest(unittest.TestCase):
                 "REPAIR_TP_PROGRESS_PROFIT_CAPTURE_REPLAY",
             )
             self.assertTrue(state["selected_request_is_auxiliary_to_waiting_p0"])
+            self.assertEqual(
+                state["artifact_contradiction_codes"],
+                ["GUARDIAN_ACTIVE_BUT_INTENTS_CARRY_GUARDIAN_BLOCKERS"],
+            )
+            self.assertIn("artifact-stale", " ".join(loop_prompt["anti_loop_rules"]))
+            self.assertIn("Resolve artifact contradictions", loop_prompt["next_loop"][0])
+            self.assertIn(
+                "generate-intents --snapshot data/broker_snapshot.json --reuse-market-artifacts",
+                " ".join(loop_prompt["verification_commands"]),
+            )
             self.assertIn("LOSS_CLOSE_PROFIT_CAPTURE_MISSED", state["support_blocker_codes"])
             self.assertIn(
                 "causal P0 blocker remains REPAIR_TP_PROGRESS_PROFIT_CAPTURE_REPLAY",
@@ -234,11 +252,61 @@ class TraderRepairOrchestratorTest(unittest.TestCase):
             )
             self.assertIn("auxiliary work", loop_prompt["current_hypothesis"])
             self.assertNotIn("..", loop_prompt["current_hypothesis"])
-            self.assertIn("waiting P0 blockers", loop_prompt["next_loop"][0])
+            self.assertIn("waiting P0 blockers", " ".join(loop_prompt["next_loop"]))
             self.assertIn(
                 "waiting_p0=REPAIR_TP_PROGRESS_PROFIT_CAPTURE_REPLAY",
                 loop_prompt["prompt_text"],
             )
+            self.assertIn(
+                "Artifact contradictions: GUARDIAN_ACTIVE_BUT_INTENTS_CARRY_GUARDIAN_BLOCKERS",
+                loop_prompt["prompt_text"],
+            )
+
+    def test_loop_prompt_does_not_mark_guardian_blockers_stale_when_guardian_is_inactive(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            support = root / "support.json"
+            output = root / "orchestrator.json"
+            report = root / "orchestrator.md"
+            support.write_text(
+                json.dumps(
+                    {
+                        "status": "SUPPORT_BLOCKED",
+                        "guardian": {"active": False, "heartbeat_status": "STALE"},
+                        "entry_readiness": {
+                            "live_ready_lanes": 0,
+                            "guardian_blocked_lanes": 4,
+                        },
+                        "repair_requests": [
+                            _request(
+                                "REPAIR_TP_PROGRESS_PROFIT_CAPTURE_REPLAY",
+                                priority="P0",
+                            )
+                        ],
+                    },
+                    ensure_ascii=False,
+                    indent=2,
+                    sort_keys=True,
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            summary = TraderRepairOrchestrator(
+                support_bot_path=support,
+                output_path=output,
+                report_path=report,
+            ).run()
+
+            self.assertEqual(summary.status, STATUS_READY)
+            payload = json.loads(output.read_text())
+            loop_prompt = payload["loop_engineering_prompt"]
+            state = loop_prompt["current_state"]
+            self.assertEqual(state["guardian_blocked_lanes"], 4)
+            self.assertEqual(state["artifact_contradictions"], [])
+            self.assertEqual(state["artifact_contradiction_codes"], [])
+            self.assertNotIn("Resolve artifact contradictions", loop_prompt["next_loop"][0])
+            self.assertIn("Artifact contradictions: (none)", loop_prompt["prompt_text"])
 
     def test_only_approval_required_requests_return_diagnostic_code(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
