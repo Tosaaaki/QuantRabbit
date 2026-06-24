@@ -3656,8 +3656,11 @@ class SelfImprovementAuditorTest(unittest.TestCase):
                                                     "confidence": 0.9918,
                                                     "direction": "UP",
                                                     "hit_rate": 1.0,
+                                                    "economic_hit_rate": 1.0,
+                                                    "economic_samples": 40,
                                                     "name": "liquidity_sweep_low",
                                                     "samples": 40,
+                                                    "target_pips": 5.0,
                                                     "timeframe": "M15",
                                                     "rationale": "sell-side sweep target, fade LONG",
                                                 },
@@ -3715,6 +3718,95 @@ class SelfImprovementAuditorTest(unittest.TestCase):
         self.assertIn("forecast arbitration", report_text)
         self.assertIn("relations=`same_side=1`", report_text)
         self.assertIn("EUR_JPY LONG->liquidity_sweep_low UP", report_text)
+
+    def test_same_side_unselected_projection_below_live_precision_waits_for_evidence(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root, active_position=False)
+            files["intents"].write_text(
+                json.dumps(
+                    {
+                        "results": [
+                            {
+                                "lane_id": "failure_trader:EUR_USD:SHORT:BREAKOUT_FAILURE:LIMIT",
+                                "status": "DRY_RUN_PASSED",
+                                "intent": {
+                                    "pair": "EUR_USD",
+                                    "side": "SHORT",
+                                    "order_type": "LIMIT",
+                                    "metadata": {
+                                        "forecast_direction": "UNCLEAR",
+                                        "forecast_confidence": 0.1792,
+                                        "forecast_raw_confidence": 0.1792,
+                                        "chart_direction_bias": "SHORT",
+                                        "forecast_market_support": {
+                                            "ok": False,
+                                            "direction": "UNCLEAR",
+                                            "reason": (
+                                                "forecast UNCLEAR has no executable direction; "
+                                                "audited projection unselected"
+                                            ),
+                                            "unselected_projection_count": 1,
+                                            "unselected_reason": (
+                                                "macro_event_nowcast_inflation DOWN audited "
+                                                "hit_rate=0.75 samples=100 was unselected because "
+                                                "forecast=UNCLEAR"
+                                            ),
+                                            "unselected_signals": [
+                                                {
+                                                    "calibration_name": "macro_event_nowcast_inflation_down",
+                                                    "confidence": 0.79,
+                                                    "direction": "DOWN",
+                                                    "economic_hit_rate": 0.75,
+                                                    "economic_samples": 100,
+                                                    "hit_rate": 0.75,
+                                                    "name": "macro_event_nowcast_inflation",
+                                                    "samples": 100,
+                                                    "timeout_rate": 0.0,
+                                                }
+                                            ],
+                                        },
+                                    },
+                                },
+                                "risk_issues": [
+                                    {
+                                        "code": "FORECAST_NOT_EXECUTABLE_FOR_LIVE",
+                                        "message": "forecast UNCLEAR remains non-executable",
+                                        "severity": "BLOCK",
+                                    }
+                                ],
+                                "strategy_issues": [],
+                                "live_strategy_issues": [],
+                                "live_blockers": [],
+                                "risk_metrics": {
+                                    "reward_jpy": 408.5,
+                                    "reward_risk": 1.008,
+                                },
+                            }
+                        ]
+                    }
+                )
+            )
+
+            summary = _run(files)
+            payload = json.loads(files["output"].read_text())
+            report_text = files["report"].read_text()
+
+        codes = {item["code"]: item for item in payload["findings"]}
+        self.assertEqual(summary.status, STATUS_BLOCKED)
+        self.assertNotIn("FORECAST_ARBITRATION_UNSELECTED_PROJECTION_REPAIR_REQUIRED", codes)
+        finding = codes["FORECAST_ARBITRATION_SAME_SIDE_PRECISION_WAIT"]
+        self.assertEqual(finding["priority"], "P2")
+        diagnostics = finding["evidence"]["forecast_arbitration_diagnostics"]
+        self.assertEqual(diagnostics["same_side_lane_count"], 1)
+        self.assertEqual(diagnostics["same_side_actionable_repair_lane_count"], 0)
+        self.assertEqual(diagnostics["same_side_precision_wait_lane_count"], 1)
+        self.assertFalse(
+            diagnostics["same_side_precision_wait_lanes"][0]["top_unselected_signal"][
+                "live_precision_ok"
+            ]
+        )
+        self.assertIn("same_side_precision_wait=`1`", report_text)
 
     def test_same_side_unselected_projection_with_context_blockers_is_not_actionable_repair(
         self,

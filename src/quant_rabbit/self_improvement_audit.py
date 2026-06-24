@@ -16,6 +16,7 @@ from quant_rabbit.execution_timing_contracts import (
 from quant_rabbit.forecast_precision import (
     projection_precision_edge_summary,
     projection_precision_gap_summary,
+    support_signal_clears_live_precision,
 )
 from quant_rabbit.paths import (
     DEFAULT_AI_ATTACK_ADVICE,
@@ -334,6 +335,13 @@ PROJECTION_ECONOMIC_PRECISION_MIN_WILSON_LOWER = _env_nonnegative_float(
 PROJECTION_ECONOMIC_PRECISION_MIN_SAMPLES = max(
     1,
     int(_env_nonnegative_float("QR_FORECAST_LIVE_PRECISION_MIN_SAMPLES", 30.0)),
+)
+# Mirror the live support target-width floor. Headline hit-rate is not enough
+# when the target is too narrow to pay spread; self-improvement must not call a
+# same-side projection actionable if RiskEngine would still reject it.
+PROJECTION_ECONOMIC_PRECISION_MIN_TARGET_PIPS = _env_nonnegative_float(
+    "QR_FORECAST_LIVE_PRECISION_MIN_TARGET_PIPS",
+    2.0,
 )
 # Report-limit only; this keeps the live digest readable and is not a market
 # threshold.
@@ -5246,6 +5254,9 @@ def _intent_findings(
     same_side_context_blocked = int(
         forecast_arbitration.get("same_side_context_blocked_lane_count") or 0
     )
+    same_side_precision_wait = int(
+        forecast_arbitration.get("same_side_precision_wait_lane_count") or 0
+    )
     opposite_arbitration = int(
         forecast_arbitration.get("opposite_conflict_lane_count")
         or forecast_arbitration.get("opposite_side_lane_count")
@@ -5266,6 +5277,25 @@ def _intent_findings(
                     "Repair forecast arbitration before forcing live sends: resolve only these same-side "
                     "projection candidates into a pair forecast with target/invalidation geometry, while "
                     "keeping opposite-projection RANGE/UNCLEAR lanes blocked."
+                ),
+                evidence={"forecast_arbitration_diagnostics": forecast_arbitration},
+            )
+        )
+    if target_open and same_side_precision_wait > 0:
+        out.append(
+            _finding(
+                run_id=run_id,
+                priority="P2",
+                layer="forecast",
+                code="FORECAST_ARBITRATION_SAME_SIDE_PRECISION_WAIT",
+                message=(
+                    f"{same_side_precision_wait} dry-run passed same-side projection candidate(s) "
+                    "do not clear the live precision floor yet"
+                ),
+                next_action=(
+                    "Do not treat these as Codex forecast-arbitration code repairs. Collect stronger "
+                    "projection/live-precision evidence or wait for a fresh signal whose Wilson/economic "
+                    "precision clears the same floor enforced by intent generation and RiskEngine."
                 ),
                 evidence={"forecast_arbitration_diagnostics": forecast_arbitration},
             )
@@ -8043,6 +8073,7 @@ def _forecast_arbitration_diagnostics(
     same_side_lanes: list[dict[str, Any]] = []
     same_side_actionable_repair_lanes: list[dict[str, Any]] = []
     same_side_context_blocked_lanes: list[dict[str, Any]] = []
+    same_side_precision_wait_lanes: list[dict[str, Any]] = []
     opposite_side_lanes: list[dict[str, Any]] = []
     mixed_relation_lanes: list[dict[str, Any]] = []
     signal_counts: dict[str, int] = {}
@@ -8140,6 +8171,12 @@ def _forecast_arbitration_diagnostics(
                 "direction": signal_direction,
                 "confidence": _maybe_float(top.get("confidence")),
                 "hit_rate": _maybe_float(top.get("hit_rate")),
+                "hit_rate_wilson_lower": _maybe_float(top.get("hit_rate_wilson_lower")),
+                "economic_hit_rate": _maybe_float(top.get("economic_hit_rate")),
+                "economic_hit_rate_wilson_lower": _maybe_float(
+                    top.get("economic_hit_rate_wilson_lower")
+                ),
+                "live_precision_ok": _forecast_unselected_signal_clears_live_precision(top),
                 "samples": _maybe_int(top.get("samples")),
                 "timeframe": str(top.get("timeframe") or ""),
                 "rationale": str(top.get("rationale") or "")[:180],
@@ -8163,6 +8200,8 @@ def _forecast_arbitration_diagnostics(
                     same_side_context_blocker_counts[family] = (
                         same_side_context_blocker_counts.get(family, 0) + 1
                     )
+            elif not _forecast_unselected_signal_clears_live_precision(same_side_signal):
+                same_side_precision_wait_lanes.append(lane)
             else:
                 same_side_actionable_repair_lanes.append(lane)
         elif relation == "opposite_side":
@@ -8182,6 +8221,7 @@ def _forecast_arbitration_diagnostics(
         "same_side_lane_count": len(same_side_lanes),
         "same_side_actionable_repair_lane_count": len(same_side_actionable_repair_lanes),
         "same_side_context_blocked_lane_count": len(same_side_context_blocked_lanes),
+        "same_side_precision_wait_lane_count": len(same_side_precision_wait_lanes),
         "opposite_side_lane_count": len(opposite_side_lanes),
         "mixed_relation_lane_count": len(mixed_relation_lanes),
         "opposite_conflict_lane_count": len(opposite_side_lanes) + len(mixed_relation_lanes),
@@ -8199,6 +8239,7 @@ def _forecast_arbitration_diagnostics(
         "same_side_lanes": same_side_lanes[:limit],
         "same_side_actionable_repair_lanes": same_side_actionable_repair_lanes[:limit],
         "same_side_context_blocked_lanes": same_side_context_blocked_lanes[:limit],
+        "same_side_precision_wait_lanes": same_side_precision_wait_lanes[:limit],
         "opposite_side_lanes": opposite_side_lanes[:limit],
         "mixed_relation_lanes": mixed_relation_lanes[:limit],
         "opposite_conflict_lanes": (opposite_side_lanes + mixed_relation_lanes)[:limit],
@@ -8222,10 +8263,25 @@ def _forecast_signal_payload(signal: Any) -> dict[str, Any]:
         "direction": str(signal.get("direction") or "").upper() or "UNKNOWN",
         "confidence": _maybe_float(signal.get("confidence")),
         "hit_rate": _maybe_float(signal.get("hit_rate")),
+        "hit_rate_wilson_lower": _maybe_float(signal.get("hit_rate_wilson_lower")),
+        "economic_hit_rate": _maybe_float(signal.get("economic_hit_rate")),
+        "economic_hit_rate_wilson_lower": _maybe_float(signal.get("economic_hit_rate_wilson_lower")),
+        "live_precision_ok": _forecast_unselected_signal_clears_live_precision(signal),
         "samples": _maybe_int(signal.get("samples")),
         "timeframe": str(signal.get("timeframe") or ""),
         "rationale": str(signal.get("rationale") or "")[:180],
     }
+
+
+def _forecast_unselected_signal_clears_live_precision(signal: Any) -> bool:
+    if not isinstance(signal, dict):
+        return False
+    return support_signal_clears_live_precision(
+        signal,
+        min_wilson_lower=PROJECTION_ECONOMIC_PRECISION_MIN_WILSON_LOWER,
+        min_samples=PROJECTION_ECONOMIC_PRECISION_MIN_SAMPLES,
+        min_target_pips=PROJECTION_ECONOMIC_PRECISION_MIN_TARGET_PIPS,
+    )
 
 
 def _issue_codes(items: Any) -> set[str]:
@@ -9021,6 +9077,7 @@ def _report_forecast_arbitration_text(raw: Any) -> str:
     signals = payload.get("signal_counts") if isinstance(payload.get("signal_counts"), list) else []
     actionable = _maybe_int(payload.get("same_side_actionable_repair_lane_count")) or 0
     context_blocked = _maybe_int(payload.get("same_side_context_blocked_lane_count")) or 0
+    precision_wait = _maybe_int(payload.get("same_side_precision_wait_lane_count")) or 0
     lanes = (
         payload.get("same_side_actionable_repair_lanes")
         if isinstance(payload.get("same_side_actionable_repair_lanes"), list)
@@ -9059,6 +9116,7 @@ def _report_forecast_arbitration_text(raw: Any) -> str:
         f"lanes=`{lane_count}`, directions=`{direction_text or 'none'}`, "
         f"relations=`{relation_text or 'none'}`, "
         f"same_side_actionable=`{actionable}`, same_side_context_blocked=`{context_blocked}`, "
+        f"same_side_precision_wait=`{precision_wait}`, "
         f"signals=`{signal_text or 'none'}`"
         + (", top=" + "; ".join(lane_labels) if lane_labels else "")
     )
