@@ -586,10 +586,10 @@ def _guardian_status(*, now_utc: datetime, execution_path: Path, heartbeat_path:
     max_age = _int_env("QR_POSITION_GUARDIAN_HEARTBEAT_MAX_AGE_SECONDS", default=interval * 4, minimum=interval)
     heartbeat_required = _truthy_env("QR_POSITION_GUARDIAN_REQUIRE_HEARTBEAT", default=True)
     required = _truthy_env("QR_REQUIRE_POSITION_GUARDIAN_ACTIVE", default=True)
-    paths = [
-        Path(os.environ.get("QR_POSITION_GUARDIAN_EXECUTION", str(execution_path))).expanduser(),
-        Path(os.environ.get("QR_POSITION_GUARDIAN_HEARTBEAT", str(heartbeat_path))).expanduser(),
-    ]
+    paths = _guardian_heartbeat_candidates(
+        execution_path=execution_path,
+        heartbeat_path=heartbeat_path,
+    )
     heartbeat = _freshest_guardian_heartbeat(paths, now_utc=now_utc, max_age=max_age)
     runtime_lock = _live_runtime_lock_status(now_utc=now_utc)
     env_active_raw = os.environ.get("QR_POSITION_GUARDIAN_ACTIVE")
@@ -638,6 +638,49 @@ def _guardian_status(*, now_utc: datetime, execution_path: Path, heartbeat_path:
     if loaded["loaded"] and heartbeat_required and not heartbeat["fresh"]:
         status["active_source"] = "live_runtime_lock_busy" if runtime_lock["active"] else "stale_heartbeat"
     return status
+
+
+def _guardian_heartbeat_candidates(*, execution_path: Path, heartbeat_path: Path) -> list[Path]:
+    execution_env = os.environ.get("QR_POSITION_GUARDIAN_EXECUTION")
+    heartbeat_env = os.environ.get("QR_POSITION_GUARDIAN_HEARTBEAT")
+    paths = [
+        Path(execution_env or str(execution_path)).expanduser(),
+        Path(heartbeat_env or str(heartbeat_path)).expanduser(),
+    ]
+    if execution_env is None and _same_path(execution_path, DEFAULT_POSITION_GUARDIAN_EXECUTION):
+        paths.append(_default_live_root() / "data" / DEFAULT_POSITION_GUARDIAN_EXECUTION.name)
+    if heartbeat_env is None and _same_path(heartbeat_path, DEFAULT_POSITION_GUARDIAN_HEARTBEAT):
+        paths.append(_default_live_root() / "data" / DEFAULT_POSITION_GUARDIAN_HEARTBEAT.name)
+    return _dedupe_paths(paths)
+
+
+def _default_live_root() -> Path:
+    return Path(
+        os.environ.get("QR_SYNC_LIVE_ROOT") or str(ROOT.parent / "QuantRabbit-live")
+    ).expanduser()
+
+
+def _dedupe_paths(paths: list[Path]) -> list[Path]:
+    result: list[Path] = []
+    seen: set[str] = set()
+    for path in paths:
+        key = _path_key(path)
+        if key in seen:
+            continue
+        seen.add(key)
+        result.append(path)
+    return result
+
+
+def _same_path(left: Path, right: Path) -> bool:
+    return _path_key(left) == _path_key(right)
+
+
+def _path_key(path: Path) -> str:
+    try:
+        return str(path.expanduser().resolve(strict=False))
+    except OSError:
+        return str(path.expanduser())
 
 
 def _live_runtime_lock_status(*, now_utc: datetime) -> dict[str, Any]:

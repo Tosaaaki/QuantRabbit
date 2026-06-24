@@ -28,6 +28,7 @@ from quant_rabbit.trader_support_bot import (
     TP_PROGRESS_GUARDIAN_WAIT_STATUS,
     TraderSupportBot,
     _acceptance_clearance_for_code,
+    _guardian_status,
 )
 
 
@@ -555,6 +556,107 @@ class TraderSupportBotTest(unittest.TestCase):
                 "RESTORE_POSITION_GUARDIAN_AFTER_PREFLIGHT",
                 payload["metrics"]["repair_request_codes"],
             )
+
+    def test_guardian_status_default_source_paths_read_live_heartbeat(self) -> None:
+        now = datetime(2026, 6, 24, 17, 45, tzinfo=timezone.utc)
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "QuantRabbit"
+            live = root / "QuantRabbit-live"
+            source_data = source / "data"
+            live_data = live / "data"
+            source_data.mkdir(parents=True)
+            live_data.mkdir(parents=True)
+            plist = root / "com.quantrabbit.position-guardian.plist"
+            plist.write_text("<plist />\n", encoding="utf-8")
+            live_heartbeat = live_data / "position_guardian.json"
+            _write_json(
+                live_heartbeat,
+                {
+                    "generated_at_utc": (now - timedelta(seconds=10)).isoformat(),
+                    "status": "NO_POSITION",
+                },
+            )
+            source_execution = source_data / "position_guardian_execution.json"
+            source_heartbeat = source_data / "position_guardian.json"
+            with (
+                mock.patch(
+                    "quant_rabbit.trader_support_bot.DEFAULT_POSITION_GUARDIAN_EXECUTION",
+                    source_execution,
+                ),
+                mock.patch(
+                    "quant_rabbit.trader_support_bot.DEFAULT_POSITION_GUARDIAN_HEARTBEAT",
+                    source_heartbeat,
+                ),
+                mock.patch(
+                    "quant_rabbit.trader_support_bot._launchd_loaded",
+                    return_value={"loaded": True},
+                ),
+                mock.patch.dict(
+                    os.environ,
+                    {
+                        "QR_SYNC_LIVE_ROOT": str(live),
+                        "QR_POSITION_GUARDIAN_PLIST": str(plist),
+                        "QR_REQUIRE_POSITION_GUARDIAN_ACTIVE": "1",
+                    },
+                    clear=False,
+                ),
+            ):
+                guardian = _guardian_status(
+                    now_utc=now,
+                    execution_path=source_execution,
+                    heartbeat_path=source_heartbeat,
+                )
+
+            self.assertTrue(guardian["active"])
+            self.assertEqual(guardian["active_source"], "launchd+heartbeat")
+            self.assertTrue(guardian["heartbeat_fresh"])
+            self.assertEqual(guardian["heartbeat_path"], str(live_heartbeat))
+            self.assertIn(str(live_heartbeat), guardian["heartbeat_candidates"])
+
+    def test_guardian_status_custom_paths_do_not_fall_back_to_live_heartbeat(self) -> None:
+        now = datetime(2026, 6, 24, 17, 45, tzinfo=timezone.utc)
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            live = root / "QuantRabbit-live"
+            live_data = live / "data"
+            live_data.mkdir(parents=True)
+            plist = root / "com.quantrabbit.position-guardian.plist"
+            plist.write_text("<plist />\n", encoding="utf-8")
+            _write_json(
+                live_data / "position_guardian.json",
+                {
+                    "generated_at_utc": (now - timedelta(seconds=10)).isoformat(),
+                    "status": "NO_POSITION",
+                },
+            )
+            custom_execution = root / "custom" / "position_guardian_execution.json"
+            custom_heartbeat = root / "custom" / "position_guardian.json"
+            with (
+                mock.patch(
+                    "quant_rabbit.trader_support_bot._launchd_loaded",
+                    return_value={"loaded": True},
+                ),
+                mock.patch.dict(
+                    os.environ,
+                    {
+                        "QR_SYNC_LIVE_ROOT": str(live),
+                        "QR_POSITION_GUARDIAN_PLIST": str(plist),
+                        "QR_REQUIRE_POSITION_GUARDIAN_ACTIVE": "1",
+                    },
+                    clear=False,
+                ),
+            ):
+                guardian = _guardian_status(
+                    now_utc=now,
+                    execution_path=custom_execution,
+                    heartbeat_path=custom_heartbeat,
+                )
+
+            self.assertFalse(guardian["active"])
+            self.assertEqual(guardian["active_source"], "stale_heartbeat")
+            self.assertIsNone(guardian["heartbeat_path"])
+            self.assertNotIn(str(live_data / "position_guardian.json"), guardian["heartbeat_candidates"])
 
     def test_close_gate_block_evidence_does_not_request_persistence_repair(self) -> None:
         now = datetime(2026, 6, 22, 12, 15, tzinfo=timezone.utc)
