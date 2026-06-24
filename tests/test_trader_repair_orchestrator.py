@@ -20,9 +20,11 @@ from quant_rabbit.trader_support_bot import (
     DIRECTIONAL_INVERSION_REPLAY_WAIT_STATUS,
     FRONTIER_MARGIN_CAPACITY_WAIT_STATUS,
     FRONTIER_QUOTE_FRESHNESS_WAIT_STATUS,
+    OANDA_AUDIT_ONLY_LOCAL_TP_EDGE_REQUEST,
     REPAIR_AUTOMATION_ALLOWED_ACTIONS,
     REPAIR_AUTOMATION_EXPLICIT_APPROVAL_ACTIONS,
     REPAIR_AUTOMATION_FORBIDDEN_DIRECT_ACTIONS,
+    TP_PROGRESS_GUARDIAN_WAIT_STATUS,
 )
 
 
@@ -147,6 +149,96 @@ class TraderRepairOrchestratorTest(unittest.TestCase):
             self.assertIn("Loop Engineering Prompt", report_text)
             self.assertIn("Evidence summary keys", report_text)
             self.assertIn("Dependency", report_text)
+
+    def test_loop_prompt_marks_lower_priority_selected_work_as_auxiliary_to_waiting_p0(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            support = root / "support.json"
+            output = root / "orchestrator.json"
+            report = root / "orchestrator.md"
+            requests = [
+                _request(
+                    "REPAIR_TP_PROGRESS_PROFIT_CAPTURE_REPLAY",
+                    priority="P0",
+                    status=TP_PROGRESS_GUARDIAN_WAIT_STATUS,
+                    evidence_summary={"loss_closes_repair_replay_triggered": 13},
+                ),
+                _request(
+                    "REPAIR_MONTH_SCALE_RESIDUAL_ENTRY_QUALITY",
+                    priority="P0",
+                    status="RESIDUAL_GROUPS_ALREADY_BLOCKED_WAITING_FOR_REPLAY",
+                ),
+                _request(
+                    OANDA_AUDIT_ONLY_LOCAL_TP_EDGE_REQUEST,
+                    priority="P1",
+                    status="READY_FOR_READ_ONLY_EVIDENCE_COLLECTION",
+                ),
+            ]
+            support.write_text(
+                json.dumps(
+                    {
+                        "status": "SUPPORT_BLOCKED",
+                        "blockers": [
+                            {"code": "LOSS_CLOSE_PROFIT_CAPTURE_MISSED", "severity": "P0"},
+                            {"code": "NO_LIVE_READY_LANES", "severity": "P1"},
+                        ],
+                        "target": {"status": "PURSUE_TARGET"},
+                        "entry_readiness": {"live_ready_lanes": 0},
+                        "profitability_acceptance": {
+                            "status": "PROFITABILITY_ACCEPTANCE_BLOCKED",
+                            "target_firepower": {
+                                "operational_minimum_5pct_reachable": False,
+                                "minimum_5pct_estimated_reachable": True,
+                            },
+                        },
+                        "repair_requests": requests,
+                    },
+                    ensure_ascii=False,
+                    indent=2,
+                    sort_keys=True,
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            summary = TraderRepairOrchestrator(
+                support_bot_path=support,
+                output_path=output,
+                report_path=report,
+            ).run()
+
+            self.assertEqual(summary.status, STATUS_READY)
+            payload = json.loads(output.read_text())
+            self.assertEqual(
+                payload["selected_request"]["code"],
+                OANDA_AUDIT_ONLY_LOCAL_TP_EDGE_REQUEST,
+            )
+            loop_prompt = payload["loop_engineering_prompt"]
+            state = loop_prompt["current_state"]
+            self.assertEqual(
+                state["waiting_p0_request_codes"],
+                [
+                    "REPAIR_TP_PROGRESS_PROFIT_CAPTURE_REPLAY",
+                    "REPAIR_MONTH_SCALE_RESIDUAL_ENTRY_QUALITY",
+                ],
+            )
+            self.assertEqual(
+                state["primary_waiting_p0_request_code"],
+                "REPAIR_TP_PROGRESS_PROFIT_CAPTURE_REPLAY",
+            )
+            self.assertTrue(state["selected_request_is_auxiliary_to_waiting_p0"])
+            self.assertIn("LOSS_CLOSE_PROFIT_CAPTURE_MISSED", state["support_blocker_codes"])
+            self.assertIn(
+                "causal P0 blocker remains REPAIR_TP_PROGRESS_PROFIT_CAPTURE_REPLAY",
+                loop_prompt["current_hypothesis"],
+            )
+            self.assertIn("auxiliary work", loop_prompt["current_hypothesis"])
+            self.assertNotIn("..", loop_prompt["current_hypothesis"])
+            self.assertIn("waiting P0 blockers", loop_prompt["next_loop"][0])
+            self.assertIn(
+                "waiting_p0=REPAIR_TP_PROGRESS_PROFIT_CAPTURE_REPLAY",
+                loop_prompt["prompt_text"],
+            )
 
     def test_only_approval_required_requests_return_diagnostic_code(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

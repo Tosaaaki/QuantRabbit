@@ -324,10 +324,12 @@ def _loop_engineering_prompt(
         if isinstance(acceptance.get("target_firepower"), dict)
         else {}
     )
+    waiting_p0 = _p0_requests(waiting)
     current_state = {
         "orchestrator_status": status,
         "support_status": support.get("status"),
         "support_generated_at_utc": support.get("generated_at_utc"),
+        "support_blocker_codes": _support_blocker_codes(support.get("blockers")),
         "campaign_day_jst": target.get("campaign_day_jst"),
         "target_status": target.get("status"),
         "minimum_progress_pct": target.get("minimum_progress_pct"),
@@ -350,9 +352,17 @@ def _loop_engineering_prompt(
         ),
         "operational_blocker_codes": list(target_firepower.get("operational_blocker_codes") or [])[:12],
         "selected_request_code": selected.get("code") if selected else None,
+        "selected_request_priority": selected.get("priority") if selected else None,
         "actionable_request_codes": _queue_codes(actionable),
         "approval_required_request_codes": _queue_codes(approval_required),
         "waiting_request_codes": _queue_codes(waiting),
+        "waiting_p0_request_codes": _queue_codes(waiting_p0),
+        "primary_waiting_p0_request_code": waiting_p0[0].get("code") if waiting_p0 else None,
+        "selected_request_is_auxiliary_to_waiting_p0": bool(
+            selected
+            and waiting_p0
+            and _priority_rank(selected.get("priority")) > _priority_rank(waiting_p0[0].get("priority"))
+        ),
     }
     current_hypothesis = _loop_current_hypothesis(
         actionable=actionable,
@@ -374,6 +384,7 @@ def _loop_engineering_prompt(
     )
     anti_loop_rules = [
         "Do not treat audit-only 5% firepower as operational reachability unless operational_minimum_5pct_reachable is true.",
+        "If the selected actionable request is lower priority than a waiting P0 blocker, treat it as auxiliary evidence work, not as clearing the P0 or proving operational 5%.",
         "Do not rerun profitability-acceptance as the fix unless an input artifact, gateway proof, or live evidence window changed first.",
         "Do not lower MIN_PRODUCTION_LOT_UNITS, bypass MARGIN_TOO_THIN_FOR_MIN_LOT, synthesize PASS close evidence, or loosen protective market-structure guards without a failing regression and a positive-path test.",
         "Do not send orders, cancel orders, close positions, mutate launchd, or call model APIs from QuantRabbit code outside the existing gateway or explicit operator approval boundary.",
@@ -418,6 +429,24 @@ def _queue_codes(items: list[dict[str, Any]]) -> list[str]:
     return [str(item.get("code")) for item in items if item.get("code")]
 
 
+def _p0_requests(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [item for item in items if _priority_rank(item.get("priority")) == 0]
+
+
+def _support_blocker_codes(value: Any) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    codes: list[str] = []
+    for item in value:
+        if isinstance(item, dict):
+            code = item.get("code")
+        else:
+            code = item
+        if code:
+            codes.append(str(code))
+    return _dedupe_strings(codes)
+
+
 def _loop_current_hypothesis(
     *,
     actionable: list[dict[str, Any]],
@@ -427,6 +456,20 @@ def _loop_current_hypothesis(
     current_state: dict[str, Any],
 ) -> str:
     if selected:
+        waiting_p0_codes = current_state.get("waiting_p0_request_codes")
+        if (
+            current_state.get("selected_request_is_auxiliary_to_waiting_p0")
+            and isinstance(waiting_p0_codes, list)
+            and waiting_p0_codes
+        ):
+            primary_p0 = str(waiting_p0_codes[0])
+            problem = str(selected.get("problem") or "").rstrip(".")
+            return (
+                f"The causal P0 blocker remains {primary_p0} waiting on evidence; "
+                f"the selected actionable loop is auxiliary work on {selected.get('code')}: "
+                f"{problem}. Do not treat this as operational 5% proof until "
+                "the waiting P0 clearance evidence changes."
+            )
         return (
             f"The next useful loop is implementation work on {selected.get('code')}: "
             f"{selected.get('problem')}"
@@ -456,12 +499,27 @@ def _loop_next_steps(
     selected: dict[str, Any],
 ) -> list[str]:
     if selected:
-        return [
-            "Read the selected request evidence and suggested files before editing.",
-            "Implement the smallest code/test/doc change that directly clears the selected clearance condition.",
-            "Run targeted tests and listed verification commands; do not count report reruns as repair unless the underlying evidence changed.",
-            "Commit with Codex attribution, sync live runtime, and verify live HEAD matches the promoted commit.",
-        ]
+        steps: list[str] = []
+        waiting_p0 = _p0_requests(waiting)
+        if (
+            waiting_p0
+            and _priority_rank(selected.get("priority"))
+            > _priority_rank(waiting_p0[0].get("priority"))
+        ):
+            steps.append(
+                "Keep the waiting P0 blockers in scope: "
+                f"{', '.join(_queue_codes(waiting_p0))}. "
+                "The selected work is auxiliary until their clearance evidence changes."
+            )
+        steps.extend(
+            [
+                "Read the selected request evidence and suggested files before editing.",
+                "Implement the smallest code/test/doc change that directly clears the selected clearance condition.",
+                "Run targeted tests and listed verification commands; do not count report reruns as repair unless the underlying evidence changed.",
+                "Commit with Codex attribution, sync live runtime, and verify live HEAD matches the promoted commit.",
+            ]
+        )
+        return steps
     if approval_required:
         first = approval_required[0]
         return [
@@ -523,6 +581,9 @@ def _render_loop_prompt_text(
         f"guardian_active={current_state.get('guardian_active')}, "
         f"operational_5pct={current_state.get('operational_minimum_5pct_reachable')}, "
         f"audit_5pct={current_state.get('audit_minimum_5pct_estimated_reachable')}.",
+        f"Queue: selected={current_state.get('selected_request_code')}, "
+        f"waiting_p0={', '.join(current_state.get('waiting_p0_request_codes') or []) or '(none)'}, "
+        f"support_blockers={', '.join(current_state.get('support_blocker_codes') or []) or '(none)'}.",
         f"Hypothesis: {current_hypothesis}",
         "",
         "Next loop:",
