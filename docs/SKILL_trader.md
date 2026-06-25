@@ -293,8 +293,9 @@ QR_LIVE_ENABLED=1 ./scripts/run-autotrade-live.sh \
 # projection/position/audit repair subset, including `position-management`
 # followed by `position-execution` when management succeeds, then reprices
 # `order_intents` with `generate-intents --reuse-market-artifacts`, refreshes
-# `daily-target-state`, and reruns read-only position evidence sidecars against
-# the final broker snapshot before `profit-capture-bot` → `memory-health` →
+# `daily-target-state`, regenerates `optimize-coverage` from that final intent
+# packet, and reruns read-only position evidence sidecars against the final
+# broker snapshot before `profit-capture-bot` → `memory-health` →
 # `self-improvement-audit` →
 # `profitability-acceptance` → `trader-support-bot` →
 # `trader-repair-orchestrator`. It preserves the original
@@ -309,7 +310,8 @@ QR_LIVE_ENABLED=1 ./scripts/run-autotrade-live.sh \
 #   → position-thesis-check → thesis-evolution-check → forecast-persistence-check
 #   → position-management → position-execution
 #   → generate-intents --reuse-market-artifacts
-#   → daily-target-state → position-thesis-check → thesis-evolution-check
+#   → daily-target-state → optimize-coverage
+#   → position-thesis-check → thesis-evolution-check
 #   → forecast-persistence-check → position-management → profit-capture-bot → memory-health
 #   → self-improvement-audit → profitability-acceptance → trader-support-bot
 #   → trader-repair-orchestrator

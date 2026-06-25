@@ -2403,6 +2403,7 @@ def _direct_autotrade_audit_sidecar_steps() -> list[dict[str, Any]]:
 def _post_intent_evidence_steps() -> list[dict[str, Any]]:
     return [
         {"argv": ["daily-target-state", "--snapshot", "data/broker_snapshot.json", "--daily-risk-pct", "10"], "required": True},
+        {"argv": ["optimize-coverage"], "required": False},
         {"argv": ["position-thesis-check"], "required": False},
         {"argv": ["thesis-evolution-check"], "required": False},
         {"argv": ["forecast-persistence-check"], "required": False},

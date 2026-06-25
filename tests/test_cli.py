@@ -5769,6 +5769,7 @@ class ConsolidatedCycleCommandTest(unittest.TestCase):
         self.assertIn(("trader-support-bot",), argv)
         self.assertIn(("trader-repair-orchestrator",), argv)
         intent_idx = argv.index(("generate-intents", "--snapshot", "data/broker_snapshot.json", "--reuse-market-artifacts"))
+        coverage_idx = argv.index(("optimize-coverage",))
         post_intent_position_management_idx = max(
             index for index, step in enumerate(argv) if step == ("position-management",)
         )
@@ -5783,6 +5784,8 @@ class ConsolidatedCycleCommandTest(unittest.TestCase):
         )
         self.assertLess(intent_idx, post_intent_position_management_idx)
         self.assertLess(intent_idx, post_intent_daily_target_idx)
+        self.assertLess(post_intent_daily_target_idx, coverage_idx)
+        self.assertLess(coverage_idx, post_intent_position_management_idx)
         self.assertLess(post_intent_daily_target_idx, post_intent_position_management_idx)
         self.assertLess(post_intent_position_management_idx, argv.index(("profit-capture-bot",)))
         self.assertLess(argv.index(("profit-capture-bot",)), argv.index(("memory-health",)))
@@ -6111,6 +6114,8 @@ class ConsolidatedCycleCommandTest(unittest.TestCase):
         self.assertLess(sidecars.index("position-management"), sidecars.index("position-execution"))
         self.assertIn(intent_step, sidecars)
         self.assertLess(sidecars.index("position-execution"), sidecars.index(intent_step))
+        coverage_step = "optimize-coverage"
+        self.assertIn(coverage_step, sidecars)
         last_position_management = max(
             index for index, step in enumerate(sidecars) if step == "position-management"
         )
@@ -6129,6 +6134,8 @@ class ConsolidatedCycleCommandTest(unittest.TestCase):
             index for index, step in enumerate(sidecars) if step == "forecast-persistence-check"
         )
         self.assertLess(sidecars.index(intent_step), last_daily_target)
+        self.assertLess(last_daily_target, sidecars.index(coverage_step))
+        self.assertLess(sidecars.index(coverage_step), last_position_thesis)
         self.assertLess(last_daily_target, last_position_thesis)
         self.assertLess(last_position_thesis, last_thesis_evolution)
         self.assertLess(last_thesis_evolution, last_forecast_persistence)
@@ -6195,6 +6202,8 @@ class ConsolidatedCycleCommandTest(unittest.TestCase):
         )
         intent_step = "generate-intents --snapshot data/broker_snapshot.json --reuse-market-artifacts"
         self.assertIn(intent_step, direct_sidecars)
+        coverage_step = "optimize-coverage"
+        self.assertIn(coverage_step, direct_sidecars)
         self.assertLess(direct_sidecars.index("verify-projections"), direct_sidecars.index("memory-health"))
         self.assertLess(direct_sidecars.index("verify-projections"), direct_sidecars.index("self-improvement-audit"))
         self.assertLess(
@@ -6220,6 +6229,8 @@ class ConsolidatedCycleCommandTest(unittest.TestCase):
             index for index, step in enumerate(direct_sidecars) if step == "forecast-persistence-check"
         )
         self.assertLess(direct_sidecars.index(intent_step), last_daily_target)
+        self.assertLess(last_daily_target, direct_sidecars.index(coverage_step))
+        self.assertLess(direct_sidecars.index(coverage_step), last_position_thesis)
         self.assertLess(last_daily_target, last_position_thesis)
         self.assertLess(last_position_thesis, last_thesis_evolution)
         self.assertLess(last_thesis_evolution, last_forecast_persistence)
