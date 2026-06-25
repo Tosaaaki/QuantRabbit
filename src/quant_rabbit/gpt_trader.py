@@ -3414,6 +3414,7 @@ def _autonomous_decision_from_packet(packet: dict[str, Any]) -> tuple[dict[str, 
     }
     candidate_lane_ids = _draft_candidate_lane_ids(packet, live_ready_lane_ids)
     selected_lane_ids = _draft_margin_aware_basket(packet, candidate_lane_ids, lanes_by_id)
+    pending_cancel_order_ids = tuple(sorted(_self_improvement_pending_cancel_review_order_ids(packet)))
 
     blockers: list[str] = []
     blockers.extend(_position_close_sidecar_reasons(packet))
@@ -3430,12 +3431,18 @@ def _autonomous_decision_from_packet(packet: dict[str, Any]) -> tuple[dict[str, 
             _self_improvement_trade_blockers(
                 packet,
                 decision_generated_at_utc=datetime.now(timezone.utc).isoformat(),
+                resolved_pending_cancel_order_ids=pending_cancel_order_ids,
                 selected_lane_ids=selected_lane_ids,
             )
         )
 
     if selected_lane_ids and not blockers:
-        return _trade_decision_draft(packet, selected_lane_ids, lanes_by_id), blockers
+        return _trade_decision_draft(
+            packet,
+            selected_lane_ids,
+            lanes_by_id,
+            cancel_order_ids=pending_cancel_order_ids,
+        ), blockers
     return _non_trade_decision_draft(packet, blockers, live_ready_lane_ids, lanes_by_id), blockers
 
 
@@ -3496,19 +3503,21 @@ def _trade_decision_draft(
     packet: dict[str, Any],
     selected_lane_ids: tuple[str, ...],
     lanes_by_id: dict[str, dict[str, Any]],
+    *,
+    cancel_order_ids: tuple[str, ...] = (),
 ) -> dict[str, Any]:
     primary = lanes_by_id[selected_lane_ids[0]]
     pair = str(primary.get("pair") or "")
     side = str(primary.get("direction") or "")
     method = str(primary.get("method") or "RANGE_ROTATION")
-    refs = _draft_trade_evidence_refs(packet, selected_lane_ids, lanes_by_id)
+    refs = _draft_trade_evidence_refs(packet, selected_lane_ids, lanes_by_id, cancel_order_ids=cancel_order_ids)
     cited_chart_refs = ", ".join(ref for ref in refs if ref.startswith(f"chart:{pair}:")) or "current chart refs"
     return {
         "generated_at_utc": datetime.now(timezone.utc).isoformat(),
         "action": "TRADE",
         "selected_lane_id": selected_lane_ids[0],
         "selected_lane_ids": list(selected_lane_ids),
-        "cancel_order_ids": [],
+        "cancel_order_ids": list(cancel_order_ids),
         "close_trade_ids": [],
         "confidence": "HIGH",
         "thesis": _draft_trade_thesis(selected_lane_ids, lanes_by_id),
@@ -3527,7 +3536,7 @@ def _trade_decision_draft(
             or "Selected lane leaves LIVE_READY or broker truth invalidates the quoted structure."
         ),
         "rejected_alternatives": _draft_rejected_alternatives(packet, selected_lane_ids, lanes_by_id),
-        "risk_notes": _draft_risk_notes(selected_lane_ids, lanes_by_id),
+        "risk_notes": _draft_risk_notes(selected_lane_ids, lanes_by_id, cancel_order_ids=cancel_order_ids),
         "evidence_refs": refs,
         "twenty_minute_plan": _draft_twenty_minute_plan(
             action="TRADE",
@@ -3592,6 +3601,8 @@ def _draft_trade_evidence_refs(
     packet: dict[str, Any],
     selected_lane_ids: tuple[str, ...],
     lanes_by_id: dict[str, dict[str, Any]],
+    *,
+    cancel_order_ids: tuple[str, ...] = (),
 ) -> list[str]:
     refs: list[str] = ["broker:snapshot", "target:daily", "news:health", "news:items"]
     attack_ids = set(_attack_recommended_tradeable_lane_ids(packet, list(lanes_by_id)))
@@ -3608,6 +3619,12 @@ def _draft_trade_evidence_refs(
             continue
         if str(requirement.get("lane_id") or "") in selected_lane_ids:
             refs.extend(str(ref) for ref in requirement.get("required_evidence_refs", []) or [])
+    if cancel_order_ids:
+        refs.extend([
+            "self_improvement:audit",
+            "self_improvement:execution_quality",
+            "self_improvement:finding:PENDING_ENTRY_CANCEL_REVIEW_REQUIRED",
+        ])
     return _known_ordered_refs(packet, refs)
 
 
@@ -3679,11 +3696,21 @@ def _draft_trade_thesis(selected_lane_ids: tuple[str, ...], lanes_by_id: dict[st
     return "Current LIVE_READY basket selected from broker-truth intents: " + "; ".join(parts)
 
 
-def _draft_risk_notes(selected_lane_ids: tuple[str, ...], lanes_by_id: dict[str, dict[str, Any]]) -> list[str]:
+def _draft_risk_notes(
+    selected_lane_ids: tuple[str, ...],
+    lanes_by_id: dict[str, dict[str, Any]],
+    *,
+    cancel_order_ids: tuple[str, ...] = (),
+) -> list[str]:
     notes = [
         "Use only units, entry, TP, SL, and risk metrics already present in current LIVE_READY intents.",
         "LiveOrderGateway must re-fetch broker truth and revalidate portfolio risk, margin, duplicate geometry, and guardian state before send.",
     ]
+    if cancel_order_ids:
+        notes.append(
+            "Cancel only verifier-approved trader-owned pending entry order ids before validating the selected replacement basket: "
+            + ", ".join(cancel_order_ids)
+        )
     for lane_id in selected_lane_ids:
         risk = lanes_by_id[lane_id].get("risk_metrics") or {}
         notes.append(
@@ -3805,6 +3832,7 @@ def _write_trader_decision_draft_report(
         f"- Action: `{decision.get('action')}`",
         f"- Selected lane: `{decision.get('selected_lane_id')}`",
         f"- Selected basket lanes: `{', '.join(decision.get('selected_lane_ids') or []) or 'none'}`",
+        f"- Cancel order ids: `{', '.join(decision.get('cancel_order_ids') or []) or 'none'}`",
         f"- Draft blockers: `{'; '.join(blockers) if blockers else 'none'}`",
         f"- Verifier precheck: `{'ACCEPTED' if verification.allowed else 'REJECTED'}`",
         "",
