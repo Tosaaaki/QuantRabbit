@@ -63,6 +63,21 @@ class OandaUniversalRotationMinerTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             miner._parse_inversion_selector_sizes("1")
 
+    def test_filter_score_rows_keeps_requested_shape_and_side(self) -> None:
+        rows = [
+            {"shape": "range_reversion", "side": "LONG"},
+            {"shape": "trend_continuation", "side": "SHORT"},
+            {"shape": "range_reversion", "side": "SHORT"},
+        ]
+
+        filtered = miner._filter_score_rows(
+            rows,
+            shape_filter=("range_reversion",),
+            side_filter=("SHORT",),
+        )
+
+        self.assertEqual(filtered, [{"shape": "range_reversion", "side": "SHORT"}])
+
     def test_discovers_and_reads_compressed_m5_history(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

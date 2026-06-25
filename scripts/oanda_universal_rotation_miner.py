@@ -159,6 +159,8 @@ def main() -> int:
     exit_shapes = _parse_exit_shapes(args.exit_shapes)
     multi_confluence_sizes = _parse_multi_confluence_sizes(args.multi_confluence_sizes)
     inversion_selector_sizes = _parse_inversion_selector_sizes(args.inversion_selector_sizes)
+    shape_filter = _parse_filter_values(args.shape_filter, case="lower")
+    side_filter = _parse_filter_values(args.side_filter, case="upper")
     out_dir = args.output_dir
     out_dir.mkdir(parents=True, exist_ok=True)
     run_ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
@@ -184,6 +186,27 @@ def main() -> int:
         tp_spread_floor=args.tp_spread_floor,
         sl_spread_floor=args.sl_spread_floor,
     )
+    if shape_filter or side_filter:
+        scored_before_filters = len(rows)
+        inversion_scored_before_filters = len(inversion_rows)
+        rows = _filter_score_rows(rows, shape_filter=shape_filter, side_filter=side_filter)
+        inversion_rows = _filter_score_rows(
+            inversion_rows,
+            shape_filter=shape_filter,
+            side_filter=side_filter,
+        )
+        load_stats.update(
+            {
+                "score_filters": {
+                    "shape_filter": list(shape_filter),
+                    "side_filter": list(side_filter),
+                },
+                "scored_outcomes_before_filters": scored_before_filters,
+                "inversion_scored_outcomes_before_filters": inversion_scored_before_filters,
+                "scored_outcomes": len(rows),
+                "inversion_scored_outcomes": len(inversion_rows),
+            }
+        )
     load_stats.update(
         _history_selection_stats(
             discovered_files,
@@ -219,6 +242,8 @@ def main() -> int:
         firepower_per_trade_risk_pct=args.firepower_per_trade_risk_pct,
         multi_confluence_sizes=multi_confluence_sizes,
         inversion_selector_sizes=inversion_selector_sizes,
+        shape_filter=shape_filter,
+        side_filter=side_filter,
         top=args.top,
         load_stats=load_stats,
         inversion_rows=inversion_rows,
@@ -241,6 +266,22 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT_DIR)
     parser.add_argument("--pairs", default="")
     parser.add_argument("--exit-shapes", default=",".join(DEFAULT_EXIT_SHAPES))
+    parser.add_argument(
+        "--shape-filter",
+        default="",
+        help=(
+            "optional comma-separated entry shapes to keep after scoring, for focused "
+            "evidence refreshes; empty means all shapes"
+        ),
+    )
+    parser.add_argument(
+        "--side-filter",
+        default="",
+        help=(
+            "optional comma-separated LONG/SHORT sides to keep after scoring, for focused "
+            "evidence refreshes; empty means both sides"
+        ),
+    )
     parser.add_argument("--max-hold-bars", type=int, default=DEFAULT_MAX_HOLD_BARS)
     parser.add_argument("--stride-bars", type=int, default=DEFAULT_STRIDE_BARS)
     parser.add_argument("--min-atr-pips", type=float, default=0.1)
@@ -390,6 +431,40 @@ def _parse_inversion_selector_sizes(value: str) -> tuple[int, ...]:
     if not sizes:
         raise ValueError("--inversion-selector-sizes produced no valid sizes")
     return tuple(sorted(sizes))
+
+
+def _parse_filter_values(value: str, *, case: str) -> tuple[str, ...]:
+    values: set[str] = set()
+    for raw in str(value or "").split(","):
+        text = raw.strip()
+        if not text:
+            continue
+        if case == "upper":
+            text = text.upper()
+        elif case == "lower":
+            text = text.lower()
+        values.add(text)
+    return tuple(sorted(values))
+
+
+def _filter_score_rows(
+    rows: list[dict[str, Any]],
+    *,
+    shape_filter: Sequence[str],
+    side_filter: Sequence[str],
+) -> list[dict[str, Any]]:
+    shapes = {str(item).lower() for item in shape_filter}
+    sides = {str(item).upper() for item in side_filter}
+    if not shapes and not sides:
+        return rows
+    out: list[dict[str, Any]] = []
+    for row in rows:
+        if shapes and str(row.get("shape") or row.get("source_shape") or "").lower() not in shapes:
+            continue
+        if sides and str(row.get("side") or row.get("selected_side") or "").upper() not in sides:
+            continue
+        out.append(row)
+    return out
 
 
 def _discover_m5_files(root: Path, history_glob: str, *, pairs: set[str]) -> list[Path]:
@@ -909,6 +984,8 @@ def _build_report(
     high_precision_min_wilson_lower: float,
     multi_confluence_sizes: Sequence[int],
     inversion_selector_sizes: Sequence[int] = DEFAULT_INVERSION_SELECTOR_CONFLUENCE_SIZES,
+    shape_filter: Sequence[str] = (),
+    side_filter: Sequence[str] = (),
     top: int,
     load_stats: dict[str, Any],
     firepower_per_trade_risk_pct: float = DEFAULT_FIREPOWER_PER_TRADE_RISK_PCT,
@@ -1128,6 +1205,8 @@ def _build_report(
             "campaign_minimum_return_pct": CAMPAIGN_MINIMUM_RETURN_PCT,
             "campaign_target_return_pct": CAMPAIGN_TARGET_RETURN_PCT,
             "multi_confluence_sizes": list(multi_confluence_sizes),
+            "shape_filter": list(shape_filter),
+            "side_filter": list(side_filter),
             "multi_confluence_min_samples": multi_confluence_min_samples,
             "directional_selector_min_samples": max(
                 DEFAULT_DIRECTIONAL_SELECTOR_MIN_SAMPLES,
@@ -1883,12 +1962,10 @@ def _bucket_partition_summaries(
 ) -> dict[str, Any]:
     train_parts = _new_metric_parts()
     validation_parts = _new_metric_parts()
-    all_parts = _new_metric_parts()
     daily_counts: collections.Counter[str] = collections.Counter()
     daily_atr_sums: dict[str, float] = collections.defaultdict(float)
     pair_counts: collections.Counter[str] = collections.Counter()
     for index, item in enumerate(ordered):
-        _add_metric_parts(all_parts, item)
         if index < split:
             _add_metric_parts(train_parts, item)
             continue
@@ -1901,7 +1978,9 @@ def _bucket_partition_summaries(
     return {
         "train_summary": _metric_summary_from_parts(train_parts),
         "validation_summary": _metric_summary_from_parts(validation_parts),
-        "all_summary": _metric_summary_from_parts(all_parts),
+        "all_summary": _metric_summary_from_parts(
+            _combine_metric_parts(train_parts, validation_parts)
+        ),
         "daily": _daily_stability_from_counts(daily_counts, daily_atr_sums, validation_n),
         "pair_counts": pair_counts,
     }
@@ -1926,6 +2005,18 @@ def _metric_summary(values: Sequence[dict[str, Any]]) -> dict[str, Any]:
 
 def _new_metric_parts() -> list[Any]:
     return [0, 0, 0.0, 0.0, [], [], collections.Counter()]
+
+
+def _combine_metric_parts(left: list[Any], right: list[Any]) -> list[Any]:
+    return [
+        int(left[0]) + int(right[0]),
+        int(left[1]) + int(right[1]),
+        float(left[2]) + float(right[2]),
+        float(left[3]) + float(right[3]),
+        [*left[4], *right[4]],
+        [*left[5], *right[5]],
+        left[6] + right[6],
+    ]
 
 
 def _add_metric_parts(
