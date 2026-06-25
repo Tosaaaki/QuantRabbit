@@ -88,6 +88,7 @@ FRONTIER_QUOTE_FRESHNESS_WAIT_STATUS = "FRONTIER_WAITING_FOR_FRESH_QUOTE"
 FRONTIER_MARGIN_CAPACITY_WAIT_STATUS = "FRONTIER_MARGIN_CAPACITY_WAIT"
 ORDER_INTENTS_ARTIFACT_REFRESH_WAIT_STATUS = "ORDER_INTENTS_ARTIFACT_REFRESH_REQUIRED"
 PROTECTIVE_FRONTIER_GUARDRAIL_STATUS = "FRONTIER_PROTECTIVE_GUARDRAIL_ACTIVE"
+FRONTIER_STRATEGY_PROFILE_EVIDENCE_WAIT_STATUS = "FRONTIER_STRATEGY_PROFILE_WAITING_FOR_NEW_EVIDENCE"
 BIDASK_REPLAY_WAIT_STATUS = "BIDASK_REPLAY_WAITING_FOR_FORECAST_SAMPLE_COVERAGE"
 TP_PROGRESS_GUARDIAN_WAIT_STATUS = "WAITING_FOR_POSITION_GUARDIAN_LIVE_EVIDENCE"
 TP_PROGRESS_LIVE_EVIDENCE_WAIT_STATUS = "WAITING_FOR_LIVE_EVIDENCE_WINDOW"
@@ -1869,9 +1870,11 @@ def _repair_frontier_remaining_blockers(repair_frontier: list[dict[str, Any]]) -
     examples: dict[str, list[str]] = defaultdict(list)
     co_blockers_by_code: dict[str, Counter[str]] = defaultdict(Counter)
     forecast_examples: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    matrix_status_by_code: dict[str, Counter[str]] = defaultdict(Counter)
     for item in repair_frontier:
         lane_id = str(item.get("lane_id") or "")
         reward = _float(item.get("reward_jpy"))
+        matrix_status = str(item.get("matrix_repair_profile_status") or "").strip()
         remaining = [
             str(code)
             for code in item.get("remaining_blocker_codes_after_guardian_and_repair_exemption") or []
@@ -1884,6 +1887,8 @@ def _repair_frontier_remaining_blockers(repair_frontier: list[dict[str, Any]]) -
                 co_blockers_by_code[code][other] += 1
             if lane_id and len(examples[code]) < 3:
                 examples[code].append(lane_id)
+            if matrix_status:
+                matrix_status_by_code[code][matrix_status] += 1
             if (
                 code in FORECAST_FRONTIER_BLOCKER_CODES
                 and isinstance(item.get("forecast_support"), dict)
@@ -1909,6 +1914,8 @@ def _repair_frontier_remaining_blockers(repair_frontier: list[dict[str, Any]]) -
         }
         if forecast_examples.get(code):
             row["forecast_support_examples"] = forecast_examples[code]
+        if matrix_status_by_code.get(code):
+            row["matrix_repair_profile_status_counts"] = dict(matrix_status_by_code[code])
         co_blockers = [
             other
             for other, _ in sorted(
@@ -1929,6 +1936,8 @@ def _frontier_blocker_sort_key(row: dict[str, Any]) -> tuple[int, int, float, st
         causal_rank = 0
     elif _frontier_blocker_waits_for_live_precision_evidence(row):
         causal_rank = 0
+    elif _frontier_blocker_waits_for_strategy_profile_evidence(row):
+        causal_rank = 0
     elif _frontier_blocker_waits_for_margin_capacity(row):
         causal_rank = 1
     elif code == OANDA_AUDIT_ONLY_LOCAL_TP_PROOF_REQUIRED:
@@ -1947,6 +1956,18 @@ def _frontier_blocker_sort_key(row: dict[str, Any]) -> tuple[int, int, float, st
 
 def _frontier_blocker_is_protective_guardrail(row: dict[str, Any]) -> bool:
     return str(row.get("code") or "") in FRONTIER_GUARDRAIL_BLOCKER_CODES
+
+
+def _frontier_blocker_waits_for_strategy_profile_evidence(row: dict[str, Any]) -> bool:
+    if str(row.get("code") or "") != "MATRIX_REPAIR_REJECT_CONTEXT":
+        return False
+    status_counts = (
+        row.get("matrix_repair_profile_status_counts")
+        if isinstance(row.get("matrix_repair_profile_status_counts"), dict)
+        else {}
+    )
+    status = str(row.get("matrix_repair_profile_status") or "")
+    return "BLOCK_UNTIL_NEW_EVIDENCE" in status_counts or status == "BLOCK_UNTIL_NEW_EVIDENCE"
 
 
 def _frontier_blocker_waits_for_quote_refresh(row: dict[str, Any]) -> bool:
@@ -4339,6 +4360,7 @@ def _build_repair_requests(
         )
         waits_for_quote_refresh = _frontier_blocker_waits_for_quote_refresh(top)
         waits_for_forecast_evidence = _frontier_blocker_waits_for_live_precision_evidence(top)
+        waits_for_strategy_profile_evidence = _frontier_blocker_waits_for_strategy_profile_evidence(top)
         waits_for_margin_capacity = _frontier_blocker_waits_for_margin_capacity(top)
         protective_guardrail_active = _frontier_blocker_is_protective_guardrail(top)
         frontier_evidence_summary = top
@@ -4405,6 +4427,24 @@ def _build_repair_requests(
             frontier_verification_commands = [
                 "PYTHONPATH=src python3 -m quant_rabbit.cli trader-support-bot",
                 "PYTHONPATH=src python3 scripts/oanda_history_replay_validate.py --forecast-history data/forecast_history.jsonl --granularity S5 --auto-history-min-days 30",
+                "PYTHONPATH=src python3 -m quant_rabbit.cli generate-intents --reuse-market-artifacts",
+            ]
+        elif waits_for_strategy_profile_evidence:
+            frontier_status = FRONTIER_STRATEGY_PROFILE_EVIDENCE_WAIT_STATUS
+            frontier_problem = (
+                "Repair-frontier lanes are strategy-profile blocked by BLOCK_UNTIL_NEW_EVIDENCE; "
+                "this is evidence wait, not Codex gate-loosening work."
+            )
+            frontier_why_now = (
+                "A BLOCK_UNTIL_NEW_EVIDENCE matrix profile means the current vehicle must prove a new "
+                "risk-resized receipt or market-structure edge before it can be reopened."
+            )
+            frontier_clearance = [
+                f"{code} clears only after the exact lane profile is no longer BLOCK_UNTIL_NEW_EVIDENCE on refreshed order_intents.",
+                "Do not auto-promote strategy_profile BLOCK_UNTIL_NEW_EVIDENCE or relax common entry gates to force this repair lane live-ready.",
+            ]
+            frontier_verification_commands = [
+                "PYTHONPATH=src python3 -m quant_rabbit.cli trader-support-bot",
                 "PYTHONPATH=src python3 -m quant_rabbit.cli generate-intents --reuse-market-artifacts",
             ]
         elif waits_for_margin_capacity:

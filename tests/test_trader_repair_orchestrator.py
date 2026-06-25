@@ -21,6 +21,7 @@ from quant_rabbit.trader_support_bot import (
     DIRECTIONAL_INVERSION_REPLAY_WAIT_STATUS,
     FRONTIER_MARGIN_CAPACITY_WAIT_STATUS,
     FRONTIER_QUOTE_FRESHNESS_WAIT_STATUS,
+    FRONTIER_STRATEGY_PROFILE_EVIDENCE_WAIT_STATUS,
     OANDA_AUDIT_ONLY_LOCAL_TP_EDGE_REQUEST,
     OANDA_AUDIT_ONLY_LOCAL_TP_PROOF_UNPROVED_STATUS,
     PENDING_CANCEL_RECEIPT_WAIT_STATUS,
@@ -1325,6 +1326,51 @@ class TraderRepairOrchestratorTest(unittest.TestCase):
             self.assertNotIn(
                 "REPAIR_FRONTIER_LANE_BLOCKER",
                 [item["code"] for item in payload["actionable_requests"]],
+            )
+
+    def test_strategy_profile_frontier_wait_is_not_codex_implementation_work(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            support = root / "support.json"
+            output = root / "orchestrator.json"
+            report = root / "orchestrator.md"
+            _write_support(
+                support,
+                [
+                    _request(
+                        "REPAIR_FRONTIER_LANE_BLOCKER",
+                        priority="P1",
+                        status=FRONTIER_STRATEGY_PROFILE_EVIDENCE_WAIT_STATUS,
+                        evidence_summary={
+                            "code": "MATRIX_REPAIR_REJECT_CONTEXT",
+                            "matrix_repair_profile_status_counts": {
+                                "BLOCK_UNTIL_NEW_EVIDENCE": 2,
+                            },
+                            "example_lane_ids": [
+                                "failure_trader:EUR_USD:LONG:BREAKOUT_FAILURE:LIMIT"
+                            ],
+                        },
+                    ),
+                ],
+            )
+
+            summary = TraderRepairOrchestrator(
+                support_bot_path=support,
+                output_path=output,
+                report_path=report,
+                trader_request="matrix profile",
+            ).run()
+
+            self.assertEqual(summary.status, STATUS_BLOCKED)
+            payload = json.loads(output.read_text())
+            frontier = payload["queue"][0]
+            self.assertEqual(frontier["automation_status"], "WAITING_FOR_LIVE_EVIDENCE_WINDOW")
+            self.assertEqual(payload["selected_request"], {})
+            self.assertEqual(payload["actionable_requests"], [])
+            self.assertEqual(payload["codex_work_order"]["status"], "NO_ACTIONABLE_CODEX_WORK")
+            self.assertIn(
+                "REPAIR_FRONTIER_LANE_BLOCKER",
+                payload["queue_summary"]["waiting_request_codes"],
             )
 
     def test_margin_capacity_frontier_wait_is_not_codex_implementation_work(self) -> None:

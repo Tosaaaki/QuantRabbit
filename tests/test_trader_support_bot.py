@@ -21,6 +21,7 @@ from quant_rabbit.trader_support_bot import (
     DIRECTIONAL_INVERSION_REPLAY_WAIT_STATUS,
     FORECAST_FRONTIER_EVIDENCE_WAIT_STATUS,
     FRONTIER_QUOTE_FRESHNESS_WAIT_STATUS,
+    FRONTIER_STRATEGY_PROFILE_EVIDENCE_WAIT_STATUS,
     OANDA_AUDIT_ONLY_LOCAL_TP_EDGE_REQUEST,
     OANDA_AUDIT_ONLY_LOCAL_TP_PROOF_UNPROVED_STATUS,
     ORDER_INTENTS_ARTIFACT_REFRESH_WAIT_STATUS,
@@ -1975,6 +1976,137 @@ class TraderSupportBotTest(unittest.TestCase):
         self.assertEqual(request["status"], "FRONTIER_PROTECTIVE_GUARDRAIL_ACTIVE")
         self.assertIn("bad entry shape", request["why_now"])
         self.assertIn("Do not edit common entry gates", " ".join(request["clearance_conditions"]))
+
+    def test_frontier_matrix_block_until_new_evidence_is_wait_not_code_repair(self) -> None:
+        now = datetime(2026, 6, 25, 8, 30, tzinfo=timezone.utc)
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _write_fixture(root, now=now, blocked=True)
+            _write_json(
+                files["intents"],
+                {
+                    "generated_at_utc": now.isoformat(),
+                    "results": [
+                        {
+                            "lane_id": "failure_trader:EUR_USD:LONG:BREAKOUT_FAILURE:LIMIT",
+                            "status": "DRY_RUN_BLOCKED",
+                            "live_blocker_codes": [
+                                "POSITION_GUARDIAN_INACTIVE_FOR_PROFIT_CAPTURE",
+                                "SELF_IMPROVEMENT_P0_PROFITABILITY_DISCIPLINE",
+                                "MATRIX_REPAIR_REJECT_CONTEXT",
+                                "EXHAUSTION_RANGE_CHASE",
+                            ],
+                            "intent": {
+                                "pair": "EUR_USD",
+                                "side": "LONG",
+                                "order_type": "LIMIT",
+                                "market_context": {"method": "BREAKOUT_FAILURE"},
+                                "metadata": {
+                                    "self_improvement_p0_repair_live_ready": True,
+                                    "self_improvement_p0_repair_mode": "TP_HARVEST_REPAIR",
+                                    "matrix_repair_profile_status": "BLOCK_UNTIL_NEW_EVIDENCE",
+                                    "sizing_actual_reward_jpy": 432.897,
+                                    "sizing_actual_risk_jpy": 429.654,
+                                },
+                            },
+                            "risk_metrics": {"reward_jpy": 432.897, "risk_jpy": 429.654},
+                        }
+                    ],
+                },
+            )
+            env = _guardian_env(root, active="0")
+            with mock.patch.dict(os.environ, env, clear=False):
+                TraderSupportBot(
+                    broker_snapshot_path=files["broker"],
+                    order_intents_path=files["intents"],
+                    target_state_path=files["target"],
+                    position_management_path=files["position_management"],
+                    position_guardian_management_path=files["guardian_management"],
+                    position_guardian_execution_path=files["guardian_execution"],
+                    position_guardian_heartbeat_path=files["guardian_heartbeat"],
+                    self_improvement_audit_path=files["self_improvement"],
+                    profitability_acceptance_path=files["profitability"],
+                    execution_timing_audit_path=files["timing"],
+                    profit_capture_bot_path=files["profit_capture_bot"],
+                    output_path=files["output"],
+                    report_path=files["report"],
+                    now_utc=now,
+                ).run()
+
+            payload = json.loads(files["output"].read_text())
+            top = payload["metrics"]["repair_frontier_after_support_top_blockers"][0]
+            request = next(
+                item for item in payload["repair_requests"] if item["code"] == "REPAIR_FRONTIER_LANE_BLOCKER"
+            )
+
+        self.assertEqual(top["code"], "MATRIX_REPAIR_REJECT_CONTEXT")
+        self.assertEqual(top["matrix_repair_profile_status_counts"], {"BLOCK_UNTIL_NEW_EVIDENCE": 1})
+        self.assertEqual(request["status"], FRONTIER_STRATEGY_PROFILE_EVIDENCE_WAIT_STATUS)
+        self.assertIn("BLOCK_UNTIL_NEW_EVIDENCE", request["problem"])
+        self.assertIn("Do not auto-promote", " ".join(request["clearance_conditions"]))
+
+    def test_frontier_matrix_risk_repair_candidate_remains_actionable(self) -> None:
+        now = datetime(2026, 6, 25, 8, 35, tzinfo=timezone.utc)
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _write_fixture(root, now=now, blocked=True)
+            _write_json(
+                files["intents"],
+                {
+                    "generated_at_utc": now.isoformat(),
+                    "results": [
+                        {
+                            "lane_id": "failure_trader:EUR_USD:LONG:BREAKOUT_FAILURE:LIMIT",
+                            "status": "DRY_RUN_BLOCKED",
+                            "live_blocker_codes": [
+                                "POSITION_GUARDIAN_INACTIVE_FOR_PROFIT_CAPTURE",
+                                "SELF_IMPROVEMENT_P0_PROFITABILITY_DISCIPLINE",
+                                "MATRIX_REPAIR_REJECT_CONTEXT",
+                            ],
+                            "intent": {
+                                "pair": "EUR_USD",
+                                "side": "LONG",
+                                "order_type": "LIMIT",
+                                "market_context": {"method": "BREAKOUT_FAILURE"},
+                                "metadata": {
+                                    "self_improvement_p0_repair_live_ready": True,
+                                    "self_improvement_p0_repair_mode": "TP_HARVEST_REPAIR",
+                                    "matrix_repair_profile_status": "RISK_REPAIR_CANDIDATE",
+                                    "sizing_actual_reward_jpy": 700.0,
+                                    "sizing_actual_risk_jpy": 300.0,
+                                },
+                            },
+                            "risk_metrics": {"reward_jpy": 700.0, "risk_jpy": 300.0},
+                        }
+                    ],
+                },
+            )
+            env = _guardian_env(root, active="0")
+            with mock.patch.dict(os.environ, env, clear=False):
+                TraderSupportBot(
+                    broker_snapshot_path=files["broker"],
+                    order_intents_path=files["intents"],
+                    target_state_path=files["target"],
+                    position_management_path=files["position_management"],
+                    position_guardian_management_path=files["guardian_management"],
+                    position_guardian_execution_path=files["guardian_execution"],
+                    position_guardian_heartbeat_path=files["guardian_heartbeat"],
+                    self_improvement_audit_path=files["self_improvement"],
+                    profitability_acceptance_path=files["profitability"],
+                    execution_timing_audit_path=files["timing"],
+                    profit_capture_bot_path=files["profit_capture_bot"],
+                    output_path=files["output"],
+                    report_path=files["report"],
+                    now_utc=now,
+                ).run()
+
+            payload = json.loads(files["output"].read_text())
+            request = next(
+                item for item in payload["repair_requests"] if item["code"] == "REPAIR_FRONTIER_LANE_BLOCKER"
+            )
+
+        self.assertEqual(request["status"], "READY_FOR_CODE_OR_EVIDENCE_REPAIR")
+        self.assertNotEqual(request["status"], FRONTIER_STRATEGY_PROFILE_EVIDENCE_WAIT_STATUS)
 
     def test_frontier_min_lot_margin_floor_is_capacity_wait_not_code_repair(self) -> None:
         now = datetime(2026, 6, 24, 8, 15, tzinfo=timezone.utc)
