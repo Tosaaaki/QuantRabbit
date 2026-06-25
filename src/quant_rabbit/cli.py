@@ -2225,6 +2225,17 @@ def _reuse_market_artifact_intent_step() -> dict[str, Any]:
     }
 
 
+def _broker_snapshot_step() -> dict[str, Any]:
+    return {"argv": ["broker-snapshot", "--output", "data/broker_snapshot.json"], "required": True}
+
+
+def _daily_target_state_step() -> dict[str, Any]:
+    return {
+        "argv": ["daily-target-state", "--snapshot", "data/broker_snapshot.json", "--daily-risk-pct", "10"],
+        "required": True,
+    }
+
+
 def _cycle_refresh_steps(daily_risk_pct: str) -> list[dict[str, Any]]:
     """Step list mirroring docs/SKILL_trader.md '2. Refresh evidence'.
 
@@ -2323,11 +2334,11 @@ def _cycle_sidecar_steps() -> list[dict[str, Any]]:
         profit_partial += ["--send", "--confirm-live"]
         position_execution += ["--send", "--confirm-live"]
     return [
-        {"argv": ["broker-snapshot", "--output", "data/broker_snapshot.json"], "required": True},
+        _broker_snapshot_step(),
         {"argv": ["tp-rebalance"], "required": False},
         {"argv": ["execution-ledger-sync"], "required": False},
-        {"argv": ["broker-snapshot", "--output", "data/broker_snapshot.json"], "required": True},
-        {"argv": ["daily-target-state", "--snapshot", "data/broker_snapshot.json", "--daily-risk-pct", "10"], "required": True},
+        _broker_snapshot_step(),
+        _daily_target_state_step(),
         {"argv": profit_partial, "required": False},
         {"argv": ["verify-projections"], "required": False},
         {"argv": ["position-thesis-check"], "required": False},
@@ -2348,6 +2359,8 @@ def _cycle_sidecar_steps() -> list[dict[str, Any]]:
         # Post-gateway sidecars refresh broker truth after cycle-refresh priced
         # entries. Reprice intents before acceptance/support so the loop does
         # not rank stale LIVE_READY/frontier blockers as repair work.
+        _broker_snapshot_step(),
+        _daily_target_state_step(),
         _reuse_market_artifact_intent_step(),
         # generate-intents may refresh broker_snapshot as part of quote/preflight
         # freshness. Rebuild read-only position evidence against that final
@@ -2369,14 +2382,16 @@ def _post_autotrade_failure_sidecar_steps() -> list[dict[str, Any]]:
     if live:
         position_execution += ["--send", "--confirm-live"]
     return [
-        {"argv": ["broker-snapshot", "--output", "data/broker_snapshot.json"], "required": True},
-        {"argv": ["daily-target-state", "--snapshot", "data/broker_snapshot.json", "--daily-risk-pct", "10"], "required": True},
+        _broker_snapshot_step(),
+        _daily_target_state_step(),
         {"argv": ["verify-projections"], "required": False},
         {"argv": ["position-thesis-check"], "required": False},
         {"argv": ["thesis-evolution-check"], "required": False},
         {"argv": ["forecast-persistence-check"], "required": False},
         {"argv": ["position-management"], "required": True},
         {"argv": position_execution, "required": False},
+        _broker_snapshot_step(),
+        _daily_target_state_step(),
         _reuse_market_artifact_intent_step(),
         *_post_intent_evidence_steps(),
         {"argv": ["profit-capture-bot"], "required": True, "ok_rcs": [0, 2]},
@@ -2398,13 +2413,15 @@ def _direct_autotrade_audit_sidecar_steps() -> list[dict[str, Any]]:
     does not inherit stale verification P0s.
     """
     return [
-        {"argv": ["broker-snapshot", "--output", "data/broker_snapshot.json"], "required": True},
-        {"argv": ["daily-target-state", "--snapshot", "data/broker_snapshot.json", "--daily-risk-pct", "10"], "required": True},
+        _broker_snapshot_step(),
+        _daily_target_state_step(),
         {"argv": ["verify-projections"], "required": False},
         {"argv": ["position-thesis-check"], "required": False},
         {"argv": ["thesis-evolution-check"], "required": False},
         {"argv": ["forecast-persistence-check"], "required": False},
         {"argv": ["position-management"], "required": True},
+        _broker_snapshot_step(),
+        _daily_target_state_step(),
         _reuse_market_artifact_intent_step(),
         *_post_intent_evidence_steps(),
         {"argv": ["profit-capture-bot"], "required": True, "ok_rcs": [0, 2]},
@@ -2418,8 +2435,8 @@ def _direct_autotrade_audit_sidecar_steps() -> list[dict[str, Any]]:
 
 def _post_intent_evidence_steps() -> list[dict[str, Any]]:
     return [
-        {"argv": ["daily-target-state", "--snapshot", "data/broker_snapshot.json", "--daily-risk-pct", "10"], "required": True},
         {"argv": ["optimize-coverage"], "required": False},
+        {"argv": ["ai-attack-advice"], "required": False},
         {"argv": ["position-thesis-check"], "required": False},
         {"argv": ["thesis-evolution-check"], "required": False},
         {"argv": ["forecast-persistence-check"], "required": False},
