@@ -79,9 +79,24 @@ class TraderRepairOrchestratorTest(unittest.TestCase):
             ).run()
 
             self.assertEqual(summary.status, STATUS_READY)
+            self.assertEqual(summary.repair_request_count, 2)
+            self.assertEqual(summary.actionable_request_count, 1)
+            self.assertEqual(summary.approval_required_request_count, 1)
+            self.assertEqual(summary.waiting_request_count, 0)
             payload = json.loads(output.read_text())
             self.assertTrue(payload["read_only"])
             self.assertEqual(payload["live_side_effects"], [])
+            self.assertEqual(payload["repair_request_count"], 2)
+            self.assertEqual(payload["actionable_request_count"], 1)
+            self.assertEqual(payload["approval_required_request_count"], 1)
+            self.assertEqual(payload["waiting_request_count"], 0)
+            self.assertEqual(payload["metrics"]["repair_request_count"], payload["repair_request_count"])
+            self.assertEqual(payload["metrics"]["actionable_request_count"], payload["actionable_request_count"])
+            self.assertEqual(
+                payload["metrics"]["approval_required_request_count"],
+                payload["approval_required_request_count"],
+            )
+            self.assertEqual(payload["metrics"]["waiting_request_count"], payload["waiting_request_count"])
             self.assertEqual(payload["selected_request"]["code"], "REPAIR_TP_PROGRESS_PROFIT_CAPTURE_REPLAY")
             self.assertEqual(
                 payload["selected_request"]["automation_status"],
@@ -527,8 +542,17 @@ class TraderRepairOrchestratorTest(unittest.TestCase):
                 )
 
             self.assertEqual(code, 2)
-            self.assertEqual(json.loads(stdout.getvalue())["status"], STATUS_APPROVAL_REQUIRED)
+            stdout_payload = json.loads(stdout.getvalue())
+            self.assertEqual(stdout_payload["status"], STATUS_APPROVAL_REQUIRED)
+            self.assertEqual(stdout_payload["repair_request_count"], 1)
+            self.assertEqual(stdout_payload["actionable_request_count"], 0)
+            self.assertEqual(stdout_payload["approval_required_request_count"], 1)
+            self.assertEqual(stdout_payload["waiting_request_count"], 0)
             payload = json.loads(output.read_text())
+            self.assertEqual(payload["repair_request_count"], 1)
+            self.assertEqual(payload["actionable_request_count"], 0)
+            self.assertEqual(payload["approval_required_request_count"], 1)
+            self.assertEqual(payload["waiting_request_count"], 0)
             self.assertEqual(payload["actionable_requests"], [])
             self.assertEqual(payload["approval_required_requests"][0]["automation_status"], "WAITING_FOR_OPERATOR_APPROVAL")
             self.assertIn("launchd_load", payload["approval_required_requests"][0]["automation_contract"]["requires_explicit_operator_approval_for"])

@@ -108,8 +108,10 @@ class TraderRepairOrchestratorSummary:
     output_path: Path
     report_path: Path
     selected_request_code: str | None
+    repair_request_count: int
     actionable_request_count: int
     approval_required_request_count: int
+    waiting_request_count: int
 
 
 class TraderRepairOrchestrator:
@@ -150,8 +152,10 @@ class TraderRepairOrchestrator:
             output_path=self.output_path,
             report_path=self.report_path,
             selected_request_code=selected.get("code"),
+            repair_request_count=int(metrics.get("repair_request_count") or 0),
             actionable_request_count=int(metrics.get("actionable_request_count") or 0),
             approval_required_request_count=int(metrics.get("approval_required_request_count") or 0),
+            waiting_request_count=int(metrics.get("waiting_request_count") or 0),
         )
 
     def build_payload(self) -> dict[str, Any]:
@@ -203,6 +207,10 @@ class TraderRepairOrchestrator:
             "status": status,
             "trader_request": self.trader_request,
             "selected_request_code": selected.get("code") if selected else None,
+            "repair_request_count": len(queue),
+            "actionable_request_count": len(actionable),
+            "approval_required_request_count": len(approval_required),
+            "waiting_request_count": len(waiting),
             "artifact_paths": {
                 "trader_support_bot": str(self.support_bot_path),
                 "output": str(self.output_path),
