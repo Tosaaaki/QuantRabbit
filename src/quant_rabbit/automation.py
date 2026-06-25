@@ -2443,24 +2443,32 @@ class AutoTradeCycle:
                                 break
 
             if selected_lane_id is None and campaign_exposure_required:
-                recovery_lane_id = self._campaign_recovery_lane(
-                    decision=decision,
-                    deterministic_lane_id=deterministic_lane_id,
-                )
-                if recovery_lane_id:
+                if _gpt_trade_rejection_blocks_campaign_recovery(gpt_summary):
                     gpt_recovery_source = (
                         gpt_recovery_source
-                        or f"CAMPAIGN_EXPOSURE_RECOVERY_GPT_{gpt_summary.status}_{gpt_summary.action or 'NO_TRADE'}"
+                        or _gpt_campaign_recovery_block_source(gpt_summary)
                     )
-                    if not _learning_audit_blocks_recovery_lane(self.gpt_learning_audit_path, recovery_lane_id):
-                        selected_lane_id = recovery_lane_id
-                        selected_lane_score, selected_lane_size_multiple = self._selected_lane_meta(
-                            decision=decision,
-                            lane_id=selected_lane_id,
+                else:
+                    recovery_lane_id = self._campaign_recovery_lane(
+                        decision=decision,
+                        deterministic_lane_id=deterministic_lane_id,
+                    )
+                    if recovery_lane_id:
+                        gpt_recovery_source = (
+                            gpt_recovery_source
+                            or f"CAMPAIGN_EXPOSURE_RECOVERY_GPT_{gpt_summary.status}_{gpt_summary.action or 'NO_TRADE'}"
                         )
+                        if not _learning_audit_blocks_recovery_lane(self.gpt_learning_audit_path, recovery_lane_id):
+                            selected_lane_id = recovery_lane_id
+                            selected_lane_score, selected_lane_size_multiple = self._selected_lane_meta(
+                                decision=decision,
+                                lane_id=selected_lane_id,
+                            )
 
             if selected_lane_id is None:
-                if intent_summary.live_ready == 0 and gpt_summary.status == "STALE_DECISION":
+                if _gpt_trade_rejection_blocks_campaign_recovery(gpt_summary):
+                    status = _gpt_campaign_recovery_block_status(gpt_summary)
+                elif intent_summary.live_ready == 0 and gpt_summary.status == "STALE_DECISION":
                     status = "NO_LIVE_READY_INTENT"
                 else:
                     status = (
@@ -2584,6 +2592,42 @@ class AutoTradeCycle:
                     if campaign_exposure_required:
                         reason = gpt_summary.action or gpt_summary.status or "NO_TRADE"
                         gpt_recovery_source = f"CAMPAIGN_EXPOSURE_RECOVERY_GPT_{reason}"
+                        if _gpt_trade_rejection_blocks_campaign_recovery(gpt_summary):
+                            gpt_recovery_source = _gpt_campaign_recovery_block_source(gpt_summary)
+                            summary = AutoTradeCycleSummary(
+                                status=_gpt_campaign_recovery_block_status(gpt_summary),
+                                report_path=self.report_path,
+                                snapshot_path=self.snapshot_path,
+                                intents_path=self.intents_path,
+                                selected_lane_id=None,
+                                selected_lane_ids=(),
+                                selected_lane_score=None,
+                                selected_lane_size_multiple=None,
+                                deterministic_lane_id=deterministic_lane_id,
+                                sent=False,
+                                sent_count=0,
+                                positions=positions,
+                                orders=orders,
+                                live_ready=intent_summary.live_ready,
+                                decision_source="gpt_trader",
+                                receipt_promotions=promotion_summary.promoted,
+                                position_management_action=position_decision.action if position_decision else None,
+                                position_execution_status=position_execution.status if position_execution else None,
+                                position_execution_sent=position_execution.sent if position_execution else False,
+                                target_status=target_summary.status if target_summary else None,
+                                target_remaining_jpy=target_summary.remaining_target_jpy if target_summary else None,
+                                target_progress_pct=target_summary.progress_pct if target_summary else None,
+                                gpt_status=gpt_summary.status,
+                                gpt_action=gpt_summary.action,
+                                gpt_allowed=gpt_summary.allowed,
+                                gpt_issues=gpt_summary.issues,
+                                gpt_error=gpt_summary.error,
+                                gpt_wait_retries=gpt_wait_retries,
+                                gpt_recovery_source=gpt_recovery_source,
+                                campaign_exposure_required=campaign_exposure_required,
+                            )
+                            self._write_report(summary, generated_at)
+                            return summary
                         if _learning_audit_blocks_recovery_lane(self.gpt_learning_audit_path, selected_lane_id):
                             summary = AutoTradeCycleSummary(
                                 status="LEARNING_AUDIT_BLOCKED",
@@ -4973,6 +5017,35 @@ def _learning_audit_blocks_recovery_lane(path: Path, lane_id: str | None) -> boo
             continue
         return bool(lane.get("learning_influences"))
     return False
+
+
+def _gpt_trade_rejection_blocks_campaign_recovery(gpt_summary: GptHandoffSummary | None) -> bool:
+    """A verifier-blocked TRADE is not a campaign-occupancy recovery source."""
+
+    if gpt_summary is None:
+        return False
+    status = str(gpt_summary.status or "").upper()
+    action = str(gpt_summary.action or "").upper()
+    error = str(gpt_summary.error or "").lower()
+    if action == "TRADE" and (status != "ACCEPTED" or not gpt_summary.allowed):
+        return True
+    return status == "STALE_DECISION" and "already verified as rejected trade" in error
+
+
+def _gpt_campaign_recovery_block_status(gpt_summary: GptHandoffSummary) -> str:
+    status = str(gpt_summary.status or "").upper()
+    error = str(gpt_summary.error or "").lower()
+    if status == "STALE_DECISION" and "already verified as rejected trade" in error:
+        return "STALE_GPT_DECISION_REFRESH_REQUIRED"
+    return "GPT_REJECTED"
+
+
+def _gpt_campaign_recovery_block_source(gpt_summary: GptHandoffSummary) -> str:
+    status = str(gpt_summary.status or "UNKNOWN").upper()
+    action = str(gpt_summary.action or "NO_ACTION").upper()
+    if status == "STALE_DECISION":
+        return "CAMPAIGN_EXPOSURE_BLOCKED_GPT_STALE_REJECTED_TRADE"
+    return f"CAMPAIGN_EXPOSURE_BLOCKED_GPT_{status}_{action}"
 
 
 def _portfolio_add_allowed(snapshot) -> bool:

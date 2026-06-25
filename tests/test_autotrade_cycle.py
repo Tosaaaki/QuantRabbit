@@ -5644,7 +5644,7 @@ class AutoTradeCycleTest(unittest.TestCase):
             self.assertFalse((root / "live_order.json").exists())
             self.assertIn("predates broker snapshot", summary.gpt_error or "")
 
-    def test_campaign_exposure_recovers_from_invalid_gpt_trade_when_flat_target_open(self) -> None:
+    def test_campaign_exposure_blocks_invalid_gpt_trade_when_flat_target_open(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             now = datetime.now(timezone.utc)
@@ -5691,11 +5691,91 @@ class AutoTradeCycleTest(unittest.TestCase):
                 live_enabled=True,
             ).run(send=False)
 
-            self.assertEqual(summary.status, "STAGED")
-            self.assertEqual(summary.decision_source, "campaign_exposure_recovery")
+            self.assertEqual(summary.status, "GPT_REJECTED")
+            self.assertEqual(summary.decision_source, "gpt_trader")
             self.assertEqual(summary.gpt_status, "REJECTED")
-            self.assertEqual(summary.selected_lane_id, "trend_trader:EUR_USD:LONG:TREND_CONTINUATION:MARKET")
+            self.assertIsNone(summary.selected_lane_id)
             self.assertTrue(summary.campaign_exposure_required)
+            self.assertEqual(client.orders_sent, [])
+            self.assertFalse((root / "live_order.json").exists())
+
+    def test_campaign_exposure_blocks_stale_rejected_gpt_trade_receipt(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            now = datetime.now(timezone.utc)
+            target_state = _open_target_state(root)
+            lane_id = "trend_trader:EUR_USD:LONG:TREND_CONTINUATION:MARKET"
+            response_path = root / "codex_trader_decision_response.json"
+            response_path.write_text(json.dumps(_gpt_trade_decision(lane_id=lane_id)) + "\n")
+            gpt_decision_path = root / "gpt_decision.json"
+            gpt_decision_path.write_text(
+                json.dumps(
+                    {
+                        "status": "REJECTED",
+                        "decision": {
+                            "action": "TRADE",
+                            "selected_lane_id": lane_id,
+                        },
+                        "verification_issues": [
+                            {
+                                "severity": "BLOCK",
+                                "code": "LEARNING_AUDIT_EVIDENCE_MISSING",
+                            }
+                        ],
+                    }
+                )
+                + "\n"
+            )
+            os.utime(response_path, (1_700_000_000, 1_700_000_000))
+            os.utime(gpt_decision_path, (1_700_000_001, 1_700_000_001))
+            client = FakeCycleClient(
+                BrokerSnapshot(
+                    fetched_at_utc=now,
+                    quotes={
+                        "EUR_USD": Quote("EUR_USD", 1.17298, 1.17306, timestamp_utc=now),
+                        "USD_JPY": Quote("USD_JPY", 157.0, 157.01, timestamp_utc=now),
+                    },
+                )
+            )
+
+            summary = AutoTradeCycle(
+                client=client,
+                snapshot_path=root / "snapshot.json",
+                intents_path=root / "intents.json",
+                intent_report_path=root / "intents.md",
+                decision_path=root / "decision.json",
+                decision_report_path=root / "decision.md",
+                gpt_decision_path=gpt_decision_path,
+                gpt_decision_report_path=root / "gpt_decision.md",
+                gpt_attack_advice_path=root / "attack_missing.json",
+                position_management_path=root / "pm.json",
+                position_management_report_path=root / "pm.md",
+                position_execution_path=root / "pe.json",
+                position_execution_report_path=root / "pe.md",
+                live_order_output_path=root / "live_order.json",
+                live_order_report_path=root / "live_order.md",
+                report_path=root / "report.md",
+                campaign_plan_path=_campaign(root),
+                strategy_profile_path=_candidate_profile(root),
+                market_story_profile_path=_stories(root),
+                receipt_promotion_report_path=root / "promotion.md",
+                target_state_path=target_state,
+                target_report_path=root / "target.md",
+                gpt_target_state_path=target_state,
+                use_gpt_trader=True,
+                gpt_provider=StaticTraderProvider(_gpt_trade_decision(lane_id=lane_id), source_path=response_path),
+                refresh_market_story=False,
+                live_enabled=True,
+            ).run(send=True)
+
+            self.assertEqual(summary.status, "STALE_GPT_DECISION_REFRESH_REQUIRED")
+            self.assertEqual(summary.gpt_status, "STALE_DECISION")
+            self.assertIn("already verified as REJECTED TRADE", summary.gpt_error or "")
+            self.assertTrue(summary.campaign_exposure_required)
+            self.assertIsNone(summary.selected_lane_id)
+            self.assertFalse(summary.sent)
+            self.assertEqual(client.orders_sent, [])
+            self.assertFalse((root / "live_order.json").exists())
 
     def test_gpt_can_select_prefiltered_discretionary_penalty_lane(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
