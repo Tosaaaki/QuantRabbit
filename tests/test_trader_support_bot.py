@@ -83,6 +83,172 @@ class TraderSupportBotTest(unittest.TestCase):
         self.assertEqual(summary["post_repair_live_evidence_repair_replay_triggered"], 0)
         self.assertIn("do not require historical pre-repair", summary["clearance_condition"])
 
+    def test_post_repair_sample_wait_does_not_block_support_readiness(self) -> None:
+        now = datetime(2026, 6, 22, 12, 15, tzinfo=timezone.utc)
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _write_fixture(root, now=now, blocked=False)
+            _write_json(
+                files["self_improvement"],
+                {
+                    "generated_at_utc": now.isoformat(),
+                    "status": "SELF_IMPROVEMENT_BLOCKED",
+                    "findings": [
+                        {
+                            "priority": "P1",
+                            "code": "LOSS_CLOSE_PROFIT_CAPTURE_MISSED",
+                            "message": "13 pre-repair replay triggers remain historical diagnostics",
+                            "next_action": "wait for the first post-repair live loss-close sample",
+                            "evidence": {
+                                "loss_closes_profit_capture_missed": 14,
+                                "loss_closes_repair_replay_triggered": 13,
+                                "pre_repair_historical_loss_closes_profit_capture_missed": 14,
+                                "pre_repair_historical_loss_closes_repair_replay_triggered": 13,
+                                "post_repair_live_evidence_loss_closes_audited": 0,
+                                "post_repair_live_evidence_loss_closes_profit_capture_missed": 0,
+                                "post_repair_live_evidence_loss_closes_repair_replay_triggered": 0,
+                            },
+                        }
+                    ],
+                },
+            )
+            _write_json(
+                files["timing"],
+                {
+                    "generated_at_utc": now.isoformat(),
+                    "status": "OK",
+                    "precision": {
+                        TP_PROGRESS_REPAIR_REPLAY_FIELD: TP_PROGRESS_REPAIR_REPLAY_CONTRACT,
+                    },
+                    "summary": {
+                        "loss_closes_profit_capture_missed": 14,
+                        "loss_closes_repair_replay_triggered": 13,
+                        "tp_progress_repair_live_evidence_status": "WAITING_FOR_POST_REPAIR_SAMPLE",
+                        "pre_repair_historical_loss_closes_profit_capture_missed": 14,
+                        "pre_repair_historical_loss_closes_repair_replay_triggered": 13,
+                        "post_repair_live_evidence_loss_closes_audited": 0,
+                        "post_repair_live_evidence_loss_closes_profit_capture_missed": 0,
+                        "post_repair_live_evidence_loss_closes_repair_replay_triggered": 0,
+                    },
+                },
+            )
+            env = _guardian_env(root, active="1")
+            with mock.patch.dict(os.environ, env, clear=False):
+                summary = TraderSupportBot(
+                    broker_snapshot_path=files["broker"],
+                    order_intents_path=files["intents"],
+                    target_state_path=files["target"],
+                    position_management_path=files["position_management"],
+                    position_guardian_management_path=files["guardian_management"],
+                    position_guardian_execution_path=files["guardian_execution"],
+                    position_guardian_heartbeat_path=files["guardian_heartbeat"],
+                    self_improvement_audit_path=files["self_improvement"],
+                    profitability_acceptance_path=files["profitability"],
+                    execution_timing_audit_path=files["timing"],
+                    profit_capture_bot_path=files["profit_capture_bot"],
+                    output_path=files["output"],
+                    report_path=files["report"],
+                    now_utc=now,
+                ).run()
+
+            payload = json.loads(files["output"].read_text())
+            blocker_codes = {item["code"] for item in payload["blockers"]}
+            self.assertEqual(summary.status, STATUS_READY)
+            self.assertNotIn("LOSS_CLOSE_PROFIT_CAPTURE_MISSED", blocker_codes)
+            self.assertTrue(payload["metrics"]["send_fresh_entries_allowed"])
+            self.assertEqual(payload["profit_capture"]["status"], "WAITING_FOR_POST_REPAIR_SAMPLE")
+            self.assertEqual(payload["profit_capture"]["post_repair_live_evidence_loss_closes_audited"], 0)
+            self.assertTrue(
+                payload["profitability_acceptance"]["target_firepower"][
+                    "operational_minimum_5pct_reachable"
+                ]
+            )
+            self.assertEqual(
+                payload["profitability_acceptance"]["target_firepower"]["operational_blocker_codes"],
+                [],
+            )
+            action_codes = {item["code"] for item in payload["operator_actions"]}
+            self.assertIn("WAIT_FOR_POST_REPAIR_TP_PROGRESS_SAMPLE", action_codes)
+            self.assertNotIn("RECHECK_TIMING_CAPTURE_MISSES", action_codes)
+
+    def test_post_repair_replay_trigger_remains_support_p0_blocker(self) -> None:
+        now = datetime(2026, 6, 22, 12, 15, tzinfo=timezone.utc)
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _write_fixture(root, now=now, blocked=False)
+            _write_json(
+                files["self_improvement"],
+                {
+                    "generated_at_utc": now.isoformat(),
+                    "status": "SELF_IMPROVEMENT_BLOCKED",
+                    "findings": [
+                        {
+                            "priority": "P1",
+                            "code": "LOSS_CLOSE_PROFIT_CAPTURE_MISSED",
+                            "message": "post-repair live loss-close replay triggered",
+                            "next_action": "repair TP-progress capture before fresh entries",
+                            "evidence": {
+                                "loss_closes_profit_capture_missed": 15,
+                                "loss_closes_repair_replay_triggered": 1,
+                                "pre_repair_historical_loss_closes_profit_capture_missed": 14,
+                                "pre_repair_historical_loss_closes_repair_replay_triggered": 13,
+                                "post_repair_live_evidence_loss_closes_audited": 1,
+                                "post_repair_live_evidence_loss_closes_profit_capture_missed": 1,
+                                "post_repair_live_evidence_loss_closes_repair_replay_triggered": 1,
+                            },
+                        }
+                    ],
+                },
+            )
+            _write_json(
+                files["timing"],
+                {
+                    "generated_at_utc": now.isoformat(),
+                    "status": "OK",
+                    "precision": {
+                        TP_PROGRESS_REPAIR_REPLAY_FIELD: TP_PROGRESS_REPAIR_REPLAY_CONTRACT,
+                    },
+                    "summary": {
+                        "loss_closes_profit_capture_missed": 15,
+                        "loss_closes_repair_replay_triggered": 1,
+                        "pre_repair_historical_loss_closes_profit_capture_missed": 14,
+                        "pre_repair_historical_loss_closes_repair_replay_triggered": 13,
+                        "post_repair_live_evidence_loss_closes_audited": 1,
+                        "post_repair_live_evidence_loss_closes_profit_capture_missed": 1,
+                        "post_repair_live_evidence_loss_closes_repair_replay_triggered": 1,
+                    },
+                },
+            )
+            env = _guardian_env(root, active="1")
+            with mock.patch.dict(os.environ, env, clear=False):
+                summary = TraderSupportBot(
+                    broker_snapshot_path=files["broker"],
+                    order_intents_path=files["intents"],
+                    target_state_path=files["target"],
+                    position_management_path=files["position_management"],
+                    position_guardian_management_path=files["guardian_management"],
+                    position_guardian_execution_path=files["guardian_execution"],
+                    position_guardian_heartbeat_path=files["guardian_heartbeat"],
+                    self_improvement_audit_path=files["self_improvement"],
+                    profitability_acceptance_path=files["profitability"],
+                    execution_timing_audit_path=files["timing"],
+                    profit_capture_bot_path=files["profit_capture_bot"],
+                    output_path=files["output"],
+                    report_path=files["report"],
+                    now_utc=now,
+                ).run()
+
+            payload = json.loads(files["output"].read_text())
+            blocker_by_code = {item["code"]: item for item in payload["blockers"]}
+            self.assertEqual(summary.status, STATUS_BLOCKED)
+            self.assertEqual(blocker_by_code["LOSS_CLOSE_PROFIT_CAPTURE_MISSED"]["severity"], "P0")
+            self.assertFalse(payload["metrics"]["send_fresh_entries_allowed"])
+            self.assertEqual(payload["profit_capture"]["status"], "PROFIT_CAPTURE_REPAIR_REQUIRED")
+            self.assertIn(
+                "LOSS_CLOSE_PROFIT_CAPTURE_MISSED",
+                payload["profitability_acceptance"]["target_firepower"]["operational_blocker_codes"],
+            )
+
     def test_acceptance_plan_breaks_loop_when_tp_progress_repair_is_not_deployed(self) -> None:
         condition, command, summary = _acceptance_clearance_for_code(
             "TP_PROGRESS_REPAIR_REPLAY_NOT_DEPLOYED",

@@ -2311,6 +2311,7 @@ def _cycle_sidecar_steps() -> list[dict[str, Any]]:
         {"argv": ["tp-rebalance"], "required": False},
         {"argv": ["execution-ledger-sync"], "required": False},
         {"argv": ["broker-snapshot", "--output", "data/broker_snapshot.json"], "required": True},
+        {"argv": ["daily-target-state", "--snapshot", "data/broker_snapshot.json", "--daily-risk-pct", "10"], "required": True},
         {"argv": profit_partial, "required": False},
         {"argv": ["verify-projections"], "required": False},
         {"argv": ["position-thesis-check"], "required": False},
@@ -2348,6 +2349,8 @@ def _post_autotrade_failure_sidecar_steps() -> list[dict[str, Any]]:
     if live:
         position_execution += ["--send", "--confirm-live"]
     return [
+        {"argv": ["broker-snapshot", "--output", "data/broker_snapshot.json"], "required": True},
+        {"argv": ["daily-target-state", "--snapshot", "data/broker_snapshot.json", "--daily-risk-pct", "10"], "required": True},
         {"argv": ["verify-projections"], "required": False},
         {"argv": ["position-thesis-check"], "required": False},
         {"argv": ["thesis-evolution-check"], "required": False},
@@ -2374,6 +2377,8 @@ def _direct_autotrade_audit_sidecar_steps() -> list[dict[str, Any]]:
     does not inherit stale verification P0s.
     """
     return [
+        {"argv": ["broker-snapshot", "--output", "data/broker_snapshot.json"], "required": True},
+        {"argv": ["daily-target-state", "--snapshot", "data/broker_snapshot.json", "--daily-risk-pct", "10"], "required": True},
         {"argv": ["verify-projections"], "required": False},
         {"argv": ["position-thesis-check"], "required": False},
         {"argv": ["thesis-evolution-check"], "required": False},

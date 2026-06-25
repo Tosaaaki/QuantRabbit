@@ -5757,6 +5757,11 @@ class ConsolidatedCycleCommandTest(unittest.TestCase):
 
         argv = [tuple(step["argv"]) for step in steps]
 
+        self.assertEqual(argv[0], ("broker-snapshot", "--output", "data/broker_snapshot.json"))
+        self.assertEqual(
+            argv[1],
+            ("daily-target-state", "--snapshot", "data/broker_snapshot.json", "--daily-risk-pct", "10"),
+        )
         self.assertIn(("position-execution", "--send", "--confirm-live"), argv)
         self.assertIn(("generate-intents", "--snapshot", "data/broker_snapshot.json", "--reuse-market-artifacts"), argv)
         self.assertIn(("profit-capture-bot",), argv)
@@ -6085,6 +6090,14 @@ class ConsolidatedCycleCommandTest(unittest.TestCase):
         self.assertNotIn("profit-partial-close --send --confirm-live", sidecars)
         self.assertIn("position-execution", sidecars)
         self.assertNotIn("position-execution --send --confirm-live", sidecars)
+        self.assertLess(
+            sidecars.index("broker-snapshot --output data/broker_snapshot.json"),
+            sidecars.index("daily-target-state --snapshot data/broker_snapshot.json --daily-risk-pct 10"),
+        )
+        self.assertLess(
+            sidecars.index("daily-target-state --snapshot data/broker_snapshot.json --daily-risk-pct 10"),
+            sidecars.index("position-management"),
+        )
         self.assertLess(sidecars.index("forecast-persistence-check"), sidecars.index("position-management"))
         self.assertLess(sidecars.index("position-management"), sidecars.index("position-execution"))
         self.assertIn(intent_step, sidecars)
@@ -6144,11 +6157,19 @@ class ConsolidatedCycleCommandTest(unittest.TestCase):
         run_steps.assert_called_once_with(_direct_autotrade_audit_sidecar_steps())
         direct_sidecars = [" ".join(s["argv"]) for s in _direct_autotrade_audit_sidecar_steps()]
         direct_sidecar_specs = {" ".join(s["argv"]): s for s in _direct_autotrade_audit_sidecar_steps()}
-        self.assertEqual(direct_sidecars[0], "verify-projections")
+        self.assertEqual(direct_sidecars[0], "broker-snapshot --output data/broker_snapshot.json")
+        self.assertEqual(
+            direct_sidecars[1],
+            "daily-target-state --snapshot data/broker_snapshot.json --daily-risk-pct 10",
+        )
         intent_step = "generate-intents --snapshot data/broker_snapshot.json --reuse-market-artifacts"
         self.assertIn(intent_step, direct_sidecars)
         self.assertLess(direct_sidecars.index("verify-projections"), direct_sidecars.index("memory-health"))
         self.assertLess(direct_sidecars.index("verify-projections"), direct_sidecars.index("self-improvement-audit"))
+        self.assertLess(
+            direct_sidecars.index("daily-target-state --snapshot data/broker_snapshot.json --daily-risk-pct 10"),
+            direct_sidecars.index("position-management"),
+        )
         self.assertLess(direct_sidecars.index("position-management"), direct_sidecars.index(intent_step))
         self.assertLess(direct_sidecars.index(intent_step), direct_sidecars.index("profit-capture-bot"))
         self.assertLess(direct_sidecars.index("profit-capture-bot"), direct_sidecars.index("memory-health"))

@@ -288,7 +288,8 @@ QR_LIVE_ENABLED=1 ./scripts/run-autotrade-live.sh \
 # still point at the pre-gateway snapshot. When `autotrade-cycle` exits
 # non-zero after refreshing broker truth, the wrapper does NOT run the full
 # broker/order sidecar list; it calls the canonical
-# `post-autotrade-failure-sidecars` command. That command runs the
+# `post-autotrade-failure-sidecars` command. That command first refreshes
+# `broker-snapshot` and `daily-target-state`, then runs the
 # projection/position/audit repair subset, including `position-management`
 # followed by `position-execution` when management succeeds, then reprices
 # `order_intents` with `generate-intents --reuse-market-artifacts` before
@@ -302,10 +303,10 @@ QR_LIVE_ENABLED=1 ./scripts/run-autotrade-live.sh \
 #
 # `cycle-sidecars` runs (canonical list: `cli._cycle_sidecar_steps`):
 #   broker-snapshot → tp-rebalance → execution-ledger-sync → broker-snapshot
-#   → profit-partial-close → verify-projections → position-thesis-check
-#   → thesis-evolution-check → forecast-persistence-check
-#   → position-management → position-execution → generate-intents --reuse-market-artifacts
-#   → profit-capture-bot → memory-health
+#   → daily-target-state → profit-partial-close → verify-projections
+#   → position-thesis-check → thesis-evolution-check → forecast-persistence-check
+#   → position-management → position-execution
+#   → generate-intents --reuse-market-artifacts → profit-capture-bot → memory-health
 #   → self-improvement-audit → profitability-acceptance → trader-support-bot
 #   → trader-repair-orchestrator
 # and prints one compact digest.

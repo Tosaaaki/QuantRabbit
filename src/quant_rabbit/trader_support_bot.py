@@ -1432,6 +1432,7 @@ def _profit_capture_summary(self_improvement: dict[str, Any], timing: dict[str, 
         "repair_replay_triggered": int(_float(repair_replay_triggered)),
         "repair_replay_contract": repair_replay_contract,
         "repair_replay_contract_present": repair_replay_contract_present,
+        "repair_evidence_split_present": split_present,
         "tp_progress_repair_live_evidence_boundary_utc": summary.get(
             "tp_progress_repair_live_evidence_boundary_utc"
         )
@@ -2728,15 +2729,12 @@ def _build_blockers(
                 ),
             }
         )
-    if profit_capture["missed_loss_closes"] > 0:
-        production_gate_block = (
-            not profit_capture.get("repair_replay_contract_present")
-            or int(_float(profit_capture.get("repair_replay_triggered"))) > 0
-        )
+    profit_capture_block_severity = _profit_capture_support_blocker_severity(profit_capture)
+    if profit_capture_block_severity:
         blockers.append(
             {
                 "code": PROFIT_CAPTURE_MISS,
-                "severity": "P0" if production_gate_block else "P1",
+                "severity": profit_capture_block_severity,
                 "message": _profit_capture_miss_message(profit_capture),
             }
         )
@@ -2783,6 +2781,21 @@ def _build_blockers(
             }
         )
     return blockers
+
+
+def _profit_capture_support_blocker_severity(profit_capture: dict[str, Any]) -> str | None:
+    if _float(profit_capture.get("missed_loss_closes")) <= 0:
+        return None
+    if str(profit_capture.get("status") or "") in {
+        "WAITING_FOR_POST_REPAIR_SAMPLE",
+        "HISTORICAL_DIAGNOSTIC_ONLY",
+    }:
+        return None
+    production_gate_block = (
+        not profit_capture.get("repair_replay_contract_present")
+        or int(_float(profit_capture.get("repair_replay_triggered"))) > 0
+    )
+    return "P0" if production_gate_block else "P1"
 
 
 def _profit_capture_miss_message(profit_capture: dict[str, Any]) -> str:
@@ -3063,13 +3076,39 @@ def _operator_actions(
                     "reason": "loading launchd changes live support services and must be explicit",
                 }
             )
-    if profit_capture["missed_loss_closes"] > 0:
+    profit_capture_block_severity = _profit_capture_support_blocker_severity(profit_capture)
+    profit_capture_status = str(profit_capture.get("status") or "")
+    if profit_capture_block_severity:
         actions.append(
             {
                 "code": "RECHECK_TIMING_CAPTURE_MISSES",
                 "command": MONTH_SCALE_EXECUTION_TIMING_AUDIT_COMMAND,
                 "requires_explicit_operator_approval": False,
                 "reason": "recompute TP-progress misses and confirm capture gap is shrinking",
+            }
+        )
+    elif profit_capture_status == "WAITING_FOR_POST_REPAIR_SAMPLE":
+        actions.append(
+            {
+                "code": "WAIT_FOR_POST_REPAIR_TP_PROGRESS_SAMPLE",
+                "command": "PYTHONPATH=src python3 -m quant_rabbit.cli trader-support-bot",
+                "requires_explicit_operator_approval": False,
+                "reason": (
+                    "pre-repair TP-progress misses are historical diagnostics; wait for a "
+                    "post-repair live loss-close sample before rerunning the repair loop"
+                ),
+            }
+        )
+    elif profit_capture_status == "HISTORICAL_DIAGNOSTIC_ONLY":
+        actions.append(
+            {
+                "code": "MONITOR_POST_REPAIR_TP_PROGRESS_EVIDENCE",
+                "command": "PYTHONPATH=src python3 -m quant_rabbit.cli trader-support-bot",
+                "requires_explicit_operator_approval": False,
+                "reason": (
+                    "post-repair production-gate replay is clean; keep monitoring without "
+                    "treating pre-repair misses as a live blocker"
+                ),
             }
         )
     artifact_freshness = (
