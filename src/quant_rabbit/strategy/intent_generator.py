@@ -6004,6 +6004,7 @@ def _live_blocker_codes_from_issues(
 _SPECIFIC_MIN_LOT_ISSUE_CODES = {
     "LOSS_BUDGET_TOO_THIN_FOR_MIN_LOT",
     "MARGIN_TOO_THIN_FOR_MIN_LOT",
+    "LOSS_AND_MARGIN_TOO_THIN_FOR_MIN_LOT",
     "CONVERSION_RATE_MISSING_FOR_MIN_LOT",
     "MIN_LOT_SIZE_UNAVAILABLE",
 }
@@ -14305,6 +14306,20 @@ def _min_lot_block_issue(
         )
         loss_subfloor = loss_budget_units < MIN_PRODUCTION_LOT_UNITS
         margin_subfloor = margin_budget_units is not None and margin_budget_units < MIN_PRODUCTION_LOT_UNITS
+        if loss_subfloor and margin_subfloor:
+            return {
+                "code": "LOSS_AND_MARGIN_TOO_THIN_FOR_MIN_LOT",
+                "message": (
+                    f"equity-derived loss budget can only fund "
+                    f"{loss_budget_units:.0f}u and available margin headroom can only fund "
+                    f"{margin_budget_units:.0f}u for {pair}; refusing to emit a "
+                    f"sub-{MIN_PRODUCTION_LOT_UNITS}u receipt because round-trip spread cost "
+                    "would dominate the pip target. Free margin alone is insufficient; wait for "
+                    "tighter market-derived geometry, higher explicit per-trade budget evidence, "
+                    "and enough freed margin to fund the production lot."
+                ),
+                "severity": "BLOCK",
+            }
         if loss_subfloor and not margin_subfloor:
             return {
                 "code": "LOSS_BUDGET_TOO_THIN_FOR_MIN_LOT",

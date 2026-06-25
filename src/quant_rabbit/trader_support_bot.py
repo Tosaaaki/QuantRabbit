@@ -105,6 +105,7 @@ FORECAST_FRONTIER_BLOCKER_CODES = {
 }
 FRONTIER_MARGIN_CAPACITY_BLOCKER_CODES = {
     "MARGIN_TOO_THIN_FOR_MIN_LOT",
+    "LOSS_AND_MARGIN_TOO_THIN_FOR_MIN_LOT",
 }
 FRONTIER_GUARDRAIL_BLOCKER_CODES = {
     "BIDASK_REPLAY_NEGATIVE_EXPECTANCY_FOR_LIVE",
@@ -3542,7 +3543,8 @@ def _build_repair_requests(
                     *[
                         str(item.get("code"))
                         for item in entry.get("repair_frontier_remaining_blockers", [])
-                        if isinstance(item, dict) and item.get("code") == "MARGIN_TOO_THIN_FOR_MIN_LOT"
+                        if isinstance(item, dict)
+                        and item.get("code") in FRONTIER_MARGIN_CAPACITY_BLOCKER_CODES
                     ],
                 ],
                 problem=(
@@ -4408,8 +4410,8 @@ def _build_repair_requests(
         elif waits_for_margin_capacity:
             frontier_status = FRONTIER_MARGIN_CAPACITY_WAIT_STATUS
             frontier_problem = (
-                "Repair-frontier lanes are blocked by the minimum production lot and current margin capacity, "
-                "not by a missing Codex code path."
+                "Repair-frontier lanes are blocked by the minimum production lot, current risk budget, "
+                "geometry, or margin capacity, not by a missing Codex code path."
             )
             frontier_why_now = (
                 "The 1000u floor prevents structurally spread-dominated micro orders; lowering it to force a "

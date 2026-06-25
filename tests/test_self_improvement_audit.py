@@ -3816,6 +3816,9 @@ class SelfImprovementAuditorTest(unittest.TestCase):
                             {
                                 "lane_id": "failure_trader:EUR_USD:SHORT:BREAKOUT_FAILURE:LIMIT",
                                 "status": "DRY_RUN_PASSED",
+                                "live_blocker_codes": [
+                                    "FORECAST_NOT_EXECUTABLE_FOR_LIVE",
+                                ],
                                 "intent": {
                                     "pair": "EUR_USD",
                                     "side": "SHORT",
@@ -3862,7 +3865,13 @@ class SelfImprovementAuditorTest(unittest.TestCase):
                                     }
                                 ],
                                 "strategy_issues": [],
-                                "live_strategy_issues": [],
+                                "live_strategy_issues": [
+                                    {
+                                        "code": "STRATEGY_NOT_ELIGIBLE",
+                                        "message": "risk-resized dry-run receipt keeps strategy profile as advisory only",
+                                        "severity": "WARN",
+                                    }
+                                ],
                                 "live_blockers": [],
                                 "risk_metrics": {
                                     "reward_jpy": 408.5,
@@ -3886,6 +3895,7 @@ class SelfImprovementAuditorTest(unittest.TestCase):
         diagnostics = finding["evidence"]["forecast_arbitration_diagnostics"]
         self.assertEqual(diagnostics["same_side_lane_count"], 1)
         self.assertEqual(diagnostics["same_side_actionable_repair_lane_count"], 0)
+        self.assertEqual(diagnostics["same_side_context_blocked_lane_count"], 0)
         self.assertEqual(diagnostics["same_side_precision_wait_lane_count"], 1)
         self.assertFalse(
             diagnostics["same_side_precision_wait_lanes"][0]["top_unselected_signal"][

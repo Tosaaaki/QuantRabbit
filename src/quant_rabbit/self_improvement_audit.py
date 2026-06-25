@@ -7989,6 +7989,24 @@ def _live_readiness_issues(result: dict[str, Any]) -> list[dict[str, Any]]:
     return issues
 
 
+def _live_readiness_issue_blocks_arbitration_context(
+    issue: dict[str, Any],
+    *,
+    live_blocker_codes: set[str],
+    has_live_blocker_codes: bool,
+) -> bool:
+    """Return whether a non-forecast issue should suppress forecast repair advice."""
+
+    if str(issue.get("source") or "") == "live_blockers":
+        return True
+    if str(issue.get("severity") or "").upper() == "BLOCK":
+        return True
+    code = str(issue.get("code") or "").strip().upper()
+    if has_live_blocker_codes:
+        return bool(code and code in live_blocker_codes)
+    return True
+
+
 def _append_live_readiness_issue(
     issues: list[dict[str, Any]],
     seen: set[tuple[str, str]],
@@ -8019,6 +8037,13 @@ def _live_readiness_issue_payload(raw: Any, *, source: str, message: str) -> dic
         "family": _live_readiness_issue_family(raw, source=source),
         "source": source,
     }
+    if isinstance(raw, dict):
+        code = str(raw.get("code") or "").strip().upper()
+        severity = str(raw.get("severity") or "").strip().upper()
+        if code:
+            payload["code"] = code
+        if severity:
+            payload["severity"] = severity
     if isinstance(raw, dict) and isinstance(raw.get("strategy_profile_evidence"), dict):
         payload["strategy_profile_evidence"] = raw["strategy_profile_evidence"]
     return payload
@@ -8239,11 +8264,25 @@ def _forecast_arbitration_diagnostics(
                 if str(issue.get("family") or "").strip()
             }
         )
-        context_blocker_families = [
-            family
-            for family in live_readiness_families
-            if family != _FORECAST_ARBITRATION_REPAIR_FAMILY
-        ]
+        live_blocker_codes = {
+            str(code).strip().upper()
+            for code in result.get("live_blocker_codes", []) or []
+            if str(code).strip()
+        }
+        has_live_blocker_codes = "live_blocker_codes" in result
+        context_blocker_families = sorted(
+            {
+                str(issue.get("family") or "other")
+                for issue in live_readiness_issues
+                if str(issue.get("family") or "").strip()
+                and issue.get("family") != _FORECAST_ARBITRATION_REPAIR_FAMILY
+                and _live_readiness_issue_blocks_arbitration_context(
+                    issue,
+                    live_blocker_codes=live_blocker_codes,
+                    has_live_blocker_codes=has_live_blocker_codes,
+                )
+            }
+        )
         lane = {
             "lane_id": str(result.get("lane_id") or ""),
             "pair": pair,

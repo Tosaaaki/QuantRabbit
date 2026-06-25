@@ -443,7 +443,9 @@ def _loop_engineering_prompt(
         "If fresher support state contradicts intent blocker counts, classify that blocker as artifact-stale and refresh the evidence packet before selecting repair work from it.",
         "Do not rerun profitability-acceptance as the fix unless an input artifact, gateway proof, or live evidence window changed first.",
         "If OANDA audit-only S5/M5 history is complete and replay cannot clear local TP proof, do not rerun validate/mine/package; wait for new local TP receipts, new forecast/candle evidence, or exact HARVEST live-grade promotion.",
-        "Do not lower MIN_PRODUCTION_LOT_UNITS, bypass MARGIN_TOO_THIN_FOR_MIN_LOT, synthesize PASS close evidence, or loosen protective market-structure guards without a failing regression and a positive-path test.",
+        "Do not lower MIN_PRODUCTION_LOT_UNITS, bypass MARGIN_TOO_THIN_FOR_MIN_LOT "
+        "or LOSS_AND_MARGIN_TOO_THIN_FOR_MIN_LOT, synthesize PASS close evidence, "
+        "or loosen protective market-structure guards without a failing regression and a positive-path test.",
         "Do not send orders, cancel orders, close positions, mutate launchd, or call model APIs from QuantRabbit code outside the existing gateway or explicit operator approval boundary.",
         "If the top item is waiting for live evidence, collect or wait for the named evidence; do not reimplement the same already-blocking guard.",
     ]
