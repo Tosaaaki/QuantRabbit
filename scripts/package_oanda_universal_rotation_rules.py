@@ -675,6 +675,21 @@ def _merge_scope_summary(current: dict[str, Any], existing: dict[str, Any]) -> d
     for key, value in existing.items():
         if key not in merged:
             merged[key] = value
+    discovered_order = _merge_ordered_unique_lists(
+        current.get("history_pairs_discovered_order"),
+        existing.get("history_pairs_discovered_order"),
+    )
+    if discovered_order:
+        merged["history_pairs_discovered_order"] = discovered_order
+        current_discovered = _optional_int(merged.get("history_pairs_discovered"))
+        if current_discovered is None or len(discovered_order) > current_discovered:
+            merged["history_pairs_discovered"] = len(discovered_order)
+    pair_selection = _merge_history_pair_selection(
+        current.get("history_pair_selection"),
+        existing.get("history_pair_selection"),
+    )
+    if pair_selection:
+        merged["history_pair_selection"] = pair_selection
     return merged
 
 
@@ -704,6 +719,34 @@ def _merge_numeric_lists(current: Any, existing: Any) -> list[Any]:
         return sorted(values)
     except TypeError:
         return values
+
+
+def _merge_history_pair_selection(current: Any, existing: Any) -> dict[str, Any]:
+    current_selection = current if isinstance(current, dict) else {}
+    existing_selection = existing if isinstance(existing, dict) else {}
+    if not current_selection and not existing_selection:
+        return {}
+    merged: dict[str, Any] = dict(existing_selection)
+    merged.update(current_selection)
+    selected_pairs = _merge_ordered_unique_lists(
+        current_selection.get("selected_pairs"),
+        existing_selection.get("selected_pairs"),
+    )
+    if selected_pairs:
+        merged["selected_pairs"] = selected_pairs
+        merged["selected_pair_count"] = len(selected_pairs)
+    return merged
+
+
+def _merge_ordered_unique_lists(current: Any, existing: Any) -> list[Any]:
+    values: list[Any] = []
+    for source in (existing, current):
+        if not isinstance(source, list):
+            continue
+        for item in source:
+            if item not in values:
+                values.append(item)
+    return values
 
 
 def _summary(payload: dict[str, Any]) -> dict[str, Any]:

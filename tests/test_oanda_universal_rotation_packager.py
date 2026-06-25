@@ -677,6 +677,84 @@ class OandaUniversalRotationPackagerTest(unittest.TestCase):
             existing["source_report"],
         )
 
+    def test_preserves_broader_scope_pair_lists_when_latest_report_is_narrower(self) -> None:
+        packaged = packager.package_payload(
+            {
+                "generated_at_utc": "2026-06-25T00:34:38Z",
+                "history_pairs_discovered_order": [
+                    "AUD_USD",
+                    "EUR_JPY",
+                    "GBP_JPY",
+                    "GBP_USD",
+                    "NZD_USD",
+                    "USD_JPY",
+                ],
+                "history_pair_selection": {
+                    "selected_pair_count": 6,
+                    "selected_pairs": [
+                        "AUD_USD",
+                        "EUR_JPY",
+                        "GBP_JPY",
+                        "GBP_USD",
+                        "NZD_USD",
+                        "USD_JPY",
+                    ],
+                },
+                "high_precision_multi_confluence_count": 16,
+                "qualified_multi_confluence_count": 455,
+                "high_precision_multi_confluences": [],
+            },
+            source_report=Path("focused.json"),
+        )
+        existing = {
+            "source_report": "logs/reports/forecast_improvement/oanda_universal_rotation_mining_latest.json",
+            "summary": {
+                "history_pairs_discovered": 7,
+                "history_pairs_discovered_order": [
+                    "AUD_JPY",
+                    "AUD_USD",
+                    "EUR_JPY",
+                    "GBP_JPY",
+                    "GBP_USD",
+                    "NZD_USD",
+                    "USD_JPY",
+                ],
+                "history_pair_selection": {
+                    "selected_pair_count": 7,
+                    "selected_pairs": [
+                        "AUD_JPY",
+                        "AUD_USD",
+                        "EUR_JPY",
+                        "GBP_JPY",
+                        "GBP_USD",
+                        "NZD_USD",
+                        "USD_JPY",
+                    ],
+                },
+                "high_precision_multi_confluence_count": 190,
+                "qualified_multi_confluence_count": 7520,
+            },
+        }
+
+        packager.preserve_existing_scope_metadata(packaged, existing)
+
+        expected_pairs = [
+            "AUD_JPY",
+            "AUD_USD",
+            "EUR_JPY",
+            "GBP_JPY",
+            "GBP_USD",
+            "NZD_USD",
+            "USD_JPY",
+        ]
+        self.assertEqual(packaged["summary"]["history_pairs_discovered_order"], expected_pairs)
+        self.assertEqual(
+            packaged["summary"]["history_pair_selection"]["selected_pairs"],
+            expected_pairs,
+        )
+        self.assertEqual(packaged["summary"]["history_pair_selection"]["selected_pair_count"], 7)
+        self.assertEqual(packaged["narrow_source_summary"]["history_pair_selection"]["selected_pair_count"], 6)
+
     def test_uses_latest_campaign_firepower_when_report_is_not_narrower(self) -> None:
         payload = {
             "generated_at_utc": "2026-06-23T06:34:34Z",
