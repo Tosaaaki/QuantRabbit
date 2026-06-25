@@ -1,6 +1,8 @@
 # Decision Receipt Schema
 
-Write `data/codex_trader_decision_response.json`.
+Write `data/codex_trader_decision_response.json`. In scheduled automation,
+`trader-draft-decision` is the default read-only composer; the final authority
+is still `gpt-trader-decision` plus `LiveOrderGateway`.
 
 ```json
 {
@@ -62,7 +64,7 @@ Write `data/codex_trader_decision_response.json`.
     "attack:advice",
     "attack:lane:<lane_id>"
   ],
-  "evidence_ref_note": "Use option:skew refs only when data/option_skew_snapshot.json has enabled=true; omit them for disabled optional skew artifacts. Use timing:* refs only when data/execution_timing_audit.json shaped cancel, HOLD, CLOSE, TP-rebalance, or profit-take reasoning.",
+  "evidence_ref_note": "Use option:skew refs only when data/option_skew_snapshot.json has enabled=true; omit them for disabled optional skew artifacts. Use timing:* refs only when data/execution_timing_audit.json shaped cancel, HOLD, CLOSE, TP-rebalance, or profit-take reasoning. TRADE must cite news:health and news:items or news:current.",
   "strategy_reviews": [
     {
       "lane_id": "desk:PAIR:SIDE:METHOD",
@@ -105,6 +107,8 @@ Write `data/codex_trader_decision_response.json`.
 - Missing or unparseable `generated_at_utc`.
 - `TRADE` without current `LIVE_READY` selected lane(s).
 - `TRADE` with `close_trade_ids`.
+- `TRADE` without `news:health` and `news:items` or `news:current`.
+- `TRADE` while `data/news_health.json` is missing, ERROR/BLOCK, or carries BLOCK issues (`NEWS_HEALTH_BLOCKS_TRADE`).
 - `TRADE` or `CANCEL_PENDING` names unknown, manual, or non-pending order ids in `cancel_order_ids`.
 - Selected lane not cited as `intent:<lane_id>`.
 - Method mismatch with selected primary lane.

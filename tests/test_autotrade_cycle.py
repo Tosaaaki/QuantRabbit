@@ -7037,6 +7037,7 @@ def _two_lane_profile(root: Path) -> Path:
 
 
 def _stories(root: Path) -> Path:
+    _write_ok_news_artifacts(root)
     path = root / "stories.json"
     path.write_text(
         json.dumps(
@@ -7059,6 +7060,7 @@ def _stories(root: Path) -> Path:
 
 
 def _short_stories(root: Path) -> Path:
+    _write_ok_news_artifacts(root)
     path = root / "stories.json"
     path.write_text(
         json.dumps(
@@ -7080,6 +7082,7 @@ def _short_stories(root: Path) -> Path:
 
 
 def _two_lane_stories(root: Path) -> Path:
+    _write_ok_news_artifacts(root)
     path = root / "stories.json"
     path.write_text(
         json.dumps(
@@ -7108,6 +7111,37 @@ def _two_lane_stories(root: Path) -> Path:
         )
     )
     return path
+
+
+def _write_ok_news_artifacts(root: Path) -> None:
+    now = datetime.now(timezone.utc).isoformat()
+    (root / "news_items.json").write_text(
+        json.dumps(
+            {
+                "generated_at_utc": now,
+                "issues": [],
+                "items": [
+                    {
+                        "title": "fixture current macro context",
+                        "summary": "Test fixture news context is current and non-blocking.",
+                        "pairs": ["EUR_USD", "AUD_JPY"],
+                        "currencies": ["EUR", "USD", "AUD", "JPY"],
+                        "published_at_utc": now,
+                    }
+                ],
+            }
+        )
+    )
+    (root / "news_health.json").write_text(
+        json.dumps(
+            {
+                "generated_at_utc": now,
+                "status": "OK",
+                "market_window": "ACTIVE",
+                "issues": [],
+            }
+        )
+    )
 
 
 def _write_live_ready_intents(path: Path) -> None:
@@ -7308,6 +7342,8 @@ def _gpt_trade_decision(
             f"story:{pair}",
             f"chart:{pair}:M5",
             f"chart:{pair}:M15",
+            "news:health",
+            "news:items",
         ],
         "twenty_minute_plan": _gpt_twenty_minute_plan(lane_ids=[lane_id], pair=pair),
         "operator_summary": "Accept the verified EUR_USD continuation lane.",

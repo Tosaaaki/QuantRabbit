@@ -13,12 +13,13 @@
 3. Build the all-horizon opportunity map before deciding: M1/M5 for immediate execution, M15/M30/H1 for operating swing, and H4/D for anchor/bias. A valid trade may come from any horizon when entry, invalidation, TP, spread, and portfolio gates pass. Do not collapse the packet to a single short-term read.
 4. Treat soft-only close sidecars without explicit Gate B as advisory for entries: keep the existing TP-managed runner under monitoring, but do not let that advisory block unrelated current `LIVE_READY` lanes on another pair or horizon. If `protection_sidecars.position_close_recommendations[].blocks_non_close_actions=false`, do not write `CLOSE` just to "test" the verifier; `CLOSE` is not a valid action in this branch. Hard close evidence or explicit Gate B still requires close-first discipline.
 5. Read `data/market_context_matrix.json` for every current candidate. Use it to raise confidence and expose the strongest counterargument, not to invent a new blocker or reduce trade count.
-6. List every current `LIVE_READY` lane.
-7. Intersect `ai_attack_advice.recommended_now_lane_ids` with current tradeable lanes.
-8. If an advised lane has `learning_influences`, require `data/learning_audit.json`
+6. Read `data/news_health.json` and current news refs before selecting `TRADE`. If news-health is missing, ERROR/BLOCK, or carries BLOCK issues, write WAIT / REQUEST_EVIDENCE with that named blocker; do not trade on a stale market story.
+7. List every current `LIVE_READY` lane.
+8. Intersect `ai_attack_advice.recommended_now_lane_ids` with current tradeable lanes.
+9. If an advised lane has `learning_influences`, require `data/learning_audit.json`
    to be non-blocked and to cover that lane before treating the advice as
    executable. Cite `learning:audit` and `learning:lane:<lane_id>` in the receipt.
-9. Read `data/operator_precedent_audit.json` and
+10. Read `data/operator_precedent_audit.json` and
    `data/manual_market_context_audit.json` if present. Use them only as
    advisory ranking/context among already-current `LIVE_READY` lanes; absence
    of alignment is not a blocker, and alignment cannot override current risk,
@@ -26,12 +27,13 @@
    the 2025 manual precedent as a reason to attack harder, also state whether
    the current lane matches the manual technical context (`prefer_h1_alignment`
    / `prefer_session_jst`) or cite a separate current deterministic edge.
-10. If the target is open and the first advised lane is tradeable, include it in the selected basket unless a named deterministic gate now blocks it.
-11. If advice spans multiple distinct pairs, include one lane per advised pair up to portfolio capacity when practical; otherwise the verifier records a warning and the gateway cycle expands the accepted trade to the deterministic prefilter basket so margin, cumulative risk, duplicate geometry, and position-count gates decide what fits.
-12. Prefer a `MARKET` variant for immediate participation when it is current `LIVE_READY`; pending entries are basket-counted by the gateway and are not blanket no-trade reasons. Exception: `BREAKOUT_FAILURE` must be at the retest/rejection side of the M5/M15 box. For SHORT, do not market-sell the lower half/support and do not arm a lower-half sell-stop; wait for upper-half resistance rejection/LIMIT or require a separate true trend-continuation breakout lane. For LONG, do not market-buy the upper half/resistance and do not arm an upper-half buy-stop; wait for lower-half support rejection/LIMIT or require a separate true trend-continuation breakout lane.
-13. If current trader-owned pending entries already consume portfolio capacity, explicitly decide whether to keep that pending basket or replace it. A `TRADE` that needs capacity for current `LIVE_READY` lanes may include `cancel_order_ids` for current trader-owned pending entry ids that should be cleared before gateway validation; never name manual/unknown orders. When self-improvement flags `PENDING_ENTRY_CANCEL_REVIEW_REQUIRED` and a current replacement lane is `LIVE_READY`, prefer this `TRADE` + `cancel_order_ids` path over a standalone `CANCEL_PENDING`, because the verifier rejects standalone cancel while executable replacement risk exists.
-14. Fill `twenty_minute_plan` before choosing the final action. The trader runs roughly one decision every 20 minutes, so a receipt that only says "trend looks good" or "timing unclear" is too shallow. State the next-cycle primary path, the failure path, the exact entry/hold trigger, the invalidation/cancel trigger, the strongest counterargument, and what must be checked on the next cycle.
-15. Write exactly one `data/codex_trader_decision_response.json`.
+11. If the target is open and the first advised lane is tradeable, include it in the selected basket unless a named deterministic gate now blocks it.
+12. If advice spans multiple distinct pairs, include one lane per advised pair up to portfolio capacity when practical; otherwise the verifier records a warning and the gateway cycle expands the accepted trade to the deterministic prefilter basket so margin, cumulative risk, duplicate geometry, and position-count gates decide what fits.
+13. Prefer a `MARKET` variant for immediate participation when it is current `LIVE_READY`; pending entries are basket-counted by the gateway and are not blanket no-trade reasons. Exception: `BREAKOUT_FAILURE` must be at the retest/rejection side of the M5/M15 box. For SHORT, do not market-sell the lower half/support and do not arm a lower-half sell-stop; wait for upper-half resistance rejection/LIMIT or require a separate true trend-continuation breakout lane. For LONG, do not market-buy the upper half/resistance and do not arm an upper-half buy-stop; wait for lower-half support rejection/LIMIT or require a separate true trend-continuation breakout lane.
+14. If current trader-owned pending entries already consume portfolio capacity, explicitly decide whether to keep that pending basket or replace it. A `TRADE` that needs capacity for current `LIVE_READY` lanes may include `cancel_order_ids` for current trader-owned pending entry ids that should be cleared before gateway validation; never name manual/unknown orders. When self-improvement flags `PENDING_ENTRY_CANCEL_REVIEW_REQUIRED` and a current replacement lane is `LIVE_READY`, prefer this `TRADE` + `cancel_order_ids` path over a standalone `CANCEL_PENDING`, because the verifier rejects standalone cancel while executable replacement risk exists.
+15. Fill `twenty_minute_plan` before choosing the final action. The trader runs roughly one decision every 20 minutes, so a receipt that only says "trend looks good" or "timing unclear" is too shallow. State the next-cycle primary path, the failure path, the exact entry/hold trigger, the invalidation/cancel trigger, the strongest counterargument, and what must be checked on the next cycle.
+16. In scheduled automation, use `trader-draft-decision` as the default receipt composer after `cycle-refresh`. If it emits TRADE and `gpt-trader-decision` accepts it, proceed to the gateway. If it emits WAIT / REQUEST_EVIDENCE because a named blocker wins, do not hand-write a TRADE unless a refreshed artifact clears that blocker.
+17. Write exactly one `data/codex_trader_decision_response.json`.
 
 ## Valid Actions
 
@@ -198,7 +200,7 @@ unwind plan is not a time-efficient trade; it is passive loss-freezing.
 - Thesis, method, narrative, chart story, invalidation, TP, SL, units, expected reward, worst-case loss.
 - Rejected alternatives.
 - Risk notes naming `per_trade_risk_budget_jpy`, spread state, calendar state, strength alignment or conflict, and any COT warning.
-- Evidence refs for broker, target, intent, campaign, strategy, story, charts, matrix, cross-asset, strength, flow, levels, calendar, news, COT, enabled option skew, and attack advice when used.
+- Evidence refs for broker, target, intent, campaign, strategy, story, charts, matrix, cross-asset, strength, flow, levels, calendar, news, news-health, COT, enabled option skew, and attack advice when used. A `TRADE` must cite `news:health` and `news:items` or `news:current`.
 - `twenty_minute_plan` with packet refs as above.
 
 ## Specialist Reviews

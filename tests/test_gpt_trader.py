@@ -14,7 +14,7 @@ from quant_rabbit.cli import main
 from quant_rabbit.execution_timing_contracts import (
     TP_PROGRESS_REPAIR_LIVE_EVIDENCE_BOUNDARY_UTC,
 )
-from quant_rabbit.gpt_trader import GPTTraderBrain, StaticTraderProvider
+from quant_rabbit.gpt_trader import GPTTraderBrain, StaticTraderProvider, draft_trader_decision
 
 
 LANE_ID = "trend_trader:EUR_USD:LONG:TREND_CONTINUATION"
@@ -36,6 +36,68 @@ class GPTTraderBrainTest(unittest.TestCase):
             payload = json.loads((root / "gpt_decision.json").read_text())
             self.assertEqual(payload["verification_issues"], [])
             self.assertIn("GPT Trader Decision Report", (root / "gpt_decision.md").read_text())
+
+    def test_drafts_live_ready_trade_receipt_for_scheduled_trader(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root)
+
+            summary = _draft(root, files)
+
+            self.assertEqual(summary.status, "DRAFT_ACCEPTED")
+            self.assertEqual(summary.action, "TRADE")
+            self.assertEqual(summary.selected_lane_ids, (LANE_ID,))
+            decision = json.loads((root / "codex_trader_decision_response.json").read_text())
+            self.assertIn("news:health", decision["evidence_refs"])
+            self.assertIn("news:items", decision["evidence_refs"])
+            brain = _brain(root, files, decision)
+            verified = brain.run(snapshot_path=files["snapshot"])
+            self.assertEqual(verified.status, "ACCEPTED")
+
+    def test_draft_refuses_trade_when_news_health_is_blocked(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root)
+            files["news_health"].write_text(
+                json.dumps(
+                    {
+                        "generated_at_utc": datetime.now(timezone.utc).isoformat(),
+                        "status": "BLOCK",
+                        "issues": ["BLOCK:news_digest_freshness: curated digest is stale"],
+                    }
+                )
+            )
+
+            summary = _draft(root, files)
+
+            self.assertEqual(summary.status, "DRAFT_ACCEPTED")
+            self.assertEqual(summary.action, "WAIT")
+            self.assertEqual(summary.selected_lane_ids, ())
+            decision = json.loads((root / "codex_trader_decision_response.json").read_text())
+            self.assertEqual(decision["selected_lane_ids"], [])
+            self.assertIn("news:health", decision["evidence_refs"])
+
+    def test_rejects_trade_when_news_health_is_blocked(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root)
+            files["news_health"].write_text(
+                json.dumps(
+                    {
+                        "generated_at_utc": datetime.now(timezone.utc).isoformat(),
+                        "status": "BLOCK",
+                        "issues": ["BLOCK:market_story_news_sync: story is older than news"],
+                    }
+                )
+            )
+            brain = _brain(root, files, _trade_decision())
+
+            summary = brain.run(snapshot_path=files["snapshot"])
+
+            self.assertEqual(summary.status, "REJECTED")
+            payload = json.loads((root / "gpt_decision.json").read_text())
+            codes = {issue["code"] for issue in payload["verification_issues"]}
+            self.assertIn("NEWS_HEALTH_BLOCKS_TRADE", codes)
 
     def test_rejects_trade_receipt_that_predates_broker_snapshot(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -3609,6 +3671,45 @@ def _brain(root: Path, files: dict[str, Path], decision: dict, *, max_lanes: int
     )
 
 
+def _draft(root: Path, files: dict[str, Path]):
+    return draft_trader_decision(
+        snapshot_path=files["snapshot"],
+        intents_path=files["intents"],
+        campaign_plan_path=files["campaign"],
+        strategy_profile_path=files["strategy"],
+        market_story_profile_path=files["story"],
+        market_status_path=files["market_status"],
+        target_state_path=files["target"],
+        output_path=root / "codex_trader_decision_response.json",
+        report_path=root / "trader_decision_draft.md",
+        pair_charts_path=files["pair_charts"],
+        context_asset_charts_path=files["context_asset_charts"],
+        broker_instruments_path=files["broker_instruments"],
+        cross_asset_path=files["cross_asset"],
+        flow_path=files["flow"],
+        currency_strength_path=files["currency_strength"],
+        levels_path=files["levels"],
+        market_context_matrix_path=files["market_context_matrix"],
+        calendar_path=files["calendar"],
+        cot_path=files["cot"],
+        option_skew_path=files["option_skew"],
+        attack_advice_path=files["attack_advice"],
+        capture_economics_path=files["capture_economics"],
+        profitability_acceptance_path=files["profitability_acceptance"],
+        execution_timing_audit_path=files["execution_timing_audit"],
+        coverage_optimization_path=files["coverage_optimization"],
+        learning_audit_path=files["learning_audit"],
+        verification_ledger_path=files["verification_ledger"],
+        self_improvement_audit_path=files["self_improvement_audit"],
+        projection_ledger_path=files["projection_ledger"],
+        operator_precedent_path=files["operator_precedent"],
+        manual_market_context_path=files["manual_market_context"],
+        predictive_limits_path=files["predictive_limits"],
+        news_items_path=files["news_items"],
+        news_health_path=files["news_health"],
+    )
+
+
 def _write_entry_thesis_blocker(root: Path, files: dict[str, Path], *, trade_id: str) -> None:
     snapshot = json.loads(files["snapshot"].read_text())
     generated_at = (
@@ -4549,6 +4650,8 @@ def _trade_decision(*, lane_id: str = LANE_ID, method: str = "TREND_CONTINUATION
             "story:EUR_USD",
             "chart:EUR_USD:M5",
             "chart:EUR_USD:M15",
+            "news:health",
+            "news:items",
         ],
         "twenty_minute_plan": _twenty_minute_plan(lane_ids=[lane_id]),
         "operator_summary": "Accept the verified EUR_USD continuation lane.",

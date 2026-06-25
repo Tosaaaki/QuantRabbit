@@ -182,6 +182,18 @@ PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli cycle-refresh --daily-risk-pct 1
 # other pairs or horizons.
 
 # 3. Write data/codex_trader_decision_response.json from the active decision branch
+# The scheduled trader should first let `trader-draft-decision` compose one
+# current receipt from the same broker/market/news packet that the verifier will
+# audit. The command is read-only except for the receipt/report files: it does
+# not call model APIs, send orders, cancel orders, close positions, or change
+# launchd state. It selects current LIVE_READY lanes from order_intents /
+# ai_attack_advice when clean, and emits WAIT / REQUEST_EVIDENCE when named
+# blockers such as news-health, projection, exposure, close-first, or
+# self-improvement gates win.
+PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli trader-draft-decision \
+  --snapshot data/broker_snapshot.json \
+  --output data/codex_trader_decision_response.json
+#
 # If broker refresh made an older receipt stale, overwrite it with one current receipt.
 # For TRADE / WAIT / REQUEST_EVIDENCE, include `twenty_minute_plan`.
 # The live cadence is about 20 minutes; the plan must state the primary
@@ -189,6 +201,14 @@ PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli cycle-refresh --daily-risk-pct 1
 # counterargument, next-cycle check, and packet evidence refs. This is a
 # receipt-depth requirement so the next cycle can audit the scenario tree;
 # it is not a new market-risk threshold or permission to invent blockers.
+# A TRADE must cite current chart evidence plus `news:health` and `news:items`
+# or `news:current`. If news-health is missing, ERROR/BLOCK, or carries BLOCK
+# issues, write a non-TRADE blocker receipt; campaign pressure must not bypass
+# stale or unsynced news.
+# If the draft reports DRAFT_REQUIRES_OPERATOR_REVIEW, do not invent a
+# deterministic workaround. Continue to `gpt-trader-decision` and the gateway
+# maintenance cycle so existing-position protection still runs, then repair the
+# named blocker or receipt bug after the handoff.
 # If current trader-owned pending entries consume portfolio capacity, either keep
 # that pending basket explicitly or name verified trader pending ids in
 # cancel_order_ids when replacing them with current MARKET participation.

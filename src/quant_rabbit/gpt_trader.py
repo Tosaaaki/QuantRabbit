@@ -250,6 +250,29 @@ def _projection_ledger_trade_blockers(packet: dict[str, Any]) -> list[str]:
     return blockers
 
 
+def _news_health_trade_blockers(packet: dict[str, Any]) -> list[str]:
+    news = packet.get("news")
+    if not isinstance(news, dict):
+        return ["NEWS_PACKET_MISSING: current news evidence is absent from the decision packet"]
+    health = news.get("health")
+    if not isinstance(health, dict):
+        return ["NEWS_HEALTH_MISSING: news freshness and market-story sync were not audited"]
+    blockers: list[str] = []
+    status = str(health.get("status") or "").strip().upper()
+    if status in {"", "MISSING", "BLOCK", "ERROR"}:
+        blockers.append(
+            f"NEWS_HEALTH_{status or 'MISSING'}: news freshness / market-story sync is not tradeable"
+        )
+    for issue in health.get("issues", []) or []:
+        text = str(issue or "").strip()
+        if not text:
+            continue
+        upper = text.upper()
+        if upper.startswith("BLOCK") or ":BLOCK" in upper or "BLOCK:" in upper:
+            blockers.append(text)
+    return blockers
+
+
 def _decision_cites_profitability_p0(evidence_refs: tuple[str, ...]) -> bool:
     for ref in evidence_refs:
         text = str(ref or "").strip()
@@ -1381,6 +1404,7 @@ from quant_rabbit.paths import (
     DEFAULT_CAMPAIGN_PLAN,
     DEFAULT_CALENDAR_SNAPSHOT,
     DEFAULT_CAPTURE_ECONOMICS,
+    DEFAULT_CODEX_TRADER_DECISION_RESPONSE,
     DEFAULT_CONTEXT_ASSET_CHARTS,
     DEFAULT_COVERAGE_OPTIMIZATION,
     DEFAULT_COT_SNAPSHOT,
@@ -1408,6 +1432,7 @@ from quant_rabbit.paths import (
     DEFAULT_PROFITABILITY_ACCEPTANCE,
     DEFAULT_SELF_IMPROVEMENT_AUDIT,
     DEFAULT_STRATEGY_PROFILE,
+    DEFAULT_TRADER_DECISION_DRAFT_REPORT,
     DEFAULT_VERIFICATION_LEDGER,
 )
 from quant_rabbit.instruments import (
@@ -1604,6 +1629,19 @@ class GPTTraderSummary:
     allowed: bool
     issues: int
     close_trade_ids: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class TraderDecisionDraftSummary:
+    status: str
+    output_path: Path
+    report_path: Path
+    action: str
+    selected_lane_id: str | None
+    selected_lane_ids: tuple[str, ...]
+    blockers: tuple[str, ...]
+    verification_allowed: bool
+    verification_issues: tuple[str, ...]
 
 
 class TraderModelProvider(Protocol):
@@ -1937,6 +1975,7 @@ class GPTTraderBrain:
                 "- `TRADE`/`CANCEL_PENDING` cancel ids must be current trader-owned pending entry orders from broker truth.",
                 "- Current `ai_attack_advice` recommendations make generic WAIT invalid while the daily target is open, but never grant live permission.",
                 "- Learning may only rank already-live-ready lanes. Any learning-influenced selected lane must be covered by a non-blocked `learning_audit` packet and cite `learning:audit` plus `learning:lane:<lane_id>`.",
+                "- `TRADE` must cite current chart evidence plus `news:health` and `news:items` or `news:current`; blocked news-health is a no-trade gate.",
                 "- `TRADE`, `WAIT`, and `REQUEST_EVIDENCE` receipts must include `twenty_minute_plan`: the next-20-minute primary path, failure path, trigger, invalidation/cancel trigger, strongest counterargument, next-cycle check, and known packet refs. This is a receipt-depth gate, not a new market-risk gate.",
                 "- `market_status` is deterministic calendar/session evidence only; broker truth still decides prices, positions, and tradability.",
                 "- A deterministic `tp-rebalance` sidecar requirement makes WAIT / REQUEST_EVIDENCE invalid until the sidecar is run.",
@@ -1985,6 +2024,7 @@ class DecisionVerifier:
         entry_thesis_blockers = _entry_thesis_sidecar_reasons(self.packet)
         position_close_reasons = _position_close_sidecar_reasons(self.packet)
         projection_trade_blockers = _projection_ledger_trade_blockers(self.packet)
+        news_trade_blockers = _news_health_trade_blockers(self.packet)
         self_improvement_trade_blockers = _self_improvement_trade_blockers(
             self.packet,
             decision_generated_at_utc=decision.generated_at_utc,
@@ -2043,6 +2083,14 @@ class DecisionVerifier:
                         "PROJECTION_LEDGER_EXPIRED_PENDING_BLOCKS_TRADE",
                         "TRADE rejected while projection_ledger has expired PENDING forecast telemetry: "
                         + "; ".join(projection_trade_blockers[:3]),
+                    )
+                )
+            if news_trade_blockers:
+                issues.append(
+                    VerificationIssue(
+                        "NEWS_HEALTH_BLOCKS_TRADE",
+                        "TRADE rejected while current news / market-story freshness is blocked: "
+                        + "; ".join(news_trade_blockers[:3]),
                     )
                 )
             issues.extend(_learning_audit_trade_issues(self.packet, selected_lane_ids, decision.evidence_refs))
@@ -2170,6 +2218,20 @@ class DecisionVerifier:
             ):
                 if not value.strip():
                     issues.append(VerificationIssue("INCOMPLETE_TRADE_DECISION", f"TRADE missing {field_name}"))
+            if "news:health" not in decision.evidence_refs:
+                issues.append(
+                    VerificationIssue(
+                        "NEWS_HEALTH_EVIDENCE_MISSING",
+                        "TRADE must cite news:health so the scheduled trader proves it checked news freshness.",
+                    )
+                )
+            if "news:items" not in decision.evidence_refs and "news:current" not in decision.evidence_refs:
+                issues.append(
+                    VerificationIssue(
+                        "NEWS_ITEMS_EVIDENCE_MISSING",
+                        "TRADE must cite news:items or news:current so macro/news context is part of the receipt.",
+                    )
+                )
             self._verify_cancel_order_ids(decision, issues, action="TRADE")
         elif decision.action in {"WAIT", "REQUEST_EVIDENCE"}:
             if decision.selected_lane_id is not None:
@@ -2235,6 +2297,7 @@ class DecisionVerifier:
                 and not exposure_blockers
                 and not self_improvement_entry_blockers
                 and not projection_trade_blockers
+                and not news_trade_blockers
                 and attack_lane_ids
             ):
                 issues.append(
@@ -2251,6 +2314,7 @@ class DecisionVerifier:
                 and not exposure_blockers
                 and not self_improvement_entry_blockers
                 and not projection_trade_blockers
+                and not news_trade_blockers
                 and tradeable_lanes
             ):
                 if not _trader_exposure_present(self.packet):
@@ -3243,6 +3307,527 @@ def _decision_from_payload(payload: dict[str, Any]) -> GPTTraderDecision:
     )
 
 
+def draft_trader_decision(
+    *,
+    snapshot_path: Path,
+    intents_path: Path = DEFAULT_ORDER_INTENTS,
+    campaign_plan_path: Path = DEFAULT_CAMPAIGN_PLAN,
+    strategy_profile_path: Path = DEFAULT_STRATEGY_PROFILE,
+    market_story_profile_path: Path = DEFAULT_MARKET_STORY_PROFILE,
+    market_status_path: Path = DEFAULT_MARKET_STATUS,
+    target_state_path: Path = DEFAULT_DAILY_TARGET_STATE,
+    pair_charts_path: Path = DEFAULT_PAIR_CHARTS,
+    context_asset_charts_path: Path = DEFAULT_CONTEXT_ASSET_CHARTS,
+    broker_instruments_path: Path = DEFAULT_BROKER_INSTRUMENTS,
+    cross_asset_path: Path = DEFAULT_CROSS_ASSET_SNAPSHOT,
+    flow_path: Path = DEFAULT_FLOW_SNAPSHOT,
+    currency_strength_path: Path = DEFAULT_CURRENCY_STRENGTH,
+    levels_path: Path = DEFAULT_LEVELS_SNAPSHOT,
+    market_context_matrix_path: Path = DEFAULT_MARKET_CONTEXT_MATRIX,
+    calendar_path: Path = DEFAULT_CALENDAR_SNAPSHOT,
+    cot_path: Path = DEFAULT_COT_SNAPSHOT,
+    option_skew_path: Path = DEFAULT_OPTION_SKEW,
+    attack_advice_path: Path = DEFAULT_AI_ATTACK_ADVICE,
+    capture_economics_path: Path = DEFAULT_CAPTURE_ECONOMICS,
+    profitability_acceptance_path: Path = DEFAULT_PROFITABILITY_ACCEPTANCE,
+    execution_timing_audit_path: Path = DEFAULT_EXECUTION_TIMING_AUDIT,
+    coverage_optimization_path: Path = DEFAULT_COVERAGE_OPTIMIZATION,
+    learning_audit_path: Path = DEFAULT_LEARNING_AUDIT,
+    verification_ledger_path: Path = DEFAULT_VERIFICATION_LEDGER,
+    self_improvement_audit_path: Path = DEFAULT_SELF_IMPROVEMENT_AUDIT,
+    projection_ledger_path: Path = DEFAULT_PROJECTION_LEDGER,
+    operator_precedent_path: Path = DEFAULT_OPERATOR_PRECEDENT_AUDIT,
+    manual_market_context_path: Path = DEFAULT_MANUAL_MARKET_CONTEXT_AUDIT,
+    predictive_limits_path: Path = DEFAULT_PREDICTIVE_LIMIT_ORDERS,
+    news_items_path: Path = DEFAULT_NEWS_SNAPSHOT,
+    news_health_path: Path = DEFAULT_NEWS_HEALTH,
+    output_path: Path = DEFAULT_CODEX_TRADER_DECISION_RESPONSE,
+    report_path: Path = DEFAULT_TRADER_DECISION_DRAFT_REPORT,
+    max_lanes: int = DEFAULT_GPT_MAX_LANES,
+) -> TraderDecisionDraftSummary:
+    brain = GPTTraderBrain(
+        provider=None,
+        intents_path=intents_path,
+        campaign_plan_path=campaign_plan_path,
+        strategy_profile_path=strategy_profile_path,
+        market_story_profile_path=market_story_profile_path,
+        market_status_path=market_status_path,
+        target_state_path=target_state_path,
+        pair_charts_path=pair_charts_path,
+        context_asset_charts_path=context_asset_charts_path,
+        broker_instruments_path=broker_instruments_path,
+        cross_asset_path=cross_asset_path,
+        flow_path=flow_path,
+        currency_strength_path=currency_strength_path,
+        levels_path=levels_path,
+        market_context_matrix_path=market_context_matrix_path,
+        calendar_path=calendar_path,
+        cot_path=cot_path,
+        option_skew_path=option_skew_path,
+        attack_advice_path=attack_advice_path,
+        capture_economics_path=capture_economics_path,
+        profitability_acceptance_path=profitability_acceptance_path,
+        execution_timing_audit_path=execution_timing_audit_path,
+        coverage_optimization_path=coverage_optimization_path,
+        learning_audit_path=learning_audit_path,
+        verification_ledger_path=verification_ledger_path,
+        self_improvement_audit_path=self_improvement_audit_path,
+        projection_ledger_path=projection_ledger_path,
+        operator_precedent_path=operator_precedent_path,
+        manual_market_context_path=manual_market_context_path,
+        predictive_limits_path=predictive_limits_path,
+        news_items_path=news_items_path,
+        news_health_path=news_health_path,
+        max_lanes=max_lanes,
+    )
+    packet = brain._input_packet(snapshot_path)
+    decision, blockers = _autonomous_decision_from_packet(packet)
+    parsed = _decision_from_payload(decision)
+    verification = DecisionVerifier(packet).verify(parsed)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text(json.dumps(decision, ensure_ascii=False, indent=2, sort_keys=True) + "\n")
+    _write_trader_decision_draft_report(
+        report_path,
+        decision=decision,
+        blockers=blockers,
+        verification=verification,
+    )
+    return TraderDecisionDraftSummary(
+        status="DRAFT_ACCEPTED" if verification.allowed else "DRAFT_REQUIRES_OPERATOR_REVIEW",
+        output_path=output_path,
+        report_path=report_path,
+        action=parsed.action,
+        selected_lane_id=parsed.selected_lane_id,
+        selected_lane_ids=parsed.selected_lane_ids,
+        blockers=tuple(blockers),
+        verification_allowed=verification.allowed,
+        verification_issues=tuple(issue.code for issue in verification.issues),
+    )
+
+
+def _autonomous_decision_from_packet(packet: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
+    live_ready_lane_ids = _tradeable_live_ready_lanes(packet)
+    lanes_by_id = {
+        str(lane.get("lane_id") or ""): lane
+        for lane in packet.get("lanes", [])
+        if isinstance(lane, dict)
+    }
+    candidate_lane_ids = _draft_candidate_lane_ids(packet, live_ready_lane_ids)
+    selected_lane_ids = _draft_margin_aware_basket(packet, candidate_lane_ids, lanes_by_id)
+
+    blockers: list[str] = []
+    blockers.extend(_position_close_sidecar_reasons(packet))
+    blockers.extend(_trade_exposure_blockers(packet))
+    blockers.extend(_entry_thesis_sidecar_reasons(packet))
+    blockers.extend(_projection_ledger_trade_blockers(packet))
+    blockers.extend(_news_health_trade_blockers(packet))
+    if not live_ready_lane_ids:
+        blockers.append("NO_LIVE_READY_LANES")
+    if live_ready_lane_ids and not selected_lane_ids:
+        blockers.append("NO_MARGIN_AWARE_BASKET_FITS")
+    if selected_lane_ids:
+        blockers.extend(
+            _self_improvement_trade_blockers(
+                packet,
+                decision_generated_at_utc=datetime.now(timezone.utc).isoformat(),
+                selected_lane_ids=selected_lane_ids,
+            )
+        )
+
+    if selected_lane_ids and not blockers:
+        return _trade_decision_draft(packet, selected_lane_ids, lanes_by_id), blockers
+    return _non_trade_decision_draft(packet, blockers, live_ready_lane_ids, lanes_by_id), blockers
+
+
+def _draft_candidate_lane_ids(packet: dict[str, Any], live_ready_lane_ids: list[str]) -> list[str]:
+    attack_lane_ids = _attack_recommended_tradeable_lane_ids(packet, live_ready_lane_ids)
+    ordered = list(attack_lane_ids or live_ready_lane_ids)
+    for lane_id in live_ready_lane_ids:
+        if lane_id not in ordered:
+            ordered.append(lane_id)
+    return ordered
+
+
+def _draft_margin_aware_basket(
+    packet: dict[str, Any],
+    candidate_lane_ids: list[str],
+    lanes_by_id: dict[str, dict[str, Any]],
+) -> tuple[str, ...]:
+    margin_room = _draft_effective_margin_room(packet)
+    selected: list[str] = []
+    selected_pairs: set[str] = set()
+    cumulative_margin = 0.0
+    for lane_id in candidate_lane_ids:
+        lane = lanes_by_id.get(lane_id)
+        if not lane:
+            continue
+        pair = str(lane.get("pair") or "")
+        if pair and pair in selected_pairs:
+            continue
+        margin = _optional_float((lane.get("risk_metrics") or {}).get("estimated_margin_jpy")) or 0.0
+        if margin_room is not None and cumulative_margin + margin > margin_room:
+            continue
+        selected.append(lane_id)
+        if pair:
+            selected_pairs.add(pair)
+        cumulative_margin += margin
+        if len(selected) >= BASKET_PAIR_COVERAGE_TARGET:
+            break
+    return tuple(selected)
+
+
+def _draft_effective_margin_room(packet: dict[str, Any]) -> float | None:
+    account = packet.get("broker_snapshot", {}).get("account")
+    if not isinstance(account, dict):
+        return None
+    available = _optional_float(account.get("margin_available_jpy"))
+    nav = _optional_float(account.get("nav_jpy"))
+    used = _optional_float(account.get("margin_used_jpy"))
+    if available is None or nav is None or used is None:
+        return None
+    utilization_room = nav * (RiskPolicy().max_margin_utilization_pct / 100.0) - used
+    base_room = min(available, utilization_room)
+    # Same C-4 engineering buffer documented in AGENT_CONTRACT. It absorbs
+    # intra-cycle margin drift and is not a market edge threshold.
+    return max(0.0, base_room) * 0.9
+
+
+def _trade_decision_draft(
+    packet: dict[str, Any],
+    selected_lane_ids: tuple[str, ...],
+    lanes_by_id: dict[str, dict[str, Any]],
+) -> dict[str, Any]:
+    primary = lanes_by_id[selected_lane_ids[0]]
+    pair = str(primary.get("pair") or "")
+    side = str(primary.get("direction") or "")
+    method = str(primary.get("method") or "RANGE_ROTATION")
+    refs = _draft_trade_evidence_refs(packet, selected_lane_ids, lanes_by_id)
+    cited_chart_refs = ", ".join(ref for ref in refs if ref.startswith(f"chart:{pair}:")) or "current chart refs"
+    return {
+        "generated_at_utc": datetime.now(timezone.utc).isoformat(),
+        "action": "TRADE",
+        "selected_lane_id": selected_lane_ids[0],
+        "selected_lane_ids": list(selected_lane_ids),
+        "cancel_order_ids": [],
+        "close_trade_ids": [],
+        "confidence": "HIGH",
+        "thesis": _draft_trade_thesis(selected_lane_ids, lanes_by_id),
+        "method": method,
+        "narrative": str(
+            primary.get("narrative")
+            or primary.get("thesis")
+            or "Selected current LIVE_READY lane(s) from broker-truth intent evidence."
+        ),
+        "chart_story": str(
+            primary.get("chart_story")
+            or f"Draft cited current chart evidence for {pair}: {cited_chart_refs}."
+        ),
+        "invalidation": str(
+            primary.get("invalidation")
+            or "Selected lane leaves LIVE_READY or broker truth invalidates the quoted structure."
+        ),
+        "rejected_alternatives": _draft_rejected_alternatives(packet, selected_lane_ids, lanes_by_id),
+        "risk_notes": _draft_risk_notes(selected_lane_ids, lanes_by_id),
+        "evidence_refs": refs,
+        "twenty_minute_plan": _draft_twenty_minute_plan(
+            action="TRADE",
+            pair=pair,
+            side=side,
+            selected_lane_ids=selected_lane_ids,
+            refs=refs,
+        ),
+        "strategy_reviews": [],
+        "specialist_reviews": _draft_specialist_reviews(primary, refs),
+        "operator_summary": (
+            "Autonomous trader draft selected current LIVE_READY lane(s) from the same "
+            "broker/market/news packet used by gpt-trader-decision; gateway validation remains final."
+        ),
+    }
+
+
+def _non_trade_decision_draft(
+    packet: dict[str, Any],
+    blockers: list[str],
+    live_ready_lane_ids: list[str],
+    lanes_by_id: dict[str, dict[str, Any]],
+) -> dict[str, Any]:
+    refs = _draft_non_trade_evidence_refs(packet, live_ready_lane_ids, lanes_by_id)
+    action = "WAIT" if live_ready_lane_ids else "REQUEST_EVIDENCE"
+    blocker_text = "; ".join(blockers[:5]) if blockers else "NO_EXECUTABLE_ENTRY_ROUTE"
+    return {
+        "generated_at_utc": datetime.now(timezone.utc).isoformat(),
+        "action": action,
+        "selected_lane_id": None,
+        "selected_lane_ids": [],
+        "cancel_order_ids": [],
+        "close_trade_ids": [],
+        "confidence": "HIGH",
+        "thesis": f"Do not draft a fresh entry while named blocker(s) remain: {blocker_text}",
+        "method": "EVENT_RISK",
+        "narrative": "Autonomous trader draft withheld TRADE instead of converting incomplete evidence into live risk.",
+        "chart_story": "Current chart/news/broker packet must be refreshed or cleared before a trade receipt is valid.",
+        "invalidation": "Re-run cycle-refresh; if blockers clear and LIVE_READY lanes remain, draft a fresh TRADE receipt.",
+        "rejected_alternatives": [
+            f"TRADE rejected by autonomous draft blocker: {item}" for item in blockers[:8]
+        ] or ["TRADE rejected because no current LIVE_READY lane exists."],
+        "risk_notes": [
+            "No new risk is authorized by this draft.",
+            "The live wrapper may still run existing-position maintenance through the gateway path.",
+        ],
+        "evidence_refs": refs,
+        "twenty_minute_plan": _draft_twenty_minute_plan(
+            action=action,
+            pair=_draft_primary_pair(live_ready_lane_ids, lanes_by_id),
+            side="",
+            selected_lane_ids=(),
+            refs=refs,
+        ),
+        "strategy_reviews": [],
+        "specialist_reviews": [],
+        "operator_summary": "Autonomous trader draft did not select a trade because required evidence/gates are blocked.",
+    }
+
+
+def _draft_trade_evidence_refs(
+    packet: dict[str, Any],
+    selected_lane_ids: tuple[str, ...],
+    lanes_by_id: dict[str, dict[str, Any]],
+) -> list[str]:
+    refs: list[str] = ["broker:snapshot", "target:daily", "news:health", "news:items"]
+    attack_ids = set(_attack_recommended_tradeable_lane_ids(packet, list(lanes_by_id)))
+    for lane_id in selected_lane_ids:
+        lane = lanes_by_id[lane_id]
+        pair = str(lane.get("pair") or "")
+        side = str(lane.get("direction") or "")
+        refs.extend([f"intent:{lane_id}", f"campaign:{lane_id}", f"strategy:{pair}:{side}", f"story:{pair}"])
+        refs.extend(_draft_pair_refs(pair, side))
+        if lane_id in attack_ids:
+            refs.extend(["attack:advice", f"attack:lane:{lane_id}"])
+    for requirement in packet.get("decision_requirements", {}).get("learning_influenced_lane_evidence", []) or []:
+        if not isinstance(requirement, dict):
+            continue
+        if str(requirement.get("lane_id") or "") in selected_lane_ids:
+            refs.extend(str(ref) for ref in requirement.get("required_evidence_refs", []) or [])
+    return _known_ordered_refs(packet, refs)
+
+
+def _draft_non_trade_evidence_refs(
+    packet: dict[str, Any],
+    live_ready_lane_ids: list[str],
+    lanes_by_id: dict[str, dict[str, Any]],
+) -> list[str]:
+    refs: list[str] = ["broker:snapshot", "target:daily", "news:health", "news:items"]
+    for lane_id in live_ready_lane_ids[:4]:
+        lane = lanes_by_id.get(lane_id)
+        if not lane:
+            continue
+        pair = str(lane.get("pair") or "")
+        side = str(lane.get("direction") or "")
+        refs.extend([f"intent:{lane_id}", f"campaign:{lane_id}"])
+        refs.extend(_draft_pair_refs(pair, side))
+    refs.extend(["projection:ledger", "self_improvement:audit", "profitability:acceptance"])
+    return _known_ordered_refs(packet, refs)
+
+
+def _draft_pair_refs(pair: str, side: str) -> list[str]:
+    if not pair:
+        return []
+    currencies = [part for part in pair.split("_") if part]
+    refs = [
+        f"chart:{pair}:M1",
+        f"chart:{pair}:M5",
+        f"chart:{pair}:M15",
+        f"chart:{pair}:M30",
+        f"chart:{pair}:H1",
+        f"chart:{pair}:H4",
+        f"chart:{pair}:D",
+        f"chart:{pair}:structure",
+        f"matrix:{pair}:{side}",
+        f"flow:{pair}",
+        f"levels:{pair}",
+        f"calendar:{pair}",
+        f"strength:{pair}",
+        f"cross:correlations:{pair}",
+        f"news:{pair}",
+    ]
+    for currency in currencies:
+        refs.extend([f"strength:{currency}", f"calendar:{currency}", f"cot:{currency}", f"news:{currency}"])
+    refs.extend(["cross:dxy", "cross:USB10Y_USD"])
+    return refs
+
+
+def _known_ordered_refs(packet: dict[str, Any], refs: list[str]) -> list[str]:
+    allowed = set(str(ref) for ref in packet.get("allowed_evidence_refs", []) or [])
+    ordered: list[str] = []
+    for ref in refs:
+        text = str(ref or "").strip()
+        if text and text in allowed and text not in ordered:
+            ordered.append(text)
+    return ordered
+
+
+def _draft_trade_thesis(selected_lane_ids: tuple[str, ...], lanes_by_id: dict[str, dict[str, Any]]) -> str:
+    parts: list[str] = []
+    for lane_id in selected_lane_ids:
+        lane = lanes_by_id[lane_id]
+        risk = lane.get("risk_metrics") or {}
+        parts.append(
+            f"{lane_id} {lane.get('order_type')} units={lane.get('units')} "
+            f"entry={lane.get('entry')} tp={lane.get('tp')} sl={lane.get('sl')} "
+            f"risk_jpy={risk.get('risk_jpy')} reward_jpy={risk.get('reward_jpy')} rr={risk.get('reward_risk')}"
+        )
+    return "Current LIVE_READY basket selected from broker-truth intents: " + "; ".join(parts)
+
+
+def _draft_risk_notes(selected_lane_ids: tuple[str, ...], lanes_by_id: dict[str, dict[str, Any]]) -> list[str]:
+    notes = [
+        "Use only units, entry, TP, SL, and risk metrics already present in current LIVE_READY intents.",
+        "LiveOrderGateway must re-fetch broker truth and revalidate portfolio risk, margin, duplicate geometry, and guardian state before send.",
+    ]
+    for lane_id in selected_lane_ids:
+        risk = lanes_by_id[lane_id].get("risk_metrics") or {}
+        notes.append(
+            f"{lane_id}: risk_jpy={risk.get('risk_jpy')} reward_jpy={risk.get('reward_jpy')} "
+            f"rr={risk.get('reward_risk')} estimated_margin_jpy={risk.get('estimated_margin_jpy')}"
+        )
+    return notes
+
+
+def _draft_rejected_alternatives(
+    packet: dict[str, Any],
+    selected_lane_ids: tuple[str, ...],
+    lanes_by_id: dict[str, dict[str, Any]],
+) -> list[str]:
+    selected = set(selected_lane_ids)
+    rejected: list[str] = []
+    for lane_id in _tradeable_live_ready_lanes(packet):
+        if lane_id in selected:
+            continue
+        lane = lanes_by_id.get(lane_id) or {}
+        pair = str(lane.get("pair") or "")
+        reason = (
+            "skipped because another selected lane already covers this pair"
+            if pair and any(pair == str((lanes_by_id.get(chosen) or {}).get("pair") or "") for chosen in selected)
+            else "skipped by margin-aware basket or lower attack-advice rank"
+        )
+        rejected.append(f"{lane_id}: {reason}")
+    return rejected or ["WAIT rejected because current packet contains selected LIVE_READY lane(s) and no named blocker won."]
+
+
+def _draft_specialist_reviews(primary_lane: dict[str, Any], refs: list[str]) -> list[dict[str, Any]]:
+    pair = str(primary_lane.get("pair") or "")
+    method = str(primary_lane.get("method") or "")
+    cited = [ref for ref in refs if ref.startswith(f"chart:{pair}:")][:4]
+    return [
+        {
+            "role": "portfolio_context",
+            "lane_id": primary_lane.get("lane_id"),
+            "method": method,
+            "verdict": "SUPPORTS",
+            "summary": "Read-only draft review; final permission remains with gpt-trader-decision and LiveOrderGateway.",
+            "cited_evidence_refs": cited or refs[:2],
+            "hard_gate_codes": [],
+            "read_only": True,
+            "live_permission": False,
+        }
+    ]
+
+
+def _draft_twenty_minute_plan(
+    *,
+    action: str,
+    pair: str,
+    side: str,
+    selected_lane_ids: tuple[str, ...],
+    refs: list[str],
+) -> dict[str, Any]:
+    plan_refs = [ref for ref in refs if ref.startswith("chart:")][:2] + [f"intent:{lane_id}" for lane_id in selected_lane_ids]
+    if len(plan_refs) < 2:
+        plan_refs = refs[:4]
+    label = f"{pair} {side}".strip() or "the current packet"
+    return {
+        "horizon_minutes": TRADER_DECISION_HORIZON_MINUTES,
+        "primary_path": (
+            f"{label} should respect the selected LIVE_READY trigger before the next scheduled cycle."
+            if action == "TRADE"
+            else "Refresh the named blocker(s) and keep broker-truth maintenance active before new risk."
+        ),
+        "failure_path": (
+            "The selected lane leaves LIVE_READY, news-health blocks, or broker truth changes exposure/margin before send."
+            if action == "TRADE"
+            else "A blocker remains after refresh, so the next cycle must continue repair/evidence work."
+        ),
+        "entry_or_hold_trigger": (
+            "Enter only through the selected current intent(s) after gpt-trader-decision accepts this receipt."
+            if action == "TRADE"
+            else "Hold new entries until cycle-refresh produces clean LIVE_READY evidence and news-health is non-blocked."
+        ),
+        "invalidation_or_cancel_trigger": (
+            "Cancel the idea if broker truth, selected lane status, news-health, or gateway risk validation changes."
+            if action == "TRADE"
+            else "Reconsider only after the named blocker code disappears from the refreshed packet."
+        ),
+        "counterargument": (
+            "The strongest counterargument is stale or incomplete market/news context; this draft cites current chart/news refs and the verifier must reject if they are blocked."
+            if action == "TRADE"
+            else "Campaign pressure argues for taking LIVE_READY lanes, but named blockers outrank discretionary urgency."
+        ),
+        "next_cycle_check": "First re-check broker snapshot, order_intents, ai_attack_advice, news-health, and selected lane refs.",
+        "evidence_refs": _unique_preserve_order(plan_refs),
+    }
+
+
+def _draft_primary_pair(live_ready_lane_ids: list[str], lanes_by_id: dict[str, dict[str, Any]]) -> str:
+    if not live_ready_lane_ids:
+        return ""
+    return str((lanes_by_id.get(live_ready_lane_ids[0]) or {}).get("pair") or "")
+
+
+def _unique_preserve_order(values: list[str]) -> list[str]:
+    out: list[str] = []
+    for value in values:
+        if value and value not in out:
+            out.append(value)
+    return out
+
+
+def _write_trader_decision_draft_report(
+    report_path: Path,
+    *,
+    decision: dict[str, Any],
+    blockers: list[str],
+    verification: VerificationResult,
+) -> None:
+    report_path.parent.mkdir(parents=True, exist_ok=True)
+    lines = [
+        "# Trader Decision Draft Report",
+        "",
+        f"- Action: `{decision.get('action')}`",
+        f"- Selected lane: `{decision.get('selected_lane_id')}`",
+        f"- Selected basket lanes: `{', '.join(decision.get('selected_lane_ids') or []) or 'none'}`",
+        f"- Draft blockers: `{'; '.join(blockers) if blockers else 'none'}`",
+        f"- Verifier precheck: `{'ACCEPTED' if verification.allowed else 'REJECTED'}`",
+        "",
+        "## Verification Issues",
+        "",
+    ]
+    if verification.issues:
+        lines.extend(f"- `{issue.severity}` {issue.code}: {issue.message}" for issue in verification.issues)
+    else:
+        lines.append("- none")
+    lines.extend(
+        [
+            "",
+            "## Contract",
+            "",
+            "- Draft generation is read-only and writes only the decision response JSON/report.",
+            "- It does not call model APIs, send orders, cancel orders, close positions, or change launchd state.",
+            "- `gpt-trader-decision` and `LiveOrderGateway` remain the execution gates.",
+        ]
+    )
+    report_path.write_text("\n".join(lines) + "\n")
+
+
 def _selected_trade_lane_ids(decision: GPTTraderDecision) -> tuple[str, ...]:
     lane_ids = tuple(dict.fromkeys(lane_id for lane_id in decision.selected_lane_ids if lane_id))
     if lane_ids:
@@ -3288,7 +3873,22 @@ def _lane_packet(
                 "units": intent.get("units"),
                 "risk_metrics": _small_dict(
                     result.get("risk_metrics"),
-                    ("entry_price", "loss_pips", "reward_pips", "risk_jpy", "reward_jpy", "reward_risk", "spread_pips", "jpy_per_pip"),
+                    (
+                        "entry_price",
+                        "loss_pips",
+                        "reward_pips",
+                        "risk_jpy",
+                        "reward_jpy",
+                        "reward_risk",
+                        "spread_pips",
+                        "jpy_per_pip",
+                        "estimated_margin_jpy",
+                        "margin_available_jpy",
+                        "margin_budget_jpy",
+                        "margin_used_jpy",
+                        "margin_utilization_after_pct",
+                        "max_margin_utilization_pct",
+                    ),
                 ),
                 "thesis": intent.get("thesis"),
                 "narrative": context.get("narrative") or "",
@@ -3406,6 +4006,7 @@ def _lane_packet(
 def _snapshot_packet(snapshot: dict[str, Any]) -> dict[str, Any]:
     orders = snapshot.get("orders", []) or []
     quotes_in = snapshot.get("quotes") or {}
+    account = snapshot.get("account") if isinstance(snapshot.get("account"), dict) else {}
     # Scope quotes to pairs we actually have positions on (or are likely
     # to reference in this cycle) so the verifier packet stays compact
     # but the CLOSE-discipline gate has bid/ask available to check
@@ -3429,6 +4030,17 @@ def _snapshot_packet(snapshot: dict[str, Any]) -> dict[str, Any]:
     return {
         "evidence_ref": "broker:snapshot",
         "fetched_at_utc": snapshot.get("fetched_at_utc"),
+        "account": _small_dict(
+            account,
+            (
+                "balance_jpy",
+                "nav_jpy",
+                "margin_available_jpy",
+                "margin_used_jpy",
+                "unrealized_pl_jpy",
+                "last_transaction_id",
+            ),
+        ),
         "positions": len(snapshot.get("positions", []) or []),
         "orders": len(orders),
         "position_summaries": [

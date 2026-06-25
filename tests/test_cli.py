@@ -3402,6 +3402,36 @@ class CliHelpTest(unittest.TestCase):
         payload = json.loads(stdout.getvalue())
         self.assertIn("--decision-response", payload["error"])
 
+    def test_trader_draft_decision_cli_writes_summary_without_being_execution_gate(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            output = root / "codex_trader_decision_response.json"
+            report = root / "trader_decision_draft_report.md"
+            summary = SimpleNamespace(
+                status="DRAFT_REQUIRES_OPERATOR_REVIEW",
+                output_path=output,
+                report_path=report,
+                action="WAIT",
+                selected_lane_id=None,
+                selected_lane_ids=(),
+                blockers=("NEWS_HEALTH_BLOCK",),
+                verification_allowed=False,
+                verification_issues=("NEWS_HEALTH_BLOCKS_TRADE",),
+            )
+            stdout = io.StringIO()
+
+            with mock.patch("quant_rabbit.cli.draft_trader_decision", return_value=summary) as draft, redirect_stdout(stdout):
+                code = main(["trader-draft-decision", "--output", str(output), "--report", str(report)])
+
+        self.assertEqual(code, 0)
+        draft.assert_called_once()
+        self.assertEqual(draft.call_args.kwargs["output_path"], output)
+        self.assertEqual(draft.call_args.kwargs["report_path"], report)
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(payload["status"], "DRAFT_REQUIRES_OPERATOR_REVIEW")
+        self.assertFalse(payload["verification_allowed"])
+        self.assertEqual(payload["verification_issues"], ["NEWS_HEALTH_BLOCKS_TRADE"])
+
     def test_thesis_evolution_legacy_alias_runs(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -5477,6 +5507,7 @@ class LiveRuntimeBootstrapTest(unittest.TestCase):
                 {
                     "autotrade-cycle",
                     "gpt-trader-decision",
+                    "trader-draft-decision",
                     "stage-live-order",
                     "generate-intents",
                     "trader-prompt-route",

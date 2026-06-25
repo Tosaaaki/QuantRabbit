@@ -107,6 +107,7 @@ from quant_rabbit.paths import (
     DEFAULT_ORDER_INTENTS,
     DEFAULT_OANDA_UNIVERSAL_ROTATION_MINING,
     DEFAULT_OANDA_UNIVERSAL_ROTATION_PACKAGED_RULES,
+    DEFAULT_PREDICTIVE_LIMIT_ORDERS,
     DEFAULT_POSITION_EXECUTION,
     DEFAULT_POSITION_EXECUTION_REPORT,
     DEFAULT_POSITION_GUARDIAN_EXECUTION,
@@ -165,6 +166,7 @@ from quant_rabbit.paths import (
     DEFAULT_COT_SNAPSHOT,
     DEFAULT_COT_REPORT,
     DEFAULT_CODEX_TRADER_DECISION_RESPONSE,
+    DEFAULT_TRADER_DECISION_DRAFT_REPORT,
     DEFAULT_OPTION_SKEW,
     DEFAULT_OPTION_SKEW_REPORT,
     DEFAULT_NEWS_SNAPSHOT,
@@ -176,7 +178,7 @@ from quant_rabbit.paths import (
     DEFAULT_OUTCOME_MART_REPORT,
     effective_oanda_universal_rotation_path,
 )
-from quant_rabbit.gpt_trader import DEFAULT_GPT_MAX_LANES, GPTTraderBrain, StaticTraderProvider
+from quant_rabbit.gpt_trader import DEFAULT_GPT_MAX_LANES, GPTTraderBrain, StaticTraderProvider, draft_trader_decision
 from quant_rabbit.instruments import DEFAULT_CONTEXT_ASSETS, DEFAULT_TRADER_PAIRS_ARG
 from quant_rabbit.replay import ReplayBacktester
 from quant_rabbit.risk import RiskEngine, RiskPolicy, resolve_max_loss_jpy
@@ -1325,6 +1327,7 @@ _LIVE_RUNTIME_COMMANDS: frozenset[str] = frozenset(
     {
         "autotrade-cycle",
         "gpt-trader-decision",
+        "trader-draft-decision",
         "stage-live-order",
         "generate-intents",
         # The router is the first branch point in the scheduled SKILL flow.
@@ -1386,6 +1389,7 @@ _LIVE_ARTIFACT_WRITER_COMMANDS: frozenset[str] = frozenset(
     {
         "autotrade-cycle",
         "gpt-trader-decision",
+        "trader-draft-decision",
         "stage-live-order",
         "broker-snapshot",
         "daily-target-state",
@@ -3902,6 +3906,46 @@ def main(argv: list[str] | None = None) -> int:
     p_complete.add_argument("--live-order", type=Path, default=DEFAULT_LIVE_ORDER_REQUEST)
     p_complete.add_argument("--output", type=Path, default=DEFAULT_COMPLETION_STATUS)
     p_complete.add_argument("--report", type=Path, default=DEFAULT_COMPLETION_STATUS_REPORT)
+
+    p_draft = sub.add_parser(
+        "trader-draft-decision",
+        help="Draft the scheduled trader decision response from current broker/market/news artifacts.",
+    )
+    p_draft.add_argument("--snapshot", type=Path, default=DEFAULT_BROKER_SNAPSHOT)
+    p_draft.add_argument("--intents", type=Path, default=DEFAULT_ORDER_INTENTS)
+    p_draft.add_argument("--campaign-plan", type=Path, default=DEFAULT_CAMPAIGN_PLAN)
+    p_draft.add_argument("--strategy-profile", type=Path, default=DEFAULT_STRATEGY_PROFILE)
+    p_draft.add_argument("--market-story-profile", type=Path, default=DEFAULT_MARKET_STORY_PROFILE)
+    p_draft.add_argument("--market-status", type=Path, default=DEFAULT_MARKET_STATUS)
+    p_draft.add_argument("--target-state", type=Path, default=DEFAULT_DAILY_TARGET_STATE)
+    p_draft.add_argument("--pair-charts", type=Path, default=DEFAULT_PAIR_CHARTS)
+    p_draft.add_argument("--context-asset-charts", type=Path, default=DEFAULT_CONTEXT_ASSET_CHARTS)
+    p_draft.add_argument("--broker-instruments", type=Path, default=DEFAULT_BROKER_INSTRUMENTS)
+    p_draft.add_argument("--cross-asset", type=Path, default=DEFAULT_CROSS_ASSET_SNAPSHOT)
+    p_draft.add_argument("--flow", type=Path, default=DEFAULT_FLOW_SNAPSHOT)
+    p_draft.add_argument("--currency-strength", type=Path, default=DEFAULT_CURRENCY_STRENGTH)
+    p_draft.add_argument("--levels", type=Path, default=DEFAULT_LEVELS_SNAPSHOT)
+    p_draft.add_argument("--market-context-matrix", type=Path, default=DEFAULT_MARKET_CONTEXT_MATRIX)
+    p_draft.add_argument("--calendar", type=Path, default=DEFAULT_CALENDAR_SNAPSHOT)
+    p_draft.add_argument("--cot", type=Path, default=DEFAULT_COT_SNAPSHOT)
+    p_draft.add_argument("--option-skew", type=Path, default=DEFAULT_OPTION_SKEW)
+    p_draft.add_argument("--attack-advice", type=Path, default=DEFAULT_AI_ATTACK_ADVICE)
+    p_draft.add_argument("--capture-economics", type=Path, default=DEFAULT_CAPTURE_ECONOMICS)
+    p_draft.add_argument("--profitability-acceptance", type=Path, default=DEFAULT_PROFITABILITY_ACCEPTANCE)
+    p_draft.add_argument("--execution-timing-audit", type=Path, default=DEFAULT_EXECUTION_TIMING_AUDIT)
+    p_draft.add_argument("--coverage-optimization", type=Path, default=DEFAULT_COVERAGE_OPTIMIZATION)
+    p_draft.add_argument("--learning-audit", type=Path, default=DEFAULT_LEARNING_AUDIT)
+    p_draft.add_argument("--verification-ledger", type=Path, default=DEFAULT_VERIFICATION_LEDGER)
+    p_draft.add_argument("--self-improvement-audit", type=Path, default=DEFAULT_SELF_IMPROVEMENT_AUDIT)
+    p_draft.add_argument("--projection-ledger", type=Path, default=DEFAULT_PROJECTION_LEDGER)
+    p_draft.add_argument("--operator-precedent", type=Path, default=DEFAULT_OPERATOR_PRECEDENT_AUDIT)
+    p_draft.add_argument("--manual-market-context", type=Path, default=DEFAULT_MANUAL_MARKET_CONTEXT_AUDIT)
+    p_draft.add_argument("--predictive-limits", type=Path, default=DEFAULT_PREDICTIVE_LIMIT_ORDERS)
+    p_draft.add_argument("--news-items", type=Path, default=DEFAULT_NEWS_SNAPSHOT)
+    p_draft.add_argument("--news-health", type=Path, default=DEFAULT_NEWS_HEALTH)
+    p_draft.add_argument("--output", type=Path, default=DEFAULT_CODEX_TRADER_DECISION_RESPONSE)
+    p_draft.add_argument("--report", type=Path, default=DEFAULT_TRADER_DECISION_DRAFT_REPORT)
+    p_draft.add_argument("--max-lanes", type=int, default=DEFAULT_GPT_MAX_LANES)
 
     p_gpt = sub.add_parser("gpt-trader-decision", help="Verify a Codex-written trader decision against broker truth.")
     p_gpt.add_argument("--snapshot", type=Path, required=True)
@@ -7327,6 +7371,72 @@ def main(argv: list[str] | None = None) -> int:
         # runs under set -e and must continue to memory-health / routing even
         # when the current market packet has no fillable attack lane.
         return 0
+    if args.command == "trader-draft-decision":
+        try:
+            summary = draft_trader_decision(
+                snapshot_path=args.snapshot,
+                intents_path=args.intents,
+                campaign_plan_path=args.campaign_plan,
+                strategy_profile_path=args.strategy_profile,
+                market_story_profile_path=args.market_story_profile,
+                market_status_path=args.market_status,
+                target_state_path=args.target_state,
+                pair_charts_path=args.pair_charts,
+                context_asset_charts_path=args.context_asset_charts,
+                broker_instruments_path=args.broker_instruments,
+                cross_asset_path=args.cross_asset,
+                flow_path=args.flow,
+                currency_strength_path=args.currency_strength,
+                levels_path=args.levels,
+                market_context_matrix_path=args.market_context_matrix,
+                calendar_path=args.calendar,
+                cot_path=args.cot,
+                option_skew_path=args.option_skew,
+                attack_advice_path=args.attack_advice,
+                capture_economics_path=args.capture_economics,
+                profitability_acceptance_path=args.profitability_acceptance,
+                execution_timing_audit_path=args.execution_timing_audit,
+                coverage_optimization_path=args.coverage_optimization,
+                learning_audit_path=args.learning_audit,
+                verification_ledger_path=args.verification_ledger,
+                self_improvement_audit_path=args.self_improvement_audit,
+                projection_ledger_path=args.projection_ledger,
+                operator_precedent_path=args.operator_precedent,
+                manual_market_context_path=args.manual_market_context,
+                predictive_limits_path=args.predictive_limits,
+                news_items_path=args.news_items,
+                news_health_path=args.news_health,
+                output_path=args.output,
+                report_path=args.report,
+                max_lanes=args.max_lanes,
+            )
+        except (RuntimeError, ValueError, OSError, json.JSONDecodeError) as exc:
+            print(json.dumps({"error": str(exc)}, ensure_ascii=False, indent=2, sort_keys=True))
+            return 2
+        print(
+            json.dumps(
+                {
+                    "status": summary.status,
+                    "output_path": str(summary.output_path),
+                    "report_path": str(summary.report_path),
+                    "action": summary.action,
+                    "selected_lane_id": summary.selected_lane_id,
+                    "selected_lane_ids": list(summary.selected_lane_ids),
+                    "blockers": list(summary.blockers),
+                    "verification_allowed": summary.verification_allowed,
+                    "verification_issues": list(summary.verification_issues),
+                },
+                ensure_ascii=False,
+                indent=2,
+                sort_keys=True,
+            )
+        )
+        # The draft command is a receipt composer, not the execution gate. Even
+        # a rejected precheck should continue into the canonical verifier and
+        # gateway maintenance path; only I/O/schema construction failures above
+        # are command failures.
+        return 0
+
     if args.command == "gpt-trader-decision":
         try:
             provider = _static_gpt_provider(
