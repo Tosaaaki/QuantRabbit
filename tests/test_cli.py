@@ -5768,14 +5768,16 @@ class ConsolidatedCycleCommandTest(unittest.TestCase):
         self.assertIn(("profitability-acceptance",), argv)
         self.assertIn(("trader-support-bot",), argv)
         self.assertIn(("trader-repair-orchestrator",), argv)
+        intent_idx = argv.index(("generate-intents", "--snapshot", "data/broker_snapshot.json", "--reuse-market-artifacts"))
+        post_intent_position_management_idx = max(
+            index for index, step in enumerate(argv) if step == ("position-management",)
+        )
         self.assertLess(
             argv.index(("position-execution", "--send", "--confirm-live")),
-            argv.index(("generate-intents", "--snapshot", "data/broker_snapshot.json", "--reuse-market-artifacts")),
+            intent_idx,
         )
-        self.assertLess(
-            argv.index(("generate-intents", "--snapshot", "data/broker_snapshot.json", "--reuse-market-artifacts")),
-            argv.index(("profit-capture-bot",)),
-        )
+        self.assertLess(intent_idx, post_intent_position_management_idx)
+        self.assertLess(post_intent_position_management_idx, argv.index(("profit-capture-bot",)))
         self.assertLess(argv.index(("profit-capture-bot",)), argv.index(("memory-health",)))
         self.assertLess(
             argv.index(("self-improvement-audit",)),
@@ -6102,7 +6104,23 @@ class ConsolidatedCycleCommandTest(unittest.TestCase):
         self.assertLess(sidecars.index("position-management"), sidecars.index("position-execution"))
         self.assertIn(intent_step, sidecars)
         self.assertLess(sidecars.index("position-execution"), sidecars.index(intent_step))
-        self.assertLess(sidecars.index(intent_step), sidecars.index("profit-capture-bot"))
+        last_position_management = max(
+            index for index, step in enumerate(sidecars) if step == "position-management"
+        )
+        last_position_thesis = max(
+            index for index, step in enumerate(sidecars) if step == "position-thesis-check"
+        )
+        last_thesis_evolution = max(
+            index for index, step in enumerate(sidecars) if step == "thesis-evolution-check"
+        )
+        last_forecast_persistence = max(
+            index for index, step in enumerate(sidecars) if step == "forecast-persistence-check"
+        )
+        self.assertLess(sidecars.index(intent_step), last_position_thesis)
+        self.assertLess(last_position_thesis, last_thesis_evolution)
+        self.assertLess(last_thesis_evolution, last_forecast_persistence)
+        self.assertLess(last_forecast_persistence, last_position_management)
+        self.assertLess(last_position_management, sidecars.index("profit-capture-bot"))
         self.assertLess(sidecars.index("profit-capture-bot"), sidecars.index("memory-health"))
         self.assertLess(sidecars.index("memory-health"), sidecars.index("self-improvement-audit"))
         self.assertLess(sidecars.index("self-improvement-audit"), sidecars.index("profitability-acceptance"))
@@ -6171,7 +6189,23 @@ class ConsolidatedCycleCommandTest(unittest.TestCase):
             direct_sidecars.index("position-management"),
         )
         self.assertLess(direct_sidecars.index("position-management"), direct_sidecars.index(intent_step))
-        self.assertLess(direct_sidecars.index(intent_step), direct_sidecars.index("profit-capture-bot"))
+        last_position_management = max(
+            index for index, step in enumerate(direct_sidecars) if step == "position-management"
+        )
+        last_position_thesis = max(
+            index for index, step in enumerate(direct_sidecars) if step == "position-thesis-check"
+        )
+        last_thesis_evolution = max(
+            index for index, step in enumerate(direct_sidecars) if step == "thesis-evolution-check"
+        )
+        last_forecast_persistence = max(
+            index for index, step in enumerate(direct_sidecars) if step == "forecast-persistence-check"
+        )
+        self.assertLess(direct_sidecars.index(intent_step), last_position_thesis)
+        self.assertLess(last_position_thesis, last_thesis_evolution)
+        self.assertLess(last_thesis_evolution, last_forecast_persistence)
+        self.assertLess(last_forecast_persistence, last_position_management)
+        self.assertLess(last_position_management, direct_sidecars.index("profit-capture-bot"))
         self.assertLess(direct_sidecars.index("profit-capture-bot"), direct_sidecars.index("memory-health"))
         self.assertLess(direct_sidecars.index("self-improvement-audit"), direct_sidecars.index("profitability-acceptance"))
         self.assertLess(direct_sidecars.index("profitability-acceptance"), direct_sidecars.index("trader-support-bot"))
