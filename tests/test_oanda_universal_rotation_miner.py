@@ -264,6 +264,86 @@ class OandaUniversalRotationMinerTest(unittest.TestCase):
         self.assertEqual(summary["validation_win_rate"], 0.0)
         self.assertIn("VALIDATION_WIN_RATE_TOO_LOW", summary["blockers"])
 
+    def test_pair_confluence_feature_groups_ignore_identity_features(self) -> None:
+        features = (
+            "shape:range_reversion",
+            "side:LONG",
+            "session:asia",
+            "session:asia",
+            "atr_regime:mid",
+            "spread_regime:low",
+            "range_pos:low",
+            "side_range:reward_edge",
+        )
+
+        groups = miner._pair_confluence_feature_groups(features, 3)
+
+        self.assertIn(("atr_regime:mid", "range_pos:low", "session:asia"), groups)
+        self.assertNotIn(("shape:range_reversion", "side:LONG", "session:asia"), groups)
+        self.assertEqual(groups, miner._pair_confluence_feature_groups(features, 3))
+
+    def test_bucket_summary_keeps_chronological_split_and_stability_metrics(self) -> None:
+        start = datetime(2026, 6, 1, tzinfo=timezone.utc)
+        values = []
+        for index, (pair, realized_atr) in enumerate(
+            (
+                ("EUR_JPY", 0.2),
+                ("USD_JPY", -0.1),
+                ("EUR_JPY", 0.4),
+                ("USD_JPY", 0.3),
+                ("EUR_JPY", -0.2),
+                ("USD_JPY", 0.6),
+            )
+        ):
+            ts = start + timedelta(days=index)
+            values.append(
+                {
+                    "timestamp_utc": miner._iso(ts),
+                    "jst_day": ts.date().isoformat(),
+                    "pair": pair,
+                    "realized_pips": realized_atr * 10.0,
+                    "realized_atr": realized_atr,
+                    "win": realized_atr > 0.0,
+                    "outcome": "TAKE_PROFIT_FIRST" if realized_atr > 0.0 else "STOP_FIRST",
+                }
+            )
+
+        summary = miner._bucket_summary(
+            list(reversed(values)),
+            train_fraction=0.5,
+            min_active_days=1,
+            min_pair_count=2,
+            max_pair_sample_share=1.0,
+            max_daily_sample_share=1.0,
+            min_positive_day_rate=0.0,
+            min_validation_expectancy_atr=0.0,
+            min_validation_win_rate=0.0,
+            min_validation_samples=1,
+            min_profit_factor=0.0,
+        )
+        chronological_summary = miner._bucket_summary(
+            values,
+            train_fraction=0.5,
+            min_active_days=1,
+            min_pair_count=2,
+            max_pair_sample_share=1.0,
+            max_daily_sample_share=1.0,
+            min_positive_day_rate=0.0,
+            min_validation_expectancy_atr=0.0,
+            min_validation_win_rate=0.0,
+            min_validation_samples=1,
+            min_profit_factor=0.0,
+            values_are_chronological=True,
+        )
+
+        self.assertEqual(summary, chronological_summary)
+        self.assertEqual(summary["train_n"], 3)
+        self.assertEqual(summary["validation_n"], 3)
+        self.assertEqual(summary["pair_count"], 2)
+        self.assertEqual(summary["active_days"], 3)
+        self.assertEqual(summary["validation_avg_realized_atr"], round((0.3 - 0.2 + 0.6) / 3, 6))
+        self.assertEqual(summary["qualification"], "PASS")
+
     def test_build_report_mines_three_and_four_feature_confluences(self) -> None:
         rows = []
         start = datetime(2026, 3, 1, tzinfo=timezone.utc)

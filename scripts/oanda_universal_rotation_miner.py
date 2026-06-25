@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import argparse
 import collections
+import functools
 import gzip
 import itertools
 import json
@@ -1218,6 +1219,7 @@ def _summarize_buckets(
                 min_validation_win_rate=min_validation_win_rate,
                 min_validation_samples=min_validation_samples,
                 min_profit_factor=min_profit_factor,
+                values_are_chronological=True,
             )
         )
         out.append(row)
@@ -1265,6 +1267,7 @@ def _summarize_feature_buckets(
                 min_validation_win_rate=min_validation_win_rate,
                 min_validation_samples=min_validation_samples,
                 min_profit_factor=min_profit_factor,
+                values_are_chronological=True,
             )
         )
         out.append(row)
@@ -1324,6 +1327,7 @@ def _summarize_pair_feature_buckets(
                 min_validation_win_rate=min_validation_win_rate,
                 min_validation_samples=min_validation_samples,
                 min_profit_factor=min_profit_factor,
+                values_are_chronological=True,
             )
         )
         out.append(row)
@@ -1346,19 +1350,17 @@ def _summarize_pair_confluence_buckets(
 ) -> list[dict[str, Any]]:
     buckets: dict[tuple[str, str, str, str, str, str], list[dict[str, Any]]] = collections.defaultdict(list)
     for row in rows:
-        features = _pair_confluence_features(row.get("features") or ())
-        for first_index, first in enumerate(features):
-            for second in features[first_index + 1:]:
-                buckets[
-                    (
-                        str(row.get("pair")),
-                        str(row.get("shape")),
-                        str(row.get("side")),
-                        str(row.get("exit_shape")),
-                        first,
-                        second,
-                    )
-                ].append(row)
+        for first, second in _pair_confluence_feature_groups(row.get("features") or (), 2):
+            buckets[
+                (
+                    str(row.get("pair")),
+                    str(row.get("shape")),
+                    str(row.get("side")),
+                    str(row.get("exit_shape")),
+                    first,
+                    second,
+                )
+            ].append(row)
     out: list[dict[str, Any]] = []
     for key, values in buckets.items():
         if len(values) < min_samples:
@@ -1409,8 +1411,7 @@ def _summarize_pair_multi_confluence_buckets(
 ) -> list[dict[str, Any]]:
     buckets: dict[tuple[str, str, str, str, tuple[str, ...]], list[dict[str, Any]]] = collections.defaultdict(list)
     for row in rows:
-        features = _pair_confluence_features(row.get("features") or ())
-        for feature_group in itertools.combinations(features, confluence_size):
+        for feature_group in _pair_confluence_feature_groups(row.get("features") or (), confluence_size):
             buckets[
                 (
                     str(row.get("pair")),
@@ -1535,11 +1536,11 @@ def _summarize_inversion_selector_buckets(
     )
     sizes = tuple(sorted({int(size) for size in confluence_sizes if int(size) >= 2}))
     for row in rows:
-        features = _selector_confluence_features(row.get("neutral_features") or ())
         for confluence_size in sizes:
-            if len(features) < confluence_size:
-                continue
-            for feature_group in itertools.combinations(features, confluence_size):
+            for feature_group in _selector_confluence_feature_groups(
+                row.get("neutral_features") or (),
+                confluence_size,
+            ):
                 buckets[
                     (
                         str(row.get("pair")),
@@ -1588,13 +1589,26 @@ def _summarize_inversion_selector_buckets(
 
 
 def _selector_confluence_features(features: Iterable[str]) -> list[str]:
+    return list(_selector_confluence_features_tuple(tuple(features)))
+
+
+@functools.lru_cache(maxsize=8192)
+def _selector_confluence_features_tuple(features: tuple[str, ...]) -> tuple[str, ...]:
     selected = []
     for feature in features:
         if not isinstance(feature, str):
             continue
         if feature.startswith(DEFAULT_SELECTOR_FEATURE_PREFIXES):
             selected.append(feature)
-    return sorted(set(selected))
+    return tuple(sorted(set(selected)))
+
+
+def _selector_confluence_feature_groups(
+    features: Iterable[str],
+    confluence_size: int,
+) -> tuple[tuple[str, ...], ...]:
+    selected = _selector_confluence_features_tuple(tuple(features))
+    return _feature_group_combinations(selected, confluence_size)
 
 
 def _train_select_side_summary(
@@ -1750,6 +1764,11 @@ def _source_metric_summary(values: Sequence[dict[str, Any]]) -> dict[str, Any]:
 
 
 def _pair_confluence_features(features: Iterable[str]) -> list[str]:
+    return list(_pair_confluence_features_tuple(tuple(features)))
+
+
+@functools.lru_cache(maxsize=8192)
+def _pair_confluence_features_tuple(features: tuple[str, ...]) -> tuple[str, ...]:
     selected = []
     for feature in features:
         if not isinstance(feature, str):
@@ -1771,7 +1790,25 @@ def _pair_confluence_features(features: Iterable[str]) -> list[str]:
             )
         ):
             selected.append(feature)
-    return sorted(set(selected))
+    return tuple(sorted(set(selected)))
+
+
+def _pair_confluence_feature_groups(
+    features: Iterable[str],
+    confluence_size: int,
+) -> tuple[tuple[str, ...], ...]:
+    selected = _pair_confluence_features_tuple(tuple(features))
+    return _feature_group_combinations(selected, confluence_size)
+
+
+@functools.lru_cache(maxsize=8192)
+def _feature_group_combinations(
+    features: tuple[str, ...],
+    confluence_size: int,
+) -> tuple[tuple[str, ...], ...]:
+    if confluence_size <= 0 or len(features) < confluence_size:
+        return ()
+    return tuple(itertools.combinations(features, confluence_size))
 
 
 def _bucket_summary(
@@ -1787,19 +1824,20 @@ def _bucket_summary(
     min_validation_win_rate: float,
     min_validation_samples: int,
     min_profit_factor: float,
+    values_are_chronological: bool = False,
 ) -> dict[str, Any]:
-    ordered = _ensure_chronological(values)
+    ordered = values if values_are_chronological else _ensure_chronological(values)
     split = int(len(ordered) * min(max(train_fraction, 0.1), 0.9))
     split = min(max(split, 1), len(ordered) - 1)
-    train = ordered[:split]
-    validation = ordered[split:]
-    train_summary = _metric_summary(train)
-    validation_summary = _metric_summary(validation)
-    all_summary = _metric_summary(ordered)
-    daily = _daily_stability(validation)
-    pair_counts = collections.Counter(item["pair"] for item in validation)
+    partition = _bucket_partition_summaries(ordered, split)
+    train_summary = partition["train_summary"]
+    validation_summary = partition["validation_summary"]
+    all_summary = partition["all_summary"]
+    daily = partition["daily"]
+    pair_counts = partition["pair_counts"]
     pair_count = len(pair_counts)
-    max_pair_share = max(pair_counts.values()) / len(validation) if validation else 1.0
+    validation_n = int(validation_summary["n"])
+    max_pair_share = max(pair_counts.values()) / validation_n if validation_n else 1.0
     blockers: list[str] = []
     if validation_summary["n"] <= 0:
         blockers.append("NO_VALIDATION")
@@ -1825,7 +1863,7 @@ def _bucket_summary(
     return {
         "qualification": "PASS" if not blockers else "FAIL",
         "blockers": blockers,
-        "split_at_utc": validation[0]["timestamp_utc"] if validation else None,
+        "split_at_utc": ordered[split]["timestamp_utc"] if split < len(ordered) else None,
         "pair_count": pair_count,
         "max_pair_sample_share": round(max_pair_share, 6),
         **_prefix("train", train_summary),
@@ -1836,6 +1874,36 @@ def _bucket_summary(
             {"pair": pair, "samples": count}
             for pair, count in pair_counts.most_common(8)
         ],
+    }
+
+
+def _bucket_partition_summaries(
+    ordered: Sequence[dict[str, Any]],
+    split: int,
+) -> dict[str, Any]:
+    train_parts = _new_metric_parts()
+    validation_parts = _new_metric_parts()
+    all_parts = _new_metric_parts()
+    daily_counts: collections.Counter[str] = collections.Counter()
+    daily_atr_sums: dict[str, float] = collections.defaultdict(float)
+    pair_counts: collections.Counter[str] = collections.Counter()
+    for index, item in enumerate(ordered):
+        _add_metric_parts(all_parts, item)
+        if index < split:
+            _add_metric_parts(train_parts, item)
+            continue
+        _add_metric_parts(validation_parts, item)
+        day = str(item.get("jst_day"))
+        daily_counts[day] += 1
+        daily_atr_sums[day] += float(item.get("realized_atr") or 0.0)
+        pair_counts[item["pair"]] += 1
+    validation_n = int(validation_parts[0])
+    return {
+        "train_summary": _metric_summary_from_parts(train_parts),
+        "validation_summary": _metric_summary_from_parts(validation_parts),
+        "all_summary": _metric_summary_from_parts(all_parts),
+        "daily": _daily_stability_from_counts(daily_counts, daily_atr_sums, validation_n),
+        "pair_counts": pair_counts,
     }
 
 
@@ -1850,13 +1918,47 @@ def _ensure_chronological(values: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 
 def _metric_summary(values: Sequence[dict[str, Any]]) -> dict[str, Any]:
-    n = len(values)
-    wins = sum(1 for item in values if item.get("win"))
-    pips = [float(item.get("realized_pips") or 0.0) for item in values]
-    atrs = [float(item.get("realized_atr") or 0.0) for item in values]
-    gains = sum(value for value in pips if value > 0.0)
-    losses = -sum(value for value in pips if value < 0.0)
-    outcomes = collections.Counter(str(item.get("outcome") or "") for item in values)
+    parts = _new_metric_parts()
+    for item in values:
+        _add_metric_parts(parts, item)
+    return _metric_summary_from_parts(parts)
+
+
+def _new_metric_parts() -> list[Any]:
+    return [0, 0, 0.0, 0.0, [], [], collections.Counter()]
+
+
+def _add_metric_parts(
+    parts: list[Any],
+    item: dict[str, Any],
+    *,
+    realized_pips_key: str = "realized_pips",
+    realized_atr_key: str = "realized_atr",
+    win_key: str = "win",
+    outcome_key: str = "outcome",
+) -> None:
+    pips = float(item.get(realized_pips_key) or 0.0)
+    atr = float(item.get(realized_atr_key) or 0.0)
+    parts[0] += 1
+    if item.get(win_key):
+        parts[1] += 1
+    if pips > 0.0:
+        parts[2] += pips
+    elif pips < 0.0:
+        parts[3] += -pips
+    parts[4].append(pips)
+    parts[5].append(atr)
+    parts[6][str(item.get(outcome_key) or "")] += 1
+
+
+def _metric_summary_from_parts(parts: list[Any]) -> dict[str, Any]:
+    n = int(parts[0])
+    wins = int(parts[1])
+    gains = float(parts[2])
+    losses = float(parts[3])
+    pips = parts[4]
+    atrs = parts[5]
+    outcomes = parts[6]
     return {
         "n": n,
         "win_rate": wins / n if n else 0.0,
@@ -1870,6 +1972,31 @@ def _metric_summary(values: Sequence[dict[str, Any]]) -> dict[str, Any]:
         "stop_first_rate": outcomes["STOP_FIRST"] / n if n else 0.0,
         "timeout_rate": outcomes["TIMEOUT"] / n if n else 0.0,
         "ambiguous_rate": outcomes["AMBIGUOUS_SAME_M5"] / n if n else 0.0,
+    }
+
+
+def _daily_stability_from_counts(
+    daily_counts: collections.Counter[str],
+    daily_atr_sums: dict[str, float],
+    total_values: int,
+) -> dict[str, Any]:
+    day_expectancies = []
+    positive_days = 0
+    max_share = 1.0
+    if total_values:
+        max_share = max(daily_counts.values()) / total_values
+    for day in sorted(daily_counts):
+        count = daily_counts[day]
+        avg = daily_atr_sums[day] / count if count else 0.0
+        if avg > 0.0:
+            positive_days += 1
+        day_expectancies.append({"jst_day": day, "n": count, "avg_realized_atr": round(avg, 6)})
+    active_days = len(daily_counts)
+    return {
+        "active_days": active_days,
+        "positive_day_rate": positive_days / active_days if active_days else 0.0,
+        "max_daily_sample_share": round(max_share, 6),
+        "validation_days_tail": day_expectancies[-10:],
     }
 
 

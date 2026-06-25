@@ -128,7 +128,85 @@ def _prefer_packaged_oanda_universal_rotation(latest_path: Path, packaged_path: 
     packaged_generated_at = _parse_generated_at(packaged.get("generated_at_utc"))
     if latest_generated_at is None or packaged_generated_at is None:
         return False
+    if _packaged_oanda_scope_covers_latest(packaged, latest):
+        return True
     return packaged_generated_at >= latest_generated_at
+
+
+def _packaged_oanda_scope_covers_latest(packaged: dict[str, Any], latest: dict[str, Any]) -> bool:
+    packaged_pairs = _oanda_scope_selected_pairs(packaged)
+    latest_pairs = _oanda_scope_selected_pairs(latest)
+    if packaged_pairs and latest_pairs:
+        return packaged_pairs.issuperset(latest_pairs) and len(packaged_pairs) > len(latest_pairs)
+
+    packaged_metrics = _oanda_scope_metrics(packaged)
+    latest_metrics = _oanda_scope_metrics(latest)
+    comparable_keys = sorted(set(packaged_metrics) & set(latest_metrics))
+    if not comparable_keys:
+        return False
+    if not any(key in comparable_keys for key in ("selected_pair_count", "history_pairs", "history_files")):
+        return False
+    if any(packaged_metrics[key] < latest_metrics[key] for key in comparable_keys):
+        return False
+    return any(packaged_metrics[key] > latest_metrics[key] for key in comparable_keys)
+
+
+def _oanda_scope_selected_pairs(payload: dict[str, Any]) -> set[str]:
+    for container in _oanda_scope_containers(payload):
+        selection = container.get("history_pair_selection")
+        if not isinstance(selection, dict):
+            continue
+        pairs = selection.get("selected_pairs")
+        if not isinstance(pairs, list):
+            continue
+        selected_pairs = {str(pair).strip().upper() for pair in pairs if str(pair).strip()}
+        if selected_pairs:
+            return selected_pairs
+    return set()
+
+
+def _oanda_scope_metrics(payload: dict[str, Any]) -> dict[str, int]:
+    metrics: dict[str, int] = {}
+    for container in _oanda_scope_containers(payload):
+        selection = container.get("history_pair_selection")
+        if isinstance(selection, dict) and "selected_pair_count" not in metrics:
+            selected_count = _int_or_none(selection.get("selected_pair_count"))
+            if selected_count is None:
+                selected_count = len(_oanda_scope_selected_pairs(payload)) or None
+            if selected_count is not None:
+                metrics["selected_pair_count"] = selected_count
+        for key in (
+            "history_files",
+            "history_files_discovered",
+            "history_pairs",
+            "history_pairs_discovered",
+            "scored_outcomes",
+            "inversion_scored_outcomes",
+            "high_precision_multi_confluence_count",
+            "high_precision_pair_confluence_count",
+            "qualified_multi_confluence_count",
+            "qualified_pair_confluence_count",
+        ):
+            value = _int_or_none(container.get(key))
+            if value is not None and key not in metrics:
+                metrics[key] = value
+    return metrics
+
+
+def _oanda_scope_containers(payload: dict[str, Any]) -> tuple[dict[str, Any], ...]:
+    summary = payload.get("summary")
+    if isinstance(summary, dict):
+        return summary, payload
+    return (payload,)
+
+
+def _int_or_none(value: Any) -> int | None:
+    if isinstance(value, bool):
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
 
 
 def _packaged_source_matches_latest(
