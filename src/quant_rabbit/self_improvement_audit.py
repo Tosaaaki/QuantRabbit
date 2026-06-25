@@ -177,6 +177,13 @@ _LEARNING_AUDIT_LANE_QUARANTINE_MESSAGES = (
     "risk-increasing learning influence is active while recent effect window is negative",
 )
 
+_POSITION_GUARDIAN_LOCK_COMMANDS = frozenset(
+    {
+        "run-position-guardian-live",
+        "run-position-guardian-live.sh",
+    }
+)
+
 
 def _external_live_runtime_lock(snapshot_path: Path) -> dict[str, Any] | None:
     """Return active wrapper lock evidence for audits outside that wrapper."""
@@ -213,6 +220,8 @@ def _external_live_runtime_lock(snapshot_path: Path) -> dict[str, Any] | None:
     except OSError:
         command = ""
     if command:
+        if command in _POSITION_GUARDIAN_LOCK_COMMANDS:
+            return None
         evidence["command"] = command
     try:
         started_at = started_path.read_text(encoding="utf-8").strip()

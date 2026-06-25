@@ -1081,6 +1081,32 @@ class SelfImprovementAuditorTest(unittest.TestCase):
         self.assertNotIn("POSITION_THESIS_STALE", codes)
         self.assertNotIn("FORECAST_PERSISTENCE_STALE", codes)
 
+    def test_position_guardian_lock_does_not_defer_self_improvement_audit(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root, active_position=False, closed_pls=(100.0, 80.0, -50.0))
+            lock_dir = root / ".quant_rabbit_live.lock"
+            lock_dir.mkdir()
+            (lock_dir / "pid").write_text(str(os.getpid()), encoding="utf-8")
+            (lock_dir / "command").write_text("run-position-guardian-live", encoding="utf-8")
+            (lock_dir / "started_at_utc").write_text(
+                (_NOW - timedelta(seconds=2)).isoformat(),
+                encoding="utf-8",
+            )
+
+            with mock.patch.dict(
+                os.environ,
+                {"QR_AUTOTRADE_LOCK_DIR": str(lock_dir), "QR_AUTOTRADE_LOCK_HELD": ""},
+                clear=False,
+            ):
+                summary = _run(files)
+            payload = json.loads(files["output"].read_text())
+
+        codes = {item["code"] for item in payload["findings"]}
+        self.assertEqual(summary.status, STATUS_BLOCKED)
+        self.assertNotIn("LIVE_RUNTIME_UPDATE_IN_PROGRESS", codes)
+        self.assertIn("TARGET_OPEN_NO_LIVE_READY_LANES", codes)
+
     def test_external_live_lock_still_surfaces_coverage_perspective_repair(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
