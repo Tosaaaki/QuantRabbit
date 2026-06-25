@@ -5772,11 +5772,18 @@ class ConsolidatedCycleCommandTest(unittest.TestCase):
         post_intent_position_management_idx = max(
             index for index, step in enumerate(argv) if step == ("position-management",)
         )
+        post_intent_daily_target_idx = max(
+            index
+            for index, step in enumerate(argv)
+            if step == ("daily-target-state", "--snapshot", "data/broker_snapshot.json", "--daily-risk-pct", "10")
+        )
         self.assertLess(
             argv.index(("position-execution", "--send", "--confirm-live")),
             intent_idx,
         )
         self.assertLess(intent_idx, post_intent_position_management_idx)
+        self.assertLess(intent_idx, post_intent_daily_target_idx)
+        self.assertLess(post_intent_daily_target_idx, post_intent_position_management_idx)
         self.assertLess(post_intent_position_management_idx, argv.index(("profit-capture-bot",)))
         self.assertLess(argv.index(("profit-capture-bot",)), argv.index(("memory-health",)))
         self.assertLess(
@@ -6107,6 +6114,11 @@ class ConsolidatedCycleCommandTest(unittest.TestCase):
         last_position_management = max(
             index for index, step in enumerate(sidecars) if step == "position-management"
         )
+        last_daily_target = max(
+            index
+            for index, step in enumerate(sidecars)
+            if step == "daily-target-state --snapshot data/broker_snapshot.json --daily-risk-pct 10"
+        )
         last_position_thesis = max(
             index for index, step in enumerate(sidecars) if step == "position-thesis-check"
         )
@@ -6116,7 +6128,8 @@ class ConsolidatedCycleCommandTest(unittest.TestCase):
         last_forecast_persistence = max(
             index for index, step in enumerate(sidecars) if step == "forecast-persistence-check"
         )
-        self.assertLess(sidecars.index(intent_step), last_position_thesis)
+        self.assertLess(sidecars.index(intent_step), last_daily_target)
+        self.assertLess(last_daily_target, last_position_thesis)
         self.assertLess(last_position_thesis, last_thesis_evolution)
         self.assertLess(last_thesis_evolution, last_forecast_persistence)
         self.assertLess(last_forecast_persistence, last_position_management)
@@ -6192,6 +6205,11 @@ class ConsolidatedCycleCommandTest(unittest.TestCase):
         last_position_management = max(
             index for index, step in enumerate(direct_sidecars) if step == "position-management"
         )
+        last_daily_target = max(
+            index
+            for index, step in enumerate(direct_sidecars)
+            if step == "daily-target-state --snapshot data/broker_snapshot.json --daily-risk-pct 10"
+        )
         last_position_thesis = max(
             index for index, step in enumerate(direct_sidecars) if step == "position-thesis-check"
         )
@@ -6201,7 +6219,8 @@ class ConsolidatedCycleCommandTest(unittest.TestCase):
         last_forecast_persistence = max(
             index for index, step in enumerate(direct_sidecars) if step == "forecast-persistence-check"
         )
-        self.assertLess(direct_sidecars.index(intent_step), last_position_thesis)
+        self.assertLess(direct_sidecars.index(intent_step), last_daily_target)
+        self.assertLess(last_daily_target, last_position_thesis)
         self.assertLess(last_position_thesis, last_thesis_evolution)
         self.assertLess(last_thesis_evolution, last_forecast_persistence)
         self.assertLess(last_forecast_persistence, last_position_management)

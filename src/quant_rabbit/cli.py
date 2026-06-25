@@ -2336,7 +2336,7 @@ def _cycle_sidecar_steps() -> list[dict[str, Any]]:
         # generate-intents may refresh broker_snapshot as part of quote/preflight
         # freshness. Rebuild read-only position evidence against that final
         # broker truth so self-improvement does not loop on stale sidecars.
-        *_post_intent_position_evidence_steps(),
+        *_post_intent_evidence_steps(),
         {"argv": ["profit-capture-bot"], "required": True, "ok_rcs": [0, 2]},
         {"argv": ["memory-health"], "required": True},
         {"argv": ["self-improvement-audit"], "required": False, "ok_rcs": [0, 2]},
@@ -2362,7 +2362,7 @@ def _post_autotrade_failure_sidecar_steps() -> list[dict[str, Any]]:
         {"argv": ["position-management"], "required": True},
         {"argv": position_execution, "required": False},
         {"argv": _reuse_market_artifact_intent_args(), "required": True},
-        *_post_intent_position_evidence_steps(),
+        *_post_intent_evidence_steps(),
         {"argv": ["profit-capture-bot"], "required": True, "ok_rcs": [0, 2]},
         {"argv": ["memory-health"], "required": True},
         {"argv": ["self-improvement-audit"], "required": False, "ok_rcs": [0, 2]},
@@ -2390,7 +2390,7 @@ def _direct_autotrade_audit_sidecar_steps() -> list[dict[str, Any]]:
         {"argv": ["forecast-persistence-check"], "required": False},
         {"argv": ["position-management"], "required": True},
         {"argv": _reuse_market_artifact_intent_args(), "required": True},
-        *_post_intent_position_evidence_steps(),
+        *_post_intent_evidence_steps(),
         {"argv": ["profit-capture-bot"], "required": True, "ok_rcs": [0, 2]},
         {"argv": ["memory-health"], "required": True},
         {"argv": ["self-improvement-audit"], "required": False, "ok_rcs": [0, 2]},
@@ -2400,8 +2400,9 @@ def _direct_autotrade_audit_sidecar_steps() -> list[dict[str, Any]]:
     ]
 
 
-def _post_intent_position_evidence_steps() -> list[dict[str, Any]]:
+def _post_intent_evidence_steps() -> list[dict[str, Any]]:
     return [
+        {"argv": ["daily-target-state", "--snapshot", "data/broker_snapshot.json", "--daily-risk-pct", "10"], "required": True},
         {"argv": ["position-thesis-check"], "required": False},
         {"argv": ["thesis-evolution-check"], "required": False},
         {"argv": ["forecast-persistence-check"], "required": False},
