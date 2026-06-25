@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from quant_rabbit.execution_timing_contracts import (
+    TP_PROGRESS_REPAIR_LIVE_EVIDENCE_BOUNDARY_UTC,
     TP_PROGRESS_REPAIR_REPLAY_CONTRACT,
     TP_PROGRESS_REPAIR_REPLAY_FIELD,
 )
@@ -577,6 +578,97 @@ class ExecutionTimingAuditTest(unittest.TestCase):
             self.assertAlmostEqual(row["repair_replay_profit_pips"], 3.2)
             self.assertAlmostEqual(row["repair_replay_counterfactual_jpy"], 32.0)
             self.assertAlmostEqual(row["repair_replay_counterfactual_net_improvement_jpy"], 82.0)
+
+    def test_tp_progress_repair_replay_splits_pre_repair_history_from_live_evidence(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            db = root / "ledger.db"
+            _make_db(db)
+            with sqlite3.connect(db) as conn:
+                for prefix, fill_ts, close_ts in (
+                    ("pre", "2026-06-22T07:00:10Z", "2026-06-22T07:10:30Z"),
+                    ("post", "2026-06-22T18:00:10Z", "2026-06-22T18:10:30Z"),
+                ):
+                    _insert_event(
+                        conn,
+                        f"fill-{prefix}",
+                        ts_utc=fill_ts,
+                        event_type="ORDER_FILLED",
+                        lane_id=f"range_trader:USD_JPY:SHORT:RANGE_ROTATION:{prefix}",
+                        order_id=f"o-fill-{prefix}",
+                        trade_id=f"t-{prefix}",
+                        pair="USD_JPY",
+                        side="SHORT",
+                        units=-1000,
+                        price=150.00,
+                    )
+                    _insert_event(
+                        conn,
+                        f"tp-{prefix}",
+                        ts_utc=fill_ts.replace(":10Z", ":20Z"),
+                        event_type="PROTECTION_CREATED",
+                        trade_id=f"t-{prefix}",
+                        pair="USD_JPY",
+                        price=149.90,
+                        raw={"type": "TAKE_PROFIT_ORDER", "tradeID": f"t-{prefix}", "price": "149.90"},
+                    )
+                    _insert_event(
+                        conn,
+                        f"close-{prefix}",
+                        ts_utc=close_ts,
+                        event_type="TRADE_CLOSED",
+                        order_id=f"o-close-{prefix}",
+                        trade_id=f"t-{prefix}",
+                        pair="USD_JPY",
+                        side="SHORT",
+                        units=1000,
+                        price=150.05,
+                        realized_pl_jpy=-50.0,
+                        exit_reason="STOP_LOSS_ORDER",
+                    )
+                conn.commit()
+
+            candles = (
+                BidAskCandle(_dt("2026-06-22T07:03:00Z"), 149.970, 149.960, 149.975, 149.968),
+                BidAskCandle(_dt("2026-06-22T07:08:00Z"), 150.030, 149.990, 150.050, 150.010),
+                BidAskCandle(_dt("2026-06-22T18:03:00Z"), 149.970, 149.960, 149.975, 149.968),
+                BidAskCandle(_dt("2026-06-22T18:08:00Z"), 150.030, 149.990, 150.050, 150.010),
+            )
+
+            def fetcher(pair: str, start: datetime, end: datetime, granularity: str) -> tuple[BidAskCandle, ...]:
+                self.assertEqual(pair, "USD_JPY")
+                return tuple(c for c in candles if start <= c.timestamp_utc <= end)
+
+            payload = build_execution_timing_audit(
+                ledger_path=db,
+                snapshot_path=None,
+                output_path=root / "audit.json",
+                report_path=root / "audit.md",
+                lookback_hours=48,
+                now_utc=_dt("2026-06-23T00:00:00Z"),
+                candle_fetcher=fetcher,
+            )
+
+            summary = payload["summary"]
+            self.assertEqual(summary["loss_closes_profit_capture_missed"], 2)
+            self.assertEqual(summary["loss_closes_repair_replay_triggered"], 2)
+            self.assertEqual(
+                summary["tp_progress_repair_live_evidence_boundary_utc"],
+                TP_PROGRESS_REPAIR_LIVE_EVIDENCE_BOUNDARY_UTC,
+            )
+            self.assertEqual(summary["pre_repair_historical_loss_closes_audited"], 1)
+            self.assertEqual(summary["pre_repair_historical_loss_closes_profit_capture_missed"], 1)
+            self.assertEqual(summary["pre_repair_historical_loss_closes_repair_replay_triggered"], 1)
+            self.assertEqual(summary["post_repair_live_evidence_loss_closes_audited"], 1)
+            self.assertEqual(summary["post_repair_live_evidence_loss_closes_profit_capture_missed"], 1)
+            self.assertEqual(
+                summary["post_repair_live_evidence_loss_closes_repair_replay_triggered"],
+                1,
+            )
+            self.assertEqual(
+                summary["tp_progress_repair_live_evidence_status"],
+                "POST_REPAIR_REPLAY_FAILURES_PRESENT",
+            )
 
     def test_tp_progress_repair_replay_requires_live_noise_floor(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

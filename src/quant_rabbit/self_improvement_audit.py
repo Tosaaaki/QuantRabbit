@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from quant_rabbit.execution_timing_contracts import (
+    TP_PROGRESS_REPAIR_LIVE_EVIDENCE_BOUNDARY_UTC,
     TP_PROGRESS_REPAIR_REPLAY_CONTRACT,
     repair_replay_contract_from_payload,
 )
@@ -2203,7 +2204,61 @@ def _profit_capture_miss_findings(
     repair_replay_contract = repair_replay_contract_from_payload(timing_payload)
     repair_replay_contract_present = repair_replay_contract == TP_PROGRESS_REPAIR_REPLAY_CONTRACT
     repair_replay_missed = int(summary.get("loss_closes_repair_replay_triggered") or 0)
-    production_gate_p0 = (not repair_replay_contract_present) or repair_replay_missed > 0
+    split_present = "post_repair_live_evidence_loss_closes_repair_replay_triggered" in summary
+    post_repair_sample_count = int(
+        _maybe_float(
+            summary.get("post_repair_live_evidence_loss_closes_audited")
+            if split_present
+            else summary.get("loss_closes_audited")
+        )
+        or 0
+    )
+    post_repair_missed = int(
+        _maybe_float(
+            summary.get("post_repair_live_evidence_loss_closes_profit_capture_missed")
+            if split_present
+            else missed
+        )
+        or 0
+    )
+    post_repair_replay_missed = int(
+        _maybe_float(
+            summary.get("post_repair_live_evidence_loss_closes_repair_replay_triggered")
+            if split_present
+            else repair_replay_missed
+        )
+        or 0
+    )
+    pre_repair_missed = int(
+        _maybe_float(
+            summary.get("pre_repair_historical_loss_closes_profit_capture_missed")
+            if split_present
+            else 0
+        )
+        or 0
+    )
+    pre_repair_replay_missed = int(
+        _maybe_float(
+            summary.get("pre_repair_historical_loss_closes_repair_replay_triggered")
+            if split_present
+            else 0
+        )
+        or 0
+    )
+    post_repair_status = str(
+        summary.get("tp_progress_repair_live_evidence_status")
+        or (
+            "WAITING_FOR_POST_REPAIR_SAMPLE"
+            if split_present and post_repair_sample_count <= 0
+            else "POST_REPAIR_REPLAY_FAILURES_PRESENT"
+            if post_repair_replay_missed > 0
+            else "POST_REPAIR_REPLAY_CLEAN"
+        )
+    )
+    production_gate_p0 = (
+        (not repair_replay_contract_present and (post_repair_missed if split_present else missed) > 0)
+        or post_repair_replay_missed > 0
+    )
     rows = [
         row
         for row in (timing_payload.get("loss_close_regrets") or [])
@@ -2249,25 +2304,37 @@ def _profit_capture_miss_findings(
     )
     if not repair_replay_contract_present:
         message = (
-            f"{missed} losing close(s) have raw TP-progress capture evidence, but the "
+            f"{post_repair_missed if split_present else missed} losing close(s) have raw "
+            "post-repair TP-progress capture evidence, but the "
             "execution-timing-audit sidecar lacks current production-gate replay proof"
         )
         next_action = (
             "Regenerate execution-timing-audit with the current runtime before treating "
             "TP-progress repair as proved or cleared."
         )
-    elif repair_replay_missed > 0:
+    elif post_repair_replay_missed > 0:
         message = (
-            f"{repair_replay_missed} losing close(s) had production-gate replay proof that "
-            f"TP-progress capture was executable before closing red ({missed} raw TP-progress miss(es))"
+            f"{post_repair_replay_missed} post-repair losing close(s) had production-gate "
+            "replay proof that TP-progress capture was executable before closing red "
+            f"({repair_replay_missed} total replay trigger(s), {missed} raw TP-progress miss(es))"
         )
         next_action = (
             "Keep the TP-progress TAKE_PROFIT_MARKET path and position guardian active, then "
-            "rerun execution-timing-audit until loss_closes_repair_replay_triggered is zero."
+            "rerun execution-timing-audit until post-repair live-evidence replay triggers are zero."
+        )
+    elif split_present and post_repair_sample_count <= 0:
+        message = (
+            f"{pre_repair_replay_missed} pre-repair replay trigger(s) remain historical "
+            f"diagnostics; no loss close has sampled the live repair after "
+            f"{TP_PROGRESS_REPAIR_LIVE_EVIDENCE_BOUNDARY_UTC}"
+        )
+        next_action = (
+            "Wait for a post-repair live loss-close sample before raising TP-progress "
+            "repair P0 again; do not require historical replay triggers to become zero."
         )
     else:
         message = (
-            f"{missed} raw TP-progress miss(es) remain, but production-gate replay found no "
+            f"{missed} raw TP-progress miss(es) remain, but post-repair production-gate replay found no "
             "executable profit-capture trigger"
         )
         next_action = (
@@ -2310,6 +2377,22 @@ def _profit_capture_miss_findings(
                 "loss_closes_repair_replay_triggered": repair_replay_missed,
                 "loss_closes_repair_replay_triggered_rate": _maybe_float(
                     summary.get("loss_closes_repair_replay_triggered_rate")
+                ),
+                "tp_progress_repair_live_evidence_boundary_utc": summary.get(
+                    "tp_progress_repair_live_evidence_boundary_utc",
+                    TP_PROGRESS_REPAIR_LIVE_EVIDENCE_BOUNDARY_UTC,
+                ),
+                "tp_progress_repair_live_evidence_status": post_repair_status,
+                "pre_repair_historical_loss_closes_profit_capture_missed": pre_repair_missed,
+                "pre_repair_historical_loss_closes_repair_replay_triggered": (
+                    pre_repair_replay_missed
+                ),
+                "post_repair_live_evidence_loss_closes_audited": post_repair_sample_count,
+                "post_repair_live_evidence_loss_closes_profit_capture_missed": (
+                    post_repair_missed
+                ),
+                "post_repair_live_evidence_loss_closes_repair_replay_triggered": (
+                    post_repair_replay_missed
                 ),
                 "loss_close_repair_replay_profit_capture_jpy": _maybe_float(
                     summary.get("loss_close_repair_replay_profit_capture_jpy")

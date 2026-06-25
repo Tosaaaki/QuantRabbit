@@ -7,6 +7,15 @@ from typing import Any
 TP_PROGRESS_REPAIR_REPLAY_CONTRACT = "TP_PROGRESS_PRODUCTION_GATE_REPLAY_V1"
 TP_PROGRESS_REPAIR_REPLAY_FIELD = "profit_capture_repair_replay_contract"
 
+# Full production replay contract live-evidence boundary. The earlier
+# 2026-06-22T09:35:39Z deploy covered TP-progress banking logic, but the audit
+# gate below measures the production replay contract that was deployed later.
+TP_PROGRESS_REPAIR_LIVE_EVIDENCE_BOUNDARY_UTC = "2026-06-22T17:54:26Z"
+TP_PROGRESS_REPAIR_LIVE_EVIDENCE_BOUNDARY_REASON = (
+    "Full TP-progress production replay contract deployed; "
+    "2026-06-22T09:35:39Z was TP-progress banking only."
+)
+
 # Contracted production replay window for TP-progress profit-capture repair.
 # 744h is the month-scale coverage used by cycle-refresh; the 80 event cap
 # limits report rows only and must not shorten the replay window.

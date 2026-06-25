@@ -92,6 +92,65 @@ class ProfitabilityAcceptanceReplayRepairTest(unittest.TestCase):
             "t-noisy-cleared",
         )
 
+    def test_pre_repair_replay_history_does_not_emit_unproved_p0(self) -> None:
+        metrics, findings = _profit_capture_replay_repair_findings(
+            {
+                "loaded": True,
+                "generated_at_utc": "2026-06-23T15:34:28+00:00",
+                "repair_replay_contract_present": True,
+                "repair_replay_contract": TP_PROGRESS_REPAIR_REPLAY_CONTRACT,
+                "loss_closes_profit_capture_missed": 14,
+                "loss_closes_repair_replay_triggered": 13,
+                "tp_progress_repair_live_evidence_split_present": True,
+                "tp_progress_repair_live_evidence_status": "WAITING_FOR_POST_REPAIR_SAMPLE",
+                "pre_repair_historical_loss_closes_profit_capture_missed": 14,
+                "pre_repair_historical_loss_closes_repair_replay_triggered": 13,
+                "post_repair_live_evidence_loss_closes_audited": 0,
+                "post_repair_live_evidence_loss_closes_profit_capture_missed": 0,
+                "post_repair_live_evidence_loss_closes_repair_replay_triggered": 0,
+                "top_repair_replay_triggers": [{"trade_id": "472792"}],
+            },
+            self_metrics={"p0_codes": ["LOSS_CLOSE_PROFIT_CAPTURE_MISSED"]},
+        )
+
+        self.assertFalse(metrics["replay_repair_proved"])
+        self.assertTrue(metrics["waiting_for_post_repair_sample"])
+        self.assertEqual(
+            metrics["post_repair_live_evidence_loss_closes_repair_replay_triggered"],
+            0,
+        )
+        self.assertEqual(
+            metrics["pre_repair_historical_loss_closes_repair_replay_triggered"],
+            13,
+        )
+        self.assertNotIn(
+            "TP_PROGRESS_REPLAY_REPAIR_UNPROVED",
+            [item["code"] for item in findings],
+        )
+
+    def test_post_repair_clean_sample_can_clear_replay_loop_despite_history(self) -> None:
+        metrics, findings = _profit_capture_replay_repair_findings(
+            {
+                "loaded": True,
+                "generated_at_utc": "2026-06-23T20:00:00+00:00",
+                "repair_replay_contract_present": True,
+                "repair_replay_contract": TP_PROGRESS_REPAIR_REPLAY_CONTRACT,
+                "loss_closes_profit_capture_missed": 14,
+                "loss_closes_repair_replay_triggered": 13,
+                "tp_progress_repair_live_evidence_split_present": True,
+                "tp_progress_repair_live_evidence_status": "POST_REPAIR_REPLAY_CLEAN",
+                "pre_repair_historical_loss_closes_profit_capture_missed": 14,
+                "pre_repair_historical_loss_closes_repair_replay_triggered": 13,
+                "post_repair_live_evidence_loss_closes_audited": 1,
+                "post_repair_live_evidence_loss_closes_profit_capture_missed": 0,
+                "post_repair_live_evidence_loss_closes_repair_replay_triggered": 0,
+            },
+            self_metrics={"p0_codes": ["LOSS_CLOSE_PROFIT_CAPTURE_MISSED"]},
+        )
+
+        self.assertTrue(metrics["replay_repair_proved"])
+        self.assertEqual(findings, [])
+
     def test_marks_replay_repair_not_deployed_when_guardian_is_inactive(self) -> None:
         metrics, findings = _profit_capture_replay_repair_findings(
             {

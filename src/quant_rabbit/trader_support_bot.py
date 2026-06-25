@@ -12,6 +12,7 @@ from typing import Any
 
 from quant_rabbit.execution_timing_contracts import (
     MONTH_SCALE_EXECUTION_TIMING_AUDIT_COMMAND,
+    TP_PROGRESS_REPAIR_LIVE_EVIDENCE_BOUNDARY_UTC,
     TP_PROGRESS_REPAIR_REPLAY_CONTRACT,
     repair_replay_contract_from_payload,
 )
@@ -1285,7 +1286,26 @@ def _has_tp_harvest_repair_basket(repair_live_ready: list[dict[str, Any]] | None
 
 
 def _profit_capture_summary(self_improvement: dict[str, Any], timing: dict[str, Any]) -> dict[str, Any]:
-    finding = next((item for item in _p0_findings(self_improvement) if item.get("code") == PROFIT_CAPTURE_MISS), None)
+    all_findings = self_improvement.get("findings") if isinstance(self_improvement.get("findings"), list) else []
+    finding = next(
+        (
+            item
+            for item in all_findings
+            if isinstance(item, dict)
+            and item.get("code") == PROFIT_CAPTURE_MISS
+            and str(item.get("priority") or "").upper() == "P0"
+        ),
+        None,
+    )
+    if finding is None:
+        finding = next(
+            (
+                item
+                for item in all_findings
+                if isinstance(item, dict) and item.get("code") == PROFIT_CAPTURE_MISS
+            ),
+            None,
+        )
     evidence = finding.get("evidence") if isinstance(finding, dict) and isinstance(finding.get("evidence"), dict) else {}
     summary = timing.get("summary") if isinstance(timing.get("summary"), dict) else {}
     repair_replay_contract = repair_replay_contract_from_payload(timing)
@@ -1317,6 +1337,49 @@ def _profit_capture_summary(self_improvement: dict[str, Any], timing: dict[str, 
         "loss_close_repair_replay_profit_capture_jpy",
         summary.get("loss_close_repair_replay_profit_capture_jpy"),
     )
+    split_present = "post_repair_live_evidence_loss_closes_repair_replay_triggered" in summary or (
+        "post_repair_live_evidence_loss_closes_repair_replay_triggered" in evidence
+    )
+    post_sample_count = int(
+        _float(
+            evidence.get(
+                "post_repair_live_evidence_loss_closes_audited",
+                summary.get("post_repair_live_evidence_loss_closes_audited"),
+            )
+        )
+    )
+    post_missed = int(
+        _float(
+            evidence.get(
+                "post_repair_live_evidence_loss_closes_profit_capture_missed",
+                summary.get("post_repair_live_evidence_loss_closes_profit_capture_missed"),
+            )
+        )
+    )
+    post_repair_replay_triggered = int(
+        _float(
+            evidence.get(
+                "post_repair_live_evidence_loss_closes_repair_replay_triggered",
+                summary.get("post_repair_live_evidence_loss_closes_repair_replay_triggered"),
+            )
+        )
+    )
+    pre_missed = int(
+        _float(
+            evidence.get(
+                "pre_repair_historical_loss_closes_profit_capture_missed",
+                summary.get("pre_repair_historical_loss_closes_profit_capture_missed"),
+            )
+        )
+    )
+    pre_repair_replay_triggered = int(
+        _float(
+            evidence.get(
+                "pre_repair_historical_loss_closes_repair_replay_triggered",
+                summary.get("pre_repair_historical_loss_closes_repair_replay_triggered"),
+            )
+        )
+    )
     top = evidence.get("top_profit_capture_misses") if isinstance(evidence.get("top_profit_capture_misses"), list) else []
     top_repair = (
         evidence.get("top_repair_replay_triggers")
@@ -1330,8 +1393,36 @@ def _profit_capture_summary(self_improvement: dict[str, Any], timing: dict[str, 
             for row in rows
             if isinstance(row, dict) and row.get("repair_replay_triggered_before_loss_close")
         ][:5]
+    status = "OK"
+    if split_present and post_sample_count <= 0 and _float(missed) > 0:
+        status = "WAITING_FOR_POST_REPAIR_SAMPLE"
+    elif split_present and post_repair_replay_triggered <= 0 and _float(missed) > 0:
+        status = "HISTORICAL_DIAGNOSTIC_ONLY"
+    elif _float(repair_replay_triggered if split_present else missed) > 0:
+        status = "PROFIT_CAPTURE_REPAIR_REQUIRED"
+    if status == "WAITING_FOR_POST_REPAIR_SAMPLE":
+        clearance_condition = (
+            "wait for the first post-repair live loss-close sample after "
+            f"{summary.get('tp_progress_repair_live_evidence_boundary_utc') or TP_PROGRESS_REPAIR_LIVE_EVIDENCE_BOUNDARY_UTC}; "
+            "do not require historical pre-repair replay triggers to become zero"
+        )
+    elif status == "HISTORICAL_DIAGNOSTIC_ONLY":
+        clearance_condition = (
+            "post-repair production-gate replay remains clean; historical pre-repair "
+            "misses stay diagnostic and must not be used as the clearance condition"
+        )
+    elif _float(missed) > 0:
+        clearance_condition = (
+            "execution-timing-audit reports zero post-repair live-evidence "
+            "loss_closes_repair_replay_triggered under the current production-gate "
+            "replay contract, and position guardian is proven active before fresh "
+            "entries resume; raw or pre-repair misses remain diagnostic unless "
+            "post-repair production-gate replay also triggers"
+        )
+    else:
+        clearance_condition = "no missed TP-progress loss close in the active timing audit"
     return {
-        "status": "PROFIT_CAPTURE_REPAIR_REQUIRED" if _float(missed) > 0 else "OK",
+        "status": status,
         "missed_loss_closes": int(_float(missed)),
         "estimated_gap_jpy": _round_optional(gap, 3),
         "actual_loss_close_pl_jpy": _round_optional(actual_pl, 3),
@@ -1341,6 +1432,22 @@ def _profit_capture_summary(self_improvement: dict[str, Any], timing: dict[str, 
         "repair_replay_triggered": int(_float(repair_replay_triggered)),
         "repair_replay_contract": repair_replay_contract,
         "repair_replay_contract_present": repair_replay_contract_present,
+        "tp_progress_repair_live_evidence_boundary_utc": summary.get(
+            "tp_progress_repair_live_evidence_boundary_utc"
+        )
+        or evidence.get("tp_progress_repair_live_evidence_boundary_utc")
+        or TP_PROGRESS_REPAIR_LIVE_EVIDENCE_BOUNDARY_UTC,
+        "tp_progress_repair_live_evidence_status": summary.get(
+            "tp_progress_repair_live_evidence_status"
+        )
+        or evidence.get("tp_progress_repair_live_evidence_status"),
+        "pre_repair_historical_missed_loss_closes": pre_missed,
+        "pre_repair_historical_repair_replay_triggered": pre_repair_replay_triggered,
+        "post_repair_live_evidence_loss_closes_audited": post_sample_count,
+        "post_repair_live_evidence_missed_loss_closes": post_missed,
+        "post_repair_live_evidence_repair_replay_triggered": (
+            post_repair_replay_triggered
+        ),
         "repair_replay_delta_jpy": _round_optional(repair_replay_delta, 3),
         "repair_replay_jpy": _round_optional(repair_replay_jpy, 3),
         "stop_loss_missed": evidence.get("stop_loss_closes_profit_capture_missed", summary.get("stop_loss_closes_profit_capture_missed")),
@@ -1348,14 +1455,7 @@ def _profit_capture_summary(self_improvement: dict[str, Any], timing: dict[str, 
         "top_repair_replay_triggers": top_repair[:5],
         "message": finding.get("message") if finding else None,
         "next_action": finding.get("next_action") if finding else None,
-        "clearance_condition": (
-            "execution-timing-audit reports zero loss_closes_repair_replay_triggered under the "
-            "current production-gate replay contract, and position guardian is proven active "
-            "before fresh entries resume; raw loss_closes_profit_capture_missed remains "
-            "diagnostic unless production-gate replay also triggers"
-            if _float(missed) > 0
-            else "no missed TP-progress loss close in the active timing audit"
-        ),
+        "clearance_condition": clearance_condition,
         "verification_command": MONTH_SCALE_EXECUTION_TIMING_AUDIT_COMMAND,
     }
 
@@ -2182,10 +2282,10 @@ def _acceptance_clearance_for_code(
         )
     if code == "TP_PROGRESS_REPLAY_REPAIR_UNPROVED":
         return (
-            "execution-timing-audit reports zero loss_closes_repair_replay_triggered under the "
-            "current production-gate replay contract after the TP-progress TAKE_PROFIT_MARKET "
-            "path and position guardian have had a live window to capture executable plus P/L "
-            "before red closes",
+            "execution-timing-audit reports zero post-repair live-evidence "
+            "loss_closes_repair_replay_triggered under the current production-gate replay "
+            "contract after the TP-progress TAKE_PROFIT_MARKET path and position guardian "
+            "have had a live window to capture executable plus P/L before red closes",
             MONTH_SCALE_EXECUTION_TIMING_AUDIT_COMMAND,
             {
                 "loss_closes_profit_capture_missed": evidence.get(
@@ -2193,6 +2293,15 @@ def _acceptance_clearance_for_code(
                 ),
                 "loss_closes_repair_replay_triggered": evidence.get(
                     "loss_closes_repair_replay_triggered"
+                ),
+                "pre_repair_historical_loss_closes_repair_replay_triggered": evidence.get(
+                    "pre_repair_historical_loss_closes_repair_replay_triggered"
+                ),
+                "post_repair_live_evidence_loss_closes_audited": evidence.get(
+                    "post_repair_live_evidence_loss_closes_audited"
+                ),
+                "post_repair_live_evidence_loss_closes_repair_replay_triggered": evidence.get(
+                    "post_repair_live_evidence_loss_closes_repair_replay_triggered"
                 ),
                 "counterfactual_profit_capture_delta_jpy": _round_optional(
                     evidence.get("counterfactual_profit_capture_delta_jpy"),
@@ -3779,7 +3888,12 @@ def _build_repair_requests(
         )
         current_guardian_inactive = _guardian_counts_as_inactive_for_support(guardian)
         current_guardian_lock_wait = _guardian_waits_for_live_runtime_lock(guardian)
-        tp_has_replay_triggers = int(_float(tp_evidence.get("loss_closes_repair_replay_triggered"))) > 0
+        tp_replay_trigger_value = tp_evidence.get(
+            "post_repair_live_evidence_loss_closes_repair_replay_triggered"
+        )
+        if tp_replay_trigger_value is None:
+            tp_replay_trigger_value = tp_evidence.get("loss_closes_repair_replay_triggered")
+        tp_has_replay_triggers = int(_float(tp_replay_trigger_value)) > 0
         tp_contract_missing = "TP_PROGRESS_REPAIR_REPLAY_CONTRACT_MISSING" in tp_codes
         tp_waits_for_operator_guardian = (
             not tp_contract_missing and current_guardian_inactive and not current_guardian_lock_wait

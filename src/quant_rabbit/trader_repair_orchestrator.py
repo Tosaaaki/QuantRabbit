@@ -1341,7 +1341,12 @@ def _approval_dependency_wait(request: dict[str, Any]) -> dict[str, Any] | None:
     source_findings = set(_dedupe_strings(request.get("source_findings")))
     if not evidence.get("guardian_profit_capture_inactive"):
         return None
-    replay_triggered = _optional_positive(evidence.get("loss_closes_repair_replay_triggered"))
+    replay_trigger_value = evidence.get(
+        "post_repair_live_evidence_loss_closes_repair_replay_triggered"
+    )
+    if replay_trigger_value is None:
+        replay_trigger_value = evidence.get("loss_closes_repair_replay_triggered")
+    replay_triggered = _optional_positive(replay_trigger_value)
     if "TP_PROGRESS_REPAIR_REPLAY_NOT_DEPLOYED" not in source_findings and not replay_triggered:
         return None
     return {

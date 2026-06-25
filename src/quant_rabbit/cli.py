@@ -2801,6 +2801,27 @@ def _cycle_digest(*, kind: str, step_results: list[dict[str, Any]], aborted: boo
             "loss_closes_profit_capture_missed": summary.get("loss_closes_profit_capture_missed"),
             "loss_closes_profit_capture_missed_rate": summary.get("loss_closes_profit_capture_missed_rate"),
             "stop_loss_closes_profit_capture_missed": summary.get("stop_loss_closes_profit_capture_missed"),
+            "tp_progress_repair_live_evidence_boundary_utc": summary.get(
+                "tp_progress_repair_live_evidence_boundary_utc"
+            ),
+            "tp_progress_repair_live_evidence_status": summary.get(
+                "tp_progress_repair_live_evidence_status"
+            ),
+            "pre_repair_historical_loss_closes_profit_capture_missed": summary.get(
+                "pre_repair_historical_loss_closes_profit_capture_missed"
+            ),
+            "pre_repair_historical_loss_closes_repair_replay_triggered": summary.get(
+                "pre_repair_historical_loss_closes_repair_replay_triggered"
+            ),
+            "post_repair_live_evidence_loss_closes_audited": summary.get(
+                "post_repair_live_evidence_loss_closes_audited"
+            ),
+            "post_repair_live_evidence_loss_closes_profit_capture_missed": summary.get(
+                "post_repair_live_evidence_loss_closes_profit_capture_missed"
+            ),
+            "post_repair_live_evidence_loss_closes_repair_replay_triggered": summary.get(
+                "post_repair_live_evidence_loss_closes_repair_replay_triggered"
+            ),
             "loss_close_estimated_capture_gap_jpy": summary.get("loss_close_estimated_capture_gap_jpy"),
             "loss_close_actual_pl_jpy": summary.get("loss_close_actual_pl_jpy"),
             "loss_close_counterfactual_profit_capture_pl_jpy": summary.get(

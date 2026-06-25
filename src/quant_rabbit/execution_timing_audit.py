@@ -24,6 +24,8 @@ from typing import Any, Callable, Iterable
 
 from quant_rabbit.broker.oanda import OandaReadOnlyClient
 from quant_rabbit.execution_timing_contracts import (
+    TP_PROGRESS_REPAIR_LIVE_EVIDENCE_BOUNDARY_REASON,
+    TP_PROGRESS_REPAIR_LIVE_EVIDENCE_BOUNDARY_UTC,
     TP_PROGRESS_REPAIR_REPLAY_CONTRACT,
     TP_PROGRESS_REPAIR_REPLAY_FIELD,
 )
@@ -971,6 +973,11 @@ def _summary(
         loss_rows,
         scope_filter={"ENTRY_QUALITY_OR_CLOSE_RESIDUAL"},
     )
+    live_split = _tp_progress_repair_live_evidence_split(
+        loss_rows=loss_rows,
+        loss_capture_missed=loss_capture_missed,
+        repair_replay_rows=repair_replay_rows,
+    )
     return {
         "canceled_orders_audited": len(canceled_rows),
         "canceled_entry_touched_after_cancel": len(canceled_entry),
@@ -1006,6 +1013,7 @@ def _summary(
         ),
         "loss_closes_repair_replay_triggered": len(repair_replay_rows),
         "loss_closes_repair_replay_triggered_rate": _rate(len(repair_replay_rows), len(loss_rows)),
+        **live_split,
         "loss_close_repair_replay_profit_capture_jpy": _sum_known(
             repair_replay_rows,
             "repair_replay_counterfactual_jpy",
@@ -1058,6 +1066,108 @@ def _summary(
         "loss_market_closes_may_have_been_premature": len(loss_premature),
         "loss_market_closes_contained_risk": len(loss_contained),
     }
+
+
+def _tp_progress_repair_live_evidence_split(
+    *,
+    loss_rows: list[dict[str, Any]],
+    loss_capture_missed: list[dict[str, Any]],
+    repair_replay_rows: list[dict[str, Any]],
+) -> dict[str, Any]:
+    boundary = _parse_utc(TP_PROGRESS_REPAIR_LIVE_EVIDENCE_BOUNDARY_UTC)
+    if boundary is None:
+        raise ValueError("invalid TP-progress repair live-evidence boundary")
+
+    post_sample_rows = [
+        row
+        for row in loss_rows
+        if _row_timestamp_at_or_after(row, "close_at_utc", boundary)
+    ]
+    post_raw_miss_rows = [
+        row
+        for row in loss_capture_missed
+        if _row_timestamp_at_or_after(row, "mfe_at_utc", boundary, fallback_key="close_at_utc")
+    ]
+    post_repair_trigger_rows = [
+        row
+        for row in repair_replay_rows
+        if _row_timestamp_at_or_after(
+            row,
+            "repair_replay_trigger_at_utc",
+            boundary,
+            fallback_key="close_at_utc",
+        )
+    ]
+    pre_sample_count = len(loss_rows) - len(post_sample_rows)
+    pre_raw_miss_count = len(loss_capture_missed) - len(post_raw_miss_rows)
+    pre_repair_trigger_count = len(repair_replay_rows) - len(post_repair_trigger_rows)
+    if not post_sample_rows:
+        status = "WAITING_FOR_POST_REPAIR_SAMPLE"
+    elif post_repair_trigger_rows:
+        status = "POST_REPAIR_REPLAY_FAILURES_PRESENT"
+    else:
+        status = "POST_REPAIR_REPLAY_CLEAN"
+    return {
+        "tp_progress_repair_live_evidence_boundary_utc": (
+            TP_PROGRESS_REPAIR_LIVE_EVIDENCE_BOUNDARY_UTC
+        ),
+        "tp_progress_repair_live_evidence_boundary_reason": (
+            TP_PROGRESS_REPAIR_LIVE_EVIDENCE_BOUNDARY_REASON
+        ),
+        "tp_progress_repair_live_evidence_status": status,
+        "pre_repair_historical_loss_closes_audited": pre_sample_count,
+        "pre_repair_historical_loss_closes_profit_capture_missed": pre_raw_miss_count,
+        "pre_repair_historical_loss_closes_profit_capture_missed_rate": _rate(
+            pre_raw_miss_count,
+            pre_sample_count,
+        ),
+        "pre_repair_historical_loss_closes_repair_replay_triggered": (
+            pre_repair_trigger_count
+        ),
+        "pre_repair_historical_loss_closes_repair_replay_triggered_rate": _rate(
+            pre_repair_trigger_count,
+            pre_sample_count,
+        ),
+        "post_repair_live_evidence_loss_closes_audited": len(post_sample_rows),
+        "post_repair_live_evidence_loss_closes_profit_capture_missed": len(
+            post_raw_miss_rows
+        ),
+        "post_repair_live_evidence_loss_closes_profit_capture_missed_rate": _rate(
+            len(post_raw_miss_rows),
+            len(post_sample_rows),
+        ),
+        "post_repair_live_evidence_stop_loss_closes_profit_capture_missed": len(
+            [
+                row
+                for row in post_raw_miss_rows
+                if str(row.get("exit_reason") or "").upper() == "STOP_LOSS_ORDER"
+            ]
+        ),
+        "post_repair_live_evidence_loss_closes_repair_replay_triggered": len(
+            post_repair_trigger_rows
+        ),
+        "post_repair_live_evidence_loss_closes_repair_replay_triggered_rate": _rate(
+            len(post_repair_trigger_rows),
+            len(post_sample_rows),
+        ),
+        "historical_pre_repair_loss_closes_profit_capture_missed": pre_raw_miss_count,
+        "historical_pre_repair_loss_closes_repair_replay_triggered": (
+            pre_repair_trigger_count
+        ),
+    }
+
+
+def _row_timestamp_at_or_after(
+    row: dict[str, Any],
+    key: str,
+    boundary: datetime,
+    *,
+    fallback_key: str | None = None,
+) -> bool:
+    timestamp = _parse_utc(row.get(key))
+    if timestamp is None and fallback_key:
+        timestamp = _parse_utc(row.get(fallback_key))
+    return timestamp is not None and timestamp >= boundary
 
 
 def _counterfactual_loss_close_pl(loss_rows: list[dict[str, Any]]) -> float | None:
@@ -1489,6 +1599,20 @@ def _write_report(payload: dict[str, Any], report_path: Path) -> None:
         "loss_close_counterfactual_profit_capture_jpy",
         "loss_closes_repair_replay_triggered",
         "loss_closes_repair_replay_triggered_rate",
+        "tp_progress_repair_live_evidence_boundary_utc",
+        "tp_progress_repair_live_evidence_boundary_reason",
+        "tp_progress_repair_live_evidence_status",
+        "pre_repair_historical_loss_closes_audited",
+        "pre_repair_historical_loss_closes_profit_capture_missed",
+        "pre_repair_historical_loss_closes_profit_capture_missed_rate",
+        "pre_repair_historical_loss_closes_repair_replay_triggered",
+        "pre_repair_historical_loss_closes_repair_replay_triggered_rate",
+        "post_repair_live_evidence_loss_closes_audited",
+        "post_repair_live_evidence_loss_closes_profit_capture_missed",
+        "post_repair_live_evidence_loss_closes_profit_capture_missed_rate",
+        "post_repair_live_evidence_stop_loss_closes_profit_capture_missed",
+        "post_repair_live_evidence_loss_closes_repair_replay_triggered",
+        "post_repair_live_evidence_loss_closes_repair_replay_triggered_rate",
         "loss_close_repair_replay_profit_capture_jpy",
         "loss_close_repair_replay_actual_pl_jpy",
         "loss_close_repair_replay_counterfactual_pl_jpy",

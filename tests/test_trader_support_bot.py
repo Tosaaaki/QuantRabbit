@@ -34,10 +34,55 @@ from quant_rabbit.trader_support_bot import (
     TraderSupportBot,
     _acceptance_clearance_for_code,
     _guardian_status,
+    _profit_capture_summary,
 )
 
 
 class TraderSupportBotTest(unittest.TestCase):
+    def test_profit_capture_summary_shows_post_repair_sample_wait_split(self) -> None:
+        summary = _profit_capture_summary(
+            {
+                "findings": [
+                    {
+                        "priority": "P1",
+                        "code": "LOSS_CLOSE_PROFIT_CAPTURE_MISSED",
+                        "message": "13 pre-repair replay triggers remain diagnostic",
+                        "next_action": "wait for post-repair sample",
+                        "evidence": {
+                            "loss_closes_profit_capture_missed": 14,
+                            "loss_closes_repair_replay_triggered": 13,
+                            "pre_repair_historical_loss_closes_profit_capture_missed": 14,
+                            "pre_repair_historical_loss_closes_repair_replay_triggered": 13,
+                            "post_repair_live_evidence_loss_closes_audited": 0,
+                            "post_repair_live_evidence_loss_closes_profit_capture_missed": 0,
+                            "post_repair_live_evidence_loss_closes_repair_replay_triggered": 0,
+                        },
+                    }
+                ]
+            },
+            {
+                "precision": {
+                    TP_PROGRESS_REPAIR_REPLAY_FIELD: TP_PROGRESS_REPAIR_REPLAY_CONTRACT,
+                },
+                "summary": {
+                    "loss_closes_profit_capture_missed": 14,
+                    "loss_closes_repair_replay_triggered": 13,
+                    "tp_progress_repair_live_evidence_status": "WAITING_FOR_POST_REPAIR_SAMPLE",
+                    "pre_repair_historical_loss_closes_profit_capture_missed": 14,
+                    "pre_repair_historical_loss_closes_repair_replay_triggered": 13,
+                    "post_repair_live_evidence_loss_closes_audited": 0,
+                    "post_repair_live_evidence_loss_closes_profit_capture_missed": 0,
+                    "post_repair_live_evidence_loss_closes_repair_replay_triggered": 0,
+                },
+            },
+        )
+
+        self.assertEqual(summary["status"], "WAITING_FOR_POST_REPAIR_SAMPLE")
+        self.assertEqual(summary["repair_replay_triggered"], 13)
+        self.assertEqual(summary["pre_repair_historical_repair_replay_triggered"], 13)
+        self.assertEqual(summary["post_repair_live_evidence_repair_replay_triggered"], 0)
+        self.assertIn("do not require historical pre-repair", summary["clearance_condition"])
+
     def test_acceptance_plan_breaks_loop_when_tp_progress_repair_is_not_deployed(self) -> None:
         condition, command, summary = _acceptance_clearance_for_code(
             "TP_PROGRESS_REPAIR_REPLAY_NOT_DEPLOYED",
@@ -162,7 +207,10 @@ class TraderSupportBotTest(unittest.TestCase):
             self.assertTrue(payload["metrics"]["profit_capture_repair_replay_contract_present"])
             self.assertEqual(payload["metrics"]["profit_capture_repair_replay_delta_jpy"], 466.2)
             self.assertEqual(payload["profit_capture"]["top_misses"][0]["profit_capture_counterfactual_jpy"], 105.84)
-            self.assertIn("zero loss_closes_repair_replay_triggered", payload["profit_capture"]["clearance_condition"])
+            self.assertIn(
+                "zero post-repair live-evidence loss_closes_repair_replay_triggered",
+                payload["profit_capture"]["clearance_condition"],
+            )
             self.assertEqual(payload["current_profit_capture"]["watch_positions"], 1)
             self.assertEqual(payload["entry_readiness"]["guardian_blocked_lanes"], 2)
             self.assertEqual(payload["metrics"]["global_unlock_frontier_lanes"], 1)

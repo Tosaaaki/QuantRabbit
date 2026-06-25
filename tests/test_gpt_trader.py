@@ -11,6 +11,9 @@ from pathlib import Path
 from unittest.mock import patch
 
 from quant_rabbit.cli import main
+from quant_rabbit.execution_timing_contracts import (
+    TP_PROGRESS_REPAIR_LIVE_EVIDENCE_BOUNDARY_UTC,
+)
 from quant_rabbit.gpt_trader import GPTTraderBrain, StaticTraderProvider
 
 
@@ -5275,6 +5278,32 @@ def _write_recent_position_management_hold_support(
     )
 
 
+def _pre_repair_only_tp_progress_timing_audit() -> dict:
+    return {
+        "generated_at_utc": datetime.now(timezone.utc).isoformat(),
+        "status": "OK",
+        "summary": {
+            "loss_closes_audited": 14,
+            "loss_closes_profit_capture_missed": 14,
+            "loss_closes_repair_replay_triggered": 13,
+            "loss_close_actual_pl_jpy": -5188.197,
+            "loss_close_counterfactual_profit_capture_pl_jpy": -4134.026,
+            "loss_close_counterfactual_profit_capture_delta_jpy": 1054.171,
+            "loss_close_counterfactual_profit_capture_jpy": 474.341,
+            "tp_progress_repair_live_evidence_boundary_utc": (
+                TP_PROGRESS_REPAIR_LIVE_EVIDENCE_BOUNDARY_UTC
+            ),
+            "tp_progress_repair_live_evidence_status": "WAITING_FOR_POST_REPAIR_SAMPLE",
+            "pre_repair_historical_loss_closes_audited": 14,
+            "pre_repair_historical_loss_closes_profit_capture_missed": 14,
+            "pre_repair_historical_loss_closes_repair_replay_triggered": 13,
+            "post_repair_live_evidence_loss_closes_audited": 0,
+            "post_repair_live_evidence_loss_closes_profit_capture_missed": 0,
+            "post_repair_live_evidence_loss_closes_repair_replay_triggered": 0,
+        },
+    }
+
+
 class CloseDisciplineTest(unittest.TestCase):
     """Coverage for 2026-05-12 CLOSE two-gate discipline added in
     response to the 2026-05-11 18:17 UTC mass-close regression where the
@@ -5575,6 +5604,28 @@ class CloseDisciplineTest(unittest.TestCase):
                 issues["CLOSE_TIMING_AUDIT_REQUIRED"],
             )
 
+    def test_loss_close_does_not_require_timing_audit_for_pre_repair_only_tp_history(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _close_fixtures(
+                root,
+                position_side="SHORT",
+                m15_dir="UP",
+                h4_dir="UP",
+            )
+            files["execution_timing_audit"].write_text(
+                json.dumps(_pre_repair_only_tp_progress_timing_audit())
+            )
+            decision = _close_decision(trade_ids=["555"], operator_close_authorized=False)
+            brain = _brain(root, files, decision)
+
+            summary = brain.run(snapshot_path=files["snapshot"])
+
+            self.assertEqual(summary.status, "ACCEPTED", msg=summary)
+            payload = json.loads((root / "gpt_decision.json").read_text())
+            codes = {issue["code"] for issue in payload["verification_issues"]}
+            self.assertNotIn("CLOSE_TIMING_AUDIT_REQUIRED", codes)
+
     def test_loss_close_with_timing_audit_ref_uses_normal_close_gates(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -5678,6 +5729,32 @@ class CloseDisciplineTest(unittest.TestCase):
             payload = json.loads((root / "gpt_decision.json").read_text())
             codes = {issue["code"] for issue in payload["verification_issues"]}
             self.assertIn("CLOSE_PREMATURE_TIMING_HARD_GATE_REQUIRED", codes)
+            self.assertNotIn("CLOSE_TIMING_AUDIT_REQUIRED", codes)
+            self.assertNotIn("CLOSE_OPERATOR_AUTH_REQUIRED", codes)
+
+    def test_soft_loss_close_with_timing_ref_ignores_pre_repair_only_tp_history(self) -> None:
+        _os.environ["QR_OPERATOR_CLOSE_OVERRIDE"] = "1"
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _close_fixtures(
+                root,
+                position_side="SHORT",
+                m15_dir="UP",
+                h4_dir="DOWN",
+            )
+            files["execution_timing_audit"].write_text(
+                json.dumps(_pre_repair_only_tp_progress_timing_audit())
+            )
+            decision = _close_decision(trade_ids=["555"])
+            decision["evidence_refs"].append("timing:audit")
+            brain = _brain(root, files, decision)
+
+            summary = brain.run(snapshot_path=files["snapshot"])
+
+            self.assertEqual(summary.status, "ACCEPTED", msg=summary)
+            payload = json.loads((root / "gpt_decision.json").read_text())
+            codes = {issue["code"] for issue in payload["verification_issues"]}
+            self.assertNotIn("CLOSE_PREMATURE_TIMING_HARD_GATE_REQUIRED", codes)
             self.assertNotIn("CLOSE_TIMING_AUDIT_REQUIRED", codes)
             self.assertNotIn("CLOSE_OPERATOR_AUTH_REQUIRED", codes)
 

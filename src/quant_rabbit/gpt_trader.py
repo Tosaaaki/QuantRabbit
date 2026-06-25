@@ -327,10 +327,8 @@ def _loss_close_timing_audit_required_trades(
     if not isinstance(summary, dict):
         return ()
     premature = _optional_int(summary.get("loss_market_closes_may_have_been_premature")) or 0
-    capture_missed = _optional_int(summary.get("loss_closes_profit_capture_missed")) or 0
-    counterfactual_delta = _optional_float(
-        summary.get("loss_close_counterfactual_profit_capture_delta_jpy")
-    )
+    capture_missed = _timing_profit_capture_missed_count(summary)
+    counterfactual_delta = _timing_profit_capture_counterfactual_delta(summary)
     if (
         premature <= 0
         and capture_missed <= 0
@@ -357,6 +355,37 @@ def _loss_close_timing_audit_required_trades(
     return tuple(blocked)
 
 
+def _timing_profit_capture_missed_count(summary: dict[str, Any]) -> int:
+    if _timing_profit_capture_split_present(summary):
+        post_missed = (
+            _optional_int(
+                summary.get("post_repair_live_evidence_loss_closes_profit_capture_missed")
+            )
+            or 0
+        )
+        post_replay_missed = (
+            _optional_int(
+                summary.get("post_repair_live_evidence_loss_closes_repair_replay_triggered")
+            )
+            or 0
+        )
+        return max(post_missed, post_replay_missed)
+    return _optional_int(summary.get("loss_closes_profit_capture_missed")) or 0
+
+
+def _timing_profit_capture_split_present(summary: dict[str, Any]) -> bool:
+    return "post_repair_live_evidence_loss_closes_profit_capture_missed" in summary
+
+
+def _timing_profit_capture_counterfactual_delta(summary: dict[str, Any]) -> float | None:
+    delta = _optional_float(summary.get("loss_close_counterfactual_profit_capture_delta_jpy"))
+    if _timing_profit_capture_split_present(summary) and (
+        _timing_profit_capture_missed_count(summary) <= 0
+    ):
+        return None
+    return delta
+
+
 def _premature_loss_close_timing_guard(packet: dict[str, Any]) -> dict[str, Any] | None:
     """Return timing-regret proof that soft underwater CLOSE must not ignore."""
 
@@ -367,10 +396,8 @@ def _premature_loss_close_timing_guard(packet: dict[str, Any]) -> dict[str, Any]
     if not isinstance(summary, dict):
         return None
     premature = _optional_int(summary.get("loss_market_closes_may_have_been_premature")) or 0
-    capture_missed = _optional_int(summary.get("loss_closes_profit_capture_missed")) or 0
-    counterfactual_delta = _optional_float(
-        summary.get("loss_close_counterfactual_profit_capture_delta_jpy")
-    )
+    capture_missed = _timing_profit_capture_missed_count(summary)
+    counterfactual_delta = _timing_profit_capture_counterfactual_delta(summary)
     if (
         premature <= 0
         and capture_missed <= 0
@@ -2865,24 +2892,25 @@ class DecisionVerifier:
             premature = _optional_int(
                 summary.get("loss_market_closes_may_have_been_premature")
             ) or 0
-            capture_missed = _optional_int(
-                summary.get("loss_closes_profit_capture_missed")
-            ) or 0
+            capture_missed = _timing_profit_capture_missed_count(summary)
             labels: list[str] = []
             if premature > 0:
                 labels.append(f"{premature} loss-side market close(s) as potentially premature")
             if capture_missed > 0:
+                evidence_label = (
+                    "post-repair loss close(s)"
+                    if _timing_profit_capture_split_present(summary)
+                    else "loss close(s)"
+                )
                 labels.append(
-                    f"{capture_missed} loss close(s) with missed TP-progress profit capture"
+                    f"{capture_missed} {evidence_label} with missed TP-progress profit capture"
                 )
             if not labels:
                 labels.append(f"{len(timing_required)} loss-side close timing issue(s)")
             followthrough = _optional_float(
                 summary.get("market_close_estimated_followthrough_jpy")
             )
-            counterfactual_delta = _optional_float(
-                summary.get("loss_close_counterfactual_profit_capture_delta_jpy")
-            )
+            counterfactual_delta = _timing_profit_capture_counterfactual_delta(summary)
             tail_parts: list[str] = []
             if followthrough is not None:
                 tail_parts.append(f"estimated follow-through left behind {followthrough:.2f} JPY")
@@ -4191,6 +4219,13 @@ def _execution_timing_audit_packet(payload: dict[str, Any] | None) -> dict[str, 
                 "loss_closes_profit_capture_missed",
                 "loss_closes_profit_capture_missed_rate",
                 "stop_loss_closes_profit_capture_missed",
+                "tp_progress_repair_live_evidence_boundary_utc",
+                "tp_progress_repair_live_evidence_status",
+                "pre_repair_historical_loss_closes_profit_capture_missed",
+                "pre_repair_historical_loss_closes_repair_replay_triggered",
+                "post_repair_live_evidence_loss_closes_audited",
+                "post_repair_live_evidence_loss_closes_profit_capture_missed",
+                "post_repair_live_evidence_loss_closes_repair_replay_triggered",
                 "loss_close_estimated_capture_gap_jpy",
                 "loss_close_actual_pl_jpy",
                 "loss_close_counterfactual_profit_capture_pl_jpy",

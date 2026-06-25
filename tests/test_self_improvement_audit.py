@@ -13,6 +13,7 @@ from unittest import mock
 
 from quant_rabbit.cli import main
 from quant_rabbit.execution_timing_contracts import (
+    TP_PROGRESS_REPAIR_LIVE_EVIDENCE_BOUNDARY_UTC,
     TP_PROGRESS_REPAIR_REPLAY_CONTRACT,
     TP_PROGRESS_REPAIR_REPLAY_FIELD,
 )
@@ -157,6 +158,65 @@ class SelfImprovementAuditorTest(unittest.TestCase):
         self.assertEqual(
             findings[0]["evidence"]["top_repair_replay_triggers"][0]["trade_id"],
             "472792",
+        )
+
+    def test_pre_repair_tp_progress_replay_history_is_p1_until_post_repair_sample(self) -> None:
+        findings = _profit_capture_miss_findings(
+            run_id=_NOW.isoformat(),
+            target_open=True,
+            timing_payload={
+                "generated_at_utc": _NOW.isoformat(),
+                "precision": {
+                    TP_PROGRESS_REPAIR_REPLAY_FIELD: TP_PROGRESS_REPAIR_REPLAY_CONTRACT,
+                },
+                "summary": {
+                    "loss_closes_audited": 34,
+                    "loss_closes_profit_capture_missed": 14,
+                    "loss_closes_profit_capture_missed_rate": 0.4118,
+                    "loss_closes_repair_replay_triggered": 13,
+                    "loss_closes_repair_replay_triggered_rate": 0.3824,
+                    "tp_progress_repair_live_evidence_boundary_utc": (
+                        TP_PROGRESS_REPAIR_LIVE_EVIDENCE_BOUNDARY_UTC
+                    ),
+                    "tp_progress_repair_live_evidence_status": "WAITING_FOR_POST_REPAIR_SAMPLE",
+                    "pre_repair_historical_loss_closes_audited": 34,
+                    "pre_repair_historical_loss_closes_profit_capture_missed": 14,
+                    "pre_repair_historical_loss_closes_repair_replay_triggered": 13,
+                    "post_repair_live_evidence_loss_closes_audited": 0,
+                    "post_repair_live_evidence_loss_closes_profit_capture_missed": 0,
+                    "post_repair_live_evidence_loss_closes_repair_replay_triggered": 0,
+                },
+                "loss_close_regrets": [
+                    {
+                        "trade_id": "472792",
+                        "lane_id": "range_trader:USD_JPY:SHORT:RANGE_ROTATION",
+                        "pair": "USD_JPY",
+                        "side": "SHORT",
+                        "exit_reason": "STOP_LOSS_ORDER",
+                        "profit_capture_missed_before_loss_close": True,
+                        "repair_replay_triggered_before_loss_close": True,
+                        "repair_replay_trigger_at_utc": "2026-06-22T06:45:00+00:00",
+                    }
+                ],
+            },
+        )
+
+        self.assertEqual(len(findings), 1)
+        self.assertEqual(findings[0]["priority"], "P1")
+        self.assertIn("pre-repair replay trigger", findings[0]["message"])
+        self.assertEqual(
+            findings[0]["evidence"]["post_repair_live_evidence_loss_closes_audited"],
+            0,
+        )
+        self.assertEqual(
+            findings[0]["evidence"][
+                "post_repair_live_evidence_loss_closes_repair_replay_triggered"
+            ],
+            0,
+        )
+        self.assertEqual(
+            findings[0]["evidence"]["pre_repair_historical_loss_closes_repair_replay_triggered"],
+            13,
         )
 
     def test_raw_profit_capture_miss_without_repair_replay_is_p1_diagnostic(self) -> None:
