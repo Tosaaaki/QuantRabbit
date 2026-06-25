@@ -91,6 +91,8 @@ BIDASK_REPLAY_WAIT_STATUS = "BIDASK_REPLAY_WAITING_FOR_FORECAST_SAMPLE_COVERAGE"
 TP_PROGRESS_GUARDIAN_WAIT_STATUS = "WAITING_FOR_POSITION_GUARDIAN_LIVE_EVIDENCE"
 TP_PROGRESS_LIVE_EVIDENCE_WAIT_STATUS = "WAITING_FOR_LIVE_EVIDENCE_WINDOW"
 POSITION_GUARDIAN_LOCK_WAIT_STATUS = "WAITING_FOR_POSITION_GUARDIAN_LOCK_RELEASE"
+PENDING_CANCEL_REVIEW_CODE = "PENDING_ENTRY_CANCEL_REVIEW_REQUIRED"
+PENDING_CANCEL_RECEIPT_WAIT_STATUS = "WAITING_FOR_TRADER_CANCEL_RECEIPT"
 QUOTE_FRESHNESS_BLOCKER_CODES = {
     "STALE_QUOTE",
     "TELEMETRY_FORECAST_QUOTE_STALE_FOR_LIVE",
@@ -323,6 +325,7 @@ class TraderSupportBot:
             profit_capture=profit_capture,
             entry=entry,
             acceptance=acceptance,
+            p0_findings=p0_findings,
             broker=broker_summary,
             target=target_summary,
             oanda_history_coverage=oanda_history_coverage,
@@ -3355,12 +3358,14 @@ def _build_repair_requests(
     profit_capture: dict[str, Any],
     entry: dict[str, Any],
     acceptance: dict[str, Any],
+    p0_findings: list[dict[str, Any]] | None = None,
     broker: dict[str, Any] | None = None,
     target: dict[str, Any] | None = None,
     oanda_history_coverage: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     broker = broker if isinstance(broker, dict) else {}
     target = target if isinstance(target, dict) else {}
+    p0_findings = p0_findings if isinstance(p0_findings, list) else []
     repair_plan = acceptance.get("repair_plan") if isinstance(acceptance.get("repair_plan"), dict) else {}
     raw_items = repair_plan.get("items") if isinstance(repair_plan.get("items"), list) else []
     items = [item for item in raw_items if isinstance(item, dict)]
@@ -3429,6 +3434,88 @@ def _build_repair_requests(
                     "Margin-thin guidance continues to rely on broker-truth margin, min-lot, and risk caps instead of loosening them.",
                 ],
                 requires_explicit_operator_approval=False,
+            )
+        )
+
+    pending_cancel_finding = next(
+        (
+            item
+            for item in p0_findings
+            if str(item.get("code") or "") == PENDING_CANCEL_REVIEW_CODE
+        ),
+        None,
+    )
+    if pending_cancel_finding is not None:
+        evidence = (
+            pending_cancel_finding.get("evidence")
+            if isinstance(pending_cancel_finding.get("evidence"), dict)
+            else {}
+        )
+        cancel_order_ids = [
+            str(item)
+            for item in evidence.get("cancel_review_order_ids", []) or []
+            if str(item)
+        ]
+        requests.append(
+            _repair_request(
+                code=PENDING_CANCEL_REVIEW_CODE,
+                priority="P0",
+                status=PENDING_CANCEL_RECEIPT_WAIT_STATUS,
+                source_findings=[PENDING_CANCEL_REVIEW_CODE],
+                problem=(
+                    "Self-improvement found trader-owned pending entry orders that no longer have "
+                    "a current LIVE_READY matching candidate."
+                ),
+                why_now=(
+                    "A stale or lower-quality pending entry can keep campaign exposure ambiguous and "
+                    "consume margin. The repair loop must surface the exact order ids for a fresh "
+                    "TRADE-with-cancel_order_ids or CANCEL_PENDING receipt instead of hiding them behind "
+                    "a generic self-improvement P0 count."
+                ),
+                evidence_summary={
+                    "cancel_review_order_ids": list(dict.fromkeys(cancel_order_ids)),
+                    "groups": evidence.get("groups") or [],
+                    "orders": evidence.get("orders") or [],
+                    "source_next_action": pending_cancel_finding.get("next_action"),
+                },
+                clearance_conditions=[
+                    (
+                        "Refresh broker snapshot, order_intents, and trader-prompt-route. If the named "
+                        "current trader-owned pending ids still exist and no current LIVE_READY "
+                        "replacement basket exists, write a fresh accepted CANCEL_PENDING receipt naming "
+                        "only those ids."
+                    ),
+                    (
+                        "If a current LIVE_READY replacement basket exists, write a fresh accepted TRADE "
+                        "receipt with cancel_order_ids for stale or lower-priority pending entries; gateway "
+                        "validation must still re-check broker truth before any cancel or send."
+                    ),
+                    (
+                        "Do not direct-cancel from support/orchestrator/Codex repair work. Clearance is a "
+                        "new broker snapshot without the ids, or a consumed gateway receipt that canceled "
+                        "or replaced them through the approved path."
+                    ),
+                ],
+                verification_commands=[
+                    "PYTHONPATH=src python3 -m quant_rabbit.cli broker-snapshot --output data/broker_snapshot.json",
+                    "PYTHONPATH=src python3 -m quant_rabbit.cli trader-prompt-route",
+                    "PYTHONPATH=src python3 -m quant_rabbit.cli trader-support-bot",
+                    "PYTHONPATH=src python3 -m quant_rabbit.cli trader-repair-orchestrator",
+                ],
+                suggested_files=[
+                    "docs/SKILL_trader.md",
+                    "docs/trader_prompts/35_position_management.md",
+                    "docs/trader_prompts/40_verify_execute.md",
+                    "src/quant_rabbit/gpt_trader.py",
+                    "src/quant_rabbit/automation.py",
+                    "tests/test_gpt_trader.py",
+                    "tests/test_autotrade_cycle.py",
+                ],
+                required_tests=[
+                    "Support bot emits a non-actionable repair request with the exact pending order ids when self-improvement raises PENDING_ENTRY_CANCEL_REVIEW_REQUIRED.",
+                    "Repair orchestrator keeps the request in the waiting queue and does not mark it as Codex implementation work or live permission.",
+                    "Gateway cancellation still requires an accepted CANCEL_PENDING receipt or accepted TRADE receipt with verified cancel_order_ids.",
+                ],
             )
         )
 
@@ -4380,6 +4467,14 @@ def repair_requests_from_support_payload(payload: dict[str, Any]) -> list[dict[s
         if isinstance(payload.get("profitability_acceptance"), dict)
         else {}
     )
+    self_improvement = (
+        payload.get("self_improvement") if isinstance(payload.get("self_improvement"), dict) else {}
+    )
+    p0_findings = (
+        self_improvement.get("p0_findings")
+        if isinstance(self_improvement.get("p0_findings"), list)
+        else _p0_findings(self_improvement)
+    )
     broker = payload.get("broker") if isinstance(payload.get("broker"), dict) else {}
     target = payload.get("target") if isinstance(payload.get("target"), dict) else {}
     oanda_history_coverage = (
@@ -4394,6 +4489,7 @@ def repair_requests_from_support_payload(payload: dict[str, Any]) -> list[dict[s
         profit_capture=profit_capture,
         entry=entry,
         acceptance=acceptance,
+        p0_findings=p0_findings,
         broker=broker,
         target=target,
         oanda_history_coverage=oanda_history_coverage,

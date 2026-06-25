@@ -23,6 +23,8 @@ from quant_rabbit.trader_support_bot import (
     FRONTIER_QUOTE_FRESHNESS_WAIT_STATUS,
     OANDA_AUDIT_ONLY_LOCAL_TP_EDGE_REQUEST,
     OANDA_AUDIT_ONLY_LOCAL_TP_PROOF_UNPROVED_STATUS,
+    PENDING_CANCEL_RECEIPT_WAIT_STATUS,
+    PENDING_CANCEL_REVIEW_CODE,
     REPAIR_AUTOMATION_ALLOWED_ACTIONS,
     REPAIR_AUTOMATION_EXPLICIT_APPROVAL_ACTIONS,
     REPAIR_AUTOMATION_FORBIDDEN_DIRECT_ACTIONS,
@@ -32,6 +34,47 @@ from quant_rabbit.trader_support_bot import (
 
 
 class TraderRepairOrchestratorTest(unittest.TestCase):
+    def test_pending_cancel_review_waits_for_trader_receipt_not_codex_implementation(self) -> None:
+        now = datetime(2026, 6, 25, 2, 15, tzinfo=timezone.utc)
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            support = root / "support.json"
+            output = root / "orchestrator.json"
+            report = root / "orchestrator.md"
+            _write_support(
+                support,
+                [
+                    _request(
+                        PENDING_CANCEL_REVIEW_CODE,
+                        priority="P0",
+                        status=PENDING_CANCEL_RECEIPT_WAIT_STATUS,
+                        source_findings=[PENDING_CANCEL_REVIEW_CODE],
+                        evidence_summary={"cancel_review_order_ids": ["472818"]},
+                    )
+                ],
+            )
+
+            summary = TraderRepairOrchestrator(
+                support_bot_path=support,
+                output_path=output,
+                report_path=report,
+                now_utc=now,
+            ).run()
+            payload = json.loads(output.read_text())
+
+        self.assertEqual(summary.status, STATUS_BLOCKED)
+        self.assertEqual(summary.actionable_request_count, 0)
+        self.assertEqual(summary.waiting_request_count, 1)
+        self.assertEqual(payload["selected_request_code"], None)
+        self.assertEqual(payload["queue"][0]["code"], PENDING_CANCEL_REVIEW_CODE)
+        self.assertEqual(payload["queue"][0]["automation_status"], "WAITING_FOR_LIVE_EVIDENCE_WINDOW")
+        self.assertEqual(
+            payload["loop_engineering_prompt"]["current_state"]["waiting_p0_request_codes"],
+            [PENDING_CANCEL_REVIEW_CODE],
+        )
+        self.assertIn(PENDING_CANCEL_REVIEW_CODE, payload["loop_engineering_prompt"]["prompt_text"])
+        self.assertIn("472818", json.dumps(payload["queue"][0]["evidence_summary"]))
+
     def test_builds_codex_repair_queue_without_live_side_effects(self) -> None:
         now = datetime(2026, 6, 23, 10, 0, tzinfo=timezone.utc)
         with tempfile.TemporaryDirectory() as tmp:

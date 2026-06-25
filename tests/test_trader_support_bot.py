@@ -24,6 +24,8 @@ from quant_rabbit.trader_support_bot import (
     OANDA_AUDIT_ONLY_LOCAL_TP_EDGE_REQUEST,
     OANDA_AUDIT_ONLY_LOCAL_TP_PROOF_UNPROVED_STATUS,
     ORDER_INTENTS_ARTIFACT_REFRESH_WAIT_STATUS,
+    PENDING_CANCEL_RECEIPT_WAIT_STATUS,
+    PENDING_CANCEL_REVIEW_CODE,
     STATUS_BLOCKED,
     STATUS_READY,
     POSITION_GUARDIAN_LOCK_WAIT_STATUS,
@@ -1989,6 +1991,82 @@ class TraderSupportBotTest(unittest.TestCase):
             report = files["report"].read_text()
             self.assertIn("Repair basket send allowed", report)
             self.assertIn("Repair LIVE_READY lanes", report)
+
+    def test_pending_cancel_review_p0_becomes_non_actionable_repair_request(self) -> None:
+        now = datetime(2026, 6, 25, 2, 12, tzinfo=timezone.utc)
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _write_fixture(root, now=now, blocked=True)
+            _write_json(
+                files["self_improvement"],
+                {
+                    "generated_at_utc": now.isoformat(),
+                    "status": "SELF_IMPROVEMENT_BLOCKED",
+                    "findings": [
+                        {
+                            "priority": "P0",
+                            "code": PENDING_CANCEL_REVIEW_CODE,
+                            "message": "1 trader-owned pending entry order(s) need cancel review",
+                            "next_action": "Write a CANCEL_PENDING receipt or TRADE with cancel_order_ids.",
+                            "evidence": {
+                                "cancel_review_order_ids": ["472818"],
+                                "groups": [
+                                    {
+                                        "pair": "EUR_USD",
+                                        "side": "SHORT",
+                                        "method": "BREAKOUT_FAILURE",
+                                        "order_ids": ["472818"],
+                                        "reason_codes": {"PENDING_CURRENT_CANDIDATE_NOT_LIVE_READY": 1},
+                                    }
+                                ],
+                                "orders": [
+                                    {
+                                        "order_id": "472818",
+                                        "pair": "EUR_USD",
+                                        "side": "SHORT",
+                                        "lane_id": "failure_trader:EUR_USD:SHORT:BREAKOUT_FAILURE:LIMIT",
+                                        "review_reasons": [
+                                            {"code": "PENDING_CURRENT_CANDIDATE_NOT_LIVE_READY"}
+                                        ],
+                                    }
+                                ],
+                            },
+                        }
+                    ],
+                },
+            )
+            env = _guardian_env(root, active="1")
+            with mock.patch.dict(os.environ, env, clear=False):
+                TraderSupportBot(
+                    broker_snapshot_path=files["broker"],
+                    order_intents_path=files["intents"],
+                    target_state_path=files["target"],
+                    position_management_path=files["position_management"],
+                    position_guardian_management_path=files["guardian_management"],
+                    position_guardian_execution_path=files["guardian_execution"],
+                    position_guardian_heartbeat_path=files["guardian_heartbeat"],
+                    self_improvement_audit_path=files["self_improvement"],
+                    profitability_acceptance_path=files["profitability"],
+                    execution_timing_audit_path=files["timing"],
+                    profit_capture_bot_path=files["profit_capture_bot"],
+                    output_path=files["output"],
+                    report_path=files["report"],
+                    now_utc=now,
+                ).run()
+
+            payload = json.loads(files["output"].read_text())
+            request = next(
+                item for item in payload["repair_requests"] if item["code"] == PENDING_CANCEL_REVIEW_CODE
+            )
+
+        self.assertEqual(request["status"], PENDING_CANCEL_RECEIPT_WAIT_STATUS)
+        self.assertEqual(request["priority"], "P0")
+        self.assertEqual(request["source_findings"], [PENDING_CANCEL_REVIEW_CODE])
+        self.assertEqual(request["evidence_summary"]["cancel_review_order_ids"], ["472818"])
+        self.assertFalse(request["requires_explicit_operator_approval"])
+        self.assertEqual(request["live_side_effects"], [])
+        self.assertIn("Do not direct-cancel", " ".join(request["clearance_conditions"]))
+        self.assertIn(PENDING_CANCEL_REVIEW_CODE, payload["metrics"]["repair_request_codes"])
 
     def test_tp_harvest_repair_basket_allows_profit_capture_p0_it_repairs(self) -> None:
         now = datetime(2026, 6, 22, 12, 15, tzinfo=timezone.utc)
