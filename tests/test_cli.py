@@ -5908,6 +5908,31 @@ class ConsolidatedCycleCommandTest(unittest.TestCase):
                 DEFAULT_CYCLE_STEP_TIMEOUT_SECONDS,
             )
 
+    def test_reuse_market_generate_intents_steps_have_extended_timeout(self) -> None:
+        from quant_rabbit.cli import (
+            DEFAULT_GENERATE_INTENTS_CYCLE_TIMEOUT_SECONDS,
+            _cycle_refresh_steps,
+            _cycle_sidecar_steps,
+        )
+
+        intent_step = "generate-intents --snapshot data/broker_snapshot.json --reuse-market-artifacts"
+        step_lists = [
+            _cycle_refresh_steps("10"),
+            _cycle_sidecar_steps(),
+            _post_autotrade_failure_sidecar_steps(),
+            _direct_autotrade_audit_sidecar_steps(),
+        ]
+
+        for specs in step_lists:
+            by_step = {" ".join(spec["argv"]): spec for spec in specs}
+            with self.subTest(steps=[spec["argv"][0] for spec in specs[:3]]):
+                self.assertIn(intent_step, by_step)
+                self.assertTrue(by_step[intent_step]["required"])
+                self.assertEqual(
+                    by_step[intent_step]["timeout_seconds"],
+                    DEFAULT_GENERATE_INTENTS_CYCLE_TIMEOUT_SECONDS,
+                )
+
     def test_cycle_refresh_refuses_existing_live_runtime_lock(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             lock_dir = Path(tmp) / "lock"
