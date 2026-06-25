@@ -201,20 +201,21 @@ class MemoryHealthAuditor:
             active_positions=active_positions,
         )
 
-        projection_rows, projection_malformed, projection_error = _read_jsonl(projection_ledger_path)
+        projection_summary = _summarize_projection_ledger(
+            projection_ledger_path,
+            snapshot_ts=snapshot_ts,
+            now=clock,
+        )
         _audit_projection_ledger(
             issues,
             metrics,
-            rows=projection_rows,
-            malformed=projection_malformed,
-            error=projection_error,
+            summary=projection_summary,
             path=projection_ledger_path,
             forecast_rows=forecast_rows,
             snapshot_ts=snapshot_ts,
             required_pairs=required_pairs,
             target_open=target_open,
             active_positions=active_positions,
-            now=clock,
         )
 
         _audit_execution_ledger(
@@ -348,6 +349,18 @@ class _LoadedJson:
     error: str | None
 
 
+@dataclass(frozen=True)
+class _ProjectionLedgerSummary:
+    rows: int
+    malformed: int
+    error: str | None
+    status_counts: dict[str, int]
+    expired_pending: int
+    directional_keys: set[tuple[str, str]]
+    duplicate_projection_keys: int
+    current_duplicate_projection_keys: int
+
+
 def _read_json(path: Path) -> _LoadedJson:
     if not path.exists():
         return _LoadedJson(None, "missing")
@@ -383,6 +396,92 @@ def _read_jsonl(path: Path) -> tuple[tuple[dict[str, Any], ...], int, str | None
     except OSError as exc:
         return (), malformed, str(exc)
     return tuple(rows), malformed, None
+
+
+def _summarize_projection_ledger(
+    path: Path,
+    *,
+    snapshot_ts: datetime | None,
+    now: datetime,
+) -> _ProjectionLedgerSummary:
+    if not path.exists():
+        return _ProjectionLedgerSummary(
+            rows=0,
+            malformed=0,
+            error="missing",
+            status_counts={},
+            expired_pending=0,
+            directional_keys=set(),
+            duplicate_projection_keys=0,
+            current_duplicate_projection_keys=0,
+        )
+    rows = 0
+    malformed = 0
+    status_counts: dict[str, int] = {}
+    expired_pending = 0
+    directional_keys: set[tuple[str, str]] = set()
+    projection_key_counts: dict[tuple[Any, ...], int] = {}
+    projection_key_latest_ts: dict[tuple[Any, ...], datetime | None] = {}
+    try:
+        with path.open("r", encoding="utf-8") as handle:
+            for line in handle:
+                text = line.strip()
+                if not text:
+                    continue
+                try:
+                    row = json.loads(text)
+                except json.JSONDecodeError:
+                    malformed += 1
+                    continue
+                if not isinstance(row, dict):
+                    malformed += 1
+                    continue
+                rows += 1
+                status = str(row.get("resolution_status") or "PENDING").upper()
+                status_counts[status] = status_counts.get(status, 0) + 1
+                if status == "PENDING" and _projection_expired(row, now=now):
+                    expired_pending += 1
+                pair = str(row.get("pair") or "")
+                cycle_id = str(row.get("cycle_id") or "")
+                if pair and cycle_id and str(row.get("signal_name") or "") == "directional_forecast":
+                    directional_keys.add((pair, cycle_id))
+                key = _projection_key(row)
+                if key is None:
+                    continue
+                projection_key_counts[key] = projection_key_counts.get(key, 0) + 1
+                ts = _parse_utc(row.get("timestamp_emitted_utc"))
+                current_latest = projection_key_latest_ts.get(key)
+                if ts is not None and (current_latest is None or ts > current_latest):
+                    projection_key_latest_ts[key] = ts
+                else:
+                    projection_key_latest_ts.setdefault(key, current_latest)
+    except OSError as exc:
+        return _ProjectionLedgerSummary(
+            rows=rows,
+            malformed=malformed,
+            error=str(exc),
+            status_counts=status_counts,
+            expired_pending=expired_pending,
+            directional_keys=directional_keys,
+            duplicate_projection_keys=0,
+            current_duplicate_projection_keys=0,
+        )
+    duplicate_projection_keys = {key for key, count in projection_key_counts.items() if count > 1}
+    current_duplicate_projection_keys = _current_duplicate_count(
+        duplicate_projection_keys,
+        latest_by_key=projection_key_latest_ts,
+        freshness_cutoff=snapshot_ts,
+    )
+    return _ProjectionLedgerSummary(
+        rows=rows,
+        malformed=malformed,
+        error=None,
+        status_counts=status_counts,
+        expired_pending=expired_pending,
+        directional_keys=directional_keys,
+        duplicate_projection_keys=len(duplicate_projection_keys),
+        current_duplicate_projection_keys=current_duplicate_projection_keys,
+    )
 
 
 def _check_required_json(
@@ -713,68 +812,36 @@ def _audit_projection_ledger(
     issues: list[dict[str, Any]],
     metrics: dict[str, Any],
     *,
-    rows: tuple[dict[str, Any], ...],
-    malformed: int,
-    error: str | None,
+    summary: _ProjectionLedgerSummary,
     path: Path,
     forecast_rows: tuple[dict[str, Any], ...],
     snapshot_ts: datetime | None,
     required_pairs: tuple[str, ...],
     target_open: bool,
     active_positions: list[dict[str, str]],
-    now: datetime,
 ) -> None:
-    status_counts: dict[str, int] = {}
-    expired_pending = 0
-    directional_keys: set[tuple[str, str]] = set()
-    projection_key_counts: dict[tuple[Any, ...], int] = {}
-    projection_key_latest_ts: dict[tuple[Any, ...], datetime | None] = {}
-    for row in rows:
-        status = str(row.get("resolution_status") or "PENDING").upper()
-        status_counts[status] = status_counts.get(status, 0) + 1
-        if status == "PENDING" and _projection_expired(row, now=now):
-            expired_pending += 1
-        pair = str(row.get("pair") or "")
-        cycle_id = str(row.get("cycle_id") or "")
-        if pair and cycle_id and str(row.get("signal_name") or "") == "directional_forecast":
-            directional_keys.add((pair, cycle_id))
-        key = _projection_key(row)
-        if key is not None:
-            projection_key_counts[key] = projection_key_counts.get(key, 0) + 1
-            ts = _parse_utc(row.get("timestamp_emitted_utc"))
-            current_latest = projection_key_latest_ts.get(key)
-            if ts is not None and (current_latest is None or ts > current_latest):
-                projection_key_latest_ts[key] = ts
-            else:
-                projection_key_latest_ts.setdefault(key, current_latest)
-    duplicate_projection_keys = {key for key, count in projection_key_counts.items() if count > 1}
-    current_duplicate_projection_keys = _current_duplicate_count(
-        duplicate_projection_keys,
-        latest_by_key=projection_key_latest_ts,
-        freshness_cutoff=snapshot_ts,
-    )
     metrics["projection_ledger"] = {
         "path": str(path),
-        "rows": len(rows),
-        "malformed_rows": malformed,
-        "status_counts": status_counts,
-        "expired_pending": expired_pending,
-        "directional_forecast_keys": len(directional_keys),
-        "duplicate_projection_keys": len(duplicate_projection_keys),
-        "current_duplicate_projection_keys": current_duplicate_projection_keys,
+        "rows": summary.rows,
+        "malformed_rows": summary.malformed,
+        "status_counts": summary.status_counts,
+        "expired_pending": summary.expired_pending,
+        "directional_forecast_keys": len(summary.directional_keys),
+        "duplicate_projection_keys": summary.duplicate_projection_keys,
+        "current_duplicate_projection_keys": summary.current_duplicate_projection_keys,
     }
-    if error is not None:
+    if summary.error is not None:
         severity = "BLOCK" if target_open or active_positions else "WARN"
         issues.append(
             _issue(
                 layer=LAYER_MEDIUM,
                 severity=severity,
                 code="MEDIUM_PROJECTION_LEDGER_UNREADABLE",
-                message=f"projection_ledger is unreadable: {path}: {error}",
+                message=f"projection_ledger is unreadable: {path}: {summary.error}",
             )
         )
         return
-    if not rows and (target_open or active_positions):
+    if not summary.rows and (target_open or active_positions):
         issues.append(
             _issue(
                 layer=LAYER_MEDIUM,
@@ -783,16 +850,16 @@ def _audit_projection_ledger(
                 message=f"projection_ledger has no rows while live memory is needed: {path}",
             )
         )
-    if malformed:
+    if summary.malformed:
         issues.append(
             _issue(
                 layer=LAYER_MEDIUM,
                 severity="WARN",
                 code="MEDIUM_PROJECTION_LEDGER_MALFORMED_ROWS",
-                message=f"projection_ledger skipped {malformed} malformed row(s): {path}",
+                message=f"projection_ledger skipped {summary.malformed} malformed row(s): {path}",
             )
         )
-    if current_duplicate_projection_keys:
+    if summary.current_duplicate_projection_keys:
         issues.append(
             _issue(
                 layer=LAYER_MEDIUM,
@@ -800,17 +867,20 @@ def _audit_projection_ledger(
                 code="MEDIUM_PROJECTION_LEDGER_DUPLICATE_KEY",
                 message=(
                     "projection_ledger has "
-                    f"{current_duplicate_projection_keys} current duplicate cycle projection key(s)"
+                    f"{summary.current_duplicate_projection_keys} current duplicate cycle projection key(s)"
                 ),
             )
         )
-    if expired_pending:
+    if summary.expired_pending:
         issues.append(
             _issue(
                 layer=LAYER_MEDIUM,
                 severity="BLOCK",
                 code="MEDIUM_PROJECTION_LEDGER_EXPIRED_PENDING",
-                message=f"projection_ledger has {expired_pending} expired PENDING projection(s); run verify-projections",
+                message=(
+                    f"projection_ledger has {summary.expired_pending} expired PENDING projection(s); "
+                    "run verify-projections"
+                ),
             )
         )
     latest_forecasts = _latest_forecasts_by_pair(forecast_rows)
@@ -827,7 +897,7 @@ def _audit_projection_ledger(
             and _forecast_predates_snapshot_beyond_grace(forecast_ts, snapshot_ts)
         ):
             continue
-        if direction in {"UP", "DOWN"} and cycle_id and (pair, cycle_id) not in directional_keys:
+        if direction in {"UP", "DOWN"} and cycle_id and (pair, cycle_id) not in summary.directional_keys:
             issues.append(
                 _issue(
                     layer=LAYER_MEDIUM,
