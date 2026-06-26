@@ -484,7 +484,7 @@ def _tp_proof_collection_new_vehicle_supported(intent: OrderIntent, metadata: di
     if intent.order_type == OrderType.MARKET:
         return False
     mode = str(metadata.get("positive_rotation_mode") or "").upper()
-    if mode and mode != "TP_PROOF_COLLECTION_HARVEST":
+    if mode and mode not in {"TP_PROOF_COLLECTION_HARVEST", "TP_PROVEN_HARVEST"}:
         return False
     if str(metadata.get("tp_execution_mode") or "").upper() != "ATTACHED_TECHNICAL_TP":
         return False

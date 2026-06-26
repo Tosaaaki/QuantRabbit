@@ -1913,6 +1913,10 @@ class AutoTradeCycle:
                 )
                 if not basket_lane_ids and self.use_gpt_trader:
                     gpt_summary = self._run_gpt_handoff()
+                    gpt_lane_ids = (
+                        gpt_summary.selected_lane_ids
+                        or ((gpt_summary.selected_lane_id,) if gpt_summary.selected_lane_id else ())
+                    )
                     if (
                         gpt_summary.status == "ACCEPTED"
                         and gpt_summary.allowed
@@ -1960,6 +1964,130 @@ class AutoTradeCycle:
                             orders=orders,
                             live_ready=intent_summary.live_ready,
                             selected_lane_ids=(),
+                            canceled_orders=tuple(canceled_orders),
+                            receipt_promotions=0,
+                            decision_source="gpt_trader",
+                            position_management_action=position_decision.action,
+                            position_execution_status=position_execution.status,
+                            position_execution_sent=position_execution.sent,
+                            target_status=target_summary.status if target_summary else None,
+                            target_remaining_jpy=target_summary.remaining_target_jpy if target_summary else None,
+                            target_progress_pct=target_summary.progress_pct if target_summary else None,
+                            gpt_status=gpt_summary.status,
+                            gpt_action=gpt_summary.action,
+                            gpt_allowed=gpt_summary.allowed,
+                            gpt_issues=gpt_summary.issues,
+                            gpt_error=gpt_summary.error,
+                        )
+                        self._write_report(summary, generated_at)
+                        return summary
+                    if (
+                        gpt_summary.status == "ACCEPTED"
+                        and gpt_summary.allowed
+                        and gpt_summary.action == "TRADE"
+                    ):
+                        try:
+                            intents_payload = json.loads(self.intents_path.read_text())
+                        except (OSError, json.JSONDecodeError, ValueError):
+                            intents_payload = {}
+                        if not isinstance(intents_payload, dict):
+                            intents_payload = {}
+                        live_ready_lane_ids = {
+                            lane_id
+                            for item in intents_payload.get("results", []) or []
+                            if isinstance(item, dict)
+                            for lane_id in (str(item.get("lane_id") or ""),)
+                            if lane_id and item.get("status") == "LIVE_READY"
+                        }
+                        unique_gpt_lane_ids = tuple(dict.fromkeys(gpt_lane_ids))
+                        current_gpt_lane_ids = tuple(
+                            lane_id for lane_id in unique_gpt_lane_ids if lane_id in live_ready_lane_ids
+                        )
+                        gpt_lanes_allowed, _ = _gpt_lanes_pass_prefilter_or_recovery(
+                            intents_payload=intents_payload,
+                            gpt_lane_ids=unique_gpt_lane_ids,
+                            prefiltered_lane_ids=live_ready_lane_ids,
+                        )
+                        if (
+                            not unique_gpt_lane_ids
+                            or not gpt_lanes_allowed
+                            or current_gpt_lane_ids != unique_gpt_lane_ids
+                        ):
+                            summary = AutoTradeCycleSummary(
+                                status="GPT_DECISION_NOT_PREFILTERED" if unique_gpt_lane_ids else "GPT_TRADE",
+                                report_path=self.report_path,
+                                snapshot_path=self.snapshot_path,
+                                intents_path=self.intents_path,
+                                selected_lane_id=None,
+                                deterministic_lane_id=None,
+                                sent=False,
+                                positions=positions,
+                                orders=orders,
+                                live_ready=intent_summary.live_ready,
+                                selected_lane_ids=unique_gpt_lane_ids,
+                                canceled_orders=tuple(canceled_orders),
+                                receipt_promotions=0,
+                                decision_source="gpt_trader",
+                                position_management_action=position_decision.action,
+                                position_execution_status=position_execution.status,
+                                position_execution_sent=position_execution.sent,
+                                target_status=target_summary.status if target_summary else None,
+                                target_remaining_jpy=target_summary.remaining_target_jpy if target_summary else None,
+                                target_progress_pct=target_summary.progress_pct if target_summary else None,
+                                gpt_status=gpt_summary.status,
+                                gpt_action=gpt_summary.action,
+                                gpt_allowed=gpt_summary.allowed,
+                                gpt_issues=gpt_summary.issues,
+                                gpt_error=gpt_summary.error,
+                            )
+                            self._write_report(summary, generated_at)
+                            return summary
+                        basket_lane_ids = current_gpt_lane_ids
+                        basket_size_multiples = {}
+                        for lane_id in basket_lane_ids:
+                            _, size_multiple = self._selected_lane_meta(decision=decision, lane_id=lane_id)
+                            basket_size_multiples[lane_id] = size_multiple if size_multiple is not None else 1.0
+                        order_gateway = LiveOrderGateway(
+                            client=self.client,
+                            strategy_profile=self.strategy_profile_path,
+                            output_path=self.live_order_output_path,
+                            report_path=self.live_order_report_path,
+                            live_enabled=self.live_enabled,
+                            max_loss_jpy=resolved_max_loss_jpy,
+                            portfolio_loss_cap_jpy=self._portfolio_loss_cap_jpy_from_target_state(),
+                            self_improvement_audit=self.gateway_self_improvement_audit_path,
+                            verified_decision_path=self.gpt_decision_path,
+                        )
+                        order_summary, deferred_canceled = self._run_order_batch_with_deferred_gpt_trade_cancels(
+                            order_gateway=order_gateway,
+                            intents_path=self.intents_path,
+                            lane_ids=basket_lane_ids,
+                            size_multiples=basket_size_multiples,
+                            send=send,
+                            gpt_summary=gpt_summary,
+                            already_canceled=tuple(canceled_orders),
+                        )
+                        canceled_orders.extend(deferred_canceled)
+                        selected_lane_id = order_summary.lane_id
+                        selected_lane_score, selected_lane_size_multiple = self._selected_lane_meta(
+                            decision=decision,
+                            lane_id=selected_lane_id,
+                        )
+                        summary = AutoTradeCycleSummary(
+                            status=order_summary.status,
+                            report_path=self.report_path,
+                            snapshot_path=self.snapshot_path,
+                            intents_path=self.intents_path,
+                            selected_lane_id=selected_lane_id,
+                            selected_lane_ids=order_summary.lane_ids,
+                            selected_lane_score=selected_lane_score,
+                            selected_lane_size_multiple=selected_lane_size_multiple,
+                            deterministic_lane_id=None,
+                            sent=order_summary.sent,
+                            sent_count=order_summary.sent_count,
+                            positions=positions,
+                            orders=orders,
+                            live_ready=intent_summary.live_ready,
                             canceled_orders=tuple(canceled_orders),
                             receipt_promotions=0,
                             decision_source="gpt_trader",

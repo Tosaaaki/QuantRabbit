@@ -728,6 +728,96 @@ class AutoTradeCycleTest(unittest.TestCase):
         self.assertEqual(client.orders_canceled, ["pending-1"])
         self.assertEqual(client.orders_sent, [])
 
+    def test_gpt_trade_replaces_pending_when_deterministic_basket_is_empty(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            now = datetime.now(timezone.utc)
+            pending = BrokerOrder(
+                order_id="stale-pending",
+                pair="GBP_JPY",
+                order_type="LIMIT",
+                price=213.602,
+                state="PENDING",
+                units=-6000,
+                owner=Owner.TRADER,
+            )
+            snapshot = BrokerSnapshot(
+                fetched_at_utc=now,
+                orders=(pending,),
+                quotes={
+                    "EUR_USD": Quote("EUR_USD", 1.17298, 1.17306, timestamp_utc=now),
+                    "GBP_JPY": Quote("GBP_JPY", 213.50, 213.52, timestamp_utc=now),
+                    "USD_JPY": Quote("USD_JPY", 157.0, 157.01, timestamp_utc=now),
+                },
+            )
+            snapshot_path = root / "snapshot.json"
+            snapshot_path.write_text(_snapshot_to_json(snapshot) + "\n")
+            intents_path = root / "intents.json"
+            _write_live_ready_intents(intents_path)
+            target_state = _open_target_state(root)
+            client = FakeCycleClient(snapshot)
+            empty_basket_decision = TraderDecision(
+                action=ACTION_NO_TRADE,
+                selected_lane_id=None,
+                generated_at_utc=now.isoformat(),
+                reason="existing pending entry left no deterministic replacement basket",
+                scores=(),
+                positions=0,
+                orders=1,
+                pending_cancel_order_ids=(),
+            )
+
+            class EmptyBasketBrain:
+                def run(self, snapshot):
+                    return empty_basket_decision
+
+            class EmptyBasketCycle(AutoTradeCycle):
+                def _brain(self):
+                    return EmptyBasketBrain()
+
+            gpt_decision = _gpt_trade_decision()
+            gpt_decision["cancel_order_ids"] = [pending.order_id]
+
+            summary = EmptyBasketCycle(
+                client=client,
+                snapshot_path=snapshot_path,
+                intents_path=intents_path,
+                intent_report_path=root / "intents.md",
+                decision_path=root / "decision.json",
+                decision_report_path=root / "decision.md",
+                gpt_decision_path=root / "gpt_decision.json",
+                gpt_decision_report_path=root / "gpt_decision.md",
+                gpt_attack_advice_path=root / "attack_missing.json",
+                position_management_path=root / "pm.json",
+                position_management_report_path=root / "pm.md",
+                position_execution_path=root / "pe.json",
+                position_execution_report_path=root / "pe.md",
+                live_order_output_path=root / "live_order.json",
+                live_order_report_path=root / "live_order.md",
+                report_path=root / "report.md",
+                campaign_plan_path=_campaign(root),
+                strategy_profile_path=_candidate_profile(root),
+                market_story_profile_path=_stories(root),
+                receipt_promotion_report_path=root / "promotion.md",
+                target_state_path=target_state,
+                target_report_path=root / "target.md",
+                gpt_target_state_path=target_state,
+                use_gpt_trader=True,
+                gpt_provider=StaticTraderProvider(gpt_decision),
+                reuse_market_artifacts=True,
+                refresh_market_story=False,
+                live_enabled=True,
+                max_loss_jpy=1_500,
+            ).run(send=True)
+
+        self.assertEqual(summary.status, "SENT")
+        self.assertEqual(summary.decision_source, "gpt_trader")
+        self.assertEqual(summary.gpt_action, "TRADE")
+        self.assertEqual(summary.selected_lane_id, "trend_trader:EUR_USD:LONG:TREND_CONTINUATION")
+        self.assertEqual(summary.canceled_orders, ("stale-pending",))
+        self.assertEqual(client.orders_canceled, ["stale-pending"])
+        self.assertEqual(len(client.orders_sent), 1)
+
     def test_report_summarizes_harvest_and_runner_opportunity_modes(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

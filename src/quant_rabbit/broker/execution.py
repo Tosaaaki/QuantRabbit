@@ -2221,6 +2221,16 @@ def _self_improvement_gateway_issues(
             p0_repair_selected=p0_repair_selected,
         ):
             continue
+        if (
+            code == "PENDING_ENTRY_CANCEL_REVIEW_REQUIRED"
+            and p0_repair_selected
+            and _verified_trade_covers_pending_cancel_review(
+                verified_decision_path,
+                finding=item,
+                audit_generated_at=payload.get("generated_at_utc"),
+            )
+        ):
+            continue
         if code == "LATEST_GPT_DECISION_STALE" and verification_postdates_audit:
             # The decision being staged was verified ACCEPTED after this audit
             # ran, so the audit's stale-decision verdict is about an older
@@ -2245,6 +2255,58 @@ def _self_improvement_gateway_issues(
             "self-improvement blocks new live entry risk: " + "; ".join(blockers[:3]),
         ).__dict__
     ]
+
+
+def _verified_trade_covers_pending_cancel_review(
+    verified_decision_path: Path | None,
+    *,
+    finding: dict[str, Any],
+    audit_generated_at: Any,
+) -> bool:
+    required_ids = _pending_cancel_review_order_ids_from_finding(finding)
+    if not required_ids or verified_decision_path is None or not verified_decision_path.exists():
+        return False
+    if audit_generated_at and not _accepted_verification_postdates(
+        verified_decision_path,
+        audit_generated_at=audit_generated_at,
+    ):
+        return False
+    try:
+        payload = json.loads(verified_decision_path.read_text())
+    except (OSError, json.JSONDecodeError, ValueError):
+        return False
+    if str(payload.get("status") or "").upper() != "ACCEPTED":
+        return False
+    decision = payload.get("decision") if isinstance(payload.get("decision"), dict) else {}
+    if str(decision.get("action") or "").upper() != "TRADE":
+        return False
+    cancel_ids = {
+        str(order_id or "").strip()
+        for order_id in decision.get("cancel_order_ids", []) or []
+        if str(order_id or "").strip()
+    }
+    return required_ids <= cancel_ids
+
+
+def _pending_cancel_review_order_ids_from_finding(finding: dict[str, Any]) -> set[str]:
+    order_ids: set[str] = set()
+
+    def add_many(values: Any) -> None:
+        for value in values or []:
+            text = str(value or "").strip()
+            if text:
+                order_ids.add(text)
+
+    add_many(finding.get("cancel_review_order_ids"))
+    evidence = finding.get("evidence") if isinstance(finding.get("evidence"), dict) else {}
+    add_many(evidence.get("cancel_review_order_ids"))
+    for item in evidence.get("orders", []) or []:
+        if isinstance(item, dict):
+            add_many((item.get("order_id"),))
+    for group in evidence.get("groups", []) or []:
+        if isinstance(group, dict):
+            add_many(group.get("order_ids"))
+    return order_ids
 
 
 def _selected_intent_is_self_improvement_profitability_repair(

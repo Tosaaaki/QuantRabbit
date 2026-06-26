@@ -996,6 +996,27 @@ class StrategyProfileTest(unittest.TestCase):
         self.assertEqual(issues[0].code, "STRATEGY_NOT_ELIGIBLE")
         self.assertEqual(issues[0].severity, "WARN")
 
+    def test_tp_proven_harvest_downgrades_pair_side_block_to_warning(self) -> None:
+        metadata = _tp_proof_metadata(
+            positive_rotation_mode="TP_PROVEN_HARVEST",
+            capture_take_profit_trades=20,
+            capture_take_profit_wins=20,
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            profile = StrategyProfile.load(
+                _pair_side_profile(Path(tmp), status="BLOCK_UNTIL_NEW_EVIDENCE", direction="SHORT")
+            )
+            prior = os.environ.get("QR_TRADER_DISABLE_SL_REPAIR")
+            os.environ["QR_TRADER_DISABLE_SL_REPAIR"] = "1"
+            try:
+                issues = profile.validate(_tp_proof_intent(metadata=metadata), for_live_send=True)
+            finally:
+                _restore_env("QR_TRADER_DISABLE_SL_REPAIR", prior)
+
+        self.assertEqual(len(issues), 1)
+        self.assertEqual(issues[0].code, "STRATEGY_NOT_ELIGIBLE")
+        self.assertEqual(issues[0].severity, "WARN")
+
     def test_tp_proof_collection_works_before_positive_rotation_label_is_added(self) -> None:
         metadata = _tp_proof_metadata()
         metadata.pop("positive_rotation_mode")

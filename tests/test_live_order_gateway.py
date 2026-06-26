@@ -725,6 +725,108 @@ class LiveOrderGatewayTest(unittest.TestCase):
             codes = {issue["code"] for issue in payload["risk_issues"]}
             self.assertNotIn("SELF_IMPROVEMENT_P0_BLOCKS_LIVE_ORDER", codes)
 
+    def test_pending_cancel_review_p0_requires_verified_trade_cancel_ids(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            audit = root / "self_improvement.json"
+            audit.write_text(
+                json.dumps(
+                    {
+                        "generated_at_utc": datetime.now(timezone.utc).isoformat(),
+                        "findings": [
+                            {
+                                "priority": "P0",
+                                "code": "PENDING_ENTRY_CANCEL_REVIEW_REQUIRED",
+                                "message": "1 trader-owned pending entry order(s) need cancel review",
+                                "evidence": {"cancel_review_order_ids": ["pending-1"]},
+                            }
+                        ],
+                    }
+                )
+            )
+            intents = _intents(
+                root,
+                metadata={
+                    "desk": "failure_trader",
+                    "campaign_role": "NOW",
+                    "self_improvement_p0_repair_live_ready": True,
+                    "self_improvement_p0_repair_mode": "TP_HARVEST_REPAIR",
+                },
+            )
+            client = FakeExecutionClient()
+            summary = LiveOrderGateway(
+                client=client,
+                strategy_profile=_profile(root),
+                output_path=root / "request.json",
+                report_path=root / "report.md",
+                self_improvement_audit=audit,
+            ).run(intents_path=intents, lane_id="lane:EUR_USD:LONG")
+
+            self.assertEqual(summary.status, "BLOCKED")
+            payload = json.loads((root / "request.json").read_text())
+            codes = {issue["code"] for issue in payload["risk_issues"]}
+            self.assertIn("SELF_IMPROVEMENT_P0_BLOCKS_LIVE_ORDER", codes)
+
+    def test_pending_cancel_review_p0_allows_verified_trade_replacement_staging(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            now = datetime.now(timezone.utc)
+            audit = root / "self_improvement.json"
+            audit.write_text(
+                json.dumps(
+                    {
+                        "generated_at_utc": (now - timedelta(minutes=1)).isoformat(),
+                        "findings": [
+                            {
+                                "priority": "P0",
+                                "code": "PENDING_ENTRY_CANCEL_REVIEW_REQUIRED",
+                                "message": "1 trader-owned pending entry order(s) need cancel review",
+                                "evidence": {"cancel_review_order_ids": ["pending-1"]},
+                            }
+                        ],
+                    }
+                )
+            )
+            verified = root / "gpt_decision.json"
+            verified.write_text(
+                json.dumps(
+                    {
+                        "generated_at_utc": now.isoformat(),
+                        "status": "ACCEPTED",
+                        "decision": {
+                            "action": "TRADE",
+                            "selected_lane_id": "lane:EUR_USD:LONG",
+                            "selected_lane_ids": ["lane:EUR_USD:LONG"],
+                            "cancel_order_ids": ["pending-1"],
+                        },
+                        "verification_issues": [],
+                    }
+                )
+            )
+            intents = _intents(
+                root,
+                metadata={
+                    "desk": "failure_trader",
+                    "campaign_role": "NOW",
+                    "self_improvement_p0_repair_live_ready": True,
+                    "self_improvement_p0_repair_mode": "TP_HARVEST_REPAIR",
+                },
+            )
+            client = FakeExecutionClient()
+            summary = LiveOrderGateway(
+                client=client,
+                strategy_profile=_profile(root),
+                output_path=root / "request.json",
+                report_path=root / "report.md",
+                self_improvement_audit=audit,
+                verified_decision_path=verified,
+            ).run(intents_path=intents, lane_id="lane:EUR_USD:LONG")
+
+            self.assertEqual(summary.status, "STAGED")
+            payload = json.loads((root / "request.json").read_text())
+            codes = {issue["code"] for issue in payload["risk_issues"]}
+            self.assertNotIn("SELF_IMPROVEMENT_P0_BLOCKS_LIVE_ORDER", codes)
+
     def test_profit_capture_miss_p0_allows_tp_harvest_repair_lane_staging(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
