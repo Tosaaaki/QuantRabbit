@@ -3417,9 +3417,11 @@ def _autonomous_decision_from_packet(packet: dict[str, Any]) -> tuple[dict[str, 
     candidate_lane_ids = _draft_candidate_lane_ids(packet, live_ready_lane_ids)
     selected_lane_ids = _draft_margin_aware_basket(packet, candidate_lane_ids, lanes_by_id)
     pending_cancel_order_ids = tuple(sorted(_self_improvement_pending_cancel_review_order_ids(packet)))
+    pending_cancel_reasons = _self_improvement_pending_cancel_review_reasons(packet)
 
     blockers: list[str] = []
-    blockers.extend(_position_close_sidecar_reasons(packet))
+    position_close_reasons = _position_close_sidecar_reasons(packet)
+    blockers.extend(position_close_reasons)
     blockers.extend(_trade_exposure_blockers(packet))
     blockers.extend(_entry_thesis_sidecar_reasons(packet))
     blockers.extend(_projection_ledger_trade_blockers(packet))
@@ -3444,6 +3446,12 @@ def _autonomous_decision_from_packet(packet: dict[str, Any]) -> tuple[dict[str, 
             selected_lane_ids,
             lanes_by_id,
             cancel_order_ids=pending_cancel_order_ids,
+        ), blockers
+    if pending_cancel_order_ids and not live_ready_lane_ids and not position_close_reasons:
+        return _cancel_pending_decision_draft(
+            packet,
+            cancel_order_ids=pending_cancel_order_ids,
+            blockers=[*pending_cancel_reasons, *blockers],
         ), blockers
     return _non_trade_decision_draft(packet, blockers, live_ready_lane_ids, lanes_by_id), blockers
 
@@ -3597,6 +3605,132 @@ def _non_trade_decision_draft(
         "specialist_reviews": [],
         "operator_summary": "Autonomous trader draft did not select a trade because required evidence/gates are blocked.",
     }
+
+
+def _cancel_pending_decision_draft(
+    packet: dict[str, Any],
+    *,
+    cancel_order_ids: tuple[str, ...],
+    blockers: list[str],
+) -> dict[str, Any]:
+    refs = _draft_cancel_pending_evidence_refs(packet)
+    pending_by_id = {
+        str(order.get("order_id") or ""): order
+        for order in _pending_entry_orders(packet)
+        if str(order.get("order_id") or "")
+    }
+    summaries = [
+        _draft_pending_order_summary(order_id, pending_by_id.get(order_id) or {})
+        for order_id in cancel_order_ids
+    ]
+    blocker_text = "; ".join(blockers[:5]) if blockers else "PENDING_ENTRY_CANCEL_REVIEW_REQUIRED"
+    return {
+        "generated_at_utc": datetime.now(timezone.utc).isoformat(),
+        "action": "CANCEL_PENDING",
+        "selected_lane_id": None,
+        "selected_lane_ids": [],
+        "cancel_order_ids": list(cancel_order_ids),
+        "close_trade_ids": [],
+        "confidence": "HIGH",
+        "thesis": (
+            "Reconcile trader-owned pending entries before new-risk routing: "
+            f"{'; '.join(summaries)}."
+        ),
+        "method": _draft_cancel_pending_method(pending_by_id, cancel_order_ids),
+        "narrative": (
+            "Autonomous trader draft selected CANCEL_PENDING because self-improvement "
+            "requires pending-entry cancel review and no current LIVE_READY replacement basket exists."
+        ),
+        "chart_story": (
+            "Current broker snapshot still has trader-owned pending entry order(s), while "
+            "the current order_intents packet has no tradeable LIVE_READY lane."
+        ),
+        "invalidation": (
+            "Do not cancel if a gateway-refresh broker snapshot no longer contains the order id "
+            "as a current trader-owned pending entry."
+        ),
+        "rejected_alternatives": [
+            f"TRADE rejected by autonomous draft blocker: {item}" for item in blockers[:8]
+        ] or ["TRADE rejected because no current LIVE_READY lane exists."],
+        "risk_notes": [
+            "No fresh entry is authorized by this cancel-only receipt.",
+            "Cancel only verifier-approved current trader-owned pending entry order ids: "
+            + ", ".join(cancel_order_ids),
+            "LiveOrderGateway must re-fetch broker truth before canceling.",
+        ],
+        "evidence_refs": refs,
+        "twenty_minute_plan": _draft_twenty_minute_plan(
+            action="CANCEL_PENDING",
+            pair="",
+            side="",
+            selected_lane_ids=(),
+            refs=refs,
+        ),
+        "strategy_reviews": [],
+        "specialist_reviews": [],
+        "operator_summary": (
+            "Autonomous trader draft will clear stale pending exposure through the verified "
+            "CANCEL_PENDING gateway path before any new trade decision."
+        ),
+    }
+
+
+def _draft_cancel_pending_evidence_refs(packet: dict[str, Any]) -> list[str]:
+    return _known_ordered_refs(
+        packet,
+        [
+            "broker:snapshot",
+            "target:daily",
+            "self_improvement:audit",
+            "self_improvement:execution_quality",
+            "self_improvement:finding:PENDING_ENTRY_CANCEL_REVIEW_REQUIRED",
+            "timing:audit",
+            "timing:canceled_orders",
+        ],
+    )
+
+
+def _draft_pending_order_summary(order_id: str, order: dict[str, Any]) -> str:
+    pair = str(order.get("pair") or "unknown_pair")
+    side = str(order.get("side") or _side_from_order_units(order.get("units")) or "UNKNOWN").upper()
+    order_type = str(order.get("order_type") or "ORDER")
+    price = order.get("price")
+    units = order.get("units")
+    return f"{order_id} {pair} {side} {order_type} units={units} price={price}"
+
+
+def _draft_cancel_pending_method(
+    pending_by_id: dict[str, dict[str, Any]],
+    cancel_order_ids: tuple[str, ...],
+) -> str:
+    methods = {
+        _method_from_pending_order(pending_by_id.get(order_id) or {})
+        for order_id in cancel_order_ids
+    }
+    methods.discard("")
+    if len(methods) == 1:
+        method = next(iter(methods))
+        if method in ALLOWED_METHODS:
+            return method
+    return "POSITION_MANAGEMENT"
+
+
+def _method_from_pending_order(order: dict[str, Any]) -> str:
+    lane = str(order.get("lane_id") or "")
+    if not lane:
+        raw = order.get("raw") if isinstance(order.get("raw"), dict) else {}
+        for key in ("clientExtensions", "tradeClientExtensions"):
+            extension = raw.get(key)
+            if not isinstance(extension, dict):
+                continue
+            comment = str(extension.get("comment") or "")
+            marker = "lane="
+            if marker not in comment:
+                continue
+            lane = comment.split(marker, 1)[1].split()[0]
+            break
+    parts = lane.split(":")
+    return parts[3] if len(parts) >= 4 else ""
 
 
 def _draft_trade_evidence_refs(

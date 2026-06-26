@@ -97,6 +97,31 @@ class GPTTraderBrainTest(unittest.TestCase):
             verified = brain.run(snapshot_path=files["snapshot"])
             self.assertEqual(verified.status, "ACCEPTED")
 
+    def test_draft_cancels_pending_review_when_no_live_ready_replacement_exists(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root, orders=[_pending_order()])
+            files["intents"].write_text(json.dumps({"results": []}))
+            files["self_improvement_audit"].write_text(
+                json.dumps(_self_improvement_pending_cancel_review_p0())
+            )
+
+            summary = _draft(root, files)
+
+            self.assertEqual(summary.status, "DRAFT_ACCEPTED")
+            self.assertEqual(summary.action, "CANCEL_PENDING")
+            self.assertEqual(summary.selected_lane_ids, ())
+            decision = json.loads((root / "codex_trader_decision_response.json").read_text())
+            self.assertEqual(decision["cancel_order_ids"], ["pending-1"])
+            self.assertIn("self_improvement:audit", decision["evidence_refs"])
+            self.assertIn(
+                "self_improvement:finding:PENDING_ENTRY_CANCEL_REVIEW_REQUIRED",
+                decision["evidence_refs"],
+            )
+            brain = _brain(root, files, decision)
+            verified = brain.run(snapshot_path=files["snapshot"])
+            self.assertEqual(verified.status, "ACCEPTED")
+
     def test_rejects_trade_when_news_health_is_blocked(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
