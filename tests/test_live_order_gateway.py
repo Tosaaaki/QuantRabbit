@@ -937,6 +937,80 @@ class LiveOrderGatewayTest(unittest.TestCase):
             self.assertIn("SELF_IMPROVEMENT_P0_BLOCKS_LIVE_ORDER", codes)
             self.assertIn("SELF_IMPROVEMENT_FORECAST_ADVERSE_PATH", payload["risk_issues"][-1]["message"])
 
+    def test_forecast_adverse_path_allows_tp_proven_repair_lane_staging(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            audit = root / "self_improvement.json"
+            audit.write_text(
+                json.dumps(
+                    {
+                        "generated_at_utc": datetime.now(timezone.utc).isoformat(),
+                        "root_cause_focus": {
+                            "primary": {
+                                "family": "FORECAST_ADVERSE_PATH",
+                                "confidence": "HIGH",
+                                "priority": "P1",
+                                "process_loop_streak": 16,
+                                "supporting_codes": [
+                                    "DIRECTIONAL_FORECAST_HIT_RATE_WEAK",
+                                    "DIRECTIONAL_FORECAST_INVALIDATION_FIRST_DOMINANT",
+                                ],
+                            }
+                        },
+                    }
+                )
+            )
+            intents = _intents(
+                root,
+                order_type="LIMIT",
+                metadata={
+                    "desk": "failure_trader",
+                    "campaign_role": "NOW",
+                    "forecast_direction": "RANGE",
+                    "forecast_confidence": 0.62,
+                    "attach_take_profit_on_fill": True,
+                    "tp_execution_mode": "ATTACHED_TECHNICAL_TP",
+                    "tp_target_intent": "HARVEST",
+                    "opportunity_mode": "HARVEST",
+                    "positive_rotation_live_ready": True,
+                    "positive_rotation_mode": "TP_PROVEN_HARVEST",
+                    "positive_rotation_pessimistic_expectancy_jpy": 180.0,
+                    "capture_take_profit_scope": "PAIR_SIDE_METHOD",
+                    "capture_take_profit_scope_key": (
+                        "EUR_USD|LONG|BREAKOUT_FAILURE|TAKE_PROFIT_ORDER"
+                    ),
+                    "capture_take_profit_trades": 20,
+                    "capture_take_profit_losses": 0,
+                    "capture_take_profit_expectancy_jpy": 591.5,
+                    "self_improvement_forecast_adverse_path_repair_live_ready": True,
+                    "self_improvement_forecast_adverse_path_repair_mode": "TP_HARVEST_REPAIR",
+                    "self_improvement_forecast_adverse_path_repair_blocker_code": (
+                        "SELF_IMPROVEMENT_FORECAST_ADVERSE_PATH"
+                    ),
+                },
+            )
+            payload = json.loads(intents.read_text())
+            intent = payload["results"][0]["intent"]
+            intent["thesis"] = "tp-proven failed-break fade"
+            intent["market_context"]["method"] = "BREAKOUT_FAILURE"
+            intent["market_context"]["regime"] = "RANGE current; BREAKOUT_FAILURE campaign lane"
+            intents.write_text(json.dumps(payload))
+            client = FakeExecutionClient()
+
+            summary = LiveOrderGateway(
+                client=client,
+                strategy_profile=_profile(root),
+                output_path=root / "request.json",
+                report_path=root / "report.md",
+                self_improvement_audit=audit,
+            ).run(intents_path=intents, lane_id="lane:EUR_USD:LONG")
+
+            self.assertEqual(summary.status, "STAGED")
+            self.assertFalse(summary.sent)
+            payload = json.loads((root / "request.json").read_text())
+            codes = {issue["code"] for issue in payload["risk_issues"]}
+            self.assertNotIn("SELF_IMPROVEMENT_P0_BLOCKS_LIVE_ORDER", codes)
+
     def test_stale_prior_gpt_decision_p0_does_not_block_live_order_staging(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

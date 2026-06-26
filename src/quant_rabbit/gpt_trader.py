@@ -1442,6 +1442,8 @@ from quant_rabbit.instruments import (
 )
 from quant_rabbit.risk import RiskPolicy, _spread_session_multiplier_from_tag
 from quant_rabbit.self_improvement_guards import (
+    FORECAST_ADVERSE_PATH_BLOCKER_CODE,
+    forecast_adverse_path_exempted_by_tp_harvest_repair,
     forecast_adverse_path_new_risk_blocker,
     intent_matches_profitability_worst_segment,
     oanda_firepower_repair_current_risk_reaches_minimum,
@@ -3962,12 +3964,29 @@ def _lane_packet(
                         "self_improvement_p0_repair_mode",
                         "self_improvement_p0_repair_blocker_code",
                         "self_improvement_p0_repair_reason",
+                        "self_improvement_forecast_adverse_path_repair_live_ready",
+                        "self_improvement_forecast_adverse_path_repair_mode",
+                        "self_improvement_forecast_adverse_path_repair_blocker_code",
+                        "self_improvement_forecast_adverse_path_repair_reason",
+                        "position_intent",
+                        "forecast_direction",
+                        "attach_take_profit_on_fill",
+                        "positive_rotation_live_ready",
                         "positive_rotation_mode",
+                        "positive_rotation_pessimistic_expectancy_jpy",
                         "positive_rotation_minimum_floor_reachable",
                         "positive_rotation_minimum_floor_reach_basis",
                         "positive_rotation_oanda_campaign_current_risk_minimum_floor_reachable",
                         "positive_rotation_oanda_campaign_current_risk_estimated_return_pct_per_active_day",
                         "positive_rotation_oanda_campaign_remaining_minimum_pct",
+                        "capture_take_profit_scope",
+                        "capture_take_profit_scope_key",
+                        "capture_take_profit_trades",
+                        "capture_take_profit_losses",
+                        "capture_take_profit_expectancy_jpy",
+                        "tp_execution_mode",
+                        "tp_target_intent",
+                        "opportunity_mode",
                     ),
                 ),
                 "position_building": _small_dict(
@@ -6515,10 +6534,16 @@ def _self_improvement_trade_blockers(
         packet,
         selected_lane_ids,
     )
+    forecast_repair_selected = _all_selected_lanes_are_forecast_adverse_path_repair(
+        packet,
+        selected_lane_ids,
+    )
     for blocker in blockers:
         if not isinstance(blocker, dict):
             continue
         code = str(blocker.get("code") or "SELF_IMPROVEMENT_P0")
+        if code == FORECAST_ADVERSE_PATH_BLOCKER_CODE and forecast_repair_selected:
+            continue
         if p0_code_exempted_by_tp_harvest_repair(
             code,
             p0_repair_selected=p0_repair_selected,
@@ -6604,6 +6629,28 @@ def _all_selected_lanes_are_self_improvement_profitability_repair(
         if not oanda_firepower_repair_current_risk_reaches_minimum(repair):
             return False
         if intent_matches_profitability_worst_segment(lane, worst_segment):
+            return False
+    return True
+
+
+def _all_selected_lanes_are_forecast_adverse_path_repair(
+    packet: dict[str, Any],
+    selected_lane_ids: Sequence[str],
+) -> bool:
+    lane_ids = tuple(dict.fromkeys(str(item) for item in selected_lane_ids if str(item)))
+    if not lane_ids:
+        return False
+    lane_map = {
+        str(lane.get("lane_id") or ""): lane
+        for lane in packet.get("lanes", []) or []
+        if isinstance(lane, dict) and str(lane.get("lane_id") or "")
+    }
+    for lane_id in lane_ids:
+        lane = lane_map.get(lane_id)
+        if not isinstance(lane, dict):
+            return False
+        repair = lane.get("self_improvement") if isinstance(lane.get("self_improvement"), dict) else {}
+        if not forecast_adverse_path_exempted_by_tp_harvest_repair(lane, repair):
             return False
     return True
 

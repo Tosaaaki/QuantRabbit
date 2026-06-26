@@ -1018,6 +1018,90 @@ class GPTTraderBrainTest(unittest.TestCase):
                 payload["input_packet"]["allowed_evidence_refs"],
             )
 
+    def test_allows_tp_proven_repair_trade_when_forecast_adverse_path_persists(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root)
+            files["self_improvement_audit"].write_text(
+                json.dumps(
+                    {
+                        "generated_at_utc": datetime.now(timezone.utc).isoformat(),
+                        "status": "SELF_IMPROVEMENT_BLOCKED",
+                        "p0_findings": 0,
+                        "p1_findings": 3,
+                        "p2_findings": 0,
+                        "root_cause_focus": {
+                            "primary": {
+                                "family": "FORECAST_ADVERSE_PATH",
+                                "confidence": "HIGH",
+                                "priority": "P1",
+                                "process_loop_streak": 16,
+                                "supporting_codes": [
+                                    "DIRECTIONAL_FORECAST_HIT_RATE_WEAK",
+                                    "DIRECTIONAL_FORECAST_INVALIDATION_FIRST_DOMINANT",
+                                ],
+                            }
+                        },
+                        "findings": [
+                            {
+                                "priority": "P1",
+                                "layer": "forecast",
+                                "code": "DIRECTIONAL_FORECAST_HIT_RATE_WEAK",
+                                "message": "directional_forecast HIT rate is weak",
+                            }
+                        ],
+                    }
+                )
+            )
+            intents = json.loads(files["intents"].read_text())
+            intent = intents["results"][0]["intent"]
+            intent["order_type"] = "LIMIT"
+            intent["thesis"] = "tp-proven failed-break fade"
+            intent["market_context"]["method"] = "BREAKOUT_FAILURE"
+            intent["market_context"]["regime"] = "RANGE current; BREAKOUT_FAILURE campaign lane"
+            intent["metadata"].update(
+                {
+                    "opportunity_mode": "HARVEST",
+                    "tp_execution_mode": "ATTACHED_TECHNICAL_TP",
+                    "tp_target_intent": "HARVEST",
+                    "forecast_direction": "RANGE",
+                    "forecast_confidence": 0.62,
+                    "attach_take_profit_on_fill": True,
+                    "positive_rotation_live_ready": True,
+                    "positive_rotation_mode": "TP_PROVEN_HARVEST",
+                    "positive_rotation_pessimistic_expectancy_jpy": 180.0,
+                    "capture_take_profit_scope": "PAIR_SIDE_METHOD",
+                    "capture_take_profit_scope_key": (
+                        "EUR_USD|LONG|BREAKOUT_FAILURE|TAKE_PROFIT_ORDER"
+                    ),
+                    "capture_take_profit_trades": 20,
+                    "capture_take_profit_losses": 0,
+                    "capture_take_profit_expectancy_jpy": 591.5,
+                    "self_improvement_forecast_adverse_path_repair_live_ready": True,
+                    "self_improvement_forecast_adverse_path_repair_mode": "TP_HARVEST_REPAIR",
+                    "self_improvement_forecast_adverse_path_repair_blocker_code": (
+                        "SELF_IMPROVEMENT_FORECAST_ADVERSE_PATH"
+                    ),
+                }
+            )
+            files["intents"].write_text(json.dumps(intents))
+            decision = _trade_decision(method="BREAKOUT_FAILURE")
+            decision["evidence_refs"].extend(
+                [
+                    "self_improvement:audit",
+                    "self_improvement:forecast",
+                    "self_improvement:root_cause:FORECAST_ADVERSE_PATH",
+                ]
+            )
+            brain = _brain(root, files, decision)
+
+            summary = brain.run(snapshot_path=files["snapshot"])
+
+            self.assertEqual(summary.status, "ACCEPTED")
+            payload = json.loads((root / "gpt_decision.json").read_text())
+            codes = {issue["code"] for issue in payload["verification_issues"]}
+            self.assertNotIn("SELF_IMPROVEMENT_P0_BLOCKS_TRADE", codes)
+
     def test_allows_trade_when_only_self_improvement_p0_is_stale_prior_gpt_decision(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

@@ -54,7 +54,10 @@ from quant_rabbit.risk import (
     resolve_max_loss_jpy,
 )
 from quant_rabbit.self_improvement_guards import (
+    FORECAST_ADVERSE_PATH_BLOCKER_CODE,
+    FORECAST_ADVERSE_PATH_REPAIR_MODE,
     forecast_adverse_path_new_risk_blocker,
+    tp_harvest_forecast_adverse_path_repair_shape,
     oanda_firepower_repair_current_risk_reaches_minimum,
     pending_execution_lifecycle_new_risk_blocker,
 )
@@ -5002,6 +5005,9 @@ SELF_IMPROVEMENT_PROFITABILITY_P0_CODE = "SELF_IMPROVEMENT_P0_PROFITABILITY_DISC
 SELF_IMPROVEMENT_PROFITABILITY_P0_REPAIR_CODE = (
     "SELF_IMPROVEMENT_P0_PROFITABILITY_REPAIR_MODE"
 )
+SELF_IMPROVEMENT_FORECAST_ADVERSE_PATH_REPAIR_CODE = (
+    "SELF_IMPROVEMENT_FORECAST_ADVERSE_PATH_REPAIR_MODE"
+)
 SELF_IMPROVEMENT_PROFITABILITY_P0_REPAIR_RECENT_LOSS_CODE = (
     "SELF_IMPROVEMENT_P0_REPAIR_RECENT_LANE_LOSS"
 )
@@ -5656,9 +5662,17 @@ class IntentGenerator:
             self_improvement_forecast_issue is not None
             and str(intent.metadata.get("position_intent") or "").upper() != "HEDGE"
         ):
-            risk_issues.append(dict(self_improvement_forecast_issue))
-            live_blockers = (*live_blockers, self_improvement_forecast_issue["message"])
-            risk_allowed = False
+            forecast_repair_issue = _self_improvement_forecast_adverse_path_repair_issue(
+                intent,
+                method,
+                self_improvement_forecast_issue,
+            )
+            if forecast_repair_issue is not None:
+                risk_issues.append(forecast_repair_issue)
+            else:
+                risk_issues.append(dict(self_improvement_forecast_issue))
+                live_blockers = (*live_blockers, self_improvement_forecast_issue["message"])
+                risk_allowed = False
         if (
             self_improvement_pending_issue is not None
             and intent.order_type != OrderType.MARKET
@@ -9906,6 +9920,44 @@ def _self_improvement_forecast_adverse_path_issue(data_root: Path) -> dict[str, 
         "code": str(blocker["code"]),
         "message": str(blocker["message"]),
         "severity": "BLOCK",
+    }
+
+
+def _self_improvement_forecast_adverse_path_repair_issue(
+    intent: OrderIntent,
+    method: TradeMethod | None,
+    blocker: dict[str, str],
+) -> dict[str, str] | None:
+    metadata = intent.metadata or {}
+    intent_shape = {
+        "pair": intent.pair,
+        "side": intent.side.value,
+        "order_type": intent.order_type.value,
+        "method": method.value if method is not None else "",
+    }
+    if not tp_harvest_forecast_adverse_path_repair_shape(intent_shape, metadata):
+        return None
+    metadata["self_improvement_forecast_adverse_path_repair_live_ready"] = True
+    metadata["self_improvement_forecast_adverse_path_repair_mode"] = (
+        FORECAST_ADVERSE_PATH_REPAIR_MODE
+    )
+    metadata["self_improvement_forecast_adverse_path_repair_blocker_code"] = (
+        str(blocker.get("code") or FORECAST_ADVERSE_PATH_BLOCKER_CODE)
+    )
+    metadata["self_improvement_forecast_adverse_path_repair_reason"] = (
+        "persistent forecast-adverse-path diagnosis is downgraded only for this "
+        "exact non-market attached-TP HARVEST lane with pair/side/method "
+        "TAKE_PROFIT_ORDER proof; forecast, market-structure, spread, risk, "
+        "broker-truth, and gateway gates still decide live eligibility"
+    )
+    return {
+        "code": SELF_IMPROVEMENT_FORECAST_ADVERSE_PATH_REPAIR_CODE,
+        "message": (
+            "self-improvement forecast adverse path downgraded to TP HARVEST "
+            "repair mode for this exact broker-TP-proven non-market lane; all "
+            "normal protective gates still apply"
+        ),
+        "severity": "WARN",
     }
 
 

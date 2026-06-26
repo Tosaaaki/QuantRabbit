@@ -44,6 +44,7 @@ from quant_rabbit.risk import (
 )
 from quant_rabbit.risk import DEFAULT_SPECS, estimate_required_margin_jpy, margin_budget_jpy
 from quant_rabbit.self_improvement_guards import (
+    forecast_adverse_path_exempted_by_tp_harvest_repair,
     forecast_adverse_path_new_risk_blocker,
     intent_matches_profitability_worst_segment,
     oanda_firepower_repair_current_risk_reaches_minimum,
@@ -2207,6 +2208,7 @@ def _self_improvement_gateway_issues(
         selected,
         worst_segment=worst_segment,
     )
+    forecast_repair_selected = forecast_adverse_path_exempted_by_tp_harvest_repair(selected)
     blockers: list[str] = []
     for item in payload.get("findings", []) or []:
         if not isinstance(item, dict):
@@ -2233,7 +2235,7 @@ def _self_improvement_gateway_issues(
         message = str(item.get("message") or code)
         blockers.append(f"{code}: {message}")
     forecast_blocker = forecast_adverse_path_new_risk_blocker(payload)
-    if forecast_blocker is not None:
+    if forecast_blocker is not None and not forecast_repair_selected:
         blockers.append(f"{forecast_blocker['code']}: {forecast_blocker['message']}")
     if not blockers:
         return []

@@ -11380,6 +11380,114 @@ class IntentGeneratorTest(unittest.TestCase):
                 )
             )
 
+    def test_forecast_adverse_path_allows_tp_proven_breakout_failure_repair_lane(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "self_improvement_audit.json").write_text(
+                json.dumps(
+                    {
+                        "generated_at_utc": datetime.now(timezone.utc).isoformat(),
+                        "root_cause_focus": {
+                            "primary": {
+                                "family": "FORECAST_ADVERSE_PATH",
+                                "confidence": "HIGH",
+                                "priority": "P1",
+                                "process_loop_streak": 16,
+                                "supporting_codes": [
+                                    "DIRECTIONAL_FORECAST_HIT_RATE_WEAK",
+                                    "DIRECTIONAL_FORECAST_INVALIDATION_FIRST_DOMINANT",
+                                ],
+                                "metrics": {
+                                    "directional_hit_rate": 0.261,
+                                    "invalidation_first_rate": 0.739,
+                                    "profit_factor": 0.891,
+                                },
+                            }
+                        },
+                    }
+                )
+            )
+            (root / "capture_economics.json").write_text(
+                json.dumps(
+                    {
+                        "status": "NEGATIVE_EXPECTANCY",
+                        "overall": {
+                            "trades": 213,
+                            "avg_win_jpy": 415.5,
+                            "avg_loss_jpy": 1061.9,
+                            "payoff_ratio": 0.391,
+                            "breakeven_payoff_at_win_rate": 0.651,
+                        },
+                        "by_exit_reason": {
+                            "TAKE_PROFIT_ORDER": {
+                                "trades": 93,
+                                "wins": 93,
+                                "losses": 0,
+                                "avg_win_jpy": 504.0,
+                                "avg_loss_jpy": 0.0,
+                                "expectancy_jpy_per_trade": 504.0,
+                            },
+                            "MARKET_ORDER_TRADE_CLOSE": {
+                                "trades": 92,
+                                "wins": 19,
+                                "losses": 73,
+                                "avg_win_jpy": 220.0,
+                                "avg_loss_jpy": 1095.5,
+                                "expectancy_jpy_per_trade": -809.8,
+                            },
+                        },
+                        **_capture_scoped_tp_payload(method="BREAKOUT_FAILURE", trades=20),
+                    }
+                )
+            )
+            campaign = _breakout_failure_campaign(root)
+            campaign_payload = json.loads(campaign.read_text())
+            campaign_payload["lanes"][0].update(
+                {
+                    "forecast_direction": "RANGE",
+                    "forecast_confidence": 0.62,
+                }
+            )
+            campaign.write_text(json.dumps(campaign_payload))
+            output = root / "intents.json"
+
+            summary = IntentGenerator(
+                campaign_plan=campaign,
+                strategy_profile=_strategy(root, status="CANDIDATE"),
+                output_path=output,
+                report_path=root / "intents.md",
+                pair_charts_path=_pair_charts_with_direction(
+                    root,
+                    long_score=0.70,
+                    short_score=0.30,
+                    dominant_regime="BREAKOUT_FAILURE",
+                    m5_regime="BREAKOUT_FAILURE",
+                ),
+                data_root=root,
+                max_loss_jpy=1000.0,
+            ).run(snapshot_path=_snapshot(root))
+
+            payload = json.loads(output.read_text())
+            result = next(
+                item for item in payload["results"]
+                if item["lane_id"] == "failure_trader:EUR_USD:LONG:BREAKOUT_FAILURE:LIMIT"
+            )
+            metadata = result["intent"]["metadata"]
+            issue_codes = {issue["code"] for issue in result["risk_issues"]}
+
+            self.assertGreaterEqual(summary.live_ready, 1)
+            self.assertEqual(result["status"], "LIVE_READY")
+            self.assertTrue(metadata["positive_rotation_live_ready"])
+            self.assertEqual(metadata["positive_rotation_mode"], "TP_PROVEN_HARVEST")
+            self.assertTrue(metadata["self_improvement_forecast_adverse_path_repair_live_ready"])
+            self.assertEqual(
+                metadata["self_improvement_forecast_adverse_path_repair_mode"],
+                "TP_HARVEST_REPAIR",
+            )
+            self.assertIn("SELF_IMPROVEMENT_FORECAST_ADVERSE_PATH_REPAIR_MODE", issue_codes)
+            self.assertNotIn("SELF_IMPROVEMENT_FORECAST_ADVERSE_PATH", issue_codes)
+            self.assertNotIn("SELF_IMPROVEMENT_FORECAST_ADVERSE_PATH", result["live_blocker_codes"])
+
     def test_projection_economic_precision_gap_blocks_persistent_forecast_path(self) -> None:
         # The operator goal needs forecast precision that remains true after
         # TIMEOUT/no-touch outcomes. A repeated headline-only projection bucket

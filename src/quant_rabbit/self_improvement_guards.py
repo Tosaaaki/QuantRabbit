@@ -20,6 +20,8 @@ PERSISTENT_ROOT_CAUSE_STREAK_MIN = 3
 
 FORECAST_ADVERSE_PATH_BLOCKER_CODE = "SELF_IMPROVEMENT_FORECAST_ADVERSE_PATH"
 FORECAST_ADVERSE_PATH_FAMILY = "FORECAST_ADVERSE_PATH"
+FORECAST_ADVERSE_PATH_REPAIR_MODE = "TP_HARVEST_REPAIR"
+TP_HARVEST_REPAIR_MIN_TRADES = 20
 FORECAST_ADVERSE_SUPPORT_CODES = frozenset(
     {
         "DIRECTIONAL_FORECAST_BUCKET_HIT_RATE_WEAK",
@@ -291,6 +293,90 @@ def p0_code_exempted_by_tp_harvest_repair(code: str, *, p0_repair_selected: bool
     return str(code or "").strip() in TP_HARVEST_REPAIR_EXEMPT_P0_CODES
 
 
+def tp_harvest_forecast_adverse_path_repair_shape(
+    intent_or_lane: dict[str, Any] | None,
+    metadata: dict[str, Any] | None = None,
+) -> bool:
+    """Return true for the exact TP-proven HARVEST lane that may repair forecast P1.
+
+    This does not bypass market-structure, spread, risk, broker-truth, or gateway
+    gates. It only identifies the already broker-TP-proven non-market shape whose
+    forecast-adverse-path blocker can be downgraded while those gates still decide
+    live eligibility.
+    """
+
+    if not isinstance(intent_or_lane, dict):
+        return False
+    intent_payload = _intent_payload(intent_or_lane)
+    meta = _metadata_from_intent_or_lane(intent_payload, metadata)
+    if str(intent_payload.get("order_type") or "").strip().upper() == "MARKET":
+        return False
+    pair = str(intent_payload.get("pair") or "").strip()
+    side = str(
+        intent_payload.get("side")
+        or intent_payload.get("direction")
+        or ""
+    ).strip().upper()
+    method = _intent_or_lane_method(intent_payload)
+    if not pair or not side or method != "BREAKOUT_FAILURE":
+        return False
+    forecast_direction = str(meta.get("forecast_direction") or "").strip().upper()
+    if forecast_direction and forecast_direction != "RANGE":
+        return False
+    if str(meta.get("position_intent") or "NEW").strip().upper() == "HEDGE":
+        return False
+    if meta.get("attach_take_profit_on_fill") is not True:
+        return False
+    if str(meta.get("tp_execution_mode") or "").strip().upper() != "ATTACHED_TECHNICAL_TP":
+        return False
+    if str(meta.get("tp_target_intent") or "").strip().upper() != "HARVEST":
+        return False
+    if str(meta.get("opportunity_mode") or "").strip().upper() != "HARVEST":
+        return False
+    if str(meta.get("positive_rotation_mode") or "").strip().upper() != "TP_PROVEN_HARVEST":
+        return False
+    if meta.get("positive_rotation_live_ready") is not True:
+        return False
+    if str(meta.get("capture_take_profit_scope") or "").strip().upper() != "PAIR_SIDE_METHOD":
+        return False
+    expected_scope = f"{pair}|{side}|{method}|TAKE_PROFIT_ORDER".upper()
+    if str(meta.get("capture_take_profit_scope_key") or "").strip().upper() != expected_scope:
+        return False
+    tp_trades = _optional_int(meta.get("capture_take_profit_trades")) or 0
+    if tp_trades < TP_HARVEST_REPAIR_MIN_TRADES:
+        return False
+    tp_losses = _optional_int(meta.get("capture_take_profit_losses")) or 0
+    if tp_losses != 0:
+        return False
+    tp_expectancy = _optional_float(meta.get("capture_take_profit_expectancy_jpy"))
+    if tp_expectancy is None or tp_expectancy <= 0:
+        return False
+    pessimistic = _optional_float(meta.get("positive_rotation_pessimistic_expectancy_jpy"))
+    if pessimistic is None or pessimistic <= 0:
+        return False
+    return True
+
+
+def forecast_adverse_path_exempted_by_tp_harvest_repair(
+    intent_or_lane: dict[str, Any] | None,
+    metadata: dict[str, Any] | None = None,
+) -> bool:
+    meta = _metadata_from_intent_or_lane(intent_or_lane, metadata)
+    if meta.get("self_improvement_forecast_adverse_path_repair_live_ready") is not True:
+        return False
+    if (
+        str(meta.get("self_improvement_forecast_adverse_path_repair_mode") or "").strip()
+        != FORECAST_ADVERSE_PATH_REPAIR_MODE
+    ):
+        return False
+    if (
+        str(meta.get("self_improvement_forecast_adverse_path_repair_blocker_code") or "").strip()
+        != FORECAST_ADVERSE_PATH_BLOCKER_CODE
+    ):
+        return False
+    return tp_harvest_forecast_adverse_path_repair_shape(intent_or_lane, meta)
+
+
 def _oanda_firepower_normal_cap_weighted_pace_reaches_minimum(
     metadata: dict[str, Any],
     *,
@@ -364,6 +450,42 @@ def _pending_churn_lane_keys(payload: dict[str, Any]) -> list[dict[str, Any]]:
                     }
                 )
     return keys
+
+
+def _metadata_from_intent_or_lane(
+    intent_or_lane: dict[str, Any] | None,
+    metadata: dict[str, Any] | None,
+) -> dict[str, Any]:
+    if isinstance(metadata, dict):
+        return metadata
+    if not isinstance(intent_or_lane, dict):
+        return {}
+    intent_payload = _intent_payload(intent_or_lane)
+    raw = intent_payload.get("metadata")
+    if isinstance(raw, dict):
+        return raw
+    raw = intent_payload.get("self_improvement")
+    if isinstance(raw, dict):
+        return raw
+    return {}
+
+
+def _intent_payload(intent_or_lane: dict[str, Any]) -> dict[str, Any]:
+    raw = intent_or_lane.get("intent")
+    if isinstance(raw, dict):
+        return raw
+    return intent_or_lane
+
+
+def _intent_or_lane_method(intent_or_lane: dict[str, Any]) -> str:
+    intent_payload = _intent_payload(intent_or_lane)
+    method = str(intent_payload.get("method") or "").strip().upper()
+    if method:
+        return method
+    context = intent_payload.get("market_context")
+    if isinstance(context, dict):
+        return str(context.get("method") or "").strip().upper()
+    return ""
 
 
 def _optional_int(value: Any) -> int | None:
