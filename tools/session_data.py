@@ -94,6 +94,23 @@ FIVE_PCT_PATH_RULES = """## 5% PATH RULES
 - The path must map to ATTACK STACK."""
 
 
+EXTENSION_GATE_TEMPLATE = """## 10% EXTENSION GATE
+Default: NO
+YES only if:
+- Progress is strong, ideally +3.5%+, or protected S/A winner can carry past +5%.
+- Hero thesis still paying.
+- 3+ pairs confirm same currency theme, or hero pair has clean trend/band-walk.
+- Spread stable.
+- No major whipsaw event in next 30m.
+- Last A/S trade green, protected, or structurally alive.
+- Real reload/second-shot level exists, not chase.
+
+Gate effect:
+- EXTEND mode requires A/S grade risk.
+- After +5%, Extension Gate NO blocks fresh B risk.
+- Before any fresh target-path order, run dry-run sizing with tools/position_sizing.py or tools/place_trader_order.py."""
+
+
 def format_path_board(metrics: DailyTargetMetrics) -> str:
     """Return the required FULL_TRADER +5% path board template."""
     return FIVE_PCT_PATH_BOARD_TEMPLATE.format(
@@ -108,7 +125,14 @@ def format_attack_stack() -> str:
 
 def format_full_trader_board(metrics: DailyTargetMetrics) -> str:
     """Return the complete session-start path contract block."""
-    return "\n\n".join((format_path_board(metrics), format_attack_stack(), FIVE_PCT_PATH_RULES))
+    return "\n\n".join(
+        (
+            format_path_board(metrics),
+            format_attack_stack(),
+            FIVE_PCT_PATH_RULES,
+            EXTENSION_GATE_TEMPLATE,
+        )
+    )
 
 
 def main() -> int:

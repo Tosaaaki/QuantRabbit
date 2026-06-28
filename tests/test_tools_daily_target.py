@@ -208,3 +208,5 @@ class DailyTargetToolTest(unittest.TestCase):
         self.assertIn("Why this thesis can still reach +5% today:", board)
         self.assertIn("B/C trades cannot be the +5% target path.", board)
         self.assertIn("One distant pending order is not enough.", board)
+        self.assertIn("## 10% EXTENSION GATE", board)
+        self.assertIn("EXTEND mode requires A/S grade risk.", board)

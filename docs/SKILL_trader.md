@@ -97,14 +97,17 @@ export QR_REQUIRE_TELEMETRY_FOR_LIVE="${QR_REQUIRE_TELEMETRY_FOR_LIVE:-1}"
 # Session-start read-only target block. This does not stage, send, cancel, or
 # close orders. It persists the first-seen UTC day-start NAV under
 # logs/day_start_nav/ and prints the base +5% / extension +10% operating mode.
-# It also prints the required FULL_TRADER +5% path board and attack stack.
+# It also prints the required FULL_TRADER +5% path board, attack stack, and
+# 10% extension gate.
 # Do not leave those fields blank in the working decision or end report: while
 # remaining_to_5pct is above zero, fill a concrete Path A / HERO route that can
 # reach the +5% floor, or write the exact blocker and next trigger. B/C churn
 # is not a substitute for the HERO path, and a single distant pending
 # order is not enough. "Trigger not printed yet" is an arm condition for a
 # LIMIT/STOP thesis, not a dead thesis. The selected path must map to the
-# ATTACK STACK.
+# ATTACK STACK. Before any fresh target-path order, run dry-run sizing with
+# tools/position_sizing.py or tools/place_trader_order.py; live sends still go
+# only through LiveOrderGateway.
 python3 tools/session_data.py
 
 Required trader block:
@@ -180,6 +183,22 @@ Path rules:
 - One distant pending order is not enough.
 - "Trigger not printed yet" is an arm condition for LIMIT/STOP, not a dead thesis.
 - The path must map to ATTACK STACK.
+
+## 10% EXTENSION GATE
+Default: NO
+YES only if:
+- Progress is strong, ideally +3.5%+, or protected S/A winner can carry past +5%.
+- Hero thesis still paying.
+- 3+ pairs confirm same currency theme, or hero pair has clean trend/band-walk.
+- Spread stable.
+- No major whipsaw event in next 30m.
+- Last A/S trade green, protected, or structurally alive.
+- Real reload/second-shot level exists, not chase.
+
+Gate effect:
+- EXTEND mode requires A/S grade risk.
+- After +5%, Extension Gate NO blocks fresh B risk.
+- Before any fresh target-path order, run dry-run sizing with tools/position_sizing.py or tools/place_trader_order.py.
 
 # 1. Route to the right prompt branch
 PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli trader-prompt-route
@@ -529,6 +548,8 @@ QR_LIVE_ENABLED=1 ./scripts/run-autotrade-live.sh \
 
 - Filled `5% PATH BOARD` with a concrete Path A / HERO route or exact blocker.
 - Filled `ATTACK STACK`, and every non-empty path-board slot maps to NOW, RELOAD, or SECOND SHOT.
+- Filled `10% EXTENSION GATE`; if YES, cite each gate condition, otherwise report NO.
+- Dry-run sizing result from `tools/position_sizing.py` or `tools/place_trader_order.py` for any fresh target-path order.
 - Final action: `TRADE`, `WAIT`, `REQUEST_EVIDENCE`, `PROTECT`, `TIGHTEN_SL`, `CLOSE`, or `CANCEL_PENDING`.
 - Sent flag: `true`, `false`, or dry-run.
 - Selected lane id(s), if any.

@@ -2,6 +2,9 @@
 
 ## 2026-06-28
 
+- Added `tools/position_sizing.py` and dry-run-only `tools/place_trader_order.py` for target-aware, risk-based order sizing.
+- Added the `10% EXTENSION GATE` checklist and RiskEngine target-path metadata guards.
+- Added `docs/SKILL_daily-review.md` Daily Target Review with +5%/+10% miss classification.
 - Added the required FULL_TRADER `5% PATH BOARD` and `ATTACK STACK` session contract.
 - Added read-only trader-state/task-sync validators so B/C churn cannot be documented as a +5% path.
 - Added `tools/daily_target.py` as a read-only UTC 00:00 daily target engine.

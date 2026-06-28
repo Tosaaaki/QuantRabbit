@@ -36,6 +36,8 @@ def main() -> int:
         (
             "5% PATH BOARD",
             "ATTACK STACK",
+            "10% EXTENSION GATE",
+            "position_sizing.py",
         ),
         issues,
     )
@@ -45,6 +47,8 @@ def main() -> int:
             "5% PATH BOARD",
             "ATTACK STACK",
             "B/C",
+            "10% Extension Gate",
+            "position_sizing.py",
         ),
         issues,
     )

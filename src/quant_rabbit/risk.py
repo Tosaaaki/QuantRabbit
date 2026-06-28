@@ -538,6 +538,203 @@ def _truthy_metadata(value: object) -> bool:
     return str(value or "").strip().lower() in {"1", "true", "yes", "on"}
 
 
+TARGET_PATH_GRADE_RANK = {
+    "C": 0,
+    "B-": 1,
+    "B0": 2,
+    "B": 2,
+    "B+": 3,
+    "A": 4,
+    "S": 5,
+}
+TARGET_PATH_MAIN_ROLES = {"MAIN", "HERO", "PATH_A", "5PCT_PATH", "GUARANTEE_5"}
+TARGET_PATH_SUPPORT_ROLES = {"SCOUT", "RELOAD", "SECOND_SHOT", "SUPPORT", "PATH_B"}
+
+
+def _target_path_guard_issues(intent: OrderIntent, *, for_live_send: bool) -> list[RiskIssue]:
+    """Enforce target-path receipt metadata when the receipt supplies it.
+
+    Existing strategy-generated intents that do not carry target-path fields
+    keep their current validation behavior. Once a dry-run/manual receipt names
+    the daily target mode, 5% path, attack stack, grade, or recent-thesis-loss
+    facts, the risk engine treats those fields as executable guard evidence.
+    """
+
+    metadata = intent.metadata or {}
+    if not metadata:
+        return []
+    contract_present = _target_path_contract_present(metadata)
+    explicit_loss_repeat = (
+        _truthy_metadata(metadata.get("same_thesis_lost_recently"))
+        or _truthy_metadata(metadata.get("same_thesis_recent_loss"))
+    )
+    if not contract_present and not explicit_loss_repeat:
+        return []
+
+    issues: list[RiskIssue] = []
+    grade = _target_grade(metadata)
+    rank = TARGET_PATH_GRADE_RANK.get(grade)
+    mode = str(
+        metadata.get("daily_target_mode")
+        or metadata.get("target_mode")
+        or metadata.get("mode")
+        or ""
+    ).strip().upper()
+    role = str(
+        metadata.get("target_path_role")
+        or metadata.get("path_role")
+        or metadata.get("daily_target_layer")
+        or ""
+    ).strip().upper()
+    remaining_5 = _target_remaining_to_5pct(metadata)
+    minimum_progress_pct = _to_float(metadata.get("minimum_progress_pct"))
+    progress_pct = _to_float(
+        metadata.get("daily_progress_pct")
+        or metadata.get("day_progress_pct")
+        or metadata.get("total_day_progress_pct")
+    )
+    under_5 = remaining_5 is not None and remaining_5 > 0
+    base_reached = (
+        (remaining_5 is not None and remaining_5 <= 0)
+        or (minimum_progress_pct is not None and minimum_progress_pct >= 100)
+        or (progress_pct is not None and progress_pct >= 5.0)
+    )
+    extension_gate_yes = _extension_gate_yes(metadata)
+    fresh_risk = str(metadata.get("position_intent") or "NEW").upper() != "HEDGE"
+
+    if mode == "EXTEND" and (rank is None or rank < TARGET_PATH_GRADE_RANK["A"]):
+        issues.append(
+            RiskIssue(
+                "EXTEND_REQUIRES_A_GRADE",
+                "EXTEND mode requires A/S grade risk; B+ and lower cannot add extension risk.",
+            )
+        )
+    if base_reached and not extension_gate_yes and fresh_risk and grade.startswith("B"):
+        issues.append(
+            RiskIssue(
+                "BASE_TARGET_REACHED_B_RISK_BLOCKED",
+                "+5% is reached and the 10% Extension Gate is NO; fresh B risk is blocked.",
+            )
+        )
+    if (
+        under_5
+        and rank is not None
+        and rank <= TARGET_PATH_GRADE_RANK["B0"]
+        and _metadata_claims_main_target_path(metadata, role)
+    ):
+        issues.append(
+            RiskIssue(
+                "TARGET_PATH_GRADE_TOO_LOW",
+                "B0/B-/C trades are not valid +5% target-path risk.",
+            )
+        )
+    if under_5 and grade == "B+" and _metadata_claims_main_target_path(metadata, role):
+        issues.append(
+            RiskIssue(
+                "B_PLUS_NOT_MAIN_TARGET_PATH",
+                "B+ can support a scout/reload, but it cannot be the main +5% path trade.",
+            )
+        )
+    if explicit_loss_repeat and _truthy_metadata(metadata.get("vehicle_unchanged_after_loss")):
+        issues.append(
+            RiskIssue(
+                "SAME_THESIS_LOST_RECENTLY",
+                "same thesis lost recently and the vehicle is unchanged; require a new vehicle or structure proof.",
+            )
+        )
+    if _path_or_attack_stack_available(metadata) and not _maps_to_attack_stack(metadata):
+        issues.append(
+            RiskIssue(
+                "PATH_ATTACK_STACK_MAPPING_MISSING",
+                "order must map to the 5% PATH / ATTACK STACK when that board is available.",
+            )
+        )
+    return issues
+
+
+def _target_path_contract_present(metadata: dict[str, object]) -> bool:
+    keys = {
+        "daily_target_mode",
+        "target_mode",
+        "remaining_to_5pct_yen",
+        "remaining_to_5pct",
+        "remaining_minimum_jpy",
+        "minimum_progress_pct",
+        "daily_progress_pct",
+        "total_day_progress_pct",
+        "ten_pct_extension_gate",
+        "extension_gate_10pct",
+        "extension_gate",
+        "target_path_role",
+        "path_role",
+        "valid_as_target_path",
+        "path_board_available",
+        "five_pct_path_available",
+        "attack_stack_available",
+        "maps_to_attack_stack",
+        "path_board_slot",
+        "attack_stack_slot",
+    }
+    return any(key in metadata for key in keys)
+
+
+def _target_grade(metadata: dict[str, object]) -> str:
+    raw = (
+        metadata.get("conviction_grade")
+        or metadata.get("grade")
+        or metadata.get("allocation_band")
+        or metadata.get("pretrade_allocation_band")
+        or ""
+    )
+    grade = str(raw).strip().upper().replace("_", "").replace(" ", "")
+    if grade == "B":
+        return "B0"
+    return grade
+
+
+def _target_remaining_to_5pct(metadata: dict[str, object]) -> float | None:
+    for key in ("remaining_to_5pct_yen", "remaining_to_5pct", "remaining_minimum_jpy"):
+        value = _to_float(metadata.get(key))
+        if value is not None:
+            return value
+    return None
+
+
+def _extension_gate_yes(metadata: dict[str, object]) -> bool:
+    for key in ("ten_pct_extension_gate", "extension_gate_10pct", "extension_gate"):
+        if key in metadata:
+            value = metadata.get(key)
+            if isinstance(value, str):
+                return value.strip().upper() == "YES" or _truthy_metadata(value)
+            return _truthy_metadata(value)
+    return False
+
+
+def _metadata_claims_main_target_path(metadata: dict[str, object], role: str) -> bool:
+    if role in TARGET_PATH_MAIN_ROLES:
+        return True
+    if role in TARGET_PATH_SUPPORT_ROLES:
+        return False
+    valid = str(metadata.get("valid_as_target_path") or "").strip().upper()
+    return valid == "YES" or _truthy_metadata(metadata.get("target_path_required"))
+
+
+def _path_or_attack_stack_available(metadata: dict[str, object]) -> bool:
+    return (
+        _truthy_metadata(metadata.get("path_board_available"))
+        or _truthy_metadata(metadata.get("five_pct_path_available"))
+        or _truthy_metadata(metadata.get("attack_stack_available"))
+    )
+
+
+def _maps_to_attack_stack(metadata: dict[str, object]) -> bool:
+    if _truthy_metadata(metadata.get("maps_to_attack_stack")):
+        return True
+    return bool(str(metadata.get("path_board_slot") or "").strip()) and bool(
+        str(metadata.get("attack_stack_slot") or "").strip()
+    )
+
+
 def _loss_asymmetry_guard_issues(intent: OrderIntent, metrics: RiskMetrics) -> list[RiskIssue]:
     """Block fresh entries whose planned loss exceeds the proven average winner.
 
@@ -2211,6 +2408,7 @@ class RiskEngine:
         issues.extend(self._same_pair_margin_concentration_issues(intent, snapshot, entry_price, quote_to_jpy, spec))
         metrics = self._metrics(intent, quote, spec, entry_price, quote_to_jpy, snapshot)
         issues.extend(self._margin_issues(snapshot, metrics))
+        issues.extend(_target_path_guard_issues(intent, for_live_send=for_live_send))
         if metrics.loss_pips <= 0:
             issues.append(RiskIssue("SL_NOT_LOSS_SIDE", f"SL is not on the loss side for {intent.side.value}"))
         if metrics.reward_pips <= 0:
