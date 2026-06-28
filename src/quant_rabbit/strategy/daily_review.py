@@ -31,7 +31,7 @@ import sqlite3
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Dict, Tuple
+from typing import Any, Dict, Tuple
 
 
 DAILY_REVIEW_LOOKBACK_HOURS = float(os.environ.get("QR_DAILY_REVIEW_LOOKBACK_HOURS", "24"))
@@ -61,6 +61,7 @@ class DailyReviewReport:
     structural_pair_pl_breakdown: Dict[str, float] = field(default_factory=dict)
     structural_pair_counts: Dict[str, int] = field(default_factory=dict)
     lane_loss_counts: Dict[str, int] = field(default_factory=dict)
+    target_path_live_reviews: list[dict[str, Any]] = field(default_factory=list)
 
     def to_dict(self) -> dict:
         out = {
@@ -68,6 +69,7 @@ class DailyReviewReport:
             "narrative_summary": self.narrative_summary,
             "bias_overrides": self.bias_overrides,
             "blocked_lanes": self.blocked_lanes,
+            "target_path_live_reviews": self.target_path_live_reviews,
             "_diagnostics": {
                 "source_window_start_utc": self.source_window_start_utc,
                 "source_window_end_utc": self.source_window_end_utc,
@@ -82,6 +84,7 @@ class DailyReviewReport:
                     f"{k[0]}:{k[1]}": v for k, v in self.structural_pair_counts.items()
                 } if all(isinstance(k, tuple) for k in self.structural_pair_counts.keys()) else self.structural_pair_counts,
                 "lane_loss_counts": self.lane_loss_counts,
+                "target_path_live_review_counts": _target_path_live_review_counts(self.target_path_live_reviews),
             },
         }
         return out
@@ -194,6 +197,221 @@ def _read_recent_closes(
     return rows
 
 
+def _read_live_target_path_reviews(
+    db_path: Path,
+    window_start_utc: datetime,
+    window_end_utc: datetime,
+) -> list[dict[str, Any]]:
+    """Classify LIVE-LEARNING target-path sends from gateway receipts.
+
+    The gateway receipt is the immutable source for the intended path/size.
+    Broker close rows may arrive later, so missing realized P/L is kept as a
+    deployment failure instead of being silently dropped from daily review.
+    """
+    if not db_path.exists():
+        return []
+    try:
+        conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+        conn.row_factory = sqlite3.Row
+    except sqlite3.Error:
+        return []
+    reviews: list[dict[str, Any]] = []
+    try:
+        rows = conn.execute(
+            """
+            SELECT
+                event_uid,
+                ts_utc,
+                lane_id,
+                order_id,
+                trade_id,
+                pair,
+                side,
+                units,
+                raw_json
+            FROM execution_events
+            WHERE event_type = 'GATEWAY_ORDER_SENT'
+              AND ts_utc >= ?
+              AND ts_utc <= ?
+            ORDER BY ts_utc ASC
+            """,
+            (
+                window_start_utc.isoformat().replace("+00:00", "Z"),
+                window_end_utc.isoformat().replace("+00:00", "Z"),
+            ),
+        ).fetchall()
+        for row in rows:
+            payload = _json_object(row["raw_json"])
+            receipt = payload.get("target_path_receipt") if isinstance(payload.get("target_path_receipt"), dict) else None
+            if receipt is None:
+                continue
+            if receipt.get("live_order_sent") is False:
+                continue
+            outcome = _target_path_live_outcome(
+                conn,
+                trade_id=_text_value(row["trade_id"]),
+                lane_id=_text_value(row["lane_id"]),
+                order_id=_text_value(row["order_id"]),
+                sent_ts_utc=str(row["ts_utc"] or ""),
+                window_end_utc=window_end_utc,
+            )
+            classification = _classify_live_target_path_review(receipt, outcome)
+            reviews.append(
+                {
+                    "classification": classification,
+                    "event_uid": row["event_uid"],
+                    "sent_at_utc": row["ts_utc"],
+                    "lane_id": row["lane_id"],
+                    "order_id": row["order_id"],
+                    "trade_id": row["trade_id"],
+                    "pair": row["pair"],
+                    "side": row["side"],
+                    "daily_target_mode": _text_value(receipt.get("daily_target_mode")),
+                    "five_pct_path_role": _text_value(receipt.get("five_pct_path_role")),
+                    "attack_stack_slot": _text_value(receipt.get("attack_stack_slot")),
+                    "grade": _text_value(receipt.get("grade")),
+                    "suggested_units": _int_value(receipt.get("suggested_units")),
+                    "final_units": _int_value(receipt.get("final_units")),
+                    "risk_yen": _float_value(receipt.get("risk_yen")),
+                    "risk_pct": _float_value(receipt.get("risk_pct")),
+                    "target_yen": _float_value(receipt.get("target_yen")),
+                    "contribution_to_5pct": _float_value(receipt.get("contribution_to_5pct")),
+                    "remaining_to_5pct": _float_value(receipt.get("remaining_to_5pct")),
+                    "live_order_gateway_receipt_id": _text_value(receipt.get("live_order_gateway_receipt_id")),
+                    "target_path_live_mode": _text_value(receipt.get("target_path_live_mode") or "LIVE_LEARNING"),
+                    "realized_pl_jpy": outcome.get("realized_pl_jpy"),
+                    "exit_reason": outcome.get("exit_reason"),
+                    "closed_at_utc": outcome.get("closed_at_utc"),
+                }
+            )
+    except (sqlite3.Error, TypeError, ValueError):
+        return reviews
+    finally:
+        conn.close()
+    return reviews
+
+
+def _target_path_live_outcome(
+    conn: sqlite3.Connection,
+    *,
+    trade_id: str | None,
+    lane_id: str | None,
+    order_id: str | None,
+    sent_ts_utc: str,
+    window_end_utc: datetime,
+) -> dict[str, Any]:
+    conditions: list[str] = []
+    params: list[Any] = []
+    if trade_id:
+        conditions.append("trade_id = ?")
+        params.append(trade_id)
+    if lane_id:
+        conditions.append("lane_id = ?")
+        params.append(lane_id)
+    if order_id:
+        conditions.append("order_id = ?")
+        params.append(order_id)
+    if not conditions:
+        return {}
+    params.extend([sent_ts_utc, window_end_utc.isoformat().replace("+00:00", "Z")])
+    try:
+        row = conn.execute(
+            f"""
+            SELECT
+                SUM(realized_pl_jpy) AS realized_pl_jpy,
+                MAX(exit_reason) AS exit_reason,
+                MAX(ts_utc) AS closed_at_utc
+            FROM execution_events
+            WHERE realized_pl_jpy IS NOT NULL
+              AND event_type IN ('TRADE_CLOSED', 'TRADE_REDUCED', 'GATEWAY_TRADE_CLOSE_RECONCILED')
+              AND ({' OR '.join(conditions)})
+              AND ts_utc >= ?
+              AND ts_utc <= ?
+            """,
+            params,
+        ).fetchone()
+    except sqlite3.Error:
+        return {}
+    if row is None or row["realized_pl_jpy"] is None:
+        return {}
+    return {
+        "realized_pl_jpy": float(row["realized_pl_jpy"]),
+        "exit_reason": _text_value(row["exit_reason"]),
+        "closed_at_utc": _text_value(row["closed_at_utc"]),
+    }
+
+
+def _classify_live_target_path_review(receipt: dict[str, Any], outcome: dict[str, Any]) -> str:
+    role = _text_value(receipt.get("five_pct_path_role"))
+    slot = _text_value(receipt.get("attack_stack_slot"))
+    grade = _text_value(receipt.get("grade"))
+    if not role or not slot or not grade:
+        return "discovery failure"
+
+    suggested_units = _int_value(receipt.get("suggested_units"))
+    final_units = _int_value(receipt.get("final_units"))
+    contribution = _float_value(receipt.get("contribution_to_5pct"))
+    if (
+        suggested_units is None
+        or suggested_units <= 0
+        or final_units is None
+        or final_units <= 0
+        or final_units < int(suggested_units * 0.5)
+        or contribution is None
+        or contribution <= 0
+    ):
+        return "sizing failure"
+
+    realized = _float_value(outcome.get("realized_pl_jpy"))
+    if realized is None:
+        return "deployment failure"
+    if realized >= 0:
+        return "good execution"
+
+    risk_yen = _float_value(receipt.get("risk_yen"))
+    exit_reason = (_text_value(outcome.get("exit_reason")) or "").upper()
+    if (risk_yen is not None and abs(realized) > risk_yen * 1.05) or any(
+        token in exit_reason for token in ("STOP", "SL", "MARKET", "CLOSE", "GPT")
+    ):
+        return "management failure"
+    return "vehicle failure"
+
+
+def _target_path_live_review_counts(reviews: list[dict[str, Any]]) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for review in reviews:
+        classification = str(review.get("classification") or "unknown")
+        counts[classification] = counts.get(classification, 0) + 1
+    return counts
+
+
+def _json_object(raw: Any) -> dict[str, Any]:
+    if isinstance(raw, dict):
+        return raw
+    try:
+        parsed = json.loads(str(raw or "{}"))
+    except json.JSONDecodeError:
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
+
+
+def _text_value(value: Any) -> str | None:
+    text = str(value or "").strip()
+    return text or None
+
+
+def _float_value(value: Any) -> float | None:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _int_value(value: Any) -> int | None:
+    parsed = _float_value(value)
+    return int(parsed) if parsed is not None else None
+
+
 def _aggregate_rows(
     rows: list[tuple[str, str, float, str | None]],
 ) -> tuple[Dict[Tuple[str, str], float], Dict[Tuple[str, str], int], Dict[str, int]]:
@@ -229,6 +447,7 @@ def compute_daily_review(
     rows = _read_recent_closes(db_path, window_start, window_end)
     structural_start = _structural_window_start(now)
     structural_rows = _read_recent_closes(db_path, structural_start, window_end)
+    target_path_live_reviews = _read_live_target_path_reviews(db_path, window_start, window_end)
 
     # Aggregate per (pair, direction)
     pair_pl, pair_count, lane_losses = _aggregate_rows(rows)
@@ -289,6 +508,12 @@ def compute_daily_review(
         parts.append("winning: " + ", ".join(winners))
     if structural_losers:
         parts.append("structural losing: " + ", ".join(structural_losers))
+    target_path_counts = _target_path_live_review_counts(target_path_live_reviews)
+    if target_path_counts:
+        parts.append(
+            "target-path live: "
+            + ", ".join(f"{name}={count}" for name, count in sorted(target_path_counts.items()))
+        )
     if not parts:
         parts.append(f"no decisive (pair, direction) signal in last {lookback_hours:.0f}h")
     narrative = "; ".join(parts)
@@ -307,6 +532,7 @@ def compute_daily_review(
         structural_pair_pl_breakdown={k: round(v, 2) for k, v in structural_pair_pl.items()},
         structural_pair_counts=structural_pair_count,
         lane_loss_counts=lane_losses,
+        target_path_live_reviews=target_path_live_reviews,
     )
 
 

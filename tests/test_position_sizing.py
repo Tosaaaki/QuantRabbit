@@ -81,6 +81,50 @@ class PositionSizingToolTest(unittest.TestCase):
         self.assertEqual(result.valid_as_target_path, "NO")
         self.assertIn("TARGET_PATH_GRADE_TOO_LOW", {issue["code"] for issue in result.issues})
 
+    def test_b_plus_support_path_is_valid_but_not_main_path(self) -> None:
+        support = position_sizing.size_position(
+            position_sizing.PositionSizingInput(
+                pair="USD_JPY",
+                side="LONG",
+                entry=150.0,
+                tp=151.0,
+                sl=149.0,
+                conviction_grade="B+",
+                day_start_nav=100_000.0,
+                current_nav=101_000.0,
+                remaining_to_5pct=4_000.0,
+                mode="ATTACK",
+                remaining_risk_budget_yen=1_000.0,
+                target_path_role="SUPPORT",
+                path_board_available=True,
+                attack_stack_available=True,
+                maps_to_attack_stack=True,
+            )
+        )
+        main = position_sizing.size_position(
+            position_sizing.PositionSizingInput(
+                pair="USD_JPY",
+                side="LONG",
+                entry=150.0,
+                tp=151.0,
+                sl=149.0,
+                conviction_grade="B+",
+                day_start_nav=100_000.0,
+                current_nav=101_000.0,
+                remaining_to_5pct=4_000.0,
+                mode="ATTACK",
+                remaining_risk_budget_yen=1_000.0,
+                target_path_role="HERO",
+                path_board_available=True,
+                attack_stack_available=True,
+                maps_to_attack_stack=True,
+            )
+        )
+
+        self.assertEqual(support.valid_as_target_path, "YES")
+        self.assertEqual(main.valid_as_target_path, "NO")
+        self.assertIn("B_PLUS_NOT_MAIN_TARGET_PATH", {issue["code"] for issue in main.issues})
+
     def test_extension_gate_requires_all_conditions(self) -> None:
         yes = position_sizing.evaluate_extension_gate(
             position_sizing.ExtensionGateInput(
@@ -144,6 +188,155 @@ class PositionSizingToolTest(unittest.TestCase):
         self.assertEqual(result.status, "DRY_RUN_BLOCKED")
         self.assertFalse(result.live_order_sent)
         self.assertIn("LIVE_SEND_DISABLED", {issue["code"] for issue in result.issues})
+
+    def test_place_trader_order_emits_live_gateway_intent_without_sending(self) -> None:
+        parser = place_trader_order._parser()
+        args = parser.parse_args(
+            [
+                "--pair",
+                "USD_JPY",
+                "--side",
+                "LONG",
+                "--entry",
+                "150",
+                "--tp",
+                "151",
+                "--sl",
+                "149",
+                "--grade",
+                "A",
+                "--day-start-nav",
+                "100000",
+                "--current-nav",
+                "101000",
+                "--remaining-to-5pct",
+                "4000",
+                "--mode",
+                "ATTACK",
+                "--remaining-risk-budget-yen",
+                "1000",
+                "--target-path-role",
+                "HERO",
+                "--path-board-available",
+                "--attack-stack-available",
+                "--maps-to-attack-stack",
+                "yes",
+                "--attack-stack-slot",
+                "NOW",
+                "--exact-pretrade-ok",
+                "yes",
+                "--spread-ok",
+                "yes",
+                "--pricing-probe-ok",
+                "yes",
+                "--fill-guard-ok",
+                "yes",
+                "--gateway-intent-output",
+                "/tmp/qr-live-intent.json",
+                "--lane-id",
+                "target-path:USD_JPY:LONG:HERO",
+                "--thesis",
+                "A-grade target path continuation",
+                "--narrative",
+                "target path board maps to NOW",
+                "--chart-story",
+                "close-confirmed continuation stair",
+                "--invalidation",
+                "SL trades",
+            ]
+        )
+
+        result = place_trader_order.evaluate_order(args)
+
+        self.assertEqual(result.status, "DRY_RUN_READY")
+        self.assertTrue(result.gateway_intent_emitted)
+        self.assertFalse(result.live_order_sent)
+        assert result.gateway_intent is not None
+        emitted = result.gateway_intent["results"][0]
+        self.assertEqual(emitted["status"], "LIVE_READY")
+        self.assertTrue(emitted["risk_allowed"])
+        metadata = emitted["intent"]["metadata"]
+        self.assertEqual(metadata["valid_as_target_path"], "YES")
+        self.assertEqual(metadata["attack_stack_slot"], "NOW")
+        self.assertTrue(metadata["path_board_available"])
+        self.assertTrue(metadata["maps_to_attack_stack"])
+        self.assertEqual(metadata["target_path_live_mode"], "LIVE_LEARNING")
+
+    def test_place_trader_order_send_does_not_emit_gateway_intent(self) -> None:
+        parser = place_trader_order._parser()
+        args = parser.parse_args(
+            [
+                "--pair",
+                "USD_JPY",
+                "--side",
+                "LONG",
+                "--entry",
+                "150",
+                "--tp",
+                "151",
+                "--sl",
+                "149",
+                "--grade",
+                "A",
+                "--day-start-nav",
+                "100000",
+                "--current-nav",
+                "101000",
+                "--remaining-to-5pct",
+                "4000",
+                "--mode",
+                "ATTACK",
+                "--remaining-risk-budget-yen",
+                "1000",
+                "--target-path-role",
+                "HERO",
+                "--path-board-available",
+                "--attack-stack-available",
+                "--maps-to-attack-stack",
+                "yes",
+                "--attack-stack-slot",
+                "NOW",
+                "--gateway-intent-output",
+                "/tmp/qr-live-intent.json",
+                "--thesis",
+                "A-grade target path continuation",
+                "--narrative",
+                "target path board maps to NOW",
+                "--chart-story",
+                "close-confirmed continuation stair",
+                "--invalidation",
+                "SL trades",
+                "--send",
+            ]
+        )
+
+        result = place_trader_order.evaluate_order(args)
+
+        self.assertEqual(result.status, "DRY_RUN_BLOCKED")
+        self.assertFalse(result.gateway_intent_emitted)
+        self.assertIsNone(result.gateway_intent)
+        self.assertIn("LIVE_SEND_DISABLED", {issue["code"] for issue in result.issues})
+
+    def test_place_trader_order_has_no_oanda_write_path(self) -> None:
+        source = (Path(__file__).resolve().parents[1] / "tools" / "place_trader_order.py").read_text()
+        self.assertNotIn("OandaExecutionClient", source)
+        self.assertNotIn("post_order_json", source)
+
+    def test_live_entry_order_post_calls_stay_inside_gateway(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        allowed = {
+            root / "src" / "quant_rabbit" / "broker" / "execution.py",
+            root / "src" / "quant_rabbit" / "broker" / "oanda.py",
+        }
+        offenders: list[str] = []
+        for path in (root / "src" / "quant_rabbit").rglob("*.py"):
+            if path in allowed:
+                continue
+            text = path.read_text()
+            if "post_order_json(" in text:
+                offenders.append(str(path.relative_to(root)))
+
+        self.assertEqual(offenders, [])
 
 
 class TargetPathRiskEngineTest(unittest.TestCase):

@@ -302,8 +302,13 @@ def _target_guard_issues(data: PositionSizingInput, grade: str, progress_pct: fl
         issues.append(_issue("EXTEND_REQUIRES_A_GRADE", "EXTEND mode requires A/S grade risk"))
     if base_reached and not data.extension_gate and fresh_risk and grade.startswith("B"):
         issues.append(_issue("BASE_TARGET_REACHED_B_RISK_BLOCKED", "+5% reached and 10% Extension Gate is NO; fresh B risk is blocked"))
-    if under_5 and rank is not None and rank <= GRADE_RANK["B0"] and role in TARGET_PATH_MAIN_ROLES:
-        issues.append(_issue("TARGET_PATH_GRADE_TOO_LOW", "B0/B-/C cannot be the +5% target path"))
+    if (
+        under_5
+        and rank is not None
+        and rank <= GRADE_RANK["B0"]
+        and role in (TARGET_PATH_MAIN_ROLES | TARGET_PATH_SUPPORT_ROLES)
+    ):
+        issues.append(_issue("TARGET_PATH_GRADE_TOO_LOW", "B0/B-/C cannot be +5% target-path risk"))
     if under_5 and grade == "B+" and role in TARGET_PATH_MAIN_ROLES:
         issues.append(_issue("B_PLUS_NOT_MAIN_TARGET_PATH", "B+ can support scout/reload, not the main +5% path"))
     if data.same_thesis_lost_recently and data.vehicle_unchanged_after_loss:
@@ -321,7 +326,7 @@ def _valid_target_path(data: PositionSizingInput, grade: str) -> str:
     if rank >= GRADE_RANK["A"]:
         return "YES"
     if grade == "B+" and role in TARGET_PATH_SUPPORT_ROLES:
-        return "NO"
+        return "YES"
     return "NO"
 
 

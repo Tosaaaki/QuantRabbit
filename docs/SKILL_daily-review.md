@@ -23,6 +23,19 @@ If +5% was missed, classify the primary miss as exactly one:
 
 If +10% was missed after +5% was reached, classify the extension miss with the same labels and state whether the 10% Extension Gate was actually `YES`.
 
+## LIVE-LEARNING Target-Path Classification
+
+For every target-path trade actually sent by `LiveOrderGateway`, classify the trade as exactly one:
+
+- `discovery failure`: path role, attack-stack slot, grade, or thesis mapping was missing or wrong.
+- `deployment failure`: live send was recorded but no resolved broker P/L is available yet.
+- `sizing failure`: suggested/final units, production-lot fit, risk, or +5% contribution was invalid or too small.
+- `vehicle failure`: the thesis was plausible, but pair/side/order type/TP/SL expression lost within planned risk.
+- `management failure`: loss exceeded planned risk or exit path showed poor protection/harvest/close management.
+- `good execution`: broker outcome was non-negative and the receipt evidence was complete.
+
+`daily-review` writes these rows under `target_path_live_reviews` in `data/trader_overrides.json` and summarizes counts in `_diagnostics.target_path_live_review_counts`. This is feedback for the next cycle, not a live-order path.
+
 ## Required Evidence
 
 - `data/daily_target_state.json`
@@ -32,8 +45,9 @@ If +10% was missed after +5% was reached, classify the extension miss with the s
 - `docs/autotrade_cycle_report.md`
 - `docs/execution_ledger_report.md`
 - `tools/position_sizing.py` or `tools/place_trader_order.py` dry-run output for fresh target-path orders
+- `target_path_receipt` rows recorded by `LiveOrderGateway` / `execution-ledger-sync` for any LIVE-LEARNING target-path send
 
 ## Output Rule
 
 - Do not place live orders from daily review.
-- Feed repair findings into trader docs, strategy memory, or tests before the next cycle.
+- Feed repair findings into trader docs, strategy memory, tests, or the next trader override review before the next cycle.

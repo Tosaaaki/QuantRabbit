@@ -620,7 +620,11 @@ def _target_path_guard_issues(intent: OrderIntent, *, for_live_send: bool) -> li
         under_5
         and rank is not None
         and rank <= TARGET_PATH_GRADE_RANK["B0"]
-        and _metadata_claims_main_target_path(metadata, role)
+        and (
+            role in TARGET_PATH_MAIN_ROLES
+            or role in TARGET_PATH_SUPPORT_ROLES
+            or _metadata_claims_main_target_path(metadata, role)
+        )
     ):
         issues.append(
             RiskIssue(

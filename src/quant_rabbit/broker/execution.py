@@ -93,6 +93,10 @@ SL_FREE_SYNTHETIC_RISK_PIPS = 30.0
 # prefix lets execution_ledger distinguish QuantRabbit-created orders from
 # manual client IDs while the comment carries the full lane for attribution.
 CLIENT_ORDER_ID_PREFIX = "qrv1"
+TARGET_PATH_MAIN_ROLES = {"MAIN", "HERO", "PATH_A", "5PCT_PATH", "GUARANTEE_5"}
+TARGET_PATH_SUPPORT_ROLES = {"SCOUT", "RELOAD", "SECOND_SHOT", "SUPPORT", "PATH_B"}
+TARGET_PATH_ATTACK_STACK_SLOTS = {"NOW", "RELOAD", "SECOND_SHOT"}
+TARGET_PATH_GRADE_RANK = {"C": 0, "B-": 1, "B0": 2, "B": 2, "B+": 3, "A": 4, "S": 5}
 
 
 class LiveOrderGateway:
@@ -257,6 +261,7 @@ class LiveOrderGateway:
             selected=selected,
         )
         send_issues = _send_guard_issues(send=send, confirm_live=confirm_live, lane_id=lane_id)
+        target_path_issues = _target_path_live_send_issues(intent, send=send)
         all_blocked = (
             any(issue["severity"] == "BLOCK" for issue in risk_issues)
             or any(issue["severity"] == "BLOCK" for issue in strategy_issues)
@@ -264,6 +269,7 @@ class LiveOrderGateway:
             or any(issue["severity"] == "BLOCK" for issue in projection_expiry_issues)
             or any(issue["severity"] == "BLOCK" for issue in self_improvement_issues)
             or any(issue["severity"] == "BLOCK" for issue in send_issues)
+            or any(issue["severity"] == "BLOCK" for issue in target_path_issues)
             or any(issue.severity == "BLOCK" for issue in scale_issues)
         )
         all_blocked = all_blocked or any(issue["severity"] == "BLOCK" for issue in order_build_issues)
@@ -323,6 +329,14 @@ class LiveOrderGateway:
                 requested_units=requested_units,
                 scaled_units=intent.units,
             ),
+            "target_path_receipt": _target_path_receipt_from_intent(
+                intent,
+                risk_metrics=asdict(risk.metrics) if risk.metrics else None,
+                order_request=order_request,
+                requested_units=requested_units,
+                final_units=intent.units,
+                sent=sent,
+            ),
             "risk_metrics": asdict(risk.metrics) if risk.metrics else None,
             "attached_stop_risk_metrics": attached_stop_metrics,
             "risk_issues": [
@@ -331,6 +345,7 @@ class LiveOrderGateway:
                 *projection_expiry_issues,
                 *self_improvement_issues,
                 *send_issues,
+                *target_path_issues,
                 *order_build_issues,
                 *[issue.__dict__ for issue in scale_issues],
                 *entry_thesis_issues,
@@ -531,6 +546,11 @@ class LiveOrderGateway:
             "lane_id": order_results[0].get("lane_id") if order_results else None,
             "lane_ids": [item.get("lane_id") for item in order_results],
             "orders": order_results,
+            "target_path_receipts": [
+                item.get("target_path_receipt")
+                for item in order_results
+                if isinstance(item.get("target_path_receipt"), dict)
+            ],
             "risk_issues": [issue for item in order_results for issue in item.get("risk_issues", [])],
             "strategy_issues": [issue for item in order_results for issue in item.get("strategy_issues", [])],
             "send_requested": send,
@@ -704,6 +724,7 @@ class LiveOrderGateway:
             selected=selected,
         )
         send_issues = _send_guard_issues(send=send, confirm_live=confirm_live, lane_id=lane_id_arg)
+        target_path_issues = _target_path_live_send_issues(intent, send=send)
         all_blocked = (
             any(issue["severity"] == "BLOCK" for issue in risk_issues)
             or any(issue["severity"] == "BLOCK" for issue in strategy_issues)
@@ -711,6 +732,7 @@ class LiveOrderGateway:
             or any(issue["severity"] == "BLOCK" for issue in projection_expiry_issues)
             or any(issue["severity"] == "BLOCK" for issue in self_improvement_issues)
             or any(issue["severity"] == "BLOCK" for issue in send_issues)
+            or any(issue["severity"] == "BLOCK" for issue in target_path_issues)
             or any(issue.severity == "BLOCK" for issue in scale_issues)
         )
         all_blocked = all_blocked or any(issue["severity"] == "BLOCK" for issue in order_build_issues)
@@ -765,6 +787,14 @@ class LiveOrderGateway:
                 requested_units=requested_units,
                 scaled_units=intent.units,
             ),
+            "target_path_receipt": _target_path_receipt_from_intent(
+                intent,
+                risk_metrics=asdict(risk.metrics) if risk.metrics else None,
+                order_request=order_request,
+                requested_units=requested_units,
+                final_units=intent.units,
+                sent=sent,
+            ),
             "risk_metrics": asdict(risk.metrics) if risk.metrics else None,
             "attached_stop_risk_metrics": attached_stop_metrics,
             "risk_issues": [
@@ -773,6 +803,7 @@ class LiveOrderGateway:
                 *projection_expiry_issues,
                 *self_improvement_issues,
                 *send_issues,
+                *target_path_issues,
                 *order_build_issues,
                 *[issue.__dict__ for issue in scale_issues],
                 *entry_thesis_issues,
@@ -1203,6 +1234,7 @@ class LiveOrderGateway:
                         f"loss=`{attached_stop['loss_pips']:.1f}pip` risk=`{attached_stop['risk_jpy']:.1f} JPY`"
                     )
                 lines.extend(_sizing_evidence_report_lines(item.get("sizing_evidence"), prefix="  - "))
+                lines.extend(_target_path_receipt_report_lines(item.get("target_path_receipt"), prefix="  - "))
         order = None if batch_orders else result.get("order_request")
         if order:
             lines.append(f"- `{order['instrument']}` `{order['type']}` units=`{order['units']}`")
@@ -1234,6 +1266,7 @@ class LiveOrderGateway:
                     f"loss=`{attached_stop['loss_pips']:.1f}pip` risk=`{attached_stop['risk_jpy']:.1f} JPY`"
                 )
             lines.extend(_sizing_evidence_report_lines(result.get("sizing_evidence"), prefix="- "))
+            lines.extend(_target_path_receipt_report_lines(result.get("target_path_receipt"), prefix="- "))
         elif not batch_orders:
             lines.append("- none")
         lines.extend(["", "## Issues", ""])
@@ -1998,6 +2031,294 @@ def _send_guard_issues(*, send: bool, confirm_live: bool, lane_id: str | None) -
             )
         )
     return [issue.__dict__ for issue in issues]
+
+
+def _target_path_live_send_issues(intent: OrderIntent, *, send: bool) -> list[dict[str, str]]:
+    metadata = dict(intent.metadata or {})
+    if not send or not _target_path_contract_present(metadata):
+        return []
+
+    issues: list[RiskIssue] = []
+    grade = _target_path_grade(metadata)
+    rank = TARGET_PATH_GRADE_RANK.get(grade)
+    role = _target_path_role(metadata)
+    slot = _target_path_attack_stack_slot(metadata)
+    remaining_5 = _target_path_remaining_to_5pct(metadata)
+    progress_pct = _target_path_progress_pct(metadata)
+    base_reached = (
+        (remaining_5 is not None and remaining_5 <= 0)
+        or (_metadata_float(metadata, "minimum_progress_pct") or 0.0) >= 100.0
+        or (progress_pct is not None and progress_pct >= 5.0)
+    )
+
+    if not _truthy_env("QR_TARGET_PATH_LIVE_ENABLED", default=False):
+        issues.append(
+            RiskIssue(
+                "TARGET_PATH_LIVE_DISABLED",
+                "target-path live send requires QR_TARGET_PATH_LIVE_ENABLED=1; dry-run/stage remains available.",
+            )
+        )
+    if str(metadata.get("valid_as_target_path") or "").strip().upper() != "YES":
+        issues.append(
+            RiskIssue(
+                "TARGET_PATH_SIZING_NOT_VALID",
+                "target-path live send requires sizing metadata valid_as_target_path=YES.",
+            )
+        )
+    if not str(metadata.get("daily_target_mode") or metadata.get("target_mode") or "").strip():
+        issues.append(
+            RiskIssue("TARGET_PATH_DAILY_MODE_MISSING", "target-path live receipt requires daily target mode.")
+        )
+    if remaining_5 is None:
+        issues.append(
+            RiskIssue("TARGET_PATH_REMAINING_TO_5PCT_MISSING", "target-path live receipt requires remaining_to_5pct.")
+        )
+    if rank is None:
+        issues.append(RiskIssue("TARGET_PATH_GRADE_MISSING", "target-path live send requires grade S/A or B+ support."))
+    elif rank <= TARGET_PATH_GRADE_RANK["B0"]:
+        issues.append(RiskIssue("TARGET_PATH_GRADE_TOO_LOW", "B0/B-/C target-path risk is never live."))
+    elif grade == "B+" and not _b_plus_target_path_support(role, slot):
+        issues.append(
+            RiskIssue(
+                "B_PLUS_NOT_SUPPORT_TARGET_PATH",
+                "B+ target-path live risk is allowed only as support/reload/second-shot, not NOW/main.",
+            )
+        )
+    elif rank < TARGET_PATH_GRADE_RANK["A"] and grade != "B+":
+        issues.append(RiskIssue("TARGET_PATH_GRADE_TOO_LOW", "target-path live send requires S/A or B+ support."))
+    if base_reached and not _target_path_extension_gate_yes(metadata) and grade.startswith("B"):
+        issues.append(
+            RiskIssue(
+                "BASE_TARGET_REACHED_B_RISK_BLOCKED",
+                "+5% is reached and the 10% Extension Gate is NO; fresh B risk is blocked.",
+            )
+        )
+    if not _target_path_board_mapped(metadata, role):
+        issues.append(
+            RiskIssue("TARGET_PATH_BOARD_MAPPING_MISSING", "target-path live send requires 5% PATH BOARD mapping.")
+        )
+    if not _target_path_attack_stack_mapped(metadata, slot):
+        issues.append(
+            RiskIssue(
+                "PATH_ATTACK_STACK_MAPPING_MISSING",
+                "target-path live send requires ATTACK STACK mapping with slot NOW / RELOAD / SECOND_SHOT.",
+            )
+        )
+    if _metadata_truthy(metadata.get("same_thesis_lost_recently")) and _metadata_truthy(
+        metadata.get("vehicle_unchanged_after_loss")
+    ):
+        issues.append(
+            RiskIssue(
+                "SAME_THESIS_LOST_RECENTLY",
+                "same thesis lost recently and vehicle is unchanged; LIVE-LEARNING blocks repeat vehicle risk.",
+            )
+        )
+
+    for code, names, label in (
+        ("EXACT_PRETRADE_BLOCKED", ("exact_pretrade_passed", "exact_pretrade_ok"), "exact pretrade"),
+        ("SPREAD_GUARD_BLOCKED", ("spread_guard_passed", "spread_ok"), "spread guard"),
+        ("PRICING_PROBE_BLOCKED", ("pricing_probe_passed", "pricing_probe_ok"), "pricing probe"),
+        ("FILL_GUARD_BLOCKED", ("fill_guard_passed", "fill_guard_ok"), "fill guard"),
+    ):
+        passed = _metadata_bool(metadata, *names)
+        if passed is not True:
+            issues.append(RiskIssue(code, f"target-path live send requires {label} proof."))
+
+    suggested_units = _metadata_int(metadata, "suggested_units")
+    if (
+        suggested_units is not None
+        and suggested_units > 0
+        and abs(int(intent.units)) < max(1, int(suggested_units * 0.5))
+    ):
+        issues.append(
+            RiskIssue(
+                "TARGET_PATH_UNITS_UNDER_SIZED",
+                "target-path live send final units are less than half of dry-run suggested units.",
+            )
+        )
+    for key in ("suggested_units", "risk_yen", "risk_pct", "target_yen", "contribution_to_5pct"):
+        if _metadata_float(metadata, key) is None:
+            issues.append(
+                RiskIssue(
+                    "TARGET_PATH_RECEIPT_FIELD_MISSING",
+                    f"target-path live receipt requires sizing metadata `{key}`.",
+                )
+            )
+    for key in ("suggested_units", "risk_yen", "target_yen", "contribution_to_5pct"):
+        value = _metadata_float(metadata, key)
+        if value is not None and value <= 0:
+            issues.append(
+                RiskIssue(
+                    "TARGET_PATH_RECEIPT_FIELD_INVALID",
+                    f"target-path live receipt requires positive sizing metadata `{key}`.",
+                )
+            )
+    return [issue.__dict__ for issue in issues]
+
+
+def _target_path_contract_present(metadata: dict[str, Any]) -> bool:
+    keys = {
+        "daily_target_mode",
+        "target_mode",
+        "remaining_to_5pct",
+        "remaining_to_5pct_yen",
+        "remaining_minimum_jpy",
+        "target_path_role",
+        "path_role",
+        "valid_as_target_path",
+        "path_board_available",
+        "five_pct_path_available",
+        "attack_stack_available",
+        "maps_to_attack_stack",
+        "path_board_slot",
+        "attack_stack_slot",
+        "target_path_live_mode",
+    }
+    return any(key in metadata for key in keys)
+
+
+def _target_path_receipt_from_intent(
+    intent: OrderIntent,
+    *,
+    risk_metrics: dict[str, Any] | None,
+    order_request: dict[str, Any] | None,
+    requested_units: int | None,
+    final_units: int | None,
+    sent: bool,
+) -> dict[str, Any] | None:
+    metadata = dict(intent.metadata or {})
+    if not _target_path_contract_present(metadata):
+        return None
+    order_request = order_request or {}
+    client_extensions = (
+        order_request.get("clientExtensions") if isinstance(order_request.get("clientExtensions"), dict) else {}
+    )
+    risk_metrics = risk_metrics or {}
+    return {
+        "daily_target_mode": str(metadata.get("daily_target_mode") or metadata.get("target_mode") or "").strip(),
+        "remaining_to_5pct": _metadata_float(
+            metadata,
+            "remaining_to_5pct_yen",
+            "remaining_to_5pct",
+            "remaining_minimum_jpy",
+        ),
+        "five_pct_path_role": _target_path_role(metadata),
+        "attack_stack_slot": _target_path_attack_stack_slot(metadata),
+        "grade": _target_path_grade(metadata),
+        "suggested_units": _metadata_int(metadata, "suggested_units") or requested_units,
+        "final_units": final_units,
+        "risk_yen": _metadata_float(metadata, "risk_yen") or _metadata_float(risk_metrics, "risk_jpy"),
+        "risk_pct": _metadata_float(metadata, "risk_pct"),
+        "target_yen": _metadata_float(metadata, "target_yen") or _metadata_float(risk_metrics, "reward_jpy"),
+        "contribution_to_5pct": _metadata_float(metadata, "contribution_to_5pct"),
+        "live_order_gateway_receipt_id": str(client_extensions.get("id") or "").strip() or None,
+        "live_order_sent": bool(sent),
+        "target_path_live_enabled": _truthy_env("QR_TARGET_PATH_LIVE_ENABLED", default=False),
+        "target_path_live_mode": str(metadata.get("target_path_live_mode") or "LIVE_LEARNING").strip().upper(),
+    }
+
+
+def _target_path_receipt_report_lines(value: Any, *, prefix: str) -> list[str]:
+    if not isinstance(value, dict) or not value:
+        return []
+    return [
+        (
+            f"{prefix}target-path receipt: mode=`{value.get('daily_target_mode')}` "
+            f"remaining_to_5pct=`{_fmt_jpy(value.get('remaining_to_5pct'))}` "
+            f"role=`{value.get('five_pct_path_role')}` slot=`{value.get('attack_stack_slot')}` "
+            f"grade=`{value.get('grade')}` units=`{value.get('suggested_units')}->{value.get('final_units')}` "
+            f"risk=`{_fmt_jpy(value.get('risk_yen'))}` risk_pct=`{value.get('risk_pct')}` "
+            f"target=`{_fmt_jpy(value.get('target_yen'))}` "
+            f"contribution_to_5pct=`{_fmt_jpy(value.get('contribution_to_5pct'))}` "
+            f"receipt_id=`{value.get('live_order_gateway_receipt_id')}` live_order_sent=`{value.get('live_order_sent')}`"
+        )
+    ]
+
+
+def _target_path_grade(metadata: dict[str, Any]) -> str:
+    raw = metadata.get("conviction_grade") or metadata.get("grade") or metadata.get("allocation_band") or ""
+    grade = str(raw).strip().upper().replace("_", "").replace(" ", "")
+    return "B0" if grade == "B" else grade
+
+
+def _target_path_role(metadata: dict[str, Any]) -> str:
+    return str(metadata.get("target_path_role") or metadata.get("path_role") or "").strip().upper()
+
+
+def _target_path_attack_stack_slot(metadata: dict[str, Any]) -> str:
+    return str(metadata.get("attack_stack_slot") or metadata.get("campaign_role") or "").strip().upper()
+
+
+def _b_plus_target_path_support(role: str, slot: str) -> bool:
+    return role in TARGET_PATH_SUPPORT_ROLES or slot in {"RELOAD", "SECOND_SHOT"}
+
+
+def _target_path_board_mapped(metadata: dict[str, Any], role: str) -> bool:
+    board_available = _metadata_truthy(metadata.get("path_board_available")) or _metadata_truthy(
+        metadata.get("five_pct_path_available")
+    )
+    return board_available and (
+        role in TARGET_PATH_MAIN_ROLES
+        or role in TARGET_PATH_SUPPORT_ROLES
+        or bool(str(metadata.get("path_board_slot") or "").strip())
+    )
+
+
+def _target_path_attack_stack_mapped(metadata: dict[str, Any], slot: str) -> bool:
+    return (
+        _metadata_truthy(metadata.get("attack_stack_available"))
+        and _metadata_truthy(metadata.get("maps_to_attack_stack"))
+        and slot in TARGET_PATH_ATTACK_STACK_SLOTS
+    )
+
+
+def _target_path_remaining_to_5pct(metadata: dict[str, Any]) -> float | None:
+    return _metadata_float(metadata, "remaining_to_5pct_yen", "remaining_to_5pct", "remaining_minimum_jpy")
+
+
+def _target_path_progress_pct(metadata: dict[str, Any]) -> float | None:
+    return _metadata_float(metadata, "daily_progress_pct", "day_progress_pct", "total_day_progress_pct")
+
+
+def _target_path_extension_gate_yes(metadata: dict[str, Any]) -> bool:
+    return _metadata_bool(metadata, "ten_pct_extension_gate", "extension_gate_10pct", "extension_gate") is True
+
+
+def _metadata_bool(metadata: dict[str, Any], *keys: str) -> bool | None:
+    for key in keys:
+        if key not in metadata:
+            continue
+        value = metadata.get(key)
+        if isinstance(value, bool):
+            return value
+        text = str(value or "").strip().lower()
+        if text in {"1", "true", "yes", "y", "on"}:
+            return True
+        if text in {"0", "false", "no", "n", "off"}:
+            return False
+    return None
+
+
+def _metadata_truthy(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    return str(value or "").strip().lower() in {"1", "true", "yes", "y", "on"}
+
+
+def _metadata_float(metadata: dict[str, Any], *keys: str) -> float | None:
+    for key in keys:
+        if key not in metadata:
+            continue
+        try:
+            return float(metadata.get(key))
+        except (TypeError, ValueError):
+            return None
+    return None
+
+
+def _metadata_int(metadata: dict[str, Any], *keys: str) -> int | None:
+    value = _metadata_float(metadata, *keys)
+    return int(value) if value is not None else None
 
 
 def _truthy_env(name: str, *, default: bool) -> bool:

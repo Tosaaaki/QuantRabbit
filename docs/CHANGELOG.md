@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-06-29
+
+- Added controlled target-path live routing behind `QR_TARGET_PATH_LIVE_ENABLED=1`, with LiveOrderGateway receipts and LIVE-LEARNING daily-review classification.
+
 ## 2026-06-28
 
 - Added `tools/position_sizing.py` and dry-run-only `tools/place_trader_order.py` for target-aware, risk-based order sizing.

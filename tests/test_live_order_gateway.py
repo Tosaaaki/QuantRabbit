@@ -1296,6 +1296,137 @@ class LiveOrderGatewayTest(unittest.TestCase):
             self.assertTrue(summary.sent)
             self.assertEqual(len(client.orders), 1)
 
+    def test_target_path_live_send_defaults_to_disabled_even_when_gateway_live_is_enabled(self) -> None:
+        prior = os.environ.get("QR_TARGET_PATH_LIVE_ENABLED")
+        os.environ.pop("QR_TARGET_PATH_LIVE_ENABLED", None)
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                client = FakeExecutionClient()
+
+                summary = LiveOrderGateway(
+                    client=client,
+                    strategy_profile=_profile(root),
+                    output_path=root / "request.json",
+                    report_path=root / "report.md",
+                    live_enabled=True,
+                ).run(
+                    intents_path=_intents(root, metadata=_target_path_metadata(grade="A")),
+                    lane_id="lane:EUR_USD:LONG",
+                    send=True,
+                    confirm_live=True,
+                )
+
+                self.assertEqual(summary.status, "BLOCKED")
+                self.assertFalse(summary.sent)
+                self.assertEqual(client.orders, [])
+                result = json.loads((root / "request.json").read_text())
+                self.assertIn("TARGET_PATH_LIVE_DISABLED", {issue["code"] for issue in result["risk_issues"]})
+                self.assertFalse(result["target_path_receipt"]["live_order_sent"])
+                self.assertFalse(result["target_path_receipt"]["target_path_live_enabled"])
+        finally:
+            _restore_env("QR_TARGET_PATH_LIVE_ENABLED", prior)
+
+    def test_target_path_live_send_blocks_b0_even_with_explicit_flag(self) -> None:
+        prior = os.environ.get("QR_TARGET_PATH_LIVE_ENABLED")
+        os.environ["QR_TARGET_PATH_LIVE_ENABLED"] = "1"
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                client = FakeExecutionClient()
+
+                summary = LiveOrderGateway(
+                    client=client,
+                    strategy_profile=_profile(root),
+                    output_path=root / "request.json",
+                    report_path=root / "report.md",
+                    live_enabled=True,
+                ).run(
+                    intents_path=_intents(root, metadata=_target_path_metadata(grade="B0", valid="NO")),
+                    lane_id="lane:EUR_USD:LONG",
+                    send=True,
+                    confirm_live=True,
+                )
+
+                self.assertEqual(summary.status, "BLOCKED")
+                self.assertEqual(client.orders, [])
+                result = json.loads((root / "request.json").read_text())
+                self.assertIn("TARGET_PATH_GRADE_TOO_LOW", {issue["code"] for issue in result["risk_issues"]})
+        finally:
+            _restore_env("QR_TARGET_PATH_LIVE_ENABLED", prior)
+
+    def test_target_path_live_send_allows_a_grade_with_receipt(self) -> None:
+        prior = os.environ.get("QR_TARGET_PATH_LIVE_ENABLED")
+        os.environ["QR_TARGET_PATH_LIVE_ENABLED"] = "1"
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                client = FakeExecutionClient()
+
+                summary = LiveOrderGateway(
+                    client=client,
+                    strategy_profile=_profile(root),
+                    output_path=root / "request.json",
+                    report_path=root / "report.md",
+                    live_enabled=True,
+                ).run(
+                    intents_path=_intents(root, metadata=_target_path_metadata(grade="A")),
+                    lane_id="lane:EUR_USD:LONG",
+                    send=True,
+                    confirm_live=True,
+                )
+
+                self.assertEqual(summary.status, "SENT")
+                self.assertTrue(summary.sent)
+                self.assertEqual(len(client.orders), 1)
+                result = json.loads((root / "request.json").read_text())
+                receipt = result["target_path_receipt"]
+                self.assertTrue(receipt["live_order_sent"])
+                self.assertTrue(receipt["target_path_live_enabled"])
+                self.assertEqual(receipt["target_path_live_mode"], "LIVE_LEARNING")
+                self.assertEqual(receipt["daily_target_mode"], "ATTACK")
+                self.assertEqual(receipt["five_pct_path_role"], "HERO")
+                self.assertEqual(receipt["attack_stack_slot"], "NOW")
+                self.assertEqual(receipt["grade"], "A")
+                self.assertTrue(str(receipt["live_order_gateway_receipt_id"]).startswith("qrv1-EURUSD-L-"))
+                report = (root / "report.md").read_text()
+                self.assertIn("target-path receipt", report)
+        finally:
+            _restore_env("QR_TARGET_PATH_LIVE_ENABLED", prior)
+
+    def test_target_path_live_send_allows_b_plus_support_reload(self) -> None:
+        prior = os.environ.get("QR_TARGET_PATH_LIVE_ENABLED")
+        os.environ["QR_TARGET_PATH_LIVE_ENABLED"] = "1"
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                client = FakeExecutionClient()
+
+                summary = LiveOrderGateway(
+                    client=client,
+                    strategy_profile=_profile(root),
+                    output_path=root / "request.json",
+                    report_path=root / "report.md",
+                    live_enabled=True,
+                ).run(
+                    intents_path=_intents(
+                        root,
+                        metadata=_target_path_metadata(grade="B+", role="SUPPORT", slot="RELOAD"),
+                    ),
+                    lane_id="lane:EUR_USD:LONG",
+                    send=True,
+                    confirm_live=True,
+                )
+
+                self.assertEqual(summary.status, "SENT")
+                self.assertEqual(len(client.orders), 1)
+                result = json.loads((root / "request.json").read_text())
+                self.assertEqual(result["target_path_receipt"]["five_pct_path_role"], "SUPPORT")
+                self.assertEqual(result["target_path_receipt"]["attack_stack_slot"], "RELOAD")
+                self.assertEqual(result["target_path_receipt"]["grade"], "B+")
+        finally:
+            _restore_env("QR_TARGET_PATH_LIVE_ENABLED", prior)
+
     def test_batch_send_posts_multiple_live_ready_orders(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -2609,6 +2740,38 @@ def _profile(root: Path, *, direction: str = "LONG") -> Path:
         )
     )
     return path
+
+
+def _target_path_metadata(*, grade: str, role: str = "HERO", slot: str = "NOW", valid: str = "YES") -> dict[str, Any]:
+    return {
+        "desk": "trend_trader",
+        "campaign_role": slot,
+        "daily_target_mode": "ATTACK",
+        "remaining_to_5pct_yen": 3000.0,
+        "remaining_to_10pct_yen": 8000.0,
+        "target_path_role": role,
+        "path_board_slot": role,
+        "path_board_available": True,
+        "five_pct_path_available": True,
+        "attack_stack_available": True,
+        "attack_stack_slot": slot,
+        "maps_to_attack_stack": True,
+        "conviction_grade": grade,
+        "valid_as_target_path": valid,
+        "suggested_units": 1000,
+        "risk_yen": 87.92,
+        "risk_pct": 0.04,
+        "target_yen": 226.08,
+        "contribution_to_5pct": 226.08,
+        "extension_gate": "NO",
+        "exact_pretrade_passed": True,
+        "spread_guard_passed": True,
+        "pricing_probe_passed": True,
+        "fill_guard_passed": True,
+        "same_thesis_lost_recently": False,
+        "vehicle_unchanged_after_loss": False,
+        "target_path_live_mode": "LIVE_LEARNING",
+    }
 
 
 def _intents(

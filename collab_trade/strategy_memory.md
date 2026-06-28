@@ -21,3 +21,10 @@
 - S/A can be the main +5% path. B+ is scout/reload support only. B0/B-/C are not valid +5% path trades.
 - The 10% Extension Gate defaults to NO; YES requires strong progress or protected S/A carry, paying hero thesis, theme/trend confirmation, stable spread, no near whipsaw event, healthy last A/S trade, and a real reload/second-shot level.
 - RiskEngine now blocks target-path metadata that violates the grade, extension, recent same-thesis loss, or 5% PATH / ATTACK STACK mapping contract. This is still dry-run/gateway-safe: no live OANDA order helper was added.
+
+## 2026-06-29 Controlled Target-Path Live Learning
+
+- Target-path live sends are still off by default. They require the normal `QR_LIVE_ENABLED=1 --send --confirm-live` path plus `QR_TARGET_PATH_LIVE_ENABLED=1`.
+- `tools/place_trader_order.py` remains dry-run only. It can emit a LiveOrderGateway intent with `--gateway-intent-output`, but all OANDA entry posts still happen only inside `LiveOrderGateway`.
+- Live target-path sends must carry `LIVE_LEARNING` receipts with daily target mode, remaining-to-5%, path role, attack-stack slot, grade, suggested/final units, risk, target contribution, and gateway receipt id.
+- `daily-review` now classifies sent target-path trades as `discovery failure`, `deployment failure`, `sizing failure`, `vehicle failure`, `management failure`, or `good execution` so the next cycle can learn from the exact failure mode instead of treating all losses as generic lane bias.

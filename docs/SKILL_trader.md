@@ -21,6 +21,7 @@ PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli trader-prompt-route
 
 - Broker truth wins over memory, prose, and prior prompts.
 - OANDA entry orders go only through `LiveOrderGateway`.
+- Target-path entry sends require `QR_TARGET_PATH_LIVE_ENABLED=1` in addition to `QR_LIVE_ENABLED=1`; default is dry-run/stage/LIVE-LEARNING receipt only.
 - OANDA position changes go only through `PositionProtectionGateway`.
 - Direct `OandaExecutionClient.close_trade()` is blocked; live market closes must use the provenance-aware gateway/partial-close paths and leave a position-execution receipt.
 - Do not print secrets.
@@ -93,6 +94,10 @@ export QR_DISASTER_SL_H4_ATR_MULT="${QR_DISASTER_SL_H4_ATR_MULT:-2.5}"
 # generate-intents may diagnose the lane but must not emit LIVE_READY.
 export QR_REQUIRE_FORECAST_FOR_LIVE="${QR_REQUIRE_FORECAST_FOR_LIVE:-1}"
 export QR_REQUIRE_TELEMETRY_FOR_LIVE="${QR_REQUIRE_TELEMETRY_FOR_LIVE:-1}"
+# Controlled target-path live is an extra gate. Leave it off unless the
+# operator intentionally wants a LIVE-LEARNING target-path send through
+# LiveOrderGateway after exact pretrade/spread/pricing/fill proofs pass.
+export QR_TARGET_PATH_LIVE_ENABLED="${QR_TARGET_PATH_LIVE_ENABLED:-0}"
 
 # Session-start read-only target block. This does not stage, send, cancel, or
 # close orders. It persists the first-seen UTC day-start NAV under
@@ -106,8 +111,10 @@ export QR_REQUIRE_TELEMETRY_FOR_LIVE="${QR_REQUIRE_TELEMETRY_FOR_LIVE:-1}"
 # order is not enough. "Trigger not printed yet" is an arm condition for a
 # LIMIT/STOP thesis, not a dead thesis. The selected path must map to the
 # ATTACK STACK. Before any fresh target-path order, run dry-run sizing with
-# tools/position_sizing.py or tools/place_trader_order.py; live sends still go
-# only through LiveOrderGateway.
+# tools/position_sizing.py or tools/place_trader_order.py. If you need a
+# handoff artifact, use tools/place_trader_order.py --gateway-intent-output;
+# live sends still go only through LiveOrderGateway and require
+# QR_TARGET_PATH_LIVE_ENABLED=1.
 python3 tools/session_data.py
 
 Required trader block:
@@ -183,6 +190,8 @@ Path rules:
 - One distant pending order is not enough.
 - "Trigger not printed yet" is an arm condition for LIMIT/STOP, not a dead thesis.
 - The path must map to ATTACK STACK.
+- `tools/place_trader_order.py` is dry-run only. It may emit a gateway intent, but it must not send.
+- Live target-path receipts must include daily target mode, remaining-to-5%, path role, attack-stack slot, grade, suggested/final units, risk, target contribution, and `LIVE_LEARNING` mode.
 
 ## 10% EXTENSION GATE
 Default: NO
@@ -406,6 +415,8 @@ PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli gpt-trader-decision \
 # PositionProtectionGateway before considering fresh entry risk. Skipping the
 # wrapper leaves profit-side partial closes, profitable hedge TPs, profit-lock
 # stops, and other dependent-order protection stale.
+# This does not enable target-path live by itself. A target-path send still
+# needs QR_TARGET_PATH_LIVE_ENABLED=1 and LiveOrderGateway target-path proof.
 QR_LIVE_ENABLED=1 ./scripts/run-autotrade-live.sh \
   --reuse-market-artifacts \
   --use-gpt-trader \
@@ -479,9 +490,11 @@ QR_LIVE_ENABLED=1 ./scripts/run-autotrade-live.sh \
 #   TAKE_PROFIT_MARKET / TP-update decision through PositionProtectionGateway.
 #   This is the full-cycle fallback for fast TP-progress wins when the separate
 #   launchd position guardian is inactive, stale, or skipped under the live
-#   lock. Live sends still require QR_LIVE_ENABLED=1 plus --send --confirm-live,
-#   and fresh entries require both a loaded guardian and a recent guardian
-#   heartbeat unless the operator uses an explicit override.
+#   lock. Live sends still require QR_LIVE_ENABLED=1 plus --send --confirm-live;
+#   target-path sends additionally require QR_TARGET_PATH_LIVE_ENABLED=1 and
+#   their target-path receipt proofs. Fresh entries require both a loaded
+#   guardian and a recent guardian heartbeat unless the operator uses an
+#   explicit override.
 # - memory-health BLOCK does not grant/deny a trade by itself;
 #   trader-prompt-route reads it for the next cycle's routing.
 # - self-improvement-audit is recalculated after the post-gateway snapshot and
@@ -556,6 +569,7 @@ QR_LIVE_ENABLED=1 ./scripts/run-autotrade-live.sh \
 - Daily target progress from `data/daily_target_state.json`.
 - `gpt-trader-decision` result and issue codes.
 - Gateway result and report paths under `docs/*_report.md`.
+- Target-path live receipt fields, if any, plus the next `daily-review` LIVE-LEARNING classification.
 - Execution ledger DB/report: `data/execution_ledger.db`, `docs/execution_ledger_report.md`.
 - Verification ledger JSON/SQL/report: `data/verification_ledger.json`, `data/execution_ledger.db`, `docs/verification_ledger_report.md`.
 - Profit capture bot JSON/report: `data/profit_capture_bot.json`, `docs/profit_capture_bot_report.md`.

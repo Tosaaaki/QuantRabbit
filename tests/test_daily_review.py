@@ -123,6 +123,88 @@ def _make_db(path: Path, trades: list[dict]) -> None:
     conn.close()
 
 
+def _make_target_path_review_db(path: Path, rows: list[dict]) -> None:
+    conn = sqlite3.connect(path)
+    conn.execute(
+        """
+        CREATE TABLE execution_events (
+            event_uid TEXT PRIMARY KEY,
+            ts_utc TEXT NOT NULL,
+            source TEXT NOT NULL,
+            event_type TEXT NOT NULL,
+            lane_id TEXT,
+            order_id TEXT,
+            trade_id TEXT,
+            pair TEXT,
+            side TEXT,
+            units INTEGER,
+            realized_pl_jpy REAL,
+            exit_reason TEXT,
+            related_transaction_ids_json TEXT NOT NULL,
+            raw_json TEXT NOT NULL,
+            inserted_at_utc TEXT NOT NULL
+        )
+        """
+    )
+    for row in rows:
+        conn.execute(
+            """
+            INSERT INTO execution_events
+                (event_uid, ts_utc, source, event_type, lane_id, order_id, trade_id, pair, side,
+                 units, realized_pl_jpy, exit_reason, related_transaction_ids_json, raw_json, inserted_at_utc)
+            VALUES (?, ?, 'test', ?, ?, ?, ?, ?, ?, ?, ?, ?, '[]', ?, ?)
+            """,
+            (
+                row["event_uid"],
+                row["ts_utc"],
+                row["event_type"],
+                row.get("lane_id"),
+                row.get("order_id"),
+                row.get("trade_id"),
+                row.get("pair"),
+                row.get("side"),
+                row.get("units"),
+                row.get("realized_pl_jpy"),
+                row.get("exit_reason"),
+                json.dumps(row.get("raw_json", {}), sort_keys=True),
+                row["ts_utc"],
+            ),
+        )
+    conn.commit()
+    conn.close()
+
+
+def _target_path_sent_row(*, ts_utc: str, trade_id: str, lane_id: str = "target:EUR_USD:LONG:HERO") -> dict:
+    receipt = {
+        "daily_target_mode": "ATTACK",
+        "remaining_to_5pct": 3000.0,
+        "five_pct_path_role": "HERO",
+        "attack_stack_slot": "NOW",
+        "grade": "A",
+        "suggested_units": 1000,
+        "final_units": 1000,
+        "risk_yen": 900.0,
+        "risk_pct": 0.45,
+        "target_yen": 1500.0,
+        "contribution_to_5pct": 1500.0,
+        "live_order_gateway_receipt_id": "qrv1-EURUSD-L-test",
+        "live_order_sent": True,
+        "target_path_live_mode": "LIVE_LEARNING",
+    }
+    return {
+        "event_uid": f"gateway-{trade_id}",
+        "ts_utc": ts_utc,
+        "event_type": "GATEWAY_ORDER_SENT",
+        "lane_id": lane_id,
+        "order_id": f"order-{trade_id}",
+        "trade_id": trade_id,
+        "pair": "EUR_USD",
+        "side": "LONG",
+        "units": 1000,
+        "raw_json": {"target_path_receipt": receipt, "sent": True},
+    }
+
+
 def _original_side(close_side: str) -> str:
     side = str(close_side).upper()
     if side == "LONG":
@@ -371,6 +453,77 @@ class DailyReviewTest(unittest.TestCase):
             self.assertIn("expires_at_utc", data)
             self.assertIn("bias_overrides", data)
             self.assertIn("GBP_USD", data["bias_overrides"])
+
+    def test_live_target_path_review_classifies_good_execution(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "ledger.db"
+            _make_target_path_review_db(
+                db_path,
+                [
+                    _target_path_sent_row(ts_utc=self._ts(2), trade_id="tp-good"),
+                    {
+                        "event_uid": "close-tp-good",
+                        "ts_utc": self._ts(1),
+                        "event_type": "TRADE_CLOSED",
+                        "lane_id": "target:EUR_USD:LONG:HERO",
+                        "trade_id": "tp-good",
+                        "pair": "EUR_USD",
+                        "side": "LONG",
+                        "units": 1000,
+                        "realized_pl_jpy": 1200.0,
+                        "exit_reason": "TAKE_PROFIT",
+                    },
+                ],
+            )
+
+            report = compute_daily_review(db_path, now=self.now)
+            data = report.to_dict()
+
+            self.assertEqual(len(report.target_path_live_reviews), 1)
+            review = report.target_path_live_reviews[0]
+            self.assertEqual(review["classification"], "good execution")
+            self.assertEqual(review["target_path_live_mode"], "LIVE_LEARNING")
+            self.assertEqual(review["live_order_gateway_receipt_id"], "qrv1-EURUSD-L-test")
+            self.assertEqual(data["_diagnostics"]["target_path_live_review_counts"], {"good execution": 1})
+            self.assertIn("target-path live: good execution=1", report.narrative_summary)
+
+    def test_live_target_path_review_keeps_unresolved_send_as_deployment_failure(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "ledger.db"
+            _make_target_path_review_db(
+                db_path,
+                [_target_path_sent_row(ts_utc=self._ts(2), trade_id="tp-open")],
+            )
+
+            report = compute_daily_review(db_path, now=self.now)
+
+            self.assertEqual(report.target_path_live_reviews[0]["classification"], "deployment failure")
+            self.assertIsNone(report.target_path_live_reviews[0]["realized_pl_jpy"])
+
+    def test_live_target_path_review_negative_without_exit_reason_is_vehicle_failure(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "ledger.db"
+            _make_target_path_review_db(
+                db_path,
+                [
+                    _target_path_sent_row(ts_utc=self._ts(2), trade_id="tp-loss"),
+                    {
+                        "event_uid": "close-tp-loss",
+                        "ts_utc": self._ts(1),
+                        "event_type": "TRADE_CLOSED",
+                        "lane_id": "target:EUR_USD:LONG:HERO",
+                        "trade_id": "tp-loss",
+                        "pair": "EUR_USD",
+                        "side": "LONG",
+                        "units": 1000,
+                        "realized_pl_jpy": -400.0,
+                    },
+                ],
+            )
+
+            report = compute_daily_review(db_path, now=self.now)
+
+            self.assertEqual(report.target_path_live_reviews[0]["classification"], "vehicle failure")
 
 
 if __name__ == "__main__":

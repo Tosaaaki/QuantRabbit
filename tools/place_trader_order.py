@@ -4,7 +4,8 @@
 Compatibility wrapper for the legacy `place_trader_order.py` workflow. This
 branch does not allow independent OANDA write helpers; real staging/sending
 remains exclusively in `LiveOrderGateway`. This script only validates a
-proposed order, calls `tools/position_sizing.py`, and prints a dry-run receipt.
+proposed order, calls `tools/position_sizing.py`, prints a dry-run receipt, and
+optionally writes a LiveOrderGateway intent artifact for a separate gateway run.
 """
 
 from __future__ import annotations
@@ -12,6 +13,7 @@ from __future__ import annotations
 import argparse
 import json
 from dataclasses import asdict, dataclass
+from pathlib import Path
 from typing import Any
 
 from position_sizing import PositionSizingInput, size_position
@@ -32,6 +34,9 @@ class DryRunGuardResult:
     side: str
     issues: tuple[dict[str, str], ...]
     sizing: dict[str, Any]
+    gateway_intent_emitted: bool = False
+    gateway_intent_output: str | None = None
+    gateway_intent: dict[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -73,6 +78,8 @@ def evaluate_order(args: argparse.Namespace) -> DryRunGuardResult:
     )
     issues = list(sizing.issues)
     issues.extend(_pretrade_guard_issues(args))
+    if _gateway_intent_requested(args):
+        issues.extend(_gateway_intent_guard_issues(args, sizing))
     status = "DRY_RUN_READY" if sizing.suggested_units > 0 and not _has_block(issues) else "DRY_RUN_BLOCKED"
     if args.send:
         status = "DRY_RUN_BLOCKED"
@@ -83,6 +90,11 @@ def evaluate_order(args: argparse.Namespace) -> DryRunGuardResult:
                 "severity": "BLOCK",
             }
         )
+    gateway_intent = (
+        _gateway_intent_payload(args, sizing)
+        if status == "DRY_RUN_READY" and _gateway_intent_requested(args)
+        else None
+    )
     return DryRunGuardResult(
         status=status,
         dry_run_only=True,
@@ -91,6 +103,9 @@ def evaluate_order(args: argparse.Namespace) -> DryRunGuardResult:
         side=args.side.upper(),
         issues=tuple(issues),
         sizing=sizing.to_dict(),
+        gateway_intent_emitted=gateway_intent is not None,
+        gateway_intent_output=str(args.gateway_intent_output) if gateway_intent is not None else None,
+        gateway_intent=gateway_intent,
     )
 
 
@@ -106,6 +121,135 @@ def _pretrade_guard_issues(args: argparse.Namespace) -> list[dict[str, str]]:
         for code, passed, message in checks
         if not passed
     ]
+
+
+def _gateway_intent_requested(args: argparse.Namespace) -> bool:
+    return getattr(args, "gateway_intent_output", None) is not None
+
+
+def _gateway_intent_guard_issues(args: argparse.Namespace, sizing: Any) -> list[dict[str, str]]:
+    issues: list[dict[str, str]] = []
+    if sizing.valid_as_target_path != "YES":
+        issues.append(
+            {
+                "code": "TARGET_PATH_SIZING_NOT_VALID",
+                "message": "LiveOrderGateway intent emission requires sizing valid_as_target_path=YES",
+                "severity": "BLOCK",
+            }
+        )
+    if not args.path_board_available:
+        issues.append(
+            {
+                "code": "PATH_BOARD_PROOF_MISSING",
+                "message": "LiveOrderGateway target-path intent requires 5% PATH BOARD proof",
+                "severity": "BLOCK",
+            }
+        )
+    if not args.attack_stack_available:
+        issues.append(
+            {
+                "code": "ATTACK_STACK_PROOF_MISSING",
+                "message": "LiveOrderGateway target-path intent requires ATTACK STACK proof",
+                "severity": "BLOCK",
+            }
+        )
+    if args.maps_to_attack_stack != "yes":
+        issues.append(
+            {
+                "code": "PATH_ATTACK_STACK_MAPPING_MISSING",
+                "message": "LiveOrderGateway target-path intent must map to ATTACK STACK",
+                "severity": "BLOCK",
+            }
+        )
+    if str(args.attack_stack_slot or "").upper() not in {"NOW", "RELOAD", "SECOND_SHOT"}:
+        issues.append(
+            {
+                "code": "ATTACK_STACK_SLOT_MISSING",
+                "message": "LiveOrderGateway target-path intent requires ATTACK STACK slot NOW / RELOAD / SECOND_SHOT",
+                "severity": "BLOCK",
+            }
+        )
+    for field, code in (
+        ("thesis", "INTENT_THESIS_MISSING"),
+        ("narrative", "INTENT_NARRATIVE_MISSING"),
+        ("chart_story", "INTENT_CHART_STORY_MISSING"),
+        ("invalidation", "INTENT_INVALIDATION_MISSING"),
+    ):
+        if not str(getattr(args, field, "") or "").strip():
+            issues.append(
+                {
+                    "code": code,
+                    "message": f"LiveOrderGateway target-path intent requires --{field.replace('_', '-')}",
+                    "severity": "BLOCK",
+                }
+            )
+    return issues
+
+
+def _gateway_intent_payload(args: argparse.Namespace, sizing: Any) -> dict[str, Any]:
+    side = args.side.upper()
+    role = str(args.target_path_role or "").strip().upper()
+    lane_id = args.lane_id or f"target-path:{args.pair.upper()}:{side}:{role or 'UNMAPPED'}"
+    metadata = {
+        "source_tool": "tools/place_trader_order.py",
+        "daily_target_mode": str(args.mode or "").strip().upper(),
+        "remaining_to_5pct_yen": args.remaining_to_5pct,
+        "remaining_to_10pct_yen": args.remaining_to_10pct,
+        "target_path_role": role,
+        "path_board_slot": str(args.path_board_slot or role or "").strip().upper(),
+        "path_board_available": True,
+        "five_pct_path_available": True,
+        "attack_stack_available": True,
+        "attack_stack_slot": str(args.attack_stack_slot or "").strip().upper(),
+        "maps_to_attack_stack": True,
+        "conviction_grade": sizing.grade,
+        "valid_as_target_path": sizing.valid_as_target_path,
+        "suggested_units": sizing.suggested_units,
+        "risk_yen": sizing.risk_yen,
+        "risk_pct": sizing.risk_pct,
+        "target_yen": sizing.target_yen,
+        "contribution_to_5pct": sizing.contribution_to_5pct,
+        "extension_gate": sizing.extension_gate,
+        "exact_pretrade_passed": bool(args.exact_pretrade_ok),
+        "spread_guard_passed": bool(args.spread_ok),
+        "pricing_probe_passed": bool(args.pricing_probe_ok),
+        "fill_guard_passed": bool(args.fill_guard_ok),
+        "same_thesis_lost_recently": bool(args.same_thesis_lost_recently),
+        "vehicle_unchanged_after_loss": bool(args.vehicle_unchanged_after_loss),
+        "target_path_live_mode": "LIVE_LEARNING",
+        "lane_id": lane_id,
+    }
+    return {
+        "generated_by": "tools/place_trader_order.py",
+        "status": "LIVE_READY",
+        "results": [
+            {
+                "lane_id": lane_id,
+                "status": "LIVE_READY",
+                "risk_allowed": True,
+                "intent": {
+                    "pair": args.pair.upper(),
+                    "side": side,
+                    "order_type": args.order_type,
+                    "units": sizing.suggested_units,
+                    "entry": args.entry,
+                    "tp": args.tp,
+                    "sl": args.sl,
+                    "thesis": args.thesis,
+                    "reason": args.reason,
+                    "owner": "trader",
+                    "market_context": {
+                        "regime": args.regime,
+                        "narrative": args.narrative,
+                        "chart_story": args.chart_story,
+                        "method": args.method,
+                        "invalidation": args.invalidation,
+                    },
+                    "metadata": metadata,
+                },
+            }
+        ],
+    }
 
 
 def _has_block(issues: list[dict[str, str]]) -> bool:
@@ -159,6 +303,8 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--unit-cap", type=int)
     parser.add_argument("--unit-band-cap", action="append", default=[])
     parser.add_argument("--target-path-role", default="")
+    parser.add_argument("--path-board-slot", default="")
+    parser.add_argument("--attack-stack-slot", choices=("NOW", "RELOAD", "SECOND_SHOT"))
     parser.add_argument("--extension-gate", choices=("yes", "no"), default="no")
     parser.add_argument("--path-board-available", action="store_true")
     parser.add_argument("--attack-stack-available", action="store_true")
@@ -169,12 +315,26 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--spread-ok", type=_yes_no, default=True)
     parser.add_argument("--pricing-probe-ok", type=_yes_no, default=True)
     parser.add_argument("--fill-guard-ok", type=_yes_no, default=True)
+    parser.add_argument("--gateway-intent-output", type=Path)
+    parser.add_argument("--lane-id")
+    parser.add_argument("--order-type", choices=("MARKET", "LIMIT", "STOP-ENTRY"), default="MARKET")
+    parser.add_argument("--thesis", default="")
+    parser.add_argument("--reason", default="target-aware preflight passed")
+    parser.add_argument("--regime", default="")
+    parser.add_argument("--narrative", default="")
+    parser.add_argument("--chart-story", default="")
+    parser.add_argument("--method", default="TREND_CONTINUATION")
+    parser.add_argument("--invalidation", default="")
     parser.add_argument("--send", action="store_true", help="Accepted only to block; this script is dry-run only.")
     return parser
 
 
 def main() -> int:
     result = evaluate_order(_parser().parse_args())
+    if result.gateway_intent is not None and result.gateway_intent_output is not None:
+        output = Path(result.gateway_intent_output)
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_text(json.dumps(result.gateway_intent, ensure_ascii=False, indent=2, sort_keys=True) + "\n")
     print(json.dumps(result.to_dict(), ensure_ascii=False, indent=2, sort_keys=True))
     return 0
 
