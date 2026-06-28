@@ -13,6 +13,9 @@ Generated from local/live artifacts on 2026-06-28 10:26 UTC / 19:26 JST.
 - Daily target packet before that close: start equity `173,944.9465 JPY`, 5% floor `8,697.25 JPY`, 10% target `17,394.49 JPY`, remaining 5% floor `8,809.25 JPY`, remaining target `17,506.49 JPY`.
 - Capture economics remains negative: win rate `59.1%`, PF `0.851`, expectancy `-163.7 JPY/trade`, net `-37,640.0 JPY` in trader-attributed realized capture report.
 - Positive edge is concentrated in `TAKE_PROFIT_ORDER` net `+48,804.8 JPY`; dominant loss leak is `MARKET_ORDER_TRADE_CLOSE` net `-74,564.8 JPY`.
+- The latest `+413.0 JPY` EUR_JPY win is arithmetically meaningful: roughly thirty similar clean wins would exceed the last known 5% floor, but only if loss-side market-close leakage stays bounded.
+- Current execution-ledger breadth is not single-pair: favorable realized pockets include `USD_JPY SHORT`, `USD_CHF LONG`, `AUD_CAD LONG`, `USD_CAD LONG`, and `EUR_JPY SHORT`; the current loop must scan every broker-enabled pair and side before concluding there is no turnover.
+- Current all-currency `order_intents` packet had `96` results and `0` `LIVE_READY` lanes. The top blockers were `NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION`, `RANGE_COUNTERTREND_RR_TOO_LOW`, `LOSS_BUDGET_TOO_THIN_FOR_MIN_LOT`, `RANGE_ROTATION_BROADER_LOCATION_CHASE`, `STRATEGY_NOT_ELIGIBLE`, and `EXHAUSTION_RANGE_CHASE`; `SPREAD_TOO_WIDE` is present but not the sole blocker.
 - Operational 5% reachability is false even though audit firepower says a 5% route is estimated. The live blockers are no current `LIVE_READY` lanes, blocked profitability acceptance, and fresh-entry send not allowed.
 
 ## Loop Objective
@@ -23,6 +26,15 @@ Drive QuantRabbit toward the daily 5% minimum as an audit and repair obligation,
 - produce at least one current, verifier-accepted, gateway-valid `LIVE_READY` attached-TP HARVEST or other approved lane,
 - clear a named profitability/close-gate evidence blocker,
 - or explicitly report that the blocker is waiting for live evidence and must not be reimplemented.
+
+## All-Currency Spread-Aware Turnover Contract
+
+- The loop must evaluate every broker-enabled currency pair and side in the fresh `order_intents` packet. Do not replay only the last winning EUR_JPY shape if other pairs have cleaner current geometry.
+- When the daily target remains open, rank all `LIVE_READY` lanes, all spread-normalized candidates, and the top all-currency blockers before reporting no-trade.
+- A fresh entry starts by paying the bid/ask spread. Initial unrealized red P/L inside current spread plus M1 noise is expected execution cost, not a failed thesis and not a market-close reason.
+- A negative close is acceptable only when it is machine-checkable: current broker truth, RiskEngine geometry, and close Gate A/B or broker-side SL/attached-TP mechanics must prove the loss is the designed invalidation cost.
+- In `NEGATIVE_EXPECTANCY`, planned loss must stay below the capture-economics loss-asymmetry cap unless the exact attached-TP HARVEST vehicle is TP-proven. One loss must not erase multiple average TP wins.
+- Increasing turnover means basketing every eligible pair the gateway can fit, then cutting only invalidated exposure. It does not mean lowering min-lot, bypassing spread, chasing broad-location extremes, or turning protective blockers into prose exceptions.
 
 ## Causal Blocker Order
 
@@ -42,6 +54,7 @@ Drive QuantRabbit toward the daily 5% minimum as an audit and repair obligation,
    - Current `LIVE_READY` count is `0`.
    - Top blockers are `NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION`, `RANGE_COUNTERTREND_RR_TOO_LOW`, `LOSS_BUDGET_TOO_THIN_FOR_MIN_LOT`, `RANGE_ROTATION_BROADER_LOCATION_CHASE`, `STRATEGY_NOT_ELIGIBLE`, and `EXHAUSTION_RANGE_CHASE`.
    - Correct protective guardrails are not code bugs. Only edit code when a failing regression proves the blocker is false for an allowed shape.
+   - Spread-only red at entry is not a blocker-clearance signal by itself. Recheck spread-normalized candidates after fresh broker truth; repair non-spread blockers separately.
 
 4. Repair frontier.
    - Current orchestrator selected `REPAIR_FRONTIER_LANE_BLOCKER` as actionable auxiliary work.
@@ -153,6 +166,8 @@ Progress is accepted only when at least one of these changes:
 - `verification-ledger-audit` proves recent loss-side closes have durable `close_gate_evidence`.
 - `execution-timing-audit --lookback-hours 744 --post-close-hours 6 --max-events 80` shows month-scale replay non-negative or residual groups removed.
 - `order_intents` has at least one `LIVE_READY` lane that passes verifier and gateway validation.
+- `order_intents` or `coverage_optimization` shows all-currency opportunity breadth improving: more spread-normalized candidates, fewer non-spread blockers, or more unique tradable pair/side lanes.
+- Realized negative closes remain "reasonable": average loss stays below the current average winner/loss-asymmetry cap, and recent loss-side `MARKET_ORDER_TRADE_CLOSE` count does not grow without durable close-gate evidence.
 - `trader_support_bot` reports operational 5% reachable true.
 
 ## Reusable Goal Prompt
@@ -169,6 +184,8 @@ Current known state:
 - First reconcile broker truth against execution_ledger because the latest ledger may be newer than data/broker_snapshot.json.
 - The last known daily floor was 5% of 173,944.9465 JPY = 8,697.25 JPY, but refresh daily-target-state before using any remaining amount.
 - Capture economics is negative; TAKE_PROFIT_ORDER is the positive edge and MARKET_ORDER_TRADE_CLOSE is the dominant loss leak.
+- The last EUR_JPY +413 JPY clean close proves the arithmetic shape, not a single-pair mandate. Scan all broker-enabled currencies and sides for the same or better current attached-TP / HARVEST / gateway-valid shape.
+- A new trade begins spread-negative. Treat initial red inside current spread plus M1 noise as execution cost, not thesis failure. Only accept negative closes that pass close Gate A/B or broker-side designed invalidation, and keep loss size below the capture-economics loss-asymmetry cap unless exact TP-proven HARVEST evidence relaxes it.
 - Audit firepower may estimate a 5% route, but operational 5% is false until profitability acceptance, LIVE_READY, guardian/send-readiness, and gateway validation are clear.
 
 Loop:
@@ -177,11 +194,12 @@ Loop:
 3. Refresh broker snapshot, execution ledger, and daily target state before making any decision.
 4. Run cycle-refresh --daily-risk-pct 10 as the single evidence refresh command.
 5. Inspect only targeted artifacts: daily_target_state, order_intents LIVE_READY count and top blockers, capture_economics, profitability_acceptance, trader_support_bot, trader_repair_orchestrator.
-6. If an open trader-owned position exists, prioritize TP/profit capture, TP rebalance, protection, or verified close discipline through PositionProtectionGateway. Do not close from fear, margin pressure, stale prose, or soft evidence without Gate B.
-7. If flat or layerable and at least one LIVE_READY lane exists, draft one decision, verify it with gpt-trader-decision, then hand it immediately to the live wrapper only through the approved gateway path.
-8. If no LIVE_READY lane or profitability acceptance is blocked, select one repair from trader-repair-orchestrator. Implement only READY_FOR_CODEX_IMPLEMENTATION work. For WAITING_FOR_LIVE_EVIDENCE_WINDOW, run the named evidence command and report the wait instead of reimplementing the same guard.
-9. Verify progress using fresh metrics: remaining_minimum_jpy, capture expectancy/PF, close_gate_evidence durability, month-scale replay status, LIVE_READY count, and trader_support_bot operational_minimum_5pct_reachable.
-10. For any runtime-affecting code/doc change, add focused tests, run targeted and full unittest, commit with Codex attribution, run scripts/sync-live-runtime.sh, and verify live HEAD matches.
+6. For order_intents, inspect all currencies: unique pair/side coverage, spread-normalized candidates, spread-only blockers versus non-spread blockers, and every current LIVE_READY lane the gateway could fit.
+7. If an open trader-owned position exists, prioritize TP/profit capture, TP rebalance, protection, or verified close discipline through PositionProtectionGateway. Do not close from fear, margin pressure, stale prose, or soft evidence without Gate B.
+8. If flat or layerable and at least one LIVE_READY lane exists, draft one basket decision across every eligible pair the gateway can fit, verify it with gpt-trader-decision, then hand it immediately to the live wrapper only through the approved gateway path.
+9. If no LIVE_READY lane or profitability acceptance is blocked, select one repair from trader-repair-orchestrator. Implement only READY_FOR_CODEX_IMPLEMENTATION work. For WAITING_FOR_LIVE_EVIDENCE_WINDOW, run the named evidence command and report the wait instead of reimplementing the same guard.
+10. Verify progress using fresh metrics: remaining_minimum_jpy, capture expectancy/PF, close_gate_evidence durability, month-scale replay status, LIVE_READY count, and trader_support_bot operational_minimum_5pct_reachable.
+11. For any runtime-affecting code/doc change, add focused tests, run targeted and full unittest, commit with Codex attribution, run scripts/sync-live-runtime.sh, and verify live HEAD matches.
 
 Anti-loop rules:
 - Do not rerun profitability-acceptance as the fix unless an input artifact, gateway proof, or live evidence window changed.
