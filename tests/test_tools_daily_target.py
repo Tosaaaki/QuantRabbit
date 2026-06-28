@@ -21,7 +21,26 @@ def _load_daily_target_module():
     return module
 
 
+def _load_session_data_module():
+    path = Path(__file__).resolve().parents[1] / "tools" / "session_data.py"
+    sys.path.insert(0, str(path.parent))
+    try:
+        spec = importlib.util.spec_from_file_location("tools_session_data", path)
+        if spec is None or spec.loader is None:
+            raise RuntimeError(f"cannot load {path}")
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = module
+        spec.loader.exec_module(module)
+        return module
+    finally:
+        try:
+            sys.path.remove(str(path.parent))
+        except ValueError:
+            pass
+
+
 daily_target = _load_daily_target_module()
+session_data = _load_session_data_module()
 
 
 class DailyTargetToolTest(unittest.TestCase):
@@ -152,3 +171,40 @@ class DailyTargetToolTest(unittest.TestCase):
             self.assertEqual(record["day_start_nav"], 123_456.7)
             self.assertEqual(record["trading_day_utc"], "2026-06-28")
             self.assertEqual(metrics.day_start_nav_path, str(record_path))
+
+    def test_full_trader_board_requires_hero_path_attack_stack_and_blocker(self) -> None:
+        metrics = daily_target.DailyTargetMetrics(
+            trading_day_utc="2026-06-28",
+            day_start_utc="2026-06-28T00:00:00+00:00",
+            day_end_utc="2026-06-29T00:00:00+00:00",
+            generated_at_utc="2026-06-28T12:00:00+00:00",
+            snapshot_fetched_at_utc="2026-06-28T12:00:00+00:00",
+            day_start_nav=100_000.0,
+            current_nav=101_000.0,
+            realized_pl_today=1_000.0,
+            unrealized_pl=0.0,
+            total_day_progress_yen=1_000.0,
+            total_day_progress_pct=1.0,
+            base_target_yen=5_000.0,
+            extension_target_yen=10_000.0,
+            remaining_to_5pct_yen=4_000.0,
+            remaining_to_10pct_yen=9_000.0,
+            margin_used=0.0,
+            margin_pct=0.0,
+            mode="BUILD",
+            extension_gate=False,
+            day_start_nav_source="test",
+            day_start_nav_path="test",
+        )
+
+        board = session_data.format_full_trader_board(metrics)
+
+        self.assertIn("## 5% PATH BOARD", board)
+        self.assertIn("Remaining to +5%: 4,000 JPY", board)
+        self.assertIn("Path A / HERO:", board)
+        self.assertIn("Path B / SECOND SHOT:", board)
+        self.assertIn("Path C / NO HONEST PATH:", board)
+        self.assertIn("## ATTACK STACK", board)
+        self.assertIn("Why this thesis can still reach +5% today:", board)
+        self.assertIn("B/C trades cannot be the +5% target path.", board)
+        self.assertIn("One distant pending order is not enough.", board)

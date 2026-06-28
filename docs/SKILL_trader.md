@@ -97,7 +97,89 @@ export QR_REQUIRE_TELEMETRY_FOR_LIVE="${QR_REQUIRE_TELEMETRY_FOR_LIVE:-1}"
 # Session-start read-only target block. This does not stage, send, cancel, or
 # close orders. It persists the first-seen UTC day-start NAV under
 # logs/day_start_nav/ and prints the base +5% / extension +10% operating mode.
+# It also prints the required FULL_TRADER +5% path board and attack stack.
+# Do not leave those fields blank in the working decision or end report: while
+# remaining_to_5pct is above zero, fill a concrete Path A / HERO route that can
+# reach the +5% floor, or write the exact blocker and next trigger. B/C churn
+# is not a substitute for the HERO path, and a single distant pending
+# order is not enough. "Trigger not printed yet" is an arm condition for a
+# LIMIT/STOP thesis, not a dead thesis. The selected path must map to the
+# ATTACK STACK.
 python3 tools/session_data.py
+
+Required trader block:
+
+```markdown
+## 5% PATH BOARD
+Remaining to +5%:
+
+Path A / HERO:
+Pair / side / vehicle:
+Expected pips:
+Suggested units:
+Expected contribution:
+Entry:
+TP:
+SL:
+Status: live / armable / blocked
+Exact blocker if blocked:
+
+Path B / SECOND SHOT:
+Pair / side / vehicle:
+Expected pips:
+Suggested units:
+Expected contribution:
+Entry:
+TP:
+SL:
+Status:
+Exact blocker if blocked:
+
+Path C / NO HONEST PATH:
+Exact blocker:
+Next trigger:
+Shelf-life:
+
+## ATTACK STACK
+Hero thesis:
+Why this thesis can still reach +5% today:
+
+NOW:
+Pair / side / vehicle:
+Entry:
+TP:
+SL:
+Units:
+Why now:
+
+RELOAD:
+Pair / side / vehicle:
+Entry:
+TP:
+SL:
+Units:
+Why this is better price, not hesitation:
+
+SECOND SHOT:
+Pair / side / vehicle:
+Entry:
+TP:
+SL:
+Units:
+Why this is same theme, different expression:
+
+If any slot is empty:
+Exact blocker:
+Next trigger:
+Shelf-life:
+```
+
+Path rules:
+- Under +5%, trader must name an A/S path or exact blocker.
+- B/C trades cannot be the +5% target path.
+- One distant pending order is not enough.
+- "Trigger not printed yet" is an arm condition for LIMIT/STOP, not a dead thesis.
+- The path must map to ATTACK STACK.
 
 # 1. Route to the right prompt branch
 PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli trader-prompt-route
@@ -445,6 +527,8 @@ QR_LIVE_ENABLED=1 ./scripts/run-autotrade-live.sh \
 
 ## End Report
 
+- Filled `5% PATH BOARD` with a concrete Path A / HERO route or exact blocker.
+- Filled `ATTACK STACK`, and every non-empty path-board slot maps to NOW, RELOAD, or SECOND SHOT.
 - Final action: `TRADE`, `WAIT`, `REQUEST_EVIDENCE`, `PROTECT`, `TIGHTEN_SL`, `CLOSE`, or `CANCEL_PENDING`.
 - Sent flag: `true`, `false`, or dry-run.
 - Selected lane id(s), if any.
