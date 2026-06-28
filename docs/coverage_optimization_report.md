@@ -1,39 +1,470 @@
 # Coverage Optimization Report
 
-- Generated at UTC: `2026-05-06T05:31:43.599437+00:00`
-- Status: `COVERAGE_REQUIRES_REPLAY_EVIDENCE`
-- Remaining target: `11120 JPY`
-- Live-ready reward: `33405 JPY` (`300.4%`)
-- Sequential ladder reward: `13806 JPY` (`124.2%`, steps=`4`)
-- Potential reward after promotions: `33405 JPY` (`300.4%`)
-- Remaining risk budget: `4202 JPY`
+- Generated at UTC: `2026-06-26T06:40:12.367934+00:00`
+- Status: `COVERAGE_GAP`
+- Remaining target: `17394 JPY`
+- Live-ready reward: `0 JPY` (`0.0%`)
+- Unique live-ready lanes: `0` (duplicates removed=`0`)
+- Sequential ladder reward: `0 JPY` (`0.0%`, steps=`0`)
+- Potential reward after promotions: `0 JPY` (`0.0%`)
+- Remaining risk budget: `17394 JPY`
+
+## Artifact Diagnostics
+
+- Intent generated at UTC: `2026-06-26T06:40:12.298577+00:00`
+- Intent age seconds: `0.0694`
+- Intent stale: `False`
+- Current FX open: `True`
+- Market closed reason: `none`
+- Matrix missing: `False`
+- Requires market evidence refresh: `False`
+- All lanes spread-blocked: `False`
+- All lanes quote-stale: `False`
+- Spread-normalized candidates: `0` reward=`0`
+- Spread-normalized no-live-blocker candidates: `0` reward=`0`
+- Spread-normalized live-blocker counts: `{}`
+- Quote-stale result count: `0`
+- Quote-normalized candidates: `0` reward=`0`
+- Quote-normalized no-live-blocker candidates: `0` reward=`0`
+- Quote-normalized live-blocker counts: `{}`
+- Risk block issue counts: `{'SELF_IMPROVEMENT_FORECAST_ADVERSE_PATH': 80, 'NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION': 74, 'RANGE_FORECAST_REQUIRES_RANGE_ROTATION': 48, 'RANGE_ROTATION_BROADER_LOCATION_CHASE': 40, 'FORECAST_WATCH_ONLY': 31, 'EXHAUSTION_RANGE_CHASE': 30, 'BIDASK_REPLAY_NEGATIVE_EXPECTANCY_FOR_LIVE': 28, 'SPREAD_TOO_WIDE': 27, 'RANGE_COUNTERTREND_RR_TOO_LOW': 15, 'BAD_UNITS': 14, 'LOSS_BUDGET_TOO_THIN_FOR_MIN_LOT': 14, 'FORECAST_CONFIDENCE_REQUIRED_FOR_LIVE': 13, 'PATTERN_REVERSAL_CHASE': 12, 'REWARD_RISK_TOO_LOW': 8, 'BREAKOUT_FAILURE_STOP_CHASES_FAILED_SIDE': 7, 'MONTH_SCALE_ENTRY_QUALITY_RESIDUAL_BLOCKED': 7, 'CHART_DIRECTION_CONFLICT': 5, 'MATRIX_REPAIR_REJECT_CONTEXT': 5, 'RANGE_FORMING_HTF_TREND_CONFLICT': 5, 'TREND_MARKET_NOT_OPERATING_TREND': 5, 'HARVEST_TP_STRUCTURE_MISSING': 4, 'RANGE_PHASE_NOT_ROTATION': 4, 'TARGET_TOO_THIN_FOR_SPREAD': 4, 'BREAKOUT_FAILURE_MARKET_NOT_RETESTED': 3, 'RANGE_MARKET_NOT_AT_RAIL': 3, 'MONTH_SCALE_RESIDUAL_LOSS_REPAIR_BLOCKED': 2, 'TREND_CONTINUATION_DIRECTION_CONFLICT': 1}`
+
+## Opportunity Modes
+
+- `HARVEST` lanes=`82` live_ready=`0` promotion_candidates=`0` total_reward=`31264.8717` live_reward=`0.0` potential_reward=`0.0` codes=`SELF_IMPROVEMENT_FORECAST_ADVERSE_PATH, NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION, FORECAST_WATCH_ONLY, RANGE_FORECAST_REQUIRES_RANGE_ROTATION` live_blocker_codes=`SELF_IMPROVEMENT_FORECAST_ADVERSE_PATH, NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION, RANGE_ROTATION_BROADER_LOCATION_CHASE, FORECAST_WATCH_ONLY` blockers=`persistent high-confidence forecast adverse path blocks new entry risk; repair directional forecast buckets/range-location priors before expanding exposure (streak=53, projection_economic_precision_gap_count=7, projection_worst_economic_wilson_lower=0.337, projection_worst_timeout_rate=0.570, PF=1.059), capture_economics is NEGATIVE_EXPECTANCY; fresh live rotation is limited to non-market attached-TP HARVEST receipts with positive TAKE_PROFIT_ORDER expectancy, zero TP losses, and positive Wilson-lower-bound stress expectancy until realized PF/expectancy recover, EUR_JPY SHORT has a RANGE forecast; only executable RANGE_ROTATION rail geometry may become LIVE_READY from a RANGE prediction.`
+- `RUNNER` lanes=`0` live_ready=`0` promotion_candidates=`0` total_reward=`0.0` live_reward=`0.0` potential_reward=`0.0` diagnostic_candidates=`13` demoted_to_harvest=`13` codes=`RANGE_FORECAST_REQUIRES_RANGE_ROTATION, NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION, SELF_IMPROVEMENT_FORECAST_ADVERSE_PATH, BIDASK_REPLAY_NEGATIVE_EXPECTANCY_FOR_LIVE` live_blocker_codes=`NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION, SELF_IMPROVEMENT_FORECAST_ADVERSE_PATH, RANGE_FORECAST_REQUIRES_RANGE_ROTATION, PATTERN_REVERSAL_CHASE` blockers=`capture_economics is NEGATIVE_EXPECTANCY; fresh live rotation is limited to non-market attached-TP HARVEST receipts with positive TAKE_PROFIT_ORDER expectancy, zero TP losses, and positive Wilson-lower-bound stress expectancy until realized PF/expectancy recover, persistent high-confidence forecast adverse path blocks new entry risk; repair directional forecast buckets/range-location priors before expanding exposure (streak=53, projection_economic_precision_gap_count=7, projection_worst_economic_wilson_lower=0.337, projection_worst_timeout_rate=0.570, PF=1.059), EUR_JPY SHORT has a RANGE forecast; only executable RANGE_ROTATION rail geometry may become LIVE_READY from a RANGE prediction.`
+- `BALANCED` lanes=`0` live_ready=`0` promotion_candidates=`0` total_reward=`0.0` live_reward=`0.0` potential_reward=`0.0` codes=`none` live_blocker_codes=`none` blockers=`none`
+
+## Runner Candidate Diagnostics
+
+- Status: `RUNNER_CANDIDATES_DEMOTED_TO_HARVEST`
+- Trend candidates: `13`
+- Runner-qualified trend candidates: `0`
+- Attached-HARVEST trend candidates: `13`
+- Top demotion reasons: `UNCLEAR regime is not a clean runner trend=7, ADX 13.7 below trend threshold 25.0=3, ADX 22.0 below trend threshold 25.0=2, ADX 21.8 below trend threshold 25.0=1`
+
+## Perspective Alignment
+
+- Status: `NO_RANGE_METHOD_MISMATCH`
+- Pair/direction groups: `26`
+- Range forecast method mismatch groups: `0`
+- Range forecast method mismatch lanes: `0`
+
+
+## Profitable Bucket Coverage
+
+- AI backtest status: `RESEARCH_PROFITABLE_NOT_CERTIFIED`
+- Positive historical pair/directions: `8`
+- Positive managed net: `41880.3267`
+- Coverage states: `{'SURFACED_BUT_BLOCKED': 5, 'NO_CURRENT_LANE': 3}`
+
+- `EUR_USD LONG` state=`SURFACED_BUT_BLOCKED` managed_net=`16738.9712` current_lanes=`4` spread_normalized=`0` no_live_blocker=`0` profile=`BLOCK_UNTIL_NEW_EVIDENCE` matrix_supports=`8` matrix_rejects=`0`
+  - strategy profile: live_net=`-7909.3184` pretrade_net=`16174.000900000001` seat_net=`-2881.5415` fix=historical live loss exceeded the 1739 JPY cap; only risk-resized dry-run receipts can reopen it
+  - cross/context assets: DXY_24H_DIRECTION: EUR_USD synthetic DXY 24h change -0.233% maps to LONG, GOLD_USD_PRESSURE_DIRECTION: EUR_USD XAU_USD 24h change 0.952% maps to LONG as USD-pressure context, GOLD_CONTEXT_TECHNICAL_DIRECTION: EUR_USD XAU_USD technical direction=DOWN regime=TREND_DOWN score_balance=SHORT_LEAN long=0.379/short=0.582 maps to SHORT as USD-pressure context
+  - top blockers: EXHAUSTION_RANGE_CHASE, NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION, SELF_IMPROVEMENT_FORECAST_ADVERSE_PATH
+- `AUD_JPY SHORT` state=`SURFACED_BUT_BLOCKED` managed_net=`7223.796` current_lanes=`4` spread_normalized=`0` no_live_blocker=`0` profile=`BLOCK_UNTIL_NEW_EVIDENCE` matrix_supports=`9` matrix_rejects=`0`
+  - strategy profile: live_net=`-7195.2` pretrade_net=`-4533.948` seat_net=`-24935.0` fix=historical live loss exceeded the 1739 JPY cap; only risk-resized dry-run receipts can reopen it
+  - cross/context assets: RISK_ASSET_JPY_CROSS_DIRECTION: AUD_JPY SPX500_USD 24h change -1.061% maps to SHORT, EQUITY_INDEX_CONTEXT_TECHNICAL_DIRECTION: AUD_JPY SPX500_USD technical direction=DOWN regime=UNCLEAR score_balance=SHORT_LEAN long=0.242/short=0.727 maps to SHORT as JPY risk context, US10Y_JPY_CROSS_DIRECTION: AUD_JPY USB10Y_USD 24h change 0.225% maps to LONG
+  - top blockers: RANGE_FORECAST_REQUIRES_RANGE_ROTATION, SELF_IMPROVEMENT_FORECAST_ADVERSE_PATH, FORECAST_CONFIDENCE_REQUIRED_FOR_LIVE
+- `GBP_USD LONG` state=`SURFACED_BUT_BLOCKED` managed_net=`5811.568` current_lanes=`3` spread_normalized=`0` no_live_blocker=`0` profile=`BLOCK_UNTIL_NEW_EVIDENCE` matrix_supports=`8` matrix_rejects=`0`
+  - strategy profile: live_net=`-24407.6243` pretrade_net=`1341.6768` seat_net=`-8787.1279` fix=historical live loss exceeded the 1739 JPY cap; only risk-resized dry-run receipts can reopen it
+  - cross/context assets: DXY_24H_DIRECTION: GBP_USD synthetic DXY 24h change -0.233% maps to LONG, GOLD_USD_PRESSURE_DIRECTION: GBP_USD XAU_USD 24h change 0.952% maps to LONG as USD-pressure context, GOLD_CONTEXT_TECHNICAL_DIRECTION: GBP_USD XAU_USD technical direction=DOWN regime=TREND_DOWN score_balance=SHORT_LEAN long=0.379/short=0.582 maps to SHORT as USD-pressure context
+  - top blockers: RANGE_FORECAST_REQUIRES_RANGE_ROTATION, SELF_IMPROVEMENT_FORECAST_ADVERSE_PATH, persistent high-confidence forecast adverse path blocks new entry risk; repair directional forecast buckets/range-location priors before expanding exposure (streak=53, projection_economic_precision_gap_count=7, projection_worst_economic_wilson_lower=0.337, projection_worst_timeout_rate=0.570, PF=1.059)
+- `AUD_JPY LONG` state=`NO_CURRENT_LANE` managed_net=`4716.335` current_lanes=`0` spread_normalized=`0` no_live_blocker=`0` profile=`BLOCK_UNTIL_NEW_EVIDENCE` matrix_supports=`3` matrix_rejects=`3`
+  - strategy profile: live_net=`-1059.166` pretrade_net=`3152.2` seat_net=`-11873.0` fix=historical live loss exceeded the 1739 JPY cap; only risk-resized dry-run receipts can reopen it
+  - cross/context assets: US10Y_JPY_CROSS_DIRECTION: AUD_JPY USB10Y_USD 24h change 0.225% maps to LONG, US10Y_CONTEXT_TECHNICAL_DIRECTION: AUD_JPY USB10Y_USD technical direction=UP regime=TREND_UP score_balance=LONG_LEAN long=0.785/short=0.200 maps to LONG as yield/JPY context, RISK_ASSET_JPY_CROSS_DIRECTION: AUD_JPY SPX500_USD 24h change -1.061% maps to SHORT
+- `EUR_JPY LONG` state=`SURFACED_BUT_BLOCKED` managed_net=`3515.8` current_lanes=`6` spread_normalized=`0` no_live_blocker=`0` profile=`MINE_MISSED_EDGE` matrix_supports=`7` matrix_rejects=`0`
+  - strategy profile: live_net=`-2344.3` pretrade_net=`3158.5` seat_net=`12720.0` fix=missed seats paid more often than captured; build trigger/pending-entry receipts before live execution
+  - cross/context assets: US10Y_JPY_CROSS_DIRECTION: EUR_JPY USB10Y_USD 24h change 0.225% maps to LONG, US10Y_CONTEXT_TECHNICAL_DIRECTION: EUR_JPY USB10Y_USD technical direction=UP regime=TREND_UP score_balance=LONG_LEAN long=0.785/short=0.200 maps to LONG as yield/JPY context, RISK_ASSET_JPY_CROSS_DIRECTION: EUR_JPY SPX500_USD 24h change -1.061% maps to SHORT
+  - top blockers: RANGE_FORECAST_REQUIRES_RANGE_ROTATION, NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION, EXHAUSTION_RANGE_CHASE
+- `EUR_USD SHORT` state=`SURFACED_BUT_BLOCKED` managed_net=`3144.1865` current_lanes=`7` spread_normalized=`0` no_live_blocker=`0` profile=`RISK_REPAIR_CANDIDATE` matrix_supports=`4` matrix_rejects=`4`
+  - strategy profile: live_net=`6770.3862` pretrade_net=`1605.1376000000002` seat_net=`-33883.0796` fix=edge exists but old sizing broke the loss cap; require <=1739 JPY dry-run receipt before live use
+  - cross/context assets: GOLD_CONTEXT_TECHNICAL_DIRECTION: EUR_USD XAU_USD technical direction=DOWN regime=TREND_DOWN score_balance=SHORT_LEAN long=0.379/short=0.582 maps to SHORT as USD-pressure context, DXY_24H_DIRECTION: EUR_USD synthetic DXY 24h change -0.233% maps to LONG, GOLD_USD_PRESSURE_DIRECTION: EUR_USD XAU_USD 24h change 0.952% maps to LONG as USD-pressure context
+  - top blockers: RANGE_FORECAST_REQUIRES_RANGE_ROTATION, SELF_IMPROVEMENT_FORECAST_ADVERSE_PATH, persistent high-confidence forecast adverse path blocks new entry risk; repair directional forecast buckets/range-location priors before expanding exposure (streak=53, projection_economic_precision_gap_count=7, projection_worst_economic_wilson_lower=0.337, projection_worst_timeout_rate=0.570, PF=1.059)
+- `GBP_JPY LONG` state=`NO_CURRENT_LANE` managed_net=`598.67` current_lanes=`0` spread_normalized=`0` no_live_blocker=`0` profile=`BLOCK_UNTIL_NEW_EVIDENCE` matrix_supports=`7` matrix_rejects=`0`
+  - strategy profile: live_net=`-348.4` pretrade_net=`-3396.0` seat_net=`-2694.0` fix=both live execution and pretrade feedback are negative; require a new vehicle or market-structure proof
+  - cross/context assets: US10Y_JPY_CROSS_DIRECTION: GBP_JPY USB10Y_USD 24h change 0.225% maps to LONG, US10Y_CONTEXT_TECHNICAL_DIRECTION: GBP_JPY USB10Y_USD technical direction=UP regime=TREND_UP score_balance=LONG_LEAN long=0.785/short=0.200 maps to LONG as yield/JPY context, RISK_ASSET_JPY_CROSS_DIRECTION: GBP_JPY SPX500_USD 24h change -1.061% maps to SHORT
+- `USD_JPY LONG` state=`NO_CURRENT_LANE` managed_net=`131.0` current_lanes=`0` spread_normalized=`0` no_live_blocker=`0` profile=`BLOCK_UNTIL_NEW_EVIDENCE` matrix_supports=`7` matrix_rejects=`2`
+  - strategy profile: live_net=`-6522.77` pretrade_net=`-29.0` seat_net=`-7884.0` fix=historical live loss exceeded the 1739 JPY cap; only risk-resized dry-run receipts can reopen it
+  - cross/context assets: US10Y_JPY_CROSS_DIRECTION: USD_JPY USB10Y_USD 24h change 0.225% maps to LONG, GOLD_CONTEXT_TECHNICAL_DIRECTION: USD_JPY XAU_USD technical direction=DOWN regime=TREND_DOWN score_balance=SHORT_LEAN long=0.379/short=0.582 maps to LONG as USD-pressure context, US10Y_CONTEXT_TECHNICAL_DIRECTION: USD_JPY USB10Y_USD technical direction=UP regime=TREND_UP score_balance=LONG_LEAN long=0.785/short=0.200 maps to LONG as yield/JPY context
+
+## Discovery Evidence Edges
+
+- Advisory, not summed into primary historical P/L: `True`
+
+- `pretrade_outcomes:EUR_USD:LONG:HIGH:UNSPECIFIED` net=`8509.3712` trades=`19` win_rate=`89.4737` coverage=`SURFACED_BUT_BLOCKED` matrix_supports=`8` matrix_rejects=`0`
+- `pretrade_outcomes:EUR_USD:LONG:MEDIUM:UNSPECIFIED` net=`6831.8625` trades=`11` win_rate=`54.5455` coverage=`SURFACED_BUT_BLOCKED` matrix_supports=`8` matrix_rejects=`0`
+- `pretrade_outcomes:AUD_JPY:LONG:LOW:UNSPECIFIED` net=`1408.0` trades=`3` win_rate=`66.6667` coverage=`NO_CURRENT_LANE` matrix_supports=`3` matrix_rejects=`3`
+- `pretrade_outcomes:EUR_USD:SHORT:HIGH:A` net=`1234.7804` trades=`5` win_rate=`60.0` coverage=`SURFACED_BUT_BLOCKED` matrix_supports=`4` matrix_rejects=`4`
+- `pretrade_outcomes:EUR_JPY:LONG:LOW:UNSPECIFIED` net=`1059.5` trades=`7` win_rate=`71.4286` coverage=`SURFACED_BUT_BLOCKED` matrix_supports=`7` matrix_rejects=`0`
+- `pretrade_outcomes:GBP_USD:LONG:MEDIUM:UNSPECIFIED` net=`1058.2362` trades=`5` win_rate=`80.0` coverage=`SURFACED_BUT_BLOCKED` matrix_supports=`8` matrix_rejects=`0`
+
+## Matrix-Supported Repair Queue
+
+- `EUR_USD LONG` state=`SURFACED_BUT_BLOCKED` managed_net=`16738.9712` supports=`8` rejects=`0` layers=`['chart', 'cross_asset', 'flow', 'levels', 'strength']`
+  - same-side context: DXY_24H_DIRECTION: EUR_USD synthetic DXY 24h change -0.233% maps to LONG, GOLD_USD_PRESSURE_DIRECTION: EUR_USD XAU_USD 24h change 0.952% maps to LONG as USD-pressure context
+  - repair blocker: EXHAUSTION_RANGE_CHASE
+- `AUD_JPY SHORT` state=`SURFACED_BUT_BLOCKED` managed_net=`7223.796` supports=`9` rejects=`0` layers=`['chart', 'context_asset_chart', 'cross_asset', 'flow', 'levels', 'strength']`
+  - same-side context: RISK_ASSET_JPY_CROSS_DIRECTION: AUD_JPY SPX500_USD 24h change -1.061% maps to SHORT, EQUITY_INDEX_CONTEXT_TECHNICAL_DIRECTION: AUD_JPY SPX500_USD technical direction=DOWN regime=UNCLEAR score_balance=SHORT_LEAN long=0.242/short=0.727 maps to SHORT as JPY risk context
+  - repair blocker: RANGE_FORECAST_REQUIRES_RANGE_ROTATION
+- `GBP_USD LONG` state=`SURFACED_BUT_BLOCKED` managed_net=`5811.568` supports=`8` rejects=`0` layers=`['chart', 'cross_asset', 'flow', 'levels', 'strength']`
+  - same-side context: DXY_24H_DIRECTION: GBP_USD synthetic DXY 24h change -0.233% maps to LONG, GOLD_USD_PRESSURE_DIRECTION: GBP_USD XAU_USD 24h change 0.952% maps to LONG as USD-pressure context
+  - repair blocker: RANGE_FORECAST_REQUIRES_RANGE_ROTATION
+- `EUR_JPY LONG` state=`SURFACED_BUT_BLOCKED` managed_net=`3515.8` supports=`7` rejects=`0` layers=`['chart', 'context_asset_chart', 'cross_asset', 'flow', 'levels', 'strength']`
+  - same-side context: US10Y_JPY_CROSS_DIRECTION: EUR_JPY USB10Y_USD 24h change 0.225% maps to LONG, US10Y_CONTEXT_TECHNICAL_DIRECTION: EUR_JPY USB10Y_USD technical direction=UP regime=TREND_UP score_balance=LONG_LEAN long=0.785/short=0.200 maps to LONG as yield/JPY context
+  - repair blocker: RANGE_FORECAST_REQUIRES_RANGE_ROTATION
+- `GBP_JPY LONG` state=`NO_CURRENT_LANE` managed_net=`598.67` supports=`7` rejects=`0` layers=`['chart', 'context_asset_chart', 'cross_asset', 'flow', 'levels', 'strength']`
+  - same-side context: US10Y_JPY_CROSS_DIRECTION: GBP_JPY USB10Y_USD 24h change 0.225% maps to LONG, US10Y_CONTEXT_TECHNICAL_DIRECTION: GBP_JPY USB10Y_USD technical direction=UP regime=TREND_UP score_balance=LONG_LEAN long=0.785/short=0.200 maps to LONG as yield/JPY context
+- `USD_JPY LONG` state=`NO_CURRENT_LANE` managed_net=`131.0` supports=`7` rejects=`2` layers=`['chart', 'context_asset_chart', 'cross_asset', 'flow', 'levels']`
+  - same-side context: US10Y_JPY_CROSS_DIRECTION: USD_JPY USB10Y_USD 24h change 0.225% maps to LONG, GOLD_CONTEXT_TECHNICAL_DIRECTION: USD_JPY XAU_USD technical direction=DOWN regime=TREND_DOWN score_balance=SHORT_LEAN long=0.379/short=0.582 maps to LONG as USD-pressure context, US10Y_CONTEXT_TECHNICAL_DIRECTION: USD_JPY USB10Y_USD technical direction=UP regime=TREND_UP score_balance=LONG_LEAN long=0.785/short=0.200 maps to LONG as yield/JPY context
 
 ## Blockers
 
-- replay evidence covers target on 4/50 days
+- live-ready reward misses remaining target by 17394 JPY
+- even promoted dry-run reward misses remaining target by 17394 JPY
+- no LIVE_READY lanes exist
+- replay evidence covers target on 5/50 days
 
 ## Action Items
 
-- execute coverage as a sequential ladder; do not deploy all live-ready lanes as simultaneous exposure
+- build at least 38 additional live-ready trigger receipts
+- repair both harvest and runner opportunity paths instead of treating coverage as one pool: HARVEST lanes=82 top codes: SELF_IMPROVEMENT_FORECAST_ADVERSE_PATH, NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION, RANGE_ROTATION_BROADER_LOCATION_CHASE; repair runner qualification before widening discovery: 13 TREND_CONTINUATION lane(s) were managed as HARVEST, so no clean RUNNER path is currently executable; top demotions: UNCLEAR regime is not a clean runner trend, ADX 13.7 below trend threshold 25.0, ADX 22.0 below trend threshold 25.0
+- prioritize matrix-supported profitable repairs before broad exploration: EUR_USD LONG (EXHAUSTION_RANGE_CHASE); AUD_JPY SHORT (RANGE_FORECAST_REQUIRES_RANGE_ROTATION); GBP_USD LONG (RANGE_FORECAST_REQUIRES_RANGE_ROTATION); EUR_JPY LONG (RANGE_FORECAST_REQUIRES_RANGE_ROTATION)
+- repair historical-profitable bucket coverage before widening discovery: EUR_USD LONG SURFACED_BUT_BLOCKED (EXHAUSTION_RANGE_CHASE); AUD_JPY SHORT SURFACED_BUT_BLOCKED (RANGE_FORECAST_REQUIRES_RANGE_ROTATION); GBP_USD LONG SURFACED_BUT_BLOCKED (RANGE_FORECAST_REQUIRES_RANGE_ROTATION); AUD_JPY LONG NO_CURRENT_LANE
+- promote advisory discovery evidence into primary selection tests before live sizing: pretrade_outcomes:EUR_USD:LONG:HIGH:UNSPECIFIED net=8509; pretrade_outcomes:EUR_USD:LONG:MEDIUM:UNSPECIFIED net=6832; pretrade_outcomes:AUD_JPY:LONG:LOW:UNSPECIFIED net=1408; pretrade_outcomes:EUR_USD:SHORT:HIGH:A net=1235
+- expand lane generation across timing windows or pairs; current repaired ladder cannot cover target
+- repair blockers for: AUD_CHF, AUD_JPY, AUD_NZD, AUD_USD, CAD_CHF, CAD_JPY, EUR_AUD, EUR_CAD
 - rerun replay/backtest after coverage changes and keep gap reasons as product blockers
 
 ## Lanes
 
-- `failure_trader:EUR_USD:SHORT:BREAKOUT_FAILURE` status=`LIVE_READY` reward=`2790` risk=`978` rr=`2.85` live_ready=`True` promotion_candidate=`False`
-- `range_trader:EUR_USD:SHORT:RANGE_ROTATION` status=`LIVE_READY` reward=`1976` risk=`978` rr=`2.02` live_ready=`True` promotion_candidate=`False`
-- `trend_trader:EUR_USD:SHORT:TREND_CONTINUATION` status=`LIVE_READY` reward=`2790` risk=`978` rr=`2.85` live_ready=`True` promotion_candidate=`False`
-- `failure_trader:AUD_JPY:LONG:BREAKOUT_FAILURE` status=`LIVE_READY` reward=`3672` risk=`960` rr=`3.83` live_ready=`True` promotion_candidate=`False`
-- `failure_trader:EUR_JPY:LONG:BREAKOUT_FAILURE` status=`LIVE_READY` reward=`1428` risk=`952` rr=`1.50` live_ready=`True` promotion_candidate=`False`
-- `failure_trader:EUR_USD:LONG:BREAKOUT_FAILURE` status=`LIVE_READY` reward=`2200` risk=`978` rr=`2.25` live_ready=`True` promotion_candidate=`False`
-- `failure_trader:GBP_USD:LONG:BREAKOUT_FAILURE` status=`LIVE_READY` reward=`1466` risk=`978` rr=`1.50` live_ready=`True` promotion_candidate=`False`
-- `range_trader:AUD_JPY:LONG:RANGE_ROTATION` status=`LIVE_READY` reward=`3672` risk=`960` rr=`3.83` live_ready=`True` promotion_candidate=`False`
-- `range_trader:EUR_JPY:LONG:RANGE_ROTATION` status=`LIVE_READY` reward=`1428` risk=`948` rr=`1.51` live_ready=`True` promotion_candidate=`False`
-- `range_trader:EUR_USD:LONG:RANGE_ROTATION` status=`LIVE_READY` reward=`1976` risk=`978` rr=`2.02` live_ready=`True` promotion_candidate=`False`
-- `range_trader:GBP_USD:LONG:RANGE_ROTATION` status=`LIVE_READY` reward=`1241` risk=`978` rr=`1.27` live_ready=`True` promotion_candidate=`False`
-- `trend_trader:AUD_JPY:LONG:TREND_CONTINUATION` status=`LIVE_READY` reward=`3672` risk=`960` rr=`3.83` live_ready=`True` promotion_candidate=`False`
-- `trend_trader:EUR_JPY:LONG:TREND_CONTINUATION` status=`LIVE_READY` reward=`1428` risk=`952` rr=`1.50` live_ready=`True` promotion_candidate=`False`
-- `trend_trader:EUR_USD:LONG:TREND_CONTINUATION` status=`LIVE_READY` reward=`2200` risk=`978` rr=`2.25` live_ready=`True` promotion_candidate=`False`
-- `trend_trader:GBP_USD:LONG:TREND_CONTINUATION` status=`LIVE_READY` reward=`1466` risk=`978` rr=`1.50` live_ready=`True` promotion_candidate=`False`
+- `range_trader:AUD_CHF:SHORT:RANGE_ROTATION` status=`DRY_RUN_BLOCKED` reward=`158` risk=`252` rr=`0.63` live_ready=`False` promotion_candidate=`False`
+  - blocker: capture_economics is NEGATIVE_EXPECTANCY; fresh live rotation is limited to non-market attached-TP HARVEST receipts with positive TAKE_PROFIT_ORDER expectancy, zero TP losses, and positive Wilson-lower-bound stress expectancy until realized PF/expectancy recover
+  - blocker: AUD_CHF SHORT RANGE_ROTATION is on the wrong side of broader market location (p24h=0.24, p7d=0.09). Range rotation must buy discount/lower-half rails and sell premium/upper-half rails; do not turn a tiny local rail into a late chase.
+  - blocker: AUD_CHF SHORT chases a move already 6.54× typical hourly range over 24h (p24h=0.29, p7d=0.12); refuse same-direction entry after the 2.0σ-equivalent extension.
+- `range_trader:AUD_CHF:SHORT:RANGE_ROTATION:MARKET` status=`DRY_RUN_BLOCKED` reward=`160` risk=`252` rr=`0.63` live_ready=`False` promotion_candidate=`False`
+  - blocker: capture_economics is NEGATIVE_EXPECTANCY; fresh live rotation is limited to non-market attached-TP HARVEST receipts with positive TAKE_PROFIT_ORDER expectancy, zero TP losses, and positive Wilson-lower-bound stress expectancy until realized PF/expectancy recover
+  - blocker: AUD_CHF SHORT RANGE_ROTATION is on the wrong side of broader market location (p24h=0.24, p7d=0.09). Range rotation must buy discount/lower-half rails and sell premium/upper-half rails; do not turn a tiny local rail into a late chase.
+  - blocker: AUD_CHF SHORT chases a move already 6.54× typical hourly range over 24h (p24h=0.24, p7d=0.09); refuse same-direction entry after the 2.0σ-equivalent extension.
+- `range_trader:AUD_JPY:SHORT:RANGE_ROTATION` status=`DRY_RUN_BLOCKED` reward=`411` risk=`375` rr=`1.10` live_ready=`False` promotion_candidate=`False`
+  - blocker: capture_economics is NEGATIVE_EXPECTANCY; fresh live rotation is limited to non-market attached-TP HARVEST receipts with positive TAKE_PROFIT_ORDER expectancy, zero TP losses, and positive Wilson-lower-bound stress expectancy until realized PF/expectancy recover
+  - blocker: AUD_JPY SHORT RANGE_ROTATION is on the wrong side of broader market location (p24h=0.36, p7d=0.11). Range rotation must buy discount/lower-half rails and sell premium/upper-half rails; do not turn a tiny local rail into a late chase.
+  - blocker: AUD_JPY SHORT chases a move already 4.82× typical hourly range over 24h (p24h=0.38, p7d=0.11); refuse same-direction entry after the 2.0σ-equivalent extension.
+- `range_trader:AUD_NZD:SHORT:RANGE_ROTATION` status=`DRY_RUN_BLOCKED` reward=`159` risk=`371` rr=`0.43` live_ready=`False` promotion_candidate=`False`
+  - blocker: planned reward/risk 0.43x is below 0.60x (regime=TREND_DOWN)
+  - blocker: target 8.7pip is less than 5.0x spread 2.6pip
+  - blocker: capture_economics is NEGATIVE_EXPECTANCY; fresh live rotation is limited to non-market attached-TP HARVEST receipts with positive TAKE_PROFIT_ORDER expectancy, zero TP losses, and positive Wilson-lower-bound stress expectancy until realized PF/expectancy recover
+- `range_trader:AUD_NZD:SHORT:RANGE_ROTATION:MARKET` status=`DRY_RUN_BLOCKED` reward=`64` risk=`371` rr=`0.17` live_ready=`False` promotion_candidate=`False`
+  - blocker: planned reward/risk 0.17x is below 0.60x (regime=TREND_DOWN)
+  - blocker: target 3.5pip is less than 5.0x spread 2.6pip
+  - blocker: capture_economics is NEGATIVE_EXPECTANCY; fresh live rotation is limited to non-market attached-TP HARVEST receipts with positive TAKE_PROFIT_ORDER expectancy, zero TP losses, and positive Wilson-lower-bound stress expectancy until realized PF/expectancy recover
+- `range_trader:AUD_USD:SHORT:RANGE_ROTATION` status=`DRY_RUN_BLOCKED` reward=`343` risk=`353` rr=`0.97` live_ready=`False` promotion_candidate=`False`
+  - blocker: AUD_USD spread 1.4pip exceeds 2.50x normal 0.5pip (policy=2.5x, session_mult=1.00)
+  - blocker: AUD_USD SHORT matrix-supported repair seed (matrix:AUD_USD:SHORT) still has current reject context: AUD_USD confluence score_balance=SHORT_LEAN; AUD_USD short_score 0.713 > long_score 0.245; keep this lane diagnostic until a fresh market-context-matrix refresh clears the rejects.
+  - blocker: capture_economics is NEGATIVE_EXPECTANCY; fresh live rotation is limited to non-market attached-TP HARVEST receipts with positive TAKE_PROFIT_ORDER expectancy, zero TP losses, and positive Wilson-lower-bound stress expectancy until realized PF/expectancy recover
+- `range_trader:AUD_USD:LONG:RANGE_ROTATION` status=`DRY_RUN_BLOCKED` reward=`253` risk=`353` rr=`0.72` live_ready=`False` promotion_candidate=`False`
+  - blocker: AUD_USD spread 1.4pip exceeds 2.50x normal 0.5pip (policy=2.5x, session_mult=1.00)
+  - blocker: AUD_USD LONG RANGE_ROTATION is counter to SHORT-leaning matrix/higher-timeframe evidence with reward/risk 0.72x below 1.00x; wait for alignment or demand at least 1R.
+  - blocker: AUD_USD LONG matrix-supported repair seed (matrix:AUD_USD:LONG) still has current reject context: AUD_USD confluence score_balance=SHORT_LEAN; AUD_USD short_score 0.713 > long_score 0.245; keep this lane diagnostic until a fresh market-context-matrix refresh clears the rejects.
+- `range_trader:CAD_CHF:LONG:RANGE_ROTATION` status=`DRY_RUN_BLOCKED` reward=`244` risk=`218` rr=`1.12` live_ready=`False` promotion_candidate=`False`
+  - blocker: capture_economics is NEGATIVE_EXPECTANCY; fresh live rotation is limited to non-market attached-TP HARVEST receipts with positive TAKE_PROFIT_ORDER expectancy, zero TP losses, and positive Wilson-lower-bound stress expectancy until realized PF/expectancy recover
+  - blocker: CAD_CHF LONG RANGE_ROTATION is on the wrong side of broader market location (p24h=0.09, p7d=0.74). Range rotation must buy discount/lower-half rails and sell premium/upper-half rails; do not turn a tiny local rail into a late chase.
+  - blocker: persistent high-confidence forecast adverse path blocks new entry risk; repair directional forecast buckets/range-location priors before expanding exposure (streak=53, projection_economic_precision_gap_count=7, projection_worst_economic_wilson_lower=0.337, projection_worst_timeout_rate=0.570, PF=1.059)
+- `range_trader:CAD_CHF:LONG:RANGE_ROTATION:MARKET` status=`DRY_RUN_BLOCKED` reward=`188` risk=`218` rr=`0.86` live_ready=`False` promotion_candidate=`False`
+  - blocker: CAD_CHF LONG RANGE_ROTATION is counter to SHORT-leaning matrix/higher-timeframe evidence with reward/risk 0.86x below 1.00x; wait for alignment or demand at least 1R.
+  - blocker: capture_economics is NEGATIVE_EXPECTANCY; fresh live rotation is limited to non-market attached-TP HARVEST receipts with positive TAKE_PROFIT_ORDER expectancy, zero TP losses, and positive Wilson-lower-bound stress expectancy until realized PF/expectancy recover
+  - blocker: CAD_CHF LONG RANGE_ROTATION is on the wrong side of broader market location (p24h=0.09, p7d=0.74). Range rotation must buy discount/lower-half rails and sell premium/upper-half rails; do not turn a tiny local rail into a late chase.
+- `range_trader:CAD_JPY:SHORT:RANGE_ROTATION` status=`DRY_RUN_BLOCKED` reward=`210` risk=`312` rr=`0.67` live_ready=`False` promotion_candidate=`False`
+  - blocker: CAD_JPY SHORT RANGE_ROTATION is counter to LONG-leaning matrix/higher-timeframe evidence with reward/risk 0.67x below 1.00x; wait for alignment or demand at least 1R.
+  - blocker: capture_economics is NEGATIVE_EXPECTANCY; fresh live rotation is limited to non-market attached-TP HARVEST receipts with positive TAKE_PROFIT_ORDER expectancy, zero TP losses, and positive Wilson-lower-bound stress expectancy until realized PF/expectancy recover
+  - blocker: CAD_JPY SHORT RANGE_ROTATION is on the wrong side of broader market location (p24h=0.76, p7d=0.44). Range rotation must buy discount/lower-half rails and sell premium/upper-half rails; do not turn a tiny local rail into a late chase.
+- `range_trader:CAD_JPY:SHORT:RANGE_ROTATION:MARKET` status=`DRY_RUN_BLOCKED` reward=`204` risk=`312` rr=`0.65` live_ready=`False` promotion_candidate=`False`
+  - blocker: CAD_JPY SHORT RANGE_ROTATION is counter to LONG-leaning matrix/higher-timeframe evidence with reward/risk 0.65x below 1.00x; wait for alignment or demand at least 1R.
+  - blocker: capture_economics is NEGATIVE_EXPECTANCY; fresh live rotation is limited to non-market attached-TP HARVEST receipts with positive TAKE_PROFIT_ORDER expectancy, zero TP losses, and positive Wilson-lower-bound stress expectancy until realized PF/expectancy recover
+  - blocker: CAD_JPY SHORT RANGE_ROTATION is on the wrong side of broader market location (p24h=0.76, p7d=0.44). Range rotation must buy discount/lower-half rails and sell premium/upper-half rails; do not turn a tiny local rail into a late chase.
+- `range_trader:EUR_AUD:LONG:RANGE_ROTATION` status=`DRY_RUN_BLOCKED` reward=`227` risk=`331` rr=`0.69` live_ready=`False` promotion_candidate=`False`
+  - blocker: EUR_AUD spread 3.8pip exceeds 2.50x normal 1.2pip (policy=2.5x, session_mult=1.00)
+  - blocker: capture_economics is NEGATIVE_EXPECTANCY; fresh live rotation is limited to non-market attached-TP HARVEST receipts with positive TAKE_PROFIT_ORDER expectancy, zero TP losses, and positive Wilson-lower-bound stress expectancy until realized PF/expectancy recover
+  - blocker: EUR_AUD LONG RANGE_ROTATION is on the wrong side of broader market location (p24h=0.73, p7d=0.89). Range rotation must buy discount/lower-half rails and sell premium/upper-half rails; do not turn a tiny local rail into a late chase.
+- `range_trader:EUR_AUD:LONG:RANGE_ROTATION:MARKET` status=`DRY_RUN_BLOCKED` reward=`219` risk=`331` rr=`0.66` live_ready=`False` promotion_candidate=`False`
+  - blocker: EUR_AUD spread 3.8pip exceeds 2.50x normal 1.2pip (policy=2.5x, session_mult=1.00)
+  - blocker: capture_economics is NEGATIVE_EXPECTANCY; fresh live rotation is limited to non-market attached-TP HARVEST receipts with positive TAKE_PROFIT_ORDER expectancy, zero TP losses, and positive Wilson-lower-bound stress expectancy until realized PF/expectancy recover
+  - blocker: EUR_AUD LONG RANGE_ROTATION is on the wrong side of broader market location (p24h=0.73, p7d=0.89). Range rotation must buy discount/lower-half rails and sell premium/upper-half rails; do not turn a tiny local rail into a late chase.
+- `range_trader:EUR_CAD:SHORT:RANGE_ROTATION` status=`DRY_RUN_BLOCKED` reward=`237` risk=`267` rr=`0.89` live_ready=`False` promotion_candidate=`False`
+  - blocker: capture_economics is NEGATIVE_EXPECTANCY; fresh live rotation is limited to non-market attached-TP HARVEST receipts with positive TAKE_PROFIT_ORDER expectancy, zero TP losses, and positive Wilson-lower-bound stress expectancy until realized PF/expectancy recover
+  - blocker: EUR_CAD SHORT RANGE_ROTATION is on the wrong side of broader market location (p24h=0.42, p7d=0.13). Range rotation must buy discount/lower-half rails and sell premium/upper-half rails; do not turn a tiny local rail into a late chase.
+  - blocker: persistent high-confidence forecast adverse path blocks new entry risk; repair directional forecast buckets/range-location priors before expanding exposure (streak=53, projection_economic_precision_gap_count=7, projection_worst_economic_wilson_lower=0.337, projection_worst_timeout_rate=0.570, PF=1.059)
+- `range_trader:EUR_CAD:SHORT:RANGE_ROTATION:MARKET` status=`DRY_RUN_BLOCKED` reward=`213` risk=`267` rr=`0.80` live_ready=`False` promotion_candidate=`False`
+  - blocker: capture_economics is NEGATIVE_EXPECTANCY; fresh live rotation is limited to non-market attached-TP HARVEST receipts with positive TAKE_PROFIT_ORDER expectancy, zero TP losses, and positive Wilson-lower-bound stress expectancy until realized PF/expectancy recover
+  - blocker: EUR_CAD SHORT RANGE_ROTATION is on the wrong side of broader market location (p24h=0.42, p7d=0.13). Range rotation must buy discount/lower-half rails and sell premium/upper-half rails; do not turn a tiny local rail into a late chase.
+  - blocker: EUR_CAD SHORT chases a move already 4.58× typical hourly range over 24h (p24h=0.42, p7d=0.13); refuse same-direction entry after the 2.0σ-equivalent extension.
+- `range_trader:EUR_CHF:LONG:RANGE_ROTATION` status=`DRY_RUN_BLOCKED` reward=`194` risk=`286` rr=`0.68` live_ready=`False` promotion_candidate=`False`
+  - blocker: EUR_CHF LONG RANGE_ROTATION is counter to SHORT-leaning matrix/higher-timeframe evidence with reward/risk 0.68x below 1.00x; wait for alignment or demand at least 1R.
+  - blocker: capture_economics is NEGATIVE_EXPECTANCY; fresh live rotation is limited to non-market attached-TP HARVEST receipts with positive TAKE_PROFIT_ORDER expectancy, zero TP losses, and positive Wilson-lower-bound stress expectancy until realized PF/expectancy recover
+  - blocker: EUR_CHF LONG RANGE_ROTATION is only RANGE_FORMING while higher timeframes oppose the rail (H1 TREND_DOWN ADX=26.5; H4 TREND_DOWN ADX=25.9; chart_bias=SHORT, matrix_rejects=3); wait for a confirmed in-range box or use the trend-aligned lane instead of catching a still-forming range against active volatility.
+- `range_trader:EUR_CHF:LONG:RANGE_ROTATION:MARKET` status=`DRY_RUN_BLOCKED` reward=`172` risk=`286` rr=`0.60` live_ready=`False` promotion_candidate=`False`
+  - blocker: EUR_CHF LONG RANGE_ROTATION is counter to SHORT-leaning matrix/higher-timeframe evidence with reward/risk 0.60x below 1.00x; wait for alignment or demand at least 1R.
+  - blocker: capture_economics is NEGATIVE_EXPECTANCY; fresh live rotation is limited to non-market attached-TP HARVEST receipts with positive TAKE_PROFIT_ORDER expectancy, zero TP losses, and positive Wilson-lower-bound stress expectancy until realized PF/expectancy recover
+  - blocker: EUR_CHF LONG RANGE_ROTATION is only RANGE_FORMING while higher timeframes oppose the rail (H1 TREND_DOWN ADX=26.5; H4 TREND_DOWN ADX=25.9; chart_bias=SHORT, matrix_rejects=3); wait for a confirmed in-range box or use the trend-aligned lane instead of catching a still-forming range against active volatility.
+- `range_trader:EUR_JPY:LONG:RANGE_ROTATION` status=`DRY_RUN_BLOCKED` reward=`387` risk=`351` rr=`1.10` live_ready=`False` promotion_candidate=`False`
+  - blocker: capture_economics is NEGATIVE_EXPECTANCY; fresh live rotation is limited to non-market attached-TP HARVEST receipts with positive TAKE_PROFIT_ORDER expectancy, zero TP losses, and positive Wilson-lower-bound stress expectancy until realized PF/expectancy recover
+  - blocker: EUR_JPY LONG RANGE_ROTATION is on the wrong side of broader market location (p24h=0.85, p7d=0.28). Range rotation must buy discount/lower-half rails and sell premium/upper-half rails; do not turn a tiny local rail into a late chase.
+  - blocker: EUR_JPY LONG chases a move already 3.94× typical hourly range over 24h (p24h=0.62, p7d=0.22); refuse same-direction entry after the 2.0σ-equivalent extension.
+- `range_trader:EUR_NZD:LONG:RANGE_ROTATION` status=`DRY_RUN_BLOCKED` reward=`0` risk=`0` rr=`0.75` live_ready=`False` promotion_candidate=`False`
+  - blocker: units must be positive, got 0
+  - blocker: EUR_NZD spread 6.3pip exceeds 2.50x normal 1.8pip (policy=2.5x, session_mult=1.00)
+  - blocker: equity-derived loss budget can only fund 930u for EUR_NZD at the current 49.1pip stop; refusing to emit a sub-1000u receipt because round-trip spread cost would dominate the pip target. Wait for tighter market-derived geometry or explicit operator pace/equity evidence that raises the per-trade budget.
+- `range_trader:EUR_NZD:LONG:RANGE_ROTATION:MARKET` status=`DRY_RUN_BLOCKED` reward=`0` risk=`0` rr=`0.49` live_ready=`False` promotion_candidate=`False`
+  - blocker: units must be positive, got 0
+  - blocker: EUR_NZD spread 6.3pip exceeds 2.50x normal 1.8pip (policy=2.5x, session_mult=1.00)
+  - blocker: planned reward/risk 0.49x is below 0.60x (regime=UNCLEAR)
+- `range_trader:EUR_USD:SHORT:RANGE_ROTATION` status=`DRY_RUN_BLOCKED` reward=`389` risk=`408` rr=`0.95` live_ready=`False` promotion_candidate=`False`
+  - blocker: EUR_USD SHORT RANGE_ROTATION is counter to LONG-leaning matrix/higher-timeframe evidence with reward/risk 0.95x below 1.00x; wait for alignment or demand at least 1R.
+  - blocker: capture_economics is NEGATIVE_EXPECTANCY; fresh live rotation is limited to non-market attached-TP HARVEST receipts with positive TAKE_PROFIT_ORDER expectancy, zero TP losses, and positive Wilson-lower-bound stress expectancy until realized PF/expectancy recover
+  - blocker: EUR_USD SHORT RANGE_ROTATION is on the wrong side of broader market location (p24h=0.86, p7d=0.19). Range rotation must buy discount/lower-half rails and sell premium/upper-half rails; do not turn a tiny local rail into a late chase.
+- `range_trader:EUR_USD:SHORT:RANGE_ROTATION:MARKET` status=`DRY_RUN_BLOCKED` reward=`1380` risk=`402` rr=`3.44` live_ready=`False` promotion_candidate=`False`
+  - blocker: EUR_USD range MARKET lane is not inside the rail zone; keep the pending LIMIT rail order unless M5 RANGE/QUIET direction bias supports a directional range market scalp.
+  - blocker: capture_economics is NEGATIVE_EXPECTANCY; fresh live rotation is limited to non-market attached-TP HARVEST receipts with positive TAKE_PROFIT_ORDER expectancy, zero TP losses, and positive Wilson-lower-bound stress expectancy until realized PF/expectancy recover
+  - blocker: EUR_USD SHORT RANGE_ROTATION is on the wrong side of broader market location (p24h=0.86, p7d=0.19). Range rotation must buy discount/lower-half rails and sell premium/upper-half rails; do not turn a tiny local rail into a late chase.
+- `range_trader:EUR_USD:LONG:RANGE_ROTATION` status=`DRY_RUN_BLOCKED` reward=`389` risk=`408` rr=`0.95` live_ready=`False` promotion_candidate=`False`
+  - blocker: EUR_USD LONG RANGE_ROTATION is counter to SHORT-leaning matrix/higher-timeframe evidence with reward/risk 0.95x below 1.00x; wait for alignment or demand at least 1R.
+  - blocker: capture_economics is NEGATIVE_EXPECTANCY; fresh live rotation is limited to non-market attached-TP HARVEST receipts with positive TAKE_PROFIT_ORDER expectancy, zero TP losses, and positive Wilson-lower-bound stress expectancy until realized PF/expectancy recover
+  - blocker: EUR_USD LONG RANGE_ROTATION is on the wrong side of broader market location (p24h=0.86, p7d=0.19). Range rotation must buy discount/lower-half rails and sell premium/upper-half rails; do not turn a tiny local rail into a late chase.
+- `range_trader:GBP_AUD:SHORT:RANGE_ROTATION` status=`DRY_RUN_BLOCKED` reward=`575` risk=`355` rr=`1.62` live_ready=`False` promotion_candidate=`False`
+  - blocker: GBP_AUD spread 5.3pip exceeds 2.50x normal 1.8pip (policy=2.5x, session_mult=1.00)
+  - blocker: capture_economics is NEGATIVE_EXPECTANCY; fresh live rotation is limited to non-market attached-TP HARVEST receipts with positive TAKE_PROFIT_ORDER expectancy, zero TP losses, and positive Wilson-lower-bound stress expectancy until realized PF/expectancy recover
+  - blocker: GBP_AUD SHORT RANGE_ROTATION is invalid in range_phase=BREAKOUT_DOWN; wait during pending squeeze or use the confirmed breakout-side continuation lane.
+- `range_trader:GBP_AUD:SHORT:RANGE_ROTATION:MARKET` status=`DRY_RUN_BLOCKED` reward=`575` risk=`355` rr=`1.62` live_ready=`False` promotion_candidate=`False`
+  - blocker: GBP_AUD spread 5.3pip exceeds 2.50x normal 1.8pip (policy=2.5x, session_mult=1.00)
+  - blocker: GBP_AUD range MARKET lane is not inside the rail zone; keep the pending LIMIT rail order unless M5 RANGE/QUIET direction bias supports a directional range market scalp.
+  - blocker: capture_economics is NEGATIVE_EXPECTANCY; fresh live rotation is limited to non-market attached-TP HARVEST receipts with positive TAKE_PROFIT_ORDER expectancy, zero TP losses, and positive Wilson-lower-bound stress expectancy until realized PF/expectancy recover
+- `failure_trader:GBP_AUD:SHORT:BREAKOUT_FAILURE:LIMIT` status=`DRY_RUN_BLOCKED` reward=`0` risk=`0` rr=`1.00` live_ready=`False` promotion_candidate=`False`
+  - blocker: units must be positive, got 0
+  - blocker: GBP_AUD spread 5.3pip exceeds 2.50x normal 1.8pip (policy=2.5x, session_mult=1.00)
+  - blocker: equity-derived loss budget can only fund 906u for GBP_AUD at the current 41.3pip stop; refusing to emit a sub-1000u receipt because round-trip spread cost would dominate the pip target. Wait for tighter market-derived geometry or explicit operator pace/equity evidence that raises the per-trade budget.
+- `failure_trader:GBP_AUD:SHORT:BREAKOUT_FAILURE` status=`DRY_RUN_BLOCKED` reward=`0` risk=`0` rr=`1.00` live_ready=`False` promotion_candidate=`False`
+  - blocker: units must be positive, got 0
+  - blocker: GBP_AUD spread 5.3pip exceeds 2.50x normal 1.8pip (policy=2.5x, session_mult=1.00)
+  - blocker: equity-derived loss budget can only fund 906u for GBP_AUD at the current 41.3pip stop; refusing to emit a sub-1000u receipt because round-trip spread cost would dominate the pip target. Wait for tighter market-derived geometry or explicit operator pace/equity evidence that raises the per-trade budget.
+- `failure_trader:GBP_AUD:SHORT:BREAKOUT_FAILURE:MARKET` status=`DRY_RUN_BLOCKED` reward=`0` risk=`0` rr=`1.00` live_ready=`False` promotion_candidate=`False`
+  - blocker: units must be positive, got 0
+  - blocker: GBP_AUD spread 5.3pip exceeds 2.50x normal 1.8pip (policy=2.5x, session_mult=1.00)
+  - blocker: equity-derived loss budget can only fund 906u for GBP_AUD at the current 41.3pip stop; refusing to emit a sub-1000u receipt because round-trip spread cost would dominate the pip target. Wait for tighter market-derived geometry or explicit operator pace/equity evidence that raises the per-trade budget.
+- `trend_trader:GBP_AUD:SHORT:TREND_CONTINUATION` status=`DRY_RUN_BLOCKED` reward=`0` risk=`0` rr=`3.51` live_ready=`False` promotion_candidate=`False`
+  - blocker: units must be positive, got 0
+  - blocker: GBP_AUD spread 5.3pip exceeds 2.50x normal 1.8pip (policy=2.5x, session_mult=1.00)
+  - blocker: equity-derived loss budget can only fund 906u for GBP_AUD at the current 41.3pip stop; refusing to emit a sub-1000u receipt because round-trip spread cost would dominate the pip target. Wait for tighter market-derived geometry or explicit operator pace/equity evidence that raises the per-trade budget.
+- `trend_trader:GBP_AUD:SHORT:TREND_CONTINUATION:MARKET` status=`DRY_RUN_BLOCKED` reward=`0` risk=`0` rr=`3.51` live_ready=`False` promotion_candidate=`False`
+  - blocker: units must be positive, got 0
+  - blocker: GBP_AUD spread 5.3pip exceeds 2.50x normal 1.8pip (policy=2.5x, session_mult=1.00)
+  - blocker: equity-derived loss budget can only fund 906u for GBP_AUD at the current 41.3pip stop; refusing to emit a sub-1000u receipt because round-trip spread cost would dominate the pip target. Wait for tighter market-derived geometry or explicit operator pace/equity evidence that raises the per-trade budget.
+- `range_trader:GBP_CHF:LONG:RANGE_ROTATION` status=`DRY_RUN_BLOCKED` reward=`391` risk=`375` rr=`1.04` live_ready=`False` promotion_candidate=`False`
+  - blocker: capture_economics is NEGATIVE_EXPECTANCY; fresh live rotation is limited to non-market attached-TP HARVEST receipts with positive TAKE_PROFIT_ORDER expectancy, zero TP losses, and positive Wilson-lower-bound stress expectancy until realized PF/expectancy recover
+  - blocker: persistent high-confidence forecast adverse path blocks new entry risk; repair directional forecast buckets/range-location priors before expanding exposure (streak=53, projection_economic_precision_gap_count=7, projection_worst_economic_wilson_lower=0.337, projection_worst_timeout_rate=0.570, PF=1.059)
+  - blocker: GBP_CHF LONG is labeled as a watch-only forecast lane (RANGE conf=0.74); gateway live send is blocked unless the intent carries a current watch-only live override and the order remains a non-market audited support/rail entry. Reason: RANGE forecast has a measured rail box, but the current range-rotation edge is not confirmed; expose RANGE_ROTATION dry-run geometry only until the chart phase clears the auto-lane gate.
+- `range_trader:GBP_CHF:LONG:RANGE_ROTATION:MARKET` status=`DRY_RUN_BLOCKED` reward=`294` risk=`375` rr=`0.79` live_ready=`False` promotion_candidate=`False`
+  - blocker: GBP_CHF LONG RANGE_ROTATION is counter to SHORT-leaning matrix/higher-timeframe evidence with reward/risk 0.79x below 1.00x; wait for alignment or demand at least 1R.
+  - blocker: capture_economics is NEGATIVE_EXPECTANCY; fresh live rotation is limited to non-market attached-TP HARVEST receipts with positive TAKE_PROFIT_ORDER expectancy, zero TP losses, and positive Wilson-lower-bound stress expectancy until realized PF/expectancy recover
+  - blocker: GBP_CHF LONG RANGE_ROTATION is on the wrong side of broader market location (p24h=0.08, p7d=0.53). Range rotation must buy discount/lower-half rails and sell premium/upper-half rails; do not turn a tiny local rail into a late chase.
+- `range_trader:GBP_JPY:SHORT:RANGE_ROTATION` status=`DRY_RUN_BLOCKED` reward=`181` risk=`234` rr=`0.77` live_ready=`False` promotion_candidate=`False`
+  - blocker: GBP_JPY SHORT RANGE_ROTATION is counter to LONG-leaning matrix/higher-timeframe evidence with reward/risk 0.77x below 1.00x; wait for alignment or demand at least 1R.
+  - blocker: capture_economics is NEGATIVE_EXPECTANCY; fresh live rotation is limited to non-market attached-TP HARVEST receipts with positive TAKE_PROFIT_ORDER expectancy, zero TP losses, and positive Wilson-lower-bound stress expectancy until realized PF/expectancy recover
+  - blocker: GBP_JPY SHORT RANGE_ROTATION is on the wrong side of broader market location (p24h=0.70, p7d=0.38). Range rotation must buy discount/lower-half rails and sell premium/upper-half rails; do not turn a tiny local rail into a late chase.
+- `range_trader:GBP_JPY:SHORT:RANGE_ROTATION:MARKET` status=`DRY_RUN_BLOCKED` reward=`192` risk=`234` rr=`0.82` live_ready=`False` promotion_candidate=`False`
+  - blocker: GBP_JPY SHORT RANGE_ROTATION is counter to LONG-leaning matrix/higher-timeframe evidence with reward/risk 0.82x below 1.00x; wait for alignment or demand at least 1R.
+  - blocker: capture_economics is NEGATIVE_EXPECTANCY; fresh live rotation is limited to non-market attached-TP HARVEST receipts with positive TAKE_PROFIT_ORDER expectancy, zero TP losses, and positive Wilson-lower-bound stress expectancy until realized PF/expectancy recover
+  - blocker: GBP_JPY SHORT RANGE_ROTATION is on the wrong side of broader market location (p24h=0.70, p7d=0.38). Range rotation must buy discount/lower-half rails and sell premium/upper-half rails; do not turn a tiny local rail into a late chase.
+- `range_trader:GBP_NZD:LONG:RANGE_ROTATION` status=`DRY_RUN_BLOCKED` reward=`0` risk=`0` rr=`0.97` live_ready=`False` promotion_candidate=`False`
+  - blocker: units must be positive, got 0
+  - blocker: GBP_NZD spread 8.3pip exceeds 2.50x normal 2.5pip (policy=2.5x, session_mult=1.00)
+  - blocker: equity-derived loss budget can only fund 917u for GBP_NZD at the current 49.8pip stop; refusing to emit a sub-1000u receipt because round-trip spread cost would dominate the pip target. Wait for tighter market-derived geometry or explicit operator pace/equity evidence that raises the per-trade budget.
+- `range_trader:GBP_NZD:LONG:RANGE_ROTATION:MARKET` status=`DRY_RUN_BLOCKED` reward=`0` risk=`0` rr=`0.90` live_ready=`False` promotion_candidate=`False`
+  - blocker: units must be positive, got 0
+  - blocker: GBP_NZD spread 8.3pip exceeds 2.50x normal 2.5pip (policy=2.5x, session_mult=1.00)
+  - blocker: equity-derived loss budget can only fund 917u for GBP_NZD at the current 49.8pip stop; refusing to emit a sub-1000u receipt because round-trip spread cost would dominate the pip target. Wait for tighter market-derived geometry or explicit operator pace/equity evidence that raises the per-trade budget.
+- `failure_trader:GBP_NZD:LONG:BREAKOUT_FAILURE:LIMIT` status=`DRY_RUN_BLOCKED` reward=`0` risk=`0` rr=`2.00` live_ready=`False` promotion_candidate=`False`
+  - blocker: units must be positive, got 0
+  - blocker: GBP_NZD spread 8.3pip exceeds 2.50x normal 2.5pip (policy=2.5x, session_mult=1.00)
+  - blocker: equity-derived loss budget can only fund 706u for GBP_NZD at the current 64.7pip stop; refusing to emit a sub-1000u receipt because round-trip spread cost would dominate the pip target. Wait for tighter market-derived geometry or explicit operator pace/equity evidence that raises the per-trade budget.
+- `failure_trader:GBP_NZD:LONG:BREAKOUT_FAILURE` status=`DRY_RUN_BLOCKED` reward=`0` risk=`0` rr=`2.00` live_ready=`False` promotion_candidate=`False`
+  - blocker: units must be positive, got 0
+  - blocker: GBP_NZD spread 8.3pip exceeds 2.50x normal 2.5pip (policy=2.5x, session_mult=1.00)
+  - blocker: equity-derived loss budget can only fund 706u for GBP_NZD at the current 64.7pip stop; refusing to emit a sub-1000u receipt because round-trip spread cost would dominate the pip target. Wait for tighter market-derived geometry or explicit operator pace/equity evidence that raises the per-trade budget.
+- `failure_trader:GBP_NZD:LONG:BREAKOUT_FAILURE:MARKET` status=`DRY_RUN_BLOCKED` reward=`0` risk=`0` rr=`2.00` live_ready=`False` promotion_candidate=`False`
+  - blocker: units must be positive, got 0
+  - blocker: GBP_NZD spread 8.3pip exceeds 2.50x normal 2.5pip (policy=2.5x, session_mult=1.00)
+  - blocker: equity-derived loss budget can only fund 706u for GBP_NZD at the current 64.7pip stop; refusing to emit a sub-1000u receipt because round-trip spread cost would dominate the pip target. Wait for tighter market-derived geometry or explicit operator pace/equity evidence that raises the per-trade budget.
+- `trend_trader:GBP_NZD:LONG:TREND_CONTINUATION` status=`DRY_RUN_BLOCKED` reward=`0` risk=`0` rr=`2.00` live_ready=`False` promotion_candidate=`False`
+  - blocker: units must be positive, got 0
+  - blocker: GBP_NZD spread 8.3pip exceeds 2.50x normal 2.5pip (policy=2.5x, session_mult=1.00)
+  - blocker: equity-derived loss budget can only fund 706u for GBP_NZD at the current 64.7pip stop; refusing to emit a sub-1000u receipt because round-trip spread cost would dominate the pip target. Wait for tighter market-derived geometry or explicit operator pace/equity evidence that raises the per-trade budget.
+- `trend_trader:GBP_NZD:LONG:TREND_CONTINUATION:MARKET` status=`DRY_RUN_BLOCKED` reward=`0` risk=`0` rr=`2.00` live_ready=`False` promotion_candidate=`False`
+  - blocker: units must be positive, got 0
+  - blocker: GBP_NZD spread 8.3pip exceeds 2.50x normal 2.5pip (policy=2.5x, session_mult=1.00)
+  - blocker: equity-derived loss budget can only fund 706u for GBP_NZD at the current 64.7pip stop; refusing to emit a sub-1000u receipt because round-trip spread cost would dominate the pip target. Wait for tighter market-derived geometry or explicit operator pace/equity evidence that raises the per-trade budget.
+- `range_trader:GBP_USD:LONG:RANGE_ROTATION` status=`DRY_RUN_BLOCKED` reward=`285` risk=`327` rr=`0.87` live_ready=`False` promotion_candidate=`False`
+  - blocker: GBP_USD LONG RANGE_ROTATION is counter to SHORT-leaning matrix/higher-timeframe evidence with reward/risk 0.87x below 1.00x; wait for alignment or demand at least 1R.
+  - blocker: capture_economics is NEGATIVE_EXPECTANCY; fresh live rotation is limited to non-market attached-TP HARVEST receipts with positive TAKE_PROFIT_ORDER expectancy, zero TP losses, and positive Wilson-lower-bound stress expectancy until realized PF/expectancy recover
+  - blocker: GBP_USD LONG RANGE_ROTATION is on the wrong side of broader market location (p24h=0.76, p7d=0.20). Range rotation must buy discount/lower-half rails and sell premium/upper-half rails; do not turn a tiny local rail into a late chase.
+- `range_trader:NZD_CHF:SHORT:RANGE_ROTATION` status=`DRY_RUN_BLOCKED` reward=`296` risk=`405` rr=`0.73` live_ready=`False` promotion_candidate=`False`
+  - blocker: capture_economics is NEGATIVE_EXPECTANCY; fresh live rotation is limited to non-market attached-TP HARVEST receipts with positive TAKE_PROFIT_ORDER expectancy, zero TP losses, and positive Wilson-lower-bound stress expectancy until realized PF/expectancy recover
+  - blocker: NZD_CHF SHORT RANGE_ROTATION is on the wrong side of broader market location (p24h=0.25, p7d=0.07). Range rotation must buy discount/lower-half rails and sell premium/upper-half rails; do not turn a tiny local rail into a late chase.
+  - blocker: NZD_CHF SHORT chases a move already 6.45× typical hourly range over 24h (p24h=0.35, p7d=0.10); refuse same-direction entry after the 2.0σ-equivalent extension.
+- `range_trader:NZD_CHF:SHORT:RANGE_ROTATION:MARKET` status=`DRY_RUN_BLOCKED` reward=`212` risk=`405` rr=`0.52` live_ready=`False` promotion_candidate=`False`
+  - blocker: planned reward/risk 0.52x is below 0.60x (regime=UNCLEAR)
+  - blocker: target 5.3pip is less than 5.0x spread 1.3pip
+  - blocker: capture_economics is NEGATIVE_EXPECTANCY; fresh live rotation is limited to non-market attached-TP HARVEST receipts with positive TAKE_PROFIT_ORDER expectancy, zero TP losses, and positive Wilson-lower-bound stress expectancy until realized PF/expectancy recover
+- `range_trader:NZD_JPY:SHORT:RANGE_ROTATION` status=`DRY_RUN_BLOCKED` reward=`179` risk=`234` rr=`0.77` live_ready=`False` promotion_candidate=`False`
+  - blocker: NZD_JPY spread 3.0pip exceeds 2.50x normal 1.1pip (policy=2.5x, session_mult=1.00)
+  - blocker: NZD_JPY SHORT RANGE_ROTATION is counter to LONG-leaning matrix/higher-timeframe evidence with reward/risk 0.76x below 1.00x; wait for alignment or demand at least 1R.
+  - blocker: capture_economics is NEGATIVE_EXPECTANCY; fresh live rotation is limited to non-market attached-TP HARVEST receipts with positive TAKE_PROFIT_ORDER expectancy, zero TP losses, and positive Wilson-lower-bound stress expectancy until realized PF/expectancy recover
+- `range_trader:NZD_JPY:SHORT:RANGE_ROTATION:MARKET` status=`DRY_RUN_BLOCKED` reward=`177` risk=`234` rr=`0.76` live_ready=`False` promotion_candidate=`False`
+  - blocker: NZD_JPY spread 3.0pip exceeds 2.50x normal 1.1pip (policy=2.5x, session_mult=1.00)
+  - blocker: NZD_JPY SHORT RANGE_ROTATION is counter to LONG-leaning matrix/higher-timeframe evidence with reward/risk 0.76x below 1.00x; wait for alignment or demand at least 1R.
+  - blocker: capture_economics is NEGATIVE_EXPECTANCY; fresh live rotation is limited to non-market attached-TP HARVEST receipts with positive TAKE_PROFIT_ORDER expectancy, zero TP losses, and positive Wilson-lower-bound stress expectancy until realized PF/expectancy recover
+- `range_trader:NZD_USD:SHORT:RANGE_ROTATION` status=`DRY_RUN_BLOCKED` reward=`275` risk=`379` rr=`0.73` live_ready=`False` promotion_candidate=`False`
+  - blocker: capture_economics is NEGATIVE_EXPECTANCY; fresh live rotation is limited to non-market attached-TP HARVEST receipts with positive TAKE_PROFIT_ORDER expectancy, zero TP losses, and positive Wilson-lower-bound stress expectancy until realized PF/expectancy recover
+  - blocker: NZD_USD SHORT RANGE_ROTATION is on the wrong side of broader market location (p24h=0.62, p7d=0.08). Range rotation must buy discount/lower-half rails and sell premium/upper-half rails; do not turn a tiny local rail into a late chase.
+  - blocker: persistent high-confidence forecast adverse path blocks new entry risk; repair directional forecast buckets/range-location priors before expanding exposure (streak=53, projection_economic_precision_gap_count=7, projection_worst_economic_wilson_lower=0.337, projection_worst_timeout_rate=0.570, PF=1.059)
+- `range_trader:NZD_USD:SHORT:RANGE_ROTATION:MARKET` status=`DRY_RUN_BLOCKED` reward=`421` risk=`379` rr=`1.11` live_ready=`False` promotion_candidate=`False`
+  - blocker: capture_economics is NEGATIVE_EXPECTANCY; fresh live rotation is limited to non-market attached-TP HARVEST receipts with positive TAKE_PROFIT_ORDER expectancy, zero TP losses, and positive Wilson-lower-bound stress expectancy until realized PF/expectancy recover
+  - blocker: NZD_USD SHORT RANGE_ROTATION is on the wrong side of broader market location (p24h=0.62, p7d=0.08). Range rotation must buy discount/lower-half rails and sell premium/upper-half rails; do not turn a tiny local rail into a late chase.
+  - blocker: persistent high-confidence forecast adverse path blocks new entry risk; repair directional forecast buckets/range-location priors before expanding exposure (streak=53, projection_economic_precision_gap_count=7, projection_worst_economic_wilson_lower=0.337, projection_worst_timeout_rate=0.570, PF=1.059)
+- `range_trader:USD_CAD:SHORT:RANGE_ROTATION` status=`DRY_RUN_BLOCKED` reward=`212` risk=`322` rr=`0.66` live_ready=`False` promotion_candidate=`False`
+  - blocker: USD_CAD spread 1.8pip exceeds 2.50x normal 0.7pip (policy=2.5x, session_mult=1.00)
+  - blocker: capture_economics is NEGATIVE_EXPECTANCY; fresh live rotation is limited to non-market attached-TP HARVEST receipts with positive TAKE_PROFIT_ORDER expectancy, zero TP losses, and positive Wilson-lower-bound stress expectancy until realized PF/expectancy recover
+  - blocker: USD_CAD SHORT RANGE_ROTATION is on the wrong side of broader market location (p24h=0.18, p7d=0.78). Range rotation must buy discount/lower-half rails and sell premium/upper-half rails; do not turn a tiny local rail into a late chase.
+- `range_trader:USD_CAD:SHORT:RANGE_ROTATION:MARKET` status=`DRY_RUN_BLOCKED` reward=`208` risk=`320` rr=`0.65` live_ready=`False` promotion_candidate=`False`
+  - blocker: USD_CAD spread 1.8pip exceeds 2.50x normal 0.7pip (policy=2.5x, session_mult=1.00)
+  - blocker: USD_CAD range MARKET lane is not inside the rail zone; keep the pending LIMIT rail order unless M5 RANGE/QUIET direction bias supports a directional range market scalp.
+  - blocker: capture_economics is NEGATIVE_EXPECTANCY; fresh live rotation is limited to non-market attached-TP HARVEST receipts with positive TAKE_PROFIT_ORDER expectancy, zero TP losses, and positive Wilson-lower-bound stress expectancy until realized PF/expectancy recover
+- `range_trader:USD_CHF:LONG:RANGE_ROTATION` status=`DRY_RUN_BLOCKED` reward=`160` risk=`250` rr=`0.64` live_ready=`False` promotion_candidate=`False`
+  - blocker: USD_CHF LONG RANGE_ROTATION is counter to SHORT-leaning matrix/higher-timeframe evidence with reward/risk 0.64x below 1.00x; wait for alignment or demand at least 1R.
+  - blocker: capture_economics is NEGATIVE_EXPECTANCY; fresh live rotation is limited to non-market attached-TP HARVEST receipts with positive TAKE_PROFIT_ORDER expectancy, zero TP losses, and positive Wilson-lower-bound stress expectancy until realized PF/expectancy recover
+  - blocker: USD_CHF LONG RANGE_ROTATION is only RANGE_FORMING while higher timeframes oppose the rail (H4 TREND_DOWN ADX=36.1; chart_bias=SHORT, matrix_rejects=4); wait for a confirmed in-range box or use the trend-aligned lane instead of catching a still-forming range against active volatility.
+- `range_trader:USD_CHF:LONG:RANGE_ROTATION:MARKET` status=`DRY_RUN_BLOCKED` reward=`429` risk=`250` rr=`1.71` live_ready=`False` promotion_candidate=`False`
+  - blocker: capture_economics is NEGATIVE_EXPECTANCY; fresh live rotation is limited to non-market attached-TP HARVEST receipts with positive TAKE_PROFIT_ORDER expectancy, zero TP losses, and positive Wilson-lower-bound stress expectancy until realized PF/expectancy recover
+  - blocker: USD_CHF LONG RANGE_ROTATION is only RANGE_FORMING while higher timeframes oppose the rail (H4 TREND_DOWN ADX=36.1; chart_bias=SHORT, matrix_rejects=4); wait for a confirmed in-range box or use the trend-aligned lane instead of catching a still-forming range against active volatility.
+  - blocker: USD_CHF LONG RANGE_ROTATION is on the wrong side of broader market location (p24h=0.02, p7d=0.76). Range rotation must buy discount/lower-half rails and sell premium/upper-half rails; do not turn a tiny local rail into a late chase.
+- `range_trader:USD_JPY:SHORT:RANGE_ROTATION` status=`DRY_RUN_BLOCKED` reward=`798` risk=`402` rr=`1.99` live_ready=`False` promotion_candidate=`False`
+  - blocker: capture_economics is NEGATIVE_EXPECTANCY; fresh live rotation is limited to non-market attached-TP HARVEST receipts with positive TAKE_PROFIT_ORDER expectancy, zero TP losses, and positive Wilson-lower-bound stress expectancy until realized PF/expectancy recover
+  - blocker: USD_JPY SHORT RANGE_ROTATION is on the wrong side of broader market location (p24h=0.35, p7d=0.90). Range rotation must buy discount/lower-half rails and sell premium/upper-half rails; do not turn a tiny local rail into a late chase.
+  - blocker: USD_JPY SHORT chases a move already 4.01× typical hourly range over 24h (p24h=0.42, p7d=0.92); refuse same-direction entry after the 2.0σ-equivalent extension.
+- `range_trader:USD_JPY:SHORT:RANGE_ROTATION:MARKET` status=`DRY_RUN_BLOCKED` reward=`702` risk=`402` rr=`1.75` live_ready=`False` promotion_candidate=`False`
+  - blocker: capture_economics is NEGATIVE_EXPECTANCY; fresh live rotation is limited to non-market attached-TP HARVEST receipts with positive TAKE_PROFIT_ORDER expectancy, zero TP losses, and positive Wilson-lower-bound stress expectancy until realized PF/expectancy recover
+  - blocker: USD_JPY SHORT RANGE_ROTATION is on the wrong side of broader market location (p24h=0.35, p7d=0.90). Range rotation must buy discount/lower-half rails and sell premium/upper-half rails; do not turn a tiny local rail into a late chase.
+  - blocker: USD_JPY SHORT chases a move already 4.01× typical hourly range over 24h (p24h=0.35, p7d=0.90); refuse same-direction entry after the 2.0σ-equivalent extension.
+- `failure_trader:AUD_JPY:SHORT:BREAKOUT_FAILURE:LIMIT` status=`DRY_RUN_BLOCKED` reward=`1451` risk=`537` rr=`2.70` live_ready=`False` promotion_candidate=`False`
+  - blocker: AUD_JPY SHORT has a RANGE forecast; only executable RANGE_ROTATION rail geometry may become LIVE_READY from a RANGE prediction.
+  - blocker: AUD_JPY SHORT BREAKOUT_FAILURE needs a usable nearby structural HARVEST TP; refusing to fall back to a distant ATR/RR target for a failed-break or recovery-hedge trade. TP plan: structural target 111.51 is only 3.6pip away (< 8.0pip spread floor); using ATR/RR virtual target; attached HARVEST fallback skipped: minimum acceptable target 53.8pip exceeds 10.0× operating ATR 4.7pip
+  - blocker: persistent high-confidence forecast adverse path blocks new entry risk; repair directional forecast buckets/range-location priors before expanding exposure (streak=53, projection_economic_precision_gap_count=7, projection_worst_economic_wilson_lower=0.337, projection_worst_timeout_rate=0.570, PF=1.059)
+- `failure_trader:AUD_JPY:SHORT:BREAKOUT_FAILURE` status=`DRY_RUN_BLOCKED` reward=`1011` risk=`375` rr=`2.70` live_ready=`False` promotion_candidate=`False`
+  - blocker: AUD_JPY SHORT has a RANGE forecast; only executable RANGE_ROTATION rail geometry may become LIVE_READY from a RANGE prediction.
+  - blocker: AUD_JPY SHORT STOP-ENTRY BREAKOUT_FAILURE chases into LONG failed-break/reversal candle evidence (LONG=22.5, SHORT=0.0): M5 failed_breakout: M5 CHOCH_DOWN@111.339 wick-only (close_confirmed=False) → trap fade UP; H1 failed_breakout: H1 BOS_DOWN@111.38 wick-only (close_confirmed=False) → trap fade UP. Wait for M5/M15 close-confirmed SHORT BOS/CHOCH, or use a retest LIMIT instead of chasing the failed side.
+  - blocker: AUD_JPY SHORT chases a move already 4.82× typical hourly range over 24h (p24h=0.36, p7d=0.11); refuse same-direction entry after the 2.0σ-equivalent extension.
+- `trend_trader:AUD_JPY:SHORT:TREND_CONTINUATION` status=`DRY_RUN_BLOCKED` reward=`1011` risk=`375` rr=`2.70` live_ready=`False` promotion_candidate=`False`
+  - blocker: AUD_JPY SHORT has a RANGE forecast; only executable RANGE_ROTATION rail geometry may become LIVE_READY from a RANGE prediction.
+  - blocker: capture_economics is NEGATIVE_EXPECTANCY; fresh live rotation is limited to non-market attached-TP HARVEST receipts with positive TAKE_PROFIT_ORDER expectancy, zero TP losses, and positive Wilson-lower-bound stress expectancy until realized PF/expectancy recover
+  - blocker: AUD_JPY SHORT STOP-ENTRY TREND_CONTINUATION chases into LONG failed-break/reversal candle evidence (LONG=22.5, SHORT=0.0): M5 failed_breakout: M5 CHOCH_DOWN@111.339 wick-only (close_confirmed=False) → trap fade UP; H1 failed_breakout: H1 BOS_DOWN@111.38 wick-only (close_confirmed=False) → trap fade UP. Wait for M5/M15 close-confirmed SHORT BOS/CHOCH, or use a retest LIMIT instead of chasing the failed side.
+- `failure_trader:AUD_USD:LONG:BREAKOUT_FAILURE:LIMIT` status=`DRY_RUN_BLOCKED` reward=`360` risk=`353` rr=`1.02` live_ready=`False` promotion_candidate=`False`
+  - blocker: AUD_USD LONG has a RANGE forecast; only executable RANGE_ROTATION rail geometry may become LIVE_READY from a RANGE prediction.
+  - blocker: AUD_USD spread 1.4pip exceeds 2.50x normal 0.5pip (policy=2.5x, session_mult=1.00)
+  - blocker: AUD_USD LONG matrix-supported repair seed (matrix:AUD_USD:LONG) still has current reject context: AUD_USD confluence score_balance=SHORT_LEAN; AUD_USD short_score 0.713 > long_score 0.245; keep this lane diagnostic until a fresh market-context-matrix refresh clears the rejects.
+- `failure_trader:AUD_USD:LONG:BREAKOUT_FAILURE` status=`DRY_RUN_BLOCKED` reward=`360` risk=`353` rr=`1.02` live_ready=`False` promotion_candidate=`False`
+  - blocker: AUD_USD LONG has a RANGE forecast; only executable RANGE_ROTATION rail geometry may become LIVE_READY from a RANGE prediction.
+  - blocker: AUD_USD spread 1.4pip exceeds 2.50x normal 0.5pip (policy=2.5x, session_mult=1.00)
+  - blocker: AUD_USD LONG matrix-supported repair seed (matrix:AUD_USD:LONG) still has current reject context: AUD_USD confluence score_balance=SHORT_LEAN; AUD_USD short_score 0.713 > long_score 0.245; keep this lane diagnostic until a fresh market-context-matrix refresh clears the rejects.
+- `trend_trader:AUD_USD:LONG:TREND_CONTINUATION` status=`DRY_RUN_BLOCKED` reward=`1241` risk=`353` rr=`3.51` live_ready=`False` promotion_candidate=`False`
+  - blocker: AUD_USD LONG has a RANGE forecast; only executable RANGE_ROTATION rail geometry may become LIVE_READY from a RANGE prediction.
+  - blocker: AUD_USD spread 1.4pip exceeds 2.50x normal 0.5pip (policy=2.5x, session_mult=1.00)
+  - blocker: AUD_USD LONG matrix-supported repair seed (matrix:AUD_USD:LONG) still has current reject context: AUD_USD confluence score_balance=SHORT_LEAN; AUD_USD short_score 0.713 > long_score 0.245; keep this lane diagnostic until a fresh market-context-matrix refresh clears the rejects.
+- `failure_trader:EUR_USD:LONG:BREAKOUT_FAILURE:LIMIT` status=`DRY_RUN_BLOCKED` reward=`476` risk=`703` rr=`0.68` live_ready=`False` promotion_candidate=`False`
+  - blocker: planned reward/risk 0.68x is below 1.00x (regime=TREND_DOWN)
+  - blocker: planned reward/risk 0.68x is below 1.00x (regime=TREND_DOWN)
+- `failure_trader:EUR_USD:LONG:BREAKOUT_FAILURE` status=`DRY_RUN_BLOCKED` reward=`2041` risk=`783` rr=`2.61` live_ready=`False` promotion_candidate=`False`
+  - blocker: EUR_USD LONG BREAKOUT_FAILURE STOP_ENTRY is a upper-half/resistance buy-stop (M5 pos=0.90 support -4.1p resistance +2.7p; M15 pos=0.65 support -1.6p resistance +3.9p). Use the lower-half support retest/LIMIT or a true TREND_CONTINUATION breakout lane; do not arm a failed-break stop that sells the low or buys the high.
+  - blocker: EUR_USD LONG STOP-ENTRY BREAKOUT_FAILURE chases into SHORT failed-break/reversal candle evidence (LONG=18.4, SHORT=22.5): M30 failed_breakout: M30 CHOCH_UP@1.13712 wick-only (close_confirmed=False) → trap fade DOWN; H1 failed_breakout: H1 BOS_UP@1.13712 wick-only (close_confirmed=False) → trap fade DOWN. Wait for M5/M15 close-confirmed LONG BOS/CHOCH, or use a retest LIMIT instead of chasing the failed side.
+  - blocker: EUR_USD LONG chases a move already 4.41× typical hourly range over 24h (p24h=0.86, p7d=0.19); refuse same-direction entry after the 2.0σ-equivalent extension.
+- `trend_trader:EUR_USD:LONG:TREND_CONTINUATION` status=`DRY_RUN_BLOCKED` reward=`875` risk=`335` rr=`2.61` live_ready=`False` promotion_candidate=`False`
+  - blocker: EUR_USD LONG has a RANGE forecast; only executable RANGE_ROTATION rail geometry may become LIVE_READY from a RANGE prediction.
+  - blocker: capture_economics is NEGATIVE_EXPECTANCY; fresh live rotation is limited to non-market attached-TP HARVEST receipts with positive TAKE_PROFIT_ORDER expectancy, zero TP losses, and positive Wilson-lower-bound stress expectancy until realized PF/expectancy recover
+  - blocker: EUR_USD LONG trend-continuation hard gate: dominant_regime_state=TREND_DOWN points against LONG. Use the aligned trend lane, or a RANGE_ROTATION/BREAKOUT_FAILURE receipt with explicit range/failure geometry instead.
+- `failure_trader:GBP_USD:LONG:BREAKOUT_FAILURE:LIMIT` status=`DRY_RUN_BLOCKED` reward=`238` risk=`237` rr=`1.01` live_ready=`False` promotion_candidate=`False`
+  - blocker: GBP_USD LONG has a RANGE forecast; only executable RANGE_ROTATION rail geometry may become LIVE_READY from a RANGE prediction.
+  - blocker: month-scale replay still leaves this pair/side/method net negative without a TP-progress production-gate profit candidate; improve entry selection, TP geometry, or close-gate evidence before exposing it as a live entry or TP_HARVEST_REPAIR (pair=GBP_USD, side=LONG, method=BREAKOUT_FAILURE, loss_closes=1, repair_replay_net=-2981.90 JPY)
+  - blocker: persistent high-confidence forecast adverse path blocks new entry risk; repair directional forecast buckets/range-location priors before expanding exposure (streak=53, projection_economic_precision_gap_count=7, projection_worst_economic_wilson_lower=0.337, projection_worst_timeout_rate=0.570, PF=1.059)
+- `failure_trader:GBP_USD:LONG:BREAKOUT_FAILURE` status=`DRY_RUN_BLOCKED` reward=`855` risk=`327` rr=`2.61` live_ready=`False` promotion_candidate=`False`
+  - blocker: GBP_USD LONG has a RANGE forecast; only executable RANGE_ROTATION rail geometry may become LIVE_READY from a RANGE prediction.
+  - blocker: GBP_USD LONG BREAKOUT_FAILURE STOP_ENTRY is a upper-half/resistance buy-stop (M5 pos=0.52 support -1.3p resistance +7.5p). Use the lower-half support retest/LIMIT or a true TREND_CONTINUATION breakout lane; do not arm a failed-break stop that sells the low or buys the high.
+  - blocker: GBP_USD LONG chases a move already 4.93× typical hourly range over 24h (p24h=0.76, p7d=0.20); refuse same-direction entry after the 2.0σ-equivalent extension.
+- `trend_trader:EUR_JPY:SHORT:TREND_CONTINUATION` status=`DRY_RUN_BLOCKED` reward=`276` risk=`351` rr=`0.79` live_ready=`False` promotion_candidate=`False`
+  - blocker: EUR_JPY SHORT has a RANGE forecast; only executable RANGE_ROTATION rail geometry may become LIVE_READY from a RANGE prediction.
+  - blocker: planned reward/risk 0.79x is below 1.20x (regime=UNCLEAR)
+  - blocker: capture_economics is NEGATIVE_EXPECTANCY; fresh live rotation is limited to non-market attached-TP HARVEST receipts with positive TAKE_PROFIT_ORDER expectancy, zero TP losses, and positive Wilson-lower-bound stress expectancy until realized PF/expectancy recover
+- `trend_trader:EUR_JPY:SHORT:TREND_CONTINUATION:MARKET` status=`DRY_RUN_BLOCKED` reward=`528` risk=`351` rr=`1.50` live_ready=`False` promotion_candidate=`False`
+  - blocker: EUR_JPY SHORT has a RANGE forecast; only executable RANGE_ROTATION rail geometry may become LIVE_READY from a RANGE prediction.
+  - blocker: capture_economics is NEGATIVE_EXPECTANCY; fresh live rotation is limited to non-market attached-TP HARVEST receipts with positive TAKE_PROFIT_ORDER expectancy, zero TP losses, and positive Wilson-lower-bound stress expectancy until realized PF/expectancy recover
+  - blocker: EUR_JPY SHORT MARKET trend-continuation needs M5 TREND_DOWN; current M5 regime is RANGE. Use a pending trigger instead of chasing inside chop/range.
+- `range_trader:EUR_JPY:SHORT:RANGE_ROTATION` status=`DRY_RUN_BLOCKED` reward=`510` risk=`351` rr=`1.45` live_ready=`False` promotion_candidate=`False`
+  - blocker: capture_economics is NEGATIVE_EXPECTANCY; fresh live rotation is limited to non-market attached-TP HARVEST receipts with positive TAKE_PROFIT_ORDER expectancy, zero TP losses, and positive Wilson-lower-bound stress expectancy until realized PF/expectancy recover
+  - blocker: EUR_JPY SHORT RANGE_ROTATION is on the wrong side of broader market location (p24h=0.85, p7d=0.28). Range rotation must buy discount/lower-half rails and sell premium/upper-half rails; do not turn a tiny local rail into a late chase.
+  - blocker: persistent high-confidence forecast adverse path blocks new entry risk; repair directional forecast buckets/range-location priors before expanding exposure (streak=53, projection_economic_precision_gap_count=7, projection_worst_economic_wilson_lower=0.337, projection_worst_timeout_rate=0.570, PF=1.059)
+- `range_trader:EUR_JPY:SHORT:RANGE_ROTATION:MARKET` status=`DRY_RUN_BLOCKED` reward=`420` risk=`351` rr=`1.20` live_ready=`False` promotion_candidate=`False`
+  - blocker: capture_economics is NEGATIVE_EXPECTANCY; fresh live rotation is limited to non-market attached-TP HARVEST receipts with positive TAKE_PROFIT_ORDER expectancy, zero TP losses, and positive Wilson-lower-bound stress expectancy until realized PF/expectancy recover
+  - blocker: EUR_JPY SHORT RANGE_ROTATION is on the wrong side of broader market location (p24h=0.85, p7d=0.28). Range rotation must buy discount/lower-half rails and sell premium/upper-half rails; do not turn a tiny local rail into a late chase.
+  - blocker: persistent high-confidence forecast adverse path blocks new entry risk; repair directional forecast buckets/range-location priors before expanding exposure (streak=53, projection_economic_precision_gap_count=7, projection_worst_economic_wilson_lower=0.337, projection_worst_timeout_rate=0.570, PF=1.059)
+- `failure_trader:EUR_USD:SHORT:BREAKOUT_FAILURE:LIMIT` status=`DRY_RUN_BLOCKED` reward=`687` risk=`402` rr=`1.71` live_ready=`False` promotion_candidate=`False`
+  - blocker: EUR_USD SHORT has a RANGE forecast; only executable RANGE_ROTATION rail geometry may become LIVE_READY from a RANGE prediction.
+  - blocker: persistent high-confidence forecast adverse path blocks new entry risk; repair directional forecast buckets/range-location priors before expanding exposure (streak=53, projection_economic_precision_gap_count=7, projection_worst_economic_wilson_lower=0.337, projection_worst_timeout_rate=0.570, PF=1.059)
+  - blocker: EUR_USD SHORT has a RANGE forecast; only executable RANGE_ROTATION rail geometry may become LIVE_READY from a RANGE prediction.
+- `failure_trader:EUR_USD:SHORT:BREAKOUT_FAILURE` status=`DRY_RUN_BLOCKED` reward=`428` risk=`402` rr=`1.06` live_ready=`False` promotion_candidate=`False`
+  - blocker: EUR_USD SHORT has a RANGE forecast; only executable RANGE_ROTATION rail geometry may become LIVE_READY from a RANGE prediction.
+  - blocker: EUR_USD SHORT BREAKOUT_FAILURE STOP_ENTRY is a lower-half/support sell-stop (M5 pos=0.31 support -4.1p resistance +2.7p; M15 pos=-0.07 support -1.6p resistance +3.9p). Use the upper-half resistance retest/LIMIT or a true TREND_CONTINUATION breakout lane; do not arm a failed-break stop that sells the low or buys the high.
+  - blocker: persistent high-confidence forecast adverse path blocks new entry risk; repair directional forecast buckets/range-location priors before expanding exposure (streak=53, projection_economic_precision_gap_count=7, projection_worst_economic_wilson_lower=0.337, projection_worst_timeout_rate=0.570, PF=1.059)
+- `failure_trader:EUR_USD:SHORT:BREAKOUT_FAILURE:MARKET` status=`DRY_RUN_BLOCKED` reward=`531` risk=`402` rr=`1.32` live_ready=`False` promotion_candidate=`False`
+  - blocker: EUR_USD SHORT has a RANGE forecast; only executable RANGE_ROTATION rail geometry may become LIVE_READY from a RANGE prediction.
+  - blocker: capture_economics is NEGATIVE_EXPECTANCY; fresh live rotation is limited to non-market attached-TP HARVEST receipts with positive TAKE_PROFIT_ORDER expectancy, zero TP losses, and positive Wilson-lower-bound stress expectancy until realized PF/expectancy recover
+  - blocker: EUR_USD SHORT BREAKOUT_FAILURE MARKET is a lower-half chase (M15 pos=0.29 support -1.6p resistance +3.9p). If the break has not continued, wait for the upper-half resistance retest or use the pending trigger instead of entering at market.
+- `trend_trader:EUR_USD:SHORT:TREND_CONTINUATION` status=`DRY_RUN_BLOCKED` reward=`428` risk=`402` rr=`1.06` live_ready=`False` promotion_candidate=`False`
+  - blocker: EUR_USD SHORT has a RANGE forecast; only executable RANGE_ROTATION rail geometry may become LIVE_READY from a RANGE prediction.
+  - blocker: planned reward/risk 1.06x is below 1.20x (regime=TREND_DOWN)
+  - blocker: capture_economics is NEGATIVE_EXPECTANCY; fresh live rotation is limited to non-market attached-TP HARVEST receipts with positive TAKE_PROFIT_ORDER expectancy, zero TP losses, and positive Wilson-lower-bound stress expectancy until realized PF/expectancy recover
+- `trend_trader:EUR_USD:SHORT:TREND_CONTINUATION:MARKET` status=`DRY_RUN_BLOCKED` reward=`531` risk=`402` rr=`1.32` live_ready=`False` promotion_candidate=`False`
+  - blocker: EUR_USD SHORT has a RANGE forecast; only executable RANGE_ROTATION rail geometry may become LIVE_READY from a RANGE prediction.
+  - blocker: capture_economics is NEGATIVE_EXPECTANCY; fresh live rotation is limited to non-market attached-TP HARVEST receipts with positive TAKE_PROFIT_ORDER expectancy, zero TP losses, and positive Wilson-lower-bound stress expectancy until realized PF/expectancy recover
+  - blocker: EUR_USD SHORT conflicts with current pair_charts direction bias=LONG (long_score=0.558, short_score=0.442); trend-continuation hard gate: decisive pair_charts bias=LONG (|score_gap|=0.116 >= 0.100). Use the aligned trend lane, or a RANGE_ROTATION/BREAKOUT_FAILURE receipt with explicit range/failure geometry instead.
+- `failure_trader:EUR_JPY:LONG:BREAKOUT_FAILURE:LIMIT` status=`DRY_RUN_BLOCKED` reward=`597` risk=`399` rr=`1.50` live_ready=`False` promotion_candidate=`False`
+  - blocker: EUR_JPY LONG has a RANGE forecast; only executable RANGE_ROTATION rail geometry may become LIVE_READY from a RANGE prediction.
+  - blocker: capture_economics is NEGATIVE_EXPECTANCY; fresh live rotation is limited to non-market attached-TP HARVEST receipts with positive TAKE_PROFIT_ORDER expectancy, zero TP losses, and positive Wilson-lower-bound stress expectancy until realized PF/expectancy recover
+  - blocker: EUR_JPY LONG chases a move already 3.94× typical hourly range over 24h (p24h=0.78, p7d=0.26); refuse same-direction entry after the 2.0σ-equivalent extension.
+- `failure_trader:EUR_JPY:LONG:BREAKOUT_FAILURE` status=`DRY_RUN_BLOCKED` reward=`622` risk=`416` rr=`1.50` live_ready=`False` promotion_candidate=`False`
+  - blocker: EUR_JPY LONG has a RANGE forecast; only executable RANGE_ROTATION rail geometry may become LIVE_READY from a RANGE prediction.
+  - blocker: capture_economics is NEGATIVE_EXPECTANCY; fresh live rotation is limited to non-market attached-TP HARVEST receipts with positive TAKE_PROFIT_ORDER expectancy, zero TP losses, and positive Wilson-lower-bound stress expectancy until realized PF/expectancy recover
+  - blocker: EUR_JPY LONG BREAKOUT_FAILURE STOP_ENTRY is a upper-half/resistance buy-stop (M5 pos=1.12 support -15.5p resistance +1.6p; M15 pos=1.20 support -16.5p resistance +0.4p). Use the lower-half support retest/LIMIT or a true TREND_CONTINUATION breakout lane; do not arm a failed-break stop that sells the low or buys the high.
+- `failure_trader:EUR_JPY:LONG:BREAKOUT_FAILURE:MARKET` status=`DRY_RUN_BLOCKED` reward=`532` risk=`356` rr=`1.49` live_ready=`False` promotion_candidate=`False`
+  - blocker: EUR_JPY LONG has a RANGE forecast; only executable RANGE_ROTATION rail geometry may become LIVE_READY from a RANGE prediction.
+  - blocker: capture_economics is NEGATIVE_EXPECTANCY; fresh live rotation is limited to non-market attached-TP HARVEST receipts with positive TAKE_PROFIT_ORDER expectancy, zero TP losses, and positive Wilson-lower-bound stress expectancy until realized PF/expectancy recover
+  - blocker: EUR_JPY LONG BREAKOUT_FAILURE MARKET is a upper-half chase (M5 pos=0.90 support -15.5p resistance +1.6p; M15 pos=0.97 support -16.5p resistance +0.4p). If the break has not continued, wait for the lower-half support retest or use the pending trigger instead of entering at market.
+- `trend_trader:EUR_JPY:LONG:TREND_CONTINUATION` status=`DRY_RUN_BLOCKED` reward=`622` risk=`416` rr=`1.50` live_ready=`False` promotion_candidate=`False`
+  - blocker: EUR_JPY LONG has a RANGE forecast; only executable RANGE_ROTATION rail geometry may become LIVE_READY from a RANGE prediction.
+  - blocker: capture_economics is NEGATIVE_EXPECTANCY; fresh live rotation is limited to non-market attached-TP HARVEST receipts with positive TAKE_PROFIT_ORDER expectancy, zero TP losses, and positive Wilson-lower-bound stress expectancy until realized PF/expectancy recover
+  - blocker: EUR_JPY LONG STOP-ENTRY TREND_CONTINUATION chases into SHORT failed-break/reversal candle evidence (LONG=22.5, SHORT=31.2): M5 failed_breakout: M5 BOS_UP@183.896 wick-only (close_confirmed=False) → trap fade DOWN; H1 failed_breakout: H1 CHOCH_UP@184.034 wick-only (close_confirmed=False) → trap fade DOWN; M5 time_exhaustion: M5 5 consecutive bull candles, range shrinking 42% → fade DOWN. Wait for M5/M15 close-confirmed LONG BOS/CHOCH, or use a retest LIMIT instead of chasing the failed side.
+- `trend_trader:EUR_JPY:LONG:TREND_CONTINUATION:MARKET` status=`DRY_RUN_BLOCKED` reward=`532` risk=`356` rr=`1.49` live_ready=`False` promotion_candidate=`False`
+  - blocker: EUR_JPY LONG has a RANGE forecast; only executable RANGE_ROTATION rail geometry may become LIVE_READY from a RANGE prediction.
+  - blocker: capture_economics is NEGATIVE_EXPECTANCY; fresh live rotation is limited to non-market attached-TP HARVEST receipts with positive TAKE_PROFIT_ORDER expectancy, zero TP losses, and positive Wilson-lower-bound stress expectancy until realized PF/expectancy recover
+  - blocker: EUR_JPY LONG MARKET trend-continuation needs M5 TREND_UP; current M5 regime is RANGE. Use a pending trigger instead of chasing inside chop/range.
+- `failure_trader:EUR_JPY:SHORT:BREAKOUT_FAILURE:LIMIT` status=`DRY_RUN_BLOCKED` reward=`528` risk=`351` rr=`1.50` live_ready=`False` promotion_candidate=`False`
+  - blocker: EUR_JPY SHORT has a RANGE forecast; only executable RANGE_ROTATION rail geometry may become LIVE_READY from a RANGE prediction.
+  - blocker: capture_economics is NEGATIVE_EXPECTANCY; fresh live rotation is limited to non-market attached-TP HARVEST receipts with positive TAKE_PROFIT_ORDER expectancy, zero TP losses, and positive Wilson-lower-bound stress expectancy until realized PF/expectancy recover
+  - blocker: persistent high-confidence forecast adverse path blocks new entry risk; repair directional forecast buckets/range-location priors before expanding exposure (streak=53, projection_economic_precision_gap_count=7, projection_worst_economic_wilson_lower=0.337, projection_worst_timeout_rate=0.570, PF=1.059)
+- `failure_trader:EUR_JPY:SHORT:BREAKOUT_FAILURE` status=`DRY_RUN_BLOCKED` reward=`276` risk=`351` rr=`0.79` live_ready=`False` promotion_candidate=`False`
+  - blocker: EUR_JPY SHORT has a RANGE forecast; only executable RANGE_ROTATION rail geometry may become LIVE_READY from a RANGE prediction.
+  - blocker: planned reward/risk 0.79x is below 1.00x (regime=UNCLEAR)
+  - blocker: capture_economics is NEGATIVE_EXPECTANCY; fresh live rotation is limited to non-market attached-TP HARVEST receipts with positive TAKE_PROFIT_ORDER expectancy, zero TP losses, and positive Wilson-lower-bound stress expectancy until realized PF/expectancy recover
+- `failure_trader:EUR_JPY:SHORT:BREAKOUT_FAILURE:MARKET` status=`DRY_RUN_BLOCKED` reward=`528` risk=`351` rr=`1.50` live_ready=`False` promotion_candidate=`False`
+  - blocker: EUR_JPY SHORT has a RANGE forecast; only executable RANGE_ROTATION rail geometry may become LIVE_READY from a RANGE prediction.
+  - blocker: capture_economics is NEGATIVE_EXPECTANCY; fresh live rotation is limited to non-market attached-TP HARVEST receipts with positive TAKE_PROFIT_ORDER expectancy, zero TP losses, and positive Wilson-lower-bound stress expectancy until realized PF/expectancy recover
+  - blocker: persistent high-confidence forecast adverse path blocks new entry risk; repair directional forecast buckets/range-location priors before expanding exposure (streak=53, projection_economic_precision_gap_count=7, projection_worst_economic_wilson_lower=0.337, projection_worst_timeout_rate=0.570, PF=1.059)
 
 ## Coverage Contract
 

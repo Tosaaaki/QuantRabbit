@@ -1,51 +1,54 @@
 # AI Attack Advice Report
 
-- Generated at UTC: `2026-05-06T15:33:26.024413+00:00`
-- Status: `ATTACK_PARTIAL`
+- Generated at UTC: `2026-06-26T06:40:12.412463+00:00`
+- Status: `NO_ATTACK_ADVICE`
 - Read only: `True`
 - Live permission: `False`
-- Live-ready lanes: `22`
-- Live-ready reward: `565 JPY` (`2.7%`)
-- Recommended now: `14` lanes, reward=`565 JPY`, risk=`256 JPY`
-- Required additional reward: `20329 JPY`
-- Required additional live-ready lanes: `473`
+- Live-ready lanes: `0`
+- Live-ready reward: `0 JPY` (`0.0%`)
+- Recommended now: `0` lanes, reward=`0 JPY`, risk=`0 JPY`
+- Required additional reward: `17394 JPY`
+- Required additional live-ready lanes: `None`
+- Projection economic precision edges: `7`
+- Capture segment priority edges: `1`
 
 ## Recommended Now
 
-- `failure_trader:EUR_USD:SHORT:BREAKOUT_FAILURE:MARKET` score=`62.3` reward=`52` risk=`18` rr=`2.84` hist_edge=`4823.5725` condition=`ALL:ALL:BREAKOUT_FAILURE:MARKET:LONDON:UNSPECIFIED` condition_edge=`1031.4102` method_edge=`-9531.8072`
-- `failure_trader:EUR_USD:LONG:BREAKOUT_FAILURE:MARKET` score=`58.8` reward=`42` risk=`18` rr=`2.27` hist_edge=`16375.5786` condition=`ALL:ALL:BREAKOUT_FAILURE:MARKET:LONDON:UNSPECIFIED` condition_edge=`1031.4102` method_edge=`2780.1475`
-- `range_trader:EUR_USD:SHORT:RANGE_ROTATION:MARKET` score=`55.3` reward=`31` risk=`18` rr=`1.68` hist_edge=`4823.5725` condition=`ALL:ALL:RANGE_ROTATION:MARKET:LONDON:UNSPECIFIED` condition_edge=`1836.1187` method_edge=`14096.4296`
-- `trend_trader:EUR_USD:SHORT:TREND_CONTINUATION` score=`27.3` reward=`52` risk=`18` rr=`2.84` hist_edge=`4823.5725` condition=`ALL:ALL:TREND_CONTINUATION:UNSPECIFIED:LONDON:UNSPECIFIED` condition_edge=`-592.2856` method_edge=`-425.3698`
-- `trend_trader:EUR_USD:LONG:TREND_CONTINUATION` score=`23.8` reward=`41` risk=`18` rr=`2.27` hist_edge=`16375.5786` condition=`ALL:ALL:TREND_CONTINUATION:UNSPECIFIED:LONDON:UNSPECIFIED` condition_edge=`-592.2856` method_edge=`-1268.8799`
-- `range_trader:EUR_USD:SHORT:RANGE_ROTATION` score=`22.0` reward=`36` risk=`18` rr=`1.96` hist_edge=`4823.5725` condition=`ALL:ALL:RANGE_ROTATION:LIMIT:LONDON:UNSPECIFIED` condition_edge=`-1777.6224` method_edge=`14096.4296`
-- `range_trader:EUR_USD:LONG:RANGE_ROTATION` score=`21.4` reward=`34` risk=`18` rr=`1.88` hist_edge=`16375.5786` condition=`ALL:ALL:RANGE_ROTATION:LIMIT:LONDON:UNSPECIFIED` condition_edge=`-1777.6224` method_edge=`2057.4571`
-- `failure_trader:AUD_JPY:LONG:BREAKOUT_FAILURE:MARKET` score=`18.3` reward=`70` risk=`18` rr=`3.83` hist_edge=`-715.4634` condition=`ALL:ALL:BREAKOUT_FAILURE:MARKET:LONDON:UNSPECIFIED` condition_edge=`1031.4102` method_edge=`-815.0`
-- `failure_trader:GBP_USD:LONG:BREAKOUT_FAILURE:MARKET` score=`4.2` reward=`28` risk=`18` rr=`1.51` hist_edge=`-220.11` condition=`ALL:ALL:BREAKOUT_FAILURE:MARKET:LONDON:UNSPECIFIED` condition_edge=`1031.4102` method_edge=`85.0231`
-- `range_trader:AUD_JPY:LONG:RANGE_ROTATION:MARKET` score=`3.2` reward=`25` risk=`18` rr=`1.34` hist_edge=`-715.4634` condition=`ALL:ALL:RANGE_ROTATION:MARKET:LONDON:UNSPECIFIED` condition_edge=`1836.1187` method_edge=`598.0`
-- `trend_trader:AUD_JPY:LONG:TREND_CONTINUATION` score=`-16.7` reward=`70` risk=`18` rr=`3.83` hist_edge=`-715.4634` condition=`ALL:ALL:TREND_CONTINUATION:UNSPECIFIED:LONDON:UNSPECIFIED` condition_edge=`-592.2856` method_edge=`-860.0`
-- `range_trader:AUD_JPY:LONG:RANGE_ROTATION` score=`-29.8` reward=`31` risk=`18` rr=`1.68` hist_edge=`-715.4634` condition=`ALL:ALL:RANGE_ROTATION:LIMIT:LONDON:UNSPECIFIED` condition_edge=`-1777.6224` method_edge=`598.0`
-- `trend_trader:GBP_USD:LONG:TREND_CONTINUATION` score=`-30.8` reward=`28` risk=`18` rr=`1.51` hist_edge=`-220.11` condition=`ALL:ALL:TREND_CONTINUATION:UNSPECIFIED:LONDON:UNSPECIFIED` condition_edge=`-592.2856` method_edge=`-6302.4407`
-- `range_trader:GBP_USD:LONG:RANGE_ROTATION` score=`-30.9` reward=`27` risk=`18` rr=`1.50` hist_edge=`-220.11` condition=`ALL:ALL:RANGE_ROTATION:LIMIT:LONDON:UNSPECIFIED` condition_edge=`-1777.6224` method_edge=`-878.4849`
+- none
 
 ## Watchlist
 
-- `trend_trader:EUR_USD:SHORT:TREND_CONTINUATION:MARKET`
-- `trend_trader:EUR_USD:LONG:TREND_CONTINUATION:MARKET`
-- `failure_trader:EUR_USD:SHORT:BREAKOUT_FAILURE`
-- `failure_trader:EUR_USD:LONG:BREAKOUT_FAILURE`
-- `trend_trader:AUD_JPY:LONG:TREND_CONTINUATION:MARKET`
-- `failure_trader:AUD_JPY:LONG:BREAKOUT_FAILURE`
-- `trend_trader:GBP_USD:LONG:TREND_CONTINUATION:MARKET`
-- `failure_trader:GBP_USD:LONG:BREAKOUT_FAILURE`
+- none
 
-## Blockers
+## Matrix-Supported Repair Queue
+
+- `EUR_USD LONG` state=`SURFACED_BUT_BLOCKED` profile=`BLOCK_UNTIL_NEW_EVIDENCE` matrix_support=`8` managed_net=`16738.9712` blocker=`EXHAUSTION_RANGE_CHASE`
+- `AUD_JPY SHORT` state=`SURFACED_BUT_BLOCKED` profile=`BLOCK_UNTIL_NEW_EVIDENCE` matrix_support=`9` managed_net=`7223.796` blocker=`RANGE_FORECAST_REQUIRES_RANGE_ROTATION`
+- `GBP_USD LONG` state=`SURFACED_BUT_BLOCKED` profile=`BLOCK_UNTIL_NEW_EVIDENCE` matrix_support=`8` managed_net=`5811.568` blocker=`RANGE_FORECAST_REQUIRES_RANGE_ROTATION`
+- `EUR_JPY LONG` state=`SURFACED_BUT_BLOCKED` profile=`MINE_MISSED_EDGE` matrix_support=`7` managed_net=`3515.8` blocker=`RANGE_FORECAST_REQUIRES_RANGE_ROTATION`
+- `GBP_JPY LONG` state=`NO_CURRENT_LANE` profile=`BLOCK_UNTIL_NEW_EVIDENCE` matrix_support=`7` managed_net=`598.67` blocker=``
+- `USD_JPY LONG` state=`NO_CURRENT_LANE` profile=`BLOCK_UNTIL_NEW_EVIDENCE` matrix_support=`7` managed_net=`131.0` blocker=``
+
+## Projection Edge Activation Queue
+
+- `session_expansion_london` bucket=`EUR_USD:UNCLEAR` direction=`EITHER` status=`EDGE_READY_NO_CURRENT_SIGNAL` repair=`DETECTOR_REFRESH_WAIT` economic_Wilson95_lower=`0.963` matched_lanes=`0` blocker=``
+- `liquidity_sweep_high_up` bucket=`AUD_JPY:UNCLEAR` direction=`UP` status=`EDGE_READY_NO_CURRENT_SIGNAL` repair=`DETECTOR_REFRESH_WAIT` economic_Wilson95_lower=`0.9191` matched_lanes=`0` blocker=``
+- `bb_squeeze_expansion_imminent` bucket=`_all_pairs:RANGE` direction=`EITHER` status=`EDGE_READY_NO_CURRENT_SIGNAL` repair=`DETECTOR_REFRESH_WAIT` economic_Wilson95_lower=`0.9155` matched_lanes=`0` blocker=``
+- `session_expansion_ny` bucket=`_all_pairs:TREND` direction=`EITHER` status=`EDGE_READY_NO_CURRENT_SIGNAL` repair=`DETECTOR_REFRESH_WAIT` economic_Wilson95_lower=`0.9071` matched_lanes=`0` blocker=``
+
+## Precision Filtered
 
 - none
 
+## Blockers
+
+- no LIVE_READY lanes are available for attack advice
+
 ## Action Items
 
-- build additional LIVE_READY receipts for 20329 JPY of target coverage
-- use recommended_now as the first verified basket, then keep generating sequential ladder receipts
+- build additional LIVE_READY receipts for 17394 JPY of target coverage
+- repair matrix-supported profitable edges before broad exploration: EUR_USD LONG (EXHAUSTION_RANGE_CHASE); AUD_JPY SHORT (RANGE_FORECAST_REQUIRES_RANGE_ROTATION); GBP_USD LONG (RANGE_FORECAST_REQUIRES_RANGE_ROTATION)
+- activate projection economic precision edges only after current blockers clear: session_expansion_london EUR_USD:UNCLEAR (DETECTOR_REFRESH_WAIT); liquidity_sweep_high_up AUD_JPY:UNCLEAR (DETECTOR_REFRESH_WAIT); bb_squeeze_expansion_imminent _all_pairs:RANGE (DETECTOR_REFRESH_WAIT)
 - resolve coverage optimizer status COVERAGE_GAP before treating attack advice as certified
 
 ## Contract

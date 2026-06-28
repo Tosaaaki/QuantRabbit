@@ -1,6 +1,6 @@
 # Manual Market Context Audit
 
-- Generated at UTC: `2026-06-12T05:23:34.094792+00:00`
+- Generated at UTC: `2026-06-26T06:40:12.710265+00:00`
 - Status: `MANUAL_MARKET_CONTEXT_PASS`
 - Pair: `USD_JPY`
 - Analyzed trades: `411` / `411` (`100.0`%)

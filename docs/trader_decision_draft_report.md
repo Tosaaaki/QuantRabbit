@@ -1,10 +1,11 @@
 # Trader Decision Draft Report
 
-- Action: `none`
-- Selected lane: `none`
+- Action: `CANCEL_PENDING`
+- Selected lane: `None`
 - Selected basket lanes: `none`
-- Draft blockers: `not run yet`
-- Verifier precheck: `not run yet`
+- Cancel order ids: `472871`
+- Draft blockers: `NO_LIVE_READY_LANES`
+- Verifier precheck: `ACCEPTED`
 
 ## Verification Issues
 

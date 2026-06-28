@@ -1,14 +1,15 @@
 # Execution Ledger Report
 
-- Generated at UTC: `2026-05-14T06:34:17.169350+00:00`
+- Generated at UTC: `2026-06-26T06:39:35.098976+00:00`
 - Status: `SYNCED`
 - DB: `/Users/tossaki/App/QuantRabbit/data/execution_ledger.db`
-- Transactions seen: `876`
-- Transactions inserted: `876`
-- Events inserted: `876`
+- Transactions seen: `0`
+- Transactions inserted: `0`
+- Events inserted: `0`
 - Gateway receipts inserted: `0`
+- Reconciled gateway events inserted: `0`
 - Baseline transaction id: `None`
-- Last transaction id: `471126`
+- Last transaction id: `472874`
 
 ## Contract
 

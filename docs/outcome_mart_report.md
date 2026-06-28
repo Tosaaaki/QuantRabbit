@@ -1,17 +1,19 @@
 # Outcome Mart Report
 
-- Generated at UTC: `2026-05-06T16:17:35.944952+00:00`
+- Generated at UTC: `2026-06-07T22:33:48.718058+00:00`
 - Status: `OUTCOME_MART_READY`
-- History DB: `/Users/tossaki/App/QuantRabbit/data/legacy_history.db`
-- Execution ledger DB: `None`
+- History DB: `data/legacy_history.db`
+- Execution ledger DB: `data/execution_ledger.db`
 - Archive outcomes: `7896`
-- Execution ledger outcomes: `0`
+- Execution ledger outcomes: `180`
 - Story observations: `2674`
+- Context-feature outcomes: `0` (`0.0%` of execution outcomes)
 
 ## Winning Conditions (>= 5 outcomes)
 
 | Condition | Outcomes | Observations | Net JPY | Avg JPY | Win % | Worst | Best |
 |---|---:|---:|---:|---:|---:|---:|---:|
+| `ALL:ALL:UNSPECIFIED:UNSPECIFIED:UNSPECIFIED:UNSPECIFIED` | 85 | 0 | 41421.0 | 487.3 | 100.0 | 0.2 | 4572.3 |
 | `ALL:ALL:RANGE_ROTATION:UNSPECIFIED:NY:SQUEEZE` | 20 | 56 | 25134.9 | 1256.7 | 100.0 | 200.0 | 2259.0 |
 | `ALL:ALL:TREND_CONTINUATION:MARKET:NY:UNSPECIFIED` | 21 | 33 | 14232.7 | 677.7 | 90.5 | -2235.6 | 1721.7 |
 | `ALL:ALL:RANGE_ROTATION:LIMIT:LONDON:SQUEEZE` | 6 | 7 | 5016.0 | 836.0 | 100.0 | 68.0 | 989.6 |
@@ -24,15 +26,15 @@
 | `ALL:ALL:RANGE_ROTATION:STOP_ENTRY:LONDON:UNSPECIFIED` | 13 | 21 | 1412.0 | 108.6 | 84.6 | -414.0 | 239.0 |
 | `ALL:ALL:RANGE_ROTATION:MARKET:LONDON:TRENDING` | 5 | 2 | 1290.0 | 258.0 | 100.0 | 258.0 | 258.0 |
 | `ALL:ALL:TREND_CONTINUATION:STOP_ENTRY:NY:SQUEEZE` | 6 | 0 | 1071.0 | 178.5 | 50.0 | -126.0 | 483.0 |
+| `ALL:ALL:UNSPECIFIED:STOP_ENTRY:UNSPECIFIED:UNSPECIFIED` | 28 | 0 | 991.5 | 35.4 | 60.7 | -546.0 | 1061.5 |
 | `ALL:ALL:UNSPECIFIED:UNSPECIFIED:LONDON:TRENDING` | 8 | 0 | 958.8 | 119.9 | 62.5 | -120.0 | 477.6 |
 | `ALL:ALL:TREND_CONTINUATION:LIMIT:LONDON:QUIET` | 5 | 0 | 957.0 | 191.4 | 60.0 | -246.0 | 483.0 |
-| `ALL:ALL:BREAKOUT_FAILURE:MARKET:ASIA:SQUEEZE` | 6 | 5 | 949.9 | 158.3 | 66.7 | -48.0 | 261.5 |
-| `ALL:ALL:BREAKOUT_FAILURE:MARKET:NY:RANGE` | 7 | 5 | 932.2 | 133.2 | 71.4 | -1575.8 | 576.0 |
 
 ## Losing Conditions (>= 5 outcomes)
 
 | Condition | Outcomes | Observations | Net JPY | Avg JPY | Win % | Worst | Best |
 |---|---:|---:|---:|---:|---:|---:|---:|
+| `ALL:ALL:UNSPECIFIED:MARKET:UNSPECIFIED:UNSPECIFIED` | 67 | 0 | -60697.8 | -905.9 | 9.0 | -11986.9 | 22725.0 |
 | `ALL:ALL:BREAKOUT_FAILURE:MARKET:NY:TRENDING` | 28 | 16 | -16948.7 | -605.3 | 14.3 | -1097.6 | 277.0 |
 | `ALL:ALL:BREAKOUT_FAILURE:MARKET:NY:SQUEEZE` | 30 | 17 | -16885.7 | -562.9 | 6.7 | -1097.6 | 238.6 |
 | `ALL:ALL:BREAKOUT_FAILURE:UNSPECIFIED:LONDON:SQUEEZE` | 41 | 15 | -13429.9 | -327.6 | 4.9 | -711.1 | 239.0 |
@@ -48,7 +50,6 @@
 | `ALL:ALL:UNSPECIFIED:STOP_ENTRY:NY:UNSPECIFIED` | 16 | 37 | -5380.6 | -336.3 | 43.8 | -1821.1 | 768.3 |
 | `ALL:ALL:UNSPECIFIED:MARKET:LONDON:UNSPECIFIED` | 1799 | 0 | -5238.6 | -2.9 | 37.5 | -2740.0 | 1154.9 |
 | `ALL:ALL:UNSPECIFIED:UNSPECIFIED:NY:TRENDING` | 31 | 0 | -4950.8 | -159.7 | 29.0 | -1026.6 | 756.0 |
-| `ALL:ALL:UNSPECIFIED:UNSPECIFIED:ROLLOVER:UNSPECIFIED` | 54 | 8 | -4605.6 | -85.3 | 48.1 | -3516.3 | 4020.0 |
 
 ## Walk-Forward Condition Validation
 
@@ -128,30 +129,33 @@
 | Condition | Outcomes | Observations | Net JPY | Avg JPY | Win % | Worst | Best |
 |---|---:|---:|---:|---:|---:|---:|---:|
 | `ALL:ALL:RANGE_ROTATION:ALL:ALL:ALL` | 265 | 1113 | 43025.3 | 162.4 | 57.4 | -2583.1 | 2992.5 |
+| `ALL:ALL:UNSPECIFIED:UNSPECIFIED:UNSPECIFIED:ALL` | 85 | 0 | 41421.0 | 487.3 | 100.0 | 0.2 | 4572.3 |
 | `ALL:ALL:RANGE_ROTATION:ALL:ALL:SQUEEZE` | 54 | 248 | 31879.9 | 590.4 | 79.6 | -2076.7 | 2259.0 |
 | `ALL:ALL:RANGE_ROTATION:UNSPECIFIED:ALL:ALL` | 76 | 251 | 31812.0 | 418.6 | 65.8 | -2583.1 | 2992.5 |
 | `ALL:ALL:RANGE_ROTATION:ALL:NY:ALL` | 98 | 393 | 29020.9 | 296.1 | 57.1 | -1575.8 | 2259.0 |
 | `ALL:ALL:RANGE_ROTATION:UNSPECIFIED:NY:ALL` | 37 | 91 | 28815.3 | 778.8 | 81.1 | -210.0 | 2259.0 |
 | `ALL:ALL:RANGE_ROTATION:ALL:NY:SQUEEZE` | 24 | 83 | 27823.2 | 1159.3 | 95.8 | -270.0 | 2259.0 |
 | `ALL:ALL:RANGE_ROTATION:UNSPECIFIED:ALL:SQUEEZE` | 26 | 144 | 26206.0 | 1007.9 | 92.3 | -742.6 | 2259.0 |
+| `ALL:ALL:UNSPECIFIED:UNSPECIFIED:ALL:UNSPECIFIED` | 322 | 19 | 24740.1 | 76.8 | 60.9 | -3631.4 | 4572.3 |
+| `ALL:ALL:UNSPECIFIED:UNSPECIFIED:ALL:ALL` | 396 | 19 | 22665.1 | 57.2 | 58.1 | -3832.3 | 4572.3 |
 | `ALL:ALL:TREND_CONTINUATION:MARKET:ALL:UNSPECIFIED` | 23 | 82 | 13734.8 | 597.2 | 87.0 | -2235.6 | 1721.7 |
 | `ALL:ALL:RANGE_ROTATION:LIMIT:ALL:ALL` | 116 | 571 | 13128.1 | 113.2 | 50.0 | -1272.0 | 2259.0 |
 | `ALL:ALL:TREND_CONTINUATION:MARKET:NY:ALL` | 26 | 33 | 9973.8 | 383.6 | 73.1 | -2235.6 | 1721.7 |
 | `ALL:ALL:RANGE_ROTATION:LIMIT:ALL:SQUEEZE` | 12 | 43 | 9011.4 | 751.0 | 91.7 | -270.0 | 989.6 |
 | `ALL:ALL:TREND_CONTINUATION:MARKET:ALL:ALL` | 42 | 96 | 8790.6 | 209.3 | 64.3 | -2235.6 | 1721.7 |
 | `ALL:ALL:RANGE_ROTATION:ALL:ALL:UNSPECIFIED` | 112 | 708 | 6995.8 | 62.5 | 60.7 | -1575.8 | 989.6 |
-| `ALL:ALL:RANGE_ROTATION:ALL:ROLLOVER:ALL` | 19 | 124 | 6981.4 | 367.4 | 68.4 | -148.1 | 989.6 |
-| `ALL:ALL:RANGE_ROTATION:LIMIT:ROLLOVER:ALL` | 12 | 54 | 6885.4 | 573.8 | 75.0 | -148.1 | 989.6 |
-| `ALL:ALL:UNSPECIFIED:UNSPECIFIED:ALL:QUIET` | 11 | 0 | 5551.2 | 504.7 | 81.8 | -611.2 | 2992.5 |
 
 ## Losing Condition Rollups (>= 5 outcomes)
 
 | Condition | Outcomes | Observations | Net JPY | Avg JPY | Win % | Worst | Best |
 |---|---:|---:|---:|---:|---:|---:|---:|
 | `ALL:ALL:BREAKOUT_FAILURE:ALL:ALL:ALL` | 515 | 957 | -145598.5 | -282.7 | 19.4 | -2235.6 | 989.6 |
+| `ALL:ALL:UNSPECIFIED:MARKET:ALL:UNSPECIFIED` | 6373 | 21 | -88783.0 | -13.9 | 41.6 | -11986.9 | 22725.0 |
+| `ALL:ALL:UNSPECIFIED:MARKET:ALL:ALL` | 6384 | 21 | -88049.4 | -13.8 | 41.6 | -11986.9 | 22725.0 |
 | `ALL:ALL:BREAKOUT_FAILURE:ALL:NY:ALL` | 238 | 367 | -83522.2 | -350.9 | 14.3 | -1821.1 | 576.0 |
-| `ALL:ALL:UNSPECIFIED:ALL:ALL:ALL` | 6875 | 163 | -58476.0 | -8.5 | 42.0 | -7696.0 | 4020.0 |
-| `ALL:ALL:UNSPECIFIED:ALL:ALL:UNSPECIFIED` | 6756 | 163 | -51908.3 | -7.7 | 42.0 | -7696.0 | 4020.0 |
+| `ALL:ALL:UNSPECIFIED:ALL:ALL:ALL` | 7055 | 163 | -76761.2 | -10.9 | 42.4 | -11986.9 | 22725.0 |
+| `ALL:ALL:UNSPECIFIED:ALL:ALL:UNSPECIFIED` | 6936 | 163 | -70193.5 | -10.1 | 42.4 | -11986.9 | 22725.0 |
+| `ALL:ALL:UNSPECIFIED:MARKET:UNSPECIFIED:ALL` | 67 | 0 | -60697.8 | -905.9 | 9.0 | -11986.9 | 22725.0 |
 | `ALL:ALL:BREAKOUT_FAILURE:ALL:ALL:TRENDING` | 130 | 142 | -51000.9 | -392.3 | 23.8 | -2235.6 | 483.0 |
 | `ALL:ALL:BREAKOUT_FAILURE:MARKET:ALL:ALL` | 169 | 168 | -48753.3 | -288.5 | 24.3 | -1575.8 | 576.0 |
 | `ALL:ALL:BREAKOUT_FAILURE:ALL:ALL:SQUEEZE` | 209 | 190 | -48254.4 | -230.9 | 10.0 | -1821.1 | 989.6 |
@@ -161,30 +165,33 @@
 | `ALL:ALL:BREAKOUT_FAILURE:MARKET:NY:ALL` | 73 | 47 | -37271.9 | -510.6 | 15.1 | -1575.8 | 576.0 |
 | `ALL:ALL:BREAKOUT_FAILURE:ALL:NY:TRENDING` | 71 | 58 | -36169.6 | -509.4 | 15.5 | -1821.1 | 277.0 |
 | `ALL:ALL:BREAKOUT_FAILURE:ALL:NY:SQUEEZE` | 105 | 69 | -30622.2 | -291.6 | 5.7 | -1821.1 | 238.6 |
-| `ALL:ALL:BREAKOUT_FAILURE:LIMIT:ALL:ALL` | 110 | 324 | -29971.7 | -272.5 | 19.1 | -1447.0 | 989.6 |
-| `ALL:ALL:UNSPECIFIED:MARKET:ALL:UNSPECIFIED` | 6306 | 21 | -28085.2 | -4.5 | 41.9 | -7696.0 | 1622.0 |
-| `ALL:ALL:UNSPECIFIED:MARKET:ALL:ALL` | 6317 | 21 | -27351.6 | -4.3 | 42.0 | -7696.0 | 1622.0 |
 
 ## Pair/Method Drilldown
 
 | Key | Outcomes | Observations | Net JPY | Avg JPY | Win % | Worst | Best |
 |---|---:|---:|---:|---:|---:|---:|---:|
 | `EUR_USD:SHORT:RANGE_ROTATION:ALL:ALL:ALL` | 92 | 124 | 49828.3 | 541.6 | 82.6 | -2076.7 | 2992.5 |
-| `EUR_USD:LONG:UNSPECIFIED:ALL:ALL:ALL` | 155 | 5 | 22091.8 | 142.5 | 51.0 | -3436.5 | 2375.5 |
-| `EUR_JPY:LONG:UNSPECIFIED:ALL:ALL:ALL` | 66 | 26 | 9470.3 | 143.5 | 69.7 | -1272.0 | 976.0 |
+| `USD_JPY:LONG:UNSPECIFIED:ALL:ALL:ALL` | 3627 | 5 | 15706.2 | 4.3 | 46.9 | -2740.0 | 22725.0 |
+| `EUR_JPY:LONG:UNSPECIFIED:ALL:ALL:ALL` | 69 | 26 | 8161.5 | 118.3 | 66.7 | -1272.0 | 976.0 |
 | `EUR_JPY:LONG:TREND_CONTINUATION:ALL:ALL:ALL` | 22 | 45 | 8094.0 | 367.9 | 90.9 | -225.0 | 483.0 |
+| `EUR_USD:LONG:UNSPECIFIED:ALL:ALL:ALL` | 197 | 5 | 7872.6 | 40.0 | 53.8 | -8378.5 | 3040.9 |
 | `AUD_JPY:LONG:RANGE_ROTATION:ALL:ALL:ALL` | 15 | 68 | 3308.0 | 220.5 | 20.0 | -372.0 | 2259.0 |
 | `EUR_USD:LONG:RANGE_ROTATION:ALL:ALL:ALL` | 29 | 108 | 2086.4 | 71.9 | 62.1 | -477.8 | 618.9 |
 | `EUR_JPY:LONG:BREAKOUT_FAILURE:ALL:ALL:ALL` | 7 | 10 | 1533.0 | 219.0 | 71.4 | -216.0 | 483.0 |
 | `EUR_USD:LONG:TREND_CONTINUATION:ALL:ALL:ALL` | 37 | 26 | 1497.2 | 40.5 | 32.4 | -435.6 | 1876.4 |
-| `AUD_JPY:LONG:UNSPECIFIED:ALL:ALL:ALL` | 74 | 25 | 1382.2 | 18.7 | 36.5 | -1065.0 | 4020.0 |
 | `USD_JPY:SHORT:RANGE_ROTATION:ALL:ALL:ALL` | 8 | 48 | 623.0 | 77.9 | 75.0 | -618.0 | 239.0 |
 | `EUR_JPY:SHORT:RANGE_ROTATION:ALL:ALL:ALL` | 14 | 98 | 488.0 | 34.9 | 71.4 | -222.0 | 277.0 |
+| `AUD_CAD:LONG:UNSPECIFIED:ALL:ALL:ALL` | 1 | 0 | 429.5 | 429.5 | 100.0 | 429.5 | 429.5 |
 | `GBP_JPY:LONG:RANGE_ROTATION:ALL:ALL:ALL` | 7 | 75 | 294.0 | 42.0 | 57.1 | -351.0 | 741.0 |
 | `AUD_USD:LONG:RANGE_ROTATION:ALL:ALL:ALL` | 2 | 19 | 106.7 | 53.4 | 50.0 | -84.6 | 191.4 |
-| `AUD_USD:LONG:BREAKOUT_FAILURE:ALL:ALL:ALL` | 1 | 0 | -84.6 | -84.6 | 0.0 | -84.6 | -84.6 |
-| `GBP_JPY:SHORT:RANGE_ROTATION:ALL:ALL:ALL` | 5 | 36 | -150.0 | -30.0 | 20.0 | -132.0 | 75.0 |
-| `AUD_USD:LONG:TREND_CONTINUATION:ALL:ALL:ALL` | 1 | 3 | -182.0 | -182.0 | 0.0 | -182.0 | -182.0 |
+| `NZD_USD:LONG:UNSPECIFIED:ALL:ALL:ALL` | 1 | 0 | 77.5 | 77.5 | 100.0 | 77.5 | 77.5 |
+| `AUD_CAD:SHORT:UNSPECIFIED:ALL:ALL:ALL` | 1 | 0 | 16.6 | 16.6 | 100.0 | 16.6 | 16.6 |
+
+## Context Feature Edges
+
+| Feature | Outcomes | Net JPY | Avg JPY | Win % | Worst | Best |
+|---|---:|---:|---:|---:|---:|---:|
+| none | 0 | 0 |  |  |  |  |
 
 ## Contract
 
@@ -193,3 +200,4 @@
 - Current broker truth, RiskEngine, strategy-profile validation, and gateways remain authoritative.
 - Story observations without P/L increase coverage counts only; they do not create expectancy.
 - Pair/method drilldown is secondary; the primary question is which conditions paid or failed.
+- Context-feature edges are post-trade attribution only; they do not grant live permission or bypass current receipts.

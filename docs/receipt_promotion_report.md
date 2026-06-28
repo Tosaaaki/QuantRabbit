@@ -1,12 +1,12 @@
 # Receipt Promotion Report
 
-- Generated at UTC: `2026-05-06T05:40:22.568840+00:00`
+- Generated at UTC: `2026-06-10T05:51:54.436047+00:00`
 - Strategy profile: `/Users/tossaki/App/QuantRabbit/data/strategy_profile.json`
-- Order intents: `/Users/tossaki/App/QuantRabbit/data/order_intents.json`
-- Intent snapshot: `data/broker_snapshot.json`
-- Profiles seen: `21`
+- Order intents: `/var/folders/64/3384w89n47v0hwlmw3ytr6j80000gn/T/tmpsbmf0ejk/intents.json`
+- Intent snapshot: `/var/folders/64/3384w89n47v0hwlmw3ytr6j80000gn/T/tmpsbmf0ejk/snapshot.json`
+- Profiles seen: `23`
 - Promoted: `0`
-- Still blocked: `12`
+- Still blocked: `17`
 
 ## Promotions
 
