@@ -5,8 +5,8 @@ Generated from local/live artifacts on 2026-06-28 10:26 UTC / 19:26 JST.
 ## Current State
 
 - Market calendar: weekend window on Sunday JST. Do not send orders or mutate launchd from this prompt.
-- Development HEAD: `50c5e510` on `codex/partial-close-live-gate`, `main`, `codex/live-trader-runtime`.
-- Live HEAD: `50c5e510` on `codex/live-trader-runtime`, `main`, `codex/partial-close-live-gate`.
+- Development/live baseline before this document commit: `50c5e510`.
+- Current document commit should be verified with `git log -1` in both development and live before the next runtime-affecting loop.
 - Live worktree has report-only runtime drift under `docs/*_report.md`.
 - Latest broker snapshot: `2026-06-26T06:48:39Z`, still shows `EUR_JPY SHORT 472876` open with TP `183.859` and SL `184.128`.
 - Execution ledger is newer than the broker snapshot: `2026-06-26T07:03:46Z` records `EUR_JPY SHORT 472876` closed by `TAKE_PROFIT_MARKET` for `+413.0 JPY`.
@@ -200,4 +200,3 @@ End each loop with:
 - selected repair or selected lane,
 - exact verification command that proved progress or the exact evidence wait blocker.
 ```
-
