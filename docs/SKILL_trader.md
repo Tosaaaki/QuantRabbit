@@ -27,6 +27,7 @@ PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli trader-prompt-route
 - Do not call `QR_OPENAI_API_KEY`, `OPENAI_API_KEY`, or any model API path from QuantRabbit code.
 - Do not invent JPY caps, pip distances, reward/risk multipliers, stale defaults, or extra risk gates.
 - Missing required evidence is a blocker, not a value to guess.
+- Daily target session accounting uses UTC 00:00 day-start NAV: +5% is the base operating target, and +10% is extension-only after an explicit favorable-market gate.
 - One final decision receipt selects action; specialist and strategy prompts are read-only observation.
 - A blocked, rejected, monitor-only, or no-trade cycle must not be followed by a workaround send.
 - Do not stop solely because a decision receipt was written recently or stale local state disagrees with refreshed broker truth. Use `trader-prompt-route`: unconsumed receipts go to verify; rejected, consumed, or broker-stale receipts go back to fresh decision work.
@@ -93,6 +94,11 @@ export QR_DISASTER_SL_H4_ATR_MULT="${QR_DISASTER_SL_H4_ATR_MULT:-2.5}"
 export QR_REQUIRE_FORECAST_FOR_LIVE="${QR_REQUIRE_FORECAST_FOR_LIVE:-1}"
 export QR_REQUIRE_TELEMETRY_FOR_LIVE="${QR_REQUIRE_TELEMETRY_FOR_LIVE:-1}"
 
+# Session-start read-only target block. This does not stage, send, cancel, or
+# close orders. It persists the first-seen UTC day-start NAV under
+# logs/day_start_nav/ and prints the base +5% / extension +10% operating mode.
+python3 tools/session_data.py
+
 # 1. Route to the right prompt branch
 PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli trader-prompt-route
 
@@ -132,10 +138,10 @@ PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli trader-prompt-route
 # before coverage, acceptance, and support can be trusted. One long wait
 # removes both empty-poll token spend and partial-stale sidecar reads.
 #
-# `--daily-risk-pct 10` is forwarded to every daily-target-state step: the
-# day's risk budget is % of starting NAV so the per-trade cap auto-scales
-# with equity (feedback_use_nav_percent.md), and 10% matches the campaign
-# `target_return_pct`.
+# `--daily-risk-pct 10` is forwarded to every daily-target-state step as the
+# current live risk-budget argument. Do not read it as the base operating
+# profit target: the session target engine treats +5% from UTC day-start NAV
+# as the base target and +10% only as a favorable-market extension gate.
 #
 # News has a cycle-local freshness floor: `news-snapshot` refreshes public RSS
 # artifacts before `mine-market-stories` / `news-health`. The richer curated
