@@ -2934,6 +2934,11 @@ def _cycle_digest(*, kind: str, step_results: list[dict[str, Any]], aborted: boo
         best_30d = performance.get("best_30d") or {}
         winning = precedent.get("winning_shape") or {}
         runtime = operator_precedent.get("runtime_alignment") or {}
+        trade_shape_engine = (
+            runtime.get("trade_shape_engine")
+            if isinstance(runtime.get("trade_shape_engine"), dict)
+            else {}
+        )
         manual_alignment = (
             runtime.get("manual_context_alignment")
             if isinstance(runtime.get("manual_context_alignment"), dict)
@@ -2949,6 +2954,20 @@ def _cycle_digest(*, kind: str, step_results: list[dict[str, Any]], aborted: boo
             "positive_sessions": winning.get("positive_sessions"),
             "live_ready_lanes": runtime.get("live_ready_lanes"),
             "aligned_live_ready_lanes": runtime.get("aligned_live_ready_lanes"),
+            "alignment_is_generalized_trade_shape": True,
+            "legacy_pair_direction_session_aligned_live_ready_lanes": runtime.get(
+                "legacy_pair_direction_session_aligned_live_ready_lanes"
+            ),
+            "trade_shape_engine": {
+                "status": trade_shape_engine.get("status"),
+                "candidate_pairs": trade_shape_engine.get("candidate_pairs"),
+                "shape_matched_live_ready_count": trade_shape_engine.get(
+                    "shape_matched_live_ready_count"
+                ),
+                "pair_specific_overlays_are_adjustments_only": (
+                    trade_shape_engine.get("contract") or {}
+                ).get("pair_specific_overlays_are_adjustments_only"),
+            },
             "manual_context_alignment_status": manual_alignment.get("status"),
             "manual_context_compatible_lanes": len(manual_alignment.get("compatible_lanes") or []),
             "manual_context_conflicting_lanes": len(manual_alignment.get("conflicting_lanes") or []),

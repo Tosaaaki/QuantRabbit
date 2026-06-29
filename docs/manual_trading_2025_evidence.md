@@ -37,9 +37,11 @@ PYTHONPATH=src python3 -m quant_rabbit.cli manual-market-context-audit
 
 ## What made the money
 
-- **One pair, total focus.** Every one of the 411 exit events was USD_JPY. No
-  attention split across 8 pairs at micro size — one instrument, full size,
-  fast rotation.
+- **One source pair, total focus.** Every one of the 411 exit events was
+  USD_JPY. That is source-history evidence, not a USD_JPY-only live rule. The
+  reusable lesson is focus on the cleanest current expression of the theme, at
+  meaningful size, with fast rotation rather than attention split across 8
+  pairs at micro size.
 - **Trend side only.** LONG: +351,348 (wr 59.6%, payoff 1.78). SHORT:
   −84,532 (wr 39.2%). The edge was riding the prevailing direction, and the
   counter-trend faders bled.
@@ -77,3 +79,15 @@ PYTHONPATH=src python3 -m quant_rabbit.cli manual-market-context-audit
    per-account empirical support for leaning it harder.
 3. Capture tempo: winners were banked in minutes-to-hours, never days. The
    thesis-horizon machinery now encodes this structurally.
+
+## Generalized discretionary trade shape
+
+The 2025 USD_JPY manual history is not a USD_JPY-only rule. It is operator
+precedent for a reusable trade shape: read theme, build only when thesis is
+alive, prefer bounded adverse add over with-move pyramid, avoid tight SL in
+noise, harvest actively, and forbid margin closeout / unattended carry.
+
+Pair-specific context is an overlay only. The current trader must apply the
+same common shape to EUR_USD, EUR_JPY, GBP_JPY, AUD_JPY, USD_JPY, and any other
+current candidate before execution gates, then let current risk geometry,
+forecast, spread, event, broker truth, and gateway validation decide.

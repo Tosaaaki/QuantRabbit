@@ -15,6 +15,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from quant_rabbit.discretionary_trade_shape import (
+    evaluate_trade_shape_engine,
+    generalized_discretionary_precedent,
+)
 from quant_rabbit.paths import (
     DEFAULT_DAILY_TARGET_STATE,
     DEFAULT_MANUAL_HISTORY_2025,
@@ -158,10 +162,11 @@ def build_operator_precedent_audit(
             _check(
                 "current_live_ready_alignment",
                 "WARN",
-                "LIVE_READY lanes exist, but none match the manual precedent's pair/direction/session shape",
+                "LIVE_READY lanes exist, but none match the generalized discretionary trade-shape precedent",
                 {
                     "live_ready_lanes": runtime["live_ready_lanes"],
-                    "precedent_shape": precedent.get("winning_shape"),
+                    "generalized_precedent": generalized_discretionary_precedent(),
+                    "historical_source_shape": precedent.get("winning_shape"),
                 },
                 severity="WARN",
             )
@@ -171,7 +176,7 @@ def build_operator_precedent_audit(
             _check(
                 "current_live_ready_alignment",
                 "PASS",
-                "at least one current LIVE_READY lane matches the manual precedent shape",
+                "at least one current LIVE_READY lane matches the generalized discretionary trade-shape precedent",
                 {"aligned_live_ready_lanes": runtime["aligned_live_ready_lanes"]},
             )
         )
@@ -210,6 +215,7 @@ def build_operator_precedent_audit(
             "verified": precedent.get("claim_verified") is True,
         },
         "precedent": precedent,
+        "generalized_trade_shape_precedent": generalized_discretionary_precedent(),
         "runtime_alignment": runtime,
         "checks": checks,
         "blockers": [item["message"] for item in blockers],
@@ -217,6 +223,7 @@ def build_operator_precedent_audit(
         "contract": {
             "advisory_only": True,
             "may_rank_current_live_ready_lanes": True,
+            "does_not_force_usd_jpy_only_trading": True,
             "cannot_override": [
                 "RiskEngine",
                 "LiveOrderGateway",
@@ -359,7 +366,7 @@ def _precedent_checks(precedent: dict[str, Any]) -> list[dict[str, Any]]:
             _check(
                 "winning_shape_extracted",
                 "PASS",
-                "manual history exposes a primary pair/direction/session shape",
+                "manual history exposes the historical source pair/direction/session shape",
                 {"winning_shape": winning_shape},
             )
         )
@@ -385,6 +392,7 @@ def _runtime_alignment(
     precedent: dict[str, Any],
     manual_context: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
+    trade_shape_engine = evaluate_trade_shape_engine(intents_payload)
     winning = precedent.get("winning_shape") or {}
     primary_pair = str(winning.get("primary_pair") or "")
     primary_direction = str(winning.get("primary_direction") or "").upper()
@@ -408,14 +416,24 @@ def _runtime_alignment(
                 aligned.append(lane)
         elif lane["status"] in NEAR_MISS_STATUSES:
             near_miss_candidates.append(lane)
-    exact_aligned_ids = {str(item.get("lane_id") or "") for item in aligned}
+    legacy_pair_direction_session_aligned = list(aligned)
+    shape_matched_lanes = [
+        item
+        for item in trade_shape_engine.get("shape_matched_live_ready_lanes", []) or []
+        if isinstance(item, dict)
+    ]
+    shape_matched_ids = {
+        str(item.get("lane_id") or "")
+        for item in shape_matched_lanes
+        if str(item.get("lane_id") or "").strip()
+    }
 
     target_trades = _maybe_float(target_payload.get("target_trades_per_day"))
     active_window = (precedent.get("sample") or {}).get("active_window") or {}
     manual_cadence = _maybe_float(active_window.get("exit_events_per_calendar_day"))
     manual_context_alignment = _manual_context_alignment(
         live_ready,
-        exact_aligned_lane_ids=exact_aligned_ids,
+        exact_aligned_lane_ids=shape_matched_ids,
         manual_context=manual_context,
         near_miss_candidates=near_miss_candidates,
         primary_pair=primary_pair,
@@ -424,16 +442,22 @@ def _runtime_alignment(
     )
     return {
         "live_ready_lanes": len(live_ready),
-        "aligned_live_ready_lanes": len(aligned),
-        "aligned_lanes": aligned[:10],
+        "aligned_live_ready_lanes": len(shape_matched_lanes),
+        "aligned_lanes": shape_matched_lanes[:10],
+        "legacy_pair_direction_session_aligned_live_ready_lanes": len(
+            legacy_pair_direction_session_aligned
+        ),
+        "legacy_pair_direction_session_aligned_lanes": legacy_pair_direction_session_aligned[:10],
         "live_ready_sample": live_ready[:10],
         "manual_context_alignment": manual_context_alignment,
+        "trade_shape_engine": trade_shape_engine,
         "target_trades_per_day": target_trades,
         "manual_exit_events_per_calendar_day": manual_cadence,
         "alignment_contract": {
             "aligned_precedent_is_advisory": True,
             "absence_of_alignment_is_not_a_trade_blocker": True,
             "current_risk_geometry_remains_authority": True,
+            "alignment_is_generalized_trade_shape_not_usd_jpy_pair_rule": True,
         },
     }
 
@@ -551,9 +575,9 @@ def _manual_context_alignment(
     return {
         "status": "MANUAL_CONTEXT_ALIGNMENT_READY",
         "basis": (
-            "bounded_replay_profile bucket sign; compatible/conflicting lists include exact "
-            "pair/direction/session precedent-aligned LIVE_READY lanes only; near_miss_lanes are "
-            "blocked diagnostics and never live permission"
+            "bounded_replay_profile bucket sign; compatible/conflicting lists include generalized "
+            "trade-shape precedent-aligned LIVE_READY lanes only; near_miss_lanes are blocked "
+            "diagnostics and never live permission"
         ),
         "lanes": lanes[:10],
         "compatible_lanes": compatible[:10],
@@ -862,6 +886,7 @@ def _write_json(path: Path, payload: dict[str, Any]) -> None:
 
 def _write_report(path: Path, payload: dict[str, Any]) -> None:
     precedent = payload["precedent"]
+    generalized = payload.get("generalized_trade_shape_precedent") or {}
     perf = precedent["funding_adjusted_performance"]
     best_30d = perf["best_30d"]
     winning = precedent["winning_shape"]
@@ -879,9 +904,11 @@ def _write_report(path: Path, payload: dict[str, Any]) -> None:
         f"- Status: `{payload['status']}`",
         f"- Best funding-adjusted 30d return: `{best_30d.get('return_pct')}`% (`{best_30d.get('profit')}` JPY)",
         f"- Peak funding-adjusted return: `{perf.get('peak_return_pct')}`%",
-        f"- Winning shape: `{winning.get('primary_pair')} {winning.get('primary_direction')}`; primary sessions `{', '.join(winning.get('primary_sessions') or [])}`; median hold `{winning.get('median_hold_hours')}`h",
+        f"- Historical source: `{winning.get('primary_pair')} {winning.get('primary_direction')}`; primary sessions `{', '.join(winning.get('primary_sessions') or [])}`; median hold `{winning.get('median_hold_hours')}`h",
+        f"- Generalized precedent: `{generalized.get('id')}`; pair-agnostic `{generalized.get('pair_agnostic')}`",
         f"- Failure shape: margin closeout `{failure.get('trades')}` exits, net `{failure.get('net_jpy')}` JPY, median hold `{failure.get('median_hold_hours')}`h",
-        f"- Current LIVE_READY lanes: `{runtime['live_ready_lanes']}`; precedent-aligned: `{runtime['aligned_live_ready_lanes']}`",
+        f"- Current LIVE_READY lanes: `{runtime['live_ready_lanes']}`; generalized-shape aligned: `{runtime['aligned_live_ready_lanes']}`",
+        f"- Legacy USD_JPY pair/direction/session aligned: `{runtime.get('legacy_pair_direction_session_aligned_live_ready_lanes')}`",
         f"- Manual context alignment: `{manual_alignment.get('status')}`; compatible `{len(manual_alignment.get('compatible_lanes') or [])}`; conflicting aligned `{manual_alignment.get('conflicting_aligned_lanes')}`; near-miss `{manual_alignment.get('near_miss_count', 0)}`",
         "",
         "## Checks",
@@ -896,6 +923,8 @@ def _write_report(path: Path, payload: dict[str, Any]) -> None:
         "## Contract",
         "",
         "- Advisory only: this audit may rank or explain already-current LIVE_READY lanes.",
+        "- The 2025 USD_JPY manual history is not a USD_JPY-only rule; it is reusable operator precedent for trade shape.",
+        "- Shape precedent: read theme, build only when thesis is alive, prefer bounded adverse add over with-move pyramid, avoid tight SL in noise, harvest actively, and forbid margin closeout / unattended carry.",
         "- It cannot override RiskEngine, LiveOrderGateway, forecast, spread, event, broker-truth, or close Gate A/B checks.",
     ]
     path.parent.mkdir(parents=True, exist_ok=True)

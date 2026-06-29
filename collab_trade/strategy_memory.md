@@ -1,5 +1,10 @@
 # Strategy Memory
 
+## 2026-06-30 Generalized Discretionary Trade Shape
+
+- The 2025 USD_JPY manual history is not a USD_JPY-only rule. It is operator precedent for a reusable trade shape: read theme, build only when thesis is alive, prefer bounded adverse add over with-move pyramid, avoid tight SL in noise, harvest actively, and forbid margin closeout / unattended carry.
+- Apply the common shape across current candidate pairs first; pair-specific overlays adjust ranking and sizing caution only. They do not replace risk geometry and they do not grant live permission.
+
 ## 2026-06-30 SL_LINT / THESIS_INVALIDATION_EXIT
 
 - A stop is not a market read. A red position is not thesis invalidation. Broker SL must represent true invalidation or emergency protection. If the thesis is alive, the system should manage size, time, and exposure, not blindly cut.

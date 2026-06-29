@@ -1,12 +1,14 @@
 # Operator Precedent Audit
 
-- Generated at UTC: `2026-06-26T06:40:22.656925+00:00`
+- Generated at UTC: `2026-06-29T23:23:42.607367+00:00`
 - Status: `OPERATOR_PRECEDENT_WARN`
 - Best funding-adjusted 30d return: `319.72`% (`457471.1871` JPY)
 - Peak funding-adjusted return: `200.28`%
-- Winning shape: `USD_JPY LONG`; primary sessions `LONDON_AM, NY_OVERLAP`; median hold `0.48`h
+- Historical source: `USD_JPY LONG`; primary sessions `LONDON_AM, NY_OVERLAP`; median hold `0.48`h
+- Generalized precedent: `operator_2025_discretionary_trade_shape`; pair-agnostic `True`
 - Failure shape: margin closeout `24` exits, net `-217327.8` JPY, median hold `12.38`h
-- Current LIVE_READY lanes: `0`; precedent-aligned: `0`
+- Current LIVE_READY lanes: `0`; generalized-shape aligned: `0`
+- Legacy USD_JPY pair/direction/session aligned: `0`
 - Manual context alignment: `MANUAL_CONTEXT_ALIGNMENT_READY`; compatible `0`; conflicting aligned `0`; near-miss `82`
 
 ## Checks
@@ -19,11 +21,13 @@
 | `target_state_readable` | `PASS` | daily target state readable: /Users/tossaki/App/QuantRabbit/data/daily_target_state.json |
 | `funding_adjusted_30d_claim` | `PASS` | best funding-adjusted 30d return 319.72% verifies the operator 200%+ claim |
 | `raw_balance_not_used_as_strategy_pnl` | `PASS` | manual history separates account funding from strategy P/L |
-| `winning_shape_extracted` | `PASS` | manual history exposes a primary pair/direction/session shape |
+| `winning_shape_extracted` | `PASS` | manual history exposes the historical source pair/direction/session shape |
 | `failure_shape_extracted` | `PASS` | manual history exposes the margin-closeout failure mode |
 | `current_live_ready_alignment` | `WARN` | no LIVE_READY lanes are present, so the manual precedent cannot be expressed in the current basket; 82 manual-context near-miss lane(s) show existing blockers |
 
 ## Contract
 
 - Advisory only: this audit may rank or explain already-current LIVE_READY lanes.
+- The 2025 USD_JPY manual history is not a USD_JPY-only rule; it is reusable operator precedent for trade shape.
+- Shape precedent: read theme, build only when thesis is alive, prefer bounded adverse add over with-move pyramid, avoid tight SL in noise, harvest actively, and forbid margin closeout / unattended carry.
 - It cannot override RiskEngine, LiveOrderGateway, forecast, spread, event, broker-truth, or close Gate A/B checks.

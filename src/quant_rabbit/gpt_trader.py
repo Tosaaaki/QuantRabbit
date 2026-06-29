@@ -1888,7 +1888,13 @@ MARKET_READ_NAKED_FIELDS = (
     "currency_bought",
     "currency_sold",
     "cleanest_pair_expression",
+    "is_cleanest_currency_theme",
+    "location_24h",
+    "h1_h4_alignment",
     "tape_state",
+    "known_winning_trade_shape_match",
+    "proposed_building_style_allowed",
+    "thesis_state",
     "what_price_is_trying_to_do_now",
 )
 MARKET_READ_PREDICTION_FIELDS = ("pair", "direction", "expected_path", "target_zone", "invalidation")
@@ -1959,6 +1965,20 @@ def _market_read_missing_fields(market_read: dict[str, Any]) -> list[str]:
     )
     if tape_state and tape_state not in {"TREND", "RANGE", "SQUEEZE", "FADE", "ROTATION"}:
         missing.append("naked_read.tape_state")
+    location = (
+        str((market_read.get("naked_read") or {}).get("location_24h") or "").strip().upper()
+        if isinstance(market_read.get("naked_read"), dict)
+        else ""
+    )
+    if location and location not in {"LOWER", "MIDDLE", "UPPER", "UNKNOWN"}:
+        missing.append("naked_read.location_24h")
+    thesis_state = (
+        str((market_read.get("naked_read") or {}).get("thesis_state") or "").strip().upper()
+        if isinstance(market_read.get("naked_read"), dict)
+        else ""
+    )
+    if thesis_state and thesis_state not in {"ALIVE", "WOUNDED", "INVALIDATED", "UNKNOWN"}:
+        missing.append("naked_read.thesis_state")
     return missing
 
 
@@ -2367,7 +2387,7 @@ class GPTTraderBrain:
                 "- A deterministic `tp-rebalance` sidecar requirement makes WAIT / REQUEST_EVIDENCE invalid until the sidecar is run.",
                 "- A deterministic entry-thesis blocker makes TRADE / WAIT invalid until the unverifiable active position is repaired or reviewed.",
                 "- Any self-improvement P0 blocks new `TRADE` receipts until the named blocker is repaired or the trader route explicitly justifies the exception.",
-                "- The 2025 operator precedent is advisory only. A `TRADE` that cites `operator:precedent` must also cite `manual:market_context`, at least one selected lane must match the current operator-precedent aligned lane set, and that selected lane must not conflict with the bounded manual technical replay buckets; otherwise the receipt must use current deterministic edge instead of precedent-based aggression.",
+                "- The 2025 operator precedent is advisory only and pair-agnostic. A `TRADE` that cites `operator:precedent` must also cite `manual:market_context`, at least one selected lane must match the generalized trade-shape aligned lane set, and that selected lane must not conflict with the bounded manual technical replay buckets; otherwise the receipt must use current deterministic edge instead of precedent-based aggression.",
                 "- Evidence refs must come from the input packet; invented refs reject the decision.",
                 "- `CLOSE` requires Gate A plus the applicable Gate B. Hard Gate A (H4 close-confirmed BOS/CHOCH against side, buffered invalidation_price hit with technical confirmation, fresh thesis_evolution BROKEN/RECOMMEND_CLOSE, structural position_management / position_guardian_management REVIEW_EXIT, or position_thesis invalidation-hit/structural-break evidence with multi-TF confirmation) carries standing loss-cut authorization only when it has not been downgraded by fresh same-direction HOLD/EXTEND sidecars. M15 structure is Gate A evidence but not unattended hard Gate B unless H4 / recorded invalidation / hard sidecar also confirms; M15 internal structure or receipt-level `invalidation_price` cannot harden a matching soft entry-buffer / unrecorded-invalidation sidecar. `protection_sidecars.position_close_recommendations[].blocks_non_close_actions=false` means the sidecar is advisory for entry routing: do not write CLOSE merely to test the verifier; evaluate current LIVE_READY entries unless a current hard close sidecar separately blocks non-close actions. Softer Gate A still needs `QR_OPERATOR_CLOSE_OVERRIDE=1` or a fresh `data/.operator_close_token` when the trader chooses CLOSE, but operator Gate B does not override fresh same-direction HOLD/EXTEND support. If the same-direction market stack still supports the open position, treat it as TP rebalance / HOLD / profit-side partial / ADD geometry, not loss-side CLOSE plus same-direction re-entry. `TRADE` must not include `close_trade_ids`; automation ends the close cycle, then the next scheduled cycle must refresh broker truth, reprice intents, and require a separate verified `TRADE` receipt. The receipt's `operator_close_authorized` field is advisory only. See AGENT_CONTRACT §10.",
             ]
@@ -3721,16 +3741,34 @@ GPT_TRADER_SCHEMA: dict[str, Any] = {
                         "currency_bought",
                         "currency_sold",
                         "cleanest_pair_expression",
+                        "is_cleanest_currency_theme",
+                        "location_24h",
+                        "h1_h4_alignment",
                         "tape_state",
+                        "known_winning_trade_shape_match",
+                        "proposed_building_style_allowed",
+                        "thesis_state",
                         "what_price_is_trying_to_do_now",
                     ],
                     "properties": {
                         "currency_bought": {"type": "string"},
                         "currency_sold": {"type": "string"},
                         "cleanest_pair_expression": {"type": "string"},
+                        "is_cleanest_currency_theme": {"type": "string"},
+                        "location_24h": {
+                            "type": "string",
+                            "enum": ["LOWER", "MIDDLE", "UPPER", "UNKNOWN"],
+                        },
+                        "h1_h4_alignment": {"type": "string"},
                         "tape_state": {
                             "type": "string",
                             "enum": ["TREND", "RANGE", "SQUEEZE", "FADE", "ROTATION"],
+                        },
+                        "known_winning_trade_shape_match": {"type": "string"},
+                        "proposed_building_style_allowed": {"type": "string"},
+                        "thesis_state": {
+                            "type": "string",
+                            "enum": ["ALIVE", "WOUNDED", "INVALIDATED", "UNKNOWN"],
                         },
                         "what_price_is_trying_to_do_now": {"type": "string"},
                     },
@@ -4459,12 +4497,19 @@ def _draft_market_read_first(
     invalidation = _price_sentence(invalidation_price, fallback=str((lane or {}).get("invalidation") or "structure breaks"))
     target_zone = _price_sentence(target_price, fallback=_market_read_target_zone_from_context(packet, pair, direction))
     vehicle = _market_read_vehicle((lane or {}).get("order_type"))
+    building_answer = _market_read_building_style_allowed(lane)
     return {
         "naked_read": {
             "currency_bought": bought or "UNKNOWN",
             "currency_sold": sold or "UNKNOWN",
             "cleanest_pair_expression": pair or "UNKNOWN_PAIR",
+            "is_cleanest_currency_theme": _market_read_cleanest_theme_answer(pair, bought, sold, lane),
+            "location_24h": _market_read_location_24h(lane),
+            "h1_h4_alignment": _market_read_h1_h4_alignment(lane, side),
             "tape_state": tape_state,
+            "known_winning_trade_shape_match": _market_read_shape_match_answer(packet, lane),
+            "proposed_building_style_allowed": building_answer,
+            "thesis_state": _market_read_thesis_state(lane),
             "what_price_is_trying_to_do_now": _market_read_now_sentence(packet, pair, direction, current_price),
         },
         "next_30m_prediction": {
@@ -4506,6 +4551,111 @@ def _market_read_primary_lane(
         if isinstance(lane, dict) and lane.get("pair"):
             return lane
     return None
+
+
+def _market_read_cleanest_theme_answer(
+    pair: str,
+    bought: str,
+    sold: str,
+    lane: dict[str, Any] | None,
+) -> str:
+    if pair and lane:
+        return f"YES - {pair} is the current cleanest expression for buying {bought or 'UNKNOWN'} and selling {sold or 'UNKNOWN'} in the selected lane."
+    if pair:
+        return f"UNKNOWN - {pair} is the available expression, but no selected lane proves it is cleanest."
+    return "UNKNOWN - no pair expression is available in the packet."
+
+
+def _market_read_location_24h(lane: dict[str, Any] | None) -> str:
+    technical = (lane or {}).get("technical_context")
+    if not isinstance(technical, dict):
+        return "UNKNOWN"
+    percentile = _optional_float(
+        technical.get("entry_price_percentile_24h") or technical.get("price_percentile_24h")
+    )
+    if percentile is None:
+        return "UNKNOWN"
+    if percentile < (1.0 / 3.0):
+        return "LOWER"
+    if percentile > (2.0 / 3.0):
+        return "UPPER"
+    return "MIDDLE"
+
+
+def _market_read_h1_h4_alignment(lane: dict[str, Any] | None, side: str) -> str:
+    technical = (lane or {}).get("technical_context")
+    if not isinstance(technical, dict):
+        return "H1=UNKNOWN; H4=UNKNOWN"
+    h1 = _market_read_tf_alignment(side, technical.get("h1_regime"), "H1")
+    h4 = _market_read_tf_alignment(side, technical.get("h4_regime"), "H4")
+    return f"H1={h1}; H4={h4}"
+
+
+def _market_read_tf_alignment(side: str, regime: Any, tf: str) -> str:
+    text = str(regime or "").upper()
+    if not text or side not in {"LONG", "SHORT"}:
+        return f"{tf}_UNKNOWN"
+    if "UP" in text:
+        direction = "UP"
+    elif "DOWN" in text:
+        direction = "DOWN"
+    else:
+        return f"{tf}_UNKNOWN"
+    side_direction = "UP" if side == "LONG" else "DOWN"
+    relation = "WITH" if direction == side_direction else "AGAINST"
+    return f"{relation}_{tf}_TREND"
+
+
+def _market_read_shape_match_answer(packet: dict[str, Any], lane: dict[str, Any] | None) -> str:
+    lane_id = str((lane or {}).get("lane_id") or "")
+    pair = str((lane or {}).get("pair") or "")
+    operator_precedent = packet.get("operator_precedent")
+    engine = (
+        operator_precedent.get("trade_shape_engine")
+        if isinstance(operator_precedent, dict) and isinstance(operator_precedent.get("trade_shape_engine"), dict)
+        else {}
+    )
+    for item in engine.get("shape_matched_live_ready_lanes", []) or []:
+        if isinstance(item, dict) and lane_id and str(item.get("lane_id") or "") == lane_id:
+            return f"MATCH - generalized 2025 operator trade shape matches {lane_id}."
+    pair_summary = (engine.get("pair_summaries") or {}).get(pair) if isinstance(engine.get("pair_summaries"), dict) else None
+    if isinstance(pair_summary, dict):
+        status = ((pair_summary.get("precedent_match") or {}).get("status") or "UNKNOWN")
+        return f"{status} - generalized 2025 operator trade-shape engine summary for {pair}."
+    return "UNKNOWN - operator-precedent trade-shape engine is not available in this packet."
+
+
+def _market_read_building_style_allowed(lane: dict[str, Any] | None) -> str:
+    building = (lane or {}).get("position_building")
+    if not isinstance(building, dict):
+        return "YES - SINGLE"
+    add_type = str(building.get("same_pair_add_type") or "").upper()
+    if add_type == "AVERAGE_INTO_ADVERSE":
+        return "YES - BOUNDED_ADVERSE_ADD only after current risk/gateway validation"
+    if add_type == "PYRAMID_WITH_MOVE":
+        return "NO - WITH_MOVE_PYRAMID is blocked by generalized operator precedent"
+    if add_type:
+        return f"UNKNOWN - {add_type} needs current risk classification"
+    return "YES - SINGLE"
+
+
+def _market_read_thesis_state(lane: dict[str, Any] | None) -> str:
+    if not lane:
+        return "UNKNOWN"
+    status = str(lane.get("status") or "").upper()
+    text = " ".join(
+        [status]
+        + [str(item or "") for item in lane.get("live_blockers", []) or []]
+        + [str(item or "") for item in lane.get("risk_blockers", []) or []]
+        + [str(item or "") for item in lane.get("strategy_blockers", []) or []]
+    ).upper()
+    if "INVALIDATED" in text or "THESIS_BROKEN" in text or "RECOMMEND_CLOSE" in text:
+        return "INVALIDATED"
+    if status == "LIVE_READY":
+        return "ALIVE"
+    if "BLOCK" in text or "WATCH_ONLY" in text or "NEGATIVE_EXPECTANCY" in text:
+        return "WOUNDED"
+    return "ALIVE"
 
 
 def _market_read_fallback_pair(packet: dict[str, Any]) -> str:
@@ -5427,6 +5577,7 @@ def _lane_packet(
                         "chart_direction_bias",
                         "h1_regime",
                         "h1_adx",
+                        "h4_regime",
                         "m5_regime",
                         "m5_regime_quantile",
                         "current_price_mid",
@@ -7124,11 +7275,14 @@ def _operator_precedent_packet(payload: dict[str, Any] | None) -> dict[str, Any]
             "status": "missing",
             "operator_claim": {},
             "winning_shape": {},
+            "generalized_trade_shape_precedent": {},
             "runtime_alignment": {},
+            "trade_shape_engine": {},
             "warnings": [],
             "blockers": [],
         }
     precedent = payload.get("precedent") if isinstance(payload.get("precedent"), dict) else {}
+    runtime = payload.get("runtime_alignment") if isinstance(payload.get("runtime_alignment"), dict) else {}
     return {
         "evidence_ref": OPERATOR_PRECEDENT_EVIDENCE_REF,
         "generated_at_utc": payload.get("generated_at_utc"),
@@ -7150,24 +7304,58 @@ def _operator_precedent_packet(payload: dict[str, Any] | None) -> dict[str, Any]
                 "payoff",
             ),
         ),
+        "generalized_trade_shape_precedent": _small_dict(
+            payload.get("generalized_trade_shape_precedent"),
+            ("id", "source_history_pair", "pair_agnostic", "winning_shape", "operator_memory"),
+        ),
         "failure_shape": _small_dict(
             (precedent.get("failure_shape") or {}).get("margin_closeout"),
             ("trades", "net_jpy", "win_rate", "median_hold_hours"),
         ),
         "runtime_alignment": _small_dict(
-            payload.get("runtime_alignment"),
+            runtime,
             (
                 "live_ready_lanes",
                 "aligned_live_ready_lanes",
                 "aligned_lanes",
+                "legacy_pair_direction_session_aligned_live_ready_lanes",
                 "manual_context_alignment",
                 "manual_exit_events_per_calendar_day",
                 "target_trades_per_day",
                 "alignment_contract",
             ),
         ),
+        "trade_shape_engine": _trade_shape_engine_packet(runtime.get("trade_shape_engine")),
         "warnings": list(payload.get("warnings") or [])[:5],
         "blockers": list(payload.get("blockers") or [])[:5],
+    }
+
+
+def _trade_shape_engine_packet(payload: object) -> dict[str, Any]:
+    if not isinstance(payload, dict):
+        return {}
+    return {
+        "status": payload.get("status"),
+        "candidate_count": payload.get("candidate_count"),
+        "candidate_pairs": list(payload.get("candidate_pairs") or [])[:20],
+        "shape_matched_live_ready_count": payload.get("shape_matched_live_ready_count"),
+        "shape_matched_live_ready_lanes": list(payload.get("shape_matched_live_ready_lanes") or [])[:10],
+        "pair_summaries": {
+            str(pair): row
+            for pair, row in list((payload.get("pair_summaries") or {}).items())[:20]
+            if isinstance(row, dict)
+        },
+        "contract": _small_dict(
+            payload.get("contract"),
+            (
+                "advisory_only",
+                "pair_agnostic_core",
+                "pair_specific_overlays_are_adjustments_only",
+                "does_not_grant_live_permission",
+                "does_not_replace_risk_engine",
+                "does_not_force_usd_jpy_only_trading",
+            ),
+        ),
     }
 
 
@@ -7986,8 +8174,8 @@ def _manual_precedent_trade_issues(
             VerificationIssue(
                 "OPERATOR_PRECEDENT_NO_CURRENT_ALIGNMENT",
                 "TRADE cites the 2025 operator precedent, but the current operator-precedent audit has no "
-                "LIVE_READY lane aligned to the manual pair/direction/session shape. Cite current deterministic "
-                "edge instead of using the manual precedent as an aggression reason.",
+                "LIVE_READY lane aligned to the generalized discretionary trade-shape precedent. Cite current "
+                "deterministic edge instead of using the manual precedent as an aggression reason.",
             )
         )
         return issues
@@ -7997,7 +8185,7 @@ def _manual_precedent_trade_issues(
             VerificationIssue(
                 "OPERATOR_PRECEDENT_SELECTED_LANE_NOT_ALIGNED",
                 "TRADE cites the 2025 operator precedent, but none of the selected lane(s) are aligned to the "
-                "manual precedent shape: "
+                "generalized discretionary trade-shape precedent: "
                 f"selected={', '.join(selected_lane_ids)} aligned={', '.join(sorted(aligned_lane_ids))}. "
                 "Use current forecast/risk/matrix evidence for this trade instead.",
             )

@@ -7,6 +7,44 @@ is still `gpt-trader-decision` plus `LiveOrderGateway`.
 ```json
 {
   "generated_at_utc": "2026-06-08T12:32:26Z",
+  "market_read_first": {
+    "naked_read": {
+      "currency_bought": "EUR",
+      "currency_sold": "USD",
+      "cleanest_pair_expression": "EUR_USD",
+      "is_cleanest_currency_theme": "YES - EUR_USD is the cleanest current EUR strength / USD weakness expression.",
+      "location_24h": "LOWER",
+      "h1_h4_alignment": "H1=WITH_H1_TREND; H4=WITH_H4_TREND",
+      "tape_state": "TREND",
+      "known_winning_trade_shape_match": "MATCH - generalized 2025 operator trade shape.",
+      "proposed_building_style_allowed": "YES - SINGLE",
+      "thesis_state": "ALIVE",
+      "what_price_is_trying_to_do_now": "EUR_USD is trying to lift from the lower 24h shelf before execution filters."
+    },
+    "next_30m_prediction": {
+      "pair": "EUR_USD",
+      "direction": "LONG",
+      "expected_path": "Hold the shelf and press toward the nearest liquidity pocket.",
+      "target_zone": "current target zone from the packet",
+      "invalidation": "current invalidation from the packet"
+    },
+    "next_2h_prediction": {
+      "pair": "EUR_USD",
+      "direction": "LONG",
+      "expected_path": "Extend only if the H1/H4 thesis remains alive.",
+      "target_zone": "current 2h target zone from the packet",
+      "invalidation": "current 2h invalidation from the packet"
+    },
+    "best_trade_if_forced": {
+      "pair": "EUR_USD",
+      "direction": "LONG",
+      "vehicle": "STOP",
+      "entry": "current broker-refreshed entry only",
+      "tp": "current TP from packet",
+      "sl": "current invalidation/emergency stop from packet",
+      "why_this_pays": "It pays only if the naked 30m/2h read reaches target before invalidation."
+    }
+  },
   "action": "TRADE",
   "selected_lane_id": "desk:PAIR:SIDE:METHOD",
   "selected_lane_ids": ["desk:PAIR:SIDE:METHOD", "desk:PAIR:SIDE:METHOD:MARKET"],
@@ -105,6 +143,10 @@ is still `gpt-trader-decision` plus `LiveOrderGateway`.
 
 - Unknown evidence refs.
 - Missing or unparseable `generated_at_utc`.
+- Missing, incomplete, or blocker-first `market_read_first`.
+- `market_read_first.naked_read` omits cleanest theme expression, 24h location,
+  H1/H4 alignment, known winning trade-shape match, proposed building-style
+  allowance, thesis state, or tape state.
 - `TRADE` without current `LIVE_READY` selected lane(s).
 - `TRADE` with `close_trade_ids`.
 - `TRADE` without `news:health` and `news:items` or `news:current`.

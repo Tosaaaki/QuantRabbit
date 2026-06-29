@@ -7602,7 +7602,13 @@ def _gpt_market_read_first(*, pair: str = "EUR_USD", direction: str = "LONG") ->
             "currency_bought": bought,
             "currency_sold": sold,
             "cleanest_pair_expression": pair,
+            "is_cleanest_currency_theme": f"YES - {pair} is the cleanest current expression.",
+            "location_24h": "LOWER",
+            "h1_h4_alignment": "H1=WITH_H1_TREND; H4=WITH_H4_TREND",
             "tape_state": "TREND",
+            "known_winning_trade_shape_match": "MATCH - generalized 2025 operator trade shape.",
+            "proposed_building_style_allowed": "YES - SINGLE",
+            "thesis_state": "ALIVE",
             "what_price_is_trying_to_do_now": f"{pair} is pressing {direction} before execution filters.",
         },
         "next_30m_prediction": {

@@ -2,6 +2,7 @@
 
 ## 2026-06-30
 
+- Added a pair-agnostic discretionary trade-shape engine: the 2025 USD_JPY manual history is now advisory source evidence for a reusable shape across current pairs, with pair-specific overlays limited to score adjustments and no live-permission authority.
 - Added `SL_LINT`, `THESIS_INVALIDATION_EXIT_REQUIRED`, and `POST_STOP_THESIS_REVIEW`: broker SLs now publish invalidation evidence and block major-figure/noise/wick/event/JPY-theme stop placement; loss-side CLOSE receipts cannot use red P/L, negative expectancy, duplicate blockers, low LIVE_READY, or old SL templates as standalone exit reasons.
 
 ## 2026-06-29

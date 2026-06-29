@@ -23,10 +23,13 @@
    `data/manual_market_context_audit.json` if present. Use them only as
    advisory ranking/context among already-current `LIVE_READY` lanes; absence
    of alignment is not a blocker, and alignment cannot override current risk,
-   forecast, spread, event, broker-truth, or close Gate A/B checks. If you cite
-   the 2025 manual precedent as a reason to attack harder, also state whether
-   the current lane matches the manual technical context (`prefer_h1_alignment`
-   / `prefer_session_jst`) or cite a separate current deterministic edge.
+   forecast, spread, event, broker-truth, or close Gate A/B checks. The 2025
+   source pair was USD_JPY, but the active operator precedent is the generalized
+   discretionary trade-shape engine. If you cite `operator:precedent` as an
+   aggression reason, the selected lane must appear in
+   `runtime_alignment.trade_shape_engine.shape_matched_live_ready_lanes`, and
+   pair-specific notes must be treated as overlays rather than replacement
+   rules.
 11. If the target is open and the first advised lane is tradeable, include it in the selected basket unless a named deterministic gate now blocks it.
 12. If advice spans multiple distinct pairs, include one lane per advised pair up to portfolio capacity when practical; otherwise the verifier records a warning and the gateway cycle expands the accepted trade to the deterministic prefilter basket so margin, cumulative risk, duplicate geometry, and position-count gates decide what fits.
 13. Prefer a `MARKET` variant for immediate participation when it is current `LIVE_READY`; pending entries are basket-counted by the gateway and are not blanket no-trade reasons. Exception: `BREAKOUT_FAILURE` must be at the retest/rejection side of the M5/M15 box. For SHORT, do not market-sell the lower half/support and do not arm a lower-half sell-stop; wait for upper-half resistance rejection/LIMIT or require a separate true trend-continuation breakout lane. For LONG, do not market-buy the upper half/resistance and do not arm an upper-half buy-stop; wait for lower-half support rejection/LIMIT or require a separate true trend-continuation breakout lane.
@@ -50,23 +53,32 @@ router will move to `position_management`.
 ## Operator Precedent (`data/operator_precedent_audit.json`, `data/manual_market_context_audit.json`, `docs/manual_trading_2025_evidence.md`)
 
 The 5%/10% daily target reproduces the operator's own 2025 manual record on
-this account. Raw balance moved 200k → 1.23M peak in ~6 weeks, but that
+this account. Raw balance moved 200k -> 1.23M peak in ~6 weeks, but that
 includes 634k of additional funding; funding-adjusted trading equity still
 peaked at 600.6k (**+400.6k / +200.28%**) and ended at 469.2k (**+269.2k /
 +134.60%**). The best funding-adjusted 30d window was **+457.5k / +319.72%**,
 after subtracting 634k of net transfers inside that window. USD_JPY only, 411
-exit events. The shape of that edge, as advisory evidence for lane selection
-— never a substitute for current risk geometry or contract gates:
+exit events. USD_JPY is the source history, not a USD_JPY-only live rule. The
+shape of that edge, as advisory evidence for lane selection - never a
+substitute for current risk geometry or contract gates:
 
+- Generalized memory: The 2025 USD_JPY manual history is not a USD_JPY-only
+  rule. It is operator precedent for a reusable trade shape: read theme, build
+  only when thesis is alive, prefer bounded adverse add over with-move pyramid,
+  avoid tight SL in noise, harvest actively, and forbid margin closeout /
+  unattended carry.
 - Fewer, larger, faster: ~10 exit events/day at meaningful size, payoff 1.30,
-  median hold 29 minutes — not 30 micro-trades across 8 pairs.
+  median hold 29 minutes - not 30 micro-trades across 8 pairs.
 - Bounded replay is the usable precedent, not the raw long-hold tail. Exclude
   >=12h holds and margin closeouts before copying the shape.
-- Technical shape: USD_JPY extreme rotation, not blind trend chase.
-  `LONG_LOWER_THIRD_24H` and `SHORT_UPPER_THIRD_24H` were the strongest
-  replayable buckets; `SHORT_WITH_H1_TREND` and middle-third shorts were bad.
+- Technical shape: current cleanest theme expression, 24h location,
+  H1/H4/M5 context, tape state, entry shape, building style, thesis state, and
+  SL lint/noise state. `LONG_LOWER_THIRD_24H` and `SHORT_UPPER_THIRD_24H` were
+  the strongest mined source buckets; `SHORT_WITH_H1_TREND` and middle-third
+  shorts were bad in the source sample, but current pair overlays only adjust
+  the common shape score.
 - Position building: the operator did use nanpin-like averaging into adverse
-  same-side USD_JPY exposure, but the replayable part was bounded. In the
+  same-side exposure, but the replayable part was bounded. In the
   >=12h/margin-closeout-excluded profile, averaging-into-adverse clusters were
   net positive and small (median 3 entries, max 4, average adverse add about
   7 pips), while bounded pyramiding-with-the-move was negative. This is
@@ -78,9 +90,10 @@ exit events. The shape of that edge, as advisory evidence for lane selection
   `position_building.same_pair_add_type`. Do not describe a
   `PYRAMID_WITH_MOVE` add as nanpin; manual precedent supports only bounded
   adverse retest/add behavior after current gates pass.
-- H1 context: bounded `AGAINST_H1_TREND` paid far better than
-  `WITH_H1_TREND`. A lane using the 2025 precedent as an aggression reason must
-  explain whether current H1/M5 and 24h-location context is comparable.
+- H1/H4/M5 context: bounded `AGAINST_H1_TREND` paid far better than
+  `WITH_H1_TREND` in the source sample. A lane using the 2025 precedent as an
+  aggression reason must explain whether current H1/H4/M5 and 24h-location
+  context is comparable through the generalized trade-shape engine.
 - Session: historical session buckets are descriptive/ranking evidence only,
   not a hard time-of-day no-trade gate. The AI trader is expected to run across
   all hours and let current spread, ATR, forecast, flow, broker truth, and risk
@@ -89,14 +102,18 @@ exit events. The shape of that edge, as advisory evidence for lane selection
   (margin closeouts −217k) — the thesis-horizon expiry and disaster stop
   exist to bound exactly that; do not fight them.
 
-`manual_market_context_audit` adds the technical replay layer around those
-manual entries. It may gate only the *use of the precedent as an aggression
-reason*: a lane that conflicts with the mined H1/M5/session context needs its
-own current deterministic edge. It is not a no-trade gate by itself. If a
-`TRADE` receipt cites `operator:precedent`, the verifier now also requires
-`manual:market_context`, at least one selected lane aligned by the current
-operator-precedent audit, and no bounded manual H1/M5/session/24h-location
-conflict on that selected precedent-aligned lane.
+`operator_precedent_audit.runtime_alignment.trade_shape_engine` is the active
+pair-agnostic comparator. Pair-specific overlays (for example JPY theme risk,
+GBP_JPY spread/noise, AUD_USD no-edge size cap, or EUR_USD direct USD theme)
+adjust advisory score only; they do not replace the common shape and they do
+not grant live permission. `manual_market_context_audit` adds the technical
+replay layer around the source manual entries. It may gate only the *use of the
+precedent as an aggression reason*: a lane that conflicts with mined
+H1/M5/session/24h-location context needs its own current deterministic edge. It
+is not a no-trade gate by itself. If a `TRADE` receipt cites
+`operator:precedent`, the verifier requires `manual:market_context`, at least
+one selected lane aligned by the generalized operator-precedent trade-shape
+audit, and no bounded manual context conflict on that selected aligned lane.
 
 ## WAIT Discipline
 

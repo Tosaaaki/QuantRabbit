@@ -125,7 +125,13 @@ Naked read:
 - Currency bought:
 - Currency sold:
 - Cleanest pair expression:
+- Is this pair the cleanest currency theme: YES / NO / UNKNOWN
+- 24h location: LOWER / MIDDLE / UPPER / UNKNOWN
+- H1/H4 alignment:
 - Tape state: TREND / RANGE / SQUEEZE / FADE / ROTATION
+- Known winning trade-shape match: MATCH / PARTIAL / NO_MATCH / UNKNOWN
+- Proposed building style allowed: YES / NO / UNKNOWN
+- Thesis state: ALIVE / WOUNDED / INVALIDATED / UNKNOWN
 - What price is trying to do now:
 
 Next 30m prediction:
@@ -245,6 +251,7 @@ Next trigger:
 Path rules:
 - Start with `MARKET READ FIRST` every cycle before citing LIVE_READY count, blocker codes, negative expectancy, margin, target pressure, or pending-order repair.
 - A blocker is not a market read. `LIVE_READY=0` is not a market read. Negative expectancy is not a market read. Predict price first, then filter execution.
+- The naked read must classify cleanest theme expression, 24h location, H1/H4 alignment, known winning trade-shape match, proposed building style, thesis state, and SL/noise context before any blocker prose.
 - A blocked but correct read is discovery success / execution miss. A wrong read that passes filters is market-read failure.
 - Final `TRADE` / `WAIT` text must reference the next 30m or next 2h prediction from `MARKET READ FIRST`.
 - Under +5%, trader must name an A/S path or exact blocker.

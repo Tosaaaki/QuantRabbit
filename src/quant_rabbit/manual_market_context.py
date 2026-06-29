@@ -778,8 +778,9 @@ def _guidance(profile: dict[str, Any]) -> dict[str, Any]:
         },
         "operator_precedent_usage_gate": (
             "A current lane may cite the 2025 manual precedent as an aggression/ranking reason only when "
-            "its pair/direction/session and H1/M5 technical context are comparable; otherwise cite the "
-            "current deterministic edge instead."
+            "its generalized discretionary trade shape and H1/M5/session/24h-location context are "
+            "comparable; otherwise cite the current deterministic edge instead. The historical USD_JPY "
+            "pair is source evidence, not a USD_JPY-only trading rule."
         ),
     }
 
