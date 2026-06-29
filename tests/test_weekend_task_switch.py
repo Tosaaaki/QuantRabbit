@@ -59,10 +59,25 @@ class WeekendTaskSwitchTest(unittest.TestCase):
             self.assertEqual(_codex_status(codex_root, "qr-trader"), "ACTIVE")
             self.assertEqual(_codex_status(codex_root, "qr-news-digest"), "ACTIVE")
             self.assertEqual(_codex_status(codex_root, "qr-hole-audit"), "ACTIVE")
-            self.assertEqual(_codex_status(codex_root, "qr-self-improvement-watch"), "ACTIVE")
+            self.assertEqual(_codex_status(codex_root, "qr-self-improvement-watch"), "PAUSED")
             self.assertEqual(_codex_status(codex_root, "qr-weekend-market-off"), "ACTIVE")
             self.assertFalse(_claude_enabled(claude_root, "trader"))
             self.assertFalse(_claude_enabled(claude_root, "trader_v2"))
+
+    def test_restore_never_enables_self_improvement_watch_from_snapshot(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            env, codex_root, claude_root, _state_file = _env(Path(tmp))
+            _codex_task(codex_root, "qr-trader", "ACTIVE")
+            _codex_task(codex_root, "qr-self-improvement-watch", "ACTIVE")
+            _claude_task(claude_root, "trader", False)
+            _claude_task(claude_root, "trader_v2", False)
+            self.assertEqual(_run_switch("pause", env).returncode, 0)
+
+            result = _run_switch("restore", env)
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(_codex_status(codex_root, "qr-trader"), "ACTIVE")
+            self.assertEqual(_codex_status(codex_root, "qr-self-improvement-watch"), "PAUSED")
 
     def test_restore_reconciles_drift_after_snapshot_was_already_restored(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -78,15 +93,17 @@ class WeekendTaskSwitchTest(unittest.TestCase):
 
             _write_codex_status(codex_root, "qr-trader", "PAUSED")
             _write_codex_status(codex_root, "qr-hole-audit", "PAUSED")
+            _write_codex_status(codex_root, "qr-self-improvement-watch", "ACTIVE")
             result = _run_switch("restore", env)
 
             self.assertEqual(result.returncode, 0, result.stderr)
             payload = json.loads(result.stdout)
-            self.assertEqual(payload["changed_count"], 2)
+            self.assertEqual(payload["changed_count"], 3)
             self.assertIn("weekend snapshot already restored", payload["warnings"])
             self.assertIn("restored snapshot drift reconciled", payload["warnings"])
             self.assertEqual(_codex_status(codex_root, "qr-trader"), "ACTIVE")
             self.assertEqual(_codex_status(codex_root, "qr-hole-audit"), "ACTIVE")
+            self.assertEqual(_codex_status(codex_root, "qr-self-improvement-watch"), "PAUSED")
             state = json.loads(state_file.read_text())
             self.assertEqual(state["mode"], "restored")
             self.assertIn("last_restore_reconciled_at_utc", state)

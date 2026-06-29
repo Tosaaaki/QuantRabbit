@@ -32,6 +32,7 @@ DEFAULT_CODEX_TASK_IDS = ("qr-trader", "qr-news-digest", "qr-hole-audit", "qr-se
 DEFAULT_CLAUDE_TASK_IDS = ("trader", "trader_v2")
 DEFAULT_DECABOT_LAUNCHD_LABELS = ("com.decabot.ai", "com.decabot.monitor", "com.decabot.review")
 CODEX_TASK_EXCLUDED_PREFIXES = ("qr-weekend-",)
+CODEX_RESTORE_FORCED_PAUSED_TASK_IDS = frozenset({"qr-self-improvement-watch"})
 WEEKDAY_CODES = frozenset({"MO", "TU", "WE", "TH", "FR"})
 QUANT_RABBIT_PROJECT_BASENAMES = frozenset({"QuantRabbit", "QuantRabbit-live"})
 TRADER_TASK_KEYS = frozenset({"codex:qr-trader", "claude:trader", "claude:trader_v2"})
@@ -145,7 +146,11 @@ def _restore(
         joined = ", ".join(active_traders)
         raise TaskSwitchError(f"refusing to restore multiple trader schedulers: {joined}")
 
-    desired = {spec.key: baseline_tasks[spec.key] for spec in specs if spec.key in baseline_tasks}
+    desired = {
+        spec.key: _restore_task_state(spec, baseline_tasks[spec.key])
+        for spec in specs
+        if spec.key in baseline_tasks
+    }
     changes = _apply_states(specs, desired, dry_run=dry_run)
     warnings: list[str] = []
     if mode == "restored":
@@ -385,6 +390,13 @@ def _paused_task_state(spec: TaskSpec, current: dict[str, Any]) -> dict[str, Any
         desired["enabled"] = False
     elif spec.kind == "decabot_launchd":
         desired["loaded"] = False
+    return desired
+
+
+def _restore_task_state(spec: TaskSpec, snapshot: dict[str, Any]) -> dict[str, Any]:
+    desired = dict(snapshot)
+    if spec.kind == "codex" and spec.task_id in CODEX_RESTORE_FORCED_PAUSED_TASK_IDS:
+        desired["status"] = CODEX_PAUSED
     return desired
 
 
