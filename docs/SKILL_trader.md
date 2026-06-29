@@ -182,6 +182,27 @@ If any slot is empty:
 Exact blocker:
 Next trigger:
 Shelf-life:
+
+## USER ALPHA CONTINUATION
+Latest USER_ALPHA / OPERATOR_ALPHA:
+Pair / side:
+Entry:
+TP:
+Realized P/L:
+MFE if available:
+Time to TP:
+Thesis if available:
+Discovered by: system / operator / user
+System TP-managed: YES / NO / UNKNOWN
+
+What the user saw:
+What the system missed:
+Is thesis still alive: YES / NO / UNKNOWN
+RELOAD candidate:
+SECOND SHOT candidate:
+5% PATH BOARD mapping:
+Exact blocker if no continuation:
+Next trigger:
 ```
 
 Path rules:
@@ -192,6 +213,8 @@ Path rules:
 - The path must map to ATTACK STACK.
 - `tools/place_trader_order.py` is dry-run only. It may emit a gateway intent, but it must not send.
 - Live target-path receipts must include daily target mode, remaining-to-5%, path role, attack-stack slot, grade, suggested/final units, risk, target contribution, and `LIVE_LEARNING` mode.
+- A profitable manual/operator-discovered winner is `USER_ALPHA` / `OPERATOR_ALPHA`, not system-discovered bot edge. If `data/trader_overrides.json` carries active `user_alpha_continuation`, the trader must answer thesis-alive / RELOAD / SECOND SHOT / exact blocker and cite `user_alpha:continuation`; generic `NEGATIVE_EXPECTANCY` cannot erase it.
+- Stale trader-owned pending entries must resolve as exactly one of `CANCEL_PENDING`, `REPRICE`, `REPLACE_WITH_NEW_INTENT`, or `KEEP_WITH_EXACT_REASON`. A replacement `TRADE` may include current pending `cancel_order_ids`; duplicate parent-lane occupancy must not block cancel/replace of the very pending id being replaced.
 
 ## 10% EXTENSION GATE
 Default: NO
@@ -562,6 +585,7 @@ QR_LIVE_ENABLED=1 ./scripts/run-autotrade-live.sh \
 - Filled `5% PATH BOARD` with a concrete Path A / HERO route or exact blocker.
 - Filled `ATTACK STACK`, and every non-empty path-board slot maps to NOW, RELOAD, or SECOND SHOT.
 - Filled `10% EXTENSION GATE`; if YES, cite each gate condition, otherwise report NO.
+- Filled `USER ALPHA CONTINUATION`; if active, state thesis-alive / RELOAD / SECOND SHOT / exact blocker / next trigger.
 - Dry-run sizing result from `tools/position_sizing.py` or `tools/place_trader_order.py` for any fresh target-path order.
 - Final action: `TRADE`, `WAIT`, `REQUEST_EVIDENCE`, `PROTECT`, `TIGHTEN_SL`, `CLOSE`, or `CANCEL_PENDING`.
 - Sent flag: `true`, `false`, or dry-run.

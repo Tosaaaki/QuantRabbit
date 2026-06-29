@@ -2671,6 +2671,155 @@ class AutoTradeCycleTest(unittest.TestCase):
             self.assertEqual(gateway.calls[0]["confirm_live"], True)
             self.assertEqual(client.orders_canceled, [])
 
+    def test_gpt_trade_replacement_send_keeps_ignored_pending_order_ids(self) -> None:
+        class FakeGateway:
+            def __init__(self, *, client: FakeCycleClient, root: Path) -> None:
+                self.client = client
+                self.root = root
+                self.calls: list[dict[str, Any]] = []
+
+            def run_batch(
+                self,
+                *,
+                intents_path: Path,
+                lane_ids: tuple[str, ...],
+                size_multiples: dict[str, float] | None = None,
+                ignore_pending_order_ids: tuple[str, ...] = (),
+                send: bool = False,
+                confirm_live: bool = False,
+                **_: Any,
+            ) -> LiveOrderStageSummary:
+                self.calls.append(
+                    {
+                        "intents_path": intents_path,
+                        "lane_ids": lane_ids,
+                        "size_multiples": dict(size_multiples or {}),
+                        "ignore_pending_order_ids": ignore_pending_order_ids,
+                        "send": send,
+                        "confirm_live": confirm_live,
+                    }
+                )
+                return LiveOrderStageSummary(
+                    status="SENT" if send else "STAGED",
+                    lane_id=lane_ids[0] if lane_ids else None,
+                    output_path=self.root / "live_order.json",
+                    report_path=self.root / "live_order.md",
+                    sent=send,
+                    risk_issues=0,
+                    strategy_issues=0,
+                    sent_count=1 if send else 0,
+                    lane_ids=lane_ids,
+                )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            now = datetime.now(timezone.utc)
+            lane_id = "trend_trader:EUR_USD:LONG:TREND_CONTINUATION"
+            pending = BrokerOrder(
+                order_id="audit-review-pending",
+                pair="EUR_USD",
+                order_type="STOP",
+                price=1.17345,
+                state="PENDING",
+                units=1000,
+                owner=Owner.TRADER,
+                raw={
+                    "clientExtensions": {
+                        "comment": f"qr-vnext lane={lane_id} desk=trend_trader role=FORECAST_FIRST"
+                    },
+                    "takeProfitOnFill": {"price": "1.17500"},
+                    "stopLossOnFill": {"price": "1.17280"},
+                },
+            )
+            snapshot = BrokerSnapshot(
+                fetched_at_utc=now,
+                orders=(pending,),
+                quotes={
+                    "EUR_USD": Quote("EUR_USD", 1.17298, 1.17306, timestamp_utc=now),
+                    "USD_JPY": Quote("USD_JPY", 157.0, 157.01, timestamp_utc=now),
+                },
+            )
+            snapshot_path = root / "snapshot.json"
+            snapshot_path.write_text(_snapshot_to_json(snapshot) + "\n")
+            intents_path = root / "intents.json"
+            intents_path.write_text(
+                json.dumps(
+                    {
+                        "results": [
+                            {
+                                "lane_id": lane_id,
+                                "status": "LIVE_READY",
+                                "intent": {
+                                    "pair": "EUR_USD",
+                                    "side": "LONG",
+                                    "order_type": "STOP-ENTRY",
+                                    "units": 1000,
+                                    "entry": 1.17355,
+                                    "tp": 1.17520,
+                                    "sl": 1.17285,
+                                    "metadata": {"max_loss_jpy": 1_500},
+                                },
+                                "risk_metrics": {"spread_pips": 0.8},
+                            },
+                        ]
+                    }
+                )
+                + "\n"
+            )
+            self_improvement_path = root / "self_improvement_audit.json"
+            self_improvement_path.write_text(
+                json.dumps(
+                    {
+                        "findings": [
+                            {
+                                "code": "PENDING_ENTRY_CANCEL_REVIEW_REQUIRED",
+                                "evidence": {
+                                    "cancel_review_order_ids": [pending.order_id],
+                                },
+                            }
+                        ]
+                    }
+                )
+                + "\n"
+            )
+            client = FakeCycleClient(snapshot)
+            gateway = FakeGateway(client=client, root=root)
+            cycle = AutoTradeCycle(
+                client=client,
+                snapshot_path=snapshot_path,
+                intents_path=intents_path,
+                live_order_output_path=root / "live_order.json",
+                live_order_report_path=root / "live_order.md",
+                gpt_self_improvement_audit_path=self_improvement_path,
+                live_enabled=True,
+            )
+            gpt_summary = GptHandoffSummary(
+                status="ACCEPTED",
+                action="TRADE",
+                selected_lane_id=lane_id,
+                allowed=True,
+                issues=0,
+                cancel_order_ids=(pending.order_id,),
+            )
+
+            summary, canceled = cycle._run_order_batch_with_deferred_gpt_trade_cancels(
+                order_gateway=gateway,  # type: ignore[arg-type]
+                intents_path=intents_path,
+                lane_ids=(lane_id,),
+                size_multiples={lane_id: 1.0},
+                send=True,
+                gpt_summary=gpt_summary,
+            )
+
+            self.assertEqual(summary.status, "SENT")
+            self.assertEqual(canceled, (pending.order_id,))
+            self.assertEqual(len(gateway.calls), 2)
+            self.assertEqual(gateway.calls[0]["ignore_pending_order_ids"], (pending.order_id,))
+            self.assertEqual(gateway.calls[0]["send"], False)
+            self.assertEqual(gateway.calls[1]["ignore_pending_order_ids"], (pending.order_id,))
+            self.assertEqual(gateway.calls[1]["send"], True)
+            self.assertEqual(client.orders_canceled, [pending.order_id])
+
     def test_gpt_trade_preserves_same_lane_pending_with_disaster_stop_match(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

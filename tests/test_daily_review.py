@@ -238,6 +238,79 @@ class DailyReviewTest(unittest.TestCase):
             report = compute_daily_review(path, now=self.now)
             self.assertEqual(report.bias_overrides, {})
 
+    def test_profitable_unattributed_close_creates_user_alpha_continuation(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "ledger.db"
+            _make_db(
+                path,
+                [
+                    {
+                        "pair": "EUR_USD",
+                        "side": "LONG",
+                        "units": 1000,
+                        "pl": None,
+                        "event_type": "ORDER_FILLED",
+                        "trade_id": "manual-eurusd-long",
+                        "ts_utc": self._ts(4),
+                    },
+                    {
+                        "pair": "EUR_USD",
+                        "close_side": "SHORT",
+                        "pl": 2300,
+                        "event_type": "TRADE_CLOSED",
+                        "trade_id": "manual-eurusd-long",
+                        "ts_utc": self._ts(2),
+                        "attributed": False,
+                    },
+                ],
+            )
+
+            report = compute_daily_review(path, now=self.now)
+
+            self.assertEqual(report.bias_overrides, {})
+            self.assertEqual(len(report.user_alpha_trades), 1)
+            trade = report.user_alpha_trades[0]
+            self.assertEqual(trade["edge_source"], "USER_ALPHA")
+            self.assertEqual(trade["classification"], "OPERATOR_ALPHA")
+            self.assertEqual(trade["pair"], "EUR_USD")
+            self.assertEqual(trade["direction"], "LONG")
+            self.assertFalse(trade["system_discovered"])
+            self.assertEqual(trade["realized_pl_jpy"], 2300)
+            self.assertEqual(trade["time_to_tp_seconds"], 7200)
+            self.assertTrue(report.user_alpha_continuation["active"])
+            self.assertEqual(
+                report.user_alpha_continuation["five_pct_path_board_candidate"]["candidate_roles"],
+                ["RELOAD", "SECOND_SHOT"],
+            )
+            self.assertIn("user-alpha: EUR_USD:LONG +2300JPY", report.narrative_summary)
+
+            out_path = Path(tmp) / "trader_overrides.json"
+            write_trader_overrides(report, out_path)
+            data = json.loads(out_path.read_text())
+            self.assertTrue(data["user_alpha_continuation"]["active"])
+            self.assertEqual(data["_diagnostics"]["user_alpha_counts"], {"OPERATOR_ALPHA": 1})
+
+    def test_gateway_attributed_winner_is_not_user_alpha(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "ledger.db"
+            _make_db(
+                path,
+                [
+                    {
+                        "pair": "EUR_USD",
+                        "close_side": "SHORT",
+                        "pl": 2300,
+                        "trade_id": "bot-eurusd-long",
+                        "ts_utc": self._ts(2),
+                    },
+                ],
+            )
+
+            report = compute_daily_review(path, now=self.now)
+
+            self.assertEqual(report.user_alpha_trades, [])
+            self.assertFalse(report.user_alpha_continuation["active"])
+
     def test_losing_direction_triggers_negative_bias(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "ledger.db"

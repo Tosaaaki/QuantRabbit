@@ -3940,6 +3940,7 @@ def main(argv: list[str] | None = None) -> int:
     p_draft.add_argument("--projection-ledger", type=Path, default=DEFAULT_PROJECTION_LEDGER)
     p_draft.add_argument("--operator-precedent", type=Path, default=DEFAULT_OPERATOR_PRECEDENT_AUDIT)
     p_draft.add_argument("--manual-market-context", type=Path, default=DEFAULT_MANUAL_MARKET_CONTEXT_AUDIT)
+    p_draft.add_argument("--trader-overrides", type=Path, default=DEFAULT_TRADER_OVERRIDES)
     p_draft.add_argument("--predictive-limits", type=Path, default=DEFAULT_PREDICTIVE_LIMIT_ORDERS)
     p_draft.add_argument("--news-items", type=Path, default=DEFAULT_NEWS_SNAPSHOT)
     p_draft.add_argument("--news-health", type=Path, default=DEFAULT_NEWS_HEALTH)
@@ -3960,6 +3961,7 @@ def main(argv: list[str] | None = None) -> int:
     p_gpt.add_argument("--self-improvement-audit", type=Path, default=DEFAULT_SELF_IMPROVEMENT_AUDIT)
     p_gpt.add_argument("--projection-ledger", type=Path, default=DEFAULT_PROJECTION_LEDGER)
     p_gpt.add_argument("--market-context-matrix", type=Path, default=DEFAULT_MARKET_CONTEXT_MATRIX)
+    p_gpt.add_argument("--trader-overrides", type=Path, default=DEFAULT_TRADER_OVERRIDES)
     p_gpt.add_argument("--decision-response", type=Path, default=None)
     p_gpt.add_argument("--max-lanes", type=int, default=DEFAULT_GPT_MAX_LANES)
     p_gpt.add_argument("--output", type=Path, default=DEFAULT_GPT_TRADER_DECISION)
@@ -7403,6 +7405,7 @@ def main(argv: list[str] | None = None) -> int:
                 projection_ledger_path=args.projection_ledger,
                 operator_precedent_path=args.operator_precedent,
                 manual_market_context_path=args.manual_market_context,
+                trader_overrides_path=args.trader_overrides,
                 predictive_limits_path=args.predictive_limits,
                 news_items_path=args.news_items,
                 news_health_path=args.news_health,
@@ -7456,6 +7459,7 @@ def main(argv: list[str] | None = None) -> int:
                 self_improvement_audit_path=args.self_improvement_audit,
                 projection_ledger_path=args.projection_ledger,
                 market_context_matrix_path=args.market_context_matrix,
+                trader_overrides_path=args.trader_overrides,
                 output_path=args.output,
                 report_path=args.report,
                 max_lanes=args.max_lanes,

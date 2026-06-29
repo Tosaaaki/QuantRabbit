@@ -28,3 +28,10 @@
 - `tools/place_trader_order.py` remains dry-run only. It can emit a LiveOrderGateway intent with `--gateway-intent-output`, but all OANDA entry posts still happen only inside `LiveOrderGateway`.
 - Live target-path sends must carry `LIVE_LEARNING` receipts with daily target mode, remaining-to-5%, path role, attack-stack slot, grade, suggested/final units, risk, target contribution, and gateway receipt id.
 - `daily-review` now classifies sent target-path trades as `discovery failure`, `deployment failure`, `sizing failure`, `vehicle failure`, `management failure`, or `good execution` so the next cycle can learn from the exact failure mode instead of treating all losses as generic lane bias.
+
+## 2026-06-29 USER_ALPHA Continuation
+
+- A profitable manual/operator-discovered winner is `USER_ALPHA` / `OPERATOR_ALPHA`, not proof that the system discovered the edge.
+- The EUR_USD LONG operator-discovered winner exposed the gap: the broker/system could manage TP, but the trader did not convert the green outcome into RELOAD / SECOND_SHOT / +5% continuation.
+- `daily-review` now publishes user-led winners separately under `user_alpha_trades` and `user_alpha_continuation`; GPT trader receipts must cite `user_alpha:continuation` and either continue the same pair/side or name an exact blocker and next trigger.
+- Stale pending replacements must carry ignored pending ids through preflight and final send so `BASKET_DUPLICATE_PARENT_LANE` cannot block cancel/replace of the pending order being replaced.

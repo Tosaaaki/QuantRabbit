@@ -37,6 +37,46 @@ class GPTTraderBrainTest(unittest.TestCase):
             self.assertEqual(payload["verification_issues"], [])
             self.assertIn("GPT Trader Decision Report", (root / "gpt_decision.md").read_text())
 
+    def test_accepts_user_alpha_matching_trade_when_continuation_is_cited(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root)
+            files["trader_overrides"].write_text(json.dumps(_user_alpha_overrides()))
+            decision = _trade_decision()
+            decision["evidence_refs"].extend(
+                ["user_alpha:continuation", "user_alpha:latest", "user_alpha:EUR_USD:LONG"]
+            )
+            decision["twenty_minute_plan"]["evidence_refs"].append("user_alpha:continuation")
+            brain = _brain(root, files, decision)
+
+            summary = brain.run(snapshot_path=files["snapshot"])
+
+            self.assertEqual(summary.status, "ACCEPTED")
+            payload = json.loads((root / "gpt_decision.json").read_text())
+            codes = {issue["code"] for issue in payload["verification_issues"]}
+            self.assertNotIn("USER_ALPHA_CONTINUATION_UNADDRESSED", codes)
+            self.assertTrue(payload["input_packet"]["user_alpha_continuation"]["active"])
+            report = (root / "gpt_decision.md").read_text()
+            self.assertIn("## USER ALPHA CONTINUATION", report)
+            self.assertIn("`OPERATOR_ALPHA` `EUR_USD` `LONG`", report)
+
+    def test_rejects_negative_expectancy_wait_that_ignores_user_alpha(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root)
+            files["trader_overrides"].write_text(json.dumps(_user_alpha_overrides()))
+            files["capture_economics"].write_text(json.dumps({"status": "NEGATIVE_EXPECTANCY"}))
+            brain = _brain(root, files, _wait_decision())
+
+            summary = brain.run(snapshot_path=files["snapshot"])
+
+            self.assertEqual(summary.status, "REJECTED")
+            payload = json.loads((root / "gpt_decision.json").read_text())
+            codes = {issue["code"] for issue in payload["verification_issues"]}
+            self.assertIn("USER_ALPHA_CONTINUATION_EVIDENCE_MISSING", codes)
+            self.assertIn("USER_ALPHA_CONTINUATION_UNADDRESSED", codes)
+            self.assertTrue(payload["input_packet"]["user_alpha_continuation"]["active"])
+
     def test_drafts_live_ready_trade_receipt_for_scheduled_trader(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -53,6 +93,20 @@ class GPTTraderBrainTest(unittest.TestCase):
             brain = _brain(root, files, decision)
             verified = brain.run(snapshot_path=files["snapshot"])
             self.assertEqual(verified.status, "ACCEPTED")
+
+    def test_draft_cites_user_alpha_when_selected_lane_continues_it(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root)
+            files["trader_overrides"].write_text(json.dumps(_user_alpha_overrides()))
+
+            summary = _draft(root, files)
+
+            self.assertEqual(summary.status, "DRAFT_ACCEPTED")
+            decision = json.loads((root / "codex_trader_decision_response.json").read_text())
+            self.assertIn("user_alpha:continuation", decision["evidence_refs"])
+            self.assertIn("user_alpha:continuation", decision["twenty_minute_plan"]["evidence_refs"])
+            self.assertIn("## USER ALPHA CONTINUATION", (root / "trader_decision_draft.md").read_text())
 
     def test_draft_refuses_trade_when_news_health_is_blocked(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -3793,6 +3847,7 @@ def _brain(root: Path, files: dict[str, Path], decision: dict, *, max_lanes: int
         projection_ledger_path=files["projection_ledger"],
         operator_precedent_path=files["operator_precedent"],
         manual_market_context_path=files["manual_market_context"],
+        trader_overrides_path=files["trader_overrides"],
         predictive_limits_path=files["predictive_limits"],
         news_items_path=files["news_items"],
         news_health_path=files["news_health"],
@@ -3833,6 +3888,7 @@ def _draft(root: Path, files: dict[str, Path]):
         projection_ledger_path=files["projection_ledger"],
         operator_precedent_path=files["operator_precedent"],
         manual_market_context_path=files["manual_market_context"],
+        trader_overrides_path=files["trader_overrides"],
         predictive_limits_path=files["predictive_limits"],
         news_items_path=files["news_items"],
         news_health_path=files["news_health"],
@@ -3894,6 +3950,7 @@ def _fixtures(root: Path, *, positions: list[dict] | None = None, orders: list[d
         "projection_ledger": root / "projection_ledger.jsonl",
         "operator_precedent": root / "operator_precedent.json",
         "manual_market_context": root / "manual_market_context.json",
+        "trader_overrides": root / "trader_overrides.json",
         "predictive_limits": root / "predictive_limits.json",
         "news_items": root / "news_items.json",
         "news_health": root / "news_health.json",
@@ -4203,6 +4260,7 @@ def _fixtures(root: Path, *, positions: list[dict] | None = None, orders: list[d
     files["projection_ledger"].write_text("")
     files["operator_precedent"].write_text(json.dumps({}))
     files["manual_market_context"].write_text(json.dumps({}))
+    files["trader_overrides"].write_text(json.dumps({}))
     files["predictive_limits"].write_text(json.dumps({"dry_run": True, "orders": []}))
     files["news_items"].write_text(json.dumps({"generated_at_utc": now, "issues": [], "items": []}))
     files["news_health"].write_text(
@@ -4812,6 +4870,53 @@ def _twenty_minute_plan(*, lane_ids: list[str] | None = None, pair: str = "EUR_U
         "counterargument": "M15 can still fade the move; the trade is only acceptable because current chart refs keep the shelf intact.",
         "next_cycle_check": "First re-check broker truth, the selected lane status, and M5/M15 structure before extending the thesis.",
         "evidence_refs": refs,
+    }
+
+
+def _user_alpha_overrides() -> dict:
+    latest = {
+        "edge_source": "USER_ALPHA",
+        "classification": "OPERATOR_ALPHA",
+        "discovered_by": "OPERATOR",
+        "system_discovered": False,
+        "system_tp_managed": True,
+        "outcome_id": "manual-eurusd-long",
+        "trade_id": "manual-eurusd-long",
+        "pair": "EUR_USD",
+        "direction": "LONG",
+        "entry": 1.172,
+        "tp": 1.174,
+        "realized_pl_jpy": 2300.0,
+        "max_favorable_excursion": None,
+        "time_to_tp_seconds": 7200,
+        "thesis": "operator found EUR_USD long continuation before the system reload",
+        "closed_at_utc": "2026-06-29T04:00:00Z",
+        "continuation_required": True,
+    }
+    return {
+        "expires_at_utc": "2099-01-01T00:00:00Z",
+        "user_alpha_trades": [latest],
+        "user_alpha_continuation": {
+            "status": "ACTIVE",
+            "active": True,
+            "edge_source": "USER_ALPHA",
+            "latest_trade": latest,
+            "five_pct_path_board_candidate": {
+                "source": "USER_ALPHA",
+                "pair": "EUR_USD",
+                "direction": "LONG",
+                "candidate_roles": ["RELOAD", "SECOND_SHOT"],
+                "target_layer": "GUARANTEE_5",
+            },
+            "required_trader_answers": [
+                "thesis_alive",
+                "reload_candidate",
+                "second_shot_candidate",
+                "exact_blocker_if_no_continuation",
+                "next_trigger",
+            ],
+            "if_no_continuation_requires_exact_blocker": True,
+        },
     }
 
 

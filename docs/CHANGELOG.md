@@ -2,6 +2,7 @@
 
 ## 2026-06-29
 
+- Added USER_ALPHA / OPERATOR_ALPHA continuation handling: daily-review publishes profitable user-led winners separately, GPT trader receipts must answer continuation or exact blocker, and stale pending replacement sends retain ignored pending ids through final gateway validation.
 - Added controlled target-path live routing behind `QR_TARGET_PATH_LIVE_ENABLED=1`, with LiveOrderGateway receipts and LIVE-LEARNING daily-review classification.
 
 ## 2026-06-28

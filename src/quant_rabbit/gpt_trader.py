@@ -273,6 +273,202 @@ def _news_health_trade_blockers(packet: dict[str, Any]) -> list[str]:
     return blockers
 
 
+def _user_alpha_continuation_from_overrides(
+    payload: dict[str, Any] | None,
+    *,
+    now: datetime | None = None,
+) -> dict[str, Any]:
+    base = {
+        "evidence_ref": "user_alpha:continuation",
+        "latest_evidence_ref": "user_alpha:latest",
+        "status": "NONE",
+        "active": False,
+        "required_user_alpha_continuation_block": True,
+    }
+    if not isinstance(payload, dict) or not payload:
+        return base
+    expires_at = _parse_utc(payload.get("expires_at_utc"))
+    if expires_at is not None and (now or datetime.now(timezone.utc)) >= expires_at:
+        expired = dict(base)
+        expired["status"] = "EXPIRED"
+        expired["expires_at_utc"] = payload.get("expires_at_utc")
+        return expired
+    continuation = payload.get("user_alpha_continuation")
+    if isinstance(continuation, dict) and continuation.get("active"):
+        packet = dict(continuation)
+    else:
+        trades = payload.get("user_alpha_trades")
+        latest = trades[-1] if isinstance(trades, list) and trades and isinstance(trades[-1], dict) else None
+        if latest is None:
+            return base
+        packet = {
+            "status": "ACTIVE",
+            "active": True,
+            "edge_source": "USER_ALPHA",
+            "latest_trade": latest,
+            "five_pct_path_board_candidate": {
+                "source": "USER_ALPHA",
+                "pair": latest.get("pair"),
+                "direction": latest.get("direction"),
+                "candidate_roles": ["RELOAD", "SECOND_SHOT"],
+                "target_layer": "GUARANTEE_5",
+            },
+            "required_trader_answers": [
+                "thesis_alive",
+                "reload_candidate",
+                "second_shot_candidate",
+                "exact_blocker_if_no_continuation",
+                "next_trigger",
+            ],
+            "if_no_continuation_requires_exact_blocker": True,
+        }
+    packet.setdefault("evidence_ref", "user_alpha:continuation")
+    packet.setdefault("latest_evidence_ref", "user_alpha:latest")
+    latest_trade = packet.get("latest_trade")
+    if isinstance(latest_trade, dict):
+        pair = str(latest_trade.get("pair") or "").strip()
+        direction = str(latest_trade.get("direction") or "").strip().upper()
+        if pair and direction:
+            packet["pair_direction_evidence_ref"] = f"user_alpha:{pair}:{direction}"
+    return packet
+
+
+def _active_user_alpha_continuation(packet: dict[str, Any]) -> dict[str, Any] | None:
+    continuation = packet.get("user_alpha_continuation")
+    if not isinstance(continuation, dict) or not continuation.get("active"):
+        return None
+    latest = continuation.get("latest_trade")
+    if not isinstance(latest, dict):
+        return None
+    pair = str(latest.get("pair") or "").strip()
+    direction = str(latest.get("direction") or "").strip().upper()
+    if not pair or direction not in {"LONG", "SHORT"}:
+        return None
+    return continuation
+
+
+def _user_alpha_evidence_refs(continuation: dict[str, Any]) -> tuple[str, ...]:
+    refs = [
+        str(continuation.get("evidence_ref") or "user_alpha:continuation"),
+        str(continuation.get("latest_evidence_ref") or "user_alpha:latest"),
+    ]
+    pair_direction_ref = str(continuation.get("pair_direction_evidence_ref") or "").strip()
+    if pair_direction_ref:
+        refs.append(pair_direction_ref)
+    return tuple(dict.fromkeys(ref for ref in refs if ref))
+
+
+def _selected_lanes_include_user_alpha(
+    packet: dict[str, Any],
+    selected_lane_ids: tuple[str, ...],
+    continuation: dict[str, Any],
+) -> bool:
+    latest = continuation.get("latest_trade") if isinstance(continuation, dict) else {}
+    pair = str(latest.get("pair") or "").strip()
+    direction = str(latest.get("direction") or "").strip().upper()
+    if not pair or direction not in {"LONG", "SHORT"}:
+        return False
+    lanes = {
+        str(lane.get("lane_id") or ""): lane
+        for lane in packet.get("lanes", []) or []
+        if isinstance(lane, dict)
+    }
+    for lane_id in selected_lane_ids:
+        lane = lanes.get(lane_id)
+        if not lane:
+            continue
+        if str(lane.get("pair") or "").strip() == pair and str(lane.get("direction") or "").strip().upper() == direction:
+            return True
+    return False
+
+
+def _decision_text_blob(decision: "GPTTraderDecision") -> str:
+    parts: list[str] = [
+        decision.thesis,
+        decision.narrative,
+        decision.chart_story,
+        decision.invalidation,
+        decision.operator_summary,
+    ]
+    parts.extend(decision.rejected_alternatives)
+    parts.extend(decision.risk_notes)
+    plan = decision.twenty_minute_plan if isinstance(decision.twenty_minute_plan, dict) else {}
+    for key in TWENTY_MINUTE_PLAN_TEXT_FIELDS:
+        parts.append(str(plan.get(key) or ""))
+    return " ".join(part for part in parts if part)
+
+
+def _decision_cites_user_alpha_exact_blocker(
+    decision: "GPTTraderDecision",
+    continuation: dict[str, Any],
+) -> bool:
+    latest = continuation.get("latest_trade") if isinstance(continuation, dict) else {}
+    pair = str(latest.get("pair") or "").strip().upper()
+    direction = str(latest.get("direction") or "").strip().upper()
+    text = _decision_text_blob(decision).upper()
+    if "BLOCKER" not in text and "BLOCKED" not in text:
+        return False
+    if pair and pair.upper() not in text:
+        return False
+    if direction and direction not in text:
+        return False
+    return True
+
+
+def _user_alpha_report_lines(
+    continuation: dict[str, Any] | None,
+    *,
+    decision: dict[str, Any] | None = None,
+) -> list[str]:
+    lines = ["", "## USER ALPHA CONTINUATION", ""]
+    if not isinstance(continuation, dict) or not continuation.get("active"):
+        return lines + ["- Status: `NONE`"]
+    latest = continuation.get("latest_trade") if isinstance(continuation.get("latest_trade"), dict) else {}
+    candidate = (
+        continuation.get("five_pct_path_board_candidate")
+        if isinstance(continuation.get("five_pct_path_board_candidate"), dict)
+        else {}
+    )
+    roles = candidate.get("candidate_roles") if isinstance(candidate.get("candidate_roles"), list) else []
+    selected = ", ".join(decision.get("selected_lane_ids") or []) if isinstance(decision, dict) else ""
+    lines.extend(
+        [
+            f"- Status: `{continuation.get('status') or 'ACTIVE'}`",
+            (
+                "- Latest user alpha: "
+                f"`{latest.get('classification') or 'USER_ALPHA'}` "
+                f"`{latest.get('pair') or 'unknown'}` `{latest.get('direction') or 'unknown'}` "
+                f"realized `{latest.get('realized_pl_jpy')}` JPY"
+            ),
+            (
+                "- Metadata: "
+                f"entry=`{latest.get('entry')}` tp=`{latest.get('tp')}` "
+                f"mfe=`{latest.get('max_favorable_excursion')}` "
+                f"time_to_tp_seconds=`{latest.get('time_to_tp_seconds')}` "
+                f"thesis=`{latest.get('thesis') or 'unknown'}`"
+            ),
+            (
+                "- Discovery: "
+                f"system_discovered=`{latest.get('system_discovered')}` "
+                f"discovered_by=`{latest.get('discovered_by') or 'OPERATOR'}` "
+                f"system_tp_managed=`{latest.get('system_tp_managed')}`"
+            ),
+            (
+                "- 5% path board candidate: "
+                f"`{candidate.get('pair') or latest.get('pair')}` "
+                f"`{candidate.get('direction') or latest.get('direction')}` "
+                f"roles=`{', '.join(str(role) for role in roles) or 'RELOAD, SECOND_SHOT'}`"
+            ),
+            "- Thesis alive: `REQUIRED`",
+            "- RELOAD candidate: `REQUIRED`",
+            "- SECOND SHOT candidate: `REQUIRED`",
+            "- Exact blocker if no continuation: `REQUIRED`",
+            f"- Selected basket lanes: `{selected or 'none'}`",
+        ]
+    )
+    return lines
+
+
 def _decision_cites_profitability_p0(evidence_refs: tuple[str, ...]) -> bool:
     for ref in evidence_refs:
         text = str(ref or "").strip()
@@ -1433,6 +1629,7 @@ from quant_rabbit.paths import (
     DEFAULT_SELF_IMPROVEMENT_AUDIT,
     DEFAULT_STRATEGY_PROFILE,
     DEFAULT_TRADER_DECISION_DRAFT_REPORT,
+    DEFAULT_TRADER_OVERRIDES,
     DEFAULT_VERIFICATION_LEDGER,
 )
 from quant_rabbit.instruments import (
@@ -1694,6 +1891,7 @@ class GPTTraderBrain:
         projection_ledger_path: Path = DEFAULT_PROJECTION_LEDGER,
         operator_precedent_path: Path = DEFAULT_OPERATOR_PRECEDENT_AUDIT,
         manual_market_context_path: Path = DEFAULT_MANUAL_MARKET_CONTEXT_AUDIT,
+        trader_overrides_path: Path = DEFAULT_TRADER_OVERRIDES,
         predictive_limits_path: Path = DEFAULT_PREDICTIVE_LIMIT_ORDERS,
         news_items_path: Path = DEFAULT_NEWS_SNAPSHOT,
         news_health_path: Path = DEFAULT_NEWS_HEALTH,
@@ -1730,6 +1928,7 @@ class GPTTraderBrain:
         self.projection_ledger_path = projection_ledger_path
         self.operator_precedent_path = operator_precedent_path
         self.manual_market_context_path = manual_market_context_path
+        self.trader_overrides_path = trader_overrides_path
         self.predictive_limits_path = predictive_limits_path
         self.news_items_path = news_items_path
         self.news_health_path = news_health_path
@@ -1789,6 +1988,8 @@ class GPTTraderBrain:
         projection_ledger = _projection_ledger_packet(self.projection_ledger_path)
         operator_precedent = _load_optional_json(self.operator_precedent_path)
         manual_market_context = _load_optional_json(self.manual_market_context_path)
+        trader_overrides = _load_optional_json(self.trader_overrides_path)
+        user_alpha_continuation = _user_alpha_continuation_from_overrides(trader_overrides)
         predictive_limits = _load_optional_json(self.predictive_limits_path)
         market_context_matrix = _load_optional_json(self.market_context_matrix_path)
         option_skew = _load_optional_json(self.option_skew_path)
@@ -1818,6 +2019,8 @@ class GPTTraderBrain:
             news_items=news_items,
             news_health=news_health,
         )
+        if user_alpha_continuation.get("active"):
+            refs.extend(_user_alpha_evidence_refs(user_alpha_continuation))
         attack_packet = _attack_advice_packet(attack_advice)
         learning_packet = _learning_audit_packet(learning_audit)
         return {
@@ -1842,6 +2045,7 @@ class GPTTraderBrain:
                 "coverage_optimization_is_read_only_gap_evidence": True,
                 "operator_precedent_is_advisory_only": True,
                 "manual_market_context_gates_only_precedent_usage": True,
+                "user_alpha_requires_continuation_or_exact_blocker": True,
                 "soft_close_advisory_non_blocking": (
                     "position_close_recommendations include blocks_non_close_actions; "
                     "when false, do not choose CLOSE from that advisory on the entry branch "
@@ -1880,6 +2084,9 @@ class GPTTraderBrain:
                     if isinstance(manual_market_context, dict)
                     else None
                 ),
+                "trader_overrides_expires_at_utc": (
+                    trader_overrides.get("expires_at_utc") if isinstance(trader_overrides, dict) else None
+                ),
             },
             "broker_snapshot": _snapshot_packet(snapshot),
             "daily_target": _target_packet(target),
@@ -1895,6 +2102,7 @@ class GPTTraderBrain:
             "projection_ledger": projection_ledger,
             "operator_precedent": _operator_precedent_packet(operator_precedent),
             "manual_market_context": _manual_market_context_packet(manual_market_context),
+            "user_alpha_continuation": user_alpha_continuation,
             "predictive_limits": _predictive_limits_packet(predictive_limits, pairs=pairs),
             "news": _news_packet(news_items, news_health, pairs=pairs, currencies=currencies),
             "market_status": _market_status_packet(market_status),
@@ -1941,10 +2149,10 @@ class GPTTraderBrain:
             f"- 20m plan: `{decision.get('twenty_minute_plan') or 'missing'}`",
             f"- Specialist reviews: `{len(decision.get('specialist_reviews') or [])}`",
             f"- Operator summary: {decision.get('operator_summary')}",
-            "",
-            "## Verification Issues",
-            "",
         ]
+        input_packet = result.get("input_packet") if isinstance(result.get("input_packet"), dict) else {}
+        lines.extend(_user_alpha_report_lines(input_packet.get("user_alpha_continuation"), decision=decision))
+        lines.extend(["", "## Verification Issues", ""])
         issues = result.get("verification_issues", [])
         if issues:
             for issue in issues:
@@ -1977,6 +2185,7 @@ class GPTTraderBrain:
                 "- `TRADE`/`CANCEL_PENDING` cancel ids must be current trader-owned pending entry orders from broker truth.",
                 "- Current `ai_attack_advice` recommendations make generic WAIT invalid while the daily target is open, but never grant live permission.",
                 "- Learning may only rank already-live-ready lanes. Any learning-influenced selected lane must be covered by a non-blocked `learning_audit` packet and cite `learning:audit` plus `learning:lane:<lane_id>`.",
+                "- Active `USER_ALPHA` / `OPERATOR_ALPHA` continuation must cite `user_alpha:continuation` and either continue the same pair/side as RELOAD / SECOND_SHOT / 5% path-board candidate, or name an exact blocker plus next trigger.",
                 "- `TRADE` must cite current chart evidence plus `news:health` and `news:items` or `news:current`; blocked news-health is a no-trade gate.",
                 "- `TRADE`, `WAIT`, and `REQUEST_EVIDENCE` receipts must include `twenty_minute_plan`: the next-20-minute primary path, failure path, trigger, invalidation/cancel trigger, strongest counterargument, next-cycle check, and known packet refs. This is a receipt-depth gate, not a new market-risk gate.",
                 "- `market_status` is deterministic calendar/session evidence only; broker truth still decides prices, positions, and tradability.",
@@ -2027,6 +2236,7 @@ class DecisionVerifier:
         position_close_reasons = _position_close_sidecar_reasons(self.packet)
         projection_trade_blockers = _projection_ledger_trade_blockers(self.packet)
         news_trade_blockers = _news_health_trade_blockers(self.packet)
+        self._verify_user_alpha_continuation(decision, selected_lane_ids, issues)
         self_improvement_trade_blockers = _self_improvement_trade_blockers(
             self.packet,
             decision_generated_at_utc=decision.generated_at_utc,
@@ -2444,6 +2654,55 @@ class DecisionVerifier:
             issues=tuple(issues),
             close_gate_evidence=tuple(self.close_gate_evidence),
         )
+
+    def _verify_user_alpha_continuation(
+        self,
+        decision: GPTTraderDecision,
+        selected_lane_ids: tuple[str, ...],
+        issues: list[VerificationIssue],
+    ) -> None:
+        continuation = _active_user_alpha_continuation(self.packet)
+        if continuation is None:
+            return
+        evidence_ref = str(continuation.get("evidence_ref") or "user_alpha:continuation")
+        cites_user_alpha = evidence_ref in decision.evidence_refs
+        if not cites_user_alpha:
+            issues.append(
+                VerificationIssue(
+                    "USER_ALPHA_CONTINUATION_EVIDENCE_MISSING",
+                    "active USER_ALPHA / OPERATOR_ALPHA continuation requires citing user_alpha:continuation "
+                    "before choosing TRADE, WAIT, REQUEST_EVIDENCE, or cancel/management actions.",
+                )
+            )
+        if decision.action == "TRADE" and _selected_lanes_include_user_alpha(
+            self.packet,
+            selected_lane_ids,
+            continuation,
+        ):
+            return
+        if not cites_user_alpha or not _decision_cites_user_alpha_exact_blocker(decision, continuation):
+            latest = continuation.get("latest_trade") if isinstance(continuation.get("latest_trade"), dict) else {}
+            pair = latest.get("pair") or "unknown"
+            direction = latest.get("direction") or "unknown"
+            issues.append(
+                VerificationIssue(
+                    "USER_ALPHA_CONTINUATION_UNADDRESSED",
+                    f"active USER_ALPHA / OPERATOR_ALPHA {pair} {direction} winner must be answered as "
+                    "thesis-alive RELOAD / SECOND_SHOT / 5% path-board continuation, or the receipt must "
+                    "cite user_alpha:continuation and name an exact blocker plus next trigger for not continuing.",
+                )
+            )
+        if decision.action in ENTRY_DECISION_HORIZON_ACTIONS:
+            plan = decision.twenty_minute_plan if isinstance(decision.twenty_minute_plan, dict) else {}
+            plan_refs = tuple(str(ref) for ref in plan.get("evidence_refs", []) or [] if str(ref))
+            if evidence_ref not in plan_refs:
+                issues.append(
+                    VerificationIssue(
+                        "USER_ALPHA_TWENTY_MINUTE_PLAN_REF_MISSING",
+                        "twenty_minute_plan.evidence_refs must include user_alpha:continuation while an "
+                        "active user-led winner is waiting for RELOAD / SECOND_SHOT or an exact blocker.",
+                    )
+                )
 
     def _verify_decision_freshness(self, decision: GPTTraderDecision, issues: list[VerificationIssue]) -> None:
         if not decision.generated_at_utc:
@@ -3340,6 +3599,7 @@ def draft_trader_decision(
     projection_ledger_path: Path = DEFAULT_PROJECTION_LEDGER,
     operator_precedent_path: Path = DEFAULT_OPERATOR_PRECEDENT_AUDIT,
     manual_market_context_path: Path = DEFAULT_MANUAL_MARKET_CONTEXT_AUDIT,
+    trader_overrides_path: Path = DEFAULT_TRADER_OVERRIDES,
     predictive_limits_path: Path = DEFAULT_PREDICTIVE_LIMIT_ORDERS,
     news_items_path: Path = DEFAULT_NEWS_SNAPSHOT,
     news_health_path: Path = DEFAULT_NEWS_HEALTH,
@@ -3377,6 +3637,7 @@ def draft_trader_decision(
         projection_ledger_path=projection_ledger_path,
         operator_precedent_path=operator_precedent_path,
         manual_market_context_path=manual_market_context_path,
+        trader_overrides_path=trader_overrides_path,
         predictive_limits_path=predictive_limits_path,
         news_items_path=news_items_path,
         news_health_path=news_health_path,
@@ -3393,6 +3654,7 @@ def draft_trader_decision(
         decision=decision,
         blockers=blockers,
         verification=verification,
+        input_packet=packet,
     )
     return TraderDecisionDraftSummary(
         status="DRAFT_ACCEPTED" if verification.allowed else "DRAFT_REQUIRES_OPERATOR_REVIEW",
@@ -3439,6 +3701,13 @@ def _autonomous_decision_from_packet(packet: dict[str, Any]) -> tuple[dict[str, 
                 selected_lane_ids=selected_lane_ids,
             )
         )
+    user_alpha = _active_user_alpha_continuation(packet)
+    if user_alpha is not None and not (
+        selected_lane_ids
+        and not blockers
+        and _selected_lanes_include_user_alpha(packet, selected_lane_ids, user_alpha)
+    ):
+        blockers.append(_user_alpha_continuation_blocker_label(user_alpha, selected_lane_ids))
 
     if selected_lane_ids and not blockers:
         return _trade_decision_draft(
@@ -3676,17 +3945,33 @@ def _cancel_pending_decision_draft(
 
 
 def _draft_cancel_pending_evidence_refs(packet: dict[str, Any]) -> list[str]:
-    return _known_ordered_refs(
-        packet,
-        [
-            "broker:snapshot",
-            "target:daily",
-            "self_improvement:audit",
-            "self_improvement:execution_quality",
-            "self_improvement:finding:PENDING_ENTRY_CANCEL_REVIEW_REQUIRED",
-            "timing:audit",
-            "timing:canceled_orders",
-        ],
+    refs = [
+        "broker:snapshot",
+        "target:daily",
+        "self_improvement:audit",
+        "self_improvement:execution_quality",
+        "self_improvement:finding:PENDING_ENTRY_CANCEL_REVIEW_REQUIRED",
+        "timing:audit",
+        "timing:canceled_orders",
+    ]
+    user_alpha = _active_user_alpha_continuation(packet)
+    if user_alpha is not None:
+        refs.extend(_user_alpha_evidence_refs(user_alpha))
+    return _known_ordered_refs(packet, refs)
+
+
+def _user_alpha_continuation_blocker_label(
+    continuation: dict[str, Any],
+    selected_lane_ids: tuple[str, ...],
+) -> str:
+    latest = continuation.get("latest_trade") if isinstance(continuation.get("latest_trade"), dict) else {}
+    pair = str(latest.get("pair") or "unknown_pair")
+    direction = str(latest.get("direction") or "UNKNOWN").upper()
+    selected = ", ".join(selected_lane_ids) if selected_lane_ids else "none"
+    return (
+        f"USER_ALPHA_CONTINUATION_BLOCKER {pair} {direction}: no clean matching "
+        f"RELOAD/SECOND_SHOT continuation selected in current basket ({selected}); "
+        "next trigger is a current LIVE_READY same-pair/same-direction lane after named blockers clear"
     )
 
 
@@ -3761,6 +4046,9 @@ def _draft_trade_evidence_refs(
             "self_improvement:execution_quality",
             "self_improvement:finding:PENDING_ENTRY_CANCEL_REVIEW_REQUIRED",
         ])
+    user_alpha = _active_user_alpha_continuation(packet)
+    if user_alpha is not None and _selected_lanes_include_user_alpha(packet, selected_lane_ids, user_alpha):
+        refs.extend(_user_alpha_evidence_refs(user_alpha))
     return _known_ordered_refs(packet, refs)
 
 
@@ -3779,6 +4067,9 @@ def _draft_non_trade_evidence_refs(
         refs.extend([f"intent:{lane_id}", f"campaign:{lane_id}"])
         refs.extend(_draft_pair_refs(pair, side))
     refs.extend(["projection:ledger", "self_improvement:audit", "profitability:acceptance"])
+    user_alpha = _active_user_alpha_continuation(packet)
+    if user_alpha is not None:
+        refs.extend(_user_alpha_evidence_refs(user_alpha))
     return _known_ordered_refs(packet, refs)
 
 
@@ -3904,7 +4195,11 @@ def _draft_twenty_minute_plan(
     selected_lane_ids: tuple[str, ...],
     refs: list[str],
 ) -> dict[str, Any]:
-    plan_refs = [ref for ref in refs if ref.startswith("chart:")][:2] + [f"intent:{lane_id}" for lane_id in selected_lane_ids]
+    plan_refs = (
+        [ref for ref in refs if ref.startswith("chart:")][:2]
+        + [f"intent:{lane_id}" for lane_id in selected_lane_ids]
+        + [ref for ref in refs if ref.startswith("user_alpha:")]
+    )
     if len(plan_refs) < 2:
         plan_refs = refs[:4]
     label = f"{pair} {side}".strip() or "the current packet"
@@ -3960,6 +4255,7 @@ def _write_trader_decision_draft_report(
     decision: dict[str, Any],
     blockers: list[str],
     verification: VerificationResult,
+    input_packet: dict[str, Any],
 ) -> None:
     report_path.parent.mkdir(parents=True, exist_ok=True)
     lines = [
@@ -3971,10 +4267,9 @@ def _write_trader_decision_draft_report(
         f"- Cancel order ids: `{', '.join(decision.get('cancel_order_ids') or []) or 'none'}`",
         f"- Draft blockers: `{'; '.join(blockers) if blockers else 'none'}`",
         f"- Verifier precheck: `{'ACCEPTED' if verification.allowed else 'REJECTED'}`",
-        "",
-        "## Verification Issues",
-        "",
     ]
+    lines.extend(_user_alpha_report_lines(input_packet.get("user_alpha_continuation"), decision=decision))
+    lines.extend(["", "## Verification Issues", ""])
     if verification.issues:
         lines.extend(f"- `{issue.severity}` {issue.code}: {issue.message}" for issue in verification.issues)
     else:

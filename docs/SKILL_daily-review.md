@@ -36,6 +36,18 @@ For every target-path trade actually sent by `LiveOrderGateway`, classify the tr
 
 `daily-review` writes these rows under `target_path_live_reviews` in `data/trader_overrides.json` and summarizes counts in `_diagnostics.target_path_live_review_counts`. This is feedback for the next cycle, not a live-order path.
 
+## USER_ALPHA / OPERATOR_ALPHA Review
+
+Profitable manual/operator-discovered outcomes are classified separately from system-discovered bot edge.
+
+- `user discovered / system managed`: user/operator found the entry and broker-side TP or system TP management realized the win.
+- `system discovered / system managed`: normal trader/gateway-attributed winner; this remains bot performance.
+- `user discovered / system failed to continue`: user/operator winner closed green, but the next trader cycle did not evaluate RELOAD / SECOND_SHOT / +5% continuation.
+- `system ignored user-alpha continuation`: active `user_alpha_continuation` existed and the receipt neither continued the pair/side nor named an exact blocker.
+- `stale pending blocked continuation`: stale pending occupancy or duplicate parent-lane geometry prevented cancel/replace of the pending id being replaced.
+
+`daily-review` writes profitable user-led outcomes under `user_alpha_trades` and the active obligation under `user_alpha_continuation` in `data/trader_overrides.json`. These rows must not be folded into system direction bias, same-day loss streaks, or bot expectancy. They are continuation evidence for the next trader receipt.
+
 ## Required Evidence
 
 - `data/daily_target_state.json`
@@ -46,6 +58,7 @@ For every target-path trade actually sent by `LiveOrderGateway`, classify the tr
 - `docs/execution_ledger_report.md`
 - `tools/position_sizing.py` or `tools/place_trader_order.py` dry-run output for fresh target-path orders
 - `target_path_receipt` rows recorded by `LiveOrderGateway` / `execution-ledger-sync` for any LIVE-LEARNING target-path send
+- `user_alpha_trades` / `user_alpha_continuation` in `data/trader_overrides.json` for profitable user-led winners
 
 ## Output Rule
 

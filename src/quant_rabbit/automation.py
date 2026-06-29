@@ -4248,6 +4248,7 @@ class AutoTradeCycle:
             intents_path=intents_path,
             lane_ids=lane_ids,
             size_multiples=size_multiples,
+            ignore_pending_order_ids=replace_order_ids,
             send=send,
             confirm_live=send,
         )

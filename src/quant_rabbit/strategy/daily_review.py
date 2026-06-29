@@ -62,6 +62,8 @@ class DailyReviewReport:
     structural_pair_counts: Dict[str, int] = field(default_factory=dict)
     lane_loss_counts: Dict[str, int] = field(default_factory=dict)
     target_path_live_reviews: list[dict[str, Any]] = field(default_factory=list)
+    user_alpha_trades: list[dict[str, Any]] = field(default_factory=list)
+    user_alpha_continuation: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict:
         out = {
@@ -70,6 +72,8 @@ class DailyReviewReport:
             "bias_overrides": self.bias_overrides,
             "blocked_lanes": self.blocked_lanes,
             "target_path_live_reviews": self.target_path_live_reviews,
+            "user_alpha_trades": self.user_alpha_trades,
+            "user_alpha_continuation": self.user_alpha_continuation,
             "_diagnostics": {
                 "source_window_start_utc": self.source_window_start_utc,
                 "source_window_end_utc": self.source_window_end_utc,
@@ -85,6 +89,7 @@ class DailyReviewReport:
                 } if all(isinstance(k, tuple) for k in self.structural_pair_counts.keys()) else self.structural_pair_counts,
                 "lane_loss_counts": self.lane_loss_counts,
                 "target_path_live_review_counts": _target_path_live_review_counts(self.target_path_live_reviews),
+                "user_alpha_counts": _user_alpha_counts(self.user_alpha_trades),
             },
         }
         return out
@@ -291,6 +296,223 @@ def _read_live_target_path_reviews(
     return reviews
 
 
+def _read_user_alpha_trades(
+    db_path: Path,
+    window_start_utc: datetime,
+    window_end_utc: datetime,
+) -> list[dict[str, Any]]:
+    """Return profitable manual/operator outcomes without bot gateway attribution.
+
+    A user-alpha outcome is deliberately kept out of system P&L bias. It is an
+    operator-discovered edge that the trader must either continue or block with
+    a named current reason.
+    """
+    if not db_path.exists():
+        return []
+    try:
+        conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+        conn.row_factory = sqlite3.Row
+    except sqlite3.Error:
+        return []
+    try:
+        columns = _table_columns(conn, "execution_events")
+        close_rows = conn.execute(
+            f"""
+            SELECT
+                event_uid,
+                ts_utc,
+                COALESCE(NULLIF(trade_id, ''), event_uid) AS outcome_id,
+                trade_id,
+                order_id,
+                lane_id,
+                pair,
+                side,
+                units,
+                realized_pl_jpy,
+                {_optional_select_column(columns, "exit_reason")},
+                {_optional_select_column(columns, "price")},
+                {_optional_select_column(columns, "tp")},
+                raw_json
+            FROM execution_events
+            WHERE event_type IN ('TRADE_CLOSED', 'TRADE_REDUCED', 'GATEWAY_TRADE_CLOSE_RECONCILED')
+              AND realized_pl_jpy IS NOT NULL
+              AND pair IS NOT NULL
+              AND ts_utc >= ?
+              AND ts_utc <= ?
+            ORDER BY ts_utc ASC
+            """,
+            (
+                window_start_utc.isoformat().replace("+00:00", "Z"),
+                window_end_utc.isoformat().replace("+00:00", "Z"),
+            ),
+        ).fetchall()
+        if not close_rows:
+            return []
+        gateway_trade_ids, gateway_order_ids = _gateway_attribution_ids(conn)
+        trade_ids = sorted(
+            {
+                str(row["trade_id"])
+                for row in close_rows
+                if _text_value(row["trade_id"])
+            }
+        )
+        entry_rows: dict[str, list[sqlite3.Row]] = {}
+        if trade_ids:
+            placeholders = ",".join("?" for _ in trade_ids)
+            entries = conn.execute(
+                f"""
+                SELECT
+                    event_uid,
+                    ts_utc,
+                    trade_id,
+                    order_id,
+                    lane_id,
+                    pair,
+                    side,
+                    units,
+                    realized_pl_jpy,
+                    {_optional_select_column(columns, "price")},
+                    {_optional_select_column(columns, "tp")},
+                    raw_json
+                FROM execution_events
+                WHERE event_type = 'ORDER_FILLED'
+                  AND trade_id IN ({placeholders})
+                ORDER BY ts_utc ASC
+                """,
+                trade_ids,
+            ).fetchall()
+            for row in entries:
+                trade_id = _text_value(row["trade_id"])
+                if trade_id:
+                    entry_rows.setdefault(trade_id, []).append(row)
+
+        grouped: dict[str, list[sqlite3.Row]] = {}
+        for row in close_rows:
+            outcome_id = str(row["outcome_id"] or row["event_uid"])
+            grouped.setdefault(outcome_id, []).append(row)
+
+        trades: list[dict[str, Any]] = []
+        for outcome_id, rows in grouped.items():
+            trade_id = _text_value(rows[-1]["trade_id"])
+            order_ids = {_text_value(row["order_id"]) for row in rows}
+            order_ids.discard(None)
+            entries = entry_rows.get(trade_id or "", [])
+            entry_order_ids = {_text_value(row["order_id"]) for row in entries}
+            entry_order_ids.discard(None)
+            if trade_id and trade_id in gateway_trade_ids:
+                continue
+            if order_ids.intersection(gateway_order_ids) or entry_order_ids.intersection(gateway_order_ids):
+                continue
+            realized = sum(float(row["realized_pl_jpy"] or 0.0) for row in rows)
+            if realized <= 0:
+                continue
+            pair = _text_value(rows[-1]["pair"])
+            if pair is None:
+                continue
+            entry = entries[0] if entries else None
+            direction = (
+                _original_side_from_entry_row(entry)
+                if entry is not None
+                else _original_side_from_close_side(_text_value(rows[-1]["side"]))
+            )
+            if direction not in {"LONG", "SHORT"}:
+                continue
+            opened_at = _text_value(entry["ts_utc"]) if entry is not None else None
+            closed_at = max(str(row["ts_utc"] or "") for row in rows)
+            close_payload = _json_object(rows[-1]["raw_json"])
+            entry_payload = _json_object(entry["raw_json"]) if entry is not None else {}
+            tp = _first_float(
+                rows[-1]["tp"],
+                entry["tp"] if entry is not None else None,
+                close_payload.get("tp"),
+                entry_payload.get("tp"),
+                _nested_value(entry_payload, ("takeProfitOnFill", "price")),
+            )
+            exit_reason = _text_value(rows[-1]["exit_reason"]) or _text_value(close_payload.get("exit_reason"))
+            thesis = _first_text(
+                close_payload.get("thesis"),
+                entry_payload.get("thesis"),
+                _nested_value(entry_payload, ("market_context", "thesis")),
+                _nested_value(close_payload, ("market_context", "thesis")),
+            )
+            alpha_type = "OPERATOR_ALPHA"
+            trade = {
+                "edge_source": "USER_ALPHA",
+                "classification": alpha_type,
+                "discovered_by": "OPERATOR",
+                "system_discovered": False,
+                "system_tp_managed": _exit_reason_is_tp(exit_reason) or tp is not None,
+                "outcome_id": outcome_id,
+                "trade_id": trade_id,
+                "pair": pair,
+                "direction": direction,
+                "entry": _first_float(
+                    entry["price"] if entry is not None else None,
+                    entry_payload.get("price"),
+                ),
+                "tp": tp,
+                "realized_pl_jpy": round(realized, 2),
+                "max_favorable_excursion": _first_float(
+                    close_payload.get("mfe"),
+                    close_payload.get("max_favorable_excursion"),
+                    close_payload.get("max_favorable_excursion_jpy"),
+                ),
+                "time_to_tp_seconds": _elapsed_seconds(opened_at, closed_at),
+                "opened_at_utc": opened_at,
+                "closed_at_utc": closed_at,
+                "exit_reason": exit_reason,
+                "thesis": thesis,
+                "operator_found_system_tp_managed": True,
+                "continuation_required": True,
+            }
+            trades.append(trade)
+        trades.sort(key=lambda item: str(item.get("closed_at_utc") or ""))
+        return trades
+    except (sqlite3.Error, TypeError, ValueError):
+        return []
+    finally:
+        conn.close()
+
+
+def _user_alpha_continuation_packet(trades: list[dict[str, Any]]) -> dict[str, Any]:
+    if not trades:
+        return {
+            "status": "NONE",
+            "active": False,
+            "required_user_alpha_continuation_block": True,
+        }
+    latest = trades[-1]
+    pair = _text_value(latest.get("pair"))
+    direction = _text_value(latest.get("direction"))
+    return {
+        "status": "ACTIVE",
+        "active": True,
+        "source": "daily_review",
+        "edge_source": "USER_ALPHA",
+        "latest_trade": latest,
+        "five_pct_path_board_candidate": {
+            "source": "USER_ALPHA",
+            "pair": pair,
+            "direction": direction,
+            "candidate_roles": ["RELOAD", "SECOND_SHOT"],
+            "target_layer": "GUARANTEE_5",
+            "reason": "profitable operator-discovered/user-led winner must be evaluated for continuation",
+        },
+        "required_trader_answers": [
+            "thesis_alive",
+            "reload_candidate",
+            "second_shot_candidate",
+            "exact_blocker_if_no_continuation",
+            "next_trigger",
+        ],
+        "if_no_continuation_requires_exact_blocker": True,
+        "negative_expectancy_scope": (
+            "NEGATIVE_EXPECTANCY on system-generated edge does not erase proven USER_ALPHA; "
+            "the trader must cite an explicit current blocker."
+        ),
+    }
+
+
 def _target_path_live_outcome(
     conn: sqlite3.Connection,
     *,
@@ -385,6 +607,50 @@ def _target_path_live_review_counts(reviews: list[dict[str, Any]]) -> dict[str, 
     return counts
 
 
+def _user_alpha_counts(trades: list[dict[str, Any]]) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for trade in trades:
+        classification = str(trade.get("classification") or "USER_ALPHA")
+        counts[classification] = counts.get(classification, 0) + 1
+    return counts
+
+
+def _table_columns(conn: sqlite3.Connection, table_name: str) -> set[str]:
+    try:
+        return {str(row[1]) for row in conn.execute(f"PRAGMA table_info({table_name})").fetchall()}
+    except sqlite3.Error:
+        return set()
+
+
+def _optional_select_column(columns: set[str], name: str) -> str:
+    return name if name in columns else f"NULL AS {name}"
+
+
+def _gateway_attribution_ids(conn: sqlite3.Connection) -> tuple[set[str], set[str]]:
+    try:
+        rows = conn.execute(
+            """
+            SELECT trade_id, order_id
+            FROM execution_events
+            WHERE event_type IN ('GATEWAY_ORDER_SENT', 'ORDER_ACCEPTED')
+              AND lane_id IS NOT NULL
+              AND lane_id != ''
+            """
+        ).fetchall()
+    except sqlite3.Error:
+        return set(), set()
+    trade_ids: set[str] = set()
+    order_ids: set[str] = set()
+    for row in rows:
+        trade_id = _text_value(row["trade_id"] if isinstance(row, sqlite3.Row) else row[0])
+        order_id = _text_value(row["order_id"] if isinstance(row, sqlite3.Row) else row[1])
+        if trade_id:
+            trade_ids.add(trade_id)
+        if order_id:
+            order_ids.add(order_id)
+    return trade_ids, order_ids
+
+
 def _json_object(raw: Any) -> dict[str, Any]:
     if isinstance(raw, dict):
         return raw
@@ -410,6 +676,81 @@ def _float_value(value: Any) -> float | None:
 def _int_value(value: Any) -> int | None:
     parsed = _float_value(value)
     return int(parsed) if parsed is not None else None
+
+
+def _first_float(*values: Any) -> float | None:
+    for value in values:
+        parsed = _float_value(value)
+        if parsed is not None:
+            return parsed
+    return None
+
+
+def _first_text(*values: Any) -> str | None:
+    for value in values:
+        parsed = _text_value(value)
+        if parsed:
+            return parsed
+    return None
+
+
+def _nested_value(payload: dict[str, Any], path: tuple[str, ...]) -> Any:
+    current: Any = payload
+    for part in path:
+        if not isinstance(current, dict):
+            return None
+        current = current.get(part)
+    return current
+
+
+def _parse_utc(value: Any) -> datetime | None:
+    text = _text_value(value)
+    if text is None:
+        return None
+    if text.endswith("Z"):
+        text = text[:-1] + "+00:00"
+    try:
+        parsed = datetime.fromisoformat(text)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def _elapsed_seconds(start: Any, end: Any) -> float | None:
+    start_dt = _parse_utc(start)
+    end_dt = _parse_utc(end)
+    if start_dt is None or end_dt is None:
+        return None
+    seconds = (end_dt - start_dt).total_seconds()
+    return round(seconds, 3) if seconds >= 0 else None
+
+
+def _original_side_from_close_side(side: str | None) -> str | None:
+    side_upper = str(side or "").upper()
+    if side_upper == "LONG":
+        return "SHORT"
+    if side_upper == "SHORT":
+        return "LONG"
+    return None
+
+
+def _original_side_from_entry_row(row: sqlite3.Row | None) -> str | None:
+    if row is None:
+        return None
+    side = str(row["side"] or "").upper()
+    if side in {"LONG", "SHORT"}:
+        return side
+    units = _float_value(row["units"])
+    if units is None:
+        return None
+    return "LONG" if units > 0 else "SHORT" if units < 0 else None
+
+
+def _exit_reason_is_tp(exit_reason: str | None) -> bool:
+    upper = str(exit_reason or "").upper()
+    return "TAKE_PROFIT" in upper or upper in {"TP", "TAKE PROFIT"} or " TP" in f" {upper}"
 
 
 def _aggregate_rows(
@@ -448,6 +789,8 @@ def compute_daily_review(
     structural_start = _structural_window_start(now)
     structural_rows = _read_recent_closes(db_path, structural_start, window_end)
     target_path_live_reviews = _read_live_target_path_reviews(db_path, window_start, window_end)
+    user_alpha_trades = _read_user_alpha_trades(db_path, window_start, window_end)
+    user_alpha_continuation = _user_alpha_continuation_packet(user_alpha_trades)
 
     # Aggregate per (pair, direction)
     pair_pl, pair_count, lane_losses = _aggregate_rows(rows)
@@ -514,6 +857,14 @@ def compute_daily_review(
             "target-path live: "
             + ", ".join(f"{name}={count}" for name, count in sorted(target_path_counts.items()))
         )
+    if user_alpha_trades:
+        latest_alpha = user_alpha_trades[-1]
+        parts.append(
+            "user-alpha: "
+            f"{latest_alpha.get('pair')}:{latest_alpha.get('direction')} "
+            f"{float(latest_alpha.get('realized_pl_jpy') or 0.0):+.0f}JPY "
+            f"({latest_alpha.get('classification') or 'USER_ALPHA'})"
+        )
     if not parts:
         parts.append(f"no decisive (pair, direction) signal in last {lookback_hours:.0f}h")
     narrative = "; ".join(parts)
@@ -533,6 +884,8 @@ def compute_daily_review(
         structural_pair_counts=structural_pair_count,
         lane_loss_counts=lane_losses,
         target_path_live_reviews=target_path_live_reviews,
+        user_alpha_trades=user_alpha_trades,
+        user_alpha_continuation=user_alpha_continuation,
     )
 
 
