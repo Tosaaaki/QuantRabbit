@@ -1,0 +1,448 @@
+{
+  "generated_at_utc": "2026-06-29T23:25:37+00:00",
+  "lessons": [
+    {
+      "allowed_use": "Advisory precedent only; current forecast, risk, spread, event, and gateway checks remain authoritative.",
+      "blocked_behavior": "Do not replay the 2025 USD_JPY precedent as a USD_JPY-only rule or as permission to ignore other pairs.",
+      "evidence": {
+        "case_study": {
+          "file": "docs/trade_case_studies/2026-06-29-usdjpy-eurjpy-162-fade.md",
+          "lesson": "Major-figure/intervention fade needs thesis invalidation, not a tight noise-zone broker SL."
+        }
+      },
+      "lesson": "A trade shape starts from the current theme, not from a single pair memory.",
+      "pattern_id": "THEME_READ",
+      "reusable_rule": "Map the cleanest expression of the bought/sold currency theme, then select pair/vehicle only after current evidence confirms the theme."
+    },
+    {
+      "allowed_use": "Advisory precedent only; current forecast, risk, spread, event, and gateway checks remain authoritative.",
+      "blocked_behavior": "Block sell-the-low / buy-the-high churn unless a separate breakout/trend proof exists.",
+      "evidence": {
+        "bounded_side_entry_location_24h": [
+          {
+            "avg_h1_adx": 29.4,
+            "avg_loss": -1513.5,
+            "avg_win": 4136.5,
+            "bucket": "LONG_LOWER_THIRD_24H",
+            "expectancy_jpy": 2171.3,
+            "median_entry_price_percentile_24h": 0.154,
+            "median_hold_hours": 0.46,
+            "net_jpy": 99877.9,
+            "payoff": 2.73,
+            "trades": 46,
+            "win_rate": 0.652
+          },
+          {
+            "avg_h1_adx": 28.8,
+            "avg_loss": -2179.5,
+            "avg_win": 2505.6,
+            "bucket": "SHORT_UPPER_THIRD_24H",
+            "expectancy_jpy": 631.5,
+            "median_entry_price_percentile_24h": 0.822,
+            "median_hold_hours": 0.18,
+            "net_jpy": 34735.0,
+            "payoff": 1.15,
+            "trades": 55,
+            "win_rate": 0.6
+          },
+          {
+            "avg_h1_adx": 26.0,
+            "avg_loss": -1771.6,
+            "avg_win": 2401.2,
+            "bucket": "LONG_UPPER_THIRD_24H",
+            "expectancy_jpy": 217.4,
+            "median_entry_price_percentile_24h": 0.81,
+            "median_hold_hours": 0.06,
+            "net_jpy": 16091.0,
+            "payoff": 1.36,
+            "trades": 74,
+            "win_rate": 0.459
+          },
+          {
+            "avg_h1_adx": 25.8,
+            "avg_loss": -1577.5,
+            "avg_win": 1185.1,
+            "bucket": "LONG_MIDDLE_THIRD_24H",
+            "expectancy_jpy": 109.4,
+            "median_entry_price_percentile_24h": 0.56,
+            "median_hold_hours": 0.7,
+            "net_jpy": 5581.3,
+            "payoff": 0.75,
+            "trades": 51,
+            "win_rate": 0.588
+          },
+          {
+            "avg_h1_adx": 29.6,
+            "avg_loss": -2188.0,
+            "avg_win": 3433.8,
+            "bucket": "SHORT_LOWER_THIRD_24H",
+            "expectancy_jpy": -187.3,
+            "median_entry_price_percentile_24h": 0.17,
+            "median_hold_hours": 0.18,
+            "net_jpy": -6930.0,
+            "payoff": 1.57,
+            "trades": 37,
+            "win_rate": 0.324
+          },
+          {
+            "avg_h1_adx": 24.6,
+            "avg_loss": -1598.1,
+            "avg_win": 1670.4,
+            "bucket": "SHORT_MIDDLE_THIRD_24H",
+            "expectancy_jpy": -728.9,
+            "median_entry_price_percentile_24h": 0.582,
+            "median_hold_hours": 0.24,
+            "net_jpy": -43734.0,
+            "payoff": 1.05,
+            "trades": 60,
+            "win_rate": 0.233
+          }
+        ]
+      },
+      "lesson": "24h location is a first-class edge filter.",
+      "pattern_id": "LOCATION_24H",
+      "reusable_rule": "Prefer pair-agnostic broad-discount LONG and broad-premium SHORT structures when they match current thesis and risk geometry."
+    },
+    {
+      "allowed_use": "Advisory precedent only; current forecast, risk, spread, event, and gateway checks remain authoritative.",
+      "blocked_behavior": "Do not infer H4 support from H1-only data; missing H4 is a data gap, not permission.",
+      "evidence": {
+        "bounded_h1_alignment": [
+          {
+            "avg_h1_adx": 27.5,
+            "avg_loss": -1761.6,
+            "avg_win": 3520.6,
+            "bucket": "AGAINST_H1_TREND",
+            "expectancy_jpy": 738.4,
+            "median_entry_price_percentile_24h": 0.593,
+            "median_hold_hours": 0.23,
+            "net_jpy": 96729.5,
+            "payoff": 2.0,
+            "trades": 131,
+            "win_rate": 0.466
+          },
+          {
+            "avg_h1_adx": 26.8,
+            "avg_loss": -1812.3,
+            "avg_win": 1889.2,
+            "bucket": "WITH_H1_TREND",
+            "expectancy_jpy": 46.3,
+            "median_entry_price_percentile_24h": 0.644,
+            "median_hold_hours": 0.14,
+            "net_jpy": 8891.7,
+            "payoff": 1.04,
+            "trades": 192,
+            "win_rate": 0.479
+          }
+        ],
+        "h4_gap": "H4 was not fully reconstructed for 2025 manual rows."
+      },
+      "lesson": "H1/H4 alignment must be evidence, not a slogan.",
+      "pattern_id": "H1_H4_ALIGNMENT",
+      "reusable_rule": "Use H1/H4 as current context buckets and require extra current reason when the current alignment conflicts with the positive bounded precedent."
+    },
+    {
+      "allowed_use": "Advisory precedent only; current forecast, risk, spread, event, and gateway checks remain authoritative.",
+      "blocked_behavior": "Do not force the same vehicle in Tokyo, London, NY overlap, and off-hours without session-specific evidence.",
+      "evidence": {
+        "bounded_session_jst": [
+          {
+            "avg_h1_adx": 25.0,
+            "avg_loss": -738.0,
+            "avg_win": 5762.9,
+            "bucket": "OFF_HOURS",
+            "expectancy_jpy": 2151.3,
+            "median_entry_price_percentile_24h": 0.585,
+            "median_hold_hours": 0.13,
+            "net_jpy": 58085.0,
+            "payoff": 7.81,
+            "trades": 27,
+            "win_rate": 0.444
+          },
+          {
+            "avg_h1_adx": 30.5,
+            "avg_loss": -2291.3,
+            "avg_win": 4042.0,
+            "bucket": "TOKYO",
+            "expectancy_jpy": 706.1,
+            "median_entry_price_percentile_24h": 0.599,
+            "median_hold_hours": 0.25,
+            "net_jpy": 57901.5,
+            "payoff": 1.76,
+            "trades": 82,
+            "win_rate": 0.451
+          },
+          {
+            "avg_h1_adx": 28.2,
+            "avg_loss": -2441.3,
+            "avg_win": 1913.1,
+            "bucket": "LONDON_AM",
+            "expectancy_jpy": 411.0,
+            "median_entry_price_percentile_24h": 0.666,
+            "median_hold_hours": 0.63,
+            "net_jpy": 23016.3,
+            "payoff": 0.78,
+            "trades": 56,
+            "win_rate": 0.625
+          },
+          {
+            "avg_h1_adx": 25.3,
+            "avg_loss": -1603.3,
+            "avg_win": 1491.3,
+            "bucket": "NY_OVERLAP",
+            "expectancy_jpy": -211.3,
+            "median_entry_price_percentile_24h": 0.631,
+            "median_hold_hours": 0.09,
+            "net_jpy": -33381.6,
+            "payoff": 0.93,
+            "trades": 158,
+            "win_rate": 0.437
+          }
+        ]
+      },
+      "lesson": "Session changes payoff and should shape aggressiveness.",
+      "pattern_id": "SESSION",
+      "reusable_rule": "Rank session-conditioned shapes separately and prefer the current liquid/session-compatible expression."
+    },
+    {
+      "allowed_use": "Advisory precedent only; current forecast, risk, spread, event, and gateway checks remain authoritative.",
+      "blocked_behavior": "Block martingale-style averaging, margin rescue, or adds whose only reason is a red open P/L.",
+      "evidence": {
+        "bounded_adverse_adds": {
+          "adverse_adds": 14,
+          "avg_adverse_add_pips": 6.45,
+          "avg_loss": -2060.0,
+          "avg_win": 14946.3,
+          "clusters": 8,
+          "entries": 24,
+          "expectancy_jpy": 12820.5,
+          "max_entries": 4,
+          "median_entries": 3.0,
+          "median_hold_hours": 1.2,
+          "multi_entry_clusters": 8,
+          "net_jpy": 102564.0,
+          "payoff": 7.26,
+          "pyramid_adds": 2,
+          "win_rate": 0.875
+        },
+        "bounded_average_into_adverse": {
+          "adverse_adds": 13,
+          "avg_adverse_add_pips": 6.89,
+          "avg_loss": -2060.0,
+          "avg_win": 6715.7,
+          "bucket": "AVERAGE_INTO_ADVERSE",
+          "clusters": 7,
+          "entries": 20,
+          "expectancy_jpy": 5462.0,
+          "max_entries": 4,
+          "median_entries": 3,
+          "median_hold_hours": 1.02,
+          "multi_entry_clusters": 7,
+          "net_jpy": 38234.0,
+          "payoff": 3.26,
+          "pyramid_adds": 0,
+          "win_rate": 0.857
+        }
+      },
+      "lesson": "Adverse adds were only useful when bounded and thesis-specific.",
+      "pattern_id": "BOUNDED_ADVERSE_ADD",
+      "reusable_rule": "An adverse add can only be considered when invalidation, max entries, margin, and harvest path are explicit before the add."
+    },
+    {
+      "allowed_use": "Advisory precedent only; current forecast, risk, spread, event, and gateway checks remain authoritative.",
+      "blocked_behavior": "Block stack-on-green behavior when the new layer lacks its own entry location, TP, invalidation, and margin proof.",
+      "evidence": {
+        "bounded_pyramid_with_move": {
+          "adverse_adds": 0,
+          "avg_adverse_add_pips": null,
+          "avg_loss": -29793.0,
+          "avg_win": 4598.0,
+          "bucket": "PYRAMID_WITH_MOVE",
+          "clusters": 2,
+          "entries": 10,
+          "expectancy_jpy": -12597.5,
+          "max_entries": 8,
+          "median_entries": 5.0,
+          "median_hold_hours": 3.61,
+          "multi_entry_clusters": 2,
+          "net_jpy": -25195.0,
+          "payoff": 0.15,
+          "pyramid_adds": 8,
+          "win_rate": 0.5
+        }
+      },
+      "lesson": "With-move pyramiding was not automatically positive in bounded replay.",
+      "pattern_id": "WITH_MOVE_PYRAMID",
+      "reusable_rule": "Pyramids need independent fresh edge and portfolio room; a move already in profit is not enough."
+    },
+    {
+      "allowed_use": "Advisory precedent only; current forecast, risk, spread, event, and gateway checks remain authoritative.",
+      "blocked_behavior": "Block tight broker SLs inside normal noise/major-figure battle zones and block loss-side closes from red P/L alone.",
+      "evidence": {
+        "case_study": {
+          "file": "docs/trade_case_studies/2026-06-29-usdjpy-eurjpy-162-fade.md",
+          "lesson": "Major-figure/intervention fade needs thesis invalidation, not a tight noise-zone broker SL."
+        }
+      },
+      "lesson": "SL-free does not mean loss-free; it means exits must be thesis invalidation based.",
+      "pattern_id": "SL_FREE_THESIS_INVALIDATION",
+      "reusable_rule": "When using SL-free or wide-catastrophe-stop logic, store the thesis, invalidation level/timeframe, and review trigger before entry."
+    },
+    {
+      "allowed_use": "Advisory precedent only; current forecast, risk, spread, event, and gateway checks remain authoritative.",
+      "blocked_behavior": "Block market-close leakage where one large give-up close erases multiple average winners.",
+      "evidence": {
+        "bounded_close_reason": [
+          {
+            "avg_h1_adx": 25.5,
+            "avg_loss": null,
+            "avg_win": 2574.8,
+            "bucket": "TAKE_PROFIT_ORDER",
+            "expectancy_jpy": 2574.8,
+            "median_entry_price_percentile_24h": 0.738,
+            "median_hold_hours": 0.1,
+            "net_jpy": 177659.0,
+            "payoff": null,
+            "trades": 69,
+            "win_rate": 1.0
+          },
+          {
+            "avg_h1_adx": 28.0,
+            "avg_loss": -2949.1,
+            "avg_win": 2222.1,
+            "bucket": "MARKET_ORDER_TRADE_CLOSE",
+            "expectancy_jpy": 662.5,
+            "median_entry_price_percentile_24h": 0.477,
+            "median_hold_hours": 0.79,
+            "net_jpy": 41739.7,
+            "payoff": 0.75,
+            "trades": 63,
+            "win_rate": 0.698
+          },
+          {
+            "avg_h1_adx": 30.3,
+            "avg_loss": -2277.2,
+            "avg_win": 2828.4,
+            "bucket": "MARKET_ORDER_POSITION_CLOSEOUT",
+            "expectancy_jpy": 43.0,
+            "median_entry_price_percentile_24h": 0.589,
+            "median_hold_hours": 0.52,
+            "net_jpy": 3827.5,
+            "payoff": 1.24,
+            "trades": 89,
+            "win_rate": 0.449
+          },
+          {
+            "avg_h1_adx": 24.8,
+            "avg_loss": -1292.4,
+            "avg_win": null,
+            "bucket": "STOP_LOSS_ORDER",
+            "expectancy_jpy": -1153.0,
+            "median_entry_price_percentile_24h": 0.591,
+            "median_hold_hours": 0.04,
+            "net_jpy": -117605.0,
+            "payoff": null,
+            "trades": 102,
+            "win_rate": 0.0
+          }
+        ]
+      },
+      "lesson": "Harvest exits are the reusable profit engine; housekeeping must not become panic closing.",
+      "pattern_id": "HOUSEKEEPING_HARVEST",
+      "reusable_rule": "Prefer attached TP / harvest / profit capture when current forecast weakens or range rail is reached."
+    },
+    {
+      "allowed_use": "Advisory precedent only; current forecast, risk, spread, event, and gateway checks remain authoritative.",
+      "blocked_behavior": "Block any target policy that requires trading through margin pressure to maintain a daily cadence.",
+      "evidence": {
+        "manual_close_reason": {
+          "avg_loss": -10850.8,
+          "avg_win": 32240.0,
+          "expectancy": -9055.3,
+          "median_hold_hours": 12.38,
+          "net": -217327.8,
+          "payoff": 2.97,
+          "trades": 24,
+          "win_rate": 0.042
+        }
+      },
+      "lesson": "Margin closeout is a hard failure mode, not a strategy exit.",
+      "pattern_id": "MARGIN_CLOSEOUT_FAILURE",
+      "reusable_rule": "Treat margin capacity as pre-entry and add-layer risk control; once margin pressure appears, do not add risk to rescue the basket."
+    },
+    {
+      "allowed_use": "Advisory precedent only; current forecast, risk, spread, event, and gateway checks remain authoritative.",
+      "blocked_behavior": "Block using raw long-hold winners to justify unattended exposure without current thesis-evolution and margin controls.",
+      "evidence": {
+        "excluded_tail_by_hold_bucket": [
+          {
+            "avg_h1_adx": 29.7,
+            "avg_loss": -15848.8,
+            "avg_win": 8272.5,
+            "bucket": "GE_12H",
+            "expectancy_jpy": 2450.7,
+            "median_entry_price_percentile_24h": 0.373,
+            "median_hold_hours": 121.38,
+            "net_jpy": 186253.7,
+            "payoff": 0.52,
+            "trades": 76,
+            "win_rate": 0.75
+          },
+          {
+            "avg_h1_adx": 57.1,
+            "avg_loss": -3120.0,
+            "avg_win": null,
+            "bucket": "<30M",
+            "expectancy_jpy": -3120.0,
+            "median_entry_price_percentile_24h": 0.777,
+            "median_hold_hours": 0.31,
+            "net_jpy": -3120.0,
+            "payoff": null,
+            "trades": 1,
+            "win_rate": 0.0
+          },
+          {
+            "avg_h1_adx": 43.6,
+            "avg_loss": -1994.5,
+            "avg_win": null,
+            "bucket": "2H_12H",
+            "expectancy_jpy": -1994.5,
+            "median_entry_price_percentile_24h": 0.807,
+            "median_hold_hours": 5.5,
+            "net_jpy": -21939.0,
+            "payoff": null,
+            "trades": 11,
+            "win_rate": 0.0
+          }
+        ],
+        "excluded_tail_profile": {
+          "avg_h1_adx": 31.7,
+          "avg_loss": -10344.6,
+          "avg_win": 8272.5,
+          "expectancy_jpy": 1831.8,
+          "median_entry_price_percentile_24h": 0.505,
+          "median_hold_hours": 108.13,
+          "net_jpy": 161194.7,
+          "payoff": 0.8,
+          "trades": 88,
+          "win_rate": 0.648
+        }
+      },
+      "lesson": "Long unattended holds contaminate precedent because they mix thesis edge with carry tail risk.",
+      "pattern_id": "LONG_UNATTENDED_HOLD_FAILURE",
+      "reusable_rule": "Separate bounded intraday precedent from >=12h carry/tail rows before citing edge."
+    }
+  ],
+  "source_sample": {
+    "manual_exit_events": 411,
+    "manual_history_window": {
+      "from": "2025-05-15T00:00:00Z",
+      "to": "2025-07-15T00:00:00Z"
+    },
+    "pair_agnostic_constraint": "The observed 2025 sample is USD_JPY-heavy, so lessons are expressed as theme/location/session/shape contracts, not as pair-specific permission.",
+    "sample_pairs": [
+      "USD_JPY"
+    ]
+  },
+  "status": "TRADE_SHAPE_PRECEDENT_READY"
+}

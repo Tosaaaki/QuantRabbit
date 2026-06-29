@@ -1,5 +1,10 @@
 # Strategy Memory
 
+## 2026-06-30 Target Cadence Policy
+
+- Optimize the system toward rolling 30-day 4x account growth, not a hard forced +5% every UTC day. +5% is a pace marker / review trigger / protection milestone; it must not force bad-day trades.
+- +10% remains extension-only behind the favorable-market gate. Red/no-edge days are allowed inside the rolling plan, but margin closeout, unattended carry, and counting operator manual precedent as system edge remain blocked.
+
 ## 2026-06-30 Generalized Discretionary Trade Shape
 
 - The 2025 USD_JPY manual history is not a USD_JPY-only rule. It is operator precedent for a reusable trade shape: read theme, build only when thesis is alive, prefer bounded adverse add over with-move pyramid, avoid tight SL in noise, harvest actively, and forbid margin closeout / unattended carry.

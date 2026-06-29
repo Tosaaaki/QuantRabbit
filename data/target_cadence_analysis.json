@@ -1,0 +1,1471 @@
+{
+  "daily_return_summary": {
+    "active_days": 25,
+    "average_red_return_pct": -8.42,
+    "best_daily_return_pct": 44.2,
+    "green_days": 12,
+    "hit_10pct_days": 3,
+    "hit_5pct_days": 7,
+    "median_red_return_pct": -7.62,
+    "red_days": 13,
+    "worst_daily_return_pct": -21.29
+  },
+  "daily_return_table": [
+    {
+      "cumulative_funding_adjusted_return_pct": -0.48,
+      "daily_return_pct": -0.48,
+      "dominant_pair": "USD_JPY",
+      "dominant_session_jst": "NY_OVERLAP",
+      "dominant_side": "SHORT",
+      "estimated_day_start_equity_jpy": 200000.0,
+      "exit_count": 14,
+      "hit_10pct": false,
+      "hit_5pct": false,
+      "intraday_cash_flow_jpy": 0.0,
+      "largest_loss_trade": {
+        "close_reason": "MARKET_ORDER_POSITION_CLOSEOUT",
+        "close_time": "2025-05-30T16:17:47.152318919Z",
+        "open_time": "2025-05-30T15:27:14.198130175Z",
+        "pair": "USD_JPY",
+        "realized_pl_jpy": -5160.0,
+        "side": "LONG",
+        "trade_id": "87"
+      },
+      "largest_win_trade": {
+        "close_reason": "TAKE_PROFIT_ORDER",
+        "close_time": "2025-05-30T12:09:18.858405939Z",
+        "open_time": "2025-05-30T11:58:29.916111468Z",
+        "pair": "USD_JPY",
+        "realized_pl_jpy": 4290.0,
+        "side": "SHORT",
+        "trade_id": "13"
+      },
+      "realized_pl_jpy": -960.0,
+      "red": true,
+      "utc_day": "2025-05-30"
+    },
+    {
+      "cumulative_funding_adjusted_return_pct": -0.73,
+      "daily_return_pct": -0.26,
+      "dominant_pair": "USD_JPY",
+      "dominant_session_jst": "OFF_HOURS",
+      "dominant_side": "SHORT",
+      "estimated_day_start_equity_jpy": 199040.0,
+      "exit_count": 2,
+      "hit_10pct": false,
+      "hit_5pct": false,
+      "intraday_cash_flow_jpy": 0.0,
+      "largest_loss_trade": {
+        "close_reason": "MARKET_ORDER_POSITION_CLOSEOUT",
+        "close_time": "2025-06-01T23:25:21.392998995Z",
+        "open_time": "2025-06-01T23:23:09.157419750Z",
+        "pair": "USD_JPY",
+        "realized_pl_jpy": -480.0,
+        "side": "SHORT",
+        "trade_id": "130"
+      },
+      "largest_win_trade": null,
+      "realized_pl_jpy": -510.0,
+      "red": true,
+      "utc_day": "2025-06-01"
+    },
+    {
+      "cumulative_funding_adjusted_return_pct": -0.93,
+      "daily_return_pct": -0.2,
+      "dominant_pair": "USD_JPY",
+      "dominant_session_jst": "TOKYO",
+      "dominant_side": "SHORT",
+      "estimated_day_start_equity_jpy": 198530.0,
+      "exit_count": 16,
+      "hit_10pct": false,
+      "hit_5pct": false,
+      "intraday_cash_flow_jpy": 0.0,
+      "largest_loss_trade": {
+        "close_reason": "STOP_LOSS_ORDER",
+        "close_time": "2025-06-02T14:00:42.426911247Z",
+        "open_time": "2025-06-02T13:51:19.859831698Z",
+        "pair": "USD_JPY",
+        "realized_pl_jpy": -6840.0,
+        "side": "LONG",
+        "trade_id": "230"
+      },
+      "largest_win_trade": {
+        "close_reason": "TAKE_PROFIT_ORDER",
+        "close_time": "2025-06-02T00:07:35.835690971Z",
+        "open_time": "2025-06-01T23:51:33.587525287Z",
+        "pair": "USD_JPY",
+        "realized_pl_jpy": 4560.0,
+        "side": "SHORT",
+        "trade_id": "138"
+      },
+      "realized_pl_jpy": -390.0,
+      "red": true,
+      "utc_day": "2025-06-02"
+    },
+    {
+      "cumulative_funding_adjusted_return_pct": 5.11,
+      "daily_return_pct": 6.09,
+      "dominant_pair": "USD_JPY",
+      "dominant_session_jst": "LONDON_AM",
+      "dominant_side": "LONG",
+      "estimated_day_start_equity_jpy": 198140.0,
+      "exit_count": 35,
+      "hit_10pct": false,
+      "hit_5pct": true,
+      "intraday_cash_flow_jpy": 0.0,
+      "largest_loss_trade": {
+        "close_reason": "STOP_LOSS_ORDER",
+        "close_time": "2025-06-03T09:18:26.229504681Z",
+        "open_time": "2025-06-03T08:38:26.219621574Z",
+        "pair": "USD_JPY",
+        "realized_pl_jpy": -6000.0,
+        "side": "SHORT",
+        "trade_id": "356"
+      },
+      "largest_win_trade": {
+        "close_reason": "TAKE_PROFIT_ORDER",
+        "close_time": "2025-06-03T06:40:42.396568828Z",
+        "open_time": "2025-06-03T06:22:53.198880880Z",
+        "pair": "USD_JPY",
+        "realized_pl_jpy": 4470.0,
+        "side": "LONG",
+        "trade_id": "340"
+      },
+      "realized_pl_jpy": 12075.284,
+      "red": false,
+      "utc_day": "2025-06-03"
+    },
+    {
+      "cumulative_funding_adjusted_return_pct": -7.97,
+      "daily_return_pct": -12.44,
+      "dominant_pair": "USD_JPY",
+      "dominant_session_jst": "NY_OVERLAP",
+      "dominant_side": "LONG",
+      "estimated_day_start_equity_jpy": 210215.284,
+      "exit_count": 22,
+      "hit_10pct": false,
+      "hit_5pct": false,
+      "intraday_cash_flow_jpy": 0.0,
+      "largest_loss_trade": {
+        "close_reason": "STOP_LOSS_ORDER",
+        "close_time": "2025-06-04T14:00:00.059249007Z",
+        "open_time": "2025-06-04T13:14:21.930349999Z",
+        "pair": "USD_JPY",
+        "realized_pl_jpy": -7770.0,
+        "side": "LONG",
+        "trade_id": "650"
+      },
+      "largest_win_trade": {
+        "close_reason": "TAKE_PROFIT_ORDER",
+        "close_time": "2025-06-04T23:47:38.169891616Z",
+        "open_time": "2025-06-04T23:25:10.086436093Z",
+        "pair": "USD_JPY",
+        "realized_pl_jpy": 4380.0,
+        "side": "LONG",
+        "trade_id": "700"
+      },
+      "realized_pl_jpy": -26160.0,
+      "red": true,
+      "utc_day": "2025-06-04"
+    },
+    {
+      "cumulative_funding_adjusted_return_pct": -2.36,
+      "daily_return_pct": 6.1,
+      "dominant_pair": "USD_JPY",
+      "dominant_session_jst": "NY_OVERLAP",
+      "dominant_side": "LONG",
+      "estimated_day_start_equity_jpy": 184055.284,
+      "exit_count": 43,
+      "hit_10pct": false,
+      "hit_5pct": true,
+      "intraday_cash_flow_jpy": 0.0,
+      "largest_loss_trade": {
+        "close_reason": "STOP_LOSS_ORDER",
+        "close_time": "2025-06-05T01:34:50.625550913Z",
+        "open_time": "2025-06-05T01:22:10.112252223Z",
+        "pair": "USD_JPY",
+        "realized_pl_jpy": -3420.0,
+        "side": "SHORT",
+        "trade_id": "712"
+      },
+      "largest_win_trade": {
+        "close_reason": "TAKE_PROFIT_ORDER",
+        "close_time": "2025-06-05T01:04:42.062799223Z",
+        "open_time": "2025-06-05T00:40:08.172575296Z",
+        "pair": "USD_JPY",
+        "realized_pl_jpy": 7320.0,
+        "side": "SHORT",
+        "trade_id": "706"
+      },
+      "realized_pl_jpy": 11220.0,
+      "red": false,
+      "utc_day": "2025-06-05"
+    },
+    {
+      "cumulative_funding_adjusted_return_pct": -11.82,
+      "daily_return_pct": -9.69,
+      "dominant_pair": "USD_JPY",
+      "dominant_session_jst": "TOKYO",
+      "dominant_side": "SHORT",
+      "estimated_day_start_equity_jpy": 195275.284,
+      "exit_count": 31,
+      "hit_10pct": false,
+      "hit_5pct": false,
+      "intraday_cash_flow_jpy": 0.0,
+      "largest_loss_trade": {
+        "close_reason": "MARKET_ORDER_TRADE_CLOSE",
+        "close_time": "2025-06-06T16:39:54.441753564Z",
+        "open_time": "2025-06-06T15:38:03.125719971Z",
+        "pair": "USD_JPY",
+        "realized_pl_jpy": -6210.0,
+        "side": "SHORT",
+        "trade_id": "1148"
+      },
+      "largest_win_trade": {
+        "close_reason": "TAKE_PROFIT_ORDER",
+        "close_time": "2025-06-06T12:43:37.220880902Z",
+        "open_time": "2025-06-06T12:40:07.644446730Z",
+        "pair": "USD_JPY",
+        "realized_pl_jpy": 4440.0,
+        "side": "SHORT",
+        "trade_id": "1126"
+      },
+      "realized_pl_jpy": -18915.0,
+      "red": true,
+      "utc_day": "2025-06-06"
+    },
+    {
+      "cumulative_funding_adjusted_return_pct": -18.54,
+      "daily_return_pct": -7.62,
+      "dominant_pair": "USD_JPY",
+      "dominant_session_jst": "TOKYO",
+      "dominant_side": "LONG",
+      "estimated_day_start_equity_jpy": 176360.284,
+      "exit_count": 4,
+      "hit_10pct": false,
+      "hit_5pct": false,
+      "intraday_cash_flow_jpy": 0.0,
+      "largest_loss_trade": {
+        "close_reason": "MARKET_ORDER_POSITION_CLOSEOUT",
+        "close_time": "2025-06-09T07:58:45.473052944Z",
+        "open_time": "2025-06-09T00:40:39.302778845Z",
+        "pair": "USD_JPY",
+        "realized_pl_jpy": -11900.0,
+        "side": "LONG",
+        "trade_id": "1156"
+      },
+      "largest_win_trade": {
+        "close_reason": "TAKE_PROFIT_ORDER",
+        "close_time": "2025-06-09T23:18:25.241885167Z",
+        "open_time": "2025-06-09T23:12:18.293778213Z",
+        "pair": "USD_JPY",
+        "realized_pl_jpy": 1860.0,
+        "side": "SHORT",
+        "trade_id": "1164"
+      },
+      "realized_pl_jpy": -13440.0,
+      "red": true,
+      "utc_day": "2025-06-09"
+    },
+    {
+      "cumulative_funding_adjusted_return_pct": -21.42,
+      "daily_return_pct": -3.54,
+      "dominant_pair": "USD_JPY",
+      "dominant_session_jst": "NY_OVERLAP",
+      "dominant_side": "LONG",
+      "estimated_day_start_equity_jpy": 162920.284,
+      "exit_count": 47,
+      "hit_10pct": false,
+      "hit_5pct": false,
+      "intraday_cash_flow_jpy": 0.0,
+      "largest_loss_trade": {
+        "close_reason": "MARKET_ORDER_POSITION_CLOSEOUT",
+        "close_time": "2025-06-10T14:06:19.420052794Z",
+        "open_time": "2025-06-10T13:31:00.251161757Z",
+        "pair": "USD_JPY",
+        "realized_pl_jpy": -2020.0,
+        "side": "SHORT",
+        "trade_id": "1188"
+      },
+      "largest_win_trade": {
+        "close_reason": "MARKET_ORDER_TRADE_CLOSE",
+        "close_time": "2025-06-10T13:29:48.665362181Z",
+        "open_time": "2025-06-10T13:15:34.051185256Z",
+        "pair": "USD_JPY",
+        "realized_pl_jpy": 1840.0,
+        "side": "SHORT",
+        "trade_id": "1172"
+      },
+      "realized_pl_jpy": -5760.0,
+      "red": true,
+      "utc_day": "2025-06-10"
+    },
+    {
+      "cumulative_funding_adjusted_return_pct": -19.07,
+      "daily_return_pct": 3.0,
+      "dominant_pair": "USD_JPY",
+      "dominant_session_jst": "NY_OVERLAP",
+      "dominant_side": "LONG",
+      "estimated_day_start_equity_jpy": 157160.284,
+      "exit_count": 14,
+      "hit_10pct": false,
+      "hit_5pct": false,
+      "intraday_cash_flow_jpy": 0.0,
+      "largest_loss_trade": {
+        "close_reason": "MARKET_ORDER_POSITION_CLOSEOUT",
+        "close_time": "2025-06-11T14:05:38.966539194Z",
+        "open_time": "2025-06-11T13:46:55.383242076Z",
+        "pair": "USD_JPY",
+        "realized_pl_jpy": -4860.0,
+        "side": "LONG",
+        "trade_id": "1532"
+      },
+      "largest_win_trade": {
+        "close_reason": "MARKET_ORDER_TRADE_CLOSE",
+        "close_time": "2025-06-11T13:29:34.221299725Z",
+        "open_time": "2025-06-11T12:59:25.377216813Z",
+        "pair": "USD_JPY",
+        "realized_pl_jpy": 2150.0,
+        "side": "LONG",
+        "trade_id": "1498"
+      },
+      "realized_pl_jpy": 4709.374,
+      "red": false,
+      "utc_day": "2025-06-11"
+    },
+    {
+      "cumulative_funding_adjusted_return_pct": -17.89,
+      "daily_return_pct": 1.45,
+      "dominant_pair": "USD_JPY",
+      "dominant_session_jst": "LONDON_AM",
+      "dominant_side": "LONG",
+      "estimated_day_start_equity_jpy": 161869.658,
+      "exit_count": 10,
+      "hit_10pct": false,
+      "hit_5pct": false,
+      "intraday_cash_flow_jpy": 0.0,
+      "largest_loss_trade": {
+        "close_reason": "STOP_LOSS_ORDER",
+        "close_time": "2025-06-12T06:16:54.900316611Z",
+        "open_time": "2025-06-12T05:58:15.578721719Z",
+        "pair": "USD_JPY",
+        "realized_pl_jpy": -3200.0,
+        "side": "SHORT",
+        "trade_id": "1596"
+      },
+      "largest_win_trade": {
+        "close_reason": "MARKET_ORDER_TRADE_CLOSE",
+        "close_time": "2025-06-12T11:41:51.302873440Z",
+        "open_time": "2025-06-12T11:34:49.754550027Z",
+        "pair": "USD_JPY",
+        "realized_pl_jpy": 3050.0,
+        "side": "LONG",
+        "trade_id": "1632"
+      },
+      "realized_pl_jpy": 2350.0,
+      "red": false,
+      "utc_day": "2025-06-12"
+    },
+    {
+      "cumulative_funding_adjusted_return_pct": -35.37,
+      "daily_return_pct": -21.29,
+      "dominant_pair": "USD_JPY",
+      "dominant_session_jst": "TOKYO",
+      "dominant_side": "SHORT",
+      "estimated_day_start_equity_jpy": 164219.658,
+      "exit_count": 32,
+      "hit_10pct": false,
+      "hit_5pct": false,
+      "intraday_cash_flow_jpy": 154172.0,
+      "largest_loss_trade": {
+        "close_reason": "MARKET_ORDER_POSITION_CLOSEOUT",
+        "close_time": "2025-06-13T10:38:42.133362554Z",
+        "open_time": "2025-06-13T03:39:48.497110082Z",
+        "pair": "USD_JPY",
+        "realized_pl_jpy": -24960.0,
+        "side": "SHORT",
+        "trade_id": "1696"
+      },
+      "largest_win_trade": {
+        "close_reason": "MARKET_ORDER_TRADE_CLOSE",
+        "close_time": "2025-06-13T00:48:29.947586827Z",
+        "open_time": "2025-06-13T00:33:15.617612714Z",
+        "pair": "USD_JPY",
+        "realized_pl_jpy": 9000.0,
+        "side": "LONG",
+        "trade_id": "1660"
+      },
+      "realized_pl_jpy": -34955.0,
+      "red": true,
+      "utc_day": "2025-06-13"
+    },
+    {
+      "cumulative_funding_adjusted_return_pct": -13.9,
+      "daily_return_pct": 15.15,
+      "dominant_pair": "USD_JPY",
+      "dominant_session_jst": "LONDON_AM",
+      "dominant_side": "SHORT",
+      "estimated_day_start_equity_jpy": 283436.658,
+      "exit_count": 19,
+      "hit_10pct": true,
+      "hit_5pct": true,
+      "intraday_cash_flow_jpy": 0.0,
+      "largest_loss_trade": {
+        "close_reason": "STOP_LOSS_ORDER",
+        "close_time": "2025-06-16T07:16:18.480602263Z",
+        "open_time": "2025-06-16T07:12:30.055146909Z",
+        "pair": "USD_JPY",
+        "realized_pl_jpy": -3240.0,
+        "side": "SHORT",
+        "trade_id": "1826"
+      },
+      "largest_win_trade": {
+        "close_reason": "TAKE_PROFIT_ORDER",
+        "close_time": "2025-06-16T13:18:15.718895734Z",
+        "open_time": "2025-06-16T10:25:00.820230426Z",
+        "pair": "USD_JPY",
+        "realized_pl_jpy": 10530.0,
+        "side": "SHORT",
+        "trade_id": "1863"
+      },
+      "realized_pl_jpy": 42944.0,
+      "red": false,
+      "utc_day": "2025-06-16"
+    },
+    {
+      "cumulative_funding_adjusted_return_pct": -39.22,
+      "daily_return_pct": -15.52,
+      "dominant_pair": "USD_JPY",
+      "dominant_session_jst": "NY_OVERLAP",
+      "dominant_side": "SHORT",
+      "estimated_day_start_equity_jpy": 326380.658,
+      "exit_count": 9,
+      "hit_10pct": false,
+      "hit_5pct": false,
+      "intraday_cash_flow_jpy": 0.0,
+      "largest_loss_trade": {
+        "close_reason": "MARKET_ORDER_POSITION_CLOSEOUT",
+        "close_time": "2025-06-17T14:33:03.879097004Z",
+        "open_time": "2025-06-16T14:51:07.610318140Z",
+        "pair": "USD_JPY",
+        "realized_pl_jpy": -50940.0,
+        "side": "SHORT",
+        "trade_id": "1901"
+      },
+      "largest_win_trade": {
+        "close_reason": "MARKET_ORDER_TRADE_CLOSE",
+        "close_time": "2025-06-17T15:16:44.130053456Z",
+        "open_time": "2025-06-17T14:36:44.494141827Z",
+        "pair": "USD_JPY",
+        "realized_pl_jpy": 2320.0,
+        "side": "SHORT",
+        "trade_id": "1936"
+      },
+      "realized_pl_jpy": -50646.0,
+      "red": true,
+      "utc_day": "2025-06-17"
+    },
+    {
+      "cumulative_funding_adjusted_return_pct": -34.36,
+      "daily_return_pct": 3.52,
+      "dominant_pair": "USD_JPY",
+      "dominant_session_jst": "TOKYO",
+      "dominant_side": "SHORT",
+      "estimated_day_start_equity_jpy": 275734.658,
+      "exit_count": 6,
+      "hit_10pct": false,
+      "hit_5pct": false,
+      "intraday_cash_flow_jpy": 0.0,
+      "largest_loss_trade": {
+        "close_reason": "MARKET_ORDER_TRADE_CLOSE",
+        "close_time": "2025-06-18T15:12:31.985185973Z",
+        "open_time": "2025-06-18T02:14:34.258601949Z",
+        "pair": "USD_JPY",
+        "realized_pl_jpy": -538.0,
+        "side": "LONG",
+        "trade_id": "1989"
+      },
+      "largest_win_trade": {
+        "close_reason": "TAKE_PROFIT_ORDER",
+        "close_time": "2025-06-18T01:02:31.762010095Z",
+        "open_time": "2025-06-18T00:09:32.388808074Z",
+        "pair": "USD_JPY",
+        "realized_pl_jpy": 4590.0,
+        "side": "SHORT",
+        "trade_id": "1962"
+      },
+      "realized_pl_jpy": 9712.0,
+      "red": false,
+      "utc_day": "2025-06-18"
+    },
+    {
+      "cumulative_funding_adjusted_return_pct": -34.26,
+      "daily_return_pct": 0.07,
+      "dominant_pair": "USD_JPY",
+      "dominant_session_jst": "TOKYO",
+      "dominant_side": "LONG",
+      "estimated_day_start_equity_jpy": 285446.658,
+      "exit_count": 2,
+      "hit_10pct": false,
+      "hit_5pct": false,
+      "intraday_cash_flow_jpy": -20000.0,
+      "largest_loss_trade": null,
+      "largest_win_trade": {
+        "close_reason": "MARKET_ORDER_TRADE_CLOSE",
+        "close_time": "2025-06-19T07:51:39.498381727Z",
+        "open_time": "2025-06-19T04:43:20.602658318Z",
+        "pair": "USD_JPY",
+        "realized_pl_jpy": 196.0,
+        "side": "LONG",
+        "trade_id": "2006"
+      },
+      "realized_pl_jpy": 196.0,
+      "red": false,
+      "utc_day": "2025-06-19"
+    },
+    {
+      "cumulative_funding_adjusted_return_pct": -24.56,
+      "daily_return_pct": 7.31,
+      "dominant_pair": "USD_JPY",
+      "dominant_session_jst": "NY_OVERLAP",
+      "dominant_side": "LONG",
+      "estimated_day_start_equity_jpy": 265642.658,
+      "exit_count": 12,
+      "hit_10pct": false,
+      "hit_5pct": true,
+      "intraday_cash_flow_jpy": 0.0,
+      "largest_loss_trade": {
+        "close_reason": "MARKET_ORDER_MARGIN_CLOSEOUT",
+        "close_time": "2025-06-23T17:42:30.096952369Z",
+        "open_time": "2025-06-23T11:48:04.883333910Z",
+        "pair": "USD_JPY",
+        "realized_pl_jpy": -1600.0,
+        "side": "LONG",
+        "trade_id": "2025"
+      },
+      "largest_win_trade": {
+        "close_reason": "MARKET_ORDER_MARGIN_CLOSEOUT",
+        "close_time": "2025-06-23T17:42:30.096952369Z",
+        "open_time": "2025-06-19T08:04:50.284825089Z",
+        "pair": "USD_JPY",
+        "realized_pl_jpy": 32240.0,
+        "side": "LONG",
+        "trade_id": "2014"
+      },
+      "realized_pl_jpy": 19412.0,
+      "red": false,
+      "utc_day": "2025-06-23"
+    },
+    {
+      "cumulative_funding_adjusted_return_pct": -49.16,
+      "daily_return_pct": -17.26,
+      "dominant_pair": "USD_JPY",
+      "dominant_session_jst": "OFF_HOURS",
+      "dominant_side": "LONG",
+      "estimated_day_start_equity_jpy": 285054.658,
+      "exit_count": 6,
+      "hit_10pct": false,
+      "hit_5pct": false,
+      "intraday_cash_flow_jpy": 0.0,
+      "largest_loss_trade": {
+        "close_reason": "MARKET_ORDER_MARGIN_CLOSEOUT",
+        "close_time": "2025-06-24T14:07:21.080016861Z",
+        "open_time": "2025-06-23T22:35:28.169503201Z",
+        "pair": "USD_JPY",
+        "realized_pl_jpy": -47000.0,
+        "side": "LONG",
+        "trade_id": "2048"
+      },
+      "largest_win_trade": null,
+      "realized_pl_jpy": -49195.0,
+      "red": true,
+      "utc_day": "2025-06-24"
+    },
+    {
+      "cumulative_funding_adjusted_return_pct": -54.93,
+      "daily_return_pct": -4.89,
+      "dominant_pair": "USD_JPY",
+      "dominant_session_jst": "TOKYO",
+      "dominant_side": "LONG",
+      "estimated_day_start_equity_jpy": 235859.658,
+      "exit_count": 9,
+      "hit_10pct": false,
+      "hit_5pct": false,
+      "intraday_cash_flow_jpy": 300000.0,
+      "largest_loss_trade": {
+        "close_reason": "MARKET_ORDER_MARGIN_CLOSEOUT",
+        "close_time": "2025-06-26T03:05:39.150645336Z",
+        "open_time": "2025-06-26T00:09:29.718308246Z",
+        "pair": "USD_JPY",
+        "realized_pl_jpy": -8704.0,
+        "side": "LONG",
+        "trade_id": "2084"
+      },
+      "largest_win_trade": {
+        "close_reason": "MARKET_ORDER_TRADE_CLOSE",
+        "close_time": "2025-06-26T00:08:02.912129484Z",
+        "open_time": "2025-06-24T15:51:04.998066883Z",
+        "pair": "USD_JPY",
+        "realized_pl_jpy": 210.0,
+        "side": "LONG",
+        "trade_id": "2064"
+      },
+      "realized_pl_jpy": -11540.8,
+      "red": true,
+      "utc_day": "2025-06-26"
+    },
+    {
+      "cumulative_funding_adjusted_return_pct": -55.08,
+      "daily_return_pct": -0.06,
+      "dominant_pair": "USD_JPY",
+      "dominant_session_jst": "TOKYO",
+      "dominant_side": "LONG",
+      "estimated_day_start_equity_jpy": 524318.858,
+      "exit_count": 2,
+      "hit_10pct": false,
+      "hit_5pct": false,
+      "intraday_cash_flow_jpy": 100000.0,
+      "largest_loss_trade": {
+        "close_reason": "MARKET_ORDER_TRADE_CLOSE",
+        "close_time": "2025-06-30T05:03:45.445770988Z",
+        "open_time": "2025-06-26T10:58:06.489750356Z",
+        "pair": "USD_JPY",
+        "realized_pl_jpy": -163.0,
+        "side": "LONG",
+        "trade_id": "2109"
+      },
+      "largest_win_trade": null,
+      "realized_pl_jpy": -308.5,
+      "red": true,
+      "utc_day": "2025-06-30"
+    },
+    {
+      "cumulative_funding_adjusted_return_pct": -54.89,
+      "daily_return_pct": 0.06,
+      "dominant_pair": "USD_JPY",
+      "dominant_session_jst": "NY_OVERLAP",
+      "dominant_side": "LONG",
+      "estimated_day_start_equity_jpy": 624010.358,
+      "exit_count": 2,
+      "hit_10pct": false,
+      "hit_5pct": false,
+      "intraday_cash_flow_jpy": 0.0,
+      "largest_loss_trade": null,
+      "largest_win_trade": {
+        "close_reason": "MARKET_ORDER_TRADE_CLOSE",
+        "close_time": "2025-07-02T12:20:16.807207110Z",
+        "open_time": "2025-07-01T14:00:49.411361787Z",
+        "pair": "USD_JPY",
+        "realized_pl_jpy": 256.0,
+        "side": "LONG",
+        "trade_id": "2174"
+      },
+      "realized_pl_jpy": 389.0,
+      "red": false,
+      "utc_day": "2025-07-02"
+    },
+    {
+      "cumulative_funding_adjusted_return_pct": 83.12,
+      "daily_return_pct": 44.2,
+      "dominant_pair": "USD_JPY",
+      "dominant_session_jst": "LONDON_AM",
+      "dominant_side": "LONG",
+      "estimated_day_start_equity_jpy": 624399.358,
+      "exit_count": 48,
+      "hit_10pct": true,
+      "hit_5pct": true,
+      "intraday_cash_flow_jpy": 0.0,
+      "largest_loss_trade": null,
+      "largest_win_trade": {
+        "close_reason": "MARKET_ORDER_POSITION_CLOSEOUT",
+        "close_time": "2025-07-08T14:56:21.296524096Z",
+        "open_time": "2025-06-26T06:47:08.355217679Z",
+        "pair": "USD_JPY",
+        "realized_pl_jpy": 99400.0,
+        "side": "LONG",
+        "trade_id": "2107"
+      },
+      "realized_pl_jpy": 276012.5,
+      "red": false,
+      "utc_day": "2025-07-08"
+    },
+    {
+      "cumulative_funding_adjusted_return_pct": 198.31,
+      "daily_return_pct": 25.59,
+      "dominant_pair": "USD_JPY",
+      "dominant_session_jst": "TOKYO",
+      "dominant_side": "SHORT",
+      "estimated_day_start_equity_jpy": 900411.858,
+      "exit_count": 13,
+      "hit_10pct": true,
+      "hit_5pct": true,
+      "intraday_cash_flow_jpy": 0.0,
+      "largest_loss_trade": {
+        "close_reason": "MARKET_ORDER_TRADE_CLOSE",
+        "close_time": "2025-07-10T14:28:37.315979627Z",
+        "open_time": "2025-07-10T13:55:10.398387252Z",
+        "pair": "USD_JPY",
+        "realized_pl_jpy": -175.0,
+        "side": "SHORT",
+        "trade_id": "2273"
+      },
+      "largest_win_trade": {
+        "close_reason": "MARKET_ORDER_POSITION_CLOSEOUT",
+        "close_time": "2025-07-10T00:41:32.103771748Z",
+        "open_time": "2025-07-08T14:56:41.469357419Z",
+        "pair": "USD_JPY",
+        "realized_pl_jpy": 158250.0,
+        "side": "SHORT",
+        "trade_id": "2229"
+      },
+      "realized_pl_jpy": 230374.0,
+      "red": false,
+      "utc_day": "2025-07-10"
+    },
+    {
+      "cumulative_funding_adjusted_return_pct": 106.73,
+      "daily_return_pct": -16.2,
+      "dominant_pair": "USD_JPY",
+      "dominant_session_jst": "TOKYO",
+      "dominant_side": "SHORT",
+      "estimated_day_start_equity_jpy": 1130785.858,
+      "exit_count": 9,
+      "hit_10pct": false,
+      "hit_5pct": false,
+      "intraday_cash_flow_jpy": 0.0,
+      "largest_loss_trade": {
+        "close_reason": "MARKET_ORDER_MARGIN_CLOSEOUT",
+        "close_time": "2025-07-11T13:59:59.278780028Z",
+        "open_time": "2025-07-10T04:59:00.497017241Z",
+        "pair": "USD_JPY",
+        "realized_pl_jpy": -53150.0,
+        "side": "SHORT",
+        "trade_id": "2261"
+      },
+      "largest_win_trade": null,
+      "realized_pl_jpy": -183158.0,
+      "red": true,
+      "utc_day": "2025-07-11"
+    },
+    {
+      "cumulative_funding_adjusted_return_pct": 133.41,
+      "daily_return_pct": 5.63,
+      "dominant_pair": "USD_JPY",
+      "dominant_session_jst": "OFF_HOURS",
+      "dominant_side": "SHORT",
+      "estimated_day_start_equity_jpy": 947627.858,
+      "exit_count": 4,
+      "hit_10pct": false,
+      "hit_5pct": true,
+      "intraday_cash_flow_jpy": 0.0,
+      "largest_loss_trade": null,
+      "largest_win_trade": {
+        "close_reason": "MARKET_ORDER_TRADE_CLOSE",
+        "close_time": "2025-07-13T22:54:08.214971194Z",
+        "open_time": "2025-07-13T22:05:03.762862831Z",
+        "pair": "USD_JPY",
+        "realized_pl_jpy": 35250.0,
+        "side": "LONG",
+        "trade_id": "2290"
+      },
+      "realized_pl_jpy": 53360.0,
+      "red": false,
+      "utc_day": "2025-07-13"
+    }
+  ],
+  "daily_target_state_snapshot": {
+    "available": true,
+    "mode": null,
+    "progress_pct": 0.0,
+    "target_trades_per_day": 30
+  },
+  "generated_at_utc": "2026-06-29T23:25:37+00:00",
+  "origin_breakdown": {
+    "execution_ledger": {
+      "available": true,
+      "buckets": {
+        "OPERATOR_MANUAL": {
+          "events": 182,
+          "evidence": {
+            "no system client id or lane id on OANDA realized event": 182
+          },
+          "realized_pl_jpy": -16314.4613
+        },
+        "SYSTEM_FRESH_ENTRY": {
+          "events": 14,
+          "evidence": {
+            "qrv1/system trade resolved through entry-attached or broker-native exit": 14
+          },
+          "realized_pl_jpy": 3652.4253
+        },
+        "SYSTEM_MANAGEMENT": {
+          "events": 38,
+          "evidence": {
+            "qrv1/system trade closed by management-style market close": 38
+          },
+          "realized_pl_jpy": -5670.4301
+        },
+        "UNKNOWN": {
+          "events": 0,
+          "evidence": {},
+          "realized_pl_jpy": 0.0
+        },
+        "USER_ALPHA_RELOAD": {
+          "events": 0,
+          "evidence": {},
+          "realized_pl_jpy": 0.0
+        }
+      },
+      "classification_contract": {
+        "operator_manual_not_system_profitability": true,
+        "qrv1_or_lane_id_required_for_system_attribution": true,
+        "system_management_is_reported_separately_from_fresh_entry_edge": true
+      },
+      "path": "/Users/tossaki/App/QuantRabbit/data/execution_ledger.db"
+    },
+    "manual_2025": {
+      "events": 411,
+      "evidence": "data/manual_history_2025_mining.json is operator manual precedent / teacher data.",
+      "origin": "OPERATOR_MANUAL",
+      "realized_pl_jpy": 266815.858,
+      "system_profitability_counted": false
+    }
+  },
+  "precedent_2025": {
+    "balances": {
+      "end": {
+        "balance": 1103380.7038,
+        "time": "2025-07-14T21:00:00.000000000Z"
+      },
+      "peak": {
+        "balance": 1234729.6793,
+        "time": "2025-07-10T04:56:44.898653457Z"
+      },
+      "start": {
+        "balance": 200000.0,
+        "time": "2025-05-30T11:09:33.419382372Z"
+      }
+    },
+    "best_day": [
+      "2025-07-08",
+      276012.5
+    ],
+    "bounded_adverse_add_pl": {
+      "adverse_adds_summary": {
+        "adverse_adds": 14,
+        "avg_adverse_add_pips": 6.45,
+        "avg_loss": -2060.0,
+        "avg_win": 14946.3,
+        "clusters": 8,
+        "entries": 24,
+        "expectancy_jpy": 12820.5,
+        "max_entries": 4,
+        "median_entries": 3.0,
+        "median_hold_hours": 1.2,
+        "multi_entry_clusters": 8,
+        "net_jpy": 102564.0,
+        "payoff": 7.26,
+        "pyramid_adds": 2,
+        "win_rate": 0.875
+      },
+      "bounded_average_into_adverse": {
+        "adverse_adds": 13,
+        "avg_adverse_add_pips": 6.89,
+        "avg_loss": -2060.0,
+        "avg_win": 6715.7,
+        "bucket": "AVERAGE_INTO_ADVERSE",
+        "clusters": 7,
+        "entries": 20,
+        "expectancy_jpy": 5462.0,
+        "max_entries": 4,
+        "median_entries": 3,
+        "median_hold_hours": 1.02,
+        "multi_entry_clusters": 7,
+        "net_jpy": 38234.0,
+        "payoff": 3.26,
+        "pyramid_adds": 0,
+        "win_rate": 0.857
+      },
+      "contract": {
+        "advisory_only": true,
+        "forbidden_to_use_for_unbounded_martingale": true,
+        "nanpin_is_not_live_permission": true,
+        "requires_current_basket_risk_validation": true
+      }
+    },
+    "deposits_withdrawals": [
+      {
+        "amount": 200000.0,
+        "balance": 200000.0,
+        "time": "2025-05-30T11:09:33.419382372Z"
+      },
+      {
+        "amount": 154172.0,
+        "balance": 297258.4922,
+        "time": "2025-06-13T00:06:04.068840482Z"
+      },
+      {
+        "amount": -20000.0,
+        "balance": 265727.6872,
+        "time": "2025-06-19T07:57:21.259340523Z"
+      },
+      {
+        "amount": 300000.0,
+        "balance": 527503.3194,
+        "time": "2025-06-26T06:46:46.354401992Z"
+      },
+      {
+        "amount": 100000.0,
+        "balance": 630655.8941,
+        "time": "2025-06-30T22:10:49.837812597Z"
+      },
+      {
+        "amount": 100000.0,
+        "balance": 730655.8941,
+        "time": "2025-07-01T07:58:35.316123679Z"
+      }
+    ],
+    "exit_count": 411,
+    "exit_reason_breakdown": {
+      "MARKET_ORDER_MARGIN_CLOSEOUT": {
+        "avg_loss": -10850.8,
+        "avg_win": 32240.0,
+        "expectancy": -9055.3,
+        "median_hold_hours": 12.38,
+        "net": -217327.8,
+        "payoff": 2.97,
+        "trades": 24,
+        "win_rate": 0.042
+      },
+      "MARKET_ORDER_POSITION_CLOSEOUT": {
+        "avg_loss": -3270.3,
+        "avg_win": 5933.6,
+        "expectancy": 2738.3,
+        "median_hold_hours": 2.33,
+        "net": 391581.0,
+        "payoff": 1.81,
+        "trades": 143,
+        "win_rate": 0.65
+      },
+      "MARKET_ORDER_TRADE_CLOSE": {
+        "avg_loss": -2634.5,
+        "avg_win": 2093.0,
+        "expectancy": 451.5,
+        "median_hold_hours": 1.05,
+        "net": 32508.7,
+        "payoff": 0.79,
+        "trades": 72,
+        "win_rate": 0.653
+      },
+      "STOP_LOSS_ORDER": {
+        "avg_loss": -1292.4,
+        "avg_win": null,
+        "expectancy": -1141.8,
+        "median_hold_hours": 0.04,
+        "net": -117605.0,
+        "payoff": null,
+        "trades": 103,
+        "win_rate": 0.0
+      },
+      "TAKE_PROFIT_ORDER": {
+        "avg_loss": null,
+        "avg_win": 2574.8,
+        "expectancy": 2574.8,
+        "median_hold_hours": 0.1,
+        "net": 177659.0,
+        "payoff": null,
+        "trades": 69,
+        "win_rate": 1.0
+      }
+    },
+    "funding_adjusted": {
+      "best_30d": {
+        "end_balance": 1234729.6793,
+        "end_time": "2025-07-10T04:56:44.898653+00:00",
+        "net_transfers": 634172.0,
+        "profit": 457471.1871,
+        "return_pct": 319.72,
+        "start_balance": 143086.4922,
+        "start_time": "2025-06-13T00:02:29.467604+00:00",
+        "window_days": 30
+      },
+      "best_30d_daily_evidence": {
+        "active_utc_days": 12,
+        "end_time": "2025-07-10T04:56:44.898653+00:00",
+        "equivalent_multiplier": 4.1972,
+        "funding_adjusted_profit_jpy": 457471.1871,
+        "funding_adjusted_return_pct": 319.72,
+        "hit_10pct_utc_days": 3,
+        "hit_5pct_utc_days": 4,
+        "red_utc_days": 5,
+        "start_time": "2025-06-13T00:02:29.467604+00:00"
+      },
+      "end_pl_jpy": 269208.7038,
+      "end_return_pct": 134.6,
+      "peak_pl_jpy": 400557.6793,
+      "peak_return_pct": 200.28
+    },
+    "long_hold_tail_risk": {
+      "excluded_tail_by_hold_bucket": [
+        {
+          "avg_h1_adx": 29.7,
+          "avg_loss": -15848.8,
+          "avg_win": 8272.5,
+          "bucket": "GE_12H",
+          "expectancy_jpy": 2450.7,
+          "median_entry_price_percentile_24h": 0.373,
+          "median_hold_hours": 121.38,
+          "net_jpy": 186253.7,
+          "payoff": 0.52,
+          "trades": 76,
+          "win_rate": 0.75
+        },
+        {
+          "avg_h1_adx": 57.1,
+          "avg_loss": -3120.0,
+          "avg_win": null,
+          "bucket": "<30M",
+          "expectancy_jpy": -3120.0,
+          "median_entry_price_percentile_24h": 0.777,
+          "median_hold_hours": 0.31,
+          "net_jpy": -3120.0,
+          "payoff": null,
+          "trades": 1,
+          "win_rate": 0.0
+        },
+        {
+          "avg_h1_adx": 43.6,
+          "avg_loss": -1994.5,
+          "avg_win": null,
+          "bucket": "2H_12H",
+          "expectancy_jpy": -1994.5,
+          "median_entry_price_percentile_24h": 0.807,
+          "median_hold_hours": 5.5,
+          "net_jpy": -21939.0,
+          "payoff": null,
+          "trades": 11,
+          "win_rate": 0.0
+        }
+      ],
+      "excluded_tail_overall": {
+        "avg_h1_adx": 31.7,
+        "avg_loss": -10344.6,
+        "avg_win": 8272.5,
+        "expectancy_jpy": 1831.8,
+        "median_entry_price_percentile_24h": 0.505,
+        "median_hold_hours": 108.13,
+        "net_jpy": 161194.7,
+        "payoff": 0.8,
+        "trades": 88,
+        "win_rate": 0.648
+      },
+      "reason": ">=12h holds and margin closeouts are excluded from bounded replay because they represent unattended carry/margin-closeout tail risk."
+    },
+    "margin_closeout_losses": {
+      "avg_loss": -10850.8,
+      "avg_win": 32240.0,
+      "expectancy": -9055.3,
+      "median_hold_hours": 12.38,
+      "net": -217327.8,
+      "payoff": 2.97,
+      "trades": 24,
+      "win_rate": 0.042
+    },
+    "pair_breakdown": {
+      "USD_JPY": {
+        "avg_loss": -3155.8,
+        "avg_win": 4095.7,
+        "expectancy": 649.2,
+        "median_hold_hours": 0.48,
+        "net": 266815.9,
+        "payoff": 1.3,
+        "trades": 411,
+        "win_rate": 0.511
+      }
+    },
+    "period": {
+      "active_window": {
+        "calendar_days": 44.5,
+        "end_time": "2025-07-13T23:55:52.750396+00:00",
+        "exit_events_per_calendar_day": 9.24,
+        "start_time": "2025-05-30T11:55:06.246195+00:00"
+      },
+      "configured_window": {
+        "from": "2025-05-15T00:00:00Z",
+        "to": "2025-07-15T00:00:00Z"
+      }
+    },
+    "profit_factor": 1.4497,
+    "session_breakdown": {
+      "LONDON_AM": {
+        "avg_loss": -2339.1,
+        "avg_win": 4445.7,
+        "expectancy": 2160.5,
+        "median_hold_hours": 1.35,
+        "net": 185804.8,
+        "payoff": 1.9,
+        "trades": 86,
+        "win_rate": 0.651
+      },
+      "NY_OVERLAP": {
+        "avg_loss": -2186.4,
+        "avg_win": 3327.4,
+        "expectancy": 470.4,
+        "median_hold_hours": 0.16,
+        "net": 88430.6,
+        "payoff": 1.52,
+        "trades": 188,
+        "win_rate": 0.473
+      },
+      "OFF_HOURS": {
+        "avg_loss": -3298.4,
+        "avg_win": 4615.0,
+        "expectancy": 425.5,
+        "median_hold_hours": 0.28,
+        "net": 14468.0,
+        "payoff": 1.4,
+        "trades": 34,
+        "win_rate": 0.471
+      },
+      "TOKYO": {
+        "avg_loss": -5480.1,
+        "avg_win": 4921.6,
+        "expectancy": -212.5,
+        "median_hold_hours": 0.43,
+        "net": -21887.5,
+        "payoff": 0.9,
+        "trades": 103,
+        "win_rate": 0.476
+      }
+    },
+    "side_breakdown": {
+      "LONG": {
+        "avg_loss": -2145.7,
+        "avg_win": 3822.4,
+        "expectancy": 1463.9,
+        "median_hold_hours": 0.72,
+        "net": 351347.9,
+        "payoff": 1.78,
+        "trades": 240,
+        "win_rate": 0.596
+      },
+      "SHORT": {
+        "avg_loss": -4103.4,
+        "avg_win": 4679.0,
+        "expectancy": -494.3,
+        "median_hold_hours": 0.25,
+        "net": -84532.0,
+        "payoff": 1.14,
+        "trades": 171,
+        "win_rate": 0.392
+      }
+    },
+    "total_realized_pl_jpy": 266815.9,
+    "win_rate": 0.511,
+    "with_move_pyramiding_pl": {
+      "bounded_lt_12h_ex_margin_closeout": {
+        "adverse_adds": 0,
+        "avg_adverse_add_pips": null,
+        "avg_loss": -29793.0,
+        "avg_win": 4598.0,
+        "bucket": "PYRAMID_WITH_MOVE",
+        "clusters": 2,
+        "entries": 10,
+        "expectancy_jpy": -12597.5,
+        "max_entries": 8,
+        "median_entries": 5.0,
+        "median_hold_hours": 3.61,
+        "multi_entry_clusters": 2,
+        "net_jpy": -25195.0,
+        "payoff": 0.15,
+        "pyramid_adds": 8,
+        "win_rate": 0.5
+      },
+      "raw": {
+        "adverse_adds": 0,
+        "avg_adverse_add_pips": null,
+        "avg_loss": -29793.0,
+        "avg_win": 12005.0,
+        "bucket": "PYRAMID_WITH_MOVE",
+        "clusters": 3,
+        "entries": 21,
+        "expectancy_jpy": -1927.7,
+        "max_entries": 11,
+        "median_entries": 8,
+        "median_hold_hours": 6.98,
+        "multi_entry_clusters": 3,
+        "net_jpy": -5783.0,
+        "payoff": 0.4,
+        "pyramid_adds": 18,
+        "win_rate": 0.667
+      }
+    },
+    "worst_day": [
+      "2025-07-11",
+      -183158.0
+    ]
+  },
+  "recommendation": {
+    "bad_red_day_tolerance": {
+      "interpretation": "With +10% good days, the 30-day 4x plan can mathematically absorb several red/flat days; the exact allowance must be recomputed from realized red-day severity, not assumed as permission to take weak trades.",
+      "model_b_red_day_math": {
+        "mathematical_empirical_red_days_for_30d_multiplier": {
+          "assumed_good_day_return_pct": 10.0,
+          "assumed_red_day_return_pct": -7.62,
+          "ending_multiplier_at_boundary": 4.3178,
+          "good_days_required": 22,
+          "max_red_days": 8
+        },
+        "mathematical_flat_red_days_for_30d_multiplier": {
+          "assumed_good_day_return_pct": 10.0,
+          "assumed_red_day_return_pct": 0.0,
+          "ending_multiplier_at_boundary": 4.1772,
+          "good_days_required": 15,
+          "max_red_days": 15
+        },
+        "policy_allowed": "Allowed when no current edge; the rolling window must recover with later high-quality days."
+      },
+      "observed_2025_active_days": {
+        "active_days": 25,
+        "average_red_return_pct": -8.42,
+        "best_daily_return_pct": 44.2,
+        "green_days": 12,
+        "hit_10pct_days": 3,
+        "hit_5pct_days": 7,
+        "median_red_return_pct": -7.62,
+        "red_days": 13,
+        "worst_daily_return_pct": -21.29
+      }
+    },
+    "behaviors_to_block": [
+      "Counting OPERATOR_MANUAL / USER_ALPHA results as system profitability.",
+      "Forcing entries on no-edge days to satisfy a same-day hard target.",
+      "Margin-closeout tolerance or any unbounded long unattended hold.",
+      "With-move pyramiding without current basket/portfolio risk validation.",
+      "Adverse adds that are not bounded by thesis invalidation, current location, and margin budget.",
+      "USD_JPY-only rules; convert precedent into pair-agnostic theme/location/session/shape checks.",
+      "Broker SL or close logic that does not represent thesis invalidation."
+    ],
+    "missing_data": [
+      "Intraday account-equity curve around deposits/withdrawals, so day-start equity remains estimated.",
+      "MFE/MAE path per 2025 manual exit for exact drawdown and red-day severity modeling.",
+      "Pair-agnostic H4/D context for every 2025 manual trade; current manual-context audit is H1/M5-centered.",
+      "Explicit origin tags in 2025 history distinguishing operator discovery, system management, and user-alpha reloads.",
+      "Current execution ledger close rows do not always preserve lane/client id on the closing event; attribution is conservative.",
+      "No Notion page was found that directly defines the rolling 30-day 4x policy; this report derives it from the user objective plus local precedent."
+    ],
+    "target_policy": "Optimize for Model B: rolling 30-day 4x account growth.",
+    "use_of_5pct": "PACE_MARKER: use +5% to measure whether the rolling plan is on schedule, to trigger review when missed, and to unlock protection-first behavior when reached; do not force bad-day trades solely to print +5%.",
+    "when_10pct_allowed": "Only when the existing 10% Extension Gate is YES: strong progress or protected S/A carry, hero thesis still paying, broad theme/trend confirmation, stable spread, no near whipsaw event, and real reload/second-shot levels.",
+    "why": [
+      "The 2025 manual precedent verifies a best funding-adjusted 30-day return above 4x while still containing red days; that shape is rolling-window performance, not a clean fixed +5% every UTC day.",
+      "Model A compounds to a slightly higher 30-day multiplier than 4x and treats ordinary bad/no-edge days as failures, increasing forced overtrading risk.",
+      "Model B preserves the arithmetic ambition while letting +5% act as a pace marker and incident diagnostic instead of an order-forcing rule."
+    ]
+  },
+  "source_provenance": {
+    "local": [
+      "/Users/tossaki/App/QuantRabbit/data/manual_history_2025_mining.json",
+      "/Users/tossaki/App/QuantRabbit/data/operator_precedent_audit.json",
+      "/Users/tossaki/App/QuantRabbit/data/manual_market_context_audit.json",
+      "/Users/tossaki/App/QuantRabbit/data/daily_target_state.json",
+      "/Users/tossaki/App/QuantRabbit/data/execution_ledger.db",
+      "docs/trade_case_studies/",
+      "collab_trade/strategy_memory.md",
+      "docs/CHANGELOG.md"
+    ],
+    "notion_reviewed": [
+      {
+        "title": "quantrabbit trade reference",
+        "url": "https://app.notion.com/p/38ef1c8e53a781eb8243ee2342891f2c",
+        "used_for": "confirmed QuantRabbit local/project reference."
+      },
+      {
+        "title": "NAV percent for asset-relative numbers",
+        "url": "https://app.notion.com/p/38ef1c8e53a7818499b4ef739905e1a5",
+        "used_for": "kept target, drawdown, and return comparisons in NAV percent rather than stale JPY thresholds."
+      },
+      {
+        "title": "basket execution + pace cap",
+        "url": "https://app.notion.com/p/38ef1c8e53a7816eb2fff7e443a76524",
+        "used_for": "forced-overtrading risk: extreme pace divisors and narrow basket selection can shrink trade size into the noise floor."
+      },
+      {
+        "title": "routine owns trading",
+        "url": "https://app.notion.com/p/38ef1c8e53a7815ab946d33a299600b5",
+        "used_for": "kept this task read-only and analysis/report-only."
+      }
+    ]
+  },
+  "status": "TARGET_CADENCE_ANALYSIS_READY",
+  "target_models": {
+    "assumptions": {
+      "calendar_days": 30,
+      "daily_pace_marker_pct": 5.0,
+      "empirical_red_day_return_pct": -7.62,
+      "empirical_red_day_source": "median red day from reconstructed 2025 UTC daily table",
+      "good_market_day_return_pct": 10.0,
+      "trading_days_per_30d": 22
+    },
+    "model_a_fixed_daily_5pct": {
+      "description": "Fixed daily +5%, +10% on good markets, daily underperformance pressure.",
+      "drawdown_sensitivity": [
+        {
+          "drawdown_pct": 5.0,
+          "elapsed_days": 1,
+          "remaining_days": 29,
+          "required_remaining_daily_return_pct": 5.36
+        },
+        {
+          "drawdown_pct": 10.0,
+          "elapsed_days": 1,
+          "remaining_days": 29,
+          "required_remaining_daily_return_pct": 5.56
+        },
+        {
+          "drawdown_pct": 20.0,
+          "elapsed_days": 1,
+          "remaining_days": 29,
+          "required_remaining_daily_return_pct": 5.99
+        },
+        {
+          "drawdown_pct": 5.0,
+          "elapsed_days": 10,
+          "remaining_days": 20,
+          "required_remaining_daily_return_pct": 7.87
+        },
+        {
+          "drawdown_pct": 10.0,
+          "elapsed_days": 10,
+          "remaining_days": 20,
+          "required_remaining_daily_return_pct": 8.16
+        },
+        {
+          "drawdown_pct": 20.0,
+          "elapsed_days": 10,
+          "remaining_days": 20,
+          "required_remaining_daily_return_pct": 8.8
+        },
+        {
+          "drawdown_pct": 5.0,
+          "elapsed_days": 15,
+          "remaining_days": 15,
+          "required_remaining_daily_return_pct": 10.63
+        },
+        {
+          "drawdown_pct": 10.0,
+          "elapsed_days": 15,
+          "remaining_days": 15,
+          "required_remaining_daily_return_pct": 11.03
+        },
+        {
+          "drawdown_pct": 20.0,
+          "elapsed_days": 15,
+          "remaining_days": 15,
+          "required_remaining_daily_return_pct": 11.9
+        }
+      ],
+      "equivalent_30d_multiplier": 4.3219,
+      "red_days_allowed_if_good_days_hit_10pct": {
+        "mathematical_empirical_red_days_for_30d_multiplier": {
+          "assumed_good_day_return_pct": 10.0,
+          "assumed_red_day_return_pct": -7.62,
+          "ending_multiplier_at_boundary": 5.1414,
+          "good_days_required": 23,
+          "max_red_days": 7
+        },
+        "mathematical_flat_red_days_for_30d_multiplier": {
+          "assumed_good_day_return_pct": 10.0,
+          "assumed_red_day_return_pct": 0.0,
+          "ending_multiplier_at_boundary": 4.595,
+          "good_days_required": 16,
+          "max_red_days": 14
+        },
+        "policy_allowed": 0
+      },
+      "required_average_daily_return_pct": 5.0,
+      "required_average_trading_day_return_pct": 6.88,
+      "risk_of_forced_overtrading": "HIGH: a hard same-day +5% obligation turns normal red/no-edge days into incident pressure and can force churn after the edge is gone."
+    },
+    "model_b_rolling_30d_4x": {
+      "description": "Rolling 30-day 4x account growth, +5% as daily pace marker, +10% only on favorable days, no forced bad-day trading.",
+      "drawdown_sensitivity": [
+        {
+          "drawdown_pct": 5.0,
+          "elapsed_days": 1,
+          "remaining_days": 29,
+          "required_remaining_daily_return_pct": 5.08
+        },
+        {
+          "drawdown_pct": 10.0,
+          "elapsed_days": 1,
+          "remaining_days": 29,
+          "required_remaining_daily_return_pct": 5.28
+        },
+        {
+          "drawdown_pct": 20.0,
+          "elapsed_days": 1,
+          "remaining_days": 29,
+          "required_remaining_daily_return_pct": 5.71
+        },
+        {
+          "drawdown_pct": 5.0,
+          "elapsed_days": 10,
+          "remaining_days": 20,
+          "required_remaining_daily_return_pct": 7.45
+        },
+        {
+          "drawdown_pct": 10.0,
+          "elapsed_days": 10,
+          "remaining_days": 20,
+          "required_remaining_daily_return_pct": 7.74
+        },
+        {
+          "drawdown_pct": 20.0,
+          "elapsed_days": 10,
+          "remaining_days": 20,
+          "required_remaining_daily_return_pct": 8.38
+        },
+        {
+          "drawdown_pct": 5.0,
+          "elapsed_days": 15,
+          "remaining_days": 15,
+          "required_remaining_daily_return_pct": 10.06
+        },
+        {
+          "drawdown_pct": 10.0,
+          "elapsed_days": 15,
+          "remaining_days": 15,
+          "required_remaining_daily_return_pct": 10.46
+        },
+        {
+          "drawdown_pct": 20.0,
+          "elapsed_days": 15,
+          "remaining_days": 15,
+          "required_remaining_daily_return_pct": 11.33
+        }
+      ],
+      "equivalent_30d_multiplier": 4.0,
+      "red_days_allowed_if_good_days_hit_10pct": {
+        "mathematical_empirical_red_days_for_30d_multiplier": {
+          "assumed_good_day_return_pct": 10.0,
+          "assumed_red_day_return_pct": -7.62,
+          "ending_multiplier_at_boundary": 4.3178,
+          "good_days_required": 22,
+          "max_red_days": 8
+        },
+        "mathematical_flat_red_days_for_30d_multiplier": {
+          "assumed_good_day_return_pct": 10.0,
+          "assumed_red_day_return_pct": 0.0,
+          "ending_multiplier_at_boundary": 4.1772,
+          "good_days_required": 15,
+          "max_red_days": 15
+        },
+        "policy_allowed": "Allowed when no current edge; the rolling window must recover with later high-quality days."
+      },
+      "required_average_daily_return_pct": 4.73,
+      "required_average_trading_day_return_pct": 6.5,
+      "risk_of_forced_overtrading": "LOWER: the model keeps the 4x arithmetic target but lets the trader skip bad days and treat +5% as pace/diagnostic evidence instead of a forced execution trigger."
+    }
+  }
+}
