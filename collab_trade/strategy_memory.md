@@ -35,3 +35,11 @@
 - The EUR_USD LONG operator-discovered winner exposed the gap: the broker/system could manage TP, but the trader did not convert the green outcome into RELOAD / SECOND_SHOT / +5% continuation.
 - `daily-review` now publishes user-led winners separately under `user_alpha_trades` and `user_alpha_continuation`; GPT trader receipts must cite `user_alpha:continuation` and either continue the same pair/side or name an exact blocker and next trigger.
 - Stale pending replacements must carry ignored pending ids through preflight and final send so `BASKET_DUPLICATE_PARENT_LANE` cannot block cancel/replace of the pending order being replaced.
+
+## 2026-06-29 MARKET_READ_FIRST
+
+- A blocker is not a market read. `LIVE_READY=0` is not a market read. Negative expectancy is not a market read.
+- Codex must first predict price, then filter execution.
+- A blocked but correct read is discovery success / execution miss.
+- A wrong read that passes filters is market-read failure.
+- Do not build direction-biased rules from biased samples; read the current chart for both directions first, then let execution gates decide whether anything can be traded.

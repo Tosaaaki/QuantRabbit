@@ -37,6 +37,97 @@ class GPTTraderBrainTest(unittest.TestCase):
             self.assertEqual(payload["verification_issues"], [])
             self.assertIn("GPT Trader Decision Report", (root / "gpt_decision.md").read_text())
 
+    def test_records_market_read_prediction_every_verified_run(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root)
+            brain = _brain(root, files, _trade_decision())
+
+            summary = brain.run(snapshot_path=files["snapshot"])
+
+            self.assertEqual(summary.status, "ACCEPTED")
+            rows = [
+                json.loads(line)
+                for line in (root / "market_read_predictions.jsonl").read_text().splitlines()
+                if line.strip()
+            ]
+            self.assertEqual(len(rows), 1)
+            self.assertEqual(rows[0]["pair"], "EUR_USD")
+            self.assertEqual(rows[0]["direction"], "LONG")
+            self.assertEqual(rows[0]["verdict"], "PENDING")
+            self.assertIn("Market Read Score Report", (root / "market_read_score_report.md").read_text())
+
+    def test_rejects_decision_without_market_read_first(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root)
+            decision = _trade_decision()
+            decision.pop("market_read_first")
+            brain = _brain(root, files, decision)
+
+            summary = brain.run(snapshot_path=files["snapshot"])
+
+            self.assertEqual(summary.status, "REJECTED")
+            payload = json.loads((root / "gpt_decision.json").read_text())
+            codes = {issue["code"] for issue in payload["verification_issues"]}
+            self.assertIn("MARKET_READ_FIRST_MISSING", codes)
+
+    def test_rejects_blocker_before_market_read_first(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root)
+            decision = _trade_decision()
+            generated_at = decision.pop("generated_at_utc")
+            market_read = decision.pop("market_read_first")
+            decision.pop("risk_notes")
+            blocker_first = {
+                "generated_at_utc": generated_at,
+                "risk_notes": ["NO_LIVE_READY_LANES blocker stated before the market read."],
+                "market_read_first": market_read,
+            }
+            blocker_first.update(decision)
+            brain = _brain(root, files, blocker_first)
+
+            summary = brain.run(snapshot_path=files["snapshot"])
+
+            self.assertEqual(summary.status, "REJECTED")
+            payload = json.loads((root / "gpt_decision.json").read_text())
+            codes = {issue["code"] for issue in payload["verification_issues"]}
+            self.assertIn("BLOCKER_BEFORE_MARKET_READ", codes)
+
+    def test_rejects_live_ready_zero_without_naked_market_read(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root)
+            decision = _wait_decision()
+            decision.pop("market_read_first")
+            decision["risk_notes"] = ["LIVE_READY=0 is why we wait."]
+            brain = _brain(root, files, decision)
+
+            summary = brain.run(snapshot_path=files["snapshot"])
+
+            self.assertEqual(summary.status, "REJECTED")
+            payload = json.loads((root / "gpt_decision.json").read_text())
+            codes = {issue["code"] for issue in payload["verification_issues"]}
+            self.assertIn("MARKET_READ_FIRST_MISSING", codes)
+            self.assertIn("LIVE_READY_ZERO_WITHOUT_MARKET_READ", codes)
+
+    def test_rejects_negative_expectancy_as_market_prediction_substitute(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root)
+            decision = _wait_decision()
+            decision.pop("market_read_first")
+            decision["thesis"] = "NEGATIVE_EXPECTANCY blocks this entry, so no market prediction is needed."
+            brain = _brain(root, files, decision)
+
+            summary = brain.run(snapshot_path=files["snapshot"])
+
+            self.assertEqual(summary.status, "REJECTED")
+            payload = json.loads((root / "gpt_decision.json").read_text())
+            codes = {issue["code"] for issue in payload["verification_issues"]}
+            self.assertIn("NEGATIVE_EXPECTANCY_WITHOUT_MARKET_READ", codes)
+
     def test_accepts_user_alpha_matching_trade_when_continuation_is_cited(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -4818,10 +4909,11 @@ def _result(*, lane_id: str = LANE_ID, method: str = "TREND_CONTINUATION") -> di
 def _trade_decision(*, lane_id: str = LANE_ID, method: str = "TREND_CONTINUATION") -> dict:
     return {
         "generated_at_utc": datetime.now(timezone.utc).isoformat(),
+        "market_read_first": _market_read_first(pair="EUR_USD", direction="LONG"),
         "action": "TRADE",
         "selected_lane_id": lane_id,
         "confidence": "HIGH",
-        "thesis": "The live-ready EUR_USD continuation lane has current story and positive mined evidence.",
+        "thesis": "MARKET READ FIRST next 30m/next 2h EUR_USD LONG path supports the live-ready continuation lane.",
         "method": method,
         "narrative": "Momentum and campaign role align with a controlled stop-entry.",
         "chart_story": "Higher lows press into the trigger shelf.",
@@ -4841,7 +4933,45 @@ def _trade_decision(*, lane_id: str = LANE_ID, method: str = "TREND_CONTINUATION
             "news:items",
         ],
         "twenty_minute_plan": _twenty_minute_plan(lane_ids=[lane_id]),
-        "operator_summary": "Accept the verified EUR_USD continuation lane.",
+        "operator_summary": "Accept the verified EUR_USD continuation lane after the next 30m and next 2h market read.",
+    }
+
+
+def _market_read_first(*, pair: str = "EUR_USD", direction: str = "LONG") -> dict:
+    base, quote = pair.split("_", 1) if "_" in pair else (pair, "USD")
+    bought = base if direction == "LONG" else quote
+    sold = quote if direction == "LONG" else base
+    return {
+        "naked_read": {
+            "currency_bought": bought,
+            "currency_sold": sold,
+            "cleanest_pair_expression": pair,
+            "tape_state": "TREND",
+            "what_price_is_trying_to_do_now": f"{pair} is pressing {direction} from the current shelf before execution filters.",
+        },
+        "next_30m_prediction": {
+            "pair": pair,
+            "direction": direction,
+            "expected_path": f"Next 30m {pair} should hold the shelf and push toward 1.1740.",
+            "target_zone": "1.1740",
+            "invalidation": "1.1700",
+        },
+        "next_2h_prediction": {
+            "pair": pair,
+            "direction": direction,
+            "expected_path": f"Next 2h {pair} should extend into 1.1760 if the shelf holds.",
+            "target_zone": "1.1760",
+            "invalidation": "1.1700",
+        },
+        "best_trade_if_forced": {
+            "pair": pair,
+            "direction": direction,
+            "vehicle": "STOP",
+            "entry": "1.1730",
+            "tp": "1.1760",
+            "sl": "1.1700",
+            "why_this_pays": "The forced trade only pays if the naked read reaches target before invalidation.",
+        },
     }
 
 
@@ -5011,6 +5141,7 @@ def _specialist_review(
 def _request_evidence_decision() -> dict:
     return {
         "generated_at_utc": datetime.now(timezone.utc).isoformat(),
+        "market_read_first": _market_read_first(pair="EUR_USD", direction="LONG"),
         "action": "REQUEST_EVIDENCE",
         "selected_lane_id": None,
         "confidence": "HIGH",
@@ -5030,10 +5161,11 @@ def _request_evidence_decision() -> dict:
 def _wait_decision() -> dict:
     return {
         "generated_at_utc": datetime.now(timezone.utc).isoformat(),
+        "market_read_first": _market_read_first(pair="EUR_USD", direction="LONG"),
         "action": "WAIT",
         "selected_lane_id": None,
         "confidence": "MEDIUM",
-        "thesis": "Wait despite the live-ready lane because discretionary timing is not clean enough.",
+        "thesis": "MARKET READ FIRST next 30m/next 2h EUR_USD LONG path is noted, but wait because timing is not clean enough.",
         "method": "EVENT_RISK",
         "narrative": "The lane is executable, but event timing argues for patience this cycle.",
         "chart_story": "The trigger shelf exists, but confirmation has not printed yet.",
@@ -5050,7 +5182,7 @@ def _wait_decision() -> dict:
             "chart:EUR_USD:M5",
         ],
         "twenty_minute_plan": _twenty_minute_plan(lane_ids=[LANE_ID]),
-        "operator_summary": "Wait with an explicit rejection of the current executable lane.",
+        "operator_summary": "Wait with an explicit rejection of the current executable lane after the next 30m and next 2h market read.",
     }
 
 
@@ -5086,6 +5218,7 @@ def _tighten_sl_decision() -> dict:
 def _cancel_pending_decision(*, cancel_order_ids: list[str] | None = None) -> dict:
     return {
         "generated_at_utc": datetime.now(timezone.utc).isoformat(),
+        "market_read_first": _market_read_first(pair="EUR_USD", direction="LONG"),
         "action": "CANCEL_PENDING",
         "selected_lane_id": None,
         "cancel_order_ids": cancel_order_ids or [],
@@ -5161,6 +5294,7 @@ def _close_decision(
     """Decision payload for action=CLOSE with the new discipline fields."""
     decision = {
         "generated_at_utc": datetime.now(timezone.utc).isoformat(),
+        "market_read_first": _market_read_first(pair="EUR_USD", direction="LONG"),
         "action": "CLOSE",
         "selected_lane_id": None,
         "selected_lane_ids": [],

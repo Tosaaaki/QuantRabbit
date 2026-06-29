@@ -98,6 +98,8 @@ from quant_rabbit.paths import (
     DEFAULT_IMPORT_REPORT,
     DEFAULT_MARKET_STATUS,
     DEFAULT_MARKET_STATUS_REPORT,
+    DEFAULT_MARKET_READ_PREDICTIONS,
+    DEFAULT_MARKET_READ_SCORE_REPORT,
     DEFAULT_LIVE_ORDER_REQUEST,
     DEFAULT_LIVE_ORDER_STAGE_REPORT,
     DEFAULT_LEGACY_ARCHIVE,
@@ -3365,6 +3367,12 @@ def main(argv: list[str] | None = None) -> int:
         help="Lookback window in hours (default: env QR_DAILY_REVIEW_LOOKBACK_HOURS or 24).",
     )
     p_dreview.add_argument(
+        "--market-read-predictions",
+        type=Path,
+        default=DEFAULT_MARKET_READ_PREDICTIONS,
+        help="Path to market_read_predictions.jsonl for market-read accuracy scoring.",
+    )
+    p_dreview.add_argument(
         "--dry-run",
         action="store_true",
         help="Compute and print report but do not write the output file.",
@@ -3966,6 +3974,8 @@ def main(argv: list[str] | None = None) -> int:
     p_gpt.add_argument("--max-lanes", type=int, default=DEFAULT_GPT_MAX_LANES)
     p_gpt.add_argument("--output", type=Path, default=DEFAULT_GPT_TRADER_DECISION)
     p_gpt.add_argument("--report", type=Path, default=DEFAULT_GPT_TRADER_DECISION_REPORT)
+    p_gpt.add_argument("--market-read-predictions", type=Path, default=DEFAULT_MARKET_READ_PREDICTIONS)
+    p_gpt.add_argument("--market-read-score-report", type=Path, default=DEFAULT_MARKET_READ_SCORE_REPORT)
 
     p_intents = sub.add_parser("generate-intents", help="Generate dry-run order intents from campaign lanes.")
     p_intents.add_argument("--campaign-plan", type=Path, default=DEFAULT_CAMPAIGN_PLAN)
@@ -5467,7 +5477,11 @@ def main(argv: list[str] | None = None) -> int:
             write_trader_overrides,
         )
         lookback = args.lookback_hours if args.lookback_hours is not None else DAILY_REVIEW_LOOKBACK_HOURS
-        report = compute_daily_review(args.ledger_db, lookback_hours=lookback)
+        report = compute_daily_review(
+            args.ledger_db,
+            lookback_hours=lookback,
+            market_read_score_path=args.market_read_predictions,
+        )
         if not args.dry_run:
             write_trader_overrides(report, args.output)
         print(json.dumps({
@@ -5476,6 +5490,7 @@ def main(argv: list[str] | None = None) -> int:
             "narrative_summary": report.narrative_summary,
             "bias_overrides": report.bias_overrides,
             "blocked_lanes": report.blocked_lanes,
+            "market_read_review": report.market_read_review,
             "lookback_hours": lookback,
         }, ensure_ascii=False, indent=2, sort_keys=True))
         return 0
@@ -7462,6 +7477,8 @@ def main(argv: list[str] | None = None) -> int:
                 trader_overrides_path=args.trader_overrides,
                 output_path=args.output,
                 report_path=args.report,
+                market_read_predictions_path=args.market_read_predictions,
+                market_read_score_report_path=args.market_read_score_report,
                 max_lanes=args.max_lanes,
             ).run(snapshot_path=args.snapshot)
         except (RuntimeError, ValueError, OSError, json.JSONDecodeError) as exc:

@@ -2,6 +2,7 @@
 
 ## 2026-06-29
 
+- Added MARKET_READ_FIRST receipt discipline: GPT trader receipts must include naked read, 30m/2h prediction, and forced-trade read before blockers; verifier rejects blocker-first, LIVE_READY=0-only, and NEGATIVE_EXPECTANCY-only reasoning; market-read predictions are recorded/scored separately from trade P/L.
 - Added USER_ALPHA / OPERATOR_ALPHA continuation handling: daily-review publishes profitable user-led winners separately, GPT trader receipts must answer continuation or exact blocker, and stale pending replacement sends retain ignored pending ids through final gateway validation.
 - Added controlled target-path live routing behind `QR_TARGET_PATH_LIVE_ENABLED=1`, with LiveOrderGateway receipts and LIVE-LEARNING daily-review classification.
 

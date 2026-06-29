@@ -598,6 +598,52 @@ class DailyReviewTest(unittest.TestCase):
 
             self.assertEqual(report.target_path_live_reviews[0]["classification"], "vehicle failure")
 
+    def test_market_read_review_scores_prediction_accuracy_separately_from_trade_pl(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "ledger.db"
+            _make_db(db_path, [])
+            score_path = Path(tmp) / "market_read_predictions.jsonl"
+            rows = [
+                {
+                    "generated_at_utc": self._ts(3),
+                    "pair": "EUR_USD",
+                    "direction": "LONG",
+                    "action": "WAIT",
+                    "verification_status": "REJECTED",
+                    "verdict": "CORRECT",
+                    "thirty_minute_verdict": "CORRECT",
+                    "two_hour_verdict": "CORRECT",
+                },
+                {
+                    "generated_at_utc": self._ts(2),
+                    "pair": "GBP_USD",
+                    "direction": "SHORT",
+                    "action": "TRADE",
+                    "verification_status": "ACCEPTED",
+                    "verdict": "WRONG",
+                    "thirty_minute_verdict": "WRONG",
+                    "two_hour_verdict": "WRONG",
+                },
+            ]
+            score_path.write_text("".join(json.dumps(row) + "\n" for row in rows))
+
+            report = compute_daily_review(db_path, now=self.now, market_read_score_path=score_path)
+            review = report.market_read_review
+
+            self.assertEqual(report.bias_overrides, {})
+            self.assertEqual(review["total_predictions"], 2)
+            self.assertEqual(review["resolved_predictions"], 2)
+            self.assertEqual(review["full_read_accuracy_pct"], 50.0)
+            self.assertEqual(review["accuracy_30m_pct"], 50.0)
+            self.assertEqual(review["accuracy_2h_pct"], 50.0)
+            self.assertEqual(review["blocked_but_correct_read_count"], 1)
+            self.assertEqual(review["wrong_read_traded_count"], 1)
+            self.assertIn("market-read: 2/2 resolved full_accuracy=50.0", report.narrative_summary)
+            self.assertEqual(
+                report.to_dict()["_diagnostics"]["market_read_review"]["verdict_counts"],
+                {"CORRECT": 1, "WRONG": 1},
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

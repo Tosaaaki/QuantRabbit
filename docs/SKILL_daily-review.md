@@ -48,12 +48,28 @@ Profitable manual/operator-discovered outcomes are classified separately from sy
 
 `daily-review` writes profitable user-led outcomes under `user_alpha_trades` and the active obligation under `user_alpha_continuation` in `data/trader_overrides.json`. These rows must not be folded into system direction bias, same-day loss streaks, or bot expectancy. They are continuation evidence for the next trader receipt.
 
+## Market Read Review
+
+For every row in `data/market_read_predictions.jsonl`, score the market read separately from trade P/L:
+
+- 30m prediction accuracy.
+- 2h prediction accuracy.
+- Full-read verdict: `CORRECT`, `WRONG`, `MIXED`, or `INVALIDATED_FIRST`; unresolved rows remain `PENDING`.
+- Whether blockers prevented a correct read from being traded.
+- Whether a wrong read still passed filters and was traded.
+- Best-trade-if-forced outcome count, separate from actual execution.
+- Codex read vs operator manual trade comparison when operator-manual comparison evidence exists; otherwise mark unknown.
+
+This is discovery/execution separation. A blocked but correct read is discovery success / execution miss. A wrong read that passes filters is market-read failure. Do not turn negative expectancy, `LIVE_READY=0`, or blocker codes into a substitute for current tape prediction.
+
 ## Required Evidence
 
 - `data/daily_target_state.json`
 - `docs/daily_target_report.md`
 - `data/order_intents.json`
 - `docs/gpt_trader_decision_report.md`
+- `data/market_read_predictions.jsonl`
+- `docs/market_read_score_report.md`
 - `docs/autotrade_cycle_report.md`
 - `docs/execution_ledger_report.md`
 - `tools/position_sizing.py` or `tools/place_trader_order.py` dry-run output for fresh target-path orders

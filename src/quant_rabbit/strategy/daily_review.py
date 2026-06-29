@@ -64,6 +64,7 @@ class DailyReviewReport:
     target_path_live_reviews: list[dict[str, Any]] = field(default_factory=list)
     user_alpha_trades: list[dict[str, Any]] = field(default_factory=list)
     user_alpha_continuation: dict[str, Any] = field(default_factory=dict)
+    market_read_review: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict:
         out = {
@@ -74,6 +75,7 @@ class DailyReviewReport:
             "target_path_live_reviews": self.target_path_live_reviews,
             "user_alpha_trades": self.user_alpha_trades,
             "user_alpha_continuation": self.user_alpha_continuation,
+            "market_read_review": self.market_read_review,
             "_diagnostics": {
                 "source_window_start_utc": self.source_window_start_utc,
                 "source_window_end_utc": self.source_window_end_utc,
@@ -90,6 +92,7 @@ class DailyReviewReport:
                 "lane_loss_counts": self.lane_loss_counts,
                 "target_path_live_review_counts": _target_path_live_review_counts(self.target_path_live_reviews),
                 "user_alpha_counts": _user_alpha_counts(self.user_alpha_trades),
+                "market_read_review": self.market_read_review,
             },
         }
         return out
@@ -615,6 +618,132 @@ def _user_alpha_counts(trades: list[dict[str, Any]]) -> dict[str, int]:
     return counts
 
 
+def _market_read_review(
+    path: Path | None,
+    window_start: datetime,
+    window_end: datetime,
+) -> dict[str, Any]:
+    base = {
+        "status": "NO_MARKET_READ_SCORE_PATH",
+        "total_predictions": 0,
+        "resolved_predictions": 0,
+        "pending_predictions": 0,
+        "verdict_counts": {},
+        "accuracy_30m_pct": None,
+        "accuracy_2h_pct": None,
+        "full_read_accuracy_pct": None,
+        "blocked_but_correct_read_count": 0,
+        "wrong_read_traded_count": 0,
+        "best_trade_if_forced_correct_count": 0,
+        "best_trade_if_forced_wrong_count": 0,
+        "codex_vs_operator_manual_trade": "UNKNOWN_NO_OPERATOR_MANUAL_COMPARISON",
+        "examples": [],
+    }
+    if path is None:
+        return base
+    if not path.exists():
+        out = dict(base)
+        out["status"] = "MISSING"
+        out["path"] = str(path)
+        return out
+
+    rows: list[dict[str, Any]] = []
+    malformed = 0
+    try:
+        with path.open(encoding="utf-8") as handle:
+            for line in handle:
+                if not line.strip():
+                    continue
+                try:
+                    payload = json.loads(line)
+                except json.JSONDecodeError:
+                    malformed += 1
+                    continue
+                if not isinstance(payload, dict):
+                    malformed += 1
+                    continue
+                generated_at = _parse_utc(payload.get("generated_at_utc"))
+                if generated_at is None or generated_at < window_start or generated_at > window_end:
+                    continue
+                rows.append(payload)
+    except OSError as exc:
+        out = dict(base)
+        out.update({"status": "UNREADABLE", "path": str(path), "error": str(exc)})
+        return out
+
+    verdict_counts: dict[str, int] = {}
+    for row in rows:
+        verdict = str(row.get("verdict") or "PENDING")
+        verdict_counts[verdict] = verdict_counts.get(verdict, 0) + 1
+    resolved = [row for row in rows if str(row.get("verdict") or "PENDING") != "PENDING"]
+    pending = [row for row in rows if str(row.get("verdict") or "PENDING") == "PENDING"]
+    resolved_30m = [row for row in rows if str(row.get("thirty_minute_verdict") or "PENDING") != "PENDING"]
+    resolved_2h = [row for row in rows if str(row.get("two_hour_verdict") or "PENDING") != "PENDING"]
+
+    blocked_correct = [
+        row for row in resolved
+        if row.get("verdict") == "CORRECT"
+        and (row.get("action") != "TRADE" or row.get("verification_status") != "ACCEPTED")
+    ]
+    wrong_traded = [
+        row for row in resolved
+        if row.get("action") == "TRADE"
+        and row.get("verification_status") == "ACCEPTED"
+        and row.get("verdict") in {"WRONG", "INVALIDATED_FIRST"}
+    ]
+    forced_correct = [row for row in resolved if row.get("verdict") in {"CORRECT", "MIXED"}]
+    forced_wrong = [row for row in resolved if row.get("verdict") in {"WRONG", "INVALIDATED_FIRST"}]
+
+    examples = []
+    for row in rows[-8:]:
+        examples.append(
+            {
+                "generated_at_utc": row.get("generated_at_utc"),
+                "pair": row.get("pair"),
+                "direction": row.get("direction"),
+                "action": row.get("action"),
+                "verification_status": row.get("verification_status"),
+                "verdict": row.get("verdict"),
+                "thirty_minute_verdict": row.get("thirty_minute_verdict"),
+                "two_hour_verdict": row.get("two_hour_verdict"),
+            }
+        )
+
+    return {
+        "status": "OK" if not malformed else "WARN_MALFORMED_ROWS",
+        "path": str(path),
+        "malformed_rows": malformed,
+        "total_predictions": len(rows),
+        "resolved_predictions": len(resolved),
+        "pending_predictions": len(pending),
+        "verdict_counts": verdict_counts,
+        "accuracy_30m_pct": _pct(
+            sum(1 for row in resolved_30m if row.get("thirty_minute_verdict") == "CORRECT"),
+            len(resolved_30m),
+        ),
+        "accuracy_2h_pct": _pct(
+            sum(1 for row in resolved_2h if row.get("two_hour_verdict") == "CORRECT"),
+            len(resolved_2h),
+        ),
+        "full_read_accuracy_pct": _pct(
+            sum(1 for row in resolved if row.get("verdict") == "CORRECT"),
+            len(resolved),
+        ),
+        "blocked_but_correct_read_count": len(blocked_correct),
+        "wrong_read_traded_count": len(wrong_traded),
+        "best_trade_if_forced_correct_count": len(forced_correct),
+        "best_trade_if_forced_wrong_count": len(forced_wrong),
+        "codex_vs_operator_manual_trade": "UNKNOWN_NO_OPERATOR_MANUAL_COMPARISON",
+        "examples": examples,
+    }
+
+
+def _pct(numerator: int, denominator: int) -> float | None:
+    if denominator <= 0:
+        return None
+    return round(numerator / denominator * 100.0, 1)
+
+
 def _table_columns(conn: sqlite3.Connection, table_name: str) -> set[str]:
     try:
         return {str(row[1]) for row in conn.execute(f"PRAGMA table_info({table_name})").fetchall()}
@@ -779,6 +908,7 @@ def compute_daily_review(
     *,
     now: datetime | None = None,
     lookback_hours: float = DAILY_REVIEW_LOOKBACK_HOURS,
+    market_read_score_path: Path | None = None,
 ) -> DailyReviewReport:
     """Build a DailyReviewReport from recent closed trades."""
     now = now or datetime.now(timezone.utc)
@@ -791,6 +921,7 @@ def compute_daily_review(
     target_path_live_reviews = _read_live_target_path_reviews(db_path, window_start, window_end)
     user_alpha_trades = _read_user_alpha_trades(db_path, window_start, window_end)
     user_alpha_continuation = _user_alpha_continuation_packet(user_alpha_trades)
+    market_read = _market_read_review(market_read_score_path, window_start, window_end)
 
     # Aggregate per (pair, direction)
     pair_pl, pair_count, lane_losses = _aggregate_rows(rows)
@@ -865,6 +996,12 @@ def compute_daily_review(
             f"{float(latest_alpha.get('realized_pl_jpy') or 0.0):+.0f}JPY "
             f"({latest_alpha.get('classification') or 'USER_ALPHA'})"
         )
+    if market_read.get("total_predictions"):
+        parts.append(
+            "market-read: "
+            f"{market_read.get('resolved_predictions', 0)}/{market_read.get('total_predictions', 0)} resolved "
+            f"full_accuracy={market_read.get('full_read_accuracy_pct')}"
+        )
     if not parts:
         parts.append(f"no decisive (pair, direction) signal in last {lookback_hours:.0f}h")
     narrative = "; ".join(parts)
@@ -886,6 +1023,7 @@ def compute_daily_review(
         target_path_live_reviews=target_path_live_reviews,
         user_alpha_trades=user_alpha_trades,
         user_alpha_continuation=user_alpha_continuation,
+        market_read_review=market_read,
     )
 
 

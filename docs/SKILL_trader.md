@@ -120,6 +120,43 @@ python3 tools/session_data.py
 Required trader block:
 
 ```markdown
+## MARKET READ FIRST
+Naked read:
+- Currency bought:
+- Currency sold:
+- Cleanest pair expression:
+- Tape state: TREND / RANGE / SQUEEZE / FADE / ROTATION
+- What price is trying to do now:
+
+Next 30m prediction:
+- Pair:
+- Direction:
+- Expected path:
+- Target zone:
+- Invalidation:
+
+Next 2h prediction:
+- Pair:
+- Direction:
+- Expected path:
+- Target zone:
+- Invalidation:
+
+Best trade if forced:
+- Pair:
+- Direction:
+- Vehicle: MARKET / LIMIT / STOP
+- Entry:
+- TP:
+- SL:
+- Why this pays:
+
+Execution filters after the read:
+- LIVE_READY lanes:
+- Exact blockers:
+- Negative expectancy / capture economics context:
+- Final action:
+
 ## 5% PATH BOARD
 Remaining to +5%:
 
@@ -206,6 +243,10 @@ Next trigger:
 ```
 
 Path rules:
+- Start with `MARKET READ FIRST` every cycle before citing LIVE_READY count, blocker codes, negative expectancy, margin, target pressure, or pending-order repair.
+- A blocker is not a market read. `LIVE_READY=0` is not a market read. Negative expectancy is not a market read. Predict price first, then filter execution.
+- A blocked but correct read is discovery success / execution miss. A wrong read that passes filters is market-read failure.
+- Final `TRADE` / `WAIT` text must reference the next 30m or next 2h prediction from `MARKET READ FIRST`.
 - Under +5%, trader must name an A/S path or exact blocker.
 - B/C trades cannot be the +5% target path.
 - One distant pending order is not enough.

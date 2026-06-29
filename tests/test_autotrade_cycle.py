@@ -7562,10 +7562,11 @@ def _gpt_trade_decision(
 ) -> dict:
     return {
         "generated_at_utc": (datetime.now(timezone.utc) + timedelta(minutes=1)).isoformat(),
+        "market_read_first": _gpt_market_read_first(pair=pair, direction=direction),
         "action": "TRADE",
         "selected_lane_id": lane_id,
         "confidence": "HIGH",
-        "thesis": "The live-ready EUR_USD continuation lane has current story and repaired risk geometry.",
+        "thesis": "MARKET READ FIRST next 30m/next 2h path supports the live-ready continuation lane.",
         "method": method,
         "narrative": "Momentum and campaign role align with a controlled stop-entry.",
         "chart_story": "Higher lows press into the trigger shelf.",
@@ -7585,7 +7586,45 @@ def _gpt_trade_decision(
             "news:items",
         ],
         "twenty_minute_plan": _gpt_twenty_minute_plan(lane_ids=[lane_id], pair=pair),
-        "operator_summary": "Accept the verified EUR_USD continuation lane.",
+        "operator_summary": "Accept the verified EUR_USD continuation lane after the next 30m and next 2h market read.",
+    }
+
+
+def _gpt_market_read_first(*, pair: str = "EUR_USD", direction: str = "LONG") -> dict:
+    base, quote = pair.split("_", 1) if "_" in pair else (pair, "USD")
+    bought = base if direction == "LONG" else quote
+    sold = quote if direction == "LONG" else base
+    return {
+        "naked_read": {
+            "currency_bought": bought,
+            "currency_sold": sold,
+            "cleanest_pair_expression": pair,
+            "tape_state": "TREND",
+            "what_price_is_trying_to_do_now": f"{pair} is pressing {direction} before execution filters.",
+        },
+        "next_30m_prediction": {
+            "pair": pair,
+            "direction": direction,
+            "expected_path": f"Next 30m {pair} should hold the operating shelf and press toward target.",
+            "target_zone": "1.1740" if not pair.endswith("_JPY") else "158.00",
+            "invalidation": "1.1700" if not pair.endswith("_JPY") else "156.80",
+        },
+        "next_2h_prediction": {
+            "pair": pair,
+            "direction": direction,
+            "expected_path": f"Next 2h {pair} should extend if the shelf remains intact.",
+            "target_zone": "1.1760" if not pair.endswith("_JPY") else "158.40",
+            "invalidation": "1.1700" if not pair.endswith("_JPY") else "156.80",
+        },
+        "best_trade_if_forced": {
+            "pair": pair,
+            "direction": direction,
+            "vehicle": "STOP",
+            "entry": "1.1730" if not pair.endswith("_JPY") else "157.40",
+            "tp": "1.1760" if not pair.endswith("_JPY") else "158.40",
+            "sl": "1.1700" if not pair.endswith("_JPY") else "156.80",
+            "why_this_pays": "The forced trade only pays if the naked read reaches target before invalidation.",
+        },
     }
 
 
@@ -7620,6 +7659,7 @@ def _gpt_twenty_minute_plan(*, lane_ids: list[str] | None = None, pair: str = "E
 def _gpt_close_decision(trade_ids: list[str]) -> dict:
     return {
         "generated_at_utc": (datetime.now(timezone.utc) + timedelta(minutes=1)).isoformat(),
+        "market_read_first": _gpt_market_read_first(),
         "action": "CLOSE",
         "selected_lane_id": None,
         "selected_lane_ids": [],
@@ -7708,10 +7748,11 @@ def _write_learning_audit_artifacts(root: Path, *, attack_advice_path: Path, lan
 def _gpt_wait_decision() -> dict:
     return {
         "generated_at_utc": (datetime.now(timezone.utc) + timedelta(minutes=1)).isoformat(),
+        "market_read_first": _gpt_market_read_first(),
         "action": "WAIT",
         "selected_lane_id": None,
         "confidence": "MEDIUM",
-        "thesis": "Wait despite a live-ready lane because discretionary timing is not clean enough.",
+        "thesis": "MARKET READ FIRST next 30m/next 2h path is noted, but wait because timing is not clean enough.",
         "method": "EVENT_RISK",
         "narrative": "The lane is executable, but the operator asks for patience this cycle.",
         "chart_story": "The trigger shelf exists, but confirmation has not printed yet.",
@@ -7732,13 +7773,14 @@ def _gpt_wait_decision() -> dict:
         "twenty_minute_plan": _gpt_twenty_minute_plan(
             lane_ids=["trend_trader:EUR_USD:LONG:TREND_CONTINUATION:MARKET"]
         ),
-        "operator_summary": "Wait even though a live-ready lane exists.",
+        "operator_summary": "Wait even though a live-ready lane exists after the next 30m and next 2h market read.",
     }
 
 
 def _gpt_cancel_pending_decision(cancel_order_ids: list[str]) -> dict:
     return {
         "generated_at_utc": (datetime.now(timezone.utc) + timedelta(minutes=1)).isoformat(),
+        "market_read_first": _gpt_market_read_first(),
         "action": "CANCEL_PENDING",
         "selected_lane_id": None,
         "cancel_order_ids": cancel_order_ids,
