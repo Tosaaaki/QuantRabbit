@@ -3974,8 +3974,8 @@ def main(argv: list[str] | None = None) -> int:
     p_gpt.add_argument("--max-lanes", type=int, default=DEFAULT_GPT_MAX_LANES)
     p_gpt.add_argument("--output", type=Path, default=DEFAULT_GPT_TRADER_DECISION)
     p_gpt.add_argument("--report", type=Path, default=DEFAULT_GPT_TRADER_DECISION_REPORT)
-    p_gpt.add_argument("--market-read-predictions", type=Path, default=DEFAULT_MARKET_READ_PREDICTIONS)
-    p_gpt.add_argument("--market-read-score-report", type=Path, default=DEFAULT_MARKET_READ_SCORE_REPORT)
+    p_gpt.add_argument("--market-read-predictions", type=Path, default=None)
+    p_gpt.add_argument("--market-read-score-report", type=Path, default=None)
 
     p_intents = sub.add_parser("generate-intents", help="Generate dry-run order intents from campaign lanes.")
     p_intents.add_argument("--campaign-plan", type=Path, default=DEFAULT_CAMPAIGN_PLAN)
