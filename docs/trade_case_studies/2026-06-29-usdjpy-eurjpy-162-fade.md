@@ -141,6 +141,18 @@ confirmed acceptance-above-figure invalidation, or much smaller scout sizing.
    into strategy repair evidence rather than treated as unrelated manual
    exposure.
 
+## Implemented Repair 2026-06-30
+
+- `LiveOrderGateway` now writes `sl_lint` for every staged broker SL and blocks
+  non-emergency stops inside major-figure, spread/ATR noise, wick/stop-run,
+  event/intervention, and duplicated JPY-theme zones.
+- `gpt-trader-decision` now emits `THESIS_INVALIDATION_EXIT_REQUIRED` when a
+  loss-side close cites red P/L, `NEGATIVE_EXPECTANCY`, duplicate blockers, low
+  `LIVE_READY`, or old SL templates without Gate A thesis invalidation.
+- `POST_STOP_THESIS_REVIEW` answers whether the thesis failed or the broker SL
+  failed, so a 162.00 stop-out followed by intended-direction movement becomes
+  re-entry/scout evidence instead of being misread as a bad market thesis.
+
 ## Review Questions
 
 1. Should major-figure fade trades be SL-free by default, with explicit
@@ -157,4 +169,3 @@ confirmed acceptance-above-figure invalidation, or much smaller scout sizing.
 
 5. How should operator manual success be converted into future live gating
    without overfitting or enabling revenge trades?
-

@@ -6019,6 +6019,9 @@ class AutoTradeCycleTest(unittest.TestCase):
     def test_gpt_can_select_prefiltered_discretionary_penalty_lane(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
+            # This test exercises GPT selection of a prefiltered discretionary
+            # penalty lane, not pair-margin concentration sizing.
+            self._default_settings_path.write_text(json.dumps({"risk": {"max_loss_pct": 0.10}}) + "\n")
             now = datetime.now(timezone.utc)
             client = FakeCycleClient(
                 BrokerSnapshot(

@@ -262,6 +262,13 @@ class LiveOrderGateway:
         )
         send_issues = _send_guard_issues(send=send, confirm_live=confirm_live, lane_id=lane_id)
         target_path_issues = _target_path_live_send_issues(intent, send=send)
+        sl_lint, sl_lint_issues = _sl_lint_result(
+            intent=intent,
+            snapshot=snapshot,
+            order_request=order_request,
+            metrics=risk.metrics,
+            attached_stop_metrics=attached_stop_metrics,
+        )
         all_blocked = (
             any(issue["severity"] == "BLOCK" for issue in risk_issues)
             or any(issue["severity"] == "BLOCK" for issue in strategy_issues)
@@ -270,6 +277,7 @@ class LiveOrderGateway:
             or any(issue["severity"] == "BLOCK" for issue in self_improvement_issues)
             or any(issue["severity"] == "BLOCK" for issue in send_issues)
             or any(issue["severity"] == "BLOCK" for issue in target_path_issues)
+            or any(issue["severity"] == "BLOCK" for issue in sl_lint_issues)
             or any(issue.severity == "BLOCK" for issue in scale_issues)
         )
         all_blocked = all_blocked or any(issue["severity"] == "BLOCK" for issue in order_build_issues)
@@ -339,6 +347,7 @@ class LiveOrderGateway:
             ),
             "risk_metrics": asdict(risk.metrics) if risk.metrics else None,
             "attached_stop_risk_metrics": attached_stop_metrics,
+            "sl_lint": sl_lint,
             "risk_issues": [
                 *risk_issues,
                 *intent_status_issues,
@@ -346,6 +355,7 @@ class LiveOrderGateway:
                 *self_improvement_issues,
                 *send_issues,
                 *target_path_issues,
+                *sl_lint_issues,
                 *order_build_issues,
                 *[issue.__dict__ for issue in scale_issues],
                 *entry_thesis_issues,
@@ -725,6 +735,13 @@ class LiveOrderGateway:
         )
         send_issues = _send_guard_issues(send=send, confirm_live=confirm_live, lane_id=lane_id_arg)
         target_path_issues = _target_path_live_send_issues(intent, send=send)
+        sl_lint, sl_lint_issues = _sl_lint_result(
+            intent=intent,
+            snapshot=snapshot,
+            order_request=order_request,
+            metrics=risk.metrics,
+            attached_stop_metrics=attached_stop_metrics,
+        )
         all_blocked = (
             any(issue["severity"] == "BLOCK" for issue in risk_issues)
             or any(issue["severity"] == "BLOCK" for issue in strategy_issues)
@@ -733,6 +750,7 @@ class LiveOrderGateway:
             or any(issue["severity"] == "BLOCK" for issue in self_improvement_issues)
             or any(issue["severity"] == "BLOCK" for issue in send_issues)
             or any(issue["severity"] == "BLOCK" for issue in target_path_issues)
+            or any(issue["severity"] == "BLOCK" for issue in sl_lint_issues)
             or any(issue.severity == "BLOCK" for issue in scale_issues)
         )
         all_blocked = all_blocked or any(issue["severity"] == "BLOCK" for issue in order_build_issues)
@@ -797,6 +815,7 @@ class LiveOrderGateway:
             ),
             "risk_metrics": asdict(risk.metrics) if risk.metrics else None,
             "attached_stop_risk_metrics": attached_stop_metrics,
+            "sl_lint": sl_lint,
             "risk_issues": [
                 *risk_issues,
                 *intent_status_issues,
@@ -804,6 +823,7 @@ class LiveOrderGateway:
                 *self_improvement_issues,
                 *send_issues,
                 *target_path_issues,
+                *sl_lint_issues,
                 *order_build_issues,
                 *[issue.__dict__ for issue in scale_issues],
                 *entry_thesis_issues,
@@ -1233,6 +1253,7 @@ class LiveOrderGateway:
                         f"  - attached broker SL: `{attached_stop['basis']}` price=`{attached_stop['price']}` "
                         f"loss=`{attached_stop['loss_pips']:.1f}pip` risk=`{attached_stop['risk_jpy']:.1f} JPY`"
                     )
+                lines.extend(_sl_lint_report_lines(item.get("sl_lint"), prefix="  - "))
                 lines.extend(_sizing_evidence_report_lines(item.get("sizing_evidence"), prefix="  - "))
                 lines.extend(_target_path_receipt_report_lines(item.get("target_path_receipt"), prefix="  - "))
         order = None if batch_orders else result.get("order_request")
@@ -1265,6 +1286,7 @@ class LiveOrderGateway:
                     f"- attached broker SL: `{attached_stop['basis']}` price=`{attached_stop['price']}` "
                     f"loss=`{attached_stop['loss_pips']:.1f}pip` risk=`{attached_stop['risk_jpy']:.1f} JPY`"
                 )
+            lines.extend(_sl_lint_report_lines(result.get("sl_lint"), prefix="- "))
             lines.extend(_sizing_evidence_report_lines(result.get("sizing_evidence"), prefix="- "))
             lines.extend(_target_path_receipt_report_lines(result.get("target_path_receipt"), prefix="- "))
         elif not batch_orders:
@@ -1822,6 +1844,447 @@ def _attached_stop_risk_metrics(
         "risk_delta_jpy": risk_jpy - metrics.risk_jpy,
         "loss_delta_pips": loss_pips - metrics.loss_pips,
     }
+
+
+SL_LINT_ALLOWED_PURPOSES = {
+    "protection": "protection",
+    "thesis_invalidation": "thesis invalidation",
+    "thesis invalidation": "thesis invalidation",
+    "emergency_only": "emergency only",
+    "emergency only": "emergency only",
+}
+
+
+def _sl_lint_result(
+    *,
+    intent: OrderIntent,
+    snapshot: BrokerSnapshot,
+    order_request: dict[str, Any] | None,
+    metrics: RiskMetrics | None,
+    attached_stop_metrics: dict[str, Any] | None,
+) -> tuple[dict[str, Any], list[dict[str, str]]]:
+    metadata = intent.metadata or {}
+    attached_sl = _raw_dependent_price(order_request or {}, "stopLossOnFill")
+    purpose = _sl_lint_purpose(intent, attached_stop_metrics)
+    invalidation_price = _sl_lint_invalidation_price(intent, attached_sl)
+    invalidation_structure = _sl_lint_first_text(
+        metadata,
+        "invalidation_structure",
+        "sl_invalidation_structure",
+        "structure_invalidation",
+        "thesis_invalidation_structure",
+    )
+    if not invalidation_structure and intent.market_context is not None:
+        invalidation_structure = intent.market_context.invalidation
+    what_proves_dead = _sl_lint_first_text(
+        metadata,
+        "what_proves_thesis_dead",
+        "thesis_dead_condition",
+        "sl_thesis_dead_condition",
+        "invalidation_condition",
+    )
+    if not what_proves_dead and intent.market_context is not None:
+        what_proves_dead = intent.market_context.invalidation
+
+    noise_floor_pips = _sl_lint_normal_noise_floor_pips(intent, snapshot, metrics)
+    battle_zone_pips = _sl_lint_battle_zone_pips(intent, noise_floor_pips)
+    base = {
+        "status": "PASS",
+        "attached_stop_present": attached_sl is not None,
+        "stop_mode": "BROKER_SL" if attached_sl is not None else "NO_BROKER_SL",
+        "sl_purpose": purpose,
+        "attached_stop_price": _price(intent.pair, attached_sl) if attached_sl is not None else None,
+        "attached_stop_basis": (
+            attached_stop_metrics.get("basis") if isinstance(attached_stop_metrics, dict) else None
+        ),
+        "invalidation_price": _price(intent.pair, invalidation_price) if invalidation_price is not None else None,
+        "invalidation_structure": invalidation_structure or "not supplied",
+        "why_sl_outside_normal_noise": "no broker trading SL attached; intent invalidation remains management evidence",
+        "what_proves_thesis_dead": what_proves_dead or "not supplied",
+        "normal_noise_floor_pips": round(noise_floor_pips, 4),
+        "battle_zone_pips": round(battle_zone_pips, 4),
+        "theme_group": _jpy_theme_group(intent),
+        "jpy_theme_invalidation_price": _sl_lint_theme_invalidation_price(intent),
+        "issues": [],
+    }
+    if attached_sl is None:
+        return base, []
+
+    issues: list[dict[str, str]] = []
+    emergency_only = purpose == "emergency only"
+    attached_loss_pips = None
+    if isinstance(attached_stop_metrics, dict):
+        attached_loss_pips = _positive_float(attached_stop_metrics.get("loss_pips"))
+    if attached_loss_pips is None and metrics is not None:
+        attached_loss_pips = _sl_lint_loss_pips(intent, attached_sl, metrics.entry_price)
+    if attached_loss_pips is not None:
+        base["attached_stop_loss_pips"] = round(attached_loss_pips, 4)
+        base["why_sl_outside_normal_noise"] = (
+            f"attached stop is {attached_loss_pips:.1f}pip from entry vs normal-noise floor "
+            f"{noise_floor_pips:.1f}pip derived from live spread/ATR context"
+        )
+        if attached_loss_pips + 1e-6 < noise_floor_pips:
+            issues.append(
+                _sl_lint_issue(
+                    "SL_LINT_NORMAL_NOISE_BAND",
+                    f"{intent.pair} {intent.side.value} broker SL is {attached_loss_pips:.1f}pip from entry, "
+                    f"inside the {noise_floor_pips:.1f}pip normal-noise floor; this is not thesis invalidation",
+                    severity="WARN" if emergency_only else "BLOCK",
+                )
+            )
+
+    major_levels = _sl_lint_major_levels(intent, attached_sl)
+    for level in major_levels:
+        distance_pips = _sl_lint_distance_pips(intent.pair, attached_sl, level["price"])
+        if distance_pips is not None and distance_pips <= battle_zone_pips:
+            base["major_figure_battle_zone"] = {
+                "level": _price(intent.pair, level["price"]),
+                "source": level["source"],
+                "distance_pips": round(distance_pips, 4),
+            }
+            issues.append(
+                _sl_lint_issue(
+                    "SL_LINT_MAJOR_FIGURE_BATTLE_ZONE",
+                    f"{intent.pair} broker SL {_price(intent.pair, attached_sl)} sits {distance_pips:.1f}pip from "
+                    f"{level['source']} {_price(intent.pair, level['price'])}; avoid major-figure battle zones "
+                    "unless this is emergency-only protection",
+                    severity="WARN" if emergency_only else "BLOCK",
+                )
+            )
+            break
+
+    wick_zone = _sl_lint_matching_zone(intent, attached_sl, _SL_LINT_WICK_ZONE_KEYS)
+    if wick_zone is not None:
+        base["recent_wick_stop_run_zone"] = wick_zone
+        issues.append(
+            _sl_lint_issue(
+                "SL_LINT_RECENT_WICK_STOP_RUN_ZONE",
+                f"{intent.pair} broker SL {_price(intent.pair, attached_sl)} is inside {wick_zone['label']} "
+                f"{wick_zone['low']}..{wick_zone['high']}; wick/stop-run zones do not prove thesis failure",
+                severity="WARN" if emergency_only else "BLOCK",
+            )
+        )
+
+    event_zone = _sl_lint_matching_zone(intent, attached_sl, _SL_LINT_EVENT_ZONE_KEYS)
+    event_text_hit = _sl_lint_event_intervention_text_hit(intent)
+    if event_zone is not None or (event_text_hit and "major_figure_battle_zone" in base):
+        if event_zone is not None:
+            base["event_intervention_zone"] = event_zone
+            message = (
+                f"{intent.pair} broker SL {_price(intent.pair, attached_sl)} is inside {event_zone['label']} "
+                f"{event_zone['low']}..{event_zone['high']}; event/intervention zones need wider or emergency-only handling"
+            )
+        else:
+            message = (
+                f"{intent.pair} broker SL is in a JPY major-figure zone while the receipt cites intervention/event risk; "
+                "that zone needs shared thesis invalidation or emergency-only handling"
+            )
+        issues.append(
+            _sl_lint_issue(
+                "SL_LINT_EVENT_INTERVENTION_ZONE",
+                message,
+                severity="WARN" if emergency_only else "BLOCK",
+            )
+        )
+
+    theme_issue = _sl_lint_jpy_theme_issue(
+        intent=intent,
+        snapshot=snapshot,
+        attached_sl=attached_sl,
+        emergency_only=emergency_only,
+    )
+    if theme_issue is not None:
+        issues.append(theme_issue)
+
+    status = "BLOCK" if any(issue["severity"] == "BLOCK" for issue in issues) else ("WARN" if issues else "PASS")
+    base["status"] = status
+    base["issues"] = issues
+    return base, issues
+
+
+def _sl_lint_purpose(intent: OrderIntent, attached_stop_metrics: dict[str, Any] | None) -> str:
+    if isinstance(attached_stop_metrics, dict) and attached_stop_metrics.get("basis") == "DISASTER_SL":
+        return "emergency only"
+    raw = str((intent.metadata or {}).get("sl_purpose") or "").strip().lower().replace("-", "_")
+    if raw in SL_LINT_ALLOWED_PURPOSES:
+        return SL_LINT_ALLOWED_PURPOSES[raw]
+    mode = str((intent.metadata or {}).get("broker_stop_loss_mode") or "").strip().upper()
+    if mode in {"DISASTER_SL", "EMERGENCY_ONLY"}:
+        return "emergency only"
+    if mode in {"PROTECTION", "PROTECTIVE"}:
+        return "protection"
+    return "thesis invalidation"
+
+
+def _sl_lint_invalidation_price(intent: OrderIntent, attached_sl: float | None) -> float | None:
+    metadata = intent.metadata or {}
+    for key in (
+        "invalidation_price",
+        "forecast_invalidation_price",
+        "sl_invalidation_price",
+        "thesis_invalidation_price",
+        "jpy_theme_invalidation_price",
+        "theme_invalidation_price",
+    ):
+        value = _positive_float(metadata.get(key))
+        if value is not None:
+            return value
+    return attached_sl if attached_sl is not None else _positive_float(intent.sl)
+
+
+def _sl_lint_first_text(metadata: dict[str, Any], *keys: str) -> str:
+    for key in keys:
+        value = metadata.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return ""
+
+
+def _sl_lint_normal_noise_floor_pips(
+    intent: OrderIntent,
+    snapshot: BrokerSnapshot,
+    metrics: RiskMetrics | None,
+) -> float:
+    spread_pips = None
+    if metrics is not None:
+        spread_pips = _positive_float(metrics.spread_pips)
+    if spread_pips is None:
+        quote = snapshot.quotes.get(intent.pair)
+        spec = DEFAULT_SPECS.get(intent.pair)
+        if quote is not None and spec is not None:
+            spread_pips = abs(quote.ask - quote.bid) * spec.pip_factor
+    floor = (spread_pips or 0.0) * RiskPolicy().min_stop_spread_multiple
+    metadata = intent.metadata or {}
+    for key in ("tp_atr_pips", "atr_pips", "m15_atr_pips", "h1_atr_pips", "normal_noise_floor_pips"):
+        value = _positive_float(metadata.get(key))
+        if value is not None:
+            floor = max(floor, value)
+    return max(0.0, floor)
+
+
+def _sl_lint_battle_zone_pips(intent: OrderIntent, noise_floor_pips: float) -> float:
+    metadata = intent.metadata or {}
+    width = noise_floor_pips
+    for key in ("level_cluster_radius_pips", "major_figure_radius_pips", "tp_atr_pips", "atr_pips"):
+        value = _positive_float(metadata.get(key))
+        if value is not None:
+            width = max(width, value)
+    return width
+
+
+def _sl_lint_loss_pips(intent: OrderIntent, stop_price: float, entry_price: float) -> float | None:
+    spec = DEFAULT_SPECS.get(intent.pair)
+    if spec is None:
+        return None
+    if intent.side == Side.LONG:
+        return max(0.0, (entry_price - stop_price) * spec.pip_factor)
+    return max(0.0, (stop_price - entry_price) * spec.pip_factor)
+
+
+def _sl_lint_distance_pips(pair: str, first: float, second: float) -> float | None:
+    spec = DEFAULT_SPECS.get(pair)
+    if spec is None:
+        return None
+    return abs(first - second) * spec.pip_factor
+
+
+def _sl_lint_major_levels(intent: OrderIntent, attached_sl: float) -> list[dict[str, Any]]:
+    metadata = intent.metadata or {}
+    levels: list[dict[str, Any]] = []
+    for key in ("nearest_levels_above", "nearest_levels_below", "key_levels", "major_levels"):
+        raw = metadata.get(key)
+        if not isinstance(raw, list):
+            continue
+        for item in raw:
+            if not isinstance(item, dict):
+                continue
+            source = str(item.get("source") or item.get("label") or key).strip()
+            level_price = _positive_float(item.get("price"))
+            if level_price is None:
+                continue
+            if "round" in source.lower() or "major" in source.lower() or key == "major_levels":
+                levels.append({"price": level_price, "source": source or key})
+    if intent.pair.endswith("_JPY") and _sl_lint_implicit_jpy_major_figure_active(intent):
+        figure = float(round(attached_sl))
+        if figure > 0:
+            levels.append({"price": figure, "source": "JPY integer major figure"})
+    deduped: list[dict[str, Any]] = []
+    seen: set[tuple[float, str]] = set()
+    for level in levels:
+        key = (round(float(level["price"]), _price_precision(intent.pair)), str(level["source"]))
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(level)
+    return deduped
+
+
+def _sl_lint_implicit_jpy_major_figure_active(intent: OrderIntent) -> bool:
+    text = _sl_lint_text_blob(intent).lower()
+    return any(
+        marker in text
+        for marker in (
+            "major figure",
+            "round number",
+            "psychological",
+            "intervention",
+            "rate check",
+            "event risk",
+            "介入",
+        )
+    )
+
+
+_SL_LINT_WICK_ZONE_KEYS = (
+    ("recent_wick_zone_low", "recent_wick_zone_high", "recent wick zone"),
+    ("recent_stop_run_zone_low", "recent_stop_run_zone_high", "recent stop-run zone"),
+    ("stop_run_zone_low", "stop_run_zone_high", "stop-run zone"),
+    ("wick_zone_low", "wick_zone_high", "wick zone"),
+)
+_SL_LINT_EVENT_ZONE_KEYS = (
+    ("event_risk_zone_low", "event_risk_zone_high", "event risk zone"),
+    ("intervention_risk_zone_low", "intervention_risk_zone_high", "intervention risk zone"),
+)
+
+
+def _sl_lint_matching_zone(
+    intent: OrderIntent,
+    attached_sl: float,
+    zone_keys: tuple[tuple[str, str, str], ...],
+) -> dict[str, Any] | None:
+    metadata = intent.metadata or {}
+    for low_key, high_key, label in zone_keys:
+        low = _positive_float(metadata.get(low_key))
+        high = _positive_float(metadata.get(high_key))
+        if low is None or high is None:
+            continue
+        lower, upper = sorted((low, high))
+        if lower <= attached_sl <= upper:
+            return {
+                "label": label,
+                "low": _price(intent.pair, lower),
+                "high": _price(intent.pair, upper),
+            }
+    return None
+
+
+def _sl_lint_event_intervention_text_hit(intent: OrderIntent) -> bool:
+    text = _sl_lint_text_blob(intent).lower()
+    return any(
+        marker in text
+        for marker in (
+            "intervention",
+            "rate check",
+            "event risk",
+            "boj",
+            "mof",
+            "jpy short",
+            "yen intervention",
+            "介入",
+        )
+    )
+
+
+def _sl_lint_text_blob(intent: OrderIntent) -> str:
+    parts = [intent.thesis, intent.reason]
+    if intent.market_context is not None:
+        parts.extend(
+            [
+                intent.market_context.regime,
+                intent.market_context.narrative,
+                intent.market_context.chart_story,
+                intent.market_context.invalidation,
+                intent.market_context.event_risk,
+                intent.market_context.session,
+            ]
+        )
+    for key, value in (intent.metadata or {}).items():
+        if isinstance(value, str):
+            parts.append(value)
+        elif isinstance(value, (int, float, bool)):
+            parts.append(f"{key}={value}")
+        elif isinstance(value, (list, tuple)):
+            parts.extend(str(item) for item in value if isinstance(item, str))
+    return " ".join(str(part) for part in parts if part)
+
+
+def _jpy_theme_group(intent: OrderIntent) -> str | None:
+    if not intent.pair.endswith("_JPY"):
+        return None
+    return "JPY_WEAKNESS" if intent.side == Side.LONG else "JPY_STRENGTH_REVERSAL"
+
+
+def _sl_lint_theme_invalidation_price(intent: OrderIntent) -> str | None:
+    for key in ("jpy_theme_invalidation_price", "theme_invalidation_price"):
+        value = _positive_float((intent.metadata or {}).get(key))
+        if value is not None:
+            return _price(intent.pair, value)
+    return None
+
+
+def _sl_lint_jpy_theme_issue(
+    *,
+    intent: OrderIntent,
+    snapshot: BrokerSnapshot,
+    attached_sl: float,
+    emergency_only: bool,
+) -> dict[str, str] | None:
+    theme = _jpy_theme_group(intent)
+    if theme is None or _sl_lint_theme_invalidation_price(intent) is not None:
+        return None
+    conflicts: list[str] = []
+    for position in snapshot.positions:
+        if position.owner != Owner.TRADER or not position.pair.endswith("_JPY") or position.pair == intent.pair:
+            continue
+        if _jpy_theme_group_for(position.pair, position.side) == theme:
+            conflicts.append(f"position {position.trade_id} {position.pair} {position.side.value}")
+    for order in snapshot.orders:
+        if not _is_trader_pending_entry(order) or not order.pair or not order.pair.endswith("_JPY") or order.pair == intent.pair:
+            continue
+        if not order.units:
+            continue
+        side = Side.LONG if order.units > 0 else Side.SHORT
+        if _jpy_theme_group_for(order.pair, side) == theme:
+            conflicts.append(f"pending order {order.order_id} {order.pair} {side.value}")
+    if not conflicts:
+        return None
+    return _sl_lint_issue(
+        "SL_LINT_JPY_THEME_INVALIDATION_REQUIRED",
+        f"{intent.pair} {intent.side.value} broker SL {_price(intent.pair, attached_sl)} creates a separate "
+        f"{theme} stop while {'; '.join(conflicts)} already carries the same JPY theme. Use one theme-level "
+        "invalidation and shared JPY-theme risk budget instead of per-pair tight broker SLs.",
+        severity="WARN" if emergency_only else "BLOCK",
+    )
+
+
+def _jpy_theme_group_for(pair: str, side: Side) -> str | None:
+    if not pair.endswith("_JPY"):
+        return None
+    return "JPY_WEAKNESS" if side == Side.LONG else "JPY_STRENGTH_REVERSAL"
+
+
+def _sl_lint_issue(code: str, message: str, *, severity: str = "BLOCK") -> dict[str, str]:
+    return {"severity": severity, "code": code, "message": message}
+
+
+def _sl_lint_report_lines(value: Any, *, prefix: str) -> list[str]:
+    if not isinstance(value, dict) or not value:
+        return []
+    lines = [
+        f"{prefix}SL_LINT: status=`{value.get('status')}` purpose=`{value.get('sl_purpose')}` "
+        f"invalidation=`{value.get('invalidation_price')}` noise_floor=`{value.get('normal_noise_floor_pips')}pip`"
+    ]
+    dead = str(value.get("what_proves_thesis_dead") or "").strip()
+    if dead and dead != "not supplied":
+        lines.append(f"{prefix}SL proves dead: `{dead}`")
+    issue_codes = [
+        str(issue.get("code"))
+        for issue in value.get("issues", [])
+        if isinstance(issue, dict) and issue.get("code")
+    ]
+    if issue_codes:
+        lines.append(f"{prefix}SL_LINT issues: `{', '.join(issue_codes)}`")
+    return lines
 
 
 def _attached_stop_loss_cap_jpy(intent: OrderIntent, policy_max_loss_jpy: float | None) -> float | None:

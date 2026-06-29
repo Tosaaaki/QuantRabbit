@@ -14,13 +14,41 @@ from quant_rabbit.cli import main
 from quant_rabbit.execution_timing_contracts import (
     TP_PROGRESS_REPAIR_LIVE_EVIDENCE_BOUNDARY_UTC,
 )
-from quant_rabbit.gpt_trader import GPTTraderBrain, StaticTraderProvider, draft_trader_decision
+from quant_rabbit.gpt_trader import (
+    GPTTraderBrain,
+    StaticTraderProvider,
+    draft_trader_decision,
+    post_stop_thesis_review,
+)
 
 
 LANE_ID = "trend_trader:EUR_USD:LONG:TREND_CONTINUATION"
 
 
 class GPTTraderBrainTest(unittest.TestCase):
+    def test_post_stop_thesis_review_marks_noise_stop_for_reentry(self) -> None:
+        review = post_stop_thesis_review(
+            {
+                "trade_id": "t-stop",
+                "pair": "USD_JPY",
+                "side": "SHORT",
+                "gateway_action": "STOP_LOSS_ORDER",
+                "realized_pl_jpy": -180.0,
+                "post_close_favorable_pips": 18.0,
+                "sl_lint": {
+                    "issues": [
+                        {"code": "SL_LINT_MAJOR_FIGURE_BATTLE_ZONE", "severity": "BLOCK"}
+                    ]
+                },
+            }
+        )
+
+        self.assertFalse(review["thesis_failed"])
+        self.assertTrue(review["price_later_moved_intended_direction"])
+        self.assertTrue(review["broker_sl_failure"])
+        self.assertTrue(review["sl_inside_noise_or_battle_zone"])
+        self.assertEqual(review["next_cycle_action"], "RE_ENTER")
+
     def test_accepts_schema_valid_evidence_cited_live_ready_trade(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -5817,6 +5845,56 @@ class CloseDisciplineTest(unittest.TestCase):
             payload = json.loads((root / "gpt_decision.json").read_text())
             codes = {issue["code"] for issue in payload["verification_issues"]}
             self.assertIn("CLOSE_THESIS_STILL_VALID", codes)
+
+    def test_loss_close_rejected_when_negative_pl_is_only_reason(self) -> None:
+        _os.environ["QR_OPERATOR_CLOSE_OVERRIDE"] = "1"
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _close_fixtures(
+                root,
+                position_side="SHORT",
+                m15_dir="DOWN",
+                h4_dir="DOWN",
+                unrealized_pl_jpy=-200.0,
+            )
+            decision = _close_decision(trade_ids=["555"])
+            decision["thesis"] = "Close because unrealized P/L is negative, not because structure failed."
+            decision["risk_notes"] = ["negative P/L on a red position is the close reason."]
+            brain = _brain(root, files, decision)
+
+            summary = brain.run(snapshot_path=files["snapshot"])
+
+            self.assertEqual(summary.status, "REJECTED")
+            payload = json.loads((root / "gpt_decision.json").read_text())
+            codes = {issue["code"] for issue in payload["verification_issues"]}
+            self.assertIn("CLOSE_THESIS_STILL_VALID", codes)
+            self.assertIn("THESIS_INVALIDATION_EXIT_REQUIRED", codes)
+
+    def test_loss_close_rejected_when_negative_expectancy_is_only_reason(self) -> None:
+        _os.environ["QR_OPERATOR_CLOSE_OVERRIDE"] = "1"
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _close_fixtures(
+                root,
+                position_side="SHORT",
+                m15_dir="DOWN",
+                h4_dir="DOWN",
+                unrealized_pl_jpy=-200.0,
+            )
+            decision = _close_decision(trade_ids=["555"])
+            decision["risk_notes"] = [
+                "NEGATIVE_EXPECTANCY says the execution shape is weak; close this trade."
+            ]
+            decision["evidence_refs"].append("self_improvement:finding:NEGATIVE_EXPECTANCY")
+            brain = _brain(root, files, decision)
+
+            summary = brain.run(snapshot_path=files["snapshot"])
+
+            self.assertEqual(summary.status, "REJECTED")
+            payload = json.loads((root / "gpt_decision.json").read_text())
+            codes = {issue["code"] for issue in payload["verification_issues"]}
+            self.assertIn("CLOSE_THESIS_STILL_VALID", codes)
+            self.assertIn("THESIS_INVALIDATION_EXIT_REQUIRED", codes)
 
     def test_close_accepted_when_m15_bos_against_side_and_operator_authorized(self) -> None:
         # SHORT position + M15 prints BOS_UP (against SHORT) → soft Gate A.

@@ -398,6 +398,43 @@ def _decision_text_blob(decision: "GPTTraderDecision") -> str:
     return " ".join(part for part in parts if part)
 
 
+_FORBIDDEN_LOSS_EXIT_REASON_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
+    (
+        "unrealized P/L",
+        re.compile(r"\bunrealized\s*(?:p/l|pl|profit.?loss)\b", re.IGNORECASE),
+    ),
+    (
+        "negative P/L",
+        re.compile(r"\bnegative\s*(?:p/l|pl|profit.?loss)\b|\bred\s+position\b|\btemporarily\s+red\b|\bunderwater\b", re.IGNORECASE),
+    ),
+    (
+        "NEGATIVE_EXPECTANCY",
+        re.compile(r"\bnegative[_\s-]*expectancy\b|\bNEGATIVE_EXPECTANCY\b", re.IGNORECASE),
+    ),
+    (
+        "duplicate blocker",
+        re.compile(r"\bduplicate\s+(?:blocker|parent|geometry|basket)\b|\bBASKET_DUPLICATE[A-Z0-9_]*\b", re.IGNORECASE),
+    ),
+    (
+        "low LIVE_READY",
+        re.compile(r"\b(?:NO[_\s-]*LIVE[_\s-]*READY|LIVE[_\s-]*READY\s*=\s*0|LIVE[_\s-]*READY[^.]{0,40}\blow\b)", re.IGNORECASE),
+    ),
+    (
+        "prior SL template",
+        re.compile(r"\b(?:prior|old)\s+SL\s+template\b|\b(?:prior|old)\s+stop\s+template\b|\bSL\s+template\b", re.IGNORECASE),
+    ),
+)
+
+
+def _non_invalidation_loss_exit_reason_hits(decision: "GPTTraderDecision") -> tuple[str, ...]:
+    text = " ".join((_decision_text_blob(decision), " ".join(decision.evidence_refs)))
+    hits: list[str] = []
+    for label, pattern in _FORBIDDEN_LOSS_EXIT_REASON_PATTERNS:
+        if pattern.search(text):
+            hits.append(label)
+    return tuple(hits)
+
+
 def _decision_cites_user_alpha_exact_blocker(
     decision: "GPTTraderDecision",
     continuation: dict[str, Any],
@@ -3216,6 +3253,7 @@ class DecisionVerifier:
         # Hard Gate A also carries the operator's standing authorization for a
         # justified loss-cut; softer Gate A still needs env/token Gate B.
         still_valid: list[str] = []
+        non_invalidation_loss_exit_reasons: list[str] = []
         same_direction_supported: list[str] = []
         needs_explicit_gate_b: list[str] = []
         needs_profitability_p0_context: list[str] = []
@@ -3270,6 +3308,12 @@ class DecisionVerifier:
                 still_valid.append(
                     f"{tid} ({pair} {side})"
                 )
+                if loss_side_close:
+                    reason_hits = _non_invalidation_loss_exit_reason_hits(decision)
+                    if reason_hits:
+                        non_invalidation_loss_exit_reasons.append(
+                            f"{tid} ({pair} {side}: {', '.join(reason_hits)})"
+                        )
                 self.close_gate_evidence.append(CloseGateEvidence(**evidence))
                 continue
 
@@ -3339,6 +3383,19 @@ class DecisionVerifier:
                     "side on M15/H4, no buffered invalidation_price hit with chart/technical confirmation, and no fresh "
                     "position sidecar REVIEW_CLOSE/RECOMMEND_CLOSE) for: "
                     + ", ".join(still_valid),
+                )
+            )
+
+        if non_invalidation_loss_exit_reasons:
+            issues.append(
+                VerificationIssue(
+                    "THESIS_INVALIDATION_EXIT_REQUIRED",
+                    "CLOSE rejected: a loss-side exit must be justified by price/timeframe/structure/"
+                    "currency-theme invalidation, margin/emergency invalidation, or explicit operator override "
+                    "with matching market evidence. Negative P/L, NEGATIVE_EXPECTANCY, duplicate blockers, "
+                    "low LIVE_READY, or old SL templates are not standalone exit triggers while the thesis "
+                    "is still valid. Forbidden non-invalidation reason(s) cited for: "
+                    + ", ".join(non_invalidation_loss_exit_reasons),
                 )
             )
 
@@ -6202,7 +6259,16 @@ def _execution_timing_audit_packet(payload: dict[str, Any] | None) -> dict[str, 
             "canceled_order_regrets": [],
             "loss_close_regrets": [],
             "market_close_counterfactuals": [],
+            "post_stop_thesis_reviews": [],
         }
+    post_stop_sources = [
+        item
+        for item in (
+            list(payload.get("loss_close_regrets") or [])
+            + list(payload.get("market_close_counterfactuals") or [])
+        )
+        if isinstance(item, dict)
+    ]
     return {
         "evidence_ref": "timing:audit",
         "generated_at_utc": payload.get("generated_at_utc"),
@@ -6366,7 +6432,136 @@ def _execution_timing_audit_packet(payload: dict[str, Any] | None) -> dict[str, 
             for item in (payload.get("market_close_counterfactuals") or [])[:12]
             if isinstance(item, dict)
         ],
+        "post_stop_thesis_reviews": [
+            post_stop_thesis_review(item)
+            for item in post_stop_sources[:12]
+            if _post_stop_review_relevant(item)
+        ],
     }
+
+
+def post_stop_thesis_review(event: dict[str, Any]) -> dict[str, Any]:
+    """Answer the post-stop review questions without treating a stop as thesis failure."""
+
+    event = event if isinstance(event, dict) else {}
+    lint_codes = _post_stop_lint_codes(event)
+    thesis_failure_reasons = _post_stop_thesis_failure_reasons(event)
+    thesis_failed = bool(thesis_failure_reasons)
+    price_later_moved_intended_direction = _post_stop_favorable_followthrough(event)
+    sl_inside_noise_or_battle_zone = bool(
+        event.get("sl_inside_noise_or_battle_zone")
+        or lint_codes.intersection(
+            {
+                "SL_LINT_NORMAL_NOISE_BAND",
+                "SL_LINT_MAJOR_FIGURE_BATTLE_ZONE",
+                "SL_LINT_RECENT_WICK_STOP_RUN_ZONE",
+                "SL_LINT_EVENT_INTERVENTION_ZONE",
+                "SL_LINT_JPY_THEME_INVALIDATION_REQUIRED",
+            }
+        )
+    )
+    stopish = _post_stop_review_relevant(event)
+    broker_sl_failure = (
+        stopish
+        and not thesis_failed
+        and price_later_moved_intended_direction
+        and (sl_inside_noise_or_battle_zone or bool(lint_codes))
+    )
+    if broker_sl_failure:
+        next_cycle_action = "RE_ENTER"
+    elif thesis_failed:
+        next_cycle_action = "WAIT"
+    elif price_later_moved_intended_direction:
+        next_cycle_action = "SCOUT"
+    else:
+        next_cycle_action = "WAIT_FOR_NEW_EVIDENCE"
+    return {
+        "evidence_ref": f"post_stop_review:{event.get('trade_id') or event.get('lane_id') or 'unknown'}",
+        "trade_id": event.get("trade_id"),
+        "lane_id": event.get("lane_id"),
+        "pair": event.get("pair"),
+        "side": event.get("side"),
+        "gateway_action": event.get("gateway_action") or event.get("exit_reason"),
+        "realized_pl_jpy": event.get("realized_pl_jpy"),
+        "thesis_failed": thesis_failed,
+        "thesis_failure_reasons": thesis_failure_reasons,
+        "price_later_moved_intended_direction": price_later_moved_intended_direction,
+        "broker_sl_failure": broker_sl_failure,
+        "sl_inside_noise_or_battle_zone": sl_inside_noise_or_battle_zone,
+        "sl_lint_codes": sorted(lint_codes),
+        "next_cycle_action": next_cycle_action,
+        "review_questions": {
+            "did_thesis_fail": thesis_failed,
+            "what_proved_thesis_dead": thesis_failure_reasons,
+            "did_price_later_move_intended_direction": price_later_moved_intended_direction,
+            "was_sl_inside_noise_or_battle_zone": sl_inside_noise_or_battle_zone,
+            "was_this_broker_sl_failure": broker_sl_failure,
+        },
+    }
+
+
+def _post_stop_review_relevant(event: dict[str, Any]) -> bool:
+    text = " ".join(
+        str(event.get(key) or "")
+        for key in ("gateway_action", "exit_reason", "post_close_path_label")
+    ).upper()
+    return "STOP" in text or bool(event.get("sl_touched_after_market_close") or event.get("sl_touched_before_loss_close"))
+
+
+def _post_stop_lint_codes(event: dict[str, Any]) -> set[str]:
+    codes: set[str] = set()
+    for key in ("sl_lint_codes", "sl_lint_issue_codes"):
+        raw = event.get(key)
+        if isinstance(raw, (list, tuple, set)):
+            codes.update(str(item) for item in raw if str(item))
+    lint = event.get("sl_lint")
+    if isinstance(lint, dict):
+        raw_issues = lint.get("issues")
+        if isinstance(raw_issues, list):
+            for issue in raw_issues:
+                if isinstance(issue, dict) and issue.get("code"):
+                    codes.add(str(issue["code"]))
+        raw_code = lint.get("code")
+        if raw_code:
+            codes.add(str(raw_code))
+    return codes
+
+
+def _post_stop_thesis_failure_reasons(event: dict[str, Any]) -> list[str]:
+    reasons: list[str] = []
+    fields = (
+        ("price_invalidation", "price invalidation"),
+        ("timeframe_invalidation", "timeframe invalidation"),
+        ("structure_invalidation", "structure invalidation"),
+        ("currency_theme_invalidation", "currency-theme invalidation"),
+        ("margin_emergency_invalidation", "margin/emergency invalidation"),
+        ("operator_override", "operator override"),
+        ("gate_a_invalidated", "Gate A invalidation"),
+        ("thesis_failed", "explicit thesis_failed"),
+    )
+    for key, label in fields:
+        if event.get(key) is True:
+            reasons.append(label)
+    for key in ("thesis_failure_reason", "what_proved_thesis_dead", "gate_a_reason"):
+        value = str(event.get(key) or "").strip()
+        if value:
+            reasons.append(value)
+    return reasons
+
+
+def _post_stop_favorable_followthrough(event: dict[str, Any]) -> bool:
+    if event.get("tp_touched_after_market_close") or event.get("tp_touched_after_loss_close"):
+        return True
+    for key in (
+        "post_close_favorable_pips",
+        "favorable_after_stop_pips",
+        "mfe_pips_after_loss_close",
+        "profit_capture_counterfactual_pips",
+    ):
+        value = _optional_float(event.get(key))
+        if value is not None and value > 0:
+            return True
+    return False
 
 
 def _coverage_optimization_packet(payload: dict[str, Any] | None) -> dict[str, Any]:

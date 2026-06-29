@@ -80,6 +80,149 @@ class LiveOrderGatewayTest(unittest.TestCase):
             self.assertEqual(order["timeInForce"], "FOK")
             self.assertNotIn("price", order)
 
+    def test_sl_lint_blocks_jpy_major_figure_battle_zone_stop(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            client = FakeExecutionClient()
+            now = datetime.now(timezone.utc)
+            account = client.snapshot_value.account
+            assert account is not None
+            client.snapshot_value = BrokerSnapshot(
+                fetched_at_utc=now,
+                positions=(),
+                orders=(),
+                quotes={
+                    "USD_JPY": Quote("USD_JPY", bid=161.884, ask=161.894, timestamp_utc=now),
+                },
+                account=account,
+            )
+            intents = _intents(
+                root,
+                order_type="MARKET",
+                metadata={
+                    "desk": "trend_trader",
+                    "campaign_role": "NOW",
+                    "tp_atr_pips": 6.0,
+                    "level_cluster_radius_pips": 8.0,
+                    "nearest_levels_above": [
+                        {"price": 162.0, "source": "levels:round_number"}
+                    ],
+                    "event_risk": "JPY intervention risk near 162.00",
+                },
+            )
+            payload = json.loads(intents.read_text())
+            result = payload["results"][0]
+            result["lane_id"] = "lane:USD_JPY:SHORT"
+            intent = result["intent"]
+            intent.update(
+                {
+                    "pair": "USD_JPY",
+                    "side": "SHORT",
+                    "entry": 161.884,
+                    "tp": 161.720,
+                    "sl": 161.941,
+                    "thesis": "JPY strength reversal fade below 162.00",
+                    "market_context": {
+                        "regime": "TREND_CONTINUATION campaign lane",
+                        "narrative": "JPY intervention risk and reversal pressure near 162.00",
+                        "chart_story": "fade major figure stop run",
+                        "method": "TREND_CONTINUATION",
+                        "invalidation": "clean acceptance above the major figure",
+                    },
+                }
+            )
+            intents.write_text(json.dumps(payload))
+
+            summary = LiveOrderGateway(
+                client=client,
+                strategy_profile=_profile(root, direction="SHORT", pair="USD_JPY"),
+                output_path=root / "request.json",
+                report_path=root / "report.md",
+            ).run(intents_path=intents, lane_id="lane:USD_JPY:SHORT")
+
+            self.assertEqual(summary.status, "BLOCKED")
+            staged = json.loads((root / "request.json").read_text())
+            self.assertEqual(staged["sl_lint"]["status"], "BLOCK")
+            codes = {issue["code"] for issue in staged["risk_issues"]}
+            self.assertIn("SL_LINT_MAJOR_FIGURE_BATTLE_ZONE", codes)
+            self.assertIn("SL_LINT_EVENT_INTERVENTION_ZONE", codes)
+            self.assertEqual(client.orders, [])
+
+    def test_sl_lint_blocks_same_jpy_theme_without_theme_level_invalidation(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            client = FakeExecutionClient()
+            now = datetime.now(timezone.utc)
+            account = client.snapshot_value.account
+            assert account is not None
+            client.snapshot_value = BrokerSnapshot(
+                fetched_at_utc=now,
+                positions=(
+                    BrokerPosition(
+                        trade_id="usd-jpy-short",
+                        pair="USD_JPY",
+                        side=Side.SHORT,
+                        units=1000,
+                        entry_price=161.800,
+                        unrealized_pl_jpy=-120.0,
+                        stop_loss=162.200,
+                        owner=Owner.TRADER,
+                    ),
+                ),
+                orders=(),
+                quotes={
+                    "EUR_JPY": Quote("EUR_JPY", bid=185.500, ask=185.510, timestamp_utc=now),
+                    "USD_JPY": Quote("USD_JPY", bid=161.884, ask=161.894, timestamp_utc=now),
+                },
+                account=account,
+            )
+            intents = _intents(
+                root,
+                order_type="MARKET",
+                metadata={
+                    "desk": "trend_trader",
+                    "campaign_role": "NOW",
+                    "tp_atr_pips": 6.0,
+                    "level_cluster_radius_pips": 8.0,
+                },
+            )
+            payload = json.loads(intents.read_text())
+            result = payload["results"][0]
+            result["lane_id"] = "lane:EUR_JPY:SHORT"
+            intent = result["intent"]
+            intent.update(
+                {
+                    "pair": "EUR_JPY",
+                    "side": "SHORT",
+                    "entry": 185.500,
+                    "tp": 185.200,
+                    "sl": 185.610,
+                    "thesis": "same JPY strength reversal theme on EUR_JPY",
+                    "market_context": {
+                        "regime": "TREND_CONTINUATION campaign lane",
+                        "narrative": "JPY strength reversal theme already active",
+                        "chart_story": "JPY crosses fading together",
+                        "method": "TREND_CONTINUATION",
+                        "invalidation": "theme acceptance against JPY strength",
+                    },
+                }
+            )
+            intents.write_text(json.dumps(payload))
+
+            summary = LiveOrderGateway(
+                client=client,
+                strategy_profile=_profile(root, direction="SHORT", pair="EUR_JPY"),
+                output_path=root / "request.json",
+                report_path=root / "report.md",
+            ).run(intents_path=intents, lane_id="lane:EUR_JPY:SHORT")
+
+            self.assertEqual(summary.status, "BLOCKED")
+            staged = json.loads((root / "request.json").read_text())
+            self.assertEqual(staged["sl_lint"]["theme_group"], "JPY_STRENGTH_REVERSAL")
+            codes = {issue["code"] for issue in staged["risk_issues"]}
+            self.assertIn("SL_LINT_JPY_THEME_INVALIDATION_REQUIRED", codes)
+            self.assertEqual(client.orders, [])
+
     def test_long_limit_crossed_favorably_reprices_passive_instead_of_blocking(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -2723,14 +2866,14 @@ def _gateway_snapshot(*, fetched_at: datetime, eur_usd_quote_time: datetime) -> 
     )
 
 
-def _profile(root: Path, *, direction: str = "LONG") -> Path:
+def _profile(root: Path, *, direction: str = "LONG", pair: str = "EUR_USD") -> Path:
     path = root / "profile.json"
     path.write_text(
         json.dumps(
             {
                 "profiles": [
                     {
-                        "pair": "EUR_USD",
+                        "pair": pair,
                         "direction": direction,
                         "status": "CANDIDATE",
                         "required_fix": "eligible",

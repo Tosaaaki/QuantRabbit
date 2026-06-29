@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-06-30
+
+- Added `SL_LINT`, `THESIS_INVALIDATION_EXIT_REQUIRED`, and `POST_STOP_THESIS_REVIEW`: broker SLs now publish invalidation evidence and block major-figure/noise/wick/event/JPY-theme stop placement; loss-side CLOSE receipts cannot use red P/L, negative expectancy, duplicate blockers, low LIVE_READY, or old SL templates as standalone exit reasons.
+
 ## 2026-06-29
 
 - Added MARKET_READ_FIRST receipt discipline: GPT trader receipts must include naked read, 30m/2h prediction, and forced-trade read before blockers; verifier rejects blocker-first, LIVE_READY=0-only, and NEGATIVE_EXPECTANCY-only reasoning; market-read predictions are recorded/scored separately from trade P/L.

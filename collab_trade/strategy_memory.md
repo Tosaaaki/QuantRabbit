@@ -1,5 +1,12 @@
 # Strategy Memory
 
+## 2026-06-30 SL_LINT / THESIS_INVALIDATION_EXIT
+
+- A stop is not a market read. A red position is not thesis invalidation. Broker SL must represent true invalidation or emergency protection. If the thesis is alive, the system should manage size, time, and exposure, not blindly cut.
+- Broker SLs near major figures, spread/ATR noise, recent wick/stop-run shelves, event/intervention zones, or duplicated same-direction JPY themes must be blocked unless they are explicitly emergency-only and documented as such.
+- Loss-side CLOSE needs real thesis invalidation. Negative P/L, NEGATIVE_EXPECTANCY, duplicate blockers, low LIVE_READY, and stale SL templates are execution-quality evidence, not exit authorization.
+- After a stop-out, review whether the thesis failed or the broker SL failed. If price later moves in the intended direction and the SL was inside a noise/battle zone, the next cycle should consider re-entry/scout instead of treating the stop as proof that the read was wrong.
+
 ## 2026-06-28 UTC Daily Target Engine
 
 - Base operating target is +5% from UTC day-start NAV.
