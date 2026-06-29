@@ -392,6 +392,7 @@ If both contributed in the same commit, include both lines.
 ### Always keep commits current
 - The working tree must be **committed before ending a session**, before switching operator (Codex ↔ Claude), and before any scheduled-task cycle that may run live (`autotrade-cycle --send`).
 - Commit logical units as they finish — do not let unrelated changes pile up across sessions. Untracked or uncommitted work invalidates the audit trail and risks the next operator inheriting an unknown state.
+- A committed change is not finished until it is pushed to the remote tracking branch. When guarded promotion moves `main` or `codex/live-trader-runtime`, push those branch heads too unless the operator explicitly says to keep the work local.
 - Receipts and reports written into `data/` and `docs/*_report.md` are runtime artifacts; commit them only when they are part of a deliberate snapshot, not on every cycle (they are usually `.gitignore`-d under `data/`).
 - Before starting work, run `git status` / `git log -1` to confirm the tree is clean and the previous operator's commit is the latest. If it is not, either commit the leftover changes (with the correct operator attribution) or ask the user before discarding.
 - Never `--amend` a published commit, never force-push, and never skip hooks (`--no-verify`). Stack a new commit instead.
