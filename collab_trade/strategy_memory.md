@@ -1,5 +1,11 @@
 # Strategy Memory
 
+## 2026-06-30 Guardian Wake Dispatch
+
+- Guardian wake is now event-driven through `tools/guardian_wake_dispatcher.py`: the router still detects deterministic events, while the dispatcher starts read-only `codex exec` for GPT-5.5 only when the event is new/severity-increased, broker truth is fresh, no live lock is active, and the dedupe key has not already been reviewed.
+- The wake path is review/receipt only by default. `QR_GUARDIAN_WAKE_GATEWAY_HANDOFF=0` prevents immediate execution; even an enabled handoff must go through the existing `RiskEngine` / `LiveOrderGateway` path and must not create direct OANDA writes.
+- If the full trader is already active, the dispatcher marks `data/guardian_escalation.json` as `queued_for_active_trader`; the next trader cycle must resolve guardian action receipts before normal new entries.
+
 ## 2026-06-30 Target Cadence Policy
 
 - Optimize the system toward rolling 30-day 4x account growth, not a hard forced +5% every UTC day. +5% is a pace marker / review trigger / protection milestone; it must not force bad-day trades.

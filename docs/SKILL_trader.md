@@ -22,6 +22,8 @@ PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli trader-prompt-route
 - Broker truth wins over memory, prose, and prior prompts.
 - OANDA entry orders go only through `LiveOrderGateway`.
 - `guardian-event-router` is read-only: it writes event/wake artifacts for GPT-5.5 and never sends, cancels, or closes broker orders.
+- Read `data/guardian_escalation.json` and `docs/guardian_event_report.md` every cycle; if `data/guardian_action_receipt.json` exists, read it before normal new-entry routing.
+- Resolve queued guardian wake actions before ordinary new entries: `queued_for_active_trader=true` means the dispatcher yielded to the active trader, so the trader must review the event/report/receipt first and either consume the receipt through the normal verifier/gateway path or write the exact reason it is stale/rejected.
 - Target-path entry sends require `QR_TARGET_PATH_LIVE_ENABLED=1` in addition to `QR_LIVE_ENABLED=1`; default is dry-run/stage/LIVE-LEARNING receipt only.
 - OANDA position changes go only through `PositionProtectionGateway`.
 - Direct `OandaExecutionClient.close_trade()` is blocked; live market closes must use the provenance-aware gateway/partial-close paths and leave a position-execution receipt.

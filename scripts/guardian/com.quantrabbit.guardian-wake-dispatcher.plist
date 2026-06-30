@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.quantrabbit.guardian-wake-dispatcher</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>-lc</string>
+    <string>cd /Users/tossaki/App/QuantRabbit-live &amp;&amp; PYTHONPATH=src /opt/homebrew/bin/python3 tools/guardian_wake_dispatcher.py</string>
+  </array>
+  <key>StartInterval</key>
+  <integer>30</integer>
+  <key>StandardOutPath</key>
+  <string>/Users/tossaki/App/QuantRabbit-live/logs/guardian_wake_dispatcher.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/tossaki/App/QuantRabbit-live/logs/guardian_wake_dispatcher.err</string>
+  <key>WorkingDirectory</key>
+  <string>/Users/tossaki/App/QuantRabbit-live</string>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PYTHONPATH</key>
+    <string>src</string>
+    <key>QR_GUARDIAN_WAKE_GATEWAY_HANDOFF</key>
+    <string>0</string>
+  </dict>
+</dict>
+</plist>

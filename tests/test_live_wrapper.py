@@ -198,10 +198,12 @@ class LiveWrapperTest(unittest.TestCase):
             _init_git(root)
             (root / "docs").mkdir(exist_ok=True)
             (root / "docs" / "cycle_report.md").write_text("tracked report\n")
+            (root / "docs" / "guardian_action_review.md").write_text("tracked review\n")
             _run(["git", "add", "."], cwd=root)
             _run(["git", "commit", "-m", "initial"], cwd=root)
             _run(["git", "branch", "-m", "main"], cwd=root)
             (root / "docs" / "cycle_report.md").write_text("runtime drift\n")
+            (root / "docs" / "guardian_action_review.md").write_text("runtime review\n")
             env["QR_SYNC_DEV_ROOT"] = str(root)
             env["QR_SYNC_MAIN_BRANCH"] = "main"
             env["QR_SYNC_MARKER_PATH"] = str(root / "docs" / "sync_report.md")

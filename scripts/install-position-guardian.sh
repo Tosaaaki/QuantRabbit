@@ -71,7 +71,7 @@ status_path() {
 
 is_report_path() {
   local path="$1"
-  [[ "$path" == docs/*_report.md || "$path" == docs/*_report.close_reentry.md ]]
+  [[ "$path" == docs/*_report.md || "$path" == docs/*_report.close_reentry.md || "$path" == docs/guardian_action_review.md ]]
 }
 
 assert_only_report_drift() {
@@ -85,7 +85,7 @@ assert_only_report_drift() {
     fi
   done < <(git -C "$LIVE_ROOT" status --short --untracked-files=all)
   if [[ "$dirty" -ne 0 ]]; then
-    die "live worktree must be clean except docs/*_report.md runtime drift." 3
+    die "live worktree must be clean except report/action-review runtime drift." 3
   fi
 }
 

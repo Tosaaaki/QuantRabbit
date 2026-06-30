@@ -107,7 +107,7 @@ status_lines() {
 
 is_report_path() {
   local path="$1"
-  [[ "$path" == docs/*_report.md || "$path" == docs/*_report.close_reentry.md ]]
+  [[ "$path" == docs/*_report.md || "$path" == docs/*_report.close_reentry.md || "$path" == docs/guardian_action_review.md ]]
 }
 
 status_path() {
@@ -142,7 +142,7 @@ assert_only_report_drift() {
     fi
   done < <(status_lines "$root")
   if [[ "$dirty" -ne 0 ]]; then
-    echo "[sync-live-runtime] $label must be clean except docs/*_report.md runtime drift." >&2
+    echo "[sync-live-runtime] $label must be clean except report/action-review runtime drift." >&2
     exit 3
   fi
 }

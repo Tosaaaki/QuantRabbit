@@ -109,7 +109,7 @@ acquire_lock() {
 
 is_report_path() {
   local path="$1"
-  [[ "$path" == docs/*_report.md || "$path" == docs/*_report.close_reentry.md ]]
+  [[ "$path" == docs/*_report.md || "$path" == docs/*_report.close_reentry.md || "$path" == docs/guardian_action_review.md ]]
 }
 
 clear_runtime_verdict_markers() {
@@ -162,7 +162,7 @@ if [[ "$QR_LIVE_SYNC_ENABLED" == "1" && -x "${ROOT_DIR}/scripts/sync-live-runtim
   set -e
   if [[ "$sync_status" -ne 0 ]]; then
     if can_continue_after_sync_failure; then
-      echo "[run-autotrade-live] live sync failed with status=${sync_status}, but runtime HEAD matches main and only docs/*_report.md drift is present; continuing this trader cycle." >&2
+      echo "[run-autotrade-live] live sync failed with status=${sync_status}, but runtime HEAD matches main and only report/action-review drift is present; continuing this trader cycle." >&2
     else
       exit "$sync_status"
     fi

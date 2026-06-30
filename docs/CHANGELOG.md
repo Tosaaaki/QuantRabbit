@@ -2,6 +2,7 @@
 
 ## 2026-06-30
 
+- Added `tools/guardian_wake_dispatcher.py`, `docs/guardian_wake_prompt.md`, and a launchd plist for event-driven GPT-5.5 guardian wakes through read-only `codex exec`; default behavior writes review/receipt artifacts only, never executes broker actions, and treats generated guardian action reviews as live runtime drift.
 - Activated `ROLLING_30D_4X` in runtime target reporting: trader cycles now surface rolling 30d start equity, current equity, multiplier, remaining-to-4x, required calendar/active-day returns, and pace state; +5% is treated as pace/review/protection rather than forced daily churn.
 - Updated verifier pace pressure so WAIT/REQUEST_EVIDENCE is forced only when A/S or attack-recommended `LIVE_READY` lanes exist; B/C lanes are not forced solely to hit the +5% pace marker.
 - Added `tools/target_cadence_analysis.py` plus target-cadence and trade-shape precedent artifacts comparing hard daily +5% cadence with rolling 30-day 4x growth; recommendation is rolling 30-day 4x, with +5% as a pace marker and +10% only behind the extension gate.
