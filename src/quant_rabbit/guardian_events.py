@@ -26,6 +26,17 @@ EVENT_TYPES = (
     "MARGIN_PRESSURE",
     "UNKNOWN_ORDER",
     "STALE_PENDING",
+    "BROKER_SNAPSHOT_STALE",
+    "SPREAD_ANOMALY",
+    "UNEXPECTED_PROTECTION_MISSING",
+    "CONTRACT_HARVEST_TRIGGER",
+    "CONTRACT_ADD_TRIGGER",
+    "CONTRACT_NO_ADD_TRIGGER",
+    "CONTRACT_WOUNDED_TRIGGER",
+    "CONTRACT_INVALIDATION_TRIGGER",
+    "CONTRACT_EMERGENCY_TRIGGER",
+    "CONTRACT_STALE",
+    "WAKE_PARSE_FAILURE",
 )
 SEVERITY_RANK = {"P2": 1, "P1": 2, "P0": 3}
 THESIS_STATE_RANK = {"UNKNOWN": 0, "ALIVE": 1, "WOUNDED": 2, "INVALIDATED": 3, "EMERGENCY": 4}
@@ -53,6 +64,25 @@ MARGIN_PRESSURE_WARNING_CAP_FRACTION = 0.90
 # observed 24h distribution, not a fixed pip level or USD/JPY literal.
 RANGE_RAIL_LOW_PERCENTILE = 0.08
 RANGE_RAIL_HIGH_PERCENTILE = 0.92
+
+# Contract freshness follows the documented hourly trader cadence with a small
+# scheduling/sync grace window. It is a runtime cadence guard, not market logic.
+DEFAULT_CONTRACT_MAX_AGE_SECONDS = 75 * 60
+DEFAULT_CONTRACT_REVIEW_DEADLINE_SECONDS = 60 * 60
+
+# Broker snapshot stale detection mirrors the guardian wake dispatcher freshness
+# window: stale quote truth should wake review rather than feed market triggers.
+DEFAULT_ROUTER_SNAPSHOT_MAX_AGE_SECONDS = 5 * 60
+
+CONTRACT_TRIGGER_BUCKETS = {
+    "harvest_triggers": ("CONTRACT_HARVEST_TRIGGER", "HARVEST", "HARVEST_REVIEW", "P1", None),
+    "add_triggers": ("CONTRACT_ADD_TRIGGER", "ADD", "ADD_REVIEW", "P1", "ALIVE"),
+    "no_add_triggers": ("CONTRACT_NO_ADD_TRIGGER", "HOLD", "ADD_REVIEW", "P1", "WOUNDED"),
+    "wounded_triggers": ("CONTRACT_WOUNDED_TRIGGER", "HOLD", "THESIS_REVIEW", "P1", "WOUNDED"),
+    "invalidation_triggers": ("CONTRACT_INVALIDATION_TRIGGER", "REDUCE", "THESIS_REVIEW", "P0", "INVALIDATED"),
+    "emergency_triggers": ("CONTRACT_EMERGENCY_TRIGGER", "REDUCE", "EMERGENCY_RISK_REVIEW", "P0", "EMERGENCY"),
+}
+CONTRACT_OWNERS = {"SYSTEM", "OPERATOR_MANUAL", "UNKNOWN"}
 
 
 @dataclass(frozen=True)
@@ -102,6 +132,8 @@ def run_guardian_event_router(
     thesis_evolution_path: Path,
     forecast_persistence_path: Path,
     market_context_matrix_path: Path,
+    trigger_contract_path: Path | None = None,
+    wake_dispatcher_state_path: Path | None = None,
     state_path: Path,
     events_output_path: Path,
     escalation_output_path: Path,
@@ -120,6 +152,8 @@ def run_guardian_event_router(
         "thesis_evolution": _load_json(thesis_evolution_path),
         "forecast_persistence": _load_json(forecast_persistence_path),
         "market_context_matrix": _load_json(market_context_matrix_path),
+        "trigger_contract": _load_json(trigger_contract_path),
+        "wake_dispatcher_state": _load_json(wake_dispatcher_state_path),
     }
     previous_state = _load_json(state_path)
     events = detect_guardian_events(inputs=inputs, now=now)
@@ -134,6 +168,7 @@ def run_guardian_event_router(
         "schema_version": 1,
         "event_types": list(EVENT_TYPES),
         "events": [event.to_payload() for event in events],
+        "trigger_contract": validate_guardian_trigger_contract(inputs["trigger_contract"], now=now),
         "inputs": {
             "snapshot": str(snapshot_path),
             "pair_charts": str(pair_charts_path),
@@ -142,6 +177,10 @@ def run_guardian_event_router(
             "thesis_evolution": str(thesis_evolution_path),
             "forecast_persistence": str(forecast_persistence_path),
             "market_context_matrix": str(market_context_matrix_path),
+            "guardian_trigger_contract": str(trigger_contract_path) if trigger_contract_path is not None else None,
+            "guardian_wake_dispatcher_state": str(wake_dispatcher_state_path)
+            if wake_dispatcher_state_path is not None
+            else None,
         },
     }
     _write_json(events_output_path, events_payload)
@@ -207,8 +246,14 @@ def detect_guardian_events(*, inputs: dict[str, Any], now: datetime | None = Non
     market_context_matrix = (
         inputs.get("market_context_matrix") if isinstance(inputs.get("market_context_matrix"), dict) else {}
     )
+    trigger_contract = inputs.get("trigger_contract") if isinstance(inputs.get("trigger_contract"), dict) else {}
+    wake_dispatcher_state = (
+        inputs.get("wake_dispatcher_state") if isinstance(inputs.get("wake_dispatcher_state"), dict) else {}
+    )
 
     collected.extend(_snapshot_events(snapshot, now=now))
+    collected.extend(_contract_events(trigger_contract, snapshot=snapshot, now=now))
+    collected.extend(_wake_parse_failure_events(wake_dispatcher_state, now=now))
     collected.extend(_pair_chart_events(pair_charts, snapshot=snapshot, now=now))
     collected.extend(_order_intent_events(order_intents, now=now))
     collected.extend(_position_management_events(position_management, now=now))
@@ -411,8 +456,383 @@ def guardian_action_gateway_issues(
     return issues
 
 
+def validate_guardian_trigger_contract(
+    payload: dict[str, Any] | None,
+    *,
+    now: datetime | None = None,
+) -> dict[str, Any]:
+    clock = _utc(now)
+    contract = payload if isinstance(payload, dict) else {}
+    issues: list[dict[str, str]] = []
+    generated_at = _parse_utc(contract.get("generated_at_utc"))
+    if not contract:
+        issues.append(_issue("CONTRACT_MISSING", "guardian trigger contract is missing"))
+    if contract.get("schema_version") != 1:
+        issues.append(_issue("CONTRACT_BAD_SCHEMA_VERSION", "guardian trigger contract schema_version must be 1"))
+    if generated_at is None:
+        issues.append(_issue("CONTRACT_GENERATED_AT_MISSING", "guardian trigger contract needs generated_at_utc"))
+    entries = _contract_entries(contract)
+    if "entries" not in contract:
+        issues.append(_issue("CONTRACT_ENTRIES_MISSING", "guardian trigger contract needs entries[]"))
+    elif not isinstance(contract.get("entries"), list):
+        issues.append(_issue("CONTRACT_ENTRIES_NOT_LIST", "guardian trigger contract entries must be a list"))
+
+    for index, entry in enumerate(entries):
+        prefix = f"entries[{index}]"
+        for field_name in (
+            "pair",
+            "side",
+            "thesis",
+            "owner",
+            "thesis_state",
+            "next_review_reason",
+            "next_review_deadline_utc",
+        ):
+            if field_name not in entry:
+                issues.append(_issue("CONTRACT_ENTRY_FIELD_MISSING", f"{prefix} missing {field_name}"))
+        pair = _pair(entry.get("pair"))
+        if not pair:
+            issues.append(_issue("CONTRACT_ENTRY_BAD_PAIR", f"{prefix} pair is empty"))
+        side = _direction_from_text(entry.get("side"))
+        if side is None:
+            issues.append(_issue("CONTRACT_ENTRY_BAD_SIDE", f"{prefix} side must be LONG or SHORT"))
+        raw_owner = str(entry.get("owner") or "").strip().upper()
+        if raw_owner not in CONTRACT_OWNERS:
+            issues.append(_issue("CONTRACT_ENTRY_BAD_OWNER", f"{prefix} owner must be SYSTEM, OPERATOR_MANUAL, or UNKNOWN"))
+        thesis_state = _thesis_state(entry.get("thesis_state"))
+        if thesis_state not in {"ALIVE", "WOUNDED", "INVALIDATED", "EMERGENCY"}:
+            issues.append(_issue("CONTRACT_ENTRY_BAD_THESIS_STATE", f"{prefix} thesis_state is unsupported"))
+        if _parse_utc(entry.get("next_review_deadline_utc")) is None:
+            issues.append(
+                _issue("CONTRACT_ENTRY_BAD_DEADLINE", f"{prefix} next_review_deadline_utc must be ISO UTC")
+            )
+        for bucket in CONTRACT_TRIGGER_BUCKETS:
+            if bucket not in entry:
+                issues.append(_issue("CONTRACT_ENTRY_TRIGGER_FIELD_MISSING", f"{prefix} missing {bucket}"))
+            elif not isinstance(entry.get(bucket), list):
+                issues.append(_issue("CONTRACT_ENTRY_TRIGGER_FIELD_NOT_LIST", f"{prefix} {bucket} must be a list"))
+
+    age_seconds = (clock - generated_at).total_seconds() if generated_at is not None else None
+    max_age = int(os.environ.get("QR_GUARDIAN_TRIGGER_CONTRACT_MAX_AGE_SECONDS", DEFAULT_CONTRACT_MAX_AGE_SECONDS))
+    stale = age_seconds is None or age_seconds > max_age
+    return {
+        "status": "VALID" if not any(issue["severity"] == "BLOCK" for issue in issues) else "INVALID",
+        "issues": issues,
+        "entry_count": len(entries),
+        "generated_at_utc": generated_at.isoformat() if generated_at is not None else None,
+        "age_seconds": age_seconds,
+        "max_age_seconds": max_age,
+        "stale": stale,
+        "trigger_event_types": {bucket: values[0] for bucket, values in CONTRACT_TRIGGER_BUCKETS.items()},
+    }
+
+
+def build_guardian_trigger_contract(
+    *,
+    snapshot: dict[str, Any],
+    order_intents: dict[str, Any],
+    existing_contract: dict[str, Any] | None = None,
+    now: datetime | None = None,
+) -> dict[str, Any]:
+    clock = _utc(now)
+    existing = existing_contract if isinstance(existing_contract, dict) else {}
+    preserved = {_contract_entry_key(entry): entry for entry in _contract_entries(existing)}
+    entries: list[dict[str, Any]] = []
+    seen: set[str] = set()
+
+    for position in snapshot.get("positions", []) or []:
+        if not isinstance(position, dict):
+            continue
+        pair = _pair(position.get("pair"))
+        side = _direction_from_position(position)
+        if not pair or not side:
+            continue
+        thesis = _position_contract_thesis(position)
+        entry = _contract_entry_from_seed(
+            pair=pair,
+            side=side,
+            thesis=thesis,
+            owner=_contract_owner_from_snapshot_owner(position.get("owner")),
+            thesis_state=_position_contract_state(position),
+            seed_reason="open broker position requires guardian triggers",
+            preserved=preserved,
+            now=clock,
+        )
+        seen.add(_contract_entry_key(entry))
+        entries.append(entry)
+
+    for result in order_intents.get("results", []) or []:
+        if not isinstance(result, dict):
+            continue
+        intent = result.get("intent") if isinstance(result.get("intent"), dict) else {}
+        pair = _pair(intent.get("pair"))
+        side = _direction_from_text(intent.get("side"))
+        if not pair or not side:
+            continue
+        thesis = str(intent.get("thesis") or result.get("lane_id") or "candidate thesis")
+        entry = _contract_entry_from_seed(
+            pair=pair,
+            side=side,
+            thesis=thesis,
+            owner="SYSTEM",
+            thesis_state=str((intent.get("metadata") or {}).get("thesis_state") or "ALIVE").upper()
+            if isinstance(intent.get("metadata"), dict)
+            else "ALIVE",
+            seed_reason=f"candidate {result.get('lane_id') or pair} requires trader-defined triggers",
+            preserved=preserved,
+            now=clock,
+        )
+        key = _contract_entry_key(entry)
+        if key in seen:
+            continue
+        seen.add(key)
+        entries.append(entry)
+
+    return {
+        "schema_version": 1,
+        "generated_at_utc": clock.isoformat(),
+        "contract_owner": "qr-trader",
+        "cycle_horizon_minutes": 60,
+        "entries": entries,
+        "execution_boundary": {
+            "guardian_never_trades": True,
+            "contract_triggers_do_not_execute": True,
+            "live_order_gateway_required": True,
+        },
+    }
+
+
+def write_guardian_trigger_contract_report(path: Path, contract: dict[str, Any], validation: dict[str, Any]) -> None:
+    lines = [
+        "# Guardian Trigger Contract Report",
+        "",
+        f"- Generated at UTC: `{contract.get('generated_at_utc')}`",
+        f"- Validation: `{validation.get('status')}`",
+        f"- Entries: `{validation.get('entry_count')}`",
+        f"- Stale: `{validation.get('stale')}` age=`{validation.get('age_seconds')}`s",
+        "",
+        "## Boundary",
+        "",
+        "- The trigger contract is read-only evidence for guardian-event-router.",
+        "- Contract triggers never execute broker writes.",
+        "- Plain trigger prose is not inferred; a trigger fires only when the contract marks it fired or gives a machine-readable predicate that evaluates true.",
+        "- Live orders, adds, harvests, cancels, and closes remain gateway-only.",
+        "",
+        "## Issues",
+        "",
+    ]
+    for issue in validation.get("issues", []) or []:
+        lines.append(f"- `{issue.get('severity')}` `{issue.get('code')}` {issue.get('message')}")
+    if not validation.get("issues"):
+        lines.append("- none")
+    lines.extend(["", "## Entries", ""])
+    for entry in _contract_entries(contract):
+        lines.append(
+            f"- `{_pair(entry.get('pair')) or 'UNKNOWN'}` `{_direction_from_text(entry.get('side')) or 'UNKNOWN'}` "
+            f"owner=`{_contract_owner(entry.get('owner'))}` state=`{_thesis_state(entry.get('thesis_state'))}`"
+        )
+        lines.append(f"  - thesis: {entry.get('thesis')}")
+        lines.append(f"  - next review: {entry.get('next_review_reason')} by `{entry.get('next_review_deadline_utc')}`")
+        for bucket in CONTRACT_TRIGGER_BUCKETS:
+            triggers = entry.get(bucket) if isinstance(entry.get(bucket), list) else []
+            fired_count = sum(1 for trigger in triggers if _trigger_explicitly_fired(trigger))
+            lines.append(f"  - {bucket}: `{len(triggers)}` declared, `{fired_count}` explicitly fired")
+    if not _contract_entries(contract):
+        lines.append("- none")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("\n".join(lines) + "\n")
+
+
+def _contract_events(contract: dict[str, Any], *, snapshot: dict[str, Any], now: datetime) -> list[GuardianEvent]:
+    events: list[GuardianEvent] = []
+    validation = validate_guardian_trigger_contract(contract, now=now)
+    exposure_exists = _snapshot_has_exposure(snapshot)
+    if exposure_exists and (validation["status"] != "VALID" or validation["stale"]):
+        events.append(
+            _event(
+                event_type="CONTRACT_STALE",
+                pair="PORTFOLIO",
+                direction=None,
+                thesis="guardian trigger contract stale or missing while exposure exists",
+                price_zone=_contract_stale_reason(validation),
+                severity="P0",
+                recommended_review_type="EMERGENCY_RISK_REVIEW",
+                action_hint="HOLD",
+                thesis_state="WOUNDED",
+                now=now,
+                details={"validation": validation},
+            )
+        )
+        if validation["status"] != "VALID":
+            return events
+
+    for entry in _contract_entries(contract):
+        pair = _pair(entry.get("pair"))
+        side = _direction_from_text(entry.get("side"))
+        thesis = str(entry.get("thesis") or "guardian trigger contract thesis")
+        if not pair:
+            continue
+        for bucket, (event_type, action_hint, review_type, severity, forced_state) in CONTRACT_TRIGGER_BUCKETS.items():
+            triggers = entry.get(bucket) if isinstance(entry.get(bucket), list) else []
+            for trigger in triggers:
+                fired, evidence = _contract_trigger_fired(trigger, entry=entry, snapshot=snapshot)
+                if not fired:
+                    continue
+                thesis_state = str(forced_state or entry.get("thesis_state") or "ALIVE").upper()
+                events.append(
+                    _event(
+                        event_type=event_type,
+                        pair=pair,
+                        direction=side,
+                        thesis=thesis,
+                        price_zone=evidence,
+                        severity=str(_trigger_field(trigger, "severity") or severity),
+                        recommended_review_type=str(_trigger_field(trigger, "recommended_review_type") or review_type),
+                        action_hint=str(_trigger_field(trigger, "action_hint") or action_hint),
+                        thesis_state=thesis_state,
+                        now=now,
+                        details={
+                            "contract_bucket": bucket,
+                            "contract_trigger": trigger,
+                            "owner": _contract_owner(entry.get("owner")),
+                            "next_review_reason": entry.get("next_review_reason"),
+                            "next_review_deadline_utc": entry.get("next_review_deadline_utc"),
+                        },
+                    )
+                )
+    return events
+
+
+def _wake_parse_failure_events(dispatcher_state: dict[str, Any], *, now: datetime) -> list[GuardianEvent]:
+    last_status = str(dispatcher_state.get("last_status") or "").upper()
+    if last_status != "PARSE_FAILED":
+        return []
+    last_result = dispatcher_state.get("last_result") if isinstance(dispatcher_state.get("last_result"), dict) else {}
+    selected = last_result.get("selected_event") if isinstance(last_result.get("selected_event"), dict) else {}
+    parse_failure = last_result.get("parse_failure") if isinstance(last_result.get("parse_failure"), dict) else {}
+    pair = _pair(selected.get("pair")) or "PORTFOLIO"
+    severity = "P0" if int(parse_failure.get("consecutive_failures") or 0) > 1 else "P1"
+    return [
+        _event(
+            event_type="WAKE_PARSE_FAILURE",
+            pair=pair,
+            direction=_direction_from_text(selected.get("direction")),
+            thesis=str(selected.get("thesis") or "guardian wake parse failure"),
+            price_zone=str(parse_failure.get("last_error") or "guardian wake produced no valid JSON receipt"),
+            severity=severity,
+            recommended_review_type="WAKE_REPAIR_REVIEW",
+            action_hint="HOLD",
+            thesis_state="WOUNDED",
+            now=now,
+            details={"selected_event": selected, "parse_failure": parse_failure},
+        )
+    ]
+
+
+def _broker_snapshot_stale_event(snapshot: dict[str, Any], *, now: datetime) -> GuardianEvent | None:
+    if not snapshot:
+        return None
+    fetched = _parse_utc(snapshot.get("fetched_at_utc"))
+    max_age = int(os.environ.get("QR_GUARDIAN_ROUTER_SNAPSHOT_MAX_AGE_SECONDS", DEFAULT_ROUTER_SNAPSHOT_MAX_AGE_SECONDS))
+    if fetched is None:
+        stale_reason = "broker snapshot missing fetched_at_utc"
+    elif (now - fetched).total_seconds() <= max_age:
+        return None
+    else:
+        stale_reason = f"broker snapshot age_seconds={(now - fetched).total_seconds():.1f} max={max_age}"
+    severity = "P0" if _snapshot_has_exposure(snapshot) else "P1"
+    return _event(
+        event_type="BROKER_SNAPSHOT_STALE",
+        pair="PORTFOLIO",
+        direction=None,
+        thesis="broker snapshot freshness",
+        price_zone=stale_reason,
+        severity=severity,
+        recommended_review_type="RISK_REVIEW",
+        action_hint="HOLD",
+        thesis_state="WOUNDED",
+        now=now,
+        details={"fetched_at_utc": snapshot.get("fetched_at_utc"), "max_age_seconds": max_age},
+    )
+
+
+def _spread_anomaly_events(quotes: dict[str, Any], *, now: datetime) -> list[GuardianEvent]:
+    events: list[GuardianEvent] = []
+    max_multiple = RiskPolicy().max_spread_multiple
+    for pair_key, quote in quotes.items():
+        pair = _pair(pair_key)
+        if not pair or not isinstance(quote, dict):
+            continue
+        bid = _float(quote.get("bid"))
+        ask = _float(quote.get("ask"))
+        normal = NORMAL_SPREAD_PIPS.get(pair)
+        if bid is None or ask is None or normal is None or normal <= 0:
+            continue
+        spread_pips = max(0.0, (ask - bid) * instrument_pip_factor(pair))
+        cap = normal * max_multiple
+        if spread_pips <= cap:
+            continue
+        events.append(
+            _event(
+                event_type="SPREAD_ANOMALY",
+                pair=pair,
+                direction=None,
+                thesis="spread anomaly safety trigger",
+                price_zone=f"spread_pips={spread_pips:.3f} cap={cap:.3f}",
+                severity="P1",
+                recommended_review_type="RISK_REVIEW",
+                action_hint="HOLD",
+                thesis_state="WOUNDED",
+                now=now,
+                details={"bid": bid, "ask": ask, "spread_pips": spread_pips, "normal_spread_pips": normal},
+            )
+        )
+    return events
+
+
+def _unexpected_protection_missing_event(
+    position: dict[str, Any],
+    *,
+    pair: str,
+    side: str | None,
+    now: datetime,
+) -> GuardianEvent | None:
+    if _owner(position.get("owner")) != Owner.TRADER.value:
+        return None
+    raw = position.get("raw") if isinstance(position.get("raw"), dict) else {}
+    expected_tp = _truthy(position.get("expected_take_profit_required")) or _truthy(
+        raw.get("expected_take_profit_required")
+    )
+    expected_sl = _truthy(position.get("expected_stop_loss_required")) or _truthy(
+        raw.get("expected_stop_loss_required")
+    )
+    missing: list[str] = []
+    if expected_tp and position.get("take_profit") is None:
+        missing.append("take_profit")
+    if expected_sl and position.get("stop_loss") is None:
+        missing.append("stop_loss")
+    if not missing:
+        return None
+    return _event(
+        event_type="UNEXPECTED_PROTECTION_MISSING",
+        pair=pair,
+        direction=side,
+        thesis=str(position.get("thesis") or position.get("trade_id") or "system position protection"),
+        price_zone="missing " + ",".join(missing),
+        severity="P0",
+        recommended_review_type="PROTECTION_REVIEW",
+        action_hint="HOLD",
+        thesis_state="WOUNDED",
+        now=now,
+        details={"trade_id": position.get("trade_id"), "missing": missing},
+    )
+
+
 def _snapshot_events(snapshot: dict[str, Any], *, now: datetime) -> list[GuardianEvent]:
     events: list[GuardianEvent] = []
+    stale = _broker_snapshot_stale_event(snapshot, now=now)
+    if stale is not None:
+        events.append(stale)
     quotes = snapshot.get("quotes") if isinstance(snapshot.get("quotes"), dict) else {}
     for position in snapshot.get("positions", []) or []:
         if not isinstance(position, dict):
@@ -473,6 +893,9 @@ def _snapshot_events(snapshot: dict[str, Any], *, now: datetime) -> list[Guardia
                         details={"trade_id": position.get("trade_id"), "harvest_trigger": operator_packet.get("harvest_trigger")},
                     )
                 )
+        protection_event = _unexpected_protection_missing_event(position, pair=pair, side=side, now=now)
+        if protection_event is not None:
+            events.append(protection_event)
     for order in snapshot.get("orders", []) or []:
         if not isinstance(order, dict):
             continue
@@ -514,6 +937,7 @@ def _snapshot_events(snapshot: dict[str, Any], *, now: datetime) -> list[Guardia
     margin_event = _margin_pressure_event(account, now=now)
     if margin_event is not None:
         events.append(margin_event)
+    events.extend(_spread_anomaly_events(quotes, now=now))
     events.extend(_quote_major_figure_events(quotes, now=now))
     return events
 
@@ -824,6 +1248,214 @@ def _quote_major_figure_events(quotes: dict[str, Any], *, now: datetime) -> list
             )
         )
     return events
+
+
+def _contract_entries(contract: dict[str, Any]) -> list[dict[str, Any]]:
+    entries = contract.get("entries") if isinstance(contract, dict) else []
+    return [entry for entry in entries or [] if isinstance(entry, dict)] if isinstance(entries, list) else []
+
+
+def _contract_entry_key(entry: dict[str, Any]) -> str:
+    return "|".join(
+        [
+            _pair(entry.get("pair")) or "UNKNOWN",
+            _direction_from_text(entry.get("side")) or "UNKNOWN",
+            _slug(str(entry.get("thesis") or "")),
+        ]
+    )
+
+
+def _contract_entry_from_seed(
+    *,
+    pair: str,
+    side: str,
+    thesis: str,
+    owner: str,
+    thesis_state: str,
+    seed_reason: str,
+    preserved: dict[str, dict[str, Any]],
+    now: datetime,
+) -> dict[str, Any]:
+    seed = {
+        "pair": pair,
+        "side": side,
+        "thesis": thesis,
+        "owner": owner,
+        "thesis_state": _thesis_state(thesis_state) if _thesis_state(thesis_state) != "UNKNOWN" else "ALIVE",
+    }
+    prior = preserved.get(_contract_entry_key(seed))
+    deadline = now.timestamp() + DEFAULT_CONTRACT_REVIEW_DEADLINE_SECONDS
+    base = {
+        **seed,
+        "harvest_triggers": [],
+        "add_triggers": [],
+        "no_add_triggers": [],
+        "wounded_triggers": [],
+        "invalidation_triggers": [],
+        "emergency_triggers": [],
+        "next_review_reason": seed_reason,
+        "next_review_deadline_utc": datetime.fromtimestamp(deadline, timezone.utc).isoformat(),
+    }
+    if not isinstance(prior, dict):
+        return base
+    merged = dict(base)
+    for field_name in CONTRACT_TRIGGER_BUCKETS:
+        if isinstance(prior.get(field_name), list):
+            merged[field_name] = prior[field_name]
+    for field_name in ("owner", "thesis_state", "next_review_reason", "next_review_deadline_utc"):
+        if prior.get(field_name):
+            merged[field_name] = prior[field_name]
+    return merged
+
+
+def _position_contract_thesis(position: dict[str, Any]) -> str:
+    raw = position.get("raw") if isinstance(position.get("raw"), dict) else {}
+    operator_packet = raw.get("operator_manual_position") if isinstance(raw.get("operator_manual_position"), dict) else {}
+    return str(
+        operator_packet.get("thesis")
+        or position.get("thesis")
+        or position.get("trade_id")
+        or "open broker position"
+    )
+
+
+def _position_contract_state(position: dict[str, Any]) -> str:
+    raw = position.get("raw") if isinstance(position.get("raw"), dict) else {}
+    operator_packet = raw.get("operator_manual_position") if isinstance(raw.get("operator_manual_position"), dict) else {}
+    state = _thesis_state(operator_packet.get("thesis_state") or position.get("thesis_state"))
+    return state if state != "UNKNOWN" else "ALIVE"
+
+
+def _contract_owner(value: Any) -> str:
+    text = str(value or "UNKNOWN").strip().upper()
+    return text if text in CONTRACT_OWNERS else "UNKNOWN"
+
+
+def _contract_owner_from_snapshot_owner(value: Any) -> str:
+    owner = _owner(value)
+    if owner == Owner.TRADER.value:
+        return "SYSTEM"
+    if owner in {Owner.MANUAL.value, Owner.OPERATOR_MANUAL.value, Owner.UNKNOWN.value}:
+        return "OPERATOR_MANUAL" if owner in {Owner.MANUAL.value, Owner.OPERATOR_MANUAL.value} else "UNKNOWN"
+    return "UNKNOWN"
+
+
+def _snapshot_has_exposure(snapshot: dict[str, Any]) -> bool:
+    return any(isinstance(item, dict) for item in snapshot.get("positions", []) or []) or any(
+        isinstance(item, dict) for item in snapshot.get("orders", []) or []
+    )
+
+
+def _contract_stale_reason(validation: dict[str, Any]) -> str:
+    if validation.get("status") != "VALID":
+        codes = ",".join(str(issue.get("code")) for issue in validation.get("issues", []) or [])
+        return f"contract invalid: {codes or 'UNKNOWN'}"
+    return f"contract stale age_seconds={validation.get('age_seconds')} max={validation.get('max_age_seconds')}"
+
+
+def _contract_trigger_fired(
+    trigger: Any,
+    *,
+    entry: dict[str, Any],
+    snapshot: dict[str, Any],
+) -> tuple[bool, str]:
+    if _trigger_explicitly_fired(trigger):
+        return True, _trigger_evidence(trigger)
+    if not isinstance(trigger, dict):
+        return False, ""
+    condition = trigger.get("condition") if isinstance(trigger.get("condition"), dict) else trigger
+    metric = str(condition.get("metric") or condition.get("field") or "").strip()
+    operator = str(condition.get("operator") or condition.get("op") or "").strip()
+    expected = _float(condition.get("value") if "value" in condition else condition.get("threshold"))
+    if not metric or not operator or expected is None:
+        return False, ""
+    actual = _contract_metric_value(metric, entry=entry, snapshot=snapshot)
+    if actual is None:
+        return False, ""
+    if not _compare_numeric(actual, operator, expected):
+        return False, ""
+    return True, f"{metric} {operator} {expected} fired with actual={actual}"
+
+
+def _trigger_explicitly_fired(trigger: Any) -> bool:
+    if isinstance(trigger, str):
+        text = trigger.strip().upper()
+        return text.startswith("FIRED:") or text.startswith("TRIGGERED:") or "[FIRED]" in text or "[TRIGGERED]" in text
+    if not isinstance(trigger, dict):
+        return False
+    if any(_truthy(trigger.get(key)) for key in ("fired", "triggered", "active", "hit")):
+        return True
+    return str(trigger.get("status") or "").strip().upper() in {"FIRED", "TRIGGERED", "HIT", "ACTIVE"}
+
+
+def _trigger_field(trigger: Any, field_name: str) -> Any:
+    return trigger.get(field_name) if isinstance(trigger, dict) else None
+
+
+def _trigger_evidence(trigger: Any) -> str:
+    if isinstance(trigger, str):
+        return trigger
+    if not isinstance(trigger, dict):
+        return "contract trigger fired"
+    return str(
+        trigger.get("evidence")
+        or trigger.get("reason")
+        or trigger.get("label")
+        or trigger.get("description")
+        or trigger.get("trigger_id")
+        or "contract trigger fired"
+    )
+
+
+def _contract_metric_value(metric: str, *, entry: dict[str, Any], snapshot: dict[str, Any]) -> float | None:
+    name = metric.strip().lower().replace("quote.", "").replace("account.", "").replace("position.", "")
+    pair = _pair(entry.get("pair"))
+    side = _direction_from_text(entry.get("side"))
+    quotes = snapshot.get("quotes") if isinstance(snapshot.get("quotes"), dict) else {}
+    quote = quotes.get(pair) if pair else None
+    if isinstance(quote, dict):
+        bid = _float(quote.get("bid"))
+        ask = _float(quote.get("ask"))
+        if name in {"bid", "ask"}:
+            return bid if name == "bid" else ask
+        if name in {"mid", "price"} and bid is not None and ask is not None:
+            return (bid + ask) / 2.0
+        if name == "spread_pips" and bid is not None and ask is not None and pair:
+            return max(0.0, (ask - bid) * instrument_pip_factor(pair))
+    account = snapshot.get("account") if isinstance(snapshot.get("account"), dict) else {}
+    if name in {"nav_jpy", "margin_used_jpy", "margin_available_jpy"}:
+        return _float(account.get(name))
+    matching_positions = []
+    for position in snapshot.get("positions", []) or []:
+        if not isinstance(position, dict):
+            continue
+        if pair and _pair(position.get("pair")) != pair:
+            continue
+        if side and _direction_from_position(position) != side:
+            continue
+        matching_positions.append(position)
+    if name == "unrealized_pl_jpy":
+        values = [_float(position.get("unrealized_pl_jpy")) for position in matching_positions]
+        return sum(value for value in values if value is not None) if values else None
+    if name == "units":
+        values = [_float(position.get("units")) for position in matching_positions]
+        return sum(value for value in values if value is not None) if values else None
+    return None
+
+
+def _compare_numeric(actual: float, operator: str, expected: float) -> bool:
+    op = operator.strip()
+    if op in {">", "gt"}:
+        return actual > expected
+    if op in {">=", "gte"}:
+        return actual >= expected
+    if op in {"<", "lt"}:
+        return actual < expected
+    if op in {"<=", "lte"}:
+        return actual <= expected
+    if op in {"==", "=", "eq"}:
+        return actual == expected
+    return False
 
 
 def _text_acceptance_events(pair: str, text: str, *, mid: float | None, now: datetime) -> list[GuardianEvent]:
@@ -1299,6 +1931,17 @@ def _default_review_type(event_type: str) -> str:
         "MARGIN_PRESSURE": "RISK_REVIEW",
         "UNKNOWN_ORDER": "EMERGENCY_RISK_REVIEW",
         "STALE_PENDING": "PENDING_CANCEL_REVIEW",
+        "BROKER_SNAPSHOT_STALE": "RISK_REVIEW",
+        "SPREAD_ANOMALY": "RISK_REVIEW",
+        "UNEXPECTED_PROTECTION_MISSING": "PROTECTION_REVIEW",
+        "CONTRACT_HARVEST_TRIGGER": "HARVEST_REVIEW",
+        "CONTRACT_ADD_TRIGGER": "ADD_REVIEW",
+        "CONTRACT_NO_ADD_TRIGGER": "ADD_REVIEW",
+        "CONTRACT_WOUNDED_TRIGGER": "THESIS_REVIEW",
+        "CONTRACT_INVALIDATION_TRIGGER": "THESIS_REVIEW",
+        "CONTRACT_EMERGENCY_TRIGGER": "EMERGENCY_RISK_REVIEW",
+        "CONTRACT_STALE": "EMERGENCY_RISK_REVIEW",
+        "WAKE_PARSE_FAILURE": "WAKE_REPAIR_REVIEW",
     }.get(event_type, "ENTRY_REVIEW")
 
 
@@ -1309,6 +1952,17 @@ def _default_action_hint(event_type: str) -> str:
         "MARGIN_PRESSURE": "REDUCE",
         "UNKNOWN_ORDER": "REDUCE",
         "STALE_PENDING": "CANCEL_PENDING",
+        "BROKER_SNAPSHOT_STALE": "HOLD",
+        "SPREAD_ANOMALY": "HOLD",
+        "UNEXPECTED_PROTECTION_MISSING": "HOLD",
+        "CONTRACT_HARVEST_TRIGGER": "HARVEST",
+        "CONTRACT_ADD_TRIGGER": "ADD",
+        "CONTRACT_NO_ADD_TRIGGER": "HOLD",
+        "CONTRACT_WOUNDED_TRIGGER": "HOLD",
+        "CONTRACT_INVALIDATION_TRIGGER": "REDUCE",
+        "CONTRACT_EMERGENCY_TRIGGER": "REDUCE",
+        "CONTRACT_STALE": "HOLD",
+        "WAKE_PARSE_FAILURE": "HOLD",
     }.get(event_type, "TRADE")
 
 

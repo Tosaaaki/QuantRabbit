@@ -136,6 +136,23 @@ def run_dispatcher(
         _append_log(paths.log, result)
         return result
 
+    parse_queue = _same_event_parse_failure_queue(dispatcher_state, selected)
+    if parse_queue:
+        queued = {
+            **result_base,
+            "status": "QUEUED_FOR_ACTIVE_TRADER",
+            "wake_gpt": True,
+            "selected_event": selected,
+            "selection": selection,
+            "queue_reason": "repeated guardian wake parse failure",
+            "parse_failure": parse_queue,
+        }
+        _mark_escalation_queued(paths.escalation, escalation, queued, now=clock, reason="repeated guardian wake parse failure")
+        _write_action_review(paths.action_review, queued)
+        _record_state(paths.dispatcher_state, dispatcher_state, queued)
+        _append_log(paths.log, queued)
+        return queued
+
     lock = _active_live_lock(paths.live_lock)
     if lock["active"]:
         queued = {
@@ -145,7 +162,7 @@ def run_dispatcher(
             "selected_event": selected,
             "lock": lock,
         }
-        _mark_escalation_queued(paths.escalation, escalation, queued, now=clock)
+        _mark_escalation_queued(paths.escalation, escalation, queued, now=clock, reason="active qr-trader/live gateway lock")
         _write_action_review(paths.action_review, queued)
         _record_state(paths.dispatcher_state, dispatcher_state, queued)
         _append_log(paths.log, queued)
@@ -182,9 +199,58 @@ def run_dispatcher(
         prompt=prompt,
         env=environ,
         subprocess_run=subprocess_run,
+        attempt="initial",
     )
 
     parsed = _parse_codex_receipt(codex.get("last_message") or "")
+    codex_attempts = [codex]
+    repair_attempted = False
+    repair_skipped: dict[str, Any] | None = None
+    if not parsed["valid"]:
+        retry_lock = _active_live_lock(paths.live_lock)
+        if retry_lock["active"]:
+            queued = {
+                **result_base,
+                "status": "QUEUED_FOR_ACTIVE_TRADER",
+                "wake_gpt": True,
+                "selected_event": selected,
+                "selection": selection,
+                "broker_snapshot_freshness": freshness,
+                "codex": codex,
+                "codex_attempts": codex_attempts,
+                "parse": parsed,
+                "receipt_written": False,
+                "action_receipt_path": None,
+                "lock": retry_lock,
+                "queue_reason": "active qr-trader/live gateway lock before parse repair retry",
+            }
+            _remove_file(paths.action_receipt)
+            _mark_escalation_queued(
+                paths.escalation,
+                escalation,
+                queued,
+                now=clock,
+                reason="active qr-trader/live gateway lock before parse repair retry",
+            )
+            _write_action_review(paths.action_review, queued)
+            _record_state(paths.dispatcher_state, dispatcher_state, queued)
+            _append_log(paths.log, queued)
+            return queued
+        repair_attempted = True
+        repair_prompt = (
+            prompt.rstrip()
+            + "\n\nReturn only the required JSON object. No markdown. No prose.\n"
+        )
+        repair_codex = _run_codex(
+            paths=paths,
+            prompt=repair_prompt,
+            env=environ,
+            subprocess_run=subprocess_run,
+            attempt="repair",
+        )
+        codex_attempts.append(repair_codex)
+        parsed = _parse_codex_receipt(repair_codex.get("last_message") or "")
+        codex = repair_codex
     events = _events_from_payload(events_payload)
     review = None
     receipt_written = False
@@ -215,6 +281,8 @@ def run_dispatcher(
         lock=lock,
     )
     status = "RECEIPT_WRITTEN" if receipt_written else "PARSE_FAILED" if not parsed["valid"] else "NO_ACTIONABLE_RECEIPT"
+    if repair_attempted and not parsed["valid"]:
+        repair_skipped = {"status": "FAILED_AFTER_ONE_RETRY", "max_retries_per_event": 1}
     result = {
         **result_base,
         "status": status,
@@ -223,7 +291,10 @@ def run_dispatcher(
         "selection": selection,
         "broker_snapshot_freshness": freshness,
         "codex": codex,
+        "codex_attempts": codex_attempts,
         "parse": parsed,
+        "repair_attempted": repair_attempted,
+        "repair_result": repair_skipped,
         "receipt_written": receipt_written,
         "action_receipt_path": str(paths.action_receipt) if receipt_written else None,
         "gateway_handoff": handoff,
@@ -272,6 +343,9 @@ def _select_dispatch_event(
         record = reviewed.get(dedupe_key) if isinstance(reviewed, dict) else None
         throttle = _dispatch_throttle_seconds(event, env)
         if isinstance(record, dict):
+            if str(record.get("last_status") or "").upper() == "PARSE_FAILED":
+                candidates.append(event)
+                continue
             previous_severity = _severity_rank(record.get("severity"))
             current_severity = _severity_rank(event.get("severity"))
             last_reviewed = _parse_utc(record.get("last_reviewed_at_utc"))
@@ -317,6 +391,23 @@ def _event_bypasses_dispatch_throttle(
         str(event.get("severity") or "").upper() == "P0"
         and _severity_rank(event.get("severity")) > previous_severity
     ) or "SEVERITY_INCREASE" in reasons
+
+
+def _same_event_parse_failure_queue(dispatcher_state: dict[str, Any], event: dict[str, Any]) -> dict[str, Any] | None:
+    failures = dispatcher_state.get("parse_failures")
+    if not isinstance(failures, dict):
+        return None
+    dedupe_key = str(event.get("dedupe_key") or "").strip()
+    if not dedupe_key:
+        return None
+    record = failures.get(dedupe_key)
+    if not isinstance(record, dict):
+        return None
+    if str(record.get("event_id") or "") != str(event.get("event_id") or ""):
+        return None
+    if int(record.get("consecutive_failures") or 0) < 1:
+        return None
+    return dict(record)
 
 
 def _broker_snapshot_freshness(payload: dict[str, Any], *, now: datetime, env: dict[str, str]) -> dict[str, Any]:
@@ -373,13 +464,21 @@ def _process_command(pid: int) -> str:
     return (proc.stdout or "").strip()
 
 
-def _mark_escalation_queued(path: Path, escalation: dict[str, Any], result: dict[str, Any], *, now: datetime) -> None:
+def _mark_escalation_queued(
+    path: Path,
+    escalation: dict[str, Any],
+    result: dict[str, Any],
+    *,
+    now: datetime,
+    reason: str,
+) -> None:
     payload = dict(escalation)
     payload["queued_for_active_trader"] = True
     payload["queued_at_utc"] = now.isoformat()
-    payload["queue_reason"] = "active qr-trader/live gateway lock"
+    payload["queue_reason"] = reason
     payload["guardian_wake_dispatcher_status"] = result.get("status")
     payload["guardian_wake_dispatcher_lock"] = result.get("lock")
+    payload["guardian_wake_dispatcher_parse_failure"] = result.get("parse_failure")
     _write_json(path, payload)
 
 
@@ -487,6 +586,7 @@ def _run_codex(
     prompt: str,
     env: dict[str, str],
     subprocess_run: Callable[..., Any],
+    attempt: str,
 ) -> dict[str, Any]:
     paths.codex_output.parent.mkdir(parents=True, exist_ok=True)
     paths.codex_output.write_text("")
@@ -513,31 +613,52 @@ def _run_codex(
     except Exception as exc:
         return {
             "status": "CODEX_EXCEPTION",
+            "attempt": attempt,
             "command": cmd,
             "returncode": None,
             "stderr_tail": str(exc),
             "stdout_tail": "",
+            "raw_stdout_excerpt": "",
+            "raw_stderr_excerpt": str(exc)[-2000:],
             "output_path": str(paths.codex_output),
             "last_message": "",
+            "last_message_file_empty": True,
+            "stdout_fallback_used": False,
         }
-    last_message = _read_text(paths.codex_output).strip()
-    if not last_message:
-        last_message = str(getattr(proc, "stdout", "") or "").strip()
+    raw_last_message = _read_text(paths.codex_output)
+    stdout_text = str(getattr(proc, "stdout", "") or "")
+    stderr_text = str(getattr(proc, "stderr", "") or "")
+    last_message_file_empty = not raw_last_message.strip()
+    stdout_fallback_used = last_message_file_empty and bool(stdout_text.strip())
+    last_message = raw_last_message.strip() or stdout_text.strip()
+    if getattr(proc, "returncode", 1) == 0 and last_message:
+        status = "OK"
+    elif getattr(proc, "returncode", 1) == 0 and not last_message:
+        status = "CODEX_EMPTY_LAST_MESSAGE"
+    else:
+        status = "CODEX_FAILED"
     return {
-        "status": "OK" if getattr(proc, "returncode", 1) == 0 and last_message else "CODEX_FAILED",
+        "status": status,
+        "attempt": attempt,
         "command": cmd,
         "returncode": getattr(proc, "returncode", None),
-        "stderr_tail": str(getattr(proc, "stderr", "") or "")[-1000:],
-        "stdout_tail": str(getattr(proc, "stdout", "") or "")[-1000:],
+        "stderr_tail": stderr_text[-1000:],
+        "stdout_tail": stdout_text[-1000:],
+        "raw_stdout_excerpt": stdout_text[-2000:],
+        "raw_stderr_excerpt": stderr_text[-2000:],
         "output_path": str(paths.codex_output),
         "last_message": last_message,
+        "last_message_file_empty": last_message_file_empty,
+        "stdout_fallback_used": stdout_fallback_used,
     }
 
 
 def _parse_codex_receipt(text: str) -> dict[str, Any]:
+    if not text.strip():
+        return {"valid": False, "error": "CODEX_EMPTY_LAST_MESSAGE", "raw_output_excerpt": ""}
     payload = _extract_json_object(text)
     if payload is None:
-        return {"valid": False, "error": "NO_JSON_OBJECT", "raw_output_excerpt": text[:2000]}
+        return {"valid": False, "error": "CODEX_NO_JSON_RECEIPT", "raw_output_excerpt": text[:2000]}
     if "actions" in payload:
         return {"valid": False, "error": "MULTIPLE_ACTIONS_FIELD_FORBIDDEN", "raw_payload": payload}
     receipt = payload.get("receipt") if isinstance(payload.get("receipt"), dict) else payload
@@ -555,6 +676,9 @@ def _parse_codex_receipt(text: str) -> dict[str, Any]:
         receipt["ownership"] = receipt["manual_system_ownership"]
     receipt["action"] = str(receipt["action"]).upper()
     receipt["thesis_state"] = str(receipt["thesis_state"]).upper()
+    receipt["ownership"] = str(receipt.get("ownership") or "UNKNOWN").upper()
+    if "side" in receipt:
+        receipt["side"] = str(receipt.get("side") or "NONE").upper()
     receipt["gateway_required"] = True
     receipt["no_direct_oanda"] = True
     return {"valid": True, "receipt": receipt}
@@ -593,6 +717,12 @@ def _receipt_parse_issues(receipt: dict[str, Any]) -> list[dict[str, str]]:
     thesis_state = str(receipt.get("thesis_state") or "").upper()
     if thesis_state and thesis_state not in THESIS_STATES:
         issues.append({"code": "BAD_THESIS_STATE", "message": "thesis_state is not supported"})
+    ownership = str(receipt.get("ownership") or receipt.get("manual_system_ownership") or "").upper()
+    if ownership and ownership not in {"SYSTEM", "OPERATOR_MANUAL", "UNKNOWN"}:
+        issues.append({"code": "BAD_OWNERSHIP", "message": "ownership must be SYSTEM, OPERATOR_MANUAL, or UNKNOWN"})
+    side = str(receipt.get("side") or "").upper()
+    if side and side not in {"LONG", "SHORT", "NONE", "N/A"}:
+        issues.append({"code": "BAD_SIDE", "message": "side must be LONG, SHORT, or NONE"})
     return issues
 
 
@@ -726,6 +856,26 @@ def _write_action_review(path: Path, payload: dict[str, Any]) -> None:
         )
     else:
         lines.append("- none")
+    attempts = payload.get("codex_attempts") if isinstance(payload.get("codex_attempts"), list) else []
+    codex_single = payload.get("codex") if isinstance(payload.get("codex"), dict) else {}
+    if attempts or codex_single:
+        lines.extend(["", "## Codex Diagnostics", ""])
+        for index, attempt in enumerate(attempts or [codex_single], start=1):
+            if not isinstance(attempt, dict):
+                continue
+            lines.extend(
+                [
+                    f"- Attempt {index}: `{attempt.get('attempt') or 'unknown'}` status=`{attempt.get('status')}` returncode=`{attempt.get('returncode')}`",
+                    f"  - output path: `{attempt.get('output_path')}`",
+                    f"  - last-message empty: `{attempt.get('last_message_file_empty')}` stdout fallback: `{attempt.get('stdout_fallback_used')}`",
+                ]
+            )
+            stdout_excerpt = str(attempt.get("raw_stdout_excerpt") or attempt.get("stdout_tail") or "").strip()
+            stderr_excerpt = str(attempt.get("raw_stderr_excerpt") or attempt.get("stderr_tail") or "").strip()
+            if stdout_excerpt:
+                lines.append(f"  - stdout excerpt: `{stdout_excerpt[:500]}`")
+            if stderr_excerpt:
+                lines.append(f"  - stderr excerpt: `{stderr_excerpt[:500]}`")
     lines.extend(["", "## Parse", ""])
     parse = payload.get("parse") if isinstance(payload.get("parse"), dict) else {}
     if parse:
@@ -775,6 +925,10 @@ def _record_state(
         key: result.get(key)
         for key in ("status", "generated_at_utc", "receipt_written", "action_receipt_path", "broker_snapshot_freshness")
     }
+    if isinstance(result.get("selected_event"), dict):
+        state["last_result"]["selected_event"] = result.get("selected_event")
+    if isinstance(result.get("parse"), dict):
+        state["last_result"]["parse"] = result.get("parse")
     if reviewed_event is not None:
         reviewed = state.get("reviewed_events") if isinstance(state.get("reviewed_events"), dict) else {}
         dedupe_key = str(reviewed_event.get("dedupe_key") or "")
@@ -787,6 +941,29 @@ def _record_state(
                 "receipt_written": bool(result.get("receipt_written")),
             }
             state["reviewed_events"] = reviewed
+            failures = state.get("parse_failures") if isinstance(state.get("parse_failures"), dict) else {}
+            if result.get("status") == "PARSE_FAILED":
+                prior = failures.get(dedupe_key) if isinstance(failures.get(dedupe_key), dict) else {}
+                same_event = str(prior.get("event_id") or "") == str(reviewed_event.get("event_id") or "")
+                consecutive = int(prior.get("consecutive_failures") or 0) + 1 if same_event else 1
+                parse = result.get("parse") if isinstance(result.get("parse"), dict) else {}
+                failure_record = {
+                    "event_id": reviewed_event.get("event_id"),
+                    "dedupe_key": dedupe_key,
+                    "pair": reviewed_event.get("pair"),
+                    "event_type": reviewed_event.get("event_type"),
+                    "severity": reviewed_event.get("severity"),
+                    "last_failed_at_utc": result.get("generated_at_utc"),
+                    "last_error": parse.get("error"),
+                    "consecutive_failures": consecutive,
+                    "queued_for_active_trader_after_failure": consecutive >= 1,
+                }
+                failures[dedupe_key] = failure_record
+                state["last_result"]["parse_failure"] = failure_record
+                state["parse_failures"] = failures
+            elif dedupe_key in failures and result.get("receipt_written"):
+                failures.pop(dedupe_key, None)
+                state["parse_failures"] = failures
     _write_json(path, state)
 
 

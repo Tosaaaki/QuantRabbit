@@ -100,6 +100,9 @@ from quant_rabbit.paths import (
     DEFAULT_GUARDIAN_EVENT_REPORT,
     DEFAULT_GUARDIAN_EVENT_STATE,
     DEFAULT_GUARDIAN_EVENTS,
+    DEFAULT_GUARDIAN_TRIGGER_CONTRACT,
+    DEFAULT_GUARDIAN_TRIGGER_CONTRACT_REPORT,
+    DEFAULT_GUARDIAN_WAKE_DISPATCHER_STATE,
     DEFAULT_HISTORY_DB,
     DEFAULT_IMPORT_REPORT,
     DEFAULT_MARKET_STATUS,
@@ -2332,6 +2335,7 @@ def _cycle_refresh_steps(daily_risk_pct: str) -> list[dict[str, Any]]:
         {"argv": ["thesis-evolution-check"], "required": False},
         {"argv": ["forecast-persistence-check"], "required": False},
         {"argv": ["position-management"], "required": True},
+        {"argv": ["guardian-trigger-contract"], "required": True},
         {"argv": ["guardian-event-router"], "required": True},
         {"argv": ["profit-capture-bot"], "required": True, "ok_rcs": [0, 2]},
         {"argv": ["memory-health"], "required": True},
@@ -2374,6 +2378,7 @@ def _cycle_sidecar_steps() -> list[dict[str, Any]]:
         # live lock. Run the gateway here as the full-cycle fallback; live sends
         # still require QR_LIVE_ENABLED plus --send --confirm-live.
         {"argv": position_execution, "required": False},
+        {"argv": ["guardian-trigger-contract"], "required": True},
         {"argv": ["guardian-event-router"], "required": True},
         # Post-gateway sidecars refresh broker truth after cycle-refresh priced
         # entries. Reprice intents before acceptance/support so the loop does
@@ -2409,6 +2414,7 @@ def _post_autotrade_failure_sidecar_steps() -> list[dict[str, Any]]:
         {"argv": ["forecast-persistence-check"], "required": False},
         {"argv": ["position-management"], "required": True},
         {"argv": position_execution, "required": False},
+        {"argv": ["guardian-trigger-contract"], "required": True},
         {"argv": ["guardian-event-router"], "required": True},
         _broker_snapshot_step(),
         _daily_target_state_step(),
@@ -2461,6 +2467,7 @@ def _post_intent_evidence_steps() -> list[dict[str, Any]]:
         {"argv": ["thesis-evolution-check"], "required": False},
         {"argv": ["forecast-persistence-check"], "required": False},
         {"argv": ["position-management"], "required": True},
+        {"argv": ["guardian-trigger-contract"], "required": True},
         {"argv": ["guardian-event-router"], "required": True},
     ]
 
@@ -3842,6 +3849,16 @@ def main(argv: list[str] | None = None) -> int:
     p_pexec.add_argument("--send", action="store_true")
     p_pexec.add_argument("--confirm-live", action="store_true")
 
+    p_guardian_contract = sub.add_parser(
+        "guardian-trigger-contract",
+        help="Refresh the trader-defined guardian trigger contract artifact without broker side effects.",
+    )
+    p_guardian_contract.add_argument("--snapshot", type=Path, default=DEFAULT_BROKER_SNAPSHOT)
+    p_guardian_contract.add_argument("--order-intents", type=Path, default=DEFAULT_ORDER_INTENTS)
+    p_guardian_contract.add_argument("--existing", type=Path, default=DEFAULT_GUARDIAN_TRIGGER_CONTRACT)
+    p_guardian_contract.add_argument("--output", type=Path, default=DEFAULT_GUARDIAN_TRIGGER_CONTRACT)
+    p_guardian_contract.add_argument("--report", type=Path, default=DEFAULT_GUARDIAN_TRIGGER_CONTRACT_REPORT)
+
     p_guardian_events = sub.add_parser(
         "guardian-event-router",
         help="Detect guardian market/exposure events and write GPT-5.5 wake artifacts without trading.",
@@ -3853,6 +3870,8 @@ def main(argv: list[str] | None = None) -> int:
     p_guardian_events.add_argument("--thesis-evolution", type=Path, default=Path("data/thesis_evolution_report.json"))
     p_guardian_events.add_argument("--forecast-persistence", type=Path, default=Path("data/forecast_persistence_report.json"))
     p_guardian_events.add_argument("--market-context-matrix", type=Path, default=DEFAULT_MARKET_CONTEXT_MATRIX)
+    p_guardian_events.add_argument("--trigger-contract", type=Path, default=DEFAULT_GUARDIAN_TRIGGER_CONTRACT)
+    p_guardian_events.add_argument("--wake-dispatcher-state", type=Path, default=DEFAULT_GUARDIAN_WAKE_DISPATCHER_STATE)
     p_guardian_events.add_argument("--state", type=Path, default=DEFAULT_GUARDIAN_EVENT_STATE)
     p_guardian_events.add_argument("--output", type=Path, default=DEFAULT_GUARDIAN_EVENTS)
     p_guardian_events.add_argument("--escalation-output", type=Path, default=DEFAULT_GUARDIAN_ESCALATION)
@@ -6830,6 +6849,39 @@ def main(argv: list[str] | None = None) -> int:
             "execution_ledger_post_sync": ledger_post_sync,
         }, indent=2, ensure_ascii=False, sort_keys=True))
         return 0
+    if args.command == "guardian-trigger-contract":
+        from quant_rabbit.guardian_events import (
+            build_guardian_trigger_contract,
+            validate_guardian_trigger_contract,
+            write_guardian_trigger_contract_report,
+        )
+
+        snapshot_payload = _load_json_object(args.snapshot) if args.snapshot.exists() else {}
+        order_intents_payload = _load_json_object(args.order_intents) if args.order_intents.exists() else {}
+        existing_payload = _load_json_object(args.existing) if args.existing.exists() else {}
+        contract = build_guardian_trigger_contract(
+            snapshot=snapshot_payload,
+            order_intents=order_intents_payload,
+            existing_contract=existing_payload,
+        )
+        validation = validate_guardian_trigger_contract(contract)
+        _write_json(args.output, contract)
+        write_guardian_trigger_contract_report(args.report, contract, validation)
+        print(
+            json.dumps(
+                {
+                    "status": validation["status"],
+                    "entry_count": validation["entry_count"],
+                    "output": str(args.output),
+                    "report": str(args.report),
+                    "issues": validation["issues"],
+                },
+                ensure_ascii=False,
+                indent=2,
+                sort_keys=True,
+            )
+        )
+        return 0 if validation["status"] == "VALID" else 2
     if args.command == "guardian-event-router":
         from quant_rabbit.guardian_events import run_guardian_event_router
 
@@ -6841,6 +6893,8 @@ def main(argv: list[str] | None = None) -> int:
             thesis_evolution_path=args.thesis_evolution,
             forecast_persistence_path=args.forecast_persistence,
             market_context_matrix_path=args.market_context_matrix,
+            trigger_contract_path=args.trigger_contract,
+            wake_dispatcher_state_path=args.wake_dispatcher_state,
             state_path=args.state,
             events_output_path=args.output,
             escalation_output_path=args.escalation_output,

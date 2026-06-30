@@ -16,6 +16,17 @@ NOW = datetime(2026, 6, 30, 4, 0, tzinfo=timezone.utc)
 
 
 class GuardianWakeDispatcherTest(unittest.TestCase):
+    def test_gpt_json_only_prompt_contains_required_schema(self) -> None:
+        prompt = (Path(__file__).resolve().parents[1] / "docs" / "guardian_wake_prompt.md").read_text()
+
+        self.assertIn("Return JSON only", prompt)
+        self.assertIn('"action": "TRADE|ADD|HOLD|HARVEST|REDUCE|CANCEL_PENDING|NO_ACTION"', prompt)
+        self.assertIn('"new_information": true', prompt)
+        self.assertIn('"thesis_state": "ALIVE|WOUNDED|INVALIDATED|EMERGENCY"', prompt)
+        self.assertIn('"ownership": "SYSTEM|OPERATOR_MANUAL|UNKNOWN"', prompt)
+        self.assertIn('"gateway_required": true', prompt)
+        self.assertIn('"no_direct_oanda": true', prompt)
+
     def test_wake_false_does_not_start_codex(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             paths = _fixture(Path(tmp), wake=False)
@@ -127,6 +138,137 @@ class GuardianWakeDispatcherTest(unittest.TestCase):
             self.assertEqual(result["status"], "PARSE_FAILED")
             self.assertFalse(paths.action_receipt.exists())
             self.assertTrue(paths.action_review.exists())
+
+    def test_empty_last_message_falls_back_to_stdout(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = _fixture(Path(tmp))
+            calls: list[list[str]] = []
+
+            result = run_dispatcher(paths=paths, now=NOW, env={}, subprocess_run=_fake_codex_stdout(calls, _valid_receipt()))
+
+            self.assertEqual(result["status"], "RECEIPT_WRITTEN")
+            self.assertTrue(result["codex"]["stdout_fallback_used"])
+            self.assertEqual(len(calls), 1)
+            self.assertTrue(paths.action_receipt.exists())
+
+    def test_empty_output_becomes_codex_empty_last_message(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = _fixture(Path(tmp))
+            calls: list[list[str]] = []
+
+            result = run_dispatcher(paths=paths, now=NOW, env={}, subprocess_run=_fake_codex(calls, ""))
+
+            self.assertEqual(result["status"], "PARSE_FAILED")
+            self.assertEqual(result["parse"]["error"], "CODEX_EMPTY_LAST_MESSAGE")
+            self.assertEqual(len(calls), 2)
+            self.assertFalse(paths.action_receipt.exists())
+
+    def test_codex_banner_without_json_becomes_no_json_receipt(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = _fixture(Path(tmp))
+            calls: list[list[str]] = []
+
+            result = run_dispatcher(
+                paths=paths,
+                now=NOW,
+                env={},
+                subprocess_run=_fake_codex(calls, "OpenAI Codex\nworking in read-only mode\n"),
+            )
+
+            self.assertEqual(result["status"], "PARSE_FAILED")
+            self.assertEqual(result["parse"]["error"], "CODEX_NO_JSON_RECEIPT")
+            self.assertFalse(paths.action_receipt.exists())
+
+    def test_one_repair_retry_occurs(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = _fixture(Path(tmp))
+            calls: list[list[str]] = []
+
+            result = run_dispatcher(
+                paths=paths,
+                now=NOW,
+                env={},
+                subprocess_run=_fake_codex_sequence(calls, ["not json", "still not json"]),
+            )
+
+            self.assertEqual(result["status"], "PARSE_FAILED")
+            self.assertTrue(result["repair_attempted"])
+            self.assertEqual([attempt["attempt"] for attempt in result["codex_attempts"]], ["initial", "repair"])
+            self.assertEqual(len(calls), 2)
+
+    def test_invalid_after_retry_does_not_create_action_receipt(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = _fixture(Path(tmp))
+            calls: list[list[str]] = []
+
+            run_dispatcher(
+                paths=paths,
+                now=NOW,
+                env={},
+                subprocess_run=_fake_codex_sequence(calls, ["not json", "still not json"]),
+            )
+
+            self.assertFalse(paths.action_receipt.exists())
+
+    def test_valid_retry_creates_guardian_action_receipt(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = _fixture(Path(tmp))
+            calls: list[list[str]] = []
+
+            result = run_dispatcher(
+                paths=paths,
+                now=NOW,
+                env={},
+                subprocess_run=_fake_codex_sequence(calls, ["not json", _valid_receipt()]),
+            )
+
+            self.assertEqual(result["status"], "RECEIPT_WRITTEN")
+            self.assertTrue(result["repair_attempted"])
+            self.assertEqual(len(calls), 2)
+            self.assertTrue(paths.action_receipt.exists())
+
+    def test_active_lock_after_invalid_output_queues_instead_of_retrying(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = _fixture(Path(tmp))
+            calls: list[list[str]] = []
+
+            def fake(cmd, *, input, capture_output, text, timeout, env):
+                calls.append(list(cmd))
+                out_path = Path(cmd[cmd.index("--output-last-message") + 1])
+                out_path.parent.mkdir(parents=True, exist_ok=True)
+                out_path.write_text("not json")
+                paths.live_lock.mkdir(parents=True)
+                (paths.live_lock / "pid").write_text(str(os.getpid()))
+                (paths.live_lock / "command").write_text("run-autotrade-live")
+                return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+            result = run_dispatcher(paths=paths, now=NOW, env={}, subprocess_run=fake)
+
+            self.assertEqual(result["status"], "QUEUED_FOR_ACTIVE_TRADER")
+            self.assertEqual(len(calls), 1)
+            self.assertFalse(paths.action_receipt.exists())
+
+    def test_repeated_parse_failure_is_queued_for_active_trader(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = _fixture(Path(tmp))
+            calls: list[list[str]] = []
+            first = run_dispatcher(
+                paths=paths,
+                now=NOW,
+                env={},
+                subprocess_run=_fake_codex_sequence(calls, ["not json", "still not json"]),
+            )
+
+            second = run_dispatcher(
+                paths=paths,
+                now=NOW + timedelta(minutes=1),
+                env={},
+                subprocess_run=_fake_codex(calls, _valid_receipt()),
+            )
+
+            self.assertEqual(first["status"], "PARSE_FAILED")
+            self.assertEqual(second["status"], "QUEUED_FOR_ACTIVE_TRADER")
+            self.assertEqual(len(calls), 2)
 
     def test_valid_gpt_output_creates_guardian_action_receipt(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -294,6 +436,31 @@ def _valid_receipt(*, event_id: str = "event-P1") -> str:
 def _fake_codex(calls: list[list[str]], output: str):
     def run(cmd, *, input, capture_output, text, timeout, env):
         calls.append(list(cmd))
+        out_path = Path(cmd[cmd.index("--output-last-message") + 1])
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        out_path.write_text(output)
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    return run
+
+
+def _fake_codex_stdout(calls: list[list[str]], stdout: str):
+    def run(cmd, *, input, capture_output, text, timeout, env):
+        calls.append(list(cmd))
+        out_path = Path(cmd[cmd.index("--output-last-message") + 1])
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        out_path.write_text("")
+        return SimpleNamespace(returncode=0, stdout=stdout, stderr="")
+
+    return run
+
+
+def _fake_codex_sequence(calls: list[list[str]], outputs: list[str]):
+    remaining = list(outputs)
+
+    def run(cmd, *, input, capture_output, text, timeout, env):
+        calls.append(list(cmd))
+        output = remaining.pop(0) if remaining else outputs[-1]
         out_path = Path(cmd[cmd.index("--output-last-message") + 1])
         out_path.parent.mkdir(parents=True, exist_ok=True)
         out_path.write_text(output)

@@ -1,0 +1,497 @@
+# Guardian Trigger Contract Report
+
+- Generated at UTC: `2026-06-30T07:16:07.025442+00:00`
+- Validation: `VALID`
+- Entries: `53`
+- Stale: `False` age=`0.002271`s
+
+## Boundary
+
+- The trigger contract is read-only evidence for guardian-event-router.
+- Contract triggers never execute broker writes.
+- Plain trigger prose is not inferred; a trigger fires only when the contract marks it fired or gives a machine-readable predicate that evaluates true.
+- Live orders, adds, harvests, cancels, and closes remain gateway-only.
+
+## Issues
+
+- none
+
+## Entries
+
+- `USD_JPY` `SHORT` owner=`UNKNOWN` state=`ALIVE`
+  - thesis: 472933
+  - next review: open broker position requires guardian triggers by `2026-06-30T08:16:07.025442+00:00`
+  - harvest_triggers: `0` declared, `0` explicitly fired
+  - add_triggers: `0` declared, `0` explicitly fired
+  - no_add_triggers: `0` declared, `0` explicitly fired
+  - wounded_triggers: `0` declared, `0` explicitly fired
+  - invalidation_triggers: `0` declared, `0` explicitly fired
+  - emergency_triggers: `0` declared, `0` explicitly fired
+- `USD_JPY` `SHORT` owner=`UNKNOWN` state=`ALIVE`
+  - thesis: 472931
+  - next review: open broker position requires guardian triggers by `2026-06-30T08:16:07.025442+00:00`
+  - harvest_triggers: `0` declared, `0` explicitly fired
+  - add_triggers: `0` declared, `0` explicitly fired
+  - no_add_triggers: `0` declared, `0` explicitly fired
+  - wounded_triggers: `0` declared, `0` explicitly fired
+  - invalidation_triggers: `0` declared, `0` explicitly fired
+  - emergency_triggers: `0` declared, `0` explicitly fired
+- `USD_JPY` `SHORT` owner=`OPERATOR_MANUAL` state=`ALIVE`
+  - thesis: 162.00 historical/intervention-risk fade
+  - next review: open broker position requires guardian triggers by `2026-06-30T08:16:07.025442+00:00`
+  - harvest_triggers: `0` declared, `0` explicitly fired
+  - add_triggers: `0` declared, `0` explicitly fired
+  - no_add_triggers: `0` declared, `0` explicitly fired
+  - wounded_triggers: `0` declared, `0` explicitly fired
+  - invalidation_triggers: `0` declared, `0` explicitly fired
+  - emergency_triggers: `0` declared, `0` explicitly fired
+- `USD_JPY` `SHORT` owner=`OPERATOR_MANUAL` state=`ALIVE`
+  - thesis: 162.00 historical/intervention-risk fade
+  - next review: open broker position requires guardian triggers by `2026-06-30T08:16:07.025442+00:00`
+  - harvest_triggers: `0` declared, `0` explicitly fired
+  - add_triggers: `0` declared, `0` explicitly fired
+  - no_add_triggers: `0` declared, `0` explicitly fired
+  - wounded_triggers: `0` declared, `0` explicitly fired
+  - invalidation_triggers: `0` declared, `0` explicitly fired
+  - emergency_triggers: `0` declared, `0` explicitly fired
+- `USD_JPY` `SHORT` owner=`OPERATOR_MANUAL` state=`ALIVE`
+  - thesis: 162.00 historical/intervention-risk fade
+  - next review: open broker position requires guardian triggers by `2026-06-30T08:16:07.025442+00:00`
+  - harvest_triggers: `0` declared, `0` explicitly fired
+  - add_triggers: `0` declared, `0` explicitly fired
+  - no_add_triggers: `0` declared, `0` explicitly fired
+  - wounded_triggers: `0` declared, `0` explicitly fired
+  - invalidation_triggers: `0` declared, `0` explicitly fired
+  - emergency_triggers: `0` declared, `0` explicitly fired
+- `USD_JPY` `SHORT` owner=`OPERATOR_MANUAL` state=`ALIVE`
+  - thesis: 162.00 historical/intervention-risk fade
+  - next review: open broker position requires guardian triggers by `2026-06-30T08:16:07.025442+00:00`
+  - harvest_triggers: `0` declared, `0` explicitly fired
+  - add_triggers: `0` declared, `0` explicitly fired
+  - no_add_triggers: `0` declared, `0` explicitly fired
+  - wounded_triggers: `0` declared, `0` explicitly fired
+  - invalidation_triggers: `0` declared, `0` explicitly fired
+  - emergency_triggers: `0` declared, `0` explicitly fired
+- `AUD_CHF` `SHORT` owner=`SYSTEM` state=`ALIVE`
+  - thesis: range_trader AUD_CHF SHORT RANGE_ROTATION 3.51R: Forecast-first lane: create an intent only if this same fresh forecast, market-location map, levels, spread, and risk geometry still agree.
+  - next review: candidate range_trader:AUD_CHF:SHORT:RANGE_ROTATION requires trader-defined triggers by `2026-06-30T08:16:07.025442+00:00`
+  - harvest_triggers: `0` declared, `0` explicitly fired
+  - add_triggers: `0` declared, `0` explicitly fired
+  - no_add_triggers: `0` declared, `0` explicitly fired
+  - wounded_triggers: `0` declared, `0` explicitly fired
+  - invalidation_triggers: `0` declared, `0` explicitly fired
+  - emergency_triggers: `0` declared, `0` explicitly fired
+- `AUD_JPY` `SHORT` owner=`SYSTEM` state=`ALIVE`
+  - thesis: range_trader AUD_JPY SHORT RANGE_ROTATION 2.70R: Watch-only forecast-first lane: build dry-run geometry and blocker reasons only. Do not send live until calibrated forecast confidence clears the live-entry floor on a fresh snapshot.
+  - next review: candidate range_trader:AUD_JPY:SHORT:RANGE_ROTATION requires trader-defined triggers by `2026-06-30T08:16:07.025442+00:00`
+  - harvest_triggers: `0` declared, `0` explicitly fired
+  - add_triggers: `0` declared, `0` explicitly fired
+  - no_add_triggers: `0` declared, `0` explicitly fired
+  - wounded_triggers: `0` declared, `0` explicitly fired
+  - invalidation_triggers: `0` declared, `0` explicitly fired
+  - emergency_triggers: `0` declared, `0` explicitly fired
+- `AUD_NZD` `SHORT` owner=`SYSTEM` state=`ALIVE`
+  - thesis: range_trader AUD_NZD SHORT RANGE_ROTATION 3.51R: Range rail override: measured RANGE_RAIL_LIMIT may be armed because the current forecast box has a rail-side LIMIT entry, TP inside the box, SL outside the box, and calibrated range confidence clears the live floor. Do not convert to MARKET; refresh forecast and broker snapshot before send.
+  - next review: candidate range_trader:AUD_NZD:SHORT:RANGE_ROTATION requires trader-defined triggers by `2026-06-30T08:16:07.025442+00:00`
+  - harvest_triggers: `0` declared, `0` explicitly fired
+  - add_triggers: `0` declared, `0` explicitly fired
+  - no_add_triggers: `0` declared, `0` explicitly fired
+  - wounded_triggers: `0` declared, `0` explicitly fired
+  - invalidation_triggers: `0` declared, `0` explicitly fired
+  - emergency_triggers: `0` declared, `0` explicitly fired
+- `AUD_NZD` `SHORT` owner=`SYSTEM` state=`ALIVE`
+  - thesis: range_trader AUD_NZD SHORT RANGE_ROTATION 3.51R: Watch-only forecast-first lane: build dry-run geometry and blocker reasons only. Do not send live until calibrated forecast confidence clears the live-entry floor on a fresh snapshot.
+  - next review: candidate range_trader:AUD_NZD:SHORT:RANGE_ROTATION:MARKET requires trader-defined triggers by `2026-06-30T08:16:07.025442+00:00`
+  - harvest_triggers: `0` declared, `0` explicitly fired
+  - add_triggers: `0` declared, `0` explicitly fired
+  - no_add_triggers: `0` declared, `0` explicitly fired
+  - wounded_triggers: `0` declared, `0` explicitly fired
+  - invalidation_triggers: `0` declared, `0` explicitly fired
+  - emergency_triggers: `0` declared, `0` explicitly fired
+- `AUD_USD` `SHORT` owner=`SYSTEM` state=`ALIVE`
+  - thesis: range_trader AUD_USD SHORT RANGE_ROTATION 3.51R: Watch-only forecast-first lane: build dry-run geometry and blocker reasons only. Do not send live until calibrated forecast confidence clears the live-entry floor on a fresh snapshot.
+  - next review: candidate range_trader:AUD_USD:SHORT:RANGE_ROTATION requires trader-defined triggers by `2026-06-30T08:16:07.025442+00:00`
+  - harvest_triggers: `0` declared, `0` explicitly fired
+  - add_triggers: `0` declared, `0` explicitly fired
+  - no_add_triggers: `0` declared, `0` explicitly fired
+  - wounded_triggers: `0` declared, `0` explicitly fired
+  - invalidation_triggers: `0` declared, `0` explicitly fired
+  - emergency_triggers: `0` declared, `0` explicitly fired
+- `AUD_USD` `LONG` owner=`SYSTEM` state=`ALIVE`
+  - thesis: range_trader AUD_USD LONG RANGE_ROTATION 3.51R: Watch-only forecast-first lane: build dry-run geometry and blocker reasons only. Do not send live until calibrated forecast confidence clears the live-entry floor on a fresh snapshot.
+  - next review: candidate range_trader:AUD_USD:LONG:RANGE_ROTATION requires trader-defined triggers by `2026-06-30T08:16:07.025442+00:00`
+  - harvest_triggers: `0` declared, `0` explicitly fired
+  - add_triggers: `0` declared, `0` explicitly fired
+  - no_add_triggers: `0` declared, `0` explicitly fired
+  - wounded_triggers: `0` declared, `0` explicitly fired
+  - invalidation_triggers: `0` declared, `0` explicitly fired
+  - emergency_triggers: `0` declared, `0` explicitly fired
+- `CAD_CHF` `LONG` owner=`SYSTEM` state=`ALIVE`
+  - thesis: range_trader CAD_CHF LONG RANGE_ROTATION 1.20R: Watch-only forecast-first lane: build dry-run geometry and blocker reasons only. Do not send live until calibrated forecast confidence clears the live-entry floor on a fresh snapshot.
+  - next review: candidate range_trader:CAD_CHF:LONG:RANGE_ROTATION requires trader-defined triggers by `2026-06-30T08:16:07.025442+00:00`
+  - harvest_triggers: `0` declared, `0` explicitly fired
+  - add_triggers: `0` declared, `0` explicitly fired
+  - no_add_triggers: `0` declared, `0` explicitly fired
+  - wounded_triggers: `0` declared, `0` explicitly fired
+  - invalidation_triggers: `0` declared, `0` explicitly fired
+  - emergency_triggers: `0` declared, `0` explicitly fired
+- `CAD_JPY` `SHORT` owner=`SYSTEM` state=`ALIVE`
+  - thesis: range_trader CAD_JPY SHORT RANGE_ROTATION 2.00R: Forecast-first lane: create an intent only if this same fresh forecast, market-location map, levels, spread, and risk geometry still agree.
+  - next review: candidate range_trader:CAD_JPY:SHORT:RANGE_ROTATION requires trader-defined triggers by `2026-06-30T08:16:07.025442+00:00`
+  - harvest_triggers: `0` declared, `0` explicitly fired
+  - add_triggers: `0` declared, `0` explicitly fired
+  - no_add_triggers: `0` declared, `0` explicitly fired
+  - wounded_triggers: `0` declared, `0` explicitly fired
+  - invalidation_triggers: `0` declared, `0` explicitly fired
+  - emergency_triggers: `0` declared, `0` explicitly fired
+- `EUR_AUD` `LONG` owner=`SYSTEM` state=`ALIVE`
+  - thesis: range_trader EUR_AUD LONG RANGE_ROTATION 2.70R: Forecast-first lane: create an intent only if this same fresh forecast, market-location map, levels, spread, and risk geometry still agree.
+  - next review: candidate range_trader:EUR_AUD:LONG:RANGE_ROTATION requires trader-defined triggers by `2026-06-30T08:16:07.025442+00:00`
+  - harvest_triggers: `0` declared, `0` explicitly fired
+  - add_triggers: `0` declared, `0` explicitly fired
+  - no_add_triggers: `0` declared, `0` explicitly fired
+  - wounded_triggers: `0` declared, `0` explicitly fired
+  - invalidation_triggers: `0` declared, `0` explicitly fired
+  - emergency_triggers: `0` declared, `0` explicitly fired
+- `EUR_CAD` `SHORT` owner=`SYSTEM` state=`ALIVE`
+  - thesis: range_trader EUR_CAD SHORT RANGE_ROTATION 2.00R: Forecast-first lane: create an intent only if this same fresh forecast, market-location map, levels, spread, and risk geometry still agree.
+  - next review: candidate range_trader:EUR_CAD:SHORT:RANGE_ROTATION requires trader-defined triggers by `2026-06-30T08:16:07.025442+00:00`
+  - harvest_triggers: `0` declared, `0` explicitly fired
+  - add_triggers: `0` declared, `0` explicitly fired
+  - no_add_triggers: `0` declared, `0` explicitly fired
+  - wounded_triggers: `0` declared, `0` explicitly fired
+  - invalidation_triggers: `0` declared, `0` explicitly fired
+  - emergency_triggers: `0` declared, `0` explicitly fired
+- `EUR_CHF` `LONG` owner=`SYSTEM` state=`ALIVE`
+  - thesis: range_trader EUR_CHF LONG RANGE_ROTATION 2.86R: Forecast-first lane: create an intent only if this same fresh forecast, market-location map, levels, spread, and risk geometry still agree.
+  - next review: candidate range_trader:EUR_CHF:LONG:RANGE_ROTATION requires trader-defined triggers by `2026-06-30T08:16:07.025442+00:00`
+  - harvest_triggers: `0` declared, `0` explicitly fired
+  - add_triggers: `0` declared, `0` explicitly fired
+  - no_add_triggers: `0` declared, `0` explicitly fired
+  - wounded_triggers: `0` declared, `0` explicitly fired
+  - invalidation_triggers: `0` declared, `0` explicitly fired
+  - emergency_triggers: `0` declared, `0` explicitly fired
+- `EUR_JPY` `LONG` owner=`SYSTEM` state=`ALIVE`
+  - thesis: range_trader EUR_JPY LONG RANGE_ROTATION 2.00R: Forecast-first lane: use only a pending trigger receipt; no market chase. The same fresh forecast, market-location map, levels, spread, and risk geometry must still agree.
+  - next review: candidate range_trader:EUR_JPY:LONG:RANGE_ROTATION requires trader-defined triggers by `2026-06-30T08:16:07.025442+00:00`
+  - harvest_triggers: `0` declared, `0` explicitly fired
+  - add_triggers: `0` declared, `0` explicitly fired
+  - no_add_triggers: `0` declared, `0` explicitly fired
+  - wounded_triggers: `0` declared, `0` explicitly fired
+  - invalidation_triggers: `0` declared, `0` explicitly fired
+  - emergency_triggers: `0` declared, `0` explicitly fired
+- `EUR_NZD` `LONG` owner=`SYSTEM` state=`ALIVE`
+  - thesis: range_trader EUR_NZD LONG RANGE_ROTATION 2.00R: Watch-only forecast-first lane: build dry-run geometry and blocker reasons only. Do not send live until calibrated forecast confidence clears the live-entry floor on a fresh snapshot.
+  - next review: candidate range_trader:EUR_NZD:LONG:RANGE_ROTATION requires trader-defined triggers by `2026-06-30T08:16:07.025442+00:00`
+  - harvest_triggers: `0` declared, `0` explicitly fired
+  - add_triggers: `0` declared, `0` explicitly fired
+  - no_add_triggers: `0` declared, `0` explicitly fired
+  - wounded_triggers: `0` declared, `0` explicitly fired
+  - invalidation_triggers: `0` declared, `0` explicitly fired
+  - emergency_triggers: `0` declared, `0` explicitly fired
+- `EUR_USD` `SHORT` owner=`SYSTEM` state=`ALIVE`
+  - thesis: range_trader EUR_USD SHORT RANGE_ROTATION 3.42R: Forecast-first lane: create an intent only if this same fresh forecast, market-location map, levels, spread, and risk geometry still agree.
+  - next review: candidate range_trader:EUR_USD:SHORT:RANGE_ROTATION requires trader-defined triggers by `2026-06-30T08:16:07.025442+00:00`
+  - harvest_triggers: `0` declared, `0` explicitly fired
+  - add_triggers: `0` declared, `0` explicitly fired
+  - no_add_triggers: `0` declared, `0` explicitly fired
+  - wounded_triggers: `0` declared, `0` explicitly fired
+  - invalidation_triggers: `0` declared, `0` explicitly fired
+  - emergency_triggers: `0` declared, `0` explicitly fired
+- `EUR_USD` `LONG` owner=`SYSTEM` state=`ALIVE`
+  - thesis: range_trader EUR_USD LONG RANGE_ROTATION 2.60R: Forecast-first lane: use only a pending trigger receipt; no market chase. The same fresh forecast, market-location map, levels, spread, and risk geometry must still agree.
+  - next review: candidate range_trader:EUR_USD:LONG:RANGE_ROTATION requires trader-defined triggers by `2026-06-30T08:16:07.025442+00:00`
+  - harvest_triggers: `0` declared, `0` explicitly fired
+  - add_triggers: `0` declared, `0` explicitly fired
+  - no_add_triggers: `0` declared, `0` explicitly fired
+  - wounded_triggers: `0` declared, `0` explicitly fired
+  - invalidation_triggers: `0` declared, `0` explicitly fired
+  - emergency_triggers: `0` declared, `0` explicitly fired
+- `GBP_AUD` `SHORT` owner=`SYSTEM` state=`ALIVE`
+  - thesis: range_trader GBP_AUD SHORT RANGE_ROTATION 1.62R: Watch-only forecast-first lane: build dry-run geometry and blocker reasons only. Do not send live until calibrated forecast confidence clears the live-entry floor on a fresh snapshot.
+  - next review: candidate range_trader:GBP_AUD:SHORT:RANGE_ROTATION requires trader-defined triggers by `2026-06-30T08:16:07.025442+00:00`
+  - harvest_triggers: `0` declared, `0` explicitly fired
+  - add_triggers: `0` declared, `0` explicitly fired
+  - no_add_triggers: `0` declared, `0` explicitly fired
+  - wounded_triggers: `0` declared, `0` explicitly fired
+  - invalidation_triggers: `0` declared, `0` explicitly fired
+  - emergency_triggers: `0` declared, `0` explicitly fired
+- `GBP_AUD` `SHORT` owner=`SYSTEM` state=`ALIVE`
+  - thesis: failure_trader GBP_AUD SHORT BREAKOUT_FAILURE 3.51R: Watch-only forecast-first lane: build dry-run geometry and blocker reasons only. Do not send live until calibrated forecast confidence clears the live-entry floor on a fresh snapshot.
+  - next review: candidate failure_trader:GBP_AUD:SHORT:BREAKOUT_FAILURE:LIMIT requires trader-defined triggers by `2026-06-30T08:16:07.025442+00:00`
+  - harvest_triggers: `0` declared, `0` explicitly fired
+  - add_triggers: `0` declared, `0` explicitly fired
+  - no_add_triggers: `0` declared, `0` explicitly fired
+  - wounded_triggers: `0` declared, `0` explicitly fired
+  - invalidation_triggers: `0` declared, `0` explicitly fired
+  - emergency_triggers: `0` declared, `0` explicitly fired
+- `GBP_AUD` `SHORT` owner=`SYSTEM` state=`ALIVE`
+  - thesis: trend_trader GBP_AUD SHORT TREND_CONTINUATION 3.51R: Watch-only forecast-first lane: build dry-run geometry and blocker reasons only. Do not send live until calibrated forecast confidence clears the live-entry floor on a fresh snapshot.
+  - next review: candidate trend_trader:GBP_AUD:SHORT:TREND_CONTINUATION requires trader-defined triggers by `2026-06-30T08:16:07.025442+00:00`
+  - harvest_triggers: `0` declared, `0` explicitly fired
+  - add_triggers: `0` declared, `0` explicitly fired
+  - no_add_triggers: `0` declared, `0` explicitly fired
+  - wounded_triggers: `0` declared, `0` explicitly fired
+  - invalidation_triggers: `0` declared, `0` explicitly fired
+  - emergency_triggers: `0` declared, `0` explicitly fired
+- `GBP_CHF` `LONG` owner=`SYSTEM` state=`ALIVE`
+  - thesis: range_trader GBP_CHF LONG RANGE_ROTATION 2.00R: Watch-only forecast-first lane: build dry-run geometry and blocker reasons only. Do not send live until calibrated forecast confidence clears the live-entry floor on a fresh snapshot.
+  - next review: candidate range_trader:GBP_CHF:LONG:RANGE_ROTATION requires trader-defined triggers by `2026-06-30T08:16:07.025442+00:00`
+  - harvest_triggers: `0` declared, `0` explicitly fired
+  - add_triggers: `0` declared, `0` explicitly fired
+  - no_add_triggers: `0` declared, `0` explicitly fired
+  - wounded_triggers: `0` declared, `0` explicitly fired
+  - invalidation_triggers: `0` declared, `0` explicitly fired
+  - emergency_triggers: `0` declared, `0` explicitly fired
+- `GBP_JPY` `SHORT` owner=`SYSTEM` state=`ALIVE`
+  - thesis: range_trader GBP_JPY SHORT RANGE_ROTATION 1.20R: Range rail override: measured RANGE_RAIL_LIMIT may be armed because the current forecast box has a rail-side LIMIT entry, TP inside the box, SL outside the box, and calibrated range confidence clears the live floor. Do not convert to MARKET; refresh forecast and broker snapshot before send.
+  - next review: candidate range_trader:GBP_JPY:SHORT:RANGE_ROTATION requires trader-defined triggers by `2026-06-30T08:16:07.025442+00:00`
+  - harvest_triggers: `0` declared, `0` explicitly fired
+  - add_triggers: `0` declared, `0` explicitly fired
+  - no_add_triggers: `0` declared, `0` explicitly fired
+  - wounded_triggers: `0` declared, `0` explicitly fired
+  - invalidation_triggers: `0` declared, `0` explicitly fired
+  - emergency_triggers: `0` declared, `0` explicitly fired
+- `GBP_JPY` `SHORT` owner=`SYSTEM` state=`ALIVE`
+  - thesis: range_trader GBP_JPY SHORT RANGE_ROTATION 1.20R: Watch-only forecast-first lane: build dry-run geometry and blocker reasons only. Do not send live until calibrated forecast confidence clears the live-entry floor on a fresh snapshot.
+  - next review: candidate range_trader:GBP_JPY:SHORT:RANGE_ROTATION:MARKET requires trader-defined triggers by `2026-06-30T08:16:07.025442+00:00`
+  - harvest_triggers: `0` declared, `0` explicitly fired
+  - add_triggers: `0` declared, `0` explicitly fired
+  - no_add_triggers: `0` declared, `0` explicitly fired
+  - wounded_triggers: `0` declared, `0` explicitly fired
+  - invalidation_triggers: `0` declared, `0` explicitly fired
+  - emergency_triggers: `0` declared, `0` explicitly fired
+- `GBP_NZD` `LONG` owner=`SYSTEM` state=`ALIVE`
+  - thesis: range_trader GBP_NZD LONG RANGE_ROTATION 1.20R: Watch-only forecast-first lane: build dry-run geometry and blocker reasons only. Do not send live until calibrated forecast confidence clears the live-entry floor on a fresh snapshot.
+  - next review: candidate range_trader:GBP_NZD:LONG:RANGE_ROTATION requires trader-defined triggers by `2026-06-30T08:16:07.025442+00:00`
+  - harvest_triggers: `0` declared, `0` explicitly fired
+  - add_triggers: `0` declared, `0` explicitly fired
+  - no_add_triggers: `0` declared, `0` explicitly fired
+  - wounded_triggers: `0` declared, `0` explicitly fired
+  - invalidation_triggers: `0` declared, `0` explicitly fired
+  - emergency_triggers: `0` declared, `0` explicitly fired
+- `GBP_NZD` `LONG` owner=`SYSTEM` state=`ALIVE`
+  - thesis: failure_trader GBP_NZD LONG BREAKOUT_FAILURE 2.00R: Watch-only forecast-first lane: build dry-run geometry and blocker reasons only. Do not send live until calibrated forecast confidence clears the live-entry floor on a fresh snapshot.
+  - next review: candidate failure_trader:GBP_NZD:LONG:BREAKOUT_FAILURE:LIMIT requires trader-defined triggers by `2026-06-30T08:16:07.025442+00:00`
+  - harvest_triggers: `0` declared, `0` explicitly fired
+  - add_triggers: `0` declared, `0` explicitly fired
+  - no_add_triggers: `0` declared, `0` explicitly fired
+  - wounded_triggers: `0` declared, `0` explicitly fired
+  - invalidation_triggers: `0` declared, `0` explicitly fired
+  - emergency_triggers: `0` declared, `0` explicitly fired
+- `GBP_NZD` `LONG` owner=`SYSTEM` state=`ALIVE`
+  - thesis: trend_trader GBP_NZD LONG TREND_CONTINUATION 2.00R: Watch-only forecast-first lane: build dry-run geometry and blocker reasons only. Do not send live until calibrated forecast confidence clears the live-entry floor on a fresh snapshot.
+  - next review: candidate trend_trader:GBP_NZD:LONG:TREND_CONTINUATION requires trader-defined triggers by `2026-06-30T08:16:07.025442+00:00`
+  - harvest_triggers: `0` declared, `0` explicitly fired
+  - add_triggers: `0` declared, `0` explicitly fired
+  - no_add_triggers: `0` declared, `0` explicitly fired
+  - wounded_triggers: `0` declared, `0` explicitly fired
+  - invalidation_triggers: `0` declared, `0` explicitly fired
+  - emergency_triggers: `0` declared, `0` explicitly fired
+- `GBP_USD` `LONG` owner=`SYSTEM` state=`ALIVE`
+  - thesis: range_trader GBP_USD LONG RANGE_ROTATION 2.60R: Forecast-first lane: use only a pending trigger receipt; no market chase. The same fresh forecast, market-location map, levels, spread, and risk geometry must still agree.
+  - next review: candidate range_trader:GBP_USD:LONG:RANGE_ROTATION requires trader-defined triggers by `2026-06-30T08:16:07.025442+00:00`
+  - harvest_triggers: `0` declared, `0` explicitly fired
+  - add_triggers: `0` declared, `0` explicitly fired
+  - no_add_triggers: `0` declared, `0` explicitly fired
+  - wounded_triggers: `0` declared, `0` explicitly fired
+  - invalidation_triggers: `0` declared, `0` explicitly fired
+  - emergency_triggers: `0` declared, `0` explicitly fired
+- `NZD_CHF` `SHORT` owner=`SYSTEM` state=`ALIVE`
+  - thesis: range_trader NZD_CHF SHORT RANGE_ROTATION 2.00R: Forecast-first lane: create an intent only if this same fresh forecast, market-location map, levels, spread, and risk geometry still agree.
+  - next review: candidate range_trader:NZD_CHF:SHORT:RANGE_ROTATION requires trader-defined triggers by `2026-06-30T08:16:07.025442+00:00`
+  - harvest_triggers: `0` declared, `0` explicitly fired
+  - add_triggers: `0` declared, `0` explicitly fired
+  - no_add_triggers: `0` declared, `0` explicitly fired
+  - wounded_triggers: `0` declared, `0` explicitly fired
+  - invalidation_triggers: `0` declared, `0` explicitly fired
+  - emergency_triggers: `0` declared, `0` explicitly fired
+- `NZD_JPY` `SHORT` owner=`SYSTEM` state=`ALIVE`
+  - thesis: range_trader NZD_JPY SHORT RANGE_ROTATION 2.60R: Watch-only forecast-first lane: build dry-run geometry and blocker reasons only. Do not send live until calibrated forecast confidence clears the live-entry floor on a fresh snapshot.
+  - next review: candidate range_trader:NZD_JPY:SHORT:RANGE_ROTATION requires trader-defined triggers by `2026-06-30T08:16:07.025442+00:00`
+  - harvest_triggers: `0` declared, `0` explicitly fired
+  - add_triggers: `0` declared, `0` explicitly fired
+  - no_add_triggers: `0` declared, `0` explicitly fired
+  - wounded_triggers: `0` declared, `0` explicitly fired
+  - invalidation_triggers: `0` declared, `0` explicitly fired
+  - emergency_triggers: `0` declared, `0` explicitly fired
+- `NZD_USD` `SHORT` owner=`SYSTEM` state=`ALIVE`
+  - thesis: range_trader NZD_USD SHORT RANGE_ROTATION 2.60R: Forecast-first lane: create an intent only if this same fresh forecast, market-location map, levels, spread, and risk geometry still agree.
+  - next review: candidate range_trader:NZD_USD:SHORT:RANGE_ROTATION requires trader-defined triggers by `2026-06-30T08:16:07.025442+00:00`
+  - harvest_triggers: `0` declared, `0` explicitly fired
+  - add_triggers: `0` declared, `0` explicitly fired
+  - no_add_triggers: `0` declared, `0` explicitly fired
+  - wounded_triggers: `0` declared, `0` explicitly fired
+  - invalidation_triggers: `0` declared, `0` explicitly fired
+  - emergency_triggers: `0` declared, `0` explicitly fired
+- `USD_CAD` `SHORT` owner=`SYSTEM` state=`ALIVE`
+  - thesis: range_trader USD_CAD SHORT RANGE_ROTATION 3.51R: Range rail override: measured RANGE_RAIL_LIMIT may be armed because the current forecast box has a rail-side LIMIT entry, TP inside the box, SL outside the box, and calibrated range confidence clears the live floor. Do not convert to MARKET; refresh forecast and broker snapshot before send.
+  - next review: candidate range_trader:USD_CAD:SHORT:RANGE_ROTATION requires trader-defined triggers by `2026-06-30T08:16:07.025442+00:00`
+  - harvest_triggers: `0` declared, `0` explicitly fired
+  - add_triggers: `0` declared, `0` explicitly fired
+  - no_add_triggers: `0` declared, `0` explicitly fired
+  - wounded_triggers: `0` declared, `0` explicitly fired
+  - invalidation_triggers: `0` declared, `0` explicitly fired
+  - emergency_triggers: `0` declared, `0` explicitly fired
+- `USD_CAD` `SHORT` owner=`SYSTEM` state=`ALIVE`
+  - thesis: range_trader USD_CAD SHORT RANGE_ROTATION 3.51R: Watch-only forecast-first lane: build dry-run geometry and blocker reasons only. Do not send live until calibrated forecast confidence clears the live-entry floor on a fresh snapshot.
+  - next review: candidate range_trader:USD_CAD:SHORT:RANGE_ROTATION:MARKET requires trader-defined triggers by `2026-06-30T08:16:07.025442+00:00`
+  - harvest_triggers: `0` declared, `0` explicitly fired
+  - add_triggers: `0` declared, `0` explicitly fired
+  - no_add_triggers: `0` declared, `0` explicitly fired
+  - wounded_triggers: `0` declared, `0` explicitly fired
+  - invalidation_triggers: `0` declared, `0` explicitly fired
+  - emergency_triggers: `0` declared, `0` explicitly fired
+- `USD_CHF` `LONG` owner=`SYSTEM` state=`ALIVE`
+  - thesis: range_trader USD_CHF LONG RANGE_ROTATION 2.60R: Range rail override: measured RANGE_RAIL_LIMIT may be armed because the current forecast box has a rail-side LIMIT entry, TP inside the box, SL outside the box, and calibrated range confidence clears the live floor. Do not convert to MARKET; refresh forecast and broker snapshot before send.
+  - next review: candidate range_trader:USD_CHF:LONG:RANGE_ROTATION requires trader-defined triggers by `2026-06-30T08:16:07.025442+00:00`
+  - harvest_triggers: `0` declared, `0` explicitly fired
+  - add_triggers: `0` declared, `0` explicitly fired
+  - no_add_triggers: `0` declared, `0` explicitly fired
+  - wounded_triggers: `0` declared, `0` explicitly fired
+  - invalidation_triggers: `0` declared, `0` explicitly fired
+  - emergency_triggers: `0` declared, `0` explicitly fired
+- `USD_CHF` `LONG` owner=`SYSTEM` state=`ALIVE`
+  - thesis: range_trader USD_CHF LONG RANGE_ROTATION 2.60R: Watch-only forecast-first lane: build dry-run geometry and blocker reasons only. Do not send live until calibrated forecast confidence clears the live-entry floor on a fresh snapshot.
+  - next review: candidate range_trader:USD_CHF:LONG:RANGE_ROTATION:MARKET requires trader-defined triggers by `2026-06-30T08:16:07.025442+00:00`
+  - harvest_triggers: `0` declared, `0` explicitly fired
+  - add_triggers: `0` declared, `0` explicitly fired
+  - no_add_triggers: `0` declared, `0` explicitly fired
+  - wounded_triggers: `0` declared, `0` explicitly fired
+  - invalidation_triggers: `0` declared, `0` explicitly fired
+  - emergency_triggers: `0` declared, `0` explicitly fired
+- `USD_JPY` `SHORT` owner=`SYSTEM` state=`ALIVE`
+  - thesis: range_trader USD_JPY SHORT RANGE_ROTATION 2.00R: Watch-only forecast-first lane: build dry-run geometry and blocker reasons only. Do not send live until calibrated forecast confidence clears the live-entry floor on a fresh snapshot.
+  - next review: candidate range_trader:USD_JPY:SHORT:RANGE_ROTATION requires trader-defined triggers by `2026-06-30T08:16:07.025442+00:00`
+  - harvest_triggers: `0` declared, `0` explicitly fired
+  - add_triggers: `0` declared, `0` explicitly fired
+  - no_add_triggers: `0` declared, `0` explicitly fired
+  - wounded_triggers: `0` declared, `0` explicitly fired
+  - invalidation_triggers: `0` declared, `0` explicitly fired
+  - emergency_triggers: `0` declared, `0` explicitly fired
+- `AUD_JPY` `SHORT` owner=`SYSTEM` state=`ALIVE`
+  - thesis: failure_trader AUD_JPY SHORT BREAKOUT_FAILURE 2.70R: Matrix-supported repair lane: create only a pending LIMIT/STOP-ENTRY dry-run receipt; do not market-chase the supported direction. RiskEngine, forecast freshness, spread, profile repair, and live gateway gates must still decide execution.
+  - next review: candidate failure_trader:AUD_JPY:SHORT:BREAKOUT_FAILURE:LIMIT requires trader-defined triggers by `2026-06-30T08:16:07.025442+00:00`
+  - harvest_triggers: `0` declared, `0` explicitly fired
+  - add_triggers: `0` declared, `0` explicitly fired
+  - no_add_triggers: `0` declared, `0` explicitly fired
+  - wounded_triggers: `0` declared, `0` explicitly fired
+  - invalidation_triggers: `0` declared, `0` explicitly fired
+  - emergency_triggers: `0` declared, `0` explicitly fired
+- `AUD_JPY` `SHORT` owner=`SYSTEM` state=`ALIVE`
+  - thesis: trend_trader AUD_JPY SHORT TREND_CONTINUATION 2.70R: Matrix-supported repair lane: create only a pending LIMIT/STOP-ENTRY dry-run receipt; do not market-chase the supported direction. RiskEngine, forecast freshness, spread, profile repair, and live gateway gates must still decide execution.
+  - next review: candidate trend_trader:AUD_JPY:SHORT:TREND_CONTINUATION requires trader-defined triggers by `2026-06-30T08:16:07.025442+00:00`
+  - harvest_triggers: `0` declared, `0` explicitly fired
+  - add_triggers: `0` declared, `0` explicitly fired
+  - no_add_triggers: `0` declared, `0` explicitly fired
+  - wounded_triggers: `0` declared, `0` explicitly fired
+  - invalidation_triggers: `0` declared, `0` explicitly fired
+  - emergency_triggers: `0` declared, `0` explicitly fired
+- `AUD_USD` `LONG` owner=`SYSTEM` state=`ALIVE`
+  - thesis: failure_trader AUD_USD LONG BREAKOUT_FAILURE 3.51R: Contested matrix-supported lane: build pending dry-run geometry and blocker reasons only; do not send live until the current matrix reject context clears on a fresh market-context refresh.
+  - next review: candidate failure_trader:AUD_USD:LONG:BREAKOUT_FAILURE:LIMIT requires trader-defined triggers by `2026-06-30T08:16:07.025442+00:00`
+  - harvest_triggers: `0` declared, `0` explicitly fired
+  - add_triggers: `0` declared, `0` explicitly fired
+  - no_add_triggers: `0` declared, `0` explicitly fired
+  - wounded_triggers: `0` declared, `0` explicitly fired
+  - invalidation_triggers: `0` declared, `0` explicitly fired
+  - emergency_triggers: `0` declared, `0` explicitly fired
+- `AUD_USD` `LONG` owner=`SYSTEM` state=`ALIVE`
+  - thesis: trend_trader AUD_USD LONG TREND_CONTINUATION 3.51R: Contested matrix-supported lane: build pending dry-run geometry and blocker reasons only; do not send live until the current matrix reject context clears on a fresh market-context refresh.
+  - next review: candidate trend_trader:AUD_USD:LONG:TREND_CONTINUATION requires trader-defined triggers by `2026-06-30T08:16:07.025442+00:00`
+  - harvest_triggers: `0` declared, `0` explicitly fired
+  - add_triggers: `0` declared, `0` explicitly fired
+  - no_add_triggers: `0` declared, `0` explicitly fired
+  - wounded_triggers: `0` declared, `0` explicitly fired
+  - invalidation_triggers: `0` declared, `0` explicitly fired
+  - emergency_triggers: `0` declared, `0` explicitly fired
+- `EUR_USD` `LONG` owner=`SYSTEM` state=`ALIVE`
+  - thesis: failure_trader EUR_USD LONG BREAKOUT_FAILURE 2.60R: Matrix-supported repair lane: create only a pending LIMIT/STOP-ENTRY dry-run receipt; do not market-chase the supported direction. RiskEngine, forecast freshness, spread, profile repair, and live gateway gates must still decide execution.
+  - next review: candidate failure_trader:EUR_USD:LONG:BREAKOUT_FAILURE:LIMIT requires trader-defined triggers by `2026-06-30T08:16:07.025442+00:00`
+  - harvest_triggers: `0` declared, `0` explicitly fired
+  - add_triggers: `0` declared, `0` explicitly fired
+  - no_add_triggers: `0` declared, `0` explicitly fired
+  - wounded_triggers: `0` declared, `0` explicitly fired
+  - invalidation_triggers: `0` declared, `0` explicitly fired
+  - emergency_triggers: `0` declared, `0` explicitly fired
+- `EUR_USD` `LONG` owner=`SYSTEM` state=`ALIVE`
+  - thesis: trend_trader EUR_USD LONG TREND_CONTINUATION 2.60R: Matrix-supported repair lane: create only a pending LIMIT/STOP-ENTRY dry-run receipt; do not market-chase the supported direction. RiskEngine, forecast freshness, spread, profile repair, and live gateway gates must still decide execution.
+  - next review: candidate trend_trader:EUR_USD:LONG:TREND_CONTINUATION requires trader-defined triggers by `2026-06-30T08:16:07.025442+00:00`
+  - harvest_triggers: `0` declared, `0` explicitly fired
+  - add_triggers: `0` declared, `0` explicitly fired
+  - no_add_triggers: `0` declared, `0` explicitly fired
+  - wounded_triggers: `0` declared, `0` explicitly fired
+  - invalidation_triggers: `0` declared, `0` explicitly fired
+  - emergency_triggers: `0` declared, `0` explicitly fired
+- `GBP_USD` `LONG` owner=`SYSTEM` state=`ALIVE`
+  - thesis: failure_trader GBP_USD LONG BREAKOUT_FAILURE 2.60R: Matrix-supported repair lane: create only a pending LIMIT/STOP-ENTRY dry-run receipt; do not market-chase the supported direction. RiskEngine, forecast freshness, spread, profile repair, and live gateway gates must still decide execution.
+  - next review: candidate failure_trader:GBP_USD:LONG:BREAKOUT_FAILURE:LIMIT requires trader-defined triggers by `2026-06-30T08:16:07.025442+00:00`
+  - harvest_triggers: `0` declared, `0` explicitly fired
+  - add_triggers: `0` declared, `0` explicitly fired
+  - no_add_triggers: `0` declared, `0` explicitly fired
+  - wounded_triggers: `0` declared, `0` explicitly fired
+  - invalidation_triggers: `0` declared, `0` explicitly fired
+  - emergency_triggers: `0` declared, `0` explicitly fired
+- `EUR_JPY` `SHORT` owner=`SYSTEM` state=`ALIVE`
+  - thesis: trend_trader EUR_JPY SHORT TREND_CONTINUATION 1.50R: Build a current non-market order intent for this OANDA-verified firepower vehicle; historical firepower is audit-only and live gateway, spread, forecast, strategy-profile, and risk gates still decide.
+  - next review: candidate trend_trader:EUR_JPY:SHORT:TREND_CONTINUATION requires trader-defined triggers by `2026-06-30T08:16:07.025442+00:00`
+  - harvest_triggers: `0` declared, `0` explicitly fired
+  - add_triggers: `0` declared, `0` explicitly fired
+  - no_add_triggers: `0` declared, `0` explicitly fired
+  - wounded_triggers: `0` declared, `0` explicitly fired
+  - invalidation_triggers: `0` declared, `0` explicitly fired
+  - emergency_triggers: `0` declared, `0` explicitly fired
+- `EUR_JPY` `SHORT` owner=`SYSTEM` state=`ALIVE`
+  - thesis: range_trader EUR_JPY SHORT RANGE_ROTATION 1.50R: Build a current non-market order intent for this OANDA-verified firepower vehicle; historical firepower is audit-only and live gateway, spread, forecast, strategy-profile, and risk gates still decide.
+  - next review: candidate range_trader:EUR_JPY:SHORT:RANGE_ROTATION requires trader-defined triggers by `2026-06-30T08:16:07.025442+00:00`
+  - harvest_triggers: `0` declared, `0` explicitly fired
+  - add_triggers: `0` declared, `0` explicitly fired
+  - no_add_triggers: `0` declared, `0` explicitly fired
+  - wounded_triggers: `0` declared, `0` explicitly fired
+  - invalidation_triggers: `0` declared, `0` explicitly fired
+  - emergency_triggers: `0` declared, `0` explicitly fired
+- `EUR_USD` `SHORT` owner=`SYSTEM` state=`ALIVE`
+  - thesis: failure_trader EUR_USD SHORT BREAKOUT_FAILURE 3.42R: Create a current order intent with market_context, entry, TP, SL, risk <=1739 JPY, and >=1.2R.
+  - next review: candidate failure_trader:EUR_USD:SHORT:BREAKOUT_FAILURE:LIMIT requires trader-defined triggers by `2026-06-30T08:16:07.025442+00:00`
+  - harvest_triggers: `0` declared, `0` explicitly fired
+  - add_triggers: `0` declared, `0` explicitly fired
+  - no_add_triggers: `0` declared, `0` explicitly fired
+  - wounded_triggers: `0` declared, `0` explicitly fired
+  - invalidation_triggers: `0` declared, `0` explicitly fired
+  - emergency_triggers: `0` declared, `0` explicitly fired
+- `EUR_USD` `SHORT` owner=`SYSTEM` state=`ALIVE`
+  - thesis: trend_trader EUR_USD SHORT TREND_CONTINUATION 3.42R: Create a current order intent with market_context, entry, TP, SL, risk <=1739 JPY, and >=1.2R.
+  - next review: candidate trend_trader:EUR_USD:SHORT:TREND_CONTINUATION requires trader-defined triggers by `2026-06-30T08:16:07.025442+00:00`
+  - harvest_triggers: `0` declared, `0` explicitly fired
+  - add_triggers: `0` declared, `0` explicitly fired
+  - no_add_triggers: `0` declared, `0` explicitly fired
+  - wounded_triggers: `0` declared, `0` explicitly fired
+  - invalidation_triggers: `0` declared, `0` explicitly fired
+  - emergency_triggers: `0` declared, `0` explicitly fired
+- `EUR_JPY` `LONG` owner=`SYSTEM` state=`ALIVE`
+  - thesis: failure_trader EUR_JPY LONG BREAKOUT_FAILURE 1.50R: Create a current order intent with market_context, entry, TP, SL, risk <=1739 JPY, and >=1.2R.
+  - next review: candidate failure_trader:EUR_JPY:LONG:BREAKOUT_FAILURE:LIMIT requires trader-defined triggers by `2026-06-30T08:16:07.025442+00:00`
+  - harvest_triggers: `0` declared, `0` explicitly fired
+  - add_triggers: `0` declared, `0` explicitly fired
+  - no_add_triggers: `0` declared, `0` explicitly fired
+  - wounded_triggers: `0` declared, `0` explicitly fired
+  - invalidation_triggers: `0` declared, `0` explicitly fired
+  - emergency_triggers: `0` declared, `0` explicitly fired
+- `EUR_JPY` `LONG` owner=`SYSTEM` state=`ALIVE`
+  - thesis: trend_trader EUR_JPY LONG TREND_CONTINUATION 1.50R: Create a current order intent with market_context, entry, TP, SL, risk <=1739 JPY, and >=1.2R.
+  - next review: candidate trend_trader:EUR_JPY:LONG:TREND_CONTINUATION requires trader-defined triggers by `2026-06-30T08:16:07.025442+00:00`
+  - harvest_triggers: `0` declared, `0` explicitly fired
+  - add_triggers: `0` declared, `0` explicitly fired
+  - no_add_triggers: `0` declared, `0` explicitly fired
+  - wounded_triggers: `0` declared, `0` explicitly fired
+  - invalidation_triggers: `0` declared, `0` explicitly fired
+  - emergency_triggers: `0` declared, `0` explicitly fired
+- `EUR_JPY` `SHORT` owner=`SYSTEM` state=`ALIVE`
+  - thesis: failure_trader EUR_JPY SHORT BREAKOUT_FAILURE 1.50R: Create a current order intent with market_context, entry, TP, SL, risk <=1739 JPY, and >=1.2R.
+  - next review: candidate failure_trader:EUR_JPY:SHORT:BREAKOUT_FAILURE:LIMIT requires trader-defined triggers by `2026-06-30T08:16:07.025442+00:00`
+  - harvest_triggers: `0` declared, `0` explicitly fired
+  - add_triggers: `0` declared, `0` explicitly fired
+  - no_add_triggers: `0` declared, `0` explicitly fired
+  - wounded_triggers: `0` declared, `0` explicitly fired
+  - invalidation_triggers: `0` declared, `0` explicitly fired
+  - emergency_triggers: `0` declared, `0` explicitly fired

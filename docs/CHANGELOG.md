@@ -2,6 +2,8 @@
 
 ## 2026-06-30
 
+- Added the Guardian Trigger Contract: hourly cycles now refresh `data/guardian_trigger_contract.json` / `docs/guardian_trigger_contract_report.md`, preserve trader-defined trigger arrays, and let `guardian-event-router` wake GPT-5.5 for explicit contract harvest/add/no-add/wounded/invalidation/emergency triggers or `CONTRACT_STALE` when exposure exists without a fresh valid contract.
+- Hardened Guardian GPT-5.5 wake receipts: prompt requires JSON-only schema, dispatcher falls back from empty last-message to stdout, classifies empty output as `CODEX_EMPTY_LAST_MESSAGE` and banner/no-JSON output as `CODEX_NO_JSON_RECEIPT`, retries once read-only, records parse failures as `WAKE_PARSE_FAILURE`, and queues repeated same-event parse failures for the active trader instead of endless Codex wakes.
 - Changed active `qr-trader` runtime policy to gpt-5.5 high every 60 minutes, with guardian probe/router remaining deterministic and frequent for risk monitoring.
 - Installed guardian wake dispatcher activation requirements for `com.quantrabbit.guardian-wake-dispatcher`: launchd stdout/stderr use dedicated `.launchd.*` logs, `QR_GUARDIAN_WAKE_GATEWAY_HANDOFF=0`, `QR_GUARDIAN_ACTION_EXECUTE=0`, and `CODEX_DISABLE_UPDATE_CHECK=1` are explicit, preserving read-only GPT wake behavior by default.
 - Added `guardian-action-cycle` safe CLI handoff for GPT-5.5 guardian action receipts. Defaults remain no-send unless `QR_LIVE_ENABLED=1`, `QR_GUARDIAN_WAKE_GATEWAY_HANDOFF=1`, and `QR_GUARDIAN_ACTION_EXECUTE=1`; receipt, broker-truth, lock, duplicate, thesis-state, manual-exposure, RiskEngine, and gateway checks run before any execution.

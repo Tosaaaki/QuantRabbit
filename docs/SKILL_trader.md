@@ -21,12 +21,14 @@ PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli trader-prompt-route
 
 - Broker truth wins over memory, prose, and prior prompts.
 - OANDA entry orders go only through `LiveOrderGateway`.
-- `guardian-event-router` is read-only: it writes event/wake artifacts for GPT-5.5 and never sends, cancels, or closes broker orders.
+- `guardian-event-router` is read-only: it reads `data/guardian_trigger_contract.json`, writes event/wake artifacts for GPT-5.5, and never sends, cancels, or closes broker orders.
 - Main trader runtime policy: `gpt-5.5`, `reasoning_effort=high`, every 60 minutes.
 - Do not rely on the hourly full-trader cadence for risk monitoring. `guardian-event-router` / probe paths remain deterministic, non-LLM, and frequent.
 - The `com.quantrabbit.guardian-wake-dispatcher` LaunchAgent may wake GPT-5.5 with read-only `codex exec`; its live default must keep `QR_GUARDIAN_WAKE_GATEWAY_HANDOFF=0` and `QR_GUARDIAN_ACTION_EXECUTE=0`, so wake output is review/receipt only unless a separate explicit gateway path is enabled.
-- Read `data/guardian_escalation.json`, `data/guardian_events.json`, `data/guardian_action_receipt.json`, `data/guardian_action_cycle_result.json`, and `docs/guardian_action_review.md` every cycle before normal new-entry routing.
+- Read `data/guardian_trigger_contract.json`, `docs/guardian_trigger_contract_report.md`, `data/guardian_escalation.json`, `data/guardian_events.json`, `data/guardian_action_receipt.json`, `data/guardian_action_cycle_result.json`, and `docs/guardian_action_review.md` every cycle before normal new-entry routing.
+- Handle `WAKE_PARSE_FAILURE` before normal entries: read the selected event, parse diagnostics, raw stdout/stderr excerpts, and whether the dispatcher queued the event for the active trader; either write a fresh valid receipt through the normal trader flow or record why the wake is stale/rejected.
 - Resolve queued guardian wake actions before ordinary new entries: `queued_for_active_trader=true` means the dispatcher yielded to the active trader, so the trader must review the event/report/receipt first and either consume the receipt through the normal verifier/gateway path, recognize that `guardian-action-cycle` already executed/rejected it, or write the exact reason it is stale/rejected.
+- Refresh `data/guardian_trigger_contract.json` after market read and position housekeeping. For each open position/candidate, keep pair, side, thesis, owner, thesis_state, trigger arrays, next_review_reason, and next_review_deadline_utc current. Do not let the guardian invent market triggers from prose: use explicit fired/triggered status or machine-readable predicates for triggers the deterministic router should monitor.
 - Target-path entry sends require `QR_TARGET_PATH_LIVE_ENABLED=1` in addition to `QR_LIVE_ENABLED=1`; default is dry-run/stage/LIVE-LEARNING receipt only.
 - OANDA position changes go only through `PositionProtectionGateway`.
 - Direct `OandaExecutionClient.close_trade()` is blocked; live market closes must use the provenance-aware gateway/partial-close paths and leave a position-execution receipt.
@@ -305,7 +307,8 @@ PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli trader-prompt-route
 # daily-target-state → capture-economics → generate-intents --reuse-market-artifacts →
 # optimize-coverage → ai-attack-advice →
 # learning/execution-timing/manual-market-context/operator-precedent/verification audits →
-# generate-predictive-limits → position sidecars → guardian-event-router →
+# generate-predictive-limits → position sidecars → guardian-trigger-contract →
+# guardian-event-router →
 # profit-capture-bot → memory-health → self-improvement-audit → profitability-acceptance →
 # trader-support-bot → trader-repair-orchestrator) in one
 # process, in the same order and with the same arguments the per-step
@@ -523,7 +526,7 @@ QR_LIVE_ENABLED=1 ./scripts/run-autotrade-live.sh \
 # `order_intents` with `generate-intents --reuse-market-artifacts`. It then
 # regenerates `optimize-coverage` and `ai-attack-advice` from that final intent
 # packet, and reruns read-only position evidence sidecars against the final
-# broker/intent packet before `guardian-event-router` →
+# broker/intent packet before `guardian-trigger-contract` → `guardian-event-router` →
 # `profit-capture-bot` → `memory-health` →
 # `self-improvement-audit` →
 # `profitability-acceptance` → `trader-support-bot` →
@@ -537,12 +540,14 @@ QR_LIVE_ENABLED=1 ./scripts/run-autotrade-live.sh \
 #   broker-snapshot → tp-rebalance → execution-ledger-sync → broker-snapshot
 #   → daily-target-state → profit-partial-close → verify-projections
 #   → position-thesis-check → thesis-evolution-check → forecast-persistence-check
-#   → position-management → position-execution → guardian-event-router
+#   → position-management → position-execution → guardian-trigger-contract
+#   → guardian-event-router
 #   → broker-snapshot → daily-target-state
 #   → generate-intents --reuse-market-artifacts
 #   → optimize-coverage → ai-attack-advice
 #   → position-thesis-check → thesis-evolution-check
-#   → forecast-persistence-check → position-management → guardian-event-router
+#   → forecast-persistence-check → position-management → guardian-trigger-contract
+#   → guardian-event-router
 #   → profit-capture-bot → memory-health
 #   → self-improvement-audit → profitability-acceptance → trader-support-bot
 #   → trader-repair-orchestrator

@@ -7,10 +7,12 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from quant_rabbit.guardian_events import (
+    build_guardian_trigger_contract,
     detect_guardian_events,
     evaluate_guardian_escalation,
     review_guardian_action_receipt,
     run_guardian_event_router,
+    validate_guardian_trigger_contract,
 )
 
 
@@ -139,6 +141,121 @@ class GuardianEventRouterTest(unittest.TestCase):
 
         self.assertEqual([event.event_type for event in events], [])
         self.assertFalse(escalation["wake_gpt"])
+
+    def test_valid_contract_schema_passes(self) -> None:
+        validation = validate_guardian_trigger_contract(_contract(), now=NOW)
+
+        self.assertEqual(validation["status"], "VALID")
+        self.assertEqual(validation["entry_count"], 1)
+
+    def test_stale_contract_with_exposure_wakes_gpt(self) -> None:
+        contract = _contract(generated_at=NOW - timedelta(hours=2))
+        snapshot = _snapshot(
+            positions=[
+                {
+                    "pair": "EUR_USD",
+                    "side": "LONG",
+                    "units": 1000,
+                    "owner": "trader",
+                    "trade_id": "1",
+                }
+            ]
+        )
+
+        events = detect_guardian_events(inputs={"snapshot": snapshot, "trigger_contract": contract}, now=NOW)
+        escalation, _ = evaluate_guardian_escalation(events=events, previous_state={}, now=NOW)
+
+        self.assertIn("CONTRACT_STALE", {event.event_type for event in events})
+        self.assertTrue(escalation["wake_gpt"])
+
+    def test_contract_harvest_trigger_wakes_gpt(self) -> None:
+        contract = _contract(
+            entry_overrides={
+                "harvest_triggers": [{"trigger_id": "upper_rail", "status": "FIRED", "evidence": "M5 upper rail touched"}]
+            }
+        )
+
+        events = detect_guardian_events(inputs={"snapshot": _snapshot(), "trigger_contract": contract}, now=NOW)
+        escalation, _ = evaluate_guardian_escalation(events=events, previous_state={}, now=NOW)
+
+        self.assertEqual(events[0].event_type, "CONTRACT_HARVEST_TRIGGER")
+        self.assertTrue(escalation["wake_gpt"])
+
+    def test_contract_invalidation_trigger_wakes_gpt(self) -> None:
+        contract = _contract(
+            entry_overrides={
+                "invalidation_triggers": [
+                    {"trigger_id": "breakdown", "fired": True, "evidence": "accepted trade below thesis support"}
+                ]
+            }
+        )
+
+        events = detect_guardian_events(inputs={"snapshot": _snapshot(), "trigger_contract": contract}, now=NOW)
+        escalation, _ = evaluate_guardian_escalation(events=events, previous_state={}, now=NOW)
+
+        self.assertEqual(events[0].event_type, "CONTRACT_INVALIDATION_TRIGGER")
+        self.assertEqual(events[0].thesis_state, "INVALIDATED")
+        self.assertTrue(escalation["wake_gpt"])
+
+    def test_fixed_safety_triggers_work_without_contract(self) -> None:
+        snapshot = _snapshot(
+            positions=[
+                {
+                    "pair": "EUR_USD",
+                    "side": "LONG",
+                    "units": 1000,
+                    "owner": "unknown",
+                    "trade_id": "manual-1",
+                }
+            ]
+        )
+
+        events = detect_guardian_events(inputs={"snapshot": snapshot}, now=NOW)
+        event_types = {event.event_type for event in events}
+
+        self.assertIn("UNKNOWN_ORDER", event_types)
+        self.assertIn("CONTRACT_STALE", event_types)
+
+    def test_missing_contract_does_not_invent_market_triggers(self) -> None:
+        snapshot = _snapshot(
+            positions=[
+                {
+                    "pair": "EUR_USD",
+                    "side": "LONG",
+                    "units": 1000,
+                    "owner": "trader",
+                    "trade_id": "1",
+                }
+            ]
+        )
+
+        events = detect_guardian_events(inputs={"snapshot": snapshot}, now=NOW)
+        event_types = {event.event_type for event in events}
+
+        self.assertEqual(event_types, {"CONTRACT_STALE"})
+
+    def test_trigger_contract_builder_preserves_existing_trader_triggers(self) -> None:
+        existing = _contract(
+            entry_overrides={
+                "harvest_triggers": [{"trigger_id": "keep_me", "metric": "mid", "operator": ">=", "value": 1.18}]
+            }
+        )
+        snapshot = _snapshot(
+            positions=[
+                {
+                    "pair": "EUR_USD",
+                    "side": "LONG",
+                    "units": 1000,
+                    "owner": "trader",
+                    "thesis": "range long",
+                    "trade_id": "1",
+                }
+            ]
+        )
+
+        contract = build_guardian_trigger_contract(snapshot=snapshot, order_intents={}, existing_contract=existing, now=NOW)
+
+        self.assertEqual(contract["entries"][0]["harvest_triggers"], existing["entries"][0]["harvest_triggers"])
 
     def test_failed_acceptance_event_can_wake(self) -> None:
         events = _events_from_chart(
@@ -309,7 +426,7 @@ class GuardianEventRouterTest(unittest.TestCase):
             self.assertTrue((root / "guardian_action_review.md").exists())
 
 
-def _snapshot() -> dict:
+def _snapshot(*, positions: list[dict] | None = None, orders: list[dict] | None = None) -> dict:
     return {
         "fetched_at_utc": NOW.isoformat(),
         "account": {
@@ -317,12 +434,43 @@ def _snapshot() -> dict:
             "margin_used_jpy": 20000.0,
             "margin_available_jpy": 180000.0,
         },
-        "positions": [],
-        "orders": [],
+        "positions": positions or [],
+        "orders": orders or [],
         "quotes": {
             "EUR_USD": {"bid": 1.1730, "ask": 1.1731},
             "USD_JPY": {"bid": 157.37, "ask": 157.38},
         },
+    }
+
+
+def _contract(
+    *,
+    generated_at: datetime = NOW,
+    entry_overrides: dict | None = None,
+) -> dict:
+    entry = {
+        "pair": "EUR_USD",
+        "side": "LONG",
+        "thesis": "range long",
+        "owner": "SYSTEM",
+        "thesis_state": "ALIVE",
+        "harvest_triggers": [],
+        "add_triggers": [],
+        "no_add_triggers": [],
+        "wounded_triggers": [],
+        "invalidation_triggers": [],
+        "emergency_triggers": [],
+        "next_review_reason": "hourly market read refresh",
+        "next_review_deadline_utc": (generated_at + timedelta(hours=1)).isoformat(),
+    }
+    if entry_overrides:
+        entry.update(entry_overrides)
+    return {
+        "schema_version": 1,
+        "generated_at_utc": generated_at.isoformat(),
+        "contract_owner": "qr-trader",
+        "cycle_horizon_minutes": 60,
+        "entries": [entry],
     }
 
 

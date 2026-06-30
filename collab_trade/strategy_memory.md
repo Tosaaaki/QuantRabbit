@@ -5,6 +5,8 @@
 - Guardian wake is now event-driven through `tools/guardian_wake_dispatcher.py`: the router still detects deterministic events, while the dispatcher starts read-only `codex exec` for GPT-5.5 only when the event is new/severity-increased, broker truth is fresh, no live lock is active, and the dedupe key has not already been reviewed.
 - The wake path is review/receipt only by default. `QR_GUARDIAN_WAKE_GATEWAY_HANDOFF=0` prevents immediate execution; even an enabled handoff must go through the existing `RiskEngine` / `LiveOrderGateway` path and must not create direct OANDA writes.
 - If the full trader is already active, the dispatcher marks `data/guardian_escalation.json` as `queued_for_active_trader`; the next trader cycle must resolve guardian action receipts before normal new entries.
+- `data/guardian_trigger_contract.json` is the trader-owned market-trigger surface. The router may fire only explicit fired/triggered trigger entries or machine-readable predicates; missing contract data becomes `CONTRACT_STALE` when exposure exists, not invented harvest/add/invalidation logic.
+- Empty or non-JSON Codex wake output is not silent failure. The dispatcher retries once read-only, writes diagnostics to `docs/guardian_action_review.md`, emits `WAKE_PARSE_FAILURE` through dispatcher state, and queues repeated same-event failures for the active trader.
 
 ## 2026-06-30 Target Cadence Policy
 
