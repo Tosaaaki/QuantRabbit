@@ -9,7 +9,7 @@ import shutil
 import subprocess
 import sys
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Callable
@@ -44,6 +44,11 @@ BROKER_SNAPSHOT_MAX_AGE_SECONDS = 5 * 60
 # Codex wake should finish well inside one event-driven review window. A hung
 # local CLI must not hold repeated launchd invocations open indefinitely.
 CODEX_TIMEOUT_SECONDS = 8 * 60
+
+# Receipt lifecycle follows the hourly trader cadence with sync/launchd grace.
+# It is a runtime artifact retention window, not market or risk geometry.
+DEFAULT_RECEIPT_TTL_SECONDS = 75 * 60
+TERMINAL_RECEIPT_LIFECYCLES = {"CONSUMED", "SUPERSEDED", "EXPIRED", "REJECTED"}
 
 
 @dataclass(frozen=True)
@@ -117,6 +122,7 @@ def run_dispatcher(
         "paths": _paths_payload(paths),
         "execution_boundary": _execution_boundary(),
     }
+    _expire_current_receipt_if_needed(paths.action_receipt, now=clock)
 
     if escalation.get("wake_gpt") is not True:
         result = {
@@ -127,8 +133,8 @@ def run_dispatcher(
             "receipt_written": False,
             "action_receipt_path": None,
         }
-        _remove_file(paths.action_receipt)
-        _write_action_review(paths.action_review, result)
+        _remove_non_accepted_current_receipt(paths.action_receipt)
+        _write_action_review(paths.action_review, result, action_receipt_path=paths.action_receipt, now=clock)
         _record_state(paths.dispatcher_state, dispatcher_state, result)
         _append_log(paths.log, result)
         return result
@@ -149,8 +155,8 @@ def run_dispatcher(
             "receipt_written": False,
             "action_receipt_path": None,
         }
-        _remove_file(paths.action_receipt)
-        _write_action_review(paths.action_review, result)
+        _remove_non_accepted_current_receipt(paths.action_receipt)
+        _write_action_review(paths.action_review, result, action_receipt_path=paths.action_receipt, now=clock)
         _record_state(paths.dispatcher_state, dispatcher_state, result)
         _append_log(paths.log, result)
         return result
@@ -168,9 +174,8 @@ def run_dispatcher(
             "receipt_written": False,
             "action_receipt_path": None,
         }
-        _remove_file(paths.action_receipt)
         _mark_escalation_queued(paths.escalation, escalation, queued, now=clock, reason="repeated guardian wake parse failure")
-        _write_action_review(paths.action_review, queued)
+        _write_action_review(paths.action_review, queued, action_receipt_path=paths.action_receipt, now=clock)
         _record_state(paths.dispatcher_state, dispatcher_state, queued)
         _append_log(paths.log, queued)
         return queued
@@ -186,9 +191,8 @@ def run_dispatcher(
             "receipt_written": False,
             "action_receipt_path": None,
         }
-        _remove_file(paths.action_receipt)
         _mark_escalation_queued(paths.escalation, escalation, queued, now=clock, reason="active qr-trader/live gateway lock")
-        _write_action_review(paths.action_review, queued)
+        _write_action_review(paths.action_review, queued, action_receipt_path=paths.action_receipt, now=clock)
         _record_state(paths.dispatcher_state, dispatcher_state, queued)
         _append_log(paths.log, queued)
         return queued
@@ -218,7 +222,6 @@ def run_dispatcher(
             "receipt_written": False,
             "action_receipt_path": None,
         }
-        _remove_file(paths.action_receipt)
         _mark_escalation_queued(
             paths.escalation,
             escalation,
@@ -226,7 +229,7 @@ def run_dispatcher(
             now=clock,
             reason="stale broker snapshot; GPT wake not started",
         )
-        _write_action_review(paths.action_review, result)
+        _write_action_review(paths.action_review, result, action_receipt_path=paths.action_receipt, now=clock)
         _record_state(paths.dispatcher_state, dispatcher_state, result)
         _append_log(paths.log, result)
         return result
@@ -257,7 +260,6 @@ def run_dispatcher(
             "queue_reason": codex_preflight.get("remediation_hint")
             or "Codex CLI/model compatibility failed before guardian wake",
         }
-        _remove_file(paths.action_receipt)
         _mark_escalation_queued(
             paths.escalation,
             escalation,
@@ -265,7 +267,7 @@ def run_dispatcher(
             now=clock,
             reason="Codex CLI/model compatibility failed before guardian wake",
         )
-        _write_action_review(paths.action_review, result)
+        _write_action_review(paths.action_review, result, action_receipt_path=paths.action_receipt, now=clock)
         _record_state(paths.dispatcher_state, dispatcher_state, result, reviewed_event=selected)
         _append_log(paths.log, result)
         return result
@@ -317,7 +319,6 @@ def run_dispatcher(
                 "lock": retry_lock,
                 "queue_reason": "active qr-trader/live gateway lock before parse repair retry",
             }
-            _remove_file(paths.action_receipt)
             _mark_escalation_queued(
                 paths.escalation,
                 escalation,
@@ -325,7 +326,7 @@ def run_dispatcher(
                 now=clock,
                 reason="active qr-trader/live gateway lock before parse repair retry",
             )
-            _write_action_review(paths.action_review, queued)
+            _write_action_review(paths.action_review, queued, action_receipt_path=paths.action_receipt, now=clock)
             _record_state(paths.dispatcher_state, dispatcher_state, queued)
             _append_log(paths.log, queued)
             return queued
@@ -354,10 +355,20 @@ def run_dispatcher(
         review = review_guardian_action_receipt(parsed["receipt"], events=events, selected_event=selected, now=clock)
         receipt_action = str(parsed["receipt"].get("action") or "").upper()
         if review.get("status") == "ACCEPTED" and receipt_action in GUARDIAN_ACTIONS:
+            superseded = _supersede_current_receipt(
+                paths.action_receipt,
+                superseded_by_event_id=str(selected.get("event_id") or ""),
+                now=clock,
+            )
             payload = {
                 **review,
                 "source": "guardian_wake_dispatcher",
                 "model": MODEL,
+                "receipt_status": "ACCEPTED",
+                "receipt_lifecycle": "ACTIVE",
+                "expires_at_utc": _receipt_expires_at(clock, env=environ),
+                "consumed_by_trader": False,
+                "superseded_by_event_id": None,
                 "no_direct_oanda": True,
                 "selected_event": selected,
                 "selected_event_id": selected.get("event_id"),
@@ -365,12 +376,15 @@ def run_dispatcher(
                 "dispatcher_status": "RECEIPT_WRITTEN",
                 "receipt_id": parsed["receipt"].get("receipt_id") or review.get("generated_at_utc"),
             }
+            if superseded:
+                payload["superseded_previous_receipt"] = superseded
             _write_json(paths.action_receipt, payload)
+            _archive_receipt(paths.action_receipt, payload)
             receipt_written = True
         else:
-            _remove_file(paths.action_receipt)
+            _remove_non_accepted_current_receipt(paths.action_receipt)
     else:
-        _remove_file(paths.action_receipt)
+        _remove_non_accepted_current_receipt(paths.action_receipt)
 
     handoff = _maybe_gateway_handoff(
         receipt_review=review,
@@ -420,7 +434,7 @@ def run_dispatcher(
             now=clock,
             reason="guardian wake receipt did not match selected_event",
         )
-    _write_action_review(paths.action_review, result)
+    _write_action_review(paths.action_review, result, action_receipt_path=paths.action_receipt, now=clock)
     _record_state(paths.dispatcher_state, dispatcher_state, result, reviewed_event=selected)
     _append_log(paths.log, result)
     return result
@@ -1424,23 +1438,55 @@ def _maybe_gateway_handoff(
     }
 
 
-def _write_action_review(path: Path, payload: dict[str, Any]) -> None:
+def _write_action_review(
+    path: Path,
+    payload: dict[str, Any],
+    *,
+    action_receipt_path: Path | None = None,
+    now: datetime | None = None,
+) -> None:
+    clock = _utc(now)
+    latest_receipt = _latest_accepted_receipt_payload(action_receipt_path)
     receipt_written = bool(payload.get("receipt_written", False))
-    receipt_reason = _action_receipt_existence_reason(payload)
+    receipt_exists = bool(latest_receipt)
+    receipt_reason = _action_receipt_existence_reason(payload, latest_receipt=latest_receipt)
     lines = [
         "# Guardian Action Review",
         "",
         f"- Generated at UTC: `{payload.get('generated_at_utc')}`",
         f"- Dispatcher status: `{payload.get('status')}`",
         f"- Model: `{payload.get('model') or MODEL}`",
-        f"- Receipt exists: `{'yes' if receipt_written else 'no'}`",
+        f"- Receipt exists: `{'yes' if receipt_exists else 'no'}`",
         f"- Receipt reason: {receipt_reason}",
         f"- Receipt written: `{receipt_written}`",
-        f"- Action receipt path: `{payload.get('action_receipt_path') or 'none'}`",
+        f"- Action receipt path: `{str(action_receipt_path) if receipt_exists and action_receipt_path else payload.get('action_receipt_path') or 'none'}`",
         "",
-        "## Selected Event",
+        "## Latest Accepted Receipt",
         "",
     ]
+    if latest_receipt:
+        receipt = latest_receipt.get("receipt") if isinstance(latest_receipt.get("receipt"), dict) else latest_receipt
+        lines.extend(
+            [
+                f"- Receipt status: `{latest_receipt.get('receipt_status') or latest_receipt.get('status')}`",
+                f"- Lifecycle: `{latest_receipt.get('receipt_lifecycle') or 'ACTIVE'}`",
+                f"- Action: `{receipt.get('action') or 'none'}`",
+                f"- Event id: `{latest_receipt.get('selected_event_id') or receipt.get('event_id') or 'none'}`",
+                f"- Dedupe key: `{latest_receipt.get('selected_event_dedupe_key') or receipt.get('dedupe_key') or 'none'}`",
+                f"- Generated at: `{latest_receipt.get('generated_at_utc') or 'none'}`",
+                f"- Expires at: `{latest_receipt.get('expires_at_utc') or 'none'}`",
+                f"- Consumed by trader: `{latest_receipt.get('consumed_by_trader', False)}`",
+            ]
+        )
+    else:
+        lines.append("- none")
+    lines.extend(
+        [
+            "",
+            "## Selected Event",
+            "",
+        ]
+    )
     event = payload.get("selected_event") if isinstance(payload.get("selected_event"), dict) else {}
     if event:
         lines.extend(
@@ -1537,9 +1583,18 @@ def _write_action_review(path: Path, payload: dict[str, Any]) -> None:
     _write_text_atomic(path, "\n".join(lines) + "\n")
 
 
-def _action_receipt_existence_reason(payload: dict[str, Any]) -> str:
+def _action_receipt_existence_reason(payload: dict[str, Any], *, latest_receipt: dict[str, Any] | None = None) -> str:
     if payload.get("receipt_written"):
         return "accepted schema-valid receipt is bound to selected_event and was written atomically."
+    if latest_receipt:
+        receipt = latest_receipt.get("receipt") if isinstance(latest_receipt.get("receipt"), dict) else latest_receipt
+        action = str(receipt.get("action") or "UNKNOWN").upper()
+        event_id = latest_receipt.get("selected_event_id") or receipt.get("event_id") or "unknown"
+        return (
+            f"latest accepted `{action}` receipt for event `{event_id}` remains "
+            f"`{latest_receipt.get('receipt_lifecycle') or 'ACTIVE'}`; dispatcher status "
+            f"`{payload.get('status') or 'UNKNOWN'}` does not invalidate it."
+        )
     status = str(payload.get("status") or "")
     parse = payload.get("parse") if isinstance(payload.get("parse"), dict) else {}
     review = payload.get("receipt_review") if isinstance(payload.get("receipt_review"), dict) else {}
@@ -1549,6 +1604,91 @@ def _action_receipt_existence_reason(payload: dict[str, Any]) -> str:
         codes = ", ".join(str(issue.get("code")) for issue in review.get("issues", []) or []) or "no issue codes"
         return f"no receipt because receipt review status is `{review.get('status')}` ({codes})."
     return f"no receipt because dispatcher status is `{status or 'UNKNOWN'}`."
+
+
+def _receipt_expires_at(now: datetime, *, env: dict[str, str]) -> str:
+    ttl = int(env.get("QR_GUARDIAN_ACTION_RECEIPT_TTL_SECONDS", DEFAULT_RECEIPT_TTL_SECONDS))
+    return (now + timedelta(seconds=max(0, ttl))).isoformat()
+
+
+def _receipt_is_accepted(payload: dict[str, Any]) -> bool:
+    return str(payload.get("receipt_status") or payload.get("status") or "").upper() == "ACCEPTED"
+
+
+def _receipt_lifecycle(payload: dict[str, Any]) -> str:
+    return str(payload.get("receipt_lifecycle") or ("ACTIVE" if _receipt_is_accepted(payload) else "")).upper()
+
+
+def _latest_accepted_receipt_payload(path: Path | None) -> dict[str, Any] | None:
+    if path is None:
+        return None
+    payload = _load_json(path)
+    if not payload or not _receipt_is_accepted(payload):
+        return None
+    return payload
+
+
+def _expire_current_receipt_if_needed(path: Path, *, now: datetime) -> None:
+    payload = _load_json(path)
+    if not payload or not _receipt_is_accepted(payload):
+        return
+    if _receipt_lifecycle(payload) in TERMINAL_RECEIPT_LIFECYCLES:
+        return
+    expires_at = _parse_utc(payload.get("expires_at_utc"))
+    if expires_at is None or expires_at > now:
+        return
+    expired = {
+        **payload,
+        "receipt_lifecycle": "EXPIRED",
+        "expired_at_utc": now.isoformat(),
+        "lifecycle_reason": "guardian action receipt exceeded expires_at_utc",
+    }
+    _archive_receipt(path, expired)
+    _remove_file(path)
+
+
+def _supersede_current_receipt(path: Path, *, superseded_by_event_id: str, now: datetime) -> dict[str, Any] | None:
+    payload = _load_json(path)
+    if not payload or not _receipt_is_accepted(payload):
+        return None
+    receipt = payload.get("receipt") if isinstance(payload.get("receipt"), dict) else payload
+    current_event_id = str(payload.get("selected_event_id") or receipt.get("event_id") or "")
+    superseded = {
+        **payload,
+        "receipt_lifecycle": "SUPERSEDED",
+        "superseded_by_event_id": superseded_by_event_id or None,
+        "superseded_at_utc": now.isoformat(),
+        "consumed_by_trader": bool(payload.get("consumed_by_trader", False)),
+    }
+    _archive_receipt(path, superseded)
+    return {
+        "event_id": current_event_id or None,
+        "action": receipt.get("action"),
+        "generated_at_utc": payload.get("generated_at_utc"),
+        "receipt_lifecycle": "SUPERSEDED",
+        "archive_path": _archive_path(path, superseded).name,
+    }
+
+
+def _remove_non_accepted_current_receipt(path: Path) -> None:
+    payload = _load_json(path)
+    if payload and _receipt_is_accepted(payload):
+        return
+    _remove_file(path)
+
+
+def _archive_receipt(current_path: Path, payload: dict[str, Any]) -> None:
+    archive_path = _archive_path(current_path, payload)
+    _write_json(archive_path, payload)
+
+
+def _archive_path(current_path: Path, payload: dict[str, Any]) -> Path:
+    receipt = payload.get("receipt") if isinstance(payload.get("receipt"), dict) else payload
+    generated = str(payload.get("generated_at_utc") or datetime.now(timezone.utc).isoformat())
+    event_id = str(payload.get("selected_event_id") or receipt.get("event_id") or "unknown")
+    lifecycle = str(payload.get("receipt_lifecycle") or "ACTIVE")
+    safe = re.sub(r"[^A-Za-z0-9_.-]+", "_", f"{generated}_{event_id}_{lifecycle}").strip("_")
+    return current_path.parent / "guardian_action_receipts" / f"{safe}.json"
 
 
 def _record_state(

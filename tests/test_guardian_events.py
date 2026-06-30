@@ -256,7 +256,12 @@ class GuardianEventRouterTest(unittest.TestCase):
 
         contract = build_guardian_trigger_contract(snapshot=snapshot, order_intents={}, existing_contract=existing, now=NOW)
 
-        self.assertEqual(contract["entries"][0]["harvest_triggers"], existing["entries"][0]["harvest_triggers"])
+        trigger = contract["entries"][0]["harvest_triggers"][0]
+        self.assertEqual(trigger["trigger_id"], "keep_me")
+        self.assertEqual(trigger["metric"], "mid")
+        self.assertEqual(trigger["trade_id"], "1")
+        self.assertEqual(trigger["units"], 1000)
+        self.assertEqual(trigger["pair"], "EUR_USD")
 
     def test_open_exposure_gets_non_empty_trigger_arrays(self) -> None:
         snapshot = _snapshot(
@@ -487,6 +492,89 @@ class GuardianEventRouterTest(unittest.TestCase):
             self.assertEqual(trigger["owner"], "OPERATOR_MANUAL")
             self.assertEqual(trigger["thesis"], "operator manual USD_JPY 162 fade")
             self.assertEqual(trigger["thesis_state"], "WOUNDED")
+
+    def test_preserved_trigger_metadata_is_rebound_to_current_parent(self) -> None:
+        existing = _contract(
+            entry_overrides={
+                "trade_id": "472909",
+                "units": 15000,
+                "avg_entry": 162.1,
+                "pair": "USD_JPY",
+                "side": "SHORT",
+                "owner": "OPERATOR_MANUAL",
+                "thesis": "operator manual USD_JPY 162 fade",
+                "harvest_triggers": [
+                    {
+                        "trigger_id": "old_trade_profit_zone",
+                        "trade_id": "472909",
+                        "units": 15000,
+                        "avg_entry": 162.1,
+                        "pair": "USD_JPY",
+                        "side": "SHORT",
+                        "owner": "OPERATOR_MANUAL",
+                        "thesis": "operator manual USD_JPY 162 fade",
+                    }
+                ],
+            }
+        )
+        snapshot = _snapshot(
+            positions=[
+                {
+                    "pair": "USD_JPY",
+                    "side": "SHORT",
+                    "units": 1000,
+                    "owner": "operator_manual",
+                    "thesis": "operator manual USD_JPY 162 fade",
+                    "trade_id": "472931",
+                    "price": 162.157,
+                }
+            ]
+        )
+
+        contract = build_guardian_trigger_contract(snapshot=snapshot, order_intents={}, existing_contract=existing, now=NOW)
+        entry = contract["entries"][0]
+        trigger = entry["harvest_triggers"][0]
+
+        self.assertEqual(entry["trade_id"], "472931")
+        self.assertEqual(entry["units"], 1000)
+        self.assertEqual(trigger["trade_id"], "472931")
+        self.assertEqual(trigger["units"], 1000)
+        self.assertEqual(trigger["avg_entry"], 162.157)
+        self.assertNotIn("472909", json.dumps(entry))
+        self.assertNotIn("15000", json.dumps(entry))
+        self.assertEqual(validate_guardian_trigger_contract(contract, now=NOW)["status"], "VALID")
+
+    def test_trigger_trade_id_mismatch_is_block_for_open_exposure(self) -> None:
+        contract = _contract(
+            entry_overrides={
+                **_open_required_trigger_fields(),
+                "trade_id": "472931",
+                "units": 1000,
+                "avg_entry": 162.157,
+                "pair": "USD_JPY",
+                "side": "SHORT",
+                "owner": "OPERATOR_MANUAL",
+                "harvest_triggers": [
+                    {
+                        "trigger_id": "bad_parent",
+                        "trade_id": "472909",
+                        "units": 15000,
+                        "avg_entry": 162.1,
+                        "pair": "USD_JPY",
+                        "side": "SHORT",
+                        "owner": "OPERATOR_MANUAL",
+                    }
+                ],
+            }
+        )
+
+        validation = validate_guardian_trigger_contract(contract, now=NOW)
+
+        self.assertEqual(validation["status"], "INVALID")
+        codes = {issue["code"] for issue in validation["issues"] if issue["severity"] == "BLOCK"}
+        self.assertIn("CONTRACT_TRIGGER_TRADE_ID_MISMATCH", codes)
+        self.assertIn("CONTRACT_TRIGGER_UNITS_MISMATCH", codes)
+        self.assertIn("CONTRACT_TRIGGER_AVG_ENTRY_MISMATCH", codes)
 
     def test_expired_contract_deadline_emits_contract_stale_with_exposure(self) -> None:
         contract = _contract(
@@ -838,6 +926,80 @@ class GuardianEventRouterTest(unittest.TestCase):
             self.assertTrue((root / "guardian_escalation.json").exists())
             self.assertTrue((root / "guardian_event_report.md").exists())
             self.assertTrue((root / "guardian_action_review.md").exists())
+
+    def test_router_preserves_accepted_receipt_lifecycle_when_reviewing_output_path(self) -> None:
+        event_input = {
+            "event_type": "FAILED_ACCEPTANCE",
+            "thesis": "major figure rejection",
+            "price_zone": "EUR_USD 1.1700 rejection",
+            "severity": "P1",
+            "action_hint": "TRADE",
+        }
+        event = _events_from_chart(event_input)[0]
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            snapshot = root / "snapshot.json"
+            pair_charts = root / "pair_charts.json"
+            order_intents = root / "order_intents.json"
+            position_management = root / "position_management.json"
+            thesis_evolution = root / "thesis_evolution.json"
+            forecast_persistence = root / "forecast_persistence.json"
+            market_context = root / "market_context.json"
+            action_receipt = root / "guardian_action_receipt.json"
+            snapshot.write_text(json.dumps(_snapshot()))
+            pair_charts.write_text(
+                json.dumps({"charts": [{"pair": "EUR_USD", "guardian_events": [event_input]}]})
+            )
+            for path in (order_intents, position_management, thesis_evolution, forecast_persistence, market_context):
+                path.write_text("{}")
+            action_receipt.write_text(
+                json.dumps(
+                    {
+                        "receipt_status": "ACCEPTED",
+                        "receipt_lifecycle": "ACTIVE",
+                        "generated_at_utc": NOW.isoformat(),
+                        "selected_event_id": event.event_id,
+                        "selected_event_dedupe_key": event.dedupe_key,
+                        "expires_at_utc": (NOW + timedelta(minutes=75)).isoformat(),
+                        "consumed_by_trader": False,
+                        "superseded_by_event_id": None,
+                        "action": "HOLD",
+                        "new_information": True,
+                        "event_id": event.event_id,
+                        "thesis_state": "ALIVE",
+                        "reason": "hold until price accepts away from the failed acceptance zone",
+                        "invalidation": "accepted break through the failed acceptance zone",
+                        "harvest_trigger": "range rail reached",
+                        "gateway_required": True,
+                    }
+                )
+            )
+
+            summary = run_guardian_event_router(
+                snapshot_path=snapshot,
+                pair_charts_path=pair_charts,
+                order_intents_path=order_intents,
+                position_management_path=position_management,
+                thesis_evolution_path=thesis_evolution,
+                forecast_persistence_path=forecast_persistence,
+                market_context_matrix_path=market_context,
+                state_path=root / "guardian_event_state.json",
+                events_output_path=root / "guardian_events.json",
+                escalation_output_path=root / "guardian_escalation.json",
+                report_path=root / "guardian_event_report.md",
+                action_receipt_input_path=action_receipt,
+                action_receipt_output_path=action_receipt,
+                action_review_report_path=root / "guardian_action_review.md",
+                now=NOW,
+            )
+
+            payload = json.loads(action_receipt.read_text())
+            self.assertEqual(summary.action_review_status, "ACCEPTED")
+            self.assertEqual(payload["receipt_status"], "ACCEPTED")
+            self.assertEqual(payload["receipt_lifecycle"], "ACTIVE")
+            self.assertEqual(payload["selected_event_id"], event.event_id)
+            self.assertEqual(payload["router_review"]["status"], "ACCEPTED")
+            self.assertEqual(payload["router_review"]["receipt"]["event_id"], event.event_id)
 
 
 def _snapshot(*, positions: list[dict] | None = None, orders: list[dict] | None = None) -> dict:

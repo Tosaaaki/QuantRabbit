@@ -42,6 +42,62 @@ class GuardianWakeDispatcherTest(unittest.TestCase):
             self.assertTrue(paths.action_review.exists())
             self.assertIn("Receipt exists: `no`", paths.action_review.read_text())
 
+    def test_accepted_hold_receipt_survives_later_no_wake(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = _fixture(Path(tmp))
+            calls: list[list[str]] = []
+            first = run_dispatcher(
+                paths=paths,
+                now=NOW,
+                env={},
+                subprocess_run=_fake_codex(calls, _valid_receipt(action="HOLD")),
+            )
+            paths.escalation.write_text(json.dumps({"generated_at_utc": NOW.isoformat(), "wake_gpt": False}))
+
+            second = run_dispatcher(
+                paths=paths,
+                now=NOW + timedelta(minutes=5),
+                env={},
+                subprocess_run=_fake_codex(calls, _valid_receipt(action="TRADE")),
+            )
+
+            self.assertEqual(first["status"], "RECEIPT_WRITTEN")
+            self.assertEqual(second["status"], "NO_WAKE")
+            payload = json.loads(paths.action_receipt.read_text())
+            self.assertEqual(payload["receipt"]["action"], "HOLD")
+            self.assertEqual(payload["receipt_lifecycle"], "ACTIVE")
+            review = paths.action_review.read_text()
+            self.assertIn("Dispatcher status: `NO_WAKE`", review)
+            self.assertIn("Latest Accepted Receipt", review)
+            self.assertIn("Action: `HOLD`", review)
+
+    def test_accepted_no_action_receipt_survives_later_suppressed_pass(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = _fixture(Path(tmp))
+            calls: list[list[str]] = []
+            run_dispatcher(
+                paths=paths,
+                now=NOW,
+                env={},
+                subprocess_run=_fake_codex(calls, _valid_receipt(action="NO_ACTION")),
+            )
+
+            result = run_dispatcher(
+                paths=paths,
+                now=NOW + timedelta(minutes=5),
+                env={},
+                subprocess_run=_fake_codex(calls, _valid_receipt(action="TRADE")),
+            )
+
+            self.assertEqual(result["status"], "SUPPRESSED")
+            self.assertEqual(len(calls), 1)
+            payload = json.loads(paths.action_receipt.read_text())
+            self.assertEqual(payload["receipt"]["action"], "NO_ACTION")
+            self.assertEqual(payload["receipt_lifecycle"], "ACTIVE")
+            review = paths.action_review.read_text()
+            self.assertIn("Dispatcher status: `SUPPRESSED`", review)
+            self.assertIn("Action: `NO_ACTION`", review)
+
     def test_wake_true_starts_codex_exec_when_allowed(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             paths = _fixture(Path(tmp))
@@ -87,6 +143,7 @@ class GuardianWakeDispatcherTest(unittest.TestCase):
             self.assertEqual(len(calls), 1)
             reasons = {item["reason"] for item in result["selection"]["suppressed"]}
             self.assertIn("THROTTLED", reasons)
+            self.assertTrue(paths.action_receipt.exists())
 
     def test_p0_severity_increase_can_bypass_throttle(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -530,6 +587,35 @@ class GuardianWakeDispatcherTest(unittest.TestCase):
 
             self.assertFalse(paths.action_receipt.exists())
 
+    def test_parse_failure_for_new_event_keeps_unrelated_accepted_history(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = _fixture(Path(tmp))
+            calls: list[list[str]] = []
+            run_dispatcher(
+                paths=paths,
+                now=NOW,
+                env={},
+                subprocess_run=_fake_codex(calls, _valid_receipt(action="HOLD")),
+            )
+            _write_wake(paths, severity="P0", reasons=("SEVERITY_INCREASE",))
+
+            result = run_dispatcher(
+                paths=paths,
+                now=NOW + timedelta(minutes=1),
+                env={},
+                subprocess_run=_fake_codex_sequence(calls, ["not json", "still not json"]),
+            )
+
+            self.assertEqual(result["status"], "PARSE_FAILED")
+            payload = json.loads(paths.action_receipt.read_text())
+            self.assertEqual(payload["receipt"]["action"], "HOLD")
+            self.assertEqual(payload["receipt_lifecycle"], "ACTIVE")
+            archive_dir = paths.action_receipt.parent / "guardian_action_receipts"
+            self.assertTrue(any(archive_dir.glob("*.json")))
+            review = paths.action_review.read_text()
+            self.assertIn("Dispatcher status: `PARSE_FAILED`", review)
+            self.assertIn("Action: `HOLD`", review)
+
     def test_valid_retry_creates_guardian_action_receipt(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             paths = _fixture(Path(tmp))
@@ -668,6 +754,10 @@ class GuardianWakeDispatcherTest(unittest.TestCase):
 
             payload = json.loads(paths.action_receipt.read_text())
             self.assertEqual(payload["status"], "ACCEPTED")
+            self.assertEqual(payload["receipt_status"], "ACCEPTED")
+            self.assertEqual(payload["receipt_lifecycle"], "ACTIVE")
+            self.assertIn("expires_at_utc", payload)
+            self.assertFalse(payload["consumed_by_trader"])
             self.assertEqual(payload["receipt"]["action"], "TRADE")
             self.assertEqual(payload["receipt"]["dedupe_key"], payload["selected_event"]["dedupe_key"])
             self.assertTrue(payload["receipt"]["gateway_required"])
@@ -801,6 +891,7 @@ class GuardianWakeDispatcherTest(unittest.TestCase):
             self.assertEqual(payload["selected_event_dedupe_key"], selected["dedupe_key"])
             self.assertEqual(payload["receipt"]["event_id"], selected["event_id"])
             self.assertEqual(payload["receipt"]["dedupe_key"], selected["dedupe_key"])
+            self.assertIn(f"Generated at: `{payload['generated_at_utc']}`", review)
             self.assertIn(f"Event id: `{selected['event_id']}`", review)
             self.assertIn(f"Dedupe key: `{selected['dedupe_key']}`", review)
             self.assertIn("Receipt exists: `yes`", review)

@@ -201,7 +201,15 @@ def run_guardian_event_router(
         )
         if action_receipt_output_path is not None:
             written_action_receipt_path = action_receipt_output_path
-            _write_json(action_receipt_output_path, action_review)
+            receipt_status = str(action_payload.get("receipt_status") or action_payload.get("status") or "").upper()
+            if receipt_status == "ACCEPTED":
+                reviewed_receipt = dict(action_payload)
+                reviewed_receipt["router_review"] = action_review
+                reviewed_receipt["router_review_status"] = action_review.get("status")
+                reviewed_receipt["router_review_generated_at_utc"] = action_review.get("generated_at_utc")
+                _write_json(action_receipt_output_path, reviewed_receipt)
+            else:
+                _write_json(action_receipt_output_path, action_review)
         _write_action_review_report(action_review_report_path, action_review)
         action_review_status = str(action_review.get("status") or "UNKNOWN")
     else:
@@ -496,6 +504,20 @@ def guardian_action_gateway_issues(
     receipt = payload.get("receipt") if isinstance(payload.get("receipt"), dict) else payload
     action = str(receipt.get("action") or "").strip().upper()
     issues = []
+    receipt_status = str(payload.get("receipt_status") or payload.get("status") or "").upper()
+    receipt_lifecycle = str(payload.get("receipt_lifecycle") or ("ACTIVE" if receipt_status == "ACCEPTED" else "")).upper()
+    if receipt_status and receipt_status != "ACCEPTED":
+        issues.append(_issue("GUARDIAN_ACTION_RECEIPT_NOT_ACCEPTED", "guardian action receipt_status must be ACCEPTED"))
+    if receipt_lifecycle and receipt_lifecycle != "ACTIVE":
+        issues.append(
+            _issue(
+                "GUARDIAN_ACTION_RECEIPT_NOT_ACTIVE",
+                f"guardian action receipt_lifecycle is {receipt_lifecycle}",
+            )
+        )
+    expires_at = _parse_utc(payload.get("expires_at_utc"))
+    if expires_at is not None and expires_at <= datetime.now(timezone.utc):
+        issues.append(_issue("GUARDIAN_ACTION_RECEIPT_EXPIRED", "guardian action receipt is past expires_at_utc"))
     if action not in {"TRADE", "ADD"}:
         issues.append(
             _issue(
@@ -588,6 +610,19 @@ def validate_guardian_trigger_contract(
                 issues.append(_issue("CONTRACT_ENTRY_TRIGGER_FIELD_MISSING", f"{prefix} missing {bucket}"))
             elif not isinstance(entry.get(bucket), list):
                 issues.append(_issue("CONTRACT_ENTRY_TRIGGER_FIELD_NOT_LIST", f"{prefix} {bucket} must be a list"))
+            else:
+                for trigger_index, trigger in enumerate(entry.get(bucket) or []):
+                    if isinstance(trigger, dict):
+                        issues.extend(
+                            _trigger_parent_binding_issues(
+                                entry=entry,
+                                trigger=trigger,
+                                bucket=bucket,
+                                entry_index=index,
+                                trigger_index=trigger_index,
+                                open_exposure=open_exposure,
+                            )
+                        )
         if open_exposure:
             for bucket in (
                 "harvest_triggers",
@@ -617,6 +652,86 @@ def validate_guardian_trigger_contract(
         "stale": stale,
         "trigger_event_types": {bucket: values[0] for bucket, values in CONTRACT_TRIGGER_BUCKETS.items()},
     }
+
+
+def _trigger_parent_binding_issues(
+    *,
+    entry: dict[str, Any],
+    trigger: dict[str, Any],
+    bucket: str,
+    entry_index: int,
+    trigger_index: int,
+    open_exposure: bool,
+) -> list[dict[str, str]]:
+    prefix = f"entries[{entry_index}].{bucket}[{trigger_index}]"
+    severity = "BLOCK" if open_exposure else "WARN"
+    issues: list[dict[str, str]] = []
+    parent_trade_id = str(entry.get("trade_id") or "").strip()
+    trigger_trade_id = str(trigger.get("trade_id") or "").strip()
+    if parent_trade_id and trigger_trade_id and trigger_trade_id != parent_trade_id:
+        issues.append(
+            _issue(
+                "CONTRACT_TRIGGER_TRADE_ID_MISMATCH",
+                f"{prefix} trade_id {trigger_trade_id} differs from parent {parent_trade_id}",
+                severity="BLOCK" if open_exposure else "WARN",
+            )
+        )
+    parent_units = _float(entry.get("units"))
+    trigger_units = _float(trigger.get("units"))
+    if parent_units is not None and trigger_units is not None and abs(parent_units - trigger_units) > 1e-9:
+        issues.append(
+            _issue(
+                "CONTRACT_TRIGGER_UNITS_MISMATCH",
+                f"{prefix} units {trigger_units} differs from parent {parent_units}",
+                severity=severity,
+            )
+        )
+    parent_pair = _pair(entry.get("pair"))
+    trigger_pair = _pair(trigger.get("pair"))
+    if parent_pair and trigger_pair and trigger_pair != parent_pair:
+        issues.append(
+            _issue(
+                "CONTRACT_TRIGGER_PAIR_MISMATCH",
+                f"{prefix} pair {trigger_pair} differs from parent {parent_pair}",
+                severity=severity,
+            )
+        )
+    parent_side = _direction_from_text(entry.get("side"))
+    trigger_side = _direction_from_text(trigger.get("side"))
+    if parent_side and trigger_side and trigger_side != parent_side:
+        issues.append(
+            _issue(
+                "CONTRACT_TRIGGER_SIDE_MISMATCH",
+                f"{prefix} side {trigger_side} differs from parent {parent_side}",
+                severity=severity,
+            )
+        )
+    parent_owner = _contract_owner(entry.get("owner"))
+    trigger_owner = _contract_owner(trigger.get("owner")) if str(trigger.get("owner") or "").strip() else ""
+    if parent_owner and trigger_owner and trigger_owner != parent_owner:
+        issues.append(
+            _issue(
+                "CONTRACT_TRIGGER_OWNER_MISMATCH",
+                f"{prefix} owner {trigger_owner} differs from parent {parent_owner}",
+                severity=severity,
+            )
+        )
+    parent_avg = _float(entry.get("avg_entry"))
+    trigger_avg = _float(trigger.get("avg_entry"))
+    if parent_avg is not None and trigger_avg is not None and _material_float_differs(parent_avg, trigger_avg):
+        issues.append(
+            _issue(
+                "CONTRACT_TRIGGER_AVG_ENTRY_MISMATCH",
+                f"{prefix} avg_entry {trigger_avg} differs from parent {parent_avg}",
+                severity=severity,
+            )
+        )
+    return issues
+
+
+def _material_float_differs(left: float, right: float) -> bool:
+    tolerance = max(1e-9, abs(left) * 1e-6)
+    return abs(left - right) > tolerance
 
 
 def build_guardian_trigger_contract(
@@ -1505,11 +1620,22 @@ def _contract_entry_from_seed(
     merged = dict(base)
     for field_name in CONTRACT_TRIGGER_BUCKETS:
         if isinstance(prior.get(field_name), list) and prior[field_name]:
-            merged[field_name] = prior[field_name]
+            merged[field_name] = [
+                _rebind_trigger_to_parent(trigger, parent=base) if isinstance(trigger, dict) else trigger
+                for trigger in prior[field_name]
+            ]
     for field_name in ("thesis_state", "next_review_reason", "next_review_deadline_utc"):
         if prior.get(field_name) and (field_name != "next_review_deadline_utc" or _deadline_is_future(prior.get(field_name), now)):
             merged[field_name] = prior[field_name]
     return {key: value for key, value in merged.items() if value is not None}
+
+
+def _rebind_trigger_to_parent(trigger: dict[str, Any], *, parent: dict[str, Any]) -> dict[str, Any]:
+    rebound = dict(trigger)
+    for field_name in ("trade_id", "pair", "side", "units", "avg_entry", "owner", "thesis", "thesis_state"):
+        if parent.get(field_name) is not None:
+            rebound[field_name] = parent[field_name]
+    return rebound
 
 
 def _position_contract_thesis(position: dict[str, Any]) -> str:

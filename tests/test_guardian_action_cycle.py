@@ -184,6 +184,33 @@ class GuardianActionCycleTest(unittest.TestCase):
             codes = {issue["code"] for issue in second["strict_receipt_issues"]}
             self.assertIn("GUARDIAN_ACTION_DUPLICATE_RECEIPT", codes)
 
+    def test_hold_and_no_action_never_execute_and_mark_consumed(self) -> None:
+        for action in ("HOLD", "NO_ACTION"):
+            with self.subTest(action=action), tempfile.TemporaryDirectory() as tmp:
+                paths = _fixture(Path(tmp), receipt_overrides={"action": action, "new_information": False, "lane_id": ""})
+                calls: list[tuple[str, bool]] = []
+
+                result = run_guardian_action_cycle(
+                    paths=paths,
+                    now=NOW,
+                    env={
+                        "QR_LIVE_ENABLED": "1",
+                        "QR_GUARDIAN_WAKE_GATEWAY_HANDOFF": "1",
+                        "QR_GUARDIAN_ACTION_EXECUTE": "1",
+                    },
+                    command_runner=_command_ok,
+                    gateway_runner=_gateway(calls, status="SENT"),
+                )
+
+                self.assertEqual(result["status"], "VERIFIED_NO_ACTION")
+                self.assertIn("NO_EXECUTABLE_ACTION", result["no_send_reason"])
+                self.assertEqual(calls, [])
+                self.assertEqual(result["receipt"]["action"], action)
+                updated = json.loads(paths.action_receipt.read_text())
+                self.assertEqual(updated["receipt_lifecycle"], "CONSUMED")
+                self.assertTrue(updated["consumed_by_trader"])
+                self.assertEqual(result["receipt_lifecycle_update"]["receipt_lifecycle"], "CONSUMED")
+
 
 def _fixture(
     root: Path,
@@ -252,6 +279,14 @@ def _fixture(
         json.dumps(
             {
                 "status": "ACCEPTED",
+                "receipt_status": "ACCEPTED",
+                "receipt_lifecycle": "ACTIVE",
+                "generated_at_utc": NOW.isoformat(),
+                "selected_event_id": event["event_id"],
+                "selected_event_dedupe_key": event["dedupe_key"],
+                "expires_at_utc": (NOW + timedelta(minutes=75)).isoformat(),
+                "consumed_by_trader": False,
+                "superseded_by_event_id": None,
                 "source": "guardian_wake_dispatcher",
                 "model": "gpt-5.5",
                 "no_direct_oanda": True,

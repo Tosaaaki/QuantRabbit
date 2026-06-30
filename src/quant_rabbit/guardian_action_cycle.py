@@ -130,6 +130,7 @@ def run_guardian_action_cycle(
         events_payload=events_payload,
         snapshot_payload=snapshot_payload,
         previous_result=previous_result,
+        now=clock,
     )
     manual_safety = _manual_exposure_safety(
         receipt=receipt,
@@ -249,6 +250,12 @@ def run_guardian_action_cycle(
         "guardian_escalation": escalation_payload,
         "guardian_action_review_excerpt": action_review_text[:2000],
     }
+    result["receipt_lifecycle_update"] = _update_receipt_lifecycle_after_cycle(
+        paths.action_receipt,
+        status=str(result["status"]),
+        issues=strict_issues,
+        now=clock,
+    )
     _write_json(paths.result, result)
     _write_report(paths.report, result)
     _append_log(paths.log, result)
@@ -264,6 +271,7 @@ def _strict_receipt_issues(
     events_payload: dict[str, Any],
     snapshot_payload: dict[str, Any],
     previous_result: dict[str, Any],
+    now: datetime,
 ) -> list[dict[str, str]]:
     issues: list[dict[str, str]] = []
     action = str(receipt.get("action") or "").upper()
@@ -273,6 +281,15 @@ def _strict_receipt_issues(
         issues.append(_issue("GUARDIAN_ACTION_BAD_SOURCE", "receipt source must be guardian_wake_dispatcher"))
     if model != "gpt-5.5":
         issues.append(_issue("GUARDIAN_ACTION_BAD_MODEL", "guardian wake receipt must come from gpt-5.5"))
+    receipt_status = str(receipt_payload.get("receipt_status") or receipt_payload.get("status") or "").upper()
+    receipt_lifecycle = str(receipt_payload.get("receipt_lifecycle") or ("ACTIVE" if receipt_status == "ACCEPTED" else "")).upper()
+    if receipt_status and receipt_status != "ACCEPTED":
+        issues.append(_issue("GUARDIAN_ACTION_RECEIPT_NOT_ACCEPTED", "receipt_status must be ACCEPTED"))
+    if receipt_lifecycle and receipt_lifecycle != "ACTIVE":
+        issues.append(_issue("GUARDIAN_ACTION_RECEIPT_NOT_ACTIVE", f"receipt_lifecycle is {receipt_lifecycle}"))
+    expires_at = _parse_utc(receipt_payload.get("expires_at_utc"))
+    if expires_at is not None and expires_at <= now:
+        issues.append(_issue("GUARDIAN_ACTION_RECEIPT_EXPIRED", "guardian action receipt is past expires_at_utc"))
     if action not in GUARDIAN_ACTIONS:
         issues.append(_issue("GUARDIAN_ACTION_BAD_ACTION", f"unsupported guardian action {action!r}"))
     if receipt.get("gateway_required") is not True:
@@ -754,6 +771,52 @@ def _status_for_result(*, action: str, issues: list[dict[str, str]], no_send_rea
     if no_send_reasons:
         return "VERIFIED_NO_SEND"
     return "VERIFIED"
+
+
+def _update_receipt_lifecycle_after_cycle(
+    path: Path,
+    *,
+    status: str,
+    issues: list[dict[str, str]],
+    now: datetime,
+) -> dict[str, Any]:
+    payload = _load_json(path)
+    if not payload:
+        return {"status": "SKIPPED", "reason": "receipt missing"}
+    current = str(payload.get("receipt_lifecycle") or ("ACTIVE" if str(payload.get("status") or "").upper() == "ACCEPTED" else "")).upper()
+    if current and current != "ACTIVE":
+        return {"status": "SKIPPED", "reason": f"receipt already {current}", "receipt_lifecycle": current}
+    next_lifecycle = None
+    consumed = bool(payload.get("consumed_by_trader", False))
+    if status in {"EXECUTED", "VERIFIED_NO_ACTION"}:
+        next_lifecycle = "CONSUMED"
+        consumed = True
+    elif status == "REJECTED":
+        codes = {str(issue.get("code") or "") for issue in issues if isinstance(issue, dict)}
+        next_lifecycle = "REJECTED"
+        if "GUARDIAN_ACTION_RECEIPT_EXPIRED" in codes:
+            next_lifecycle = "EXPIRED"
+    if next_lifecycle is None:
+        return {"status": "SKIPPED", "reason": f"cycle status {status} does not consume receipt"}
+    updated = {
+        **payload,
+        "receipt_lifecycle": next_lifecycle,
+        "consumed_by_trader": consumed,
+        "lifecycle_updated_at_utc": now.isoformat(),
+        "lifecycle_updated_by": "guardian-action-cycle",
+    }
+    if next_lifecycle == "CONSUMED":
+        updated["consumed_at_utc"] = now.isoformat()
+    elif next_lifecycle == "REJECTED":
+        updated["rejected_at_utc"] = now.isoformat()
+    elif next_lifecycle == "EXPIRED":
+        updated["expired_at_utc"] = now.isoformat()
+    _write_json(path, updated)
+    return {
+        "status": "UPDATED",
+        "receipt_lifecycle": next_lifecycle,
+        "consumed_by_trader": consumed,
+    }
 
 
 def _compact_snapshot_payload(payload: dict[str, Any]) -> dict[str, Any]:
