@@ -49,7 +49,10 @@ def classify_operator_manual_snapshot(
     rows = confirmations if confirmations is not None else load_operator_manual_confirmations()
     if not rows or not snapshot.positions:
         return snapshot
-    positions = tuple(_classify_position(position, snapshot.positions, rows) for position in snapshot.positions)
+    confirmed_rows = _confirmed_operator_manual_rows(snapshot.positions, rows)
+    if not confirmed_rows:
+        return snapshot
+    positions = tuple(_classify_position(position, confirmed_rows) for position in snapshot.positions)
     if positions == snapshot.positions:
         return snapshot
     return replace(snapshot, positions=positions)
@@ -244,17 +247,26 @@ def major_figure_fade_thesis_state(
 
 def _classify_position(
     position: BrokerPosition,
-    all_positions: tuple[BrokerPosition, ...],
-    confirmations: list[dict[str, Any]],
+    confirmed_rows: dict[str, dict[str, Any]],
 ) -> BrokerPosition:
+    row = confirmed_rows.get(position.trade_id)
+    if row is None:
+        return position
+    packet = _packet_from_confirmation(row, position)
+    raw = dict(position.raw or {})
+    raw["operator_manual_position"] = packet
+    return replace(position, owner=Owner.OPERATOR_MANUAL, raw=raw)
+
+
+def _confirmed_operator_manual_rows(
+    positions: tuple[BrokerPosition, ...],
+    confirmations: list[dict[str, Any]],
+) -> dict[str, dict[str, Any]]:
+    confirmed: dict[str, dict[str, Any]] = {}
     for row in confirmations:
-        if not _confirmation_matches_position(row, position, all_positions):
-            continue
-        packet = _packet_from_confirmation(row, position)
-        raw = dict(position.raw or {})
-        raw["operator_manual_position"] = packet
-        return replace(position, owner=Owner.OPERATOR_MANUAL, raw=raw)
-    return position
+        for position in _positions_confirmed_by_row(row, positions):
+            confirmed.setdefault(position.trade_id, row)
+    return confirmed
 
 
 def _confirmation_matches_position(
@@ -262,28 +274,61 @@ def _confirmation_matches_position(
     position: BrokerPosition,
     all_positions: tuple[BrokerPosition, ...],
 ) -> bool:
+    return any(
+        candidate.trade_id == position.trade_id
+        for candidate in _positions_confirmed_by_row(row, all_positions)
+    )
+
+
+def _positions_confirmed_by_row(
+    row: dict[str, Any],
+    all_positions: tuple[BrokerPosition, ...],
+) -> tuple[BrokerPosition, ...]:
     if not bool(row.get("operator_confirmed") or row.get("owner_confirmed")):
-        return False
+        return ()
     pair = str(row.get("pair") or "").upper()
     side = str(row.get("side") or "").upper()
-    if position.pair != pair or position.side.value != side:
-        return False
-    if position.owner not in {Owner.UNKNOWN, Owner.MANUAL, Owner.OPERATOR_MANUAL}:
-        return False
-    if _has_system_lane_or_gateway_receipt(position):
-        return False
-    expected_units = _maybe_int(row.get("units"))
-    if expected_units is None:
-        return True
-    aggregate_units = sum(
-        abs(int(candidate.units))
+    eligible = tuple(
+        candidate
         for candidate in all_positions
         if candidate.pair == pair
         and candidate.side.value == side
         and candidate.owner in {Owner.UNKNOWN, Owner.MANUAL, Owner.OPERATOR_MANUAL}
         and not _has_system_lane_or_gateway_receipt(candidate)
     )
-    return aggregate_units == expected_units
+    if not eligible:
+        return ()
+    expected_units = _maybe_int(row.get("units"))
+    if expected_units is None:
+        return eligible
+    aggregate_units = sum(abs(int(candidate.units)) for candidate in eligible)
+    if aggregate_units == expected_units:
+        return eligible
+    if aggregate_units < expected_units:
+        return ()
+    return _oldest_prefix_for_units(eligible, expected_units)
+
+
+def _oldest_prefix_for_units(
+    positions: tuple[BrokerPosition, ...],
+    expected_units: int,
+) -> tuple[BrokerPosition, ...]:
+    selected: list[BrokerPosition] = []
+    total = 0
+    for position in sorted(positions, key=_position_open_sort_key):
+        units = abs(int(position.units))
+        if total + units > expected_units:
+            return ()
+        selected.append(position)
+        total += units
+        if total == expected_units:
+            return tuple(selected)
+    return ()
+
+
+def _position_open_sort_key(position: BrokerPosition) -> tuple[datetime, str]:
+    raw = position.raw if isinstance(position.raw, dict) else {}
+    return _datetime_from_payload(raw.get("openTime")), position.trade_id
 
 
 def _packet_from_confirmation(row: dict[str, Any], position: BrokerPosition) -> dict[str, Any]:
@@ -412,10 +457,29 @@ def _datetime_from_payload(value: object) -> datetime:
     try:
         parsed = datetime.fromisoformat(text) if text else datetime.now(timezone.utc)
     except ValueError:
-        parsed = datetime.now(timezone.utc)
+        normalized = _trim_iso_fraction_to_microseconds(text)
+        try:
+            parsed = datetime.fromisoformat(normalized) if normalized else datetime.now(timezone.utc)
+        except ValueError:
+            parsed = datetime.now(timezone.utc)
     if parsed.tzinfo is None:
         parsed = parsed.replace(tzinfo=timezone.utc)
     return parsed.astimezone(timezone.utc)
+
+
+def _trim_iso_fraction_to_microseconds(text: str) -> str:
+    dot = text.find(".")
+    if dot < 0:
+        return text
+    tz_start = len(text)
+    for index in range(dot + 1, len(text)):
+        if text[index] in "+-Z":
+            tz_start = index
+            break
+    fraction = text[dot + 1 : tz_start]
+    if len(fraction) <= 6 or not fraction.isdigit():
+        return text
+    return f"{text[: dot + 1]}{fraction[:6]}{text[tz_start:]}"
 
 
 def _pip_value_jpy(*, pair: str, units: int, snapshot: BrokerSnapshot) -> float | None:

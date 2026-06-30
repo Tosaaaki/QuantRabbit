@@ -77,6 +77,106 @@ class OperatorManualClassificationTest(unittest.TestCase):
         self.assertIn("red P/L", packet["exact_invalidation_evidence"])
         self.assertTrue(packet["blocks_fresh_jpy_adds"])
 
+    def test_confirmed_split_tranche_classifies_oldest_units_when_extra_unknown_exists(self) -> None:
+        now = datetime(2026, 6, 30, 3, 30, tzinfo=timezone.utc)
+        snapshot = BrokerSnapshot(
+            fetched_at_utc=now,
+            positions=(
+                BrokerPosition(
+                    trade_id="new-extra-2",
+                    pair="USD_JPY",
+                    side=Side.SHORT,
+                    units=1_000,
+                    entry_price=162.157,
+                    unrealized_pl_jpy=-77.0,
+                    owner=Owner.UNKNOWN,
+                    raw={"openTime": "2026-06-30T03:06:05.083752860Z"},
+                ),
+                BrokerPosition(
+                    trade_id="new-extra-1",
+                    pair="USD_JPY",
+                    side=Side.SHORT,
+                    units=1_000,
+                    entry_price=162.139,
+                    unrealized_pl_jpy=-95.0,
+                    owner=Owner.UNKNOWN,
+                    raw={"openTime": "2026-06-30T02:49:26.217785906Z"},
+                ),
+                BrokerPosition(
+                    trade_id="confirmed-4",
+                    pair="USD_JPY",
+                    side=Side.SHORT,
+                    units=1_000,
+                    entry_price=162.146,
+                    unrealized_pl_jpy=-88.0,
+                    owner=Owner.UNKNOWN,
+                    raw={"openTime": "2026-06-30T02:19:45.445812800Z"},
+                ),
+                BrokerPosition(
+                    trade_id="confirmed-3",
+                    pair="USD_JPY",
+                    side=Side.SHORT,
+                    units=1_000,
+                    entry_price=162.156,
+                    unrealized_pl_jpy=-78.0,
+                    owner=Owner.UNKNOWN,
+                    raw={"openTime": "2026-06-30T02:01:39.173639648Z"},
+                ),
+                BrokerPosition(
+                    trade_id="confirmed-2",
+                    pair="USD_JPY",
+                    side=Side.SHORT,
+                    units=5_000,
+                    entry_price=161.892,
+                    unrealized_pl_jpy=-1710.0,
+                    owner=Owner.UNKNOWN,
+                    raw={"openTime": "2026-06-29T14:02:12.760635166Z"},
+                ),
+                BrokerPosition(
+                    trade_id="confirmed-1",
+                    pair="USD_JPY",
+                    side=Side.SHORT,
+                    units=15_000,
+                    entry_price=161.938,
+                    unrealized_pl_jpy=-4440.0,
+                    owner=Owner.UNKNOWN,
+                    raw={"openTime": "2026-06-29T13:47:34.536835380Z"},
+                ),
+            ),
+            quotes={"USD_JPY": Quote("USD_JPY", bid=162.228, ask=162.236, timestamp_utc=now)},
+        )
+
+        classified = classify_operator_manual_snapshot(
+            snapshot,
+            confirmations=[
+                {
+                    "pair": "USD_JPY",
+                    "side": "SHORT",
+                    "units": 22_000,
+                    "owner_confirmed": True,
+                    "thesis": "162.00 historical/intervention-risk fade",
+                    "major_figure": 162.0,
+                }
+            ],
+        )
+
+        owners = {position.trade_id: position.owner for position in classified.positions}
+        self.assertEqual(owners["confirmed-1"], Owner.OPERATOR_MANUAL)
+        self.assertEqual(owners["confirmed-2"], Owner.OPERATOR_MANUAL)
+        self.assertEqual(owners["confirmed-3"], Owner.OPERATOR_MANUAL)
+        self.assertEqual(owners["confirmed-4"], Owner.OPERATOR_MANUAL)
+        self.assertEqual(owners["new-extra-1"], Owner.UNKNOWN)
+        self.assertEqual(owners["new-extra-2"], Owner.UNKNOWN)
+
+        packets = operator_manual_position_packets(classified)
+        self.assertEqual(len(packets), 1)
+        self.assertEqual(packets[0]["units"], 22_000)
+        self.assertEqual(packets[0]["unrealized_pl_jpy"], -6316.0)
+        self.assertEqual(
+            packets[0]["trade_ids"],
+            ["confirmed-4", "confirmed-3", "confirmed-2", "confirmed-1"],
+        )
+
     def test_system_lane_receipt_prevents_operator_manual_reclassification(self) -> None:
         now = datetime(2026, 6, 30, 1, 0, tzinfo=timezone.utc)
         snapshot = BrokerSnapshot(

@@ -8,6 +8,7 @@
 - Added a pair-agnostic discretionary trade-shape engine: the 2025 USD_JPY manual history is now advisory source evidence for a reusable shape across current pairs, with pair-specific overlays limited to score adjustments and no live-permission authority.
 - Added `SL_LINT`, `THESIS_INVALIDATION_EXIT_REQUIRED`, and `POST_STOP_THESIS_REVIEW`: broker SLs now publish invalidation evidence and block major-figure/noise/wick/event/JPY-theme stop placement; loss-side CLOSE receipts cannot use red P/L, negative expectancy, duplicate blockers, low LIVE_READY, or old SL templates as standalone exit reasons.
 - Added explicit `operator_manual` classification for confirmed USD_JPY manual exposure: emits `OPERATOR_MANUAL_POSITION`, excludes the exposure from system P/L, blocks fresh USD_JPY/Jpy-cross bot adds while active unless operator-authorized, and treats the 162.00 fade thesis as alive until an accepted break above the figure is proven.
+- Made operator-manual confirmation tranche-aware: if broker truth has additional no-receipt USD_JPY shorts beyond the confirmed unit count, only the oldest exact confirmed tranche is classified and surplus exposure remains unknown for operator review.
 
 ## 2026-06-29
 

@@ -24,6 +24,7 @@
 - Do not count this exposure in system profitability or trader risk-budget progress. Account-level NAV/UPL may still report it as broker truth, but system P/L must not claim it.
 - Red UPL is not invalidation for the 162.00 historical/intervention-risk fade. Thesis state requires exact evidence: `ALIVE` below the figure without accepted break, `WOUNDED` on wick/stop-run or touch without acceptance, `INVALIDATED` only after accepted trade above 162.00, and `EMERGENCY` only on true margin/protection emergency.
 - While this operator_manual USD_JPY exposure exists, fresh bot USD_JPY and JPY-cross adds are blocked unless the operator explicitly authorizes overlap. The system must not attach SL, loss-close, or average into the manual exposure by itself.
+- Confirmation is tranche-scoped. If broker truth shows more no-receipt USD_JPY short units than the operator-confirmed 22,000u, classify only the oldest exact 22,000u tranche as `operator_manual`; leave surplus unknown exposure visible for operator review rather than silently adopting it.
 
 ## 2026-06-28 UTC Daily Target Engine
 
