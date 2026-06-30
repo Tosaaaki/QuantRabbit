@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from quant_rabbit.models import BrokerPosition, BrokerSnapshot, Owner, Side
+from quant_rabbit.operator_manual import is_operator_managed_manual_owner
 from quant_rabbit.paths import (
     DEFAULT_DAILY_TARGET_STATE,
     DEFAULT_PAIR_CHARTS,
@@ -92,7 +93,7 @@ def _trader_sl_repair_disabled() -> bool:
 
 
 def _manual_take_profit_owner(owner: Owner) -> bool:
-    return owner in {Owner.MANUAL, Owner.UNKNOWN}
+    return is_operator_managed_manual_owner(owner)
 
 
 def _missing_tp_repair_enabled() -> bool:

@@ -10,6 +10,7 @@ from typing import Any, Protocol
 from quant_rabbit.analysis.sessions import tag_bar
 from quant_rabbit.instruments import NORMAL_SPREAD_PIPS, instrument_pip_factor
 from quant_rabbit.models import BrokerPosition, BrokerSnapshot, Owner, Quote, Side
+from quant_rabbit.operator_manual import is_operator_managed_manual_owner
 from quant_rabbit.paths import DEFAULT_POSITION_EXECUTION, DEFAULT_POSITION_EXECUTION_REPORT
 from quant_rabbit.risk import RiskPolicy, _spread_session_multiplier_from_tag
 from quant_rabbit.strategy.position_manager import (
@@ -173,8 +174,8 @@ class PositionProtectionGateway:
                 }
             )
             return action
-        manual_tp_owner = position.owner in {Owner.MANUAL, Owner.UNKNOWN}
-        if position.owner not in {Owner.TRADER, Owner.MANUAL, Owner.UNKNOWN}:
+        manual_tp_owner = is_operator_managed_manual_owner(position.owner)
+        if position.owner != Owner.TRADER and not manual_tp_owner:
             action["issues"].append(
                 {
                     "severity": "BLOCK",

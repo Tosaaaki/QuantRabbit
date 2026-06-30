@@ -60,6 +60,7 @@ DEFAULT_PROFIT_PARTIAL_CLOSE_REPORT = ROOT / "docs" / "profit_partial_close_repo
 DEFAULT_PROFIT_PARTIAL_CLOSE_STATE = ROOT / "data" / "profit_partial_close_state.json"
 DEFAULT_PREDICTIVE_LIMIT_ORDERS = ROOT / "data" / "predictive_limit_orders.json"
 DEFAULT_BROKER_SNAPSHOT = ROOT / "data" / "broker_snapshot.json"
+DEFAULT_OPERATOR_MANUAL_POSITIONS = ROOT / "data" / "operator_manual_positions.json"
 DEFAULT_WEBULL_ENV_CHECK = ROOT / "data" / "webull_env_check.json"
 DEFAULT_WEBULL_ENV_CHECK_REPORT = ROOT / "docs" / "webull_env_check_report.md"
 DEFAULT_WEBULL_ACCOUNT_SNAPSHOT = ROOT / "data" / "webull_account_snapshot.json"

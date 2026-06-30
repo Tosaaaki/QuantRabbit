@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from quant_rabbit.models import AccountSummary, BrokerOrder, BrokerPosition, BrokerSnapshot, Owner, Quote, Side
-from quant_rabbit.snapshot_json import snapshot_payload_order_raw
+from quant_rabbit.snapshot_json import snapshot_payload_order_raw, snapshot_payload_position_raw
 
 
 def _trader_sl_repair_disabled() -> bool:
@@ -756,7 +756,7 @@ def _blockers(
 
 
 def _counts_against_trader_budget(position: TargetPositionRisk) -> bool:
-    return position.owner not in {Owner.MANUAL.value, Owner.UNKNOWN.value}
+    return position.owner not in {Owner.MANUAL.value, Owner.UNKNOWN.value, Owner.OPERATOR_MANUAL.value}
 
 
 def _account_unrealized_pl(snapshot: BrokerSnapshot | None, previous: dict[str, Any]) -> float:
@@ -1252,6 +1252,7 @@ def _snapshot_from_json(payload: dict[str, Any]) -> BrokerSnapshot:
             take_profit=float(item["take_profit"]) if item.get("take_profit") is not None else None,
             stop_loss=float(item["stop_loss"]) if item.get("stop_loss") is not None else None,
             owner=Owner(str(item.get("owner") or Owner.UNKNOWN.value)),
+            raw=snapshot_payload_position_raw(item),
         )
         for item in payload.get("positions", []) or []
     )

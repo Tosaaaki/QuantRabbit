@@ -18,6 +18,13 @@
 - Loss-side CLOSE needs real thesis invalidation. Negative P/L, NEGATIVE_EXPECTANCY, duplicate blockers, low LIVE_READY, and stale SL templates are execution-quality evidence, not exit authorization.
 - After a stop-out, review whether the thesis failed or the broker SL failed. If price later moves in the intended direction and the SL was inside a noise/battle zone, the next cycle should consider re-entry/scout instead of treating the stop as proof that the read was wrong.
 
+## 2026-06-30 Operator Manual USD_JPY 162 Fade
+
+- The current confirmed USD_JPY SHORT 22,000u manual exposure is `operator_manual` / `OPERATOR_ALPHA_CANDIDATE`, not unknown system risk. It is observed, TP-assisted, and reported only.
+- Do not count this exposure in system profitability or trader risk-budget progress. Account-level NAV/UPL may still report it as broker truth, but system P/L must not claim it.
+- Red UPL is not invalidation for the 162.00 historical/intervention-risk fade. Thesis state requires exact evidence: `ALIVE` below the figure without accepted break, `WOUNDED` on wick/stop-run or touch without acceptance, `INVALIDATED` only after accepted trade above 162.00, and `EMERGENCY` only on true margin/protection emergency.
+- While this operator_manual USD_JPY exposure exists, fresh bot USD_JPY and JPY-cross adds are blocked unless the operator explicitly authorizes overlap. The system must not attach SL, loss-close, or average into the manual exposure by itself.
+
 ## 2026-06-28 UTC Daily Target Engine
 
 - Base operating target is +5% from UTC day-start NAV.

@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Iterable
 
 from quant_rabbit.models import AccountSummary, BrokerOrder, BrokerPosition, BrokerSnapshot, Owner, Quote, Side
+from quant_rabbit.operator_manual import classify_operator_manual_snapshot
 from quant_rabbit.paths import DEFAULT_ENV_LOCAL
 
 
@@ -103,7 +104,7 @@ class OandaReadOnlyClient:
         positions = _backfill_take_profit_from_pending(positions, orders)
         quotes, home_conversions = self._pricing(tuple(pairs))
         account = self._account_summary_safe(fetched_at)
-        return BrokerSnapshot(
+        snapshot = BrokerSnapshot(
             fetched_at_utc=fetched_at,
             positions=tuple(positions),
             orders=tuple(orders),
@@ -111,6 +112,7 @@ class OandaReadOnlyClient:
             account=account,
             home_conversions=home_conversions,
         )
+        return classify_operator_manual_snapshot(snapshot)
 
     def account_summary(self, *, now_utc: datetime | None = None) -> AccountSummary:
         payload = self.get_json(f"/v3/accounts/{self.account_id}/summary")

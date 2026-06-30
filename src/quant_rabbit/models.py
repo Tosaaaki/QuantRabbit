@@ -53,6 +53,7 @@ class TradeMethod(str, Enum):
 class Owner(str, Enum):
     TRADER = "trader"
     MANUAL = "manual"
+    OPERATOR_MANUAL = "operator_manual"
     EXTERNAL = "external"
     UNKNOWN = "unknown"
 

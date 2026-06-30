@@ -9,6 +9,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from quant_rabbit.models import BrokerPosition, BrokerSnapshot, Owner, Quote, Side
+from quant_rabbit.operator_manual import OPERATOR_MANUAL_POSITION_PACKET
 from quant_rabbit.strategy.position_manager import (
     ACTION_BREAK_EVEN_STOP,
     ACTION_HARVEST_TP,
@@ -2134,6 +2135,54 @@ class PositionManagerTest(unittest.TestCase):
                 report = (root / "pm.md").read_text()
                 self.assertIn("TP-only profit management enabled", report)
                 self.assertIn("preserving no-broker-TP runner", report)
+        finally:
+            if prior is not None:
+                os.environ["QR_ENABLE_MISSING_TP_REPAIR"] = prior
+
+    def test_red_upl_operator_manual_usdjpy_short_is_not_closed_or_stopped(self) -> None:
+        prior = os.environ.pop("QR_ENABLE_MISSING_TP_REPAIR", None)
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                decision = _decision(root, long_score=120, short_score=160)
+                snapshot = _snapshot(
+                    BrokerPosition(
+                        trade_id="operator-usdjpy-short",
+                        pair="USD_JPY",
+                        side=Side.SHORT,
+                        units=22_000,
+                        entry_price=161.84,
+                        unrealized_pl_jpy=-12_300.0,
+                        owner=Owner.OPERATOR_MANUAL,
+                        raw={
+                            "operator_manual_position": {
+                                "packet_type": OPERATOR_MANUAL_POSITION_PACKET,
+                                "classification": "OPERATOR_MANUAL",
+                                "alpha_classification": "OPERATOR_ALPHA_CANDIDATE",
+                                "major_figure": 162.0,
+                            }
+                        },
+                    ),
+                    usd_jpy_bid=161.92,
+                    usd_jpy_ask=161.93,
+                )
+
+                result = PositionManager(
+                    trader_decision_path=decision,
+                    pair_charts_path=root / "missing_pair_charts.json",
+                    output_path=root / "pm.json",
+                    report_path=root / "pm.md",
+                ).run(snapshot)
+
+                managed = result.positions[0]
+                self.assertEqual(managed.owner, Owner.OPERATOR_MANUAL.value)
+                self.assertEqual(managed.action, ACTION_HOLD_SL_FREE)
+                self.assertIsNone(managed.recommended_stop_loss)
+                self.assertIsNone(managed.recommended_take_profit)
+                self.assertNotIn(managed.action, {ACTION_REVIEW_EXIT, ACTION_TAKE_PROFIT_MARKET})
+                report = (root / "pm.md").read_text()
+                self.assertIn("TP-only profit management enabled", report)
+                self.assertIn("SL and loss-close management disabled", report)
         finally:
             if prior is not None:
                 os.environ["QR_ENABLE_MISSING_TP_REPAIR"] = prior

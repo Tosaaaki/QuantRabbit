@@ -36,6 +36,11 @@ from quant_rabbit.paths import (
     ROOT,
     effective_oanda_universal_rotation_path,
 )
+from quant_rabbit.operator_manual import (
+    JPY_FRESH_ADD_BLOCK_CODE,
+    is_operator_manual_position,
+    operator_manual_position_packets_from_payload,
+)
 from quant_rabbit.risk import (
     FORECAST_MARKET_SUPPORT_MIN_DIRECTIONAL_HIT_RATE,
     FORECAST_MARKET_SUPPORT_MIN_SAMPLES,
@@ -412,6 +417,13 @@ class TraderSupportBot:
             "open_trader_positions": broker_summary["trader_positions"],
             "open_positions": broker_summary["positions"],
             "unknown_owner_positions": broker_summary["unknown_owner_positions"],
+            "operator_manual_positions": broker_summary["operator_manual_positions"],
+            "operator_manual_jpy_fresh_add_block_active": broker_summary[
+                "operator_manual_jpy_fresh_add_block_active"
+            ],
+            "operator_manual_jpy_fresh_add_block_code": broker_summary[
+                "operator_manual_jpy_fresh_add_block_code"
+            ],
             "directional_inversion_counterfactual_count": len(
                 broker_summary["directional_inversion_counterfactuals"]
             ),
@@ -840,9 +852,29 @@ def _broker_summary(
             }
         )
     open_rows = [_compact_open_position(item) for item in positions[:12] if isinstance(item, dict)]
-    unknown_positions = [
-        item for item in open_rows if str(item.get("owner") or "").lower() not in {"trader", "bot"}
+    operator_manual_packets = operator_manual_position_packets_from_payload(payload)
+    operator_manual_trade_ids = {
+        str(trade_id)
+        for packet in operator_manual_packets
+        for trade_id in (packet.get("trade_ids") if isinstance(packet.get("trade_ids"), list) else [])
+    }
+    operator_manual_rows = [
+        item
+        for item in open_rows
+        if is_operator_manual_position(item) or str(item.get("trade_id")) in operator_manual_trade_ids
     ]
+    unknown_positions = [
+        item
+        for item in open_rows
+        if str(item.get("owner") or "").lower() not in {"trader", "bot"}
+        and not (is_operator_manual_position(item) or str(item.get("trade_id")) in operator_manual_trade_ids)
+    ]
+    operator_manual_jpy_block = any(
+        packet.get("pair") == "USD_JPY"
+        and packet.get("side") == "SHORT"
+        and bool(packet.get("blocks_fresh_jpy_adds"))
+        for packet in operator_manual_packets
+    )
     account = payload.get("account") if isinstance(payload.get("account"), dict) else {}
     return {
         "fetched_at_utc": payload.get("fetched_at_utc") or account.get("fetched_at_utc"),
@@ -861,6 +893,11 @@ def _broker_summary(
         "open_positions": open_rows,
         "unknown_owner_positions": len(unknown_positions),
         "unknown_owner_position_examples": unknown_positions[:5],
+        "operator_manual_positions": len(operator_manual_rows),
+        "operator_manual_position_examples": operator_manual_rows[:5],
+        "operator_manual_position_packets": operator_manual_packets,
+        "operator_manual_jpy_fresh_add_block_active": operator_manual_jpy_block,
+        "operator_manual_jpy_fresh_add_block_code": JPY_FRESH_ADD_BLOCK_CODE if operator_manual_jpy_block else None,
         "directional_inversion_counterfactuals": _directional_inversion_counterfactuals(
             open_rows,
             target=target,
@@ -916,6 +953,8 @@ def _artifact_freshness_summary(
 
 
 def _compact_open_position(item: dict[str, Any]) -> dict[str, Any]:
+    raw = item.get("raw") if isinstance(item.get("raw"), dict) else {}
+    packet = raw.get("operator_manual_position") if isinstance(raw.get("operator_manual_position"), dict) else None
     return {
         "trade_id": item.get("trade_id"),
         "pair": item.get("pair"),
@@ -925,6 +964,8 @@ def _compact_open_position(item: dict[str, Any]) -> dict[str, Any]:
         "unrealized_pl_jpy": _round_optional(item.get("unrealized_pl_jpy"), 3),
         "take_profit": item.get("take_profit") or item.get("take_profit_price"),
         "stop_loss": item.get("stop_loss") or item.get("stop_loss_price"),
+        "operator_manual_position": packet,
+        "raw": {"operator_manual_position": packet} if packet else {},
     }
 
 
@@ -4744,7 +4785,8 @@ def _render_report(payload: dict[str, Any]) -> str:
         f"repair_replay_triggered=`{profit['repair_replay_triggered']}` "
         f"repair_delta=`{profit['repair_replay_delta_jpy']}` JPY |",
         f"| Current profit-capture positions | bankable=`{current_profit['bankable_positions']}` watch=`{current_profit['watch_positions']}` blocked=`{current_profit['blocked_positions']}` |",
-        f"| Open positions | `{broker['positions']}` unknown_owner=`{broker.get('unknown_owner_positions')}` |",
+        f"| Open positions | `{broker['positions']}` unknown_owner=`{broker.get('unknown_owner_positions')}` operator_manual=`{broker.get('operator_manual_positions')}` |",
+        f"| Operator manual JPY add guard | `{broker.get('operator_manual_jpy_fresh_add_block_active')}` code=`{broker.get('operator_manual_jpy_fresh_add_block_code')}` |",
         f"| Open trader positions | `{broker['trader_positions']}` upl=`{broker['trader_unrealized_pl_jpy']}` JPY |",
         f"| Directional inversion 5% counterfactuals | `{sum(1 for item in broker.get('directional_inversion_counterfactuals', []) if item.get('would_clear_minimum_5pct'))}` |",
         f"| Target remaining | `{target['remaining_target_jpy']}` JPY |",
@@ -4757,6 +4799,34 @@ def _render_report(payload: dict[str, Any]) -> str:
     if payload["blockers"]:
         for blocker in payload["blockers"]:
             lines.append(f"- `{blocker['severity']}` `{blocker['code']}`: {blocker['message']}")
+    else:
+        lines.append("- none")
+    lines.extend(["", "## Operator Manual Positions", ""])
+    operator_packets = (
+        broker.get("operator_manual_position_packets")
+        if isinstance(broker.get("operator_manual_position_packets"), list)
+        else []
+    )
+    if operator_packets:
+        lines.extend(
+            [
+                "| Pair | Side | Units | Avg Entry | UPL JPY | Pip Value | Thesis | State | Margin | Harvest Zone | Invalidation Evidence |",
+                "|---|---|---:|---:|---:|---:|---|---|---|---|---|",
+            ]
+        )
+        for packet in operator_packets:
+            margin = packet.get("margin_pressure") if isinstance(packet.get("margin_pressure"), dict) else {}
+            lines.append(
+                f"| `{packet.get('pair')}` | `{packet.get('side')}` | `{packet.get('units')}` | "
+                f"`{packet.get('avg_entry')}` | `{packet.get('unrealized_pl_jpy')}` | "
+                f"`{packet.get('pip_value_jpy_per_pip')}` | {packet.get('thesis') or ''} | "
+                f"`{packet.get('thesis_state')}` | `{margin.get('state')}` | "
+                f"{packet.get('harvest_zone') or ''} | {packet.get('exact_invalidation_evidence') or ''} |"
+            )
+        lines.append("")
+        lines.append(
+            "- Management rule: observe, TP-assist, and report only; no SL, loss-side close, or averaging unless the operator explicitly asks."
+        )
     else:
         lines.append("- none")
     lines.extend(["", "## Repair Requests", ""])

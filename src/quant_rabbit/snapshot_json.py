@@ -20,6 +20,17 @@ ORDER_RAW_SNAPSHOT_KEYS = (
     "type",
 )
 
+POSITION_RAW_SNAPSHOT_KEYS = (
+    "openTime",
+    "initialUnits",
+    "currentUnits",
+    "clientExtensions",
+    "tradeClientExtensions",
+    "takeProfitOrder",
+    "stopLossOrder",
+    "operator_manual_position",
+)
+
 
 def snapshot_order_raw(raw: object) -> dict[str, Any]:
     if not isinstance(raw, dict):
@@ -31,3 +42,15 @@ def snapshot_payload_order_raw(item: object) -> dict[str, Any]:
     if not isinstance(item, dict):
         return {}
     return snapshot_order_raw(item.get("raw"))
+
+
+def snapshot_position_raw(raw: object) -> dict[str, Any]:
+    if not isinstance(raw, dict):
+        return {}
+    return {key: raw[key] for key in POSITION_RAW_SNAPSHOT_KEYS if key in raw}
+
+
+def snapshot_payload_position_raw(item: object) -> dict[str, Any]:
+    if not isinstance(item, dict):
+        return {}
+    return snapshot_position_raw(item.get("raw"))

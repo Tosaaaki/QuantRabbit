@@ -61,7 +61,7 @@ from quant_rabbit.self_improvement_guards import (
     oanda_firepower_repair_current_risk_reaches_minimum,
     pending_execution_lifecycle_new_risk_blocker,
 )
-from quant_rabbit.snapshot_json import snapshot_payload_order_raw
+from quant_rabbit.snapshot_json import snapshot_payload_order_raw, snapshot_payload_position_raw
 from quant_rabbit.strategy.lane_history_ledger import (
     LOSS_STREAK_BLOCK_THRESHOLD,
     LOSS_STREAK_SIZE_BACKOFF,
@@ -14605,6 +14605,7 @@ def _snapshot_from_json(payload: dict[str, Any]) -> BrokerSnapshot:
             take_profit=float(item["take_profit"]) if item.get("take_profit") is not None else None,
             stop_loss=float(item["stop_loss"]) if item.get("stop_loss") is not None else None,
             owner=Owner(str(item.get("owner") or Owner.UNKNOWN.value)),
+            raw=snapshot_payload_position_raw(item),
         )
         for item in payload.get("positions", []) or []
     )

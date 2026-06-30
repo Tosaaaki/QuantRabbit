@@ -2666,7 +2666,7 @@ def _parent_lane_id(lane_id: str) -> str:
 def _exposure_blockers(snapshot: BrokerSnapshot) -> tuple[str, ...]:
     blockers: list[str] = []
     for position in snapshot.positions:
-        if position.owner in {Owner.MANUAL, Owner.UNKNOWN}:
+        if position.owner in {Owner.MANUAL, Owner.UNKNOWN, Owner.OPERATOR_MANUAL}:
             continue
         blockers.append(f"open position exists: {position.pair} {position.side.value} id={position.trade_id}")
     return tuple(blockers)
@@ -2677,7 +2677,7 @@ def _pending_entry_order_count(snapshot: BrokerSnapshot) -> int:
         1
         for order in snapshot.orders
         if not order.trade_id and order.order_type.upper() in PENDING_ENTRY_TYPES
-        and order.owner not in {Owner.MANUAL, Owner.UNKNOWN}
+        and order.owner not in {Owner.MANUAL, Owner.UNKNOWN, Owner.OPERATOR_MANUAL}
     )
 
 

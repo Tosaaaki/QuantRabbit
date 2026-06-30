@@ -63,7 +63,7 @@ def _is_disabled() -> bool:
 
 
 def _profit_take_owner_allowed(owner: str) -> bool:
-    return owner.strip().lower() in {"trader", "manual", "unknown"}
+    return owner.strip().lower() in {"trader", "manual", "unknown", "operator_manual"}
 
 
 def compute_profit_partial_close(

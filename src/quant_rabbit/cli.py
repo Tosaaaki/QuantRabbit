@@ -184,7 +184,12 @@ from quant_rabbit.gpt_trader import DEFAULT_GPT_MAX_LANES, GPTTraderBrain, Stati
 from quant_rabbit.instruments import DEFAULT_CONTEXT_ASSETS, DEFAULT_TRADER_PAIRS_ARG
 from quant_rabbit.replay import ReplayBacktester
 from quant_rabbit.risk import RiskEngine, RiskPolicy, resolve_max_loss_jpy
-from quant_rabbit.snapshot_json import snapshot_order_raw, snapshot_payload_order_raw
+from quant_rabbit.snapshot_json import (
+    snapshot_order_raw,
+    snapshot_payload_order_raw,
+    snapshot_payload_position_raw,
+    snapshot_position_raw,
+)
 from quant_rabbit.strategy.ensemble import CampaignPlanner
 from quant_rabbit.strategy.intent_generator import IntentGenerator
 from quant_rabbit.strategy.market_story import MarketStoryMiner
@@ -7596,6 +7601,7 @@ def _snapshot_to_json(snapshot: BrokerSnapshot) -> str:
                 "take_profit": pos.take_profit,
                 "stop_loss": pos.stop_loss,
                 "owner": pos.owner.value,
+                "raw": snapshot_position_raw(pos.raw),
             }
             for pos in snapshot.positions
         ],
@@ -7689,6 +7695,7 @@ def _snapshot_from_json(payload: dict) -> BrokerSnapshot:
                 take_profit=float(item["take_profit"]) if item.get("take_profit") is not None else None,
                 stop_loss=float(item["stop_loss"]) if item.get("stop_loss") is not None else None,
                 owner=Owner(str(item.get("owner") or Owner.UNKNOWN.value)),
+                raw=snapshot_payload_position_raw(item),
             )
         )
     orders = []

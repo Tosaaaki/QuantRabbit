@@ -8,6 +8,11 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from quant_rabbit.models import AccountSummary, BrokerOrder, BrokerPosition, BrokerSnapshot, MarketContext, OrderIntent, OrderType, Owner, Quote, Side, TradeMethod
+from quant_rabbit.operator_manual import (
+    JPY_FRESH_ADD_BLOCK_CODE,
+    OPERATOR_MANUAL_AUTH_METADATA_KEY,
+    OPERATOR_MANUAL_POSITION_PACKET,
+)
 from quant_rabbit.risk import (
     LOSS_ASYMMETRY_OANDA_CAMPAIGN_FIREPOWER_RELAXED_MODE,
     RiskEngine,
@@ -51,6 +56,30 @@ def snapshot(
 
 
 TEST_MAX_LOSS_JPY = 500.0
+
+
+def operator_manual_usdjpy_short() -> BrokerPosition:
+    return BrokerPosition(
+        trade_id="operator-usdjpy-short",
+        pair="USD_JPY",
+        side=Side.SHORT,
+        units=22_000,
+        entry_price=161.84,
+        unrealized_pl_jpy=-12_300.0,
+        owner=Owner.OPERATOR_MANUAL,
+        raw={
+            "operator_manual_position": {
+                "packet_type": OPERATOR_MANUAL_POSITION_PACKET,
+                "classification": "OPERATOR_MANUAL",
+                "alpha_classification": "OPERATOR_ALPHA_CANDIDATE",
+                "thesis": "162.00 historical/intervention-risk fade",
+                "invalidation": "accepted trade above 162.00 major figure",
+                "harvest_trigger": "harvest after rejection from 162.00",
+                "harvest_zone": "below 162.00 after rejection",
+                "major_figure": 162.0,
+            }
+        },
+    )
 
 
 def _capped_engine(*, policy: RiskPolicy | None = None, **kwargs) -> RiskEngine:
@@ -2315,6 +2344,60 @@ class RiskEngineTest(unittest.TestCase):
         self.assertNotIn("EXTERNAL_RISK_OPEN", codes)
         self.assertNotIn("UNPROTECTED_POSITION", codes)
         self.assertNotIn("OPEN_POSITION_EXISTS", codes)
+
+    def test_operator_manual_usdjpy_short_blocks_fresh_jpy_adds(self) -> None:
+        intent = OrderIntent(
+            pair="USD_JPY",
+            side=Side.SHORT,
+            order_type=OrderType.MARKET,
+            units=1000,
+            tp=156.30,
+            sl=156.82,
+            thesis="fresh_usdjpy_add_must_wait_for_operator_authorization",
+        )
+
+        decision = _capped_engine().validate(intent, snapshot(positions=(operator_manual_usdjpy_short(),)))
+        codes = {issue.code for issue in decision.issues}
+
+        self.assertFalse(decision.allowed)
+        self.assertIn(JPY_FRESH_ADD_BLOCK_CODE, codes)
+
+    def test_operator_manual_usdjpy_short_does_not_block_non_jpy_fresh_entry(self) -> None:
+        intent = OrderIntent(
+            pair="EUR_USD",
+            side=Side.LONG,
+            order_type=OrderType.MARKET,
+            units=3000,
+            tp=1.17554,
+            sl=1.17234,
+            thesis="operator_manual_usdjpy_is_parallel_to_eurusd",
+        )
+
+        decision = _capped_engine().validate(intent, snapshot(positions=(operator_manual_usdjpy_short(),)))
+        codes = {issue.code for issue in decision.issues}
+
+        self.assertTrue(decision.allowed, decision.block_reasons)
+        self.assertNotIn(JPY_FRESH_ADD_BLOCK_CODE, codes)
+        self.assertNotIn("EXTERNAL_RISK_OPEN", codes)
+        self.assertNotIn("UNPROTECTED_POSITION", codes)
+
+    def test_operator_authorization_allows_fresh_jpy_add_guard_overlap(self) -> None:
+        intent = OrderIntent(
+            pair="USD_JPY",
+            side=Side.SHORT,
+            order_type=OrderType.MARKET,
+            units=1000,
+            tp=156.30,
+            sl=156.82,
+            thesis="operator_explicitly_authorized_overlap",
+            metadata={OPERATOR_MANUAL_AUTH_METADATA_KEY: True},
+        )
+
+        decision = _capped_engine().validate(intent, snapshot(positions=(operator_manual_usdjpy_short(),)))
+        codes = {issue.code for issue in decision.issues}
+
+        self.assertTrue(decision.allowed, decision.block_reasons)
+        self.assertNotIn(JPY_FRESH_ADD_BLOCK_CODE, codes)
 
     def test_trader_position_without_tp_or_sl_blocks_fresh_entries(self) -> None:
         unprotected = BrokerPosition(

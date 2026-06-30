@@ -16,6 +16,7 @@ from quant_rabbit.execution_timing_contracts import (
     TP_PROGRESS_REPAIR_REPLAY_CONTRACT,
     TP_PROGRESS_REPAIR_REPLAY_FIELD,
 )
+from quant_rabbit.operator_manual import OPERATOR_MANUAL_POSITION_PACKET
 from quant_rabbit.trader_support_bot import (
     DIRECTIONAL_INVERSION_COUNTERFACTUAL_REQUEST,
     DIRECTIONAL_INVERSION_REPLAY_WAIT_STATUS,
@@ -1256,6 +1257,94 @@ class TraderSupportBotTest(unittest.TestCase):
             self.assertFalse(request["requires_explicit_operator_approval"])
             self.assertEqual(request["evidence_summary"]["examples"][0]["trade_id"], "472802")
             self.assertIn("BROKER_TRUTH_UNKNOWN_OWNER_EXPOSURE", request["source_findings"])
+
+    def test_operator_manual_position_reports_without_unknown_owner_review(self) -> None:
+        now = datetime(2026, 6, 30, 1, 0, tzinfo=timezone.utc)
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _write_fixture(root, now=now, blocked=False)
+            _write_json(
+                files["broker"],
+                {
+                    "fetched_at_utc": now.isoformat(),
+                    "account": {
+                        "balance_jpy": 250000.0,
+                        "nav_jpy": 237700.0,
+                        "unrealized_pl_jpy": -12300.0,
+                        "margin_used_jpy": 142419.2,
+                        "margin_available_jpy": 95580.8,
+                        "fetched_at_utc": now.isoformat(),
+                    },
+                    "positions": [
+                        {
+                            "trade_id": "operator-usdjpy-short",
+                            "pair": "USD_JPY",
+                            "side": "SHORT",
+                            "owner": "operator_manual",
+                            "units": 22000,
+                            "entry_price": 161.84,
+                            "unrealized_pl_jpy": -12300.0,
+                            "take_profit": None,
+                            "stop_loss": None,
+                            "raw": {
+                                "operator_manual_position": {
+                                    "packet_type": OPERATOR_MANUAL_POSITION_PACKET,
+                                    "classification": "OPERATOR_MANUAL",
+                                    "alpha_classification": "OPERATOR_ALPHA_CANDIDATE",
+                                    "thesis": "162.00 historical/intervention-risk fade",
+                                    "invalidation": "accepted trade above 162.00 major figure",
+                                    "harvest_trigger": "harvest after rejection from 162.00",
+                                    "harvest_zone": "below 162.00 after rejection",
+                                    "major_figure": 162.0,
+                                }
+                            },
+                        }
+                    ],
+                    "orders": [],
+                    "quotes": {
+                        "USD_JPY": {
+                            "bid": 161.92,
+                            "ask": 161.93,
+                            "timestamp_utc": now.isoformat(),
+                        }
+                    },
+                },
+            )
+            env = _guardian_env(root, active="1")
+            with mock.patch.dict(os.environ, env, clear=False):
+                TraderSupportBot(
+                    broker_snapshot_path=files["broker"],
+                    order_intents_path=files["intents"],
+                    target_state_path=files["target"],
+                    position_management_path=files["position_management"],
+                    position_guardian_management_path=files["guardian_management"],
+                    position_guardian_execution_path=files["guardian_execution"],
+                    position_guardian_heartbeat_path=files["guardian_heartbeat"],
+                    self_improvement_audit_path=files["self_improvement"],
+                    profitability_acceptance_path=files["profitability"],
+                    execution_timing_audit_path=files["timing"],
+                    profit_capture_bot_path=files["profit_capture_bot"],
+                    output_path=files["output"],
+                    report_path=files["report"],
+                    now_utc=now,
+                ).run()
+
+            payload = json.loads(files["output"].read_text())
+            action_codes = {item["code"] for item in payload["operator_actions"]}
+            request_codes = {item["code"] for item in payload["repair_requests"]}
+
+            self.assertEqual(payload["metrics"]["unknown_owner_positions"], 0)
+            self.assertEqual(payload["metrics"]["operator_manual_positions"], 1)
+            self.assertTrue(payload["metrics"]["operator_manual_jpy_fresh_add_block_active"])
+            self.assertNotIn("REVIEW_UNKNOWN_OWNER_EXPOSURE", action_codes)
+            self.assertNotIn("REVIEW_UNKNOWN_OWNER_EXPOSURE", request_codes)
+            packet = payload["broker"]["operator_manual_position_packets"][0]
+            self.assertEqual(packet["pair"], "USD_JPY")
+            self.assertEqual(packet["pip_value_jpy_per_pip"], 220.0)
+            self.assertEqual(packet["thesis_state"], "ALIVE")
+            report = files["report"].read_text()
+            self.assertIn("Operator Manual Positions", report)
+            self.assertIn("162.00 historical/intervention-risk fade", report)
 
     def test_bidask_partial_price_truth_evidence_exposes_exact_fetch_command(self) -> None:
         now = datetime(2026, 6, 22, 12, 15, tzinfo=timezone.utc)

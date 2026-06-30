@@ -7,6 +7,7 @@
 - Added `tools/target_cadence_analysis.py` plus target-cadence and trade-shape precedent artifacts comparing hard daily +5% cadence with rolling 30-day 4x growth; recommendation is rolling 30-day 4x, with +5% as a pace marker and +10% only behind the extension gate.
 - Added a pair-agnostic discretionary trade-shape engine: the 2025 USD_JPY manual history is now advisory source evidence for a reusable shape across current pairs, with pair-specific overlays limited to score adjustments and no live-permission authority.
 - Added `SL_LINT`, `THESIS_INVALIDATION_EXIT_REQUIRED`, and `POST_STOP_THESIS_REVIEW`: broker SLs now publish invalidation evidence and block major-figure/noise/wick/event/JPY-theme stop placement; loss-side CLOSE receipts cannot use red P/L, negative expectancy, duplicate blockers, low LIVE_READY, or old SL templates as standalone exit reasons.
+- Added explicit `operator_manual` classification for confirmed USD_JPY manual exposure: emits `OPERATOR_MANUAL_POSITION`, excludes the exposure from system P/L, blocks fresh USD_JPY/Jpy-cross bot adds while active unless operator-authorized, and treats the 162.00 fade thesis as alive until an accepted break above the figure is proven.
 
 ## 2026-06-29
 

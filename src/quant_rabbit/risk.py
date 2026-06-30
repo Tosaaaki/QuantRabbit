@@ -62,6 +62,7 @@ from .forecast_precision import (
     technical_harvest_precision_support,
 )
 from .instruments import DEFAULT_TRADER_PAIRS, NORMAL_SPREAD_PIPS, instrument_pip_factor
+from .operator_manual import is_operator_managed_manual_owner, operator_manual_jpy_add_block_issue
 
 # OANDA Japan retail FX margin in the current account is 25:1 leverage, i.e.
 # 4% initial margin. Recent broker truth confirms the same scale: USD_JPY
@@ -2264,6 +2265,9 @@ class RiskEngine:
         issues.extend(_forecast_range_confidence_issues(intent, for_live_send=for_live_send))
         issues.extend(_forecast_watch_only_live_send_issues(intent, for_live_send=for_live_send))
         issues.extend(self._market_context_issues(intent, for_live_send=for_live_send))
+        operator_manual_block = operator_manual_jpy_add_block_issue(intent, snapshot)
+        if operator_manual_block is not None:
+            issues.append(RiskIssue(operator_manual_block["code"], operator_manual_block["message"]))
 
         entry_relevant_positions = self._entry_relevant_positions(snapshot)
         portfolio_add_mode = self.policy.allow_protected_trader_position_adds
@@ -3480,11 +3484,11 @@ def _hedge_balance_issues(intent: OrderIntent, snapshot: BrokerSnapshot) -> list
 
 
 def _is_operator_managed_manual(position: BrokerPosition) -> bool:
-    return position.owner in {Owner.MANUAL, Owner.UNKNOWN}
+    return is_operator_managed_manual_owner(position.owner)
 
 
 def _is_operator_managed_manual_order(order: BrokerOrder) -> bool:
-    return order.owner in {Owner.MANUAL, Owner.UNKNOWN}
+    return is_operator_managed_manual_owner(order.owner)
 
 
 def _is_pending_entry_order(order: BrokerOrder) -> bool:

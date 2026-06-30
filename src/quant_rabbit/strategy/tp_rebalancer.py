@@ -118,7 +118,7 @@ def _insurance_tp_disabled() -> bool:
 
 
 def _profit_take_owner_allowed(owner: str) -> bool:
-    return owner.strip().lower() in {"trader", "manual", "unknown"}
+    return owner.strip().lower() in {"trader", "manual", "unknown", "operator_manual"}
 
 
 def _optional_float(value: Any) -> Optional[float]:
@@ -542,7 +542,7 @@ def compute_tp_adjustment(
         return None
     manual_missing_tp_repair = (
         current_tp is None
-        and owner_normalized in {"manual", "unknown"}
+        and owner_normalized in {"manual", "unknown", "operator_manual"}
         and _missing_tp_repair_enabled()
     )
     if atr_pips <= 0 or reward_risk <= 0:
