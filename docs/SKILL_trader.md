@@ -24,6 +24,7 @@ PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli trader-prompt-route
 - `guardian-event-router` is read-only: it writes event/wake artifacts for GPT-5.5 and never sends, cancels, or closes broker orders.
 - Main trader runtime policy: `gpt-5.5`, `reasoning_effort=high`, every 60 minutes.
 - Do not rely on the hourly full-trader cadence for risk monitoring. `guardian-event-router` / probe paths remain deterministic, non-LLM, and frequent.
+- The `com.quantrabbit.guardian-wake-dispatcher` LaunchAgent may wake GPT-5.5 with read-only `codex exec`; its live default must keep `QR_GUARDIAN_WAKE_GATEWAY_HANDOFF=0` and `QR_GUARDIAN_ACTION_EXECUTE=0`, so wake output is review/receipt only unless a separate explicit gateway path is enabled.
 - Read `data/guardian_escalation.json`, `data/guardian_events.json`, `data/guardian_action_receipt.json`, `data/guardian_action_cycle_result.json`, and `docs/guardian_action_review.md` every cycle before normal new-entry routing.
 - Resolve queued guardian wake actions before ordinary new entries: `queued_for_active_trader=true` means the dispatcher yielded to the active trader, so the trader must review the event/report/receipt first and either consume the receipt through the normal verifier/gateway path, recognize that `guardian-action-cycle` already executed/rejected it, or write the exact reason it is stale/rejected.
 - Target-path entry sends require `QR_TARGET_PATH_LIVE_ENABLED=1` in addition to `QR_LIVE_ENABLED=1`; default is dry-run/stage/LIVE-LEARNING receipt only.

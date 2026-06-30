@@ -3,6 +3,7 @@
 ## 2026-06-30
 
 - Changed active `qr-trader` runtime policy to gpt-5.5 high every 60 minutes, with guardian probe/router remaining deterministic and frequent for risk monitoring.
+- Installed guardian wake dispatcher activation requirements for `com.quantrabbit.guardian-wake-dispatcher`: launchd stdout/stderr use dedicated `.launchd.*` logs, `QR_GUARDIAN_WAKE_GATEWAY_HANDOFF=0`, `QR_GUARDIAN_ACTION_EXECUTE=0`, and `CODEX_DISABLE_UPDATE_CHECK=1` are explicit, preserving read-only GPT wake behavior by default.
 - Added `guardian-action-cycle` safe CLI handoff for GPT-5.5 guardian action receipts. Defaults remain no-send unless `QR_LIVE_ENABLED=1`, `QR_GUARDIAN_WAKE_GATEWAY_HANDOFF=1`, and `QR_GUARDIAN_ACTION_EXECUTE=1`; receipt, broker-truth, lock, duplicate, thesis-state, manual-exposure, RiskEngine, and gateway checks run before any execution.
 - Added `tools/guardian_wake_dispatcher.py`, `docs/guardian_wake_prompt.md`, and a launchd plist for event-driven GPT-5.5 guardian wakes through read-only `codex exec`; default behavior writes review/receipt artifacts only, never executes broker actions, and treats generated guardian action reviews as live runtime drift.
 - Activated `ROLLING_30D_4X` in runtime target reporting: trader cycles now surface rolling 30d start equity, current equity, multiplier, remaining-to-4x, required calendar/active-day returns, and pace state; +5% is treated as pace/review/protection rather than forced daily churn.
