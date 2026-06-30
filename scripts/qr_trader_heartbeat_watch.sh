@@ -30,9 +30,9 @@ LIVE_ROOT="${QR_LIVE_ROOT:-/Users/tossaki/App/QuantRabbit-live}"
 STATE_FILE="${QR_WEEKEND_STATE:-$HOME/.codex/quant_rabbit_weekend_task_state.json}"
 ALERT_LOG="${QR_HEARTBEAT_ALERT_LOG:-$LIVE_ROOT/logs/heartbeat_alerts.log}"
 STAMP_FILE="${QR_HEARTBEAT_STAMP:-$HOME/.cache/qr_trader_heartbeat_last_alert}"
-# 3 × 20-minute cadence + 5 min slack. The cadence is the qr-trader RRULE
+# 3 × 60-minute cadence + 5 min slack. The cadence is the qr-trader RRULE
 # interval; change both together.
-MAX_SILENCE_SECONDS="${QR_HEARTBEAT_MAX_SILENCE:-3900}"
+MAX_SILENCE_SECONDS="${QR_HEARTBEAT_MAX_SILENCE:-18300}"
 ALERT_THROTTLE_SECONDS="${QR_HEARTBEAT_THROTTLE:-3600}"
 
 now_epoch=$(date +%s)
@@ -91,7 +91,7 @@ msg="QuantRabbit trader silent for ${silence} during open market. Check Codex cr
 echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) $msg" >> "$ALERT_LOG"
 /usr/bin/osascript -e "display notification \"$msg\" with title \"QR trader heartbeat\" sound name \"Basso\"" 2>/dev/null
 
-# --- 5. Self-heal: relaunch Codex.app when its process is gone. The 20-min
+# --- 5. Self-heal: relaunch Codex.app when its process is gone. The hourly
 #        scheduler lives inside the app, so an app crash/quit IS a dead
 #        trader; relaunching restores the already-enabled automation without
 #        touching task state. When the process is alive (e.g. the 2026-06-09

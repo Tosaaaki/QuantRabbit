@@ -39,8 +39,9 @@ DEFAULT_THROTTLE_SECONDS = 30 * 60
 # throttle is deliberately longer than read-only harvest/review prompts.
 DEFAULT_FRESH_ACTION_THROTTLE_SECONDS = 60 * 60
 
-# A stale pending order has missed roughly three scheduled 20-minute decision
-# windows. This is a lifecycle watchdog, not a pair-specific price threshold.
+# A stale pending order has sat for roughly one hour. This guardian lifecycle
+# watchdog is independent of the hourly full-trader cadence; the deterministic
+# router still checks frequently.
 DEFAULT_STALE_PENDING_SECONDS = 3 * 20 * 60
 
 # Early margin pressure uses the existing gateway cap as its anchor. At 90% of

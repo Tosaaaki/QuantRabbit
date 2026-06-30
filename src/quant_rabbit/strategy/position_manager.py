@@ -1312,7 +1312,7 @@ def _temporary_extreme_profit_take_signal(
 
     # Use the full bounded M1 sample from chart_reader for the local extreme
     # context, while keeping reversal evidence on the shorter live-execution
-    # window. A 20-minute scheduler can otherwise drop the actual top/bottom
+    # window. A full-trader cadence can otherwise drop the actual top/bottom
     # just outside the last 12 M1 candles and then miss the rollover that is
     # happening right now.
     context_recent = candles

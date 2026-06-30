@@ -7654,7 +7654,7 @@ def _gpt_twenty_minute_plan(*, lane_ids: list[str] | None = None, pair: str = "E
     for lane_id in lane_ids or []:
         refs.append(f"intent:{lane_id}")
     return {
-        "horizon_minutes": 20,
+        "horizon_minutes": 60,
         "primary_path": f"{pair} should hold the operating shelf and follow through toward the selected trigger before the next cycle.",
         "failure_path": "A close through the shelf or a newly named deterministic blocker makes the decision wrong.",
         "entry_or_hold_trigger": "Use only the current LIVE_READY intent trigger; do not chase if price leaves the planned structure.",

@@ -47,7 +47,7 @@ DEFAULT_CAPTURE_ECONOMICS_REPORT = ROOT / "docs" / "capture_economics_report.md"
 MIN_SAMPLE_FOR_VERDICT = 20
 
 # Report/action payloads are read by the trader prompt packet. Keep them short
-# so the 20-minute cycle sees the repair priorities without drowning out the
+# so the live cycle sees the repair priorities without drowning out the
 # current broker/intent evidence; this is an engineering display cap, not a
 # market threshold.
 EXIT_REPAIR_ITEM_LIMIT = 4

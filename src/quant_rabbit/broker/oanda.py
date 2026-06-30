@@ -16,9 +16,9 @@ from quant_rabbit.paths import DEFAULT_ENV_LOCAL
 
 # OANDA REST calls are bounded by infrastructure wall-clock behavior, not by
 # market geometry. Fifteen seconds allows normal broker/API jitter while keeping
-# one stalled HTTP read from consuming a material share of the 20-minute live
-# cycle. Replace this with an observed endpoint SLO if OANDA latency telemetry
-# becomes available.
+# one stalled HTTP read from consuming a material share of the live cycle.
+# Replace this with an observed endpoint SLO if OANDA latency telemetry becomes
+# available.
 DEFAULT_OANDA_HTTP_TIMEOUT_SECONDS = 15.0
 OANDA_CLOSE_PROVENANCE_POSITION_PROTECTION = "position_protection_gateway"
 OANDA_CLOSE_PROVENANCE_PROFIT_PARTIAL = "profit_partial_close"

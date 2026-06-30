@@ -58,7 +58,7 @@ is still `gpt-trader-decision` plus `LiveOrderGateway`.
   "rejected_alternatives": ["..."],
   "risk_notes": ["bounded by per_trade_risk_budget_jpy from data/daily_target_state.json"],
   "twenty_minute_plan": {
-    "horizon_minutes": 20,
+    "horizon_minutes": 60,
     "primary_path": "What should happen before the next trader cycle if this decision is right.",
     "failure_path": "What would make the decision wrong before the next trader cycle.",
     "entry_or_hold_trigger": "Concrete trigger for entry, basket keep, or WAIT continuation.",
@@ -136,7 +136,7 @@ is still `gpt-trader-decision` plus `LiveOrderGateway`.
 - Specialist `role`: `macro_news`, `indicator`, `flow_levels`, `risk_audit`, `strategy`, `portfolio_context`
 - `strategy_reviews[].verdict` and `specialist_reviews[].verdict`: `SUPPORTS`, `REJECTS`, `BLOCKED`, `WATCH`. Do not encode gate reasons in the verdict string; put gate details such as `CLOSE_OPERATOR_AUTH_REQUIRED` or `NO_LIVE_READY_LANES` in `hard_gate_codes`.
 - `market_read_first.naked_read.thesis_state`: `ALIVE`, `WOUNDED`, `INVALIDATED`, `EMERGENCY`, or `UNKNOWN`.
-- `twenty_minute_plan.horizon_minutes`: `20` for `TRADE`, `WAIT`, and `REQUEST_EVIDENCE`; this is the scheduled decision cadence, not a market-derived holding target.
+- `twenty_minute_plan.horizon_minutes`: `60` for `TRADE`, `WAIT`, and `REQUEST_EVIDENCE`; the field name is retained for compatibility, and this is the scheduled hourly decision cadence, not a market-derived holding target.
 - `cancel_order_ids` on `TRADE` or `CANCEL_PENDING` is allowed only for current trader-owned pending entry ids from the broker snapshot. For `TRADE`, the gateway cancels those ids before validating the selected basket, so use it only when replacing stale or lower-priority pending exposure with a current tradeable basket. For `CANCEL_PENDING`, the gateway cycle cancels the verified ids and sends no fresh entry in that same cycle.
 - `close_trade_ids` is allowed only with `action=CLOSE`. `TRADE` with `close_trade_ids` is rejected; loss-cut and re-entry must be separated by a fresh broker snapshot / intent cycle.
 

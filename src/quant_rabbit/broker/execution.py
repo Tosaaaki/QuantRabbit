@@ -3047,7 +3047,7 @@ def _self_improvement_gateway_issues(
             # The decision being staged was verified ACCEPTED after this audit
             # ran, so the audit's stale-decision verdict is about an older
             # receipt (mirrors gpt_trader._self_improvement_trade_blockers).
-            # With a 20-minute audit cadence and a slower decision cadence the
+            # With asynchronous audit cadence and a slower decision cadence the
             # streak otherwise re-blocks the first staging attempt of every
             # fresh receipt. Manual stage-live-order paths do not pass
             # verified_decision_path and keep the strict streak gate.
@@ -3373,7 +3373,7 @@ def _oanda_order_request(intent: OrderIntent) -> dict[str, Any]:
         # not a trading stop: it never trails, it does not enter sizing or
         # reward/risk math, and existing positions are never retro-fitted.
         # Its only job is bounding the tail when the market dislocates
-        # inside the 20-minute blind window between cycles.
+        # inside the full-trader blind window between cycles.
         disaster_sl = (intent.metadata or {}).get("disaster_sl")
         if disaster_sl is not None:
             try:

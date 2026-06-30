@@ -7,6 +7,7 @@ import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import patch
 
 from tools.guardian_wake_dispatcher import DispatcherPaths, run_dispatcher
 
@@ -101,6 +102,7 @@ class GuardianWakeDispatcherTest(unittest.TestCase):
             self.assertEqual(cmd[cmd.index("-m") + 1], "gpt-5.5")
             self.assertEqual(cmd[cmd.index("-s") + 1], "read-only")
             self.assertEqual(cmd[cmd.index("-C") + 1], str(paths.live_root))
+            self.assertIn('model_reasoning_effort = "high"', (paths.codex_home / "config.toml").read_text())
 
     def test_dispatcher_never_calls_oanda_or_gateway_cli_directly(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -136,6 +138,7 @@ class GuardianWakeDispatcherTest(unittest.TestCase):
             payload = json.loads(paths.action_receipt.read_text())
             self.assertEqual(payload["status"], "ACCEPTED")
             self.assertEqual(payload["receipt"]["action"], "TRADE")
+            self.assertEqual(payload["receipt"]["dedupe_key"], payload["selected_event"]["dedupe_key"])
             self.assertTrue(payload["receipt"]["gateway_required"])
             self.assertTrue(payload["receipt"]["no_direct_oanda"])
 
@@ -149,13 +152,10 @@ class GuardianWakeDispatcherTest(unittest.TestCase):
             self.assertEqual(result["gateway_handoff"]["status"], "SKIPPED_DEFAULT_OFF")
             self.assertEqual(len(calls), 1)
 
-    def test_enabled_gateway_handoff_still_requires_live_order_gateway(self) -> None:
+    def test_enabled_gateway_handoff_requires_action_execute_flag(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             paths = _fixture(root)
-            gateway_file = root / "src" / "quant_rabbit" / "broker" / "execution.py"
-            gateway_file.parent.mkdir(parents=True)
-            gateway_file.write_text("class LiveOrderGateway: pass\n")
             calls: list[list[str]] = []
 
             result = run_dispatcher(
@@ -166,8 +166,38 @@ class GuardianWakeDispatcherTest(unittest.TestCase):
             )
 
             self.assertEqual(result["gateway_handoff"]["required_gateway"], "LiveOrderGateway")
-            self.assertEqual(result["gateway_handoff"]["status"], "SKIPPED_NO_SAFE_EXISTING_CLI_ROUTE")
+            self.assertEqual(result["gateway_handoff"]["status"], "SKIPPED_ACTION_EXECUTE_DISABLED")
             self.assertEqual(len(calls), 1)
+
+    def test_all_guardian_execute_flags_call_action_cycle_cli_after_accepted_receipt(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = _fixture(Path(tmp))
+            codex_calls: list[list[str]] = []
+            action_calls: list[list[str]] = []
+
+            def fake_action_cycle(cmd, **kwargs):
+                action_calls.append(list(cmd))
+                return SimpleNamespace(
+                    returncode=0,
+                    stdout='{"status":"VERIFIED_NO_SEND","executed":false}\n',
+                    stderr="",
+                )
+
+            with patch("tools.guardian_wake_dispatcher.subprocess.run", side_effect=fake_action_cycle):
+                result = run_dispatcher(
+                    paths=paths,
+                    now=NOW,
+                    env={
+                        "QR_GUARDIAN_WAKE_GATEWAY_HANDOFF": "1",
+                        "QR_GUARDIAN_ACTION_EXECUTE": "1",
+                        "QR_LIVE_ENABLED": "1",
+                    },
+                    subprocess_run=_fake_codex(codex_calls, _valid_receipt()),
+                )
+
+            self.assertEqual(result["gateway_handoff"]["status"], "ACTION_CYCLE_CALLED")
+            self.assertEqual(action_calls, [["python3", "-m", "quant_rabbit.cli", "guardian-action-cycle"]])
+            self.assertEqual(len(codex_calls), 1)
 
 
 def _fixture(

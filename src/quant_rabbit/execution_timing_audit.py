@@ -37,10 +37,9 @@ from quant_rabbit.paths import (
 )
 
 
-# The live decision cadence is roughly 20 minutes; six hours covers eighteen
-# missed decision opportunities and matches the legacy "recovered in 6h" stop
-# regret lens already mined into strategy reports. It is an audit window, not a
-# live risk threshold.
+# Six hours matches the legacy "recovered in 6h" stop-regret lens already mined
+# into strategy reports. It is an audit window, not a live risk threshold or a
+# scheduler-cadence derivative.
 DEFAULT_POST_CANCEL_HORIZON_HOURS = 6.0
 
 # Use the same audit horizon as canceled pending regrets so close timing and

@@ -79,7 +79,7 @@ THESIS_HORIZON_FORECAST_MULT = float(os.environ.get("QR_THESIS_HORIZON_FORECAST_
 THESIS_EVOLUTION_HISTORY_FILENAME = "thesis_evolution_history.jsonl"
 
 # Same-cycle dedup floor for the consecutive-WEAKENED check: an archived row
-# younger than half the 20-minute scheduler cadence is the current cycle's own
+# younger than the refresh/gateway handoff window is the current cycle's own
 # write (multiple evaluations can run inside one cycle), not a prior check.
 THESIS_EXPIRY_PRIOR_CHECK_MIN_AGE_SECONDS = 600.0
 RANGE_ROTATION_FAIL_TARGET_FRACTION = float(os.environ.get("QR_RANGE_ROTATION_FAIL_TARGET_FRACTION", "0.35"))

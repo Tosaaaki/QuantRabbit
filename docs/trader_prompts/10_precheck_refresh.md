@@ -29,7 +29,7 @@ canonical list), then prints one compact digest that already includes the
 re-routed prompt branch (`route`).
 
 **Token discipline (2026-06-09 credit-exhaustion incident).** Running these
-steps as separate shell turns burned ~3M tokens per 20-minute cycle and
+steps as separate shell turns burned ~3M tokens per former 20-minute cycle and
 silently stopped live trading for ~36 hours. Do NOT run the refresh steps
 individually; do NOT cat multi-megabyte artifacts. Read the digest, then
 drill into `data/order_intents.json`, `data/pair_charts.json`,

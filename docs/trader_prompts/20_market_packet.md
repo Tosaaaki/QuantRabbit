@@ -86,7 +86,7 @@
 - `data/market_context_matrix.json`
   - Advisory pair/side matrix joining chart, strength, cross-asset, flow, levels, calendar, COT, and option-skew observations.
   - It raises certainty by exposing `supports`, `rejects`, `warnings`, and `missing` evidence; it must not create new live blockers or reduce `LIVE_READY` lane count.
-  - TRADE receipts should cite `matrix:<PAIR>:<SIDE>` and carry the strongest reject into the 20-minute counterargument.
+  - TRADE receipts should cite `matrix:<PAIR>:<SIDE>` and carry the strongest reject into the next-cycle counterargument.
 - `data/economic_calendar.json`
   - `pair_windows[].in_window=true` means WAIT unless the receipt explicitly records an override reason.
 - `data/news_items.json` and `data/news_health.json`

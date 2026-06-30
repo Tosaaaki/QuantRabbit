@@ -265,7 +265,7 @@ _SL_FREE_RUNTIME_DEFAULTS: dict[str, str] = {
     # recreate the micro-lot spiral). It never trails (trailing stays
     # disabled). Its only job: cap the tail (give-up closes averaged
     # -1,437 JPY, margin closeouts -5,641 JPY on 2026-05-14) and make a
-    # flash move / intervention during the 20-minute blind window unable
+    # flash move / intervention during the full-trader blind window unable
     # to destroy the account.
     "QR_DISASTER_SL": "1",
     # Live fresh entries must carry a current executable pair forecast. This
@@ -1498,7 +1498,7 @@ _AUTOTRADE_EXIT_ZERO_STATUSES: frozenset[str] = frozenset(
 )
 
 
-# One consolidated live refresh must fit the roughly 20-minute trader cadence.
+# One consolidated live refresh must fit the roughly 60-minute trader cadence.
 # A single internal step taking more than five minutes is operationally stale
 # evidence, usually a wedged HTTPS/read-only data fetch, and should be recorded
 # as a named failure instead of holding the live runtime lock indefinitely.
@@ -1521,7 +1521,7 @@ DEFAULT_GENERATE_INTENTS_CYCLE_TIMEOUT_SECONDS = 900.0
 DEFAULT_EXECUTION_TIMING_AUDIT_CYCLE_LOOKBACK_HOURS = 744.0
 DEFAULT_EXECUTION_TIMING_AUDIT_CYCLE_TIMEOUT_SECONDS = 180.0
 # Pair charts fetch 28 G8 pairs x 7 timeframes. Fourteen workers keeps the
-# broker-read fanout inside the 20-minute live cadence even when one batch hits
+# broker-read fanout inside the 60-minute live cadence even when one batch hits
 # the OANDA HTTP timeout, while staying far below one thread per candle request.
 # This is infrastructure wall-clock control, not market/risk tuning.
 DEFAULT_PAIR_CHART_WORKERS = 14
@@ -2215,7 +2215,7 @@ def _write_json(path: Path, payload: dict[str, Any]) -> None:
 # Consolidated cycle commands (token-budget repair, 2026-06-10).
 #
 # The scheduled trader previously executed every refresh/sidecar step as a
-# separate shell turn (~35 exec turns per 20-minute cycle). Each turn re-sends
+# separate shell turn (~35 exec turns per former 20-minute cycle). Each turn re-sends
 # the whole growing conversation context to the model, so one cycle burned
 # ~3M tokens and the 2026-06-09 02:00 JST credit exhaustion stopped live
 # trading entirely. `cycle-refresh` and `cycle-sidecars` run the same CLI
@@ -3860,6 +3860,26 @@ def main(argv: list[str] | None = None) -> int:
     p_guardian_events.add_argument("--action-receipt-input", type=Path, default=None)
     p_guardian_events.add_argument("--action-receipt-output", type=Path, default=DEFAULT_GUARDIAN_ACTION_RECEIPT)
     p_guardian_events.add_argument("--action-review-report", type=Path, default=DEFAULT_GUARDIAN_ACTION_REVIEW)
+
+    p_guardian_action = sub.add_parser(
+        "guardian-action-cycle",
+        help="Verify a GPT-5.5 guardian action receipt and optionally hand it to the approved gateway path.",
+    )
+    p_guardian_action.add_argument("--action-receipt", type=Path, default=DEFAULT_GUARDIAN_ACTION_RECEIPT)
+    p_guardian_action.add_argument("--escalation", type=Path, default=DEFAULT_GUARDIAN_ESCALATION)
+    p_guardian_action.add_argument("--events", type=Path, default=DEFAULT_GUARDIAN_EVENTS)
+    p_guardian_action.add_argument("--snapshot", type=Path, default=DEFAULT_BROKER_SNAPSHOT)
+    p_guardian_action.add_argument("--daily-target-state", type=Path, default=DEFAULT_DAILY_TARGET_STATE)
+    p_guardian_action.add_argument("--order-intents", type=Path, default=DEFAULT_ORDER_INTENTS)
+    p_guardian_action.add_argument("--action-review", type=Path, default=DEFAULT_GUARDIAN_ACTION_REVIEW)
+    p_guardian_action.add_argument("--output", type=Path, default=Path("data/guardian_action_cycle_result.json"))
+    p_guardian_action.add_argument("--report", type=Path, default=Path("docs/guardian_action_cycle_report.md"))
+    p_guardian_action.add_argument("--log", type=Path, default=Path("logs/guardian_action_cycle.log"))
+    p_guardian_action.add_argument(
+        "--live-root",
+        type=Path,
+        default=Path(os.environ.get("QR_GUARDIAN_ACTION_LIVE_ROOT", "/Users/tossaki/App/QuantRabbit-live")),
+    )
 
     p_plim = sub.add_parser(
         "generate-predictive-limits",
@@ -6850,6 +6870,45 @@ def main(argv: list[str] | None = None) -> int:
             )
         )
         return 0
+    if args.command == "guardian-action-cycle":
+        from quant_rabbit.guardian_action_cycle import GuardianActionCyclePaths, run_guardian_action_cycle
+
+        result = run_guardian_action_cycle(
+            paths=GuardianActionCyclePaths(
+                root=ROOT,
+                action_receipt=args.action_receipt,
+                escalation=args.escalation,
+                events=args.events,
+                broker_snapshot=args.snapshot,
+                daily_target_state=args.daily_target_state,
+                order_intents=args.order_intents,
+                action_review=args.action_review,
+                result=args.output,
+                report=args.report,
+                log=args.log,
+                live_root=args.live_root,
+            )
+        )
+        print(
+            json.dumps(
+                {
+                    "status": result.get("status"),
+                    "executed": result.get("executed"),
+                    "selected_event_id": (result.get("selected_event") or {}).get("event_id")
+                    if isinstance(result.get("selected_event"), dict)
+                    else None,
+                    "selected_lane_id": result.get("selected_lane_id"),
+                    "no_send_reason": result.get("no_send_reason"),
+                    "output_path": str(args.output),
+                    "report_path": str(args.report),
+                    "no_direct_oanda": True,
+                },
+                ensure_ascii=False,
+                indent=2,
+                sort_keys=True,
+            )
+        )
+        return 0 if result.get("status") != "REJECTED" else 2
     if args.command == "verify-projections":
         from quant_rabbit.strategy.projection_ledger import (
             compute_hit_rates,

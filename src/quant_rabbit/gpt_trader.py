@@ -1746,12 +1746,11 @@ BASKET_PAIR_COVERAGE_TARGET = 4
 # feedback_high_conviction_execution.md).
 PRIMARY_ATTACK_RANK_CEILING = 4
 
-# The scheduled trader cadence is approximately one operator decision every
-# 20 minutes. This is an operational receipt horizon, not a market threshold,
-# JPY cap, pip distance, or reward/risk multiplier. If scheduler cadence
-# changes, replace this with scheduler config rather than tuning it from trade
-# outcomes.
-TRADER_DECISION_HORIZON_MINUTES = 20
+# The scheduled trader cadence is one deeper operator decision every 60
+# minutes. This is an operational receipt horizon, not a market threshold, JPY
+# cap, pip distance, or reward/risk multiplier. If scheduler cadence changes,
+# replace this with scheduler config rather than tuning it from trade outcomes.
+TRADER_DECISION_HORIZON_MINUTES = 60
 ENTRY_DECISION_HORIZON_ACTIONS = ("TRADE", "WAIT", "REQUEST_EVIDENCE")
 TWENTY_MINUTE_PLAN_TEXT_FIELDS = (
     "primary_path",
@@ -2382,7 +2381,7 @@ class GPTTraderBrain:
                 "- Learning may only rank already-live-ready lanes. Any learning-influenced selected lane must be covered by a non-blocked `learning_audit` packet and cite `learning:audit` plus `learning:lane:<lane_id>`.",
                 "- Active `USER_ALPHA` / `OPERATOR_ALPHA` continuation must cite `user_alpha:continuation` and either continue the same pair/side as RELOAD / SECOND_SHOT / 5% path-board candidate, or name an exact blocker plus next trigger.",
                 "- `TRADE` must cite current chart evidence plus `news:health` and `news:items` or `news:current`; blocked news-health is a no-trade gate.",
-                "- `TRADE`, `WAIT`, and `REQUEST_EVIDENCE` receipts must include `twenty_minute_plan`: the next-20-minute primary path, failure path, trigger, invalidation/cancel trigger, strongest counterargument, next-cycle check, and known packet refs. This is a receipt-depth gate, not a new market-risk gate.",
+                f"- `TRADE`, `WAIT`, and `REQUEST_EVIDENCE` receipts must include `twenty_minute_plan` with `horizon_minutes={TRADER_DECISION_HORIZON_MINUTES}`: the next-cycle primary path, failure path, trigger, invalidation/cancel trigger, strongest counterargument, next-cycle check, and known packet refs. This is a receipt-depth gate, not a new market-risk gate.",
                 "- `market_status` is deterministic calendar/session evidence only; broker truth still decides prices, positions, and tradability.",
                 "- A deterministic `tp-rebalance` sidecar requirement makes WAIT / REQUEST_EVIDENCE invalid until the sidecar is run.",
                 "- A deterministic entry-thesis blocker makes TRADE / WAIT invalid until the unverifiable active position is repaired or reviewed.",

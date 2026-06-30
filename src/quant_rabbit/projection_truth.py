@@ -9,9 +9,9 @@ from quant_rabbit.analysis.candles import fetch_candles_via_client
 
 
 # Projection candle truth is read-only broker evidence, but it runs inside the
-# unattended 20-minute live cycle. Forty-five seconds allows several normal
-# OANDA REST reads or three default socket timeouts, then yields partial truth
-# so the cycle can continue and surface the degraded evidence. This is an
+# unattended live cycle. Forty-five seconds allows several normal OANDA REST
+# reads or three default socket timeouts, then yields partial truth so the
+# cycle can continue and surface the degraded evidence. This is an
 # infrastructure watchdog budget, not a market-derived trading threshold; tune
 # it from live endpoint latency telemetry if that becomes available.
 DEFAULT_PROJECTION_CANDLE_TRUTH_BUDGET_SECONDS = 45.0

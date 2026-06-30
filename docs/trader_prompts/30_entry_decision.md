@@ -34,7 +34,7 @@
 12. If advice spans multiple distinct pairs, include one lane per advised pair up to portfolio capacity when practical; otherwise the verifier records a warning and the gateway cycle expands the accepted trade to the deterministic prefilter basket so margin, cumulative risk, duplicate geometry, and position-count gates decide what fits.
 13. Prefer a `MARKET` variant for immediate participation when it is current `LIVE_READY`; pending entries are basket-counted by the gateway and are not blanket no-trade reasons. Exception: `BREAKOUT_FAILURE` must be at the retest/rejection side of the M5/M15 box. For SHORT, do not market-sell the lower half/support and do not arm a lower-half sell-stop; wait for upper-half resistance rejection/LIMIT or require a separate true trend-continuation breakout lane. For LONG, do not market-buy the upper half/resistance and do not arm an upper-half buy-stop; wait for lower-half support rejection/LIMIT or require a separate true trend-continuation breakout lane.
 14. If current trader-owned pending entries already consume portfolio capacity, explicitly decide whether to keep that pending basket or replace it. A `TRADE` that needs capacity for current `LIVE_READY` lanes may include `cancel_order_ids` for current trader-owned pending entry ids that should be cleared before gateway validation; never name manual/unknown orders. When self-improvement flags `PENDING_ENTRY_CANCEL_REVIEW_REQUIRED` and a current replacement lane is `LIVE_READY`, prefer this `TRADE` + `cancel_order_ids` path over a standalone `CANCEL_PENDING`, because the verifier rejects standalone cancel while executable replacement risk exists.
-15. Fill `twenty_minute_plan` before choosing the final action. The trader runs roughly one decision every 20 minutes, so a receipt that only says "trend looks good" or "timing unclear" is too shallow. State the next-cycle primary path, the failure path, the exact entry/hold trigger, the invalidation/cancel trigger, the strongest counterargument, and what must be checked on the next cycle.
+15. Fill `twenty_minute_plan` before choosing the final action. The field name is retained for compatibility, but the full trader now runs one deeper decision every 60 minutes, so a receipt that only says "trend looks good" or "timing unclear" is too shallow. State the next-cycle primary path, the failure path, the exact entry/hold trigger, the invalidation/cancel trigger, the strongest counterargument, and what must be checked on the next cycle.
 16. In scheduled automation, use `trader-draft-decision` as the default receipt composer after `cycle-refresh`. If it emits TRADE and `gpt-trader-decision` accepts it, proceed to the gateway. If it emits WAIT / REQUEST_EVIDENCE because a named blocker wins, do not hand-write a TRADE unless a refreshed artifact clears that blocker.
 17. Write exactly one `data/codex_trader_decision_response.json`.
 
@@ -180,7 +180,7 @@ contradicts your chosen direction, downgrade size, switch method, or WAIT.
 
 Add `twenty_minute_plan` to the decision receipt:
 
-- `horizon_minutes`: `20`.
+- `horizon_minutes`: `60`.
 - `primary_path`: what price / structure / flow should do before the next cycle if the decision is right.
 - `failure_path`: what would make the decision wrong before the next cycle.
 - `entry_or_hold_trigger`: the concrete trigger for entry, basket keep, or WAIT continuation.
@@ -190,8 +190,8 @@ Add `twenty_minute_plan` to the decision receipt:
 - `evidence_refs`: known packet refs supporting this plan, including the selected `intent:<lane_id>` for TRADE and at least one chart ref when current tradeable lanes exist.
 
 This does not create a new market-risk gate. It forces the trader to expose
-the 20-minute scenario tree so the verifier and the next cycle can catch
-shallow or contradictory reasoning.
+the hourly next-cycle scenario tree so the verifier and the next cycle can
+catch shallow or contradictory reasoning.
 
 ## Hedge Timing Rubric
 

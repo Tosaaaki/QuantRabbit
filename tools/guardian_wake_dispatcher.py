@@ -33,7 +33,7 @@ DEFAULT_LIVE_ROOT = Path("/Users/tossaki/App/QuantRabbit-live")
 # for the normal trader refresh instead of prompting GPT from stale quotes.
 BROKER_SNAPSHOT_MAX_AGE_SECONDS = 5 * 60
 
-# Codex wake should finish well inside the 20-minute trader cadence. A hung
+# Codex wake should finish well inside one event-driven review window. A hung
 # local CLI must not hold repeated launchd invocations open indefinitely.
 CODEX_TIMEOUT_SECONDS = 8 * 60
 
@@ -189,6 +189,8 @@ def run_dispatcher(
     review = None
     receipt_written = False
     if parsed["valid"]:
+        if not parsed["receipt"].get("dedupe_key") and selected.get("dedupe_key"):
+            parsed["receipt"]["dedupe_key"] = selected["dedupe_key"]
         review = review_guardian_action_receipt(parsed["receipt"], events=events, now=clock)
         receipt_action = str(parsed["receipt"].get("action") or "").upper()
         if review.get("status") == "ACCEPTED" and receipt_action in ACTIONABLE_ACTIONS:
@@ -653,7 +655,7 @@ def _maybe_gateway_handoff(
         "enabled": enabled,
         "default_off_env": "QR_GUARDIAN_WAKE_GATEWAY_HANDOFF=0",
         "required_gateway": "LiveOrderGateway",
-        "required_revalidators": ["RiskEngine", "LiveOrderGateway"],
+        "required_revalidators": ["guardian-action-cycle", "RiskEngine", "LiveOrderGateway"],
     }
     if not enabled:
         return {**base, "status": "SKIPPED_DEFAULT_OFF"}
@@ -672,17 +674,28 @@ def _maybe_gateway_handoff(
     live_flags = {
         "QR_LIVE_ENABLED": env.get("QR_LIVE_ENABLED", "0"),
         "QR_GUARDIAN_WAKE_GATEWAY_HANDOFF": env.get("QR_GUARDIAN_WAKE_GATEWAY_HANDOFF", "0"),
+        "QR_GUARDIAN_ACTION_EXECUTE": env.get("QR_GUARDIAN_ACTION_EXECUTE", "0"),
     }
-    if live_flags["QR_LIVE_ENABLED"] != "1":
+    if live_flags["QR_GUARDIAN_ACTION_EXECUTE"] != "1":
+        return {**base, "status": "SKIPPED_ACTION_EXECUTE_DISABLED", "live_flags": live_flags}
+    if any(value != "1" for value in live_flags.values()):
         return {**base, "status": "SKIPPED_LIVE_FLAGS_DISABLED", "live_flags": live_flags}
-    gateway_source = paths.root / "src" / "quant_rabbit" / "broker" / "execution.py"
-    if not gateway_source.exists():
-        return {**base, "status": "SKIPPED_LIVE_ORDER_GATEWAY_MISSING", "live_flags": live_flags}
+    python_bin = env.get("QR_PYTHON", "python3")
+    cmd = [python_bin, "-m", "quant_rabbit.cli", "guardian-action-cycle"]
+    run_env = dict(env)
+    run_env["PYTHONPATH"] = str(paths.root / "src")
+    try:
+        proc = subprocess.run(cmd, cwd=str(paths.root), capture_output=True, text=True, timeout=180, env=run_env)
+    except Exception as exc:  # noqa: BLE001
+        return {**base, "status": "ACTION_CYCLE_EXCEPTION", "live_flags": live_flags, "command": cmd, "error": str(exc)}
     return {
         **base,
-        "status": "SKIPPED_NO_SAFE_EXISTING_CLI_ROUTE",
+        "status": "ACTION_CYCLE_CALLED" if proc.returncode == 0 else "ACTION_CYCLE_FAILED",
         "live_flags": live_flags,
-        "reason": "guardian receipt is review-only; no existing CLI consumes it directly without the trader verifier path",
+        "command": cmd,
+        "returncode": proc.returncode,
+        "stdout_tail": (proc.stdout or "")[-1000:],
+        "stderr_tail": (proc.stderr or "")[-1000:],
     }
 
 

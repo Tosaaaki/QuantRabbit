@@ -68,8 +68,9 @@ FORECAST_SNAPSHOT_GRACE = timedelta(
 # for the next verify-projections pass instead of starving a current entry.
 # Kept in lockstep with the live-entry gate and self-improvement audit
 # (QR_PROJECTION_PENDING_EXPIRY_GRACE_SECONDS = 1200): the measured live
-# refresh-to-gateway latency is ~10 minutes, so one 20-minute scheduler
-# cadence is the boundary between same-cycle latency and a real defect.
+# refresh-to-gateway latency is ~10 minutes, so the 20-minute grace is a
+# boundary between same-cycle latency and a real defect, not the current
+# full-trader cadence.
 PROJECTION_PENDING_EXPIRY_GRACE = timedelta(
     seconds=int(os.environ.get("QR_MEMORY_PROJECTION_EXPIRY_GRACE_SECONDS", "1200"))
 )

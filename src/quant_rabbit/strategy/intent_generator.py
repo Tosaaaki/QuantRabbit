@@ -180,7 +180,7 @@ def _new_entry_initial_sl_active() -> bool:
 #   would recreate the 2026-06-11 micro-lot spiral.
 # - the disaster stop is only attached to the broker order
 #   (`stopLossOnFill`) so a flash move / JPY intervention / weekend gap
-#   during the 20-minute blind window between cycles cannot destroy the
+#   during the full-trader blind window between cycles cannot destroy the
 #   account, and the give-up-close tail (avg -1,437 JPY, margin closeouts
 #   -5,641 JPY on 2026-05-14) gets a hard ceiling.
 # - it never trails (QR_DISABLE_TRAILING_SL=1 stays on) and existing
@@ -384,10 +384,10 @@ RECOVERY_HEDGE_CONTINUATION_MAX_SCALE = 0.35
 # staging. The consolidated trader cycle includes model reasoning between
 # refresh and gateway, measured at ~10 minutes live (2026-06-11: preflight
 # 11:17:12Z resolved all expired rows, staging 11:27:16Z re-blocked 3 of 4
-# basket lanes on rows that crossed expiry in between). One full 20-minute
-# scheduler cadence is the natural bound: by then the next preflight has run,
-# so anything older is a genuine verification-pipeline defect, not boundary
-# latency.
+# basket lanes on rows that crossed expiry in between). The 20-minute grace is
+# a measured refresh/gateway latency bound, not the current trader cadence; by
+# then the next preflight should have run, so anything older is a genuine
+# verification-pipeline defect, not boundary latency.
 PROJECTION_PENDING_EXPIRY_GRACE_SECONDS = _env_float(
     "QR_PROJECTION_PENDING_EXPIRY_GRACE_SECONDS",
     1200.0,

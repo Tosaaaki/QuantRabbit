@@ -5095,7 +5095,7 @@ def _twenty_minute_plan(*, lane_ids: list[str] | None = None, pair: str = "EUR_U
     for lane_id in lane_ids or []:
         refs.append(f"intent:{lane_id}")
     return {
-        "horizon_minutes": 20,
+        "horizon_minutes": 60,
         "primary_path": f"{pair} should hold the M5 shelf and press toward the selected trigger before the next cycle.",
         "failure_path": "A close back through the shelf or a newly named packet blocker makes the idea wrong.",
         "entry_or_hold_trigger": "Use only the current LIVE_READY intent trigger or hold WAIT if that trigger is absent.",

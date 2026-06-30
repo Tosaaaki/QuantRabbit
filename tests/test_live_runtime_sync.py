@@ -288,7 +288,7 @@ class LiveRuntimeSyncTest(unittest.TestCase):
             )
 
             self.assertEqual(result.returncode, 6)
-            self.assertIn("cadence must be 20 minutes", result.stderr)
+            self.assertIn("cadence must be 60 minutes", result.stderr)
 
 
 def _sync(
@@ -353,7 +353,7 @@ def _write_automation(
     *,
     status: str,
     prompt: str | None = None,
-    rrule: str = "RRULE:FREQ=MINUTELY;INTERVAL=20;BYDAY=MO,TU,WE,TH,FR,SA",
+    rrule: str = "RRULE:FREQ=MINUTELY;INTERVAL=60;BYDAY=MO,TU,WE,TH,FR,SA",
 ) -> None:
     prompt_text = prompt if prompt is not None else _current_trader_prompt_sentinel()
     path.write_text(
@@ -367,7 +367,7 @@ def _write_automation(
                 f'status = "{status}"',
                 f'rrule = "{rrule}"',
                 'model = "gpt-5.5"',
-                'reasoning_effort = "medium"',
+                'reasoning_effort = "high"',
                 'execution_environment = "local"',
                 f'cwds = ["{live}"]',
             ]

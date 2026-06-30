@@ -63,7 +63,7 @@ def _env_nonnegative_float(name: str, default: float) -> float:
 
 # Match the live-entry telemetry gate's cycle-preflight tolerance
 # (intent_generator.PROJECTION_PENDING_EXPIRY_GRACE_SECONDS): one full
-# 20-minute scheduler cadence. The consolidated cycle's refresh-to-gateway
+# refresh/gateway handoff window. The consolidated cycle's refresh-to-gateway
 # latency was measured at ~10 minutes live (2026-06-11), so rows that cross
 # their resolution boundary inside one cadence are next-preflight work, not a
 # stale-state defect.

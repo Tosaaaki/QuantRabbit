@@ -22,8 +22,10 @@ PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli trader-prompt-route
 - Broker truth wins over memory, prose, and prior prompts.
 - OANDA entry orders go only through `LiveOrderGateway`.
 - `guardian-event-router` is read-only: it writes event/wake artifacts for GPT-5.5 and never sends, cancels, or closes broker orders.
-- Read `data/guardian_escalation.json` and `docs/guardian_event_report.md` every cycle; if `data/guardian_action_receipt.json` exists, read it before normal new-entry routing.
-- Resolve queued guardian wake actions before ordinary new entries: `queued_for_active_trader=true` means the dispatcher yielded to the active trader, so the trader must review the event/report/receipt first and either consume the receipt through the normal verifier/gateway path or write the exact reason it is stale/rejected.
+- Main trader runtime policy: `gpt-5.5`, `reasoning_effort=high`, every 60 minutes.
+- Do not rely on the hourly full-trader cadence for risk monitoring. `guardian-event-router` / probe paths remain deterministic, non-LLM, and frequent.
+- Read `data/guardian_escalation.json`, `data/guardian_events.json`, `data/guardian_action_receipt.json`, `data/guardian_action_cycle_result.json`, and `docs/guardian_action_review.md` every cycle before normal new-entry routing.
+- Resolve queued guardian wake actions before ordinary new entries: `queued_for_active_trader=true` means the dispatcher yielded to the active trader, so the trader must review the event/report/receipt first and either consume the receipt through the normal verifier/gateway path, recognize that `guardian-action-cycle` already executed/rejected it, or write the exact reason it is stale/rejected.
 - Target-path entry sends require `QR_TARGET_PATH_LIVE_ENABLED=1` in addition to `QR_LIVE_ENABLED=1`; default is dry-run/stage/LIVE-LEARNING receipt only.
 - OANDA position changes go only through `PositionProtectionGateway`.
 - Direct `OandaExecutionClient.close_trade()` is blocked; live market closes must use the provenance-aware gateway/partial-close paths and leave a position-execution receipt.
@@ -89,7 +91,9 @@ export QR_DISABLE_TRAILING_SL="${QR_DISABLE_TRAILING_SL:-1}"
 # 2026-05-13 stops. It is decoupled from intent.sl: sizing, reward/risk,
 # and risk validation are unchanged; it never trails; existing positions
 # are never retro-fitted. Its job is to cap the give-up-close tail and
-# survive a flash move / intervention inside the 20-minute blind window.
+# survive a flash move / intervention inside the full-trader blind window.
+# Frequent guardian probe/router monitoring covers state-change risk between
+# hourly trader cycles.
 export QR_DISASTER_SL="${QR_DISASTER_SL:-1}"
 export QR_DISASTER_SL_H4_ATR_MULT="${QR_DISASTER_SL_H4_ATR_MULT:-2.5}"
 # Fresh entries need both executable forecast context and auditable telemetry.
@@ -308,7 +312,7 @@ PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli trader-prompt-route
 # prints ONE compact digest including the re-routed prompt branch.
 #
 # Token discipline (2026-06-10): the per-step skeleton burned ~3M tokens per
-# 20-minute cycle (one shell turn per command × full-context resend) and
+# former 20-minute cycle (one shell turn per command × full-context resend) and
 # exhausted the scheduler's credits on 2026-06-09, stopping live trading.
 # Read the digest, then drill into `data/order_intents.json`,
 # `data/pair_charts.json`, `data/market_context_matrix.json` etc. with
@@ -390,11 +394,13 @@ PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli trader-draft-decision \
 #
 # If broker refresh made an older receipt stale, overwrite it with one current receipt.
 # For TRADE / WAIT / REQUEST_EVIDENCE, include `twenty_minute_plan`.
-# The live cadence is about 20 minutes; the plan must state the primary
-# path, failure path, trigger, invalidation/cancel trigger, strongest
-# counterargument, next-cycle check, and packet evidence refs. This is a
-# receipt-depth requirement so the next cycle can audit the scenario tree;
-# it is not a new market-risk threshold or permission to invent blockers.
+# The field name is retained for verifier/backward compatibility, but the
+# scheduled full-trader cadence is now 60 minutes. Set `horizon_minutes=60`
+# and state the primary path, failure path, trigger, invalidation/cancel
+# trigger, strongest counterargument, next-cycle check, and packet evidence
+# refs. This is a receipt-depth requirement so the next cycle can audit the
+# scenario tree; it is not a new market-risk threshold or permission to invent
+# blockers.
 # A TRADE must cite current chart evidence plus `news:health` and `news:items`
 # or `news:current`. If news-health is missing, ERROR/BLOCK, or carries BLOCK
 # issues, write a non-TRADE blocker receipt; campaign pressure must not bypass

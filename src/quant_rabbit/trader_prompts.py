@@ -56,12 +56,12 @@ def _self_improvement_worst_segment_target(system: dict[str, Any]) -> str:
 
 
 # Operational carry-forward window for PositionManager REVIEW_EXIT evidence.
-# The live trader normally cycles about every 20 minutes; this keeps one
-# structural loss-cut review alive across several scheduler / refresh handoffs
-# so GPT CLOSE Gate A can verify it before the next PositionManager pass
-# overwrites the file. It is not a market threshold, JPY cap, pip distance, or
-# reward/risk multiplier. If cycle cadence changes, replace it with an explicit
-# scheduler-cadence config rather than tuning it from trade outcomes.
+# The live trader now cycles hourly; this keeps one structural loss-cut review
+# alive across several scheduler / refresh handoffs so GPT CLOSE Gate A can
+# verify it before the next PositionManager pass overwrites the file. It is not
+# a market threshold, JPY cap, pip distance, or reward/risk multiplier. If cycle
+# cadence changes, replace it with an explicit scheduler-cadence config rather
+# than tuning it from trade outcomes.
 POSITION_MANAGEMENT_REVIEW_EXIT_TTL_SECONDS = float(
     os.environ.get("QR_POSITION_MANAGEMENT_REVIEW_EXIT_TTL_SECONDS", "7200")
 )
