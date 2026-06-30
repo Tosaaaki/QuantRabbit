@@ -28,7 +28,7 @@ PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli trader-prompt-route
 - Do not call `QR_OPENAI_API_KEY`, `OPENAI_API_KEY`, or any model API path from QuantRabbit code.
 - Do not invent JPY caps, pip distances, reward/risk multipliers, stale defaults, or extra risk gates.
 - Missing required evidence is a blocker, not a value to guess.
-- Daily target session accounting uses UTC 00:00 day-start NAV: +5% is the base operating target, and +10% is extension-only after an explicit favorable-market gate.
+- Rolling target accounting uses `ROLLING_30D_4X` as the top KPI: 30 calendar days to 4x. +5% is a pace marker / review trigger / protection milestone, and +10% is extension-only after an explicit favorable-market gate.
 - One final decision receipt selects action; specialist and strategy prompts are read-only observation.
 - A blocked, rejected, monitor-only, or no-trade cycle must not be followed by a workaround send.
 - Do not stop solely because a decision receipt was written recently or stale local state disagrees with refreshed broker truth. Use `trader-prompt-route`: unconsumed receipts go to verify; rejected, consumed, or broker-stale receipts go back to fresh decision work.
@@ -101,13 +101,15 @@ export QR_TARGET_PATH_LIVE_ENABLED="${QR_TARGET_PATH_LIVE_ENABLED:-0}"
 
 # Session-start read-only target block. This does not stage, send, cancel, or
 # close orders. It persists the first-seen UTC day-start NAV under
-# logs/day_start_nav/ and prints the base +5% / extension +10% operating mode.
-# It also prints the required FULL_TRADER +5% path board, attack stack, and
-# 10% extension gate.
-# Do not leave those fields blank in the working decision or end report: while
-# remaining_to_5pct is above zero, fill a concrete Path A / HERO route that can
-# reach the +5% floor, or write the exact blocker and next trigger. B/C churn
-# is not a substitute for the HERO path, and a single distant pending
+# logs/day_start_nav/ and prints the rolling 30-calendar-day 4x KPI plus the
+# +5% pace marker / extension +10% operating mode. It also prints the required
+# FULL_TRADER pace board, attack stack, and 10% extension gate.
+# Do not leave those fields blank in the working decision or end report: report
+# rolling_30d_start_equity, current_equity, current_30d_multiplier,
+# remaining_to_4x, required_calendar_daily_return, required_active_day_return,
+# and pace_state every cycle. While remaining_to_5pct is above zero, fill a
+# concrete A/S Path A / HERO route or write the exact blocker and next trigger.
+# B/C churn is not a substitute for the HERO path, and a single distant pending
 # order is not enough. "Trigger not printed yet" is an arm condition for a
 # LIMIT/STOP thesis, not a dead thesis. The selected path must map to the
 # ATTACK STACK. Before any fresh target-path order, run dry-run sizing with
@@ -131,7 +133,7 @@ Naked read:
 - Tape state: TREND / RANGE / SQUEEZE / FADE / ROTATION
 - Known winning trade-shape match: MATCH / PARTIAL / NO_MATCH / UNKNOWN
 - Proposed building style allowed: YES / NO / UNKNOWN
-- Thesis state: ALIVE / WOUNDED / INVALIDATED / UNKNOWN
+- Thesis state: ALIVE / WOUNDED / INVALIDATED / EMERGENCY / UNKNOWN
 - What price is trying to do now:
 
 Next 30m prediction:
@@ -163,8 +165,9 @@ Execution filters after the read:
 - Negative expectancy / capture economics context:
 - Final action:
 
-## 5% PATH BOARD
+## 5% PACE BOARD
 Remaining to +5%:
+Role: pace marker / review trigger / protection milestone, not forced churn.
 
 Path A / HERO:
 Pair / side / vehicle:
@@ -243,7 +246,7 @@ What the system missed:
 Is thesis still alive: YES / NO / UNKNOWN
 RELOAD candidate:
 SECOND SHOT candidate:
-5% PATH BOARD mapping:
+5% PACE BOARD mapping:
 Exact blocker if no continuation:
 Next trigger:
 ```
@@ -254,8 +257,9 @@ Path rules:
 - The naked read must classify cleanest theme expression, 24h location, H1/H4 alignment, known winning trade-shape match, proposed building style, thesis state, and SL/noise context before any blocker prose.
 - A blocked but correct read is discovery success / execution miss. A wrong read that passes filters is market-read failure.
 - Final `TRADE` / `WAIT` text must reference the next 30m or next 2h prediction from `MARKET READ FIRST`.
-- Under +5%, trader must name an A/S path or exact blocker.
-- B/C trades cannot be the +5% target path.
+- Under +5%, trader must name an A/S path, a +10% extension setup gate candidate, or exact blocker.
+- A +5% miss must not force B/C churn.
+- B/C trades cannot be the +5% pace path.
 - One distant pending order is not enough.
 - "Trigger not printed yet" is an arm condition for LIMIT/STOP, not a dead thesis.
 - The path must map to ATTACK STACK.
@@ -630,7 +634,7 @@ QR_LIVE_ENABLED=1 ./scripts/run-autotrade-live.sh \
 
 ## End Report
 
-- Filled `5% PATH BOARD` with a concrete Path A / HERO route or exact blocker.
+- Filled `5% PACE BOARD` with a concrete A/S Path A / HERO route, +10% extension setup gate candidate, or exact blocker.
 - Filled `ATTACK STACK`, and every non-empty path-board slot maps to NOW, RELOAD, or SECOND SHOT.
 - Filled `10% EXTENSION GATE`; if YES, cite each gate condition, otherwise report NO.
 - Filled `USER ALPHA CONTINUATION`; if active, state thesis-alive / RELOAD / SECOND SHOT / exact blocker / next trigger.

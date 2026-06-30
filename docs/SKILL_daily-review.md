@@ -1,18 +1,30 @@
 # Daily Review Skill
 
-## Daily Target Review
+## Rolling 30D Target Review
 
-- Reached +5%? `YES` / `NO`
+- Rolling policy: `ROLLING_30D_4X`
+- Rolling 30d start equity
+- Current equity
+- Current 30d multiplier
+- Remaining to 4x
+- Required calendar daily return
+- Required active-day return
+- Pace state: `AHEAD` / `ON_PACE` / `BEHIND` / `DANGER`
+
+## Daily Pace Review
+
+- +5% pace marker met? `YES` / `NO`
 - Reached +10%? `YES` / `NO`
 - 10% Extension Gate: `YES` / `NO`
 - Max progress: JPY and `%` from day-start NAV
 - Final progress: JPY and `%` from day-start NAV
+- Acceptable no-edge day? `YES` / `NO`
 - Best target-path trade: pair / side / vehicle / grade / contribution
 - Worst target-path drag: pair / side / vehicle / grade / risk used
 
 ## Miss Classification
 
-If +5% was missed, classify the primary miss as exactly one:
+If +5% pace was missed, classify the primary miss as exactly one:
 
 - `discovery`: no valid A/S path was found early enough.
 - `deployment`: valid path existed but was not converted into an executable receipt/order.
@@ -20,8 +32,17 @@ If +5% was missed, classify the primary miss as exactly one:
 - `vehicle`: thesis was plausible but order type, TP/SL geometry, or pair expression was wrong.
 - `management`: plus P/L or TP progress was not protected, harvested, or reloaded correctly.
 - `bad session`: spread, whipsaw, news, or market structure made the day unsuitable.
+- `acceptable no-edge`: no A/S setup and no +10% extension gate existed; do not mark this as forced execution failure.
 
 If +10% was missed after +5% was reached, classify the extension miss with the same labels and state whether the 10% Extension Gate was actually `YES`.
+
+Also score:
+
+- Missed +10 extension when gate was `YES`.
+- Trade-shape match across all candidate pairs, not USD_JPY-only replay.
+- Thesis-state exit quality: `ALIVE` / `WOUNDED` / `INVALIDATED` / `EMERGENCY`.
+- SL/loss-cut failure: stop inside noise/battle/event/theme zone, or loss-side close without invalidation.
+- Margin/carry failure: margin rescue add, margin closeout tolerance, or unattended carry.
 
 ## LIVE-LEARNING Target-Path Classification
 
@@ -66,6 +87,7 @@ This is discovery/execution separation. A blocked but correct read is discovery 
 
 - `data/daily_target_state.json`
 - `docs/daily_target_report.md`
+- Rolling 30d fields in `data/daily_target_state.json`: `rolling_30d_start_equity`, `current_equity`, `current_30d_multiplier`, `remaining_to_4x`, `required_calendar_daily_return`, `required_active_day_return`, `pace_state`.
 - `data/order_intents.json`
 - `docs/gpt_trader_decision_report.md`
 - `data/market_read_predictions.jsonl`

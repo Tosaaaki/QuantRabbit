@@ -34,7 +34,7 @@ def main() -> int:
     _require_text(
         CHANGELOG_PATH,
         (
-            "5% PATH BOARD",
+            "5% PACE BOARD",
             "ATTACK STACK",
             "10% EXTENSION GATE",
             "position_sizing.py",
@@ -44,7 +44,7 @@ def main() -> int:
     _require_text(
         STRATEGY_MEMORY_PATH,
         (
-            "5% PATH BOARD",
+            "5% PACE BOARD",
             "ATTACK STACK",
             "B/C",
             "10% Extension Gate",

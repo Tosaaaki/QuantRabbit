@@ -2,7 +2,7 @@
 
 ## Use When
 
-- Daily target remains open.
+- Rolling 30d target remains open, or +5% pace / +10% extension review requires a current entry decision.
 - Account is flat or existing trader-owned exposure is layerable.
 - Current `LIVE_READY` lane(s) exist in `data/order_intents.json`.
 
@@ -30,7 +30,7 @@
    `runtime_alignment.trade_shape_engine.shape_matched_live_ready_lanes`, and
    pair-specific notes must be treated as overlays rather than replacement
    rules.
-11. If the target is open and the first advised lane is tradeable, include it in the selected basket unless a named deterministic gate now blocks it.
+11. If rolling pace is open and the first advised A/S or attack-recommended lane is tradeable, include it in the selected basket unless a named deterministic gate now blocks it. Do not force B/C churn solely because the +5% pace marker is behind.
 12. If advice spans multiple distinct pairs, include one lane per advised pair up to portfolio capacity when practical; otherwise the verifier records a warning and the gateway cycle expands the accepted trade to the deterministic prefilter basket so margin, cumulative risk, duplicate geometry, and position-count gates decide what fits.
 13. Prefer a `MARKET` variant for immediate participation when it is current `LIVE_READY`; pending entries are basket-counted by the gateway and are not blanket no-trade reasons. Exception: `BREAKOUT_FAILURE` must be at the retest/rejection side of the M5/M15 box. For SHORT, do not market-sell the lower half/support and do not arm a lower-half sell-stop; wait for upper-half resistance rejection/LIMIT or require a separate true trend-continuation breakout lane. For LONG, do not market-buy the upper half/resistance and do not arm an upper-half buy-stop; wait for lower-half support rejection/LIMIT or require a separate true trend-continuation breakout lane.
 14. If current trader-owned pending entries already consume portfolio capacity, explicitly decide whether to keep that pending basket or replace it. A `TRADE` that needs capacity for current `LIVE_READY` lanes may include `cancel_order_ids` for current trader-owned pending entry ids that should be cleared before gateway validation; never name manual/unknown orders. When self-improvement flags `PENDING_ENTRY_CANCEL_REVIEW_REQUIRED` and a current replacement lane is `LIVE_READY`, prefer this `TRADE` + `cancel_order_ids` path over a standalone `CANCEL_PENDING`, because the verifier rejects standalone cancel while executable replacement risk exists.

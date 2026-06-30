@@ -21,8 +21,9 @@ from daily_target import (
 )
 
 
-FIVE_PCT_PATH_BOARD_TEMPLATE = """## 5% PATH BOARD
+FIVE_PCT_PATH_BOARD_TEMPLATE = """## 5% PACE BOARD
 Remaining to +5%: {remaining_to_5pct}
+Role: pace marker / review trigger / protection milestone, not forced churn.
 
 Path A / HERO:
 Pair / side / vehicle:
@@ -86,9 +87,10 @@ Next trigger:
 Shelf-life:"""
 
 
-FIVE_PCT_PATH_RULES = """## 5% PATH RULES
-- Under +5%, trader must name an A/S path or exact blocker.
-- B/C trades cannot be the +5% target path.
+FIVE_PCT_PATH_RULES = """## 5% PACE RULES
+- Under +5%, trader must name an A/S path, a +10% extension setup gate candidate, or exact blocker.
+- A +5% miss is review evidence; it must not force B/C churn.
+- B/C trades cannot be the +5% pace path.
 - One distant pending order is not enough.
 - "Trigger not printed yet" is an arm condition for LIMIT/STOP, not a dead thesis.
 - The path must map to ATTACK STACK."""

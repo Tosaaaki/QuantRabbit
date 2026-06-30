@@ -498,7 +498,7 @@ def _user_alpha_continuation_packet(trades: list[dict[str, Any]]) -> dict[str, A
             "pair": pair,
             "direction": direction,
             "candidate_roles": ["RELOAD", "SECOND_SHOT"],
-            "target_layer": "GUARANTEE_5",
+            "target_layer": "PACE_5",
             "reason": "profitable operator-discovered/user-led winner must be evaluated for continuation",
         },
         "required_trader_answers": [

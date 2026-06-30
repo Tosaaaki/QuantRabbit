@@ -21,7 +21,7 @@ LOCATION_UNKNOWN = "UNKNOWN"
 TAPE_STATES = {"TREND", "RANGE", "SQUEEZE", "FADE", "ROTATION"}
 ENTRY_SHAPES = {"SCOUT", "PULLBACK", "BREAKOUT", "FADE", "RETEST"}
 BUILDING_STYLES = {"SINGLE", "BOUNDED_ADVERSE_ADD", "WITH_MOVE_PYRAMID"}
-THESIS_STATES = {"ALIVE", "WOUNDED", "INVALIDATED"}
+THESIS_STATES = {"ALIVE", "WOUNDED", "INVALIDATED", "EMERGENCY"}
 SL_LINT_STATES = {"PASS", "WARN", "BLOCK"}
 
 # Advisory score weights are ordinal explanation weights, not market-derived
@@ -342,6 +342,13 @@ def _behavior_lists(
                 "behavior": "Do not add risk after thesis invalidation.",
             }
         )
+    elif shape.thesis_state == "EMERGENCY":
+        blocked.append(
+            {
+                "code": "THESIS_EMERGENCY_BLOCKED",
+                "behavior": "Do not add risk while the thesis is in emergency/margin state.",
+            }
+        )
     elif shape.thesis_state == "WOUNDED":
         blocked.append(
             {
@@ -384,7 +391,7 @@ def _core_score(
         score += BOUNDED_ADVERSE_ADD_SCORE
     if shape.thesis_state == "WOUNDED":
         score += WOUNDED_THESIS_PENALTY
-    elif shape.thesis_state == "INVALIDATED":
+    elif shape.thesis_state in {"INVALIDATED", "EMERGENCY"}:
         score += INVALIDATED_THESIS_PENALTY
     if shape.building_style == "WITH_MOVE_PYRAMID":
         score += WITH_MOVE_PYRAMID_PENALTY
@@ -492,6 +499,7 @@ def _hard_behavior_codes() -> set[str]:
         "WITH_MOVE_PYRAMID_BLOCKED",
         "BOUNDED_ADVERSE_ADD_BLOCKED",
         "THESIS_INVALIDATED_BLOCKED",
+        "THESIS_EMERGENCY_BLOCKED",
         "SL_LINT_BLOCKED",
     }
 
@@ -623,6 +631,8 @@ def _thesis_state(row: Mapping[str, Any], metadata: Mapping[str, Any]) -> str:
         + [str(item or "") for item in row.get("live_blockers", []) or []]
         + _all_issue_codes(row)
     ).upper()
+    if "EMERGENCY" in text or "MARGIN_CLOSEOUT" in text:
+        return "EMERGENCY"
     if "INVALIDATED" in text or "THESIS_BROKEN" in text or "RECOMMEND_CLOSE" in text:
         return "INVALIDATED"
     if status == "LIVE_READY":

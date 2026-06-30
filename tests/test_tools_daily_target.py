@@ -99,6 +99,18 @@ class DailyTargetToolTest(unittest.TestCase):
             self.assertEqual(metrics.realized_pl_today, 1_500.0)
             self.assertEqual(metrics.total_day_progress_yen, 5_000.0)
             self.assertEqual(metrics.total_day_progress_pct, 5.0)
+            self.assertEqual(metrics.rolling_30d_policy, "ROLLING_30D_4X")
+            self.assertEqual(metrics.rolling_30d_start_equity, 105_000.0)
+            self.assertEqual(metrics.current_equity, 105_000.0)
+            self.assertEqual(metrics.current_30d_multiplier, 1.0)
+            self.assertEqual(metrics.remaining_to_4x, 315_000.0)
+            self.assertIsNotNone(metrics.required_calendar_daily_return)
+            self.assertIsNotNone(metrics.required_active_day_return)
+            self.assertGreater(
+                metrics.required_active_day_return or 0.0,
+                metrics.required_calendar_daily_return or 0.0,
+            )
+            self.assertEqual(metrics.pace_state, "AHEAD")
             self.assertEqual(metrics.remaining_to_5pct_yen, 0.0)
             self.assertEqual(metrics.remaining_to_10pct_yen, 5_000.0)
             self.assertEqual(metrics.mode, "PROTECT")
@@ -185,6 +197,16 @@ class DailyTargetToolTest(unittest.TestCase):
             unrealized_pl=0.0,
             total_day_progress_yen=1_000.0,
             total_day_progress_pct=1.0,
+            rolling_30d_policy="ROLLING_30D_4X",
+            rolling_30d_start_utc="2026-06-28T12:00:00+00:00",
+            rolling_30d_end_utc="2026-07-28T12:00:00+00:00",
+            rolling_30d_start_equity=100_000.0,
+            current_equity=101_000.0,
+            current_30d_multiplier=1.01,
+            remaining_to_4x=299_000.0,
+            required_calendar_daily_return=4.686,
+            required_active_day_return=6.534,
+            pace_state="AHEAD",
             base_target_yen=5_000.0,
             extension_target_yen=10_000.0,
             remaining_to_5pct_yen=4_000.0,
@@ -199,14 +221,15 @@ class DailyTargetToolTest(unittest.TestCase):
 
         board = session_data.format_full_trader_board(metrics)
 
-        self.assertIn("## 5% PATH BOARD", board)
+        self.assertIn("## 5% PACE BOARD", board)
         self.assertIn("Remaining to +5%: 4,000 JPY", board)
+        self.assertIn("not forced churn", board)
         self.assertIn("Path A / HERO:", board)
         self.assertIn("Path B / SECOND SHOT:", board)
         self.assertIn("Path C / NO HONEST PATH:", board)
         self.assertIn("## ATTACK STACK", board)
         self.assertIn("Why this thesis can still reach +5% today:", board)
-        self.assertIn("B/C trades cannot be the +5% target path.", board)
+        self.assertIn("B/C trades cannot be the +5% pace path.", board)
         self.assertIn("One distant pending order is not enough.", board)
         self.assertIn("## 10% EXTENSION GATE", board)
         self.assertIn("EXTEND mode requires A/S grade risk.", board)

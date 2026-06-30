@@ -32,6 +32,12 @@ BUILD_TO_ATTACK_PCT = 2.0
 BASE_TARGET_PCT = 5.0
 EXTENSION_TARGET_PCT = 10.0
 DAMAGE_CONTROL_PCT = -1.5
+ROLLING_30D_POLICY = "ROLLING_30D_4X"
+ROLLING_30D_CALENDAR_DAYS = 30
+ROLLING_30D_ACTIVE_DAYS = 22
+ROLLING_30D_TARGET_MULTIPLIER = 4.0
+ROLLING_30D_ON_PACE_TOLERANCE = 0.98
+ROLLING_30D_DANGER_DAILY_RETURN_PCT = 10.0
 
 CLOSE_EVENT_TYPES = ("TRADE_CLOSED", "TRADE_REDUCED")
 
@@ -49,6 +55,16 @@ class DailyTargetMetrics:
     unrealized_pl: float
     total_day_progress_yen: float
     total_day_progress_pct: float
+    rolling_30d_policy: str
+    rolling_30d_start_utc: str
+    rolling_30d_end_utc: str
+    rolling_30d_start_equity: float
+    current_equity: float
+    current_30d_multiplier: float
+    remaining_to_4x: float
+    required_calendar_daily_return: float | None
+    required_active_day_return: float | None
+    pace_state: str
     base_target_yen: float
     extension_target_yen: float
     remaining_to_5pct_yen: float
@@ -119,6 +135,12 @@ def compute_daily_target(
 
     progress_yen = round(current_nav - day_start_nav, 4)
     progress_pct = round((progress_yen / day_start_nav) * 100.0, 4) if day_start_nav > 0 else 0.0
+    rolling = _rolling_30d_policy(
+        current_equity=current_nav,
+        day_start_dir=day_start_dir,
+        now=now,
+        dry_run=dry_run,
+    )
     base_target = round(day_start_nav * (BASE_TARGET_PCT / 100.0), 4)
     extension_target = round(day_start_nav * (EXTENSION_TARGET_PCT / 100.0), 4)
     margin_pct = round((margin_used / current_nav) * 100.0, 4) if current_nav > 0 else 0.0
@@ -136,6 +158,16 @@ def compute_daily_target(
         unrealized_pl=round(unrealized_pl, 4),
         total_day_progress_yen=progress_yen,
         total_day_progress_pct=progress_pct,
+        rolling_30d_policy=ROLLING_30D_POLICY,
+        rolling_30d_start_utc=rolling["rolling_30d_start_utc"],
+        rolling_30d_end_utc=rolling["rolling_30d_end_utc"],
+        rolling_30d_start_equity=rolling["rolling_30d_start_equity"],
+        current_equity=rolling["current_equity"],
+        current_30d_multiplier=rolling["current_30d_multiplier"],
+        remaining_to_4x=rolling["remaining_to_4x"],
+        required_calendar_daily_return=rolling["required_calendar_daily_return"],
+        required_active_day_return=rolling["required_active_day_return"],
+        pace_state=rolling["pace_state"],
         base_target_yen=base_target,
         extension_target_yen=extension_target,
         remaining_to_5pct_yen=round(max(0.0, base_target - progress_yen), 4),
@@ -160,6 +192,25 @@ def format_daily_target_block(metrics: DailyTargetMetrics) -> str:
         f"Unrealized P/L: {_format_signed_jpy(metrics.unrealized_pl)}",
         "Total day progress: "
         f"{_format_signed_jpy(metrics.total_day_progress_yen)} ({metrics.total_day_progress_pct:+.2f}%)",
+        "## ROLLING 30D 4X POLICY",
+        f"Rolling 30d start equity: {_format_jpy(metrics.rolling_30d_start_equity)}",
+        f"Current equity: {_format_jpy(metrics.current_equity)}",
+        f"Current 30d multiplier: {metrics.current_30d_multiplier:.4f}x",
+        f"Remaining to 4x: {_format_jpy(metrics.remaining_to_4x)}",
+        "Required calendar daily return: "
+        + (
+            f"{metrics.required_calendar_daily_return:.4f}%"
+            if metrics.required_calendar_daily_return is not None
+            else "n/a"
+        ),
+        "Required active-day return: "
+        + (
+            f"{metrics.required_active_day_return:.4f}%"
+            if metrics.required_active_day_return is not None
+            else "n/a"
+        ),
+        f"Pace state: {metrics.pace_state}",
+        "## DAILY PACE MARKER",
         f"Base target +5%: {_format_jpy(metrics.base_target_yen)}",
         f"Remaining to +5%: {_format_jpy(metrics.remaining_to_5pct_yen)}",
         f"Extension target +10%: {_format_jpy(metrics.extension_target_yen)}",
@@ -210,6 +261,120 @@ def _resolve_day_start_nav(
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(record, ensure_ascii=False, indent=2, sort_keys=True) + "\n")
     return nav, source, path, issues
+
+
+def _rolling_30d_policy(
+    *,
+    current_equity: float,
+    day_start_dir: Path,
+    now: datetime,
+    dry_run: bool,
+) -> dict[str, Any]:
+    path = day_start_dir / "rolling_30d_4x.json"
+    start_time: datetime | None = None
+    start_equity: float | None = None
+    if path.exists():
+        payload = _load_json(path)
+        start_time = _parse_datetime(str(payload.get("rolling_30d_start_utc") or ""))
+        try:
+            start_equity = _required_float(payload, "rolling_30d_start_equity", context=str(path))
+        except ValueError:
+            start_equity = None
+    if (
+        start_time is None
+        or start_equity is None
+        or start_equity <= 0
+        or start_time > now
+        or (now - start_time) >= timedelta(days=ROLLING_30D_CALENDAR_DAYS)
+    ):
+        start_time = now
+        start_equity = current_equity
+        if not dry_run:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(
+                json.dumps(
+                    {
+                        "rolling_30d_policy": ROLLING_30D_POLICY,
+                        "rolling_30d_start_utc": start_time.isoformat(),
+                        "rolling_30d_start_equity": round(start_equity, 4),
+                    },
+                    ensure_ascii=False,
+                    indent=2,
+                    sort_keys=True,
+                )
+                + "\n"
+            )
+
+    end_time = start_time + timedelta(days=ROLLING_30D_CALENDAR_DAYS)
+    elapsed_days = max(0.0, (now - start_time).total_seconds() / 86400.0)
+    remaining_calendar = max(0.0, ROLLING_30D_CALENDAR_DAYS - elapsed_days)
+    remaining_active = remaining_calendar * (ROLLING_30D_ACTIVE_DAYS / ROLLING_30D_CALENDAR_DAYS)
+    target_equity = start_equity * ROLLING_30D_TARGET_MULTIPLIER
+    multiplier = current_equity / start_equity if start_equity > 0 else 0.0
+    remaining_to_4x = max(0.0, target_equity - current_equity)
+    required_calendar = _required_compound_return_pct(
+        current_value=current_equity,
+        target_value=target_equity,
+        remaining_periods=remaining_calendar,
+    )
+    required_active = _required_compound_return_pct(
+        current_value=current_equity,
+        target_value=target_equity,
+        remaining_periods=remaining_active,
+    )
+    expected_multiplier = ROLLING_30D_TARGET_MULTIPLIER ** (
+        min(elapsed_days, ROLLING_30D_CALENDAR_DAYS) / ROLLING_30D_CALENDAR_DAYS
+    )
+    return {
+        "rolling_30d_start_utc": start_time.isoformat(),
+        "rolling_30d_end_utc": end_time.isoformat(),
+        "rolling_30d_start_equity": round(start_equity, 4),
+        "current_equity": round(current_equity, 4),
+        "current_30d_multiplier": round(multiplier, 6),
+        "remaining_to_4x": round(remaining_to_4x, 4),
+        "required_calendar_daily_return": required_calendar,
+        "required_active_day_return": required_active,
+        "pace_state": _rolling_pace_state(
+            current_multiplier=multiplier,
+            expected_multiplier=expected_multiplier,
+            required_calendar_daily_return=required_calendar,
+            remaining_to_4x=remaining_to_4x,
+        ),
+    }
+
+
+def _required_compound_return_pct(
+    *,
+    current_value: float,
+    target_value: float,
+    remaining_periods: float,
+) -> float | None:
+    if current_value <= 0 or target_value <= 0:
+        return None
+    if current_value >= target_value:
+        return 0.0
+    if remaining_periods <= 0:
+        return None
+    return round(((target_value / current_value) ** (1.0 / remaining_periods) - 1.0) * 100.0, 6)
+
+
+def _rolling_pace_state(
+    *,
+    current_multiplier: float,
+    expected_multiplier: float,
+    required_calendar_daily_return: float | None,
+    remaining_to_4x: float,
+) -> str:
+    if remaining_to_4x <= 0 or current_multiplier >= expected_multiplier:
+        return "AHEAD"
+    if current_multiplier >= expected_multiplier * ROLLING_30D_ON_PACE_TOLERANCE:
+        return "ON_PACE"
+    if (
+        required_calendar_daily_return is not None
+        and required_calendar_daily_return > ROLLING_30D_DANGER_DAILY_RETURN_PCT
+    ):
+        return "DANGER"
+    return "BEHIND"
 
 
 def _realized_pl_today(*, execution_ledger_db: Path, trading_day: date) -> tuple[float, list[str]]:

@@ -32,7 +32,7 @@ GRADE_RANK = {
     "A": 4,
     "S": 5,
 }
-TARGET_PATH_MAIN_ROLES = {"MAIN", "HERO", "PATH_A", "5PCT_PATH", "GUARANTEE_5"}
+TARGET_PATH_MAIN_ROLES = {"MAIN", "HERO", "PATH_A", "5PCT_PATH", "GUARANTEE_5", "PACE_5"}
 TARGET_PATH_SUPPORT_ROLES = {"SCOUT", "RELOAD", "SECOND_SHOT", "SUPPORT", "PATH_B"}
 
 
@@ -308,13 +308,13 @@ def _target_guard_issues(data: PositionSizingInput, grade: str, progress_pct: fl
         and rank <= GRADE_RANK["B0"]
         and role in (TARGET_PATH_MAIN_ROLES | TARGET_PATH_SUPPORT_ROLES)
     ):
-        issues.append(_issue("TARGET_PATH_GRADE_TOO_LOW", "B0/B-/C cannot be +5% target-path risk"))
+        issues.append(_issue("TARGET_PATH_GRADE_TOO_LOW", "B0/B-/C cannot be +5% pace-path risk"))
     if under_5 and grade == "B+" and role in TARGET_PATH_MAIN_ROLES:
-        issues.append(_issue("B_PLUS_NOT_MAIN_TARGET_PATH", "B+ can support scout/reload, not the main +5% path"))
+        issues.append(_issue("B_PLUS_NOT_MAIN_TARGET_PATH", "B+ can support scout/reload, not the main +5% pace path"))
     if data.same_thesis_lost_recently and data.vehicle_unchanged_after_loss:
         issues.append(_issue("SAME_THESIS_LOST_RECENTLY", "same thesis lost recently and vehicle is unchanged"))
     if (data.path_board_available or data.attack_stack_available) and data.maps_to_attack_stack is not True:
-        issues.append(_issue("PATH_ATTACK_STACK_MAPPING_MISSING", "order must map to 5% PATH / ATTACK STACK when available"))
+        issues.append(_issue("PATH_ATTACK_STACK_MAPPING_MISSING", "order must map to 5% PACE BOARD / ATTACK STACK when available"))
     return issues
 
 

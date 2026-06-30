@@ -1933,6 +1933,38 @@ class GPTTraderBrainTest(unittest.TestCase):
             codes = {issue["code"] for issue in payload["verification_issues"]}
             self.assertIn("CAMPAIGN_EXPOSURE_REQUIRED", codes)
 
+    def test_accepts_wait_when_rolling_policy_only_has_b_grade_pace_lane(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root)
+            _enable_rolling_policy(files, pace_state="BEHIND")
+            _set_lane_target_grade(files, "B0")
+            brain = _brain(root, files, _wait_decision())
+
+            summary = brain.run(snapshot_path=files["snapshot"])
+
+            self.assertEqual(summary.status, "ACCEPTED")
+            payload = json.loads((root / "gpt_decision.json").read_text())
+            codes = {issue["code"] for issue in payload["verification_issues"]}
+            self.assertNotIn("CAMPAIGN_EXPOSURE_REQUIRED", codes)
+            self.assertNotIn("WAIT_MISSING_LIVE_READY_REJECTION", codes)
+            self.assertNotIn("REQUEST_EVIDENCE_WITH_LIVE_READY_LANES", codes)
+
+    def test_rejects_wait_when_rolling_policy_has_a_grade_pace_lane(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root)
+            _enable_rolling_policy(files, pace_state="BEHIND")
+            _set_lane_target_grade(files, "A")
+            brain = _brain(root, files, _wait_decision())
+
+            summary = brain.run(snapshot_path=files["snapshot"])
+
+            self.assertEqual(summary.status, "REJECTED")
+            payload = json.loads((root / "gpt_decision.json").read_text())
+            codes = {issue["code"] for issue in payload["verification_issues"]}
+            self.assertIn("CAMPAIGN_EXPOSURE_REQUIRED", codes)
+
     def test_accepts_wait_when_trader_exposure_is_already_active(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -4395,6 +4427,43 @@ def _fixtures(root: Path, *, positions: list[dict] | None = None, orders: list[d
     return files
 
 
+def _enable_rolling_policy(files: dict[str, Path], *, pace_state: str = "BEHIND") -> None:
+    target = json.loads(files["target"].read_text())
+    target.update(
+        {
+            "rolling_30d_policy": "ROLLING_30D_4X",
+            "rolling_30d_start_equity": 100_000.0,
+            "current_equity": 110_000.0,
+            "current_30d_multiplier": 1.1,
+            "remaining_to_4x": 290_000.0,
+            "required_calendar_daily_return": 4.25,
+            "required_active_day_return": 5.92,
+            "pace_state": pace_state,
+            "remaining_target_jpy": 4_000.0,
+        }
+    )
+    files["target"].write_text(json.dumps(target))
+
+
+def _set_lane_target_grade(files: dict[str, Path], grade: str, *, lane_id: str = LANE_ID) -> None:
+    intents = json.loads(files["intents"].read_text())
+    for result in intents.get("results", []) or []:
+        if str(result.get("lane_id") or "") != lane_id:
+            continue
+        metadata = result.setdefault("intent", {}).setdefault("metadata", {})
+        metadata.update(
+            {
+                "daily_target_mode": "BUILD",
+                "target_path_role": "MAIN",
+                "attack_stack_slot": "NOW",
+                "grade": grade,
+                "valid_as_target_path": "YES" if grade in {"A", "S"} else "NO",
+                "remaining_to_5pct_yen": 4_000.0,
+            }
+        )
+    files["intents"].write_text(json.dumps(intents))
+
+
 def _operator_precedent_audit(aligned_lane_ids: list[str]) -> dict:
     return {
         "generated_at_utc": datetime.now(timezone.utc).isoformat(),
@@ -5070,7 +5139,7 @@ def _user_alpha_overrides() -> dict:
                 "pair": "EUR_USD",
                 "direction": "LONG",
                 "candidate_roles": ["RELOAD", "SECOND_SHOT"],
-                "target_layer": "GUARANTEE_5",
+                "target_layer": "PACE_5",
             },
             "required_trader_answers": [
                 "thesis_alive",

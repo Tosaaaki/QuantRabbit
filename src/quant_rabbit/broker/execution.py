@@ -93,7 +93,7 @@ SL_FREE_SYNTHETIC_RISK_PIPS = 30.0
 # prefix lets execution_ledger distinguish QuantRabbit-created orders from
 # manual client IDs while the comment carries the full lane for attribution.
 CLIENT_ORDER_ID_PREFIX = "qrv1"
-TARGET_PATH_MAIN_ROLES = {"MAIN", "HERO", "PATH_A", "5PCT_PATH", "GUARANTEE_5"}
+TARGET_PATH_MAIN_ROLES = {"MAIN", "HERO", "PATH_A", "5PCT_PATH", "GUARANTEE_5", "PACE_5"}
 TARGET_PATH_SUPPORT_ROLES = {"SCOUT", "RELOAD", "SECOND_SHOT", "SUPPORT", "PATH_B"}
 TARGET_PATH_ATTACK_STACK_SLOTS = {"NOW", "RELOAD", "SECOND_SHOT"}
 TARGET_PATH_GRADE_RANK = {"C": 0, "B-": 1, "B0": 2, "B": 2, "B+": 3, "A": 4, "S": 5}
@@ -2558,7 +2558,7 @@ def _target_path_live_send_issues(intent: OrderIntent, *, send: bool) -> list[di
         )
     if not _target_path_board_mapped(metadata, role):
         issues.append(
-            RiskIssue("TARGET_PATH_BOARD_MAPPING_MISSING", "target-path live send requires 5% PATH BOARD mapping.")
+            RiskIssue("TARGET_PATH_BOARD_MAPPING_MISSING", "target-path live send requires 5% PACE BOARD mapping.")
         )
     if not _target_path_attack_stack_mapped(metadata, slot):
         issues.append(
@@ -2665,6 +2665,12 @@ def _target_path_receipt_from_intent(
             "remaining_to_5pct",
             "remaining_minimum_jpy",
         ),
+        "rolling_30d_policy": str(metadata.get("rolling_30d_policy") or "").strip() or None,
+        "current_30d_multiplier": _metadata_float(metadata, "current_30d_multiplier"),
+        "remaining_to_4x": _metadata_float(metadata, "remaining_to_4x"),
+        "required_calendar_daily_return": _metadata_float(metadata, "required_calendar_daily_return"),
+        "required_active_day_return": _metadata_float(metadata, "required_active_day_return"),
+        "pace_state": str(metadata.get("pace_state") or "").strip() or None,
         "five_pct_path_role": _target_path_role(metadata),
         "attack_stack_slot": _target_path_attack_stack_slot(metadata),
         "grade": _target_path_grade(metadata),
@@ -2688,6 +2694,8 @@ def _target_path_receipt_report_lines(value: Any, *, prefix: str) -> list[str]:
         (
             f"{prefix}target-path receipt: mode=`{value.get('daily_target_mode')}` "
             f"remaining_to_5pct=`{_fmt_jpy(value.get('remaining_to_5pct'))}` "
+            f"remaining_to_4x=`{_fmt_jpy(value.get('remaining_to_4x'))}` "
+            f"pace=`{value.get('pace_state')}` "
             f"role=`{value.get('five_pct_path_role')}` slot=`{value.get('attack_stack_slot')}` "
             f"grade=`{value.get('grade')}` units=`{value.get('suggested_units')}->{value.get('final_units')}` "
             f"risk=`{_fmt_jpy(value.get('risk_yen'))}` risk_pct=`{value.get('risk_pct')}` "

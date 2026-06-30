@@ -2,8 +2,8 @@
 """Validate the FULL_TRADER session-state contract.
 
 This checker is read-only. It verifies that the session-start tool and trader
-runtime prompt both carry the required +5% path board and attack stack, so a
-future trader cycle cannot silently drift back to B/C churn as a target path.
+runtime prompt both carry the required +5% pace board and attack stack, so a
+future trader cycle cannot silently drift back to B/C churn as a pace path.
 """
 
 from __future__ import annotations
@@ -18,7 +18,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 SKILL_TRADER_PATH = REPO_ROOT / "docs" / "SKILL_trader.md"
 
 REQUIRED_PATH_BOARD_LINES = (
-    "## 5% PATH BOARD",
+    "## 5% PACE BOARD",
     "Remaining to +5%:",
     "Path A / HERO:",
     "Pair / side / vehicle:",
@@ -60,8 +60,8 @@ REQUIRED_ATTACK_STACK_LINES = (
 )
 
 REQUIRED_RULE_LINES = (
-    "Under +5%, trader must name an A/S path or exact blocker.",
-    "B/C trades cannot be the +5% target path.",
+    "Under +5%, trader must name an A/S path, a +10% extension setup gate candidate, or exact blocker.",
+    "B/C trades cannot be the +5% pace path.",
     "One distant pending order is not enough.",
     '"Trigger not printed yet" is an arm condition for LIMIT/STOP, not a dead thesis.',
     "The path must map to ATTACK STACK.",
@@ -102,13 +102,13 @@ def validate_contract() -> list[str]:
     )
 
     checks = (
-        ("session_data path board", session_text, REQUIRED_PATH_BOARD_LINES),
+        ("session_data pace board", session_text, REQUIRED_PATH_BOARD_LINES),
         ("session_data attack stack", session_text, REQUIRED_ATTACK_STACK_LINES),
-        ("session_data path rules", session_text, REQUIRED_RULE_LINES),
+        ("session_data pace rules", session_text, REQUIRED_RULE_LINES),
         ("session_data extension gate", session_text, REQUIRED_EXTENSION_GATE_LINES),
-        ("docs/SKILL_trader.md path board", skill_text, REQUIRED_PATH_BOARD_LINES),
+        ("docs/SKILL_trader.md pace board", skill_text, REQUIRED_PATH_BOARD_LINES),
         ("docs/SKILL_trader.md attack stack", skill_text, REQUIRED_ATTACK_STACK_LINES),
-        ("docs/SKILL_trader.md path rules", skill_text, REQUIRED_RULE_LINES),
+        ("docs/SKILL_trader.md pace rules", skill_text, REQUIRED_RULE_LINES),
         ("docs/SKILL_trader.md extension gate", skill_text, REQUIRED_EXTENSION_GATE_LINES),
     )
     for label, text, required in checks:
@@ -117,7 +117,7 @@ def validate_contract() -> list[str]:
             issues.append(f"{label} missing: {', '.join(missing)}")
 
     if "B/C churn" not in skill_text:
-        issues.append("docs/SKILL_trader.md must explicitly reject B/C churn as target-path proof")
+        issues.append("docs/SKILL_trader.md must explicitly reject B/C churn as pace-path proof")
     if "remaining_to_5pct is above zero" not in skill_text:
         issues.append("docs/SKILL_trader.md must tie the board to under-+5% sessions")
 

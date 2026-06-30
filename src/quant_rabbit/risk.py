@@ -547,7 +547,7 @@ TARGET_PATH_GRADE_RANK = {
     "A": 4,
     "S": 5,
 }
-TARGET_PATH_MAIN_ROLES = {"MAIN", "HERO", "PATH_A", "5PCT_PATH", "GUARANTEE_5"}
+TARGET_PATH_MAIN_ROLES = {"MAIN", "HERO", "PATH_A", "5PCT_PATH", "GUARANTEE_5", "PACE_5"}
 TARGET_PATH_SUPPORT_ROLES = {"SCOUT", "RELOAD", "SECOND_SHOT", "SUPPORT", "PATH_B"}
 
 
@@ -650,7 +650,7 @@ def _target_path_guard_issues(intent: OrderIntent, *, for_live_send: bool) -> li
         issues.append(
             RiskIssue(
                 "PATH_ATTACK_STACK_MAPPING_MISSING",
-                "order must map to the 5% PATH / ATTACK STACK when that board is available.",
+                "order must map to the 5% PACE BOARD / ATTACK STACK when that board is available.",
             )
         )
     return issues

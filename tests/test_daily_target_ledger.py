@@ -5,7 +5,7 @@ import os
 import sqlite3
 import tempfile
 import unittest
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from quant_rabbit.models import AccountSummary, BrokerPosition, BrokerSnapshot, Owner, Quote, Side
@@ -52,15 +52,88 @@ class DailyTargetLedgerTest(unittest.TestCase):
             self.assertEqual(summary.target_jpy, 20_000)
             self.assertEqual(summary.minimum_target_jpy, 10_000)
             self.assertEqual(summary.progress_jpy, 1200)
+            self.assertEqual(summary.rolling_30d_start_equity, 201_200.0)
+            self.assertEqual(summary.current_equity, 201_200.0)
+            self.assertEqual(summary.current_30d_multiplier, 1.0)
+            self.assertEqual(summary.remaining_to_4x, 603_600.0)
+            self.assertIsNotNone(summary.required_calendar_daily_return)
+            self.assertIsNotNone(summary.required_active_day_return)
+            self.assertGreater(
+                summary.required_active_day_return or 0.0,
+                summary.required_calendar_daily_return or 0.0,
+            )
+            self.assertEqual(summary.pace_state, "AHEAD")
             self.assertEqual(summary.remaining_minimum_jpy, 8_800)
             self.assertEqual(summary.remaining_target_jpy, 18_800)
             self.assertAlmostEqual(summary.remaining_risk_budget_jpy, 343.0)
             payload = json.loads((root / "target.json").read_text())
+            self.assertEqual(payload["rolling_30d_policy"], "ROLLING_30D_4X")
+            self.assertEqual(payload["rolling_30d_start_equity"], 201_200.0)
+            self.assertEqual(payload["current_equity"], 201_200.0)
+            self.assertEqual(payload["current_30d_multiplier"], 1.0)
+            self.assertEqual(payload["remaining_to_4x"], 603_600.0)
+            self.assertEqual(payload["pace_state"], "AHEAD")
             self.assertEqual(payload["minimum_return_pct"], 5.0)
             self.assertEqual(payload["minimum_progress_pct"], 12.0)
             self.assertEqual(payload["positions"][0]["remaining_risk_jpy"], 157.0)
+            self.assertIn("Rolling 30D 4X Policy", (root / "target.md").read_text())
             self.assertIn("Minimum daily floor", (root / "target.md").read_text())
             self.assertIn("Remaining target", (root / "target.md").read_text())
+
+    def test_reuses_calendar_rolling_window_and_reports_active_day_return_separately(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            state_path = root / "target.json"
+            start = datetime(2026, 6, 1, 0, 0, tzinfo=timezone.utc)
+            now = start + timedelta(days=10)
+            state_path.write_text(
+                json.dumps(
+                    {
+                        "rolling_30d_start_utc": start.isoformat(),
+                        "rolling_30d_start_equity": 100_000.0,
+                    }
+                )
+            )
+            snapshot = BrokerSnapshot(
+                fetched_at_utc=now,
+                positions=(),
+                quotes={"USD_JPY": Quote("USD_JPY", 156.99, 157.0, timestamp_utc=now)},
+                account=AccountSummary(
+                    nav_jpy=156_000.0,
+                    balance_jpy=156_000.0,
+                    unrealized_pl_jpy=0.0,
+                    fetched_at_utc=now,
+                ),
+            )
+
+            summary = DailyTargetLedger(
+                state_path=state_path,
+                report_path=root / "target.md",
+            ).run(
+                start_balance_jpy=100_000.0,
+                daily_risk_budget_jpy=1_000.0,
+                snapshot=snapshot,
+                now_utc=now,
+            )
+
+            expected_calendar = ((400_000.0 / 156_000.0) ** (1.0 / 20.0) - 1.0) * 100.0
+            expected_active_days = 20.0 * (22.0 / 30.0)
+            expected_active = ((400_000.0 / 156_000.0) ** (1.0 / expected_active_days) - 1.0) * 100.0
+            self.assertEqual(summary.rolling_30d_start_equity, 100_000.0)
+            self.assertEqual(summary.current_equity, 156_000.0)
+            self.assertEqual(summary.current_30d_multiplier, 1.56)
+            self.assertEqual(summary.remaining_to_4x, 244_000.0)
+            self.assertAlmostEqual(summary.required_calendar_daily_return or 0.0, expected_calendar, places=6)
+            self.assertAlmostEqual(summary.required_active_day_return or 0.0, expected_active, places=6)
+            self.assertGreater(
+                summary.required_active_day_return or 0.0,
+                summary.required_calendar_daily_return or 0.0,
+            )
+            self.assertEqual(summary.pace_state, "ON_PACE")
+            payload = json.loads(state_path.read_text())
+            self.assertEqual(payload["rolling_30d_elapsed_calendar_days"], 10.0)
+            self.assertEqual(payload["rolling_30d_remaining_calendar_days"], 20.0)
+            self.assertAlmostEqual(payload["rolling_30d_remaining_active_days"], expected_active_days, places=4)
 
     def test_state_writes_canonical_campaign_day_and_as_of_aliases(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

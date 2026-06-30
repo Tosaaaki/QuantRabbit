@@ -311,7 +311,7 @@ def _user_alpha_continuation_from_overrides(
                 "pair": latest.get("pair"),
                 "direction": latest.get("direction"),
                 "candidate_roles": ["RELOAD", "SECOND_SHOT"],
-                "target_layer": "GUARANTEE_5",
+                "target_layer": "PACE_5",
             },
             "required_trader_answers": [
                 "thesis_alive",
@@ -1977,7 +1977,7 @@ def _market_read_missing_fields(market_read: dict[str, Any]) -> list[str]:
         if isinstance(market_read.get("naked_read"), dict)
         else ""
     )
-    if thesis_state and thesis_state not in {"ALIVE", "WOUNDED", "INVALIDATED", "UNKNOWN"}:
+    if thesis_state and thesis_state not in {"ALIVE", "WOUNDED", "INVALIDATED", "EMERGENCY", "UNKNOWN"}:
         missing.append("naked_read.thesis_state")
     return missing
 
@@ -2426,6 +2426,7 @@ class DecisionVerifier:
         selected_lane_ids = _selected_trade_lane_ids(decision)
         primary_lane_id = decision.selected_lane_id or (selected_lane_ids[0] if selected_lane_ids else None)
         tradeable_lanes = _tradeable_live_ready_lanes(self.packet)
+        pace_trade_lanes = _pace_trade_lanes(self.packet, tradeable_lanes)
         attack_lane_ids = _attack_recommended_tradeable_lane_ids(self.packet, tradeable_lanes)
         exposure_blockers = _trade_exposure_blockers(self.packet)
         entry_thesis_blockers = _entry_thesis_sidecar_reasons(self.packet)
@@ -2723,32 +2724,32 @@ class DecisionVerifier:
                 and not self_improvement_entry_blockers
                 and not projection_trade_blockers
                 and not news_trade_blockers
-                and tradeable_lanes
+                and pace_trade_lanes
             ):
                 if not _trader_exposure_present(self.packet):
                     issues.append(
                         VerificationIssue(
                             "CAMPAIGN_EXPOSURE_REQUIRED",
-                            "daily target is still open, no trader-owned position or pending entry is active, "
-                            "and tradeable LIVE_READY lanes exist; choose TRADE instead of leaving the "
-                            f"campaign flat: {', '.join(tradeable_lanes[:3])}",
+                            "rolling 30d pace is open, no trader-owned position or pending entry is active, "
+                            "and A/S or attack-recommended LIVE_READY lanes exist; choose TRADE instead of "
+                            f"leaving the campaign flat: {', '.join(pace_trade_lanes[:3])}",
                         )
                     )
-                cited_live_ready = _cited_live_ready_lanes(decision, tradeable_lanes)
+                cited_live_ready = _cited_live_ready_lanes(decision, pace_trade_lanes)
                 if decision.action == "REQUEST_EVIDENCE":
                     issues.append(
                         VerificationIssue(
                             "REQUEST_EVIDENCE_WITH_LIVE_READY_LANES",
                             "REQUEST_EVIDENCE is stale or contradictory because the packet already contains "
-                            f"tradeable LIVE_READY lanes: {', '.join(tradeable_lanes[:3])}",
+                            f"A/S or attack-recommended LIVE_READY lanes: {', '.join(pace_trade_lanes[:3])}",
                         )
                     )
                 elif not cited_live_ready:
                     issues.append(
                         VerificationIssue(
                             "WAIT_MISSING_LIVE_READY_REJECTION",
-                            "WAIT must cite at least one current LIVE_READY lane evidence ref when clean "
-                            "tradeable lanes exist and the daily target is still open",
+                            "WAIT must cite at least one current A/S or attack-recommended LIVE_READY lane "
+                            "evidence ref when clean pace lanes exist and the rolling target is still open",
                         )
                     )
         elif decision.action == "CANCEL_PENDING":
@@ -3768,7 +3769,7 @@ GPT_TRADER_SCHEMA: dict[str, Any] = {
                         "proposed_building_style_allowed": {"type": "string"},
                         "thesis_state": {
                             "type": "string",
-                            "enum": ["ALIVE", "WOUNDED", "INVALIDATED", "UNKNOWN"],
+                            "enum": ["ALIVE", "WOUNDED", "INVALIDATED", "EMERGENCY", "UNKNOWN"],
                         },
                         "what_price_is_trying_to_do_now": {"type": "string"},
                     },
@@ -4649,6 +4650,8 @@ def _market_read_thesis_state(lane: dict[str, Any] | None) -> str:
         + [str(item or "") for item in lane.get("risk_blockers", []) or []]
         + [str(item or "") for item in lane.get("strategy_blockers", []) or []]
     ).upper()
+    if "EMERGENCY" in text or "MARGIN_CLOSEOUT" in text:
+        return "EMERGENCY"
     if "INVALIDATED" in text or "THESIS_BROKEN" in text or "RECOMMEND_CLOSE" in text:
         return "INVALIDATED"
     if status == "LIVE_READY":
@@ -5503,6 +5506,23 @@ def _lane_packet(
                         "tp_target_source",
                     ),
                 ),
+                "target_path": _small_dict(
+                    metadata,
+                    (
+                        "daily_target_mode",
+                        "target_mode",
+                        "remaining_to_5pct_yen",
+                        "remaining_to_5pct",
+                        "remaining_minimum_jpy",
+                        "conviction_grade",
+                        "grade",
+                        "allocation_band",
+                        "target_path_role",
+                        "path_role",
+                        "attack_stack_slot",
+                        "valid_as_target_path",
+                    ),
+                ),
                 "self_improvement": _small_dict(
                     metadata,
                     (
@@ -5736,6 +5756,14 @@ def _target_packet(target: dict[str, Any]) -> dict[str, Any]:
         "account_progress_pct": target.get("account_progress_pct"),
         "account_unrealized_pl_jpy": target.get("account_unrealized_pl_jpy"),
         "current_equity_jpy": target.get("current_equity_jpy"),
+        "rolling_30d_policy": target.get("rolling_30d_policy"),
+        "rolling_30d_start_equity": target.get("rolling_30d_start_equity"),
+        "current_equity": target.get("current_equity"),
+        "current_30d_multiplier": target.get("current_30d_multiplier"),
+        "remaining_to_4x": target.get("remaining_to_4x"),
+        "required_calendar_daily_return": target.get("required_calendar_daily_return"),
+        "required_active_day_return": target.get("required_active_day_return"),
+        "pace_state": target.get("pace_state"),
         "remaining_minimum_jpy": target.get("remaining_minimum_jpy"),
         "remaining_target_jpy": target.get("remaining_target_jpy"),
         "remaining_risk_budget_jpy": target.get("remaining_risk_budget_jpy"),
@@ -7988,6 +8016,50 @@ def _tradeable_live_ready_lanes(packet: dict[str, Any]) -> list[str]:
         if lane_id:
             lanes.append(lane_id)
     return lanes
+
+
+def _pace_trade_lanes(packet: dict[str, Any], tradeable_lanes: list[str]) -> list[str]:
+    """Lanes strong enough for rolling-policy pace pressure.
+
+    +5% is a pace marker, not a forced churn target. When the rolling policy is
+    behind, the verifier may require action only for A/S target-path lanes or
+    explicitly recommended attack lanes. B/C LIVE_READY lanes remain tradable if
+    selected for independent edge, but they are not forced solely to satisfy the
+    daily +5% marker.
+    """
+
+    if not _rolling_30d_policy_active(packet):
+        return tradeable_lanes
+    attack = set(_attack_recommended_tradeable_lane_ids(packet, tradeable_lanes))
+    lane_by_id = {
+        str(lane.get("lane_id") or ""): lane
+        for lane in packet.get("lanes", []) or []
+        if isinstance(lane, dict)
+    }
+    forced: list[str] = []
+    for lane_id in tradeable_lanes:
+        lane = lane_by_id.get(lane_id) or {}
+        if lane_id in attack or _lane_target_grade_at_least_a(lane):
+            forced.append(lane_id)
+    return forced
+
+
+def _rolling_30d_policy_active(packet: dict[str, Any]) -> bool:
+    target = packet.get("daily_target")
+    if not isinstance(target, dict):
+        return False
+    return str(target.get("rolling_30d_policy") or "").upper() == "ROLLING_30D_4X"
+
+
+def _lane_target_grade_at_least_a(lane: dict[str, Any]) -> bool:
+    target_path = lane.get("target_path") if isinstance(lane.get("target_path"), dict) else {}
+    grade = str(
+        target_path.get("conviction_grade")
+        or target_path.get("grade")
+        or target_path.get("allocation_band")
+        or ""
+    ).strip().upper().replace("_", "").replace(" ", "")
+    return grade in {"A", "S"}
 
 
 def _attack_recommended_tradeable_lane_ids(

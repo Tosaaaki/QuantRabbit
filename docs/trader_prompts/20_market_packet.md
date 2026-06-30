@@ -6,7 +6,8 @@
   - Positions, pending orders, owner tags, quote timestamps, spreads, account truth.
   - Manual/tagless exposure is TP-managed only; the trader does not SL, loss-close, or use it as a fresh-entry blocker.
 - `data/daily_target_state.json`
-  - `status`, `target_jpy`, `minimum_target_jpy`, `progress_jpy`, `progress_pct`, `minimum_progress_pct`, `remaining_minimum_jpy`, `remaining_target_jpy`.
+  - Rolling top KPI: `rolling_30d_start_equity`, `current_equity`, `current_30d_multiplier`, `remaining_to_4x`, `required_calendar_daily_return`, `required_active_day_return`, `pace_state`.
+  - Daily pace marker: `status`, `target_jpy`, `minimum_target_jpy`, `progress_jpy`, `progress_pct`, `minimum_progress_pct`, `remaining_minimum_jpy`, `remaining_target_jpy`.
   - `daily_risk_budget_jpy` is the whole-day risk budget.
   - `per_trade_risk_budget_jpy` is the single-shot cap used by intents.
   - Do not conflate the whole-day and per-trade caps.

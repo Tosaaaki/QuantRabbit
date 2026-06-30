@@ -141,7 +141,7 @@ def _gateway_intent_guard_issues(args: argparse.Namespace, sizing: Any) -> list[
         issues.append(
             {
                 "code": "PATH_BOARD_PROOF_MISSING",
-                "message": "LiveOrderGateway target-path intent requires 5% PATH BOARD proof",
+                "message": "LiveOrderGateway target-path intent requires 5% PACE BOARD proof",
                 "severity": "BLOCK",
             }
         )

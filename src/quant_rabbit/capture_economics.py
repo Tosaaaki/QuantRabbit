@@ -22,8 +22,8 @@ strategy, margin, or gateway gates. It exists because the 2026-05-14→06-08 led
 averaging +376 JPY against 24 losses averaging -1,437 JPY (payoff 0.26 vs
 breakeven 0.43 at the observed 70% win rate) — an asymmetry no forecast
 hit-rate can outrun. The trader and the operator must see this number move
-toward/over breakeven, or the 5% guaranteed floor (§5) has no arithmetic
-route.
+toward/over breakeven, or the +5% pace/protection marker (§5) has no arithmetic
+route on days where a valid edge exists.
 """
 
 from __future__ import annotations

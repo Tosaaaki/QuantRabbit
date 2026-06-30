@@ -31,6 +31,18 @@ from quant_rabbit.paths import DEFAULT_DAILY_TARGET_REPORT, DEFAULT_DAILY_TARGET
 from quant_rabbit.risk import RiskPolicy
 
 
+# Rolling target policy constants are product contract values, not tuned market
+# thresholds: the top KPI is 4x equity over 30 calendar days. Active-day return
+# is reported separately using the cadence-analysis convention of 22 active
+# days per 30 calendar days.
+ROLLING_30D_POLICY = "ROLLING_30D_4X"
+ROLLING_30D_CALENDAR_DAYS = 30
+ROLLING_30D_ACTIVE_DAYS = 22
+ROLLING_30D_TARGET_MULTIPLIER = 4.0
+ROLLING_30D_ON_PACE_TOLERANCE = 0.98
+ROLLING_30D_DANGER_DAILY_RETURN_PCT = 10.0
+
+
 @dataclass(frozen=True)
 class TargetPositionRisk:
     trade_id: str
@@ -64,6 +76,19 @@ class DailyTargetSnapshot:
     remaining_minimum_jpy: float
     remaining_target_jpy: float
     current_equity_jpy: float
+    rolling_30d_policy: str
+    rolling_30d_start_utc: str
+    rolling_30d_end_utc: str
+    rolling_30d_elapsed_calendar_days: float
+    rolling_30d_remaining_calendar_days: float
+    rolling_30d_remaining_active_days: float
+    rolling_30d_start_equity: float
+    current_equity: float
+    current_30d_multiplier: float
+    remaining_to_4x: float
+    required_calendar_daily_return: float | None
+    required_active_day_return: float | None
+    pace_state: str
     campaign_day_jst: str
     daily_risk_budget_jpy: float
     daily_risk_pct: float | None
@@ -90,6 +115,13 @@ class DailyTargetSummary:
     minimum_target_jpy: float
     progress_jpy: float
     progress_pct: float
+    rolling_30d_start_equity: float
+    current_equity: float
+    current_30d_multiplier: float
+    remaining_to_4x: float
+    required_calendar_daily_return: float | None
+    required_active_day_return: float | None
+    pace_state: str
     minimum_progress_pct: float
     remaining_minimum_jpy: float
     remaining_target_jpy: float
@@ -428,6 +460,11 @@ class DailyTargetLedger:
             fallback_progress_jpy=progress,
             previous=previous,
         )
+        rolling_30d = _rolling_30d_policy(
+            previous=previous,
+            current_equity_jpy=current_equity,
+            reference_time=reference_time,
+        )
         progress_pct = round((progress / target_jpy) * 100.0, 4) if target_jpy else 0.0
         account_progress = round(current_equity - start_balance, 4)
         account_progress_pct = round((account_progress / target_jpy) * 100.0, 4) if target_jpy else 0.0
@@ -463,6 +500,19 @@ class DailyTargetLedger:
             remaining_minimum_jpy=remaining_minimum,
             remaining_target_jpy=remaining_target,
             current_equity_jpy=current_equity,
+            rolling_30d_policy=ROLLING_30D_POLICY,
+            rolling_30d_start_utc=rolling_30d["rolling_30d_start_utc"],
+            rolling_30d_end_utc=rolling_30d["rolling_30d_end_utc"],
+            rolling_30d_elapsed_calendar_days=rolling_30d["rolling_30d_elapsed_calendar_days"],
+            rolling_30d_remaining_calendar_days=rolling_30d["rolling_30d_remaining_calendar_days"],
+            rolling_30d_remaining_active_days=rolling_30d["rolling_30d_remaining_active_days"],
+            rolling_30d_start_equity=rolling_30d["rolling_30d_start_equity"],
+            current_equity=rolling_30d["current_equity"],
+            current_30d_multiplier=rolling_30d["current_30d_multiplier"],
+            remaining_to_4x=rolling_30d["remaining_to_4x"],
+            required_calendar_daily_return=rolling_30d["required_calendar_daily_return"],
+            required_active_day_return=rolling_30d["required_active_day_return"],
+            pace_state=rolling_30d["pace_state"],
             campaign_day_jst=campaign_day_jst,
             daily_risk_budget_jpy=round(risk_budget, 4),
             daily_risk_pct=round(active_pct, 4) if active_pct is not None else None,
@@ -491,6 +541,13 @@ class DailyTargetLedger:
             minimum_target_jpy=state.minimum_target_jpy,
             progress_jpy=state.progress_jpy,
             progress_pct=state.progress_pct,
+            rolling_30d_start_equity=state.rolling_30d_start_equity,
+            current_equity=state.current_equity,
+            current_30d_multiplier=state.current_30d_multiplier,
+            remaining_to_4x=state.remaining_to_4x,
+            required_calendar_daily_return=state.required_calendar_daily_return,
+            required_active_day_return=state.required_active_day_return,
+            pace_state=state.pace_state,
             minimum_progress_pct=state.minimum_progress_pct,
             remaining_minimum_jpy=state.remaining_minimum_jpy,
             remaining_target_jpy=state.remaining_target_jpy,
@@ -530,6 +587,31 @@ class DailyTargetLedger:
             f"- Progress: `{state.progress_jpy:.0f} JPY` (`{state.progress_pct:.1f}%` of target)",
             f"- Account unrealized PnL: `{state.account_unrealized_pl_jpy:.0f} JPY` (includes manual/tagless exposure)",
             f"- Account progress: `{state.account_progress_jpy:.0f} JPY` (`{state.account_progress_pct:.1f}%` of target, broker NAV view)",
+            "",
+            "## Rolling 30D 4X Policy",
+            "",
+            f"- Policy: `{state.rolling_30d_policy}`",
+            f"- Window: `{state.rolling_30d_start_utc}` → `{state.rolling_30d_end_utc}`",
+            f"- Rolling 30d start equity: `{state.rolling_30d_start_equity:.0f} JPY`",
+            f"- Current equity: `{state.current_equity:.0f} JPY`",
+            f"- Current 30d multiplier: `{state.current_30d_multiplier:.4f}x`",
+            f"- Remaining to 4x: `{state.remaining_to_4x:.0f} JPY`",
+            "- Required calendar daily return: "
+            + (
+                f"`{state.required_calendar_daily_return:.4f}%`"
+                if state.required_calendar_daily_return is not None
+                else "`n/a`"
+            ),
+            "- Required active-day return: "
+            + (
+                f"`{state.required_active_day_return:.4f}%`"
+                if state.required_active_day_return is not None
+                else "`n/a`"
+            ),
+            f"- Pace state: `{state.pace_state}`",
+            "",
+            "## Daily Pace Marker",
+            "",
             f"- Minimum-floor progress: `{state.minimum_progress_pct:.1f}%`; remaining floor `{state.remaining_minimum_jpy:.0f} JPY`",
             f"- Remaining target: `{state.remaining_target_jpy:.0f} JPY`",
             f"- Open risk: `{state.open_risk_jpy:.0f} JPY`",
@@ -566,8 +648,9 @@ class DailyTargetLedger:
                 "",
                 "## Target Contract",
                 "",
-                "- The 10% daily target is tracked as a product KPI and execution objective, not a guaranteed return.",
-                "- The 5% daily floor is tracked as the minimum same-day progress line; reaching it does not stop the 10% campaign by itself.",
+                "- The top KPI is rolling 30-calendar-day 4x equity growth.",
+                "- The +5% daily line is a pace marker, review trigger, and protection milestone; it must not force B/C churn on no-edge days.",
+                "- The 10% daily target is extension-only behind the favorable-market gate, not a guaranteed return.",
                 "- Unprotected trader-owned or external exposure makes remaining risk budget unavailable; operator-managed manual/tagless exposure is TP-managed only and does not block fresh entries.",
                 "- Trader progress excludes operator-managed manual/tagless P/L for risk gating, while account progress shows broker NAV including that exposure.",
                 "- Reaching the target switches the system toward protection-first behavior before any new risk is added.",
@@ -701,6 +784,107 @@ def _current_equity_jpy(
     if previous_equity is not None:
         return previous_equity
     return round(start_balance_jpy + fallback_progress_jpy, 4)
+
+
+def _rolling_30d_policy(
+    *,
+    previous: dict[str, Any],
+    current_equity_jpy: float,
+    reference_time: datetime,
+) -> dict[str, Any]:
+    previous_start = _parse_utc_timestamp(previous.get("rolling_30d_start_utc"))
+    previous_equity = _coalesce_float(previous.get("rolling_30d_start_equity"))
+    if (
+        previous_start is not None
+        and previous_equity is not None
+        and previous_equity > 0
+        and previous_start <= reference_time
+        and (reference_time - previous_start) < timedelta(days=ROLLING_30D_CALENDAR_DAYS)
+    ):
+        start_time = previous_start
+        start_equity = previous_equity
+    else:
+        start_time = reference_time
+        start_equity = current_equity_jpy
+
+    end_time = start_time + timedelta(days=ROLLING_30D_CALENDAR_DAYS)
+    elapsed_days = max(0.0, (reference_time - start_time).total_seconds() / 86400.0)
+    remaining_calendar_days = max(0.0, ROLLING_30D_CALENDAR_DAYS - elapsed_days)
+    remaining_active_days = remaining_calendar_days * (
+        ROLLING_30D_ACTIVE_DAYS / ROLLING_30D_CALENDAR_DAYS
+    )
+    target_equity = start_equity * ROLLING_30D_TARGET_MULTIPLIER
+    multiplier = current_equity_jpy / start_equity if start_equity > 0 else 0.0
+    remaining_to_4x = max(0.0, target_equity - current_equity_jpy)
+    required_calendar = _required_compound_return_pct(
+        current_value=current_equity_jpy,
+        target_value=target_equity,
+        remaining_periods=remaining_calendar_days,
+    )
+    required_active = _required_compound_return_pct(
+        current_value=current_equity_jpy,
+        target_value=target_equity,
+        remaining_periods=remaining_active_days,
+    )
+    expected_multiplier = ROLLING_30D_TARGET_MULTIPLIER ** (
+        min(elapsed_days, ROLLING_30D_CALENDAR_DAYS) / ROLLING_30D_CALENDAR_DAYS
+    )
+    pace_state = _rolling_pace_state(
+        current_multiplier=multiplier,
+        expected_multiplier=expected_multiplier,
+        required_calendar_daily_return=required_calendar,
+        remaining_to_4x=remaining_to_4x,
+    )
+    return {
+        "rolling_30d_start_utc": start_time.isoformat(),
+        "rolling_30d_end_utc": end_time.isoformat(),
+        "rolling_30d_elapsed_calendar_days": round(elapsed_days, 4),
+        "rolling_30d_remaining_calendar_days": round(remaining_calendar_days, 4),
+        "rolling_30d_remaining_active_days": round(remaining_active_days, 4),
+        "rolling_30d_start_equity": round(start_equity, 4),
+        "current_equity": round(current_equity_jpy, 4),
+        "current_30d_multiplier": round(multiplier, 6),
+        "remaining_to_4x": round(remaining_to_4x, 4),
+        "required_calendar_daily_return": required_calendar,
+        "required_active_day_return": required_active,
+        "pace_state": pace_state,
+    }
+
+
+def _required_compound_return_pct(
+    *,
+    current_value: float,
+    target_value: float,
+    remaining_periods: float,
+) -> float | None:
+    if current_value <= 0 or target_value <= 0:
+        return None
+    if current_value >= target_value:
+        return 0.0
+    if remaining_periods <= 0:
+        return None
+    return round(((target_value / current_value) ** (1.0 / remaining_periods) - 1.0) * 100.0, 6)
+
+
+def _rolling_pace_state(
+    *,
+    current_multiplier: float,
+    expected_multiplier: float,
+    required_calendar_daily_return: float | None,
+    remaining_to_4x: float,
+) -> str:
+    if remaining_to_4x <= 0:
+        return "AHEAD"
+    if current_multiplier >= expected_multiplier:
+        return "AHEAD"
+    if current_multiplier >= expected_multiplier * ROLLING_30D_ON_PACE_TOLERANCE:
+        return "ON_PACE"
+    if (
+        required_calendar_daily_return is not None
+        and required_calendar_daily_return > ROLLING_30D_DANGER_DAILY_RETURN_PCT
+    ):
+        return "DANGER"
+    return "BEHIND"
 
 
 def _status(

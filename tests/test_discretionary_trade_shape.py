@@ -212,6 +212,19 @@ class DiscretionaryTradeShapeTest(unittest.TestCase):
             )
             self.assertIn("With-move pyramiding", item["exact_reason_if_not_tradable"])
 
+    def test_emergency_thesis_state_blocks_fresh_shape(self) -> None:
+        engine = evaluate_trade_shape_engine(
+            {"results": [_lane("EUR_USD", "LONG", thesis_state="EMERGENCY")]}
+        )
+
+        item = engine["pair_evaluations"][0]
+        self.assertFalse(item["tradable"])
+        self.assertEqual(item["trade_shape"]["thesis_state"], "EMERGENCY")
+        self.assertIn(
+            "THESIS_EMERGENCY_BLOCKED",
+            {blocked["code"] for blocked in item["blocked_behaviors"]},
+        )
+
     def test_pair_specific_overlays_adjust_but_do_not_replace_common_scoring(self) -> None:
         engine = evaluate_trade_shape_engine(
             {
