@@ -34,6 +34,28 @@ class LiveRuntimeSyncTest(unittest.TestCase):
             self.assertEqual((live / "docs" / "cycle_report.md").read_text(), "new runtime drift\n")
             self.assertEqual(_git(live, "status", "--short"), "M docs/cycle_report.md")
 
+    def test_promotes_after_preserving_guardian_trigger_contract_drift(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp) / "repo"
+            live = Path(tmp) / "live"
+            _init_repo(repo)
+            _commit_file(repo, "src/app.py", "print('v1')\n", "initial")
+            _run(["git", "branch", "-m", "main"], cwd=repo)
+            _commit_file(repo, "data/guardian_trigger_contract.json", '{"generated_at_utc":"old"}\n', "track contract")
+            _run(["git", "checkout", "-b", "feature"], cwd=repo)
+            _commit_file(repo, "src/app.py", "print('v2')\n", "feature")
+            _run(["git", "worktree", "add", "-b", "runtime", str(live), "main"], cwd=repo)
+            (live / "data" / "guardian_trigger_contract.json").write_text('{"generated_at_utc":"runtime"}\n')
+
+            result = _sync(repo, live, source_branch="feature")
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            feature_head = _git(repo, "rev-parse", "feature")
+            self.assertEqual(_git(repo, "rev-parse", "main"), feature_head)
+            self.assertEqual(_git(live, "rev-parse", "HEAD"), feature_head)
+            self.assertEqual((live / "data" / "guardian_trigger_contract.json").read_text(), '{"generated_at_utc":"runtime"}\n')
+            self.assertEqual(_git(live, "status", "--short"), "M data/guardian_trigger_contract.json")
+
     def test_blocks_when_development_has_source_dirty(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             repo = Path(tmp) / "repo"
