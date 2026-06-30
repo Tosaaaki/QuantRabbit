@@ -129,6 +129,21 @@ class GuardianWakeDispatcherTest(unittest.TestCase):
             self.assertNotIn("autotrade-cycle", command_text)
             self.assertNotIn("position-execution", command_text)
 
+    def test_dispatcher_source_has_no_direct_oanda_order_cancel_close_path(self) -> None:
+        source = (Path(__file__).resolve().parents[1] / "tools" / "guardian_wake_dispatcher.py").read_text()
+
+        for forbidden in (
+            "requests.",
+            "urllib.request",
+            "api-fxtrade.oanda.com",
+            "OANDA_TOKEN",
+            "openTrades",
+            "stage-live-order",
+            "position-execution",
+            "autotrade-cycle --send",
+        ):
+            self.assertNotIn(forbidden, source)
+
     def test_invalid_gpt_output_does_not_create_executable_receipt(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             paths = _fixture(Path(tmp))
@@ -326,6 +341,91 @@ class GuardianWakeDispatcherTest(unittest.TestCase):
             self.assertEqual(len(calls), 1)
             self.assertFalse(paths.action_receipt.exists())
 
+    def test_unsupported_codex_preflight_queues_without_full_wake(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = _fixture(Path(tmp))
+            codex_calls: list[list[str]] = []
+            preflight_calls: list[list[str]] = []
+
+            result = run_dispatcher(
+                paths=paths,
+                now=NOW,
+                env={
+                    "QR_GUARDIAN_WAKE_CODEX_PREFLIGHT": "1",
+                    "QR_GUARDIAN_WAKE_CODEX_BIN": "/opt/homebrew/bin/codex",
+                },
+                subprocess_run=_fake_codex(codex_calls, _valid_receipt()),
+                codex_preflight_run=_fake_preflight(preflight_calls, stdout="codex-cli 0.25.0\n"),
+            )
+
+            self.assertEqual(result["status"], "CODEX_MODEL_UNSUPPORTED")
+            self.assertEqual(result["parse"]["error"], "CODEX_MODEL_UNSUPPORTED")
+            self.assertEqual(codex_calls, [])
+            self.assertEqual(preflight_calls, [["/opt/homebrew/bin/codex", "--version"]])
+            self.assertFalse(paths.action_receipt.exists())
+            self.assertTrue(paths.action_review.exists())
+            self.assertTrue(result["queued_for_active_trader"])
+            preflight = result["codex_preflight"]
+            self.assertEqual(preflight["codex_binary_path"], "/opt/homebrew/bin/codex")
+            self.assertEqual(preflight["codex_version"], "0.25.0")
+            self.assertEqual(preflight["requested_model"], "gpt-5.5")
+            self.assertIn("QR_GUARDIAN_WAKE_CODEX_BIN", preflight["remediation_hint"])
+
+            state = json.loads(paths.dispatcher_state.read_text())
+            self.assertEqual(state["last_status"], "CODEX_MODEL_UNSUPPORTED")
+            self.assertEqual(state["last_result"]["codex_preflight"]["codex_version"], "0.25.0")
+            escalation = json.loads(paths.escalation.read_text())
+            self.assertTrue(escalation["queued_for_active_trader"])
+
+    def test_unsupported_codex_model_error_is_not_schema_invalid(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = _fixture(Path(tmp))
+            calls: list[list[str]] = []
+
+            result = run_dispatcher(
+                paths=paths,
+                now=NOW,
+                env={},
+                subprocess_run=_fake_codex_failed(
+                    calls,
+                    stderr="gpt-5.5 model requires a newer version of Codex",
+                ),
+            )
+
+            self.assertEqual(result["status"], "CODEX_MODEL_UNSUPPORTED")
+            self.assertEqual(result["parse"]["error"], "CODEX_MODEL_UNSUPPORTED")
+            self.assertNotEqual(result["parse"]["error"], "SCHEMA_INVALID")
+            self.assertEqual(len(calls), 1)
+            self.assertEqual(result["codex"]["requested_model"], "gpt-5.5")
+            self.assertIn("newer version", result["codex"]["raw_stderr_excerpt"])
+            self.assertIn("QR_GUARDIAN_WAKE_CODEX_BIN", result["codex"]["remediation_hint"])
+            self.assertFalse(paths.action_receipt.exists())
+
+    def test_supported_preflight_records_codex_version_and_writes_receipt(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = _fixture(Path(tmp))
+            codex_calls: list[list[str]] = []
+            preflight_calls: list[list[str]] = []
+
+            result = run_dispatcher(
+                paths=paths,
+                now=NOW,
+                env={
+                    "QR_GUARDIAN_WAKE_CODEX_PREFLIGHT": "1",
+                    "QR_GUARDIAN_WAKE_CODEX_BIN": "/Applications/Codex.app/Contents/Resources/codex",
+                },
+                subprocess_run=_fake_codex(codex_calls, _valid_receipt()),
+                codex_preflight_run=_fake_preflight(preflight_calls, stdout="codex-cli 0.142.4\n"),
+            )
+
+            self.assertEqual(result["status"], "RECEIPT_WRITTEN")
+            self.assertEqual(preflight_calls, [["/Applications/Codex.app/Contents/Resources/codex", "--version"]])
+            self.assertEqual(len(codex_calls), 1)
+            self.assertEqual(codex_calls[0][0], "/Applications/Codex.app/Contents/Resources/codex")
+            self.assertEqual(result["codex_preflight"]["codex_version"], "0.142.4")
+            self.assertEqual(result["codex"]["codex_version"], "0.142.4")
+            self.assertTrue(paths.action_receipt.exists())
+
     def test_one_repair_retry_occurs(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             paths = _fixture(Path(tmp))
@@ -499,6 +599,38 @@ class GuardianWakeDispatcherTest(unittest.TestCase):
             self.assertEqual(payload["receipt"]["dedupe_key"], payload["selected_event"]["dedupe_key"])
             self.assertTrue(payload["receipt"]["gateway_required"])
             self.assertTrue(payload["receipt"]["no_direct_oanda"])
+
+    def test_valid_no_action_output_preserves_guardian_action_receipt(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = _fixture(Path(tmp))
+            calls: list[list[str]] = []
+
+            result = run_dispatcher(
+                paths=paths,
+                now=NOW,
+                env={},
+                subprocess_run=_fake_codex(calls, _valid_receipt(action="NO_ACTION")),
+            )
+
+            self.assertEqual(result["status"], "RECEIPT_WRITTEN")
+            payload = json.loads(paths.action_receipt.read_text())
+            receipt = payload["receipt"]
+            self.assertEqual(receipt["action"], "NO_ACTION")
+            for field in (
+                "event_id",
+                "pair",
+                "side",
+                "thesis_state",
+                "reason",
+                "invalidation_evidence",
+                "harvest_trigger",
+                "margin_state",
+                "ownership",
+            ):
+                self.assertIn(field, receipt)
+                self.assertNotEqual(receipt[field], "")
+            self.assertTrue(receipt["gateway_required"])
+            self.assertTrue(receipt["no_direct_oanda"])
 
     def test_valid_hold_output_creates_guardian_action_receipt(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -743,6 +875,14 @@ def _fake_codex_failed(calls: list[list[str]], *, stderr: str):
         out_path.parent.mkdir(parents=True, exist_ok=True)
         out_path.write_text("")
         return SimpleNamespace(returncode=1, stdout="", stderr=stderr)
+
+    return run
+
+
+def _fake_preflight(calls: list[list[str]], *, stdout: str = "", stderr: str = "", returncode: int = 0):
+    def run(cmd, *, capture_output, text, timeout, env):
+        calls.append(list(cmd))
+        return SimpleNamespace(returncode=returncode, stdout=stdout, stderr=stderr)
 
     return run
 

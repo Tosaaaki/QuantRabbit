@@ -13,6 +13,7 @@ from quant_rabbit.guardian_events import (
     review_guardian_action_receipt,
     run_guardian_event_router,
     validate_guardian_trigger_contract,
+    write_guardian_trigger_contract_report,
 )
 
 
@@ -287,6 +288,98 @@ class GuardianEventRouterTest(unittest.TestCase):
         self.assertEqual(entry["avg_entry"], 1.171)
         self.assertEqual(entry["units"], 1000)
 
+    def test_open_exposure_avg_entry_populates_from_broker_entry_price(self) -> None:
+        snapshot = _snapshot(
+            positions=[
+                {
+                    "pair": "USD_JPY",
+                    "side": "SHORT",
+                    "units": 1000,
+                    "owner": "trader",
+                    "thesis": "system USD_JPY short",
+                    "thesis_state": "ALIVE",
+                    "trade_id": "trade-entry",
+                    "entry_price": 162.157,
+                }
+            ]
+        )
+
+        contract = build_guardian_trigger_contract(snapshot=snapshot, order_intents={}, existing_contract={}, now=NOW)
+        entry = contract["entries"][0]
+
+        self.assertEqual(entry["avg_entry"], 162.157)
+        for bucket in (
+            "harvest_triggers",
+            "no_add_triggers",
+            "wounded_triggers",
+            "invalidation_triggers",
+            "emergency_triggers",
+        ):
+            trigger = entry[bucket][0]
+            self.assertEqual(trigger["trade_id"], "trade-entry")
+            self.assertEqual(trigger["units"], 1000)
+            self.assertEqual(trigger["avg_entry"], 162.157)
+            self.assertEqual(trigger["pair"], "USD_JPY")
+            self.assertEqual(trigger["side"], "SHORT")
+            self.assertEqual(trigger["owner"], "SYSTEM")
+            self.assertEqual(trigger["thesis"], "system USD_JPY short")
+            self.assertEqual(trigger["thesis_state"], "ALIVE")
+
+    def test_unknown_usd_jpy_owner_remains_unresolved_without_evidence(self) -> None:
+        snapshot = _snapshot(
+            positions=[
+                {
+                    "pair": "USD_JPY",
+                    "side": "SHORT",
+                    "units": 1000,
+                    "owner": "unknown",
+                    "thesis": "operator manual USD_JPY 162 fade",
+                    "trade_id": "472933",
+                    "entry_price": 162.157,
+                    "raw": {"currentUnits": "-1000", "price": "162.157"},
+                }
+            ]
+        )
+
+        contract = build_guardian_trigger_contract(snapshot=snapshot, order_intents={}, existing_contract={}, now=NOW)
+        entry = contract["entries"][0]
+
+        self.assertEqual(entry["owner"], "UNKNOWN")
+        self.assertEqual(entry["avg_entry"], 162.157)
+        self.assertEqual(entry["ownership_audit"]["status"], "UNKNOWN_NEEDS_OPERATOR_CONFIRM")
+        self.assertTrue(entry["ownership_audit"]["unresolved"])
+        self.assertNotIn("usd_jpy_162_manual_fade", json.dumps(entry))
+
+        with tempfile.TemporaryDirectory() as tmp:
+            report_path = Path(tmp) / "guardian_trigger_contract_report.md"
+            write_guardian_trigger_contract_report(report_path, contract, validate_guardian_trigger_contract(contract, now=NOW))
+            report = report_path.read_text()
+        self.assertIn("UNKNOWN_NEEDS_OPERATOR_CONFIRM", report)
+        self.assertIn("trade_id=`472933`", report)
+
+    def test_unknown_owner_with_gateway_lane_evidence_maps_to_system(self) -> None:
+        snapshot = _snapshot(
+            positions=[
+                {
+                    "pair": "EUR_USD",
+                    "side": "LONG",
+                    "units": 1000,
+                    "owner": "unknown",
+                    "thesis": "system lane long",
+                    "trade_id": "system-1",
+                    "entry_price": 1.171,
+                    "lane_id": "range:EUR_USD:LONG:system-lane",
+                }
+            ]
+        )
+
+        contract = build_guardian_trigger_contract(snapshot=snapshot, order_intents={}, existing_contract={}, now=NOW)
+        entry = contract["entries"][0]
+
+        self.assertEqual(entry["owner"], "SYSTEM")
+        self.assertEqual(entry["ownership_audit"]["status"], "SYSTEM")
+        self.assertFalse(entry["ownership_audit"]["unresolved"])
+
     def test_manual_exposure_maps_by_trade_id(self) -> None:
         snapshot = _snapshot(
             positions=[
@@ -343,6 +436,22 @@ class GuardianEventRouterTest(unittest.TestCase):
         self.assertIn("cross-JPY confirmation", joined)
         self.assertIn("TP-only profit assistance", joined)
         self.assertIn("no fresh bot USD_JPY", joined)
+        for bucket in (
+            "harvest_triggers",
+            "no_add_triggers",
+            "wounded_triggers",
+            "invalidation_triggers",
+            "emergency_triggers",
+        ):
+            trigger = entry[bucket][0]
+            self.assertEqual(trigger["trade_id"], "manual-162")
+            self.assertEqual(trigger["units"], 22000)
+            self.assertEqual(trigger["avg_entry"], 162.157)
+            self.assertEqual(trigger["pair"], "USD_JPY")
+            self.assertEqual(trigger["side"], "SHORT")
+            self.assertEqual(trigger["owner"], "OPERATOR_MANUAL")
+            self.assertEqual(trigger["thesis"], "operator manual USD_JPY 162 fade")
+            self.assertEqual(trigger["thesis_state"], "WOUNDED")
 
     def test_expired_contract_deadline_emits_contract_stale_with_exposure(self) -> None:
         contract = _contract(entry_overrides={"next_review_deadline_utc": (NOW - timedelta(minutes=1)).isoformat()})

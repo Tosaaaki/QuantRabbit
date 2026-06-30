@@ -28,6 +28,13 @@ MODEL = "gpt-5.5"
 ACTIONABLE_ACTIONS = {"TRADE", "ADD", "HARVEST", "REDUCE", "CANCEL_PENDING"}
 THESIS_STATES = {"ALIVE", "WOUNDED", "INVALIDATED", "EMERGENCY"}
 DEFAULT_LIVE_ROOT = Path("/Users/tossaki/App/QuantRabbit-live")
+DEFAULT_CODEX_APP_BIN = Path("/Applications/Codex.app/Contents/Resources/codex")
+
+# Local compatibility floor for GPT-5.5 support: codex-cli 0.25.0 returns
+# "gpt-5.5 model requires a newer version of Codex", while 0.142.4 accepts the
+# model. This is a CLI compatibility guard, not market/risk logic.
+MIN_GPT55_CODEX_VERSION = (0, 142, 0)
+CODEX_MODEL_FAILURE_STATUSES = {"CODEX_MODEL_UNSUPPORTED", "CODEX_CLI_VERSION_UNSUPPORTED"}
 
 # Guardian wake runs every 30s from a router that just refreshed broker truth;
 # older snapshots are likely from a previous operating window and should wait
@@ -90,6 +97,7 @@ def run_dispatcher(
     env: dict[str, str] | None = None,
     subprocess_run: Callable[..., Any] = subprocess.run,
     snapshot_refresh_run: Callable[..., Any] | None = None,
+    codex_preflight_run: Callable[..., Any] | None = None,
 ) -> dict[str, Any]:
     clock = _utc(now)
     environ = env if env is not None else os.environ
@@ -207,6 +215,45 @@ def run_dispatcher(
         _append_log(paths.log, result)
         return result
 
+    codex_preflight = _run_codex_preflight(
+        env=environ,
+        subprocess_run=codex_preflight_run or subprocess.run,
+    )
+    if codex_preflight.get("enabled") and str(codex_preflight.get("status") or "").upper() in CODEX_MODEL_FAILURE_STATUSES:
+        result = {
+            **result_base,
+            "status": codex_preflight["status"],
+            "wake_gpt": True,
+            "selected_event": selected,
+            "selection": selection,
+            "broker_snapshot_freshness": freshness,
+            "codex_preflight": codex_preflight,
+            "parse": {
+                "valid": False,
+                "error": codex_preflight["status"],
+                "raw_output_excerpt": str(
+                    codex_preflight.get("stderr_excerpt") or codex_preflight.get("stdout_excerpt") or ""
+                )[:2000],
+            },
+            "receipt_written": False,
+            "action_receipt_path": None,
+            "queued_for_active_trader": True,
+            "queue_reason": codex_preflight.get("remediation_hint")
+            or "Codex CLI/model compatibility failed before guardian wake",
+        }
+        _remove_file(paths.action_receipt)
+        _mark_escalation_queued(
+            paths.escalation,
+            escalation,
+            result,
+            now=clock,
+            reason="Codex CLI/model compatibility failed before guardian wake",
+        )
+        _write_action_review(paths.action_review, result)
+        _record_state(paths.dispatcher_state, dispatcher_state, result, reviewed_event=selected)
+        _append_log(paths.log, result)
+        return result
+
     _prepare_codex_home(paths.codex_home, live_root=paths.live_root)
     prompt = _build_prompt(
         paths=paths,
@@ -225,6 +272,7 @@ def run_dispatcher(
         env=environ,
         subprocess_run=subprocess_run,
         attempt="initial",
+        codex_preflight=codex_preflight,
     )
 
     parsed = _parse_codex_result(codex)
@@ -234,6 +282,7 @@ def run_dispatcher(
     if not parsed["valid"] and parsed.get("error") not in {
         "CODEX_TIMEOUT",
         "CODEX_AUTH_OR_SANDBOX_FAILURE",
+        *CODEX_MODEL_FAILURE_STATUSES,
     }:
         retry_lock = _active_live_lock(paths.live_lock)
         if retry_lock["active"]:
@@ -275,6 +324,7 @@ def run_dispatcher(
             env=environ,
             subprocess_run=subprocess_run,
             attempt="repair",
+            codex_preflight=codex_preflight,
         )
         codex_attempts.append(repair_codex)
         parsed = _parse_codex_result(repair_codex)
@@ -308,7 +358,15 @@ def run_dispatcher(
         env=environ,
         lock=lock,
     )
-    status = "RECEIPT_WRITTEN" if receipt_written else "PARSE_FAILED" if not parsed["valid"] else "RECEIPT_REJECTED"
+    status = (
+        "RECEIPT_WRITTEN"
+        if receipt_written
+        else parsed["error"]
+        if not parsed["valid"] and parsed.get("error") in CODEX_MODEL_FAILURE_STATUSES
+        else "PARSE_FAILED"
+        if not parsed["valid"]
+        else "RECEIPT_REJECTED"
+    )
     if repair_attempted and not parsed["valid"]:
         repair_skipped = {"status": "FAILED_AFTER_ONE_RETRY", "max_retries_per_event": 1}
     result = {
@@ -318,6 +376,7 @@ def run_dispatcher(
         "selected_event": selected,
         "selection": selection,
         "broker_snapshot_freshness": freshness,
+        "codex_preflight": codex_preflight,
         "codex": codex,
         "codex_attempts": codex_attempts,
         "parse": parsed,
@@ -572,6 +631,98 @@ def _refresh_broker_snapshot(
     }
 
 
+def _resolve_codex_bin(env: dict[str, str]) -> str:
+    configured = str(env.get("QR_GUARDIAN_WAKE_CODEX_BIN") or "").strip()
+    if configured:
+        return configured
+    found = shutil.which("codex")
+    if found:
+        return found
+    if DEFAULT_CODEX_APP_BIN.exists():
+        return str(DEFAULT_CODEX_APP_BIN)
+    return "codex"
+
+
+def _run_codex_preflight(
+    *,
+    env: dict[str, str],
+    subprocess_run: Callable[..., Any],
+) -> dict[str, Any]:
+    codex_bin = _resolve_codex_bin(env)
+    base = {
+        "enabled": env.get("QR_GUARDIAN_WAKE_CODEX_PREFLIGHT", "0") == "1",
+        "codex_binary_path": codex_bin,
+        "requested_model": MODEL,
+        "minimum_supported_version": ".".join(str(item) for item in MIN_GPT55_CODEX_VERSION),
+    }
+    if not base["enabled"]:
+        return {**base, "status": "SKIPPED"}
+    cmd = [codex_bin, "--version"]
+    timeout = int(env.get("QR_GUARDIAN_WAKE_CODEX_PREFLIGHT_TIMEOUT_SECONDS", "10"))
+    try:
+        proc = subprocess_run(cmd, capture_output=True, text=True, timeout=timeout, env=dict(env))
+    except FileNotFoundError as exc:
+        return {
+            **base,
+            "status": "CODEX_CLI_VERSION_UNSUPPORTED",
+            "command": cmd,
+            "returncode": None,
+            "codex_version": None,
+            "stdout_excerpt": "",
+            "stderr_excerpt": str(exc),
+            "remediation_hint": _codex_remediation_hint(status="CODEX_CLI_VERSION_UNSUPPORTED", codex_bin=codex_bin),
+        }
+    except subprocess.TimeoutExpired as exc:
+        return {
+            **base,
+            "status": "CODEX_CLI_VERSION_UNSUPPORTED",
+            "command": cmd,
+            "returncode": None,
+            "codex_version": None,
+            "stdout_excerpt": _decoded_tail(exc.stdout),
+            "stderr_excerpt": _decoded_tail(exc.stderr),
+            "timeout_seconds": timeout,
+            "remediation_hint": _codex_remediation_hint(status="CODEX_CLI_VERSION_UNSUPPORTED", codex_bin=codex_bin),
+        }
+    except Exception as exc:  # noqa: BLE001
+        return {
+            **base,
+            "status": "CODEX_CLI_VERSION_UNSUPPORTED",
+            "command": cmd,
+            "returncode": None,
+            "codex_version": None,
+            "stdout_excerpt": "",
+            "stderr_excerpt": str(exc),
+            "remediation_hint": _codex_remediation_hint(status="CODEX_CLI_VERSION_UNSUPPORTED", codex_bin=codex_bin),
+        }
+    stdout = str(getattr(proc, "stdout", "") or "")
+    stderr = str(getattr(proc, "stderr", "") or "")
+    version = _parse_codex_version(stdout or stderr)
+    version_tuple = _codex_version_tuple(version)
+    if getattr(proc, "returncode", 1) != 0:
+        status = "CODEX_CLI_VERSION_UNSUPPORTED"
+    elif version_tuple is None:
+        status = "CODEX_CLI_VERSION_UNSUPPORTED"
+    elif version_tuple < MIN_GPT55_CODEX_VERSION:
+        status = "CODEX_MODEL_UNSUPPORTED"
+    else:
+        status = "OK"
+    result = {
+        **base,
+        "status": status,
+        "command": cmd,
+        "returncode": getattr(proc, "returncode", None),
+        "codex_version": version,
+        "stdout_excerpt": stdout[-1000:],
+        "stderr_excerpt": stderr[-1000:],
+        "supports_requested_model": status == "OK",
+    }
+    if status != "OK":
+        result["cli_failure_class"] = "CODEX_CLI_VERSION_UNSUPPORTED"
+        result["remediation_hint"] = _codex_remediation_hint(status=status, codex_bin=codex_bin)
+    return result
+
+
 def _build_prompt(
     *,
     paths: DispatcherPaths,
@@ -659,12 +810,15 @@ def _run_codex(
     env: dict[str, str],
     subprocess_run: Callable[..., Any],
     attempt: str,
+    codex_preflight: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     paths.codex_output.parent.mkdir(parents=True, exist_ok=True)
     paths.codex_output.write_text("")
     paths.codex_explicit_output.parent.mkdir(parents=True, exist_ok=True)
     paths.codex_explicit_output.write_text("")
-    codex_bin = env.get("QR_GUARDIAN_WAKE_CODEX_BIN") or shutil.which("codex") or "codex"
+    codex_preflight = codex_preflight if isinstance(codex_preflight, dict) else {}
+    codex_bin = str(codex_preflight.get("codex_binary_path") or _resolve_codex_bin(env))
+    codex_version = codex_preflight.get("codex_version")
     timeout = int(env.get("QR_GUARDIAN_WAKE_CODEX_TIMEOUT_SECONDS", CODEX_TIMEOUT_SECONDS))
     cmd = [
         codex_bin,
@@ -709,6 +863,9 @@ def _run_codex(
             "status": "CODEX_TIMEOUT",
             "attempt": attempt,
             "command": cmd,
+            "codex_binary_path": codex_bin,
+            "codex_version": codex_version,
+            "requested_model": MODEL,
             "returncode": None,
             "stderr_tail": stderr_text[-1000:],
             "stdout_tail": stdout_text[-1000:],
@@ -730,6 +887,9 @@ def _run_codex(
             "status": "CODEX_EXCEPTION",
             "attempt": attempt,
             "command": cmd,
+            "codex_binary_path": codex_bin,
+            "codex_version": codex_version,
+            "requested_model": MODEL,
             "returncode": None,
             "stderr_tail": str(exc),
             "stdout_tail": "",
@@ -767,7 +927,10 @@ def _run_codex(
     )
     stdout_fallback_used = last_message_source == "stdout-assistant"
     session_jsonl_fallback_used = last_message_source == "session-jsonl-assistant"
-    if getattr(proc, "returncode", 1) == 0 and last_message:
+    model_failure = _codex_model_version_failure(stderr_text=stderr_text, stdout_text=stdout_text, codex_bin=codex_bin)
+    if model_failure is not None:
+        status = model_failure["status"]
+    elif getattr(proc, "returncode", 1) == 0 and last_message:
         status = "OK"
     elif _codex_auth_or_sandbox_failed(getattr(proc, "returncode", 1), stderr_text, stdout_text):
         status = "CODEX_AUTH_OR_SANDBOX_FAILURE"
@@ -781,6 +944,12 @@ def _run_codex(
         "status": status,
         "attempt": attempt,
         "command": cmd,
+        "codex_binary_path": codex_bin,
+        "codex_version": codex_version,
+        "requested_model": MODEL,
+        "supports_requested_model": status == "OK",
+        "remediation_hint": (model_failure or {}).get("remediation_hint"),
+        "cli_failure_class": (model_failure or {}).get("cli_failure_class"),
         "returncode": getattr(proc, "returncode", None),
         "stderr_tail": stderr_text[-1000:],
         "stdout_tail": stdout_text[-1000:],
@@ -831,18 +1000,22 @@ def _parse_codex_receipt(text: str, *, empty_error: str = "CODEX_EMPTY_LAST_MESS
 
 def _parse_codex_result(codex: dict[str, Any]) -> dict[str, Any]:
     status = str(codex.get("status") or "").upper()
-    if status in {"CODEX_TIMEOUT", "CODEX_AUTH_OR_SANDBOX_FAILURE"}:
+    if status in {"CODEX_TIMEOUT", "CODEX_AUTH_OR_SANDBOX_FAILURE", *CODEX_MODEL_FAILURE_STATUSES}:
         return {
             "valid": False,
             "error": status,
             "raw_output_excerpt": str(codex.get("last_message") or codex.get("raw_stdout_excerpt") or "")[:2000],
+            "codex_binary_path": codex.get("codex_binary_path"),
+            "codex_version": codex.get("codex_version"),
+            "requested_model": codex.get("requested_model") or MODEL,
+            "remediation_hint": codex.get("remediation_hint"),
         }
     return _parse_codex_receipt(codex.get("last_message") or "", empty_error=_empty_parse_error(codex))
 
 
 def _empty_parse_error(codex: dict[str, Any]) -> str:
     status = str(codex.get("status") or "").upper()
-    if status in {"CODEX_TIMEOUT", "CODEX_AUTH_OR_SANDBOX_FAILURE", "CODEX_NO_ASSISTANT_MESSAGE"}:
+    if status in {"CODEX_TIMEOUT", "CODEX_AUTH_OR_SANDBOX_FAILURE", "CODEX_NO_ASSISTANT_MESSAGE", *CODEX_MODEL_FAILURE_STATUSES}:
         return status
     return "CODEX_EMPTY_LAST_MESSAGE"
 
@@ -975,6 +1148,65 @@ def _extract_transcript_assistant_message(text: str) -> str:
     if not marker:
         return ""
     return text[marker.end() :].strip()
+
+
+def _parse_codex_version(text: str) -> str | None:
+    match = re.search(r"codex(?:-cli)?\s+([0-9]+(?:\.[0-9]+){1,3})", str(text or ""), flags=re.IGNORECASE)
+    if match:
+        return match.group(1)
+    match = re.search(r"\b([0-9]+(?:\.[0-9]+){1,3})\b", str(text or ""))
+    return match.group(1) if match else None
+
+
+def _codex_version_tuple(version: Any) -> tuple[int, int, int] | None:
+    if not version:
+        return None
+    parts = str(version).strip().split(".")
+    try:
+        numbers = [int(part) for part in parts[:3]]
+    except ValueError:
+        return None
+    while len(numbers) < 3:
+        numbers.append(0)
+    return tuple(numbers[:3])
+
+
+def _codex_model_version_failure(*, stderr_text: str, stdout_text: str, codex_bin: str) -> dict[str, str] | None:
+    haystack = f"{stderr_text}\n{stdout_text}".lower()
+    if not haystack.strip():
+        return None
+    if MODEL.lower() in haystack and any(token in haystack for token in ("newer version", "upgrade", "requires a newer")):
+        return {
+            "status": "CODEX_MODEL_UNSUPPORTED",
+            "cli_failure_class": "CODEX_CLI_VERSION_UNSUPPORTED",
+            "remediation_hint": _codex_remediation_hint(status="CODEX_MODEL_UNSUPPORTED", codex_bin=codex_bin),
+        }
+    if MODEL.lower() in haystack and any(token in haystack for token in ("unsupported model", "unknown model", "invalid model")):
+        return {
+            "status": "CODEX_MODEL_UNSUPPORTED",
+            "cli_failure_class": "CODEX_MODEL_UNSUPPORTED",
+            "remediation_hint": _codex_remediation_hint(status="CODEX_MODEL_UNSUPPORTED", codex_bin=codex_bin),
+        }
+    if "codex" in haystack and "version" in haystack and any(token in haystack for token in ("unsupported", "too old", "upgrade")):
+        return {
+            "status": "CODEX_CLI_VERSION_UNSUPPORTED",
+            "cli_failure_class": "CODEX_CLI_VERSION_UNSUPPORTED",
+            "remediation_hint": _codex_remediation_hint(status="CODEX_CLI_VERSION_UNSUPPORTED", codex_bin=codex_bin),
+        }
+    return None
+
+
+def _codex_remediation_hint(*, status: str, codex_bin: str) -> str:
+    if status == "CODEX_MODEL_UNSUPPORTED":
+        return (
+            f"{MODEL} is not supported by Codex binary {codex_bin}. Upgrade that CLI or set "
+            "QR_GUARDIAN_WAKE_CODEX_BIN to a GPT-5.5-capable Codex binary such as "
+            f"{DEFAULT_CODEX_APP_BIN}."
+        )
+    return (
+        f"Codex binary {codex_bin} could not prove a supported CLI version. Upgrade it or set "
+        f"QR_GUARDIAN_WAKE_CODEX_BIN={DEFAULT_CODEX_APP_BIN}."
+    )
 
 
 def _codex_auth_or_sandbox_failed(returncode: int | None, stderr_text: str, stdout_text: str) -> bool:
@@ -1182,6 +1414,22 @@ def _write_action_review(path: Path, payload: dict[str, Any]) -> None:
         )
     else:
         lines.append("- none")
+    preflight = payload.get("codex_preflight") if isinstance(payload.get("codex_preflight"), dict) else {}
+    if preflight:
+        lines.extend(
+            [
+                "",
+                "## Codex Preflight",
+                "",
+                f"- Status: `{preflight.get('status')}` enabled=`{preflight.get('enabled')}`",
+                f"- Binary: `{preflight.get('codex_binary_path')}`",
+                f"- Version: `{preflight.get('codex_version') or 'unknown'}`",
+                f"- Requested model: `{preflight.get('requested_model') or MODEL}`",
+                f"- Supports requested model: `{preflight.get('supports_requested_model')}`",
+            ]
+        )
+        if preflight.get("remediation_hint"):
+            lines.append(f"- Remediation: {preflight.get('remediation_hint')}")
     attempts = payload.get("codex_attempts") if isinstance(payload.get("codex_attempts"), list) else []
     codex_single = payload.get("codex") if isinstance(payload.get("codex"), dict) else {}
     if attempts or codex_single:
@@ -1192,6 +1440,7 @@ def _write_action_review(path: Path, payload: dict[str, Any]) -> None:
             lines.extend(
                 [
                     f"- Attempt {index}: `{attempt.get('attempt') or 'unknown'}` status=`{attempt.get('status')}` returncode=`{attempt.get('returncode')}`",
+                    f"  - binary: `{attempt.get('codex_binary_path') or 'unknown'}` version: `{attempt.get('codex_version') or 'unknown'}` requested model: `{attempt.get('requested_model') or MODEL}`",
                     f"  - output path: `{attempt.get('output_path')}`",
                     f"  - explicit output path: `{attempt.get('explicit_output_path')}`",
                     f"  - session JSONL: `{attempt.get('session_jsonl_path') or 'none'}`",
@@ -1205,6 +1454,8 @@ def _write_action_review(path: Path, payload: dict[str, Any]) -> None:
                 lines.append(f"  - stdout excerpt: `{stdout_excerpt[:500]}`")
             if stderr_excerpt:
                 lines.append(f"  - stderr excerpt: `{stderr_excerpt[:500]}`")
+            if attempt.get("remediation_hint"):
+                lines.append(f"  - remediation: {attempt.get('remediation_hint')}")
     lines.extend(["", "## Parse", ""])
     parse = payload.get("parse") if isinstance(payload.get("parse"), dict) else {}
     if parse:
@@ -1252,12 +1503,36 @@ def _record_state(
     state["last_status"] = result.get("status")
     state["last_result"] = {
         key: result.get(key)
-        for key in ("status", "generated_at_utc", "receipt_written", "action_receipt_path", "broker_snapshot_freshness")
+        for key in (
+            "status",
+            "generated_at_utc",
+            "receipt_written",
+            "action_receipt_path",
+            "broker_snapshot_freshness",
+            "queued_for_active_trader",
+            "queue_reason",
+        )
     }
     if isinstance(result.get("selected_event"), dict):
         state["last_result"]["selected_event"] = result.get("selected_event")
     if isinstance(result.get("parse"), dict):
         state["last_result"]["parse"] = result.get("parse")
+    if isinstance(result.get("codex_preflight"), dict):
+        state["last_result"]["codex_preflight"] = result.get("codex_preflight")
+    if isinstance(result.get("codex"), dict):
+        codex = result.get("codex") or {}
+        state["last_result"]["codex"] = {
+            key: codex.get(key)
+            for key in (
+                "status",
+                "attempt",
+                "codex_binary_path",
+                "codex_version",
+                "requested_model",
+                "returncode",
+                "remediation_hint",
+            )
+        }
     if isinstance(result.get("parse_failure"), dict):
         state["last_result"]["parse_failure"] = result.get("parse_failure")
     if reviewed_event is not None:

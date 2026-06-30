@@ -30,6 +30,11 @@ class GuardianWakeDispatcherLaunchdTest(unittest.TestCase):
         self.assertIn("tools/guardian_wake_dispatcher.py", command)
 
         env = payload["EnvironmentVariables"]
+        self.assertEqual(
+            env["QR_GUARDIAN_WAKE_CODEX_BIN"],
+            "/Applications/Codex.app/Contents/Resources/codex",
+        )
+        self.assertEqual(env["QR_GUARDIAN_WAKE_CODEX_PREFLIGHT"], "1")
         self.assertEqual(env["QR_GUARDIAN_WAKE_GATEWAY_HANDOFF"], "0")
         self.assertEqual(env["QR_GUARDIAN_ACTION_EXECUTE"], "0")
         self.assertEqual(env["CODEX_DISABLE_UPDATE_CHECK"], "1")

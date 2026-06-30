@@ -11,6 +11,7 @@ from typing import Any
 
 from quant_rabbit.instruments import NORMAL_SPREAD_PIPS, instrument_pip_factor
 from quant_rabbit.models import Owner
+from quant_rabbit.operator_manual import OPERATOR_MANUAL_POSITION_PACKET
 from quant_rabbit.risk import RiskPolicy
 
 
@@ -565,17 +566,19 @@ def build_guardian_trigger_contract(
         if not pair or not side:
             continue
         thesis = _position_contract_thesis(position)
+        ownership_audit = _position_ownership_audit(position)
         entry = _contract_entry_from_seed(
             pair=pair,
             side=side,
             thesis=thesis,
-            owner=_contract_owner_from_snapshot_owner(position.get("owner")),
+            owner=_contract_owner_from_ownership_audit(ownership_audit),
             thesis_state=_position_contract_state(position),
             seed_reason="open broker position requires guardian triggers",
             preserved=preserved,
             now=clock,
             position=position,
             open_exposure=True,
+            ownership_audit=ownership_audit,
         )
         seen.add(_contract_entry_key(entry))
         entries.append(entry)
@@ -602,6 +605,7 @@ def build_guardian_trigger_contract(
             now=clock,
             position={},
             open_exposure=False,
+            ownership_audit={"status": "SYSTEM", "evidence": ["candidate intent is system-generated"], "unresolved": False},
         )
         key = _contract_entry_key(entry)
         if key in seen:
@@ -647,18 +651,36 @@ def write_guardian_trigger_contract_report(path: Path, contract: dict[str, Any],
     if not validation.get("issues"):
         lines.append("- none")
     lines.extend(["", "## Entries", ""])
+    unresolved_unknown: list[dict[str, Any]] = []
     for entry in _contract_entries(contract):
+        audit = entry.get("ownership_audit") if isinstance(entry.get("ownership_audit"), dict) else {}
+        if entry.get("owner") == "UNKNOWN" or audit.get("status") == "UNKNOWN_NEEDS_OPERATOR_CONFIRM":
+            unresolved_unknown.append(entry)
         lines.append(
             f"- `{_pair(entry.get('pair')) or 'UNKNOWN'}` `{_direction_from_text(entry.get('side')) or 'UNKNOWN'}` "
-            f"owner=`{_contract_owner(entry.get('owner'))}` state=`{_thesis_state(entry.get('thesis_state'))}`"
+            f"owner=`{_contract_owner(entry.get('owner'))}` state=`{_thesis_state(entry.get('thesis_state'))}` "
+            f"trade_id=`{entry.get('trade_id') or 'none'}` units=`{entry.get('units')}` avg_entry=`{entry.get('avg_entry')}`"
         )
         lines.append(f"  - thesis: {entry.get('thesis')}")
+        if audit:
+            lines.append(f"  - ownership audit: `{audit.get('status')}` evidence=`{'; '.join(audit.get('evidence') or [])}`")
         lines.append(f"  - next review: {entry.get('next_review_reason')} by `{entry.get('next_review_deadline_utc')}`")
         for bucket in CONTRACT_TRIGGER_BUCKETS:
             triggers = entry.get(bucket) if isinstance(entry.get(bucket), list) else []
             fired_count = sum(1 for trigger in triggers if _trigger_explicitly_fired(trigger))
             lines.append(f"  - {bucket}: `{len(triggers)}` declared, `{fired_count}` explicitly fired")
     if not _contract_entries(contract):
+        lines.append("- none")
+    lines.extend(["", "## Ownership Audit", ""])
+    if unresolved_unknown:
+        lines.append("- Unresolved UNKNOWN exposure requires operator confirmation before being treated as OPERATOR_MANUAL:")
+        for entry in unresolved_unknown:
+            lines.append(
+                f"  - `{entry.get('pair')}` `{entry.get('side')}` trade_id=`{entry.get('trade_id') or 'none'}` "
+                f"units=`{entry.get('units')}` avg_entry=`{entry.get('avg_entry')}` thesis=`{entry.get('thesis')}` "
+                "status=`UNKNOWN_NEEDS_OPERATOR_CONFIRM`"
+            )
+    else:
         lines.append("- none")
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("\n".join(lines) + "\n")
@@ -1346,6 +1368,7 @@ def _contract_entry_from_seed(
     now: datetime,
     position: dict[str, Any] | None = None,
     open_exposure: bool = False,
+    ownership_audit: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     position_payload = position if isinstance(position, dict) else {}
     seed = {
@@ -1362,6 +1385,7 @@ def _contract_entry_from_seed(
         **seed,
         "units": _position_units(position_payload),
         "avg_entry": _position_average_entry(position_payload),
+        "ownership_audit": ownership_audit if isinstance(ownership_audit, dict) else None,
         "harvest_triggers": [],
         "add_triggers": [],
         "no_add_triggers": [],
@@ -1379,7 +1403,7 @@ def _contract_entry_from_seed(
     for field_name in CONTRACT_TRIGGER_BUCKETS:
         if isinstance(prior.get(field_name), list) and prior[field_name]:
             merged[field_name] = prior[field_name]
-    for field_name in ("owner", "thesis_state", "next_review_reason", "next_review_deadline_utc"):
+    for field_name in ("thesis_state", "next_review_reason", "next_review_deadline_utc"):
         if prior.get(field_name) and (field_name != "next_review_deadline_utc" or _deadline_is_future(prior.get(field_name), now)):
             merged[field_name] = prior[field_name]
     return {key: value for key, value in merged.items() if value is not None}
@@ -1420,16 +1444,132 @@ def _position_units(position: dict[str, Any]) -> float | None:
 
 
 def _position_average_entry(position: dict[str, Any]) -> float | None:
-    for key in ("avg_entry", "average_entry", "average_entry_price", "price", "entry"):
+    for key in (
+        "avg_entry",
+        "average_entry",
+        "average_entry_price",
+        "averagePrice",
+        "average_price",
+        "price",
+        "entry",
+        "entry_price",
+        "entryPrice",
+        "open_price",
+    ):
         value = _float(position.get(key))
         if value is not None:
             return value
     raw = position.get("raw") if isinstance(position.get("raw"), dict) else {}
-    for key in ("price", "average_entry", "averagePrice"):
+    for key in ("price", "average_entry", "averagePrice", "average_price", "entry_price", "entryPrice", "open_price"):
         value = _float(raw.get(key))
         if value is not None:
             return value
     return None
+
+
+def _position_ownership_audit(position: dict[str, Any]) -> dict[str, Any]:
+    owner = _owner(position.get("owner"))
+    evidence: list[str] = []
+    raw = position.get("raw") if isinstance(position.get("raw"), dict) else {}
+    trade_id = _position_trade_id(position)
+    if _position_has_system_lane_or_gateway_receipt(position):
+        return {
+            "status": "SYSTEM",
+            "owner_input": owner,
+            "trade_id": trade_id,
+            "evidence": ["gateway receipt/lane/client extension evidence is present"],
+            "unresolved": False,
+        }
+    if owner == Owner.TRADER.value:
+        return {
+            "status": "SYSTEM",
+            "owner_input": owner,
+            "trade_id": trade_id,
+            "evidence": ["snapshot owner=trader"],
+            "unresolved": False,
+        }
+    operator_packet = _operator_manual_packet(position)
+    if owner in {Owner.MANUAL.value, Owner.OPERATOR_MANUAL.value}:
+        evidence.append(f"snapshot owner={owner}")
+    if operator_packet:
+        evidence.append("operator_manual_position packet present")
+    if evidence:
+        return {
+            "status": "OPERATOR_MANUAL",
+            "owner_input": owner,
+            "trade_id": trade_id,
+            "evidence": evidence,
+            "unresolved": False,
+        }
+    return {
+        "status": "UNKNOWN_NEEDS_OPERATOR_CONFIRM",
+        "owner_input": owner,
+        "trade_id": trade_id,
+        "evidence": ["no gateway receipt/lane id and no operator manual confirmation packet"],
+        "raw_owner": raw.get("owner"),
+        "unresolved": True,
+    }
+
+
+def _contract_owner_from_ownership_audit(audit: dict[str, Any]) -> str:
+    status = str(audit.get("status") or "").upper()
+    if status == "SYSTEM":
+        return "SYSTEM"
+    if status == "OPERATOR_MANUAL":
+        return "OPERATOR_MANUAL"
+    return "UNKNOWN"
+
+
+def _operator_manual_packet(position: dict[str, Any]) -> dict[str, Any]:
+    raw = position.get("raw") if isinstance(position.get("raw"), dict) else {}
+    packet = raw.get("operator_manual_position") if isinstance(raw.get("operator_manual_position"), dict) else {}
+    if not packet and isinstance(position.get("operator_manual_position"), dict):
+        packet = position["operator_manual_position"]
+    if packet and str(packet.get("packet_type") or "") == OPERATOR_MANUAL_POSITION_PACKET:
+        return dict(packet)
+    return {}
+
+
+def _position_has_system_lane_or_gateway_receipt(position: dict[str, Any]) -> bool:
+    if _owner(position.get("owner")) == Owner.TRADER.value:
+        return True
+    for key in (
+        "lane_id",
+        "entry_lane_id",
+        "gateway_lane_id",
+        "source_lane_id",
+        "gateway_receipt_id",
+        "entry_receipt_id",
+        "receipt_id",
+        "qr_lane_id",
+    ):
+        if str(position.get(key) or "").strip():
+            return True
+    raw = position.get("raw") if isinstance(position.get("raw"), dict) else {}
+    for key in (
+        "lane_id",
+        "entry_lane_id",
+        "gateway_lane_id",
+        "source_lane_id",
+        "gateway_receipt_id",
+        "entry_receipt_id",
+        "receipt_id",
+        "qr_lane_id",
+    ):
+        if str(raw.get(key) or "").strip():
+            return True
+    for key in ("clientExtensions", "tradeClientExtensions"):
+        ext = raw.get(key) if isinstance(raw.get(key), dict) else {}
+        tag = str(ext.get("tag") or "").strip().lower()
+        if tag == Owner.TRADER.value:
+            return True
+        comment = str(ext.get("comment") or "").lower()
+        cid = str(ext.get("id") or "").lower()
+        if any(token in comment for token in ("lane", "gateway", "trader")):
+            return True
+        if any(token in cid for token in ("lane", "gateway", "trader")):
+            return True
+    return False
 
 
 def _deadline_is_future(value: Any, now: datetime) -> bool:
@@ -1449,7 +1589,17 @@ def _default_open_position_triggers(
     thesis_state = _thesis_state(entry.get("thesis_state"))
     avg_entry = _position_average_entry(position)
     trade_id = _position_trade_id(position)
-    base_ref = {"trade_id": trade_id, "pair": pair, "side": side}
+    units = _position_units(position)
+    base_ref = {
+        "trade_id": trade_id,
+        "units": units,
+        "avg_entry": avg_entry,
+        "pair": pair,
+        "side": side,
+        "owner": owner,
+        "thesis": entry.get("thesis"),
+        "thesis_state": thesis_state,
+    }
     if _is_usd_jpy_162_manual_fade(pair, side, owner, position):
         return _usd_jpy_manual_fade_triggers(entry, position, now=now)
     harvest_detail = "profit-side TP/harvest review when current quote reaches the broker TP, declared harvest zone, or positive UPL is outside spread/noise"
@@ -1512,7 +1662,7 @@ def _default_open_position_triggers(
 
 
 def _is_usd_jpy_162_manual_fade(pair: str, side: str, owner: str, position: dict[str, Any]) -> bool:
-    if pair != "USD_JPY" or side != "SHORT" or owner not in {"OPERATOR_MANUAL", "UNKNOWN"}:
+    if pair != "USD_JPY" or side != "SHORT" or owner != "OPERATOR_MANUAL":
         return False
     thesis = _position_contract_thesis(position).lower()
     return "162" in thesis or "manual" in thesis or "operator" in thesis or owner == "OPERATOR_MANUAL"
@@ -1529,7 +1679,16 @@ def _usd_jpy_manual_fade_triggers(
     trade_id = _position_trade_id(position)
     avg_entry = _position_average_entry(position)
     units = _position_units(position)
-    ref = {"trade_id": trade_id, "pair": "USD_JPY", "side": "SHORT", "avg_entry": avg_entry, "units": units}
+    ref = {
+        "trade_id": trade_id,
+        "units": units,
+        "avg_entry": avg_entry,
+        "pair": "USD_JPY",
+        "side": "SHORT",
+        "owner": _contract_owner(entry.get("owner")),
+        "thesis": entry.get("thesis"),
+        "thesis_state": _thesis_state(entry.get("thesis_state")),
+    }
     return {
         "harvest_triggers": [
             {
@@ -1589,15 +1748,6 @@ def _usd_jpy_manual_fade_triggers(
 def _contract_owner(value: Any) -> str:
     text = str(value or "UNKNOWN").strip().upper()
     return text if text in CONTRACT_OWNERS else "UNKNOWN"
-
-
-def _contract_owner_from_snapshot_owner(value: Any) -> str:
-    owner = _owner(value)
-    if owner == Owner.TRADER.value:
-        return "SYSTEM"
-    if owner in {Owner.MANUAL.value, Owner.OPERATOR_MANUAL.value, Owner.UNKNOWN.value}:
-        return "OPERATOR_MANUAL" if owner in {Owner.MANUAL.value, Owner.OPERATOR_MANUAL.value} else "UNKNOWN"
-    return "UNKNOWN"
 
 
 def _snapshot_has_exposure(snapshot: dict[str, Any]) -> bool:

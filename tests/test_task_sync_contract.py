@@ -26,6 +26,7 @@ class TaskSyncContractTest(unittest.TestCase):
     def test_qr_trader_automation_validator_accepts_hourly_gpt55_high(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             automation = Path(tmp) / "automation.toml"
+            prompt = " ".join(check_task_sync.EXPECTED_QR_TRADER_GUARDIAN_STARTUP_READS)
             automation.write_text(
                 "\n".join(
                     [
@@ -33,7 +34,7 @@ class TaskSyncContractTest(unittest.TestCase):
                         'id = "qr-trader"',
                         'kind = "cron"',
                         'name = "QR vNext Trader"',
-                        'prompt = "test"',
+                        f'prompt = "{prompt}"',
                         'status = "ACTIVE"',
                         'rrule = "RRULE:FREQ=MINUTELY;INTERVAL=60;BYDAY=MO,TU,WE,TH,FR,SA"',
                         'model = "gpt-5.5"',

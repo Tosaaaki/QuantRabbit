@@ -23,6 +23,14 @@ EXPECTED_QR_TRADER_RRULE = "RRULE:FREQ=MINUTELY;INTERVAL=60;BYDAY=MO,TU,WE,TH,FR
 EXPECTED_QR_TRADER_MODEL = "gpt-5.5"
 EXPECTED_QR_TRADER_REASONING = "high"
 EXPECTED_QR_TRADER_CWD = "/Users/tossaki/App/QuantRabbit-live"
+EXPECTED_QR_TRADER_GUARDIAN_STARTUP_READS = (
+    "docs/guardian_event_report.md",
+    "data/guardian_events.json",
+    "data/guardian_escalation.json",
+    "docs/guardian_action_review.md",
+    "data/guardian_action_receipt.json",
+    "data/guardian_trigger_contract.json",
+)
 
 
 def _require_text(path: Path, needles: tuple[str, ...], issues: list[str]) -> None:
@@ -50,6 +58,10 @@ def _validate_qr_trader_automation(issues: list[str]) -> None:
     cwds = payload.get("cwds")
     if cwds != [EXPECTED_QR_TRADER_CWD]:
         issues.append(f"qr-trader automation cwds expected {[EXPECTED_QR_TRADER_CWD]!r}, got {cwds!r}")
+    prompt = str(payload.get("prompt") or "")
+    for required_path in EXPECTED_QR_TRADER_GUARDIAN_STARTUP_READS:
+        if required_path not in prompt:
+            issues.append(f"qr-trader automation prompt missing guardian startup read: {required_path}")
 
 
 def _load_toml_payload(text: str) -> dict[str, Any]:
