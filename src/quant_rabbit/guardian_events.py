@@ -477,6 +477,7 @@ def validate_guardian_trigger_contract(
     elif not isinstance(contract.get("entries"), list):
         issues.append(_issue("CONTRACT_ENTRIES_NOT_LIST", "guardian trigger contract entries must be a list"))
 
+    deadline_expired = False
     for index, entry in enumerate(entries):
         prefix = f"entries[{index}]"
         for field_name in (
@@ -502,19 +503,32 @@ def validate_guardian_trigger_contract(
         thesis_state = _thesis_state(entry.get("thesis_state"))
         if thesis_state not in {"ALIVE", "WOUNDED", "INVALIDATED", "EMERGENCY"}:
             issues.append(_issue("CONTRACT_ENTRY_BAD_THESIS_STATE", f"{prefix} thesis_state is unsupported"))
-        if _parse_utc(entry.get("next_review_deadline_utc")) is None:
+        deadline = _parse_utc(entry.get("next_review_deadline_utc"))
+        if deadline is None:
             issues.append(
                 _issue("CONTRACT_ENTRY_BAD_DEADLINE", f"{prefix} next_review_deadline_utc must be ISO UTC")
             )
+        elif deadline <= clock:
+            deadline_expired = True
+            issues.append(_issue("CONTRACT_ENTRY_DEADLINE_EXPIRED", f"{prefix} next_review_deadline_utc is expired"))
         for bucket in CONTRACT_TRIGGER_BUCKETS:
             if bucket not in entry:
                 issues.append(_issue("CONTRACT_ENTRY_TRIGGER_FIELD_MISSING", f"{prefix} missing {bucket}"))
             elif not isinstance(entry.get(bucket), list):
                 issues.append(_issue("CONTRACT_ENTRY_TRIGGER_FIELD_NOT_LIST", f"{prefix} {bucket} must be a list"))
+        if _contract_entry_has_open_exposure(entry):
+            for bucket in ("harvest_triggers", "invalidation_triggers", "emergency_triggers"):
+                if isinstance(entry.get(bucket), list) and not entry.get(bucket):
+                    issues.append(
+                        _issue(
+                            "CONTRACT_ENTRY_OPEN_TRIGGER_EMPTY",
+                            f"{prefix} open exposure needs non-empty {bucket}",
+                        )
+                    )
 
     age_seconds = (clock - generated_at).total_seconds() if generated_at is not None else None
     max_age = int(os.environ.get("QR_GUARDIAN_TRIGGER_CONTRACT_MAX_AGE_SECONDS", DEFAULT_CONTRACT_MAX_AGE_SECONDS))
-    stale = age_seconds is None or age_seconds > max_age
+    stale = age_seconds is None or age_seconds > max_age or deadline_expired
     return {
         "status": "VALID" if not any(issue["severity"] == "BLOCK" for issue in issues) else "INVALID",
         "issues": issues,
@@ -536,7 +550,10 @@ def build_guardian_trigger_contract(
 ) -> dict[str, Any]:
     clock = _utc(now)
     existing = existing_contract if isinstance(existing_contract, dict) else {}
-    preserved = {_contract_entry_key(entry): entry for entry in _contract_entries(existing)}
+    preserved: dict[str, dict[str, Any]] = {}
+    for entry in _contract_entries(existing):
+        preserved[_contract_entry_key(entry)] = entry
+        preserved[_contract_entry_legacy_key(entry)] = entry
     entries: list[dict[str, Any]] = []
     seen: set[str] = set()
 
@@ -557,6 +574,8 @@ def build_guardian_trigger_contract(
             seed_reason="open broker position requires guardian triggers",
             preserved=preserved,
             now=clock,
+            position=position,
+            open_exposure=True,
         )
         seen.add(_contract_entry_key(entry))
         entries.append(entry)
@@ -581,6 +600,8 @@ def build_guardian_trigger_contract(
             seed_reason=f"candidate {result.get('lane_id') or pair} requires trader-defined triggers",
             preserved=preserved,
             now=clock,
+            position={},
+            open_exposure=False,
         )
         key = _contract_entry_key(entry)
         if key in seen:
@@ -1288,6 +1309,18 @@ def _contract_entries(contract: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 def _contract_entry_key(entry: dict[str, Any]) -> str:
+    trade_id = str(entry.get("trade_id") or "").strip()
+    return "|".join(
+        [
+            _pair(entry.get("pair")) or "UNKNOWN",
+            _direction_from_text(entry.get("side")) or "UNKNOWN",
+            trade_id or "NO_TRADE_ID",
+            _slug(str(entry.get("thesis") or "")),
+        ]
+    )
+
+
+def _contract_entry_legacy_key(entry: dict[str, Any]) -> str:
     return "|".join(
         [
             _pair(entry.get("pair")) or "UNKNOWN",
@@ -1295,6 +1328,10 @@ def _contract_entry_key(entry: dict[str, Any]) -> str:
             _slug(str(entry.get("thesis") or "")),
         ]
     )
+
+
+def _contract_entry_has_open_exposure(entry: dict[str, Any]) -> bool:
+    return bool(str(entry.get("trade_id") or "").strip())
 
 
 def _contract_entry_from_seed(
@@ -1307,18 +1344,24 @@ def _contract_entry_from_seed(
     seed_reason: str,
     preserved: dict[str, dict[str, Any]],
     now: datetime,
+    position: dict[str, Any] | None = None,
+    open_exposure: bool = False,
 ) -> dict[str, Any]:
+    position_payload = position if isinstance(position, dict) else {}
     seed = {
         "pair": pair,
         "side": side,
         "thesis": thesis,
         "owner": owner,
         "thesis_state": _thesis_state(thesis_state) if _thesis_state(thesis_state) != "UNKNOWN" else "ALIVE",
+        "trade_id": _position_trade_id(position_payload),
     }
-    prior = preserved.get(_contract_entry_key(seed))
+    prior = preserved.get(_contract_entry_key(seed)) or preserved.get(_contract_entry_legacy_key(seed))
     deadline = now.timestamp() + DEFAULT_CONTRACT_REVIEW_DEADLINE_SECONDS
     base = {
         **seed,
+        "units": _position_units(position_payload),
+        "avg_entry": _position_average_entry(position_payload),
         "harvest_triggers": [],
         "add_triggers": [],
         "no_add_triggers": [],
@@ -1328,16 +1371,18 @@ def _contract_entry_from_seed(
         "next_review_reason": seed_reason,
         "next_review_deadline_utc": datetime.fromtimestamp(deadline, timezone.utc).isoformat(),
     }
+    if open_exposure:
+        base.update(_default_open_position_triggers(base, position_payload, now=now))
     if not isinstance(prior, dict):
-        return base
+        return {key: value for key, value in base.items() if value is not None}
     merged = dict(base)
     for field_name in CONTRACT_TRIGGER_BUCKETS:
-        if isinstance(prior.get(field_name), list):
+        if isinstance(prior.get(field_name), list) and prior[field_name]:
             merged[field_name] = prior[field_name]
     for field_name in ("owner", "thesis_state", "next_review_reason", "next_review_deadline_utc"):
-        if prior.get(field_name):
+        if prior.get(field_name) and (field_name != "next_review_deadline_utc" or _deadline_is_future(prior.get(field_name), now)):
             merged[field_name] = prior[field_name]
-    return merged
+    return {key: value for key, value in merged.items() if value is not None}
 
 
 def _position_contract_thesis(position: dict[str, Any]) -> str:
@@ -1356,6 +1401,189 @@ def _position_contract_state(position: dict[str, Any]) -> str:
     operator_packet = raw.get("operator_manual_position") if isinstance(raw.get("operator_manual_position"), dict) else {}
     state = _thesis_state(operator_packet.get("thesis_state") or position.get("thesis_state"))
     return state if state != "UNKNOWN" else "ALIVE"
+
+
+def _position_trade_id(position: dict[str, Any]) -> str | None:
+    for key in ("trade_id", "id", "tradeID"):
+        value = position.get(key)
+        if value is not None and str(value).strip():
+            return str(value).strip()
+    return None
+
+
+def _position_units(position: dict[str, Any]) -> float | None:
+    for key in ("units", "current_units", "currentUnits"):
+        value = _float(position.get(key))
+        if value is not None:
+            return value
+    return None
+
+
+def _position_average_entry(position: dict[str, Any]) -> float | None:
+    for key in ("avg_entry", "average_entry", "average_entry_price", "price", "entry"):
+        value = _float(position.get(key))
+        if value is not None:
+            return value
+    raw = position.get("raw") if isinstance(position.get("raw"), dict) else {}
+    for key in ("price", "average_entry", "averagePrice"):
+        value = _float(raw.get(key))
+        if value is not None:
+            return value
+    return None
+
+
+def _deadline_is_future(value: Any, now: datetime) -> bool:
+    deadline = _parse_utc(value)
+    return deadline is not None and deadline > now
+
+
+def _default_open_position_triggers(
+    entry: dict[str, Any],
+    position: dict[str, Any],
+    *,
+    now: datetime,
+) -> dict[str, list[dict[str, Any]]]:
+    pair = _pair(entry.get("pair")) or "UNKNOWN"
+    side = _direction_from_text(entry.get("side")) or "UNKNOWN"
+    owner = _contract_owner(entry.get("owner"))
+    thesis_state = _thesis_state(entry.get("thesis_state"))
+    avg_entry = _position_average_entry(position)
+    trade_id = _position_trade_id(position)
+    base_ref = {"trade_id": trade_id, "pair": pair, "side": side}
+    if _is_usd_jpy_162_manual_fade(pair, side, owner, position):
+        return _usd_jpy_manual_fade_triggers(entry, position, now=now)
+    harvest_detail = "profit-side TP/harvest review when current quote reaches the broker TP, declared harvest zone, or positive UPL is outside spread/noise"
+    invalidation_detail = "accepted market evidence that the position thesis is broken; red P/L alone is not invalidation"
+    no_add_detail = "no add while thesis_state is not ALIVE, margin is under pressure, or overlap lacks explicit operator authorization"
+    return {
+        "harvest_triggers": [
+            {
+                **base_ref,
+                "trigger_id": "open_exposure_profit_harvest_review",
+                "status": "PENDING",
+                "kind": "profit_harvest_review",
+                "evidence_required": harvest_detail,
+                "avg_entry": avg_entry,
+                "action_hint": "HARVEST",
+            }
+        ],
+        "no_add_triggers": [
+            {
+                **base_ref,
+                "trigger_id": "open_exposure_no_add_guard",
+                "status": "PENDING",
+                "kind": "no_add_guard",
+                "evidence_required": no_add_detail,
+                "thesis_state": thesis_state,
+                "action_hint": "HOLD",
+            }
+        ],
+        "wounded_triggers": [
+            {
+                **base_ref,
+                "trigger_id": "open_exposure_wounded_review",
+                "status": "PENDING",
+                "kind": "thesis_wounded_review",
+                "evidence_required": "price action materially damages but does not invalidate the thesis",
+                "action_hint": "HOLD",
+            }
+        ],
+        "invalidation_triggers": [
+            {
+                **base_ref,
+                "trigger_id": "open_exposure_invalidation_review",
+                "status": "PENDING",
+                "kind": "thesis_invalidation_review",
+                "evidence_required": invalidation_detail,
+                "action_hint": "REDUCE",
+            }
+        ],
+        "emergency_triggers": [
+            {
+                **base_ref,
+                "trigger_id": "open_exposure_margin_or_nav_emergency",
+                "status": "PENDING",
+                "kind": "margin_or_nav_emergency",
+                "evidence_required": "margin pressure, NAV shock, missing broker truth, or gateway-outside exposure needs immediate trader review",
+                "action_hint": "REDUCE",
+            }
+        ],
+    }
+
+
+def _is_usd_jpy_162_manual_fade(pair: str, side: str, owner: str, position: dict[str, Any]) -> bool:
+    if pair != "USD_JPY" or side != "SHORT" or owner not in {"OPERATOR_MANUAL", "UNKNOWN"}:
+        return False
+    thesis = _position_contract_thesis(position).lower()
+    return "162" in thesis or "manual" in thesis or "operator" in thesis or owner == "OPERATOR_MANUAL"
+
+
+def _usd_jpy_manual_fade_triggers(
+    entry: dict[str, Any],
+    position: dict[str, Any],
+    *,
+    now: datetime,
+) -> dict[str, list[dict[str, Any]]]:
+    # Operator-specified manual USD_JPY 162 fade contract; these are review
+    # triggers only, and omit machine predicates for confirmation-only evidence.
+    trade_id = _position_trade_id(position)
+    avg_entry = _position_average_entry(position)
+    units = _position_units(position)
+    ref = {"trade_id": trade_id, "pair": "USD_JPY", "side": "SHORT", "avg_entry": avg_entry, "units": units}
+    return {
+        "harvest_triggers": [
+            {
+                **ref,
+                "trigger_id": "usd_jpy_162_manual_fade_profit_zone",
+                "status": "PENDING",
+                "kind": "manual_tp_profit_zone",
+                "evidence_required": "USD_JPY trades below the manual fade average entry enough to show positive UPL outside current spread/noise; TP-only profit assistance is allowed",
+                "action_hint": "HARVEST",
+            }
+        ],
+        "no_add_triggers": [
+            {
+                **ref,
+                "trigger_id": "usd_jpy_162_manual_fade_no_add_guard",
+                "status": "PENDING",
+                "kind": "manual_overlap_no_add",
+                "evidence_required": "no fresh bot USD_JPY or JPY-cross add while margin is too high or thesis_state is not ALIVE unless explicit operator manual-overlap authorization exists",
+                "action_hint": "HOLD",
+            }
+        ],
+        "wounded_triggers": [
+            {
+                **ref,
+                "trigger_id": "usd_jpy_162_manual_fade_wounded_m5_hold_above_figure",
+                "status": "PENDING",
+                "kind": "major_figure_wounded",
+                "zone": "162.00 figure / upper battle zone",
+                "confirmation_required": "M5 holds above the 162.00 figure/upper battle zone rather than a wick-only stop run",
+                "action_hint": "HOLD",
+            }
+        ],
+        "invalidation_triggers": [
+            {
+                **ref,
+                "trigger_id": "usd_jpy_162_manual_fade_invalidated_accepted_break",
+                "status": "PENDING",
+                "kind": "major_figure_invalidation",
+                "zone": "accepted break above 162.00 figure",
+                "confirmation_required": "accepted break above the 162.00 figure with cross-JPY confirmation; red P/L or a wick/touch is not enough",
+                "action_hint": "REDUCE",
+            }
+        ],
+        "emergency_triggers": [
+            {
+                **ref,
+                "trigger_id": "usd_jpy_162_manual_fade_margin_nav_emergency",
+                "status": "PENDING",
+                "kind": "margin_nav_emergency",
+                "evidence_required": "margin/NAV pressure crosses the gateway risk cap or broker truth becomes unavailable; trader review only, no direct close",
+                "action_hint": "REDUCE",
+            }
+        ],
+    }
 
 
 def _contract_owner(value: Any) -> str:

@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -54,6 +55,7 @@ class DispatcherPaths:
     log: Path
     codex_home: Path
     codex_output: Path
+    codex_explicit_output: Path
     live_root: Path
     live_lock: Path
 
@@ -75,6 +77,7 @@ class DispatcherPaths:
             log=root / "logs" / "guardian_wake_dispatcher.log",
             codex_home=root / "data" / "codex_guardian_home",
             codex_output=root / "data" / "guardian_wake_codex_last_message.md",
+            codex_explicit_output=root / "data" / "guardian_wake_codex_explicit_receipt.json",
             live_root=live,
             live_lock=live / ".quant_rabbit_live.lock",
         )
@@ -86,6 +89,7 @@ def run_dispatcher(
     now: datetime | None = None,
     env: dict[str, str] | None = None,
     subprocess_run: Callable[..., Any] = subprocess.run,
+    snapshot_refresh_run: Callable[..., Any] | None = None,
 ) -> dict[str, Any]:
     clock = _utc(now)
     environ = env if env is not None else os.environ
@@ -170,13 +174,34 @@ def run_dispatcher(
 
     freshness = _broker_snapshot_freshness(broker_snapshot, now=clock, env=environ)
     if not freshness["fresh"]:
+        refresh = _refresh_broker_snapshot(
+            paths=paths,
+            env=environ,
+            subprocess_run=snapshot_refresh_run or subprocess.run,
+        )
+        if refresh["status"] == "REFRESHED":
+            broker_snapshot = _load_json(paths.broker_snapshot)
+            freshness = _broker_snapshot_freshness(broker_snapshot, now=clock, env=environ)
+            freshness["refresh_attempt"] = refresh
+        else:
+            freshness["refresh_attempt"] = refresh
+    if not freshness["fresh"]:
         result = {
             **result_base,
             "status": "BROKER_SNAPSHOT_STALE",
             "wake_gpt": True,
             "selected_event": selected,
             "broker_snapshot_freshness": freshness,
+            "queued_for_active_trader": True,
+            "queue_reason": "stale broker snapshot; GPT wake not started because stale broker truth must not enter the prompt",
         }
+        _mark_escalation_queued(
+            paths.escalation,
+            escalation,
+            result,
+            now=clock,
+            reason="stale broker snapshot; GPT wake not started",
+        )
         _write_action_review(paths.action_review, result)
         _record_state(paths.dispatcher_state, dispatcher_state, result)
         _append_log(paths.log, result)
@@ -202,11 +227,14 @@ def run_dispatcher(
         attempt="initial",
     )
 
-    parsed = _parse_codex_receipt(codex.get("last_message") or "")
+    parsed = _parse_codex_result(codex)
     codex_attempts = [codex]
     repair_attempted = False
     repair_skipped: dict[str, Any] | None = None
-    if not parsed["valid"]:
+    if not parsed["valid"] and parsed.get("error") not in {
+        "CODEX_TIMEOUT",
+        "CODEX_AUTH_OR_SANDBOX_FAILURE",
+    }:
         retry_lock = _active_live_lock(paths.live_lock)
         if retry_lock["active"]:
             queued = {
@@ -249,7 +277,7 @@ def run_dispatcher(
             attempt="repair",
         )
         codex_attempts.append(repair_codex)
-        parsed = _parse_codex_receipt(repair_codex.get("last_message") or "")
+        parsed = _parse_codex_result(repair_codex)
         codex = repair_codex
     events = _events_from_payload(events_payload)
     review = None
@@ -502,6 +530,48 @@ def _prepare_codex_home(codex_home: Path, *, live_root: Path) -> None:
         config_path.write_text(config)
 
 
+def _refresh_broker_snapshot(
+    *,
+    paths: DispatcherPaths,
+    env: dict[str, str],
+    subprocess_run: Callable[..., Any],
+) -> dict[str, Any]:
+    if env.get("QR_GUARDIAN_WAKE_DISABLE_SNAPSHOT_REFRESH", "0") == "1":
+        return {"status": "DISABLED", "reason": "QR_GUARDIAN_WAKE_DISABLE_SNAPSHOT_REFRESH=1"}
+    python_bin = env.get("QR_PYTHON", "python3")
+    cmd = [
+        python_bin,
+        "-m",
+        "quant_rabbit.cli",
+        "broker-snapshot",
+        "--output",
+        str(paths.broker_snapshot),
+    ]
+    run_env = dict(env)
+    run_env["PYTHONPATH"] = str(paths.root / "src")
+    timeout = int(env.get("QR_GUARDIAN_WAKE_SNAPSHOT_REFRESH_TIMEOUT_SECONDS", "90"))
+    try:
+        proc = subprocess_run(cmd, cwd=str(paths.root), capture_output=True, text=True, timeout=timeout, env=run_env)
+    except subprocess.TimeoutExpired as exc:
+        return {
+            "status": "TIMEOUT",
+            "command": cmd,
+            "timeout_seconds": timeout,
+            "stdout_tail": _decoded_tail(exc.stdout),
+            "stderr_tail": _decoded_tail(exc.stderr),
+        }
+    except Exception as exc:  # noqa: BLE001
+        return {"status": "EXCEPTION", "command": cmd, "error": str(exc)}
+    return {
+        "status": "REFRESHED" if proc.returncode == 0 and paths.broker_snapshot.exists() else "FAILED",
+        "command": cmd,
+        "returncode": proc.returncode,
+        "stdout_tail": (proc.stdout or "")[-1000:],
+        "stderr_tail": (proc.stderr or "")[-1000:],
+        "read_only_broker_operation": True,
+    }
+
+
 def _build_prompt(
     *,
     paths: DispatcherPaths,
@@ -528,6 +598,8 @@ def _build_prompt(
     }
     return (
         template.rstrip()
+        + "\n\nIf the final-message capture is unavailable, also return the same JSON object as the final assistant message. "
+        + f"If an explicit output file is available, use this path for the JSON object only: {paths.codex_explicit_output}.\n"
         + "\n\n# Dispatcher Context\n\n"
         + "Use only the following local artifacts. Do not request web, OANDA, broker, or API access.\n\n"
         + "```json\n"
@@ -590,6 +662,8 @@ def _run_codex(
 ) -> dict[str, Any]:
     paths.codex_output.parent.mkdir(parents=True, exist_ok=True)
     paths.codex_output.write_text("")
+    paths.codex_explicit_output.parent.mkdir(parents=True, exist_ok=True)
+    paths.codex_explicit_output.write_text("")
     codex_bin = env.get("QR_GUARDIAN_WAKE_CODEX_BIN") or shutil.which("codex") or "codex"
     timeout = int(env.get("QR_GUARDIAN_WAKE_CODEX_TIMEOUT_SECONDS", CODEX_TIMEOUT_SECONDS))
     cmd = [
@@ -602,14 +676,55 @@ def _run_codex(
         "read-only",
         "-C",
         str(paths.live_root),
+        "--json",
         "--output-last-message",
         str(paths.codex_output),
     ]
     run_env = dict(env)
     run_env["CODEX_HOME"] = str(paths.codex_home)
     run_env["CODEX_DISABLE_UPDATE_CHECK"] = "1"
+    session_before = _latest_session_jsonl(paths.codex_home)
+    session_before_mtime = _path_mtime(session_before)
     try:
         proc = subprocess_run(cmd, input=prompt, capture_output=True, text=True, timeout=timeout, env=run_env)
+    except subprocess.TimeoutExpired as exc:
+        stdout_text = _decode_process_text(exc.stdout)
+        stderr_text = _decode_process_text(exc.stderr)
+        session_message, session_path = _latest_session_assistant_message(
+            paths.codex_home,
+            previous=session_before,
+            previous_mtime=session_before_mtime,
+        )
+        explicit_message = _read_text(paths.codex_explicit_output).strip()
+        raw_last_message = _read_text(paths.codex_output).strip()
+        candidate, source = _first_message_candidate(
+            [
+                ("output-last-message", raw_last_message),
+                ("explicit-output-file", explicit_message),
+                ("stdout-assistant", _extract_stdout_assistant_message(stdout_text)),
+                ("session-jsonl-assistant", session_message),
+            ]
+        )
+        return {
+            "status": "CODEX_TIMEOUT",
+            "attempt": attempt,
+            "command": cmd,
+            "returncode": None,
+            "stderr_tail": stderr_text[-1000:],
+            "stdout_tail": stdout_text[-1000:],
+            "raw_stdout_excerpt": stdout_text[-2000:],
+            "raw_stderr_excerpt": stderr_text[-2000:],
+            "output_path": str(paths.codex_output),
+            "explicit_output_path": str(paths.codex_explicit_output),
+            "session_jsonl_path": str(session_path) if session_path else None,
+            "last_message": candidate,
+            "last_message_source": source,
+            "last_message_file_empty": not raw_last_message,
+            "explicit_output_file_empty": not explicit_message,
+            "stdout_fallback_used": source == "stdout-assistant",
+            "session_jsonl_fallback_used": source == "session-jsonl-assistant",
+            "timeout_seconds": timeout,
+        }
     except Exception as exc:
         return {
             "status": "CODEX_EXCEPTION",
@@ -621,18 +736,43 @@ def _run_codex(
             "raw_stdout_excerpt": "",
             "raw_stderr_excerpt": str(exc)[-2000:],
             "output_path": str(paths.codex_output),
+            "explicit_output_path": str(paths.codex_explicit_output),
+            "session_jsonl_path": None,
             "last_message": "",
+            "last_message_source": None,
             "last_message_file_empty": True,
+            "explicit_output_file_empty": True,
             "stdout_fallback_used": False,
+            "session_jsonl_fallback_used": False,
         }
     raw_last_message = _read_text(paths.codex_output)
+    explicit_message = _read_text(paths.codex_explicit_output)
     stdout_text = str(getattr(proc, "stdout", "") or "")
     stderr_text = str(getattr(proc, "stderr", "") or "")
+    stdout_message = _extract_stdout_assistant_message(stdout_text)
+    session_message, session_path = _latest_session_assistant_message(
+        paths.codex_home,
+        previous=session_before,
+        previous_mtime=session_before_mtime,
+    )
     last_message_file_empty = not raw_last_message.strip()
-    stdout_fallback_used = last_message_file_empty and bool(stdout_text.strip())
-    last_message = raw_last_message.strip() or stdout_text.strip()
+    explicit_output_file_empty = not explicit_message.strip()
+    last_message, last_message_source = _first_message_candidate(
+        [
+            ("output-last-message", raw_last_message),
+            ("explicit-output-file", explicit_message),
+            ("stdout-assistant", stdout_message),
+            ("session-jsonl-assistant", session_message),
+        ]
+    )
+    stdout_fallback_used = last_message_source == "stdout-assistant"
+    session_jsonl_fallback_used = last_message_source == "session-jsonl-assistant"
     if getattr(proc, "returncode", 1) == 0 and last_message:
         status = "OK"
+    elif _codex_auth_or_sandbox_failed(getattr(proc, "returncode", 1), stderr_text, stdout_text):
+        status = "CODEX_AUTH_OR_SANDBOX_FAILURE"
+    elif stdout_text.strip() or session_path is not None:
+        status = "CODEX_NO_ASSISTANT_MESSAGE"
     elif getattr(proc, "returncode", 1) == 0 and not last_message:
         status = "CODEX_EMPTY_LAST_MESSAGE"
     else:
@@ -647,15 +787,20 @@ def _run_codex(
         "raw_stdout_excerpt": stdout_text[-2000:],
         "raw_stderr_excerpt": stderr_text[-2000:],
         "output_path": str(paths.codex_output),
+        "explicit_output_path": str(paths.codex_explicit_output),
+        "session_jsonl_path": str(session_path) if session_path else None,
         "last_message": last_message,
+        "last_message_source": last_message_source,
         "last_message_file_empty": last_message_file_empty,
+        "explicit_output_file_empty": explicit_output_file_empty,
         "stdout_fallback_used": stdout_fallback_used,
+        "session_jsonl_fallback_used": session_jsonl_fallback_used,
     }
 
 
-def _parse_codex_receipt(text: str) -> dict[str, Any]:
+def _parse_codex_receipt(text: str, *, empty_error: str = "CODEX_EMPTY_LAST_MESSAGE") -> dict[str, Any]:
     if not text.strip():
-        return {"valid": False, "error": "CODEX_EMPTY_LAST_MESSAGE", "raw_output_excerpt": ""}
+        return {"valid": False, "error": empty_error, "raw_output_excerpt": ""}
     payload = _extract_json_object(text)
     if payload is None:
         return {"valid": False, "error": "CODEX_NO_JSON_RECEIPT", "raw_output_excerpt": text[:2000]}
@@ -682,6 +827,186 @@ def _parse_codex_receipt(text: str) -> dict[str, Any]:
     receipt["gateway_required"] = True
     receipt["no_direct_oanda"] = True
     return {"valid": True, "receipt": receipt}
+
+
+def _parse_codex_result(codex: dict[str, Any]) -> dict[str, Any]:
+    status = str(codex.get("status") or "").upper()
+    if status in {"CODEX_TIMEOUT", "CODEX_AUTH_OR_SANDBOX_FAILURE"}:
+        return {
+            "valid": False,
+            "error": status,
+            "raw_output_excerpt": str(codex.get("last_message") or codex.get("raw_stdout_excerpt") or "")[:2000],
+        }
+    return _parse_codex_receipt(codex.get("last_message") or "", empty_error=_empty_parse_error(codex))
+
+
+def _empty_parse_error(codex: dict[str, Any]) -> str:
+    status = str(codex.get("status") or "").upper()
+    if status in {"CODEX_TIMEOUT", "CODEX_AUTH_OR_SANDBOX_FAILURE", "CODEX_NO_ASSISTANT_MESSAGE"}:
+        return status
+    return "CODEX_EMPTY_LAST_MESSAGE"
+
+
+def _first_message_candidate(candidates: list[tuple[str, str]]) -> tuple[str, str | None]:
+    for source, value in candidates:
+        text = str(value or "").strip()
+        if text:
+            return text, source
+    return "", None
+
+
+def _extract_stdout_assistant_message(text: str) -> str:
+    stripped = text.strip()
+    if not stripped:
+        return ""
+    if stripped.startswith("{"):
+        try:
+            payload = json.loads(stripped)
+        except json.JSONDecodeError:
+            payload = None
+        if isinstance(payload, dict) and ("action" in payload or "receipt" in payload):
+            return stripped
+    jsonl_message = _extract_assistant_message_from_jsonl(stripped.splitlines())
+    if jsonl_message:
+        return jsonl_message
+    if stripped.startswith("{") and _extract_json_object(stripped) is not None:
+        return stripped
+    return _extract_transcript_assistant_message(stripped)
+
+
+def _latest_session_jsonl(codex_home: Path) -> Path | None:
+    sessions = codex_home / "sessions"
+    try:
+        files = [path for path in sessions.rglob("*.jsonl") if path.is_file()]
+    except OSError:
+        return None
+    if not files:
+        return None
+    return max(files, key=lambda item: item.stat().st_mtime)
+
+
+def _path_mtime(path: Path | None) -> float | None:
+    if path is None:
+        return None
+    try:
+        return path.stat().st_mtime
+    except OSError:
+        return None
+
+
+def _latest_session_assistant_message(
+    codex_home: Path,
+    *,
+    previous: Path | None = None,
+    previous_mtime: float | None = None,
+) -> tuple[str, Path | None]:
+    path = _latest_session_jsonl(codex_home)
+    if path is None:
+        return "", None
+    if previous is not None:
+        try:
+            if path == previous and previous_mtime is not None and path.stat().st_mtime <= previous_mtime:
+                return "", path
+        except OSError:
+            return "", path
+    try:
+        lines = path.read_text().splitlines()
+    except OSError:
+        return "", path
+    return _extract_assistant_message_from_jsonl(lines), path
+
+
+def _extract_assistant_message_from_jsonl(lines: list[str]) -> str:
+    messages: list[str] = []
+    for line in lines:
+        line = line.strip()
+        if not line or not line.startswith("{"):
+            continue
+        try:
+            payload = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        text = _assistant_text_from_event(payload)
+        if text:
+            messages.append(text)
+    return messages[-1].strip() if messages else ""
+
+
+def _assistant_text_from_event(payload: Any) -> str:
+    if isinstance(payload, list):
+        for item in reversed(payload):
+            text = _assistant_text_from_event(item)
+            if text:
+                return text
+        return ""
+    if not isinstance(payload, dict):
+        return ""
+    role = str(payload.get("role") or "").lower()
+    event_type = str(payload.get("type") or payload.get("record_type") or "").lower()
+    if role == "assistant" or event_type in {"agent_message", "assistant_message", "final_answer"}:
+        return _content_text(payload.get("content") or payload.get("message") or payload.get("text"))
+    for key in ("message", "item", "delta", "event"):
+        text = _assistant_text_from_event(payload.get(key))
+        if text:
+            return text
+    return ""
+
+
+def _content_text(value: Any) -> str:
+    if isinstance(value, str):
+        return value
+    if isinstance(value, list):
+        parts: list[str] = []
+        for item in value:
+            text = _content_text(item)
+            if text:
+                parts.append(text)
+        return "\n".join(parts)
+    if isinstance(value, dict):
+        for key in ("text", "content", "message", "output_text"):
+            text = _content_text(value.get(key))
+            if text:
+                return text
+    return ""
+
+
+def _extract_transcript_assistant_message(text: str) -> str:
+    marker = re.search(r"(?im)^\[[^\n\]]+\]\s+(?:assistant|codex)\s*$", text)
+    if not marker:
+        return ""
+    return text[marker.end() :].strip()
+
+
+def _codex_auth_or_sandbox_failed(returncode: int | None, stderr_text: str, stdout_text: str) -> bool:
+    if returncode == 0:
+        return False
+    haystack = f"{stderr_text}\n{stdout_text}".lower()
+    return any(
+        token in haystack
+        for token in (
+            "auth",
+            "login",
+            "not authenticated",
+            "authentication",
+            "sandbox",
+            "permission denied",
+            "operation not permitted",
+            "not trusted",
+            "approval",
+        )
+    )
+
+
+def _decode_process_text(value: Any) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, bytes):
+        return value.decode("utf-8", errors="replace")
+    return str(value)
+
+
+def _decoded_tail(value: Any, *, limit: int = 1000) -> str:
+    return _decode_process_text(value)[-limit:]
 
 
 def _receipt_parse_issues(receipt: dict[str, Any]) -> list[dict[str, str]]:
@@ -735,15 +1060,16 @@ def _extract_json_object(text: str) -> dict[str, Any] | None:
         return payload if isinstance(payload, dict) else None
     except json.JSONDecodeError:
         pass
-    start = stripped.find("{")
-    end = stripped.rfind("}")
-    if start < 0 or end <= start:
-        return None
-    try:
-        payload = json.loads(stripped[start : end + 1])
-    except json.JSONDecodeError:
-        return None
-    return payload if isinstance(payload, dict) else None
+    decoder = json.JSONDecoder()
+    found: list[dict[str, Any]] = []
+    for match in re.finditer(r"\{", stripped):
+        try:
+            payload, _ = decoder.raw_decode(stripped[match.start() :])
+        except json.JSONDecodeError:
+            continue
+        if isinstance(payload, dict):
+            found.append(payload)
+    return found[-1] if found else None
 
 
 def _events_from_payload(payload: dict[str, Any]) -> list[GuardianEvent]:
@@ -867,7 +1193,10 @@ def _write_action_review(path: Path, payload: dict[str, Any]) -> None:
                 [
                     f"- Attempt {index}: `{attempt.get('attempt') or 'unknown'}` status=`{attempt.get('status')}` returncode=`{attempt.get('returncode')}`",
                     f"  - output path: `{attempt.get('output_path')}`",
-                    f"  - last-message empty: `{attempt.get('last_message_file_empty')}` stdout fallback: `{attempt.get('stdout_fallback_used')}`",
+                    f"  - explicit output path: `{attempt.get('explicit_output_path')}`",
+                    f"  - session JSONL: `{attempt.get('session_jsonl_path') or 'none'}`",
+                    f"  - last-message source: `{attempt.get('last_message_source') or 'none'}`",
+                    f"  - last-message empty: `{attempt.get('last_message_file_empty')}` explicit empty: `{attempt.get('explicit_output_file_empty')}` stdout fallback: `{attempt.get('stdout_fallback_used')}` session fallback: `{attempt.get('session_jsonl_fallback_used')}`",
                 ]
             )
             stdout_excerpt = str(attempt.get("raw_stdout_excerpt") or attempt.get("stdout_tail") or "").strip()
@@ -984,6 +1313,7 @@ def _paths_payload(paths: DispatcherPaths) -> dict[str, str]:
         "guardian_action_review": str(paths.action_review),
         "dispatcher_state": str(paths.dispatcher_state),
         "codex_home": str(paths.codex_home),
+        "codex_explicit_output": str(paths.codex_explicit_output),
         "live_root": str(paths.live_root),
     }
 
@@ -1096,6 +1426,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--log", type=Path, default=None)
     parser.add_argument("--codex-home", type=Path, default=None)
     parser.add_argument("--codex-output", type=Path, default=None)
+    parser.add_argument("--codex-explicit-output", type=Path, default=None)
     parser.add_argument("--live-lock", type=Path, default=None)
     return parser.parse_args(argv)
 
@@ -1117,6 +1448,7 @@ def paths_from_args(args: argparse.Namespace) -> DispatcherPaths:
         log=args.log or paths.log,
         codex_home=args.codex_home or paths.codex_home,
         codex_output=args.codex_output or paths.codex_output,
+        codex_explicit_output=args.codex_explicit_output or paths.codex_explicit_output,
         live_root=paths.live_root,
         live_lock=args.live_lock or paths.live_lock,
     )

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
 import tempfile
 import unittest
 from datetime import datetime, timedelta, timezone
@@ -151,6 +152,69 @@ class GuardianWakeDispatcherTest(unittest.TestCase):
             self.assertEqual(len(calls), 1)
             self.assertTrue(paths.action_receipt.exists())
 
+    def test_jsonl_stdout_assistant_message_beats_trailing_status_event(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = _fixture(Path(tmp))
+            calls: list[list[str]] = []
+            stdout = "\n".join(
+                [
+                    json.dumps({"type": "session_started", "session_id": "s1"}),
+                    json.dumps({"type": "agent_message", "message": _valid_receipt()}),
+                    json.dumps({"type": "task_complete", "status": "success"}),
+                ]
+            )
+
+            result = run_dispatcher(paths=paths, now=NOW, env={}, subprocess_run=_fake_codex_stdout(calls, stdout))
+
+            self.assertEqual(result["status"], "RECEIPT_WRITTEN")
+            self.assertTrue(result["codex"]["stdout_fallback_used"])
+            self.assertEqual(result["codex"]["last_message_source"], "stdout-assistant")
+            self.assertTrue(paths.action_receipt.exists())
+
+    def test_output_last_message_json_succeeds(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = _fixture(Path(tmp))
+            calls: list[list[str]] = []
+
+            result = run_dispatcher(paths=paths, now=NOW, env={}, subprocess_run=_fake_codex(calls, _valid_receipt()))
+
+            self.assertEqual(result["status"], "RECEIPT_WRITTEN")
+            self.assertEqual(result["codex"]["last_message_source"], "output-last-message")
+            self.assertTrue(paths.action_receipt.exists())
+
+    def test_explicit_output_file_json_succeeds(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = _fixture(Path(tmp))
+            calls: list[list[str]] = []
+
+            result = run_dispatcher(
+                paths=paths,
+                now=NOW,
+                env={},
+                subprocess_run=_fake_codex_explicit(paths, calls, _valid_receipt()),
+            )
+
+            self.assertEqual(result["status"], "RECEIPT_WRITTEN")
+            self.assertEqual(result["codex"]["last_message_source"], "explicit-output-file")
+            self.assertTrue(paths.action_receipt.exists())
+
+    def test_session_jsonl_assistant_json_succeeds(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = _fixture(Path(tmp))
+            calls: list[list[str]] = []
+
+            result = run_dispatcher(
+                paths=paths,
+                now=NOW,
+                env={},
+                subprocess_run=_fake_codex_session(paths, calls, _valid_receipt()),
+            )
+
+            self.assertEqual(result["status"], "RECEIPT_WRITTEN")
+            self.assertEqual(result["codex"]["last_message_source"], "session-jsonl-assistant")
+            self.assertTrue(result["codex"]["session_jsonl_fallback_used"])
+            self.assertTrue(paths.action_receipt.exists())
+
     def test_empty_output_becomes_codex_empty_last_message(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             paths = _fixture(Path(tmp))
@@ -177,6 +241,89 @@ class GuardianWakeDispatcherTest(unittest.TestCase):
 
             self.assertEqual(result["status"], "PARSE_FAILED")
             self.assertEqual(result["parse"]["error"], "CODEX_NO_JSON_RECEIPT")
+            self.assertEqual(len(calls), 2)
+            self.assertFalse(paths.action_receipt.exists())
+
+    def test_banner_only_output_retries_once_and_can_recover(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = _fixture(Path(tmp))
+            calls: list[list[str]] = []
+
+            result = run_dispatcher(
+                paths=paths,
+                now=NOW,
+                env={},
+                subprocess_run=_fake_codex_stdout_sequence(
+                    calls,
+                    ["OpenAI Codex\nworking in read-only mode\n", _valid_receipt()],
+                ),
+            )
+
+            self.assertEqual(result["status"], "RECEIPT_WRITTEN")
+            self.assertEqual(len(calls), 2)
+            self.assertTrue(paths.action_receipt.exists())
+
+    def test_assistant_text_without_json_becomes_no_json_receipt(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = _fixture(Path(tmp))
+            calls: list[list[str]] = []
+
+            result = run_dispatcher(
+                paths=paths,
+                now=NOW,
+                env={},
+                subprocess_run=_fake_codex_session(paths, calls, "I cannot recommend action."),
+            )
+
+            self.assertEqual(result["status"], "PARSE_FAILED")
+            self.assertEqual(result["parse"]["error"], "CODEX_NO_JSON_RECEIPT")
+
+    def test_session_jsonl_without_assistant_is_classified(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = _fixture(Path(tmp))
+            calls: list[list[str]] = []
+
+            result = run_dispatcher(
+                paths=paths,
+                now=NOW,
+                env={},
+                subprocess_run=_fake_codex_session_without_assistant(paths, calls),
+            )
+
+            self.assertEqual(result["status"], "PARSE_FAILED")
+            self.assertEqual(result["parse"]["error"], "CODEX_NO_ASSISTANT_MESSAGE")
+
+    def test_codex_timeout_is_classified_without_retry(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = _fixture(Path(tmp))
+            calls: list[list[str]] = []
+
+            def fake_timeout(cmd, *, input, capture_output, text, timeout, env):
+                calls.append(list(cmd))
+                raise subprocess.TimeoutExpired(cmd=cmd, timeout=timeout, output="", stderr="still running")
+
+            result = run_dispatcher(paths=paths, now=NOW, env={}, subprocess_run=fake_timeout)
+
+            self.assertEqual(result["status"], "PARSE_FAILED")
+            self.assertEqual(result["parse"]["error"], "CODEX_TIMEOUT")
+            self.assertEqual(len(calls), 1)
+            self.assertFalse(paths.action_receipt.exists())
+
+    def test_codex_auth_or_sandbox_failure_is_classified_without_retry(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = _fixture(Path(tmp))
+            calls: list[list[str]] = []
+
+            result = run_dispatcher(
+                paths=paths,
+                now=NOW,
+                env={},
+                subprocess_run=_fake_codex_failed(calls, stderr="not authenticated; login required"),
+            )
+
+            self.assertEqual(result["status"], "PARSE_FAILED")
+            self.assertEqual(result["parse"]["error"], "CODEX_AUTH_OR_SANDBOX_FAILURE")
+            self.assertEqual(len(calls), 1)
             self.assertFalse(paths.action_receipt.exists())
 
     def test_one_repair_retry_occurs(self) -> None:
@@ -226,6 +373,75 @@ class GuardianWakeDispatcherTest(unittest.TestCase):
             self.assertTrue(result["repair_attempted"])
             self.assertEqual(len(calls), 2)
             self.assertTrue(paths.action_receipt.exists())
+
+    def test_empty_output_retries_once_and_recovers(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = _fixture(Path(tmp))
+            calls: list[list[str]] = []
+
+            result = run_dispatcher(
+                paths=paths,
+                now=NOW,
+                env={},
+                subprocess_run=_fake_codex_sequence(calls, ["", _valid_receipt()]),
+            )
+
+            self.assertEqual(result["status"], "RECEIPT_WRITTEN")
+            self.assertEqual(len(calls), 2)
+            self.assertTrue(paths.action_receipt.exists())
+
+    def test_stale_broker_snapshot_refreshes_before_prompt(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = _fixture(Path(tmp))
+            stale = json.loads(paths.broker_snapshot.read_text())
+            stale["fetched_at_utc"] = (NOW - timedelta(minutes=10)).isoformat()
+            paths.broker_snapshot.write_text(json.dumps(stale))
+            codex_calls: list[list[str]] = []
+            refresh_calls: list[list[str]] = []
+
+            def fake_refresh(cmd, *, cwd, capture_output, text, timeout, env):
+                refresh_calls.append(list(cmd))
+                fresh = dict(stale)
+                fresh["fetched_at_utc"] = NOW.isoformat()
+                paths.broker_snapshot.write_text(json.dumps(fresh))
+                return SimpleNamespace(returncode=0, stdout="refreshed", stderr="")
+
+            result = run_dispatcher(
+                paths=paths,
+                now=NOW,
+                env={},
+                subprocess_run=_fake_codex(codex_calls, _valid_receipt()),
+                snapshot_refresh_run=fake_refresh,
+            )
+
+            self.assertEqual(result["status"], "RECEIPT_WRITTEN")
+            self.assertEqual(len(refresh_calls), 1)
+            self.assertEqual(len(codex_calls), 1)
+            self.assertTrue(result["broker_snapshot_freshness"]["fresh"])
+
+    def test_stale_broker_snapshot_queues_without_prompt_when_refresh_fails(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = _fixture(Path(tmp))
+            stale = json.loads(paths.broker_snapshot.read_text())
+            stale["fetched_at_utc"] = (NOW - timedelta(minutes=10)).isoformat()
+            paths.broker_snapshot.write_text(json.dumps(stale))
+            codex_calls: list[list[str]] = []
+
+            def fake_refresh(cmd, *, cwd, capture_output, text, timeout, env):
+                return SimpleNamespace(returncode=1, stdout="", stderr="missing read credentials")
+
+            result = run_dispatcher(
+                paths=paths,
+                now=NOW,
+                env={},
+                subprocess_run=_fake_codex(codex_calls, _valid_receipt()),
+                snapshot_refresh_run=fake_refresh,
+            )
+
+            self.assertEqual(result["status"], "BROKER_SNAPSHOT_STALE")
+            self.assertTrue(result["queued_for_active_trader"])
+            self.assertEqual(codex_calls, [])
+            self.assertFalse(paths.action_receipt.exists())
 
     def test_active_lock_after_invalid_output_queues_instead_of_retrying(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -474,6 +690,63 @@ def _fake_codex_stdout(calls: list[list[str]], stdout: str):
     return run
 
 
+def _fake_codex_explicit(paths: DispatcherPaths, calls: list[list[str]], output: str):
+    def run(cmd, *, input, capture_output, text, timeout, env):
+        calls.append(list(cmd))
+        out_path = Path(cmd[cmd.index("--output-last-message") + 1])
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        out_path.write_text("")
+        paths.codex_explicit_output.parent.mkdir(parents=True, exist_ok=True)
+        paths.codex_explicit_output.write_text(output)
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    return run
+
+
+def _fake_codex_session(paths: DispatcherPaths, calls: list[list[str]], assistant_text: str):
+    def run(cmd, *, input, capture_output, text, timeout, env):
+        calls.append(list(cmd))
+        out_path = Path(cmd[cmd.index("--output-last-message") + 1])
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        out_path.write_text("")
+        session_dir = paths.codex_home / "sessions" / "2026" / "06" / "30"
+        session_dir.mkdir(parents=True, exist_ok=True)
+        session_path = session_dir / f"rollout-{len(calls)}.jsonl"
+        session_path.write_text(
+            json.dumps({"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": assistant_text}]})
+            + "\n"
+        )
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    return run
+
+
+def _fake_codex_session_without_assistant(paths: DispatcherPaths, calls: list[list[str]]):
+    def run(cmd, *, input, capture_output, text, timeout, env):
+        calls.append(list(cmd))
+        out_path = Path(cmd[cmd.index("--output-last-message") + 1])
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        out_path.write_text("")
+        session_dir = paths.codex_home / "sessions" / "2026" / "06" / "30"
+        session_dir.mkdir(parents=True, exist_ok=True)
+        session_path = session_dir / f"rollout-no-assistant-{len(calls)}.jsonl"
+        session_path.write_text(json.dumps({"type": "message", "role": "user", "content": "prompt"}) + "\n")
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    return run
+
+
+def _fake_codex_failed(calls: list[list[str]], *, stderr: str):
+    def run(cmd, *, input, capture_output, text, timeout, env):
+        calls.append(list(cmd))
+        out_path = Path(cmd[cmd.index("--output-last-message") + 1])
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        out_path.write_text("")
+        return SimpleNamespace(returncode=1, stdout="", stderr=stderr)
+
+    return run
+
+
 def _fake_codex_sequence(calls: list[list[str]], outputs: list[str]):
     remaining = list(outputs)
 
@@ -484,6 +757,20 @@ def _fake_codex_sequence(calls: list[list[str]], outputs: list[str]):
         out_path.parent.mkdir(parents=True, exist_ok=True)
         out_path.write_text(output)
         return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    return run
+
+
+def _fake_codex_stdout_sequence(calls: list[list[str]], outputs: list[str]):
+    remaining = list(outputs)
+
+    def run(cmd, *, input, capture_output, text, timeout, env):
+        calls.append(list(cmd))
+        output = remaining.pop(0) if remaining else outputs[-1]
+        out_path = Path(cmd[cmd.index("--output-last-message") + 1])
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        out_path.write_text("")
+        return SimpleNamespace(returncode=0, stdout=output, stderr="")
 
     return run
 

@@ -11,6 +11,8 @@ Output contract:
 - Do not output Markdown.
 - Do not output code fences.
 - Do not output explanations before or after the JSON.
+- Do not output prose.
+- Do not explain your choice.
 - If no action is appropriate, return `NO_ACTION` with the same required fields.
 
 Required JSON object shape:
@@ -55,3 +57,23 @@ Rules:
   averaging into that exposure.
 - If evidence is insufficient or stale, choose `HOLD` or `NO_ACTION`.
 - Do not add fields outside the required JSON object shape.
+
+Minimal valid fallback receipt:
+
+If uncertain, return exactly this shape with the current event values filled in:
+
+{
+  "action": "NO_ACTION",
+  "event_id": "...",
+  "new_information": false,
+  "pair": "...",
+  "side": "...",
+  "thesis_state": "WOUNDED",
+  "reason": "No safe action from current evidence",
+  "invalidation_evidence": "not established",
+  "harvest_trigger": "not reached",
+  "margin_state": "...",
+  "ownership": "...",
+  "gateway_required": true,
+  "no_direct_oanda": true
+}

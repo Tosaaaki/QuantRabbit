@@ -257,6 +257,163 @@ class GuardianEventRouterTest(unittest.TestCase):
 
         self.assertEqual(contract["entries"][0]["harvest_triggers"], existing["entries"][0]["harvest_triggers"])
 
+    def test_open_exposure_gets_non_empty_trigger_arrays(self) -> None:
+        snapshot = _snapshot(
+            positions=[
+                {
+                    "pair": "EUR_USD",
+                    "side": "LONG",
+                    "units": 1000,
+                    "owner": "trader",
+                    "thesis": "range long",
+                    "trade_id": "trade-1",
+                    "price": 1.171,
+                }
+            ]
+        )
+
+        contract = build_guardian_trigger_contract(snapshot=snapshot, order_intents={}, existing_contract={}, now=NOW)
+        entry = contract["entries"][0]
+
+        for bucket in (
+            "harvest_triggers",
+            "no_add_triggers",
+            "wounded_triggers",
+            "invalidation_triggers",
+            "emergency_triggers",
+        ):
+            self.assertTrue(entry[bucket], bucket)
+        self.assertEqual(entry["trade_id"], "trade-1")
+        self.assertEqual(entry["avg_entry"], 1.171)
+        self.assertEqual(entry["units"], 1000)
+
+    def test_manual_exposure_maps_by_trade_id(self) -> None:
+        snapshot = _snapshot(
+            positions=[
+                {
+                    "pair": "USD_JPY",
+                    "side": "SHORT",
+                    "units": 1000,
+                    "owner": "operator_manual",
+                    "thesis": "operator manual USD_JPY 162 fade",
+                    "trade_id": "472909",
+                    "price": 162.157,
+                },
+                {
+                    "pair": "USD_JPY",
+                    "side": "SHORT",
+                    "units": 5000,
+                    "owner": "operator_manual",
+                    "thesis": "operator manual USD_JPY 162 fade",
+                    "trade_id": "472913",
+                    "price": 162.2,
+                },
+            ]
+        )
+
+        contract = build_guardian_trigger_contract(snapshot=snapshot, order_intents={}, existing_contract={}, now=NOW)
+
+        self.assertEqual({entry["trade_id"] for entry in contract["entries"]}, {"472909", "472913"})
+        self.assertEqual(len(contract["entries"]), 2)
+
+    def test_operator_manual_usd_jpy_162_fade_gets_concrete_triggers(self) -> None:
+        snapshot = _snapshot(
+            positions=[
+                {
+                    "pair": "USD_JPY",
+                    "side": "SHORT",
+                    "units": 22000,
+                    "owner": "operator_manual",
+                    "thesis": "operator manual USD_JPY 162 fade",
+                    "thesis_state": "WOUNDED",
+                    "trade_id": "manual-162",
+                    "price": 162.157,
+                }
+            ]
+        )
+
+        contract = build_guardian_trigger_contract(snapshot=snapshot, order_intents={}, existing_contract={}, now=NOW)
+        entry = contract["entries"][0]
+
+        self.assertEqual(entry["owner"], "OPERATOR_MANUAL")
+        self.assertEqual(entry["trade_id"], "manual-162")
+        self.assertEqual(entry["thesis_state"], "WOUNDED")
+        joined = json.dumps(entry, ensure_ascii=False)
+        self.assertIn("162.00", joined)
+        self.assertIn("cross-JPY confirmation", joined)
+        self.assertIn("TP-only profit assistance", joined)
+        self.assertIn("no fresh bot USD_JPY", joined)
+
+    def test_expired_contract_deadline_emits_contract_stale_with_exposure(self) -> None:
+        contract = _contract(entry_overrides={"next_review_deadline_utc": (NOW - timedelta(minutes=1)).isoformat()})
+        snapshot = _snapshot(
+            positions=[
+                {
+                    "pair": "EUR_USD",
+                    "side": "LONG",
+                    "units": 1000,
+                    "owner": "trader",
+                    "trade_id": "1",
+                }
+            ]
+        )
+
+        validation = validate_guardian_trigger_contract(contract, now=NOW)
+        events = detect_guardian_events(inputs={"snapshot": snapshot, "trigger_contract": contract}, now=NOW)
+
+        self.assertEqual(validation["status"], "INVALID")
+        self.assertTrue(validation["stale"])
+        self.assertIn("CONTRACT_STALE", {event.event_type for event in events})
+
+    def test_open_exposure_empty_required_triggers_emit_contract_stale(self) -> None:
+        contract = _contract(
+            entry_overrides={
+                "trade_id": "manual-weak",
+                "harvest_triggers": [],
+                "invalidation_triggers": [],
+                "emergency_triggers": [],
+            }
+        )
+        snapshot = _snapshot(
+            positions=[
+                {
+                    "pair": "USD_JPY",
+                    "side": "SHORT",
+                    "units": 1000,
+                    "owner": "operator_manual",
+                    "trade_id": "manual-weak",
+                }
+            ]
+        )
+
+        validation = validate_guardian_trigger_contract(contract, now=NOW)
+        events = detect_guardian_events(inputs={"snapshot": snapshot, "trigger_contract": contract}, now=NOW)
+
+        self.assertEqual(validation["status"], "INVALID")
+        self.assertIn(
+            "CONTRACT_ENTRY_OPEN_TRIGGER_EMPTY",
+            {issue["code"] for issue in validation["issues"]},
+        )
+        self.assertIn("CONTRACT_STALE", {event.event_type for event in events})
+
+    def test_generated_contract_deadline_is_not_expired(self) -> None:
+        snapshot = _snapshot(
+            positions=[
+                {
+                    "pair": "EUR_USD",
+                    "side": "LONG",
+                    "units": 1000,
+                    "owner": "trader",
+                    "trade_id": "1",
+                }
+            ]
+        )
+
+        contract = build_guardian_trigger_contract(snapshot=snapshot, order_intents={}, existing_contract={}, now=NOW)
+        deadline = datetime.fromisoformat(contract["entries"][0]["next_review_deadline_utc"])
+
+        self.assertGreater(deadline, NOW)
+
     def test_parse_failure_map_reaches_next_trader_even_after_later_dispatch_status(self) -> None:
         dispatcher_state = {
             "last_status": "BROKER_SNAPSHOT_STALE",
