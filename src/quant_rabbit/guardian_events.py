@@ -367,6 +367,7 @@ def review_guardian_action_receipt(
     *,
     events: list[GuardianEvent],
     previous_state: dict[str, Any] | None = None,
+    selected_event: dict[str, Any] | GuardianEvent | None = None,
     now: datetime | None = None,
 ) -> dict[str, Any]:
     now = _utc(now)
@@ -396,10 +397,16 @@ def review_guardian_action_receipt(
     if receipt.get("gateway_required") is not True:
         issues.append(_issue("GUARDIAN_ACTION_GATEWAY_REQUIRED", "guardian action receipt must set gateway_required=true"))
 
+    binding_issues = _selected_event_binding_issues(receipt, selected_event)
+    issues.extend(binding_issues)
+
     if action in {"TRADE", "ADD"}:
         issues.extend(_guardian_trade_add_action_issues(receipt, event=event))
 
-    status = "ACCEPTED" if not any(issue["severity"] == "BLOCK" for issue in issues) else "REJECTED"
+    if binding_issues:
+        status = "RECEIPT_EVENT_MISMATCH"
+    else:
+        status = "ACCEPTED" if not any(issue["severity"] == "BLOCK" for issue in issues) else "REJECTED"
     reviewed = {
         "generated_at_utc": now.isoformat(),
         "status": status,
@@ -414,6 +421,59 @@ def review_guardian_action_receipt(
         },
     }
     return reviewed
+
+
+def _selected_event_binding_issues(
+    receipt: dict[str, Any],
+    selected_event: dict[str, Any] | GuardianEvent | None,
+) -> list[dict[str, str]]:
+    selected = _event_payload(selected_event)
+    if not selected:
+        return []
+    issues: list[dict[str, str]] = []
+    receipt_event_id = str(receipt.get("event_id") or "").strip()
+    selected_event_id = str(selected.get("event_id") or "").strip()
+    if selected_event_id and receipt_event_id != selected_event_id:
+        issues.append(
+            _issue(
+                "RECEIPT_EVENT_MISMATCH",
+                f"receipt event_id {receipt_event_id or 'missing'} does not match selected_event {selected_event_id}",
+            )
+        )
+    receipt_pair = _pair(receipt.get("pair"))
+    selected_pair = _pair(selected.get("pair"))
+    if selected_pair and receipt_pair != selected_pair:
+        issues.append(
+            _issue(
+                "RECEIPT_EVENT_MISMATCH",
+                f"receipt pair {receipt_pair or 'missing'} does not match selected_event {selected_pair}",
+            )
+        )
+    selected_direction = _direction_from_text(selected.get("direction") or selected.get("side"))
+    receipt_side = _direction_from_text(receipt.get("side") or receipt.get("direction"))
+    if selected_direction is not None and receipt_side != selected_direction:
+        issues.append(
+            _issue(
+                "RECEIPT_EVENT_MISMATCH",
+                f"receipt side {receipt_side or 'missing'} does not match selected_event direction {selected_direction}",
+            )
+        )
+    receipt_dedupe = str(receipt.get("dedupe_key") or "").strip()
+    selected_dedupe = str(selected.get("dedupe_key") or "").strip()
+    if receipt_dedupe and selected_dedupe and receipt_dedupe != selected_dedupe:
+        issues.append(
+            _issue(
+                "RECEIPT_EVENT_MISMATCH",
+                "receipt dedupe_key does not match selected_event dedupe_key",
+            )
+        )
+    return issues
+
+
+def _event_payload(event: dict[str, Any] | GuardianEvent | None) -> dict[str, Any]:
+    if isinstance(event, GuardianEvent):
+        return event.to_payload()
+    return event if isinstance(event, dict) else {}
 
 
 def guardian_action_gateway_issues(
@@ -478,9 +538,11 @@ def validate_guardian_trigger_contract(
     elif not isinstance(contract.get("entries"), list):
         issues.append(_issue("CONTRACT_ENTRIES_NOT_LIST", "guardian trigger contract entries must be a list"))
 
-    deadline_expired = False
+    stale_relevant_deadline_expired = False
     for index, entry in enumerate(entries):
         prefix = f"entries[{index}]"
+        open_exposure = _contract_entry_has_open_exposure(entry)
+        live_relevant = _contract_entry_is_live_relevant(entry)
         for field_name in (
             "pair",
             "side",
@@ -510,15 +572,30 @@ def validate_guardian_trigger_contract(
                 _issue("CONTRACT_ENTRY_BAD_DEADLINE", f"{prefix} next_review_deadline_utc must be ISO UTC")
             )
         elif deadline <= clock:
-            deadline_expired = True
-            issues.append(_issue("CONTRACT_ENTRY_DEADLINE_EXPIRED", f"{prefix} next_review_deadline_utc is expired"))
+            if live_relevant:
+                stale_relevant_deadline_expired = True
+                issues.append(_issue("CONTRACT_ENTRY_DEADLINE_EXPIRED", f"{prefix} next_review_deadline_utc is expired"))
+            else:
+                issues.append(
+                    _issue(
+                        "CONTRACT_ENTRY_WATCH_DEADLINE_EXPIRED",
+                        f"{prefix} watch-only candidate next_review_deadline_utc is expired",
+                        severity="WARN",
+                    )
+                )
         for bucket in CONTRACT_TRIGGER_BUCKETS:
             if bucket not in entry:
                 issues.append(_issue("CONTRACT_ENTRY_TRIGGER_FIELD_MISSING", f"{prefix} missing {bucket}"))
             elif not isinstance(entry.get(bucket), list):
                 issues.append(_issue("CONTRACT_ENTRY_TRIGGER_FIELD_NOT_LIST", f"{prefix} {bucket} must be a list"))
-        if _contract_entry_has_open_exposure(entry):
-            for bucket in ("harvest_triggers", "invalidation_triggers", "emergency_triggers"):
+        if open_exposure:
+            for bucket in (
+                "harvest_triggers",
+                "no_add_triggers",
+                "wounded_triggers",
+                "invalidation_triggers",
+                "emergency_triggers",
+            ):
                 if isinstance(entry.get(bucket), list) and not entry.get(bucket):
                     issues.append(
                         _issue(
@@ -529,7 +606,7 @@ def validate_guardian_trigger_contract(
 
     age_seconds = (clock - generated_at).total_seconds() if generated_at is not None else None
     max_age = int(os.environ.get("QR_GUARDIAN_TRIGGER_CONTRACT_MAX_AGE_SECONDS", DEFAULT_CONTRACT_MAX_AGE_SECONDS))
-    stale = age_seconds is None or age_seconds > max_age or deadline_expired
+    stale = age_seconds is None or age_seconds > max_age or stale_relevant_deadline_expired
     return {
         "status": "VALID" if not any(issue["severity"] == "BLOCK" for issue in issues) else "INVALID",
         "issues": issues,
@@ -1354,6 +1431,32 @@ def _contract_entry_legacy_key(entry: dict[str, Any]) -> str:
 
 def _contract_entry_has_open_exposure(entry: dict[str, Any]) -> bool:
     return bool(str(entry.get("trade_id") or "").strip())
+
+
+def _contract_entry_is_live_relevant(entry: dict[str, Any]) -> bool:
+    if _contract_entry_has_open_exposure(entry):
+        return True
+    for key in (
+        "selected",
+        "current",
+        "live_relevant",
+        "is_selected",
+        "is_current",
+        "selected_for_review",
+        "active",
+        "active_pending_risk",
+    ):
+        if _truthy(entry.get(key)):
+            return True
+    for key in ("status", "intent_status", "lane_status", "contract_status"):
+        status = str(entry.get(key) or "").strip().upper()
+        if status in {"LIVE_READY", "SELECTED", "CURRENT", "ACTIVE", "PENDING", "ARMED", "OPEN"}:
+            return True
+    for bucket in CONTRACT_TRIGGER_BUCKETS:
+        triggers = entry.get(bucket) if isinstance(entry.get(bucket), list) else []
+        if any(_trigger_explicitly_fired(trigger) for trigger in triggers):
+            return True
+    return False
 
 
 def _contract_entry_from_seed(

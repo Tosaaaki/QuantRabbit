@@ -124,7 +124,11 @@ def run_dispatcher(
             "status": "NO_WAKE",
             "wake_gpt": False,
             "reason": "guardian_escalation wake_gpt is not true",
+            "receipt_written": False,
+            "action_receipt_path": None,
         }
+        _remove_file(paths.action_receipt)
+        _write_action_review(paths.action_review, result)
         _record_state(paths.dispatcher_state, dispatcher_state, result)
         _append_log(paths.log, result)
         return result
@@ -142,7 +146,10 @@ def run_dispatcher(
             "status": "SUPPRESSED",
             "wake_gpt": True,
             "selection": selection,
+            "receipt_written": False,
+            "action_receipt_path": None,
         }
+        _remove_file(paths.action_receipt)
         _write_action_review(paths.action_review, result)
         _record_state(paths.dispatcher_state, dispatcher_state, result)
         _append_log(paths.log, result)
@@ -158,7 +165,10 @@ def run_dispatcher(
             "selection": selection,
             "queue_reason": "repeated guardian wake parse failure",
             "parse_failure": parse_queue,
+            "receipt_written": False,
+            "action_receipt_path": None,
         }
+        _remove_file(paths.action_receipt)
         _mark_escalation_queued(paths.escalation, escalation, queued, now=clock, reason="repeated guardian wake parse failure")
         _write_action_review(paths.action_review, queued)
         _record_state(paths.dispatcher_state, dispatcher_state, queued)
@@ -173,7 +183,10 @@ def run_dispatcher(
             "wake_gpt": True,
             "selected_event": selected,
             "lock": lock,
+            "receipt_written": False,
+            "action_receipt_path": None,
         }
+        _remove_file(paths.action_receipt)
         _mark_escalation_queued(paths.escalation, escalation, queued, now=clock, reason="active qr-trader/live gateway lock")
         _write_action_review(paths.action_review, queued)
         _record_state(paths.dispatcher_state, dispatcher_state, queued)
@@ -202,7 +215,10 @@ def run_dispatcher(
             "broker_snapshot_freshness": freshness,
             "queued_for_active_trader": True,
             "queue_reason": "stale broker snapshot; GPT wake not started because stale broker truth must not enter the prompt",
+            "receipt_written": False,
+            "action_receipt_path": None,
         }
+        _remove_file(paths.action_receipt)
         _mark_escalation_queued(
             paths.escalation,
             escalation,
@@ -335,7 +351,7 @@ def run_dispatcher(
     if parsed["valid"]:
         if not parsed["receipt"].get("dedupe_key") and selected.get("dedupe_key"):
             parsed["receipt"]["dedupe_key"] = selected["dedupe_key"]
-        review = review_guardian_action_receipt(parsed["receipt"], events=events, now=clock)
+        review = review_guardian_action_receipt(parsed["receipt"], events=events, selected_event=selected, now=clock)
         receipt_action = str(parsed["receipt"].get("action") or "").upper()
         if review.get("status") == "ACCEPTED" and receipt_action in GUARDIAN_ACTIONS:
             payload = {
@@ -344,6 +360,10 @@ def run_dispatcher(
                 "model": MODEL,
                 "no_direct_oanda": True,
                 "selected_event": selected,
+                "selected_event_id": selected.get("event_id"),
+                "selected_event_dedupe_key": selected.get("dedupe_key"),
+                "dispatcher_status": "RECEIPT_WRITTEN",
+                "receipt_id": parsed["receipt"].get("receipt_id") or review.get("generated_at_utc"),
             }
             _write_json(paths.action_receipt, payload)
             receipt_written = True
@@ -365,6 +385,8 @@ def run_dispatcher(
         if not parsed["valid"] and parsed.get("error") in CODEX_MODEL_FAILURE_STATUSES
         else "PARSE_FAILED"
         if not parsed["valid"]
+        else "RECEIPT_EVENT_MISMATCH"
+        if review is not None and review.get("status") == "RECEIPT_EVENT_MISMATCH"
         else "RECEIPT_REJECTED"
     )
     if repair_attempted and not parsed["valid"]:
@@ -388,6 +410,16 @@ def run_dispatcher(
     }
     if review is not None:
         result["receipt_review"] = review
+    if status == "RECEIPT_EVENT_MISMATCH":
+        result["queued_for_active_trader"] = True
+        result["queue_reason"] = "guardian wake receipt did not match selected_event"
+        _mark_escalation_queued(
+            paths.escalation,
+            escalation,
+            result,
+            now=clock,
+            reason="guardian wake receipt did not match selected_event",
+        )
     _write_action_review(paths.action_review, result)
     _record_state(paths.dispatcher_state, dispatcher_state, result, reviewed_event=selected)
     _append_log(paths.log, result)
@@ -927,11 +959,16 @@ def _run_codex(
     )
     stdout_fallback_used = last_message_source == "stdout-assistant"
     session_jsonl_fallback_used = last_message_source == "session-jsonl-assistant"
-    model_failure = _codex_model_version_failure(stderr_text=stderr_text, stdout_text=stdout_text, codex_bin=codex_bin)
-    if model_failure is not None:
-        status = model_failure["status"]
-    elif getattr(proc, "returncode", 1) == 0 and last_message:
+    current_invocation_failed = getattr(proc, "returncode", 1) != 0
+    model_failure = (
+        _codex_model_version_failure(stderr_text=stderr_text, stdout_text=stdout_text, codex_bin=codex_bin)
+        if current_invocation_failed
+        else None
+    )
+    if getattr(proc, "returncode", 1) == 0 and last_message:
         status = "OK"
+    elif model_failure is not None:
+        status = model_failure["status"]
     elif _codex_auth_or_sandbox_failed(getattr(proc, "returncode", 1), stderr_text, stdout_text):
         status = "CODEX_AUTH_OR_SANDBOX_FAILURE"
     elif stdout_text.strip() or session_path is not None:
@@ -1388,13 +1425,17 @@ def _maybe_gateway_handoff(
 
 
 def _write_action_review(path: Path, payload: dict[str, Any]) -> None:
+    receipt_written = bool(payload.get("receipt_written", False))
+    receipt_reason = _action_receipt_existence_reason(payload)
     lines = [
         "# Guardian Action Review",
         "",
         f"- Generated at UTC: `{payload.get('generated_at_utc')}`",
         f"- Dispatcher status: `{payload.get('status')}`",
         f"- Model: `{payload.get('model') or MODEL}`",
-        f"- Receipt written: `{payload.get('receipt_written', False)}`",
+        f"- Receipt exists: `{'yes' if receipt_written else 'no'}`",
+        f"- Receipt reason: {receipt_reason}",
+        f"- Receipt written: `{receipt_written}`",
         f"- Action receipt path: `{payload.get('action_receipt_path') or 'none'}`",
         "",
         "## Selected Event",
@@ -1471,6 +1512,11 @@ def _write_action_review(path: Path, payload: dict[str, Any]) -> None:
         lines.extend(["", "## Receipt Review", "", f"- Status: `{review.get('status')}`"])
         receipt = review.get("receipt") if isinstance(review.get("receipt"), dict) else {}
         lines.append(f"- Action: `{receipt.get('action') or 'none'}`")
+        lines.append(f"- Event id: `{receipt.get('event_id') or 'none'}`")
+        lines.append(f"- Pair / side: `{receipt.get('pair') or 'none'}` / `{receipt.get('side') or 'none'}`")
+        lines.append(f"- Dedupe key: `{receipt.get('dedupe_key') or 'none'}`")
+        lines.append(f"- Receipt id: `{receipt.get('receipt_id') or review.get('generated_at_utc') or 'none'}`")
+        lines.append(f"- Dispatcher status: `{payload.get('status')}`")
         for issue in review.get("issues", []) or []:
             lines.append(f"- `{issue.get('severity')}` `{issue.get('code')}` {issue.get('message')}")
     handoff = payload.get("gateway_handoff") if isinstance(payload.get("gateway_handoff"), dict) else {}
@@ -1488,7 +1534,21 @@ def _write_action_review(path: Path, payload: dict[str, Any]) -> None:
         ]
     )
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text("\n".join(lines) + "\n")
+    _write_text_atomic(path, "\n".join(lines) + "\n")
+
+
+def _action_receipt_existence_reason(payload: dict[str, Any]) -> str:
+    if payload.get("receipt_written"):
+        return "accepted schema-valid receipt is bound to selected_event and was written atomically."
+    status = str(payload.get("status") or "")
+    parse = payload.get("parse") if isinstance(payload.get("parse"), dict) else {}
+    review = payload.get("receipt_review") if isinstance(payload.get("receipt_review"), dict) else {}
+    if parse.get("error"):
+        return f"no receipt because Codex output parse/classification is `{parse.get('error')}`."
+    if review.get("status"):
+        codes = ", ".join(str(issue.get("code")) for issue in review.get("issues", []) or []) or "no issue codes"
+        return f"no receipt because receipt review status is `{review.get('status')}` ({codes})."
+    return f"no receipt because dispatcher status is `{status or 'UNKNOWN'}`."
 
 
 def _record_state(
@@ -1639,7 +1699,14 @@ def _read_text(path: Path) -> str:
 
 def _write_json(path: Path, payload: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n")
+    _write_text_atomic(path, json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n")
+
+
+def _write_text_atomic(path: Path, text: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    tmp.write_text(text)
+    os.replace(tmp, path)
 
 
 def _remove_file(path: Path) -> None:

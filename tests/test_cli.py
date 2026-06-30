@@ -29,7 +29,7 @@ from quant_rabbit.cli import (
     _snapshot_to_json,
     main,
 )
-from quant_rabbit.models import AccountSummary, BrokerOrder, BrokerSnapshot, Owner, Quote
+from quant_rabbit.models import AccountSummary, BrokerOrder, BrokerPosition, BrokerSnapshot, Owner, Quote, Side
 from quant_rabbit.paths import DEFAULT_CAPTURE_ECONOMICS, DEFAULT_EXECUTION_LEDGER_DB, DEFAULT_MARKET_CONTEXT_MATRIX
 from quant_rabbit.profitability_acceptance import (
     ProfitabilityAcceptanceAuditor,
@@ -432,6 +432,16 @@ class CliHelpTest(unittest.TestCase):
         now = datetime.now(timezone.utc)
         snapshot = BrokerSnapshot(
             fetched_at_utc=now,
+            positions=(
+                BrokerPosition(
+                    trade_id="472001",
+                    pair="USD_JPY",
+                    side=Side.SHORT,
+                    units=1000,
+                    entry_price=162.157,
+                    raw={"averagePrice": "162.157"},
+                ),
+            ),
             orders=(
                 BrokerOrder(
                     order_id="472032",
@@ -455,10 +465,13 @@ class CliHelpTest(unittest.TestCase):
         )
 
         payload = json.loads(_snapshot_to_json(snapshot))
+        position = payload["positions"][0]
         order_raw = payload["orders"][0]["raw"]
         restored = _snapshot_from_json(payload)
         restored_for_reuse = _intent_snapshot_from_json(payload)
 
+        self.assertEqual(position["entry_price"], 162.157)
+        self.assertEqual(position["avg_entry"], 162.157)
         self.assertNotIn("accountID", order_raw)
         self.assertEqual(order_raw["createTime"], "2026-06-04T22:45:52.123456789Z")
         self.assertEqual(restored.orders[0].raw["clientExtensions"]["tag"], "trader")

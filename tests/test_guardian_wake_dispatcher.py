@@ -31,6 +31,7 @@ class GuardianWakeDispatcherTest(unittest.TestCase):
     def test_wake_false_does_not_start_codex(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             paths = _fixture(Path(tmp), wake=False)
+            paths.action_receipt.write_text('{"status":"STALE"}\n')
             calls: list[list[str]] = []
 
             result = run_dispatcher(paths=paths, now=NOW, env={}, subprocess_run=_fake_codex(calls, _valid_receipt()))
@@ -38,6 +39,8 @@ class GuardianWakeDispatcherTest(unittest.TestCase):
             self.assertEqual(result["status"], "NO_WAKE")
             self.assertEqual(calls, [])
             self.assertFalse(paths.action_receipt.exists())
+            self.assertTrue(paths.action_review.exists())
+            self.assertIn("Receipt exists: `no`", paths.action_review.read_text())
 
     def test_wake_true_starts_codex_exec_when_allowed(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -419,12 +422,81 @@ class GuardianWakeDispatcherTest(unittest.TestCase):
             )
 
             self.assertEqual(result["status"], "RECEIPT_WRITTEN")
+            self.assertNotIn(result["status"], {"CODEX_MODEL_UNSUPPORTED", "CODEX_CLI_VERSION_UNSUPPORTED"})
             self.assertEqual(preflight_calls, [["/Applications/Codex.app/Contents/Resources/codex", "--version"]])
             self.assertEqual(len(codex_calls), 1)
             self.assertEqual(codex_calls[0][0], "/Applications/Codex.app/Contents/Resources/codex")
             self.assertEqual(result["codex_preflight"]["codex_version"], "0.142.4")
             self.assertEqual(result["codex"]["codex_version"], "0.142.4")
             self.assertTrue(paths.action_receipt.exists())
+
+    def test_supported_preflight_valid_json_ignores_stale_unsupported_stderr(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = _fixture(Path(tmp))
+            codex_calls: list[list[str]] = []
+            preflight_calls: list[list[str]] = []
+
+            result = run_dispatcher(
+                paths=paths,
+                now=NOW,
+                env={
+                    "QR_GUARDIAN_WAKE_CODEX_PREFLIGHT": "1",
+                    "QR_GUARDIAN_WAKE_CODEX_BIN": "/Applications/Codex.app/Contents/Resources/codex",
+                },
+                subprocess_run=_fake_codex_with_diagnostics(
+                    codex_calls,
+                    _valid_receipt(),
+                    stderr="old session diagnostic: gpt-5.5 model requires a newer version of Codex",
+                    returncode=0,
+                ),
+                codex_preflight_run=_fake_preflight(preflight_calls, stdout="codex-cli 0.142.4\n"),
+            )
+
+            self.assertEqual(result["status"], "RECEIPT_WRITTEN")
+            self.assertEqual(result["codex"]["status"], "OK")
+            self.assertTrue(paths.action_receipt.exists())
+
+    def test_old_session_unsupported_text_does_not_poison_new_valid_receipt(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = _fixture(Path(tmp))
+            stale_dir = paths.codex_home / "sessions" / "2026" / "06" / "29"
+            stale_dir.mkdir(parents=True, exist_ok=True)
+            (stale_dir / "rollout-old.jsonl").write_text(
+                json.dumps(
+                    {
+                        "type": "message",
+                        "role": "assistant",
+                        "content": "gpt-5.5 model requires a newer version of Codex",
+                    }
+                )
+                + "\n"
+            )
+            codex_calls: list[list[str]] = []
+
+            result = run_dispatcher(paths=paths, now=NOW, env={}, subprocess_run=_fake_codex(codex_calls, _valid_receipt()))
+
+            self.assertEqual(result["status"], "RECEIPT_WRITTEN")
+            self.assertEqual(result["codex"]["last_message_source"], "output-last-message")
+            self.assertTrue(paths.action_receipt.exists())
+
+    def test_current_cli_version_failure_still_classifies_unsupported(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = _fixture(Path(tmp))
+            calls: list[list[str]] = []
+
+            result = run_dispatcher(
+                paths=paths,
+                now=NOW,
+                env={},
+                subprocess_run=_fake_codex_failed(
+                    calls,
+                    stderr="codex cli version unsupported; too old, please upgrade",
+                ),
+            )
+
+            self.assertEqual(result["status"], "CODEX_CLI_VERSION_UNSUPPORTED")
+            self.assertEqual(result["parse"]["error"], "CODEX_CLI_VERSION_UNSUPPORTED")
+            self.assertFalse(paths.action_receipt.exists())
 
     def test_one_repair_retry_occurs(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -446,6 +518,7 @@ class GuardianWakeDispatcherTest(unittest.TestCase):
     def test_invalid_after_retry_does_not_create_action_receipt(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             paths = _fixture(Path(tmp))
+            paths.action_receipt.write_text('{"status":"STALE"}\n')
             calls: list[list[str]] = []
 
             run_dispatcher(
@@ -599,6 +672,139 @@ class GuardianWakeDispatcherTest(unittest.TestCase):
             self.assertEqual(payload["receipt"]["dedupe_key"], payload["selected_event"]["dedupe_key"])
             self.assertTrue(payload["receipt"]["gateway_required"])
             self.assertTrue(payload["receipt"]["no_direct_oanda"])
+
+    def test_selected_event_aud_jpy_receipt_usd_cad_rejects(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = _fixture(Path(tmp))
+            aud = _event(
+                severity="P1",
+                event_id="event-aud",
+                pair="AUD_JPY",
+                direction="LONG",
+                dedupe_key="AUD_JPY|thesis|FAILED_ACCEPTANCE|TRADE",
+            )
+            usd = _event(
+                severity="P1",
+                event_id="event-usd",
+                pair="USD_CAD",
+                direction="SHORT",
+                dedupe_key="USD_CAD|thesis|FAILED_ACCEPTANCE|TRADE",
+            )
+            paths.events.write_text(json.dumps({"generated_at_utc": NOW.isoformat(), "events": [aud, usd]}))
+            paths.escalation.write_text(
+                json.dumps(
+                    {
+                        "generated_at_utc": NOW.isoformat(),
+                        "wake_gpt": True,
+                        "events_to_review": [
+                            {**aud, "wake_reason_codes": ["NEW_EVENT"]},
+                            {**usd, "wake_reason_codes": ["NEW_EVENT"]},
+                        ],
+                    }
+                )
+            )
+            paths.action_receipt.write_text('{"status":"STALE"}\n')
+            calls: list[list[str]] = []
+
+            result = run_dispatcher(
+                paths=paths,
+                now=NOW,
+                env={},
+                subprocess_run=_fake_codex(
+                    calls,
+                    _valid_receipt(
+                        event_id="event-usd",
+                        pair="USD_CAD",
+                        side="SHORT",
+                        dedupe_key="USD_CAD|thesis|FAILED_ACCEPTANCE|TRADE",
+                    ),
+                ),
+            )
+
+            self.assertEqual(result["status"], "RECEIPT_EVENT_MISMATCH")
+            self.assertFalse(paths.action_receipt.exists())
+            self.assertTrue(result["queued_for_active_trader"])
+            self.assertIn("RECEIPT_EVENT_MISMATCH", paths.action_review.read_text())
+
+    def test_selected_event_event_id_mismatch_rejects(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = _fixture(Path(tmp))
+            calls: list[list[str]] = []
+
+            result = run_dispatcher(
+                paths=paths,
+                now=NOW,
+                env={},
+                subprocess_run=_fake_codex(calls, _valid_receipt(event_id="event-other")),
+            )
+
+            self.assertEqual(result["status"], "RECEIPT_EVENT_MISMATCH")
+            self.assertFalse(paths.action_receipt.exists())
+
+    def test_selected_event_pair_and_event_id_match_accepts(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = _fixture(Path(tmp))
+            calls: list[list[str]] = []
+
+            result = run_dispatcher(
+                paths=paths,
+                now=NOW,
+                env={},
+                subprocess_run=_fake_codex(calls, _valid_receipt(event_id="event-P1", pair="EUR_USD", side="LONG")),
+            )
+
+            self.assertEqual(result["status"], "RECEIPT_WRITTEN")
+            self.assertTrue(paths.action_receipt.exists())
+
+    def test_selected_event_side_mismatch_rejects(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = _fixture(Path(tmp))
+            calls: list[list[str]] = []
+
+            result = run_dispatcher(
+                paths=paths,
+                now=NOW,
+                env={},
+                subprocess_run=_fake_codex(calls, _valid_receipt(event_id="event-P1", pair="EUR_USD", side="SHORT")),
+            )
+
+            self.assertEqual(result["status"], "RECEIPT_EVENT_MISMATCH")
+            self.assertFalse(paths.action_receipt.exists())
+
+    def test_selected_event_dedupe_mismatch_rejects_when_present(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = _fixture(Path(tmp))
+            calls: list[list[str]] = []
+
+            result = run_dispatcher(
+                paths=paths,
+                now=NOW,
+                env={},
+                subprocess_run=_fake_codex(calls, _valid_receipt(dedupe_key="WRONG|DEDUPE")),
+            )
+
+            self.assertEqual(result["status"], "RECEIPT_EVENT_MISMATCH")
+            self.assertFalse(paths.action_receipt.exists())
+
+    def test_accepted_receipt_writes_matching_review_and_receipt(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = _fixture(Path(tmp))
+            calls: list[list[str]] = []
+
+            result = run_dispatcher(paths=paths, now=NOW, env={}, subprocess_run=_fake_codex(calls, _valid_receipt()))
+
+            payload = json.loads(paths.action_receipt.read_text())
+            review = paths.action_review.read_text()
+            selected = payload["selected_event"]
+            self.assertEqual(payload["dispatcher_status"], result["status"])
+            self.assertEqual(payload["selected_event_id"], selected["event_id"])
+            self.assertEqual(payload["selected_event_dedupe_key"], selected["dedupe_key"])
+            self.assertEqual(payload["receipt"]["event_id"], selected["event_id"])
+            self.assertEqual(payload["receipt"]["dedupe_key"], selected["dedupe_key"])
+            self.assertIn(f"Event id: `{selected['event_id']}`", review)
+            self.assertIn(f"Dedupe key: `{selected['dedupe_key']}`", review)
+            self.assertIn("Receipt exists: `yes`", review)
+            self.assertIn("Dispatcher status: `RECEIPT_WRITTEN`", review)
 
     def test_valid_no_action_output_preserves_guardian_action_receipt(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -761,17 +967,41 @@ def _write_wake(paths: DispatcherPaths, *, severity: str, reasons: tuple[str, ..
     )
 
 
-def _event(*, severity: str) -> dict:
+def _event(
+    *,
+    severity: str,
+    event_id: str | None = None,
+    pair: str = "EUR_USD",
+    direction: str = "LONG",
+    dedupe_key: str | None = None,
+) -> dict:
+    return _event_payload(
+        severity=severity,
+        event_id=event_id,
+        pair=pair,
+        direction=direction,
+        dedupe_key=dedupe_key,
+    )
+
+
+def _event_payload(
+    *,
+    severity: str,
+    event_id: str | None = None,
+    pair: str = "EUR_USD",
+    direction: str = "LONG",
+    dedupe_key: str | None = None,
+) -> dict:
     return {
-        "event_id": f"event-{severity}",
+        "event_id": event_id or f"event-{severity}",
         "event_type": "FAILED_ACCEPTANCE",
-        "pair": "EUR_USD",
-        "direction": "LONG",
+        "pair": pair,
+        "direction": direction,
         "thesis": "major figure rejection",
-        "price_zone": "EUR_USD 1.1700 rejection",
+        "price_zone": f"{pair} 1.1700 rejection",
         "severity": severity,
         "recommended_review_type": "ENTRY_REVIEW",
-        "dedupe_key": "EUR_USD|major_figure_rejection|FAILED_ACCEPTANCE|TRADE",
+        "dedupe_key": dedupe_key or f"{pair}|major_figure_rejection|FAILED_ACCEPTANCE|TRADE",
         "action_hint": "TRADE",
         "thesis_state": "ALIVE",
         "detected_at_utc": NOW.isoformat(),
@@ -779,25 +1009,33 @@ def _event(*, severity: str) -> dict:
     }
 
 
-def _valid_receipt(*, event_id: str = "event-P1", action: str = "TRADE") -> str:
-    return json.dumps(
-        {
-            "action": action,
-            "event_id": event_id,
-            "new_information": True,
-            "pair": "EUR_USD",
-            "side": "LONG",
-            "thesis_state": "ALIVE",
-            "reason": "fresh failed acceptance at the major figure",
-            "invalidation_evidence": "accepted trade back below failed-acceptance support",
-            "invalidation": "accepted trade back below failed-acceptance support",
-            "harvest_trigger": "upper range rail",
-            "margin_state": "margin available and no active position",
-            "ownership": "system",
-            "gateway_required": True,
-            "no_direct_oanda": True,
-        }
-    )
+def _valid_receipt(
+    *,
+    event_id: str = "event-P1",
+    action: str = "TRADE",
+    pair: str = "EUR_USD",
+    side: str = "LONG",
+    dedupe_key: str | None = None,
+) -> str:
+    payload = {
+        "action": action,
+        "event_id": event_id,
+        "new_information": True,
+        "pair": pair,
+        "side": side,
+        "thesis_state": "ALIVE",
+        "reason": "fresh failed acceptance at the major figure",
+        "invalidation_evidence": "accepted trade back below failed-acceptance support",
+        "invalidation": "accepted trade back below failed-acceptance support",
+        "harvest_trigger": "upper range rail",
+        "margin_state": "margin available and no active position",
+        "ownership": "system",
+        "gateway_required": True,
+        "no_direct_oanda": True,
+    }
+    if dedupe_key is not None:
+        payload["dedupe_key"] = dedupe_key
+    return json.dumps(payload)
 
 
 def _fake_codex(calls: list[list[str]], output: str):
@@ -875,6 +1113,24 @@ def _fake_codex_failed(calls: list[list[str]], *, stderr: str):
         out_path.parent.mkdir(parents=True, exist_ok=True)
         out_path.write_text("")
         return SimpleNamespace(returncode=1, stdout="", stderr=stderr)
+
+    return run
+
+
+def _fake_codex_with_diagnostics(
+    calls: list[list[str]],
+    output: str,
+    *,
+    stdout: str = "",
+    stderr: str = "",
+    returncode: int = 0,
+):
+    def run(cmd, *, input, capture_output, text, timeout, env):
+        calls.append(list(cmd))
+        out_path = Path(cmd[cmd.index("--output-last-message") + 1])
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        out_path.write_text(output)
+        return SimpleNamespace(returncode=returncode, stdout=stdout, stderr=stderr)
 
     return run
 

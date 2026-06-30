@@ -178,6 +178,68 @@ class OandaAccountSummaryTest(unittest.TestCase):
         self.assertTrue(summary.hedging_enabled)
         self.assertEqual(summary.fetched_at_utc, now)
 
+    def test_open_position_entry_price_populates_from_price(self) -> None:
+        with patch.dict(
+            "os.environ",
+            {
+                "QR_OANDA_TOKEN": "qr-token",
+                "QR_OANDA_ACCOUNT_ID": "qr-account",
+                "QR_OANDA_BASE_URL": "https://example.invalid/",
+            },
+            clear=True,
+        ):
+            client = OandaReadOnlyClient()
+
+        with patch.object(
+            client,
+            "get_json",
+            return_value={
+                "trades": [
+                    {
+                        "id": "472001",
+                        "instrument": "USD_JPY",
+                        "currentUnits": "-1000",
+                        "price": "162.157",
+                    }
+                ]
+            },
+        ):
+            positions = client._open_positions()
+
+        self.assertEqual(len(positions), 1)
+        self.assertEqual(positions[0].entry_price, 162.157)
+
+    def test_open_position_entry_price_populates_from_average_price(self) -> None:
+        with patch.dict(
+            "os.environ",
+            {
+                "QR_OANDA_TOKEN": "qr-token",
+                "QR_OANDA_ACCOUNT_ID": "qr-account",
+                "QR_OANDA_BASE_URL": "https://example.invalid/",
+            },
+            clear=True,
+        ):
+            client = OandaReadOnlyClient()
+
+        with patch.object(
+            client,
+            "get_json",
+            return_value={
+                "trades": [
+                    {
+                        "id": "472002",
+                        "instrument": "USD_JPY",
+                        "currentUnits": "-1000",
+                        "averagePrice": "162.157",
+                    }
+                ]
+            },
+        ):
+            positions = client._open_positions()
+
+        self.assertEqual(len(positions), 1)
+        self.assertEqual(positions[0].entry_price, 162.157)
+
     def test_snapshot_continues_when_summary_call_fails(self) -> None:
         from datetime import datetime, timezone
         from unittest.mock import patch

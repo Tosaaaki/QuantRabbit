@@ -7779,6 +7779,7 @@ def _snapshot_to_json(snapshot: BrokerSnapshot) -> str:
                 "side": pos.side.value,
                 "units": pos.units,
                 "entry_price": pos.entry_price,
+                "avg_entry": pos.entry_price,
                 "unrealized_pl_jpy": pos.unrealized_pl_jpy,
                 "take_profit": pos.take_profit,
                 "stop_loss": pos.stop_loss,

@@ -2,6 +2,7 @@
 
 ## 2026-06-30
 
+- Fixed remaining guardian wake receipt integrity gaps: current Codex.app valid JSON can no longer be poisoned by stale unsupported-model diagnostics, selected-event/receipt mismatches are rejected with stale receipt removal, receipt/review writes are atomic and non-contradictory, qr-trader startup reads the trigger contract report directly, watch-only contract deadlines no longer create noisy `CONTRACT_STALE`, and broker snapshot average entry is normalized for open exposure.
 - Repaired guardian wake capture: dispatcher now invokes Codex with JSON event output, preserves stdout/stderr/session diagnostics, falls back through output-last-message, explicit output file, stdout assistant text, and latest session JSONL assistant message, and classifies empty output, missing assistant, no JSON, timeout, auth/sandbox, and schema failures distinctly.
 - Blocked stale broker truth from guardian GPT prompts: when a wake arrives with a stale broker snapshot, the dispatcher first attempts the safe read-only `broker-snapshot` refresh; if freshness still fails, it queues the event for the active trader with `BROKER_SNAPSHOT_STALE` instead of prompting GPT from stale data.
 - Strengthened guardian trigger contract generation for open exposure: open positions map by trade_id, carry units/average entry, get non-empty harvest/no-add/wounded/invalidation/emergency review triggers, refresh non-expired deadlines, and emit `CONTRACT_STALE` when an exposure contract deadline expires.

@@ -325,6 +325,41 @@ class GuardianEventRouterTest(unittest.TestCase):
             self.assertEqual(trigger["thesis"], "system USD_JPY short")
             self.assertEqual(trigger["thesis_state"], "ALIVE")
 
+    def test_open_exposure_avg_entry_populates_from_raw_average_price(self) -> None:
+        snapshot = _snapshot(
+            positions=[
+                {
+                    "pair": "USD_JPY",
+                    "side": "SHORT",
+                    "units": 1000,
+                    "owner": "trader",
+                    "thesis": "system USD_JPY short",
+                    "thesis_state": "ALIVE",
+                    "trade_id": "trade-average-price",
+                    "raw": {"averagePrice": "162.157"},
+                }
+            ]
+        )
+
+        contract = build_guardian_trigger_contract(snapshot=snapshot, order_intents={}, existing_contract={}, now=NOW)
+        entry = contract["entries"][0]
+
+        self.assertEqual(entry["avg_entry"], 162.157)
+        for bucket in (
+            "harvest_triggers",
+            "no_add_triggers",
+            "wounded_triggers",
+            "invalidation_triggers",
+            "emergency_triggers",
+        ):
+            self.assertEqual(entry[bucket][0]["avg_entry"], 162.157)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            report_path = Path(tmp) / "guardian_trigger_contract_report.md"
+            write_guardian_trigger_contract_report(report_path, contract, validate_guardian_trigger_contract(contract, now=NOW))
+            report = report_path.read_text()
+        self.assertIn("avg_entry=`162.157`", report)
+
     def test_unknown_usd_jpy_owner_remains_unresolved_without_evidence(self) -> None:
         snapshot = _snapshot(
             positions=[
@@ -454,7 +489,15 @@ class GuardianEventRouterTest(unittest.TestCase):
             self.assertEqual(trigger["thesis_state"], "WOUNDED")
 
     def test_expired_contract_deadline_emits_contract_stale_with_exposure(self) -> None:
-        contract = _contract(entry_overrides={"next_review_deadline_utc": (NOW - timedelta(minutes=1)).isoformat()})
+        contract = _contract(
+            entry_overrides={
+                **_open_required_trigger_fields(),
+                "trade_id": "1",
+                "units": 1000,
+                "avg_entry": 1.171,
+                "next_review_deadline_utc": (NOW - timedelta(minutes=1)).isoformat(),
+            }
+        )
         snapshot = _snapshot(
             positions=[
                 {
@@ -473,6 +516,45 @@ class GuardianEventRouterTest(unittest.TestCase):
         self.assertEqual(validation["status"], "INVALID")
         self.assertTrue(validation["stale"])
         self.assertIn("CONTRACT_STALE", {event.event_type for event in events})
+
+    def test_expired_watch_only_candidate_does_not_emit_contract_stale_by_itself(self) -> None:
+        contract = _contract(entry_overrides={"next_review_deadline_utc": (NOW - timedelta(minutes=1)).isoformat()})
+
+        validation = validate_guardian_trigger_contract(contract, now=NOW)
+        events = detect_guardian_events(inputs={"snapshot": _snapshot(), "trigger_contract": contract}, now=NOW)
+
+        self.assertEqual(validation["status"], "VALID")
+        self.assertFalse(validation["stale"])
+        self.assertIn("CONTRACT_ENTRY_WATCH_DEADLINE_EXPIRED", {issue["code"] for issue in validation["issues"]})
+        self.assertNotIn("CONTRACT_STALE", {event.event_type for event in events})
+
+    def test_open_exposure_with_valid_deadline_and_triggers_is_valid(self) -> None:
+        contract = _contract(
+            entry_overrides={
+                **_open_required_trigger_fields(),
+                "trade_id": "valid-open",
+                "units": 1000,
+                "avg_entry": 1.171,
+            }
+        )
+        snapshot = _snapshot(
+            positions=[
+                {
+                    "pair": "EUR_USD",
+                    "side": "LONG",
+                    "units": 1000,
+                    "owner": "trader",
+                    "trade_id": "valid-open",
+                }
+            ]
+        )
+
+        validation = validate_guardian_trigger_contract(contract, now=NOW)
+        events = detect_guardian_events(inputs={"snapshot": snapshot, "trigger_contract": contract}, now=NOW)
+
+        self.assertEqual(validation["status"], "VALID")
+        self.assertFalse(validation["stale"])
+        self.assertNotIn("CONTRACT_STALE", {event.event_type for event in events})
 
     def test_open_exposure_empty_required_triggers_emit_contract_stale(self) -> None:
         contract = _contract(
@@ -803,6 +885,19 @@ def _contract(
         "contract_owner": "qr-trader",
         "cycle_horizon_minutes": 60,
         "entries": [entry],
+    }
+
+
+def _open_required_trigger_fields() -> dict:
+    return {
+        bucket: [{"trigger_id": f"{bucket}:fixture", "metric": "mid", "operator": ">=", "value": 1.17}]
+        for bucket in (
+            "harvest_triggers",
+            "no_add_triggers",
+            "wounded_triggers",
+            "invalidation_triggers",
+            "emergency_triggers",
+        )
     }
 
 

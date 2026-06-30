@@ -150,7 +150,7 @@ class OandaReadOnlyClient:
                     pair=str(trade.get("instrument") or ""),
                     side=Side.LONG if units_signed > 0 else Side.SHORT,
                     units=abs(units_signed),
-                    entry_price=float(trade.get("price") or 0.0),
+                    entry_price=_trade_entry_price(trade),
                     unrealized_pl_jpy=float(trade.get("unrealizedPL") or 0.0),
                     take_profit=_nested_price(trade.get("takeProfitOrder")),
                     stop_loss=_nested_price(trade.get("stopLossOrder")),
@@ -237,6 +237,14 @@ def _nested_price(payload: object) -> float | None:
     if not isinstance(payload, dict):
         return None
     return _optional_float(payload.get("price"))
+
+
+def _trade_entry_price(trade: dict) -> float:
+    for key in ("price", "entry", "entryPrice", "averagePrice", "average_entry", "average_price"):
+        value = _optional_float(trade.get(key))
+        if value is not None:
+            return value
+    return 0.0
 
 
 def _backfill_take_profit_from_pending(

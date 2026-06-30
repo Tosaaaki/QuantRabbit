@@ -29,7 +29,9 @@ EXPECTED_QR_TRADER_GUARDIAN_STARTUP_READS = (
     "data/guardian_escalation.json",
     "docs/guardian_action_review.md",
     "data/guardian_action_receipt.json",
+    "data/guardian_action_cycle_result.json",
     "data/guardian_trigger_contract.json",
+    "docs/guardian_trigger_contract_report.md",
 )
 
 
