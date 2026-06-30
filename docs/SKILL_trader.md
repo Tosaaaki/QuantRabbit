@@ -21,6 +21,7 @@ PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli trader-prompt-route
 
 - Broker truth wins over memory, prose, and prior prompts.
 - OANDA entry orders go only through `LiveOrderGateway`.
+- `guardian-event-router` is read-only: it writes event/wake artifacts for GPT-5.5 and never sends, cancels, or closes broker orders.
 - Target-path entry sends require `QR_TARGET_PATH_LIVE_ENABLED=1` in addition to `QR_LIVE_ENABLED=1`; default is dry-run/stage/LIVE-LEARNING receipt only.
 - OANDA position changes go only through `PositionProtectionGateway`.
 - Direct `OandaExecutionClient.close_trade()` is blocked; live market closes must use the provenance-aware gateway/partial-close paths and leave a position-execution receipt.
@@ -297,8 +298,8 @@ PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli trader-prompt-route
 # daily-target-state → capture-economics → generate-intents --reuse-market-artifacts →
 # optimize-coverage → ai-attack-advice →
 # learning/execution-timing/manual-market-context/operator-precedent/verification audits →
-# generate-predictive-limits → position sidecars → memory-health →
-# profit-capture-bot → self-improvement-audit → profitability-acceptance →
+# generate-predictive-limits → position sidecars → guardian-event-router →
+# profit-capture-bot → memory-health → self-improvement-audit → profitability-acceptance →
 # trader-support-bot → trader-repair-orchestrator) in one
 # process, in the same order and with the same arguments the per-step
 # skeleton used (`cli._cycle_refresh_steps` is the canonical list), then
@@ -513,7 +514,8 @@ QR_LIVE_ENABLED=1 ./scripts/run-autotrade-live.sh \
 # `order_intents` with `generate-intents --reuse-market-artifacts`. It then
 # regenerates `optimize-coverage` and `ai-attack-advice` from that final intent
 # packet, and reruns read-only position evidence sidecars against the final
-# broker/intent packet before `profit-capture-bot` → `memory-health` →
+# broker/intent packet before `guardian-event-router` →
+# `profit-capture-bot` → `memory-health` →
 # `self-improvement-audit` →
 # `profitability-acceptance` → `trader-support-bot` →
 # `trader-repair-orchestrator`. It preserves the original
@@ -526,12 +528,13 @@ QR_LIVE_ENABLED=1 ./scripts/run-autotrade-live.sh \
 #   broker-snapshot → tp-rebalance → execution-ledger-sync → broker-snapshot
 #   → daily-target-state → profit-partial-close → verify-projections
 #   → position-thesis-check → thesis-evolution-check → forecast-persistence-check
-#   → position-management → position-execution
+#   → position-management → position-execution → guardian-event-router
 #   → broker-snapshot → daily-target-state
 #   → generate-intents --reuse-market-artifacts
 #   → optimize-coverage → ai-attack-advice
 #   → position-thesis-check → thesis-evolution-check
-#   → forecast-persistence-check → position-management → profit-capture-bot → memory-health
+#   → forecast-persistence-check → position-management → guardian-event-router
+#   → profit-capture-bot → memory-health
 #   → self-improvement-audit → profitability-acceptance → trader-support-bot
 #   → trader-repair-orchestrator
 # and prints one compact digest.

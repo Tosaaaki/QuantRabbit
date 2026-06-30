@@ -1,0 +1,344 @@
+from __future__ import annotations
+
+import json
+import tempfile
+import unittest
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+
+from quant_rabbit.guardian_events import (
+    detect_guardian_events,
+    evaluate_guardian_escalation,
+    review_guardian_action_receipt,
+    run_guardian_event_router,
+)
+
+
+NOW = datetime(2026, 6, 30, 3, 30, tzinfo=timezone.utc)
+
+
+class GuardianEventRouterTest(unittest.TestCase):
+    def test_no_event_no_wake(self) -> None:
+        events = detect_guardian_events(inputs={"snapshot": _snapshot()}, now=NOW)
+        escalation, _ = evaluate_guardian_escalation(events=events, previous_state={}, now=NOW)
+
+        self.assertEqual(events, [])
+        self.assertFalse(escalation["wake_gpt"])
+
+    def test_repeated_same_event_is_throttled(self) -> None:
+        events = _events_from_chart(
+            {
+                "event_type": "FAILED_ACCEPTANCE",
+                "thesis": "major figure rejection",
+                "price_zone": "EUR_USD 1.1700 rejection",
+                "severity": "P1",
+                "action_hint": "TRADE",
+            }
+        )
+        first, state = evaluate_guardian_escalation(events=events, previous_state={}, now=NOW)
+
+        second, _ = evaluate_guardian_escalation(
+            events=events,
+            previous_state=state,
+            now=NOW + timedelta(minutes=5),
+        )
+
+        self.assertTrue(first["wake_gpt"])
+        self.assertFalse(second["wake_gpt"])
+        self.assertEqual(second["suppressed_events"][0]["suppressed_reason"], "THROTTLED")
+
+    def test_p0_severity_increase_bypasses_throttle(self) -> None:
+        p1_events = _events_from_chart(
+            {
+                "event_type": "THESIS_INVALIDATION",
+                "thesis": "EUR_USD long thesis",
+                "price_zone": "M15 support cracked",
+                "severity": "P1",
+                "action_hint": "REDUCE",
+                "thesis_state": "WOUNDED",
+            }
+        )
+        _, state = evaluate_guardian_escalation(events=p1_events, previous_state={}, now=NOW)
+        p0_events = _events_from_chart(
+            {
+                "event_type": "THESIS_INVALIDATION",
+                "thesis": "EUR_USD long thesis",
+                "price_zone": "H4 close-confirmed break",
+                "severity": "P0",
+                "action_hint": "REDUCE",
+                "thesis_state": "INVALIDATED",
+            }
+        )
+
+        escalation, _ = evaluate_guardian_escalation(
+            events=p0_events,
+            previous_state=state,
+            now=NOW + timedelta(minutes=5),
+        )
+
+        self.assertTrue(escalation["wake_gpt"])
+        self.assertIn("SEVERITY_INCREASE", escalation["wake_reason_codes"])
+
+    def test_harvest_event_wakes(self) -> None:
+        events = detect_guardian_events(
+            inputs={
+                "order_intents": {
+                    "results": [
+                        {
+                            "lane_id": "range:EUR_USD:LONG:HARVEST",
+                            "status": "LIVE_READY",
+                            "intent": {
+                                "pair": "EUR_USD",
+                                "side": "LONG",
+                                "thesis": "range harvest long",
+                                "entry": 1.171,
+                                "metadata": {
+                                    "opportunity_mode": "HARVEST",
+                                    "tp_target_intent": "HARVEST",
+                                    "harvest_zone": "upper range rail",
+                                },
+                            },
+                        }
+                    ]
+                }
+            },
+            now=NOW,
+        )
+        escalation, _ = evaluate_guardian_escalation(events=events, previous_state={}, now=NOW)
+
+        self.assertEqual(events[0].event_type, "HARVEST_ZONE")
+        self.assertTrue(escalation["wake_gpt"])
+        self.assertIn("PRICE_ENTERED_HARVEST_ZONE", escalation["wake_reason_codes"])
+
+    def test_dry_run_harvest_geometry_does_not_wake_as_harvest_zone(self) -> None:
+        events = detect_guardian_events(
+            inputs={
+                "order_intents": {
+                    "results": [
+                        {
+                            "lane_id": "range:EUR_USD:LONG:DRY_RUN",
+                            "status": "DRY_RUN_BLOCKED",
+                            "intent": {
+                                "pair": "EUR_USD",
+                                "side": "LONG",
+                                "thesis": "range target geometry",
+                                "entry": 1.171,
+                                "metadata": {
+                                    "opportunity_mode": "HARVEST",
+                                    "opportunity_mode_reason": "tp_target_intent=HARVEST",
+                                    "tp_target_intent": "HARVEST",
+                                },
+                            },
+                        }
+                    ]
+                }
+            },
+            now=NOW,
+        )
+        escalation, _ = evaluate_guardian_escalation(events=events, previous_state={}, now=NOW)
+
+        self.assertEqual([event.event_type for event in events], [])
+        self.assertFalse(escalation["wake_gpt"])
+
+    def test_failed_acceptance_event_can_wake(self) -> None:
+        events = _events_from_chart(
+            {
+                "event_type": "FAILED_ACCEPTANCE",
+                "thesis": "failed acceptance below major figure",
+                "price_zone": "GBP_JPY 198.00 rejection",
+                "severity": "P1",
+                "action_hint": "TRADE",
+            },
+            pair="GBP_JPY",
+        )
+        escalation, _ = evaluate_guardian_escalation(events=events, previous_state={}, now=NOW)
+
+        self.assertEqual(events[0].event_type, "FAILED_ACCEPTANCE")
+        self.assertEqual(events[0].pair, "GBP_JPY")
+        self.assertTrue(escalation["wake_gpt"])
+
+    def test_same_event_framework_handles_multiple_pairs(self) -> None:
+        events = detect_guardian_events(
+            inputs={
+                "pair_charts": {
+                    "charts": [
+                        {
+                            "pair": "EUR_USD",
+                            "guardian_events": [
+                                {
+                                    "event_type": "RANGE_RAIL_TOUCH",
+                                    "direction": "LONG",
+                                    "thesis": "EUR lower rail",
+                                    "price_zone": "EUR_USD lower rail",
+                                    "severity": "P2",
+                                }
+                            ],
+                        },
+                        {
+                            "pair": "GBP_JPY",
+                            "guardian_events": [
+                                {
+                                    "event_type": "SQUEEZE_RELEASE",
+                                    "direction": "SHORT",
+                                    "thesis": "GBP_JPY squeeze",
+                                    "price_zone": "M5 squeeze release",
+                                    "severity": "P1",
+                                }
+                            ],
+                        },
+                    ]
+                }
+            },
+            now=NOW,
+        )
+
+        self.assertEqual({event.pair for event in events}, {"EUR_USD", "GBP_JPY"})
+        self.assertEqual({event.event_type for event in events}, {"RANGE_RAIL_TOUCH", "SQUEEZE_RELEASE"})
+
+    def test_gpt_action_without_new_information_is_rejected(self) -> None:
+        event = _events_from_chart(
+            {
+                "event_type": "FAILED_ACCEPTANCE",
+                "thesis": "major figure rejection",
+                "price_zone": "EUR_USD 1.1700 rejection",
+                "severity": "P1",
+                "action_hint": "TRADE",
+            }
+        )[0]
+
+        review = review_guardian_action_receipt(
+            {
+                "action": "TRADE",
+                "new_information": False,
+                "event_id": event.event_id,
+                "thesis_state": "ALIVE",
+                "reason": "same idea as the last cycle",
+                "invalidation": "accepted break above zone",
+                "harvest_trigger": "upper rail",
+                "gateway_required": True,
+            },
+            events=[event],
+            now=NOW,
+        )
+
+        self.assertEqual(review["status"], "REJECTED")
+        self.assertIn("GUARDIAN_ACTION_REQUIRES_NEW_INFORMATION", _issue_codes(review))
+
+    def test_live_actions_require_gateway_required_true(self) -> None:
+        event = _events_from_chart(
+            {
+                "event_type": "SQUEEZE_RELEASE",
+                "thesis": "squeeze release",
+                "price_zone": "M5 squeeze release",
+                "severity": "P1",
+                "action_hint": "ADD",
+            }
+        )[0]
+
+        review = review_guardian_action_receipt(
+            {
+                "action": "ADD",
+                "new_information": True,
+                "event_id": event.event_id,
+                "thesis_state": "ALIVE",
+                "reason": "fresh squeeze release",
+                "invalidation": "squeeze failed back inside range",
+                "harvest_trigger": "first rail touch",
+                "gateway_required": False,
+            },
+            events=[event],
+            now=NOW,
+        )
+
+        self.assertEqual(review["status"], "REJECTED")
+        self.assertIn("GUARDIAN_ACTION_GATEWAY_REQUIRED", _issue_codes(review))
+
+    def test_cli_writes_required_reports(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            snapshot = root / "snapshot.json"
+            pair_charts = root / "pair_charts.json"
+            order_intents = root / "order_intents.json"
+            position_management = root / "position_management.json"
+            thesis_evolution = root / "thesis_evolution.json"
+            forecast_persistence = root / "forecast_persistence.json"
+            market_context = root / "market_context.json"
+            snapshot.write_text(json.dumps(_snapshot()))
+            pair_charts.write_text(
+                json.dumps(
+                    {
+                        "charts": [
+                            {
+                                "pair": "EUR_USD",
+                                "guardian_events": [
+                                    {
+                                        "event_type": "FAILED_ACCEPTANCE",
+                                        "thesis": "major figure rejection",
+                                        "price_zone": "EUR_USD 1.1700 rejection",
+                                        "severity": "P1",
+                                        "action_hint": "TRADE",
+                                    }
+                                ],
+                            }
+                        ]
+                    }
+                )
+            )
+            for path in (order_intents, position_management, thesis_evolution, forecast_persistence, market_context):
+                path.write_text("{}")
+
+            summary = run_guardian_event_router(
+                snapshot_path=snapshot,
+                pair_charts_path=pair_charts,
+                order_intents_path=order_intents,
+                position_management_path=position_management,
+                thesis_evolution_path=thesis_evolution,
+                forecast_persistence_path=forecast_persistence,
+                market_context_matrix_path=market_context,
+                state_path=root / "guardian_event_state.json",
+                events_output_path=root / "guardian_events.json",
+                escalation_output_path=root / "guardian_escalation.json",
+                report_path=root / "guardian_event_report.md",
+                action_review_report_path=root / "guardian_action_review.md",
+            )
+
+            self.assertTrue(summary.wake_gpt)
+            self.assertTrue((root / "guardian_events.json").exists())
+            self.assertTrue((root / "guardian_escalation.json").exists())
+            self.assertTrue((root / "guardian_event_report.md").exists())
+            self.assertTrue((root / "guardian_action_review.md").exists())
+
+
+def _snapshot() -> dict:
+    return {
+        "fetched_at_utc": NOW.isoformat(),
+        "account": {
+            "nav_jpy": 200000.0,
+            "margin_used_jpy": 20000.0,
+            "margin_available_jpy": 180000.0,
+        },
+        "positions": [],
+        "orders": [],
+        "quotes": {
+            "EUR_USD": {"bid": 1.1730, "ask": 1.1731},
+            "USD_JPY": {"bid": 157.37, "ask": 157.38},
+        },
+    }
+
+
+def _events_from_chart(event: dict, *, pair: str = "EUR_USD"):
+    return detect_guardian_events(
+        inputs={
+            "snapshot": _snapshot(),
+            "pair_charts": {"charts": [{"pair": pair, "guardian_events": [event]}]},
+        },
+        now=NOW,
+    )
+
+
+def _issue_codes(review: dict) -> set[str]:
+    return {str(issue.get("code")) for issue in review.get("issues", [])}
+
+
+if __name__ == "__main__":
+    unittest.main()

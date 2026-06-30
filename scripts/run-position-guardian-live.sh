@@ -142,18 +142,33 @@ guardian_management="${QR_POSITION_GUARDIAN_MANAGEMENT:-data/position_guardian_m
 guardian_management_report="${QR_POSITION_GUARDIAN_MANAGEMENT_REPORT:-docs/position_guardian_management_report.md}"
 guardian_execution="${QR_POSITION_GUARDIAN_EXECUTION:-data/position_guardian_execution.json}"
 guardian_execution_report="${QR_POSITION_GUARDIAN_EXECUTION_REPORT:-docs/position_guardian_execution_report.md}"
+guardian_charts="${QR_POSITION_GUARDIAN_PAIR_CHARTS:-data/position_guardian_pair_charts.json}"
+guardian_report="${QR_POSITION_GUARDIAN_PAIR_CHARTS_REPORT:-docs/position_guardian_pair_charts_report.md}"
+guardian_count="${QR_POSITION_GUARDIAN_CANDLE_COUNT:-120}"
+
+run_guardian_event_router() {
+  "$QR_PYTHON" -m quant_rabbit.cli guardian-event-router \
+    --snapshot "$guardian_snapshot" \
+    --pair-charts "$guardian_charts" \
+    --order-intents "${QR_POSITION_GUARDIAN_ORDER_INTENTS:-data/order_intents.json}" \
+    --position-management "$guardian_management" \
+    --thesis-evolution "${QR_POSITION_GUARDIAN_THESIS_EVOLUTION:-data/thesis_evolution_report.json}" \
+    --forecast-persistence "${QR_POSITION_GUARDIAN_FORECAST_PERSISTENCE:-data/forecast_persistence_report.json}" \
+    --market-context-matrix "${QR_POSITION_GUARDIAN_MARKET_CONTEXT_MATRIX:-data/market_context_matrix.json}" \
+    --output "${QR_POSITION_GUARDIAN_EVENTS:-data/guardian_events.json}" \
+    --escalation-output "${QR_POSITION_GUARDIAN_ESCALATION:-data/guardian_escalation.json}" \
+    --report "${QR_POSITION_GUARDIAN_EVENT_REPORT:-docs/guardian_event_report.md}" \
+    --action-review-report "${QR_POSITION_GUARDIAN_ACTION_REVIEW:-docs/guardian_action_review.md}"
+}
 
 "$QR_PYTHON" -m quant_rabbit.cli broker-snapshot --output "$guardian_snapshot"
 pairs="$(open_trader_pairs "$guardian_snapshot")"
 if [[ -z "$pairs" ]]; then
+  run_guardian_event_router
   write_no_position_artifact
   echo "[run-position-guardian-live] no trader-owned open positions; skipped." >&2
   exit 0
 fi
-
-guardian_charts="${QR_POSITION_GUARDIAN_PAIR_CHARTS:-data/position_guardian_pair_charts.json}"
-guardian_report="${QR_POSITION_GUARDIAN_PAIR_CHARTS_REPORT:-docs/position_guardian_pair_charts_report.md}"
-guardian_count="${QR_POSITION_GUARDIAN_CANDLE_COUNT:-120}"
 
 "$QR_PYTHON" -m quant_rabbit.cli pair-charts \
   --pairs "$pairs" \
@@ -180,3 +195,4 @@ if [[ "$QR_LIVE_ENABLED" == "1" ]]; then
 fi
 
 "$QR_PYTHON" -m quant_rabbit.cli "${pexec_args[@]}"
+run_guardian_event_router

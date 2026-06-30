@@ -29,11 +29,13 @@ def _trader_sl_repair_disabled() -> bool:
 from quant_rabbit.paths import (
     ROOT as _QR_ROOT,
     DEFAULT_DAILY_TARGET_STATE,
+    DEFAULT_GUARDIAN_ACTION_RECEIPT,
     DEFAULT_LIVE_ORDER_REQUEST,
     DEFAULT_LIVE_ORDER_STAGE_REPORT,
     DEFAULT_ORDER_INTENTS,
     DEFAULT_STRATEGY_PROFILE,
 )
+from quant_rabbit.guardian_events import guardian_action_gateway_issues
 from quant_rabbit.risk import (
     MIN_PRODUCTION_LOT_UNITS,
     RiskEngine,
@@ -116,6 +118,7 @@ class LiveOrderGateway:
         portfolio_loss_cap_jpy: float | None = None,
         self_improvement_audit: Path | None = None,
         verified_decision_path: Path | None = None,
+        guardian_action_receipt_path: Path | None = DEFAULT_GUARDIAN_ACTION_RECEIPT,
     ) -> None:
         self.client = client
         self.strategy_profile = strategy_profile
@@ -132,6 +135,7 @@ class LiveOrderGateway:
         # the LATEST_GPT_DECISION_STALE audit finding can be recognized as
         # already repaired. Manual stage-live-order paths leave it None.
         self.verified_decision_path = verified_decision_path
+        self.guardian_action_receipt_path = guardian_action_receipt_path
 
     def run(
         self,
@@ -262,6 +266,12 @@ class LiveOrderGateway:
         )
         send_issues = _send_guard_issues(send=send, confirm_live=confirm_live, lane_id=lane_id)
         target_path_issues = _target_path_live_send_issues(intent, send=send)
+        guardian_action_issues = guardian_action_gateway_issues(
+            intent_metadata=intent.metadata,
+            pair=intent.pair,
+            thesis=intent.thesis,
+            action_receipt_path=self.guardian_action_receipt_path,
+        )
         sl_lint, sl_lint_issues = _sl_lint_result(
             intent=intent,
             snapshot=snapshot,
@@ -277,6 +287,7 @@ class LiveOrderGateway:
             or any(issue["severity"] == "BLOCK" for issue in self_improvement_issues)
             or any(issue["severity"] == "BLOCK" for issue in send_issues)
             or any(issue["severity"] == "BLOCK" for issue in target_path_issues)
+            or any(issue["severity"] == "BLOCK" for issue in guardian_action_issues)
             or any(issue["severity"] == "BLOCK" for issue in sl_lint_issues)
             or any(issue.severity == "BLOCK" for issue in scale_issues)
         )
@@ -355,6 +366,7 @@ class LiveOrderGateway:
                 *self_improvement_issues,
                 *send_issues,
                 *target_path_issues,
+                *guardian_action_issues,
                 *sl_lint_issues,
                 *order_build_issues,
                 *[issue.__dict__ for issue in scale_issues],
@@ -735,6 +747,12 @@ class LiveOrderGateway:
         )
         send_issues = _send_guard_issues(send=send, confirm_live=confirm_live, lane_id=lane_id_arg)
         target_path_issues = _target_path_live_send_issues(intent, send=send)
+        guardian_action_issues = guardian_action_gateway_issues(
+            intent_metadata=intent.metadata,
+            pair=intent.pair,
+            thesis=intent.thesis,
+            action_receipt_path=self.guardian_action_receipt_path,
+        )
         sl_lint, sl_lint_issues = _sl_lint_result(
             intent=intent,
             snapshot=snapshot,
@@ -750,6 +768,7 @@ class LiveOrderGateway:
             or any(issue["severity"] == "BLOCK" for issue in self_improvement_issues)
             or any(issue["severity"] == "BLOCK" for issue in send_issues)
             or any(issue["severity"] == "BLOCK" for issue in target_path_issues)
+            or any(issue["severity"] == "BLOCK" for issue in guardian_action_issues)
             or any(issue["severity"] == "BLOCK" for issue in sl_lint_issues)
             or any(issue.severity == "BLOCK" for issue in scale_issues)
         )
@@ -823,6 +842,7 @@ class LiveOrderGateway:
                 *self_improvement_issues,
                 *send_issues,
                 *target_path_issues,
+                *guardian_action_issues,
                 *sl_lint_issues,
                 *order_build_issues,
                 *[issue.__dict__ for issue in scale_issues],

@@ -94,6 +94,12 @@ from quant_rabbit.paths import (
     DEFAULT_EXECUTION_REPLAY_REPORT,
     DEFAULT_GPT_TRADER_DECISION,
     DEFAULT_GPT_TRADER_DECISION_REPORT,
+    DEFAULT_GUARDIAN_ACTION_RECEIPT,
+    DEFAULT_GUARDIAN_ACTION_REVIEW,
+    DEFAULT_GUARDIAN_ESCALATION,
+    DEFAULT_GUARDIAN_EVENT_REPORT,
+    DEFAULT_GUARDIAN_EVENT_STATE,
+    DEFAULT_GUARDIAN_EVENTS,
     DEFAULT_HISTORY_DB,
     DEFAULT_IMPORT_REPORT,
     DEFAULT_MARKET_STATUS,
@@ -2326,6 +2332,7 @@ def _cycle_refresh_steps(daily_risk_pct: str) -> list[dict[str, Any]]:
         {"argv": ["thesis-evolution-check"], "required": False},
         {"argv": ["forecast-persistence-check"], "required": False},
         {"argv": ["position-management"], "required": True},
+        {"argv": ["guardian-event-router"], "required": True},
         {"argv": ["profit-capture-bot"], "required": True, "ok_rcs": [0, 2]},
         {"argv": ["memory-health"], "required": True},
         {"argv": ["self-improvement-audit"], "required": False, "ok_rcs": [0, 2]},
@@ -2367,6 +2374,7 @@ def _cycle_sidecar_steps() -> list[dict[str, Any]]:
         # live lock. Run the gateway here as the full-cycle fallback; live sends
         # still require QR_LIVE_ENABLED plus --send --confirm-live.
         {"argv": position_execution, "required": False},
+        {"argv": ["guardian-event-router"], "required": True},
         # Post-gateway sidecars refresh broker truth after cycle-refresh priced
         # entries. Reprice intents before acceptance/support so the loop does
         # not rank stale LIVE_READY/frontier blockers as repair work.
@@ -2401,6 +2409,7 @@ def _post_autotrade_failure_sidecar_steps() -> list[dict[str, Any]]:
         {"argv": ["forecast-persistence-check"], "required": False},
         {"argv": ["position-management"], "required": True},
         {"argv": position_execution, "required": False},
+        {"argv": ["guardian-event-router"], "required": True},
         _broker_snapshot_step(),
         _daily_target_state_step(),
         _reuse_market_artifact_intent_step(),
@@ -2452,6 +2461,7 @@ def _post_intent_evidence_steps() -> list[dict[str, Any]]:
         {"argv": ["thesis-evolution-check"], "required": False},
         {"argv": ["forecast-persistence-check"], "required": False},
         {"argv": ["position-management"], "required": True},
+        {"argv": ["guardian-event-router"], "required": True},
     ]
 
 
@@ -3831,6 +3841,25 @@ def main(argv: list[str] | None = None) -> int:
     p_pexec.add_argument("--execution-ledger-report", type=Path, default=DEFAULT_EXECUTION_LEDGER_REPORT)
     p_pexec.add_argument("--send", action="store_true")
     p_pexec.add_argument("--confirm-live", action="store_true")
+
+    p_guardian_events = sub.add_parser(
+        "guardian-event-router",
+        help="Detect guardian market/exposure events and write GPT-5.5 wake artifacts without trading.",
+    )
+    p_guardian_events.add_argument("--snapshot", type=Path, default=DEFAULT_BROKER_SNAPSHOT)
+    p_guardian_events.add_argument("--pair-charts", type=Path, default=DEFAULT_PAIR_CHARTS)
+    p_guardian_events.add_argument("--order-intents", type=Path, default=DEFAULT_ORDER_INTENTS)
+    p_guardian_events.add_argument("--position-management", type=Path, default=DEFAULT_POSITION_MANAGEMENT)
+    p_guardian_events.add_argument("--thesis-evolution", type=Path, default=Path("data/thesis_evolution_report.json"))
+    p_guardian_events.add_argument("--forecast-persistence", type=Path, default=Path("data/forecast_persistence_report.json"))
+    p_guardian_events.add_argument("--market-context-matrix", type=Path, default=DEFAULT_MARKET_CONTEXT_MATRIX)
+    p_guardian_events.add_argument("--state", type=Path, default=DEFAULT_GUARDIAN_EVENT_STATE)
+    p_guardian_events.add_argument("--output", type=Path, default=DEFAULT_GUARDIAN_EVENTS)
+    p_guardian_events.add_argument("--escalation-output", type=Path, default=DEFAULT_GUARDIAN_ESCALATION)
+    p_guardian_events.add_argument("--report", type=Path, default=DEFAULT_GUARDIAN_EVENT_REPORT)
+    p_guardian_events.add_argument("--action-receipt-input", type=Path, default=None)
+    p_guardian_events.add_argument("--action-receipt-output", type=Path, default=DEFAULT_GUARDIAN_ACTION_RECEIPT)
+    p_guardian_events.add_argument("--action-review-report", type=Path, default=DEFAULT_GUARDIAN_ACTION_REVIEW)
 
     p_plim = sub.add_parser(
         "generate-predictive-limits",
@@ -6780,6 +6809,46 @@ def main(argv: list[str] | None = None) -> int:
             "execution_ledger": ledger_record,
             "execution_ledger_post_sync": ledger_post_sync,
         }, indent=2, ensure_ascii=False, sort_keys=True))
+        return 0
+    if args.command == "guardian-event-router":
+        from quant_rabbit.guardian_events import run_guardian_event_router
+
+        summary = run_guardian_event_router(
+            snapshot_path=args.snapshot,
+            pair_charts_path=args.pair_charts,
+            order_intents_path=args.order_intents,
+            position_management_path=args.position_management,
+            thesis_evolution_path=args.thesis_evolution,
+            forecast_persistence_path=args.forecast_persistence,
+            market_context_matrix_path=args.market_context_matrix,
+            state_path=args.state,
+            events_output_path=args.output,
+            escalation_output_path=args.escalation_output,
+            report_path=args.report,
+            action_receipt_input_path=args.action_receipt_input,
+            action_receipt_output_path=args.action_receipt_output,
+            action_review_report_path=args.action_review_report,
+        )
+        print(
+            json.dumps(
+                {
+                    "status": summary.status,
+                    "event_count": summary.event_count,
+                    "wake_gpt": summary.wake_gpt,
+                    "wake_reasons": list(summary.wake_reasons),
+                    "events_path": str(summary.events_path),
+                    "escalation_path": str(summary.escalation_path),
+                    "state_path": str(summary.state_path),
+                    "report_path": str(summary.report_path),
+                    "action_receipt_path": str(summary.action_receipt_path) if summary.action_receipt_path else None,
+                    "action_review_report_path": str(summary.action_review_report_path),
+                    "action_review_status": summary.action_review_status,
+                },
+                ensure_ascii=False,
+                indent=2,
+                sort_keys=True,
+            )
+        )
         return 0
     if args.command == "verify-projections":
         from quant_rabbit.strategy.projection_ledger import (

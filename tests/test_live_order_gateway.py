@@ -80,6 +80,78 @@ class LiveOrderGatewayTest(unittest.TestCase):
             self.assertEqual(order["timeInForce"], "FOK")
             self.assertNotIn("price", order)
 
+    def test_guardian_wake_hourly_schedule_alone_cannot_stage_order(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            receipt = root / "guardian_action_receipt.json"
+            receipt.write_text(
+                json.dumps(
+                    {
+                        "action": "TRADE",
+                        "new_information": True,
+                        "event_id": "event-hourly",
+                        "pair": "EUR_USD",
+                        "thesis": "trend continuation",
+                        "thesis_state": "ALIVE",
+                        "reason": "scheduled hour arrived, so place the trade",
+                        "invalidation": "break back below support",
+                        "harvest_trigger": "upper rail",
+                        "gateway_required": True,
+                    }
+                )
+            )
+
+            summary = LiveOrderGateway(
+                client=FakeExecutionClient(),
+                strategy_profile=_profile(root),
+                output_path=root / "request.json",
+                report_path=root / "report.md",
+                guardian_action_receipt_path=receipt,
+            ).run(
+                intents_path=_intents(
+                    root,
+                    metadata={
+                        "desk": "trend_trader",
+                        "campaign_role": "NOW",
+                        "guardian_event_id": "event-hourly",
+                        "guardian_event_wake": True,
+                    },
+                    order_type="MARKET",
+                ),
+                lane_id="lane:EUR_USD:LONG",
+            )
+
+            self.assertEqual(summary.status, "BLOCKED")
+            payload = json.loads((root / "request.json").read_text())
+            self.assertIn("GUARDIAN_ACTION_SCHEDULE_ONLY", {issue["code"] for issue in payload["risk_issues"]})
+
+    def test_guardian_wake_intent_requires_action_receipt_before_gateway(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            summary = LiveOrderGateway(
+                client=FakeExecutionClient(),
+                strategy_profile=_profile(root),
+                output_path=root / "request.json",
+                report_path=root / "report.md",
+                guardian_action_receipt_path=root / "missing_guardian_action_receipt.json",
+            ).run(
+                intents_path=_intents(
+                    root,
+                    metadata={
+                        "desk": "trend_trader",
+                        "campaign_role": "NOW",
+                        "guardian_event_id": "event-missing",
+                        "guardian_event_wake": True,
+                    },
+                    order_type="MARKET",
+                ),
+                lane_id="lane:EUR_USD:LONG",
+            )
+
+            self.assertEqual(summary.status, "BLOCKED")
+            payload = json.loads((root / "request.json").read_text())
+            self.assertIn("GUARDIAN_ACTION_RECEIPT_REQUIRED", {issue["code"] for issue in payload["risk_issues"]})
+
     def test_sl_lint_blocks_jpy_major_figure_battle_zone_stop(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

@@ -1,0 +1,259 @@
+# Guardian Event Report
+
+- Generated at UTC: `2026-06-30T04:06:02.819672+00:00`
+- Events detected: `60`
+- Wake GPT-5.5: `False`
+- Wake reasons: `none`
+
+## Execution Boundary
+
+- Guardian is read-only and never trades.
+- GPT wake output is a receipt only and never calls OANDA directly.
+- Live sends/cancels/closes still require the existing gateway path.
+
+## Events
+
+- `P0` `UNKNOWN_ORDER` `USD_JPY` `SHORT`
+  - thesis: gateway-outside broker position
+  - price zone: entry=162.157 owner=unknown
+  - review: `EMERGENCY_RISK_REVIEW` dedupe: `USD_JPY|GATEWAY_OUTSIDE_BROKER_POSITION|UNKNOWN_ORDER|REDUCE`
+- `P1` `MARGIN_PRESSURE` `PORTFOLIO` `N/A`
+  - thesis: portfolio margin capacity
+  - price zone: margin_used/nav=0.908; available/nav=0.093; cap=0.920
+  - review: `RISK_REVIEW` dedupe: `PORTFOLIO|PORTFOLIO_MARGIN_CAPACITY|MARGIN_PRESSURE|HOLD`
+- `P1` `HARVEST_ZONE` `USD_JPY` `SHORT`
+  - thesis: 162.00 historical/intervention-risk fade
+  - price zone: Below 162.00 after rejection/fade confirms; TP-assisted profit harvest only.
+  - review: `HARVEST_REVIEW` dedupe: `USD_JPY|162_00_HISTORICAL_INTERVENTION_RISK_FADE|HARVEST_ZONE|HARVEST`
+- `P2` `SESSION_EXPANSION` `AUD_CAD` `SHORT`
+  - thesis: session expansion timing event
+  - price zone: LONDON_KILLZONE expansion sigma=6.29
+  - review: `ENTRY_REVIEW` dedupe: `AUD_CAD|SESSION_EXPANSION_TIMING_EVENT|SESSION_EXPANSION|TRADE`
+- `P2` `THEME_CONFIRMATION` `AUD_CAD` `SHORT`
+  - thesis: AUD_CAD confluence score_balance=SHORT_LEAN
+  - price zone: matrix:AUD_CAD:SHORT
+  - review: `ENTRY_REVIEW` dedupe: `AUD_CAD|AUD_CAD_CONFLUENCE_SCORE_BALANCE_SHORT_LEAN|THEME_CONFIRMATION|TRADE`
+- `P2` `SESSION_EXPANSION` `AUD_CHF` `SHORT`
+  - thesis: session expansion timing event
+  - price zone: LONDON_KILLZONE expansion sigma=6.54
+  - review: `ENTRY_REVIEW` dedupe: `AUD_CHF|SESSION_EXPANSION_TIMING_EVENT|SESSION_EXPANSION|TRADE`
+- `P2` `THEME_CONFIRMATION` `AUD_CHF` `SHORT`
+  - thesis: AUD_CHF confluence score_balance=SHORT_LEAN
+  - price zone: matrix:AUD_CHF:SHORT
+  - review: `ENTRY_REVIEW` dedupe: `AUD_CHF|AUD_CHF_CONFLUENCE_SCORE_BALANCE_SHORT_LEAN|THEME_CONFIRMATION|TRADE`
+- `P2` `FAILED_ACCEPTANCE` `AUD_JPY` `SHORT`
+  - thesis: failure_trader AUD_JPY SHORT BREAKOUT_FAILURE 2.70R: Matrix-supported repair lane: create only a pending LIMIT/STOP-ENTRY dry-run receipt; do not market-chase the supported direction. RiskEngine, forecast freshness, spread, profile repair, and live gateway gates must still decide execution.
+  - price zone: 111.546
+  - review: `ENTRY_REVIEW` dedupe: `AUD_JPY|FAILURE_TRADER_AUD_JPY_SHORT_BREAKOUT_FAILURE_2_70R_MATRIX_SUPPORTED_REPAIR_LANE_CREATE_ONLY_A_P|FAILED_ACCEPTANCE|TRADE`
+- `P2` `SESSION_EXPANSION` `AUD_JPY` `SHORT`
+  - thesis: session expansion timing event
+  - price zone: LONDON_KILLZONE expansion sigma=4.82
+  - review: `ENTRY_REVIEW` dedupe: `AUD_JPY|SESSION_EXPANSION_TIMING_EVENT|SESSION_EXPANSION|TRADE`
+- `P2` `THEME_CONFIRMATION` `AUD_JPY` `SHORT`
+  - thesis: AUD_JPY confluence score_balance=SHORT_LEAN
+  - price zone: matrix:AUD_JPY:SHORT
+  - review: `ENTRY_REVIEW` dedupe: `AUD_JPY|AUD_JPY_CONFLUENCE_SCORE_BALANCE_SHORT_LEAN|THEME_CONFIRMATION|TRADE`
+- `P2` `SESSION_EXPANSION` `AUD_NZD` `N/A`
+  - thesis: session expansion timing event
+  - price zone: LONDON_KILLZONE expansion sigma=4.24
+  - review: `ENTRY_REVIEW` dedupe: `AUD_NZD|SESSION_EXPANSION_TIMING_EVENT|SESSION_EXPANSION|TRADE`
+- `P2` `THEME_CONFIRMATION` `AUD_NZD` `SHORT`
+  - thesis: AUD_NZD dominant_regime=TREND_DOWN
+  - price zone: matrix:AUD_NZD:SHORT
+  - review: `ENTRY_REVIEW` dedupe: `AUD_NZD|AUD_NZD_DOMINANT_REGIME_TREND_DOWN|THEME_CONFIRMATION|TRADE`
+- `P2` `FAILED_ACCEPTANCE` `AUD_USD` `LONG`
+  - thesis: failure_trader AUD_USD LONG BREAKOUT_FAILURE 3.51R: Contested matrix-supported lane: build pending dry-run geometry and blocker reasons only; do not send live until the current matrix reject context clears on a fresh market-context refresh.
+  - price zone: 0.68926
+  - review: `ENTRY_REVIEW` dedupe: `AUD_USD|FAILURE_TRADER_AUD_USD_LONG_BREAKOUT_FAILURE_3_51R_CONTESTED_MATRIX_SUPPORTED_LANE_BUILD_PENDING|FAILED_ACCEPTANCE|TRADE`
+- `P2` `SESSION_EXPANSION` `AUD_USD` `SHORT`
+  - thesis: session expansion timing event
+  - price zone: LONDON_KILLZONE expansion sigma=5.27
+  - review: `ENTRY_REVIEW` dedupe: `AUD_USD|SESSION_EXPANSION_TIMING_EVENT|SESSION_EXPANSION|TRADE`
+- `P2` `SESSION_EXPANSION` `CAD_CHF` `SHORT`
+  - thesis: session expansion timing event
+  - price zone: LONDON_KILLZONE expansion sigma=3.35
+  - review: `ENTRY_REVIEW` dedupe: `CAD_CHF|SESSION_EXPANSION_TIMING_EVENT|SESSION_EXPANSION|TRADE`
+- `P2` `THEME_CONFIRMATION` `CAD_CHF` `SHORT`
+  - thesis: CAD_CHF confluence score_balance=SHORT_LEAN
+  - price zone: matrix:CAD_CHF:SHORT
+  - review: `ENTRY_REVIEW` dedupe: `CAD_CHF|CAD_CHF_CONFLUENCE_SCORE_BALANCE_SHORT_LEAN|THEME_CONFIRMATION|TRADE`
+- `P2` `SESSION_EXPANSION` `CAD_JPY` `SHORT`
+  - thesis: session expansion timing event
+  - price zone: LONDON_KILLZONE expansion sigma=5.32
+  - review: `ENTRY_REVIEW` dedupe: `CAD_JPY|SESSION_EXPANSION_TIMING_EVENT|SESSION_EXPANSION|TRADE`
+- `P2` `SESSION_EXPANSION` `CHF_JPY` `LONG`
+  - thesis: session expansion timing event
+  - price zone: LONDON_KILLZONE expansion sigma=4.60
+  - review: `ENTRY_REVIEW` dedupe: `CHF_JPY|SESSION_EXPANSION_TIMING_EVENT|SESSION_EXPANSION|TRADE`
+- `P2` `THEME_CONFIRMATION` `CHF_JPY` `LONG`
+  - thesis: CHF_JPY confluence score_balance=LONG_LEAN
+  - price zone: matrix:CHF_JPY:LONG
+  - review: `ENTRY_REVIEW` dedupe: `CHF_JPY|CHF_JPY_CONFLUENCE_SCORE_BALANCE_LONG_LEAN|THEME_CONFIRMATION|TRADE`
+- `P2` `SESSION_EXPANSION` `EUR_AUD` `LONG`
+  - thesis: session expansion timing event
+  - price zone: LONDON_KILLZONE expansion sigma=5.18
+  - review: `ENTRY_REVIEW` dedupe: `EUR_AUD|SESSION_EXPANSION_TIMING_EVENT|SESSION_EXPANSION|TRADE`
+- `P2` `THEME_CONFIRMATION` `EUR_AUD` `LONG`
+  - thesis: EUR_AUD confluence score_balance=LONG_LEAN
+  - price zone: matrix:EUR_AUD:LONG
+  - review: `ENTRY_REVIEW` dedupe: `EUR_AUD|EUR_AUD_CONFLUENCE_SCORE_BALANCE_LONG_LEAN|THEME_CONFIRMATION|TRADE`
+- `P2` `SESSION_EXPANSION` `EUR_CAD` `LONG`
+  - thesis: session expansion timing event
+  - price zone: LONDON_KILLZONE expansion sigma=4.58
+  - review: `ENTRY_REVIEW` dedupe: `EUR_CAD|SESSION_EXPANSION_TIMING_EVENT|SESSION_EXPANSION|TRADE`
+- `P2` `SESSION_EXPANSION` `EUR_CHF` `SHORT`
+  - thesis: session expansion timing event
+  - price zone: LONDON_KILLZONE expansion sigma=5.13
+  - review: `ENTRY_REVIEW` dedupe: `EUR_CHF|SESSION_EXPANSION_TIMING_EVENT|SESSION_EXPANSION|TRADE`
+- `P2` `THEME_CONFIRMATION` `EUR_CHF` `SHORT`
+  - thesis: EUR_CHF confluence score_balance=SHORT_LEAN
+  - price zone: matrix:EUR_CHF:SHORT
+  - review: `ENTRY_REVIEW` dedupe: `EUR_CHF|EUR_CHF_CONFLUENCE_SCORE_BALANCE_SHORT_LEAN|THEME_CONFIRMATION|TRADE`
+- `P2` `SESSION_EXPANSION` `EUR_GBP` `SHORT`
+  - thesis: session expansion timing event
+  - price zone: LONDON_KILLZONE expansion sigma=2.71
+  - review: `ENTRY_REVIEW` dedupe: `EUR_GBP|SESSION_EXPANSION_TIMING_EVENT|SESSION_EXPANSION|TRADE`
+- `P2` `FAILED_ACCEPTANCE` `EUR_JPY` `LONG`
+  - thesis: failure_trader EUR_JPY LONG BREAKOUT_FAILURE 1.50R: Create a current order intent with market_context, entry, TP, SL, risk <=1739 JPY, and >=1.2R.
+  - price zone: 183.952
+  - review: `ENTRY_REVIEW` dedupe: `EUR_JPY|FAILURE_TRADER_EUR_JPY_LONG_BREAKOUT_FAILURE_1_50R_CREATE_A_CURRENT_ORDER_INTENT_WITH_MARKET_CON|FAILED_ACCEPTANCE|TRADE`
+- `P2` `FAILED_ACCEPTANCE` `EUR_JPY` `SHORT`
+  - thesis: failure_trader EUR_JPY SHORT BREAKOUT_FAILURE 1.50R: Create a current order intent with market_context, entry, TP, SL, risk <=1739 JPY, and >=1.2R.
+  - price zone: 184.027
+  - review: `ENTRY_REVIEW` dedupe: `EUR_JPY|FAILURE_TRADER_EUR_JPY_SHORT_BREAKOUT_FAILURE_1_50R_CREATE_A_CURRENT_ORDER_INTENT_WITH_MARKET_CO|FAILED_ACCEPTANCE|TRADE`
+- `P2` `SESSION_EXPANSION` `EUR_JPY` `N/A`
+  - thesis: session expansion timing event
+  - price zone: LONDON_KILLZONE expansion sigma=3.94
+  - review: `ENTRY_REVIEW` dedupe: `EUR_JPY|SESSION_EXPANSION_TIMING_EVENT|SESSION_EXPANSION|TRADE`
+- `P2` `THEME_CONFIRMATION` `EUR_JPY` `LONG`
+  - thesis: EUR_JPY long_score 0.497 > short_score 0.477
+  - price zone: matrix:EUR_JPY:LONG
+  - review: `ENTRY_REVIEW` dedupe: `EUR_JPY|EUR_JPY_LONG_SCORE_0_497_SHORT_SCORE_0_477|THEME_CONFIRMATION|TRADE`
+- `P2` `SESSION_EXPANSION` `EUR_NZD` `LONG`
+  - thesis: session expansion timing event
+  - price zone: LONDON_KILLZONE expansion sigma=5.84
+  - review: `ENTRY_REVIEW` dedupe: `EUR_NZD|SESSION_EXPANSION_TIMING_EVENT|SESSION_EXPANSION|TRADE`
+- `P2` `THEME_CONFIRMATION` `EUR_NZD` `LONG`
+  - thesis: EUR_NZD confluence score_balance=LONG_LEAN
+  - price zone: matrix:EUR_NZD:LONG
+  - review: `ENTRY_REVIEW` dedupe: `EUR_NZD|EUR_NZD_CONFLUENCE_SCORE_BALANCE_LONG_LEAN|THEME_CONFIRMATION|TRADE`
+- `P2` `FAILED_ACCEPTANCE` `EUR_USD` `LONG`
+  - thesis: failure_trader EUR_USD LONG BREAKOUT_FAILURE 2.60R: Matrix-supported repair lane: create only a pending LIMIT/STOP-ENTRY dry-run receipt; do not market-chase the supported direction. RiskEngine, forecast freshness, spread, profile repair, and live gateway gates must still decide execution.
+  - price zone: 1.13766
+  - review: `ENTRY_REVIEW` dedupe: `EUR_USD|FAILURE_TRADER_EUR_USD_LONG_BREAKOUT_FAILURE_2_60R_MATRIX_SUPPORTED_REPAIR_LANE_CREATE_ONLY_A_PE|FAILED_ACCEPTANCE|TRADE`
+- `P2` `FAILED_ACCEPTANCE` `EUR_USD` `SHORT`
+  - thesis: failure_trader EUR_USD SHORT BREAKOUT_FAILURE 3.42R: Create a current order intent with market_context, entry, TP, SL, risk <=1739 JPY, and >=1.2R.
+  - price zone: 1.13806
+  - review: `ENTRY_REVIEW` dedupe: `EUR_USD|FAILURE_TRADER_EUR_USD_SHORT_BREAKOUT_FAILURE_3_42R_CREATE_A_CURRENT_ORDER_INTENT_WITH_MARKET_CO|FAILED_ACCEPTANCE|TRADE`
+- `P2` `SESSION_EXPANSION` `EUR_USD` `LONG`
+  - thesis: session expansion timing event
+  - price zone: LONDON_KILLZONE expansion sigma=4.41
+  - review: `ENTRY_REVIEW` dedupe: `EUR_USD|SESSION_EXPANSION_TIMING_EVENT|SESSION_EXPANSION|TRADE`
+- `P2` `THEME_CONFIRMATION` `EUR_USD` `LONG`
+  - thesis: EUR_USD confluence score_balance=LONG_LEAN
+  - price zone: matrix:EUR_USD:LONG
+  - review: `ENTRY_REVIEW` dedupe: `EUR_USD|EUR_USD_CONFLUENCE_SCORE_BALANCE_LONG_LEAN|THEME_CONFIRMATION|TRADE`
+- `P2` `FAILED_ACCEPTANCE` `GBP_AUD` `SHORT`
+  - thesis: failure_trader GBP_AUD SHORT BREAKOUT_FAILURE 3.51R: Watch-only forecast-first lane: build dry-run geometry and blocker reasons only. Do not send live until calibrated forecast confidence clears the live-entry floor on a fresh snapshot.
+  - price zone: 1.91552
+  - review: `ENTRY_REVIEW` dedupe: `GBP_AUD|FAILURE_TRADER_GBP_AUD_SHORT_BREAKOUT_FAILURE_3_51R_WATCH_ONLY_FORECAST_FIRST_LANE_BUILD_DRY_RUN|FAILED_ACCEPTANCE|TRADE`
+- `P2` `SESSION_EXPANSION` `GBP_AUD` `LONG`
+  - thesis: session expansion timing event
+  - price zone: LONDON_KILLZONE expansion sigma=5.14
+  - review: `ENTRY_REVIEW` dedupe: `GBP_AUD|SESSION_EXPANSION_TIMING_EVENT|SESSION_EXPANSION|TRADE`
+- `P2` `THEME_CONFIRMATION` `GBP_AUD` `LONG`
+  - thesis: GBP_AUD confluence score_balance=LONG_LEAN
+  - price zone: matrix:GBP_AUD:LONG
+  - review: `ENTRY_REVIEW` dedupe: `GBP_AUD|GBP_AUD_CONFLUENCE_SCORE_BALANCE_LONG_LEAN|THEME_CONFIRMATION|TRADE`
+- `P2` `SESSION_EXPANSION` `GBP_CAD` `LONG`
+  - thesis: session expansion timing event
+  - price zone: LONDON_KILLZONE expansion sigma=4.69
+  - review: `ENTRY_REVIEW` dedupe: `GBP_CAD|SESSION_EXPANSION_TIMING_EVENT|SESSION_EXPANSION|TRADE`
+- `P2` `SESSION_EXPANSION` `GBP_CHF` `SHORT`
+  - thesis: session expansion timing event
+  - price zone: LONDON_KILLZONE expansion sigma=4.38
+  - review: `ENTRY_REVIEW` dedupe: `GBP_CHF|SESSION_EXPANSION_TIMING_EVENT|SESSION_EXPANSION|TRADE`
+- `P2` `THEME_CONFIRMATION` `GBP_CHF` `SHORT`
+  - thesis: GBP_CHF confluence score_balance=SHORT_LEAN
+  - price zone: matrix:GBP_CHF:SHORT
+  - review: `ENTRY_REVIEW` dedupe: `GBP_CHF|GBP_CHF_CONFLUENCE_SCORE_BALANCE_SHORT_LEAN|THEME_CONFIRMATION|TRADE`
+- `P2` `SESSION_EXPANSION` `GBP_JPY` `LONG`
+  - thesis: session expansion timing event
+  - price zone: LONDON_KILLZONE expansion sigma=4.28
+  - review: `ENTRY_REVIEW` dedupe: `GBP_JPY|SESSION_EXPANSION_TIMING_EVENT|SESSION_EXPANSION|TRADE`
+- `P2` `THEME_CONFIRMATION` `GBP_JPY` `LONG`
+  - thesis: GBP_JPY confluence score_balance=LONG_LEAN
+  - price zone: matrix:GBP_JPY:LONG
+  - review: `ENTRY_REVIEW` dedupe: `GBP_JPY|GBP_JPY_CONFLUENCE_SCORE_BALANCE_LONG_LEAN|THEME_CONFIRMATION|TRADE`
+- `P2` `FAILED_ACCEPTANCE` `GBP_NZD` `LONG`
+  - thesis: failure_trader GBP_NZD LONG BREAKOUT_FAILURE 2.00R: Watch-only forecast-first lane: build dry-run geometry and blocker reasons only. Do not send live until calibrated forecast confidence clears the live-entry floor on a fresh snapshot.
+  - price zone: 2.33531
+  - review: `ENTRY_REVIEW` dedupe: `GBP_NZD|FAILURE_TRADER_GBP_NZD_LONG_BREAKOUT_FAILURE_2_00R_WATCH_ONLY_FORECAST_FIRST_LANE_BUILD_DRY_RUN_|FAILED_ACCEPTANCE|TRADE`
+- `P2` `SESSION_EXPANSION` `GBP_NZD` `LONG`
+  - thesis: session expansion timing event
+  - price zone: LONDON_KILLZONE expansion sigma=6.10
+  - review: `ENTRY_REVIEW` dedupe: `GBP_NZD|SESSION_EXPANSION_TIMING_EVENT|SESSION_EXPANSION|TRADE`
+- `P2` `THEME_CONFIRMATION` `GBP_NZD` `LONG`
+  - thesis: GBP_NZD confluence score_balance=LONG_LEAN
+  - price zone: matrix:GBP_NZD:LONG
+  - review: `ENTRY_REVIEW` dedupe: `GBP_NZD|GBP_NZD_CONFLUENCE_SCORE_BALANCE_LONG_LEAN|THEME_CONFIRMATION|TRADE`
+- `P2` `FAILED_ACCEPTANCE` `GBP_USD` `LONG`
+  - thesis: failure_trader GBP_USD LONG BREAKOUT_FAILURE 2.60R: Matrix-supported repair lane: create only a pending LIMIT/STOP-ENTRY dry-run receipt; do not market-chase the supported direction. RiskEngine, forecast freshness, spread, profile repair, and live gateway gates must still decide execution.
+  - price zone: 1.31968
+  - review: `ENTRY_REVIEW` dedupe: `GBP_USD|FAILURE_TRADER_GBP_USD_LONG_BREAKOUT_FAILURE_2_60R_MATRIX_SUPPORTED_REPAIR_LANE_CREATE_ONLY_A_PE|FAILED_ACCEPTANCE|TRADE`
+- `P2` `SESSION_EXPANSION` `GBP_USD` `LONG`
+  - thesis: session expansion timing event
+  - price zone: LONDON_KILLZONE expansion sigma=4.93
+  - review: `ENTRY_REVIEW` dedupe: `GBP_USD|SESSION_EXPANSION_TIMING_EVENT|SESSION_EXPANSION|TRADE`
+- `P2` `THEME_CONFIRMATION` `GBP_USD` `LONG`
+  - thesis: GBP_USD confluence score_balance=LONG_LEAN
+  - price zone: matrix:GBP_USD:LONG
+  - review: `ENTRY_REVIEW` dedupe: `GBP_USD|GBP_USD_CONFLUENCE_SCORE_BALANCE_LONG_LEAN|THEME_CONFIRMATION|TRADE`
+- `P2` `SESSION_EXPANSION` `NZD_CAD` `SHORT`
+  - thesis: session expansion timing event
+  - price zone: LONDON_KILLZONE expansion sigma=6.11
+  - review: `ENTRY_REVIEW` dedupe: `NZD_CAD|SESSION_EXPANSION_TIMING_EVENT|SESSION_EXPANSION|TRADE`
+- `P2` `THEME_CONFIRMATION` `NZD_CAD` `SHORT`
+  - thesis: NZD_CAD confluence score_balance=SHORT_LEAN
+  - price zone: matrix:NZD_CAD:SHORT
+  - review: `ENTRY_REVIEW` dedupe: `NZD_CAD|NZD_CAD_CONFLUENCE_SCORE_BALANCE_SHORT_LEAN|THEME_CONFIRMATION|TRADE`
+- `P2` `SESSION_EXPANSION` `NZD_CHF` `SHORT`
+  - thesis: session expansion timing event
+  - price zone: LONDON_KILLZONE expansion sigma=6.45
+  - review: `ENTRY_REVIEW` dedupe: `NZD_CHF|SESSION_EXPANSION_TIMING_EVENT|SESSION_EXPANSION|TRADE`
+- `P2` `THEME_CONFIRMATION` `NZD_CHF` `SHORT`
+  - thesis: NZD_CHF confluence score_balance=SHORT_LEAN
+  - price zone: matrix:NZD_CHF:SHORT
+  - review: `ENTRY_REVIEW` dedupe: `NZD_CHF|NZD_CHF_CONFLUENCE_SCORE_BALANCE_SHORT_LEAN|THEME_CONFIRMATION|TRADE`
+- `P2` `SESSION_EXPANSION` `NZD_JPY` `SHORT`
+  - thesis: session expansion timing event
+  - price zone: LONDON_KILLZONE expansion sigma=4.33
+  - review: `ENTRY_REVIEW` dedupe: `NZD_JPY|SESSION_EXPANSION_TIMING_EVENT|SESSION_EXPANSION|TRADE`
+- `P2` `SESSION_EXPANSION` `NZD_USD` `SHORT`
+  - thesis: session expansion timing event
+  - price zone: LONDON_KILLZONE expansion sigma=4.38
+  - review: `ENTRY_REVIEW` dedupe: `NZD_USD|SESSION_EXPANSION_TIMING_EVENT|SESSION_EXPANSION|TRADE`
+- `P2` `SESSION_EXPANSION` `USD_CAD` `SHORT`
+  - thesis: session expansion timing event
+  - price zone: LONDON_KILLZONE expansion sigma=6.17
+  - review: `ENTRY_REVIEW` dedupe: `USD_CAD|SESSION_EXPANSION_TIMING_EVENT|SESSION_EXPANSION|TRADE`
+- `P2` `THEME_CONFIRMATION` `USD_CAD` `SHORT`
+  - thesis: USD_CAD confluence score_balance=SHORT_LEAN
+  - price zone: matrix:USD_CAD:SHORT
+  - review: `ENTRY_REVIEW` dedupe: `USD_CAD|USD_CAD_CONFLUENCE_SCORE_BALANCE_SHORT_LEAN|THEME_CONFIRMATION|TRADE`
+- `P2` `SESSION_EXPANSION` `USD_CHF` `SHORT`
+  - thesis: session expansion timing event
+  - price zone: LONDON_KILLZONE expansion sigma=5.56
+  - review: `ENTRY_REVIEW` dedupe: `USD_CHF|SESSION_EXPANSION_TIMING_EVENT|SESSION_EXPANSION|TRADE`
+- `P2` `THEME_CONFIRMATION` `USD_CHF` `SHORT`
+  - thesis: USD_CHF confluence score_balance=SHORT_LEAN
+  - price zone: matrix:USD_CHF:SHORT
+  - review: `ENTRY_REVIEW` dedupe: `USD_CHF|USD_CHF_CONFLUENCE_SCORE_BALANCE_SHORT_LEAN|THEME_CONFIRMATION|TRADE`
+- `P2` `SESSION_EXPANSION` `USD_JPY` `LONG`
+  - thesis: session expansion timing event
+  - price zone: LONDON_KILLZONE expansion sigma=4.01
+  - review: `ENTRY_REVIEW` dedupe: `USD_JPY|SESSION_EXPANSION_TIMING_EVENT|SESSION_EXPANSION|TRADE`
+
+## Escalation
+
+- no wake; no meaningful state change
