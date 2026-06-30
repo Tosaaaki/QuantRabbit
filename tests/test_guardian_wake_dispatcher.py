@@ -284,6 +284,25 @@ class GuardianWakeDispatcherTest(unittest.TestCase):
             self.assertTrue(payload["receipt"]["gateway_required"])
             self.assertTrue(payload["receipt"]["no_direct_oanda"])
 
+    def test_valid_hold_output_creates_guardian_action_receipt(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = _fixture(Path(tmp))
+            calls: list[list[str]] = []
+
+            result = run_dispatcher(
+                paths=paths,
+                now=NOW,
+                env={},
+                subprocess_run=_fake_codex(calls, _valid_receipt(action="HOLD")),
+            )
+
+            self.assertEqual(result["status"], "RECEIPT_WRITTEN")
+            self.assertTrue(paths.action_receipt.exists())
+            payload = json.loads(paths.action_receipt.read_text())
+            self.assertEqual(payload["status"], "ACCEPTED")
+            self.assertEqual(payload["receipt"]["action"], "HOLD")
+            self.assertEqual(result["gateway_handoff"]["status"], "SKIPPED_DEFAULT_OFF")
+
     def test_default_gateway_handoff_off_prevents_immediate_execution(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             paths = _fixture(Path(tmp))
@@ -412,10 +431,10 @@ def _event(*, severity: str) -> dict:
     }
 
 
-def _valid_receipt(*, event_id: str = "event-P1") -> str:
+def _valid_receipt(*, event_id: str = "event-P1", action: str = "TRADE") -> str:
     return json.dumps(
         {
-            "action": "TRADE",
+            "action": action,
             "event_id": event_id,
             "new_information": True,
             "pair": "EUR_USD",

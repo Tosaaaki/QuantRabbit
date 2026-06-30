@@ -704,29 +704,61 @@ def _contract_events(contract: dict[str, Any], *, snapshot: dict[str, Any], now:
 
 
 def _wake_parse_failure_events(dispatcher_state: dict[str, Any], *, now: datetime) -> list[GuardianEvent]:
+    events: list[GuardianEvent] = []
+    seen_failure_keys: set[str] = set()
     last_status = str(dispatcher_state.get("last_status") or "").upper()
-    if last_status != "PARSE_FAILED":
-        return []
     last_result = dispatcher_state.get("last_result") if isinstance(dispatcher_state.get("last_result"), dict) else {}
     selected = last_result.get("selected_event") if isinstance(last_result.get("selected_event"), dict) else {}
     parse_failure = last_result.get("parse_failure") if isinstance(last_result.get("parse_failure"), dict) else {}
-    pair = _pair(selected.get("pair")) or "PORTFOLIO"
+    if last_status == "PARSE_FAILED" and parse_failure:
+        seen_failure_keys.add(_wake_parse_failure_key(parse_failure))
+        events.append(_wake_parse_failure_event(parse_failure, selected_event=selected, now=now))
+
+    failures = dispatcher_state.get("parse_failures")
+    if isinstance(failures, dict):
+        for failure in failures.values():
+            if not isinstance(failure, dict):
+                continue
+            failure_key = _wake_parse_failure_key(failure)
+            if failure_key in seen_failure_keys:
+                continue
+            seen_failure_keys.add(failure_key)
+            selected_for_failure = selected if str(selected.get("event_id") or "") == str(failure.get("event_id") or "") else {}
+            events.append(_wake_parse_failure_event(failure, selected_event=selected_for_failure, now=now))
+    return events
+
+
+def _wake_parse_failure_key(parse_failure: dict[str, Any]) -> str:
+    return str(parse_failure.get("dedupe_key") or parse_failure.get("event_id") or id(parse_failure))
+
+
+def _wake_parse_failure_event(
+    parse_failure: dict[str, Any],
+    *,
+    selected_event: dict[str, Any],
+    now: datetime,
+) -> GuardianEvent:
+    pair = _pair(selected_event.get("pair") or parse_failure.get("pair")) or "PORTFOLIO"
     severity = "P0" if int(parse_failure.get("consecutive_failures") or 0) > 1 else "P1"
-    return [
-        _event(
-            event_type="WAKE_PARSE_FAILURE",
-            pair=pair,
-            direction=_direction_from_text(selected.get("direction")),
-            thesis=str(selected.get("thesis") or "guardian wake parse failure"),
-            price_zone=str(parse_failure.get("last_error") or "guardian wake produced no valid JSON receipt"),
-            severity=severity,
-            recommended_review_type="WAKE_REPAIR_REVIEW",
-            action_hint="HOLD",
-            thesis_state="WOUNDED",
-            now=now,
-            details={"selected_event": selected, "parse_failure": parse_failure},
-        )
-    ]
+    thesis = str(
+        selected_event.get("thesis")
+        or parse_failure.get("thesis")
+        or parse_failure.get("event_type")
+        or "guardian wake parse failure"
+    )
+    return _event(
+        event_type="WAKE_PARSE_FAILURE",
+        pair=pair,
+        direction=_direction_from_text(selected_event.get("direction") or parse_failure.get("direction")),
+        thesis=thesis,
+        price_zone=str(parse_failure.get("last_error") or "guardian wake produced no valid JSON receipt"),
+        severity=severity,
+        recommended_review_type="WAKE_REPAIR_REVIEW",
+        action_hint="HOLD",
+        thesis_state="WOUNDED",
+        now=now,
+        details={"selected_event": selected_event, "parse_failure": parse_failure},
+    )
 
 
 def _broker_snapshot_stale_event(snapshot: dict[str, Any], *, now: datetime) -> GuardianEvent | None:

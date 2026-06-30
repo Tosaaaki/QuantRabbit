@@ -259,7 +259,7 @@ def run_dispatcher(
             parsed["receipt"]["dedupe_key"] = selected["dedupe_key"]
         review = review_guardian_action_receipt(parsed["receipt"], events=events, now=clock)
         receipt_action = str(parsed["receipt"].get("action") or "").upper()
-        if review.get("status") == "ACCEPTED" and receipt_action in ACTIONABLE_ACTIONS:
+        if review.get("status") == "ACCEPTED" and receipt_action in GUARDIAN_ACTIONS:
             payload = {
                 **review,
                 "source": "guardian_wake_dispatcher",
@@ -280,7 +280,7 @@ def run_dispatcher(
         env=environ,
         lock=lock,
     )
-    status = "RECEIPT_WRITTEN" if receipt_written else "PARSE_FAILED" if not parsed["valid"] else "NO_ACTIONABLE_RECEIPT"
+    status = "RECEIPT_WRITTEN" if receipt_written else "PARSE_FAILED" if not parsed["valid"] else "RECEIPT_REJECTED"
     if repair_attempted and not parsed["valid"]:
         repair_skipped = {"status": "FAILED_AFTER_ONE_RETRY", "max_retries_per_event": 1}
     result = {
@@ -929,6 +929,8 @@ def _record_state(
         state["last_result"]["selected_event"] = result.get("selected_event")
     if isinstance(result.get("parse"), dict):
         state["last_result"]["parse"] = result.get("parse")
+    if isinstance(result.get("parse_failure"), dict):
+        state["last_result"]["parse_failure"] = result.get("parse_failure")
     if reviewed_event is not None:
         reviewed = state.get("reviewed_events") if isinstance(state.get("reviewed_events"), dict) else {}
         dedupe_key = str(reviewed_event.get("dedupe_key") or "")
@@ -951,7 +953,10 @@ def _record_state(
                     "event_id": reviewed_event.get("event_id"),
                     "dedupe_key": dedupe_key,
                     "pair": reviewed_event.get("pair"),
+                    "direction": reviewed_event.get("direction"),
                     "event_type": reviewed_event.get("event_type"),
+                    "thesis": reviewed_event.get("thesis"),
+                    "price_zone": reviewed_event.get("price_zone"),
                     "severity": reviewed_event.get("severity"),
                     "last_failed_at_utc": result.get("generated_at_utc"),
                     "last_error": parse.get("error"),

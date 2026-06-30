@@ -257,6 +257,72 @@ class GuardianEventRouterTest(unittest.TestCase):
 
         self.assertEqual(contract["entries"][0]["harvest_triggers"], existing["entries"][0]["harvest_triggers"])
 
+    def test_parse_failure_map_reaches_next_trader_even_after_later_dispatch_status(self) -> None:
+        dispatcher_state = {
+            "last_status": "BROKER_SNAPSHOT_STALE",
+            "last_result": {
+                "status": "BROKER_SNAPSHOT_STALE",
+                "selected_event": {
+                    "event_id": "event-later",
+                    "pair": "USD_CAD",
+                    "event_type": "SPREAD_ANOMALY",
+                    "thesis": "spread anomaly safety trigger",
+                    "dedupe_key": "USD_CAD|SPREAD_ANOMALY_SAFETY_TRIGGER|SPREAD_ANOMALY|HOLD",
+                },
+            },
+            "parse_failures": {
+                "EUR_JPY|SPREAD_ANOMALY_SAFETY_TRIGGER|SPREAD_ANOMALY|HOLD": {
+                    "event_id": "event-failed",
+                    "dedupe_key": "EUR_JPY|SPREAD_ANOMALY_SAFETY_TRIGGER|SPREAD_ANOMALY|HOLD",
+                    "pair": "EUR_JPY",
+                    "direction": None,
+                    "event_type": "SPREAD_ANOMALY",
+                    "thesis": "spread anomaly safety trigger",
+                    "severity": "P1",
+                    "last_error": "CODEX_NO_JSON_RECEIPT",
+                    "consecutive_failures": 1,
+                }
+            },
+        }
+
+        events = detect_guardian_events(inputs={"wake_dispatcher_state": dispatcher_state}, now=NOW)
+        escalation, _ = evaluate_guardian_escalation(events=events, previous_state={}, now=NOW)
+
+        wake_parse_failures = [event for event in events if event.event_type == "WAKE_PARSE_FAILURE"]
+        self.assertEqual(len(wake_parse_failures), 1)
+        self.assertEqual(wake_parse_failures[0].pair, "EUR_JPY")
+        self.assertIn("CODEX_NO_JSON_RECEIPT", wake_parse_failures[0].price_zone)
+        self.assertTrue(escalation["wake_gpt"])
+
+    def test_parse_failure_last_result_and_map_do_not_duplicate_event(self) -> None:
+        failure = {
+            "event_id": "event-failed",
+            "dedupe_key": "EUR_JPY|SPREAD_ANOMALY_SAFETY_TRIGGER|SPREAD_ANOMALY|HOLD",
+            "pair": "EUR_JPY",
+            "event_type": "SPREAD_ANOMALY",
+            "thesis": "spread anomaly safety trigger",
+            "last_error": "CODEX_EMPTY_OUTPUT",
+            "consecutive_failures": 1,
+        }
+        dispatcher_state = {
+            "last_status": "PARSE_FAILED",
+            "last_result": {
+                "status": "PARSE_FAILED",
+                "selected_event": {
+                    "event_id": "event-failed",
+                    "pair": "EUR_JPY",
+                    "event_type": "SPREAD_ANOMALY",
+                    "thesis": "spread anomaly safety trigger",
+                },
+                "parse_failure": failure,
+            },
+            "parse_failures": {failure["dedupe_key"]: failure},
+        }
+
+        events = detect_guardian_events(inputs={"wake_dispatcher_state": dispatcher_state}, now=NOW)
+
+        self.assertEqual(len([event for event in events if event.event_type == "WAKE_PARSE_FAILURE"]), 1)
+
     def test_failed_acceptance_event_can_wake(self) -> None:
         events = _events_from_chart(
             {
