@@ -919,7 +919,7 @@ def _suspected_cause(
     if status == "UNKNOWN":
         return "Run evidence is insufficient; automation config exists but no journal, decision, or memory timestamp was usable."
     if guardian.get("issues"):
-        return "Active guardian receipt is waiting on the next trader run to consume or classify it."
+        return "Guardian receipt consumption issues require the next trader cycle to resolve or classify them before ordinary entries."
     if status == "STALE":
         if hints:
             return str(hints[0])
@@ -957,7 +957,7 @@ def _recommended_operator_action(
             "code": "RESOLVE_GUARDIAN_RECEIPT_IN_NEXT_TRADER_CYCLE",
             "requires_explicit_operator_approval": False,
             "command": "read data/guardian_action_receipt.json and docs/guardian_action_review.md before normal entries",
-            "reason": "guardian receipt is active and unconsumed",
+            "reason": "guardian receipt is unconsumed or expired without trader resolution",
         }
     if status == "UNKNOWN":
         return {
