@@ -135,6 +135,7 @@ from quant_rabbit.paths import (
     DEFAULT_POST_TRADE_LEARNING_REPORT,
     DEFAULT_PROFITABILITY_ACCEPTANCE,
     DEFAULT_PROFITABILITY_ACCEPTANCE_REPORT,
+    DEFAULT_QR_TRADER_RUN_WATCHDOG,
     DEFAULT_RECEIPT_PROMOTION_REPORT,
     DEFAULT_REPLAY_BACKTEST,
     DEFAULT_REPLAY_BACKTEST_REPORT,
@@ -3136,6 +3137,11 @@ def _cycle_digest(*, kind: str, step_results: list[dict[str, Any]], aborted: boo
             if isinstance(trader_support.get("current_profit_capture"), dict)
             else {}
         )
+        qr_trader_run_watchdog = (
+            trader_support.get("qr_trader_run_watchdog")
+            if isinstance(trader_support.get("qr_trader_run_watchdog"), dict)
+            else {}
+        )
         digest["trader_support_bot"] = {
             "generated_at_utc": trader_support.get("generated_at_utc"),
             "status": trader_support.get("status"),
@@ -3150,6 +3156,19 @@ def _cycle_digest(*, kind: str, step_results: list[dict[str, Any]], aborted: boo
             "guardian_heartbeat_fresh": metrics.get("guardian_heartbeat_fresh"),
             "guardian_active_source": guardian.get("active_source"),
             "guardian_heartbeat_age_seconds": guardian.get("heartbeat_age_seconds"),
+            "qr_trader_run_watchdog_status": metrics.get("qr_trader_run_watchdog_status"),
+            "qr_trader_run_watchdog_severity": metrics.get("qr_trader_run_watchdog_severity"),
+            "qr_trader_run_watchdog_minutes_since_last_run": metrics.get(
+                "qr_trader_run_watchdog_minutes_since_last_run"
+            ),
+            "qr_trader_run_watchdog_missed_expected_window": metrics.get(
+                "qr_trader_run_watchdog_missed_expected_window"
+            ),
+            "qr_trader_run_watchdog_suspected_cause": qr_trader_run_watchdog.get("suspected_cause"),
+            "qr_trader_guardian_receipt_issue_codes": metrics.get(
+                "qr_trader_guardian_receipt_issue_codes"
+            )
+            or [],
             "profit_capture_missed_loss_closes": metrics.get("profit_capture_missed_loss_closes"),
             "profit_capture_estimated_gap_jpy": metrics.get("profit_capture_estimated_gap_jpy"),
             "profit_capture_bankable_positions": metrics.get("profit_capture_bankable_positions"),
@@ -3719,6 +3738,7 @@ def main(argv: list[str] | None = None) -> int:
     p_support.add_argument("--profitability-acceptance", type=Path, default=DEFAULT_PROFITABILITY_ACCEPTANCE)
     p_support.add_argument("--execution-timing-audit", type=Path, default=DEFAULT_EXECUTION_TIMING_AUDIT)
     p_support.add_argument("--profit-capture-bot", type=Path, default=DEFAULT_PROFIT_CAPTURE_BOT)
+    p_support.add_argument("--qr-trader-run-watchdog", type=Path, default=DEFAULT_QR_TRADER_RUN_WATCHDOG)
     p_support.add_argument("--oanda-rotation-mining", type=Path, default=DEFAULT_OANDA_UNIVERSAL_ROTATION_MINING)
     p_support.add_argument("--bidask-replay-validation", type=Path, default=None)
     p_support.add_argument("--output", type=Path, default=DEFAULT_TRADER_SUPPORT_BOT)
@@ -6215,6 +6235,7 @@ def main(argv: list[str] | None = None) -> int:
                 profitability_acceptance_path=args.profitability_acceptance,
                 execution_timing_audit_path=args.execution_timing_audit,
                 profit_capture_bot_path=args.profit_capture_bot,
+                qr_trader_run_watchdog_path=args.qr_trader_run_watchdog,
                 oanda_rotation_mining_path=args.oanda_rotation_mining,
                 bidask_replay_validation_path=args.bidask_replay_validation,
                 output_path=args.output,

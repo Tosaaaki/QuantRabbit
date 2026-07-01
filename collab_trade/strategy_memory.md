@@ -1,5 +1,12 @@
 # Strategy Memory
 
+## 2026-07-01 qr-trader Scheduled-Run Watchdog
+
+- `tools/qr_trader_run_watchdog.py` is the local P0 evidence surface for missed Codex-managed `qr-trader` hourly runs. It is one-shot/read-only and writes `data/qr_trader_run_watchdog.json`, `docs/qr_trader_run_watchdog_report.md`, and `logs/qr_trader_run_watchdog.log`.
+- The watchdog combines automation config, automation memory, trader journal, decision artifacts, guardian receipt/review, and read-only Codex logs. `STALE` / `BROKEN` means inspect the scheduler/thread before assuming the trader is healthy.
+- Active guardian receipts, especially `REDUCE`, `HARVEST`, and `CANCEL_PENDING`, must be consumed or explicitly classified by the next trader run; expiry before trader consumption is surfaced as `GUARDIAN_RECEIPT_NOT_CONSUMED_BY_TRADER`.
+- Default boundary remains detection only: no OANDA calls, no order send/cancel/close, no execution flags, and no automatic `codex exec`/trader wake while `QR_TRADER_WATCHDOG_CAN_WAKE=0`.
+
 ## 2026-06-30 Guardian Wake Dispatch
 
 - Guardian wake is now event-driven through `tools/guardian_wake_dispatcher.py`: the router still detects deterministic events, while the dispatcher starts read-only `codex exec` for GPT-5.5 only when the event is new/severity-increased, broker truth is fresh, no live lock is active, and the dedupe key has not already been reviewed.

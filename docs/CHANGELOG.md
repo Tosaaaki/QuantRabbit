@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-07-01
+
+- Added a read-only `qr-trader` scheduled-run watchdog: `tools/qr_trader_run_watchdog.py` validates the Codex automation policy, combines live journal/decision/memory evidence, checks active guardian receipts for missed trader consumption, and writes `data/qr_trader_run_watchdog.json`, `docs/qr_trader_run_watchdog_report.md`, and `logs/qr_trader_run_watchdog.log` without broker calls or automatic trader wake.
+- Added `com.quantrabbit.qr-trader-run-watchdog` launchd plist for 300-second local checks with `QR_TRADER_WATCHDOG_CAN_WAKE=0` and `CODEX_DISABLE_UPDATE_CHECK=1`.
+- Surfaced watchdog status in `trader-support-bot` / cycle digest and updated the trader playbook so `qr-trader` reads the watchdog JSON/report before normal entries.
+
 ## 2026-06-30
 
 - Made accepted guardian HOLD / NO_ACTION receipts durable across later `NO_WAKE` and `SUPPRESSED` dispatcher passes. Guardian receipts now carry explicit `receipt_status`, `receipt_lifecycle`, selected-event binding, expiry, consumed/superseded metadata, and accepted-history archives; action review reports show latest dispatcher status separately from the latest accepted receipt. `guardian-action-cycle` verifies but never executes HOLD / NO_ACTION and marks them consumed evidence for the trader.

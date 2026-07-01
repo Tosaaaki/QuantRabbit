@@ -30,6 +30,7 @@ from quant_rabbit.paths import (
     DEFAULT_POSITION_MANAGEMENT,
     DEFAULT_PROFIT_CAPTURE_BOT,
     DEFAULT_PROFITABILITY_ACCEPTANCE,
+    DEFAULT_QR_TRADER_RUN_WATCHDOG,
     DEFAULT_SELF_IMPROVEMENT_AUDIT,
     DEFAULT_TRADER_SUPPORT_BOT,
     DEFAULT_TRADER_SUPPORT_BOT_REPORT,
@@ -192,6 +193,7 @@ class TraderSupportBot:
         profitability_acceptance_path: Path = DEFAULT_PROFITABILITY_ACCEPTANCE,
         execution_timing_audit_path: Path = DEFAULT_EXECUTION_TIMING_AUDIT,
         profit_capture_bot_path: Path = DEFAULT_PROFIT_CAPTURE_BOT,
+        qr_trader_run_watchdog_path: Path = DEFAULT_QR_TRADER_RUN_WATCHDOG,
         oanda_rotation_mining_path: Path = DEFAULT_OANDA_UNIVERSAL_ROTATION_MINING,
         oanda_rotation_packaged_path: Path = DEFAULT_OANDA_UNIVERSAL_ROTATION_PACKAGED_RULES,
         bidask_replay_validation_path: Path | None = None,
@@ -211,6 +213,7 @@ class TraderSupportBot:
         self.profitability_acceptance_path = profitability_acceptance_path
         self.execution_timing_audit_path = execution_timing_audit_path
         self.profit_capture_bot_path = profit_capture_bot_path
+        self.qr_trader_run_watchdog_path = qr_trader_run_watchdog_path
         self.oanda_rotation_mining_path = oanda_rotation_mining_path
         self.oanda_rotation_packaged_path = oanda_rotation_packaged_path
         self._read_oanda_rotation = (
@@ -258,6 +261,7 @@ class TraderSupportBot:
         profitability = _read_json(self.profitability_acceptance_path)
         timing = _read_json(self.execution_timing_audit_path)
         profit_capture_bot = _read_json(self.profit_capture_bot_path)
+        qr_trader_run_watchdog = _watchdog_summary(_read_json(self.qr_trader_run_watchdog_path))
         oanda_rotation_effective_path = (
             effective_oanda_universal_rotation_path(
                 self.oanda_rotation_mining_path,
@@ -316,6 +320,7 @@ class TraderSupportBot:
             p0_findings=p0_findings,
             entry=entry,
             acceptance=acceptance,
+            qr_trader_run_watchdog=qr_trader_run_watchdog,
         )
         status = STATUS_BLOCKED if blockers else STATUS_READY
         actions = _operator_actions(
@@ -327,6 +332,7 @@ class TraderSupportBot:
             acceptance=acceptance,
             broker=broker_summary,
             oanda_history_coverage=oanda_history_coverage,
+            qr_trader_run_watchdog=qr_trader_run_watchdog,
         )
         repair_requests = _build_repair_requests(
             guardian=guardian,
@@ -465,6 +471,19 @@ class TraderSupportBot:
             ),
             "repair_request_count": len(repair_requests),
             "repair_request_codes": [item["code"] for item in repair_requests],
+            "qr_trader_run_watchdog_status": qr_trader_run_watchdog.get("status"),
+            "qr_trader_run_watchdog_severity": qr_trader_run_watchdog.get("severity"),
+            "qr_trader_run_watchdog_minutes_since_last_run": qr_trader_run_watchdog.get(
+                "minutes_since_last_run"
+            ),
+            "qr_trader_run_watchdog_missed_expected_window": qr_trader_run_watchdog.get(
+                "missed_expected_window"
+            ),
+            "qr_trader_guardian_receipt_issue_codes": [
+                item.get("code")
+                for item in qr_trader_run_watchdog.get("guardian_receipt_issues", [])
+                if isinstance(item, dict)
+            ],
             "repair_basket_lane_ids": [item["lane_id"] for item in entry["repair_live_ready"]],
             "repair_basket_guardian_recovery_lane_ids": [
                 item["lane_id"] for item in entry["repair_basket_guardian_recovery"]
@@ -487,6 +506,7 @@ class TraderSupportBot:
                 "profitability_acceptance": str(self.profitability_acceptance_path),
                 "execution_timing_audit": str(self.execution_timing_audit_path),
                 "profit_capture_bot": str(self.profit_capture_bot_path),
+                "qr_trader_run_watchdog": str(self.qr_trader_run_watchdog_path),
                 "oanda_rotation_mining": str(self.oanda_rotation_mining_path),
                 "oanda_rotation_packaged": str(self.oanda_rotation_packaged_path),
                 "oanda_rotation_effective": str(oanda_rotation_effective_path),
@@ -503,6 +523,7 @@ class TraderSupportBot:
             "broker": broker_summary,
             "target": target_summary,
             "profit_capture": profit_capture,
+            "qr_trader_run_watchdog": qr_trader_run_watchdog,
             "current_profit_capture": current_profit_capture,
             "entry_readiness": entry,
             "oanda_history_coverage": oanda_history_coverage,
@@ -525,6 +546,42 @@ def _read_json(path: Path) -> dict[str, Any]:
     if not isinstance(payload, dict):
         raise ValueError(f"{path} must contain a JSON object")
     return payload
+
+
+def _watchdog_summary(payload: dict[str, Any]) -> dict[str, Any]:
+    if not isinstance(payload, dict) or payload.get("_missing"):
+        return {
+            "status": "UNAVAILABLE",
+            "severity": "INFO",
+            "missing": True,
+            "path": payload.get("_path") if isinstance(payload, dict) else None,
+            "guardian_receipt_issues": [],
+        }
+    guardian = payload.get("guardian_receipt") if isinstance(payload.get("guardian_receipt"), dict) else {}
+    guardian_issues = guardian.get("issues") if isinstance(guardian.get("issues"), list) else []
+    return {
+        "status": payload.get("status"),
+        "severity": payload.get("severity"),
+        "missing": False,
+        "generated_at_utc": payload.get("generated_at_utc"),
+        "last_trader_run_at": payload.get("last_trader_run_at"),
+        "minutes_since_last_run": payload.get("minutes_since_last_run"),
+        "missed_expected_window": payload.get("missed_expected_window"),
+        "expected_cadence_minutes": payload.get("expected_cadence_minutes"),
+        "grace_minutes": payload.get("grace_minutes"),
+        "suspected_cause": payload.get("suspected_cause"),
+        "recommended_operator_action": payload.get("recommended_operator_action"),
+        "guardian_receipt": guardian,
+        "guardian_receipt_issues": guardian_issues,
+        "issues": payload.get("issues") if isinstance(payload.get("issues"), list) else [],
+        "artifact_paths": payload.get("artifact_paths") if isinstance(payload.get("artifact_paths"), dict) else {},
+    }
+
+
+def _watchdog_counts_as_support_blocker(payload: dict[str, Any]) -> bool:
+    if payload.get("missing") or payload.get("status") == "UNAVAILABLE":
+        return False
+    return str(payload.get("status") or "") in {"BROKEN", "STALE", "UNKNOWN"}
 
 
 def _parse_utc(value: Any) -> datetime | None:
@@ -2779,8 +2836,34 @@ def _build_blockers(
     p0_findings: list[dict[str, Any]],
     entry: dict[str, Any],
     acceptance: dict[str, Any],
+    qr_trader_run_watchdog: dict[str, Any],
 ) -> list[dict[str, Any]]:
     blockers: list[dict[str, Any]] = []
+    if _watchdog_counts_as_support_blocker(qr_trader_run_watchdog):
+        status = qr_trader_run_watchdog.get("status")
+        severity = "P0" if status in {"BROKEN", "STALE"} else "P1"
+        blockers.append(
+            {
+                "code": "QR_TRADER_SCHEDULED_RUN_WATCHDOG_BLOCKED",
+                "severity": severity,
+                "message": (
+                    f"qr-trader scheduled-run watchdog status is {status}; "
+                    f"last_run={qr_trader_run_watchdog.get('last_trader_run_at')} "
+                    f"minutes_since={qr_trader_run_watchdog.get('minutes_since_last_run')}"
+                ),
+            }
+        )
+    for issue in qr_trader_run_watchdog.get("guardian_receipt_issues", []) or []:
+        if not isinstance(issue, dict):
+            continue
+        severity = str(issue.get("severity") or "WARN")
+        blockers.append(
+            {
+                "code": str(issue.get("code") or "GUARDIAN_RECEIPT_NOT_CONSUMED_BY_TRADER"),
+                "severity": severity,
+                "message": str(issue.get("message") or "guardian receipt was not consumed by qr-trader"),
+            }
+        )
     if _guardian_counts_as_inactive_for_support(guardian):
         blockers.append(
             {
@@ -3094,8 +3177,12 @@ def _operator_actions(
     acceptance: dict[str, Any],
     broker: dict[str, Any] | None = None,
     oanda_history_coverage: dict[str, Any] | None = None,
+    qr_trader_run_watchdog: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     broker = broker if isinstance(broker, dict) else {}
+    qr_trader_run_watchdog = (
+        qr_trader_run_watchdog if isinstance(qr_trader_run_watchdog, dict) else {}
+    )
     actions: list[dict[str, Any]] = [
         {
             "code": "REFRESH_SUPPORT_PANEL",
@@ -3104,6 +3191,35 @@ def _operator_actions(
             "reason": "read-only status refresh for trader operations",
         }
     ]
+    if _watchdog_counts_as_support_blocker(qr_trader_run_watchdog) or qr_trader_run_watchdog.get(
+        "guardian_receipt_issues"
+    ):
+        actions.append(
+            {
+                "code": "REFRESH_QR_TRADER_RUN_WATCHDOG",
+                "command": "PYTHONPATH=src python3 tools/qr_trader_run_watchdog.py",
+                "requires_explicit_operator_approval": False,
+                "reason": (
+                    "read-only scheduled-run watchdog refresh; does not run qr-trader, Codex wake, "
+                    "or broker calls by default"
+                ),
+            }
+        )
+    recommended = qr_trader_run_watchdog.get("recommended_operator_action")
+    if isinstance(recommended, dict) and recommended.get("code") not in {
+        None,
+        "NO_OPERATOR_ACTION_REQUIRED",
+    }:
+        actions.append(
+            {
+                "code": f"QR_TRADER_WATCHDOG_{recommended.get('code')}",
+                "command": recommended.get("command") or "inspect qr-trader scheduled-run watchdog report",
+                "requires_explicit_operator_approval": bool(
+                    recommended.get("requires_explicit_operator_approval")
+                ),
+                "reason": recommended.get("reason") or "qr-trader run watchdog recommended action",
+            }
+        )
     if guardian["required"] and not guardian["active"]:
         actions.extend(
             [
@@ -4748,6 +4864,11 @@ def _render_report(payload: dict[str, Any]) -> str:
     guardian = payload["guardian"]
     entry = payload["entry_readiness"]
     profit = payload["profit_capture"]
+    watchdog = (
+        payload.get("qr_trader_run_watchdog")
+        if isinstance(payload.get("qr_trader_run_watchdog"), dict)
+        else {}
+    )
     current_profit = payload["current_profit_capture"]
     broker = payload["broker"]
     target = payload["target"]
@@ -4769,6 +4890,7 @@ def _render_report(payload: dict[str, Any]) -> str:
         f"| Repair basket send allowed | `{payload['metrics']['repair_basket_send_allowed']}` |",
         f"| Guardian active | `{guardian['active']}` source=`{guardian['active_source']}` |",
         f"| Guardian heartbeat fresh | `{guardian['heartbeat_fresh']}` age=`{guardian['heartbeat_age_seconds']}`s |",
+        f"| qr-trader scheduled-run watchdog | `{watchdog.get('status')}` severity=`{watchdog.get('severity')}` minutes_since=`{watchdog.get('minutes_since_last_run')}` |",
         f"| LIVE_READY lanes | `{entry['live_ready_lanes']}` / `{entry['lanes']}` |",
         f"| Order intents freshness | `{entry.get('artifact_freshness', {}).get('status')}` staleness=`{entry.get('artifact_freshness', {}).get('order_intents_staleness_seconds')}`s |",
         f"| Repair LIVE_READY lanes | `{len(entry['repair_live_ready'])}` |",
@@ -4801,6 +4923,33 @@ def _render_report(payload: dict[str, Any]) -> str:
             lines.append(f"- `{blocker['severity']}` `{blocker['code']}`: {blocker['message']}")
     else:
         lines.append("- none")
+    lines.extend(
+        [
+            "",
+            "## qr-trader Scheduled Run Watchdog",
+            "",
+            f"- Status: `{watchdog.get('status')}` severity=`{watchdog.get('severity')}`",
+            f"- Generated: `{watchdog.get('generated_at_utc')}`",
+            f"- Last run evidence: `{watchdog.get('last_trader_run_at')}`",
+            f"- Minutes since last run: `{watchdog.get('minutes_since_last_run')}`",
+            f"- Missed expected window: `{watchdog.get('missed_expected_window')}`",
+            f"- Suspected cause: {watchdog.get('suspected_cause') or 'none'}",
+        ]
+    )
+    guardian_receipt_issues = (
+        watchdog.get("guardian_receipt_issues")
+        if isinstance(watchdog.get("guardian_receipt_issues"), list)
+        else []
+    )
+    if guardian_receipt_issues:
+        lines.append("- Guardian receipt issues:")
+        for issue in guardian_receipt_issues:
+            if isinstance(issue, dict):
+                lines.append(
+                    f"  - `{issue.get('severity')}` `{issue.get('code')}`: {issue.get('message')}"
+                )
+    else:
+        lines.append("- Guardian receipt issues: none")
     lines.extend(["", "## Operator Manual Positions", ""])
     operator_packets = (
         broker.get("operator_manual_position_packets")
