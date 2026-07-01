@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -25,7 +26,15 @@ DEFAULT_LIVE_ROOT = Path(EXPECTED_CWD)
 DEFAULT_AUTOMATION_DIR = Path.home() / ".codex" / "automations" / "qr-trader"
 DEFAULT_CODEX_LOGS = Path.home() / ".codex" / "logs_2.sqlite"
 HIGH_URGENCY_GUARDIAN_ACTIONS = {"REDUCE", "HARVEST", "CANCEL_PENDING"}
+LOW_URGENCY_GUARDIAN_ACTIONS = {"HOLD", "NO_ACTION"}
 TERMINAL_RECEIPT_LIFECYCLES = {"CONSUMED", "SUPERSEDED", "EXPIRED", "REJECTED"}
+RECEIPT_LIFECYCLE_PRECEDENCE = {
+    "EXPIRED": 50,
+    "CONSUMED": 40,
+    "SUPERSEDED": 30,
+    "REJECTED": 20,
+    "ACTIVE": 10,
+}
 
 
 @dataclass(frozen=True)
@@ -142,6 +151,9 @@ def evaluate_watchdog(
         "generated_at_utc": clock.isoformat(),
         "status": status,
         "severity": overall_severity,
+        "no_live_side_effects": True,
+        "codex_exec_enabled": can_wake,
+        "broker_writes_enabled": False,
         "missed_expected_window": missed_expected_window,
         "expected_cadence_minutes": expected_cadence,
         "grace_minutes": grace_minutes,
@@ -168,8 +180,11 @@ def evaluate_watchdog(
         },
         "execution_boundary": {
             "read_only": True,
+            "no_live_side_effects": True,
             "live_side_effects": [],
             "calls_oanda": False,
+            "codex_exec_enabled": can_wake,
+            "broker_writes_enabled": False,
             "runs_codex_by_default": False,
             "runs_trader_by_default": False,
             "places_orders": False,
@@ -492,28 +507,137 @@ def _guardian_receipt_status(
     grace_minutes: int,
     now_utc: datetime,
 ) -> dict[str, Any]:
-    receipt = _read_json_object(receipt_path)
     review_text = _read_text(review_path, limit=16_000)
+    candidates = _guardian_receipt_candidates(receipt_path)
+    groups = _group_guardian_receipts(candidates)
     issues: list[dict[str, Any]] = []
-    if not isinstance(receipt, dict):
+    summaries = [
+        _guardian_receipt_group_summary(
+            group,
+            last_trader_run_at=last_trader_run_at,
+            expected_cadence_minutes=expected_cadence_minutes,
+            grace_minutes=grace_minutes,
+            now_utc=now_utc,
+        )
+        for group in groups
+    ]
+    summaries.sort(key=lambda item: item.get("generated_at_utc") or "", reverse=True)
+    for summary in summaries:
+        issue = _guardian_receipt_issue(summary)
+        if issue is not None:
+            issues.append(issue)
+    current_summary = next((item for item in summaries if item.get("canonical_present")), None)
+    if current_summary is None and summaries:
+        current_summary = summaries[0]
+    archive_dir = receipt_path.parent / "guardian_action_receipts"
+    if current_summary is None:
         return {
             "path": str(receipt_path),
             "exists": receipt_path.exists(),
             "active": False,
             "issues": issues,
+            "receipts_checked": 0,
+            "archive_path": str(archive_dir),
+            "archive_exists": archive_dir.exists(),
+            "archive_receipts_checked": 0,
+            "receipt_summaries": [],
             "review_path": str(review_path),
             "review_excerpt": review_text[:800] if review_text else None,
         }
-    action = str(
-        (receipt.get("receipt") if isinstance(receipt.get("receipt"), dict) else {}).get("action")
-        or receipt.get("action")
-        or ""
-    ).upper()
-    lifecycle = str(receipt.get("receipt_lifecycle") or "").upper()
-    receipt_status = str(receipt.get("receipt_status") or receipt.get("status") or "").upper()
-    generated_at = _parse_utc(receipt.get("generated_at_utc"))
-    expires_at = _parse_utc(receipt.get("expires_at_utc"))
-    consumed = bool(receipt.get("consumed_by_trader"))
+    return {
+        "path": str(receipt_path),
+        "exists": receipt_path.exists(),
+        "active": current_summary["active"],
+        "receipt_status": current_summary["receipt_status"],
+        "receipt_lifecycle": current_summary["receipt_lifecycle"],
+        "terminal_lifecycle": current_summary["terminal_lifecycle"],
+        "action": current_summary["action"],
+        "high_urgency_action": current_summary["high_urgency_action"],
+        "generated_at_utc": current_summary["generated_at_utc"],
+        "expires_at_utc": current_summary["expires_at_utc"],
+        "consumed_by_trader": current_summary["consumed_by_trader"],
+        "receipt_after_last_trader_run": current_summary["receipt_after_last_trader_run"],
+        "next_run_due_utc": current_summary["next_run_due_utc"],
+        "expired_before_trader_run": current_summary["expired_before_trader_run"],
+        "next_run_window_missed": current_summary["next_run_window_missed"],
+        "will_expire_before_next_run": current_summary["will_expire_before_next_run"],
+        "dependency_before_next_run": current_summary["dependency_before_next_run"],
+        "emergency_or_margin_risk": current_summary["emergency_or_margin_risk"],
+        "issues": issues,
+        "receipts_checked": len(candidates),
+        "archive_path": str(archive_dir),
+        "archive_exists": archive_dir.exists(),
+        "archive_receipts_checked": len([item for item in candidates if item["source"] == "archive"]),
+        "receipt_summaries": summaries,
+        "review_path": str(review_path),
+        "review_exists": review_path.exists(),
+        "review_excerpt": review_text[:800] if review_text else None,
+    }
+
+
+def _guardian_receipt_candidates(receipt_path: Path) -> list[dict[str, Any]]:
+    candidates: list[dict[str, Any]] = []
+    current = _read_json_object(receipt_path)
+    if isinstance(current, dict):
+        candidates.append({"source": "canonical", "path": str(receipt_path), "payload": current})
+    archive_dir = receipt_path.parent / "guardian_action_receipts"
+    if archive_dir.exists():
+        for path in sorted(archive_dir.glob("*.json")):
+            payload = _read_json_object(path)
+            if isinstance(payload, dict):
+                candidates.append({"source": "archive", "path": str(path), "payload": payload})
+    return candidates
+
+
+def _group_guardian_receipts(candidates: list[dict[str, Any]]) -> list[list[dict[str, Any]]]:
+    grouped: dict[str, list[dict[str, Any]]] = {}
+    for candidate in candidates:
+        identity = _guardian_receipt_identity(candidate["payload"])
+        grouped.setdefault(identity, []).append(candidate)
+    return list(grouped.values())
+
+
+def _guardian_receipt_identity(receipt: dict[str, Any]) -> str:
+    nested = _nested_receipt(receipt)
+    selected = _selected_event(receipt)
+    action = _guardian_receipt_action(receipt)
+    generated = str(receipt.get("generated_at_utc") or nested.get("generated_at_utc") or "")
+    event_id = str(nested.get("event_id") or receipt.get("event_id") or selected.get("event_id") or "")
+    dedupe_key = str(nested.get("dedupe_key") or receipt.get("dedupe_key") or selected.get("dedupe_key") or "")
+    if event_id:
+        return "|".join(["event", event_id, action, generated])
+    if dedupe_key:
+        return "|".join(["dedupe", dedupe_key, action, generated])
+    fallback = json.dumps(
+        {
+            "action": action,
+            "generated_at_utc": generated,
+            "expires_at_utc": receipt.get("expires_at_utc") or nested.get("expires_at_utc"),
+            "reason": nested.get("reason") or receipt.get("reason"),
+        },
+        ensure_ascii=True,
+        sort_keys=True,
+    )
+    return "hash|" + hashlib.sha256(fallback.encode("utf-8")).hexdigest()
+
+
+def _guardian_receipt_group_summary(
+    group: list[dict[str, Any]],
+    *,
+    last_trader_run_at: str | None,
+    expected_cadence_minutes: int,
+    grace_minutes: int,
+    now_utc: datetime,
+) -> dict[str, Any]:
+    payloads = [item["payload"] for item in group]
+    canonical_present = any(item["source"] == "canonical" for item in group)
+    representative = _guardian_receipt_representative(payloads)
+    action = _guardian_receipt_action(representative)
+    lifecycle = _guardian_receipt_lifecycle(payloads)
+    receipt_status = _guardian_receipt_status_value(payloads)
+    generated_at = _guardian_receipt_datetime(payloads, "generated_at_utc")
+    expires_at = _guardian_receipt_datetime(payloads, "expires_at_utc")
+    consumed = any(_bool_value(payload.get("consumed_by_trader")) for payload in payloads)
     active = receipt_status == "ACCEPTED" and lifecycle == "ACTIVE"
     last_run = _parse_utc(last_trader_run_at)
     next_run_due = None
@@ -521,11 +645,17 @@ def _guardian_receipt_status(
         next_run_due = last_run + timedelta(minutes=expected_cadence_minutes + grace_minutes)
     receipt_after_last_run = generated_at is not None and (last_run is None or generated_at > last_run)
     expired_before_trader_run = bool(
-        active
+        receipt_status == "ACCEPTED"
         and not consumed
-        and receipt_after_last_run
-        and expires_at is not None
-        and expires_at <= now_utc
+        and (
+            lifecycle == "EXPIRED"
+            or (
+                active
+                and receipt_after_last_run
+                and expires_at is not None
+                and expires_at <= now_utc
+            )
+        )
     )
     next_run_window_missed = bool(
         active
@@ -542,25 +672,20 @@ def _guardian_receipt_status(
         and next_run_due is not None
         and expires_at < next_run_due
     )
-    if active and not consumed and (expired_before_trader_run or next_run_window_missed or will_expire_before_next_run):
-        severity = "P1" if action in HIGH_URGENCY_GUARDIAN_ACTIONS else "WARN"
-        reasons = []
-        if expired_before_trader_run:
-            reasons.append("receipt expired before any later trader run consumed or classified it")
-        if next_run_window_missed:
-            reasons.append("next trader run window passed without consumption/classification")
-        if will_expire_before_next_run:
-            reasons.append("receipt expiry precedes the next expected trader run window")
-        issues.append(
-            _issue(
-                "GUARDIAN_RECEIPT_NOT_CONSUMED_BY_TRADER",
-                severity,
-                "; ".join(reasons),
-            )
-        )
+    dependency_before_next_run = bool(
+        active
+        and not consumed
+        and receipt_after_last_run
+        and next_run_due is not None
+        and now_utc <= next_run_due
+        and not expired_before_trader_run
+    )
+    emergency_or_margin = any(_receipt_is_emergency_or_margin_risk(payload) for payload in payloads)
     return {
-        "path": str(receipt_path),
-        "exists": receipt_path.exists(),
+        "identity": _guardian_receipt_identity(representative),
+        "canonical_present": canonical_present,
+        "source_paths": sorted(item["path"] for item in group),
+        "sources": sorted({item["source"] for item in group}),
         "active": active,
         "receipt_status": receipt_status or None,
         "receipt_lifecycle": lifecycle or None,
@@ -575,11 +700,123 @@ def _guardian_receipt_status(
         "expired_before_trader_run": expired_before_trader_run,
         "next_run_window_missed": next_run_window_missed,
         "will_expire_before_next_run": will_expire_before_next_run,
-        "issues": issues,
-        "review_path": str(review_path),
-        "review_exists": review_path.exists(),
-        "review_excerpt": review_text[:800] if review_text else None,
+        "dependency_before_next_run": dependency_before_next_run,
+        "emergency_or_margin_risk": emergency_or_margin,
     }
+
+
+def _guardian_receipt_issue(summary: dict[str, Any]) -> dict[str, Any] | None:
+    if summary.get("receipt_status") != "ACCEPTED" or summary.get("consumed_by_trader"):
+        return None
+    if not summary.get("expired_before_trader_run") and not summary.get("next_run_window_missed"):
+        return None
+    reasons = []
+    lifecycle = str(summary.get("receipt_lifecycle") or "")
+    if lifecycle == "EXPIRED":
+        reasons.append("receipt_lifecycle=EXPIRED while consumed_by_trader=false")
+    elif summary.get("expired_before_trader_run"):
+        reasons.append("receipt expired before any later trader run consumed or classified it")
+    if summary.get("next_run_window_missed"):
+        reasons.append("next trader run window passed without consumption/classification")
+    message = "; ".join(reasons)
+    source_paths = summary.get("source_paths") if isinstance(summary.get("source_paths"), list) else []
+    if source_paths:
+        message += f"; sources={len(source_paths)}"
+    return _issue(
+        "GUARDIAN_RECEIPT_NOT_CONSUMED_BY_TRADER",
+        _guardian_receipt_issue_severity(summary),
+        message,
+    )
+
+
+def _guardian_receipt_issue_severity(summary: dict[str, Any]) -> str:
+    if summary.get("emergency_or_margin_risk"):
+        return "P0"
+    action = str(summary.get("action") or "").upper()
+    if action in HIGH_URGENCY_GUARDIAN_ACTIONS:
+        return "P1"
+    if action in LOW_URGENCY_GUARDIAN_ACTIONS:
+        return "WARN"
+    return "WARN"
+
+
+def _guardian_receipt_representative(payloads: list[dict[str, Any]]) -> dict[str, Any]:
+    return max(
+        payloads,
+        key=lambda payload: (
+            RECEIPT_LIFECYCLE_PRECEDENCE.get(str(payload.get("receipt_lifecycle") or "").upper(), 0),
+            _parse_utc(payload.get("generated_at_utc")) or datetime.min.replace(tzinfo=timezone.utc),
+        ),
+    )
+
+
+def _guardian_receipt_lifecycle(payloads: list[dict[str, Any]]) -> str:
+    lifecycles = [str(payload.get("receipt_lifecycle") or "").upper() for payload in payloads]
+    lifecycles = [item for item in lifecycles if item]
+    if not lifecycles and any(_guardian_receipt_status_value([payload]) == "ACCEPTED" for payload in payloads):
+        return "ACTIVE"
+    return max(lifecycles, key=lambda item: RECEIPT_LIFECYCLE_PRECEDENCE.get(item, 0), default="")
+
+
+def _guardian_receipt_status_value(payloads: list[dict[str, Any]]) -> str:
+    statuses = [str(payload.get("receipt_status") or payload.get("status") or "").upper() for payload in payloads]
+    if "ACCEPTED" in statuses:
+        return "ACCEPTED"
+    return next((item for item in statuses if item), "")
+
+
+def _guardian_receipt_datetime(payloads: list[dict[str, Any]], key: str) -> datetime | None:
+    parsed = [_parse_utc(payload.get(key)) for payload in payloads]
+    parsed = [item for item in parsed if item is not None]
+    return _max_dt(parsed)
+
+
+def _nested_receipt(receipt: dict[str, Any]) -> dict[str, Any]:
+    nested = receipt.get("receipt")
+    return nested if isinstance(nested, dict) else {}
+
+
+def _selected_event(receipt: dict[str, Any]) -> dict[str, Any]:
+    selected = receipt.get("selected_event")
+    return selected if isinstance(selected, dict) else {}
+
+
+def _guardian_receipt_action(receipt: dict[str, Any]) -> str:
+    nested = _nested_receipt(receipt)
+    return str(nested.get("action") or receipt.get("action") or "").upper()
+
+
+def _receipt_is_emergency_or_margin_risk(receipt: dict[str, Any]) -> bool:
+    nested = _nested_receipt(receipt)
+    selected = _selected_event(receipt)
+    thesis_states = [
+        receipt.get("thesis_state"),
+        nested.get("thesis_state"),
+        selected.get("thesis_state"),
+    ]
+    if any(str(item or "").upper() == "EMERGENCY" for item in thesis_states):
+        return True
+    review_type = str(selected.get("recommended_review_type") or receipt.get("recommended_review_type") or "").upper()
+    if "EMERGENCY" in review_type or "MARGIN" in review_type:
+        return True
+    event_texts = [
+        selected.get("event_type"),
+        receipt.get("event_type"),
+        selected.get("dedupe_key"),
+        nested.get("dedupe_key"),
+    ]
+    if any("MARGIN" in str(item or "").upper() for item in event_texts):
+        return True
+    margin_state = str(nested.get("margin_state") or receipt.get("margin_state") or "").lower()
+    return "margin_pressure=true" in margin_state or "margin pressure=true" in margin_state
+
+
+def _bool_value(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.strip().lower() in {"1", "true", "yes", "y"}
+    return bool(value)
 
 
 def _codex_log_summary(path: Path, *, now_utc: datetime) -> dict[str, Any]:
@@ -770,6 +1007,9 @@ def _render_report(payload: dict[str, Any]) -> str:
         f"- Minutes since last run: `{payload['minutes_since_last_run']}`",
         f"- Cadence + grace: `{payload['expected_cadence_minutes']} + {payload['grace_minutes']}` minutes",
         f"- Read only: `{payload['execution_boundary']['read_only']}`",
+        f"- no_live_side_effects={'true' if payload.get('no_live_side_effects') else 'false'}",
+        f"- codex_exec_enabled={'true' if payload.get('codex_exec_enabled') else 'false'}",
+        f"- broker_writes_enabled={'true' if payload.get('broker_writes_enabled') else 'false'}",
         f"- Live side effects: `{len(payload['execution_boundary']['live_side_effects'])}`",
         "",
         "## Automation Config",
@@ -805,6 +1045,8 @@ def _render_report(payload: dict[str, Any]) -> str:
             f"- Consumed by trader: `{guardian.get('consumed_by_trader')}`",
             f"- Receipt after last trader run: `{guardian.get('receipt_after_last_trader_run')}`",
             f"- Next run due: `{guardian.get('next_run_due_utc')}`",
+            f"- Dependency before next run: `{guardian.get('dependency_before_next_run')}`",
+            f"- Receipts checked: `{guardian.get('receipts_checked')}` archive=`{guardian.get('archive_receipts_checked')}`",
             "",
             "## Codex Logs",
             "",
@@ -835,6 +1077,9 @@ def _render_report(payload: dict[str, Any]) -> str:
             "",
             "## Boundary",
             "",
+            f"- no_live_side_effects={'true' if payload.get('no_live_side_effects') else 'false'}",
+            f"- codex_exec_enabled={'true' if payload.get('codex_exec_enabled') else 'false'}",
+            f"- broker_writes_enabled={'true' if payload.get('broker_writes_enabled') else 'false'}",
             "- This watchdog does not call OANDA.",
             "- This watchdog does not run `codex exec` or the trader by default.",
             "- This watchdog does not place, cancel, or close broker orders.",
