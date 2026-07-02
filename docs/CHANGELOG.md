@@ -2,6 +2,7 @@
 
 ## 2026-07-02
 
+- Recorded the operator's 100,000 JPY capital injection in `data/capital_flows.json` / `docs/capital_flow_report.md` and split rolling 30d target reporting into raw equity and funding-adjusted performance. `capital-flow-report` safely regenerates the ignored live artifact/report; `required_*_funding_adjusted` fields are now explicit and authoritative for 30d 4x pace, while raw broker NAV remains the basis for risk, margin, and sizing.
 - Blocked the AUD_USD `campaign_exposure_recovery` stale-decision leak that produced `trade_id=472952`: fresh entry/recovery sends now require a fresh accepted GPT `TRADE`/`ADD` receipt, stale accepted `WAIT`/`REQUEST_EVIDENCE`, `gpt_allowed=false`, missing fresh receipt errors, unresolved guardian receipt blockers, and watchdog `normal_routing_allowed=false` cannot route fresh risk, and the report classifies the loss as deployment/stale-decision/campaign-recovery failure rather than profit-capture failure.
 - Removed `OANDA_CAMPAIGN_FIREPOWER_RELAXED` as an edge override: campaign firepower remains capacity evidence only and no longer relaxes `NEGATIVE_EXPECTANCY`, stale GPT, guardian receipt, or market-read blockers.
 - Added defense-in-depth at `LiveOrderGateway` for GPT receipts and market-read geometry: live sends from automation-provided receipts reject non-TRADE/ADD actions, stale/mismatched receipts, blocking verifier issues, and missing `market_read_first`; `gpt-trader-decision` rejects TRADE receipts whose market-read direction/target/invalidation geometry contradicts the selected side.

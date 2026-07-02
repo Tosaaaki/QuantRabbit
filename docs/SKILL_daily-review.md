@@ -4,12 +4,23 @@
 
 - Rolling policy: `ROLLING_30D_4X`
 - Rolling 30d start equity
-- Current equity
-- Current 30d multiplier
-- Remaining to 4x
-- Required calendar daily return
-- Required active-day return
+- Current equity raw
+- Capital flows 30d
+- Funding-adjusted equity
+- Rolling 30d multiplier raw
+- Rolling 30d multiplier funding-adjusted
+- Remaining to 4x raw
+- Remaining to 4x funding-adjusted
+- Required calendar daily return raw
+- Required active-day return raw
+- Required calendar daily return funding-adjusted
+- Required active-day return funding-adjusted
+- Required calendar daily return (legacy alias of funding-adjusted)
+- Required active-day return (legacy alias of funding-adjusted)
+- Performance basis
+- Sizing basis
 - Pace state: `AHEAD` / `ON_PACE` / `BEHIND` / `DANGER`
+- Performance and 30d 4x pace use funding-adjusted equity; risk, margin, and sizing use raw broker NAV.
 
 ## Daily Pace Review
 
@@ -87,7 +98,7 @@ This is discovery/execution separation. A blocked but correct read is discovery 
 
 - `data/daily_target_state.json`
 - `docs/daily_target_report.md`
-- Rolling 30d fields in `data/daily_target_state.json`: `rolling_30d_start_equity`, `current_equity`, `current_30d_multiplier`, `remaining_to_4x`, `required_calendar_daily_return`, `required_active_day_return`, `pace_state`.
+- Rolling 30d fields in `data/daily_target_state.json`: `rolling_30d_start_equity`, `current_equity_raw`, `capital_flows_30d`, `funding_adjusted_equity`, `rolling_30d_multiplier_raw`, `rolling_30d_multiplier_funding_adjusted`, `remaining_to_4x_raw`, `remaining_to_4x_funding_adjusted`, `required_calendar_daily_return_raw`, `required_active_day_return_raw`, `required_calendar_daily_return_funding_adjusted`, `required_active_day_return_funding_adjusted`, `required_calendar_daily_return`, `required_active_day_return`, `performance_basis`, `sizing_basis`, `pace_state`.
 - `data/order_intents.json`
 - `docs/gpt_trader_decision_report.md`
 - `data/market_read_predictions.jsonl`

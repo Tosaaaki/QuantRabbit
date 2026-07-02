@@ -8,7 +8,10 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
+from quant_rabbit.capital_flows import funding_adjusted_equity, summarize_capital_flows
 from quant_rabbit.models import AccountSummary, BrokerOrder, BrokerPosition, BrokerSnapshot, Owner, Quote, Side
+from quant_rabbit.paths import DEFAULT_CAPITAL_FLOWS, DEFAULT_DAILY_TARGET_REPORT, DEFAULT_DAILY_TARGET_STATE
+from quant_rabbit.risk import RiskPolicy
 from quant_rabbit.snapshot_json import snapshot_payload_order_raw, snapshot_payload_position_raw
 
 
@@ -27,8 +30,6 @@ def _trader_no_broker_tp_runner(position: BrokerPosition) -> bool:
         and _trader_sl_repair_disabled()
         and not _missing_tp_repair_enabled()
     )
-from quant_rabbit.paths import DEFAULT_DAILY_TARGET_REPORT, DEFAULT_DAILY_TARGET_STATE
-from quant_rabbit.risk import RiskPolicy
 
 
 # Rolling target policy constants are product contract values, not tuned market
@@ -76,6 +77,10 @@ class DailyTargetSnapshot:
     remaining_minimum_jpy: float
     remaining_target_jpy: float
     current_equity_jpy: float
+    current_equity_raw: float
+    capital_flows_30d: float
+    capital_flow_count_30d: int
+    funding_adjusted_equity: float
     rolling_30d_policy: str
     rolling_30d_start_utc: str
     rolling_30d_end_utc: str
@@ -84,11 +89,22 @@ class DailyTargetSnapshot:
     rolling_30d_remaining_active_days: float
     rolling_30d_start_equity: float
     current_equity: float
+    rolling_30d_multiplier_raw: float
+    rolling_30d_multiplier_funding_adjusted: float
     current_30d_multiplier: float
+    remaining_to_4x_raw: float
+    remaining_to_4x_funding_adjusted: float
     remaining_to_4x: float
+    required_calendar_daily_return_raw: float | None
+    required_active_day_return_raw: float | None
+    required_calendar_daily_return_funding_adjusted: float | None
+    required_active_day_return_funding_adjusted: float | None
     required_calendar_daily_return: float | None
     required_active_day_return: float | None
+    performance_basis: str
+    sizing_basis: str
     pace_state: str
+    capital_flow_issues: tuple[str, ...]
     campaign_day_jst: str
     daily_risk_budget_jpy: float
     daily_risk_pct: float | None
@@ -116,11 +132,24 @@ class DailyTargetSummary:
     progress_jpy: float
     progress_pct: float
     rolling_30d_start_equity: float
+    current_equity_raw: float
+    capital_flows_30d: float
+    funding_adjusted_equity: float
     current_equity: float
+    rolling_30d_multiplier_raw: float
+    rolling_30d_multiplier_funding_adjusted: float
     current_30d_multiplier: float
+    remaining_to_4x_raw: float
+    remaining_to_4x_funding_adjusted: float
     remaining_to_4x: float
+    required_calendar_daily_return_raw: float | None
+    required_active_day_return_raw: float | None
+    required_calendar_daily_return_funding_adjusted: float | None
+    required_active_day_return_funding_adjusted: float | None
     required_calendar_daily_return: float | None
     required_active_day_return: float | None
+    performance_basis: str
+    sizing_basis: str
     pace_state: str
     minimum_progress_pct: float
     remaining_minimum_jpy: float
@@ -154,11 +183,13 @@ class DailyTargetLedger:
         *,
         state_path: Path = DEFAULT_DAILY_TARGET_STATE,
         report_path: Path = DEFAULT_DAILY_TARGET_REPORT,
+        capital_flows_path: Path = DEFAULT_CAPITAL_FLOWS,
         pace_backtest_path: Path | None = None,
         execution_ledger_path: Path | None = None,
     ) -> None:
         self.state_path = state_path
         self.report_path = report_path
+        self.capital_flows_path = capital_flows_path
         self.pace_backtest_path = pace_backtest_path
         self.execution_ledger_path = execution_ledger_path
 
@@ -464,6 +495,7 @@ class DailyTargetLedger:
             previous=previous,
             current_equity_jpy=current_equity,
             reference_time=reference_time,
+            capital_flows_path=self.capital_flows_path,
         )
         progress_pct = round((progress / target_jpy) * 100.0, 4) if target_jpy else 0.0
         account_progress = round(current_equity - start_balance, 4)
@@ -500,6 +532,10 @@ class DailyTargetLedger:
             remaining_minimum_jpy=remaining_minimum,
             remaining_target_jpy=remaining_target,
             current_equity_jpy=current_equity,
+            current_equity_raw=rolling_30d["current_equity_raw"],
+            capital_flows_30d=rolling_30d["capital_flows_30d"],
+            capital_flow_count_30d=rolling_30d["capital_flow_count_30d"],
+            funding_adjusted_equity=rolling_30d["funding_adjusted_equity"],
             rolling_30d_policy=ROLLING_30D_POLICY,
             rolling_30d_start_utc=rolling_30d["rolling_30d_start_utc"],
             rolling_30d_end_utc=rolling_30d["rolling_30d_end_utc"],
@@ -508,11 +544,26 @@ class DailyTargetLedger:
             rolling_30d_remaining_active_days=rolling_30d["rolling_30d_remaining_active_days"],
             rolling_30d_start_equity=rolling_30d["rolling_30d_start_equity"],
             current_equity=rolling_30d["current_equity"],
+            rolling_30d_multiplier_raw=rolling_30d["rolling_30d_multiplier_raw"],
+            rolling_30d_multiplier_funding_adjusted=rolling_30d["rolling_30d_multiplier_funding_adjusted"],
             current_30d_multiplier=rolling_30d["current_30d_multiplier"],
+            remaining_to_4x_raw=rolling_30d["remaining_to_4x_raw"],
+            remaining_to_4x_funding_adjusted=rolling_30d["remaining_to_4x_funding_adjusted"],
             remaining_to_4x=rolling_30d["remaining_to_4x"],
+            required_calendar_daily_return_raw=rolling_30d["required_calendar_daily_return_raw"],
+            required_active_day_return_raw=rolling_30d["required_active_day_return_raw"],
+            required_calendar_daily_return_funding_adjusted=rolling_30d[
+                "required_calendar_daily_return_funding_adjusted"
+            ],
+            required_active_day_return_funding_adjusted=rolling_30d[
+                "required_active_day_return_funding_adjusted"
+            ],
             required_calendar_daily_return=rolling_30d["required_calendar_daily_return"],
             required_active_day_return=rolling_30d["required_active_day_return"],
+            performance_basis=rolling_30d["performance_basis"],
+            sizing_basis=rolling_30d["sizing_basis"],
             pace_state=rolling_30d["pace_state"],
+            capital_flow_issues=rolling_30d["capital_flow_issues"],
             campaign_day_jst=campaign_day_jst,
             daily_risk_budget_jpy=round(risk_budget, 4),
             daily_risk_pct=round(active_pct, 4) if active_pct is not None else None,
@@ -542,11 +593,24 @@ class DailyTargetLedger:
             progress_jpy=state.progress_jpy,
             progress_pct=state.progress_pct,
             rolling_30d_start_equity=state.rolling_30d_start_equity,
+            current_equity_raw=state.current_equity_raw,
+            capital_flows_30d=state.capital_flows_30d,
+            funding_adjusted_equity=state.funding_adjusted_equity,
             current_equity=state.current_equity,
+            rolling_30d_multiplier_raw=state.rolling_30d_multiplier_raw,
+            rolling_30d_multiplier_funding_adjusted=state.rolling_30d_multiplier_funding_adjusted,
             current_30d_multiplier=state.current_30d_multiplier,
+            remaining_to_4x_raw=state.remaining_to_4x_raw,
+            remaining_to_4x_funding_adjusted=state.remaining_to_4x_funding_adjusted,
             remaining_to_4x=state.remaining_to_4x,
+            required_calendar_daily_return_raw=state.required_calendar_daily_return_raw,
+            required_active_day_return_raw=state.required_active_day_return_raw,
+            required_calendar_daily_return_funding_adjusted=state.required_calendar_daily_return_funding_adjusted,
+            required_active_day_return_funding_adjusted=state.required_active_day_return_funding_adjusted,
             required_calendar_daily_return=state.required_calendar_daily_return,
             required_active_day_return=state.required_active_day_return,
+            performance_basis=state.performance_basis,
+            sizing_basis=state.sizing_basis,
             pace_state=state.pace_state,
             minimum_progress_pct=state.minimum_progress_pct,
             remaining_minimum_jpy=state.remaining_minimum_jpy,
@@ -593,9 +657,39 @@ class DailyTargetLedger:
             f"- Policy: `{state.rolling_30d_policy}`",
             f"- Window: `{state.rolling_30d_start_utc}` → `{state.rolling_30d_end_utc}`",
             f"- Rolling 30d start equity: `{state.rolling_30d_start_equity:.0f} JPY`",
-            f"- Current equity: `{state.current_equity:.0f} JPY`",
-            f"- Current 30d multiplier: `{state.current_30d_multiplier:.4f}x`",
-            f"- Remaining to 4x: `{state.remaining_to_4x:.0f} JPY`",
+            f"- current_equity_raw: `{state.current_equity_raw:.0f} JPY`",
+            f"- capital_flows_30d: `{state.capital_flows_30d:.0f} JPY`",
+            f"- funding_adjusted_equity: `{state.funding_adjusted_equity:.0f} JPY`",
+            f"- rolling_30d_multiplier_raw: `{state.rolling_30d_multiplier_raw:.4f}x`",
+            f"- rolling_30d_multiplier_funding_adjusted: `{state.rolling_30d_multiplier_funding_adjusted:.4f}x`",
+            f"- remaining_to_4x_raw: `{state.remaining_to_4x_raw:.0f} JPY`",
+            f"- remaining_to_4x_funding_adjusted: `{state.remaining_to_4x_funding_adjusted:.0f} JPY`",
+            f"- Current 30d multiplier: `{state.current_30d_multiplier:.4f}x` (funding-adjusted)",
+            f"- Remaining to 4x: `{state.remaining_to_4x:.0f} JPY` (funding-adjusted)",
+            "- required_calendar_daily_return_raw: "
+            + (
+                f"`{state.required_calendar_daily_return_raw:.4f}%`"
+                if state.required_calendar_daily_return_raw is not None
+                else "`n/a`"
+            ),
+            "- required_active_day_return_raw: "
+            + (
+                f"`{state.required_active_day_return_raw:.4f}%`"
+                if state.required_active_day_return_raw is not None
+                else "`n/a`"
+            ),
+            "- required_calendar_daily_return_funding_adjusted: "
+            + (
+                f"`{state.required_calendar_daily_return_funding_adjusted:.4f}%`"
+                if state.required_calendar_daily_return_funding_adjusted is not None
+                else "`n/a`"
+            ),
+            "- required_active_day_return_funding_adjusted: "
+            + (
+                f"`{state.required_active_day_return_funding_adjusted:.4f}%`"
+                if state.required_active_day_return_funding_adjusted is not None
+                else "`n/a`"
+            ),
             "- Required calendar daily return: "
             + (
                 f"`{state.required_calendar_daily_return:.4f}%`"
@@ -608,6 +702,8 @@ class DailyTargetLedger:
                 if state.required_active_day_return is not None
                 else "`n/a`"
             ),
+            f"- performance_basis: `{state.performance_basis}`",
+            f"- sizing_basis: `{state.sizing_basis}`",
             f"- Pace state: `{state.pace_state}`",
             "",
             "## Daily Pace Marker",
@@ -633,6 +729,9 @@ class DailyTargetLedger:
             lines.extend(f"- {blocker}" for blocker in state.blockers)
         else:
             lines.append("- none")
+        if state.capital_flow_issues:
+            lines.extend(["", "## Capital Flow Issues", ""])
+            lines.extend(f"- {issue}" for issue in state.capital_flow_issues)
         lines.extend(["", "## Open Positions", ""])
         if not state.positions:
             lines.append("- none")
@@ -649,6 +748,9 @@ class DailyTargetLedger:
                 "## Target Contract",
                 "",
                 "- The top KPI is rolling 30-calendar-day 4x equity growth.",
+                "- Rolling 30d performance uses funding_adjusted_equity; current_equity_raw remains the broker NAV basis for risk, margin, and sizing.",
+                "- Capital flows are recorded as deposits/withdrawals, not trading P/L, and are excluded from funding-adjusted return.",
+                "- Backward-compatible required_calendar_daily_return and required_active_day_return are funding-adjusted primary values.",
                 "- The +5% daily line is a pace marker, review trigger, and protection milestone; it must not force B/C churn on no-edge days.",
                 "- The 10% daily target is extension-only behind the favorable-market gate, not a guaranteed return.",
                 "- Unprotected trader-owned or external exposure makes remaining risk budget unavailable; operator-managed manual/tagless exposure is TP-managed only and does not block fresh entries.",
@@ -791,6 +893,7 @@ def _rolling_30d_policy(
     previous: dict[str, Any],
     current_equity_jpy: float,
     reference_time: datetime,
+    capital_flows_path: Path,
 ) -> dict[str, Any]:
     previous_start = _parse_utc_timestamp(previous.get("rolling_30d_start_utc"))
     previous_equity = _coalesce_float(previous.get("rolling_30d_start_equity"))
@@ -814,15 +917,34 @@ def _rolling_30d_policy(
         ROLLING_30D_ACTIVE_DAYS / ROLLING_30D_CALENDAR_DAYS
     )
     target_equity = start_equity * ROLLING_30D_TARGET_MULTIPLIER
-    multiplier = current_equity_jpy / start_equity if start_equity > 0 else 0.0
-    remaining_to_4x = max(0.0, target_equity - current_equity_jpy)
-    required_calendar = _required_compound_return_pct(
-        current_value=current_equity_jpy,
+    capital_flows = summarize_capital_flows(
+        capital_flows_path,
+        start_utc=start_time,
+        end_utc=reference_time,
+    )
+    current_equity_raw = round(current_equity_jpy, 4)
+    adjusted_equity = funding_adjusted_equity(current_equity_raw, capital_flows.net_amount_jpy)
+    multiplier_raw = current_equity_raw / start_equity if start_equity > 0 else 0.0
+    multiplier_adjusted = adjusted_equity / start_equity if start_equity > 0 else 0.0
+    remaining_to_4x_raw = max(0.0, target_equity - current_equity_raw)
+    remaining_to_4x_adjusted = max(0.0, target_equity - adjusted_equity)
+    required_calendar_raw = _required_compound_return_pct(
+        current_value=current_equity_raw,
         target_value=target_equity,
         remaining_periods=remaining_calendar_days,
     )
-    required_active = _required_compound_return_pct(
-        current_value=current_equity_jpy,
+    required_active_raw = _required_compound_return_pct(
+        current_value=current_equity_raw,
+        target_value=target_equity,
+        remaining_periods=remaining_active_days,
+    )
+    required_calendar_adjusted = _required_compound_return_pct(
+        current_value=adjusted_equity,
+        target_value=target_equity,
+        remaining_periods=remaining_calendar_days,
+    )
+    required_active_adjusted = _required_compound_return_pct(
+        current_value=adjusted_equity,
         target_value=target_equity,
         remaining_periods=remaining_active_days,
     )
@@ -830,10 +952,10 @@ def _rolling_30d_policy(
         min(elapsed_days, ROLLING_30D_CALENDAR_DAYS) / ROLLING_30D_CALENDAR_DAYS
     )
     pace_state = _rolling_pace_state(
-        current_multiplier=multiplier,
+        current_multiplier=multiplier_adjusted,
         expected_multiplier=expected_multiplier,
-        required_calendar_daily_return=required_calendar,
-        remaining_to_4x=remaining_to_4x,
+        required_calendar_daily_return=required_calendar_adjusted,
+        remaining_to_4x=remaining_to_4x_adjusted,
     )
     return {
         "rolling_30d_start_utc": start_time.isoformat(),
@@ -842,12 +964,27 @@ def _rolling_30d_policy(
         "rolling_30d_remaining_calendar_days": round(remaining_calendar_days, 4),
         "rolling_30d_remaining_active_days": round(remaining_active_days, 4),
         "rolling_30d_start_equity": round(start_equity, 4),
-        "current_equity": round(current_equity_jpy, 4),
-        "current_30d_multiplier": round(multiplier, 6),
-        "remaining_to_4x": round(remaining_to_4x, 4),
-        "required_calendar_daily_return": required_calendar,
-        "required_active_day_return": required_active,
+        "current_equity_raw": current_equity_raw,
+        "capital_flows_30d": capital_flows.net_amount_jpy,
+        "capital_flow_count_30d": capital_flows.count,
+        "funding_adjusted_equity": adjusted_equity,
+        "current_equity": adjusted_equity,
+        "rolling_30d_multiplier_raw": round(multiplier_raw, 6),
+        "rolling_30d_multiplier_funding_adjusted": round(multiplier_adjusted, 6),
+        "current_30d_multiplier": round(multiplier_adjusted, 6),
+        "remaining_to_4x_raw": round(remaining_to_4x_raw, 4),
+        "remaining_to_4x_funding_adjusted": round(remaining_to_4x_adjusted, 4),
+        "remaining_to_4x": round(remaining_to_4x_adjusted, 4),
+        "required_calendar_daily_return_raw": required_calendar_raw,
+        "required_active_day_return_raw": required_active_raw,
+        "required_calendar_daily_return_funding_adjusted": required_calendar_adjusted,
+        "required_active_day_return_funding_adjusted": required_active_adjusted,
+        "required_calendar_daily_return": required_calendar_adjusted,
+        "required_active_day_return": required_active_adjusted,
+        "performance_basis": "funding_adjusted",
+        "sizing_basis": "raw_nav",
         "pace_state": pace_state,
+        "capital_flow_issues": capital_flows.issues,
     }
 
 

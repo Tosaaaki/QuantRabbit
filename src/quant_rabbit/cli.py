@@ -40,6 +40,13 @@ from quant_rabbit.broker.webull import (
     write_webull_account_report,
     write_webull_env_report,
 )
+from quant_rabbit.capital_flows import (
+    DEFAULT_OPERATOR_DEPOSIT_AMOUNT_JPY,
+    DEFAULT_OPERATOR_DEPOSIT_NOTE,
+    DEFAULT_OPERATOR_DEPOSIT_SOURCE,
+    DEFAULT_OPERATOR_DEPOSIT_TIMESTAMP_UTC,
+    ensure_operator_deposit_artifact,
+)
 from quant_rabbit.certification import DryRunCertifier
 from quant_rabbit.completion import CompletionAuditor
 from quant_rabbit.coverage import CoverageOptimizer
@@ -63,6 +70,8 @@ from quant_rabbit.paths import (
     DEFAULT_BROKER_SNAPSHOT,
     DEFAULT_CAMPAIGN_PLAN,
     DEFAULT_CAMPAIGN_REPORT,
+    DEFAULT_CAPITAL_FLOW_REPORT,
+    DEFAULT_CAPITAL_FLOWS,
     DEFAULT_COMPLETION_STATUS,
     DEFAULT_COMPLETION_STATUS_REPORT,
     DEFAULT_BROKER_INSTRUMENTS,
@@ -2769,6 +2778,19 @@ def _cycle_digest(*, kind: str, step_results: list[dict[str, Any]], aborted: boo
                 "status",
                 "start_balance_jpy",
                 "current_equity_jpy",
+                "current_equity_raw",
+                "capital_flows_30d",
+                "funding_adjusted_equity",
+                "rolling_30d_multiplier_raw",
+                "rolling_30d_multiplier_funding_adjusted",
+                "remaining_to_4x_raw",
+                "remaining_to_4x_funding_adjusted",
+                "required_calendar_daily_return_raw",
+                "required_active_day_return_raw",
+                "required_calendar_daily_return_funding_adjusted",
+                "required_active_day_return_funding_adjusted",
+                "performance_basis",
+                "sizing_basis",
                 "realized_pl_jpy",
                 "progress_pct",
                 "minimum_progress_pct",
@@ -3570,7 +3592,20 @@ def main(argv: list[str] | None = None) -> int:
     p_target.add_argument("--snapshot", type=Path, default=None)
     p_target.add_argument("--state", type=Path, default=DEFAULT_DAILY_TARGET_STATE)
     p_target.add_argument("--report", type=Path, default=DEFAULT_DAILY_TARGET_REPORT)
+    p_target.add_argument("--capital-flows", type=Path, default=DEFAULT_CAPITAL_FLOWS)
     p_target.add_argument("--execution-ledger-db", type=Path, default=DEFAULT_EXECUTION_LEDGER_DB)
+
+    p_capital_flow = sub.add_parser(
+        "capital-flow-report",
+        help="Ensure the local capital-flow artifact/report for funding-adjusted accounting.",
+    )
+    p_capital_flow.add_argument("--flows", type=Path, default=DEFAULT_CAPITAL_FLOWS)
+    p_capital_flow.add_argument("--report", type=Path, default=DEFAULT_CAPITAL_FLOW_REPORT)
+    p_capital_flow.add_argument("--target-state", type=Path, default=DEFAULT_DAILY_TARGET_STATE)
+    p_capital_flow.add_argument("--amount-jpy", type=float, default=DEFAULT_OPERATOR_DEPOSIT_AMOUNT_JPY)
+    p_capital_flow.add_argument("--timestamp-utc", default=DEFAULT_OPERATOR_DEPOSIT_TIMESTAMP_UTC)
+    p_capital_flow.add_argument("--source", default=DEFAULT_OPERATOR_DEPOSIT_SOURCE)
+    p_capital_flow.add_argument("--note", default=DEFAULT_OPERATOR_DEPOSIT_NOTE)
 
     p_replay = sub.add_parser("replay-backtest", help="Replay imported legacy days against 10%% target coverage.")
     p_replay.add_argument("--db", type=Path, default=DEFAULT_HISTORY_DB)
@@ -5742,6 +5777,7 @@ def main(argv: list[str] | None = None) -> int:
             summary = DailyTargetLedger(
                 state_path=args.state,
                 report_path=args.report,
+                capital_flows_path=args.capital_flows,
                 pace_backtest_path=DEFAULT_AI_TEST_BOT_BACKTEST,
                 execution_ledger_path=args.execution_ledger_db,
             ).run(
@@ -5767,6 +5803,19 @@ def main(argv: list[str] | None = None) -> int:
                     "target_profit_jpy": summary.target_profit_jpy,
                     "progress_jpy": summary.progress_jpy,
                     "progress_pct": summary.progress_pct,
+                    "current_equity_raw": summary.current_equity_raw,
+                    "capital_flows_30d": summary.capital_flows_30d,
+                    "funding_adjusted_equity": summary.funding_adjusted_equity,
+                    "rolling_30d_multiplier_raw": summary.rolling_30d_multiplier_raw,
+                    "rolling_30d_multiplier_funding_adjusted": summary.rolling_30d_multiplier_funding_adjusted,
+                    "remaining_to_4x_raw": summary.remaining_to_4x_raw,
+                    "remaining_to_4x_funding_adjusted": summary.remaining_to_4x_funding_adjusted,
+                    "required_calendar_daily_return_raw": summary.required_calendar_daily_return_raw,
+                    "required_active_day_return_raw": summary.required_active_day_return_raw,
+                    "required_calendar_daily_return_funding_adjusted": summary.required_calendar_daily_return_funding_adjusted,
+                    "required_active_day_return_funding_adjusted": summary.required_active_day_return_funding_adjusted,
+                    "performance_basis": summary.performance_basis,
+                    "sizing_basis": summary.sizing_basis,
                     "remaining_target_jpy": summary.remaining_target_jpy,
                     "remaining_risk_budget_jpy": summary.remaining_risk_budget_jpy,
                     "target_trades_per_day": summary.target_trades_per_day,
@@ -5774,6 +5823,39 @@ def main(argv: list[str] | None = None) -> int:
                     "target_trades_per_day_basis_return_pct": summary.target_trades_per_day_basis_return_pct,
                     "per_trade_risk_budget_jpy": summary.per_trade_risk_budget_jpy,
                     "unprotected_positions": summary.unprotected_positions,
+                },
+                ensure_ascii=False,
+                indent=2,
+                sort_keys=True,
+            )
+        )
+        return 0
+    if args.command == "capital-flow-report":
+        try:
+            result = ensure_operator_deposit_artifact(
+                args.flows,
+                args.report,
+                target_state_path=args.target_state,
+                amount_jpy=args.amount_jpy,
+                timestamp_utc=args.timestamp_utc,
+                source=args.source,
+                note=args.note,
+            )
+        except ValueError as exc:
+            print(json.dumps({"error": str(exc)}, ensure_ascii=False, indent=2, sort_keys=True))
+            return 2
+        print(
+            json.dumps(
+                {
+                    "flows_path": str(result.flows_path),
+                    "report_path": str(result.report_path),
+                    "created": result.created,
+                    "updated": result.updated,
+                    "deposit_timestamp_utc": result.deposit_timestamp_utc,
+                    "flow_count": result.flow_count,
+                    "issues": list(result.issues),
+                    "live_side_effects": [],
+                    "broker_side_effects": [],
                 },
                 ensure_ascii=False,
                 indent=2,

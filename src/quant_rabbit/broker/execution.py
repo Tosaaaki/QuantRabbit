@@ -2854,10 +2854,32 @@ def _target_path_receipt_from_intent(
             "remaining_minimum_jpy",
         ),
         "rolling_30d_policy": str(metadata.get("rolling_30d_policy") or "").strip() or None,
+        "current_equity_raw": _metadata_float(metadata, "current_equity_raw"),
+        "capital_flows_30d": _metadata_float(metadata, "capital_flows_30d"),
+        "funding_adjusted_equity": _metadata_float(metadata, "funding_adjusted_equity"),
+        "rolling_30d_multiplier_raw": _metadata_float(metadata, "rolling_30d_multiplier_raw"),
+        "rolling_30d_multiplier_funding_adjusted": _metadata_float(
+            metadata,
+            "rolling_30d_multiplier_funding_adjusted",
+        ),
         "current_30d_multiplier": _metadata_float(metadata, "current_30d_multiplier"),
+        "remaining_to_4x_raw": _metadata_float(metadata, "remaining_to_4x_raw"),
+        "remaining_to_4x_funding_adjusted": _metadata_float(metadata, "remaining_to_4x_funding_adjusted"),
         "remaining_to_4x": _metadata_float(metadata, "remaining_to_4x"),
+        "required_calendar_daily_return_raw": _metadata_float(metadata, "required_calendar_daily_return_raw"),
+        "required_active_day_return_raw": _metadata_float(metadata, "required_active_day_return_raw"),
+        "required_calendar_daily_return_funding_adjusted": _metadata_float(
+            metadata,
+            "required_calendar_daily_return_funding_adjusted",
+        ),
+        "required_active_day_return_funding_adjusted": _metadata_float(
+            metadata,
+            "required_active_day_return_funding_adjusted",
+        ),
         "required_calendar_daily_return": _metadata_float(metadata, "required_calendar_daily_return"),
         "required_active_day_return": _metadata_float(metadata, "required_active_day_return"),
+        "performance_basis": str(metadata.get("performance_basis") or "").strip() or None,
+        "sizing_basis": str(metadata.get("sizing_basis") or "").strip() or None,
         "pace_state": str(metadata.get("pace_state") or "").strip() or None,
         "five_pct_path_role": _target_path_role(metadata),
         "attack_stack_slot": _target_path_attack_stack_slot(metadata),
@@ -2882,7 +2904,13 @@ def _target_path_receipt_report_lines(value: Any, *, prefix: str) -> list[str]:
         (
             f"{prefix}target-path receipt: mode=`{value.get('daily_target_mode')}` "
             f"remaining_to_5pct=`{_fmt_jpy(value.get('remaining_to_5pct'))}` "
-            f"remaining_to_4x=`{_fmt_jpy(value.get('remaining_to_4x'))}` "
+            f"remaining_to_4x_raw=`{_fmt_jpy(value.get('remaining_to_4x_raw'))}` "
+            f"remaining_to_4x_funding_adjusted=`{_fmt_jpy(value.get('remaining_to_4x_funding_adjusted') or value.get('remaining_to_4x'))}` "
+            f"multiplier_raw=`{value.get('rolling_30d_multiplier_raw')}` "
+            f"multiplier_funding_adjusted=`{value.get('rolling_30d_multiplier_funding_adjusted') or value.get('current_30d_multiplier')}` "
+            f"required_calendar_funding_adjusted=`{value.get('required_calendar_daily_return_funding_adjusted') or value.get('required_calendar_daily_return')}` "
+            f"required_active_funding_adjusted=`{value.get('required_active_day_return_funding_adjusted') or value.get('required_active_day_return')}` "
+            f"performance_basis=`{value.get('performance_basis')}` sizing_basis=`{value.get('sizing_basis')}` "
             f"pace=`{value.get('pace_state')}` "
             f"role=`{value.get('five_pct_path_role')}` slot=`{value.get('attack_stack_slot')}` "
             f"grade=`{value.get('grade')}` units=`{value.get('suggested_units')}->{value.get('final_units')}` "

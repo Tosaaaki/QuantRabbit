@@ -41,7 +41,7 @@ PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli trader-prompt-route
 - Do not call `QR_OPENAI_API_KEY`, `OPENAI_API_KEY`, or any model API path from QuantRabbit code.
 - Do not invent JPY caps, pip distances, reward/risk multipliers, stale defaults, or extra risk gates.
 - Missing required evidence is a blocker, not a value to guess.
-- Rolling target accounting uses `ROLLING_30D_4X` as the top KPI: 30 calendar days to 4x. +5% is a pace marker / review trigger / protection milestone, and +10% is extension-only after an explicit favorable-market gate.
+- Rolling target accounting uses `ROLLING_30D_4X` as the top KPI: 30 calendar days to 4x. Reports must separate `current_equity_raw` from `funding_adjusted_equity`; capital flows are not trading P/L. +5% is a pace marker / review trigger / protection milestone, and +10% is extension-only after an explicit favorable-market gate.
 - One final decision receipt selects action; specialist and strategy prompts are read-only observation.
 - A blocked, rejected, monitor-only, or no-trade cycle must not be followed by a workaround send.
 - Do not stop solely because a decision receipt was written recently or stale local state disagrees with refreshed broker truth. Use `trader-prompt-route`: unconsumed receipts go to verify; rejected, consumed, or broker-stale receipts go back to fresh decision work.
@@ -120,9 +120,18 @@ export QR_TARGET_PATH_LIVE_ENABLED="${QR_TARGET_PATH_LIVE_ENABLED:-0}"
 # +5% pace marker / extension +10% operating mode. It also prints the required
 # FULL_TRADER pace board, attack stack, and 10% extension gate.
 # Do not leave those fields blank in the working decision or end report: report
-# rolling_30d_start_equity, current_equity, current_30d_multiplier,
-# remaining_to_4x, required_calendar_daily_return, required_active_day_return,
-# and pace_state every cycle. While remaining_to_5pct is above zero, fill a
+# rolling_30d_start_equity, current_equity_raw, capital_flows_30d,
+# funding_adjusted_equity, rolling_30d_multiplier_raw,
+# rolling_30d_multiplier_funding_adjusted, remaining_to_4x_raw,
+# remaining_to_4x_funding_adjusted, required_calendar_daily_return_raw,
+# required_active_day_return_raw, required_calendar_daily_return_funding_adjusted,
+# required_active_day_return_funding_adjusted, required_calendar_daily_return,
+# required_active_day_return, performance_basis, sizing_basis, and pace_state
+# every cycle. Performance / 30d 4x uses funding_adjusted_equity; risk / margin
+# / sizing uses current broker NAV / current_equity_raw. The legacy
+# required_calendar_daily_return / required_active_day_return fields are
+# funding-adjusted aliases. Do not claim 30d 4x pace from raw NAV when
+# capital_flows_30d explains the increase. While remaining_to_5pct is above zero, fill a
 # concrete A/S Path A / HERO route or write the exact blocker and next trigger.
 # B/C churn is not a substitute for the HERO path, and a single distant pending
 # order is not enough. "Trigger not printed yet" is an arm condition for a

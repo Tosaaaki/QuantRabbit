@@ -53,9 +53,28 @@ class DailyTargetLedgerTest(unittest.TestCase):
             self.assertEqual(summary.minimum_target_jpy, 10_000)
             self.assertEqual(summary.progress_jpy, 1200)
             self.assertEqual(summary.rolling_30d_start_equity, 201_200.0)
+            self.assertEqual(summary.current_equity_raw, 201_200.0)
+            self.assertEqual(summary.capital_flows_30d, 0.0)
+            self.assertEqual(summary.funding_adjusted_equity, 201_200.0)
             self.assertEqual(summary.current_equity, 201_200.0)
+            self.assertEqual(summary.rolling_30d_multiplier_raw, 1.0)
+            self.assertEqual(summary.rolling_30d_multiplier_funding_adjusted, 1.0)
             self.assertEqual(summary.current_30d_multiplier, 1.0)
+            self.assertEqual(summary.remaining_to_4x_raw, 603_600.0)
+            self.assertEqual(summary.remaining_to_4x_funding_adjusted, 603_600.0)
             self.assertEqual(summary.remaining_to_4x, 603_600.0)
+            self.assertEqual(summary.required_calendar_daily_return_raw, summary.required_calendar_daily_return)
+            self.assertEqual(summary.required_active_day_return_raw, summary.required_active_day_return)
+            self.assertEqual(
+                summary.required_calendar_daily_return_funding_adjusted,
+                summary.required_calendar_daily_return,
+            )
+            self.assertEqual(
+                summary.required_active_day_return_funding_adjusted,
+                summary.required_active_day_return,
+            )
+            self.assertEqual(summary.performance_basis, "funding_adjusted")
+            self.assertEqual(summary.sizing_basis, "raw_nav")
             self.assertIsNotNone(summary.required_calendar_daily_return)
             self.assertIsNotNone(summary.required_active_day_return)
             self.assertGreater(
@@ -69,9 +88,28 @@ class DailyTargetLedgerTest(unittest.TestCase):
             payload = json.loads((root / "target.json").read_text())
             self.assertEqual(payload["rolling_30d_policy"], "ROLLING_30D_4X")
             self.assertEqual(payload["rolling_30d_start_equity"], 201_200.0)
+            self.assertEqual(payload["current_equity_raw"], 201_200.0)
+            self.assertEqual(payload["capital_flows_30d"], 0.0)
+            self.assertEqual(payload["funding_adjusted_equity"], 201_200.0)
             self.assertEqual(payload["current_equity"], 201_200.0)
+            self.assertEqual(payload["rolling_30d_multiplier_raw"], 1.0)
+            self.assertEqual(payload["rolling_30d_multiplier_funding_adjusted"], 1.0)
             self.assertEqual(payload["current_30d_multiplier"], 1.0)
+            self.assertEqual(payload["remaining_to_4x_raw"], 603_600.0)
+            self.assertEqual(payload["remaining_to_4x_funding_adjusted"], 603_600.0)
             self.assertEqual(payload["remaining_to_4x"], 603_600.0)
+            self.assertEqual(payload["required_calendar_daily_return_raw"], payload["required_calendar_daily_return"])
+            self.assertEqual(payload["required_active_day_return_raw"], payload["required_active_day_return"])
+            self.assertEqual(
+                payload["required_calendar_daily_return_funding_adjusted"],
+                payload["required_calendar_daily_return"],
+            )
+            self.assertEqual(
+                payload["required_active_day_return_funding_adjusted"],
+                payload["required_active_day_return"],
+            )
+            self.assertEqual(payload["performance_basis"], "funding_adjusted")
+            self.assertEqual(payload["sizing_basis"], "raw_nav")
             self.assertEqual(payload["pace_state"], "AHEAD")
             self.assertEqual(payload["minimum_return_pct"], 5.0)
             self.assertEqual(payload["minimum_progress_pct"], 12.0)
@@ -120,9 +158,28 @@ class DailyTargetLedgerTest(unittest.TestCase):
             expected_active_days = 20.0 * (22.0 / 30.0)
             expected_active = ((400_000.0 / 156_000.0) ** (1.0 / expected_active_days) - 1.0) * 100.0
             self.assertEqual(summary.rolling_30d_start_equity, 100_000.0)
+            self.assertEqual(summary.current_equity_raw, 156_000.0)
+            self.assertEqual(summary.capital_flows_30d, 0.0)
+            self.assertEqual(summary.funding_adjusted_equity, 156_000.0)
             self.assertEqual(summary.current_equity, 156_000.0)
+            self.assertEqual(summary.rolling_30d_multiplier_raw, 1.56)
+            self.assertEqual(summary.rolling_30d_multiplier_funding_adjusted, 1.56)
             self.assertEqual(summary.current_30d_multiplier, 1.56)
+            self.assertEqual(summary.remaining_to_4x_raw, 244_000.0)
+            self.assertEqual(summary.remaining_to_4x_funding_adjusted, 244_000.0)
             self.assertEqual(summary.remaining_to_4x, 244_000.0)
+            self.assertAlmostEqual(summary.required_calendar_daily_return_raw or 0.0, expected_calendar, places=6)
+            self.assertAlmostEqual(summary.required_active_day_return_raw or 0.0, expected_active, places=6)
+            self.assertAlmostEqual(
+                summary.required_calendar_daily_return_funding_adjusted or 0.0,
+                expected_calendar,
+                places=6,
+            )
+            self.assertAlmostEqual(
+                summary.required_active_day_return_funding_adjusted or 0.0,
+                expected_active,
+                places=6,
+            )
             self.assertAlmostEqual(summary.required_calendar_daily_return or 0.0, expected_calendar, places=6)
             self.assertAlmostEqual(summary.required_active_day_return or 0.0, expected_active, places=6)
             self.assertGreater(
@@ -134,6 +191,186 @@ class DailyTargetLedgerTest(unittest.TestCase):
             self.assertEqual(payload["rolling_30d_elapsed_calendar_days"], 10.0)
             self.assertEqual(payload["rolling_30d_remaining_calendar_days"], 20.0)
             self.assertAlmostEqual(payload["rolling_30d_remaining_active_days"], expected_active_days, places=4)
+
+    def test_capital_flow_deposit_increases_raw_equity_not_trading_performance(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            state_path = root / "target.json"
+            flow_path = root / "capital_flows.json"
+            start = datetime(2026, 7, 1, 0, 0, tzinfo=timezone.utc)
+            now = datetime(2026, 7, 2, 0, 0, tzinfo=timezone.utc)
+            state_path.write_text(
+                json.dumps(
+                    {
+                        "rolling_30d_start_utc": start.isoformat(),
+                        "rolling_30d_start_equity": 200_000.0,
+                    }
+                )
+            )
+            flow_path.write_text(
+                json.dumps(
+                    {
+                        "capital_flows": [
+                            {
+                                "timestamp_utc": "2026-07-01T12:00:00Z",
+                                "amount_jpy": 100_000,
+                                "type": "DEPOSIT",
+                                "source": "operator",
+                                "note": "100,000 JPY capital injection",
+                                "included_in_raw_equity": True,
+                                "excluded_from_funding_adjusted_return": True,
+                            }
+                        ]
+                    }
+                )
+            )
+            snapshot = BrokerSnapshot(
+                fetched_at_utc=now,
+                positions=(),
+                quotes={"USD_JPY": Quote("USD_JPY", 156.99, 157.0, timestamp_utc=now)},
+                account=AccountSummary(
+                    nav_jpy=300_000.0,
+                    balance_jpy=300_000.0,
+                    unrealized_pl_jpy=0.0,
+                    fetched_at_utc=now,
+                ),
+            )
+
+            summary = DailyTargetLedger(
+                state_path=state_path,
+                report_path=root / "target.md",
+                capital_flows_path=flow_path,
+            ).run(
+                start_balance_jpy=300_000.0,
+                realized_pl_jpy=0.0,
+                daily_risk_pct=10.0,
+                target_trades_per_day=10,
+                snapshot=snapshot,
+                now_utc=now,
+            )
+            payload = json.loads(state_path.read_text())
+            report = (root / "target.md").read_text()
+
+            self.assertEqual(summary.progress_jpy, 0.0)
+            self.assertEqual(payload["realized_pl_jpy"], 0.0)
+            self.assertEqual(payload["current_equity_jpy"], 300_000.0)
+            self.assertEqual(summary.current_equity_raw, 300_000.0)
+            self.assertEqual(summary.capital_flows_30d, 100_000.0)
+            self.assertEqual(summary.funding_adjusted_equity, 200_000.0)
+            self.assertEqual(summary.rolling_30d_multiplier_raw, 1.5)
+            self.assertEqual(summary.rolling_30d_multiplier_funding_adjusted, 1.0)
+            self.assertEqual(summary.current_30d_multiplier, 1.0)
+            self.assertEqual(summary.remaining_to_4x_raw, 500_000.0)
+            self.assertEqual(summary.remaining_to_4x_funding_adjusted, 600_000.0)
+            self.assertEqual(summary.remaining_to_4x, 600_000.0)
+            self.assertIsNotNone(summary.required_calendar_daily_return_raw)
+            self.assertIsNotNone(summary.required_active_day_return_raw)
+            self.assertIsNotNone(summary.required_calendar_daily_return_funding_adjusted)
+            self.assertIsNotNone(summary.required_active_day_return_funding_adjusted)
+            self.assertLess(
+                summary.required_calendar_daily_return_raw or 0.0,
+                summary.required_calendar_daily_return_funding_adjusted or 0.0,
+            )
+            self.assertEqual(summary.required_calendar_daily_return, summary.required_calendar_daily_return_funding_adjusted)
+            self.assertEqual(summary.required_active_day_return, summary.required_active_day_return_funding_adjusted)
+            self.assertEqual(summary.performance_basis, "funding_adjusted")
+            self.assertEqual(summary.sizing_basis, "raw_nav")
+            self.assertEqual(payload["daily_risk_budget_jpy"], 30_000.0)
+            self.assertEqual(payload["per_trade_risk_budget_jpy"], 3_000.0)
+            self.assertIn("current_equity_raw", report)
+            self.assertIn("funding_adjusted_equity", report)
+            self.assertIn("rolling_30d_multiplier_funding_adjusted", report)
+            self.assertIn("required_calendar_daily_return_funding_adjusted", report)
+            self.assertIn("performance_basis", report)
+
+    def test_manual_system_and_deposit_pl_are_not_mixed(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            state_path = root / "target.json"
+            flow_path = root / "capital_flows.json"
+            start = datetime(2026, 7, 1, 0, 0, tzinfo=timezone.utc)
+            now = datetime(2026, 7, 2, 0, 0, tzinfo=timezone.utc)
+            state_path.write_text(
+                json.dumps(
+                    {
+                        "rolling_30d_start_utc": start.isoformat(),
+                        "rolling_30d_start_equity": 200_000.0,
+                    }
+                )
+            )
+            flow_path.write_text(
+                json.dumps(
+                    {
+                        "capital_flows": [
+                            {
+                                "timestamp_utc": "2026-07-01T12:00:00Z",
+                                "amount_jpy": 100_000,
+                                "type": "DEPOSIT",
+                                "source": "operator",
+                                "note": "100,000 JPY capital injection",
+                                "included_in_raw_equity": True,
+                                "excluded_from_funding_adjusted_return": True,
+                            }
+                        ]
+                    }
+                )
+            )
+            snapshot = BrokerSnapshot(
+                fetched_at_utc=now,
+                positions=(
+                    BrokerPosition(
+                        trade_id="system-1",
+                        pair="EUR_USD",
+                        side=Side.LONG,
+                        units=1000,
+                        entry_price=1.1000,
+                        unrealized_pl_jpy=1_000.0,
+                        take_profit=1.1050,
+                        stop_loss=1.0950,
+                        owner=Owner.TRADER,
+                    ),
+                    BrokerPosition(
+                        trade_id="manual-1",
+                        pair="USD_JPY",
+                        side=Side.SHORT,
+                        units=1000,
+                        entry_price=160.0,
+                        unrealized_pl_jpy=4_000.0,
+                        owner=Owner.OPERATOR_MANUAL,
+                    ),
+                ),
+                quotes={
+                    "EUR_USD": Quote("EUR_USD", 1.1004, 1.1005, timestamp_utc=now),
+                    "USD_JPY": Quote("USD_JPY", 156.99, 157.0, timestamp_utc=now),
+                },
+                account=AccountSummary(
+                    nav_jpy=305_500.0,
+                    balance_jpy=300_500.0,
+                    unrealized_pl_jpy=5_000.0,
+                    fetched_at_utc=now,
+                ),
+            )
+
+            summary = DailyTargetLedger(
+                state_path=state_path,
+                report_path=root / "target.md",
+                capital_flows_path=flow_path,
+            ).run(
+                start_balance_jpy=300_000.0,
+                realized_pl_jpy=500.0,
+                daily_risk_budget_jpy=10_000.0,
+                snapshot=snapshot,
+                now_utc=now,
+            )
+            payload = json.loads(state_path.read_text())
+
+            self.assertEqual(summary.progress_jpy, 1_500.0)
+            self.assertEqual(payload["realized_pl_jpy"], 500.0)
+            self.assertEqual(payload["unrealized_pl_jpy"], 1_000.0)
+            self.assertEqual(payload["account_unrealized_pl_jpy"], 5_000.0)
+            self.assertEqual(payload["capital_flows_30d"], 100_000.0)
+            self.assertEqual(payload["current_equity_raw"], 305_500.0)
+            self.assertEqual(payload["funding_adjusted_equity"], 205_500.0)
 
     def test_state_writes_canonical_campaign_day_and_as_of_aliases(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

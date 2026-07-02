@@ -6,7 +6,8 @@
   - Positions, pending orders, owner tags, quote timestamps, spreads, account truth.
   - Manual/tagless exposure is TP-managed only; the trader does not SL, loss-close, or use it as a fresh-entry blocker.
 - `data/daily_target_state.json`
-  - Rolling top KPI: `rolling_30d_start_equity`, `current_equity`, `current_30d_multiplier`, `remaining_to_4x`, `required_calendar_daily_return`, `required_active_day_return`, `pace_state`.
+  - Rolling top KPI: `rolling_30d_start_equity`, `current_equity_raw`, `capital_flows_30d`, `funding_adjusted_equity`, `rolling_30d_multiplier_raw`, `rolling_30d_multiplier_funding_adjusted`, `remaining_to_4x_raw`, `remaining_to_4x_funding_adjusted`, `required_calendar_daily_return_raw`, `required_active_day_return_raw`, `required_calendar_daily_return_funding_adjusted`, `required_active_day_return_funding_adjusted`, `required_calendar_daily_return`, `required_active_day_return`, `performance_basis`, `sizing_basis`, `pace_state`.
+  - Use funding-adjusted equity for performance / 30d 4x. Use current broker NAV / raw equity for risk, margin, and sizing. Legacy `required_calendar_daily_return` / `required_active_day_return` are funding-adjusted aliases.
   - Daily pace marker: `status`, `target_jpy`, `minimum_target_jpy`, `progress_jpy`, `progress_pct`, `minimum_progress_pct`, `remaining_minimum_jpy`, `remaining_target_jpy`.
   - `daily_risk_budget_jpy` is the whole-day risk budget.
   - `per_trade_risk_budget_jpy` is the single-shot cap used by intents.

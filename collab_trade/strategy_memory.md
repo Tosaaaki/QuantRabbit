@@ -36,7 +36,8 @@
 
 - Optimize the system toward rolling 30-day 4x account growth, not a hard forced +5% every UTC day. +5% is a pace marker / review trigger / protection milestone; it must not force bad-day trades.
 - +10% remains extension-only behind the favorable-market gate. Red/no-edge days are allowed inside the rolling plan, but margin closeout, unattended carry, and counting operator manual precedent as system edge remain blocked.
-- Runtime target state now reports the rolling policy fields every cycle: `rolling_30d_start_equity`, `current_equity`, `current_30d_multiplier`, `remaining_to_4x`, `required_calendar_daily_return`, `required_active_day_return`, and `pace_state`. Verifier pace pressure applies only to A/S or attack-recommended lanes; B/C lanes are not forced to repair a +5% pace miss.
+- Runtime target state now reports the rolling policy fields every cycle: `rolling_30d_start_equity`, `current_equity_raw`, `capital_flows_30d`, `funding_adjusted_equity`, `rolling_30d_multiplier_raw`, `rolling_30d_multiplier_funding_adjusted`, `remaining_to_4x_raw`, `remaining_to_4x_funding_adjusted`, `required_calendar_daily_return_raw`, `required_active_day_return_raw`, `required_calendar_daily_return_funding_adjusted`, `required_active_day_return_funding_adjusted`, `required_calendar_daily_return`, `required_active_day_return`, `performance_basis`, `sizing_basis`, and `pace_state`. Verifier pace pressure applies only to funding-adjusted A/S or attack-recommended lanes; B/C lanes are not forced to repair a +5% pace miss.
+- 2026-07-02 capital injection accounting: the operator deposited 100,000 JPY. Raw NAV may rise, but 30d 4x performance must use funding-adjusted equity. Use current broker NAV / raw equity for risk, margin, and sizing; do not claim 4x pace from deposit-driven raw NAV.
 
 ## 2026-06-30 Generalized Discretionary Trade Shape
 

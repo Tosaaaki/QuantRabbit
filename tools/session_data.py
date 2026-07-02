@@ -11,6 +11,7 @@ import argparse
 from pathlib import Path
 
 from daily_target import (
+    DEFAULT_CAPITAL_FLOWS_PATH,
     DEFAULT_DAY_START_DIR,
     DEFAULT_EXECUTION_LEDGER_DB,
     DEFAULT_SNAPSHOT_PATH,
@@ -142,6 +143,7 @@ def main() -> int:
     parser.add_argument("--snapshot", type=Path, default=DEFAULT_SNAPSHOT_PATH)
     parser.add_argument("--execution-ledger-db", type=Path, default=DEFAULT_EXECUTION_LEDGER_DB)
     parser.add_argument("--day-start-dir", type=Path, default=DEFAULT_DAY_START_DIR)
+    parser.add_argument("--capital-flows", type=Path, default=DEFAULT_CAPITAL_FLOWS_PATH)
     parser.add_argument("--dry-run", action="store_true", help="Do not persist a missing day-start NAV record.")
     parser.add_argument(
         "--extension-gate",
@@ -155,6 +157,7 @@ def main() -> int:
         snapshot_path=args.snapshot,
         execution_ledger_db=args.execution_ledger_db,
         day_start_dir=args.day_start_dir,
+        capital_flows_path=args.capital_flows,
         dry_run=args.dry_run,
         extension_gate=args.extension_gate == "yes",
     )

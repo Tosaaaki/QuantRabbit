@@ -6004,11 +6004,28 @@ def _target_packet(target: dict[str, Any]) -> dict[str, Any]:
         "current_equity_jpy": target.get("current_equity_jpy"),
         "rolling_30d_policy": target.get("rolling_30d_policy"),
         "rolling_30d_start_equity": target.get("rolling_30d_start_equity"),
+        "current_equity_raw": target.get("current_equity_raw"),
+        "capital_flows_30d": target.get("capital_flows_30d"),
+        "funding_adjusted_equity": target.get("funding_adjusted_equity"),
         "current_equity": target.get("current_equity"),
+        "rolling_30d_multiplier_raw": target.get("rolling_30d_multiplier_raw"),
+        "rolling_30d_multiplier_funding_adjusted": target.get("rolling_30d_multiplier_funding_adjusted"),
         "current_30d_multiplier": target.get("current_30d_multiplier"),
+        "remaining_to_4x_raw": target.get("remaining_to_4x_raw"),
+        "remaining_to_4x_funding_adjusted": target.get("remaining_to_4x_funding_adjusted"),
         "remaining_to_4x": target.get("remaining_to_4x"),
+        "required_calendar_daily_return_raw": target.get("required_calendar_daily_return_raw"),
+        "required_active_day_return_raw": target.get("required_active_day_return_raw"),
+        "required_calendar_daily_return_funding_adjusted": target.get(
+            "required_calendar_daily_return_funding_adjusted"
+        ),
+        "required_active_day_return_funding_adjusted": target.get(
+            "required_active_day_return_funding_adjusted"
+        ),
         "required_calendar_daily_return": target.get("required_calendar_daily_return"),
         "required_active_day_return": target.get("required_active_day_return"),
+        "performance_basis": target.get("performance_basis"),
+        "sizing_basis": target.get("sizing_basis"),
         "pace_state": target.get("pace_state"),
         "remaining_minimum_jpy": target.get("remaining_minimum_jpy"),
         "remaining_target_jpy": target.get("remaining_target_jpy"),

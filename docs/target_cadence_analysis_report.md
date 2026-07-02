@@ -3,6 +3,7 @@
 - Generated at UTC: `2026-06-29T23:25:37+00:00`
 - Scope: analysis/report generation only; no live orders, cancels, or position changes.
 - Recommendation: **Optimize for Model B: rolling 30-day 4x account growth.**
+- Capital-flow basis: raw broker NAV and funding-adjusted performance must be reported separately. Capital injections increase account size for risk/margin/sizing, but 30d 4x progress uses funding-adjusted equity.
 
 ## Target Model Comparison
 
@@ -99,6 +100,7 @@ Exit reason:
 ## Policy Answer
 
 - Optimize for: **Optimize for Model B: rolling 30-day 4x account growth.**
+- Current performance basis: use `funding_adjusted_equity`, `rolling_30d_multiplier_funding_adjusted`, and `remaining_to_4x_funding_adjusted`; show `current_equity_raw` separately for risk/margin/sizing.
 - Use +5% as: **PACE_MARKER: use +5% to measure whether the rolling plan is on schedule, to trigger review when missed, and to unlock protection-first behavior when reached; do not force bad-day trades solely to print +5%.**
 - Allow +10% when: Only when the existing 10% Extension Gate is YES: strong progress or protected S/A carry, hero thesis still paying, broad theme/trend confirmation, stable spread, no near whipsaw event, and real reload/second-shot levels.
 - Bad/red days: With +10% good days, the 30-day 4x plan can mathematically absorb several red/flat days; the exact allowance must be recomputed from realized red-day severity, not assumed as permission to take weak trades.
