@@ -145,10 +145,30 @@ class LiveOrderGateway:
         # already repaired. Manual stage-live-order paths leave it None.
         self.verified_decision_path = verified_decision_path
         self.guardian_action_receipt_path = guardian_action_receipt_path
-        self.qr_trader_run_watchdog_path = qr_trader_run_watchdog_path
-        self.guardian_receipt_consumption_path = guardian_receipt_consumption_path
-        self.guardian_receipt_operator_review_path = guardian_receipt_operator_review_path
-        self.broker_snapshot_path = broker_snapshot_path
+        self.qr_trader_run_watchdog_path = (
+            qr_trader_run_watchdog_path
+            if qr_trader_run_watchdog_path != DEFAULT_QR_TRADER_RUN_WATCHDOG
+            or output_path == DEFAULT_LIVE_ORDER_REQUEST
+            else output_path.parent / DEFAULT_QR_TRADER_RUN_WATCHDOG.name
+        )
+        self.guardian_receipt_consumption_path = (
+            guardian_receipt_consumption_path
+            if guardian_receipt_consumption_path != DEFAULT_GUARDIAN_RECEIPT_CONSUMPTION
+            or output_path == DEFAULT_LIVE_ORDER_REQUEST
+            else output_path.parent / DEFAULT_GUARDIAN_RECEIPT_CONSUMPTION.name
+        )
+        self.guardian_receipt_operator_review_path = (
+            guardian_receipt_operator_review_path
+            if guardian_receipt_operator_review_path != DEFAULT_GUARDIAN_RECEIPT_OPERATOR_REVIEW
+            or output_path == DEFAULT_LIVE_ORDER_REQUEST
+            else output_path.parent / DEFAULT_GUARDIAN_RECEIPT_OPERATOR_REVIEW.name
+        )
+        self.broker_snapshot_path = (
+            broker_snapshot_path
+            if broker_snapshot_path != DEFAULT_BROKER_SNAPSHOT
+            or output_path == DEFAULT_LIVE_ORDER_REQUEST
+            else output_path.parent / DEFAULT_BROKER_SNAPSHOT.name
+        )
 
     def run(
         self,
@@ -953,6 +973,10 @@ class LiveOrderGateway:
                 max_portfolio_loss_jpy=None if allow_basket_pending else portfolio_loss_cap,
             ),
             live_enabled=validate_live_enabled,
+            guardian_receipt_watchdog_path=self.qr_trader_run_watchdog_path,
+            guardian_receipt_consumption_path=self.guardian_receipt_consumption_path,
+            guardian_receipt_operator_review_path=self.guardian_receipt_operator_review_path,
+            guardian_receipt_broker_snapshot_path=self.broker_snapshot_path,
         ).validate(intent, snapshot, for_live_send=True)
 
     def _reprice_crossed_passive_limit(

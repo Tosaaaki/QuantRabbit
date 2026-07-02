@@ -5399,6 +5399,10 @@ class IntentGenerator:
         risk = RiskEngine(
             policy=risk_policy,
             validation_time_utc=validation_time_utc,
+            guardian_receipt_watchdog_path=data_root / "qr_trader_run_watchdog.json" if data_root else None,
+            guardian_receipt_consumption_path=data_root / "guardian_receipt_consumption.json" if data_root else None,
+            guardian_receipt_operator_review_path=data_root / "guardian_receipt_operator_review.json" if data_root else None,
+            guardian_receipt_broker_snapshot_path=data_root / "broker_snapshot.json" if data_root else None,
         ).validate(
             intent,
             snapshot,
@@ -5749,6 +5753,10 @@ class IntentGenerator:
             policy=_live_send_preview_policy(risk_policy),
             live_enabled=True,
             validation_time_utc=validation_time_utc,
+            guardian_receipt_watchdog_path=data_root / "qr_trader_run_watchdog.json" if data_root else None,
+            guardian_receipt_consumption_path=data_root / "guardian_receipt_consumption.json" if data_root else None,
+            guardian_receipt_operator_review_path=data_root / "guardian_receipt_operator_review.json" if data_root else None,
+            guardian_receipt_broker_snapshot_path=data_root / "broker_snapshot.json" if data_root else None,
         ).validate(intent, snapshot, for_live_send=True)
         risk_issues, live_blockers = _merge_live_send_preview_blockers(
             risk_issues,

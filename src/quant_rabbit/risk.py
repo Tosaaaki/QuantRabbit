@@ -4,6 +4,7 @@ import os
 import math
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from pathlib import Path
 
 
 def _trader_sl_repair_disabled() -> bool:
@@ -2206,10 +2207,18 @@ class RiskEngine:
         specs: dict[str, InstrumentSpec] | None = None,
         live_enabled: bool = False,
         validation_time_utc: datetime | None = None,
+        guardian_receipt_watchdog_path: Path | None = None,
+        guardian_receipt_consumption_path: Path | None = None,
+        guardian_receipt_operator_review_path: Path | None = None,
+        guardian_receipt_broker_snapshot_path: Path | None = None,
     ) -> None:
         self.policy = policy or RiskPolicy()
         self.specs = specs or DEFAULT_SPECS
         self.live_enabled = live_enabled
+        self.guardian_receipt_watchdog_path = guardian_receipt_watchdog_path
+        self.guardian_receipt_consumption_path = guardian_receipt_consumption_path
+        self.guardian_receipt_operator_review_path = guardian_receipt_operator_review_path
+        self.guardian_receipt_broker_snapshot_path = guardian_receipt_broker_snapshot_path
         self.validation_time_utc = (
             validation_time_utc.astimezone(timezone.utc)
             if validation_time_utc is not None
@@ -2232,7 +2241,12 @@ class RiskEngine:
                     str(item.get("code") or "GUARDIAN_RECEIPT_NOT_CONSUMED_BY_TRADER_BLOCKS_NEW_ENTRY"),
                     str(item.get("message") or "unresolved guardian receipt issue blocks normal new entries"),
                 )
-                for item in guardian_receipt_new_entry_blockers_from_paths()
+                for item in guardian_receipt_new_entry_blockers_from_paths(
+                    watchdog_path=self.guardian_receipt_watchdog_path,
+                    consumption_path=self.guardian_receipt_consumption_path,
+                    operator_review_path=self.guardian_receipt_operator_review_path,
+                    broker_snapshot_path=self.guardian_receipt_broker_snapshot_path,
+                )
             )
 
         if intent.owner != Owner.TRADER:

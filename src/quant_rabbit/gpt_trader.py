@@ -2123,11 +2123,26 @@ class GPTTraderBrain:
         self.predictive_limits_path = predictive_limits_path
         self.news_items_path = news_items_path
         self.news_health_path = news_health_path
-        self.qr_trader_run_watchdog_path = qr_trader_run_watchdog_path
-        self.guardian_receipt_consumption_path = guardian_receipt_consumption_path
-        self.guardian_receipt_operator_review_path = guardian_receipt_operator_review_path
         self.output_path = output_path
         self.report_path = report_path
+        self.qr_trader_run_watchdog_path = (
+            qr_trader_run_watchdog_path
+            if qr_trader_run_watchdog_path != DEFAULT_QR_TRADER_RUN_WATCHDOG
+            or output_path == DEFAULT_GPT_TRADER_DECISION
+            else output_path.parent / DEFAULT_QR_TRADER_RUN_WATCHDOG.name
+        )
+        self.guardian_receipt_consumption_path = (
+            guardian_receipt_consumption_path
+            if guardian_receipt_consumption_path != DEFAULT_GUARDIAN_RECEIPT_CONSUMPTION
+            or output_path == DEFAULT_GPT_TRADER_DECISION
+            else output_path.parent / DEFAULT_GUARDIAN_RECEIPT_CONSUMPTION.name
+        )
+        self.guardian_receipt_operator_review_path = (
+            guardian_receipt_operator_review_path
+            if guardian_receipt_operator_review_path != DEFAULT_GUARDIAN_RECEIPT_OPERATOR_REVIEW
+            or output_path == DEFAULT_GPT_TRADER_DECISION
+            else output_path.parent / DEFAULT_GUARDIAN_RECEIPT_OPERATOR_REVIEW.name
+        )
         self.market_read_predictions_path = (
             market_read_predictions_path
             if market_read_predictions_path is not None
