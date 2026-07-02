@@ -1,5 +1,12 @@
 # Strategy Memory
 
+## 2026-07-02 AUD_USD Stale-Decision Recovery Leak
+
+- AUD_USD `trade_id=472952` is a deployment / stale-decision routing / `campaign_exposure_recovery` leak, not a profit-capture failure: MFE was only 0.4 pips and TP progress was 3.42%, so the failure was entry/direction/vehicle plus stale GPT routing.
+- Fresh campaign recovery now requires a fresh accepted GPT `TRADE`/`ADD` receipt. Stale accepted `WAIT` / `REQUEST_EVIDENCE`, `gpt_allowed=false`, fresh-receipt-required errors, guardian receipt hard blockers, and missing market-read confirmation cannot be bypassed by deterministic recovery.
+- `OANDA_CAMPAIGN_FIREPOWER_RELAXED` means capacity/firepower only. It must not override `NEGATIVE_EXPECTANCY`, stale GPT, accepted WAIT/REQUEST_EVIDENCE, guardian blockers, or missing market-read confirmation.
+- Open AUD_USD `trade_id=472965` without client extensions, gateway lane/receipt, or operator confirmation is `UNKNOWN_NEEDS_OPERATOR_CONFIRM`: exclude from system P/L, do not loss-close automatically, and do not add into the same pair/theme until operator confirmation or gateway evidence exists.
+
 ## 2026-07-02 Guardian Receipt Consumption Gate
 
 - Watchdog `last_trader_run_at` must be real trader-run evidence only: trader journal `ts`, qr-trader automation memory, trader decision/autotrade reports, or trader-shaped decision response timestamps. Guardian receipt expiry/generated timestamps, guardian action review timestamps, watchdog generated timestamps, and guardian trigger deadlines are rejected candidates, not trader runs.

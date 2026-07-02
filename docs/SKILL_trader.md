@@ -270,8 +270,11 @@ Path rules:
 - Start with `MARKET READ FIRST` every cycle before citing LIVE_READY count, blocker codes, negative expectancy, margin, target pressure, or pending-order repair.
 - A blocker is not a market read. `LIVE_READY=0` is not a market read. Negative expectancy is not a market read. Predict price first, then filter execution.
 - The naked read must classify cleanest theme expression, 24h location, H1/H4 alignment, known winning trade-shape match, proposed building style, thesis state, and SL/noise context before any blocker prose.
+- A fresh `TRADE` must not contradict the naked read: SHORT market read with LONG target/invalidation geometry, LONG market read with SHORT geometry, or selected side vs market-read direction conflict requires rejection/request-evidence unless the final action explicitly resolves the contradiction.
 - A blocked but correct read is discovery success / execution miss. A wrong read that passes filters is market-read failure.
 - Final `TRADE` / `WAIT` text must reference the next 30m or next 2h prediction from `MARKET READ FIRST`.
+- `campaign_exposure_recovery` and deterministic recovery are fresh-entry routes, not WAIT overrides. They require a fresh accepted GPT `TRADE`/`ADD` receipt naming the lane; stale accepted `WAIT` / `REQUEST_EVIDENCE`, `gpt_allowed=false`, fresh-receipt-required errors, unresolved guardian receipt issues, watchdog `normal_routing_allowed=false`, and missing market-read confirmation block the send.
+- `OANDA_CAMPAIGN_FIREPOWER_RELAXED` is capacity only. It cannot relax `NEGATIVE_EXPECTANCY`, stale GPT/non-TRADE receipts, accepted WAIT/REQUEST_EVIDENCE, missing fresh TRADE receipt, guardian hard blockers, or no current market-read confirmation.
 - Under +5%, trader must name an A/S path, a +10% extension setup gate candidate, or exact blocker.
 - A +5% miss must not force B/C churn.
 - B/C trades cannot be the +5% pace path.

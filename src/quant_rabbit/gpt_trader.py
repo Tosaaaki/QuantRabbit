@@ -2954,6 +2954,123 @@ class DecisionVerifier:
                     "final TRADE / WAIT rationale must reference the market_read_first next 30m or next 2h prediction.",
                 )
             )
+        self._verify_market_read_geometry(decision, market_read, issues)
+
+    def _verify_market_read_geometry(
+        self,
+        decision: GPTTraderDecision,
+        market_read: dict[str, Any],
+        issues: list[VerificationIssue],
+    ) -> None:
+        if decision.action != "TRADE":
+            return
+        selected_lane_ids = _selected_trade_lane_ids(decision)
+        selected_lanes = [self.lanes.get(lane_id) for lane_id in selected_lane_ids]
+        selected_lanes = [lane for lane in selected_lanes if isinstance(lane, dict)]
+        next_30m = market_read.get("next_30m_prediction") if isinstance(market_read.get("next_30m_prediction"), dict) else {}
+        next_2h = market_read.get("next_2h_prediction") if isinstance(market_read.get("next_2h_prediction"), dict) else {}
+        forced = market_read.get("best_trade_if_forced") if isinstance(market_read.get("best_trade_if_forced"), dict) else {}
+
+        if decision.action == "TRADE" and selected_lanes:
+            prediction_directions = (
+                str(next_30m.get("direction") or "").strip().upper(),
+                str(next_2h.get("direction") or "").strip().upper(),
+                str(forced.get("direction") or "").strip().upper(),
+            )
+            direction_conflict_recorded = False
+            for lane in selected_lanes:
+                lane_side = str(lane.get("direction") or lane.get("side") or "").strip().upper()
+                if lane_side not in {"LONG", "SHORT"}:
+                    continue
+                for direction in prediction_directions:
+                    if not direction:
+                        continue
+                    if _market_read_direction_conflicts_side(direction, lane_side):
+                        issues.append(
+                            VerificationIssue(
+                                "MARKET_READ_DIRECTION_ACTION_CONFLICT",
+                                f"market_read_first direction {direction} conflicts with selected {lane_side} lane "
+                                f"{lane.get('lane_id') or decision.selected_lane_id}.",
+                            )
+                        )
+                        direction_conflict_recorded = True
+                        break
+                if direction_conflict_recorded:
+                    break
+
+        for horizon_name, prediction in (("next_30m_prediction", next_30m), ("next_2h_prediction", next_2h)):
+            pair = str(prediction.get("pair") or "").strip()
+            direction = str(prediction.get("direction") or "").strip().upper()
+            if not pair or not direction:
+                continue
+            basis = self._market_read_forced_entry_basis(pair, direction, forced)
+            if basis is None:
+                basis = _current_market_read_price(self.packet, pair)
+            if basis is None:
+                basis = self._selected_lane_price_basis(pair, selected_lanes)
+            if basis is None:
+                continue
+            target_numbers = _numbers(str(prediction.get("target_zone") or ""))
+            if target_numbers and _market_read_target_on_wrong_side(direction, basis, target_numbers):
+                issues.append(
+                    VerificationIssue(
+                        "MARKET_READ_TARGET_GEOMETRY_CONFLICT",
+                        f"{horizon_name} {direction} target_zone is on the wrong side of current {pair} price {basis}.",
+                    )
+                )
+            invalidation_numbers = _numbers(str(prediction.get("invalidation") or ""))
+            if invalidation_numbers and _market_read_invalidation_on_wrong_side(direction, basis, invalidation_numbers):
+                issues.append(
+                    VerificationIssue(
+                        "MARKET_READ_INVALIDATION_GEOMETRY_CONFLICT",
+                        f"{horizon_name} {direction} invalidation is on the wrong side of current {pair} price {basis}.",
+                    )
+                )
+
+        forced_direction = str(forced.get("direction") or "").strip().upper()
+        forced_entry = _first_number(str(forced.get("entry") or ""))
+        if forced_direction and forced_entry is not None:
+            forced_tp = _numbers(str(forced.get("tp") or ""))
+            forced_sl = _numbers(str(forced.get("sl") or ""))
+            if forced_tp and _market_read_target_on_wrong_side(forced_direction, forced_entry, forced_tp):
+                issues.append(
+                    VerificationIssue(
+                        "MARKET_READ_FORCED_TRADE_GEOMETRY_CONFLICT",
+                        "best_trade_if_forced TP is on the wrong side for the stated direction.",
+                    )
+                )
+            if forced_sl and _market_read_invalidation_on_wrong_side(forced_direction, forced_entry, forced_sl):
+                issues.append(
+                    VerificationIssue(
+                        "MARKET_READ_FORCED_TRADE_GEOMETRY_CONFLICT",
+                        "best_trade_if_forced SL is on the wrong side for the stated direction.",
+                    )
+                )
+
+    def _selected_lane_price_basis(self, pair: str, selected_lanes: list[dict[str, Any]]) -> float | None:
+        for lane in selected_lanes:
+            if str(lane.get("pair") or "").strip() != pair:
+                continue
+            for value in (
+                lane.get("entry"),
+                (lane.get("risk_metrics") or {}).get("entry_price") if isinstance(lane.get("risk_metrics"), dict) else None,
+            ):
+                parsed = _optional_float(value)
+                if parsed is not None:
+                    return parsed
+        return None
+
+    def _market_read_forced_entry_basis(
+        self,
+        pair: str,
+        direction: str,
+        forced: dict[str, Any],
+    ) -> float | None:
+        forced_pair = str(forced.get("pair") or "").strip()
+        forced_direction = str(forced.get("direction") or "").strip().upper()
+        if forced_pair != pair or forced_direction != direction:
+            return None
+        return _first_number(str(forced.get("entry") or ""))
 
     def _verify_user_alpha_continuation(
         self,
@@ -4183,6 +4300,30 @@ def _market_read_longish(direction: str) -> bool:
 
 def _market_read_shortish(direction: str) -> bool:
     return direction.upper() in {"SHORT", "SELL", "DOWN", "BEAR", "BEARISH"}
+
+
+def _market_read_direction_conflicts_side(direction: str, side: str) -> bool:
+    if _market_read_longish(direction):
+        return side.upper() == "SHORT"
+    if _market_read_shortish(direction):
+        return side.upper() == "LONG"
+    return False
+
+
+def _market_read_target_on_wrong_side(direction: str, basis: float, prices: list[float]) -> bool:
+    if _market_read_longish(direction):
+        return max(prices) <= basis
+    if _market_read_shortish(direction):
+        return min(prices) >= basis
+    return False
+
+
+def _market_read_invalidation_on_wrong_side(direction: str, basis: float, prices: list[float]) -> bool:
+    if _market_read_longish(direction):
+        return min(prices) >= basis
+    if _market_read_shortish(direction):
+        return max(prices) <= basis
+    return False
 
 
 def _numbers(text: str) -> list[float]:

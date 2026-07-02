@@ -586,7 +586,7 @@ def validate_guardian_trigger_contract(
         if raw_owner not in CONTRACT_OWNERS:
             issues.append(_issue("CONTRACT_ENTRY_BAD_OWNER", f"{prefix} owner must be SYSTEM, OPERATOR_MANUAL, or UNKNOWN"))
         thesis_state = _thesis_state(entry.get("thesis_state"))
-        if thesis_state not in {"ALIVE", "WOUNDED", "INVALIDATED", "EMERGENCY"}:
+        if thesis_state not in {"ALIVE", "WOUNDED", "INVALIDATED", "EMERGENCY", "UNKNOWN"}:
             issues.append(_issue("CONTRACT_ENTRY_BAD_THESIS_STATE", f"{prefix} thesis_state is unsupported"))
         deadline = _parse_utc(entry.get("next_review_deadline_utc"))
         if deadline is None:
@@ -1594,7 +1594,7 @@ def _contract_entry_from_seed(
         "side": side,
         "thesis": thesis,
         "owner": owner,
-        "thesis_state": _thesis_state(thesis_state) if _thesis_state(thesis_state) != "UNKNOWN" else "ALIVE",
+        "thesis_state": _thesis_state(thesis_state),
         "trade_id": _position_trade_id(position_payload),
     }
     prior = preserved.get(_contract_entry_key(seed)) or preserved.get(_contract_entry_legacy_key(seed))
@@ -1653,7 +1653,15 @@ def _position_contract_state(position: dict[str, Any]) -> str:
     raw = position.get("raw") if isinstance(position.get("raw"), dict) else {}
     operator_packet = raw.get("operator_manual_position") if isinstance(raw.get("operator_manual_position"), dict) else {}
     state = _thesis_state(operator_packet.get("thesis_state") or position.get("thesis_state"))
-    return state if state != "UNKNOWN" else "ALIVE"
+    if state != "UNKNOWN":
+        return state
+    if (
+        _owner(position.get("owner")) in {Owner.UNKNOWN.value, Owner.EXTERNAL.value, ""}
+        and not _position_has_system_lane_or_gateway_receipt(position)
+        and not _operator_manual_packet(position)
+    ):
+        return "UNKNOWN"
+    return "ALIVE"
 
 
 def _position_trade_id(position: dict[str, Any]) -> str | None:
@@ -1737,6 +1745,10 @@ def _position_ownership_audit(position: dict[str, Any]) -> dict[str, Any]:
         "evidence": ["no gateway receipt/lane id and no operator manual confirmation packet"],
         "raw_owner": raw.get("owner"),
         "unresolved": True,
+        "system_pl_counted": False,
+        "loss_side_auto_close_allowed": False,
+        "same_theme_auto_add_allowed": False,
+        "requires": "operator confirmation or gateway evidence",
     }
 
 
@@ -1831,9 +1843,33 @@ def _default_open_position_triggers(
     }
     if _is_usd_jpy_162_manual_fade(pair, side, owner, position):
         return _usd_jpy_manual_fade_triggers(entry, position, now=now)
-    harvest_detail = "profit-side TP/harvest review when current quote reaches the broker TP, declared harvest zone, or positive UPL is outside spread/noise"
-    invalidation_detail = "accepted market evidence that the position thesis is broken; red P/L alone is not invalidation"
-    no_add_detail = "no add while thesis_state is not ALIVE, margin is under pressure, or overlap lacks explicit operator authorization"
+    unknown_owner = owner == "UNKNOWN"
+    if unknown_owner:
+        harvest_detail = (
+            "UNKNOWN_NEEDS_OPERATOR_CONFIRM: profit-side TP/harvest review only after operator confirmation "
+            "or gateway evidence; loss-side automation remains disabled"
+        )
+        invalidation_detail = (
+            "UNKNOWN_NEEDS_OPERATOR_CONFIRM: operator/gateway review only; red P/L or stale routing evidence "
+            "does not authorize automatic loss-side close"
+        )
+        no_add_detail = (
+            "UNKNOWN_NEEDS_OPERATOR_CONFIRM: no add into the same pair/theme until operator confirmation "
+            "or gateway evidence classifies the exposure"
+        )
+        emergency_detail = (
+            "UNKNOWN_NEEDS_OPERATOR_CONFIRM: margin pressure, NAV shock, missing broker truth, or gateway-outside "
+            "exposure needs trader review; do not auto-close loss-side unknown exposure"
+        )
+        invalidation_action = "HOLD"
+        emergency_action = "HOLD"
+    else:
+        harvest_detail = "profit-side TP/harvest review when current quote reaches the broker TP, declared harvest zone, or positive UPL is outside spread/noise"
+        invalidation_detail = "accepted market evidence that the position thesis is broken; red P/L alone is not invalidation"
+        no_add_detail = "no add while thesis_state is not ALIVE, margin is under pressure, or overlap lacks explicit operator authorization"
+        emergency_detail = "margin pressure, NAV shock, missing broker truth, or gateway-outside exposure needs immediate trader review"
+        invalidation_action = "REDUCE"
+        emergency_action = "REDUCE"
     return {
         "harvest_triggers": [
             {
@@ -1874,7 +1910,7 @@ def _default_open_position_triggers(
                 "status": "PENDING",
                 "kind": "thesis_invalidation_review",
                 "evidence_required": invalidation_detail,
-                "action_hint": "REDUCE",
+                "action_hint": invalidation_action,
             }
         ],
         "emergency_triggers": [
@@ -1883,8 +1919,8 @@ def _default_open_position_triggers(
                 "trigger_id": "open_exposure_margin_or_nav_emergency",
                 "status": "PENDING",
                 "kind": "margin_or_nav_emergency",
-                "evidence_required": "margin pressure, NAV shock, missing broker truth, or gateway-outside exposure needs immediate trader review",
-                "action_hint": "REDUCE",
+                "evidence_required": emergency_detail,
+                "action_hint": emergency_action,
             }
         ],
     }

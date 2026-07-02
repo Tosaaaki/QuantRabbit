@@ -2534,19 +2534,15 @@ class AutoTradeCycle:
                                 decision.selected_lane_id if decision.action == ACTION_SEND_ENTRY else None
                             )
                             if deterministic_lane_id:
-                                selected_lane_id = deterministic_lane_id
-                                selected_lane_score = decision.selected_lane_score
-                                selected_lane_size_multiple = decision.selected_lane_size_multiple
-                                gpt_summary = GptHandoffSummary(
-                                    status="ACCEPTED",
-                                    action="TRADE",
-                                    selected_lane_id=deterministic_lane_id,
-                                    allowed=True,
-                                    issues=0,
-                                    selected_lane_ids=(deterministic_lane_id,),
+                                gpt_recovery_source = (
+                                    f"DETERMINISTIC_WAIT_RECOVERY_BLOCKED_ATTEMPT_{attempt}"
                                 )
-                                gpt_selected_lane_ids = (deterministic_lane_id,)
-                                gpt_recovery_source = f"DETERMINISTIC_WAIT_RECOVERY_ATTEMPT_{attempt}"
+                                break
+                            if _gpt_fresh_entry_receipt_blocks_campaign_recovery(gpt_summary):
+                                gpt_recovery_source = (
+                                    gpt_recovery_source
+                                    or _gpt_campaign_recovery_block_source(gpt_summary)
+                                )
                                 break
                             if attempt == self.gpt_wait_retry_limit:
                                 break
@@ -2570,8 +2566,8 @@ class AutoTradeCycle:
                                 gpt_recovery_source = f"GPT_RETRY_TRADE_ATTEMPT_{attempt}"
                                 break
 
-            if selected_lane_id is None and campaign_exposure_required:
-                if _gpt_trade_rejection_blocks_campaign_recovery(gpt_summary):
+            if selected_lane_id is None and campaign_exposure_required and intent_summary.live_ready > 0:
+                if _gpt_fresh_entry_receipt_blocks_campaign_recovery(gpt_summary):
                     gpt_recovery_source = (
                         gpt_recovery_source
                         or _gpt_campaign_recovery_block_source(gpt_summary)
@@ -2594,10 +2590,16 @@ class AutoTradeCycle:
                             )
 
             if selected_lane_id is None:
-                if _gpt_trade_rejection_blocks_campaign_recovery(gpt_summary):
-                    status = _gpt_campaign_recovery_block_status(gpt_summary)
-                elif intent_summary.live_ready == 0 and gpt_summary.status == "STALE_DECISION":
+                if intent_summary.live_ready == 0 and gpt_summary.status == "STALE_DECISION":
                     status = "NO_LIVE_READY_INTENT"
+                elif (
+                    intent_summary.live_ready == 0
+                    and gpt_summary.status == "ACCEPTED"
+                    and gpt_summary.action in {"WAIT", "REQUEST_EVIDENCE"}
+                ):
+                    status = f"GPT_{gpt_summary.action}"
+                elif _gpt_fresh_entry_receipt_blocks_campaign_recovery(gpt_summary):
+                    status = _gpt_campaign_recovery_block_status(gpt_summary)
                 else:
                     status = (
                         "GPT_REJECTED"
@@ -2720,10 +2722,9 @@ class AutoTradeCycle:
                     if campaign_exposure_required:
                         reason = gpt_summary.action or gpt_summary.status or "NO_TRADE"
                         gpt_recovery_source = f"CAMPAIGN_EXPOSURE_RECOVERY_GPT_{reason}"
-                        if _gpt_trade_rejection_blocks_campaign_recovery(gpt_summary):
-                            gpt_recovery_source = _gpt_campaign_recovery_block_source(gpt_summary)
+                        if _learning_audit_blocks_recovery_lane(self.gpt_learning_audit_path, selected_lane_id):
                             summary = AutoTradeCycleSummary(
-                                status=_gpt_campaign_recovery_block_status(gpt_summary),
+                                status="LEARNING_AUDIT_BLOCKED",
                                 report_path=self.report_path,
                                 snapshot_path=self.snapshot_path,
                                 intents_path=self.intents_path,
@@ -2756,9 +2757,10 @@ class AutoTradeCycle:
                             )
                             self._write_report(summary, generated_at)
                             return summary
-                        if _learning_audit_blocks_recovery_lane(self.gpt_learning_audit_path, selected_lane_id):
+                        if _gpt_fresh_entry_receipt_blocks_campaign_recovery(gpt_summary):
+                            gpt_recovery_source = _gpt_campaign_recovery_block_source(gpt_summary)
                             summary = AutoTradeCycleSummary(
-                                status="LEARNING_AUDIT_BLOCKED",
+                                status=_gpt_campaign_recovery_block_status(gpt_summary),
                                 report_path=self.report_path,
                                 snapshot_path=self.snapshot_path,
                                 intents_path=self.intents_path,
@@ -5149,32 +5151,92 @@ def _learning_audit_blocks_recovery_lane(path: Path, lane_id: str | None) -> boo
     return False
 
 
-def _gpt_trade_rejection_blocks_campaign_recovery(gpt_summary: GptHandoffSummary | None) -> bool:
-    """A verifier-blocked TRADE is not a campaign-occupancy recovery source."""
+def _gpt_fresh_entry_receipt_blocks_campaign_recovery(gpt_summary: GptHandoffSummary | None) -> bool:
+    """Campaign recovery needs a fresh accepted TRADE/ADD receipt."""
 
     if gpt_summary is None:
         return False
     status = str(gpt_summary.status or "").upper()
     action = str(gpt_summary.action or "").upper()
     error = str(gpt_summary.error or "").lower()
-    if action == "TRADE" and (status != "ACCEPTED" or not gpt_summary.allowed):
+    if not gpt_summary.allowed:
         return True
-    return status == "STALE_DECISION" and "already verified as rejected trade" in error
+    if "fresh receipt" in error or "write a fresh receipt" in error:
+        return True
+    if "guardian receipt" in error and ("unresolved" in error or "block" in error or "normal_routing_allowed=false" in error):
+        return True
+    if "normal_routing_allowed=false" in error:
+        return True
+    if status == "STALE_DECISION":
+        if action in {"WAIT", "REQUEST_EVIDENCE"}:
+            return True
+        if action != "TRADE":
+            return True
+        return "already verified as rejected trade" in error or not gpt_summary.allowed
+    if status != "ACCEPTED":
+        return True
+    if action in {"WAIT", "REQUEST_EVIDENCE"}:
+        return True
+    if action not in {"TRADE", "ADD"}:
+        return True
+    if action in {"TRADE", "ADD"} and not gpt_summary.selected_lane_id and not gpt_summary.selected_lane_ids:
+        return True
+    return False
+
+
+def _gpt_trade_rejection_blocks_campaign_recovery(gpt_summary: GptHandoffSummary | None) -> bool:
+    return _gpt_fresh_entry_receipt_blocks_campaign_recovery(gpt_summary)
 
 
 def _gpt_campaign_recovery_block_status(gpt_summary: GptHandoffSummary) -> str:
     status = str(gpt_summary.status or "").upper()
+    action = str(gpt_summary.action or "").upper()
     error = str(gpt_summary.error or "").lower()
     if status == "STALE_DECISION" and "already verified as rejected trade" in error:
         return "STALE_GPT_DECISION_REFRESH_REQUIRED"
+    if action == "TRADE" and (status != "ACCEPTED" or not gpt_summary.allowed):
+        return "GPT_REJECTED"
+    if not gpt_summary.allowed:
+        return "GPT_FRESH_RECEIPT_REQUIRED_FOR_RECOVERY"
+    if status == "STALE_DECISION" and action == "WAIT":
+        return "STALE_ACCEPTED_WAIT_BLOCKS_CAMPAIGN_RECOVERY"
+    if status == "STALE_DECISION" and action == "REQUEST_EVIDENCE":
+        return "STALE_ACCEPTED_REQUEST_EVIDENCE_BLOCKS_CAMPAIGN_RECOVERY"
+    if action == "WAIT":
+        return "ACCEPTED_WAIT_BLOCKS_CAMPAIGN_RECOVERY"
+    if action == "REQUEST_EVIDENCE":
+        return "ACCEPTED_REQUEST_EVIDENCE_BLOCKS_CAMPAIGN_RECOVERY"
+    if "fresh receipt" in error or "write a fresh receipt" in error:
+        return "GPT_FRESH_RECEIPT_REQUIRED_FOR_RECOVERY"
+    if "guardian receipt" in error or "normal_routing_allowed=false" in error:
+        return "GUARDIAN_RECEIPT_BLOCKS_CAMPAIGN_RECOVERY"
+    if action not in {"TRADE", "ADD"}:
+        return "GPT_FRESH_RECEIPT_REQUIRED_FOR_RECOVERY"
     return "GPT_REJECTED"
 
 
 def _gpt_campaign_recovery_block_source(gpt_summary: GptHandoffSummary) -> str:
     status = str(gpt_summary.status or "UNKNOWN").upper()
     action = str(gpt_summary.action or "NO_ACTION").upper()
-    if status == "STALE_DECISION":
+    error = str(gpt_summary.error or "").lower()
+    if status == "STALE_DECISION" and "already verified as rejected trade" in error:
         return "CAMPAIGN_EXPOSURE_BLOCKED_GPT_STALE_REJECTED_TRADE"
+    if action == "TRADE" and (status != "ACCEPTED" or not gpt_summary.allowed):
+        return f"CAMPAIGN_EXPOSURE_BLOCKED_GPT_{status}_{action}"
+    if not gpt_summary.allowed:
+        return "CAMPAIGN_EXPOSURE_BLOCKED_GPT_NOT_ALLOWED"
+    if status == "STALE_DECISION" and action == "WAIT":
+        return "CAMPAIGN_EXPOSURE_BLOCKED_STALE_ACCEPTED_WAIT"
+    if status == "STALE_DECISION" and action == "REQUEST_EVIDENCE":
+        return "CAMPAIGN_EXPOSURE_BLOCKED_STALE_ACCEPTED_REQUEST_EVIDENCE"
+    if action in {"WAIT", "REQUEST_EVIDENCE"}:
+        return f"CAMPAIGN_EXPOSURE_BLOCKED_ACCEPTED_{action}"
+    if "fresh receipt" in error or "write a fresh receipt" in error:
+        return "CAMPAIGN_EXPOSURE_BLOCKED_FRESH_RECEIPT_REQUIRED"
+    if "guardian receipt" in error or "normal_routing_allowed=false" in error:
+        return "CAMPAIGN_EXPOSURE_BLOCKED_GUARDIAN_RECEIPT"
+    if status == "STALE_DECISION":
+        return "CAMPAIGN_EXPOSURE_BLOCKED_GPT_STALE_NON_TRADE"
     return f"CAMPAIGN_EXPOSURE_BLOCKED_GPT_{status}_{action}"
 
 

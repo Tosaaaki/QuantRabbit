@@ -397,6 +397,50 @@ class GuardianEventRouterTest(unittest.TestCase):
         self.assertIn("UNKNOWN_NEEDS_OPERATOR_CONFIRM", report)
         self.assertIn("trade_id=`472933`", report)
 
+    def test_aud_usd_472965_unknown_owner_is_hold_only_and_not_system_counted(self) -> None:
+        snapshot = _snapshot(
+            positions=[
+                {
+                    "pair": "AUD_USD",
+                    "side": "LONG",
+                    "units": 14000,
+                    "owner": "unknown",
+                    "thesis": "unknown/manual AUD_USD exposure awaiting operator confirmation",
+                    "thesis_state": "UNKNOWN",
+                    "trade_id": "472965",
+                    "entry_price": 0.68966,
+                    "unrealized_pl_jpy": -120.0,
+                    "raw": {
+                        "id": "472965",
+                        "instrument": "AUD_USD",
+                        "currentUnits": "14000",
+                        "price": "0.68966",
+                    },
+                }
+            ]
+        )
+
+        contract = build_guardian_trigger_contract(snapshot=snapshot, order_intents={}, existing_contract={}, now=NOW)
+        entry = contract["entries"][0]
+        audit = entry["ownership_audit"]
+
+        self.assertEqual(validate_guardian_trigger_contract(contract, now=NOW)["status"], "VALID")
+        self.assertEqual(entry["trade_id"], "472965")
+        self.assertEqual(entry["units"], 14000)
+        self.assertEqual(entry["avg_entry"], 0.68966)
+        self.assertEqual(entry["owner"], "UNKNOWN")
+        self.assertEqual(entry["thesis_state"], "UNKNOWN")
+        self.assertEqual(audit["status"], "UNKNOWN_NEEDS_OPERATOR_CONFIRM")
+        self.assertTrue(audit["unresolved"])
+        self.assertFalse(audit["system_pl_counted"])
+        self.assertFalse(audit["loss_side_auto_close_allowed"])
+        self.assertFalse(audit["same_theme_auto_add_allowed"])
+        self.assertEqual(audit["requires"], "operator confirmation or gateway evidence")
+        self.assertIn("UNKNOWN_NEEDS_OPERATOR_CONFIRM", entry["no_add_triggers"][0]["evidence_required"])
+        self.assertEqual(entry["invalidation_triggers"][0]["action_hint"], "HOLD")
+        self.assertEqual(entry["emergency_triggers"][0]["action_hint"], "HOLD")
+        self.assertIn("do not auto-close loss-side", entry["emergency_triggers"][0]["evidence_required"])
+
     def test_unknown_owner_with_gateway_lane_evidence_maps_to_system(self) -> None:
         snapshot = _snapshot(
             positions=[

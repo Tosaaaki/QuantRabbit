@@ -123,6 +123,27 @@ class GPTTraderBrainTest(unittest.TestCase):
             codes = {issue["code"] for issue in payload["verification_issues"]}
             self.assertIn("BLOCKER_BEFORE_MARKET_READ", codes)
 
+    def test_rejects_trade_when_market_read_short_has_long_geometry(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root)
+            decision = _trade_decision()
+            decision["market_read_first"] = _market_read_first(pair="EUR_USD", direction="SHORT")
+            decision["thesis"] = (
+                "MARKET READ FIRST next 30m/next 2h EUR_USD SHORT path conflicts with the selected LONG lane."
+            )
+            brain = _brain(root, files, decision)
+
+            summary = brain.run(snapshot_path=files["snapshot"])
+
+            self.assertEqual(summary.status, "REJECTED")
+            payload = json.loads((root / "gpt_decision.json").read_text())
+            codes = {issue["code"] for issue in payload["verification_issues"]}
+            self.assertIn("MARKET_READ_DIRECTION_ACTION_CONFLICT", codes)
+            self.assertIn("MARKET_READ_TARGET_GEOMETRY_CONFLICT", codes)
+            self.assertIn("MARKET_READ_INVALIDATION_GEOMETRY_CONFLICT", codes)
+            self.assertIn("MARKET_READ_FORCED_TRADE_GEOMETRY_CONFLICT", codes)
+
     def test_rejects_live_ready_zero_without_naked_market_read(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

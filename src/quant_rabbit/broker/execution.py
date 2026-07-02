@@ -271,6 +271,12 @@ class LiveOrderGateway:
             verified_decision_path=self.verified_decision_path,
             selected=selected,
         )
+        gpt_verified_decision_issues = _gpt_verified_decision_live_send_issues(
+            self.verified_decision_path,
+            selected_lane_id=selected_lane_id,
+            intents_payload=intents_payload,
+            send=send,
+        )
         send_issues = _send_guard_issues(send=send, confirm_live=confirm_live, lane_id=lane_id)
         target_path_issues = _target_path_live_send_issues(intent, send=send)
         guardian_action_issues = guardian_action_gateway_issues(
@@ -293,6 +299,7 @@ class LiveOrderGateway:
             or any(issue["severity"] == "BLOCK" for issue in intent_status_issues)
             or any(issue["severity"] == "BLOCK" for issue in projection_expiry_issues)
             or any(issue["severity"] == "BLOCK" for issue in self_improvement_issues)
+            or any(issue["severity"] == "BLOCK" for issue in gpt_verified_decision_issues)
             or any(issue["severity"] == "BLOCK" for issue in send_issues)
             or any(issue["severity"] == "BLOCK" for issue in target_path_issues)
             or any(issue["severity"] == "BLOCK" for issue in guardian_action_issues)
@@ -373,6 +380,7 @@ class LiveOrderGateway:
                 *intent_status_issues,
                 *projection_expiry_issues,
                 *self_improvement_issues,
+                *gpt_verified_decision_issues,
                 *send_issues,
                 *target_path_issues,
                 *guardian_action_issues,
@@ -755,6 +763,12 @@ class LiveOrderGateway:
             verified_decision_path=self.verified_decision_path,
             selected=selected,
         )
+        gpt_verified_decision_issues = _gpt_verified_decision_live_send_issues(
+            self.verified_decision_path,
+            selected_lane_id=selected_lane_id,
+            intents_payload=intents_payload,
+            send=send,
+        )
         send_issues = _send_guard_issues(send=send, confirm_live=confirm_live, lane_id=lane_id_arg)
         target_path_issues = _target_path_live_send_issues(intent, send=send)
         guardian_action_issues = guardian_action_gateway_issues(
@@ -777,6 +791,7 @@ class LiveOrderGateway:
             or any(issue["severity"] == "BLOCK" for issue in intent_status_issues)
             or any(issue["severity"] == "BLOCK" for issue in projection_expiry_issues)
             or any(issue["severity"] == "BLOCK" for issue in self_improvement_issues)
+            or any(issue["severity"] == "BLOCK" for issue in gpt_verified_decision_issues)
             or any(issue["severity"] == "BLOCK" for issue in send_issues)
             or any(issue["severity"] == "BLOCK" for issue in target_path_issues)
             or any(issue["severity"] == "BLOCK" for issue in guardian_action_issues)
@@ -852,6 +867,7 @@ class LiveOrderGateway:
                 *intent_status_issues,
                 *projection_expiry_issues,
                 *self_improvement_issues,
+                *gpt_verified_decision_issues,
                 *send_issues,
                 *target_path_issues,
                 *guardian_action_issues,
@@ -2390,7 +2406,7 @@ def _portfolio_loss_remaining_jpy(
 
 def _loss_asymmetry_cap_from_metadata(metadata: dict[str, Any]) -> float | None:
     mode = str(metadata.get("loss_asymmetry_guard_mode") or "").upper()
-    if mode in {"TP_PROVEN_RELAXED", "OANDA_CAMPAIGN_FIREPOWER_RELAXED"}:
+    if mode == "TP_PROVEN_RELAXED":
         return None
     status = str(metadata.get("capture_economics_status") or "").upper()
     active = str(metadata.get("loss_asymmetry_guard_active") or "").strip().lower() in {
@@ -2539,6 +2555,125 @@ def _send_guard_issues(*, send: bool, confirm_live: bool, lane_id: str | None) -
             )
         )
     return [issue.__dict__ for issue in issues]
+
+
+def _gpt_verified_decision_live_send_issues(
+    verified_decision_path: Path | None,
+    *,
+    selected_lane_id: str | None,
+    intents_payload: dict[str, Any],
+    send: bool,
+) -> list[dict[str, str]]:
+    if not send or verified_decision_path is None:
+        return []
+    if not verified_decision_path.exists():
+        return [
+            RiskIssue(
+                "GPT_FRESH_TRADE_RECEIPT_REQUIRED_FOR_LIVE_SEND",
+                f"live fresh entry send requires a verified ACCEPTED TRADE receipt: {verified_decision_path}",
+            ).__dict__
+        ]
+    try:
+        payload = json.loads(verified_decision_path.read_text())
+    except (OSError, json.JSONDecodeError, ValueError) as exc:
+        return [
+            RiskIssue(
+                "GPT_VERIFIED_RECEIPT_UNREADABLE_FOR_LIVE_SEND",
+                f"verified GPT decision receipt is unreadable before live send: {verified_decision_path}: {exc}",
+            ).__dict__
+        ]
+
+    issues: list[RiskIssue] = []
+    status = str(payload.get("status") or "").upper()
+    decision = payload.get("decision") if isinstance(payload.get("decision"), dict) else {}
+    action = str(decision.get("action") or "").upper()
+    if status != "ACCEPTED":
+        issues.append(
+            RiskIssue(
+                "GPT_VERIFIED_RECEIPT_NOT_ACCEPTED_FOR_LIVE_SEND",
+                f"verified GPT receipt status is {status or 'missing'}; fresh entry send requires ACCEPTED TRADE.",
+            )
+        )
+    if action not in {"TRADE", "ADD"}:
+        issues.append(
+            RiskIssue(
+                "GPT_FRESH_TRADE_RECEIPT_REQUIRED_FOR_LIVE_SEND",
+                f"verified GPT receipt action is {action or 'missing'}; WAIT/REQUEST_EVIDENCE/non-TRADE cannot send fresh risk.",
+            )
+        )
+
+    selected_receipt_lanes = _gpt_receipt_selected_lane_ids(decision)
+    if action in {"TRADE", "ADD"} and not selected_receipt_lanes:
+        issues.append(
+            RiskIssue(
+                "GPT_SELECTED_LANE_MISSING_FOR_LIVE_SEND",
+                "verified GPT TRADE/ADD receipt must name selected_lane_id or selected_lane_ids.",
+            )
+        )
+    if selected_lane_id and selected_receipt_lanes and selected_lane_id not in selected_receipt_lanes:
+        issues.append(
+            RiskIssue(
+                "GPT_SELECTED_LANE_MISMATCH_FOR_LIVE_SEND",
+                f"gateway selected lane {selected_lane_id} is not in GPT receipt lanes: "
+                f"{', '.join(selected_receipt_lanes)}",
+            )
+        )
+
+    market_read = decision.get("market_read_first")
+    if action in {"TRADE", "ADD"} and not isinstance(market_read, dict):
+        issues.append(
+            RiskIssue(
+                "GPT_MARKET_READ_FIRST_REQUIRED_FOR_LIVE_SEND",
+                "fresh entry send requires current market_read_first on the verified GPT receipt.",
+            )
+        )
+
+    blocking_verification_codes = [
+        str(item.get("code") or "").strip()
+        for item in payload.get("verification_issues", []) or []
+        if isinstance(item, dict) and str(item.get("severity") or "BLOCK").upper() == "BLOCK"
+    ]
+    blocking_verification_codes = [code for code in blocking_verification_codes if code]
+    if blocking_verification_codes:
+        issues.append(
+            RiskIssue(
+                "GPT_VERIFIED_RECEIPT_HAS_BLOCKING_ISSUES",
+                "verified GPT receipt still has BLOCK issue(s): "
+                + ", ".join(blocking_verification_codes[:8]),
+            )
+        )
+
+    receipt_generated_at = payload.get("generated_at_utc") or decision.get("generated_at_utc")
+    receipt_ts = _parse_utc_timestamp(receipt_generated_at)
+    intents_ts = _parse_utc_timestamp(intents_payload.get("generated_at_utc"))
+    if receipt_ts is None:
+        issues.append(
+            RiskIssue(
+                "GPT_VERIFIED_RECEIPT_TIMESTAMP_REQUIRED_FOR_LIVE_SEND",
+                "verified GPT receipt must include generated_at_utc so gateway can prove it is fresh.",
+            )
+        )
+    elif intents_ts is not None and receipt_ts < intents_ts:
+        issues.append(
+            RiskIssue(
+                "GPT_RECEIPT_STALE_FOR_ORDER_INTENTS",
+                "verified GPT receipt predates the order_intents packet; rerun gpt-trader-decision for "
+                "current intents before sending fresh risk.",
+            )
+        )
+
+    return [issue.__dict__ for issue in issues]
+
+
+def _gpt_receipt_selected_lane_ids(decision: dict[str, Any]) -> tuple[str, ...]:
+    lane_ids: list[str] = []
+    selected_lane_ids = decision.get("selected_lane_ids")
+    if isinstance(selected_lane_ids, list):
+        lane_ids.extend(str(lane_id).strip() for lane_id in selected_lane_ids if str(lane_id).strip())
+    primary = str(decision.get("selected_lane_id") or "").strip()
+    if primary:
+        lane_ids.append(primary)
+    return tuple(dict.fromkeys(lane_ids))
 
 
 def _target_path_live_send_issues(intent: OrderIntent, *, send: bool) -> list[dict[str, str]]:

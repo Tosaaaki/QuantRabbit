@@ -771,15 +771,6 @@ def _loss_asymmetry_guard_issues(intent: OrderIntent, metrics: RiskMetrics) -> l
         and _loss_asymmetry_tp_relaxation_shape_allowed(intent, metadata)
     ):
         return []
-    if (
-        mode == LOSS_ASYMMETRY_OANDA_CAMPAIGN_FIREPOWER_RELAXED_MODE
-        and _loss_asymmetry_oanda_campaign_firepower_relaxed_shape_allowed(
-            intent,
-            metadata,
-            metrics,
-        )
-    ):
-        return []
     if mode == LOSS_ASYMMETRY_TP_PROOF_COLLECTION_MIN_LOT_MODE:
         proof_cap = _to_float(metadata.get("loss_asymmetry_guard_effective_max_loss_jpy"))
         normal_cap = _to_float(metadata.get("loss_asymmetry_guard_base_max_loss_jpy"))

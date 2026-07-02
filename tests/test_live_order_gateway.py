@@ -119,6 +119,44 @@ class LiveOrderGatewayTest(unittest.TestCase):
                 (root / "report.md").read_text(),
             )
 
+    def test_verified_wait_receipt_blocks_fresh_entry_send_before_broker_post(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            verified = root / "gpt_decision.json"
+            verified.write_text(
+                json.dumps(
+                    {
+                        "generated_at_utc": datetime.now(timezone.utc).isoformat(),
+                        "status": "ACCEPTED",
+                        "decision": {"action": "WAIT", "selected_lane_id": None},
+                        "verification_issues": [],
+                    }
+                )
+                + "\n"
+            )
+            client = FakeExecutionClient()
+
+            summary = LiveOrderGateway(
+                client=client,
+                strategy_profile=_profile(root),
+                output_path=root / "request.json",
+                report_path=root / "report.md",
+                live_enabled=True,
+                verified_decision_path=verified,
+            ).run(
+                intents_path=_intents(root),
+                lane_id="lane:EUR_USD:LONG",
+                send=True,
+                confirm_live=True,
+            )
+
+            self.assertEqual(summary.status, "BLOCKED")
+            self.assertFalse(summary.sent)
+            self.assertEqual(client.orders, [])
+            payload = json.loads((root / "request.json").read_text())
+            codes = {issue["code"] for issue in payload["risk_issues"]}
+            self.assertIn("GPT_FRESH_TRADE_RECEIPT_REQUIRED_FOR_LIVE_SEND", codes)
+
     def test_guardian_wake_hourly_schedule_alone_cannot_stage_order(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

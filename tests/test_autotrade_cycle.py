@@ -5235,7 +5235,7 @@ class AutoTradeCycleTest(unittest.TestCase):
             payload = json.loads((root / "gpt_decision.json").read_text())
             self.assertIn("UNKNOWN_EVIDENCE_REF", {issue["code"] for issue in payload["verification_issues"]})
 
-    def test_campaign_exposure_recovers_from_gpt_wait_when_flat_target_open(self) -> None:
+    def test_campaign_exposure_blocks_gpt_wait_when_flat_target_open(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             now = datetime.now(timezone.utc)
@@ -5280,13 +5280,291 @@ class AutoTradeCycleTest(unittest.TestCase):
                 live_enabled=True,
             ).run(send=False)
 
-            self.assertEqual(summary.status, "STAGED")
-            self.assertEqual(summary.decision_source, "campaign_exposure_recovery")
-            self.assertEqual(summary.selected_lane_id, "trend_trader:EUR_USD:LONG:TREND_CONTINUATION:MARKET")
+            self.assertEqual(summary.status, "ACCEPTED_WAIT_BLOCKS_CAMPAIGN_RECOVERY")
+            self.assertEqual(summary.decision_source, "gpt_trader")
+            self.assertIsNone(summary.selected_lane_id)
             self.assertTrue(summary.campaign_exposure_required)
-            self.assertIn("CAMPAIGN_EXPOSURE_RECOVERY", summary.gpt_recovery_source or "")
-            self.assertTrue((root / "live_order.json").exists())
+            self.assertIn("CAMPAIGN_EXPOSURE_BLOCKED", summary.gpt_recovery_source or "")
+            self.assertFalse(summary.sent)
+            self.assertEqual(client.orders_sent, [])
+            self.assertFalse((root / "live_order.json").exists())
             self.assertIn("Campaign exposure required: `True`", (root / "report.md").read_text())
+
+    def test_campaign_exposure_blocks_accepted_request_evidence_when_flat_target_open(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            now = datetime.now(timezone.utc)
+            target_state = _open_target_state(root)
+            client = FakeCycleClient(
+                BrokerSnapshot(
+                    fetched_at_utc=now,
+                    quotes={
+                        "EUR_USD": Quote("EUR_USD", 1.17298, 1.17306, timestamp_utc=now),
+                        "USD_JPY": Quote("USD_JPY", 157.0, 157.01, timestamp_utc=now),
+                    },
+                )
+            )
+
+            class RequestEvidenceCycle(AutoTradeCycle):
+                def _run_gpt_handoff(self) -> GptHandoffSummary:
+                    return GptHandoffSummary(
+                        status="ACCEPTED",
+                        action="REQUEST_EVIDENCE",
+                        selected_lane_id=None,
+                        allowed=True,
+                        issues=0,
+                    )
+
+            summary = RequestEvidenceCycle(
+                client=client,
+                snapshot_path=root / "snapshot.json",
+                intents_path=root / "intents.json",
+                intent_report_path=root / "intents.md",
+                decision_path=root / "decision.json",
+                decision_report_path=root / "decision.md",
+                gpt_decision_path=root / "gpt_decision.json",
+                gpt_decision_report_path=root / "gpt_decision.md",
+                gpt_attack_advice_path=root / "attack_missing.json",
+                position_management_path=root / "pm.json",
+                position_management_report_path=root / "pm.md",
+                position_execution_path=root / "pe.json",
+                position_execution_report_path=root / "pe.md",
+                live_order_output_path=root / "live_order.json",
+                live_order_report_path=root / "live_order.md",
+                report_path=root / "report.md",
+                campaign_plan_path=_campaign(root),
+                strategy_profile_path=_candidate_profile(root),
+                market_story_profile_path=_stories(root),
+                receipt_promotion_report_path=root / "promotion.md",
+                target_state_path=target_state,
+                target_report_path=root / "target.md",
+                gpt_target_state_path=target_state,
+                use_gpt_trader=True,
+                refresh_market_story=False,
+                live_enabled=True,
+            ).run(send=False)
+
+            self.assertEqual(summary.status, "ACCEPTED_REQUEST_EVIDENCE_BLOCKS_CAMPAIGN_RECOVERY")
+            self.assertEqual(summary.decision_source, "gpt_trader")
+            self.assertIsNone(summary.selected_lane_id)
+            self.assertTrue(summary.campaign_exposure_required)
+            self.assertFalse(summary.sent)
+            self.assertEqual(client.orders_sent, [])
+            self.assertFalse((root / "live_order.json").exists())
+
+    def test_stale_accepted_request_evidence_blocks_campaign_recovery(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            now = datetime.now(timezone.utc)
+            target_state = _open_target_state(root)
+            client = FakeCycleClient(
+                BrokerSnapshot(
+                    fetched_at_utc=now,
+                    quotes={
+                        "EUR_USD": Quote("EUR_USD", 1.17298, 1.17306, timestamp_utc=now),
+                        "USD_JPY": Quote("USD_JPY", 157.0, 157.01, timestamp_utc=now),
+                    },
+                )
+            )
+
+            class StaleRequestEvidenceCycle(AutoTradeCycle):
+                def _run_gpt_handoff(self) -> GptHandoffSummary:
+                    return GptHandoffSummary(
+                        status="STALE_DECISION",
+                        action="REQUEST_EVIDENCE",
+                        selected_lane_id=None,
+                        allowed=False,
+                        issues=1,
+                        error=(
+                            "external GPT decision response was already verified as ACCEPTED REQUEST_EVIDENCE; "
+                            "write a fresh receipt before another gateway cycle"
+                        ),
+                    )
+
+            summary = StaleRequestEvidenceCycle(
+                client=client,
+                snapshot_path=root / "snapshot.json",
+                intents_path=root / "intents.json",
+                intent_report_path=root / "intents.md",
+                decision_path=root / "decision.json",
+                decision_report_path=root / "decision.md",
+                gpt_decision_path=root / "gpt_decision.json",
+                gpt_decision_report_path=root / "gpt_decision.md",
+                gpt_attack_advice_path=root / "attack_missing.json",
+                position_management_path=root / "pm.json",
+                position_management_report_path=root / "pm.md",
+                position_execution_path=root / "pe.json",
+                position_execution_report_path=root / "pe.md",
+                live_order_output_path=root / "live_order.json",
+                live_order_report_path=root / "live_order.md",
+                report_path=root / "report.md",
+                campaign_plan_path=_campaign(root),
+                strategy_profile_path=_candidate_profile(root),
+                market_story_profile_path=_stories(root),
+                receipt_promotion_report_path=root / "promotion.md",
+                target_state_path=target_state,
+                target_report_path=root / "target.md",
+                gpt_target_state_path=target_state,
+                use_gpt_trader=True,
+                refresh_market_story=False,
+                live_enabled=True,
+            ).run(send=True)
+
+            self.assertIn(
+                summary.status,
+                {
+                    "STALE_ACCEPTED_REQUEST_EVIDENCE_BLOCKS_CAMPAIGN_RECOVERY",
+                    "GPT_FRESH_RECEIPT_REQUIRED_FOR_RECOVERY",
+                },
+            )
+            self.assertFalse(summary.sent)
+            self.assertEqual(client.orders_sent, [])
+            self.assertIsNone(summary.selected_lane_id)
+            self.assertFalse((root / "live_order.json").exists())
+
+    def test_trade_472952_shape_stale_accepted_wait_blocks_campaign_recovery_send(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            now = datetime(2026, 7, 2, 3, 10, tzinfo=timezone.utc)
+            target_state = _open_target_state(root)
+            lane_id = "range_trader:AUD_USD:LONG:RANGE_ROTATION"
+            client = FakeCycleClient(
+                BrokerSnapshot(
+                    fetched_at_utc=now,
+                    quotes={
+                        "AUD_USD": Quote("AUD_USD", 0.68966, 0.68970, timestamp_utc=now),
+                        "USD_JPY": Quote("USD_JPY", 157.0, 157.01, timestamp_utc=now),
+                    },
+                )
+            )
+
+            class AudIntentGenerator:
+                def __init__(self, output_path: Path, report_path: Path) -> None:
+                    self.output_path = output_path
+                    self.report_path = report_path
+
+                def run(self, *, snapshot_path: Path, max_candidates: int = 12) -> SimpleNamespace:
+                    _write_aud_usd_472952_intents(self.output_path)
+                    self.report_path.write_text("# intents\n\n- AUD_USD 472952 fixture\n")
+                    return SimpleNamespace(
+                        output_path=self.output_path,
+                        report_path=self.report_path,
+                        candidates_seen=1,
+                        generated=1,
+                        needs_snapshot=0,
+                        dry_run_passed=1,
+                        live_ready=1,
+                    )
+
+            class AudBrain:
+                def run(self, snapshot: BrokerSnapshot) -> TraderDecision:
+                    score = LaneScore(
+                        lane_id=lane_id,
+                        pair="AUD_USD",
+                        direction="LONG",
+                        method="RANGE_ROTATION",
+                        order_type="LIMIT",
+                        entry=0.68970,
+                        tp=0.69087,
+                        sl=0.68855,
+                        status="LIVE_READY",
+                        score=98.0,
+                        action=ACTION_SEND_ENTRY,
+                        blockers=(),
+                        rationale=("AUD_USD RANGE_ROTATION fixture",),
+                    )
+                    return TraderDecision(
+                        action=ACTION_SEND_ENTRY,
+                        selected_lane_id=lane_id,
+                        generated_at_utc=now.isoformat(),
+                        reason="AUD_USD campaign exposure fixture",
+                        scores=(score,),
+                        positions=0,
+                        orders=0,
+                        selected_lane_score=98.0,
+                        selected_lane_size_multiple=1.0,
+                    )
+
+            class StaleWaitAudCycle(AutoTradeCycle):
+                def _intent_generator(self, max_loss_jpy: float | None = None) -> AudIntentGenerator:
+                    return AudIntentGenerator(self.intents_path, self.intent_report_path)
+
+                def _brain(self) -> AudBrain:
+                    return AudBrain()
+
+                def _run_gpt_handoff(self) -> GptHandoffSummary:
+                    return GptHandoffSummary(
+                        status="STALE_DECISION",
+                        action="WAIT",
+                        selected_lane_id=None,
+                        allowed=False,
+                        issues=1,
+                        error=(
+                            "external GPT decision response was already verified as ACCEPTED WAIT; "
+                            "write a fresh receipt before another gateway cycle"
+                        ),
+                    )
+
+            campaign_path = root / "campaign.json"
+            campaign_path.write_text(
+                json.dumps(
+                    {
+                        "lanes": [
+                            {
+                                "desk": "range_trader",
+                                "pair": "AUD_USD",
+                                "direction": "LONG",
+                                "method": "RANGE_ROTATION",
+                                "adoption": "ORDER_INTENT_REQUIRED",
+                                "campaign_role": "NOW_IF_CLEAN",
+                                "required_receipt": "fresh GPT TRADE receipt",
+                            }
+                        ]
+                    }
+                )
+                + "\n"
+            )
+
+            summary = StaleWaitAudCycle(
+                client=client,
+                snapshot_path=root / "snapshot.json",
+                intents_path=root / "intents.json",
+                intent_report_path=root / "intents.md",
+                decision_path=root / "decision.json",
+                decision_report_path=root / "decision.md",
+                gpt_decision_path=root / "gpt_decision.json",
+                gpt_decision_report_path=root / "gpt_decision.md",
+                gpt_attack_advice_path=root / "attack_missing.json",
+                position_management_path=root / "pm.json",
+                position_management_report_path=root / "pm.md",
+                position_execution_path=root / "pe.json",
+                position_execution_report_path=root / "pe.md",
+                live_order_output_path=root / "live_order.json",
+                live_order_report_path=root / "live_order.md",
+                report_path=root / "report.md",
+                campaign_plan_path=campaign_path,
+                pair_charts_path=_pair_charts(root, ("AUD_USD",)),
+                strategy_profile_path=_candidate_profile(root),
+                market_story_profile_path=_stories(root),
+                receipt_promotion_report_path=root / "promotion.md",
+                target_state_path=target_state,
+                target_report_path=root / "target.md",
+                gpt_target_state_path=target_state,
+                use_gpt_trader=True,
+                refresh_market_story=False,
+                live_enabled=True,
+            ).run(send=True)
+
+            self.assertIn(
+                summary.status,
+                {"STALE_ACCEPTED_WAIT_BLOCKS_CAMPAIGN_RECOVERY", "GPT_FRESH_RECEIPT_REQUIRED_FOR_RECOVERY"},
+            )
+            self.assertFalse(summary.sent)
+            self.assertEqual(client.orders_sent, [])
+            self.assertIsNone(summary.selected_lane_id)
+            self.assertTrue(summary.campaign_exposure_required)
+            self.assertIn("CAMPAIGN_EXPOSURE_BLOCKED", summary.gpt_recovery_source or "")
+            self.assertFalse((root / "live_order.json").exists())
 
     def test_gpt_cancel_pending_preempts_campaign_exposure_recovery_lane(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -6478,9 +6756,12 @@ class AutoTradeCycleTest(unittest.TestCase):
                 max_loss_jpy=1_500,
             ).run(send=False)
 
-            self.assertEqual(summary.status, "STAGED")
+            self.assertEqual(summary.status, "GPT_FRESH_RECEIPT_REQUIRED_FOR_RECOVERY")
+            self.assertFalse(summary.sent)
+            self.assertEqual(summary.sent_count, 0)
             self.assertEqual(summary.gpt_status, "STALE_DECISION")
             self.assertIn("predates ai_attack_advice", summary.gpt_error or "")
+            self.assertFalse((root / "live_order.json").exists())
 
     def test_gpt_trade_at_position_capacity_stays_monitor_only(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -7434,6 +7715,77 @@ def _write_live_ready_intents(path: Path) -> None:
     )
 
 
+def _write_aud_usd_472952_intents(path: Path) -> None:
+    lane_id = "range_trader:AUD_USD:LONG:RANGE_ROTATION"
+    path.write_text(
+        json.dumps(
+            {
+                "generated_at_utc": "2026-07-02T03:10:00+00:00",
+                "campaign_exposure_required": True,
+                "results": [
+                    {
+                        "lane_id": lane_id,
+                        "status": "LIVE_READY",
+                        "intent": {
+                            "pair": "AUD_USD",
+                            "side": "LONG",
+                            "order_type": "LIMIT",
+                            "units": 14_000,
+                            "entry": 0.68970,
+                            "tp": 0.69087,
+                            "sl": 0.68855,
+                            "thesis": "AUD_USD RANGE_ROTATION campaign exposure fixture.",
+                            "reason": "trade_id=472952 stale WAIT leak regression",
+                            "owner": "trader",
+                            "market_context": {
+                                "regime": "RANGE current; RANGE_ROTATION campaign lane",
+                                "narrative": "AUD_USD range rotation candidate exists but needs fresh GPT TRADE.",
+                                "chart_story": "AUD_USD lower rail rotation candidate.",
+                                "method": "RANGE_ROTATION",
+                                "invalidation": "0.68855 breaks the range rail",
+                                "event_risk": "none",
+                                "session": "test",
+                            },
+                            "metadata": {
+                                "capture_economics_status": "NEGATIVE_EXPECTANCY",
+                                "capture_avg_win_jpy": 600.0,
+                                "capture_avg_loss_jpy": 1100.0,
+                                "loss_asymmetry_guard_active": True,
+                                "loss_asymmetry_guard_mode": "OANDA_CAMPAIGN_FIREPOWER_RELAXED",
+                                "loss_asymmetry_guard_loss_cap_jpy": 600.0,
+                                "tp_execution_mode": "ATTACHED_TECHNICAL_TP",
+                                "attach_take_profit_on_fill": True,
+                                "tp_target_intent": "HARVEST",
+                                "opportunity_mode": "HARVEST",
+                                "positive_rotation_oanda_campaign_firepower_status": (
+                                    "VERIFIED_TARGET_10_ROUTE_ESTIMATED"
+                                ),
+                            },
+                        },
+                        "risk_metrics": {
+                            "entry_price": 0.68970,
+                            "risk_jpy": 2690.6967,
+                            "reward_jpy": 2100.0,
+                            "reward_risk": 0.78,
+                            "spread_pips": 0.4,
+                        },
+                        "risk_issues": [
+                            {
+                                "severity": "BLOCK",
+                                "code": "NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION",
+                                "message": "capture economics is NEGATIVE_EXPECTANCY",
+                            }
+                        ],
+                        "strategy_issues": [],
+                        "live_blockers": [],
+                    }
+                ],
+            }
+        )
+        + "\n"
+    )
+
+
 def _write_no_live_ready_intents(path: Path) -> None:
     _write_live_ready_intents(path)
     payload = json.loads(path.read_text())
@@ -7597,6 +7949,16 @@ def _gpt_market_read_first(*, pair: str = "EUR_USD", direction: str = "LONG") ->
     base, quote = pair.split("_", 1) if "_" in pair else (pair, "USD")
     bought = base if direction == "LONG" else quote
     sold = quote if direction == "LONG" else base
+    if pair.endswith("_JPY"):
+        entry = 112.00 if pair.startswith("AUD_") else 157.40
+        target_30 = entry + 0.60 if direction == "LONG" else entry - 0.60
+        target_2h = entry + 1.00 if direction == "LONG" else entry - 1.00
+        invalidation = entry - 0.40 if direction == "LONG" else entry + 0.40
+    else:
+        entry = 1.1730
+        target_30 = 1.1740 if direction == "LONG" else 1.1720
+        target_2h = 1.1760 if direction == "LONG" else 1.1700
+        invalidation = 1.1700 if direction == "LONG" else 1.1760
     return {
         "naked_read": {
             "currency_bought": bought,
@@ -7615,23 +7977,23 @@ def _gpt_market_read_first(*, pair: str = "EUR_USD", direction: str = "LONG") ->
             "pair": pair,
             "direction": direction,
             "expected_path": f"Next 30m {pair} should hold the operating shelf and press toward target.",
-            "target_zone": "1.1740" if not pair.endswith("_JPY") else "158.00",
-            "invalidation": "1.1700" if not pair.endswith("_JPY") else "156.80",
+            "target_zone": f"{target_30:.3f}" if pair.endswith("_JPY") else f"{target_30:.4f}",
+            "invalidation": f"{invalidation:.3f}" if pair.endswith("_JPY") else f"{invalidation:.4f}",
         },
         "next_2h_prediction": {
             "pair": pair,
             "direction": direction,
             "expected_path": f"Next 2h {pair} should extend if the shelf remains intact.",
-            "target_zone": "1.1760" if not pair.endswith("_JPY") else "158.40",
-            "invalidation": "1.1700" if not pair.endswith("_JPY") else "156.80",
+            "target_zone": f"{target_2h:.3f}" if pair.endswith("_JPY") else f"{target_2h:.4f}",
+            "invalidation": f"{invalidation:.3f}" if pair.endswith("_JPY") else f"{invalidation:.4f}",
         },
         "best_trade_if_forced": {
             "pair": pair,
             "direction": direction,
             "vehicle": "STOP",
-            "entry": "1.1730" if not pair.endswith("_JPY") else "157.40",
-            "tp": "1.1760" if not pair.endswith("_JPY") else "158.40",
-            "sl": "1.1700" if not pair.endswith("_JPY") else "156.80",
+            "entry": f"{entry:.3f}" if pair.endswith("_JPY") else f"{entry:.4f}",
+            "tp": f"{target_2h:.3f}" if pair.endswith("_JPY") else f"{target_2h:.4f}",
+            "sl": f"{invalidation:.3f}" if pair.endswith("_JPY") else f"{invalidation:.4f}",
             "why_this_pays": "The forced trade only pays if the naked read reaches target before invalidation.",
         },
     }
