@@ -115,11 +115,17 @@ def build_guardian_receipt_operator_review(
         row["clearance_status"] = status.get("status")
         row["clearance_reason"] = status.get("reason")
 
-    normal_allowed = all(row.get("normal_routing_allowed") is True for row in rows)
+    review_allowed = all(row.get("normal_routing_allowed") is True for row in rows)
+    current_p0_p1_blocks = _has_uncleared_p0_p1_watchdog_issue(watchdog_payload, rows)
+    normal_allowed = review_allowed and not current_p0_p1_blocks
     if not rows:
         status = "NO_OPERATOR_REVIEW_REQUIRED"
-        normal_allowed = True
-    elif normal_allowed:
+        normal_allowed = not current_p0_p1_blocks
+        if current_p0_p1_blocks:
+            status = "NO_OPERATOR_REVIEW_REQUIRED_CURRENT_P0_BLOCKS_ROUTING"
+    elif review_allowed and current_p0_p1_blocks:
+        status = "GUARDIAN_RECEIPT_OPERATOR_REVIEW_CLEARED_CURRENT_P0_BLOCKS_ROUTING"
+    elif review_allowed:
         status = "GUARDIAN_RECEIPT_OPERATOR_REVIEW_CLEARED"
     else:
         status = "GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED"
@@ -128,6 +134,7 @@ def build_guardian_receipt_operator_review(
             "status": status,
             "normal_routing_allowed": normal_allowed,
             "unresolved_review_count": sum(1 for row in rows if row.get("normal_routing_allowed") is not True),
+            "current_p0_p1_blocks_routing": current_p0_p1_blocks,
             "watchdog_generated_at_utc": (
                 watchdog_payload.get("generated_at_utc") if isinstance(watchdog_payload, dict) else None
             ),
@@ -189,7 +196,8 @@ def render_guardian_receipt_operator_review_report(payload: dict[str, Any]) -> s
             "",
             "- This artifact records operator review for expired/historical guardian receipts.",
             "- It does not place orders, cancel orders, close positions, enable execution flags, or modify broker state.",
-            "- Clearance requires a fresh explicit operator decision, expired/historical receipt lifecycle, broker-truth clearance for the same event, and no unresolved P0/P1 guardian/watchdog issue outside that reviewed event.",
+            "- Receipt clearance requires a fresh explicit operator decision, expired/historical receipt lifecycle, and broker-truth clearance for the same event.",
+            "- Top-level normal routing also requires no separate unresolved P0/P1 guardian/watchdog issue.",
             "",
         ]
     )
@@ -262,11 +270,6 @@ def operator_review_clearance_status(
     fresh = _review_row_fresh(row, now)
     if fresh is not True:
         return _blocked("OPERATOR_REVIEW_STALE", str(fresh))
-    if _has_current_p0_p1_watchdog_issue(watchdog_payload):
-        return _blocked(
-            "CURRENT_P0_P1_GUARDIAN_OR_WATCHDOG_ISSUE_REMAINS",
-            "watchdog still has an unresolved P0/P1 guardian/watchdog issue",
-        )
     broker_clear = _broker_truth_clears_event(issue, broker_snapshot_payload, decision)
     if broker_clear is not True:
         return _blocked("BROKER_TRUTH_EMERGENCY_NOT_CLEARED", str(broker_clear))
@@ -437,6 +440,34 @@ def _has_current_p0_p1_watchdog_issue(watchdog_payload: dict[str, Any] | None) -
     return False
 
 
+def _has_uncleared_p0_p1_watchdog_issue(
+    watchdog_payload: dict[str, Any] | None,
+    cleared_review_rows: list[dict[str, Any]],
+) -> bool:
+    if not _has_current_p0_p1_watchdog_issue(watchdog_payload):
+        return False
+    if not isinstance(watchdog_payload, dict):
+        return False
+    severe_issues = [
+        item
+        for item in _watchdog_guardian_issues(watchdog_payload)
+        if str(item.get("severity") or "").upper() in P0_P1
+    ]
+    if not severe_issues:
+        return True
+    cleared_keys = {
+        _issue_key(row)
+        for row in cleared_review_rows
+        if row.get("normal_routing_allowed") is True
+    }
+    for issue in severe_issues:
+        if _issue_code(issue) not in {OPERATOR_REVIEW_ISSUE_CODE, BASE_RECEIPT_ISSUE_CODE}:
+            return True
+        if _issue_key(issue) not in cleared_keys:
+            return True
+    return False
+
+
 def _broker_truth_clears_event(
     issue: dict[str, Any],
     broker_snapshot_payload: dict[str, Any] | None,
@@ -535,4 +566,3 @@ def _bool_value(value: Any) -> bool:
     if isinstance(value, str):
         return value.strip().lower() in {"1", "true", "yes", "on"}
     return bool(value)
-

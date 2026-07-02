@@ -93,6 +93,64 @@ class GuardianReceiptOperatorReviewTest(unittest.TestCase):
         self.assertTrue(review["no_live_side_effects"])
         self.assertEqual(review["live_side_effects"], [])
 
+    def test_historical_receipt_can_clear_while_current_p0_blocks_global_routing(self) -> None:
+        now = datetime(2026, 7, 2, tzinfo=timezone.utc)
+        watchdog = {
+            "status": "BLOCKED",
+            "issue_status": "P0",
+            "guardian_receipt": {"issues": [_current_aud_usd_p0_issue()]},
+        }
+        review = build_guardian_receipt_operator_review(
+            watchdog,
+            {"classifications": [_consumption_row(classification="NEEDS_OPERATOR_REVIEW")]},
+            broker_snapshot_payload={"positions": [], "orders": []},
+            operator_decision_payload={
+                "decisions": [
+                    {
+                        "receipt_event_id": "receipt-reduce",
+                        "receipt_action": "REDUCE",
+                        "receipt_lifecycle": "EXPIRED",
+                        "operator_decision": OPERATOR_ACKNOWLEDGED_HISTORICAL,
+                        "reason": "operator verified the receipt is historical and no active emergency remains",
+                        "expires_at_utc": (now + timedelta(hours=2)).isoformat(),
+                        "no_live_side_effects": True,
+                    }
+                ]
+            },
+            now_utc=now,
+        )
+        consumption = build_guardian_receipt_consumption(
+            watchdog,
+            existing={"classifications": [_consumption_row(classification="NEEDS_OPERATOR_REVIEW")]},
+            operator_review=review,
+            broker_snapshot={"positions": [], "orders": []},
+            now_utc=now,
+        )
+
+        self.assertEqual(
+            review["status"],
+            "GUARDIAN_RECEIPT_OPERATOR_REVIEW_CLEARED_CURRENT_P0_BLOCKS_ROUTING",
+        )
+        self.assertFalse(review["normal_routing_allowed"])
+        self.assertEqual(review["unresolved_review_count"], 0)
+        self.assertTrue(review["classifications"][0]["normal_routing_allowed"])
+        historical_row = next(
+            item
+            for item in consumption["classifications"]
+            if item["receipt_event_id"] == "receipt-reduce"
+        )
+        current_p0_row = next(
+            item
+            for item in consumption["classifications"]
+            if item["receipt_event_id"] == "aud-current-p0"
+        )
+        self.assertEqual(historical_row["classification"], "HISTORICAL_ONLY")
+        self.assertTrue(historical_row["normal_routing_allowed"])
+        self.assertEqual(current_p0_row["classification"], "NEEDS_OPERATOR_REVIEW")
+        self.assertFalse(current_p0_row["normal_routing_allowed"])
+        self.assertFalse(consumption["normal_routing_allowed"])
+        self.assertTrue(consumption["current_p0_p1_blocks_routing"])
+
     def test_legacy_expired_acknowledged_reduce_row_is_reblocked_without_review(self) -> None:
         now = datetime(2026, 7, 2, tzinfo=timezone.utc)
         consumption = build_guardian_receipt_consumption(
@@ -191,6 +249,16 @@ def _issue() -> dict[str, object]:
         "receipt_action": "REDUCE",
         "receipt_lifecycle": "EXPIRED",
         "consumed_by_trader": False,
+    }
+
+
+def _current_aud_usd_p0_issue() -> dict[str, object]:
+    return {
+        "code": "CURRENT_GUARDIAN_P0_UNKNOWN_EXPOSURE",
+        "severity": "P0",
+        "receipt_event_id": "aud-current-p0",
+        "receipt_action": "REDUCE",
+        "receipt_lifecycle": "CURRENT_GUARDIAN_EVENT",
     }
 
 

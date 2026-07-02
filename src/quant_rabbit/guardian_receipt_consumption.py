@@ -90,11 +90,17 @@ def build_guardian_receipt_consumption(
             generated_by=generated_by,
         )
         rows.append(row)
-    normal_allowed = all(item.get("normal_routing_allowed") is True for item in rows)
+    rows_allowed = all(item.get("normal_routing_allowed") is True for item in rows)
+    current_p0_p1_blocks = _watchdog_has_uncleared_p0_p1_issue(watchdog, rows)
+    normal_allowed = rows_allowed and not current_p0_p1_blocks
     if not rows:
         status = "NO_GUARDIAN_RECEIPT_ISSUES"
-        normal_allowed = True
-    elif normal_allowed:
+        normal_allowed = not current_p0_p1_blocks
+        if current_p0_p1_blocks:
+            status = "NO_GUARDIAN_RECEIPT_ISSUES_CURRENT_P0_BLOCKS_ROUTING"
+    elif rows_allowed and current_p0_p1_blocks:
+        status = "GUARDIAN_RECEIPT_ISSUES_ACKNOWLEDGED_CURRENT_P0_BLOCKS_ROUTING"
+    elif rows_allowed:
         status = "GUARDIAN_RECEIPT_ISSUES_ACKNOWLEDGED"
     else:
         status = "GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED"
@@ -104,6 +110,7 @@ def build_guardian_receipt_consumption(
         "normal_routing_allowed": normal_allowed,
         "classifications": rows,
         "unresolved_issue_count": sum(1 for item in rows if item.get("normal_routing_allowed") is not True),
+        "current_p0_p1_blocks_routing": current_p0_p1_blocks,
         "watchdog_generated_at_utc": watchdog.get("generated_at_utc"),
         "watchdog_status": watchdog.get("status"),
         "watchdog_path": (
@@ -240,22 +247,6 @@ def guardian_receipt_new_entry_blockers(
     operator_review = operator_review_payload if isinstance(operator_review_payload, dict) else {}
     broker_snapshot = broker_snapshot_payload if isinstance(broker_snapshot_payload, dict) else {}
     blockers: list[dict[str, str]] = []
-    if _watchdog_issue_status_blocks(watchdog):
-        blockers.append(
-            {
-                "code": OPERATOR_REVIEW_REQUIRED_BLOCK_CODE,
-                "severity": "BLOCK",
-                "message": (
-                    "qr_trader_run_watchdog issue_status/severity is P0/P1; "
-                    "ordinary fresh-entry routing remains blocked until watchdog clears"
-                ),
-                "receipt_event_id": "",
-                "receipt_action": "",
-                "receipt_lifecycle": "",
-                "classification": "WATCHDOG_P0_P1",
-            }
-        )
-
     for issue in operator_review_subjects_from_artifacts(watchdog, consumption):
         status = operator_review_clearance_status(
             issue,
@@ -333,6 +324,21 @@ def guardian_receipt_new_entry_blockers(
                 "classification": str(consumption.get("status") or "NORMAL_ROUTING_FALSE"),
             }
         )
+    elif _watchdog_has_uncleared_p0_p1_issue(watchdog, _classification_rows(consumption)) and not blockers:
+        blockers.append(
+            {
+                "code": OPERATOR_REVIEW_REQUIRED_BLOCK_CODE,
+                "severity": "BLOCK",
+                "message": (
+                    "qr_trader_run_watchdog issue_status/severity is P0/P1; "
+                    "ordinary fresh-entry routing remains blocked until watchdog clears"
+                ),
+                "receipt_event_id": "",
+                "receipt_action": "",
+                "receipt_lifecycle": "",
+                "classification": "WATCHDOG_P0_P1",
+            }
+        )
     return blockers
 
 
@@ -371,14 +377,17 @@ def _classification_from_issue(
             row.setdefault("generated_by", generated_by)
             row.setdefault("generated_at_utc", generated_at_utc)
             if review_required:
-                row["classification"] = NEEDS_OPERATOR_REVIEW
+                review_clears = isinstance(review_status, dict) and review_status.get("normal_routing_allowed") is True
+                row["classification"] = (
+                    _operator_review_cleared_classification(issue, classification)
+                    if review_clears
+                    else NEEDS_OPERATOR_REVIEW
+                )
                 row["operator_review_required"] = True
                 row["operator_review_status"] = review_status.get("status") if isinstance(review_status, dict) else None
                 row["operator_review_reason"] = review_status.get("reason") if isinstance(review_status, dict) else None
-                row["normal_routing_allowed"] = (
-                    isinstance(review_status, dict) and review_status.get("normal_routing_allowed") is True
-                )
-                row["reason"] = _classification_reason(issue, NEEDS_OPERATOR_REVIEW, review_status=review_status)
+                row["normal_routing_allowed"] = review_clears
+                row["reason"] = _classification_reason(issue, row["classification"], review_status=review_status)
             else:
                 row["normal_routing_allowed"] = _normal_allowed_for_classification(classification)
             return row
@@ -386,8 +395,9 @@ def _classification_from_issue(
     classification = _automatic_classification(issue)
     normal_allowed = _normal_allowed_for_classification(classification)
     if review_required:
-        classification = NEEDS_OPERATOR_REVIEW
-        normal_allowed = isinstance(review_status, dict) and review_status.get("normal_routing_allowed") is True
+        review_clears = isinstance(review_status, dict) and review_status.get("normal_routing_allowed") is True
+        classification = _operator_review_cleared_classification(issue) if review_clears else NEEDS_OPERATOR_REVIEW
+        normal_allowed = review_clears
     return {
         "issue_code": _issue_code(issue),
         "receipt_event_id": _issue_event_id(issue),
@@ -461,6 +471,17 @@ def _normal_allowed_for_classification(classification: str) -> bool:
     return classification in ACKNOWLEDGED_CLASSIFICATIONS
 
 
+def _operator_review_cleared_classification(issue: dict[str, Any], existing_classification: str = "") -> str:
+    if existing_classification in ACKNOWLEDGED_CLASSIFICATIONS:
+        return existing_classification
+    lifecycle = _issue_lifecycle(issue)
+    if lifecycle == "REJECTED":
+        return REJECTED_ACKNOWLEDGED
+    if lifecycle == "STALE":
+        return STALE_ACKNOWLEDGED
+    return HISTORICAL_ONLY
+
+
 def _watchdog_issue_status_blocks(payload: dict[str, Any]) -> bool:
     issue_status = str(payload.get("issue_status") or "").upper()
     if issue_status in {"P0", "P1"}:
@@ -469,6 +490,29 @@ def _watchdog_issue_status_blocks(payload: dict[str, Any]) -> bool:
     if severity in {"P0", "P1"} and str(payload.get("status") or "").upper() == "BLOCKED":
         return True
     return any(str(item.get("severity") or "").upper() in {"P0", "P1"} for item in _watchdog_guardian_issues(payload))
+
+
+def _watchdog_has_uncleared_p0_p1_issue(payload: dict[str, Any], rows: list[dict[str, Any]]) -> bool:
+    if not _watchdog_issue_status_blocks(payload):
+        return False
+    severe_issues = [
+        item
+        for item in _watchdog_guardian_issues(payload)
+        if str(item.get("severity") or "").upper() in {"P0", "P1"}
+    ]
+    if not severe_issues:
+        return True
+    cleared_keys = {
+        _classification_key(row)
+        for row in rows
+        if row.get("normal_routing_allowed") is True
+    }
+    for issue in severe_issues:
+        if _issue_code(issue) not in {ISSUE_CODE, OPERATOR_REVIEW_ISSUE_CODE}:
+            return True
+        if _issue_key(issue) not in cleared_keys:
+            return True
+    return False
 
 
 def _watchdog_guardian_issues(payload: dict[str, Any]) -> list[dict[str, Any]]:

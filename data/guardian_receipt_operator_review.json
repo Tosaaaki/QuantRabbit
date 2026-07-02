@@ -1,25 +1,58 @@
 {
+  "broker_truth_checked_at_utc": "2026-07-02T07:33:42.324184+00:00",
   "classifications": [
     {
-      "expires_at_utc": "2026-07-03T04:37:47+00:00",
-      "generated_at_utc": "2026-07-02T04:37:47+00:00",
+      "broker_truth_summary": {
+        "current_same_event_emergency_active": false,
+        "matching_current_guardian_dedupe_present": false,
+        "original_trade_id": "472944",
+        "original_trade_id_open": false,
+        "pending_reduce_harvest_cancel_receipt_active": false
+      },
+      "expires_at_utc": "2026-07-03T07:34:31+00:00",
+      "generated_at_utc": "2026-07-02T07:34:31+00:00",
       "no_live_side_effects": true,
-      "normal_routing_allowed": false,
-      "operator_decision": "OPERATOR_REQUESTS_KEEP_BLOCKED",
+      "normal_routing_allowed": true,
+      "operator_decision": "OPERATOR_ACKNOWLEDGED_HISTORICAL",
       "original_issue_code": "GUARDIAN_RECEIPT_NEEDS_OPERATOR_REVIEW",
-      "reason": "Expired REDUCE guardian receipt for event 832d2908eeb84b2f is historical but has not been explicitly cleared by a local operator decision file; ordinary fresh-entry routing remains blocked pending review.",
+      "reason": "original USD_JPY unknown/gateway-outside emergency no longer exists in current broker truth or current guardian events; receipt is historical evidence only",
       "receipt_action": "REDUCE",
       "receipt_event_id": "832d2908eeb84b2f",
-      "receipt_lifecycle": "EXPIRED"
+      "receipt_lifecycle": "EXPIRED",
+      "review_scope": "historical_receipt_only",
+      "same_event_emergency_active": false
     }
   ],
-  "generated_at_utc": "2026-07-02T04:37:47+00:00",
+  "current_blockers": [
+    {
+      "action_hint": "REDUCE",
+      "dedupe_key": "AUD_USD|GATEWAY_OUTSIDE_BROKER_POSITION|UNKNOWN_ORDER|REDUCE",
+      "event_id": "aafaf3622a11c9c7",
+      "issue_code": "CURRENT_GUARDIAN_P0_UNKNOWN_EXPOSURE",
+      "normal_routing_allowed": false,
+      "pair": "AUD_USD",
+      "reason": "current AUD_USD LONG 14000 owner unknown/gateway-outside exposure remains open with stop_loss=null",
+      "severity": "P0",
+      "trade_id": "472965"
+    },
+    {
+      "dedupe_key": "AUD_USD|SPREAD_ANOMALY_SAFETY_TRIGGER|SPREAD_ANOMALY|HOLD",
+      "event_id": "3ffe24ccc8b74a56",
+      "issue_code": "CURRENT_GUARDIAN_P1_SPREAD_ANOMALY",
+      "normal_routing_allowed": false,
+      "pair": "AUD_USD",
+      "reason": "current AUD_USD spread anomaly remains a P1 guardian issue",
+      "severity": "P1"
+    }
+  ],
+  "generated_at_utc": "2026-07-02T07:34:31+00:00",
   "live_side_effects": [],
   "no_live_side_effects": true,
   "normal_routing_allowed": false,
   "read_only": true,
-  "status": "GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED",
-  "unresolved_review_count": 1,
+  "current_p0_p1_blocks_routing": true,
+  "status": "GUARDIAN_RECEIPT_OPERATOR_REVIEW_CLEARED_CURRENT_P0_BLOCKS_ROUTING",
+  "unresolved_review_count": 0,
   "watchdog_issue_status": "P0",
   "watchdog_status": "BLOCKED"
 }
