@@ -86,6 +86,8 @@ class LiveOrderGatewayTest(unittest.TestCase):
             client = FakeExecutionClient()
             watchdog = root / "watchdog.json"
             consumption = root / "guardian_receipt_consumption.json"
+            operator_review = root / "guardian_receipt_operator_review.json"
+            broker_snapshot = root / "broker_snapshot.json"
             _write_gateway_guardian_watchdog_issue(watchdog)
 
             summary = LiveOrderGateway(
@@ -96,6 +98,8 @@ class LiveOrderGatewayTest(unittest.TestCase):
                 live_enabled=True,
                 qr_trader_run_watchdog_path=watchdog,
                 guardian_receipt_consumption_path=consumption,
+                guardian_receipt_operator_review_path=operator_review,
+                broker_snapshot_path=broker_snapshot,
             ).run(
                 intents_path=_intents(
                     root,
@@ -113,9 +117,9 @@ class LiveOrderGatewayTest(unittest.TestCase):
             self.assertEqual(client.orders, [])
             payload = json.loads((root / "request.json").read_text())
             codes = {issue["code"] for issue in payload["risk_issues"]}
-            self.assertIn("GUARDIAN_RECEIPT_NOT_CONSUMED_BY_TRADER_BLOCKS_NEW_ENTRY", codes)
+            self.assertIn("GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED", codes)
             self.assertIn(
-                "GUARDIAN_RECEIPT_NOT_CONSUMED_BY_TRADER_BLOCKS_NEW_ENTRY",
+                "GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED",
                 (root / "report.md").read_text(),
             )
 

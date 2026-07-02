@@ -124,6 +124,8 @@ class RiskEngineTest(unittest.TestCase):
         self._prior_bidask_rules = os.environ.get("QR_BIDASK_REPLAY_PRECISION_RULES")
         self._prior_guardian_watchdog = os.environ.get("QR_GUARDIAN_RECEIPT_WATCHDOG_PATH")
         self._prior_guardian_consumption = os.environ.get("QR_GUARDIAN_RECEIPT_CONSUMPTION_PATH")
+        self._prior_guardian_operator_review = os.environ.get("QR_GUARDIAN_RECEIPT_OPERATOR_REVIEW_PATH")
+        self._prior_guardian_broker_snapshot = os.environ.get("QR_GUARDIAN_RECEIPT_BROKER_SNAPSHOT_PATH")
         os.environ["QR_BIDASK_REPLAY_PRECISION_RULES"] = str(
             write_nonmatching_bidask_rules(Path(self._bidask_tmp.name))
         )
@@ -141,6 +143,14 @@ class RiskEngineTest(unittest.TestCase):
             os.environ.pop("QR_GUARDIAN_RECEIPT_CONSUMPTION_PATH", None)
         else:
             os.environ["QR_GUARDIAN_RECEIPT_CONSUMPTION_PATH"] = self._prior_guardian_consumption
+        if self._prior_guardian_operator_review is None:
+            os.environ.pop("QR_GUARDIAN_RECEIPT_OPERATOR_REVIEW_PATH", None)
+        else:
+            os.environ["QR_GUARDIAN_RECEIPT_OPERATOR_REVIEW_PATH"] = self._prior_guardian_operator_review
+        if self._prior_guardian_broker_snapshot is None:
+            os.environ.pop("QR_GUARDIAN_RECEIPT_BROKER_SNAPSHOT_PATH", None)
+        else:
+            os.environ["QR_GUARDIAN_RECEIPT_BROKER_SNAPSHOT_PATH"] = self._prior_guardian_broker_snapshot
         self._bidask_tmp.cleanup()
 
     def test_default_policy_has_no_jpy_loss_cap_literal(self) -> None:
@@ -185,9 +195,13 @@ class RiskEngineTest(unittest.TestCase):
             root = Path(tmp)
             watchdog = root / "watchdog.json"
             consumption = root / "guardian_receipt_consumption.json"
+            operator_review = root / "guardian_receipt_operator_review.json"
+            broker_snapshot = root / "broker_snapshot.json"
             _write_guardian_watchdog_issue(watchdog)
             os.environ["QR_GUARDIAN_RECEIPT_WATCHDOG_PATH"] = str(watchdog)
             os.environ["QR_GUARDIAN_RECEIPT_CONSUMPTION_PATH"] = str(consumption)
+            os.environ["QR_GUARDIAN_RECEIPT_OPERATOR_REVIEW_PATH"] = str(operator_review)
+            os.environ["QR_GUARDIAN_RECEIPT_BROKER_SNAPSHOT_PATH"] = str(broker_snapshot)
             intent = OrderIntent(
                 pair="EUR_USD",
                 side=Side.LONG,
@@ -202,7 +216,7 @@ class RiskEngineTest(unittest.TestCase):
 
             self.assertFalse(decision.allowed)
             self.assertIn(
-                "GUARDIAN_RECEIPT_NOT_CONSUMED_BY_TRADER_BLOCKS_NEW_ENTRY",
+                "GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED",
                 {issue.code for issue in decision.issues},
             )
 

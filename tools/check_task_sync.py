@@ -32,6 +32,17 @@ EXPECTED_QR_TRADER_GUARDIAN_STARTUP_READS = (
     "data/guardian_action_cycle_result.json",
     "data/guardian_trigger_contract.json",
     "docs/guardian_trigger_contract_report.md",
+    "data/guardian_receipt_consumption.json",
+    "docs/guardian_receipt_consumption_report.md",
+    "data/guardian_receipt_operator_review.json",
+    "docs/guardian_receipt_operator_review_report.md",
+    "data/qr_trader_run_watchdog.json",
+    "docs/qr_trader_run_watchdog_report.md",
+)
+SOURCE_DIRT_EXPLANATION_REQUIRED_PATHS = (
+    "src/quant_rabbit/automation.py",
+    "src/quant_rabbit/broker/execution.py",
+    "src/quant_rabbit/risk.py",
 )
 
 
@@ -84,6 +95,28 @@ def _load_toml_payload(text: str) -> dict[str, Any]:
         else:
             payload[key] = value
     return payload
+
+
+def unexplained_source_dirt(
+    status_lines: tuple[str, ...] | list[str],
+    explanations: dict[str, str],
+) -> list[str]:
+    dirty_paths = {_git_status_path(line) for line in status_lines}
+    required = set(SOURCE_DIRT_EXPLANATION_REQUIRED_PATHS)
+    return sorted(
+        path
+        for path in dirty_paths
+        if path in required and not str(explanations.get(path) or "").strip()
+    )
+
+
+def _git_status_path(line: str) -> str:
+    # `git status --short` is two status columns, a space, then the path. Rename
+    # output keeps the destination after ` -> `.
+    raw = str(line or "")[3:].strip()
+    if " -> " in raw:
+        raw = raw.rsplit(" -> ", 1)[-1]
+    return raw
 
 
 def main() -> int:

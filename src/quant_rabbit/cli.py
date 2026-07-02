@@ -102,6 +102,8 @@ from quant_rabbit.paths import (
     DEFAULT_GUARDIAN_EVENTS,
     DEFAULT_GUARDIAN_RECEIPT_CONSUMPTION,
     DEFAULT_GUARDIAN_RECEIPT_CONSUMPTION_REPORT,
+    DEFAULT_GUARDIAN_RECEIPT_OPERATOR_REVIEW,
+    DEFAULT_GUARDIAN_RECEIPT_OPERATOR_REVIEW_REPORT,
     DEFAULT_GUARDIAN_TRIGGER_CONTRACT,
     DEFAULT_GUARDIAN_TRIGGER_CONTRACT_REPORT,
     DEFAULT_GUARDIAN_WAKE_DISPATCHER_STATE,
@@ -193,6 +195,12 @@ from quant_rabbit.paths import (
     effective_oanda_universal_rotation_path,
 )
 from quant_rabbit.gpt_trader import DEFAULT_GPT_MAX_LANES, GPTTraderBrain, StaticTraderProvider, draft_trader_decision
+from quant_rabbit.guardian_receipt_consumption import load_guardian_receipt_consumption
+from quant_rabbit.guardian_receipt_operator_review import (
+    build_guardian_receipt_operator_review,
+    render_guardian_receipt_operator_review_report,
+    write_guardian_receipt_operator_review,
+)
 from quant_rabbit.instruments import DEFAULT_CONTEXT_ASSETS, DEFAULT_TRADER_PAIRS_ARG
 from quant_rabbit.replay import ReplayBacktester
 from quant_rabbit.risk import RiskEngine, RiskPolicy, resolve_max_loss_jpy
@@ -3746,6 +3754,11 @@ def main(argv: list[str] | None = None) -> int:
         type=Path,
         default=DEFAULT_GUARDIAN_RECEIPT_CONSUMPTION,
     )
+    p_support.add_argument(
+        "--guardian-receipt-operator-review",
+        type=Path,
+        default=DEFAULT_GUARDIAN_RECEIPT_OPERATOR_REVIEW,
+    )
     p_support.add_argument("--oanda-rotation-mining", type=Path, default=DEFAULT_OANDA_UNIVERSAL_ROTATION_MINING)
     p_support.add_argument("--bidask-replay-validation", type=Path, default=None)
     p_support.add_argument("--output", type=Path, default=DEFAULT_TRADER_SUPPORT_BOT)
@@ -3927,6 +3940,26 @@ def main(argv: list[str] | None = None) -> int:
         default=Path(os.environ.get("QR_GUARDIAN_ACTION_LIVE_ROOT", "/Users/tossaki/App/QuantRabbit-live")),
     )
 
+    p_guardian_review = sub.add_parser(
+        "guardian-receipt-operator-review",
+        help="Report or write explicit operator review classifications for expired guardian receipt blockers.",
+    )
+    p_guardian_review.add_argument("--qr-trader-run-watchdog", type=Path, default=DEFAULT_QR_TRADER_RUN_WATCHDOG)
+    p_guardian_review.add_argument(
+        "--guardian-receipt-consumption",
+        type=Path,
+        default=DEFAULT_GUARDIAN_RECEIPT_CONSUMPTION,
+    )
+    p_guardian_review.add_argument("--broker-snapshot", type=Path, default=DEFAULT_BROKER_SNAPSHOT)
+    p_guardian_review.add_argument(
+        "--operator-decision-file",
+        type=Path,
+        default=None,
+        help="Optional local JSON file with explicit operator decisions. Without it this command is report-only.",
+    )
+    p_guardian_review.add_argument("--output", type=Path, default=DEFAULT_GUARDIAN_RECEIPT_OPERATOR_REVIEW)
+    p_guardian_review.add_argument("--report", type=Path, default=DEFAULT_GUARDIAN_RECEIPT_OPERATOR_REVIEW_REPORT)
+
     p_plim = sub.add_parser(
         "generate-predictive-limits",
         help="Generate LIMIT orders from Grade-A forward-projection setups (path Step B + liquidity sweep fades).",
@@ -4082,6 +4115,11 @@ def main(argv: list[str] | None = None) -> int:
         type=Path,
         default=DEFAULT_GUARDIAN_RECEIPT_CONSUMPTION_REPORT,
     )
+    p_draft.add_argument(
+        "--guardian-receipt-operator-review",
+        type=Path,
+        default=DEFAULT_GUARDIAN_RECEIPT_OPERATOR_REVIEW,
+    )
     p_draft.add_argument("--output", type=Path, default=DEFAULT_CODEX_TRADER_DECISION_RESPONSE)
     p_draft.add_argument("--report", type=Path, default=DEFAULT_TRADER_DECISION_DRAFT_REPORT)
     p_draft.add_argument("--max-lanes", type=int, default=DEFAULT_GPT_MAX_LANES)
@@ -4105,6 +4143,11 @@ def main(argv: list[str] | None = None) -> int:
         "--guardian-receipt-consumption",
         type=Path,
         default=DEFAULT_GUARDIAN_RECEIPT_CONSUMPTION,
+    )
+    p_gpt.add_argument(
+        "--guardian-receipt-operator-review",
+        type=Path,
+        default=DEFAULT_GUARDIAN_RECEIPT_OPERATOR_REVIEW,
     )
     p_gpt.add_argument("--decision-response", type=Path, default=None)
     p_gpt.add_argument("--max-lanes", type=int, default=DEFAULT_GPT_MAX_LANES)
@@ -6261,6 +6304,7 @@ def main(argv: list[str] | None = None) -> int:
                 profit_capture_bot_path=args.profit_capture_bot,
                 qr_trader_run_watchdog_path=args.qr_trader_run_watchdog,
                 guardian_receipt_consumption_path=args.guardian_receipt_consumption,
+                guardian_receipt_operator_review_path=args.guardian_receipt_operator_review,
                 oanda_rotation_mining_path=args.oanda_rotation_mining,
                 bidask_replay_validation_path=args.bidask_replay_validation,
                 output_path=args.output,
@@ -7009,6 +7053,54 @@ def main(argv: list[str] | None = None) -> int:
             )
         )
         return 0 if result.get("status") != "REJECTED" else 2
+    if args.command == "guardian-receipt-operator-review":
+        try:
+            watchdog_payload = _load_json_object(args.qr_trader_run_watchdog) if args.qr_trader_run_watchdog.exists() else {}
+            consumption_payload = load_guardian_receipt_consumption(args.guardian_receipt_consumption)
+            broker_snapshot_payload = _load_json_object(args.broker_snapshot) if args.broker_snapshot.exists() else {}
+            operator_decision_payload = None
+            if args.operator_decision_file is not None:
+                if not args.operator_decision_file.exists():
+                    raise FileNotFoundError(f"operator decision file not found: {args.operator_decision_file}")
+                operator_decision_payload = _load_json_object(args.operator_decision_file)
+            review_payload = build_guardian_receipt_operator_review(
+                watchdog_payload,
+                consumption_payload,
+                broker_snapshot_payload=broker_snapshot_payload,
+                operator_decision_payload=operator_decision_payload,
+            )
+            wrote_artifacts = operator_decision_payload is not None
+            if wrote_artifacts:
+                write_guardian_receipt_operator_review(
+                    review_payload,
+                    output_path=args.output,
+                    report_path=args.report,
+                )
+            else:
+                _ = render_guardian_receipt_operator_review_report(review_payload)
+        except (OSError, json.JSONDecodeError, ValueError) as exc:
+            print(json.dumps({"error": str(exc)}, ensure_ascii=False, indent=2, sort_keys=True))
+            return 2
+        print(
+            json.dumps(
+                {
+                    "status": review_payload.get("status"),
+                    "normal_routing_allowed": review_payload.get("normal_routing_allowed"),
+                    "unresolved_review_count": review_payload.get("unresolved_review_count"),
+                    "rows": len(review_payload.get("classifications") or []),
+                    "wrote_artifacts": wrote_artifacts,
+                    "output_path": str(args.output) if wrote_artifacts else None,
+                    "report_path": str(args.report) if wrote_artifacts else None,
+                    "read_only": True,
+                    "no_live_side_effects": True,
+                    "live_side_effects": [],
+                },
+                ensure_ascii=False,
+                indent=2,
+                sort_keys=True,
+            )
+        )
+        return 0
     if args.command == "verify-projections":
         from quant_rabbit.strategy.projection_ledger import (
             compute_hit_rates,
@@ -7679,6 +7771,7 @@ def main(argv: list[str] | None = None) -> int:
                 qr_trader_run_watchdog_path=args.qr_trader_run_watchdog,
                 guardian_receipt_consumption_path=args.guardian_receipt_consumption,
                 guardian_receipt_consumption_report_path=args.guardian_receipt_consumption_report,
+                guardian_receipt_operator_review_path=args.guardian_receipt_operator_review,
                 output_path=args.output,
                 report_path=args.report,
                 max_lanes=args.max_lanes,
@@ -7732,6 +7825,7 @@ def main(argv: list[str] | None = None) -> int:
                 trader_overrides_path=args.trader_overrides,
                 qr_trader_run_watchdog_path=args.qr_trader_run_watchdog,
                 guardian_receipt_consumption_path=args.guardian_receipt_consumption,
+                guardian_receipt_operator_review_path=args.guardian_receipt_operator_review,
                 output_path=args.output,
                 report_path=args.report,
                 market_read_predictions_path=args.market_read_predictions,

@@ -1,0 +1,25 @@
+{
+  "classifications": [
+    {
+      "expires_at_utc": "2026-07-03T04:37:47+00:00",
+      "generated_at_utc": "2026-07-02T04:37:47+00:00",
+      "no_live_side_effects": true,
+      "normal_routing_allowed": false,
+      "operator_decision": "OPERATOR_REQUESTS_KEEP_BLOCKED",
+      "original_issue_code": "GUARDIAN_RECEIPT_NEEDS_OPERATOR_REVIEW",
+      "reason": "Expired REDUCE guardian receipt for event 832d2908eeb84b2f is historical but has not been explicitly cleared by a local operator decision file; ordinary fresh-entry routing remains blocked pending review.",
+      "receipt_action": "REDUCE",
+      "receipt_event_id": "832d2908eeb84b2f",
+      "receipt_lifecycle": "EXPIRED"
+    }
+  ],
+  "generated_at_utc": "2026-07-02T04:37:47+00:00",
+  "live_side_effects": [],
+  "no_live_side_effects": true,
+  "normal_routing_allowed": false,
+  "read_only": true,
+  "status": "GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED",
+  "unresolved_review_count": 1,
+  "watchdog_issue_status": "P0",
+  "watchdog_status": "BLOCKED"
+}

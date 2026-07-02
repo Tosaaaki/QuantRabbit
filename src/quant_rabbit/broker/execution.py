@@ -28,9 +28,11 @@ def _trader_sl_repair_disabled() -> bool:
     return os.environ.get("QR_TRADER_DISABLE_SL_REPAIR", "").strip() in {"1", "true", "TRUE", "yes", "YES"}
 from quant_rabbit.paths import (
     ROOT as _QR_ROOT,
+    DEFAULT_BROKER_SNAPSHOT,
     DEFAULT_DAILY_TARGET_STATE,
     DEFAULT_GUARDIAN_ACTION_RECEIPT,
     DEFAULT_GUARDIAN_RECEIPT_CONSUMPTION,
+    DEFAULT_GUARDIAN_RECEIPT_OPERATOR_REVIEW,
     DEFAULT_LIVE_ORDER_REQUEST,
     DEFAULT_LIVE_ORDER_STAGE_REPORT,
     DEFAULT_ORDER_INTENTS,
@@ -124,6 +126,8 @@ class LiveOrderGateway:
         guardian_action_receipt_path: Path | None = DEFAULT_GUARDIAN_ACTION_RECEIPT,
         qr_trader_run_watchdog_path: Path | None = DEFAULT_QR_TRADER_RUN_WATCHDOG,
         guardian_receipt_consumption_path: Path | None = DEFAULT_GUARDIAN_RECEIPT_CONSUMPTION,
+        guardian_receipt_operator_review_path: Path | None = DEFAULT_GUARDIAN_RECEIPT_OPERATOR_REVIEW,
+        broker_snapshot_path: Path | None = DEFAULT_BROKER_SNAPSHOT,
     ) -> None:
         self.client = client
         self.strategy_profile = strategy_profile
@@ -143,6 +147,8 @@ class LiveOrderGateway:
         self.guardian_action_receipt_path = guardian_action_receipt_path
         self.qr_trader_run_watchdog_path = qr_trader_run_watchdog_path
         self.guardian_receipt_consumption_path = guardian_receipt_consumption_path
+        self.guardian_receipt_operator_review_path = guardian_receipt_operator_review_path
+        self.broker_snapshot_path = broker_snapshot_path
 
     def run(
         self,
@@ -906,6 +912,8 @@ class LiveOrderGateway:
         return guardian_receipt_new_entry_blockers_from_paths(
             watchdog_path=self.qr_trader_run_watchdog_path,
             consumption_path=self.guardian_receipt_consumption_path,
+            operator_review_path=self.guardian_receipt_operator_review_path,
+            broker_snapshot_path=self.broker_snapshot_path,
         )
 
     def _resolve_gateway_max_loss_jpy(self) -> float:

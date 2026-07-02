@@ -1639,6 +1639,10 @@ from quant_rabbit.guardian_receipt_consumption import (
     load_guardian_receipt_consumption,
     write_guardian_receipt_consumption,
 )
+from quant_rabbit.guardian_receipt_operator_review import (
+    load_guardian_receipt_operator_review,
+    operator_review_status_summary,
+)
 from quant_rabbit.paths import (
     DEFAULT_AI_ATTACK_ADVICE,
     DEFAULT_BROKER_INSTRUMENTS,
@@ -1656,6 +1660,7 @@ from quant_rabbit.paths import (
     DEFAULT_FLOW_SNAPSHOT,
     DEFAULT_GUARDIAN_RECEIPT_CONSUMPTION,
     DEFAULT_GUARDIAN_RECEIPT_CONSUMPTION_REPORT,
+    DEFAULT_GUARDIAN_RECEIPT_OPERATOR_REVIEW,
     DEFAULT_GPT_TRADER_DECISION,
     DEFAULT_GPT_TRADER_DECISION_REPORT,
     DEFAULT_LEVELS_SNAPSHOT,
@@ -2078,6 +2083,7 @@ class GPTTraderBrain:
         news_health_path: Path = DEFAULT_NEWS_HEALTH,
         qr_trader_run_watchdog_path: Path = DEFAULT_QR_TRADER_RUN_WATCHDOG,
         guardian_receipt_consumption_path: Path = DEFAULT_GUARDIAN_RECEIPT_CONSUMPTION,
+        guardian_receipt_operator_review_path: Path = DEFAULT_GUARDIAN_RECEIPT_OPERATOR_REVIEW,
         output_path: Path = DEFAULT_GPT_TRADER_DECISION,
         report_path: Path = DEFAULT_GPT_TRADER_DECISION_REPORT,
         market_read_predictions_path: Path | None = None,
@@ -2119,6 +2125,7 @@ class GPTTraderBrain:
         self.news_health_path = news_health_path
         self.qr_trader_run_watchdog_path = qr_trader_run_watchdog_path
         self.guardian_receipt_consumption_path = guardian_receipt_consumption_path
+        self.guardian_receipt_operator_review_path = guardian_receipt_operator_review_path
         self.output_path = output_path
         self.report_path = report_path
         self.market_read_predictions_path = (
@@ -2205,6 +2212,9 @@ class GPTTraderBrain:
         qr_trader_run_watchdog = _load_optional_json(self.qr_trader_run_watchdog_path)
         guardian_receipt_consumption = consumption_status_summary(
             load_guardian_receipt_consumption(self.guardian_receipt_consumption_path)
+        )
+        guardian_receipt_operator_review = operator_review_status_summary(
+            load_guardian_receipt_operator_review(self.guardian_receipt_operator_review_path)
         )
         pairs = _pairs_from_lanes_and_positions(lanes, snapshot)
         currencies = _currencies_from_pairs(pairs)
@@ -2318,6 +2328,7 @@ class GPTTraderBrain:
             "news": _news_packet(news_items, news_health, pairs=pairs, currencies=currencies),
             "qr_trader_run_watchdog": _qr_trader_run_watchdog_packet(qr_trader_run_watchdog),
             "guardian_receipt_consumption": guardian_receipt_consumption,
+            "guardian_receipt_operator_review": guardian_receipt_operator_review,
             "market_status": _market_status_packet(market_status),
             "protection_sidecars": _protection_sidecars_packet(
                 snapshot=snapshot,
@@ -2526,7 +2537,7 @@ class DecisionVerifier:
             if guardian_receipt_trade_blockers:
                 issues.append(
                     VerificationIssue(
-                        BLOCK_NEW_ENTRY_CODE,
+                        _guardian_receipt_blocker_issue_code(guardian_receipt_trade_blockers),
                         "TRADE rejected because guardian receipt consumption blocks normal new-entry routing: "
                         + "; ".join(guardian_receipt_trade_blockers[:3]),
                     )
@@ -4467,14 +4478,19 @@ def draft_trader_decision(
     qr_trader_run_watchdog_path: Path = DEFAULT_QR_TRADER_RUN_WATCHDOG,
     guardian_receipt_consumption_path: Path = DEFAULT_GUARDIAN_RECEIPT_CONSUMPTION,
     guardian_receipt_consumption_report_path: Path = DEFAULT_GUARDIAN_RECEIPT_CONSUMPTION_REPORT,
+    guardian_receipt_operator_review_path: Path = DEFAULT_GUARDIAN_RECEIPT_OPERATOR_REVIEW,
     output_path: Path = DEFAULT_CODEX_TRADER_DECISION_RESPONSE,
     report_path: Path = DEFAULT_TRADER_DECISION_DRAFT_REPORT,
     max_lanes: int = DEFAULT_GPT_MAX_LANES,
 ) -> TraderDecisionDraftSummary:
     watchdog_payload = _load_optional_json(qr_trader_run_watchdog_path)
+    broker_snapshot_payload = _load_optional_json(snapshot_path)
+    operator_review_payload = load_guardian_receipt_operator_review(guardian_receipt_operator_review_path)
     consumption_payload = build_guardian_receipt_consumption(
         watchdog_payload,
         existing=load_guardian_receipt_consumption(guardian_receipt_consumption_path),
+        operator_review=operator_review_payload,
+        broker_snapshot=broker_snapshot_payload,
     )
     write_guardian_receipt_consumption(
         consumption_payload,
@@ -4517,6 +4533,7 @@ def draft_trader_decision(
         news_health_path=news_health_path,
         qr_trader_run_watchdog_path=qr_trader_run_watchdog_path,
         guardian_receipt_consumption_path=guardian_receipt_consumption_path,
+        guardian_receipt_operator_review_path=guardian_receipt_operator_review_path,
         max_lanes=max_lanes,
     )
     packet = brain._input_packet(snapshot_path)
@@ -4608,11 +4625,23 @@ def _guardian_receipt_consumption_trade_blockers(packet: dict[str, Any]) -> list
         packet.get("guardian_receipt_consumption")
         if isinstance(packet.get("guardian_receipt_consumption"), dict)
         else {},
+        packet.get("guardian_receipt_operator_review")
+        if isinstance(packet.get("guardian_receipt_operator_review"), dict)
+        else {},
+        packet.get("broker_snapshot") if isinstance(packet.get("broker_snapshot"), dict) else {},
     )
     return [
         f"{item.get('code') or BLOCK_NEW_ENTRY_CODE}: {item.get('message') or 'normal new-entry routing blocked'}"
         for item in blockers
     ]
+
+
+def _guardian_receipt_blocker_issue_code(blockers: list[str]) -> str:
+    for blocker in blockers:
+        code = str(blocker or "").split(":", 1)[0].strip()
+        if code:
+            return code
+    return BLOCK_NEW_ENTRY_CODE
 
 
 def _draft_candidate_lane_ids(packet: dict[str, Any], live_ready_lane_ids: list[str]) -> list[str]:
@@ -5592,10 +5621,17 @@ def _write_trader_decision_draft_report(
         if isinstance(input_packet.get("guardian_receipt_consumption"), dict)
         else {}
     )
+    operator_review = (
+        input_packet.get("guardian_receipt_operator_review")
+        if isinstance(input_packet.get("guardian_receipt_operator_review"), dict)
+        else {}
+    )
     lines.extend(
         [
             f"- Guardian receipt consumption: `{consumption.get('status')}` "
             f"normal_routing_allowed=`{consumption.get('normal_routing_allowed')}`",
+            f"- Guardian receipt operator review: `{operator_review.get('status')}` "
+            f"normal_routing_allowed=`{operator_review.get('normal_routing_allowed')}`",
         ]
     )
     lines.extend(_user_alpha_report_lines(input_packet.get("user_alpha_continuation"), decision=decision))
@@ -7915,6 +7951,9 @@ def _qr_trader_run_watchdog_packet(payload: dict[str, Any] | None) -> dict[str, 
         "available": True,
         "generated_at_utc": payload.get("generated_at_utc"),
         "status": payload.get("status"),
+        "runtime_status": payload.get("runtime_status"),
+        "issue_status": payload.get("issue_status"),
+        "overall_status": payload.get("overall_status"),
         "severity": payload.get("severity"),
         "last_trader_run_at": payload.get("last_trader_run_at"),
         "last_trader_run_source": payload.get("last_trader_run_source"),
@@ -7928,6 +7967,9 @@ def _qr_trader_run_watchdog_packet(payload: dict[str, Any] | None) -> dict[str, 
                 "receipt_event_id": item.get("receipt_event_id"),
                 "receipt_action": item.get("receipt_action"),
                 "receipt_lifecycle": item.get("receipt_lifecycle"),
+                "receipt_identity": item.get("receipt_identity"),
+                "receipt_source_paths": item.get("receipt_source_paths"),
+                "emergency_or_margin_risk": item.get("emergency_or_margin_risk"),
                 "consumed_by_trader": item.get("consumed_by_trader"),
                 "normal_routing_allowed": item.get("normal_routing_allowed"),
             }

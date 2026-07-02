@@ -17,12 +17,14 @@ from quant_rabbit.execution_timing_contracts import (
     repair_replay_contract_from_payload,
 )
 from quant_rabbit.guardian_receipt_consumption import consumption_status_summary
+from quant_rabbit.guardian_receipt_operator_review import operator_review_status_summary
 from quant_rabbit.paths import (
     DEFAULT_BIDASK_REPLAY_VALIDATION,
     DEFAULT_BROKER_SNAPSHOT,
     DEFAULT_DAILY_TARGET_STATE,
     DEFAULT_EXECUTION_TIMING_AUDIT,
     DEFAULT_GUARDIAN_RECEIPT_CONSUMPTION,
+    DEFAULT_GUARDIAN_RECEIPT_OPERATOR_REVIEW,
     DEFAULT_OANDA_UNIVERSAL_ROTATION_MINING,
     DEFAULT_OANDA_UNIVERSAL_ROTATION_PACKAGED_RULES,
     DEFAULT_ORDER_INTENTS,
@@ -197,6 +199,7 @@ class TraderSupportBot:
         profit_capture_bot_path: Path = DEFAULT_PROFIT_CAPTURE_BOT,
         qr_trader_run_watchdog_path: Path = DEFAULT_QR_TRADER_RUN_WATCHDOG,
         guardian_receipt_consumption_path: Path = DEFAULT_GUARDIAN_RECEIPT_CONSUMPTION,
+        guardian_receipt_operator_review_path: Path = DEFAULT_GUARDIAN_RECEIPT_OPERATOR_REVIEW,
         oanda_rotation_mining_path: Path = DEFAULT_OANDA_UNIVERSAL_ROTATION_MINING,
         oanda_rotation_packaged_path: Path = DEFAULT_OANDA_UNIVERSAL_ROTATION_PACKAGED_RULES,
         bidask_replay_validation_path: Path | None = None,
@@ -218,6 +221,12 @@ class TraderSupportBot:
         self.profit_capture_bot_path = profit_capture_bot_path
         self.qr_trader_run_watchdog_path = qr_trader_run_watchdog_path
         self.guardian_receipt_consumption_path = guardian_receipt_consumption_path
+        self.guardian_receipt_operator_review_path = (
+            guardian_receipt_operator_review_path
+            if guardian_receipt_operator_review_path != DEFAULT_GUARDIAN_RECEIPT_OPERATOR_REVIEW
+            or output_path == DEFAULT_TRADER_SUPPORT_BOT
+            else output_path.parent / DEFAULT_GUARDIAN_RECEIPT_OPERATOR_REVIEW.name
+        )
         self.oanda_rotation_mining_path = oanda_rotation_mining_path
         self.oanda_rotation_packaged_path = oanda_rotation_packaged_path
         self._read_oanda_rotation = (
@@ -268,6 +277,9 @@ class TraderSupportBot:
         qr_trader_run_watchdog = _watchdog_summary(_read_json(self.qr_trader_run_watchdog_path))
         guardian_receipt_consumption = consumption_status_summary(
             _read_json(self.guardian_receipt_consumption_path)
+        )
+        guardian_receipt_operator_review = operator_review_status_summary(
+            _read_json(self.guardian_receipt_operator_review_path)
         )
         oanda_rotation_effective_path = (
             effective_oanda_universal_rotation_path(
@@ -329,6 +341,7 @@ class TraderSupportBot:
             acceptance=acceptance,
             qr_trader_run_watchdog=qr_trader_run_watchdog,
             guardian_receipt_consumption=guardian_receipt_consumption,
+            guardian_receipt_operator_review=guardian_receipt_operator_review,
         )
         status = STATUS_BLOCKED if blockers else STATUS_READY
         actions = _operator_actions(
@@ -342,6 +355,7 @@ class TraderSupportBot:
             oanda_history_coverage=oanda_history_coverage,
             qr_trader_run_watchdog=qr_trader_run_watchdog,
             guardian_receipt_consumption=guardian_receipt_consumption,
+            guardian_receipt_operator_review=guardian_receipt_operator_review,
         )
         repair_requests = _build_repair_requests(
             guardian=guardian,
@@ -358,6 +372,7 @@ class TraderSupportBot:
             and bool(entry["live_ready_lanes"])
             and (not guardian["required"] or bool(guardian["active"]))
             and guardian_receipt_consumption.get("normal_routing_allowed") is not False
+            and guardian_receipt_operator_review.get("normal_routing_allowed") is not False
         )
         repair_basket_self_improvement_blockers = _repair_basket_self_improvement_blockers(
             p0_findings,
@@ -367,6 +382,7 @@ class TraderSupportBot:
             bool(entry["repair_live_ready"])
             and (not guardian["required"] or bool(guardian["active"]))
             and not repair_basket_self_improvement_blockers
+            and guardian_receipt_operator_review.get("normal_routing_allowed") is not False
         )
         _annotate_operational_target_firepower(
             acceptance["target_firepower"],
@@ -506,6 +522,18 @@ class TraderSupportBot:
                 for item in guardian_receipt_consumption.get("classifications", [])
                 if isinstance(item, dict)
             ],
+            "guardian_receipt_operator_review_status": guardian_receipt_operator_review.get("status"),
+            "guardian_receipt_operator_review_normal_routing_allowed": guardian_receipt_operator_review.get(
+                "normal_routing_allowed"
+            ),
+            "guardian_receipt_operator_review_unresolved_review_count": guardian_receipt_operator_review.get(
+                "unresolved_review_count"
+            ),
+            "guardian_receipt_operator_review_decisions": [
+                item.get("operator_decision")
+                for item in guardian_receipt_operator_review.get("classifications", [])
+                if isinstance(item, dict)
+            ],
             "guardian_receipt_recommended_next_action": _guardian_receipt_consumption_next_action(
                 qr_trader_run_watchdog,
                 guardian_receipt_consumption,
@@ -534,6 +562,7 @@ class TraderSupportBot:
                 "profit_capture_bot": str(self.profit_capture_bot_path),
                 "qr_trader_run_watchdog": str(self.qr_trader_run_watchdog_path),
                 "guardian_receipt_consumption": str(self.guardian_receipt_consumption_path),
+                "guardian_receipt_operator_review": str(self.guardian_receipt_operator_review_path),
                 "oanda_rotation_mining": str(self.oanda_rotation_mining_path),
                 "oanda_rotation_packaged": str(self.oanda_rotation_packaged_path),
                 "oanda_rotation_effective": str(oanda_rotation_effective_path),
@@ -552,6 +581,7 @@ class TraderSupportBot:
             "profit_capture": profit_capture,
             "qr_trader_run_watchdog": qr_trader_run_watchdog,
             "guardian_receipt_consumption": guardian_receipt_consumption,
+            "guardian_receipt_operator_review": guardian_receipt_operator_review,
             "current_profit_capture": current_profit_capture,
             "entry_readiness": entry,
             "oanda_history_coverage": oanda_history_coverage,
@@ -2871,6 +2901,7 @@ def _build_blockers(
     acceptance: dict[str, Any],
     qr_trader_run_watchdog: dict[str, Any],
     guardian_receipt_consumption: dict[str, Any],
+    guardian_receipt_operator_review: dict[str, Any],
 ) -> list[dict[str, Any]]:
     blockers: list[dict[str, Any]] = []
     if _watchdog_counts_as_support_blocker(qr_trader_run_watchdog):
@@ -2904,6 +2935,26 @@ def _build_blockers(
                     "guardian receipt consumption status does not allow normal new-entry routing; "
                     f"status={guardian_receipt_consumption.get('status')} "
                     f"classifications={','.join(classifications) or 'none'}"
+                ),
+            }
+        )
+    if (
+        guardian_receipt_operator_review.get("normal_routing_allowed") is False
+        and not guardian_receipt_operator_review.get("missing")
+    ):
+        decisions = [
+            str(item.get("operator_decision") or "")
+            for item in guardian_receipt_operator_review.get("classifications", [])
+            if isinstance(item, dict)
+        ]
+        blockers.append(
+            {
+                "code": "GUARDIAN_RECEIPT_OPERATOR_REVIEW_BLOCKS_NORMAL_ROUTING",
+                "severity": "P0",
+                "message": (
+                    "guardian receipt operator review does not allow normal new-entry routing; "
+                    f"status={guardian_receipt_operator_review.get('status')} "
+                    f"decisions={','.join(decisions) or 'none'}"
                 ),
             }
         )
@@ -3233,6 +3284,7 @@ def _operator_actions(
     oanda_history_coverage: dict[str, Any] | None = None,
     qr_trader_run_watchdog: dict[str, Any] | None = None,
     guardian_receipt_consumption: dict[str, Any] | None = None,
+    guardian_receipt_operator_review: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     broker = broker if isinstance(broker, dict) else {}
     qr_trader_run_watchdog = (
@@ -3240,6 +3292,9 @@ def _operator_actions(
     )
     guardian_receipt_consumption = (
         guardian_receipt_consumption if isinstance(guardian_receipt_consumption, dict) else {}
+    )
+    guardian_receipt_operator_review = (
+        guardian_receipt_operator_review if isinstance(guardian_receipt_operator_review, dict) else {}
     )
     actions: list[dict[str, Any]] = [
         {
@@ -3292,6 +3347,18 @@ def _operator_actions(
                     ),
                 }
             )
+    if guardian_receipt_operator_review.get("normal_routing_allowed") is False:
+        actions.append(
+            {
+                "code": "REVIEW_GUARDIAN_RECEIPT_OPERATOR_REVIEW",
+                "command": "sed -n '1,200p' docs/guardian_receipt_operator_review_report.md",
+                "requires_explicit_operator_approval": False,
+                "reason": (
+                    "operator review artifact exists but does not clear normal routing; inspect the "
+                    "decision row before any fresh-entry routing"
+                ),
+            }
+        )
     recommended = qr_trader_run_watchdog.get("recommended_operator_action")
     if isinstance(recommended, dict) and recommended.get("code") not in {
         None,

@@ -447,7 +447,7 @@ class QRTraderRunWatchdogTest(unittest.TestCase):
             _write_decision(root, _dt("2026-07-01T02:55:00+00:00"))
             _write_guardian_receipt(
                 root,
-                action="REDUCE",
+                action="HOLD",
                 generated_at=_dt("2026-07-01T01:10:00+00:00"),
                 expires_at=_dt("2026-07-01T02:25:00+00:00"),
                 consumed=False,
@@ -458,7 +458,7 @@ class QRTraderRunWatchdogTest(unittest.TestCase):
                 root,
                 issue_code="GUARDIAN_RECEIPT_NOT_CONSUMED_BY_TRADER",
                 event_id="receipt-expired-ack",
-                action="REDUCE",
+                action="HOLD",
                 lifecycle="EXPIRED",
                 classification="EXPIRED_ACKNOWLEDGED",
                 normal_routing_allowed=True,

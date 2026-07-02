@@ -55,6 +55,31 @@ class TaskSyncContractTest(unittest.TestCase):
 
             self.assertEqual(issues, [])
 
+    def test_source_dirt_check_requires_explanation_for_guarded_source_files(self) -> None:
+        dirty = [
+            " M src/quant_rabbit/automation.py",
+            " M docs/trader_decision_report.md",
+            " M src/quant_rabbit/risk.py",
+        ]
+
+        self.assertEqual(
+            check_task_sync.unexplained_source_dirt(
+                dirty,
+                {"src/quant_rabbit/automation.py": "committed prior guardian receipt gate hardening"},
+            ),
+            ["src/quant_rabbit/risk.py"],
+        )
+        self.assertEqual(
+            check_task_sync.unexplained_source_dirt(
+                dirty,
+                {
+                    "src/quant_rabbit/automation.py": "committed prior guardian receipt gate hardening",
+                    "src/quant_rabbit/risk.py": "committed prior guardian receipt gate hardening",
+                },
+            ),
+            [],
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

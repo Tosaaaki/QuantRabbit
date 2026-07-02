@@ -6,6 +6,14 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from quant_rabbit.guardian_receipt_operator_review import (
+    OPERATOR_REVIEW_REQUIRED_BLOCK_CODE,
+    load_guardian_receipt_operator_review,
+    operator_review_clearance_status,
+    operator_review_subjects_from_artifacts,
+    receipt_requires_operator_review,
+)
+
 
 ISSUE_CODE = "GUARDIAN_RECEIPT_NOT_CONSUMED_BY_TRADER"
 OPERATOR_REVIEW_ISSUE_CODE = "GUARDIAN_RECEIPT_NEEDS_OPERATOR_REVIEW"
@@ -46,6 +54,8 @@ def build_guardian_receipt_consumption(
     *,
     now_utc: datetime | None = None,
     existing: dict[str, Any] | None = None,
+    operator_review: dict[str, Any] | None = None,
+    broker_snapshot: dict[str, Any] | None = None,
     generated_by: str = "deterministic-preflight",
 ) -> dict[str, Any]:
     watchdog = watchdog_payload if isinstance(watchdog_payload, dict) else {}
@@ -56,11 +66,26 @@ def build_guardian_receipt_consumption(
         if _classification_key(item)
     }
     issues = _watchdog_guardian_issues(watchdog)
+    existing_review_required = [
+        _classification_row_as_issue(row)
+        for row in _classification_rows(existing)
+        if receipt_requires_operator_review(row)
+    ]
+    seen_issue_keys = {_issue_key(issue) for issue in issues}
+    for issue in existing_review_required:
+        key = _issue_key(issue)
+        if key not in seen_issue_keys:
+            issues.append(issue)
+            seen_issue_keys.add(key)
     rows: list[dict[str, Any]] = []
     for issue in issues:
         row = _classification_from_issue(
             issue,
             existing_by_key.get(_issue_key(issue)),
+            watchdog_payload=watchdog,
+            operator_review=operator_review,
+            broker_snapshot=broker_snapshot,
+            now_utc=now,
             generated_at_utc=now.isoformat(),
             generated_by=generated_by,
         )
@@ -190,29 +215,81 @@ def guardian_receipt_new_entry_blockers_from_paths(
     *,
     watchdog_path: Path | None = None,
     consumption_path: Path | None = None,
+    operator_review_path: Path | None = None,
+    broker_snapshot_path: Path | None = None,
 ) -> list[dict[str, str]]:
     watchdog = _read_json_path(_env_path("QR_GUARDIAN_RECEIPT_WATCHDOG_PATH", watchdog_path))
     consumption = load_guardian_receipt_consumption(
         _env_path("QR_GUARDIAN_RECEIPT_CONSUMPTION_PATH", consumption_path)
     )
-    return guardian_receipt_new_entry_blockers(watchdog, consumption)
+    operator_review = load_guardian_receipt_operator_review(
+        _env_path("QR_GUARDIAN_RECEIPT_OPERATOR_REVIEW_PATH", operator_review_path)
+    )
+    broker_snapshot = _read_json_path(_env_path("QR_GUARDIAN_RECEIPT_BROKER_SNAPSHOT_PATH", broker_snapshot_path))
+    return guardian_receipt_new_entry_blockers(watchdog, consumption, operator_review, broker_snapshot)
 
 
 def guardian_receipt_new_entry_blockers(
     watchdog_payload: dict[str, Any] | None,
     consumption_payload: dict[str, Any] | None,
+    operator_review_payload: dict[str, Any] | None = None,
+    broker_snapshot_payload: dict[str, Any] | None = None,
 ) -> list[dict[str, str]]:
+    watchdog = watchdog_payload if isinstance(watchdog_payload, dict) else {}
+    consumption = consumption_payload if isinstance(consumption_payload, dict) else {}
+    operator_review = operator_review_payload if isinstance(operator_review_payload, dict) else {}
+    broker_snapshot = broker_snapshot_payload if isinstance(broker_snapshot_payload, dict) else {}
+    blockers: list[dict[str, str]] = []
+    if _watchdog_issue_status_blocks(watchdog):
+        blockers.append(
+            {
+                "code": OPERATOR_REVIEW_REQUIRED_BLOCK_CODE,
+                "severity": "BLOCK",
+                "message": (
+                    "qr_trader_run_watchdog issue_status/severity is P0/P1; "
+                    "ordinary fresh-entry routing remains blocked until watchdog clears"
+                ),
+                "receipt_event_id": "",
+                "receipt_action": "",
+                "receipt_lifecycle": "",
+                "classification": "WATCHDOG_P0_P1",
+            }
+        )
+
+    for issue in operator_review_subjects_from_artifacts(watchdog, consumption):
+        status = operator_review_clearance_status(
+            issue,
+            operator_review,
+            watchdog_payload=watchdog,
+            broker_snapshot_payload=broker_snapshot,
+        )
+        if status.get("normal_routing_allowed") is True:
+            continue
+        blockers.append(
+            {
+                "code": OPERATOR_REVIEW_REQUIRED_BLOCK_CODE,
+                "severity": "BLOCK",
+                "message": (
+                    f"operator review required for receipt event={_issue_event_id(issue) or 'UNKNOWN'} "
+                    f"action={_issue_action(issue) or 'UNKNOWN'} lifecycle={_issue_lifecycle(issue) or 'UNKNOWN'} "
+                    f"status={status.get('status')}: {status.get('reason')}"
+                ),
+                "receipt_event_id": _issue_event_id(issue),
+                "receipt_action": _issue_action(issue),
+                "receipt_lifecycle": _issue_lifecycle(issue),
+                "classification": NEEDS_OPERATOR_REVIEW,
+            }
+        )
+
     issues = [
         issue
-        for issue in _watchdog_guardian_issues(watchdog_payload if isinstance(watchdog_payload, dict) else {})
+        for issue in _watchdog_guardian_issues(watchdog)
         if _issue_code(issue) in {ISSUE_CODE, OPERATOR_REVIEW_ISSUE_CODE}
+        and not receipt_requires_operator_review(issue)
     ]
-    if not issues:
-        return []
-    blockers: list[dict[str, str]] = []
     for issue in issues:
         acknowledgement = acknowledgement_for_receipt(
-            consumption_payload if isinstance(consumption_payload, dict) else {},
+            consumption,
             issue_code=_issue_code(issue),
             receipt_event_id=_issue_event_id(issue),
             receipt_action=_issue_action(issue),
@@ -241,6 +318,21 @@ def guardian_receipt_new_entry_blockers(
                 "classification": classification,
             }
         )
+    if consumption.get("normal_routing_allowed") is False and not blockers:
+        blockers.append(
+            {
+                "code": OPERATOR_REVIEW_REQUIRED_BLOCK_CODE,
+                "severity": "BLOCK",
+                "message": (
+                    f"guardian_receipt_consumption status={consumption.get('status')} "
+                    "has normal_routing_allowed=false"
+                ),
+                "receipt_event_id": "",
+                "receipt_action": "",
+                "receipt_lifecycle": "",
+                "classification": str(consumption.get("status") or "NORMAL_ROUTING_FALSE"),
+            }
+        )
     return blockers
 
 
@@ -248,9 +340,25 @@ def _classification_from_issue(
     issue: dict[str, Any],
     existing: dict[str, Any] | None,
     *,
+    watchdog_payload: dict[str, Any],
+    operator_review: dict[str, Any] | None,
+    broker_snapshot: dict[str, Any] | None,
+    now_utc: datetime,
     generated_at_utc: str,
     generated_by: str,
 ) -> dict[str, Any]:
+    review_required = receipt_requires_operator_review(issue)
+    review_status = (
+        operator_review_clearance_status(
+            issue,
+            operator_review,
+            watchdog_payload=watchdog_payload,
+            broker_snapshot_payload=broker_snapshot,
+            now_utc=now_utc,
+        )
+        if review_required
+        else None
+    )
     if isinstance(existing, dict):
         classification = str(existing.get("classification") or "").upper()
         if classification in CLASSIFICATIONS:
@@ -262,10 +370,24 @@ def _classification_from_issue(
             row.setdefault("consumed_by_trader", bool(issue.get("consumed_by_trader")))
             row.setdefault("generated_by", generated_by)
             row.setdefault("generated_at_utc", generated_at_utc)
-            row["normal_routing_allowed"] = _normal_allowed_for_classification(classification)
+            if review_required:
+                row["classification"] = NEEDS_OPERATOR_REVIEW
+                row["operator_review_required"] = True
+                row["operator_review_status"] = review_status.get("status") if isinstance(review_status, dict) else None
+                row["operator_review_reason"] = review_status.get("reason") if isinstance(review_status, dict) else None
+                row["normal_routing_allowed"] = (
+                    isinstance(review_status, dict) and review_status.get("normal_routing_allowed") is True
+                )
+                row["reason"] = _classification_reason(issue, NEEDS_OPERATOR_REVIEW, review_status=review_status)
+            else:
+                row["normal_routing_allowed"] = _normal_allowed_for_classification(classification)
             return row
 
     classification = _automatic_classification(issue)
+    normal_allowed = _normal_allowed_for_classification(classification)
+    if review_required:
+        classification = NEEDS_OPERATOR_REVIEW
+        normal_allowed = isinstance(review_status, dict) and review_status.get("normal_routing_allowed") is True
     return {
         "issue_code": _issue_code(issue),
         "receipt_event_id": _issue_event_id(issue),
@@ -275,8 +397,11 @@ def _classification_from_issue(
         "receipt_source_paths": issue.get("receipt_source_paths") if isinstance(issue.get("receipt_source_paths"), list) else [],
         "consumed_by_trader": bool(issue.get("consumed_by_trader")),
         "classification": classification,
-        "reason": _classification_reason(issue, classification),
-        "normal_routing_allowed": _normal_allowed_for_classification(classification),
+        "reason": _classification_reason(issue, classification, review_status=review_status),
+        "normal_routing_allowed": normal_allowed,
+        "operator_review_required": review_required,
+        "operator_review_status": review_status.get("status") if isinstance(review_status, dict) else None,
+        "operator_review_reason": review_status.get("reason") if isinstance(review_status, dict) else None,
         "generated_by": generated_by,
         "generated_at_utc": generated_at_utc,
     }
@@ -285,6 +410,8 @@ def _classification_from_issue(
 def _automatic_classification(issue: dict[str, Any]) -> str:
     if issue.get("consumed_by_trader") is True:
         return CONSUMED
+    if receipt_requires_operator_review(issue):
+        return NEEDS_OPERATOR_REVIEW
     if issue.get("emergency_or_margin_risk") is True:
         return NEEDS_OPERATOR_REVIEW
     lifecycle = _issue_lifecycle(issue)
@@ -300,7 +427,12 @@ def _automatic_classification(issue: dict[str, Any]) -> str:
     return NEEDS_OPERATOR_REVIEW
 
 
-def _classification_reason(issue: dict[str, Any], classification: str) -> str:
+def _classification_reason(
+    issue: dict[str, Any],
+    classification: str,
+    *,
+    review_status: dict[str, Any] | None = None,
+) -> str:
     lifecycle = _issue_lifecycle(issue) or "UNKNOWN"
     action = _issue_action(issue) or "UNKNOWN"
     event_id = _issue_event_id(issue) or "UNKNOWN"
@@ -314,6 +446,11 @@ def _classification_reason(issue: dict[str, Any], classification: str) -> str:
         return f"Receipt event {event_id} {action} is stale: lifecycle={lifecycle} and the next trader window was missed."
     if classification == REJECTED_ACKNOWLEDGED:
         return f"Receipt event {event_id} {action} is lifecycle REJECTED and is acknowledged as non-executable."
+    if isinstance(review_status, dict):
+        return (
+            f"Receipt event {event_id} {action} requires operator review before normal new-entry routing; "
+            f"operator_review_status={review_status.get('status')}, reason={review_status.get('reason')}."
+        )
     return (
         f"Receipt event {event_id} {action} requires operator review before normal new-entry routing; "
         f"lifecycle={lifecycle}, severity={issue.get('severity')}."
@@ -322,6 +459,16 @@ def _classification_reason(issue: dict[str, Any], classification: str) -> str:
 
 def _normal_allowed_for_classification(classification: str) -> bool:
     return classification in ACKNOWLEDGED_CLASSIFICATIONS
+
+
+def _watchdog_issue_status_blocks(payload: dict[str, Any]) -> bool:
+    issue_status = str(payload.get("issue_status") or "").upper()
+    if issue_status in {"P0", "P1"}:
+        return True
+    severity = str(payload.get("severity") or "").upper()
+    if severity in {"P0", "P1"} and str(payload.get("status") or "").upper() == "BLOCKED":
+        return True
+    return any(str(item.get("severity") or "").upper() in {"P0", "P1"} for item in _watchdog_guardian_issues(payload))
 
 
 def _watchdog_guardian_issues(payload: dict[str, Any]) -> list[dict[str, Any]]:
@@ -335,6 +482,20 @@ def _watchdog_guardian_issues(payload: dict[str, Any]) -> list[dict[str, Any]]:
     return [item for item in issues if isinstance(item, dict)]
 
 
+def _classification_row_as_issue(row: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "code": row.get("issue_code") or ISSUE_CODE,
+        "receipt_event_id": row.get("receipt_event_id"),
+        "receipt_action": row.get("receipt_action"),
+        "receipt_lifecycle": row.get("receipt_lifecycle"),
+        "receipt_identity": row.get("receipt_identity"),
+        "receipt_source_paths": row.get("receipt_source_paths") if isinstance(row.get("receipt_source_paths"), list) else [],
+        "consumed_by_trader": row.get("consumed_by_trader"),
+        "classification": row.get("classification"),
+        "normal_routing_allowed": row.get("normal_routing_allowed"),
+    }
+
+
 def _env_path(name: str, fallback: Path | None) -> Path:
     raw = os.environ.get(name)
     if raw:
@@ -345,6 +506,10 @@ def _env_path(name: str, fallback: Path | None) -> Path:
 
     if name == "QR_GUARDIAN_RECEIPT_WATCHDOG_PATH":
         return ROOT / "data" / "qr_trader_run_watchdog.json"
+    if name == "QR_GUARDIAN_RECEIPT_OPERATOR_REVIEW_PATH":
+        return ROOT / "data" / "guardian_receipt_operator_review.json"
+    if name == "QR_GUARDIAN_RECEIPT_BROKER_SNAPSHOT_PATH":
+        return ROOT / "data" / "broker_snapshot.json"
     return ROOT / "data" / "guardian_receipt_consumption.json"
 
 

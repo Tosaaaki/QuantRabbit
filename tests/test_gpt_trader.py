@@ -256,6 +256,32 @@ class GPTTraderBrainTest(unittest.TestCase):
             self.assertFalse(consumption["classifications"][0]["consumed_by_trader"])
             self.assertTrue(files["guardian_receipt_consumption_report"].exists())
 
+    def test_draft_records_reduce_receipt_operator_review_before_normal_routing(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root)
+            _write_watchdog_guardian_issue(
+                files["qr_trader_run_watchdog"],
+                lifecycle="EXPIRED",
+                action="REDUCE",
+                event_id="receipt-expired-reduce",
+                emergency_or_margin_risk=False,
+            )
+
+            summary = _draft(root, files)
+
+            self.assertEqual(summary.status, "DRAFT_REQUIRES_OPERATOR_REVIEW")
+            self.assertEqual(summary.action, "WAIT")
+            self.assertIn("GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED", " ".join(summary.blockers))
+            consumption = json.loads(files["guardian_receipt_consumption"].read_text())
+            self.assertFalse(consumption["normal_routing_allowed"])
+            self.assertEqual(consumption["classifications"][0]["classification"], "NEEDS_OPERATOR_REVIEW")
+            self.assertEqual(consumption["classifications"][0]["operator_review_status"], "OPERATOR_REVIEW_MISSING")
+            self.assertIn(
+                "Guardian receipt operator review",
+                (root / "trader_decision_draft.md").read_text(),
+            )
+
     def test_draft_blocks_normal_trade_when_guardian_receipt_needs_operator_review(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -272,7 +298,7 @@ class GPTTraderBrainTest(unittest.TestCase):
 
             self.assertEqual(summary.status, "DRAFT_REQUIRES_OPERATOR_REVIEW")
             self.assertEqual(summary.action, "WAIT")
-            self.assertIn("GUARDIAN_RECEIPT_NOT_CONSUMED_BY_TRADER_BLOCKS_NEW_ENTRY", " ".join(summary.blockers))
+            self.assertIn("GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED", " ".join(summary.blockers))
             consumption = json.loads(files["guardian_receipt_consumption"].read_text())
             self.assertFalse(consumption["normal_routing_allowed"])
             self.assertEqual(consumption["classifications"][0]["classification"], "NEEDS_OPERATOR_REVIEW")
@@ -296,7 +322,7 @@ class GPTTraderBrainTest(unittest.TestCase):
             self.assertEqual(summary.status, "REJECTED")
             payload = json.loads((root / "gpt_decision.json").read_text())
             codes = {issue["code"] for issue in payload["verification_issues"]}
-            self.assertIn("GUARDIAN_RECEIPT_NOT_CONSUMED_BY_TRADER_BLOCKS_NEW_ENTRY", codes)
+            self.assertIn("GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED", codes)
 
     def test_regression_blocks_aud_usd_campaign_recovery_when_reduce_receipt_unconsumed(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -336,9 +362,9 @@ class GPTTraderBrainTest(unittest.TestCase):
             self.assertEqual(summary.status, "REJECTED")
             payload = json.loads((root / "gpt_decision.json").read_text())
             codes = {issue["code"] for issue in payload["verification_issues"]}
-            self.assertIn("GUARDIAN_RECEIPT_NOT_CONSUMED_BY_TRADER_BLOCKS_NEW_ENTRY", codes)
+            self.assertIn("GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED", codes)
             report = (root / "gpt_decision.md").read_text()
-            self.assertIn("GUARDIAN_RECEIPT_NOT_CONSUMED_BY_TRADER_BLOCKS_NEW_ENTRY", report)
+            self.assertIn("GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED", report)
 
     def test_draft_cites_user_alpha_when_selected_lane_continues_it(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -4131,6 +4157,7 @@ def _brain(root: Path, files: dict[str, Path], decision: dict, *, max_lanes: int
         news_health_path=files["news_health"],
         qr_trader_run_watchdog_path=files["qr_trader_run_watchdog"],
         guardian_receipt_consumption_path=files["guardian_receipt_consumption"],
+        guardian_receipt_operator_review_path=files["guardian_receipt_operator_review"],
         **({"max_lanes": max_lanes} if max_lanes is not None else {}),
     )
 
@@ -4175,6 +4202,7 @@ def _draft(root: Path, files: dict[str, Path]):
         qr_trader_run_watchdog_path=files["qr_trader_run_watchdog"],
         guardian_receipt_consumption_path=files["guardian_receipt_consumption"],
         guardian_receipt_consumption_report_path=files["guardian_receipt_consumption_report"],
+        guardian_receipt_operator_review_path=files["guardian_receipt_operator_review"],
     )
 
 
@@ -4272,6 +4300,7 @@ def _fixtures(root: Path, *, positions: list[dict] | None = None, orders: list[d
         "qr_trader_run_watchdog": root / "qr_trader_run_watchdog.json",
         "guardian_receipt_consumption": root / "guardian_receipt_consumption.json",
         "guardian_receipt_consumption_report": root / "guardian_receipt_consumption_report.md",
+        "guardian_receipt_operator_review": root / "guardian_receipt_operator_review.json",
     }
     now = datetime.now(timezone.utc).isoformat()
     files["snapshot"].write_text(
