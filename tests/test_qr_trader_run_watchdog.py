@@ -40,6 +40,10 @@ class QRTraderRunWatchdogTest(unittest.TestCase):
             self.assertTrue(paths.output_log.exists())
             self.assertEqual(payload["last_trader_run_source"], "qr_trader_automation_memory.timestamp")
             self.assertEqual(payload["last_trader_run_path"], str(automation_dir / "memory.md"))
+            self.assertEqual(
+                payload["accepted_timestamp_candidate"]["source"],
+                "qr_trader_automation_memory.timestamp",
+            )
 
     def test_active_stale_run_is_stale(self) -> None:
         now = _dt("2026-07-01T03:00:00+00:00")
@@ -307,6 +311,67 @@ class QRTraderRunWatchdogTest(unittest.TestCase):
             self.assertIn("guardian_action_receipt.expires_at_utc", rejected_sources)
             self.assertIn("guardian_action_receipt.generated_at_utc", rejected_sources)
 
+    def test_receipt_timestamps_inside_memory_are_rejected_as_last_trader_run(self) -> None:
+        now = _dt("2026-07-01T03:00:00+00:00")
+        with tempfile.TemporaryDirectory() as tmp:
+            _, automation_dir, paths = _fixture(tmp, now=now)
+            _write_automation(automation_dir)
+            (automation_dir / "memory.md").write_text(
+                "\n".join(
+                    [
+                        "# memory",
+                        "- Guardian receipt expires_at_utc=2026-07-01T02:59:00+00:00 remains open.",
+                        "- Guardian receipt generated_at_utc=2026-07-01T02:58:00+00:00 was reviewed.",
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            payload = run_watchdog(paths=paths, now_utc=now)
+
+            self.assertIsNone(payload["last_trader_run_at"])
+            self.assertIsNone(payload["accepted_timestamp_candidate"])
+            memory_rejections = [
+                item
+                for item in payload["rejected_timestamp_candidates"]
+                if item["source"] == "qr_trader_automation_memory.timestamp"
+            ]
+            reasons = {item["rejected_reason"] for item in memory_rejections}
+            self.assertIn("receipt expiry timestamp is not trader-run evidence", reasons)
+            self.assertIn("receipt or guardian generated_at timestamp is not trader-run evidence", reasons)
+
+    def test_json_and_code_block_timestamps_inside_memory_are_rejected(self) -> None:
+        now = _dt("2026-07-01T03:00:00+00:00")
+        with tempfile.TemporaryDirectory() as tmp:
+            _, automation_dir, paths = _fixture(tmp, now=now)
+            _write_automation(automation_dir)
+            (automation_dir / "memory.md").write_text(
+                "\n".join(
+                    [
+                        "# memory",
+                        '> {"generated_at_utc": "2026-07-01T02:59:00+00:00"}',
+                        "```json",
+                        '{"ts": "2026-07-01T02:58:00+00:00", "action": "WAIT"}',
+                        "```",
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            payload = run_watchdog(paths=paths, now_utc=now)
+
+            self.assertIsNone(payload["last_trader_run_at"])
+            memory_rejections = [
+                item
+                for item in payload["rejected_timestamp_candidates"]
+                if item["source"] == "qr_trader_automation_memory.timestamp"
+            ]
+            reasons = {item["rejected_reason"] for item in memory_rejections}
+            self.assertIn("timestamp appears inside a JSON snippet or quoted JSON block", reasons)
+            self.assertIn("timestamp appears inside a code block", reasons)
+
     def test_guardian_review_and_trigger_deadline_are_rejected_as_last_trader_run(self) -> None:
         now = _dt("2026-07-01T03:00:00+00:00")
         with tempfile.TemporaryDirectory() as tmp:
@@ -362,6 +427,35 @@ class QRTraderRunWatchdogTest(unittest.TestCase):
 
             self.assertEqual(payload["last_trader_run_at"], "2026-07-01T02:58:00+00:00")
             self.assertEqual(payload["last_trader_run_source"], "qr_trader_automation_memory.timestamp")
+            self.assertEqual(
+                payload["accepted_timestamp_candidate"]["timestamp_utc"],
+                "2026-07-01T02:58:00+00:00",
+            )
+
+    def test_automation_memory_hourly_trader_cycle_heading_is_accepted(self) -> None:
+        now = _dt("2026-07-01T03:00:00+00:00")
+        with tempfile.TemporaryDirectory() as tmp:
+            _, automation_dir, paths = _fixture(tmp, now=now)
+            _write_automation(automation_dir)
+            (automation_dir / "memory.md").write_text(
+                "2026-07-01T02:58Z hourly trader cycle:\n"
+                "- Guardian receipt expiring 2026-07-01T03:20:00+00:00 was reviewed.\n",
+                encoding="utf-8",
+            )
+
+            payload = run_watchdog(paths=paths, now_utc=now)
+
+            self.assertEqual(payload["last_trader_run_at"], "2026-07-01T02:58:00+00:00")
+            memory_rejections = [
+                item
+                for item in payload["rejected_timestamp_candidates"]
+                if item["source"] == "qr_trader_automation_memory.timestamp"
+            ]
+            self.assertEqual(len(memory_rejections), 1)
+            self.assertEqual(
+                memory_rejections[0]["rejected_reason"],
+                "receipt expiry timestamp is not trader-run evidence",
+            )
 
     def test_decision_artifact_generated_at_requires_trader_decision_shape(self) -> None:
         now = _dt("2026-07-01T03:00:00+00:00")
@@ -628,7 +722,7 @@ def _write_journal(root: Path, generated_at: datetime) -> None:
 
 def _write_memory(automation_dir: Path, generated_at: datetime) -> None:
     memory = automation_dir / "memory.md"
-    memory.write_text(f"# memory\n\n- {generated_at.isoformat()} trader cycle complete\n", encoding="utf-8")
+    memory.write_text(f"# memory\n\n- {generated_at.isoformat()} qr-trader run completed\n", encoding="utf-8")
     os.utime(memory, (generated_at.timestamp(), generated_at.timestamp()))
 
 

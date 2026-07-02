@@ -118,9 +118,36 @@ def _write_guardian_watchdog_issue(path: Path) -> None:
     )
 
 
+def _write_empty_guardian_artifacts(root: Path) -> dict[str, Path]:
+    paths = {
+        "watchdog": root / "watchdog.json",
+        "consumption": root / "guardian_receipt_consumption.json",
+        "operator_review": root / "guardian_receipt_operator_review.json",
+        "broker_snapshot": root / "broker_snapshot.json",
+    }
+    paths["watchdog"].write_text(
+        json.dumps({"status": "OK", "issue_status": "OK", "guardian_receipt": {"issues": []}}),
+        encoding="utf-8",
+    )
+    paths["consumption"].write_text(
+        json.dumps({"status": "OK", "normal_routing_allowed": True, "classifications": []}),
+        encoding="utf-8",
+    )
+    paths["operator_review"].write_text(
+        json.dumps({"status": "OK", "normal_routing_allowed": True, "reviews": []}),
+        encoding="utf-8",
+    )
+    paths["broker_snapshot"].write_text(
+        json.dumps({"generated_at_utc": datetime.now(timezone.utc).isoformat(), "positions": [], "orders": []}),
+        encoding="utf-8",
+    )
+    return paths
+
+
 class RiskEngineTest(unittest.TestCase):
     def setUp(self) -> None:
         self._bidask_tmp = tempfile.TemporaryDirectory()
+        self._guardian_tmp = tempfile.TemporaryDirectory()
         self._prior_bidask_rules = os.environ.get("QR_BIDASK_REPLAY_PRECISION_RULES")
         self._prior_guardian_watchdog = os.environ.get("QR_GUARDIAN_RECEIPT_WATCHDOG_PATH")
         self._prior_guardian_consumption = os.environ.get("QR_GUARDIAN_RECEIPT_CONSUMPTION_PATH")
@@ -129,6 +156,11 @@ class RiskEngineTest(unittest.TestCase):
         os.environ["QR_BIDASK_REPLAY_PRECISION_RULES"] = str(
             write_nonmatching_bidask_rules(Path(self._bidask_tmp.name))
         )
+        guardian_paths = _write_empty_guardian_artifacts(Path(self._guardian_tmp.name))
+        os.environ["QR_GUARDIAN_RECEIPT_WATCHDOG_PATH"] = str(guardian_paths["watchdog"])
+        os.environ["QR_GUARDIAN_RECEIPT_CONSUMPTION_PATH"] = str(guardian_paths["consumption"])
+        os.environ["QR_GUARDIAN_RECEIPT_OPERATOR_REVIEW_PATH"] = str(guardian_paths["operator_review"])
+        os.environ["QR_GUARDIAN_RECEIPT_BROKER_SNAPSHOT_PATH"] = str(guardian_paths["broker_snapshot"])
 
     def tearDown(self) -> None:
         if self._prior_bidask_rules is None:
@@ -152,6 +184,7 @@ class RiskEngineTest(unittest.TestCase):
         else:
             os.environ["QR_GUARDIAN_RECEIPT_BROKER_SNAPSHOT_PATH"] = self._prior_guardian_broker_snapshot
         self._bidask_tmp.cleanup()
+        self._guardian_tmp.cleanup()
 
     def test_default_policy_has_no_jpy_loss_cap_literal(self) -> None:
         self.assertIsNone(RiskPolicy().max_loss_jpy)
@@ -219,6 +252,41 @@ class RiskEngineTest(unittest.TestCase):
                 "GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED",
                 {issue.code for issue in decision.issues},
             )
+
+    def test_missing_quote_live_send_blocker_is_separate_from_guardian_blocker(self) -> None:
+        now = datetime.now(timezone.utc)
+        snap = BrokerSnapshot(
+            fetched_at_utc=now,
+            positions=(),
+            orders=(),
+            quotes={
+                "USD_JPY": Quote("USD_JPY", bid=156.640, ask=156.648, timestamp_utc=now),
+            },
+            account=AccountSummary(
+                nav_jpy=200_000.0,
+                balance_jpy=200_000.0,
+                margin_used_jpy=0.0,
+                margin_available_jpy=200_000.0,
+                fetched_at_utc=now,
+            ),
+        )
+        intent = OrderIntent(
+            pair="EUR_USD",
+            side=Side.LONG,
+            order_type=OrderType.MARKET,
+            units=3000,
+            tp=1.17554,
+            sl=1.17234,
+            thesis="missing_quote_must_surface_without_live_artifact_leak",
+        )
+
+        decision = _capped_engine(live_enabled=True).validate(intent, snap, for_live_send=True)
+
+        codes = {issue.code for issue in decision.issues}
+        self.assertFalse(decision.allowed)
+        self.assertIn("MISSING_QUOTE", codes)
+        self.assertNotIn("GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED", codes)
+        self.assertNotIn("GUARDIAN_RECEIPT_NOT_CONSUMED_BY_TRADER_BLOCKS_NEW_ENTRY", codes)
 
     def test_validation_time_freezes_quote_freshness_for_batch_generation(self) -> None:
         quote_time = datetime(2026, 5, 19, 0, 0, tzinfo=timezone.utc)

@@ -21,17 +21,44 @@ TEST_DAILY_RISK_BUDGET_JPY = 50_000.0
 
 class LiveOrderGatewayTest(unittest.TestCase):
     def setUp(self) -> None:
+        self._guardian_tmp = tempfile.TemporaryDirectory()
         self._original_per_trade_reader = execution_module._per_trade_risk_from_state
         self._original_daily_budget_reader = execution_module._daily_risk_budget_from_state
         self._original_target_trades_reader = execution_module._target_trades_per_day_from_state
+        self._prior_guardian_watchdog = os.environ.get("QR_GUARDIAN_RECEIPT_WATCHDOG_PATH")
+        self._prior_guardian_consumption = os.environ.get("QR_GUARDIAN_RECEIPT_CONSUMPTION_PATH")
+        self._prior_guardian_operator_review = os.environ.get("QR_GUARDIAN_RECEIPT_OPERATOR_REVIEW_PATH")
+        self._prior_guardian_broker_snapshot = os.environ.get("QR_GUARDIAN_RECEIPT_BROKER_SNAPSHOT_PATH")
         execution_module._per_trade_risk_from_state = lambda: TEST_PER_TRADE_RISK_JPY
         execution_module._daily_risk_budget_from_state = lambda path=None: TEST_DAILY_RISK_BUDGET_JPY
         execution_module._target_trades_per_day_from_state = lambda path=None: None
+        guardian_paths = _write_empty_guardian_artifacts(Path(self._guardian_tmp.name))
+        os.environ["QR_GUARDIAN_RECEIPT_WATCHDOG_PATH"] = str(guardian_paths["watchdog"])
+        os.environ["QR_GUARDIAN_RECEIPT_CONSUMPTION_PATH"] = str(guardian_paths["consumption"])
+        os.environ["QR_GUARDIAN_RECEIPT_OPERATOR_REVIEW_PATH"] = str(guardian_paths["operator_review"])
+        os.environ["QR_GUARDIAN_RECEIPT_BROKER_SNAPSHOT_PATH"] = str(guardian_paths["broker_snapshot"])
 
     def tearDown(self) -> None:
         execution_module._per_trade_risk_from_state = self._original_per_trade_reader
         execution_module._daily_risk_budget_from_state = self._original_daily_budget_reader
         execution_module._target_trades_per_day_from_state = self._original_target_trades_reader
+        if self._prior_guardian_watchdog is None:
+            os.environ.pop("QR_GUARDIAN_RECEIPT_WATCHDOG_PATH", None)
+        else:
+            os.environ["QR_GUARDIAN_RECEIPT_WATCHDOG_PATH"] = self._prior_guardian_watchdog
+        if self._prior_guardian_consumption is None:
+            os.environ.pop("QR_GUARDIAN_RECEIPT_CONSUMPTION_PATH", None)
+        else:
+            os.environ["QR_GUARDIAN_RECEIPT_CONSUMPTION_PATH"] = self._prior_guardian_consumption
+        if self._prior_guardian_operator_review is None:
+            os.environ.pop("QR_GUARDIAN_RECEIPT_OPERATOR_REVIEW_PATH", None)
+        else:
+            os.environ["QR_GUARDIAN_RECEIPT_OPERATOR_REVIEW_PATH"] = self._prior_guardian_operator_review
+        if self._prior_guardian_broker_snapshot is None:
+            os.environ.pop("QR_GUARDIAN_RECEIPT_BROKER_SNAPSHOT_PATH", None)
+        else:
+            os.environ["QR_GUARDIAN_RECEIPT_BROKER_SNAPSHOT_PATH"] = self._prior_guardian_broker_snapshot
+        self._guardian_tmp.cleanup()
 
     def test_stages_oanda_stop_order_without_sending(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -89,6 +116,10 @@ class LiveOrderGatewayTest(unittest.TestCase):
             operator_review = root / "guardian_receipt_operator_review.json"
             broker_snapshot = root / "broker_snapshot.json"
             _write_gateway_guardian_watchdog_issue(watchdog)
+            os.environ["QR_GUARDIAN_RECEIPT_WATCHDOG_PATH"] = str(watchdog)
+            os.environ["QR_GUARDIAN_RECEIPT_CONSUMPTION_PATH"] = str(consumption)
+            os.environ["QR_GUARDIAN_RECEIPT_OPERATOR_REVIEW_PATH"] = str(operator_review)
+            os.environ["QR_GUARDIAN_RECEIPT_BROKER_SNAPSHOT_PATH"] = str(broker_snapshot)
 
             summary = LiveOrderGateway(
                 client=client,
@@ -103,11 +134,11 @@ class LiveOrderGatewayTest(unittest.TestCase):
             ).run(
                 intents_path=_intents(
                     root,
-                    pair="AUD_USD",
-                    lane_id="campaign_exposure_recovery:AUD_USD:LONG:TREND_CONTINUATION",
+                    pair="EUR_USD",
+                    lane_id="campaign_exposure_recovery:EUR_USD:LONG:TREND_CONTINUATION",
                     metadata={"desk": "campaign_exposure_recovery", "campaign_role": "NOW"},
                 ),
-                lane_id="campaign_exposure_recovery:AUD_USD:LONG:TREND_CONTINUATION",
+                lane_id="campaign_exposure_recovery:EUR_USD:LONG:TREND_CONTINUATION",
                 send=True,
                 confirm_live=True,
             )
@@ -122,6 +153,33 @@ class LiveOrderGatewayTest(unittest.TestCase):
                 "GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED",
                 (root / "report.md").read_text(),
             )
+
+    def test_missing_quote_blocks_send_without_guardian_artifact_leak(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            client = FakeExecutionClient()
+
+            summary = LiveOrderGateway(
+                client=client,
+                strategy_profile=_profile(root, pair="AUD_USD"),
+                output_path=root / "request.json",
+                report_path=root / "report.md",
+                live_enabled=True,
+            ).run(
+                intents_path=_intents(root, pair="AUD_USD", lane_id="lane:AUD_USD:LONG"),
+                lane_id="lane:AUD_USD:LONG",
+                send=True,
+                confirm_live=True,
+            )
+
+            self.assertEqual(summary.status, "BLOCKED")
+            self.assertFalse(summary.sent)
+            self.assertEqual(client.orders, [])
+            payload = json.loads((root / "request.json").read_text())
+            codes = {issue["code"] for issue in payload["risk_issues"]}
+            self.assertIn("MISSING_QUOTE", codes)
+            self.assertNotIn("GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED", codes)
+            self.assertNotIn("GUARDIAN_RECEIPT_NOT_CONSUMED_BY_TRADER_BLOCKS_NEW_ENTRY", codes)
 
     def test_verified_wait_receipt_blocks_fresh_entry_send_before_broker_post(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -3069,6 +3127,32 @@ def _target_path_metadata(*, grade: str, role: str = "HERO", slot: str = "NOW", 
         "vehicle_unchanged_after_loss": False,
         "target_path_live_mode": "LIVE_LEARNING",
     }
+
+
+def _write_empty_guardian_artifacts(root: Path) -> dict[str, Path]:
+    paths = {
+        "watchdog": root / "watchdog.json",
+        "consumption": root / "guardian_receipt_consumption.json",
+        "operator_review": root / "guardian_receipt_operator_review.json",
+        "broker_snapshot": root / "broker_snapshot.json",
+    }
+    paths["watchdog"].write_text(
+        json.dumps({"status": "OK", "issue_status": "OK", "guardian_receipt": {"issues": []}}),
+        encoding="utf-8",
+    )
+    paths["consumption"].write_text(
+        json.dumps({"status": "OK", "normal_routing_allowed": True, "classifications": []}),
+        encoding="utf-8",
+    )
+    paths["operator_review"].write_text(
+        json.dumps({"status": "OK", "normal_routing_allowed": True, "reviews": []}),
+        encoding="utf-8",
+    )
+    paths["broker_snapshot"].write_text(
+        json.dumps({"generated_at_utc": datetime.now(timezone.utc).isoformat(), "positions": [], "orders": []}),
+        encoding="utf-8",
+    )
+    return paths
 
 
 def _write_gateway_guardian_watchdog_issue(path: Path) -> None:

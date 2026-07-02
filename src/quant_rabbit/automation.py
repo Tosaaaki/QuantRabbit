@@ -2590,6 +2590,12 @@ class AutoTradeCycle:
                             )
 
             if selected_lane_id is None:
+                learning_recovery_lane_id = None
+                if campaign_exposure_required:
+                    learning_recovery_lane_id = self._campaign_recovery_lane(
+                        decision=decision,
+                        deterministic_lane_id=deterministic_lane_id,
+                    )
                 if intent_summary.live_ready == 0 and gpt_summary.status == "STALE_DECISION":
                     status = "NO_LIVE_READY_INTENT"
                 elif (
@@ -2598,6 +2604,12 @@ class AutoTradeCycle:
                     and gpt_summary.action in {"WAIT", "REQUEST_EVIDENCE"}
                 ):
                     status = f"GPT_{gpt_summary.action}"
+                elif campaign_exposure_required and _learning_audit_blocks_recovery_lane(
+                    self.gpt_learning_audit_path,
+                    learning_recovery_lane_id or deterministic_lane_id,
+                ):
+                    status = "LEARNING_AUDIT_BLOCKED"
+                    deterministic_lane_id = learning_recovery_lane_id or deterministic_lane_id
                 elif _gpt_fresh_entry_receipt_blocks_campaign_recovery(gpt_summary):
                     status = _gpt_campaign_recovery_block_status(gpt_summary)
                 else:
@@ -2722,7 +2734,8 @@ class AutoTradeCycle:
                     if campaign_exposure_required:
                         reason = gpt_summary.action or gpt_summary.status or "NO_TRADE"
                         gpt_recovery_source = f"CAMPAIGN_EXPOSURE_RECOVERY_GPT_{reason}"
-                        if _learning_audit_blocks_recovery_lane(self.gpt_learning_audit_path, selected_lane_id):
+                        recovery_lane_id = selected_lane_id or deterministic_lane_id
+                        if _learning_audit_blocks_recovery_lane(self.gpt_learning_audit_path, recovery_lane_id):
                             summary = AutoTradeCycleSummary(
                                 status="LEARNING_AUDIT_BLOCKED",
                                 report_path=self.report_path,
@@ -5145,10 +5158,16 @@ def _learning_audit_blocks_recovery_lane(path: Path, lane_id: str | None) -> boo
     for lane in lanes:
         if not isinstance(lane, dict):
             continue
-        if str(lane.get("lane_id") or "") != lane_id:
+        if not _same_recovery_lane_family(str(lane.get("lane_id") or ""), lane_id):
             continue
         return bool(lane.get("learning_influences"))
     return False
+
+
+def _same_recovery_lane_family(a: str, b: str | None) -> bool:
+    if not a or not b:
+        return False
+    return a == b or a.startswith(f"{b}:") or b.startswith(f"{a}:")
 
 
 def _gpt_fresh_entry_receipt_blocks_campaign_recovery(gpt_summary: GptHandoffSummary | None) -> bool:

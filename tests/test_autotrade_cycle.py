@@ -90,6 +90,33 @@ def _write_accepted_gpt_close_receipt(
     )
 
 
+def _write_empty_guardian_artifacts(root: Path) -> dict[str, Path]:
+    root.mkdir(parents=True, exist_ok=True)
+    paths = {
+        "watchdog": root / "watchdog.json",
+        "consumption": root / "guardian_receipt_consumption.json",
+        "operator_review": root / "guardian_receipt_operator_review.json",
+        "broker_snapshot": root / "broker_snapshot.json",
+    }
+    paths["watchdog"].write_text(
+        json.dumps({"status": "OK", "issue_status": "OK", "guardian_receipt": {"issues": []}}),
+        encoding="utf-8",
+    )
+    paths["consumption"].write_text(
+        json.dumps({"status": "OK", "normal_routing_allowed": True, "classifications": []}),
+        encoding="utf-8",
+    )
+    paths["operator_review"].write_text(
+        json.dumps({"status": "OK", "normal_routing_allowed": True, "reviews": []}),
+        encoding="utf-8",
+    )
+    paths["broker_snapshot"].write_text(
+        json.dumps({"generated_at_utc": datetime.now(timezone.utc).isoformat(), "positions": [], "orders": []}),
+        encoding="utf-8",
+    )
+    return paths
+
+
 class AutoTradeCycleTest(unittest.TestCase):
     def setUp(self) -> None:
         self._default_settings_tmp = tempfile.TemporaryDirectory()
@@ -5675,35 +5702,54 @@ class AutoTradeCycleTest(unittest.TestCase):
                         error="LEARNING_AUDIT_BLOCKED",
                     )
 
-            summary = RejectedLearningCycle(
-                client=client,
-                snapshot_path=root / "snapshot.json",
-                intents_path=root / "intents.json",
-                intent_report_path=root / "intents.md",
-                decision_path=root / "decision.json",
-                decision_report_path=root / "decision.md",
-                gpt_decision_path=root / "gpt_decision.json",
-                gpt_decision_report_path=root / "gpt_decision.md",
-                gpt_attack_advice_path=root / "attack_missing.json",
-                gpt_learning_audit_path=learning_audit_path,
-                position_management_path=root / "pm.json",
-                position_management_report_path=root / "pm.md",
-                position_execution_path=root / "pe.json",
-                position_execution_report_path=root / "pe.md",
-                live_order_output_path=root / "live_order.json",
-                live_order_report_path=root / "live_order.md",
-                report_path=root / "report.md",
-                campaign_plan_path=_campaign(root),
-                strategy_profile_path=_candidate_profile(root),
-                market_story_profile_path=_stories(root),
-                receipt_promotion_report_path=root / "promotion.md",
-                target_state_path=target_state,
-                target_report_path=root / "target.md",
-                gpt_target_state_path=target_state,
-                use_gpt_trader=True,
-                refresh_market_story=False,
-                live_enabled=True,
-            ).run(send=True)
+            guardian_env = (
+                "QR_GUARDIAN_RECEIPT_WATCHDOG_PATH",
+                "QR_GUARDIAN_RECEIPT_CONSUMPTION_PATH",
+                "QR_GUARDIAN_RECEIPT_OPERATOR_REVIEW_PATH",
+                "QR_GUARDIAN_RECEIPT_BROKER_SNAPSHOT_PATH",
+            )
+            previous_env = {name: os.environ.get(name) for name in guardian_env}
+            guardian_paths = _write_empty_guardian_artifacts(root / "guardian")
+            os.environ["QR_GUARDIAN_RECEIPT_WATCHDOG_PATH"] = str(guardian_paths["watchdog"])
+            os.environ["QR_GUARDIAN_RECEIPT_CONSUMPTION_PATH"] = str(guardian_paths["consumption"])
+            os.environ["QR_GUARDIAN_RECEIPT_OPERATOR_REVIEW_PATH"] = str(guardian_paths["operator_review"])
+            os.environ["QR_GUARDIAN_RECEIPT_BROKER_SNAPSHOT_PATH"] = str(guardian_paths["broker_snapshot"])
+            try:
+                summary = RejectedLearningCycle(
+                    client=client,
+                    snapshot_path=root / "snapshot.json",
+                    intents_path=root / "intents.json",
+                    intent_report_path=root / "intents.md",
+                    decision_path=root / "decision.json",
+                    decision_report_path=root / "decision.md",
+                    gpt_decision_path=root / "gpt_decision.json",
+                    gpt_decision_report_path=root / "gpt_decision.md",
+                    gpt_attack_advice_path=root / "attack_missing.json",
+                    gpt_learning_audit_path=learning_audit_path,
+                    position_management_path=root / "pm.json",
+                    position_management_report_path=root / "pm.md",
+                    position_execution_path=root / "pe.json",
+                    position_execution_report_path=root / "pe.md",
+                    live_order_output_path=root / "live_order.json",
+                    live_order_report_path=root / "live_order.md",
+                    report_path=root / "report.md",
+                    campaign_plan_path=_campaign(root),
+                    strategy_profile_path=_candidate_profile(root),
+                    market_story_profile_path=_stories(root),
+                    receipt_promotion_report_path=root / "promotion.md",
+                    target_state_path=target_state,
+                    target_report_path=root / "target.md",
+                    gpt_target_state_path=target_state,
+                    use_gpt_trader=True,
+                    refresh_market_story=False,
+                    live_enabled=True,
+                ).run(send=True)
+            finally:
+                for name, previous in previous_env.items():
+                    if previous is None:
+                        os.environ.pop(name, None)
+                    else:
+                        os.environ[name] = previous
 
             self.assertEqual(summary.status, "LEARNING_AUDIT_BLOCKED")
             self.assertEqual(summary.deterministic_lane_id, lane_id)

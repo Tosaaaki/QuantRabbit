@@ -183,6 +183,7 @@ def evaluate_watchdog(
         "last_trader_run_at": evidence["last_trader_run_at"],
         "last_trader_run_source": evidence["last_trader_run_source"],
         "last_trader_run_path": evidence["last_trader_run_path"],
+        "accepted_timestamp_candidate": evidence["accepted_timestamp_candidate"],
         "rejected_timestamp_candidates": evidence["rejected_timestamp_candidates"],
         "last_journal_at": evidence["last_journal_at"],
         "last_decision_artifact_at": evidence["last_decision_artifact_at"],
@@ -415,6 +416,7 @@ def _latest_run_evidence(*, paths: WatchdogPaths, now_utc: datetime) -> dict[str
         "last_trader_run_at": _iso(latest),
         "last_trader_run_source": latest_candidate.get("source") if latest_candidate else None,
         "last_trader_run_path": latest_candidate.get("path") if latest_candidate else None,
+        "accepted_timestamp_candidate": latest_candidate,
         "accepted_timestamp_candidates": accepted_candidates,
         "rejected_timestamp_candidates": rejected_candidates,
         "last_journal_at": journal.get("last_at"),
@@ -636,16 +638,7 @@ def _looks_like_trader_report_text(text: str, name: str) -> bool:
 
 def _memory_evidence(path: Path) -> dict[str, Any]:
     text = _read_tail_text(path, max_bytes=128_000)
-    timestamps = _timestamps_from_text(text)
-    accepted = [
-        _timestamp_candidate(
-            source="qr_trader_automation_memory.timestamp",
-            path=path,
-            timestamp=timestamp,
-        )
-        for timestamp in timestamps
-    ]
-    rejected: list[dict[str, Any]] = []
+    accepted, rejected = _memory_timestamp_candidates(text, path)
     mtime = _mtime_utc(path)
     if mtime is not None:
         rejected.append(
@@ -662,10 +655,140 @@ def _memory_evidence(path: Path) -> dict[str, Any]:
         "exists": path.exists(),
         "last_at": latest.get("timestamp_utc") if latest else None,
         "file_mtime_utc": _iso(mtime),
-        "parsed_timestamp_count": len(timestamps),
+        "parsed_timestamp_count": len(accepted)
+        + len(
+            [
+                item
+                for item in rejected
+                if item.get("source") == "qr_trader_automation_memory.timestamp"
+            ]
+        ),
         "accepted_timestamp_candidates": accepted,
         "rejected_timestamp_candidates": rejected,
     }
+
+
+def _memory_timestamp_candidates(text: str, path: Path) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    accepted: list[dict[str, Any]] = []
+    rejected: list[dict[str, Any]] = []
+    in_code_block = False
+    for line_number, raw_line in enumerate(text.splitlines(), start=1):
+        stripped = raw_line.strip()
+        fence_line = stripped.startswith("```")
+        matches = _timestamp_matches_from_text(raw_line)
+        if matches:
+            rejected_reason = _memory_timestamp_rejected_reason(
+                raw_line,
+                in_code_block=in_code_block or fence_line,
+            )
+            if rejected_reason is None and not _memory_line_is_run_marker(raw_line):
+                rejected_reason = "automation memory timestamp is not attached to a qr-trader run marker"
+            for timestamp in matches:
+                if rejected_reason:
+                    rejected.append(
+                        _timestamp_candidate(
+                            source="qr_trader_automation_memory.timestamp",
+                            path=path,
+                            timestamp=timestamp,
+                            detail=_memory_line_detail(line_number, raw_line),
+                            rejected_reason=rejected_reason,
+                        )
+                    )
+                else:
+                    accepted.append(
+                        _timestamp_candidate(
+                            source="qr_trader_automation_memory.timestamp",
+                            path=path,
+                            timestamp=timestamp,
+                            detail=_memory_line_detail(line_number, raw_line),
+                        )
+                    )
+        if fence_line:
+            in_code_block = not in_code_block
+    return accepted, rejected
+
+
+def _memory_timestamp_rejected_reason(line: str, *, in_code_block: bool) -> str | None:
+    stripped = line.strip()
+    lower = stripped.lower()
+    if in_code_block:
+        return "timestamp appears inside a code block"
+    if _memory_line_is_json_snippet(stripped):
+        return "timestamp appears inside a JSON snippet or quoted JSON block"
+    if "expires_at_utc" in lower or (
+        "expir" in lower and ("receipt" in lower or "guardian" in lower)
+    ):
+        return "receipt expiry timestamp is not trader-run evidence"
+    if "generated_at_utc" in lower and ("receipt" in lower or "guardian" in lower):
+        return "receipt or guardian generated_at timestamp is not trader-run evidence"
+    if "guardian action review" in lower or "guardian_action_review" in lower:
+        return "guardian action review timestamp is not trader-run evidence"
+    if ("receipt_lifecycle" in lower or "receipt lifecycle" in lower) and "receipt" in lower:
+        return "guardian receipt lifecycle timestamp is not trader-run evidence"
+    if "next_review_deadline_utc" in lower or ("trigger" in lower and "deadline" in lower):
+        return "guardian trigger contract deadline timestamp is not trader-run evidence"
+    if ("report" in lower or "snippet" in lower) and not _memory_line_is_run_marker(line):
+        return "report snippet timestamp is not trader-run evidence"
+    if ("issue" in lower or "description" in lower) and not _memory_line_is_run_marker(line):
+        return "issue description timestamp is not trader-run evidence"
+    return None
+
+
+def _memory_line_is_run_marker(line: str) -> bool:
+    lower = line.strip().lower()
+    starts_with_timestamp = _memory_line_starts_with_timestamp(line)
+    heading = lower.lstrip("#").strip() != lower
+    if starts_with_timestamp and "hourly trader cycle" in lower:
+        return True
+    if heading and ("qr-trader" in lower or "hourly trader cycle" in lower) and (
+        "run" in lower or "cycle" in lower or "completed" in lower
+    ):
+        return True
+    if "qr-trader" in lower and (
+        "run completed" in lower
+        or "cycle completed" in lower
+        or "automation memory entry" in lower
+        or "automation run completed" in lower
+        or "completed timestamp" in lower
+    ):
+        return True
+    if "qr-trader" in lower and ("automation run id" in lower or "run_id" in lower) and (
+        "complete" in lower or "completed" in lower or "success" in lower
+    ):
+        return True
+    if (
+        "latest journal timestamp" in lower
+        or "trader_journal.ts" in lower
+        or "journal ts" in lower
+    ) and ("qr-trader" in lower or "trader run" in lower or "automation memory" in lower):
+        return True
+    return False
+
+
+def _memory_line_starts_with_timestamp(line: str) -> bool:
+    candidate = line.lstrip(" \t-*#>.")
+    return bool(
+        re.match(
+            r"\d{4}-\d{2}-\d{2}(?:T| )\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:?\d{2}|\s+JST)",
+            candidate,
+            flags=re.IGNORECASE,
+        )
+    )
+
+
+def _memory_line_is_json_snippet(stripped: str) -> bool:
+    text = stripped.lstrip(">")
+    text = text.strip()
+    if not text:
+        return False
+    if text.startswith("{") or text.startswith("}") or text.startswith("[") or text.startswith("]"):
+        return True
+    return bool(re.match(r'"[A-Za-z0-9_:-]+"\s*:', text))
+
+
+def _memory_line_detail(line_number: int, line: str) -> str:
+    compact = " ".join(line.strip().split())
+    return f"line={line_number} text={compact[:220]}"
 
 
 def _timestamp_candidate(
@@ -1515,6 +1638,10 @@ def _tail_lines(path: Path, *, max_bytes: int) -> list[str]:
 
 
 def _timestamps_from_text(text: str) -> list[datetime]:
+    return _timestamp_matches_from_text(text)
+
+
+def _timestamp_matches_from_text(text: str) -> list[datetime]:
     timestamps: list[datetime] = []
     iso_pattern = re.compile(
         r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:?\d{2})"
