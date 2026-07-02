@@ -38,6 +38,9 @@ EVENT_TYPES = (
     "CONTRACT_EMERGENCY_TRIGGER",
     "CONTRACT_STALE",
     "WAKE_PARSE_FAILURE",
+    "EVENT_SUPPRESSED_WITH_PRICE_CHANGE",
+    "TRIGGER_CONTRACT_EMPTY_FOR_ACTIVE_PAIR",
+    "WATCH_ONLY_NO_TRIGGER_CONTRACT",
 )
 SEVERITY_RANK = {"P2": 1, "P1": 2, "P0": 3}
 THESIS_STATE_RANK = {"UNKNOWN": 0, "ALIVE": 1, "WOUNDED": 2, "INVALIDATED": 3, "EMERGENCY": 4}
@@ -84,6 +87,14 @@ CONTRACT_TRIGGER_BUCKETS = {
     "emergency_triggers": ("CONTRACT_EMERGENCY_TRIGGER", "REDUCE", "EMERGENCY_RISK_REVIEW", "P0", "EMERGENCY"),
 }
 CONTRACT_OWNERS = {"SYSTEM", "OPERATOR_MANUAL", "UNKNOWN"}
+MARKET_READ_STATE_CHANGE_EVENTS = {
+    "FAILED_ACCEPTANCE",
+    "ACCEPTANCE_BREAK",
+    "SESSION_EXPANSION",
+    "RANGE_RAIL_TOUCH",
+    "THEME_CONFIRMATION",
+    "SQUEEZE_RELEASE",
+}
 
 
 @dataclass(frozen=True)
@@ -169,7 +180,11 @@ def run_guardian_event_router(
         "schema_version": 1,
         "event_types": list(EVENT_TYPES),
         "events": [event.to_payload() for event in events],
-        "trigger_contract": validate_guardian_trigger_contract(inputs["trigger_contract"], now=now),
+        "trigger_contract": validate_guardian_trigger_contract(
+            inputs["trigger_contract"],
+            now=now,
+            snapshot=inputs["snapshot"],
+        ),
         "inputs": {
             "snapshot": str(snapshot_path),
             "pair_charts": str(pair_charts_path),
@@ -283,6 +298,7 @@ def evaluate_guardian_escalation(
     previous_events = previous.get("events") if isinstance(previous.get("events"), dict) else {}
     review_events: list[dict[str, Any]] = []
     suppressed_events: list[dict[str, Any]] = []
+    diagnostics: list[dict[str, Any]] = []
     wake_reason_codes: list[str] = []
     next_events: dict[str, Any] = {}
 
@@ -305,6 +321,7 @@ def evaluate_guardian_escalation(
         else:
             last_wake_at = (prior or {}).get("last_wake_at_utc")
             if reasons and throttled:
+                diagnostics.extend(_suppressed_price_change_diagnostics(event, prior))
                 suppressed_events.append(
                     {
                         **event_payload,
@@ -320,6 +337,7 @@ def evaluate_guardian_escalation(
                     and last_wake is not None
                     and (now - last_wake).total_seconds() < throttle_seconds
                 )
+                diagnostics.extend(_suppressed_price_change_diagnostics(event, prior))
                 suppressed_events.append(
                     {
                         **event_payload,
@@ -338,6 +356,8 @@ def evaluate_guardian_escalation(
             "recommended_review_type": event.recommended_review_type,
             "action_hint": event.action_hint,
             "thesis_state": event.thesis_state,
+            "price_zone": event.price_zone,
+            "details": event.details,
             "in_harvest_zone": event.event_type == "HARVEST_ZONE",
             "margin_pressure": event.event_type == "MARGIN_PRESSURE",
             "last_seen_at_utc": now.isoformat(),
@@ -357,6 +377,7 @@ def evaluate_guardian_escalation(
         "wake_reason_codes": sorted(set(wake_reason_codes)),
         "events_to_review": review_events,
         "suppressed_events": suppressed_events,
+        "diagnostics": diagnostics,
         "throttle": {
             "default_seconds": DEFAULT_THROTTLE_SECONDS,
             "fresh_entry_or_add_seconds": DEFAULT_FRESH_ACTION_THROTTLE_SECONDS,
@@ -543,6 +564,7 @@ def validate_guardian_trigger_contract(
     payload: dict[str, Any] | None,
     *,
     now: datetime | None = None,
+    snapshot: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     clock = _utc(now)
     contract = payload if isinstance(payload, dict) else {}
@@ -561,10 +583,25 @@ def validate_guardian_trigger_contract(
         issues.append(_issue("CONTRACT_ENTRIES_NOT_LIST", "guardian trigger contract entries must be a list"))
 
     stale_relevant_deadline_expired = False
+    open_entry_keys = set()
     for index, entry in enumerate(entries):
         prefix = f"entries[{index}]"
         open_exposure = _contract_entry_has_open_exposure(entry)
         live_relevant = _contract_entry_is_live_relevant(entry)
+        all_core_trigger_arrays_empty = all(
+            isinstance(entry.get(bucket), list) and not entry.get(bucket)
+            for bucket in (
+                "harvest_triggers",
+                "no_add_triggers",
+                "wounded_triggers",
+                "invalidation_triggers",
+                "emergency_triggers",
+            )
+        )
+        watch_only = _contract_entry_watch_only_reason(entry)
+        if open_exposure:
+            for key in _contract_open_exposure_keys(entry):
+                open_entry_keys.add(key)
         for field_name in (
             "pair",
             "side",
@@ -638,6 +675,54 @@ def validate_guardian_trigger_contract(
                             f"{prefix} open exposure needs non-empty {bucket}",
                         )
                     )
+        elif all_core_trigger_arrays_empty:
+            if _truthy(entry.get("watch_only")):
+                if not watch_only:
+                    issues.append(
+                        _issue(
+                            "WATCH_ONLY_NO_TRIGGER_CONTRACT",
+                            (
+                                f"{prefix} pair={pair or 'UNKNOWN'} side={side or 'UNKNOWN'} watch_only candidate "
+                                "needs watch_only_reason when omitting triggers"
+                            ),
+                            severity="BLOCK" if live_relevant else "WARN",
+                        )
+                    )
+            elif live_relevant:
+                issues.append(
+                    _issue(
+                        "TRIGGER_CONTRACT_EMPTY_FOR_ACTIVE_PAIR",
+                        (
+                            f"{prefix} pair={pair or 'UNKNOWN'} side={side or 'UNKNOWN'} selected/current candidate "
+                            "has no machine-readable guardian triggers and is not watch_only"
+                        ),
+                    )
+                )
+            else:
+                issues.append(
+                    _issue(
+                        "TRIGGER_CONTRACT_EMPTY_FOR_ACTIVE_PAIR",
+                        (
+                            f"{prefix} pair={pair or 'UNKNOWN'} side={side or 'UNKNOWN'} candidate has empty "
+                            "guardian triggers and is not explicitly watch_only"
+                        ),
+                        severity="WARN",
+                    )
+                )
+
+    snapshot_payload = snapshot if isinstance(snapshot, dict) else {}
+    if snapshot_payload:
+        for exposure in _snapshot_open_exposure_contract_refs(snapshot_payload):
+            if not exposure["keys"].intersection(open_entry_keys):
+                issues.append(
+                    _issue(
+                        "CONTRACT_OPEN_EXPOSURE_MISSING",
+                        (
+                            "broker open exposure is missing from guardian trigger contract "
+                            f"pair={exposure.get('pair')} side={exposure.get('side')} trade_id={exposure.get('trade_id') or 'none'}"
+                        ),
+                    )
+                )
 
     age_seconds = (clock - generated_at).total_seconds() if generated_at is not None else None
     max_age = int(os.environ.get("QR_GUARDIAN_TRIGGER_CONTRACT_MAX_AGE_SECONDS", DEFAULT_CONTRACT_MAX_AGE_SECONDS))
@@ -749,6 +834,7 @@ def build_guardian_trigger_contract(
         preserved[_contract_entry_legacy_key(entry)] = entry
     entries: list[dict[str, Any]] = []
     seen: set[str] = set()
+    selected_lane_ids = _selected_order_intent_lane_ids(order_intents)
 
     for position in snapshot.get("positions", []) or []:
         if not isinstance(position, dict):
@@ -784,14 +870,13 @@ def build_guardian_trigger_contract(
         if not pair or not side:
             continue
         thesis = str(intent.get("thesis") or result.get("lane_id") or "candidate thesis")
+        metadata = intent.get("metadata") if isinstance(intent.get("metadata"), dict) else {}
         entry = _contract_entry_from_seed(
             pair=pair,
             side=side,
             thesis=thesis,
             owner="SYSTEM",
-            thesis_state=str((intent.get("metadata") or {}).get("thesis_state") or "ALIVE").upper()
-            if isinstance(intent.get("metadata"), dict)
-            else "ALIVE",
+            thesis_state=str(metadata.get("thesis_state") or "ALIVE").upper(),
             seed_reason=f"candidate {result.get('lane_id') or pair} requires trader-defined triggers",
             preserved=preserved,
             now=clock,
@@ -799,6 +884,26 @@ def build_guardian_trigger_contract(
             open_exposure=False,
             ownership_audit={"status": "SYSTEM", "evidence": ["candidate intent is system-generated"], "unresolved": False},
         )
+        lane_id = str(result.get("lane_id") or "").strip()
+        status = str(result.get("status") or "").strip().upper()
+        if lane_id:
+            entry["lane_id"] = lane_id
+        if status:
+            entry["status"] = status
+        if lane_id and lane_id in selected_lane_ids:
+            entry["selected"] = True
+            entry["current"] = True
+        if _truthy(result.get("selected")) or _truthy(result.get("current")) or _truthy(result.get("selected_for_review")):
+            entry["selected"] = _truthy(result.get("selected")) or _truthy(result.get("selected_for_review"))
+            entry["current"] = _truthy(result.get("current")) or bool(entry.get("current"))
+        watch_only_reason = _candidate_watch_only_reason(result, intent, thesis)
+        if watch_only_reason:
+            entry["watch_only"] = True
+            entry["watch_only_reason"] = watch_only_reason
+            entry["thesis_state"] = "UNKNOWN"
+            entry["next_review_reason"] = f"watch-only candidate: {watch_only_reason}"
+        elif _contract_core_trigger_arrays_empty(entry):
+            entry.update(_default_candidate_triggers(entry, result, intent, now=clock))
         key = _contract_entry_key(entry)
         if key in seen:
             continue
@@ -880,7 +985,7 @@ def write_guardian_trigger_contract_report(path: Path, contract: dict[str, Any],
 
 def _contract_events(contract: dict[str, Any], *, snapshot: dict[str, Any], now: datetime) -> list[GuardianEvent]:
     events: list[GuardianEvent] = []
-    validation = validate_guardian_trigger_contract(contract, now=now)
+    validation = validate_guardian_trigger_contract(contract, now=now, snapshot=snapshot)
     exposure_exists = _snapshot_has_exposure(snapshot)
     if exposure_exists and (validation["status"] != "VALID" or validation["stale"]):
         events.append(
@@ -900,6 +1005,25 @@ def _contract_events(contract: dict[str, Any], *, snapshot: dict[str, Any], now:
         )
         if validation["status"] != "VALID":
             return events
+    for issue in validation.get("issues", []) or []:
+        code = str(issue.get("code") or "").upper()
+        if code not in {"TRIGGER_CONTRACT_EMPTY_FOR_ACTIVE_PAIR", "WATCH_ONLY_NO_TRIGGER_CONTRACT"}:
+            continue
+        events.append(
+            _event(
+                event_type=code,
+                pair=_issue_pair(issue) or "PORTFOLIO",
+                direction=None,
+                thesis="guardian trigger contract quality",
+                price_zone=str(issue.get("message") or code),
+                severity="P1" if str(issue.get("severity") or "").upper() == "BLOCK" else "P2",
+                recommended_review_type="THESIS_REVIEW",
+                action_hint="HOLD",
+                thesis_state="WOUNDED",
+                now=now,
+                details={"validation_issue": issue},
+            )
+        )
 
     for entry in _contract_entries(contract):
         pair = _pair(entry.get("pair"))
@@ -1574,6 +1698,204 @@ def _contract_entry_is_live_relevant(entry: dict[str, Any]) -> bool:
     return False
 
 
+def _contract_core_trigger_arrays_empty(entry: dict[str, Any]) -> bool:
+    return all(
+        isinstance(entry.get(bucket), list) and not entry.get(bucket)
+        for bucket in (
+            "harvest_triggers",
+            "no_add_triggers",
+            "wounded_triggers",
+            "invalidation_triggers",
+            "emergency_triggers",
+        )
+    )
+
+
+def _contract_entry_watch_only_reason(entry: dict[str, Any]) -> str:
+    for key in ("watch_only_reason", "reason", "watch_reason"):
+        value = str(entry.get(key) or "").strip()
+        if value:
+            return value
+    return ""
+
+
+def _contract_open_exposure_keys(entry: dict[str, Any]) -> set[str]:
+    pair = _pair(entry.get("pair"))
+    side = _direction_from_text(entry.get("side"))
+    trade_id = str(entry.get("trade_id") or "").strip()
+    keys: set[str] = set()
+    if trade_id:
+        keys.add(f"trade:{trade_id}")
+    if pair and side:
+        keys.add(f"pair-side:{pair}:{side}")
+    return keys
+
+
+def _snapshot_open_exposure_contract_refs(snapshot: dict[str, Any]) -> list[dict[str, Any]]:
+    refs: list[dict[str, Any]] = []
+    for position in snapshot.get("positions", []) or []:
+        if not isinstance(position, dict):
+            continue
+        pair = _pair(position.get("pair"))
+        side = _direction_from_position(position)
+        trade_id = _position_trade_id(position)
+        if not pair or not side:
+            continue
+        keys = set()
+        if trade_id:
+            keys.add(f"trade:{trade_id}")
+        keys.add(f"pair-side:{pair}:{side}")
+        refs.append({"pair": pair, "side": side, "trade_id": trade_id, "keys": keys})
+    return refs
+
+
+def _selected_order_intent_lane_ids(order_intents: dict[str, Any]) -> set[str]:
+    selected: set[str] = set()
+    for key in ("selected_lane_id", "current_lane_id", "selected_result_lane_id"):
+        value = str(order_intents.get(key) or "").strip()
+        if value:
+            selected.add(value)
+    for key in ("selected_lane_ids", "current_lane_ids"):
+        values = order_intents.get(key)
+        if isinstance(values, list):
+            selected.update(str(value).strip() for value in values if str(value).strip())
+    selected_result = order_intents.get("selected_result")
+    if isinstance(selected_result, dict):
+        value = str(selected_result.get("lane_id") or "").strip()
+        if value:
+            selected.add(value)
+    current_result = order_intents.get("current_result")
+    if isinstance(current_result, dict):
+        value = str(current_result.get("lane_id") or "").strip()
+        if value:
+            selected.add(value)
+    return selected
+
+
+def _candidate_watch_only_reason(result: dict[str, Any], intent: dict[str, Any], thesis: str) -> str:
+    metadata = intent.get("metadata") if isinstance(intent.get("metadata"), dict) else {}
+    for key in ("watch_only_reason", "reason"):
+        value = str(metadata.get(key) or result.get(key) or "").strip()
+        if _truthy(metadata.get("watch_only")) or _truthy(result.get("watch_only")):
+            return value or "no_current_thesis"
+    status = str(result.get("status") or "").strip().upper()
+    if status in {"WATCH_ONLY", "MARKET_READ_FIRST", "DRY_RUN_BLOCKED", "NO_TRADE"}:
+        return str(metadata.get("watch_only_reason") or result.get("reason") or "no_current_thesis").strip()
+    thesis_text = str(thesis or "").strip()
+    if not thesis_text or thesis_text == "candidate thesis":
+        return "no_current_thesis"
+    return ""
+
+
+def _default_candidate_triggers(
+    entry: dict[str, Any],
+    result: dict[str, Any],
+    intent: dict[str, Any],
+    *,
+    now: datetime,
+) -> dict[str, list[dict[str, Any]]]:
+    del now
+    metadata = intent.get("metadata") if isinstance(intent.get("metadata"), dict) else {}
+    pair = _pair(entry.get("pair")) or "UNKNOWN"
+    side = _direction_from_text(entry.get("side")) or "UNKNOWN"
+    lane_id = str(result.get("lane_id") or entry.get("lane_id") or "").strip()
+    entry_price = _float(intent.get("entry") or intent.get("entry_price") or metadata.get("entry"))
+    take_profit = _float(
+        intent.get("take_profit")
+        or intent.get("tp")
+        or intent.get("target")
+        or metadata.get("take_profit")
+        or metadata.get("tp")
+        or metadata.get("target")
+    )
+    stop_loss = _float(
+        intent.get("stop_loss")
+        or intent.get("sl")
+        or intent.get("invalidation_price")
+        or metadata.get("stop_loss")
+        or metadata.get("sl")
+        or metadata.get("invalidation_price")
+    )
+    spread_cap = _float(metadata.get("max_spread_pips") or metadata.get("spread_cap_pips"))
+    base_ref = {
+        "lane_id": lane_id or None,
+        "pair": pair,
+        "side": side,
+        "owner": _contract_owner(entry.get("owner")),
+        "thesis": entry.get("thesis"),
+        "thesis_state": _thesis_state(entry.get("thesis_state")),
+    }
+    harvest_trigger = {
+        **base_ref,
+        "trigger_id": "candidate_profit_harvest_review",
+        "status": "PENDING",
+        "kind": "candidate_harvest_review",
+        "action_hint": "HARVEST",
+        "evidence_required": "review only after candidate target/harvest zone is reached and gateway/risk gates still allow the action",
+    }
+    if take_profit is not None:
+        harvest_trigger["condition"] = {
+            "metric": "mid",
+            "operator": ">=" if side == "LONG" else "<=",
+            "value": take_profit,
+        }
+    no_add_trigger = {
+        **base_ref,
+        "trigger_id": "candidate_no_add_guard",
+        "status": "PENDING",
+        "kind": "candidate_no_add_guard",
+        "action_hint": "HOLD",
+        "evidence_required": "no add unless the thesis remains ALIVE, guardian/operator-review blockers are clear, and gateway evidence is fresh",
+    }
+    if spread_cap is not None:
+        no_add_trigger["condition"] = {"metric": "spread_pips", "operator": ">", "value": spread_cap}
+    wounded_trigger = {
+        **base_ref,
+        "trigger_id": "candidate_wounded_review",
+        "status": "PENDING",
+        "kind": "candidate_wounded_review",
+        "action_hint": "HOLD",
+        "evidence_required": "failed acceptance, range rail change, or market-read evidence materially weakens the candidate thesis",
+    }
+    if entry_price is not None and stop_loss is not None:
+        wounded_level = (entry_price + stop_loss) / 2.0
+        wounded_trigger["condition"] = {
+            "metric": "mid",
+            "operator": "<=" if side == "LONG" else ">=",
+            "value": wounded_level,
+        }
+    invalidation_trigger = {
+        **base_ref,
+        "trigger_id": "candidate_invalidation_review",
+        "status": "PENDING",
+        "kind": "candidate_invalidation_review",
+        "action_hint": "HOLD",
+        "evidence_required": "accepted break through the candidate invalidation level; no broker action is implied by the contract",
+    }
+    if stop_loss is not None:
+        invalidation_trigger["condition"] = {
+            "metric": "mid",
+            "operator": "<=" if side == "LONG" else ">=",
+            "value": stop_loss,
+        }
+    emergency_trigger = {
+        **base_ref,
+        "trigger_id": "candidate_margin_or_broker_truth_emergency",
+        "status": "PENDING",
+        "kind": "candidate_emergency_review",
+        "action_hint": "HOLD",
+        "evidence_required": "margin pressure, broker snapshot staleness, or gateway-outside exposure blocks fresh routing",
+        "condition": {"metric": "margin_available_jpy", "operator": "<=", "value": 0},
+    }
+    return {
+        "harvest_triggers": [{key: value for key, value in harvest_trigger.items() if value is not None}],
+        "no_add_triggers": [{key: value for key, value in no_add_trigger.items() if value is not None}],
+        "wounded_triggers": [{key: value for key, value in wounded_trigger.items() if value is not None}],
+        "invalidation_triggers": [{key: value for key, value in invalidation_trigger.items() if value is not None}],
+        "emergency_triggers": [{key: value for key, value in emergency_trigger.items() if value is not None}],
+    }
+
+
 def _contract_entry_from_seed(
     *,
     pair: str,
@@ -1641,6 +1963,12 @@ def _rebind_trigger_to_parent(trigger: dict[str, Any], *, parent: dict[str, Any]
 def _position_contract_thesis(position: dict[str, Any]) -> str:
     raw = position.get("raw") if isinstance(position.get("raw"), dict) else {}
     operator_packet = raw.get("operator_manual_position") if isinstance(raw.get("operator_manual_position"), dict) else {}
+    if (
+        not operator_packet
+        and not str(position.get("thesis") or "").strip()
+        and _owner(position.get("owner")) in {Owner.UNKNOWN.value, Owner.EXTERNAL.value, ""}
+    ):
+        return "gateway-outside broker position"
     return str(
         operator_packet.get("thesis")
         or position.get("thesis")
@@ -2350,10 +2678,18 @@ def _wake_reasons_for_event(event: GuardianEvent, prior: dict[str, Any] | None) 
             reasons.append(f"THESIS_{previous_state}_TO_{event.thesis_state}")
     if event.event_type == "HARVEST_ZONE" and not (prior or {}).get("in_harvest_zone"):
         reasons.append("PRICE_ENTERED_HARVEST_ZONE")
-    if event.event_type == "UNKNOWN_ORDER" and prior is None:
-        reasons.append("UNKNOWN_GATEWAY_OUTSIDE_ORDER")
+    if event.event_type == "UNKNOWN_ORDER":
+        if prior is None:
+            reasons.append("UNKNOWN_GATEWAY_OUTSIDE_ORDER")
+        elif _unknown_order_broker_truth_changed(event, prior):
+            reasons.append("UNKNOWN_GATEWAY_OUTSIDE_ORDER_STATE_CHANGE")
     if event.event_type == "MARGIN_PRESSURE" and (prior is None or not prior.get("margin_pressure")):
         reasons.append("MARGIN_RISK_THRESHOLD_CROSSED")
+    material_change = _event_price_zone_material_change(event, prior)
+    if material_change["material"]:
+        reasons.append("LARGE_PRICE_DISPLACEMENT_STATE_CHANGE")
+        if event.event_type == "FAILED_ACCEPTANCE":
+            reasons.append("FAILED_ACCEPTANCE_PRICE_ZONE_CHANGE")
     return list(dict.fromkeys(reasons))
 
 
@@ -2366,10 +2702,115 @@ def _event_throttle_seconds(event: GuardianEvent) -> int:
 def _event_bypasses_throttle(event: GuardianEvent, reasons: list[str]) -> bool:
     return (
         event.event_type == "HARVEST_ZONE"
-        or event.severity == "P0"
+        or (event.severity == "P0" and event.event_type != "UNKNOWN_ORDER")
+        or "UNKNOWN_GATEWAY_OUTSIDE_ORDER" in reasons
+        or "UNKNOWN_GATEWAY_OUTSIDE_ORDER_STATE_CHANGE" in reasons
+        or "LARGE_PRICE_DISPLACEMENT_STATE_CHANGE" in reasons
+        or "FAILED_ACCEPTANCE_PRICE_ZONE_CHANGE" in reasons
         or "SEVERITY_INCREASE" in reasons
         or any(reason.startswith("THESIS_ALIVE_TO_") for reason in reasons)
     )
+
+
+def _unknown_order_broker_truth_changed(event: GuardianEvent, prior: dict[str, Any]) -> bool:
+    current = _unknown_order_truth_fingerprint(event.to_payload())
+    previous = _unknown_order_truth_fingerprint(prior)
+    return bool(current and previous and current != previous)
+
+
+def _unknown_order_truth_fingerprint(payload: dict[str, Any]) -> str:
+    details = payload.get("details") if isinstance(payload.get("details"), dict) else {}
+    trade_id = str(details.get("trade_id") or "").strip()
+    order_id = str(details.get("order_id") or "").strip()
+    owner = str(details.get("owner") or payload.get("owner") or "").strip().lower()
+    pair = _pair(payload.get("pair")) or "UNKNOWN"
+    direction = _direction_from_text(payload.get("direction") or payload.get("side")) or "UNKNOWN"
+    price_zone = str(payload.get("price_zone") or "").strip()
+    return "|".join([pair, direction, trade_id or order_id or "NO_ID", owner or "unknown", price_zone])
+
+
+def _event_price_zone_material_change(event: GuardianEvent, prior: dict[str, Any] | None) -> dict[str, Any]:
+    if prior is None:
+        return {"changed": False, "material": False}
+    current_zone = str(event.price_zone or "").strip()
+    previous_zone = str(prior.get("price_zone") or "").strip()
+    if not current_zone or not previous_zone or current_zone == previous_zone:
+        return {"changed": False, "material": False, "current_price_zone": current_zone, "previous_price_zone": previous_zone}
+    pair = _pair(event.pair) or "UNKNOWN"
+    threshold_pips = _price_zone_material_threshold_pips(pair)
+    current_distance = _price_zone_distance_pips(current_zone)
+    previous_distance = _price_zone_distance_pips(previous_zone)
+    if current_distance is not None and previous_distance is not None:
+        delta_pips = abs(current_distance - previous_distance)
+        return {
+            "changed": True,
+            "material": delta_pips >= threshold_pips,
+            "delta_pips": delta_pips,
+            "threshold_pips": threshold_pips,
+            "current_price_zone": current_zone,
+            "previous_price_zone": previous_zone,
+            "basis": "distance_pips",
+        }
+    current_price = _price_zone_anchor_price(current_zone)
+    previous_price = _price_zone_anchor_price(previous_zone)
+    if current_price is None or previous_price is None:
+        return {
+            "changed": True,
+            "material": False,
+            "threshold_pips": threshold_pips,
+            "current_price_zone": current_zone,
+            "previous_price_zone": previous_zone,
+            "basis": "text_only",
+        }
+    delta_pips = abs(current_price - previous_price) * instrument_pip_factor(pair)
+    return {
+        "changed": True,
+        "material": delta_pips >= threshold_pips,
+        "delta_pips": delta_pips,
+        "threshold_pips": threshold_pips,
+        "current_price_zone": current_zone,
+        "previous_price_zone": previous_zone,
+        "basis": "anchor_price",
+    }
+
+
+def _price_zone_material_threshold_pips(pair: str) -> float:
+    normal = NORMAL_SPREAD_PIPS.get(_pair(pair) or pair, 1.0)
+    return max(float(normal) * 2.0, 1.0)
+
+
+def _price_zone_distance_pips(zone: str) -> float | None:
+    match = re.search(r"\bdistance_pips\s*=\s*(-?\d+(?:\.\d+)?)", zone)
+    if not match:
+        return None
+    return _float(match.group(1))
+
+
+def _price_zone_anchor_price(zone: str) -> float | None:
+    lower = zone.lower()
+    if "percentile=" in lower or "sigma=" in lower or "spread_pips=" in lower:
+        return None
+    matches = re.findall(r"(?<![A-Za-z_])(-?\d{1,3}(?:\.\d+)?)(?![A-Za-z_])", zone)
+    if not matches:
+        return None
+    return _float(matches[0])
+
+
+def _suppressed_price_change_diagnostics(event: GuardianEvent, prior: dict[str, Any] | None) -> list[dict[str, Any]]:
+    change = _event_price_zone_material_change(event, prior)
+    if not change.get("changed"):
+        return []
+    return [
+        {
+            "code": "EVENT_SUPPRESSED_WITH_PRICE_CHANGE",
+            "event_id": event.event_id,
+            "dedupe_key": event.dedupe_key,
+            "pair": event.pair,
+            "event_type": event.event_type,
+            "material": bool(change.get("material")),
+            "details": change,
+        }
+    ]
 
 
 def _guardian_trade_add_action_issues(
@@ -2462,6 +2903,74 @@ def _write_event_report(path: Path, events_payload: dict[str, Any], escalation: 
         )
     if not escalation.get("events_to_review"):
         lines.append("- no wake; no meaningful state change")
+    lines.extend(["", "## Suppressed Events", ""])
+    for event in escalation.get("suppressed_events", []) or []:
+        lines.append(
+            f"- suppressed `{event.get('event_type')}` `{event.get('pair')}` "
+            f"reason=`{event.get('suppressed_reason')}` price_zone=`{event.get('price_zone')}`"
+        )
+    if not escalation.get("suppressed_events"):
+        lines.append("- none")
+    lines.extend(["", "## Diagnostics", ""])
+    trigger_validation = events_payload.get("trigger_contract") if isinstance(events_payload.get("trigger_contract"), dict) else {}
+    for issue in trigger_validation.get("issues", []) or []:
+        if str(issue.get("code") or "").upper() in {
+            "TRIGGER_CONTRACT_EMPTY_FOR_ACTIVE_PAIR",
+            "WATCH_ONLY_NO_TRIGGER_CONTRACT",
+            "CONTRACT_OPEN_EXPOSURE_MISSING",
+        }:
+            lines.append(f"- `{issue.get('severity')}` `{issue.get('code')}` {issue.get('message')}")
+    for diagnostic in escalation.get("diagnostics", []) or []:
+        lines.append(
+            f"- `{diagnostic.get('code')}` `{diagnostic.get('pair')}` `{diagnostic.get('event_type')}` "
+            f"material=`{diagnostic.get('material')}`"
+        )
+    if not any(
+        str(issue.get("code") or "").upper()
+        in {"TRIGGER_CONTRACT_EMPTY_FOR_ACTIVE_PAIR", "WATCH_ONLY_NO_TRIGGER_CONTRACT", "CONTRACT_OPEN_EXPOSURE_MISSING"}
+        for issue in trigger_validation.get("issues", []) or []
+    ) and not escalation.get("diagnostics"):
+        lines.append("- none")
+    usd_jpy_events = [
+        event for event in events_payload.get("events", []) or [] if _pair(event.get("pair")) == "USD_JPY"
+    ]
+    if usd_jpy_events:
+        open_usd_jpy = any(
+            event.get("event_type") == "UNKNOWN_ORDER" and _pair(event.get("pair")) == "USD_JPY"
+            for event in events_payload.get("events", []) or []
+        )
+        usd_jpy_trigger_issue = any(
+            "USD_JPY" in str(issue.get("message") or "")
+            and str(issue.get("code") or "").upper()
+            in {"TRIGGER_CONTRACT_EMPTY_FOR_ACTIVE_PAIR", "WATCH_ONLY_NO_TRIGGER_CONTRACT", "CONTRACT_OPEN_EXPOSURE_MISSING"}
+            for issue in trigger_validation.get("issues", []) or []
+        )
+        usd_jpy_suppressed = [
+            event
+            for event in escalation.get("suppressed_events", []) or []
+            if _pair(event.get("pair")) == "USD_JPY"
+        ]
+        lines.extend(
+            [
+                "",
+                "## USD_JPY Reaction Classification",
+                "",
+                "- Classification: `PARTIAL_REACTION` (not `LAUNCHD_FAILURE`).",
+                "- Launchd/runtime pass ran far enough to generate this guardian event report.",
+                "- USD_JPY was detected in guardian events.",
+                f"- No USD_JPY open exposure existed in this router pass: `{not open_usd_jpy}`.",
+                (
+                    "- USD_JPY trigger contract had no actionable machine-readable triggers: "
+                    f"`{usd_jpy_trigger_issue}`."
+                ),
+                (
+                    "- USD_JPY events were throttled or classified no-state-change: "
+                    f"`{len(usd_jpy_suppressed)}`."
+                ),
+                "- Normal TRADE/ADD routing remains blocked unless guardian/operator-review gates explicitly clear.",
+                "- Therefore no broker-side action is implied by this report.",
+            ]
+        )
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("\n".join(lines) + "\n")
 
@@ -2617,6 +3126,9 @@ def _default_review_type(event_type: str) -> str:
         "CONTRACT_EMERGENCY_TRIGGER": "EMERGENCY_RISK_REVIEW",
         "CONTRACT_STALE": "EMERGENCY_RISK_REVIEW",
         "WAKE_PARSE_FAILURE": "WAKE_REPAIR_REVIEW",
+        "EVENT_SUPPRESSED_WITH_PRICE_CHANGE": "ENTRY_REVIEW",
+        "TRIGGER_CONTRACT_EMPTY_FOR_ACTIVE_PAIR": "THESIS_REVIEW",
+        "WATCH_ONLY_NO_TRIGGER_CONTRACT": "THESIS_REVIEW",
     }.get(event_type, "ENTRY_REVIEW")
 
 
@@ -2638,7 +3150,16 @@ def _default_action_hint(event_type: str) -> str:
         "CONTRACT_EMERGENCY_TRIGGER": "REDUCE",
         "CONTRACT_STALE": "HOLD",
         "WAKE_PARSE_FAILURE": "HOLD",
+        "EVENT_SUPPRESSED_WITH_PRICE_CHANGE": "HOLD",
+        "TRIGGER_CONTRACT_EMPTY_FOR_ACTIVE_PAIR": "HOLD",
+        "WATCH_ONLY_NO_TRIGGER_CONTRACT": "HOLD",
     }.get(event_type, "TRADE")
+
+
+def _issue_pair(issue: dict[str, Any]) -> str | None:
+    text = str(issue.get("message") or "")
+    match = re.search(r"pair=([A-Z]{3}_[A-Z]{3})", text)
+    return match.group(1) if match else None
 
 
 def _issue(code: str, message: str, severity: str = "BLOCK") -> dict[str, str]:

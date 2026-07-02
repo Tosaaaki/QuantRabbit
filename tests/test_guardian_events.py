@@ -50,6 +50,91 @@ class GuardianEventRouterTest(unittest.TestCase):
         self.assertFalse(second["wake_gpt"])
         self.assertEqual(second["suppressed_events"][0]["suppressed_reason"], "THROTTLED")
 
+    def test_p2_duplicate_suppressed_only_when_price_zone_materially_unchanged(self) -> None:
+        first_events = _events_from_chart(
+            {
+                "event_type": "FAILED_ACCEPTANCE",
+                "thesis": "USD_JPY failed acceptance",
+                "price_zone": "USD_JPY 162.000 rejection",
+                "severity": "P2",
+                "action_hint": "TRADE",
+            },
+            pair="USD_JPY",
+        )
+        _, state = evaluate_guardian_escalation(events=first_events, previous_state={}, now=NOW)
+
+        unchanged, _ = evaluate_guardian_escalation(
+            events=first_events,
+            previous_state=state,
+            now=NOW + timedelta(minutes=5),
+        )
+
+        self.assertFalse(unchanged["wake_gpt"])
+        self.assertEqual(unchanged["suppressed_events"][0]["suppressed_reason"], "THROTTLED")
+
+    def test_large_price_zone_move_produces_state_change_wake_evidence(self) -> None:
+        first_events = _events_from_chart(
+            {
+                "event_type": "FAILED_ACCEPTANCE",
+                "thesis": "USD_JPY failed acceptance",
+                "price_zone": "USD_JPY 162.000 rejection",
+                "severity": "P2",
+                "action_hint": "TRADE",
+            },
+            pair="USD_JPY",
+        )
+        _, state = evaluate_guardian_escalation(events=first_events, previous_state={}, now=NOW)
+        moved_events = _events_from_chart(
+            {
+                "event_type": "FAILED_ACCEPTANCE",
+                "thesis": "USD_JPY failed acceptance",
+                "price_zone": "USD_JPY 162.050 rejection",
+                "severity": "P2",
+                "action_hint": "TRADE",
+            },
+            pair="USD_JPY",
+        )
+
+        escalation, _ = evaluate_guardian_escalation(
+            events=moved_events,
+            previous_state=state,
+            now=NOW + timedelta(minutes=5),
+        )
+
+        self.assertTrue(escalation["wake_gpt"])
+        self.assertIn("LARGE_PRICE_DISPLACEMENT_STATE_CHANGE", escalation["wake_reason_codes"])
+        self.assertIn("FAILED_ACCEPTANCE_PRICE_ZONE_CHANGE", escalation["wake_reason_codes"])
+
+    def test_current_p0_unknown_exposure_wakes_once_and_same_truth_is_suppressed(self) -> None:
+        snapshot = _snapshot(
+            positions=[
+                {
+                    "pair": "EUR_USD",
+                    "side": "SHORT",
+                    "units": 30000,
+                    "owner": "unknown",
+                    "trade_id": "472987",
+                    "entry_price": 1.14048,
+                }
+            ]
+        )
+        events = detect_guardian_events(inputs={"snapshot": snapshot}, now=NOW)
+
+        first, state = evaluate_guardian_escalation(events=events, previous_state={}, now=NOW)
+        second, _ = evaluate_guardian_escalation(
+            events=events,
+            previous_state=state,
+            now=NOW + timedelta(minutes=5),
+        )
+
+        self.assertTrue(first["wake_gpt"])
+        self.assertIn("UNKNOWN_GATEWAY_OUTSIDE_ORDER", first["wake_reason_codes"])
+        self.assertFalse(second["wake_gpt"])
+        unknown_suppressed = [
+            event for event in second["suppressed_events"] if event["event_type"] == "UNKNOWN_ORDER"
+        ]
+        self.assertEqual(unknown_suppressed[0]["suppressed_reason"], "THROTTLED")
+
     def test_p0_severity_increase_bypasses_throttle(self) -> None:
         p1_events = _events_from_chart(
             {
@@ -441,6 +526,53 @@ class GuardianEventRouterTest(unittest.TestCase):
         self.assertEqual(entry["emergency_triggers"][0]["action_hint"], "HOLD")
         self.assertIn("do not auto-close loss-side", entry["emergency_triggers"][0]["evidence_required"])
 
+    def test_current_eur_usd_472987_unknown_owner_requires_operator_confirmation(self) -> None:
+        snapshot = _snapshot(
+            positions=[
+                {
+                    "pair": "EUR_USD",
+                    "side": "SHORT",
+                    "units": 30000,
+                    "owner": "unknown",
+                    "thesis": "gateway-outside broker position",
+                    "thesis_state": "UNKNOWN",
+                    "trade_id": "472987",
+                    "entry_price": 1.14048,
+                    "take_profit": None,
+                    "stop_loss": None,
+                    "unrealized_pl_jpy": -922.0941,
+                    "raw": {
+                        "id": "472987",
+                        "instrument": "EUR_USD",
+                        "currentUnits": "-30000",
+                        "initialUnits": "-30000",
+                        "price": "1.14048",
+                    },
+                }
+            ]
+        )
+
+        contract = build_guardian_trigger_contract(snapshot=snapshot, order_intents={}, existing_contract={}, now=NOW)
+        entry = contract["entries"][0]
+        audit = entry["ownership_audit"]
+
+        self.assertEqual(validate_guardian_trigger_contract(contract, now=NOW, snapshot=snapshot)["status"], "VALID")
+        self.assertEqual(entry["trade_id"], "472987")
+        self.assertEqual(entry["pair"], "EUR_USD")
+        self.assertEqual(entry["side"], "SHORT")
+        self.assertEqual(entry["units"], 30000)
+        self.assertEqual(entry["avg_entry"], 1.14048)
+        self.assertEqual(entry["owner"], "UNKNOWN")
+        self.assertEqual(entry["thesis_state"], "UNKNOWN")
+        self.assertEqual(audit["status"], "UNKNOWN_NEEDS_OPERATOR_CONFIRM")
+        self.assertTrue(audit["unresolved"])
+        self.assertFalse(audit["system_pl_counted"])
+        self.assertFalse(audit["loss_side_auto_close_allowed"])
+        self.assertFalse(audit["same_theme_auto_add_allowed"])
+        self.assertEqual(audit["requires"], "operator confirmation or gateway evidence")
+        self.assertEqual(entry["invalidation_triggers"][0]["action_hint"], "HOLD")
+        self.assertEqual(entry["emergency_triggers"][0]["action_hint"], "HOLD")
+
     def test_unknown_owner_with_gateway_lane_evidence_maps_to_system(self) -> None:
         snapshot = _snapshot(
             positions=[
@@ -718,6 +850,118 @@ class GuardianEventRouterTest(unittest.TestCase):
             {issue["code"] for issue in validation["issues"]},
         )
         self.assertIn("CONTRACT_STALE", {event.event_type for event in events})
+
+    def test_missing_current_open_exposure_in_contract_is_blocked(self) -> None:
+        contract = _contract()
+        snapshot = _snapshot(
+            positions=[
+                {
+                    "pair": "EUR_USD",
+                    "side": "SHORT",
+                    "units": 30000,
+                    "owner": "unknown",
+                    "trade_id": "472987",
+                    "entry_price": 1.14048,
+                }
+            ]
+        )
+
+        validation = validate_guardian_trigger_contract(contract, now=NOW, snapshot=snapshot)
+        events = detect_guardian_events(inputs={"snapshot": snapshot, "trigger_contract": contract}, now=NOW)
+
+        self.assertEqual(validation["status"], "INVALID")
+        self.assertIn("CONTRACT_OPEN_EXPOSURE_MISSING", {issue["code"] for issue in validation["issues"]})
+        self.assertIn("CONTRACT_STALE", {event.event_type for event in events})
+
+    def test_selected_candidate_empty_triggers_blocks_without_watch_only_reason(self) -> None:
+        contract = _contract(entry_overrides={"selected": True, "status": "LIVE_READY"})
+
+        validation = validate_guardian_trigger_contract(contract, now=NOW)
+
+        self.assertEqual(validation["status"], "INVALID")
+        blockers = {issue["code"] for issue in validation["issues"] if issue["severity"] == "BLOCK"}
+        self.assertIn("TRIGGER_CONTRACT_EMPTY_FOR_ACTIVE_PAIR", blockers)
+
+    def test_watch_only_candidate_may_omit_triggers_with_explicit_reason(self) -> None:
+        contract = _contract(
+            entry_overrides={
+                "watch_only": True,
+                "watch_only_reason": "no_current_thesis",
+                "thesis_state": "UNKNOWN",
+            }
+        )
+
+        validation = validate_guardian_trigger_contract(contract, now=NOW)
+
+        self.assertEqual(validation["status"], "VALID")
+        self.assertNotIn("WATCH_ONLY_NO_TRIGGER_CONTRACT", {issue["code"] for issue in validation["issues"]})
+        self.assertNotIn("TRIGGER_CONTRACT_EMPTY_FOR_ACTIVE_PAIR", {issue["code"] for issue in validation["issues"]})
+
+    def test_watch_only_candidate_without_reason_warns_when_triggers_omitted(self) -> None:
+        contract = _contract(entry_overrides={"watch_only": True, "thesis_state": "UNKNOWN"})
+
+        validation = validate_guardian_trigger_contract(contract, now=NOW)
+
+        self.assertEqual(validation["status"], "VALID")
+        self.assertIn("WATCH_ONLY_NO_TRIGGER_CONTRACT", {issue["code"] for issue in validation["issues"]})
+
+    def test_candidate_builder_adds_default_triggers_for_tradable_thesis(self) -> None:
+        contract = build_guardian_trigger_contract(
+            snapshot=_snapshot(),
+            order_intents={
+                "selected_lane_id": "market-read:USD_JPY:SHORT",
+                "results": [
+                    {
+                        "lane_id": "market-read:USD_JPY:SHORT",
+                        "status": "LIVE_READY",
+                        "intent": {
+                            "pair": "USD_JPY",
+                            "side": "SHORT",
+                            "thesis": "USD_JPY failed acceptance short",
+                            "entry": 162.0,
+                            "take_profit": 161.72,
+                            "stop_loss": 162.18,
+                            "metadata": {"max_spread_pips": 1.2},
+                        },
+                    }
+                ],
+            },
+            existing_contract={},
+            now=NOW,
+        )
+        entry = contract["entries"][0]
+
+        self.assertTrue(entry["selected"])
+        for bucket in (
+            "harvest_triggers",
+            "no_add_triggers",
+            "wounded_triggers",
+            "invalidation_triggers",
+            "emergency_triggers",
+        ):
+            self.assertTrue(entry[bucket], bucket)
+        self.assertEqual(validate_guardian_trigger_contract(contract, now=NOW)["status"], "VALID")
+
+    def test_candidate_builder_marks_missing_thesis_as_watch_only(self) -> None:
+        contract = build_guardian_trigger_contract(
+            snapshot=_snapshot(),
+            order_intents={
+                "results": [
+                    {
+                        "lane_id": "market-read:USD_JPY:SHORT",
+                        "status": "MARKET_READ_FIRST",
+                        "intent": {"pair": "USD_JPY", "side": "SHORT"},
+                    }
+                ],
+            },
+            existing_contract={},
+            now=NOW,
+        )
+        entry = contract["entries"][0]
+
+        self.assertTrue(entry["watch_only"])
+        self.assertEqual(entry["watch_only_reason"], "no_current_thesis")
+        self.assertEqual(validate_guardian_trigger_contract(contract, now=NOW)["status"], "VALID")
 
     def test_generated_contract_deadline_is_not_expired(self) -> None:
         snapshot = _snapshot(

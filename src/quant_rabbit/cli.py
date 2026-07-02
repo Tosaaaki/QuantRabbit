@@ -4177,12 +4177,12 @@ def main(argv: list[str] | None = None) -> int:
     p_gpt.add_argument(
         "--guardian-receipt-consumption",
         type=Path,
-        default=DEFAULT_GUARDIAN_RECEIPT_CONSUMPTION,
+        default=Path(os.environ.get("QR_GUARDIAN_RECEIPT_CONSUMPTION_PATH", DEFAULT_GUARDIAN_RECEIPT_CONSUMPTION)),
     )
     p_gpt.add_argument(
         "--guardian-receipt-operator-review",
         type=Path,
-        default=DEFAULT_GUARDIAN_RECEIPT_OPERATOR_REVIEW,
+        default=Path(os.environ.get("QR_GUARDIAN_RECEIPT_OPERATOR_REVIEW_PATH", DEFAULT_GUARDIAN_RECEIPT_OPERATOR_REVIEW)),
     )
     p_gpt.add_argument("--decision-response", type=Path, default=None)
     p_gpt.add_argument("--max-lanes", type=int, default=DEFAULT_GPT_MAX_LANES)
@@ -7036,7 +7036,7 @@ def main(argv: list[str] | None = None) -> int:
             order_intents=order_intents_payload,
             existing_contract=existing_payload,
         )
-        validation = validate_guardian_trigger_contract(contract)
+        validation = validate_guardian_trigger_contract(contract, snapshot=snapshot_payload)
         _write_json(args.output, contract)
         write_guardian_trigger_contract_report(args.report, contract, validation)
         print(
