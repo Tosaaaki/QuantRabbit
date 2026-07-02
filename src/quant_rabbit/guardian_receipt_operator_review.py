@@ -117,6 +117,7 @@ def build_guardian_receipt_operator_review(
         "status": "NO_OPERATOR_REVIEW_REQUIRED",
         "normal_routing_allowed": True,
         "classifications": rows,
+        "operator_position_reviews": _operator_position_review_rows(operator_decision_payload),
         "read_only": True,
         "no_live_side_effects": True,
         "live_side_effects": [],
@@ -212,6 +213,7 @@ def render_guardian_receipt_operator_review_report(payload: dict[str, Any]) -> s
             for row in rows
             if any(row.get(key) is not None for key in ("trade_id", "owner", "management_intent"))
         ]
+        position_rows.extend(_operator_position_review_rows(payload))
         if position_rows:
             lines.extend(
                 [
@@ -372,6 +374,13 @@ def _decision_rows(payload: dict[str, Any] | None) -> list[dict[str, Any]]:
     rows = payload.get("decisions")
     if not isinstance(rows, list):
         rows = payload.get("classifications")
+    return [item for item in (rows if isinstance(rows, list) else []) if isinstance(item, dict)]
+
+
+def _operator_position_review_rows(payload: dict[str, Any] | None) -> list[dict[str, Any]]:
+    if not isinstance(payload, dict):
+        return []
+    rows = payload.get("operator_position_reviews")
     return [item for item in (rows if isinstance(rows, list) else []) if isinstance(item, dict)]
 
 

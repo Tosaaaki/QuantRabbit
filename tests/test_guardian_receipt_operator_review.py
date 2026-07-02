@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import tempfile
 import unittest
 from datetime import datetime, timedelta, timezone
@@ -313,6 +314,131 @@ class GuardianReceiptOperatorReviewTest(unittest.TestCase):
             self.assertTrue(report.exists())
             self.assertIn("no_live_side_effects", output.read_text())
             self.assertIn("does not place orders", report.read_text())
+
+    def test_operator_review_cli_preserves_operator_position_reviews_from_decision_file(self) -> None:
+        now = datetime(2026, 7, 2, tzinfo=timezone.utc)
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            watchdog = root / "watchdog.json"
+            consumption = root / "consumption.json"
+            broker = root / "broker.json"
+            decision = root / "decision.json"
+            output = root / "review.json"
+            report = root / "review.md"
+            _write_review_inputs(watchdog, consumption, broker)
+            decision.write_text(
+                json.dumps(
+                    {
+                        "decisions": [
+                            {
+                                "receipt_event_id": "receipt-reduce",
+                                "receipt_action": "REDUCE",
+                                "receipt_lifecycle": "EXPIRED",
+                                "operator_decision": "OPERATOR_ACKNOWLEDGED_HISTORICAL",
+                                "reason": "operator confirmed historical",
+                                "expires_at_utc": (now + timedelta(hours=1)).isoformat(),
+                                "no_live_side_effects": True,
+                            }
+                        ],
+                        "operator_position_reviews": [
+                            {
+                                "trade_id": "472987",
+                                "pair": "EUR_USD",
+                                "side": "SHORT",
+                                "units": 30000,
+                                "avg_entry": 1.14048,
+                                "owner": "OPERATOR_MANUAL",
+                                "operator_decision": "OPERATOR_CONFIRMED_MANUAL_OWNED",
+                                "management_intent": "KEEP",
+                                "operator_confirmation_source": "chat_operator_confirmation",
+                                "system_pl_counted": False,
+                                "same_theme_auto_add_allowed": False,
+                                "loss_side_auto_close_allowed": False,
+                                "auto_sl_attach_allowed": False,
+                                "auto_tp_modify_allowed": False,
+                            }
+                        ],
+                    }
+                )
+            )
+
+            rc = main(
+                [
+                    "guardian-receipt-operator-review",
+                    "--qr-trader-run-watchdog",
+                    str(watchdog),
+                    "--guardian-receipt-consumption",
+                    str(consumption),
+                    "--broker-snapshot",
+                    str(broker),
+                    "--operator-decision-file",
+                    str(decision),
+                    "--output",
+                    str(output),
+                    "--report",
+                    str(report),
+                ]
+            )
+
+            self.assertEqual(rc, 0)
+            payload = json.loads(output.read_text())
+            self.assertEqual(payload["operator_position_reviews"][0]["trade_id"], "472987")
+            report_text = report.read_text()
+            self.assertIn("Operator Position Review", report_text)
+            self.assertIn("472987", report_text)
+
+    def test_guardian_receipt_consumption_cli_rebuilds_acknowledgement(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            watchdog = root / "watchdog.json"
+            existing = root / "consumption.json"
+            review = root / "review.json"
+            broker = root / "broker.json"
+            report = root / "consumption.md"
+            _write_review_inputs(watchdog, existing, broker)
+            review.write_text(
+                json.dumps(
+                    {
+                        "classifications": [
+                            {
+                                "receipt_event_id": "receipt-reduce",
+                                "receipt_action": "REDUCE",
+                                "receipt_lifecycle": "EXPIRED",
+                                "operator_decision": "OPERATOR_ACKNOWLEDGED_HISTORICAL",
+                                "reason": "operator confirmed historical",
+                                "generated_at_utc": "2026-07-02T00:00:00+00:00",
+                                "expires_at_utc": "2099-07-02T00:00:00+00:00",
+                                "normal_routing_allowed": True,
+                                "no_live_side_effects": True,
+                            }
+                        ]
+                    }
+                )
+            )
+
+            rc = main(
+                [
+                    "guardian-receipt-consumption",
+                    "--qr-trader-run-watchdog",
+                    str(watchdog),
+                    "--existing",
+                    str(existing),
+                    "--operator-review",
+                    str(review),
+                    "--broker-snapshot",
+                    str(broker),
+                    "--output",
+                    str(existing),
+                    "--report",
+                    str(report),
+                ]
+            )
+
+            self.assertEqual(rc, 0)
+            payload = json.loads(existing.read_text())
+            self.assertEqual(payload["classifications"][0]["classification"], "HISTORICAL_ONLY")
+            self.assertTrue(payload["classifications"][0]["normal_routing_allowed"])
+            self.assertTrue(report.exists())
 
 
 def _issue() -> dict[str, object]:

@@ -205,7 +205,11 @@ from quant_rabbit.paths import (
     effective_oanda_universal_rotation_path,
 )
 from quant_rabbit.gpt_trader import DEFAULT_GPT_MAX_LANES, GPTTraderBrain, StaticTraderProvider, draft_trader_decision
-from quant_rabbit.guardian_receipt_consumption import load_guardian_receipt_consumption
+from quant_rabbit.guardian_receipt_consumption import (
+    build_guardian_receipt_consumption,
+    load_guardian_receipt_consumption,
+    write_guardian_receipt_consumption,
+)
 from quant_rabbit.guardian_receipt_operator_review import (
     build_guardian_receipt_operator_review,
     render_guardian_receipt_operator_review_report,
@@ -3978,6 +3982,27 @@ def main(argv: list[str] | None = None) -> int:
         default=Path(os.environ.get("QR_GUARDIAN_ACTION_LIVE_ROOT", "/Users/tossaki/App/QuantRabbit-live")),
     )
 
+    p_guardian_consumption = sub.add_parser(
+        "guardian-receipt-consumption",
+        help="Rebuild the read-only trader acknowledgement record for guardian receipt blockers.",
+    )
+    p_guardian_consumption.add_argument("--qr-trader-run-watchdog", type=Path, default=DEFAULT_QR_TRADER_RUN_WATCHDOG)
+    p_guardian_consumption.add_argument(
+        "--existing",
+        type=Path,
+        default=DEFAULT_GUARDIAN_RECEIPT_CONSUMPTION,
+        help="Existing consumption artifact used to preserve durable classifications.",
+    )
+    p_guardian_consumption.add_argument(
+        "--operator-review",
+        type=Path,
+        default=DEFAULT_GUARDIAN_RECEIPT_OPERATOR_REVIEW,
+    )
+    p_guardian_consumption.add_argument("--broker-snapshot", type=Path, default=DEFAULT_BROKER_SNAPSHOT)
+    p_guardian_consumption.add_argument("--output", type=Path, default=DEFAULT_GUARDIAN_RECEIPT_CONSUMPTION)
+    p_guardian_consumption.add_argument("--report", type=Path, default=DEFAULT_GUARDIAN_RECEIPT_CONSUMPTION_REPORT)
+    p_guardian_consumption.add_argument("--generated-by", default="guardian-receipt-consumption")
+
     p_guardian_review = sub.add_parser(
         "guardian-receipt-operator-review",
         help="Report or write explicit operator review classifications for expired guardian receipt blockers.",
@@ -7152,9 +7177,52 @@ def main(argv: list[str] | None = None) -> int:
                 ensure_ascii=False,
                 indent=2,
                 sort_keys=True,
-            )
+        )
         )
         return 0 if result.get("status") != "REJECTED" else 2
+    if args.command == "guardian-receipt-consumption":
+        try:
+            watchdog_payload = _load_json_object(args.qr_trader_run_watchdog) if args.qr_trader_run_watchdog.exists() else {}
+            existing_payload = load_guardian_receipt_consumption(args.existing)
+            operator_review_payload = (
+                _load_json_object(args.operator_review) if args.operator_review.exists() else {}
+            )
+            broker_snapshot_payload = _load_json_object(args.broker_snapshot) if args.broker_snapshot.exists() else {}
+            consumption_payload = build_guardian_receipt_consumption(
+                watchdog_payload,
+                existing=existing_payload,
+                operator_review=operator_review_payload,
+                broker_snapshot=broker_snapshot_payload,
+                generated_by=args.generated_by,
+            )
+            write_guardian_receipt_consumption(
+                consumption_payload,
+                output_path=args.output,
+                report_path=args.report,
+            )
+        except (OSError, json.JSONDecodeError, ValueError) as exc:
+            print(json.dumps({"error": str(exc)}, ensure_ascii=False, indent=2, sort_keys=True))
+            return 2
+        print(
+            json.dumps(
+                {
+                    "status": consumption_payload.get("status"),
+                    "normal_routing_allowed": consumption_payload.get("normal_routing_allowed"),
+                    "unresolved_issue_count": consumption_payload.get("unresolved_issue_count"),
+                    "current_p0_p1_blocks_routing": consumption_payload.get("current_p0_p1_blocks_routing"),
+                    "rows": len(consumption_payload.get("classifications") or []),
+                    "output_path": str(args.output),
+                    "report_path": str(args.report),
+                    "read_only": True,
+                    "no_live_side_effects": True,
+                    "live_side_effects": [],
+                },
+                ensure_ascii=False,
+                indent=2,
+                sort_keys=True,
+            )
+        )
+        return 0
     if args.command == "guardian-receipt-operator-review":
         try:
             watchdog_payload = _load_json_object(args.qr_trader_run_watchdog) if args.qr_trader_run_watchdog.exists() else {}
