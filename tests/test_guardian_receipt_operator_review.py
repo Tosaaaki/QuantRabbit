@@ -226,6 +226,80 @@ class GuardianReceiptOperatorReviewTest(unittest.TestCase):
         self.assertFalse(review["classifications"][0]["auto_tp_modify_allowed"])
         self.assertTrue(review["classifications"][0]["normal_routing_allowed"])
 
+    def test_emergency_hold_receipt_clears_with_manual_ownership_review(self) -> None:
+        now = datetime(2026, 7, 2, tzinfo=timezone.utc)
+        watchdog = {
+            "status": "BLOCKED",
+            "issue_status": "P0",
+            "guardian_receipt": {"issues": [_emergency_hold_receipt_issue()]},
+        }
+        consumption_row = _consumption_row(
+            classification="NEEDS_OPERATOR_REVIEW",
+            receipt_event_id="receipt-hold",
+            receipt_action="HOLD",
+        )
+        broker_snapshot = {
+            "positions": [
+                {
+                    "trade_id": "472987",
+                    "pair": "EUR_USD",
+                    "side": "SHORT",
+                    "units": 30000,
+                    "entry_price": 1.14048,
+                    "owner": "operator_manual",
+                }
+            ],
+            "orders": [],
+        }
+        review = build_guardian_receipt_operator_review(
+            watchdog,
+            {"classifications": [consumption_row]},
+            broker_snapshot_payload=broker_snapshot,
+            operator_decision_payload={
+                "decisions": [
+                    {
+                        "receipt_event_id": "receipt-hold",
+                        "receipt_action": "HOLD",
+                        "receipt_lifecycle": "EXPIRED",
+                        "trade_id": "472987",
+                        "pair": "EUR_USD",
+                        "side": "SHORT",
+                        "units": 30000,
+                        "avg_entry": 1.14048,
+                        "operator_decision": OPERATOR_CONFIRMED_MANUAL_OWNED,
+                        "management_intent": "KEEP",
+                        "owner": "OPERATOR_MANUAL",
+                        "operator_confirmation_source": "chat_operator_confirmation",
+                        "system_pl_counted": False,
+                        "same_theme_auto_add_allowed": False,
+                        "loss_side_auto_close_allowed": False,
+                        "auto_sl_attach_allowed": False,
+                        "auto_tp_modify_allowed": False,
+                        "reason": "operator explicitly confirmed manual EUR_USD should remain open",
+                        "expires_at_utc": (now + timedelta(hours=2)).isoformat(),
+                        "no_live_side_effects": True,
+                    }
+                ]
+            },
+            now_utc=now,
+        )
+        consumption = build_guardian_receipt_consumption(
+            watchdog,
+            existing={"classifications": [consumption_row]},
+            operator_review=review,
+            broker_snapshot=broker_snapshot,
+            now_utc=now,
+        )
+
+        self.assertEqual(review["status"], "GUARDIAN_RECEIPT_OPERATOR_REVIEW_CLEARED")
+        self.assertTrue(review["normal_routing_allowed"])
+        self.assertEqual(review["classifications"][0]["operator_decision"], OPERATOR_CONFIRMED_MANUAL_OWNED)
+        self.assertTrue(review["classifications"][0]["normal_routing_allowed"])
+        self.assertEqual(consumption["status"], "GUARDIAN_RECEIPT_ISSUES_ACKNOWLEDGED")
+        self.assertTrue(consumption["normal_routing_allowed"])
+        self.assertEqual(consumption["classifications"][0]["classification"], "HISTORICAL_ONLY")
+        self.assertTrue(consumption["classifications"][0]["normal_routing_allowed"])
+
     def test_legacy_expired_acknowledged_reduce_row_is_reblocked_without_review(self) -> None:
         now = datetime(2026, 7, 2, tzinfo=timezone.utc)
         consumption = build_guardian_receipt_consumption(
@@ -462,6 +536,19 @@ def _current_aud_usd_p0_issue() -> dict[str, object]:
     }
 
 
+def _emergency_hold_receipt_issue() -> dict[str, object]:
+    return {
+        "code": "GUARDIAN_RECEIPT_NOT_CONSUMED_BY_TRADER",
+        "severity": "P0",
+        "receipt_event_id": "receipt-hold",
+        "receipt_action": "HOLD",
+        "receipt_lifecycle": "EXPIRED",
+        "trade_id": "472987",
+        "emergency_or_margin_risk": True,
+        "consumed_by_trader": False,
+    }
+
+
 def _write_review_inputs(watchdog: Path, consumption: Path, broker: Path) -> None:
     watchdog.write_text('{"status": "OK", "issue_status": "OK", "guardian_receipt": {"issues": []}}')
     consumption.write_text(
@@ -473,11 +560,16 @@ def _write_review_inputs(watchdog: Path, consumption: Path, broker: Path) -> Non
     broker.write_text('{"positions": [], "orders": []}')
 
 
-def _consumption_row(*, classification: str) -> dict[str, object]:
+def _consumption_row(
+    *,
+    classification: str,
+    receipt_event_id: str = "receipt-reduce",
+    receipt_action: str = "REDUCE",
+) -> dict[str, object]:
     return {
         "issue_code": "GUARDIAN_RECEIPT_NOT_CONSUMED_BY_TRADER",
-        "receipt_event_id": "receipt-reduce",
-        "receipt_action": "REDUCE",
+        "receipt_event_id": receipt_event_id,
+        "receipt_action": receipt_action,
         "receipt_lifecycle": "EXPIRED",
         "consumed_by_trader": False,
         "classification": classification,

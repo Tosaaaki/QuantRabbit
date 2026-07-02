@@ -283,6 +283,8 @@ def receipt_requires_operator_review(record: dict[str, Any] | None) -> bool:
         return True
     action = _issue_action(record)
     lifecycle = _issue_lifecycle(record)
+    if _bool_value(record.get("emergency_or_margin_risk")) and lifecycle in HISTORICAL_LIFECYCLES:
+        return True
     return action in REVIEW_REQUIRED_ACTIONS and lifecycle in HISTORICAL_LIFECYCLES
 
 
