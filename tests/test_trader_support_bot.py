@@ -2509,6 +2509,98 @@ class TraderSupportBotTest(unittest.TestCase):
             self.assertIn("Repair basket send allowed", report)
             self.assertIn("Repair LIVE_READY lanes", report)
 
+    def test_guardian_receipt_consumption_status_blocks_normal_routing(self) -> None:
+        now = datetime(2026, 6, 22, 12, 15, tzinfo=timezone.utc)
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _write_fixture(root, now=now, blocked=False)
+            _write_watchdog_guardian_issue(files["qr_trader_run_watchdog"], event_id="receipt-review")
+            _write_guardian_receipt_consumption(
+                files["guardian_receipt_consumption"],
+                event_id="receipt-review",
+                classification="NEEDS_OPERATOR_REVIEW",
+                normal_routing_allowed=False,
+            )
+            env = _guardian_env(root, active="1")
+            with mock.patch.dict(os.environ, env, clear=False):
+                summary = TraderSupportBot(
+                    broker_snapshot_path=files["broker"],
+                    order_intents_path=files["intents"],
+                    target_state_path=files["target"],
+                    position_management_path=files["position_management"],
+                    position_guardian_management_path=files["guardian_management"],
+                    position_guardian_execution_path=files["guardian_execution"],
+                    position_guardian_heartbeat_path=files["guardian_heartbeat"],
+                    self_improvement_audit_path=files["self_improvement"],
+                    profitability_acceptance_path=files["profitability"],
+                    execution_timing_audit_path=files["timing"],
+                    profit_capture_bot_path=files["profit_capture_bot"],
+                    qr_trader_run_watchdog_path=files["qr_trader_run_watchdog"],
+                    guardian_receipt_consumption_path=files["guardian_receipt_consumption"],
+                    output_path=files["output"],
+                    report_path=files["report"],
+                    now_utc=now,
+                ).run()
+
+            payload = json.loads(files["output"].read_text())
+            blocker_codes = {item["code"] for item in payload["blockers"]}
+            action_codes = {item["code"] for item in payload["operator_actions"]}
+            report = files["report"].read_text()
+
+        self.assertEqual(summary.status, STATUS_BLOCKED)
+        self.assertIn("GUARDIAN_RECEIPT_CONSUMPTION_BLOCKS_NORMAL_ROUTING", blocker_codes)
+        self.assertIn("GUARDIAN_RECEIPT_NEEDS_OPERATOR_REVIEW", blocker_codes)
+        self.assertIn("REVIEW_GUARDIAN_RECEIPT_CONSUMPTION", action_codes)
+        self.assertFalse(payload["metrics"]["send_fresh_entries_allowed"])
+        self.assertEqual(payload["metrics"]["guardian_receipt_consumption_status"], "GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED")
+        self.assertFalse(payload["metrics"]["guardian_receipt_consumption_normal_routing_allowed"])
+        self.assertIn("NEEDS_OPERATOR_REVIEW", payload["metrics"]["guardian_receipt_recommended_next_action"])
+        self.assertIn("Guardian Receipt Consumption", report)
+        self.assertIn("Recommended next action", report)
+        self.assertIn("NEEDS_OPERATOR_REVIEW", report)
+
+    def test_acknowledged_guardian_receipt_consumption_surfaces_normal_routing_allowed(self) -> None:
+        now = datetime(2026, 6, 22, 12, 15, tzinfo=timezone.utc)
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _write_fixture(root, now=now, blocked=False)
+            _write_guardian_receipt_consumption(
+                files["guardian_receipt_consumption"],
+                event_id="receipt-expired",
+                classification="EXPIRED_ACKNOWLEDGED",
+                normal_routing_allowed=True,
+            )
+            env = _guardian_env(root, active="1")
+            with mock.patch.dict(os.environ, env, clear=False):
+                summary = TraderSupportBot(
+                    broker_snapshot_path=files["broker"],
+                    order_intents_path=files["intents"],
+                    target_state_path=files["target"],
+                    position_management_path=files["position_management"],
+                    position_guardian_management_path=files["guardian_management"],
+                    position_guardian_execution_path=files["guardian_execution"],
+                    position_guardian_heartbeat_path=files["guardian_heartbeat"],
+                    self_improvement_audit_path=files["self_improvement"],
+                    profitability_acceptance_path=files["profitability"],
+                    execution_timing_audit_path=files["timing"],
+                    profit_capture_bot_path=files["profit_capture_bot"],
+                    qr_trader_run_watchdog_path=files["qr_trader_run_watchdog"],
+                    guardian_receipt_consumption_path=files["guardian_receipt_consumption"],
+                    output_path=files["output"],
+                    report_path=files["report"],
+                    now_utc=now,
+                ).run()
+
+            payload = json.loads(files["output"].read_text())
+            blocker_codes = {item["code"] for item in payload["blockers"]}
+            report = files["report"].read_text()
+
+        self.assertEqual(summary.status, STATUS_READY)
+        self.assertNotIn("GUARDIAN_RECEIPT_CONSUMPTION_BLOCKS_NORMAL_ROUTING", blocker_codes)
+        self.assertTrue(payload["metrics"]["guardian_receipt_consumption_normal_routing_allowed"])
+        self.assertEqual(payload["metrics"]["guardian_receipt_consumption_classifications"], ["EXPIRED_ACKNOWLEDGED"])
+        self.assertIn("EXPIRED_ACKNOWLEDGED", report)
+
     def test_pending_cancel_review_p0_becomes_non_actionable_repair_request(self) -> None:
         now = datetime(2026, 6, 25, 2, 12, tzinfo=timezone.utc)
         with tempfile.TemporaryDirectory() as tmp:
@@ -4102,6 +4194,8 @@ def _write_fixture(root: Path, *, now: datetime, blocked: bool) -> dict[str, Pat
         "profitability": data / "profitability_acceptance.json",
         "timing": data / "execution_timing_audit.json",
         "profit_capture_bot": data / "profit_capture_bot.json",
+        "qr_trader_run_watchdog": data / "qr_trader_run_watchdog.json",
+        "guardian_receipt_consumption": data / "guardian_receipt_consumption.json",
         "output": data / "trader_support_bot.json",
         "report": docs / "trader_support_bot_report.md",
     }
@@ -4590,6 +4684,63 @@ def _write_fixture(root: Path, *, now: datetime, blocked: bool) -> dict[str, Pat
         },
     )
     return files
+
+
+def _write_watchdog_guardian_issue(path: Path, *, event_id: str) -> None:
+    issue = {
+        "code": "GUARDIAN_RECEIPT_NEEDS_OPERATOR_REVIEW",
+        "severity": "P0",
+        "message": "guardian receipt needs operator review",
+        "receipt_event_id": event_id,
+        "receipt_action": "HOLD",
+        "receipt_lifecycle": "EXPIRED",
+        "consumed_by_trader": False,
+        "normal_routing_allowed": False,
+    }
+    _write_json(
+        path,
+        {
+            "generated_at_utc": datetime.now(timezone.utc).isoformat(),
+            "status": "OK",
+            "severity": "P0",
+            "last_trader_run_at": datetime.now(timezone.utc).isoformat(),
+            "last_trader_run_source": "trader_journal.ts",
+            "last_trader_run_path": "logs/trader_journal.jsonl",
+            "guardian_receipt": {"issues": [issue]},
+        },
+    )
+
+
+def _write_guardian_receipt_consumption(
+    path: Path,
+    *,
+    event_id: str,
+    classification: str,
+    normal_routing_allowed: bool,
+) -> None:
+    _write_json(
+        path,
+        {
+            "generated_at_utc": datetime.now(timezone.utc).isoformat(),
+            "status": "GUARDIAN_RECEIPT_ISSUES_ACKNOWLEDGED"
+            if normal_routing_allowed
+            else "GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED",
+            "normal_routing_allowed": normal_routing_allowed,
+            "unresolved_issue_count": 0 if normal_routing_allowed else 1,
+            "classifications": [
+                {
+                    "issue_code": "GUARDIAN_RECEIPT_NOT_CONSUMED_BY_TRADER",
+                    "receipt_event_id": event_id,
+                    "receipt_action": "HOLD",
+                    "receipt_lifecycle": "EXPIRED",
+                    "consumed_by_trader": False,
+                    "classification": classification,
+                    "reason": "test guardian receipt classification",
+                    "normal_routing_allowed": normal_routing_allowed,
+                }
+            ],
+        },
+    )
 
 
 def _guardian_env(root: Path, *, active: str) -> dict[str, str]:

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import tempfile
 import unittest
@@ -90,10 +91,39 @@ def _capped_engine(*, policy: RiskPolicy | None = None, **kwargs) -> RiskEngine:
     return RiskEngine(policy=policy, **kwargs)
 
 
+def _write_guardian_watchdog_issue(path: Path) -> None:
+    path.write_text(
+        json.dumps(
+            {
+                "generated_at_utc": datetime.now(timezone.utc).isoformat(),
+                "status": "BLOCKED",
+                "severity": "P1",
+                "guardian_receipt": {
+                    "issues": [
+                        {
+                            "code": "GUARDIAN_RECEIPT_NOT_CONSUMED_BY_TRADER",
+                            "severity": "P1",
+                            "message": "receipt_lifecycle=EXPIRED while consumed_by_trader=false",
+                            "receipt_event_id": "receipt-stale-reduce",
+                            "receipt_action": "REDUCE",
+                            "receipt_lifecycle": "EXPIRED",
+                            "consumed_by_trader": False,
+                            "normal_routing_allowed": False,
+                        }
+                    ]
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+
 class RiskEngineTest(unittest.TestCase):
     def setUp(self) -> None:
         self._bidask_tmp = tempfile.TemporaryDirectory()
         self._prior_bidask_rules = os.environ.get("QR_BIDASK_REPLAY_PRECISION_RULES")
+        self._prior_guardian_watchdog = os.environ.get("QR_GUARDIAN_RECEIPT_WATCHDOG_PATH")
+        self._prior_guardian_consumption = os.environ.get("QR_GUARDIAN_RECEIPT_CONSUMPTION_PATH")
         os.environ["QR_BIDASK_REPLAY_PRECISION_RULES"] = str(
             write_nonmatching_bidask_rules(Path(self._bidask_tmp.name))
         )
@@ -103,6 +133,14 @@ class RiskEngineTest(unittest.TestCase):
             os.environ.pop("QR_BIDASK_REPLAY_PRECISION_RULES", None)
         else:
             os.environ["QR_BIDASK_REPLAY_PRECISION_RULES"] = self._prior_bidask_rules
+        if self._prior_guardian_watchdog is None:
+            os.environ.pop("QR_GUARDIAN_RECEIPT_WATCHDOG_PATH", None)
+        else:
+            os.environ["QR_GUARDIAN_RECEIPT_WATCHDOG_PATH"] = self._prior_guardian_watchdog
+        if self._prior_guardian_consumption is None:
+            os.environ.pop("QR_GUARDIAN_RECEIPT_CONSUMPTION_PATH", None)
+        else:
+            os.environ["QR_GUARDIAN_RECEIPT_CONSUMPTION_PATH"] = self._prior_guardian_consumption
         self._bidask_tmp.cleanup()
 
     def test_default_policy_has_no_jpy_loss_cap_literal(self) -> None:
@@ -141,6 +179,32 @@ class RiskEngineTest(unittest.TestCase):
         self.assertLessEqual(decision.metrics.risk_jpy, TEST_MAX_LOSS_JPY)
         self.assertGreaterEqual(decision.metrics.reward_risk, 1.2)
         self.assertIn("MISSING_MARKET_CONTEXT", {issue.code for issue in decision.issues})
+
+    def test_live_send_blocks_unresolved_guardian_receipt_issue(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            watchdog = root / "watchdog.json"
+            consumption = root / "guardian_receipt_consumption.json"
+            _write_guardian_watchdog_issue(watchdog)
+            os.environ["QR_GUARDIAN_RECEIPT_WATCHDOG_PATH"] = str(watchdog)
+            os.environ["QR_GUARDIAN_RECEIPT_CONSUMPTION_PATH"] = str(consumption)
+            intent = OrderIntent(
+                pair="EUR_USD",
+                side=Side.LONG,
+                order_type=OrderType.MARKET,
+                units=3000,
+                tp=1.17554,
+                sl=1.17234,
+                thesis="eurusd_direct_usd_continuation",
+            )
+
+            decision = _capped_engine(live_enabled=True).validate(intent, snapshot(), for_live_send=True)
+
+            self.assertFalse(decision.allowed)
+            self.assertIn(
+                "GUARDIAN_RECEIPT_NOT_CONSUMED_BY_TRADER_BLOCKS_NEW_ENTRY",
+                {issue.code for issue in decision.issues},
+            )
 
     def test_validation_time_freezes_quote_freshness_for_batch_generation(self) -> None:
         quote_time = datetime(2026, 5, 19, 0, 0, tzinfo=timezone.utc)

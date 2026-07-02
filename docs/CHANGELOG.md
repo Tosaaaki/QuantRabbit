@@ -1,5 +1,13 @@
 # Changelog
 
+## 2026-07-02
+
+- Tightened `qr-trader` watchdog timestamp parsing: `last_trader_run_at` now reports its source/path and accepts only trader journal `ts`, qr-trader automation memory timestamps, trader decision/autotrade report generated-at fields, or trader-shaped decision response generated-at fields. Guardian receipt expiry/generated timestamps, guardian action review timestamps, watchdog generated timestamps, and guardian trigger deadlines are reported as rejected timestamp candidates instead of trader-run evidence.
+- Added guardian receipt consumption acknowledgement: `trader-draft-decision` writes `data/guardian_receipt_consumption.json` and `docs/guardian_receipt_consumption_report.md` before normal new-entry routing, classifying watchdog receipt issues as consumed, expired/stale/rejected acknowledged, historical-only, or operator-review-required with per-row `generated_by` and `generated_at_utc`. `NEEDS_OPERATOR_REVIEW` blocks normal TRADE routing while preserving existing exposure safety paths.
+- Enforced the guardian receipt hard gate across `gpt-trader-decision`, `RiskEngine.validate(..., for_live_send=True)`, and `LiveOrderGateway`: unresolved watchdog receipt issues now emit `GUARDIAN_RECEIPT_NOT_CONSUMED_BY_TRADER_BLOCKS_NEW_ENTRY`, reject ordinary fresh entries before broker posts, and keep protection/management paths separate.
+- Split watchdog runtime health from workflow permission: a healthy scheduler with a P0/P1 guardian receipt issue reports `runtime_status=OK`, `overall_status=BLOCKED`, and top-level `status=BLOCKED` instead of `status=OK severity=P0/P1`.
+- Updated `trader-support-bot` and watchdog integration so support reports unresolved guardian receipt issues, latest consumption status, and whether normal routing is allowed; acknowledged expired/stale/rejected/historical receipts stop recurring as active watchdog blockers.
+
 ## 2026-07-01
 
 - Added a read-only `qr-trader` scheduled-run watchdog: `tools/qr_trader_run_watchdog.py` validates the Codex automation policy, combines live journal/decision/memory evidence, checks active guardian receipts for missed trader consumption, and writes `data/qr_trader_run_watchdog.json`, `docs/qr_trader_run_watchdog_report.md`, and `logs/qr_trader_run_watchdog.log` without broker calls or automatic trader wake.

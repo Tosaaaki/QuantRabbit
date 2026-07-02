@@ -38,6 +38,8 @@ class QRTraderRunWatchdogTest(unittest.TestCase):
             self.assertTrue(paths.output_json.exists())
             self.assertTrue(paths.output_report.exists())
             self.assertTrue(paths.output_log.exists())
+            self.assertEqual(payload["last_trader_run_source"], "qr_trader_automation_memory.timestamp")
+            self.assertEqual(payload["last_trader_run_path"], str(automation_dir / "memory.md"))
 
     def test_active_stale_run_is_stale(self) -> None:
         now = _dt("2026-07-01T03:00:00+00:00")
@@ -91,6 +93,10 @@ class QRTraderRunWatchdogTest(unittest.TestCase):
 
             payload = run_watchdog(paths=paths, now_utc=now)
 
+            self.assertEqual(payload["status"], "STALE")
+            self.assertEqual(payload["runtime_status"], "STALE")
+            self.assertEqual(payload["overall_status"], "BLOCKED")
+            self.assertEqual(payload["issue_status"], "P0")
             guardian_issues = payload["guardian_receipt"]["issues"]
             self.assertEqual(guardian_issues[0]["code"], "GUARDIAN_RECEIPT_NOT_CONSUMED_BY_TRADER")
             self.assertEqual(guardian_issues[0]["severity"], "P1")
@@ -135,6 +141,10 @@ class QRTraderRunWatchdogTest(unittest.TestCase):
             payload = run_watchdog(paths=paths, now_utc=now)
 
             guardian_issues = payload["guardian_receipt"]["issues"]
+            self.assertEqual(payload["status"], "BLOCKED")
+            self.assertEqual(payload["runtime_status"], "OK")
+            self.assertEqual(payload["overall_status"], "BLOCKED")
+            self.assertEqual(payload["issue_status"], "P1")
             self.assertEqual(len(guardian_issues), 1)
             self.assertEqual(guardian_issues[0]["code"], "GUARDIAN_RECEIPT_NOT_CONSUMED_BY_TRADER")
             self.assertIn("receipt_lifecycle=EXPIRED", guardian_issues[0]["message"])
@@ -274,6 +284,226 @@ class QRTraderRunWatchdogTest(unittest.TestCase):
             self.assertEqual(payload["guardian_receipt"]["receipts_checked"], 2)
             self.assertEqual(len(payload["guardian_receipt"]["receipt_summaries"]), 1)
             self.assertEqual(len(payload["guardian_receipt"]["issues"]), 1)
+
+    def test_receipt_expiry_is_rejected_as_last_trader_run(self) -> None:
+        now = _dt("2026-07-01T03:00:00+00:00")
+        with tempfile.TemporaryDirectory() as tmp:
+            root, automation_dir, paths = _fixture(tmp, now=now)
+            _write_automation(automation_dir)
+            _write_guardian_receipt(
+                root,
+                action="HOLD",
+                generated_at=_dt("2026-07-01T02:40:00+00:00"),
+                expires_at=_dt("2026-07-01T02:59:00+00:00"),
+                consumed=False,
+                lifecycle="EXPIRED",
+            )
+
+            payload = run_watchdog(paths=paths, now_utc=now)
+
+            self.assertIsNone(payload["last_trader_run_at"])
+            self.assertEqual(payload["status"], "UNKNOWN")
+            rejected_sources = {item["source"] for item in payload["rejected_timestamp_candidates"]}
+            self.assertIn("guardian_action_receipt.expires_at_utc", rejected_sources)
+            self.assertIn("guardian_action_receipt.generated_at_utc", rejected_sources)
+
+    def test_guardian_review_and_trigger_deadline_are_rejected_as_last_trader_run(self) -> None:
+        now = _dt("2026-07-01T03:00:00+00:00")
+        with tempfile.TemporaryDirectory() as tmp:
+            root, automation_dir, paths = _fixture(tmp, now=now)
+            _write_automation(automation_dir)
+            (root / "docs" / "guardian_action_review.md").write_text(
+                "# Guardian Action Review\n\n- Generated at UTC: `2026-07-01T02:59:00+00:00`\n",
+                encoding="utf-8",
+            )
+            _write_json(
+                root / "data" / "guardian_trigger_contract.json",
+                {
+                    "generated_at_utc": "2026-07-01T02:57:00+00:00",
+                    "next_review_deadline_utc": "2026-07-01T02:59:00+00:00",
+                },
+            )
+            _write_json(
+                paths.output_json,
+                {
+                    "generated_at_utc": "2026-07-01T02:58:00+00:00",
+                    "status": "OK",
+                },
+            )
+
+            payload = run_watchdog(paths=paths, now_utc=now)
+
+            self.assertIsNone(payload["last_trader_run_at"])
+            rejected_sources = {item["source"] for item in payload["rejected_timestamp_candidates"]}
+            self.assertIn("guardian_action_review.timestamp", rejected_sources)
+            self.assertIn("guardian_trigger_contract.next_review_deadline_utc", rejected_sources)
+            self.assertIn("qr_trader_run_watchdog.generated_at_utc", rejected_sources)
+
+    def test_trader_journal_ts_is_accepted_as_last_trader_run(self) -> None:
+        now = _dt("2026-07-01T03:00:00+00:00")
+        with tempfile.TemporaryDirectory() as tmp:
+            root, automation_dir, paths = _fixture(tmp, now=now)
+            _write_automation(automation_dir)
+            _write_journal(root, _dt("2026-07-01T02:59:00+00:00"))
+
+            payload = run_watchdog(paths=paths, now_utc=now)
+
+            self.assertEqual(payload["last_trader_run_at"], "2026-07-01T02:59:00+00:00")
+            self.assertEqual(payload["last_trader_run_source"], "trader_journal.ts")
+
+    def test_automation_memory_timestamp_is_accepted_as_last_trader_run(self) -> None:
+        now = _dt("2026-07-01T03:00:00+00:00")
+        with tempfile.TemporaryDirectory() as tmp:
+            _, automation_dir, paths = _fixture(tmp, now=now)
+            _write_automation(automation_dir)
+            _write_memory(automation_dir, _dt("2026-07-01T02:58:00+00:00"))
+
+            payload = run_watchdog(paths=paths, now_utc=now)
+
+            self.assertEqual(payload["last_trader_run_at"], "2026-07-01T02:58:00+00:00")
+            self.assertEqual(payload["last_trader_run_source"], "qr_trader_automation_memory.timestamp")
+
+    def test_decision_artifact_generated_at_requires_trader_decision_shape(self) -> None:
+        now = _dt("2026-07-01T03:00:00+00:00")
+        with tempfile.TemporaryDirectory() as tmp:
+            root, automation_dir, paths = _fixture(tmp, now=now)
+            _write_automation(automation_dir)
+            _write_json(
+                root / "data" / "codex_trader_decision_response.json",
+                {
+                    "generated_at_utc": "2026-07-01T02:58:00+00:00",
+                    "action": "HOLD",
+                    "receipt_status": "ACCEPTED",
+                },
+            )
+
+            payload = run_watchdog(paths=paths, now_utc=now)
+
+            self.assertIsNone(payload["last_trader_run_at"])
+            rejected_sources = {item["source"] for item in payload["rejected_timestamp_candidates"]}
+            self.assertIn("decision_response.generated_at_utc", rejected_sources)
+
+            _write_json(
+                root / "data" / "codex_trader_decision_response.json",
+                {
+                    "generated_at_utc": "2026-07-01T02:58:00+00:00",
+                    "action": "WAIT",
+                    "market_read_first": {"naked_read": {"tape_state": "RANGE"}},
+                    "twenty_minute_plan": {"horizon_minutes": 60},
+                },
+            )
+
+            payload = run_watchdog(paths=paths, now_utc=now)
+
+            self.assertEqual(payload["last_trader_run_at"], "2026-07-01T02:58:00+00:00")
+            self.assertEqual(payload["last_trader_run_source"], "decision_response.generated_at_utc")
+
+    def test_report_generated_at_is_accepted_as_trader_run_evidence(self) -> None:
+        now = _dt("2026-07-01T03:00:00+00:00")
+        with tempfile.TemporaryDirectory() as tmp:
+            root, automation_dir, paths = _fixture(tmp, now=now)
+            _write_automation(automation_dir)
+            (root / "docs" / "autotrade_cycle_report.md").write_text(
+                "# Autotrade Cycle Report\n\n- Generated at UTC: `2026-07-01T02:56:00+00:00`\n",
+                encoding="utf-8",
+            )
+
+            payload = run_watchdog(paths=paths, now_utc=now)
+
+            self.assertEqual(payload["last_trader_run_at"], "2026-07-01T02:56:00+00:00")
+            self.assertEqual(payload["last_trader_run_source"], "autotrade_report.generated_at_utc")
+
+    def test_gpt_decision_report_generated_at_requires_trader_report_shape(self) -> None:
+        now = _dt("2026-07-01T03:00:00+00:00")
+        with tempfile.TemporaryDirectory() as tmp:
+            root, automation_dir, paths = _fixture(tmp, now=now)
+            _write_automation(automation_dir)
+            (root / "docs" / "gpt_trader_decision_report.md").write_text(
+                "# Guardian Action Review\n\n- Generated at UTC: `2026-07-01T02:56:00+00:00`\n",
+                encoding="utf-8",
+            )
+
+            payload = run_watchdog(paths=paths, now_utc=now)
+
+            self.assertIsNone(payload["last_trader_run_at"])
+            rejected_sources = {item["source"] for item in payload["rejected_timestamp_candidates"]}
+            self.assertIn("gpt_decision_report.generated_at_utc", rejected_sources)
+
+            (root / "docs" / "gpt_trader_decision_report.md").write_text(
+                "# GPT Trader Decision Report\n\n- Generated at UTC: `2026-07-01T02:56:00+00:00`\n",
+                encoding="utf-8",
+            )
+
+            payload = run_watchdog(paths=paths, now_utc=now)
+
+            self.assertEqual(payload["last_trader_run_at"], "2026-07-01T02:56:00+00:00")
+            self.assertEqual(payload["last_trader_run_source"], "gpt_decision_report.generated_at_utc")
+
+    def test_expired_acknowledged_receipt_stops_repeating_active_issue(self) -> None:
+        now = _dt("2026-07-01T03:00:00+00:00")
+        with tempfile.TemporaryDirectory() as tmp:
+            root, automation_dir, paths = _fixture(tmp, now=now)
+            _write_automation(automation_dir)
+            _write_decision(root, _dt("2026-07-01T02:55:00+00:00"))
+            _write_guardian_receipt(
+                root,
+                action="REDUCE",
+                generated_at=_dt("2026-07-01T01:10:00+00:00"),
+                expires_at=_dt("2026-07-01T02:25:00+00:00"),
+                consumed=False,
+                lifecycle="EXPIRED",
+                event_id="receipt-expired-ack",
+            )
+            _write_consumption(
+                root,
+                issue_code="GUARDIAN_RECEIPT_NOT_CONSUMED_BY_TRADER",
+                event_id="receipt-expired-ack",
+                action="REDUCE",
+                lifecycle="EXPIRED",
+                classification="EXPIRED_ACKNOWLEDGED",
+                normal_routing_allowed=True,
+            )
+
+            payload = run_watchdog(paths=paths, now_utc=now)
+
+            self.assertEqual(payload["guardian_receipt"]["issues"], [])
+            self.assertEqual(
+                payload["guardian_receipt"]["receipt_summaries"][0]["acknowledgement_classification"],
+                "EXPIRED_ACKNOWLEDGED",
+            )
+
+    def test_needs_operator_review_remains_visible_without_consumed_flag(self) -> None:
+        now = _dt("2026-07-01T03:00:00+00:00")
+        with tempfile.TemporaryDirectory() as tmp:
+            root, automation_dir, paths = _fixture(tmp, now=now)
+            _write_automation(automation_dir)
+            _write_decision(root, _dt("2026-07-01T02:55:00+00:00"))
+            _write_guardian_receipt(
+                root,
+                action="HOLD",
+                generated_at=_dt("2026-07-01T01:10:00+00:00"),
+                expires_at=_dt("2026-07-01T02:25:00+00:00"),
+                consumed=False,
+                lifecycle="EXPIRED",
+                event_id="receipt-needs-review",
+                thesis_state="EMERGENCY",
+            )
+            _write_consumption(
+                root,
+                issue_code="GUARDIAN_RECEIPT_NEEDS_OPERATOR_REVIEW",
+                event_id="receipt-needs-review",
+                action="HOLD",
+                lifecycle="EXPIRED",
+                classification="NEEDS_OPERATOR_REVIEW",
+                normal_routing_allowed=False,
+            )
+
+            payload = run_watchdog(paths=paths, now_utc=now)
+
+            issue = payload["guardian_receipt"]["issues"][0]
+            self.assertEqual(issue["code"], "GUARDIAN_RECEIPT_NEEDS_OPERATOR_REVIEW")
+            self.assertFalse(issue["consumed_by_trader"])
+            self.assertFalse(issue["normal_routing_allowed"])
 
     def test_missing_evidence_is_unknown(self) -> None:
         now = _dt("2026-07-01T03:00:00+00:00")
@@ -442,6 +672,40 @@ def _write_guardian_receipt(
     )
     (root / "docs" / "guardian_action_review.md").write_text(
         "# Guardian Action Review\n\n- Status: `RECEIPT_WRITTEN`\n", encoding="utf-8"
+    )
+
+
+def _write_consumption(
+    root: Path,
+    *,
+    issue_code: str,
+    event_id: str,
+    action: str,
+    lifecycle: str,
+    classification: str,
+    normal_routing_allowed: bool,
+) -> None:
+    _write_json(
+        root / "data" / "guardian_receipt_consumption.json",
+        {
+            "generated_at_utc": "2026-07-01T02:56:00+00:00",
+            "status": "GUARDIAN_RECEIPT_ISSUES_ACKNOWLEDGED"
+            if normal_routing_allowed
+            else "GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED",
+            "normal_routing_allowed": normal_routing_allowed,
+            "classifications": [
+                {
+                    "issue_code": issue_code,
+                    "receipt_event_id": event_id,
+                    "receipt_action": action,
+                    "receipt_lifecycle": lifecycle,
+                    "consumed_by_trader": False,
+                    "classification": classification,
+                    "reason": "test classification",
+                    "normal_routing_allowed": normal_routing_allowed,
+                }
+            ],
+        },
     )
 
 

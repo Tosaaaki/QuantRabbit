@@ -30,12 +30,15 @@ from quant_rabbit.paths import (
     ROOT as _QR_ROOT,
     DEFAULT_DAILY_TARGET_STATE,
     DEFAULT_GUARDIAN_ACTION_RECEIPT,
+    DEFAULT_GUARDIAN_RECEIPT_CONSUMPTION,
     DEFAULT_LIVE_ORDER_REQUEST,
     DEFAULT_LIVE_ORDER_STAGE_REPORT,
     DEFAULT_ORDER_INTENTS,
+    DEFAULT_QR_TRADER_RUN_WATCHDOG,
     DEFAULT_STRATEGY_PROFILE,
 )
 from quant_rabbit.guardian_events import guardian_action_gateway_issues
+from quant_rabbit.guardian_receipt_consumption import guardian_receipt_new_entry_blockers_from_paths
 from quant_rabbit.risk import (
     MIN_PRODUCTION_LOT_UNITS,
     RiskEngine,
@@ -119,6 +122,8 @@ class LiveOrderGateway:
         self_improvement_audit: Path | None = None,
         verified_decision_path: Path | None = None,
         guardian_action_receipt_path: Path | None = DEFAULT_GUARDIAN_ACTION_RECEIPT,
+        qr_trader_run_watchdog_path: Path | None = DEFAULT_QR_TRADER_RUN_WATCHDOG,
+        guardian_receipt_consumption_path: Path | None = DEFAULT_GUARDIAN_RECEIPT_CONSUMPTION,
     ) -> None:
         self.client = client
         self.strategy_profile = strategy_profile
@@ -136,6 +141,8 @@ class LiveOrderGateway:
         # already repaired. Manual stage-live-order paths leave it None.
         self.verified_decision_path = verified_decision_path
         self.guardian_action_receipt_path = guardian_action_receipt_path
+        self.qr_trader_run_watchdog_path = qr_trader_run_watchdog_path
+        self.guardian_receipt_consumption_path = guardian_receipt_consumption_path
 
     def run(
         self,
@@ -272,6 +279,7 @@ class LiveOrderGateway:
             thesis=intent.thesis,
             action_receipt_path=self.guardian_action_receipt_path,
         )
+        guardian_receipt_consumption_issues = self._guardian_receipt_consumption_gateway_issues(risk_issues)
         sl_lint, sl_lint_issues = _sl_lint_result(
             intent=intent,
             snapshot=snapshot,
@@ -288,6 +296,7 @@ class LiveOrderGateway:
             or any(issue["severity"] == "BLOCK" for issue in send_issues)
             or any(issue["severity"] == "BLOCK" for issue in target_path_issues)
             or any(issue["severity"] == "BLOCK" for issue in guardian_action_issues)
+            or any(issue["severity"] == "BLOCK" for issue in guardian_receipt_consumption_issues)
             or any(issue["severity"] == "BLOCK" for issue in sl_lint_issues)
             or any(issue.severity == "BLOCK" for issue in scale_issues)
         )
@@ -367,6 +376,7 @@ class LiveOrderGateway:
                 *send_issues,
                 *target_path_issues,
                 *guardian_action_issues,
+                *guardian_receipt_consumption_issues,
                 *sl_lint_issues,
                 *order_build_issues,
                 *[issue.__dict__ for issue in scale_issues],
@@ -753,6 +763,7 @@ class LiveOrderGateway:
             thesis=intent.thesis,
             action_receipt_path=self.guardian_action_receipt_path,
         )
+        guardian_receipt_consumption_issues = self._guardian_receipt_consumption_gateway_issues(risk_issues)
         sl_lint, sl_lint_issues = _sl_lint_result(
             intent=intent,
             snapshot=snapshot,
@@ -769,6 +780,7 @@ class LiveOrderGateway:
             or any(issue["severity"] == "BLOCK" for issue in send_issues)
             or any(issue["severity"] == "BLOCK" for issue in target_path_issues)
             or any(issue["severity"] == "BLOCK" for issue in guardian_action_issues)
+            or any(issue["severity"] == "BLOCK" for issue in guardian_receipt_consumption_issues)
             or any(issue["severity"] == "BLOCK" for issue in sl_lint_issues)
             or any(issue.severity == "BLOCK" for issue in scale_issues)
         )
@@ -843,6 +855,7 @@ class LiveOrderGateway:
                 *send_issues,
                 *target_path_issues,
                 *guardian_action_issues,
+                *guardian_receipt_consumption_issues,
                 *sl_lint_issues,
                 *order_build_issues,
                 *[issue.__dict__ for issue in scale_issues],
@@ -866,6 +879,18 @@ class LiveOrderGateway:
             "portfolio_position_cap": portfolio_position_cap or _portfolio_position_cap_from_state(),
             "geometry_key": list(_intent_geometry_key(intent)),
         }
+
+    def _guardian_receipt_consumption_gateway_issues(self, risk_issues: list[dict[str, Any]]) -> list[dict[str, str]]:
+        if any(
+            issue.get("code") == "GUARDIAN_RECEIPT_NOT_CONSUMED_BY_TRADER_BLOCKS_NEW_ENTRY"
+            for issue in risk_issues
+            if isinstance(issue, dict)
+        ):
+            return []
+        return guardian_receipt_new_entry_blockers_from_paths(
+            watchdog_path=self.qr_trader_run_watchdog_path,
+            consumption_path=self.guardian_receipt_consumption_path,
+        )
 
     def _resolve_gateway_max_loss_jpy(self) -> float:
         default_max_loss_jpy = _per_trade_risk_from_state()

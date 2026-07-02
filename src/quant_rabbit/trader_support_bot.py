@@ -16,11 +16,13 @@ from quant_rabbit.execution_timing_contracts import (
     TP_PROGRESS_REPAIR_REPLAY_CONTRACT,
     repair_replay_contract_from_payload,
 )
+from quant_rabbit.guardian_receipt_consumption import consumption_status_summary
 from quant_rabbit.paths import (
     DEFAULT_BIDASK_REPLAY_VALIDATION,
     DEFAULT_BROKER_SNAPSHOT,
     DEFAULT_DAILY_TARGET_STATE,
     DEFAULT_EXECUTION_TIMING_AUDIT,
+    DEFAULT_GUARDIAN_RECEIPT_CONSUMPTION,
     DEFAULT_OANDA_UNIVERSAL_ROTATION_MINING,
     DEFAULT_OANDA_UNIVERSAL_ROTATION_PACKAGED_RULES,
     DEFAULT_ORDER_INTENTS,
@@ -194,6 +196,7 @@ class TraderSupportBot:
         execution_timing_audit_path: Path = DEFAULT_EXECUTION_TIMING_AUDIT,
         profit_capture_bot_path: Path = DEFAULT_PROFIT_CAPTURE_BOT,
         qr_trader_run_watchdog_path: Path = DEFAULT_QR_TRADER_RUN_WATCHDOG,
+        guardian_receipt_consumption_path: Path = DEFAULT_GUARDIAN_RECEIPT_CONSUMPTION,
         oanda_rotation_mining_path: Path = DEFAULT_OANDA_UNIVERSAL_ROTATION_MINING,
         oanda_rotation_packaged_path: Path = DEFAULT_OANDA_UNIVERSAL_ROTATION_PACKAGED_RULES,
         bidask_replay_validation_path: Path | None = None,
@@ -214,6 +217,7 @@ class TraderSupportBot:
         self.execution_timing_audit_path = execution_timing_audit_path
         self.profit_capture_bot_path = profit_capture_bot_path
         self.qr_trader_run_watchdog_path = qr_trader_run_watchdog_path
+        self.guardian_receipt_consumption_path = guardian_receipt_consumption_path
         self.oanda_rotation_mining_path = oanda_rotation_mining_path
         self.oanda_rotation_packaged_path = oanda_rotation_packaged_path
         self._read_oanda_rotation = (
@@ -262,6 +266,9 @@ class TraderSupportBot:
         timing = _read_json(self.execution_timing_audit_path)
         profit_capture_bot = _read_json(self.profit_capture_bot_path)
         qr_trader_run_watchdog = _watchdog_summary(_read_json(self.qr_trader_run_watchdog_path))
+        guardian_receipt_consumption = consumption_status_summary(
+            _read_json(self.guardian_receipt_consumption_path)
+        )
         oanda_rotation_effective_path = (
             effective_oanda_universal_rotation_path(
                 self.oanda_rotation_mining_path,
@@ -321,6 +328,7 @@ class TraderSupportBot:
             entry=entry,
             acceptance=acceptance,
             qr_trader_run_watchdog=qr_trader_run_watchdog,
+            guardian_receipt_consumption=guardian_receipt_consumption,
         )
         status = STATUS_BLOCKED if blockers else STATUS_READY
         actions = _operator_actions(
@@ -333,6 +341,7 @@ class TraderSupportBot:
             broker=broker_summary,
             oanda_history_coverage=oanda_history_coverage,
             qr_trader_run_watchdog=qr_trader_run_watchdog,
+            guardian_receipt_consumption=guardian_receipt_consumption,
         )
         repair_requests = _build_repair_requests(
             guardian=guardian,
@@ -348,6 +357,7 @@ class TraderSupportBot:
             status == STATUS_READY
             and bool(entry["live_ready_lanes"])
             and (not guardian["required"] or bool(guardian["active"]))
+            and guardian_receipt_consumption.get("normal_routing_allowed") is not False
         )
         repair_basket_self_improvement_blockers = _repair_basket_self_improvement_blockers(
             p0_findings,
@@ -484,6 +494,22 @@ class TraderSupportBot:
                 for item in qr_trader_run_watchdog.get("guardian_receipt_issues", [])
                 if isinstance(item, dict)
             ],
+            "guardian_receipt_consumption_status": guardian_receipt_consumption.get("status"),
+            "guardian_receipt_consumption_normal_routing_allowed": guardian_receipt_consumption.get(
+                "normal_routing_allowed"
+            ),
+            "guardian_receipt_consumption_unresolved_issue_count": guardian_receipt_consumption.get(
+                "unresolved_issue_count"
+            ),
+            "guardian_receipt_consumption_classifications": [
+                item.get("classification")
+                for item in guardian_receipt_consumption.get("classifications", [])
+                if isinstance(item, dict)
+            ],
+            "guardian_receipt_recommended_next_action": _guardian_receipt_consumption_next_action(
+                qr_trader_run_watchdog,
+                guardian_receipt_consumption,
+            ),
             "repair_basket_lane_ids": [item["lane_id"] for item in entry["repair_live_ready"]],
             "repair_basket_guardian_recovery_lane_ids": [
                 item["lane_id"] for item in entry["repair_basket_guardian_recovery"]
@@ -507,6 +533,7 @@ class TraderSupportBot:
                 "execution_timing_audit": str(self.execution_timing_audit_path),
                 "profit_capture_bot": str(self.profit_capture_bot_path),
                 "qr_trader_run_watchdog": str(self.qr_trader_run_watchdog_path),
+                "guardian_receipt_consumption": str(self.guardian_receipt_consumption_path),
                 "oanda_rotation_mining": str(self.oanda_rotation_mining_path),
                 "oanda_rotation_packaged": str(self.oanda_rotation_packaged_path),
                 "oanda_rotation_effective": str(oanda_rotation_effective_path),
@@ -524,6 +551,7 @@ class TraderSupportBot:
             "target": target_summary,
             "profit_capture": profit_capture,
             "qr_trader_run_watchdog": qr_trader_run_watchdog,
+            "guardian_receipt_consumption": guardian_receipt_consumption,
             "current_profit_capture": current_profit_capture,
             "entry_readiness": entry,
             "oanda_history_coverage": oanda_history_coverage,
@@ -565,6 +593,11 @@ def _watchdog_summary(payload: dict[str, Any]) -> dict[str, Any]:
         "missing": False,
         "generated_at_utc": payload.get("generated_at_utc"),
         "last_trader_run_at": payload.get("last_trader_run_at"),
+        "last_trader_run_source": payload.get("last_trader_run_source"),
+        "last_trader_run_path": payload.get("last_trader_run_path"),
+        "rejected_timestamp_candidates": payload.get("rejected_timestamp_candidates")
+        if isinstance(payload.get("rejected_timestamp_candidates"), list)
+        else [],
         "minutes_since_last_run": payload.get("minutes_since_last_run"),
         "missed_expected_window": payload.get("missed_expected_window"),
         "expected_cadence_minutes": payload.get("expected_cadence_minutes"),
@@ -2837,6 +2870,7 @@ def _build_blockers(
     entry: dict[str, Any],
     acceptance: dict[str, Any],
     qr_trader_run_watchdog: dict[str, Any],
+    guardian_receipt_consumption: dict[str, Any],
 ) -> list[dict[str, Any]]:
     blockers: list[dict[str, Any]] = []
     if _watchdog_counts_as_support_blocker(qr_trader_run_watchdog):
@@ -2850,6 +2884,26 @@ def _build_blockers(
                     f"qr-trader scheduled-run watchdog status is {status}; "
                     f"last_run={qr_trader_run_watchdog.get('last_trader_run_at')} "
                     f"minutes_since={qr_trader_run_watchdog.get('minutes_since_last_run')}"
+                ),
+            }
+        )
+    if (
+        guardian_receipt_consumption.get("normal_routing_allowed") is False
+        and not guardian_receipt_consumption.get("missing")
+    ):
+        classifications = [
+            str(item.get("classification") or "")
+            for item in guardian_receipt_consumption.get("classifications", [])
+            if isinstance(item, dict)
+        ]
+        blockers.append(
+            {
+                "code": "GUARDIAN_RECEIPT_CONSUMPTION_BLOCKS_NORMAL_ROUTING",
+                "severity": "P0",
+                "message": (
+                    "guardian receipt consumption status does not allow normal new-entry routing; "
+                    f"status={guardian_receipt_consumption.get('status')} "
+                    f"classifications={','.join(classifications) or 'none'}"
                 ),
             }
         )
@@ -3178,10 +3232,14 @@ def _operator_actions(
     broker: dict[str, Any] | None = None,
     oanda_history_coverage: dict[str, Any] | None = None,
     qr_trader_run_watchdog: dict[str, Any] | None = None,
+    guardian_receipt_consumption: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     broker = broker if isinstance(broker, dict) else {}
     qr_trader_run_watchdog = (
         qr_trader_run_watchdog if isinstance(qr_trader_run_watchdog, dict) else {}
+    )
+    guardian_receipt_consumption = (
+        guardian_receipt_consumption if isinstance(guardian_receipt_consumption, dict) else {}
     )
     actions: list[dict[str, Any]] = [
         {
@@ -3205,6 +3263,35 @@ def _operator_actions(
                 ),
             }
         )
+    if (
+        qr_trader_run_watchdog.get("guardian_receipt_issues")
+        and guardian_receipt_consumption.get("normal_routing_allowed") is not True
+    ):
+        classifications = guardian_receipt_consumption.get("classifications")
+        if isinstance(classifications, list) and classifications:
+            actions.append(
+                {
+                    "code": "REVIEW_GUARDIAN_RECEIPT_CONSUMPTION",
+                    "command": "sed -n '1,160p' docs/guardian_receipt_consumption_report.md",
+                    "requires_explicit_operator_approval": False,
+                    "reason": _guardian_receipt_consumption_next_action(
+                        qr_trader_run_watchdog,
+                        guardian_receipt_consumption,
+                    ),
+                }
+            )
+        else:
+            actions.append(
+                {
+                    "code": "WRITE_GUARDIAN_RECEIPT_CONSUMPTION",
+                    "command": "PYTHONPATH=src python3 -m quant_rabbit.cli trader-draft-decision",
+                    "requires_explicit_operator_approval": False,
+                    "reason": _guardian_receipt_consumption_next_action(
+                        qr_trader_run_watchdog,
+                        guardian_receipt_consumption,
+                    ),
+                }
+            )
     recommended = qr_trader_run_watchdog.get("recommended_operator_action")
     if isinstance(recommended, dict) and recommended.get("code") not in {
         None,
@@ -3567,6 +3654,49 @@ def _operator_actions(
         seen.add(code)
         unique.append(action)
     return unique
+
+
+def _guardian_receipt_consumption_next_action(
+    qr_trader_run_watchdog: dict[str, Any],
+    guardian_receipt_consumption: dict[str, Any],
+) -> str:
+    issues = (
+        qr_trader_run_watchdog.get("guardian_receipt_issues")
+        if isinstance(qr_trader_run_watchdog.get("guardian_receipt_issues"), list)
+        else []
+    )
+    if not issues:
+        return "No unresolved guardian receipt issue is currently blocking normal routing."
+    classifications = (
+        guardian_receipt_consumption.get("classifications")
+        if isinstance(guardian_receipt_consumption.get("classifications"), list)
+        else []
+    )
+    normal_allowed = guardian_receipt_consumption.get("normal_routing_allowed")
+    if normal_allowed is True:
+        return (
+            "Guardian receipt issues have a normal-routing-allowed classification; "
+            "continue normal verifier/gateway flow."
+        )
+    if not classifications:
+        return (
+            "Run the qr-trader draft/preflight path to write a durable guardian_receipt_consumption "
+            "classification before any ordinary fresh entry."
+        )
+    labels = [
+        str(item.get("classification") or "")
+        for item in classifications
+        if isinstance(item, dict) and str(item.get("classification") or "")
+    ]
+    if "NEEDS_OPERATOR_REVIEW" in labels:
+        return (
+            "Operator/trader must review NEEDS_OPERATOR_REVIEW guardian receipt rows and record a precise "
+            "non-action reason or use an approved protection/risk-reduction path; ordinary fresh entries remain blocked."
+        )
+    return (
+        "Guardian receipt consumption does not allow normal routing; inspect the classification report before any "
+        "ordinary fresh entry and keep protection/reporting paths separate."
+    )
 
 
 def _frontier_blocker_waits_for_live_precision_evidence(top: dict[str, Any]) -> bool:
@@ -4869,6 +4999,11 @@ def _render_report(payload: dict[str, Any]) -> str:
         if isinstance(payload.get("qr_trader_run_watchdog"), dict)
         else {}
     )
+    consumption = (
+        payload.get("guardian_receipt_consumption")
+        if isinstance(payload.get("guardian_receipt_consumption"), dict)
+        else {}
+    )
     current_profit = payload["current_profit_capture"]
     broker = payload["broker"]
     target = payload["target"]
@@ -4891,6 +5026,7 @@ def _render_report(payload: dict[str, Any]) -> str:
         f"| Guardian active | `{guardian['active']}` source=`{guardian['active_source']}` |",
         f"| Guardian heartbeat fresh | `{guardian['heartbeat_fresh']}` age=`{guardian['heartbeat_age_seconds']}`s |",
         f"| qr-trader scheduled-run watchdog | `{watchdog.get('status')}` severity=`{watchdog.get('severity')}` minutes_since=`{watchdog.get('minutes_since_last_run')}` |",
+        f"| Guardian receipt consumption | `{consumption.get('status')}` normal_routing_allowed=`{consumption.get('normal_routing_allowed')}` unresolved=`{consumption.get('unresolved_issue_count')}` |",
         f"| LIVE_READY lanes | `{entry['live_ready_lanes']}` / `{entry['lanes']}` |",
         f"| Order intents freshness | `{entry.get('artifact_freshness', {}).get('status')}` staleness=`{entry.get('artifact_freshness', {}).get('order_intents_staleness_seconds')}`s |",
         f"| Repair LIVE_READY lanes | `{len(entry['repair_live_ready'])}` |",
@@ -4931,11 +5067,39 @@ def _render_report(payload: dict[str, Any]) -> str:
             f"- Status: `{watchdog.get('status')}` severity=`{watchdog.get('severity')}`",
             f"- Generated: `{watchdog.get('generated_at_utc')}`",
             f"- Last run evidence: `{watchdog.get('last_trader_run_at')}`",
+            f"- Last run source: `{watchdog.get('last_trader_run_source')}` path=`{watchdog.get('last_trader_run_path')}`",
             f"- Minutes since last run: `{watchdog.get('minutes_since_last_run')}`",
             f"- Missed expected window: `{watchdog.get('missed_expected_window')}`",
             f"- Suspected cause: {watchdog.get('suspected_cause') or 'none'}",
+            "",
+            "## Guardian Receipt Consumption",
+            "",
+            f"- Status: `{consumption.get('status')}`",
+            f"- Generated: `{consumption.get('generated_at_utc')}`",
+            f"- Normal routing allowed: `{consumption.get('normal_routing_allowed')}`",
+            f"- Unresolved issue count: `{consumption.get('unresolved_issue_count')}`",
+            "- Recommended next action: "
+            + _guardian_receipt_consumption_next_action(watchdog, consumption),
         ]
     )
+    classifications = (
+        consumption.get("classifications")
+        if isinstance(consumption.get("classifications"), list)
+        else []
+    )
+    if classifications:
+        for item in classifications:
+            if isinstance(item, dict):
+                lines.append(
+                    "- "
+                    f"`{item.get('classification')}` issue=`{item.get('issue_code')}` "
+                    f"event=`{item.get('receipt_event_id')}` action=`{item.get('receipt_action')}` "
+                    f"lifecycle=`{item.get('receipt_lifecycle')}` "
+                    f"normal_routing_allowed=`{item.get('normal_routing_allowed')}`"
+                )
+    else:
+        lines.append("- Classifications: none")
+    lines.extend(["", "## Guardian Receipt Issues", ""])
     guardian_receipt_issues = (
         watchdog.get("guardian_receipt_issues")
         if isinstance(watchdog.get("guardian_receipt_issues"), list)

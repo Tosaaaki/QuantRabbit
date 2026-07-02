@@ -100,6 +100,8 @@ from quant_rabbit.paths import (
     DEFAULT_GUARDIAN_EVENT_REPORT,
     DEFAULT_GUARDIAN_EVENT_STATE,
     DEFAULT_GUARDIAN_EVENTS,
+    DEFAULT_GUARDIAN_RECEIPT_CONSUMPTION,
+    DEFAULT_GUARDIAN_RECEIPT_CONSUMPTION_REPORT,
     DEFAULT_GUARDIAN_TRIGGER_CONTRACT,
     DEFAULT_GUARDIAN_TRIGGER_CONTRACT_REPORT,
     DEFAULT_GUARDIAN_WAKE_DISPATCHER_STATE,
@@ -3739,6 +3741,11 @@ def main(argv: list[str] | None = None) -> int:
     p_support.add_argument("--execution-timing-audit", type=Path, default=DEFAULT_EXECUTION_TIMING_AUDIT)
     p_support.add_argument("--profit-capture-bot", type=Path, default=DEFAULT_PROFIT_CAPTURE_BOT)
     p_support.add_argument("--qr-trader-run-watchdog", type=Path, default=DEFAULT_QR_TRADER_RUN_WATCHDOG)
+    p_support.add_argument(
+        "--guardian-receipt-consumption",
+        type=Path,
+        default=DEFAULT_GUARDIAN_RECEIPT_CONSUMPTION,
+    )
     p_support.add_argument("--oanda-rotation-mining", type=Path, default=DEFAULT_OANDA_UNIVERSAL_ROTATION_MINING)
     p_support.add_argument("--bidask-replay-validation", type=Path, default=None)
     p_support.add_argument("--output", type=Path, default=DEFAULT_TRADER_SUPPORT_BOT)
@@ -4064,6 +4071,17 @@ def main(argv: list[str] | None = None) -> int:
     p_draft.add_argument("--predictive-limits", type=Path, default=DEFAULT_PREDICTIVE_LIMIT_ORDERS)
     p_draft.add_argument("--news-items", type=Path, default=DEFAULT_NEWS_SNAPSHOT)
     p_draft.add_argument("--news-health", type=Path, default=DEFAULT_NEWS_HEALTH)
+    p_draft.add_argument("--qr-trader-run-watchdog", type=Path, default=DEFAULT_QR_TRADER_RUN_WATCHDOG)
+    p_draft.add_argument(
+        "--guardian-receipt-consumption",
+        type=Path,
+        default=DEFAULT_GUARDIAN_RECEIPT_CONSUMPTION,
+    )
+    p_draft.add_argument(
+        "--guardian-receipt-consumption-report",
+        type=Path,
+        default=DEFAULT_GUARDIAN_RECEIPT_CONSUMPTION_REPORT,
+    )
     p_draft.add_argument("--output", type=Path, default=DEFAULT_CODEX_TRADER_DECISION_RESPONSE)
     p_draft.add_argument("--report", type=Path, default=DEFAULT_TRADER_DECISION_DRAFT_REPORT)
     p_draft.add_argument("--max-lanes", type=int, default=DEFAULT_GPT_MAX_LANES)
@@ -4082,6 +4100,12 @@ def main(argv: list[str] | None = None) -> int:
     p_gpt.add_argument("--projection-ledger", type=Path, default=DEFAULT_PROJECTION_LEDGER)
     p_gpt.add_argument("--market-context-matrix", type=Path, default=DEFAULT_MARKET_CONTEXT_MATRIX)
     p_gpt.add_argument("--trader-overrides", type=Path, default=DEFAULT_TRADER_OVERRIDES)
+    p_gpt.add_argument("--qr-trader-run-watchdog", type=Path, default=DEFAULT_QR_TRADER_RUN_WATCHDOG)
+    p_gpt.add_argument(
+        "--guardian-receipt-consumption",
+        type=Path,
+        default=DEFAULT_GUARDIAN_RECEIPT_CONSUMPTION,
+    )
     p_gpt.add_argument("--decision-response", type=Path, default=None)
     p_gpt.add_argument("--max-lanes", type=int, default=DEFAULT_GPT_MAX_LANES)
     p_gpt.add_argument("--output", type=Path, default=DEFAULT_GPT_TRADER_DECISION)
@@ -6236,6 +6260,7 @@ def main(argv: list[str] | None = None) -> int:
                 execution_timing_audit_path=args.execution_timing_audit,
                 profit_capture_bot_path=args.profit_capture_bot,
                 qr_trader_run_watchdog_path=args.qr_trader_run_watchdog,
+                guardian_receipt_consumption_path=args.guardian_receipt_consumption,
                 oanda_rotation_mining_path=args.oanda_rotation_mining,
                 bidask_replay_validation_path=args.bidask_replay_validation,
                 output_path=args.output,
@@ -7651,6 +7676,9 @@ def main(argv: list[str] | None = None) -> int:
                 predictive_limits_path=args.predictive_limits,
                 news_items_path=args.news_items,
                 news_health_path=args.news_health,
+                qr_trader_run_watchdog_path=args.qr_trader_run_watchdog,
+                guardian_receipt_consumption_path=args.guardian_receipt_consumption,
+                guardian_receipt_consumption_report_path=args.guardian_receipt_consumption_report,
                 output_path=args.output,
                 report_path=args.report,
                 max_lanes=args.max_lanes,
@@ -7702,6 +7730,8 @@ def main(argv: list[str] | None = None) -> int:
                 projection_ledger_path=args.projection_ledger,
                 market_context_matrix_path=args.market_context_matrix,
                 trader_overrides_path=args.trader_overrides,
+                qr_trader_run_watchdog_path=args.qr_trader_run_watchdog,
+                guardian_receipt_consumption_path=args.guardian_receipt_consumption,
                 output_path=args.output,
                 report_path=args.report,
                 market_read_predictions_path=args.market_read_predictions,

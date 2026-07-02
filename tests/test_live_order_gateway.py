@@ -80,6 +80,45 @@ class LiveOrderGatewayTest(unittest.TestCase):
             self.assertEqual(order["timeInForce"], "FOK")
             self.assertNotIn("price", order)
 
+    def test_unresolved_guardian_receipt_issue_blocks_send_before_broker_post(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            client = FakeExecutionClient()
+            watchdog = root / "watchdog.json"
+            consumption = root / "guardian_receipt_consumption.json"
+            _write_gateway_guardian_watchdog_issue(watchdog)
+
+            summary = LiveOrderGateway(
+                client=client,
+                strategy_profile=_profile(root),
+                output_path=root / "request.json",
+                report_path=root / "report.md",
+                live_enabled=True,
+                qr_trader_run_watchdog_path=watchdog,
+                guardian_receipt_consumption_path=consumption,
+            ).run(
+                intents_path=_intents(
+                    root,
+                    pair="AUD_USD",
+                    lane_id="campaign_exposure_recovery:AUD_USD:LONG:TREND_CONTINUATION",
+                    metadata={"desk": "campaign_exposure_recovery", "campaign_role": "NOW"},
+                ),
+                lane_id="campaign_exposure_recovery:AUD_USD:LONG:TREND_CONTINUATION",
+                send=True,
+                confirm_live=True,
+            )
+
+            self.assertEqual(summary.status, "BLOCKED")
+            self.assertFalse(summary.sent)
+            self.assertEqual(client.orders, [])
+            payload = json.loads((root / "request.json").read_text())
+            codes = {issue["code"] for issue in payload["risk_issues"]}
+            self.assertIn("GUARDIAN_RECEIPT_NOT_CONSUMED_BY_TRADER_BLOCKS_NEW_ENTRY", codes)
+            self.assertIn(
+                "GUARDIAN_RECEIPT_NOT_CONSUMED_BY_TRADER_BLOCKS_NEW_ENTRY",
+                (root / "report.md").read_text(),
+            )
+
     def test_guardian_wake_hourly_schedule_alone_cannot_stage_order(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -1866,6 +1905,7 @@ class LiveOrderGatewayTest(unittest.TestCase):
             orders=(),
             quotes={
                 "EUR_USD": Quote("EUR_USD", bid=1.17298, ask=1.17306, timestamp_utc=now),
+                "AUD_USD": Quote("AUD_USD", bid=0.66210, ask=0.66218, timestamp_utc=now),
                 "USD_JPY": Quote("USD_JPY", bid=157.0, ask=157.01, timestamp_utc=now),
             },
             account=AccountSummary(
@@ -2989,6 +3029,33 @@ def _target_path_metadata(*, grade: str, role: str = "HERO", slot: str = "NOW", 
     }
 
 
+def _write_gateway_guardian_watchdog_issue(path: Path) -> None:
+    path.write_text(
+        json.dumps(
+            {
+                "generated_at_utc": datetime.now(timezone.utc).isoformat(),
+                "status": "BLOCKED",
+                "severity": "P1",
+                "guardian_receipt": {
+                    "issues": [
+                        {
+                            "code": "GUARDIAN_RECEIPT_NOT_CONSUMED_BY_TRADER",
+                            "severity": "P1",
+                            "message": "receipt_lifecycle=EXPIRED while consumed_by_trader=false",
+                            "receipt_event_id": "receipt-stale-reduce",
+                            "receipt_action": "REDUCE",
+                            "receipt_lifecycle": "EXPIRED",
+                            "consumed_by_trader": False,
+                            "normal_routing_allowed": False,
+                        }
+                    ]
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+
 def _intents(
     root: Path,
     *,
@@ -2996,6 +3063,9 @@ def _intents(
     metadata: dict[str, Any] | None = None,
     order_type: str = "STOP-ENTRY",
     units: int = 1000,
+    pair: str = "EUR_USD",
+    side: str = "LONG",
+    lane_id: str = "lane:EUR_USD:LONG",
 ) -> Path:
     path = root / "intents.json"
     path.write_text(
@@ -3003,17 +3073,17 @@ def _intents(
             {
                 "results": [
                     {
-                        "lane_id": "lane:EUR_USD:LONG",
+                        "lane_id": lane_id,
                         "status": status,
                         "risk_allowed": True,
                         "intent": {
-                            "pair": "EUR_USD",
-                            "side": "LONG",
+                            "pair": pair,
+                            "side": side,
                             "order_type": order_type,
                             "units": units,
-                            "entry": 1.17306 if order_type == "MARKET" else 1.17330,
-                            "tp": 1.17450,
-                            "sl": 1.17250,
+                            "entry": 1.17306 if order_type == "MARKET" else (0.66240 if pair == "AUD_USD" else 1.17330),
+                            "tp": 0.66360 if pair == "AUD_USD" else 1.17450,
+                            "sl": 0.66160 if pair == "AUD_USD" else 1.17250,
                             "thesis": "trend continuation",
                             "owner": "trader",
                             "market_context": {

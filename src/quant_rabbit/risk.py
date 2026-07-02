@@ -62,6 +62,7 @@ from .forecast_precision import (
     technical_harvest_precision_support,
 )
 from .instruments import DEFAULT_TRADER_PAIRS, NORMAL_SPREAD_PIPS, instrument_pip_factor
+from .guardian_receipt_consumption import guardian_receipt_new_entry_blockers_from_paths
 from .operator_manual import is_operator_managed_manual_owner, operator_manual_jpy_add_block_issue
 
 # OANDA Japan retail FX margin in the current account is 25:1 leverage, i.e.
@@ -2230,6 +2231,14 @@ class RiskEngine:
 
         if for_live_send and self.policy.require_live_enabled_for_send and not self.live_enabled:
             issues.append(RiskIssue("LIVE_DISABLED", "live execution is disabled; dry-run only"))
+        if for_live_send:
+            issues.extend(
+                RiskIssue(
+                    str(item.get("code") or "GUARDIAN_RECEIPT_NOT_CONSUMED_BY_TRADER_BLOCKS_NEW_ENTRY"),
+                    str(item.get("message") or "unresolved guardian receipt issue blocks normal new entries"),
+                )
+                for item in guardian_receipt_new_entry_blockers_from_paths()
+            )
 
         if intent.owner != Owner.TRADER:
             issues.append(RiskIssue("OWNER_NOT_TRADER", f"order owner must be trader, got {intent.owner.value}"))

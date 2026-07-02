@@ -1631,6 +1631,14 @@ def _position_thesis_structural_break_text(text: str) -> bool:
     )
 
 from quant_rabbit.analysis.chart_reader import DEFAULT_TIMEFRAMES as DEFAULT_PAIR_CHART_TIMEFRAMES
+from quant_rabbit.guardian_receipt_consumption import (
+    BLOCK_NEW_ENTRY_CODE,
+    build_guardian_receipt_consumption,
+    consumption_status_summary,
+    guardian_receipt_new_entry_blockers,
+    load_guardian_receipt_consumption,
+    write_guardian_receipt_consumption,
+)
 from quant_rabbit.paths import (
     DEFAULT_AI_ATTACK_ADVICE,
     DEFAULT_BROKER_INSTRUMENTS,
@@ -1646,6 +1654,8 @@ from quant_rabbit.paths import (
     DEFAULT_DAILY_TARGET_STATE,
     DEFAULT_EXECUTION_TIMING_AUDIT,
     DEFAULT_FLOW_SNAPSHOT,
+    DEFAULT_GUARDIAN_RECEIPT_CONSUMPTION,
+    DEFAULT_GUARDIAN_RECEIPT_CONSUMPTION_REPORT,
     DEFAULT_GPT_TRADER_DECISION,
     DEFAULT_GPT_TRADER_DECISION_REPORT,
     DEFAULT_LEVELS_SNAPSHOT,
@@ -1665,6 +1675,7 @@ from quant_rabbit.paths import (
     DEFAULT_PREDICTIVE_LIMIT_ORDERS,
     DEFAULT_PROJECTION_LEDGER,
     DEFAULT_PROFITABILITY_ACCEPTANCE,
+    DEFAULT_QR_TRADER_RUN_WATCHDOG,
     DEFAULT_SELF_IMPROVEMENT_AUDIT,
     DEFAULT_STRATEGY_PROFILE,
     DEFAULT_TRADER_DECISION_DRAFT_REPORT,
@@ -2065,6 +2076,8 @@ class GPTTraderBrain:
         predictive_limits_path: Path = DEFAULT_PREDICTIVE_LIMIT_ORDERS,
         news_items_path: Path = DEFAULT_NEWS_SNAPSHOT,
         news_health_path: Path = DEFAULT_NEWS_HEALTH,
+        qr_trader_run_watchdog_path: Path = DEFAULT_QR_TRADER_RUN_WATCHDOG,
+        guardian_receipt_consumption_path: Path = DEFAULT_GUARDIAN_RECEIPT_CONSUMPTION,
         output_path: Path = DEFAULT_GPT_TRADER_DECISION,
         report_path: Path = DEFAULT_GPT_TRADER_DECISION_REPORT,
         market_read_predictions_path: Path | None = None,
@@ -2104,6 +2117,8 @@ class GPTTraderBrain:
         self.predictive_limits_path = predictive_limits_path
         self.news_items_path = news_items_path
         self.news_health_path = news_health_path
+        self.qr_trader_run_watchdog_path = qr_trader_run_watchdog_path
+        self.guardian_receipt_consumption_path = guardian_receipt_consumption_path
         self.output_path = output_path
         self.report_path = report_path
         self.market_read_predictions_path = (
@@ -2187,6 +2202,10 @@ class GPTTraderBrain:
         option_skew = _load_optional_json(self.option_skew_path)
         news_items = _load_optional_json(self.news_items_path)
         news_health = _load_optional_json(self.news_health_path)
+        qr_trader_run_watchdog = _load_optional_json(self.qr_trader_run_watchdog_path)
+        guardian_receipt_consumption = consumption_status_summary(
+            load_guardian_receipt_consumption(self.guardian_receipt_consumption_path)
+        )
         pairs = _pairs_from_lanes_and_positions(lanes, snapshot)
         currencies = _currencies_from_pairs(pairs)
         refs = _allowed_refs(
@@ -2297,6 +2316,8 @@ class GPTTraderBrain:
             "user_alpha_continuation": user_alpha_continuation,
             "predictive_limits": _predictive_limits_packet(predictive_limits, pairs=pairs),
             "news": _news_packet(news_items, news_health, pairs=pairs, currencies=currencies),
+            "qr_trader_run_watchdog": _qr_trader_run_watchdog_packet(qr_trader_run_watchdog),
+            "guardian_receipt_consumption": guardian_receipt_consumption,
             "market_status": _market_status_packet(market_status),
             "protection_sidecars": _protection_sidecars_packet(
                 snapshot=snapshot,
@@ -2432,6 +2453,7 @@ class DecisionVerifier:
         position_close_reasons = _position_close_sidecar_reasons(self.packet)
         projection_trade_blockers = _projection_ledger_trade_blockers(self.packet)
         news_trade_blockers = _news_health_trade_blockers(self.packet)
+        guardian_receipt_trade_blockers = _guardian_receipt_consumption_trade_blockers(self.packet)
         self._verify_user_alpha_continuation(decision, selected_lane_ids, issues)
         self_improvement_trade_blockers = _self_improvement_trade_blockers(
             self.packet,
@@ -2499,6 +2521,14 @@ class DecisionVerifier:
                         "NEWS_HEALTH_BLOCKS_TRADE",
                         "TRADE rejected while current news / market-story freshness is blocked: "
                         + "; ".join(news_trade_blockers[:3]),
+                    )
+                )
+            if guardian_receipt_trade_blockers:
+                issues.append(
+                    VerificationIssue(
+                        BLOCK_NEW_ENTRY_CODE,
+                        "TRADE rejected because guardian receipt consumption blocks normal new-entry routing: "
+                        + "; ".join(guardian_receipt_trade_blockers[:3]),
                     )
                 )
             issues.extend(_learning_audit_trade_issues(self.packet, selected_lane_ids, decision.evidence_refs))
@@ -4293,10 +4323,23 @@ def draft_trader_decision(
     predictive_limits_path: Path = DEFAULT_PREDICTIVE_LIMIT_ORDERS,
     news_items_path: Path = DEFAULT_NEWS_SNAPSHOT,
     news_health_path: Path = DEFAULT_NEWS_HEALTH,
+    qr_trader_run_watchdog_path: Path = DEFAULT_QR_TRADER_RUN_WATCHDOG,
+    guardian_receipt_consumption_path: Path = DEFAULT_GUARDIAN_RECEIPT_CONSUMPTION,
+    guardian_receipt_consumption_report_path: Path = DEFAULT_GUARDIAN_RECEIPT_CONSUMPTION_REPORT,
     output_path: Path = DEFAULT_CODEX_TRADER_DECISION_RESPONSE,
     report_path: Path = DEFAULT_TRADER_DECISION_DRAFT_REPORT,
     max_lanes: int = DEFAULT_GPT_MAX_LANES,
 ) -> TraderDecisionDraftSummary:
+    watchdog_payload = _load_optional_json(qr_trader_run_watchdog_path)
+    consumption_payload = build_guardian_receipt_consumption(
+        watchdog_payload,
+        existing=load_guardian_receipt_consumption(guardian_receipt_consumption_path),
+    )
+    write_guardian_receipt_consumption(
+        consumption_payload,
+        output_path=guardian_receipt_consumption_path,
+        report_path=guardian_receipt_consumption_report_path,
+    )
     brain = GPTTraderBrain(
         provider=None,
         intents_path=intents_path,
@@ -4331,6 +4374,8 @@ def draft_trader_decision(
         predictive_limits_path=predictive_limits_path,
         news_items_path=news_items_path,
         news_health_path=news_health_path,
+        qr_trader_run_watchdog_path=qr_trader_run_watchdog_path,
+        guardian_receipt_consumption_path=guardian_receipt_consumption_path,
         max_lanes=max_lanes,
     )
     packet = brain._input_packet(snapshot_path)
@@ -4378,6 +4423,7 @@ def _autonomous_decision_from_packet(packet: dict[str, Any]) -> tuple[dict[str, 
     blockers.extend(_entry_thesis_sidecar_reasons(packet))
     blockers.extend(_projection_ledger_trade_blockers(packet))
     blockers.extend(_news_health_trade_blockers(packet))
+    blockers.extend(_guardian_receipt_consumption_trade_blockers(packet))
     if not live_ready_lane_ids:
         blockers.append("NO_LIVE_READY_LANES")
     if live_ready_lane_ids and not selected_lane_ids:
@@ -4413,6 +4459,19 @@ def _autonomous_decision_from_packet(packet: dict[str, Any]) -> tuple[dict[str, 
             blockers=[*pending_cancel_reasons, *blockers],
         ), blockers
     return _non_trade_decision_draft(packet, blockers, live_ready_lane_ids, lanes_by_id), blockers
+
+
+def _guardian_receipt_consumption_trade_blockers(packet: dict[str, Any]) -> list[str]:
+    blockers = guardian_receipt_new_entry_blockers(
+        packet.get("qr_trader_run_watchdog") if isinstance(packet.get("qr_trader_run_watchdog"), dict) else {},
+        packet.get("guardian_receipt_consumption")
+        if isinstance(packet.get("guardian_receipt_consumption"), dict)
+        else {},
+    )
+    return [
+        f"{item.get('code') or BLOCK_NEW_ENTRY_CODE}: {item.get('message') or 'normal new-entry routing blocked'}"
+        for item in blockers
+    ]
 
 
 def _draft_candidate_lane_ids(packet: dict[str, Any], live_ready_lane_ids: list[str]) -> list[str]:
@@ -5387,6 +5446,17 @@ def _write_trader_decision_draft_report(
         f"- Market read first: `{decision.get('market_read_first') or 'missing'}`",
         f"- Verifier precheck: `{'ACCEPTED' if verification.allowed else 'REJECTED'}`",
     ]
+    consumption = (
+        input_packet.get("guardian_receipt_consumption")
+        if isinstance(input_packet.get("guardian_receipt_consumption"), dict)
+        else {}
+    )
+    lines.extend(
+        [
+            f"- Guardian receipt consumption: `{consumption.get('status')}` "
+            f"normal_routing_allowed=`{consumption.get('normal_routing_allowed')}`",
+        ]
+    )
     lines.extend(_user_alpha_report_lines(input_packet.get("user_alpha_continuation"), decision=decision))
     lines.extend(["", "## Verification Issues", ""])
     if verification.issues:
@@ -7692,6 +7762,37 @@ def _news_item_packet(item: dict[str, Any]) -> dict[str, Any]:
         "topics": list(item.get("topics", [])[:8]) if isinstance(item.get("topics"), list) else [],
         "categories": list(item.get("categories", [])[:8]) if isinstance(item.get("categories"), list) else [],
         "link": item.get("link"),
+    }
+
+
+def _qr_trader_run_watchdog_packet(payload: dict[str, Any] | None) -> dict[str, Any]:
+    if not isinstance(payload, dict):
+        return {"available": False}
+    guardian = payload.get("guardian_receipt") if isinstance(payload.get("guardian_receipt"), dict) else {}
+    issues = guardian.get("issues") if isinstance(guardian.get("issues"), list) else []
+    return {
+        "available": True,
+        "generated_at_utc": payload.get("generated_at_utc"),
+        "status": payload.get("status"),
+        "severity": payload.get("severity"),
+        "last_trader_run_at": payload.get("last_trader_run_at"),
+        "last_trader_run_source": payload.get("last_trader_run_source"),
+        "last_trader_run_path": payload.get("last_trader_run_path"),
+        "minutes_since_last_run": payload.get("minutes_since_last_run"),
+        "guardian_receipt_issues": [
+            {
+                "code": item.get("code"),
+                "severity": item.get("severity"),
+                "message": item.get("message"),
+                "receipt_event_id": item.get("receipt_event_id"),
+                "receipt_action": item.get("receipt_action"),
+                "receipt_lifecycle": item.get("receipt_lifecycle"),
+                "consumed_by_trader": item.get("consumed_by_trader"),
+                "normal_routing_allowed": item.get("normal_routing_allowed"),
+            }
+            for item in issues
+            if isinstance(item, dict)
+        ],
     }
 
 

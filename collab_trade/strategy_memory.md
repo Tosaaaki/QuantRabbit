@@ -1,5 +1,13 @@
 # Strategy Memory
 
+## 2026-07-02 Guardian Receipt Consumption Gate
+
+- Watchdog `last_trader_run_at` must be real trader-run evidence only: trader journal `ts`, qr-trader automation memory, trader decision/autotrade reports, or trader-shaped decision response timestamps. Guardian receipt expiry/generated timestamps, guardian action review timestamps, watchdog generated timestamps, and guardian trigger deadlines are rejected candidates, not trader runs.
+- `data/guardian_receipt_consumption.json` / `docs/guardian_receipt_consumption_report.md` are the qr-trader acknowledgement record for watchdog guardian receipt issues. Every issue needs a durable classification before ordinary new-entry routing.
+- `EXPIRED_ACKNOWLEDGED`, `STALE_ACKNOWLEDGED`, `REJECTED_ACKNOWLEDGED`, `HISTORICAL_ONLY`, and `CONSUMED` allow normal routing after the issue is documented. `NEEDS_OPERATOR_REVIEW` remains visible, does not count as consumed, and blocks normal TRADE while approved protection/management paths for existing exposure remain available.
+- The hard block is enforced at verifier, RiskEngine live-send validation, and LiveOrderGateway with `GUARDIAN_RECEIPT_NOT_CONSUMED_BY_TRADER_BLOCKS_NEW_ENTRY`; the AUD_USD campaign exposure recovery leak shape is now a regression test.
+- The boundary remains inspection/maintenance only: this gate writes support artifacts and verifier blockers, not broker orders, cancels, closes, or execution flags.
+
 ## 2026-07-01 qr-trader Scheduled-Run Watchdog
 
 - `tools/qr_trader_run_watchdog.py` is the local P0 evidence surface for missed Codex-managed `qr-trader` hourly runs. It is one-shot/read-only and writes `data/qr_trader_run_watchdog.json`, `docs/qr_trader_run_watchdog_report.md`, and `logs/qr_trader_run_watchdog.log`.

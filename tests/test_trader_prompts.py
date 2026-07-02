@@ -266,6 +266,81 @@ class TraderPromptRouteTest(unittest.TestCase):
         self.assertTrue(any("NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION" in reason for reason in route.reasons))
         self.assertTrue(any("SELF_IMPROVEMENT_P0_PROFITABILITY_DISCIPLINE" in reason for reason in route.reasons))
 
+    def test_unclassified_guardian_receipt_issue_routes_to_entry_before_normal_routing(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root)
+            _write_support_guardian_receipt_issue(files, classifications=[])
+
+            route = route_trader_prompts(**_route_paths(files), decision_response_path=None)
+
+        self.assertEqual(route.branch, BRANCH_ENTRY)
+        self.assertTrue(any("no durable trader classification" in reason for reason in route.reasons))
+        self.assertFalse(any("daily target open with" in reason for reason in route.reasons))
+
+    def test_acknowledged_expired_guardian_receipt_allows_normal_entry_route(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root)
+            _write_support_guardian_receipt_issue(
+                files,
+                watchdog_issues=[],
+                classifications=[
+                    {
+                        "issue_code": "GUARDIAN_RECEIPT_NOT_CONSUMED_BY_TRADER",
+                        "receipt_event_id": "receipt-1",
+                        "receipt_action": "HOLD",
+                        "receipt_lifecycle": "EXPIRED",
+                        "consumed_by_trader": False,
+                        "classification": "EXPIRED_ACKNOWLEDGED",
+                        "normal_routing_allowed": True,
+                        "reason": "expired receipt acknowledged",
+                    }
+                ],
+                normal_routing_allowed=True,
+            )
+
+            route = route_trader_prompts(**_route_paths(files), decision_response_path=None)
+
+        self.assertEqual(route.branch, BRANCH_ENTRY)
+        self.assertTrue(any("daily target open with" in reason for reason in route.reasons))
+        self.assertFalse(any("guardian receipt consumption blocks normal" in reason for reason in route.reasons))
+
+    def test_needs_operator_review_guardian_receipt_blocks_normal_entry_route(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root)
+            _write_support_guardian_receipt_issue(
+                files,
+                watchdog_issues=[
+                    {
+                        "code": "GUARDIAN_RECEIPT_NEEDS_OPERATOR_REVIEW",
+                        "receipt_event_id": "receipt-1",
+                        "receipt_action": "HOLD",
+                        "receipt_lifecycle": "EXPIRED",
+                    }
+                ],
+                classifications=[
+                    {
+                        "issue_code": "GUARDIAN_RECEIPT_NOT_CONSUMED_BY_TRADER",
+                        "receipt_event_id": "receipt-1",
+                        "receipt_action": "HOLD",
+                        "receipt_lifecycle": "EXPIRED",
+                        "consumed_by_trader": False,
+                        "classification": "NEEDS_OPERATOR_REVIEW",
+                        "normal_routing_allowed": False,
+                        "reason": "operator review required",
+                    }
+                ],
+                normal_routing_allowed=False,
+            )
+
+            route = route_trader_prompts(**_route_paths(files), decision_response_path=None)
+
+        self.assertEqual(route.branch, BRANCH_ENTRY)
+        self.assertTrue(any("NEEDS_OPERATOR_REVIEW" in reason for reason in route.reasons))
+        self.assertTrue(any("blocks normal new-entry routing" in reason for reason in route.reasons))
+
     def test_missing_profitability_acceptance_routes_to_refresh_branch(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -4170,6 +4245,61 @@ def _write_support_guardian_recovery(files: dict[str, Path]) -> None:
                         "requires_explicit_operator_approval": True,
                     }
                 ],
+                "live_side_effects": [],
+            }
+        )
+    )
+
+
+def _write_support_guardian_receipt_issue(
+    files: dict[str, Path],
+    *,
+    watchdog_issues: list[dict] | None = None,
+    classifications: list[dict] | None = None,
+    normal_routing_allowed: bool = False,
+) -> None:
+    issues = watchdog_issues
+    if issues is None:
+        issues = [
+            {
+                "code": "GUARDIAN_RECEIPT_NOT_CONSUMED_BY_TRADER",
+                "severity": "WARN",
+                "message": "receipt_lifecycle=EXPIRED while consumed_by_trader=false",
+                "receipt_event_id": "receipt-1",
+                "receipt_action": "HOLD",
+                "receipt_lifecycle": "EXPIRED",
+                "consumed_by_trader": False,
+                "normal_routing_allowed": False,
+            }
+        ]
+    classes = classifications if classifications is not None else []
+    files["trader_support_bot"].write_text(
+        json.dumps(
+            {
+                "generated_at_utc": datetime.now(timezone.utc).isoformat(),
+                "status": "SUPPORT_BLOCKED" if normal_routing_allowed is False else "SUPPORT_READY",
+                "metrics": {
+                    "repair_basket_send_allowed": True,
+                    "guardian_active": True,
+                    "repair_basket_guardian_recovery_lanes": 0,
+                    "repair_basket_guardian_recovery_lane_ids": [],
+                    "guardian_receipt_consumption_normal_routing_allowed": normal_routing_allowed,
+                },
+                "qr_trader_run_watchdog": {
+                    "status": "OK",
+                    "severity": "WARN" if issues else "OK",
+                    "guardian_receipt_issues": issues,
+                },
+                "guardian_receipt_consumption": {
+                    "status": "GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED"
+                    if normal_routing_allowed is False
+                    else "GUARDIAN_RECEIPT_ISSUES_ACKNOWLEDGED",
+                    "normal_routing_allowed": normal_routing_allowed,
+                    "classifications": classes,
+                    "unresolved_issue_count": 0 if normal_routing_allowed else 1,
+                },
+                "entry_readiness": {"repair_basket_guardian_recovery": []},
+                "operator_actions": [],
                 "live_side_effects": [],
             }
         )

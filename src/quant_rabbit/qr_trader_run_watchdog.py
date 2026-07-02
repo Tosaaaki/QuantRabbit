@@ -11,6 +11,13 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
+from quant_rabbit.guardian_receipt_consumption import (
+    NEEDS_OPERATOR_REVIEW,
+    OPERATOR_REVIEW_ISSUE_CODE,
+    acknowledgement_for_receipt,
+    load_guardian_receipt_consumption,
+)
+
 try:
     import tomllib
 except ModuleNotFoundError:  # pragma: no cover
@@ -48,6 +55,8 @@ class WatchdogPaths:
     decision_response: Path
     guardian_receipt: Path
     guardian_review: Path
+    guardian_trigger_contract: Path
+    guardian_receipt_consumption: Path
     codex_logs: Path
     output_json: Path
     output_report: Path
@@ -75,6 +84,8 @@ class WatchdogPaths:
             decision_response=root / "data" / "codex_trader_decision_response.json",
             guardian_receipt=root / "data" / "guardian_action_receipt.json",
             guardian_review=root / "docs" / "guardian_action_review.md",
+            guardian_trigger_contract=root / "data" / "guardian_trigger_contract.json",
+            guardian_receipt_consumption=root / "data" / "guardian_receipt_consumption.json",
             codex_logs=codex_logs or DEFAULT_CODEX_LOGS,
             output_json=output_json or root / "data" / "qr_trader_run_watchdog.json",
             output_report=output_report or root / "docs" / "qr_trader_run_watchdog_report.md",
@@ -94,9 +105,12 @@ def evaluate_watchdog(
     automation = _automation_config(paths.automation_toml)
     evidence = _latest_run_evidence(paths=paths, now_utc=clock)
     codex_logs = _codex_log_summary(paths.codex_logs, now_utc=clock)
+    receipt_consumption = load_guardian_receipt_consumption(paths.guardian_receipt_consumption)
     guardian = _guardian_receipt_status(
         paths.guardian_receipt,
         paths.guardian_review,
+        paths.guardian_trigger_contract,
+        receipt_consumption=receipt_consumption,
         last_trader_run_at=evidence["last_trader_run_at"],
         expected_cadence_minutes=automation.get("cadence_minutes") or EXPECTED_CADENCE_MINUTES,
         grace_minutes=grace_minutes,
@@ -143,13 +157,20 @@ def evaluate_watchdog(
             status = "OK"
 
     issues.extend(guardian["issues"])
-    overall_severity = _overall_severity(status, issues)
-    suspected_cause = _suspected_cause(status=status, evidence=evidence, codex_logs=codex_logs, guardian=guardian)
+    runtime_status = status
+    overall_severity = _overall_severity(runtime_status, issues)
+    issue_status = overall_severity
+    overall_status = "BLOCKED" if overall_severity in {"P0", "P1"} else runtime_status
+    status = "BLOCKED" if runtime_status == "OK" and overall_status == "BLOCKED" else runtime_status
+    suspected_cause = _suspected_cause(status=runtime_status, evidence=evidence, codex_logs=codex_logs, guardian=guardian)
     can_wake = str(environ.get("QR_TRADER_WATCHDOG_CAN_WAKE", "0")).strip() == "1"
 
     payload = {
         "generated_at_utc": clock.isoformat(),
         "status": status,
+        "runtime_status": runtime_status,
+        "issue_status": issue_status,
+        "overall_status": overall_status,
         "severity": overall_severity,
         "no_live_side_effects": True,
         "codex_exec_enabled": can_wake,
@@ -160,6 +181,9 @@ def evaluate_watchdog(
         "threshold_minutes": threshold_minutes,
         "minutes_since_last_run": minutes_since,
         "last_trader_run_at": evidence["last_trader_run_at"],
+        "last_trader_run_source": evidence["last_trader_run_source"],
+        "last_trader_run_path": evidence["last_trader_run_path"],
+        "rejected_timestamp_candidates": evidence["rejected_timestamp_candidates"],
         "last_journal_at": evidence["last_journal_at"],
         "last_decision_artifact_at": evidence["last_decision_artifact_at"],
         "last_memory_at": evidence["last_memory_at"],
@@ -168,7 +192,7 @@ def evaluate_watchdog(
         "guardian_receipt": guardian,
         "codex_logs": codex_logs,
         "suspected_cause": suspected_cause,
-        "recommended_operator_action": _recommended_operator_action(status, guardian, config_issues),
+        "recommended_operator_action": _recommended_operator_action(runtime_status, guardian, config_issues),
         "issues": issues,
         "environment": {
             "QR_TRADER_WATCHDOG_CAN_WAKE": "1" if can_wake else "0",
@@ -200,6 +224,8 @@ def evaluate_watchdog(
             "decision_response": str(paths.decision_response),
             "guardian_receipt": str(paths.guardian_receipt),
             "guardian_review": str(paths.guardian_review),
+            "guardian_trigger_contract": str(paths.guardian_trigger_contract),
+            "guardian_receipt_consumption": str(paths.guardian_receipt_consumption),
             "codex_logs": str(paths.codex_logs),
             "output_json": str(paths.output_json),
             "output_report": str(paths.output_report),
@@ -230,6 +256,8 @@ def run_watchdog(
                     "status": payload["status"],
                     "severity": payload["severity"],
                     "last_trader_run_at": payload["last_trader_run_at"],
+                    "last_trader_run_source": payload["last_trader_run_source"],
+                    "last_trader_run_path": payload["last_trader_run_path"],
                     "minutes_since_last_run": payload["minutes_since_last_run"],
                     "issue_codes": [item["code"] for item in payload["issues"]],
                 },
@@ -364,14 +392,31 @@ def _latest_run_evidence(*, paths: WatchdogPaths, now_utc: datetime) -> dict[str
         paths.autotrade_report,
     )
     memory = _memory_evidence(paths.automation_memory)
-    candidates = [
-        _parse_utc(journal.get("last_at")),
-        _parse_utc(decision.get("last_at")),
-        _parse_utc(memory.get("last_at")),
-    ]
-    latest = _max_dt([item for item in candidates if item is not None])
+    accepted_candidates: list[dict[str, Any]] = []
+    for item in (
+        journal.get("accepted_timestamp_candidates"),
+        decision.get("accepted_timestamp_candidates"),
+        memory.get("accepted_timestamp_candidates"),
+    ):
+        if isinstance(item, list):
+            accepted_candidates.extend(candidate for candidate in item if isinstance(candidate, dict))
+    latest_candidate = _latest_timestamp_candidate(accepted_candidates)
+    latest = _parse_utc(latest_candidate.get("timestamp_utc")) if latest_candidate else None
+    rejected_candidates: list[dict[str, Any]] = []
+    for item in (
+        journal.get("rejected_timestamp_candidates"),
+        decision.get("rejected_timestamp_candidates"),
+        memory.get("rejected_timestamp_candidates"),
+    ):
+        if isinstance(item, list):
+            rejected_candidates.extend(candidate for candidate in item if isinstance(candidate, dict))
+    rejected_candidates.extend(_non_trader_timestamp_candidates(paths))
     return {
         "last_trader_run_at": _iso(latest),
+        "last_trader_run_source": latest_candidate.get("source") if latest_candidate else None,
+        "last_trader_run_path": latest_candidate.get("path") if latest_candidate else None,
+        "accepted_timestamp_candidates": accepted_candidates,
+        "rejected_timestamp_candidates": rejected_candidates,
         "last_journal_at": journal.get("last_at"),
         "last_decision_artifact_at": decision.get("last_at"),
         "last_memory_at": memory.get("last_at"),
@@ -383,11 +428,12 @@ def _latest_run_evidence(*, paths: WatchdogPaths, now_utc: datetime) -> dict[str
 
 
 def _journal_evidence(path: Path) -> dict[str, Any]:
-    timestamps: list[datetime] = []
+    accepted: list[dict[str, Any]] = []
+    rejected: list[dict[str, Any]] = []
     last_status = None
     last_line_excerpt = None
     if path.exists():
-        for line in _tail_lines(path, max_bytes=256_000):
+        for line_number, line in enumerate(_tail_lines(path, max_bytes=256_000), start=1):
             stripped = line.strip()
             if not stripped:
                 continue
@@ -396,24 +442,49 @@ def _journal_evidence(path: Path) -> dict[str, Any]:
             except json.JSONDecodeError:
                 payload = {}
             if isinstance(payload, dict):
-                for key in ("ts", "timestamp", "generated_at_utc", "time", "created_at_utc"):
-                    parsed = _parse_utc(payload.get(key))
-                    if parsed is not None:
-                        timestamps.append(parsed)
-                        break
+                parsed = _parse_utc(payload.get("ts"))
+                if parsed is not None:
+                    accepted.append(
+                        _timestamp_candidate(
+                            source="trader_journal.ts",
+                            path=path,
+                            timestamp=parsed,
+                            detail=f"jsonl_line={line_number}",
+                        )
+                    )
+                for key in ("timestamp", "generated_at_utc", "time", "created_at_utc"):
+                    rejected_ts = _parse_utc(payload.get(key))
+                    if rejected_ts is not None:
+                        rejected.append(
+                            _timestamp_candidate(
+                                source=f"trader_journal.{key}",
+                                path=path,
+                                timestamp=rejected_ts,
+                                rejected_reason="trader journal run evidence must use the explicit ts field",
+                            )
+                        )
                 last_status = payload.get("status") or payload.get("gpt_status") or last_status
             last_line_excerpt = stripped[:500]
     mtime = _mtime_utc(path)
-    if not timestamps and mtime is not None:
-        timestamps.append(mtime)
-    latest = _max_dt(timestamps)
+    if mtime is not None:
+        rejected.append(
+            _timestamp_candidate(
+                source="trader_journal.file_mtime",
+                path=path,
+                timestamp=mtime,
+                rejected_reason="file mtime is not explicit trader-run evidence",
+            )
+        )
+    latest = _latest_timestamp_candidate(accepted)
     return {
         "path": str(path),
         "exists": path.exists(),
-        "last_at": _iso(latest),
+        "last_at": latest.get("timestamp_utc") if latest else None,
         "file_mtime_utc": _iso(mtime),
         "last_status": last_status,
         "last_line_excerpt": last_line_excerpt,
+        "accepted_timestamp_candidates": accepted,
+        "rejected_timestamp_candidates": rejected,
     }
 
 
@@ -427,12 +498,21 @@ def _decision_artifact_evidence(
         _report_artifact_time(gpt_report, "gpt_decision_report"),
         _report_artifact_time(autotrade_report, "autotrade_report"),
     ]
-    latest = _max_dt(
-        [parsed for parsed in (_parse_utc(item.get("generated_at_utc")) for item in artifacts) if parsed]
-    )
+    accepted: list[dict[str, Any]] = []
+    rejected: list[dict[str, Any]] = []
+    for item in artifacts:
+        candidate = item.get("timestamp_candidate")
+        if isinstance(candidate, dict):
+            accepted.append(candidate)
+        rejected_items = item.get("rejected_timestamp_candidates")
+        if isinstance(rejected_items, list):
+            rejected.extend(rejected_item for rejected_item in rejected_items if isinstance(rejected_item, dict))
+    latest = _latest_timestamp_candidate(accepted)
     return {
-        "last_at": _iso(latest),
+        "last_at": latest.get("timestamp_utc") if latest else None,
         "artifacts": artifacts,
+        "accepted_timestamp_candidates": accepted,
+        "rejected_timestamp_candidates": rejected,
     }
 
 
@@ -441,22 +521,58 @@ def _json_artifact_time(path: Path, name: str) -> dict[str, Any]:
     parsed = None
     status = None
     action = None
+    accepted_candidate = None
+    rejected: list[dict[str, Any]] = []
     if isinstance(payload, dict):
-        for key in ("generated_at_utc", "ts", "timestamp", "created_at_utc"):
-            parsed = _parse_utc(payload.get(key))
-            if parsed is not None:
-                break
+        parsed = _parse_utc(payload.get("generated_at_utc"))
         status = payload.get("status")
         action = payload.get("action")
-    if parsed is None:
-        parsed = _mtime_utc(path)
+        if parsed is not None:
+            if _looks_like_trader_decision_response(payload):
+                accepted_candidate = _timestamp_candidate(
+                    source=f"{name}.generated_at_utc",
+                    path=path,
+                    timestamp=parsed,
+                )
+            else:
+                rejected.append(
+                    _timestamp_candidate(
+                        source=f"{name}.generated_at_utc",
+                        path=path,
+                        timestamp=parsed,
+                        rejected_reason="codex_trader_decision_response is not clearly a trader decision",
+                    )
+                )
+        for key in ("ts", "timestamp", "created_at_utc"):
+            rejected_ts = _parse_utc(payload.get(key))
+            if rejected_ts is not None:
+                rejected.append(
+                    _timestamp_candidate(
+                        source=f"{name}.{key}",
+                        path=path,
+                        timestamp=rejected_ts,
+                        rejected_reason="decision response run evidence must use generated_at_utc",
+                    )
+                )
+    mtime = _mtime_utc(path)
+    if mtime is not None:
+        rejected.append(
+            _timestamp_candidate(
+                source=f"{name}.file_mtime",
+                path=path,
+                timestamp=mtime,
+                rejected_reason="file mtime is not explicit trader-run evidence",
+            )
+        )
     return {
         "name": name,
         "path": str(path),
         "exists": path.exists(),
-        "generated_at_utc": _iso(parsed),
+        "generated_at_utc": accepted_candidate.get("timestamp_utc") if accepted_candidate else None,
         "status": status,
         "action": action,
+        "timestamp_candidate": accepted_candidate,
+        "rejected_timestamp_candidates": rejected,
     }
 
 
@@ -464,63 +580,272 @@ def _report_artifact_time(path: Path, name: str) -> dict[str, Any]:
     text = _read_text(path, limit=16_000)
     parsed = None
     status = None
+    accepted_candidate = None
+    rejected: list[dict[str, Any]] = []
     if text:
         match = re.search(r"Generated at UTC:\s*`([^`]+)`", text)
         if match:
             parsed = _parse_utc(match.group(1))
+            if parsed is not None:
+                if _looks_like_trader_report_text(text, name):
+                    accepted_candidate = _timestamp_candidate(
+                        source=f"{name}.generated_at_utc",
+                        path=path,
+                        timestamp=parsed,
+                    )
+                else:
+                    rejected.append(
+                        _timestamp_candidate(
+                            source=f"{name}.generated_at_utc",
+                            path=path,
+                            timestamp=parsed,
+                            rejected_reason="report is not clearly a qr-trader cycle artifact",
+                        )
+                    )
         status_match = re.search(r"Status:\s*`([^`]+)`", text)
         if status_match:
             status = status_match.group(1)
-    if parsed is None:
-        parsed = _mtime_utc(path)
+    mtime = _mtime_utc(path)
+    if mtime is not None:
+        rejected.append(
+            _timestamp_candidate(
+                source=f"{name}.file_mtime",
+                path=path,
+                timestamp=mtime,
+                rejected_reason="file mtime is not explicit trader-run evidence",
+            )
+        )
     return {
         "name": name,
         "path": str(path),
         "exists": path.exists(),
-        "generated_at_utc": _iso(parsed),
+        "generated_at_utc": accepted_candidate.get("timestamp_utc") if accepted_candidate else None,
         "status": status,
+        "timestamp_candidate": accepted_candidate,
+        "rejected_timestamp_candidates": rejected,
     }
+
+
+def _looks_like_trader_report_text(text: str, name: str) -> bool:
+    if name == "gpt_decision_report":
+        return bool(re.search(r"^#\s+GPT Trader Decision Report\s*$", text, flags=re.MULTILINE))
+    if name == "autotrade_report":
+        return bool(re.search(r"^#\s+Autotrade Cycle Report\s*$", text, flags=re.MULTILINE))
+    return False
 
 
 def _memory_evidence(path: Path) -> dict[str, Any]:
     text = _read_tail_text(path, max_bytes=128_000)
     timestamps = _timestamps_from_text(text)
+    accepted = [
+        _timestamp_candidate(
+            source="qr_trader_automation_memory.timestamp",
+            path=path,
+            timestamp=timestamp,
+        )
+        for timestamp in timestamps
+    ]
+    rejected: list[dict[str, Any]] = []
     mtime = _mtime_utc(path)
     if mtime is not None:
-        timestamps.append(mtime)
-    latest = _max_dt(timestamps)
+        rejected.append(
+            _timestamp_candidate(
+                source="qr_trader_automation_memory.file_mtime",
+                path=path,
+                timestamp=mtime,
+                rejected_reason="automation memory mtime is not an entry timestamp",
+            )
+        )
+    latest = _latest_timestamp_candidate(accepted)
     return {
         "path": str(path),
         "exists": path.exists(),
-        "last_at": _iso(latest),
+        "last_at": latest.get("timestamp_utc") if latest else None,
         "file_mtime_utc": _iso(mtime),
         "parsed_timestamp_count": len(timestamps),
+        "accepted_timestamp_candidates": accepted,
+        "rejected_timestamp_candidates": rejected,
     }
+
+
+def _timestamp_candidate(
+    *,
+    source: str,
+    path: Path,
+    timestamp: datetime,
+    detail: str | None = None,
+    rejected_reason: str | None = None,
+) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "source": source,
+        "path": str(path),
+        "timestamp_utc": timestamp.astimezone(timezone.utc).isoformat(),
+    }
+    if detail:
+        payload["detail"] = detail
+    if rejected_reason:
+        payload["rejected_reason"] = rejected_reason
+    return payload
+
+
+def _latest_timestamp_candidate(candidates: list[dict[str, Any]]) -> dict[str, Any] | None:
+    parsed: list[tuple[datetime, dict[str, Any]]] = []
+    for candidate in candidates:
+        timestamp = _parse_utc(candidate.get("timestamp_utc"))
+        if timestamp is not None:
+            parsed.append((timestamp, candidate))
+    if not parsed:
+        return None
+    return max(parsed, key=lambda item: item[0])[1]
+
+
+def _looks_like_trader_decision_response(payload: dict[str, Any]) -> bool:
+    action_value = payload.get("action")
+    decision = payload.get("decision")
+    if not action_value and isinstance(decision, dict):
+        action_value = decision.get("action")
+    action = str(action_value or "").upper()
+    if action not in {"TRADE", "WAIT", "CANCEL_PENDING", "PROTECT", "TIGHTEN_SL", "CLOSE", "REQUEST_EVIDENCE"}:
+        return False
+    trader_markers = {
+        "market_read_first",
+        "twenty_minute_plan",
+        "selected_lane_id",
+        "selected_lane_ids",
+        "rejected_alternatives",
+        "risk_notes",
+        "operator_summary",
+        "close_trade_ids",
+        "cancel_order_ids",
+        "confidence",
+        "method",
+    }
+    if any(key in payload for key in trader_markers):
+        return True
+    decision = payload.get("decision")
+    return isinstance(decision, dict) and any(key in decision for key in trader_markers)
+
+
+def _non_trader_timestamp_candidates(paths: WatchdogPaths) -> list[dict[str, Any]]:
+    rejected: list[dict[str, Any]] = []
+    rejected.extend(
+        _json_timestamp_rejections(
+            paths.guardian_receipt,
+            keys=("generated_at_utc", "expires_at_utc"),
+            source_prefix="guardian_action_receipt",
+            reason="guardian receipt timestamps are not trader-run evidence",
+        )
+    )
+    rejected.extend(
+        _json_timestamp_rejections(
+            paths.guardian_trigger_contract,
+            keys=("generated_at_utc", "next_review_deadline_utc"),
+            source_prefix="guardian_trigger_contract",
+            reason="guardian trigger contract timestamps are not trader-run evidence",
+        )
+    )
+    review_text = _read_text(paths.guardian_review, limit=16_000)
+    for timestamp in _timestamps_from_text(review_text):
+        rejected.append(
+            _timestamp_candidate(
+                source="guardian_action_review.timestamp",
+                path=paths.guardian_review,
+                timestamp=timestamp,
+                rejected_reason="guardian action review timestamps are not trader-run evidence",
+            )
+        )
+    rejected.extend(
+        _json_timestamp_rejections(
+            paths.output_json,
+            keys=("generated_at_utc",),
+            source_prefix="qr_trader_run_watchdog",
+            reason="watchdog generated_at is not trader-run evidence",
+        )
+    )
+    return rejected
+
+
+def _json_timestamp_rejections(
+    path: Path,
+    *,
+    keys: tuple[str, ...],
+    source_prefix: str,
+    reason: str,
+) -> list[dict[str, Any]]:
+    payload = _read_json_object(path)
+    if not isinstance(payload, dict):
+        return []
+    rejected: list[dict[str, Any]] = []
+    for key in keys:
+        parsed = _parse_utc(payload.get(key))
+        if parsed is not None:
+            rejected.append(
+                _timestamp_candidate(
+                    source=f"{source_prefix}.{key}",
+                    path=path,
+                    timestamp=parsed,
+                    rejected_reason=reason,
+                )
+            )
+    for nested_key in ("receipt", "selected_event"):
+        nested = payload.get(nested_key)
+        if not isinstance(nested, dict):
+            continue
+        for key in keys:
+            parsed = _parse_utc(nested.get(key))
+            if parsed is not None:
+                rejected.append(
+                    _timestamp_candidate(
+                        source=f"{source_prefix}.{nested_key}.{key}",
+                        path=path,
+                        timestamp=parsed,
+                        rejected_reason=reason,
+                    )
+                )
+    return rejected
 
 
 def _guardian_receipt_status(
     receipt_path: Path,
     review_path: Path,
+    trigger_contract_path: Path,
     *,
+    receipt_consumption: dict[str, Any],
     last_trader_run_at: str | None,
     expected_cadence_minutes: int,
     grace_minutes: int,
     now_utc: datetime,
 ) -> dict[str, Any]:
     review_text = _read_text(review_path, limit=16_000)
+    _ = trigger_contract_path
     candidates = _guardian_receipt_candidates(receipt_path)
     groups = _group_guardian_receipts(candidates)
     issues: list[dict[str, Any]] = []
-    summaries = [
-        _guardian_receipt_group_summary(
+    summaries: list[dict[str, Any]] = []
+    for group in groups:
+        summary = _guardian_receipt_group_summary(
             group,
             last_trader_run_at=last_trader_run_at,
             expected_cadence_minutes=expected_cadence_minutes,
             grace_minutes=grace_minutes,
             now_utc=now_utc,
         )
-        for group in groups
-    ]
+        acknowledgement = acknowledgement_for_receipt(
+            receipt_consumption,
+            issue_code="GUARDIAN_RECEIPT_NOT_CONSUMED_BY_TRADER",
+            receipt_event_id=summary.get("event_id"),
+            receipt_action=summary.get("action"),
+            receipt_lifecycle=summary.get("receipt_lifecycle"),
+        )
+        summary["trader_acknowledgement"] = acknowledgement
+        summary["acknowledged_by_trader"] = acknowledgement is not None
+        summary["acknowledgement_classification"] = (
+            acknowledgement.get("classification") if isinstance(acknowledgement, dict) else None
+        )
+        summary["normal_routing_allowed_by_acknowledgement"] = (
+            acknowledgement.get("normal_routing_allowed") if isinstance(acknowledgement, dict) else None
+        )
+        summaries.append(summary)
     summaries.sort(key=lambda item: item.get("generated_at_utc") or "", reverse=True)
     for summary in summaries:
         issue = _guardian_receipt_issue(summary)
@@ -541,6 +866,7 @@ def _guardian_receipt_status(
             "archive_exists": archive_dir.exists(),
             "archive_receipts_checked": 0,
             "receipt_summaries": [],
+            "guardian_receipt_consumption": receipt_consumption,
             "review_path": str(review_path),
             "review_excerpt": review_text[:800] if review_text else None,
         }
@@ -569,6 +895,7 @@ def _guardian_receipt_status(
         "archive_exists": archive_dir.exists(),
         "archive_receipts_checked": len([item for item in candidates if item["source"] == "archive"]),
         "receipt_summaries": summaries,
+        "guardian_receipt_consumption": receipt_consumption,
         "review_path": str(review_path),
         "review_exists": review_path.exists(),
         "review_excerpt": review_text[:800] if review_text else None,
@@ -633,6 +960,8 @@ def _guardian_receipt_group_summary(
     canonical_present = any(item["source"] == "canonical" for item in group)
     representative = _guardian_receipt_representative(payloads)
     action = _guardian_receipt_action(representative)
+    event_id = _guardian_receipt_event_id(representative)
+    dedupe_key = _guardian_receipt_dedupe_key(representative)
     lifecycle = _guardian_receipt_lifecycle(payloads)
     receipt_status = _guardian_receipt_status_value(payloads)
     generated_at = _guardian_receipt_datetime(payloads, "generated_at_utc")
@@ -683,6 +1012,8 @@ def _guardian_receipt_group_summary(
     emergency_or_margin = any(_receipt_is_emergency_or_margin_risk(payload) for payload in payloads)
     return {
         "identity": _guardian_receipt_identity(representative),
+        "event_id": event_id,
+        "dedupe_key": dedupe_key,
         "canonical_present": canonical_present,
         "source_paths": sorted(item["path"] for item in group),
         "sources": sorted({item["source"] for item in group}),
@@ -710,6 +1041,30 @@ def _guardian_receipt_issue(summary: dict[str, Any]) -> dict[str, Any] | None:
         return None
     if not summary.get("expired_before_trader_run") and not summary.get("next_run_window_missed"):
         return None
+    acknowledgement = summary.get("trader_acknowledgement")
+    if isinstance(acknowledgement, dict):
+        classification = str(acknowledgement.get("classification") or "").upper()
+        normal_allowed = acknowledgement.get("normal_routing_allowed") is True
+        if normal_allowed:
+            return None
+        if classification == NEEDS_OPERATOR_REVIEW:
+            return _issue(
+                OPERATOR_REVIEW_ISSUE_CODE,
+                _guardian_receipt_issue_severity(summary),
+                str(acknowledgement.get("reason") or "guardian receipt needs operator review"),
+                receipt_identity=summary.get("identity"),
+                receipt_event_id=summary.get("event_id"),
+                receipt_action=summary.get("action"),
+                receipt_lifecycle=summary.get("receipt_lifecycle"),
+                receipt_sources=summary.get("sources"),
+                receipt_source_paths=summary.get("source_paths"),
+                consumed_by_trader=summary.get("consumed_by_trader"),
+                expired_before_trader_run=summary.get("expired_before_trader_run"),
+                next_run_window_missed=summary.get("next_run_window_missed"),
+                emergency_or_margin_risk=summary.get("emergency_or_margin_risk"),
+                acknowledgement_classification=classification,
+                normal_routing_allowed=False,
+            )
     reasons = []
     lifecycle = str(summary.get("receipt_lifecycle") or "")
     if lifecycle == "EXPIRED":
@@ -726,6 +1081,17 @@ def _guardian_receipt_issue(summary: dict[str, Any]) -> dict[str, Any] | None:
         "GUARDIAN_RECEIPT_NOT_CONSUMED_BY_TRADER",
         _guardian_receipt_issue_severity(summary),
         message,
+        receipt_identity=summary.get("identity"),
+        receipt_event_id=summary.get("event_id"),
+        receipt_action=summary.get("action"),
+        receipt_lifecycle=summary.get("receipt_lifecycle"),
+        receipt_sources=summary.get("sources"),
+        receipt_source_paths=summary.get("source_paths"),
+        consumed_by_trader=summary.get("consumed_by_trader"),
+        expired_before_trader_run=summary.get("expired_before_trader_run"),
+        next_run_window_missed=summary.get("next_run_window_missed"),
+        emergency_or_margin_risk=summary.get("emergency_or_margin_risk"),
+        normal_routing_allowed=False,
     )
 
 
@@ -784,6 +1150,18 @@ def _selected_event(receipt: dict[str, Any]) -> dict[str, Any]:
 def _guardian_receipt_action(receipt: dict[str, Any]) -> str:
     nested = _nested_receipt(receipt)
     return str(nested.get("action") or receipt.get("action") or "").upper()
+
+
+def _guardian_receipt_event_id(receipt: dict[str, Any]) -> str:
+    nested = _nested_receipt(receipt)
+    selected = _selected_event(receipt)
+    return str(nested.get("event_id") or receipt.get("event_id") or selected.get("event_id") or "")
+
+
+def _guardian_receipt_dedupe_key(receipt: dict[str, Any]) -> str:
+    nested = _nested_receipt(receipt)
+    selected = _selected_event(receipt)
+    return str(nested.get("dedupe_key") or receipt.get("dedupe_key") or selected.get("dedupe_key") or "")
 
 
 def _receipt_is_emergency_or_margin_risk(receipt: dict[str, Any]) -> bool:
@@ -988,8 +1366,10 @@ def _overall_severity(status: str, issues: list[dict[str, Any]]) -> str:
     return severity
 
 
-def _issue(code: str, severity: str, message: str) -> dict[str, Any]:
-    return {"code": code, "severity": severity, "message": message}
+def _issue(code: str, severity: str, message: str, **extra: Any) -> dict[str, Any]:
+    payload = {"code": code, "severity": severity, "message": message}
+    payload.update(extra)
+    return payload
 
 
 def _render_report(payload: dict[str, Any]) -> str:
@@ -1001,9 +1381,15 @@ def _render_report(payload: dict[str, Any]) -> str:
         "# QR Trader Run Watchdog Report",
         "",
         f"- Generated at UTC: `{payload['generated_at_utc']}`",
-        f"- Status: `{payload['status']}` severity=`{payload['severity']}`",
+        f"- Status: `{payload['status']}` runtime_status=`{payload.get('runtime_status')}` "
+        f"overall_status=`{payload.get('overall_status')}` issue_status=`{payload.get('issue_status')}`",
+        f"- Severity: `{payload['severity']}`",
+        f"- Service health: `{'healthy' if payload.get('runtime_status') == 'OK' else 'attention_required'}`",
+        f"- Trading workflow: `{'blocked_by_guardian_or_run_issue' if payload.get('overall_status') == 'BLOCKED' else 'available'}`",
         f"- Missed expected window: `{payload['missed_expected_window']}`",
         f"- Last trader run evidence: `{payload['last_trader_run_at']}`",
+        f"- Last trader run source: `{payload.get('last_trader_run_source')}`",
+        f"- Last trader run path: `{payload.get('last_trader_run_path')}`",
         f"- Minutes since last run: `{payload['minutes_since_last_run']}`",
         f"- Cadence + grace: `{payload['expected_cadence_minutes']} + {payload['grace_minutes']}` minutes",
         f"- Read only: `{payload['execution_boundary']['read_only']}`",
@@ -1026,6 +1412,7 @@ def _render_report(payload: dict[str, Any]) -> str:
         f"- Journal: `{payload['last_journal_at']}` path=`{evidence['journal']['path']}`",
         f"- Decision artifacts: `{payload['last_decision_artifact_at']}`",
         f"- Automation memory: `{payload['last_memory_at']}` path=`{evidence['memory']['path']}`",
+        f"- Rejected timestamp candidates: `{len(payload.get('rejected_timestamp_candidates') or [])}`",
         "",
         "| Artifact | Generated UTC | Status |",
         "|---|---:|---|",
@@ -1213,6 +1600,8 @@ def main(argv: list[str] | None = None) -> int:
                 "severity": payload["severity"],
                 "missed_expected_window": payload["missed_expected_window"],
                 "last_trader_run_at": payload["last_trader_run_at"],
+                "last_trader_run_source": payload["last_trader_run_source"],
+                "last_trader_run_path": payload["last_trader_run_path"],
                 "minutes_since_last_run": payload["minutes_since_last_run"],
                 "output_json": str(paths.output_json),
                 "output_report": str(paths.output_report),

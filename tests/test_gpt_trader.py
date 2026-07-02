@@ -213,6 +213,112 @@ class GPTTraderBrainTest(unittest.TestCase):
             verified = brain.run(snapshot_path=files["snapshot"])
             self.assertEqual(verified.status, "ACCEPTED")
 
+    def test_draft_classifies_expired_guardian_receipt_before_trade_allowed(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root)
+            _write_watchdog_guardian_issue(
+                files["qr_trader_run_watchdog"],
+                lifecycle="EXPIRED",
+                action="HOLD",
+                event_id="receipt-expired",
+                emergency_or_margin_risk=False,
+            )
+
+            summary = _draft(root, files)
+
+            self.assertEqual(summary.status, "DRAFT_ACCEPTED")
+            self.assertEqual(summary.action, "TRADE")
+            consumption = json.loads(files["guardian_receipt_consumption"].read_text())
+            self.assertTrue(consumption["normal_routing_allowed"])
+            self.assertEqual(consumption["classifications"][0]["classification"], "EXPIRED_ACKNOWLEDGED")
+            self.assertFalse(consumption["classifications"][0]["consumed_by_trader"])
+            self.assertTrue(files["guardian_receipt_consumption_report"].exists())
+
+    def test_draft_blocks_normal_trade_when_guardian_receipt_needs_operator_review(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root)
+            _write_watchdog_guardian_issue(
+                files["qr_trader_run_watchdog"],
+                lifecycle="EXPIRED",
+                action="HOLD",
+                event_id="receipt-review",
+                emergency_or_margin_risk=True,
+            )
+
+            summary = _draft(root, files)
+
+            self.assertEqual(summary.status, "DRAFT_REQUIRES_OPERATOR_REVIEW")
+            self.assertEqual(summary.action, "WAIT")
+            self.assertIn("GUARDIAN_RECEIPT_NOT_CONSUMED_BY_TRADER_BLOCKS_NEW_ENTRY", " ".join(summary.blockers))
+            consumption = json.loads(files["guardian_receipt_consumption"].read_text())
+            self.assertFalse(consumption["normal_routing_allowed"])
+            self.assertEqual(consumption["classifications"][0]["classification"], "NEEDS_OPERATOR_REVIEW")
+            self.assertFalse(consumption["classifications"][0]["consumed_by_trader"])
+
+    def test_rejects_trade_when_active_guardian_receipt_issue_has_no_classification(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root)
+            _write_watchdog_guardian_issue(
+                files["qr_trader_run_watchdog"],
+                lifecycle="EXPIRED",
+                action="REDUCE",
+                event_id="receipt-unclassified",
+                emergency_or_margin_risk=False,
+            )
+            brain = _brain(root, files, _trade_decision())
+
+            summary = brain.run(snapshot_path=files["snapshot"])
+
+            self.assertEqual(summary.status, "REJECTED")
+            payload = json.loads((root / "gpt_decision.json").read_text())
+            codes = {issue["code"] for issue in payload["verification_issues"]}
+            self.assertIn("GUARDIAN_RECEIPT_NOT_CONSUMED_BY_TRADER_BLOCKS_NEW_ENTRY", codes)
+
+    def test_regression_blocks_aud_usd_campaign_recovery_when_reduce_receipt_unconsumed(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            aud_lane = "campaign_exposure_recovery:AUD_USD:LONG:TREND_CONTINUATION"
+            files = _fixtures(root)
+            files["intents"].write_text(
+                json.dumps(
+                    {
+                        "results": [
+                            _result(
+                                lane_id=aud_lane,
+                                pair="AUD_USD",
+                                side="LONG",
+                                metadata={
+                                    "desk": "campaign_exposure_recovery",
+                                    "campaign_role": "NOW",
+                                    "campaign_exposure_recovery": True,
+                                },
+                            )
+                        ]
+                    }
+                )
+            )
+            _write_watchdog_guardian_issue(
+                files["qr_trader_run_watchdog"],
+                lifecycle="EXPIRED",
+                action="REDUCE",
+                event_id="receipt-stale-reduce",
+                emergency_or_margin_risk=False,
+            )
+            decision = _trade_decision(lane_id=aud_lane, pair="AUD_USD", direction="LONG")
+            brain = _brain(root, files, decision)
+
+            summary = brain.run(snapshot_path=files["snapshot"])
+
+            self.assertEqual(summary.status, "REJECTED")
+            payload = json.loads((root / "gpt_decision.json").read_text())
+            codes = {issue["code"] for issue in payload["verification_issues"]}
+            self.assertIn("GUARDIAN_RECEIPT_NOT_CONSUMED_BY_TRADER_BLOCKS_NEW_ENTRY", codes)
+            report = (root / "gpt_decision.md").read_text()
+            self.assertIn("GUARDIAN_RECEIPT_NOT_CONSUMED_BY_TRADER_BLOCKS_NEW_ENTRY", report)
+
     def test_draft_cites_user_alpha_when_selected_lane_continues_it(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -4002,6 +4108,8 @@ def _brain(root: Path, files: dict[str, Path], decision: dict, *, max_lanes: int
         predictive_limits_path=files["predictive_limits"],
         news_items_path=files["news_items"],
         news_health_path=files["news_health"],
+        qr_trader_run_watchdog_path=files["qr_trader_run_watchdog"],
+        guardian_receipt_consumption_path=files["guardian_receipt_consumption"],
         **({"max_lanes": max_lanes} if max_lanes is not None else {}),
     )
 
@@ -4043,6 +4151,9 @@ def _draft(root: Path, files: dict[str, Path]):
         predictive_limits_path=files["predictive_limits"],
         news_items_path=files["news_items"],
         news_health_path=files["news_health"],
+        qr_trader_run_watchdog_path=files["qr_trader_run_watchdog"],
+        guardian_receipt_consumption_path=files["guardian_receipt_consumption"],
+        guardian_receipt_consumption_report_path=files["guardian_receipt_consumption_report"],
     )
 
 
@@ -4067,6 +4178,38 @@ def _write_entry_thesis_blocker(root: Path, files: dict[str, Path], *, trade_id:
                 ],
             }
         )
+    )
+
+
+def _write_watchdog_guardian_issue(
+    path: Path,
+    *,
+    lifecycle: str,
+    action: str,
+    event_id: str,
+    emergency_or_margin_risk: bool,
+) -> None:
+    issue = {
+        "code": "GUARDIAN_RECEIPT_NOT_CONSUMED_BY_TRADER",
+        "severity": "P0" if emergency_or_margin_risk else "WARN",
+        "message": f"receipt_lifecycle={lifecycle} while consumed_by_trader=false",
+        "receipt_event_id": event_id,
+        "receipt_action": action,
+        "receipt_lifecycle": lifecycle,
+        "consumed_by_trader": False,
+        "emergency_or_margin_risk": emergency_or_margin_risk,
+        "normal_routing_allowed": False,
+    }
+    path.write_text(
+        json.dumps(
+            {
+                "generated_at_utc": datetime.now(timezone.utc).isoformat(),
+                "status": "OK",
+                "severity": issue["severity"],
+                "guardian_receipt": {"issues": [issue]},
+            }
+        ),
+        encoding="utf-8",
     )
 
 
@@ -4105,6 +4248,9 @@ def _fixtures(root: Path, *, positions: list[dict] | None = None, orders: list[d
         "predictive_limits": root / "predictive_limits.json",
         "news_items": root / "news_items.json",
         "news_health": root / "news_health.json",
+        "qr_trader_run_watchdog": root / "qr_trader_run_watchdog.json",
+        "guardian_receipt_consumption": root / "guardian_receipt_consumption.json",
+        "guardian_receipt_consumption_report": root / "guardian_receipt_consumption_report.md",
     }
     now = datetime.now(timezone.utc).isoformat()
     files["snapshot"].write_text(
@@ -4964,7 +5110,14 @@ def _chart_view(granularity: str, *, atr_pips: float, state: str, last_jump_bars
     }
 
 
-def _result(*, lane_id: str = LANE_ID, method: str = "TREND_CONTINUATION") -> dict:
+def _result(
+    *,
+    lane_id: str = LANE_ID,
+    method: str = "TREND_CONTINUATION",
+    pair: str = "EUR_USD",
+    side: str = "LONG",
+    metadata: dict | None = None,
+) -> dict:
     return {
         "lane_id": lane_id,
         "status": "LIVE_READY",
@@ -4973,25 +5126,25 @@ def _result(*, lane_id: str = LANE_ID, method: str = "TREND_CONTINUATION") -> di
         "strategy_issues": [],
         "live_blockers": [],
         "intent": {
-            "pair": "EUR_USD",
-            "side": "LONG",
+            "pair": pair,
+            "side": side,
             "order_type": "STOP-ENTRY",
             "units": 1000,
             "entry": 1.1725,
             "tp": 1.1737,
             "sl": 1.1717,
-            "thesis": "EUR_USD continuation can pay before daily target window closes.",
+            "thesis": f"{pair} continuation can pay before daily target window closes.",
             "owner": "trader",
             "market_context": {
                 "regime": f"{method} campaign lane",
-                "narrative": "Dollar pressure and momentum theme favor EUR_USD continuation.",
+                "narrative": f"Momentum theme favors {pair} continuation.",
                 "chart_story": "Higher lows are pressing into the trigger shelf.",
                 "method": method,
                 "invalidation": "Invalid if the shelf breaks before entry.",
                 "event_risk": "",
                 "session": "test",
             },
-            "metadata": {
+            "metadata": metadata or {
                 "opportunity_mode": "RUNNER",
                 "opportunity_mode_reason": "tp_target_intent=EXTEND",
                 "opportunity_mode_reward_risk": 2.4,
@@ -5003,14 +5156,20 @@ def _result(*, lane_id: str = LANE_ID, method: str = "TREND_CONTINUATION") -> di
     }
 
 
-def _trade_decision(*, lane_id: str = LANE_ID, method: str = "TREND_CONTINUATION") -> dict:
+def _trade_decision(
+    *,
+    lane_id: str = LANE_ID,
+    method: str = "TREND_CONTINUATION",
+    pair: str = "EUR_USD",
+    direction: str = "LONG",
+) -> dict:
     return {
         "generated_at_utc": datetime.now(timezone.utc).isoformat(),
-        "market_read_first": _market_read_first(pair="EUR_USD", direction="LONG"),
+        "market_read_first": _market_read_first(pair=pair, direction=direction),
         "action": "TRADE",
         "selected_lane_id": lane_id,
         "confidence": "HIGH",
-        "thesis": "MARKET READ FIRST next 30m/next 2h EUR_USD LONG path supports the live-ready continuation lane.",
+        "thesis": f"MARKET READ FIRST next 30m/next 2h {pair} {direction} path supports the live-ready continuation lane.",
         "method": method,
         "narrative": "Momentum and campaign role align with a controlled stop-entry.",
         "chart_story": "Higher lows press into the trigger shelf.",
@@ -5022,15 +5181,15 @@ def _trade_decision(*, lane_id: str = LANE_ID, method: str = "TREND_CONTINUATION
             "target:daily",
             f"intent:{lane_id}",
             f"campaign:{lane_id}",
-            "strategy:EUR_USD:LONG",
-            "story:EUR_USD",
-            "chart:EUR_USD:M5",
-            "chart:EUR_USD:M15",
+            f"strategy:{pair}:{direction}",
+            f"story:{pair}",
+            f"chart:{pair}:M5",
+            f"chart:{pair}:M15",
             "news:health",
             "news:items",
         ],
-        "twenty_minute_plan": _twenty_minute_plan(lane_ids=[lane_id]),
-        "operator_summary": "Accept the verified EUR_USD continuation lane after the next 30m and next 2h market read.",
+        "twenty_minute_plan": _twenty_minute_plan(lane_ids=[lane_id], pair=pair),
+        "operator_summary": f"Accept the verified {pair} continuation lane after the next 30m and next 2h market read.",
     }
 
 

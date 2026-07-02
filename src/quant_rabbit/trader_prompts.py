@@ -248,6 +248,7 @@ def route_trader_prompts(
     attack_advice = _load_json(attack_advice_path)
     trader_support = _trader_support_bot_payload(trader_support_bot_path)
     support_guardian_recovery_reasons = _trader_support_guardian_recovery_reasons(trader_support)
+    support_guardian_receipt_reasons = _trader_support_guardian_receipt_consumption_reasons(trader_support)
     support_global_unlock_reasons = _trader_support_global_unlock_reasons(trader_support)
     support_repair_request_reasons = _trader_support_repair_request_reasons(trader_support)
     support_repair_context_reasons = (
@@ -429,6 +430,18 @@ def route_trader_prompts(
         return _build_route(
             BRANCH_REFRESH,
             (*carry_reasons, *evidence_refresh_reasons),
+            include_content=include_content,
+        )
+
+    if support_guardian_receipt_reasons:
+        return _build_route(
+            BRANCH_ENTRY,
+            (
+                *carry_reasons,
+                *advisory_close_review_reasons,
+                *pending_entry_reasons,
+                *support_guardian_receipt_reasons,
+            ),
             include_content=include_content,
         )
 
@@ -749,6 +762,46 @@ def _trader_support_guardian_recovery_reasons(payload: dict[str, Any]) -> tuple[
         "do not add unrelated indicators or resend generic entries before resolving guardian proof "
         f"({'; '.join(details)})",
     )
+
+
+def _trader_support_guardian_receipt_consumption_reasons(payload: dict[str, Any]) -> tuple[str, ...]:
+    if not payload:
+        return ()
+    watchdog = payload.get("qr_trader_run_watchdog") if isinstance(payload.get("qr_trader_run_watchdog"), dict) else {}
+    issues = watchdog.get("guardian_receipt_issues") if isinstance(watchdog.get("guardian_receipt_issues"), list) else []
+    consumption = (
+        payload.get("guardian_receipt_consumption")
+        if isinstance(payload.get("guardian_receipt_consumption"), dict)
+        else {}
+    )
+    normal_allowed = consumption.get("normal_routing_allowed")
+    classifications = consumption.get("classifications") if isinstance(consumption.get("classifications"), list) else []
+    if not issues and normal_allowed is not False:
+        return ()
+    issue_codes = [
+        str(item.get("code") or "GUARDIAN_RECEIPT_NOT_CONSUMED_BY_TRADER")
+        for item in issues
+        if isinstance(item, dict)
+    ]
+    class_labels = [
+        str(item.get("classification") or "")
+        for item in classifications
+        if isinstance(item, dict) and str(item.get("classification") or "")
+    ]
+    if issues and not classifications:
+        return (
+            "guardian receipt watchdog issue has no durable trader classification yet; "
+            "write data/guardian_receipt_consumption.json before normal new-entry routing "
+            f"(issues={','.join(dict.fromkeys(issue_codes))}; support_bot=data/trader_support_bot.json)",
+        )
+    if normal_allowed is False:
+        return (
+            "guardian receipt consumption blocks normal new-entry routing; manage/protect existing exposure only "
+            "until classification allows routing or operator review resolves it "
+            f"(status={consumption.get('status')}; classifications={','.join(dict.fromkeys(class_labels)) or 'none'}; "
+            "support_bot=data/trader_support_bot.json)",
+        )
+    return ()
 
 
 def _trader_support_repair_request_reasons(payload: dict[str, Any]) -> tuple[str, ...]:
