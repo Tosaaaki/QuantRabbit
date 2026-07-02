@@ -6,6 +6,7 @@ import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+from quant_rabbit.cli import main
 from quant_rabbit.guardian_events import (
     build_guardian_trigger_contract,
     detect_guardian_events,
@@ -15,6 +16,7 @@ from quant_rabbit.guardian_events import (
     validate_guardian_trigger_contract,
     write_guardian_trigger_contract_report,
 )
+from quant_rabbit.operator_manual import OPERATOR_MANUAL_POSITION_PACKET
 
 
 NOW = datetime(2026, 6, 30, 3, 30, tzinfo=timezone.utc)
@@ -572,6 +574,188 @@ class GuardianEventRouterTest(unittest.TestCase):
         self.assertEqual(audit["requires"], "operator confirmation or gateway evidence")
         self.assertEqual(entry["invalidation_triggers"][0]["action_hint"], "HOLD")
         self.assertEqual(entry["emergency_triggers"][0]["action_hint"], "HOLD")
+
+    def test_operator_confirmed_eur_usd_472987_is_monitored_as_operator_manual_keep(self) -> None:
+        snapshot = _snapshot(
+            positions=[
+                {
+                    "pair": "EUR_USD",
+                    "side": "SHORT",
+                    "units": 30000,
+                    "owner": "operator_manual",
+                    "thesis": "operator-confirmed manual EUR_USD short; keep open",
+                    "thesis_state": "ALIVE",
+                    "trade_id": "472987",
+                    "entry_price": 1.14048,
+                    "take_profit": 1.13800,
+                    "stop_loss": None,
+                    "raw": {
+                        "id": "472987",
+                        "instrument": "EUR_USD",
+                        "currentUnits": "-30000",
+                        "price": "1.14048",
+                        "operator_manual_position": {
+                            "packet_type": OPERATOR_MANUAL_POSITION_PACKET,
+                            "classification": "OPERATOR_MANUAL",
+                            "operator_decision": "OPERATOR_CONFIRMED_MANUAL_OWNED",
+                            "management_intent": "KEEP",
+                            "operator_confirmation_source": "chat_operator_confirmation",
+                            "no_live_side_effects": True,
+                            "system_pl_counted": False,
+                            "same_theme_auto_add_allowed": False,
+                            "loss_side_auto_close_allowed": False,
+                            "auto_sl_attach_allowed": False,
+                            "auto_tp_modify_allowed": False,
+                        },
+                    },
+                }
+            ]
+        )
+
+        contract = build_guardian_trigger_contract(snapshot=snapshot, order_intents={}, existing_contract={}, now=NOW)
+        entry = contract["entries"][0]
+        audit = entry["ownership_audit"]
+
+        self.assertEqual(validate_guardian_trigger_contract(contract, now=NOW, snapshot=snapshot)["status"], "VALID")
+        self.assertEqual(entry["trade_id"], "472987")
+        self.assertEqual(entry["pair"], "EUR_USD")
+        self.assertEqual(entry["side"], "SHORT")
+        self.assertEqual(entry["units"], 30000)
+        self.assertEqual(entry["avg_entry"], 1.14048)
+        self.assertEqual(entry["owner"], "OPERATOR_MANUAL")
+        self.assertEqual(entry["thesis_state"], "ALIVE")
+        self.assertEqual(audit["status"], "OPERATOR_MANUAL")
+        self.assertEqual(audit["operator_decision"], "OPERATOR_CONFIRMED_MANUAL_OWNED")
+        self.assertEqual(audit["management_intent"], "KEEP")
+        self.assertEqual(audit["operator_confirmation_source"], "chat_operator_confirmation")
+        self.assertFalse(audit["system_pl_counted"])
+        self.assertFalse(audit["same_theme_auto_add_allowed"])
+        self.assertFalse(audit["loss_side_auto_close_allowed"])
+        self.assertFalse(audit["auto_sl_attach_allowed"])
+        self.assertFalse(audit["auto_tp_modify_allowed"])
+        for bucket in (
+            "harvest_triggers",
+            "no_add_triggers",
+            "wounded_triggers",
+            "invalidation_triggers",
+            "emergency_triggers",
+        ):
+            self.assertTrue(entry[bucket], bucket)
+            self.assertEqual(entry[bucket][0]["trade_id"], "472987")
+            self.assertEqual(entry[bucket][0]["owner"], "OPERATOR_MANUAL")
+        self.assertEqual(entry["harvest_triggers"][0]["action_hint"], "HOLD")
+        self.assertEqual(entry["invalidation_triggers"][0]["action_hint"], "HOLD")
+        self.assertEqual(entry["emergency_triggers"][0]["action_hint"], "HOLD")
+        self.assertIn("do not automatically loss-close", entry["invalidation_triggers"][0]["evidence_required"])
+
+    def test_guardian_trigger_contract_cli_applies_operator_review_confirmation(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            snapshot_path = root / "snapshot.json"
+            intents_path = root / "order_intents.json"
+            manual_path = root / "operator_manual_positions.json"
+            review_path = root / "guardian_receipt_operator_review.json"
+            output_path = root / "guardian_trigger_contract.json"
+            report_path = root / "guardian_trigger_contract.md"
+            snapshot_path.write_text(
+                json.dumps(
+                    {
+                        "fetched_at_utc": "2026-07-02T13:10:16+00:00",
+                        "positions": [
+                            {
+                                "trade_id": "472987",
+                                "pair": "EUR_USD",
+                                "side": "SHORT",
+                                "units": 30_000,
+                                "entry_price": 1.14048,
+                                "avg_entry": 1.14048,
+                                "unrealized_pl_jpy": -20723.0081,
+                                "take_profit": 1.1388,
+                                "stop_loss": None,
+                                "owner": "unknown",
+                                "raw": {"currentUnits": "-30000"},
+                            }
+                        ],
+                        "quotes": {
+                            "EUR_USD": {
+                                "bid": 1.14730,
+                                "ask": 1.14738,
+                                "timestamp_utc": "2026-07-02T13:10:16+00:00",
+                            }
+                        },
+                    }
+                )
+            )
+            intents_path.write_text("{}")
+            review_path.write_text(
+                json.dumps(
+                    {
+                        "operator_position_reviews": [
+                            {
+                                "trade_id": "472987",
+                                "pair": "EUR_USD",
+                                "side": "SHORT",
+                                "units": 30_000,
+                                "avg_entry": 1.14048,
+                                "owner": "OPERATOR_MANUAL",
+                                "operator_decision": "OPERATOR_CONFIRMED_MANUAL_OWNED",
+                                "management_intent": "KEEP",
+                                "reason": "operator explicitly confirmed manual EUR_USD should remain open",
+                                "operator_confirmation_source": "chat_operator_confirmation",
+                                "no_live_side_effects": True,
+                                "system_pl_counted": False,
+                                "same_theme_auto_add_allowed": False,
+                                "loss_side_auto_close_allowed": False,
+                                "auto_sl_attach_allowed": False,
+                                "auto_tp_modify_allowed": False,
+                            }
+                        ]
+                    }
+                )
+            )
+
+            exit_code = main(
+                [
+                    "guardian-trigger-contract",
+                    "--snapshot",
+                    str(snapshot_path),
+                    "--order-intents",
+                    str(intents_path),
+                    "--existing",
+                    str(root / "missing_existing.json"),
+                    "--operator-manual-positions",
+                    str(manual_path),
+                    "--operator-review",
+                    str(review_path),
+                    "--output",
+                    str(output_path),
+                    "--report",
+                    str(report_path),
+                ]
+            )
+
+            payload = json.loads(output_path.read_text())
+
+        self.assertEqual(exit_code, 0)
+        entry = next(item for item in payload["entries"] if item.get("trade_id") == "472987")
+        self.assertEqual(entry["owner"], "OPERATOR_MANUAL")
+        self.assertEqual(entry["thesis_state"], "ALIVE")
+        audit = entry["ownership_audit"]
+        self.assertEqual(audit["operator_decision"], "OPERATOR_CONFIRMED_MANUAL_OWNED")
+        self.assertEqual(audit["management_intent"], "KEEP")
+        self.assertFalse(audit["system_pl_counted"])
+        self.assertFalse(audit["same_theme_auto_add_allowed"])
+        self.assertFalse(audit["loss_side_auto_close_allowed"])
+        self.assertFalse(audit["auto_sl_attach_allowed"])
+        self.assertFalse(audit["auto_tp_modify_allowed"])
+        for bucket in (
+            "harvest_triggers",
+            "no_add_triggers",
+            "wounded_triggers",
+            "invalidation_triggers",
+            "emergency_triggers",
+        ):
+            self.assertTrue(entry[bucket], bucket)
 
     def test_unknown_owner_with_gateway_lane_evidence_maps_to_system(self) -> None:
         snapshot = _snapshot(

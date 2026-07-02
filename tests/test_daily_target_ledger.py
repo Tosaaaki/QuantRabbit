@@ -618,6 +618,49 @@ class DailyTargetLedgerTest(unittest.TestCase):
             payload = json.loads((root / "target.json").read_text())
             self.assertEqual(payload["unrealized_pl_jpy"], 0.0)
             self.assertEqual(payload["account_unrealized_pl_jpy"], -12_300.0)
+
+    def test_operator_confirmed_eurusd_manual_position_is_not_system_profitability(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            now = datetime.now(timezone.utc)
+            snapshot = BrokerSnapshot(
+                fetched_at_utc=now,
+                positions=(
+                    BrokerPosition(
+                        trade_id="472987",
+                        pair="EUR_USD",
+                        side=Side.SHORT,
+                        units=30_000,
+                        entry_price=1.14048,
+                        unrealized_pl_jpy=-922.0941,
+                        take_profit=1.13800,
+                        stop_loss=None,
+                        owner=Owner.OPERATOR_MANUAL,
+                    ),
+                ),
+                quotes={
+                    "EUR_USD": Quote("EUR_USD", 1.14070, 1.14078, timestamp_utc=now),
+                    "USD_JPY": Quote("USD_JPY", 156.64, 156.648, timestamp_utc=now),
+                },
+                account=AccountSummary(
+                    nav_jpy=199_077.9059,
+                    balance_jpy=200_000.0,
+                    unrealized_pl_jpy=-922.0941,
+                    fetched_at_utc=now,
+                ),
+            )
+
+            summary = DailyTargetLedger(
+                state_path=root / "target.json",
+                report_path=root / "target.md",
+            ).run(start_balance_jpy=200_000, daily_risk_budget_jpy=1_000, snapshot=snapshot)
+
+            self.assertEqual(summary.status, "PURSUE_TARGET")
+            self.assertEqual(summary.progress_jpy, 0.0)
+            payload = json.loads((root / "target.json").read_text())
+            self.assertEqual(payload["unrealized_pl_jpy"], 0.0)
+            self.assertEqual(payload["account_unrealized_pl_jpy"], -922.0941)
+            self.assertEqual(payload["positions"][0]["owner"], "operator_manual")
             self.assertEqual(payload["positions"][0]["owner"], Owner.OPERATOR_MANUAL.value)
 
     def test_updates_existing_target_without_repeating_start_balance(self) -> None:

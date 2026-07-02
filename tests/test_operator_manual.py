@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import json
+import tempfile
 import unittest
 from datetime import datetime, timezone
+from pathlib import Path
 
 from quant_rabbit.models import AccountSummary, BrokerPosition, BrokerSnapshot, Owner, Quote, Side
 from quant_rabbit.operator_manual import (
@@ -9,6 +12,7 @@ from quant_rabbit.operator_manual import (
     OPERATOR_MANUAL,
     OPERATOR_MANUAL_POSITION_PACKET,
     classify_operator_manual_snapshot,
+    load_operator_manual_confirmations,
     major_figure_fade_thesis_state,
     operator_manual_position_packets,
 )
@@ -76,6 +80,132 @@ class OperatorManualClassificationTest(unittest.TestCase):
         self.assertEqual(packet["thesis_state"], "ALIVE")
         self.assertIn("red P/L", packet["exact_invalidation_evidence"])
         self.assertTrue(packet["blocks_fresh_jpy_adds"])
+
+    def test_operator_confirmed_eur_usd_unknown_trade_becomes_operator_manual_only_for_trade_id(self) -> None:
+        now = datetime(2026, 7, 2, 7, 34, tzinfo=timezone.utc)
+        snapshot = BrokerSnapshot(
+            fetched_at_utc=now,
+            positions=(
+                BrokerPosition(
+                    trade_id="472987",
+                    pair="EUR_USD",
+                    side=Side.SHORT,
+                    units=30_000,
+                    entry_price=1.14048,
+                    unrealized_pl_jpy=-922.0941,
+                    take_profit=1.13800,
+                    stop_loss=None,
+                    owner=Owner.UNKNOWN,
+                    raw={"currentUnits": "-30000", "price": "1.14048"},
+                ),
+                BrokerPosition(
+                    trade_id="other-eurusd",
+                    pair="EUR_USD",
+                    side=Side.SHORT,
+                    units=30_000,
+                    entry_price=1.14010,
+                    owner=Owner.UNKNOWN,
+                    raw={"currentUnits": "-30000", "price": "1.14010"},
+                ),
+            ),
+            quotes={"EUR_USD": Quote("EUR_USD", bid=1.14070, ask=1.14078, timestamp_utc=now)},
+        )
+
+        classified = classify_operator_manual_snapshot(
+            snapshot,
+            confirmations=[
+                {
+                    "trade_id": "472987",
+                    "pair": "EUR_USD",
+                    "side": "SHORT",
+                    "units": 30_000,
+                    "owner_confirmed": True,
+                    "operator_decision": "OPERATOR_CONFIRMED_MANUAL_OWNED",
+                    "management_intent": "KEEP",
+                    "reason": "operator explicitly confirmed manual EUR_USD should remain open",
+                    "operator_confirmation_source": "chat_operator_confirmation",
+                    "no_live_side_effects": True,
+                    "system_pl_counted": False,
+                    "same_theme_auto_add_allowed": False,
+                    "loss_side_auto_close_allowed": False,
+                    "auto_sl_attach_allowed": False,
+                    "auto_tp_modify_allowed": False,
+                    "thesis": "operator-confirmed manual EUR_USD short",
+                }
+            ],
+        )
+
+        owners = {position.trade_id: position.owner for position in classified.positions}
+        self.assertEqual(owners["472987"], Owner.OPERATOR_MANUAL)
+        self.assertEqual(owners["other-eurusd"], Owner.UNKNOWN)
+        packet = classified.positions[0].raw["operator_manual_position"]
+        self.assertEqual(packet["operator_decision"], "OPERATOR_CONFIRMED_MANUAL_OWNED")
+        self.assertEqual(packet["management_intent"], "KEEP")
+        self.assertEqual(packet["operator_confirmation_source"], "chat_operator_confirmation")
+        self.assertFalse(packet["system_pl_counted"])
+        self.assertFalse(packet["same_theme_auto_add_allowed"])
+        self.assertFalse(packet["loss_side_auto_close_allowed"])
+        self.assertFalse(packet["auto_sl_attach_allowed"])
+        self.assertFalse(packet["auto_tp_modify_allowed"])
+
+        packets = operator_manual_position_packets(classified)
+        eur_packet = next(item for item in packets if item["pair"] == "EUR_USD")
+        self.assertEqual(eur_packet["trade_ids"], ["472987"])
+        self.assertEqual(eur_packet["operator_decision"], "OPERATOR_CONFIRMED_MANUAL_OWNED")
+        self.assertFalse(eur_packet["system_pl_counted"])
+
+    def test_operator_review_artifact_row_loads_as_manual_confirmation(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            review_path = root / "guardian_receipt_operator_review.json"
+            review_path.write_text(
+                json.dumps(
+                    {
+                        "operator_position_reviews": [
+                            {
+                                "trade_id": "472987",
+                                "pair": "EUR_USD",
+                                "side": "SHORT",
+                                "units": 30_000,
+                                "owner": "OPERATOR_MANUAL",
+                                "operator_decision": "OPERATOR_CONFIRMED_MANUAL_OWNED",
+                                "management_intent": "KEEP",
+                                "operator_confirmation_source": "chat_operator_confirmation",
+                                "system_pl_counted": False,
+                                "same_theme_auto_add_allowed": False,
+                                "loss_side_auto_close_allowed": False,
+                                "auto_sl_attach_allowed": False,
+                                "auto_tp_modify_allowed": False,
+                            },
+                            {
+                                "trade_id": "skip-me",
+                                "pair": "EUR_USD",
+                                "side": "SHORT",
+                                "owner": "UNKNOWN",
+                                "operator_decision": "OPERATOR_CONFIRMED_NO_ACTION",
+                            },
+                        ],
+                    }
+                )
+            )
+
+            rows = load_operator_manual_confirmations(
+                root / "operator_manual_positions.json",
+                operator_review_path=review_path,
+            )
+
+        self.assertEqual(len(rows), 1)
+        row = rows[0]
+        self.assertEqual(row["trade_id"], "472987")
+        self.assertTrue(row["operator_confirmed"])
+        self.assertTrue(row["owner_confirmed"])
+        self.assertEqual(row["classification"], OPERATOR_MANUAL)
+        self.assertEqual(row["operator_confirmation_source"], "chat_operator_confirmation")
+        self.assertFalse(row["system_pl_counted"])
+        self.assertFalse(row["same_theme_auto_add_allowed"])
+        self.assertFalse(row["loss_side_auto_close_allowed"])
+        self.assertFalse(row["auto_sl_attach_allowed"])
+        self.assertFalse(row["auto_tp_modify_allowed"])
 
     def test_confirmed_split_tranche_classifies_oldest_units_when_extra_unknown_exists(self) -> None:
         now = datetime(2026, 6, 30, 3, 30, tzinfo=timezone.utc)

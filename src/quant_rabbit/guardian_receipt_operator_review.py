@@ -92,6 +92,24 @@ def build_guardian_receipt_operator_review(
             "no_live_side_effects": True,
             "generated_by": generated_by,
         }
+        if explicit is not None:
+            for key in (
+                "trade_id",
+                "pair",
+                "side",
+                "units",
+                "avg_entry",
+                "owner",
+                "management_intent",
+                "operator_confirmation_source",
+                "system_pl_counted",
+                "same_theme_auto_add_allowed",
+                "loss_side_auto_close_allowed",
+                "auto_sl_attach_allowed",
+                "auto_tp_modify_allowed",
+            ):
+                if key in explicit:
+                    row[key] = explicit[key]
         rows.append(row)
 
     preview_payload = {
@@ -189,6 +207,30 @@ def render_guardian_receipt_operator_review_report(payload: dict[str, Any]) -> s
                 f"`{row.get('generated_at_utc')}` | `{row.get('expires_at_utc')}` | "
                 f"`{row.get('no_live_side_effects')}` | {reason} |"
             )
+        position_rows = [
+            row
+            for row in rows
+            if any(row.get(key) is not None for key in ("trade_id", "owner", "management_intent"))
+        ]
+        if position_rows:
+            lines.extend(
+                [
+                    "",
+                    "## Operator Position Review",
+                    "",
+                    "| Trade ID | Pair | Side | Units | Avg Entry | Owner | Management Intent | Source | System P/L Counted | Same-Theme Add | Loss Close | Auto SL | Auto TP |",
+                    "|---|---|---|---|---|---|---|---|---|---|---|---|---|",
+                ]
+            )
+            for row in position_rows:
+                lines.append(
+                    f"| `{row.get('trade_id')}` | `{row.get('pair')}` | `{row.get('side')}` | "
+                    f"`{row.get('units')}` | `{row.get('avg_entry')}` | `{row.get('owner')}` | "
+                    f"`{row.get('management_intent')}` | `{row.get('operator_confirmation_source')}` | "
+                    f"`{row.get('system_pl_counted')}` | `{row.get('same_theme_auto_add_allowed')}` | "
+                    f"`{row.get('loss_side_auto_close_allowed')}` | `{row.get('auto_sl_attach_allowed')}` | "
+                    f"`{row.get('auto_tp_modify_allowed')}` |"
+                )
     lines.extend(
         [
             "",

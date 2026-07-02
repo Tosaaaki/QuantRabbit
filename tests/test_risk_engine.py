@@ -13,6 +13,7 @@ from quant_rabbit.operator_manual import (
     JPY_FRESH_ADD_BLOCK_CODE,
     OPERATOR_MANUAL_AUTH_METADATA_KEY,
     OPERATOR_MANUAL_POSITION_PACKET,
+    SAME_THEME_ADD_BLOCK_CODE,
 )
 from quant_rabbit.risk import (
     LOSS_ASYMMETRY_OANDA_CAMPAIGN_FIREPOWER_RELAXED_MODE,
@@ -78,6 +79,34 @@ def operator_manual_usdjpy_short() -> BrokerPosition:
                 "harvest_trigger": "harvest after rejection from 162.00",
                 "harvest_zone": "below 162.00 after rejection",
                 "major_figure": 162.0,
+            }
+        },
+    )
+
+
+def operator_manual_eurusd_short_472987() -> BrokerPosition:
+    return BrokerPosition(
+        trade_id="472987",
+        pair="EUR_USD",
+        side=Side.SHORT,
+        units=30_000,
+        entry_price=1.14048,
+        unrealized_pl_jpy=-922.0941,
+        take_profit=1.13800,
+        stop_loss=None,
+        owner=Owner.OPERATOR_MANUAL,
+        raw={
+            "operator_manual_position": {
+                "packet_type": OPERATOR_MANUAL_POSITION_PACKET,
+                "classification": "OPERATOR_MANUAL",
+                "operator_decision": "OPERATOR_CONFIRMED_MANUAL_OWNED",
+                "management_intent": "KEEP",
+                "operator_confirmation_source": "chat_operator_confirmation",
+                "system_pl_counted": False,
+                "same_theme_auto_add_allowed": False,
+                "loss_side_auto_close_allowed": False,
+                "auto_sl_attach_allowed": False,
+                "auto_tp_modify_allowed": False,
             }
         },
     )
@@ -2544,6 +2573,43 @@ class RiskEngineTest(unittest.TestCase):
 
         self.assertTrue(decision.allowed, decision.block_reasons)
         self.assertNotIn(JPY_FRESH_ADD_BLOCK_CODE, codes)
+
+    def test_operator_manual_eurusd_same_theme_system_add_is_blocked(self) -> None:
+        intent = OrderIntent(
+            pair="EUR_USD",
+            side=Side.SHORT,
+            order_type=OrderType.MARKET,
+            units=1000,
+            tp=1.13800,
+            sl=1.14200,
+            thesis="same_theme_add_must_wait_for_operator_authorization",
+        )
+
+        decision = _capped_engine().validate(intent, snapshot(positions=(operator_manual_eurusd_short_472987(),)))
+        codes = {issue.code for issue in decision.issues}
+
+        self.assertFalse(decision.allowed)
+        self.assertIn(SAME_THEME_ADD_BLOCK_CODE, codes)
+        self.assertNotIn("EXTERNAL_RISK_OPEN", codes)
+        self.assertNotIn("UNPROTECTED_POSITION", codes)
+
+    def test_operator_authorization_allows_eurusd_same_theme_add_guard_overlap(self) -> None:
+        intent = OrderIntent(
+            pair="EUR_USD",
+            side=Side.SHORT,
+            order_type=OrderType.MARKET,
+            units=1000,
+            tp=1.17100,
+            sl=1.17500,
+            thesis="operator_explicitly_authorized_eurusd_overlap",
+            metadata={OPERATOR_MANUAL_AUTH_METADATA_KEY: True},
+        )
+
+        decision = _capped_engine().validate(intent, snapshot(positions=(operator_manual_eurusd_short_472987(),)))
+        codes = {issue.code for issue in decision.issues}
+
+        self.assertTrue(decision.allowed, decision.block_reasons)
+        self.assertNotIn(SAME_THEME_ADD_BLOCK_CODE, codes)
 
     def test_trader_position_without_tp_or_sl_blocks_fresh_entries(self) -> None:
         unprotected = BrokerPosition(

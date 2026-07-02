@@ -131,6 +131,7 @@ from quant_rabbit.paths import (
     DEFAULT_ORDER_INTENTS,
     DEFAULT_OANDA_UNIVERSAL_ROTATION_MINING,
     DEFAULT_OANDA_UNIVERSAL_ROTATION_PACKAGED_RULES,
+    DEFAULT_OPERATOR_MANUAL_POSITIONS,
     DEFAULT_PREDICTIVE_LIMIT_ORDERS,
     DEFAULT_POSITION_EXECUTION,
     DEFAULT_POSITION_EXECUTION_REPORT,
@@ -3931,6 +3932,8 @@ def main(argv: list[str] | None = None) -> int:
     p_guardian_contract.add_argument("--snapshot", type=Path, default=DEFAULT_BROKER_SNAPSHOT)
     p_guardian_contract.add_argument("--order-intents", type=Path, default=DEFAULT_ORDER_INTENTS)
     p_guardian_contract.add_argument("--existing", type=Path, default=DEFAULT_GUARDIAN_TRIGGER_CONTRACT)
+    p_guardian_contract.add_argument("--operator-manual-positions", type=Path, default=DEFAULT_OPERATOR_MANUAL_POSITIONS)
+    p_guardian_contract.add_argument("--operator-review", type=Path, default=DEFAULT_GUARDIAN_RECEIPT_OPERATOR_REVIEW)
     p_guardian_contract.add_argument("--output", type=Path, default=DEFAULT_GUARDIAN_TRIGGER_CONTRACT)
     p_guardian_contract.add_argument("--report", type=Path, default=DEFAULT_GUARDIAN_TRIGGER_CONTRACT_REPORT)
 
@@ -7029,6 +7032,23 @@ def main(argv: list[str] | None = None) -> int:
         )
 
         snapshot_payload = _load_json_object(args.snapshot) if args.snapshot.exists() else {}
+        if snapshot_payload:
+            from quant_rabbit.operator_manual import (
+                classify_operator_manual_snapshot,
+                load_operator_manual_confirmations,
+            )
+
+            snapshot_payload = json.loads(
+                _snapshot_to_json(
+                    classify_operator_manual_snapshot(
+                        _snapshot_from_json(snapshot_payload),
+                        confirmations=load_operator_manual_confirmations(
+                            path=args.operator_manual_positions,
+                            operator_review_path=args.operator_review,
+                        ),
+                    )
+                )
+            )
         order_intents_payload = _load_json_object(args.order_intents) if args.order_intents.exists() else {}
         existing_payload = _load_json_object(args.existing) if args.existing.exists() else {}
         contract = build_guardian_trigger_contract(

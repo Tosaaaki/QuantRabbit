@@ -2059,13 +2059,28 @@ def _position_ownership_audit(position: dict[str, Any]) -> dict[str, Any]:
     if operator_packet:
         evidence.append("operator_manual_position packet present")
     if evidence:
-        return {
+        audit = {
             "status": "OPERATOR_MANUAL",
             "owner_input": owner,
             "trade_id": trade_id,
             "evidence": evidence,
             "unresolved": False,
         }
+        if operator_packet:
+            for key in (
+                "operator_decision",
+                "management_intent",
+                "operator_confirmation_source",
+                "no_live_side_effects",
+                "system_pl_counted",
+                "same_theme_auto_add_allowed",
+                "loss_side_auto_close_allowed",
+                "auto_sl_attach_allowed",
+                "auto_tp_modify_allowed",
+            ):
+                if key in operator_packet:
+                    audit[key] = operator_packet[key]
+        return audit
     return {
         "status": "UNKNOWN_NEEDS_OPERATOR_CONFIRM",
         "owner_input": owner,
@@ -2169,6 +2184,20 @@ def _default_open_position_triggers(
         "thesis": entry.get("thesis"),
         "thesis_state": thesis_state,
     }
+    operator_packet = _operator_manual_packet(position)
+    if operator_packet:
+        for key in (
+            "operator_decision",
+            "management_intent",
+            "operator_confirmation_source",
+            "system_pl_counted",
+            "same_theme_auto_add_allowed",
+            "loss_side_auto_close_allowed",
+            "auto_sl_attach_allowed",
+            "auto_tp_modify_allowed",
+        ):
+            if key in operator_packet:
+                base_ref[key] = operator_packet[key]
     if _is_usd_jpy_162_manual_fade(pair, side, owner, position):
         return _usd_jpy_manual_fade_triggers(entry, position, now=now)
     unknown_owner = owner == "UNKNOWN"
@@ -2191,6 +2220,26 @@ def _default_open_position_triggers(
         )
         invalidation_action = "HOLD"
         emergency_action = "HOLD"
+        harvest_action = "HARVEST"
+    elif owner == "OPERATOR_MANUAL":
+        harvest_detail = (
+            "OPERATOR_MANUAL: read-only monitoring/alerting is allowed; TP modification or "
+            "profit action requires explicit operator authorization when auto_tp_modify_allowed=false"
+        )
+        invalidation_detail = (
+            "OPERATOR_MANUAL: operator review only; do not automatically loss-close, attach SL, "
+            "or treat red P/L as thesis invalidation"
+        )
+        no_add_detail = (
+            "OPERATOR_MANUAL: do not add into the same pair/theme unless the operator explicitly authorizes overlap"
+        )
+        emergency_detail = (
+            "OPERATOR_MANUAL: margin/NAV/broker-truth emergency is an alert and operator-review condition only; "
+            "no automatic loss-side close or SL attach"
+        )
+        invalidation_action = "HOLD"
+        emergency_action = "HOLD"
+        harvest_action = "HOLD" if operator_packet.get("auto_tp_modify_allowed") is False else "HARVEST"
     else:
         harvest_detail = "profit-side TP/harvest review when current quote reaches the broker TP, declared harvest zone, or positive UPL is outside spread/noise"
         invalidation_detail = "accepted market evidence that the position thesis is broken; red P/L alone is not invalidation"
@@ -2198,6 +2247,7 @@ def _default_open_position_triggers(
         emergency_detail = "margin pressure, NAV shock, missing broker truth, or gateway-outside exposure needs immediate trader review"
         invalidation_action = "REDUCE"
         emergency_action = "REDUCE"
+        harvest_action = "HARVEST"
     return {
         "harvest_triggers": [
             {
@@ -2207,7 +2257,7 @@ def _default_open_position_triggers(
                 "kind": "profit_harvest_review",
                 "evidence_required": harvest_detail,
                 "avg_entry": avg_entry,
-                "action_hint": "HARVEST",
+                "action_hint": harvest_action,
             }
         ],
         "no_add_triggers": [

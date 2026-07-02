@@ -12,6 +12,7 @@ from quant_rabbit.guardian_receipt_consumption import (
 )
 from quant_rabbit.guardian_receipt_operator_review import (
     OPERATOR_ACKNOWLEDGED_HISTORICAL,
+    OPERATOR_CONFIRMED_MANUAL_OWNED,
     build_guardian_receipt_operator_review,
     operator_review_clearance_status,
 )
@@ -150,6 +151,79 @@ class GuardianReceiptOperatorReviewTest(unittest.TestCase):
         self.assertFalse(current_p0_row["normal_routing_allowed"])
         self.assertFalse(consumption["normal_routing_allowed"])
         self.assertTrue(consumption["current_p0_p1_blocks_routing"])
+
+    def test_manual_ownership_confirmation_does_not_unlock_global_routing_with_other_p0(self) -> None:
+        now = datetime(2026, 7, 2, tzinfo=timezone.utc)
+        watchdog = {
+            "status": "BLOCKED",
+            "issue_status": "P0",
+            "guardian_receipt": {"issues": [_current_aud_usd_p0_issue()]},
+        }
+        review = build_guardian_receipt_operator_review(
+            watchdog,
+            {"classifications": [_consumption_row(classification="NEEDS_OPERATOR_REVIEW")]},
+            broker_snapshot_payload={
+                "positions": [
+                    {
+                        "trade_id": "472987",
+                        "pair": "EUR_USD",
+                        "side": "SHORT",
+                        "units": 30000,
+                        "entry_price": 1.14048,
+                        "owner": "operator_manual",
+                    }
+                ],
+                "orders": [],
+            },
+            operator_decision_payload={
+                "decisions": [
+                    {
+                        "receipt_event_id": "receipt-reduce",
+                        "receipt_action": "REDUCE",
+                        "receipt_lifecycle": "EXPIRED",
+                        "trade_id": "472987",
+                        "pair": "EUR_USD",
+                        "side": "SHORT",
+                        "units": 30000,
+                        "avg_entry": 1.14048,
+                        "operator_decision": OPERATOR_CONFIRMED_MANUAL_OWNED,
+                        "management_intent": "KEEP",
+                        "owner": "OPERATOR_MANUAL",
+                        "operator_confirmation_source": "chat_operator_confirmation",
+                        "system_pl_counted": False,
+                        "same_theme_auto_add_allowed": False,
+                        "loss_side_auto_close_allowed": False,
+                        "auto_sl_attach_allowed": False,
+                        "auto_tp_modify_allowed": False,
+                        "reason": "operator explicitly confirmed manual EUR_USD should remain open",
+                        "expires_at_utc": (now + timedelta(hours=2)).isoformat(),
+                        "no_live_side_effects": True,
+                    }
+                ]
+            },
+            now_utc=now,
+        )
+
+        self.assertEqual(
+            review["status"],
+            "GUARDIAN_RECEIPT_OPERATOR_REVIEW_CLEARED_CURRENT_P0_BLOCKS_ROUTING",
+        )
+        self.assertFalse(review["normal_routing_allowed"])
+        self.assertTrue(review["current_p0_p1_blocks_routing"])
+        self.assertEqual(review["classifications"][0]["operator_decision"], OPERATOR_CONFIRMED_MANUAL_OWNED)
+        self.assertEqual(review["classifications"][0]["trade_id"], "472987")
+        self.assertEqual(review["classifications"][0]["owner"], "OPERATOR_MANUAL")
+        self.assertEqual(review["classifications"][0]["management_intent"], "KEEP")
+        self.assertEqual(
+            review["classifications"][0]["operator_confirmation_source"],
+            "chat_operator_confirmation",
+        )
+        self.assertFalse(review["classifications"][0]["system_pl_counted"])
+        self.assertFalse(review["classifications"][0]["same_theme_auto_add_allowed"])
+        self.assertFalse(review["classifications"][0]["loss_side_auto_close_allowed"])
+        self.assertFalse(review["classifications"][0]["auto_sl_attach_allowed"])
+        self.assertFalse(review["classifications"][0]["auto_tp_modify_allowed"])
+        self.assertTrue(review["classifications"][0]["normal_routing_allowed"])
 
     def test_legacy_expired_acknowledged_reduce_row_is_reblocked_without_review(self) -> None:
         now = datetime(2026, 7, 2, tzinfo=timezone.utc)

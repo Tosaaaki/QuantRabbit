@@ -4,107 +4,185 @@
   "entries": [
     {
       "add_triggers": [],
-      "emergency_triggers": [],
-      "harvest_triggers": [],
-      "invalidation_triggers": [],
-      "next_review_deadline_utc": "2026-06-30T08:16:07.025442+00:00",
+      "avg_entry": 1.14048,
+      "emergency_triggers": [
+        {
+          "action_hint": "HOLD",
+          "auto_sl_attach_allowed": false,
+          "auto_tp_modify_allowed": false,
+          "avg_entry": 1.14048,
+          "evidence_required": "OPERATOR_MANUAL: margin/NAV/broker-truth emergency is an alert and operator-review condition only; no automatic loss-side close or SL attach",
+          "kind": "margin_or_nav_emergency",
+          "loss_side_auto_close_allowed": false,
+          "management_intent": "KEEP",
+          "operator_confirmation_source": "chat_operator_confirmation",
+          "operator_decision": "OPERATOR_CONFIRMED_MANUAL_OWNED",
+          "owner": "OPERATOR_MANUAL",
+          "pair": "EUR_USD",
+          "same_theme_auto_add_allowed": false,
+          "side": "SHORT",
+          "status": "PENDING",
+          "system_pl_counted": false,
+          "thesis": "operator-confirmed manual EUR_USD short; keep open and monitor read-only",
+          "thesis_state": "ALIVE",
+          "trade_id": "472987",
+          "trigger_id": "open_exposure_margin_or_nav_emergency",
+          "units": 30000.0
+        }
+      ],
+      "harvest_triggers": [
+        {
+          "action_hint": "HOLD",
+          "auto_sl_attach_allowed": false,
+          "auto_tp_modify_allowed": false,
+          "avg_entry": 1.14048,
+          "evidence_required": "OPERATOR_MANUAL: read-only monitoring/alerting is allowed; TP modification or profit action requires explicit operator authorization when auto_tp_modify_allowed=false",
+          "kind": "profit_harvest_review",
+          "loss_side_auto_close_allowed": false,
+          "management_intent": "KEEP",
+          "operator_confirmation_source": "chat_operator_confirmation",
+          "operator_decision": "OPERATOR_CONFIRMED_MANUAL_OWNED",
+          "owner": "OPERATOR_MANUAL",
+          "pair": "EUR_USD",
+          "same_theme_auto_add_allowed": false,
+          "side": "SHORT",
+          "status": "PENDING",
+          "system_pl_counted": false,
+          "thesis": "operator-confirmed manual EUR_USD short; keep open and monitor read-only",
+          "thesis_state": "ALIVE",
+          "trade_id": "472987",
+          "trigger_id": "open_exposure_profit_harvest_review",
+          "units": 30000.0
+        }
+      ],
+      "invalidation_triggers": [
+        {
+          "action_hint": "HOLD",
+          "auto_sl_attach_allowed": false,
+          "auto_tp_modify_allowed": false,
+          "avg_entry": 1.14048,
+          "evidence_required": "OPERATOR_MANUAL: operator review only; do not automatically loss-close, attach SL, or treat red P/L as thesis invalidation",
+          "kind": "thesis_invalidation_review",
+          "loss_side_auto_close_allowed": false,
+          "management_intent": "KEEP",
+          "operator_confirmation_source": "chat_operator_confirmation",
+          "operator_decision": "OPERATOR_CONFIRMED_MANUAL_OWNED",
+          "owner": "OPERATOR_MANUAL",
+          "pair": "EUR_USD",
+          "same_theme_auto_add_allowed": false,
+          "side": "SHORT",
+          "status": "PENDING",
+          "system_pl_counted": false,
+          "thesis": "operator-confirmed manual EUR_USD short; keep open and monitor read-only",
+          "thesis_state": "ALIVE",
+          "trade_id": "472987",
+          "trigger_id": "open_exposure_invalidation_review",
+          "units": 30000.0
+        }
+      ],
+      "next_review_deadline_utc": "2026-07-02T14:10:16.037750+00:00",
       "next_review_reason": "open broker position requires guardian triggers",
-      "no_add_triggers": [],
-      "owner": "UNKNOWN",
-      "pair": "USD_JPY",
-      "side": "SHORT",
-      "thesis": "472933",
-      "thesis_state": "ALIVE",
-      "wounded_triggers": []
-    },
-    {
-      "add_triggers": [],
-      "emergency_triggers": [],
-      "harvest_triggers": [],
-      "invalidation_triggers": [],
-      "next_review_deadline_utc": "2026-06-30T08:16:07.025442+00:00",
-      "next_review_reason": "open broker position requires guardian triggers",
-      "no_add_triggers": [],
-      "owner": "UNKNOWN",
-      "pair": "USD_JPY",
-      "side": "SHORT",
-      "thesis": "472931",
-      "thesis_state": "ALIVE",
-      "wounded_triggers": []
-    },
-    {
-      "add_triggers": [],
-      "emergency_triggers": [],
-      "harvest_triggers": [],
-      "invalidation_triggers": [],
-      "next_review_deadline_utc": "2026-06-30T08:16:07.025442+00:00",
-      "next_review_reason": "open broker position requires guardian triggers",
-      "no_add_triggers": [],
+      "no_add_triggers": [
+        {
+          "action_hint": "HOLD",
+          "auto_sl_attach_allowed": false,
+          "auto_tp_modify_allowed": false,
+          "avg_entry": 1.14048,
+          "evidence_required": "OPERATOR_MANUAL: do not add into the same pair/theme unless the operator explicitly authorizes overlap",
+          "kind": "no_add_guard",
+          "loss_side_auto_close_allowed": false,
+          "management_intent": "KEEP",
+          "operator_confirmation_source": "chat_operator_confirmation",
+          "operator_decision": "OPERATOR_CONFIRMED_MANUAL_OWNED",
+          "owner": "OPERATOR_MANUAL",
+          "pair": "EUR_USD",
+          "same_theme_auto_add_allowed": false,
+          "side": "SHORT",
+          "status": "PENDING",
+          "system_pl_counted": false,
+          "thesis": "operator-confirmed manual EUR_USD short; keep open and monitor read-only",
+          "thesis_state": "ALIVE",
+          "trade_id": "472987",
+          "trigger_id": "open_exposure_no_add_guard",
+          "units": 30000.0
+        }
+      ],
       "owner": "OPERATOR_MANUAL",
-      "pair": "USD_JPY",
+      "ownership_audit": {
+        "auto_sl_attach_allowed": false,
+        "auto_tp_modify_allowed": false,
+        "evidence": [
+          "snapshot owner=operator_manual",
+          "operator_manual_position packet present"
+        ],
+        "loss_side_auto_close_allowed": false,
+        "management_intent": "KEEP",
+        "no_live_side_effects": true,
+        "operator_confirmation_source": "chat_operator_confirmation",
+        "operator_decision": "OPERATOR_CONFIRMED_MANUAL_OWNED",
+        "owner_input": "operator_manual",
+        "same_theme_auto_add_allowed": false,
+        "status": "OPERATOR_MANUAL",
+        "system_pl_counted": false,
+        "trade_id": "472987",
+        "unresolved": false
+      },
+      "pair": "EUR_USD",
       "side": "SHORT",
-      "thesis": "162.00 historical/intervention-risk fade",
+      "thesis": "operator-confirmed manual EUR_USD short; keep open and monitor read-only",
       "thesis_state": "ALIVE",
-      "wounded_triggers": []
+      "trade_id": "472987",
+      "units": 30000.0,
+      "wounded_triggers": [
+        {
+          "action_hint": "HOLD",
+          "auto_sl_attach_allowed": false,
+          "auto_tp_modify_allowed": false,
+          "avg_entry": 1.14048,
+          "evidence_required": "price action materially damages but does not invalidate the thesis",
+          "kind": "thesis_wounded_review",
+          "loss_side_auto_close_allowed": false,
+          "management_intent": "KEEP",
+          "operator_confirmation_source": "chat_operator_confirmation",
+          "operator_decision": "OPERATOR_CONFIRMED_MANUAL_OWNED",
+          "owner": "OPERATOR_MANUAL",
+          "pair": "EUR_USD",
+          "same_theme_auto_add_allowed": false,
+          "side": "SHORT",
+          "status": "PENDING",
+          "system_pl_counted": false,
+          "thesis": "operator-confirmed manual EUR_USD short; keep open and monitor read-only",
+          "thesis_state": "ALIVE",
+          "trade_id": "472987",
+          "trigger_id": "open_exposure_wounded_review",
+          "units": 30000.0
+        }
+      ]
     },
     {
       "add_triggers": [],
       "emergency_triggers": [],
       "harvest_triggers": [],
       "invalidation_triggers": [],
-      "next_review_deadline_utc": "2026-06-30T08:16:07.025442+00:00",
-      "next_review_reason": "open broker position requires guardian triggers",
-      "no_add_triggers": [],
-      "owner": "OPERATOR_MANUAL",
-      "pair": "USD_JPY",
-      "side": "SHORT",
-      "thesis": "162.00 historical/intervention-risk fade",
-      "thesis_state": "ALIVE",
-      "wounded_triggers": []
-    },
-    {
-      "add_triggers": [],
-      "emergency_triggers": [],
-      "harvest_triggers": [],
-      "invalidation_triggers": [],
-      "next_review_deadline_utc": "2026-06-30T08:16:07.025442+00:00",
-      "next_review_reason": "open broker position requires guardian triggers",
-      "no_add_triggers": [],
-      "owner": "OPERATOR_MANUAL",
-      "pair": "USD_JPY",
-      "side": "SHORT",
-      "thesis": "162.00 historical/intervention-risk fade",
-      "thesis_state": "ALIVE",
-      "wounded_triggers": []
-    },
-    {
-      "add_triggers": [],
-      "emergency_triggers": [],
-      "harvest_triggers": [],
-      "invalidation_triggers": [],
-      "next_review_deadline_utc": "2026-06-30T08:16:07.025442+00:00",
-      "next_review_reason": "open broker position requires guardian triggers",
-      "no_add_triggers": [],
-      "owner": "OPERATOR_MANUAL",
-      "pair": "USD_JPY",
-      "side": "SHORT",
-      "thesis": "162.00 historical/intervention-risk fade",
-      "thesis_state": "ALIVE",
-      "wounded_triggers": []
-    },
-    {
-      "add_triggers": [],
-      "emergency_triggers": [],
-      "harvest_triggers": [],
-      "invalidation_triggers": [],
-      "next_review_deadline_utc": "2026-06-30T08:16:07.025442+00:00",
-      "next_review_reason": "candidate range_trader:AUD_CHF:SHORT:RANGE_ROTATION requires trader-defined triggers",
+      "lane_id": "range_trader:AUD_CAD:LONG:RANGE_ROTATION",
+      "next_review_deadline_utc": "2026-07-02T14:09:10.744865+00:00",
+      "next_review_reason": "watch-only candidate: no_current_thesis",
       "no_add_triggers": [],
       "owner": "SYSTEM",
-      "pair": "AUD_CHF",
-      "side": "SHORT",
-      "thesis": "range_trader AUD_CHF SHORT RANGE_ROTATION 3.51R: Forecast-first lane: create an intent only if this same fresh forecast, market-location map, levels, spread, and risk geometry still agree.",
-      "thesis_state": "ALIVE",
+      "ownership_audit": {
+        "evidence": [
+          "candidate intent is system-generated"
+        ],
+        "status": "SYSTEM",
+        "unresolved": false
+      },
+      "pair": "AUD_CAD",
+      "side": "LONG",
+      "status": "DRY_RUN_BLOCKED",
+      "thesis": "range_trader AUD_CAD LONG RANGE_ROTATION 1.20R: Watch-only forecast-first lane: build dry-run geometry and blocker reasons only. Do not send live until calibrated forecast confidence clears the live-entry floor on a fresh snapshot.",
+      "thesis_state": "UNKNOWN",
+      "watch_only": true,
+      "watch_only_reason": "no_current_thesis",
       "wounded_triggers": []
     },
     {
@@ -112,14 +190,25 @@
       "emergency_triggers": [],
       "harvest_triggers": [],
       "invalidation_triggers": [],
-      "next_review_deadline_utc": "2026-06-30T08:16:07.025442+00:00",
-      "next_review_reason": "candidate range_trader:AUD_JPY:SHORT:RANGE_ROTATION requires trader-defined triggers",
+      "lane_id": "range_trader:AUD_JPY:SHORT:RANGE_ROTATION",
+      "next_review_deadline_utc": "2026-07-02T14:09:10.744865+00:00",
+      "next_review_reason": "watch-only candidate: no_current_thesis",
       "no_add_triggers": [],
       "owner": "SYSTEM",
+      "ownership_audit": {
+        "evidence": [
+          "candidate intent is system-generated"
+        ],
+        "status": "SYSTEM",
+        "unresolved": false
+      },
       "pair": "AUD_JPY",
       "side": "SHORT",
-      "thesis": "range_trader AUD_JPY SHORT RANGE_ROTATION 2.70R: Watch-only forecast-first lane: build dry-run geometry and blocker reasons only. Do not send live until calibrated forecast confidence clears the live-entry floor on a fresh snapshot.",
-      "thesis_state": "ALIVE",
+      "status": "DRY_RUN_BLOCKED",
+      "thesis": "range_trader AUD_JPY SHORT RANGE_ROTATION 4.20R: Watch-only forecast-first lane: build dry-run geometry and blocker reasons only. Do not send live until calibrated forecast confidence clears the live-entry floor on a fresh snapshot.",
+      "thesis_state": "UNKNOWN",
+      "watch_only": true,
+      "watch_only_reason": "no_current_thesis",
       "wounded_triggers": []
     },
     {
@@ -127,14 +216,25 @@
       "emergency_triggers": [],
       "harvest_triggers": [],
       "invalidation_triggers": [],
-      "next_review_deadline_utc": "2026-06-30T08:16:07.025442+00:00",
-      "next_review_reason": "candidate range_trader:AUD_NZD:SHORT:RANGE_ROTATION requires trader-defined triggers",
+      "lane_id": "range_trader:AUD_NZD:SHORT:RANGE_ROTATION",
+      "next_review_deadline_utc": "2026-07-02T14:09:10.744865+00:00",
+      "next_review_reason": "watch-only candidate: no_current_thesis",
       "no_add_triggers": [],
       "owner": "SYSTEM",
+      "ownership_audit": {
+        "evidence": [
+          "candidate intent is system-generated"
+        ],
+        "status": "SYSTEM",
+        "unresolved": false
+      },
       "pair": "AUD_NZD",
       "side": "SHORT",
-      "thesis": "range_trader AUD_NZD SHORT RANGE_ROTATION 3.51R: Range rail override: measured RANGE_RAIL_LIMIT may be armed because the current forecast box has a rail-side LIMIT entry, TP inside the box, SL outside the box, and calibrated range confidence clears the live floor. Do not convert to MARKET; refresh forecast and broker snapshot before send.",
-      "thesis_state": "ALIVE",
+      "status": "DRY_RUN_BLOCKED",
+      "thesis": "range_trader AUD_NZD SHORT RANGE_ROTATION 1.20R: Forecast-first lane: create an intent only if this same fresh forecast, market-location map, levels, spread, and risk geometry still agree.",
+      "thesis_state": "UNKNOWN",
+      "watch_only": true,
+      "watch_only_reason": "no_current_thesis",
       "wounded_triggers": []
     },
     {
@@ -142,74 +242,25 @@
       "emergency_triggers": [],
       "harvest_triggers": [],
       "invalidation_triggers": [],
-      "next_review_deadline_utc": "2026-06-30T08:16:07.025442+00:00",
-      "next_review_reason": "candidate range_trader:AUD_NZD:SHORT:RANGE_ROTATION:MARKET requires trader-defined triggers",
+      "lane_id": "range_trader:CAD_CHF:SHORT:RANGE_ROTATION",
+      "next_review_deadline_utc": "2026-07-02T14:09:10.744865+00:00",
+      "next_review_reason": "watch-only candidate: no_current_thesis",
       "no_add_triggers": [],
       "owner": "SYSTEM",
-      "pair": "AUD_NZD",
-      "side": "SHORT",
-      "thesis": "range_trader AUD_NZD SHORT RANGE_ROTATION 3.51R: Watch-only forecast-first lane: build dry-run geometry and blocker reasons only. Do not send live until calibrated forecast confidence clears the live-entry floor on a fresh snapshot.",
-      "thesis_state": "ALIVE",
-      "wounded_triggers": []
-    },
-    {
-      "add_triggers": [],
-      "emergency_triggers": [],
-      "harvest_triggers": [],
-      "invalidation_triggers": [],
-      "next_review_deadline_utc": "2026-06-30T08:16:07.025442+00:00",
-      "next_review_reason": "candidate range_trader:AUD_USD:SHORT:RANGE_ROTATION requires trader-defined triggers",
-      "no_add_triggers": [],
-      "owner": "SYSTEM",
-      "pair": "AUD_USD",
-      "side": "SHORT",
-      "thesis": "range_trader AUD_USD SHORT RANGE_ROTATION 3.51R: Watch-only forecast-first lane: build dry-run geometry and blocker reasons only. Do not send live until calibrated forecast confidence clears the live-entry floor on a fresh snapshot.",
-      "thesis_state": "ALIVE",
-      "wounded_triggers": []
-    },
-    {
-      "add_triggers": [],
-      "emergency_triggers": [],
-      "harvest_triggers": [],
-      "invalidation_triggers": [],
-      "next_review_deadline_utc": "2026-06-30T08:16:07.025442+00:00",
-      "next_review_reason": "candidate range_trader:AUD_USD:LONG:RANGE_ROTATION requires trader-defined triggers",
-      "no_add_triggers": [],
-      "owner": "SYSTEM",
-      "pair": "AUD_USD",
-      "side": "LONG",
-      "thesis": "range_trader AUD_USD LONG RANGE_ROTATION 3.51R: Watch-only forecast-first lane: build dry-run geometry and blocker reasons only. Do not send live until calibrated forecast confidence clears the live-entry floor on a fresh snapshot.",
-      "thesis_state": "ALIVE",
-      "wounded_triggers": []
-    },
-    {
-      "add_triggers": [],
-      "emergency_triggers": [],
-      "harvest_triggers": [],
-      "invalidation_triggers": [],
-      "next_review_deadline_utc": "2026-06-30T08:16:07.025442+00:00",
-      "next_review_reason": "candidate range_trader:CAD_CHF:LONG:RANGE_ROTATION requires trader-defined triggers",
-      "no_add_triggers": [],
-      "owner": "SYSTEM",
+      "ownership_audit": {
+        "evidence": [
+          "candidate intent is system-generated"
+        ],
+        "status": "SYSTEM",
+        "unresolved": false
+      },
       "pair": "CAD_CHF",
-      "side": "LONG",
-      "thesis": "range_trader CAD_CHF LONG RANGE_ROTATION 1.20R: Watch-only forecast-first lane: build dry-run geometry and blocker reasons only. Do not send live until calibrated forecast confidence clears the live-entry floor on a fresh snapshot.",
-      "thesis_state": "ALIVE",
-      "wounded_triggers": []
-    },
-    {
-      "add_triggers": [],
-      "emergency_triggers": [],
-      "harvest_triggers": [],
-      "invalidation_triggers": [],
-      "next_review_deadline_utc": "2026-06-30T08:16:07.025442+00:00",
-      "next_review_reason": "candidate range_trader:CAD_JPY:SHORT:RANGE_ROTATION requires trader-defined triggers",
-      "no_add_triggers": [],
-      "owner": "SYSTEM",
-      "pair": "CAD_JPY",
       "side": "SHORT",
-      "thesis": "range_trader CAD_JPY SHORT RANGE_ROTATION 2.00R: Forecast-first lane: create an intent only if this same fresh forecast, market-location map, levels, spread, and risk geometry still agree.",
-      "thesis_state": "ALIVE",
+      "status": "DRY_RUN_BLOCKED",
+      "thesis": "range_trader CAD_CHF SHORT RANGE_ROTATION 1.62R: Forecast-first lane: create an intent only if this same fresh forecast, market-location map, levels, spread, and risk geometry still agree.",
+      "thesis_state": "UNKNOWN",
+      "watch_only": true,
+      "watch_only_reason": "no_current_thesis",
       "wounded_triggers": []
     },
     {
@@ -217,14 +268,25 @@
       "emergency_triggers": [],
       "harvest_triggers": [],
       "invalidation_triggers": [],
-      "next_review_deadline_utc": "2026-06-30T08:16:07.025442+00:00",
-      "next_review_reason": "candidate range_trader:EUR_AUD:LONG:RANGE_ROTATION requires trader-defined triggers",
+      "lane_id": "range_trader:EUR_AUD:SHORT:RANGE_ROTATION",
+      "next_review_deadline_utc": "2026-07-02T14:09:10.744865+00:00",
+      "next_review_reason": "watch-only candidate: no_current_thesis",
       "no_add_triggers": [],
       "owner": "SYSTEM",
+      "ownership_audit": {
+        "evidence": [
+          "candidate intent is system-generated"
+        ],
+        "status": "SYSTEM",
+        "unresolved": false
+      },
       "pair": "EUR_AUD",
-      "side": "LONG",
-      "thesis": "range_trader EUR_AUD LONG RANGE_ROTATION 2.70R: Forecast-first lane: create an intent only if this same fresh forecast, market-location map, levels, spread, and risk geometry still agree.",
-      "thesis_state": "ALIVE",
+      "side": "SHORT",
+      "status": "DRY_RUN_BLOCKED",
+      "thesis": "range_trader EUR_AUD SHORT RANGE_ROTATION 3.51R: Range rail override: measured RANGE_RAIL_LIMIT may be armed because the current forecast box has a rail-side LIMIT entry, TP inside the box, SL outside the box, and calibrated range confidence clears the live floor. Do not convert to MARKET; refresh forecast and broker snapshot before send.",
+      "thesis_state": "UNKNOWN",
+      "watch_only": true,
+      "watch_only_reason": "no_current_thesis",
       "wounded_triggers": []
     },
     {
@@ -232,14 +294,103 @@
       "emergency_triggers": [],
       "harvest_triggers": [],
       "invalidation_triggers": [],
-      "next_review_deadline_utc": "2026-06-30T08:16:07.025442+00:00",
-      "next_review_reason": "candidate range_trader:EUR_CAD:SHORT:RANGE_ROTATION requires trader-defined triggers",
+      "lane_id": "range_trader:EUR_AUD:SHORT:RANGE_ROTATION:MARKET",
+      "next_review_deadline_utc": "2026-07-02T14:09:10.744865+00:00",
+      "next_review_reason": "watch-only candidate: no_current_thesis",
       "no_add_triggers": [],
       "owner": "SYSTEM",
+      "ownership_audit": {
+        "evidence": [
+          "candidate intent is system-generated"
+        ],
+        "status": "SYSTEM",
+        "unresolved": false
+      },
+      "pair": "EUR_AUD",
+      "side": "SHORT",
+      "status": "DRY_RUN_BLOCKED",
+      "thesis": "range_trader EUR_AUD SHORT RANGE_ROTATION 3.51R: Watch-only forecast-first lane: build dry-run geometry and blocker reasons only. Do not send live until calibrated forecast confidence clears the live-entry floor on a fresh snapshot.",
+      "thesis_state": "UNKNOWN",
+      "watch_only": true,
+      "watch_only_reason": "no_current_thesis",
+      "wounded_triggers": []
+    },
+    {
+      "add_triggers": [],
+      "emergency_triggers": [],
+      "harvest_triggers": [],
+      "invalidation_triggers": [],
+      "lane_id": "range_trader:EUR_CAD:LONG:RANGE_ROTATION",
+      "next_review_deadline_utc": "2026-07-02T14:09:10.744865+00:00",
+      "next_review_reason": "watch-only candidate: no_current_thesis",
+      "no_add_triggers": [],
+      "owner": "SYSTEM",
+      "ownership_audit": {
+        "evidence": [
+          "candidate intent is system-generated"
+        ],
+        "status": "SYSTEM",
+        "unresolved": false
+      },
       "pair": "EUR_CAD",
+      "side": "LONG",
+      "status": "DRY_RUN_BLOCKED",
+      "thesis": "range_trader EUR_CAD LONG RANGE_ROTATION 2.86R: Range rail override: measured RANGE_RAIL_LIMIT may be armed because the current forecast box has a rail-side LIMIT entry, TP inside the box, SL outside the box, and calibrated range confidence clears the live floor. Do not convert to MARKET; refresh forecast and broker snapshot before send.",
+      "thesis_state": "UNKNOWN",
+      "watch_only": true,
+      "watch_only_reason": "no_current_thesis",
+      "wounded_triggers": []
+    },
+    {
+      "add_triggers": [],
+      "emergency_triggers": [],
+      "harvest_triggers": [],
+      "invalidation_triggers": [],
+      "lane_id": "range_trader:EUR_CAD:LONG:RANGE_ROTATION:MARKET",
+      "next_review_deadline_utc": "2026-07-02T14:09:10.744865+00:00",
+      "next_review_reason": "watch-only candidate: no_current_thesis",
+      "no_add_triggers": [],
+      "owner": "SYSTEM",
+      "ownership_audit": {
+        "evidence": [
+          "candidate intent is system-generated"
+        ],
+        "status": "SYSTEM",
+        "unresolved": false
+      },
+      "pair": "EUR_CAD",
+      "side": "LONG",
+      "status": "DRY_RUN_BLOCKED",
+      "thesis": "range_trader EUR_CAD LONG RANGE_ROTATION 2.86R: Watch-only forecast-first lane: build dry-run geometry and blocker reasons only. Do not send live until calibrated forecast confidence clears the live-entry floor on a fresh snapshot.",
+      "thesis_state": "UNKNOWN",
+      "watch_only": true,
+      "watch_only_reason": "no_current_thesis",
+      "wounded_triggers": []
+    },
+    {
+      "add_triggers": [],
+      "emergency_triggers": [],
+      "harvest_triggers": [],
+      "invalidation_triggers": [],
+      "lane_id": "range_trader:EUR_GBP:SHORT:RANGE_ROTATION",
+      "next_review_deadline_utc": "2026-07-02T14:09:10.744865+00:00",
+      "next_review_reason": "watch-only candidate: no_current_thesis",
+      "no_add_triggers": [],
+      "owner": "SYSTEM",
+      "ownership_audit": {
+        "evidence": [
+          "candidate intent is system-generated"
+        ],
+        "status": "SYSTEM",
+        "unresolved": false
+      },
+      "pair": "EUR_GBP",
       "side": "SHORT",
-      "thesis": "range_trader EUR_CAD SHORT RANGE_ROTATION 2.00R: Forecast-first lane: create an intent only if this same fresh forecast, market-location map, levels, spread, and risk geometry still agree.",
-      "thesis_state": "ALIVE",
+      "status": "DRY_RUN_BLOCKED",
+      "thesis": "range_trader EUR_GBP SHORT RANGE_ROTATION 5.46R: Range rail override: measured RANGE_RAIL_LIMIT may be armed because the current forecast box has a rail-side LIMIT entry, TP inside the box, SL outside the box, and calibrated range confidence clears the live floor. Do not convert to MARKET; refresh forecast and broker snapshot before send.",
+      "thesis_state": "UNKNOWN",
+      "watch_only": true,
+      "watch_only_reason": "no_current_thesis",
       "wounded_triggers": []
     },
     {
@@ -247,14 +398,25 @@
       "emergency_triggers": [],
       "harvest_triggers": [],
       "invalidation_triggers": [],
-      "next_review_deadline_utc": "2026-06-30T08:16:07.025442+00:00",
-      "next_review_reason": "candidate range_trader:EUR_CHF:LONG:RANGE_ROTATION requires trader-defined triggers",
+      "lane_id": "range_trader:EUR_GBP:SHORT:RANGE_ROTATION:MARKET",
+      "next_review_deadline_utc": "2026-07-02T14:09:10.744865+00:00",
+      "next_review_reason": "watch-only candidate: no_current_thesis",
       "no_add_triggers": [],
       "owner": "SYSTEM",
-      "pair": "EUR_CHF",
-      "side": "LONG",
-      "thesis": "range_trader EUR_CHF LONG RANGE_ROTATION 2.86R: Forecast-first lane: create an intent only if this same fresh forecast, market-location map, levels, spread, and risk geometry still agree.",
-      "thesis_state": "ALIVE",
+      "ownership_audit": {
+        "evidence": [
+          "candidate intent is system-generated"
+        ],
+        "status": "SYSTEM",
+        "unresolved": false
+      },
+      "pair": "EUR_GBP",
+      "side": "SHORT",
+      "status": "DRY_RUN_BLOCKED",
+      "thesis": "range_trader EUR_GBP SHORT RANGE_ROTATION 5.46R: Watch-only forecast-first lane: build dry-run geometry and blocker reasons only. Do not send live until calibrated forecast confidence clears the live-entry floor on a fresh snapshot.",
+      "thesis_state": "UNKNOWN",
+      "watch_only": true,
+      "watch_only_reason": "no_current_thesis",
       "wounded_triggers": []
     },
     {
@@ -262,44 +424,25 @@
       "emergency_triggers": [],
       "harvest_triggers": [],
       "invalidation_triggers": [],
-      "next_review_deadline_utc": "2026-06-30T08:16:07.025442+00:00",
-      "next_review_reason": "candidate range_trader:EUR_JPY:LONG:RANGE_ROTATION requires trader-defined triggers",
+      "lane_id": "range_trader:EUR_NZD:SHORT:RANGE_ROTATION",
+      "next_review_deadline_utc": "2026-07-02T14:09:10.744865+00:00",
+      "next_review_reason": "watch-only candidate: no_current_thesis",
       "no_add_triggers": [],
       "owner": "SYSTEM",
-      "pair": "EUR_JPY",
-      "side": "LONG",
-      "thesis": "range_trader EUR_JPY LONG RANGE_ROTATION 2.00R: Forecast-first lane: use only a pending trigger receipt; no market chase. The same fresh forecast, market-location map, levels, spread, and risk geometry must still agree.",
-      "thesis_state": "ALIVE",
-      "wounded_triggers": []
-    },
-    {
-      "add_triggers": [],
-      "emergency_triggers": [],
-      "harvest_triggers": [],
-      "invalidation_triggers": [],
-      "next_review_deadline_utc": "2026-06-30T08:16:07.025442+00:00",
-      "next_review_reason": "candidate range_trader:EUR_NZD:LONG:RANGE_ROTATION requires trader-defined triggers",
-      "no_add_triggers": [],
-      "owner": "SYSTEM",
+      "ownership_audit": {
+        "evidence": [
+          "candidate intent is system-generated"
+        ],
+        "status": "SYSTEM",
+        "unresolved": false
+      },
       "pair": "EUR_NZD",
-      "side": "LONG",
-      "thesis": "range_trader EUR_NZD LONG RANGE_ROTATION 2.00R: Watch-only forecast-first lane: build dry-run geometry and blocker reasons only. Do not send live until calibrated forecast confidence clears the live-entry floor on a fresh snapshot.",
-      "thesis_state": "ALIVE",
-      "wounded_triggers": []
-    },
-    {
-      "add_triggers": [],
-      "emergency_triggers": [],
-      "harvest_triggers": [],
-      "invalidation_triggers": [],
-      "next_review_deadline_utc": "2026-06-30T08:16:07.025442+00:00",
-      "next_review_reason": "candidate range_trader:EUR_USD:SHORT:RANGE_ROTATION requires trader-defined triggers",
-      "no_add_triggers": [],
-      "owner": "SYSTEM",
-      "pair": "EUR_USD",
       "side": "SHORT",
-      "thesis": "range_trader EUR_USD SHORT RANGE_ROTATION 3.42R: Forecast-first lane: create an intent only if this same fresh forecast, market-location map, levels, spread, and risk geometry still agree.",
-      "thesis_state": "ALIVE",
+      "status": "DRY_RUN_BLOCKED",
+      "thesis": "range_trader EUR_NZD SHORT RANGE_ROTATION 5.46R: Watch-only forecast-first lane: build dry-run geometry and blocker reasons only. Do not send live until calibrated forecast confidence clears the live-entry floor on a fresh snapshot.",
+      "thesis_state": "UNKNOWN",
+      "watch_only": true,
+      "watch_only_reason": "no_current_thesis",
       "wounded_triggers": []
     },
     {
@@ -307,74 +450,25 @@
       "emergency_triggers": [],
       "harvest_triggers": [],
       "invalidation_triggers": [],
-      "next_review_deadline_utc": "2026-06-30T08:16:07.025442+00:00",
-      "next_review_reason": "candidate range_trader:EUR_USD:LONG:RANGE_ROTATION requires trader-defined triggers",
+      "lane_id": "range_trader:GBP_CHF:LONG:RANGE_ROTATION",
+      "next_review_deadline_utc": "2026-07-02T14:09:10.744865+00:00",
+      "next_review_reason": "watch-only candidate: no_current_thesis",
       "no_add_triggers": [],
       "owner": "SYSTEM",
-      "pair": "EUR_USD",
-      "side": "LONG",
-      "thesis": "range_trader EUR_USD LONG RANGE_ROTATION 2.60R: Forecast-first lane: use only a pending trigger receipt; no market chase. The same fresh forecast, market-location map, levels, spread, and risk geometry must still agree.",
-      "thesis_state": "ALIVE",
-      "wounded_triggers": []
-    },
-    {
-      "add_triggers": [],
-      "emergency_triggers": [],
-      "harvest_triggers": [],
-      "invalidation_triggers": [],
-      "next_review_deadline_utc": "2026-06-30T08:16:07.025442+00:00",
-      "next_review_reason": "candidate range_trader:GBP_AUD:SHORT:RANGE_ROTATION requires trader-defined triggers",
-      "no_add_triggers": [],
-      "owner": "SYSTEM",
-      "pair": "GBP_AUD",
-      "side": "SHORT",
-      "thesis": "range_trader GBP_AUD SHORT RANGE_ROTATION 1.62R: Watch-only forecast-first lane: build dry-run geometry and blocker reasons only. Do not send live until calibrated forecast confidence clears the live-entry floor on a fresh snapshot.",
-      "thesis_state": "ALIVE",
-      "wounded_triggers": []
-    },
-    {
-      "add_triggers": [],
-      "emergency_triggers": [],
-      "harvest_triggers": [],
-      "invalidation_triggers": [],
-      "next_review_deadline_utc": "2026-06-30T08:16:07.025442+00:00",
-      "next_review_reason": "candidate failure_trader:GBP_AUD:SHORT:BREAKOUT_FAILURE:LIMIT requires trader-defined triggers",
-      "no_add_triggers": [],
-      "owner": "SYSTEM",
-      "pair": "GBP_AUD",
-      "side": "SHORT",
-      "thesis": "failure_trader GBP_AUD SHORT BREAKOUT_FAILURE 3.51R: Watch-only forecast-first lane: build dry-run geometry and blocker reasons only. Do not send live until calibrated forecast confidence clears the live-entry floor on a fresh snapshot.",
-      "thesis_state": "ALIVE",
-      "wounded_triggers": []
-    },
-    {
-      "add_triggers": [],
-      "emergency_triggers": [],
-      "harvest_triggers": [],
-      "invalidation_triggers": [],
-      "next_review_deadline_utc": "2026-06-30T08:16:07.025442+00:00",
-      "next_review_reason": "candidate trend_trader:GBP_AUD:SHORT:TREND_CONTINUATION requires trader-defined triggers",
-      "no_add_triggers": [],
-      "owner": "SYSTEM",
-      "pair": "GBP_AUD",
-      "side": "SHORT",
-      "thesis": "trend_trader GBP_AUD SHORT TREND_CONTINUATION 3.51R: Watch-only forecast-first lane: build dry-run geometry and blocker reasons only. Do not send live until calibrated forecast confidence clears the live-entry floor on a fresh snapshot.",
-      "thesis_state": "ALIVE",
-      "wounded_triggers": []
-    },
-    {
-      "add_triggers": [],
-      "emergency_triggers": [],
-      "harvest_triggers": [],
-      "invalidation_triggers": [],
-      "next_review_deadline_utc": "2026-06-30T08:16:07.025442+00:00",
-      "next_review_reason": "candidate range_trader:GBP_CHF:LONG:RANGE_ROTATION requires trader-defined triggers",
-      "no_add_triggers": [],
-      "owner": "SYSTEM",
+      "ownership_audit": {
+        "evidence": [
+          "candidate intent is system-generated"
+        ],
+        "status": "SYSTEM",
+        "unresolved": false
+      },
       "pair": "GBP_CHF",
       "side": "LONG",
-      "thesis": "range_trader GBP_CHF LONG RANGE_ROTATION 2.00R: Watch-only forecast-first lane: build dry-run geometry and blocker reasons only. Do not send live until calibrated forecast confidence clears the live-entry floor on a fresh snapshot.",
-      "thesis_state": "ALIVE",
+      "status": "DRY_RUN_BLOCKED",
+      "thesis": "range_trader GBP_CHF LONG RANGE_ROTATION 2.70R: Forecast-first lane: create an intent only if this same fresh forecast, market-location map, levels, spread, and risk geometry still agree.",
+      "thesis_state": "UNKNOWN",
+      "watch_only": true,
+      "watch_only_reason": "no_current_thesis",
       "wounded_triggers": []
     },
     {
@@ -382,14 +476,129 @@
       "emergency_triggers": [],
       "harvest_triggers": [],
       "invalidation_triggers": [],
-      "next_review_deadline_utc": "2026-06-30T08:16:07.025442+00:00",
-      "next_review_reason": "candidate range_trader:GBP_JPY:SHORT:RANGE_ROTATION requires trader-defined triggers",
+      "lane_id": "range_trader:NZD_CAD:LONG:RANGE_ROTATION",
+      "next_review_deadline_utc": "2026-07-02T14:09:10.744865+00:00",
+      "next_review_reason": "watch-only candidate: no_current_thesis",
       "no_add_triggers": [],
       "owner": "SYSTEM",
-      "pair": "GBP_JPY",
+      "ownership_audit": {
+        "evidence": [
+          "candidate intent is system-generated"
+        ],
+        "status": "SYSTEM",
+        "unresolved": false
+      },
+      "pair": "NZD_CAD",
+      "side": "LONG",
+      "status": "DRY_RUN_BLOCKED",
+      "thesis": "range_trader NZD_CAD LONG RANGE_ROTATION 1.20R: Range rail override: measured RANGE_RAIL_LIMIT may be armed because the current forecast box has a rail-side LIMIT entry, TP inside the box, SL outside the box, and calibrated range confidence clears the live floor. Do not convert to MARKET; refresh forecast and broker snapshot before send.",
+      "thesis_state": "UNKNOWN",
+      "watch_only": true,
+      "watch_only_reason": "no_current_thesis",
+      "wounded_triggers": []
+    },
+    {
+      "add_triggers": [],
+      "emergency_triggers": [],
+      "harvest_triggers": [],
+      "invalidation_triggers": [],
+      "lane_id": "range_trader:NZD_CAD:LONG:RANGE_ROTATION:MARKET",
+      "next_review_deadline_utc": "2026-07-02T14:09:10.744865+00:00",
+      "next_review_reason": "watch-only candidate: no_current_thesis",
+      "no_add_triggers": [],
+      "owner": "SYSTEM",
+      "ownership_audit": {
+        "evidence": [
+          "candidate intent is system-generated"
+        ],
+        "status": "SYSTEM",
+        "unresolved": false
+      },
+      "pair": "NZD_CAD",
+      "side": "LONG",
+      "status": "DRY_RUN_BLOCKED",
+      "thesis": "range_trader NZD_CAD LONG RANGE_ROTATION 1.20R: Watch-only forecast-first lane: build dry-run geometry and blocker reasons only. Do not send live until calibrated forecast confidence clears the live-entry floor on a fresh snapshot.",
+      "thesis_state": "UNKNOWN",
+      "watch_only": true,
+      "watch_only_reason": "no_current_thesis",
+      "wounded_triggers": []
+    },
+    {
+      "add_triggers": [],
+      "emergency_triggers": [],
+      "harvest_triggers": [],
+      "invalidation_triggers": [],
+      "lane_id": "failure_trader:NZD_CHF:LONG:BREAKOUT_FAILURE:LIMIT",
+      "next_review_deadline_utc": "2026-07-02T14:09:10.744865+00:00",
+      "next_review_reason": "watch-only candidate: no_current_thesis",
+      "no_add_triggers": [],
+      "owner": "SYSTEM",
+      "ownership_audit": {
+        "evidence": [
+          "candidate intent is system-generated"
+        ],
+        "status": "SYSTEM",
+        "unresolved": false
+      },
+      "pair": "NZD_CHF",
+      "side": "LONG",
+      "status": "DRY_RUN_BLOCKED",
+      "thesis": "failure_trader NZD_CHF LONG BREAKOUT_FAILURE 3.51R: Watch-only forecast-first lane: build dry-run geometry and blocker reasons only. Do not send live until calibrated forecast confidence clears the live-entry floor on a fresh snapshot.",
+      "thesis_state": "UNKNOWN",
+      "watch_only": true,
+      "watch_only_reason": "no_current_thesis",
+      "wounded_triggers": []
+    },
+    {
+      "add_triggers": [],
+      "emergency_triggers": [],
+      "harvest_triggers": [],
+      "invalidation_triggers": [],
+      "lane_id": "trend_trader:NZD_CHF:LONG:TREND_CONTINUATION",
+      "next_review_deadline_utc": "2026-07-02T14:09:10.744865+00:00",
+      "next_review_reason": "watch-only candidate: no_current_thesis",
+      "no_add_triggers": [],
+      "owner": "SYSTEM",
+      "ownership_audit": {
+        "evidence": [
+          "candidate intent is system-generated"
+        ],
+        "status": "SYSTEM",
+        "unresolved": false
+      },
+      "pair": "NZD_CHF",
+      "side": "LONG",
+      "status": "DRY_RUN_BLOCKED",
+      "thesis": "trend_trader NZD_CHF LONG TREND_CONTINUATION 3.51R: Watch-only forecast-first lane: build dry-run geometry and blocker reasons only. Do not send live until calibrated forecast confidence clears the live-entry floor on a fresh snapshot.",
+      "thesis_state": "UNKNOWN",
+      "watch_only": true,
+      "watch_only_reason": "no_current_thesis",
+      "wounded_triggers": []
+    },
+    {
+      "add_triggers": [],
+      "emergency_triggers": [],
+      "harvest_triggers": [],
+      "invalidation_triggers": [],
+      "lane_id": "range_trader:USD_CAD:SHORT:RANGE_ROTATION",
+      "next_review_deadline_utc": "2026-07-02T14:09:10.744865+00:00",
+      "next_review_reason": "watch-only candidate: no_current_thesis",
+      "no_add_triggers": [],
+      "owner": "SYSTEM",
+      "ownership_audit": {
+        "evidence": [
+          "candidate intent is system-generated"
+        ],
+        "status": "SYSTEM",
+        "unresolved": false
+      },
+      "pair": "USD_CAD",
       "side": "SHORT",
-      "thesis": "range_trader GBP_JPY SHORT RANGE_ROTATION 1.20R: Range rail override: measured RANGE_RAIL_LIMIT may be armed because the current forecast box has a rail-side LIMIT entry, TP inside the box, SL outside the box, and calibrated range confidence clears the live floor. Do not convert to MARKET; refresh forecast and broker snapshot before send.",
-      "thesis_state": "ALIVE",
+      "status": "DRY_RUN_BLOCKED",
+      "thesis": "range_trader USD_CAD SHORT RANGE_ROTATION 2.60R: Range rail override: measured RANGE_RAIL_LIMIT may be armed because the current forecast box has a rail-side LIMIT entry, TP inside the box, SL outside the box, and calibrated range confidence clears the live floor. Do not convert to MARKET; refresh forecast and broker snapshot before send.",
+      "thesis_state": "UNKNOWN",
+      "watch_only": true,
+      "watch_only_reason": "no_current_thesis",
       "wounded_triggers": []
     },
     {
@@ -397,14 +606,25 @@
       "emergency_triggers": [],
       "harvest_triggers": [],
       "invalidation_triggers": [],
-      "next_review_deadline_utc": "2026-06-30T08:16:07.025442+00:00",
-      "next_review_reason": "candidate range_trader:GBP_JPY:SHORT:RANGE_ROTATION:MARKET requires trader-defined triggers",
+      "lane_id": "range_trader:USD_CAD:SHORT:RANGE_ROTATION:MARKET",
+      "next_review_deadline_utc": "2026-07-02T14:09:10.744865+00:00",
+      "next_review_reason": "watch-only candidate: no_current_thesis",
       "no_add_triggers": [],
       "owner": "SYSTEM",
-      "pair": "GBP_JPY",
+      "ownership_audit": {
+        "evidence": [
+          "candidate intent is system-generated"
+        ],
+        "status": "SYSTEM",
+        "unresolved": false
+      },
+      "pair": "USD_CAD",
       "side": "SHORT",
-      "thesis": "range_trader GBP_JPY SHORT RANGE_ROTATION 1.20R: Watch-only forecast-first lane: build dry-run geometry and blocker reasons only. Do not send live until calibrated forecast confidence clears the live-entry floor on a fresh snapshot.",
-      "thesis_state": "ALIVE",
+      "status": "DRY_RUN_BLOCKED",
+      "thesis": "range_trader USD_CAD SHORT RANGE_ROTATION 2.60R: Watch-only forecast-first lane: build dry-run geometry and blocker reasons only. Do not send live until calibrated forecast confidence clears the live-entry floor on a fresh snapshot.",
+      "thesis_state": "UNKNOWN",
+      "watch_only": true,
+      "watch_only_reason": "no_current_thesis",
       "wounded_triggers": []
     },
     {
@@ -412,14 +632,77 @@
       "emergency_triggers": [],
       "harvest_triggers": [],
       "invalidation_triggers": [],
-      "next_review_deadline_utc": "2026-06-30T08:16:07.025442+00:00",
-      "next_review_reason": "candidate range_trader:GBP_NZD:LONG:RANGE_ROTATION requires trader-defined triggers",
+      "lane_id": "failure_trader:AUD_JPY:SHORT:BREAKOUT_FAILURE:LIMIT",
+      "next_review_deadline_utc": "2026-07-02T14:09:10.744865+00:00",
+      "next_review_reason": "watch-only candidate: no_current_thesis",
       "no_add_triggers": [],
       "owner": "SYSTEM",
-      "pair": "GBP_NZD",
+      "ownership_audit": {
+        "evidence": [
+          "candidate intent is system-generated"
+        ],
+        "status": "SYSTEM",
+        "unresolved": false
+      },
+      "pair": "AUD_JPY",
+      "side": "SHORT",
+      "status": "DRY_RUN_BLOCKED",
+      "thesis": "failure_trader AUD_JPY SHORT BREAKOUT_FAILURE 4.20R: Matrix-supported repair lane: create only a pending LIMIT/STOP-ENTRY dry-run receipt; do not market-chase the supported direction. RiskEngine, forecast freshness, spread, profile repair, and live gateway gates must still decide execution.",
+      "thesis_state": "UNKNOWN",
+      "watch_only": true,
+      "watch_only_reason": "no_current_thesis",
+      "wounded_triggers": []
+    },
+    {
+      "add_triggers": [],
+      "emergency_triggers": [],
+      "harvest_triggers": [],
+      "invalidation_triggers": [],
+      "lane_id": "trend_trader:AUD_JPY:SHORT:TREND_CONTINUATION",
+      "next_review_deadline_utc": "2026-07-02T14:09:10.744865+00:00",
+      "next_review_reason": "watch-only candidate: no_current_thesis",
+      "no_add_triggers": [],
+      "owner": "SYSTEM",
+      "ownership_audit": {
+        "evidence": [
+          "candidate intent is system-generated"
+        ],
+        "status": "SYSTEM",
+        "unresolved": false
+      },
+      "pair": "AUD_JPY",
+      "side": "SHORT",
+      "status": "DRY_RUN_BLOCKED",
+      "thesis": "trend_trader AUD_JPY SHORT TREND_CONTINUATION 4.20R: Matrix-supported repair lane: create only a pending LIMIT/STOP-ENTRY dry-run receipt; do not market-chase the supported direction. RiskEngine, forecast freshness, spread, profile repair, and live gateway gates must still decide execution.",
+      "thesis_state": "UNKNOWN",
+      "watch_only": true,
+      "watch_only_reason": "no_current_thesis",
+      "wounded_triggers": []
+    },
+    {
+      "add_triggers": [],
+      "emergency_triggers": [],
+      "harvest_triggers": [],
+      "invalidation_triggers": [],
+      "lane_id": "failure_trader:EUR_USD:LONG:BREAKOUT_FAILURE:LIMIT",
+      "next_review_deadline_utc": "2026-07-02T14:09:10.744865+00:00",
+      "next_review_reason": "watch-only candidate: no_current_thesis",
+      "no_add_triggers": [],
+      "owner": "SYSTEM",
+      "ownership_audit": {
+        "evidence": [
+          "candidate intent is system-generated"
+        ],
+        "status": "SYSTEM",
+        "unresolved": false
+      },
+      "pair": "EUR_USD",
       "side": "LONG",
-      "thesis": "range_trader GBP_NZD LONG RANGE_ROTATION 1.20R: Watch-only forecast-first lane: build dry-run geometry and blocker reasons only. Do not send live until calibrated forecast confidence clears the live-entry floor on a fresh snapshot.",
-      "thesis_state": "ALIVE",
+      "status": "DRY_RUN_BLOCKED",
+      "thesis": "failure_trader EUR_USD LONG BREAKOUT_FAILURE 2.60R: Contested matrix-supported lane: build pending dry-run geometry and blocker reasons only; do not send live until the current matrix reject context clears on a fresh market-context refresh.",
+      "thesis_state": "UNKNOWN",
+      "watch_only": true,
+      "watch_only_reason": "no_current_thesis",
       "wounded_triggers": []
     },
     {
@@ -427,14 +710,25 @@
       "emergency_triggers": [],
       "harvest_triggers": [],
       "invalidation_triggers": [],
-      "next_review_deadline_utc": "2026-06-30T08:16:07.025442+00:00",
-      "next_review_reason": "candidate failure_trader:GBP_NZD:LONG:BREAKOUT_FAILURE:LIMIT requires trader-defined triggers",
+      "lane_id": "trend_trader:EUR_USD:LONG:TREND_CONTINUATION",
+      "next_review_deadline_utc": "2026-07-02T14:09:10.744865+00:00",
+      "next_review_reason": "watch-only candidate: no_current_thesis",
       "no_add_triggers": [],
       "owner": "SYSTEM",
-      "pair": "GBP_NZD",
+      "ownership_audit": {
+        "evidence": [
+          "candidate intent is system-generated"
+        ],
+        "status": "SYSTEM",
+        "unresolved": false
+      },
+      "pair": "EUR_USD",
       "side": "LONG",
-      "thesis": "failure_trader GBP_NZD LONG BREAKOUT_FAILURE 2.00R: Watch-only forecast-first lane: build dry-run geometry and blocker reasons only. Do not send live until calibrated forecast confidence clears the live-entry floor on a fresh snapshot.",
-      "thesis_state": "ALIVE",
+      "status": "DRY_RUN_BLOCKED",
+      "thesis": "trend_trader EUR_USD LONG TREND_CONTINUATION 2.60R: Contested matrix-supported lane: build pending dry-run geometry and blocker reasons only; do not send live until the current matrix reject context clears on a fresh market-context refresh.",
+      "thesis_state": "UNKNOWN",
+      "watch_only": true,
+      "watch_only_reason": "no_current_thesis",
       "wounded_triggers": []
     },
     {
@@ -442,29 +736,25 @@
       "emergency_triggers": [],
       "harvest_triggers": [],
       "invalidation_triggers": [],
-      "next_review_deadline_utc": "2026-06-30T08:16:07.025442+00:00",
-      "next_review_reason": "candidate trend_trader:GBP_NZD:LONG:TREND_CONTINUATION requires trader-defined triggers",
+      "lane_id": "failure_trader:GBP_USD:LONG:BREAKOUT_FAILURE:LIMIT",
+      "next_review_deadline_utc": "2026-07-02T14:09:10.744865+00:00",
+      "next_review_reason": "watch-only candidate: no_current_thesis",
       "no_add_triggers": [],
       "owner": "SYSTEM",
-      "pair": "GBP_NZD",
-      "side": "LONG",
-      "thesis": "trend_trader GBP_NZD LONG TREND_CONTINUATION 2.00R: Watch-only forecast-first lane: build dry-run geometry and blocker reasons only. Do not send live until calibrated forecast confidence clears the live-entry floor on a fresh snapshot.",
-      "thesis_state": "ALIVE",
-      "wounded_triggers": []
-    },
-    {
-      "add_triggers": [],
-      "emergency_triggers": [],
-      "harvest_triggers": [],
-      "invalidation_triggers": [],
-      "next_review_deadline_utc": "2026-06-30T08:16:07.025442+00:00",
-      "next_review_reason": "candidate range_trader:GBP_USD:LONG:RANGE_ROTATION requires trader-defined triggers",
-      "no_add_triggers": [],
-      "owner": "SYSTEM",
+      "ownership_audit": {
+        "evidence": [
+          "candidate intent is system-generated"
+        ],
+        "status": "SYSTEM",
+        "unresolved": false
+      },
       "pair": "GBP_USD",
       "side": "LONG",
-      "thesis": "range_trader GBP_USD LONG RANGE_ROTATION 2.60R: Forecast-first lane: use only a pending trigger receipt; no market chase. The same fresh forecast, market-location map, levels, spread, and risk geometry must still agree.",
-      "thesis_state": "ALIVE",
+      "status": "DRY_RUN_BLOCKED",
+      "thesis": "failure_trader GBP_USD LONG BREAKOUT_FAILURE 5.46R: Contested matrix-supported lane: build pending dry-run geometry and blocker reasons only; do not send live until the current matrix reject context clears on a fresh market-context refresh.",
+      "thesis_state": "UNKNOWN",
+      "watch_only": true,
+      "watch_only_reason": "no_current_thesis",
       "wounded_triggers": []
     },
     {
@@ -472,14 +762,51 @@
       "emergency_triggers": [],
       "harvest_triggers": [],
       "invalidation_triggers": [],
-      "next_review_deadline_utc": "2026-06-30T08:16:07.025442+00:00",
-      "next_review_reason": "candidate range_trader:NZD_CHF:SHORT:RANGE_ROTATION requires trader-defined triggers",
+      "lane_id": "trend_trader:GBP_USD:LONG:TREND_CONTINUATION",
+      "next_review_deadline_utc": "2026-07-02T14:09:10.744865+00:00",
+      "next_review_reason": "watch-only candidate: no_current_thesis",
       "no_add_triggers": [],
       "owner": "SYSTEM",
-      "pair": "NZD_CHF",
+      "ownership_audit": {
+        "evidence": [
+          "candidate intent is system-generated"
+        ],
+        "status": "SYSTEM",
+        "unresolved": false
+      },
+      "pair": "GBP_USD",
+      "side": "LONG",
+      "status": "DRY_RUN_BLOCKED",
+      "thesis": "trend_trader GBP_USD LONG TREND_CONTINUATION 5.46R: Contested matrix-supported lane: build pending dry-run geometry and blocker reasons only; do not send live until the current matrix reject context clears on a fresh market-context refresh.",
+      "thesis_state": "UNKNOWN",
+      "watch_only": true,
+      "watch_only_reason": "no_current_thesis",
+      "wounded_triggers": []
+    },
+    {
+      "add_triggers": [],
+      "emergency_triggers": [],
+      "harvest_triggers": [],
+      "invalidation_triggers": [],
+      "lane_id": "failure_trader:EUR_JPY:SHORT:BREAKOUT_FAILURE:LIMIT",
+      "next_review_deadline_utc": "2026-07-02T14:09:10.744865+00:00",
+      "next_review_reason": "watch-only candidate: no_current_thesis",
+      "no_add_triggers": [],
+      "owner": "SYSTEM",
+      "ownership_audit": {
+        "evidence": [
+          "candidate intent is system-generated"
+        ],
+        "status": "SYSTEM",
+        "unresolved": false
+      },
+      "pair": "EUR_JPY",
       "side": "SHORT",
-      "thesis": "range_trader NZD_CHF SHORT RANGE_ROTATION 2.00R: Forecast-first lane: create an intent only if this same fresh forecast, market-location map, levels, spread, and risk geometry still agree.",
-      "thesis_state": "ALIVE",
+      "status": "DRY_RUN_BLOCKED",
+      "thesis": "failure_trader EUR_JPY SHORT BREAKOUT_FAILURE 5.46R: Matrix-supported repair lane: create only a pending LIMIT/STOP-ENTRY dry-run receipt; do not market-chase the supported direction. RiskEngine, forecast freshness, spread, profile repair, and live gateway gates must still decide execution.",
+      "thesis_state": "UNKNOWN",
+      "watch_only": true,
+      "watch_only_reason": "no_current_thesis",
       "wounded_triggers": []
     },
     {
@@ -487,14 +814,25 @@
       "emergency_triggers": [],
       "harvest_triggers": [],
       "invalidation_triggers": [],
-      "next_review_deadline_utc": "2026-06-30T08:16:07.025442+00:00",
-      "next_review_reason": "candidate range_trader:NZD_JPY:SHORT:RANGE_ROTATION requires trader-defined triggers",
+      "lane_id": "failure_trader:GBP_JPY:SHORT:BREAKOUT_FAILURE:LIMIT",
+      "next_review_deadline_utc": "2026-07-02T14:09:10.744865+00:00",
+      "next_review_reason": "watch-only candidate: no_current_thesis",
       "no_add_triggers": [],
       "owner": "SYSTEM",
-      "pair": "NZD_JPY",
+      "ownership_audit": {
+        "evidence": [
+          "candidate intent is system-generated"
+        ],
+        "status": "SYSTEM",
+        "unresolved": false
+      },
+      "pair": "GBP_JPY",
       "side": "SHORT",
-      "thesis": "range_trader NZD_JPY SHORT RANGE_ROTATION 2.60R: Watch-only forecast-first lane: build dry-run geometry and blocker reasons only. Do not send live until calibrated forecast confidence clears the live-entry floor on a fresh snapshot.",
-      "thesis_state": "ALIVE",
+      "status": "DRY_RUN_BLOCKED",
+      "thesis": "failure_trader GBP_JPY SHORT BREAKOUT_FAILURE 5.46R: Matrix-supported repair lane: create only a pending LIMIT/STOP-ENTRY dry-run receipt; do not market-chase the supported direction. RiskEngine, forecast freshness, spread, profile repair, and live gateway gates must still decide execution.",
+      "thesis_state": "UNKNOWN",
+      "watch_only": true,
+      "watch_only_reason": "no_current_thesis",
       "wounded_triggers": []
     },
     {
@@ -502,59 +840,233 @@
       "emergency_triggers": [],
       "harvest_triggers": [],
       "invalidation_triggers": [],
-      "next_review_deadline_utc": "2026-06-30T08:16:07.025442+00:00",
-      "next_review_reason": "candidate range_trader:NZD_USD:SHORT:RANGE_ROTATION requires trader-defined triggers",
+      "lane_id": "trend_trader:GBP_JPY:SHORT:TREND_CONTINUATION",
+      "next_review_deadline_utc": "2026-07-02T14:09:10.744865+00:00",
+      "next_review_reason": "watch-only candidate: no_current_thesis",
       "no_add_triggers": [],
       "owner": "SYSTEM",
+      "ownership_audit": {
+        "evidence": [
+          "candidate intent is system-generated"
+        ],
+        "status": "SYSTEM",
+        "unresolved": false
+      },
+      "pair": "GBP_JPY",
+      "side": "SHORT",
+      "status": "DRY_RUN_BLOCKED",
+      "thesis": "trend_trader GBP_JPY SHORT TREND_CONTINUATION 5.46R: Matrix-supported repair lane: create only a pending LIMIT/STOP-ENTRY dry-run receipt; do not market-chase the supported direction. RiskEngine, forecast freshness, spread, profile repair, and live gateway gates must still decide execution.",
+      "thesis_state": "UNKNOWN",
+      "watch_only": true,
+      "watch_only_reason": "no_current_thesis",
+      "wounded_triggers": []
+    },
+    {
+      "add_triggers": [],
+      "emergency_triggers": [],
+      "harvest_triggers": [],
+      "invalidation_triggers": [],
+      "lane_id": "range_trader:USD_JPY:LONG:RANGE_ROTATION",
+      "next_review_deadline_utc": "2026-07-02T14:09:10.744865+00:00",
+      "next_review_reason": "watch-only candidate: no_current_thesis",
+      "no_add_triggers": [],
+      "owner": "SYSTEM",
+      "ownership_audit": {
+        "evidence": [
+          "candidate intent is system-generated"
+        ],
+        "status": "SYSTEM",
+        "unresolved": false
+      },
+      "pair": "USD_JPY",
+      "side": "LONG",
+      "status": "DRY_RUN_BLOCKED",
+      "thesis": "range_trader USD_JPY LONG RANGE_ROTATION 5.46R: Build a current non-market order intent for this OANDA-verified firepower vehicle; historical firepower is audit-only and live gateway, spread, forecast, strategy-profile, and risk gates still decide.",
+      "thesis_state": "UNKNOWN",
+      "watch_only": true,
+      "watch_only_reason": "no_current_thesis",
+      "wounded_triggers": []
+    },
+    {
+      "add_triggers": [],
+      "emergency_triggers": [],
+      "harvest_triggers": [],
+      "invalidation_triggers": [],
+      "lane_id": "trend_trader:EUR_JPY:SHORT:TREND_CONTINUATION",
+      "next_review_deadline_utc": "2026-07-02T14:09:10.744865+00:00",
+      "next_review_reason": "watch-only candidate: no_current_thesis",
+      "no_add_triggers": [],
+      "owner": "SYSTEM",
+      "ownership_audit": {
+        "evidence": [
+          "candidate intent is system-generated"
+        ],
+        "status": "SYSTEM",
+        "unresolved": false
+      },
+      "pair": "EUR_JPY",
+      "side": "SHORT",
+      "status": "DRY_RUN_BLOCKED",
+      "thesis": "trend_trader EUR_JPY SHORT TREND_CONTINUATION 5.46R: Build a current non-market order intent for this OANDA-verified firepower vehicle; historical firepower is audit-only and live gateway, spread, forecast, strategy-profile, and risk gates still decide.",
+      "thesis_state": "UNKNOWN",
+      "watch_only": true,
+      "watch_only_reason": "no_current_thesis",
+      "wounded_triggers": []
+    },
+    {
+      "add_triggers": [],
+      "emergency_triggers": [],
+      "harvest_triggers": [],
+      "invalidation_triggers": [],
+      "lane_id": "range_trader:AUD_JPY:LONG:RANGE_ROTATION",
+      "next_review_deadline_utc": "2026-07-02T14:09:10.744865+00:00",
+      "next_review_reason": "watch-only candidate: no_current_thesis",
+      "no_add_triggers": [],
+      "owner": "SYSTEM",
+      "ownership_audit": {
+        "evidence": [
+          "candidate intent is system-generated"
+        ],
+        "status": "SYSTEM",
+        "unresolved": false
+      },
+      "pair": "AUD_JPY",
+      "side": "LONG",
+      "status": "DRY_RUN_BLOCKED",
+      "thesis": "range_trader AUD_JPY LONG RANGE_ROTATION 4.20R: Build a current non-market order intent for this OANDA-verified firepower vehicle; historical firepower is audit-only and live gateway, spread, forecast, strategy-profile, and risk gates still decide.",
+      "thesis_state": "UNKNOWN",
+      "watch_only": true,
+      "watch_only_reason": "no_current_thesis",
+      "wounded_triggers": []
+    },
+    {
+      "add_triggers": [],
+      "emergency_triggers": [],
+      "harvest_triggers": [],
+      "invalidation_triggers": [],
+      "lane_id": "range_trader:AUD_USD:SHORT:RANGE_ROTATION",
+      "next_review_deadline_utc": "2026-07-02T14:09:10.744865+00:00",
+      "next_review_reason": "watch-only candidate: no_current_thesis",
+      "no_add_triggers": [],
+      "owner": "SYSTEM",
+      "ownership_audit": {
+        "evidence": [
+          "candidate intent is system-generated"
+        ],
+        "status": "SYSTEM",
+        "unresolved": false
+      },
+      "pair": "AUD_USD",
+      "side": "SHORT",
+      "status": "DRY_RUN_BLOCKED",
+      "thesis": "range_trader AUD_USD SHORT RANGE_ROTATION 1.95R: Build a current non-market order intent for this OANDA-verified firepower vehicle; historical firepower is audit-only and live gateway, spread, forecast, strategy-profile, and risk gates still decide.",
+      "thesis_state": "UNKNOWN",
+      "watch_only": true,
+      "watch_only_reason": "no_current_thesis",
+      "wounded_triggers": []
+    },
+    {
+      "add_triggers": [],
+      "emergency_triggers": [],
+      "harvest_triggers": [],
+      "invalidation_triggers": [],
+      "lane_id": "range_trader:GBP_USD:SHORT:RANGE_ROTATION",
+      "next_review_deadline_utc": "2026-07-02T14:09:10.744865+00:00",
+      "next_review_reason": "watch-only candidate: no_current_thesis",
+      "no_add_triggers": [],
+      "owner": "SYSTEM",
+      "ownership_audit": {
+        "evidence": [
+          "candidate intent is system-generated"
+        ],
+        "status": "SYSTEM",
+        "unresolved": false
+      },
+      "pair": "GBP_USD",
+      "side": "SHORT",
+      "status": "DRY_RUN_BLOCKED",
+      "thesis": "range_trader GBP_USD SHORT RANGE_ROTATION 5.46R: Build a current non-market order intent for this OANDA-verified firepower vehicle; historical firepower is audit-only and live gateway, spread, forecast, strategy-profile, and risk gates still decide.",
+      "thesis_state": "UNKNOWN",
+      "watch_only": true,
+      "watch_only_reason": "no_current_thesis",
+      "wounded_triggers": []
+    },
+    {
+      "add_triggers": [],
+      "emergency_triggers": [],
+      "harvest_triggers": [],
+      "invalidation_triggers": [],
+      "lane_id": "range_trader:GBP_JPY:SHORT:RANGE_ROTATION",
+      "next_review_deadline_utc": "2026-07-02T14:09:10.744865+00:00",
+      "next_review_reason": "watch-only candidate: no_current_thesis",
+      "no_add_triggers": [],
+      "owner": "SYSTEM",
+      "ownership_audit": {
+        "evidence": [
+          "candidate intent is system-generated"
+        ],
+        "status": "SYSTEM",
+        "unresolved": false
+      },
+      "pair": "GBP_JPY",
+      "side": "SHORT",
+      "status": "DRY_RUN_BLOCKED",
+      "thesis": "range_trader GBP_JPY SHORT RANGE_ROTATION 5.46R: Build a current non-market order intent for this OANDA-verified firepower vehicle; historical firepower is audit-only and live gateway, spread, forecast, strategy-profile, and risk gates still decide.",
+      "thesis_state": "UNKNOWN",
+      "watch_only": true,
+      "watch_only_reason": "no_current_thesis",
+      "wounded_triggers": []
+    },
+    {
+      "add_triggers": [],
+      "emergency_triggers": [],
+      "harvest_triggers": [],
+      "invalidation_triggers": [],
+      "lane_id": "trend_trader:GBP_JPY:LONG:TREND_CONTINUATION",
+      "next_review_deadline_utc": "2026-07-02T14:09:10.744865+00:00",
+      "next_review_reason": "watch-only candidate: no_current_thesis",
+      "no_add_triggers": [],
+      "owner": "SYSTEM",
+      "ownership_audit": {
+        "evidence": [
+          "candidate intent is system-generated"
+        ],
+        "status": "SYSTEM",
+        "unresolved": false
+      },
+      "pair": "GBP_JPY",
+      "side": "LONG",
+      "status": "DRY_RUN_BLOCKED",
+      "thesis": "trend_trader GBP_JPY LONG TREND_CONTINUATION 5.46R: Build a current non-market order intent for this OANDA-verified firepower vehicle; historical firepower is audit-only and live gateway, spread, forecast, strategy-profile, and risk gates still decide.",
+      "thesis_state": "UNKNOWN",
+      "watch_only": true,
+      "watch_only_reason": "no_current_thesis",
+      "wounded_triggers": []
+    },
+    {
+      "add_triggers": [],
+      "emergency_triggers": [],
+      "harvest_triggers": [],
+      "invalidation_triggers": [],
+      "lane_id": "range_trader:NZD_USD:LONG:RANGE_ROTATION",
+      "next_review_deadline_utc": "2026-07-02T14:09:10.744865+00:00",
+      "next_review_reason": "watch-only candidate: no_current_thesis",
+      "no_add_triggers": [],
+      "owner": "SYSTEM",
+      "ownership_audit": {
+        "evidence": [
+          "candidate intent is system-generated"
+        ],
+        "status": "SYSTEM",
+        "unresolved": false
+      },
       "pair": "NZD_USD",
-      "side": "SHORT",
-      "thesis": "range_trader NZD_USD SHORT RANGE_ROTATION 2.60R: Forecast-first lane: create an intent only if this same fresh forecast, market-location map, levels, spread, and risk geometry still agree.",
-      "thesis_state": "ALIVE",
-      "wounded_triggers": []
-    },
-    {
-      "add_triggers": [],
-      "emergency_triggers": [],
-      "harvest_triggers": [],
-      "invalidation_triggers": [],
-      "next_review_deadline_utc": "2026-06-30T08:16:07.025442+00:00",
-      "next_review_reason": "candidate range_trader:USD_CAD:SHORT:RANGE_ROTATION requires trader-defined triggers",
-      "no_add_triggers": [],
-      "owner": "SYSTEM",
-      "pair": "USD_CAD",
-      "side": "SHORT",
-      "thesis": "range_trader USD_CAD SHORT RANGE_ROTATION 3.51R: Range rail override: measured RANGE_RAIL_LIMIT may be armed because the current forecast box has a rail-side LIMIT entry, TP inside the box, SL outside the box, and calibrated range confidence clears the live floor. Do not convert to MARKET; refresh forecast and broker snapshot before send.",
-      "thesis_state": "ALIVE",
-      "wounded_triggers": []
-    },
-    {
-      "add_triggers": [],
-      "emergency_triggers": [],
-      "harvest_triggers": [],
-      "invalidation_triggers": [],
-      "next_review_deadline_utc": "2026-06-30T08:16:07.025442+00:00",
-      "next_review_reason": "candidate range_trader:USD_CAD:SHORT:RANGE_ROTATION:MARKET requires trader-defined triggers",
-      "no_add_triggers": [],
-      "owner": "SYSTEM",
-      "pair": "USD_CAD",
-      "side": "SHORT",
-      "thesis": "range_trader USD_CAD SHORT RANGE_ROTATION 3.51R: Watch-only forecast-first lane: build dry-run geometry and blocker reasons only. Do not send live until calibrated forecast confidence clears the live-entry floor on a fresh snapshot.",
-      "thesis_state": "ALIVE",
-      "wounded_triggers": []
-    },
-    {
-      "add_triggers": [],
-      "emergency_triggers": [],
-      "harvest_triggers": [],
-      "invalidation_triggers": [],
-      "next_review_deadline_utc": "2026-06-30T08:16:07.025442+00:00",
-      "next_review_reason": "candidate range_trader:USD_CHF:LONG:RANGE_ROTATION requires trader-defined triggers",
-      "no_add_triggers": [],
-      "owner": "SYSTEM",
-      "pair": "USD_CHF",
       "side": "LONG",
-      "thesis": "range_trader USD_CHF LONG RANGE_ROTATION 2.60R: Range rail override: measured RANGE_RAIL_LIMIT may be armed because the current forecast box has a rail-side LIMIT entry, TP inside the box, SL outside the box, and calibrated range confidence clears the live floor. Do not convert to MARKET; refresh forecast and broker snapshot before send.",
-      "thesis_state": "ALIVE",
+      "status": "DRY_RUN_BLOCKED",
+      "thesis": "range_trader NZD_USD LONG RANGE_ROTATION 2.86R: Build a current non-market order intent for this OANDA-verified firepower vehicle; historical firepower is audit-only and live gateway, spread, forecast, strategy-profile, and risk gates still decide.",
+      "thesis_state": "UNKNOWN",
+      "watch_only": true,
+      "watch_only_reason": "no_current_thesis",
       "wounded_triggers": []
     },
     {
@@ -562,14 +1074,25 @@
       "emergency_triggers": [],
       "harvest_triggers": [],
       "invalidation_triggers": [],
-      "next_review_deadline_utc": "2026-06-30T08:16:07.025442+00:00",
-      "next_review_reason": "candidate range_trader:USD_CHF:LONG:RANGE_ROTATION:MARKET requires trader-defined triggers",
+      "lane_id": "trend_trader:USD_JPY:LONG:TREND_CONTINUATION",
+      "next_review_deadline_utc": "2026-07-02T14:09:10.744865+00:00",
+      "next_review_reason": "watch-only candidate: no_current_thesis",
       "no_add_triggers": [],
       "owner": "SYSTEM",
-      "pair": "USD_CHF",
+      "ownership_audit": {
+        "evidence": [
+          "candidate intent is system-generated"
+        ],
+        "status": "SYSTEM",
+        "unresolved": false
+      },
+      "pair": "USD_JPY",
       "side": "LONG",
-      "thesis": "range_trader USD_CHF LONG RANGE_ROTATION 2.60R: Watch-only forecast-first lane: build dry-run geometry and blocker reasons only. Do not send live until calibrated forecast confidence clears the live-entry floor on a fresh snapshot.",
-      "thesis_state": "ALIVE",
+      "status": "DRY_RUN_BLOCKED",
+      "thesis": "trend_trader USD_JPY LONG TREND_CONTINUATION 5.46R: Build a current non-market order intent for this OANDA-verified firepower vehicle; historical firepower is audit-only and live gateway, spread, forecast, strategy-profile, and risk gates still decide.",
+      "thesis_state": "UNKNOWN",
+      "watch_only": true,
+      "watch_only_reason": "no_current_thesis",
       "wounded_triggers": []
     },
     {
@@ -577,14 +1100,77 @@
       "emergency_triggers": [],
       "harvest_triggers": [],
       "invalidation_triggers": [],
-      "next_review_deadline_utc": "2026-06-30T08:16:07.025442+00:00",
-      "next_review_reason": "candidate range_trader:USD_JPY:SHORT:RANGE_ROTATION requires trader-defined triggers",
+      "lane_id": "range_trader:EUR_JPY:SHORT:RANGE_ROTATION",
+      "next_review_deadline_utc": "2026-07-02T14:09:10.744865+00:00",
+      "next_review_reason": "watch-only candidate: no_current_thesis",
       "no_add_triggers": [],
       "owner": "SYSTEM",
+      "ownership_audit": {
+        "evidence": [
+          "candidate intent is system-generated"
+        ],
+        "status": "SYSTEM",
+        "unresolved": false
+      },
+      "pair": "EUR_JPY",
+      "side": "SHORT",
+      "status": "DRY_RUN_BLOCKED",
+      "thesis": "range_trader EUR_JPY SHORT RANGE_ROTATION 2.52R: Build a current non-market order intent for this OANDA-verified firepower vehicle; historical firepower is audit-only and live gateway, spread, forecast, strategy-profile, and risk gates still decide.",
+      "thesis_state": "UNKNOWN",
+      "watch_only": true,
+      "watch_only_reason": "no_current_thesis",
+      "wounded_triggers": []
+    },
+    {
+      "add_triggers": [],
+      "emergency_triggers": [],
+      "harvest_triggers": [],
+      "invalidation_triggers": [],
+      "lane_id": "trend_trader:EUR_USD:SHORT:TREND_CONTINUATION",
+      "next_review_deadline_utc": "2026-07-02T14:09:10.744865+00:00",
+      "next_review_reason": "watch-only candidate: no_current_thesis",
+      "no_add_triggers": [],
+      "owner": "SYSTEM",
+      "ownership_audit": {
+        "evidence": [
+          "candidate intent is system-generated"
+        ],
+        "status": "SYSTEM",
+        "unresolved": false
+      },
+      "pair": "EUR_USD",
+      "side": "SHORT",
+      "status": "DRY_RUN_BLOCKED",
+      "thesis": "trend_trader EUR_USD SHORT TREND_CONTINUATION 1.95R: Build a current non-market order intent for this OANDA-verified firepower vehicle; historical firepower is audit-only and live gateway, spread, forecast, strategy-profile, and risk gates still decide.",
+      "thesis_state": "UNKNOWN",
+      "watch_only": true,
+      "watch_only_reason": "no_current_thesis",
+      "wounded_triggers": []
+    },
+    {
+      "add_triggers": [],
+      "emergency_triggers": [],
+      "harvest_triggers": [],
+      "invalidation_triggers": [],
+      "lane_id": "range_trader:USD_JPY:SHORT:RANGE_ROTATION",
+      "next_review_deadline_utc": "2026-07-02T14:09:10.744865+00:00",
+      "next_review_reason": "watch-only candidate: no_current_thesis",
+      "no_add_triggers": [],
+      "owner": "SYSTEM",
+      "ownership_audit": {
+        "evidence": [
+          "candidate intent is system-generated"
+        ],
+        "status": "SYSTEM",
+        "unresolved": false
+      },
       "pair": "USD_JPY",
       "side": "SHORT",
-      "thesis": "range_trader USD_JPY SHORT RANGE_ROTATION 2.00R: Watch-only forecast-first lane: build dry-run geometry and blocker reasons only. Do not send live until calibrated forecast confidence clears the live-entry floor on a fresh snapshot.",
-      "thesis_state": "ALIVE",
+      "status": "DRY_RUN_BLOCKED",
+      "thesis": "range_trader USD_JPY SHORT RANGE_ROTATION 5.46R: Build a current non-market order intent for this OANDA-verified firepower vehicle; historical firepower is audit-only and live gateway, spread, forecast, strategy-profile, and risk gates still decide.",
+      "thesis_state": "UNKNOWN",
+      "watch_only": true,
+      "watch_only_reason": "no_current_thesis",
       "wounded_triggers": []
     },
     {
@@ -592,164 +1178,165 @@
       "emergency_triggers": [],
       "harvest_triggers": [],
       "invalidation_triggers": [],
-      "next_review_deadline_utc": "2026-06-30T08:16:07.025442+00:00",
-      "next_review_reason": "candidate failure_trader:AUD_JPY:SHORT:BREAKOUT_FAILURE:LIMIT requires trader-defined triggers",
+      "lane_id": "range_trader:AUD_USD:LONG:RANGE_ROTATION",
+      "next_review_deadline_utc": "2026-07-02T14:09:10.744865+00:00",
+      "next_review_reason": "watch-only candidate: no_current_thesis",
       "no_add_triggers": [],
       "owner": "SYSTEM",
-      "pair": "AUD_JPY",
-      "side": "SHORT",
-      "thesis": "failure_trader AUD_JPY SHORT BREAKOUT_FAILURE 2.70R: Matrix-supported repair lane: create only a pending LIMIT/STOP-ENTRY dry-run receipt; do not market-chase the supported direction. RiskEngine, forecast freshness, spread, profile repair, and live gateway gates must still decide execution.",
-      "thesis_state": "ALIVE",
-      "wounded_triggers": []
-    },
-    {
-      "add_triggers": [],
-      "emergency_triggers": [],
-      "harvest_triggers": [],
-      "invalidation_triggers": [],
-      "next_review_deadline_utc": "2026-06-30T08:16:07.025442+00:00",
-      "next_review_reason": "candidate trend_trader:AUD_JPY:SHORT:TREND_CONTINUATION requires trader-defined triggers",
-      "no_add_triggers": [],
-      "owner": "SYSTEM",
-      "pair": "AUD_JPY",
-      "side": "SHORT",
-      "thesis": "trend_trader AUD_JPY SHORT TREND_CONTINUATION 2.70R: Matrix-supported repair lane: create only a pending LIMIT/STOP-ENTRY dry-run receipt; do not market-chase the supported direction. RiskEngine, forecast freshness, spread, profile repair, and live gateway gates must still decide execution.",
-      "thesis_state": "ALIVE",
-      "wounded_triggers": []
-    },
-    {
-      "add_triggers": [],
-      "emergency_triggers": [],
-      "harvest_triggers": [],
-      "invalidation_triggers": [],
-      "next_review_deadline_utc": "2026-06-30T08:16:07.025442+00:00",
-      "next_review_reason": "candidate failure_trader:AUD_USD:LONG:BREAKOUT_FAILURE:LIMIT requires trader-defined triggers",
-      "no_add_triggers": [],
-      "owner": "SYSTEM",
+      "ownership_audit": {
+        "evidence": [
+          "candidate intent is system-generated"
+        ],
+        "status": "SYSTEM",
+        "unresolved": false
+      },
       "pair": "AUD_USD",
       "side": "LONG",
-      "thesis": "failure_trader AUD_USD LONG BREAKOUT_FAILURE 3.51R: Contested matrix-supported lane: build pending dry-run geometry and blocker reasons only; do not send live until the current matrix reject context clears on a fresh market-context refresh.",
-      "thesis_state": "ALIVE",
+      "status": "DRY_RUN_BLOCKED",
+      "thesis": "range_trader AUD_USD LONG RANGE_ROTATION 1.95R: Build a current non-market order intent for this OANDA-verified firepower vehicle; historical firepower is audit-only and live gateway, spread, forecast, strategy-profile, and risk gates still decide.",
+      "thesis_state": "UNKNOWN",
+      "watch_only": true,
+      "watch_only_reason": "no_current_thesis",
       "wounded_triggers": []
     },
     {
       "add_triggers": [],
-      "emergency_triggers": [],
-      "harvest_triggers": [],
-      "invalidation_triggers": [],
-      "next_review_deadline_utc": "2026-06-30T08:16:07.025442+00:00",
-      "next_review_reason": "candidate trend_trader:AUD_USD:LONG:TREND_CONTINUATION requires trader-defined triggers",
-      "no_add_triggers": [],
-      "owner": "SYSTEM",
-      "pair": "AUD_USD",
-      "side": "LONG",
-      "thesis": "trend_trader AUD_USD LONG TREND_CONTINUATION 3.51R: Contested matrix-supported lane: build pending dry-run geometry and blocker reasons only; do not send live until the current matrix reject context clears on a fresh market-context refresh.",
-      "thesis_state": "ALIVE",
-      "wounded_triggers": []
-    },
-    {
-      "add_triggers": [],
-      "emergency_triggers": [],
-      "harvest_triggers": [],
-      "invalidation_triggers": [],
-      "next_review_deadline_utc": "2026-06-30T08:16:07.025442+00:00",
-      "next_review_reason": "candidate failure_trader:EUR_USD:LONG:BREAKOUT_FAILURE:LIMIT requires trader-defined triggers",
-      "no_add_triggers": [],
-      "owner": "SYSTEM",
-      "pair": "EUR_USD",
-      "side": "LONG",
-      "thesis": "failure_trader EUR_USD LONG BREAKOUT_FAILURE 2.60R: Matrix-supported repair lane: create only a pending LIMIT/STOP-ENTRY dry-run receipt; do not market-chase the supported direction. RiskEngine, forecast freshness, spread, profile repair, and live gateway gates must still decide execution.",
-      "thesis_state": "ALIVE",
-      "wounded_triggers": []
-    },
-    {
-      "add_triggers": [],
-      "emergency_triggers": [],
-      "harvest_triggers": [],
-      "invalidation_triggers": [],
-      "next_review_deadline_utc": "2026-06-30T08:16:07.025442+00:00",
-      "next_review_reason": "candidate trend_trader:EUR_USD:LONG:TREND_CONTINUATION requires trader-defined triggers",
-      "no_add_triggers": [],
-      "owner": "SYSTEM",
-      "pair": "EUR_USD",
-      "side": "LONG",
-      "thesis": "trend_trader EUR_USD LONG TREND_CONTINUATION 2.60R: Matrix-supported repair lane: create only a pending LIMIT/STOP-ENTRY dry-run receipt; do not market-chase the supported direction. RiskEngine, forecast freshness, spread, profile repair, and live gateway gates must still decide execution.",
-      "thesis_state": "ALIVE",
-      "wounded_triggers": []
-    },
-    {
-      "add_triggers": [],
-      "emergency_triggers": [],
-      "harvest_triggers": [],
-      "invalidation_triggers": [],
-      "next_review_deadline_utc": "2026-06-30T08:16:07.025442+00:00",
-      "next_review_reason": "candidate failure_trader:GBP_USD:LONG:BREAKOUT_FAILURE:LIMIT requires trader-defined triggers",
-      "no_add_triggers": [],
-      "owner": "SYSTEM",
-      "pair": "GBP_USD",
-      "side": "LONG",
-      "thesis": "failure_trader GBP_USD LONG BREAKOUT_FAILURE 2.60R: Matrix-supported repair lane: create only a pending LIMIT/STOP-ENTRY dry-run receipt; do not market-chase the supported direction. RiskEngine, forecast freshness, spread, profile repair, and live gateway gates must still decide execution.",
-      "thesis_state": "ALIVE",
-      "wounded_triggers": []
-    },
-    {
-      "add_triggers": [],
-      "emergency_triggers": [],
-      "harvest_triggers": [],
-      "invalidation_triggers": [],
-      "next_review_deadline_utc": "2026-06-30T08:16:07.025442+00:00",
-      "next_review_reason": "candidate trend_trader:EUR_JPY:SHORT:TREND_CONTINUATION requires trader-defined triggers",
-      "no_add_triggers": [],
-      "owner": "SYSTEM",
-      "pair": "EUR_JPY",
-      "side": "SHORT",
-      "thesis": "trend_trader EUR_JPY SHORT TREND_CONTINUATION 1.50R: Build a current non-market order intent for this OANDA-verified firepower vehicle; historical firepower is audit-only and live gateway, spread, forecast, strategy-profile, and risk gates still decide.",
-      "thesis_state": "ALIVE",
-      "wounded_triggers": []
-    },
-    {
-      "add_triggers": [],
-      "emergency_triggers": [],
-      "harvest_triggers": [],
-      "invalidation_triggers": [],
-      "next_review_deadline_utc": "2026-06-30T08:16:07.025442+00:00",
-      "next_review_reason": "candidate range_trader:EUR_JPY:SHORT:RANGE_ROTATION requires trader-defined triggers",
-      "no_add_triggers": [],
-      "owner": "SYSTEM",
-      "pair": "EUR_JPY",
-      "side": "SHORT",
-      "thesis": "range_trader EUR_JPY SHORT RANGE_ROTATION 1.50R: Build a current non-market order intent for this OANDA-verified firepower vehicle; historical firepower is audit-only and live gateway, spread, forecast, strategy-profile, and risk gates still decide.",
-      "thesis_state": "ALIVE",
-      "wounded_triggers": []
-    },
-    {
-      "add_triggers": [],
-      "emergency_triggers": [],
-      "harvest_triggers": [],
-      "invalidation_triggers": [],
-      "next_review_deadline_utc": "2026-06-30T08:16:07.025442+00:00",
+      "emergency_triggers": [
+        {
+          "action_hint": "HOLD",
+          "condition": {
+            "metric": "margin_available_jpy",
+            "operator": "<=",
+            "value": 0
+          },
+          "evidence_required": "margin pressure, broker snapshot staleness, or gateway-outside exposure blocks fresh routing",
+          "kind": "candidate_emergency_review",
+          "lane_id": "failure_trader:EUR_USD:SHORT:BREAKOUT_FAILURE:LIMIT",
+          "owner": "SYSTEM",
+          "pair": "EUR_USD",
+          "side": "SHORT",
+          "status": "PENDING",
+          "thesis": "failure_trader EUR_USD SHORT BREAKOUT_FAILURE 2.16R: Create a current order intent with market_context, entry, TP, SL, risk <=2748 JPY, and >=1.2R.",
+          "thesis_state": "ALIVE",
+          "trigger_id": "candidate_margin_or_broker_truth_emergency"
+        }
+      ],
+      "harvest_triggers": [
+        {
+          "action_hint": "HARVEST",
+          "condition": {
+            "metric": "mid",
+            "operator": "<=",
+            "value": 1.13766
+          },
+          "evidence_required": "review only after candidate target/harvest zone is reached and gateway/risk gates still allow the action",
+          "kind": "candidate_harvest_review",
+          "lane_id": "failure_trader:EUR_USD:SHORT:BREAKOUT_FAILURE:LIMIT",
+          "owner": "SYSTEM",
+          "pair": "EUR_USD",
+          "side": "SHORT",
+          "status": "PENDING",
+          "thesis": "failure_trader EUR_USD SHORT BREAKOUT_FAILURE 2.16R: Create a current order intent with market_context, entry, TP, SL, risk <=2748 JPY, and >=1.2R.",
+          "thesis_state": "ALIVE",
+          "trigger_id": "candidate_profit_harvest_review"
+        }
+      ],
+      "invalidation_triggers": [
+        {
+          "action_hint": "HOLD",
+          "condition": {
+            "metric": "mid",
+            "operator": ">=",
+            "value": 1.14149
+          },
+          "evidence_required": "accepted break through the candidate invalidation level; no broker action is implied by the contract",
+          "kind": "candidate_invalidation_review",
+          "lane_id": "failure_trader:EUR_USD:SHORT:BREAKOUT_FAILURE:LIMIT",
+          "owner": "SYSTEM",
+          "pair": "EUR_USD",
+          "side": "SHORT",
+          "status": "PENDING",
+          "thesis": "failure_trader EUR_USD SHORT BREAKOUT_FAILURE 2.16R: Create a current order intent with market_context, entry, TP, SL, risk <=2748 JPY, and >=1.2R.",
+          "thesis_state": "ALIVE",
+          "trigger_id": "candidate_invalidation_review"
+        }
+      ],
+      "lane_id": "failure_trader:EUR_USD:SHORT:BREAKOUT_FAILURE:LIMIT",
+      "next_review_deadline_utc": "2026-07-02T14:09:10.744865+00:00",
       "next_review_reason": "candidate failure_trader:EUR_USD:SHORT:BREAKOUT_FAILURE:LIMIT requires trader-defined triggers",
-      "no_add_triggers": [],
+      "no_add_triggers": [
+        {
+          "action_hint": "HOLD",
+          "evidence_required": "no add unless the thesis remains ALIVE, guardian/operator-review blockers are clear, and gateway evidence is fresh",
+          "kind": "candidate_no_add_guard",
+          "lane_id": "failure_trader:EUR_USD:SHORT:BREAKOUT_FAILURE:LIMIT",
+          "owner": "SYSTEM",
+          "pair": "EUR_USD",
+          "side": "SHORT",
+          "status": "PENDING",
+          "thesis": "failure_trader EUR_USD SHORT BREAKOUT_FAILURE 2.16R: Create a current order intent with market_context, entry, TP, SL, risk <=2748 JPY, and >=1.2R.",
+          "thesis_state": "ALIVE",
+          "trigger_id": "candidate_no_add_guard"
+        }
+      ],
       "owner": "SYSTEM",
+      "ownership_audit": {
+        "evidence": [
+          "candidate intent is system-generated"
+        ],
+        "status": "SYSTEM",
+        "unresolved": false
+      },
       "pair": "EUR_USD",
       "side": "SHORT",
-      "thesis": "failure_trader EUR_USD SHORT BREAKOUT_FAILURE 3.42R: Create a current order intent with market_context, entry, TP, SL, risk <=1739 JPY, and >=1.2R.",
+      "status": "DRY_RUN_PASSED",
+      "thesis": "failure_trader EUR_USD SHORT BREAKOUT_FAILURE 2.16R: Create a current order intent with market_context, entry, TP, SL, risk <=2748 JPY, and >=1.2R.",
       "thesis_state": "ALIVE",
-      "wounded_triggers": []
+      "wounded_triggers": [
+        {
+          "action_hint": "HOLD",
+          "condition": {
+            "metric": "mid",
+            "operator": ">=",
+            "value": 1.140885
+          },
+          "evidence_required": "failed acceptance, range rail change, or market-read evidence materially weakens the candidate thesis",
+          "kind": "candidate_wounded_review",
+          "lane_id": "failure_trader:EUR_USD:SHORT:BREAKOUT_FAILURE:LIMIT",
+          "owner": "SYSTEM",
+          "pair": "EUR_USD",
+          "side": "SHORT",
+          "status": "PENDING",
+          "thesis": "failure_trader EUR_USD SHORT BREAKOUT_FAILURE 2.16R: Create a current order intent with market_context, entry, TP, SL, risk <=2748 JPY, and >=1.2R.",
+          "thesis_state": "ALIVE",
+          "trigger_id": "candidate_wounded_review"
+        }
+      ]
     },
     {
       "add_triggers": [],
       "emergency_triggers": [],
       "harvest_triggers": [],
       "invalidation_triggers": [],
-      "next_review_deadline_utc": "2026-06-30T08:16:07.025442+00:00",
-      "next_review_reason": "candidate trend_trader:EUR_USD:SHORT:TREND_CONTINUATION requires trader-defined triggers",
+      "lane_id": "range_trader:EUR_USD:SHORT:RANGE_ROTATION",
+      "next_review_deadline_utc": "2026-07-02T14:09:10.744865+00:00",
+      "next_review_reason": "watch-only candidate: no_current_thesis",
       "no_add_triggers": [],
       "owner": "SYSTEM",
+      "ownership_audit": {
+        "evidence": [
+          "candidate intent is system-generated"
+        ],
+        "status": "SYSTEM",
+        "unresolved": false
+      },
       "pair": "EUR_USD",
       "side": "SHORT",
-      "thesis": "trend_trader EUR_USD SHORT TREND_CONTINUATION 3.42R: Create a current order intent with market_context, entry, TP, SL, risk <=1739 JPY, and >=1.2R.",
-      "thesis_state": "ALIVE",
+      "status": "DRY_RUN_BLOCKED",
+      "thesis": "range_trader EUR_USD SHORT RANGE_ROTATION 2.16R: Create a current order intent with market_context, entry, TP, SL, risk <=2748 JPY, and >=1.2R.",
+      "thesis_state": "UNKNOWN",
+      "watch_only": true,
+      "watch_only_reason": "no_current_thesis",
       "wounded_triggers": []
     },
     {
@@ -757,14 +1344,25 @@
       "emergency_triggers": [],
       "harvest_triggers": [],
       "invalidation_triggers": [],
-      "next_review_deadline_utc": "2026-06-30T08:16:07.025442+00:00",
-      "next_review_reason": "candidate failure_trader:EUR_JPY:LONG:BREAKOUT_FAILURE:LIMIT requires trader-defined triggers",
+      "lane_id": "failure_trader:EUR_JPY:LONG:BREAKOUT_FAILURE:LIMIT",
+      "next_review_deadline_utc": "2026-07-02T14:09:10.744865+00:00",
+      "next_review_reason": "watch-only candidate: no_current_thesis",
       "no_add_triggers": [],
       "owner": "SYSTEM",
+      "ownership_audit": {
+        "evidence": [
+          "candidate intent is system-generated"
+        ],
+        "status": "SYSTEM",
+        "unresolved": false
+      },
       "pair": "EUR_JPY",
       "side": "LONG",
-      "thesis": "failure_trader EUR_JPY LONG BREAKOUT_FAILURE 1.50R: Create a current order intent with market_context, entry, TP, SL, risk <=1739 JPY, and >=1.2R.",
-      "thesis_state": "ALIVE",
+      "status": "DRY_RUN_BLOCKED",
+      "thesis": "failure_trader EUR_JPY LONG BREAKOUT_FAILURE 5.46R: Create a current order intent with market_context, entry, TP, SL, risk <=2748 JPY, and >=1.2R.",
+      "thesis_state": "UNKNOWN",
+      "watch_only": true,
+      "watch_only_reason": "no_current_thesis",
       "wounded_triggers": []
     },
     {
@@ -772,14 +1370,25 @@
       "emergency_triggers": [],
       "harvest_triggers": [],
       "invalidation_triggers": [],
-      "next_review_deadline_utc": "2026-06-30T08:16:07.025442+00:00",
-      "next_review_reason": "candidate trend_trader:EUR_JPY:LONG:TREND_CONTINUATION requires trader-defined triggers",
+      "lane_id": "range_trader:EUR_JPY:LONG:RANGE_ROTATION",
+      "next_review_deadline_utc": "2026-07-02T14:09:10.744865+00:00",
+      "next_review_reason": "watch-only candidate: no_current_thesis",
       "no_add_triggers": [],
       "owner": "SYSTEM",
+      "ownership_audit": {
+        "evidence": [
+          "candidate intent is system-generated"
+        ],
+        "status": "SYSTEM",
+        "unresolved": false
+      },
       "pair": "EUR_JPY",
       "side": "LONG",
-      "thesis": "trend_trader EUR_JPY LONG TREND_CONTINUATION 1.50R: Create a current order intent with market_context, entry, TP, SL, risk <=1739 JPY, and >=1.2R.",
-      "thesis_state": "ALIVE",
+      "status": "DRY_RUN_BLOCKED",
+      "thesis": "range_trader EUR_JPY LONG RANGE_ROTATION 2.52R: Create a current order intent with market_context, entry, TP, SL, risk <=2748 JPY, and >=1.2R.",
+      "thesis_state": "UNKNOWN",
+      "watch_only": true,
+      "watch_only_reason": "no_current_thesis",
       "wounded_triggers": []
     },
     {
@@ -787,14 +1396,77 @@
       "emergency_triggers": [],
       "harvest_triggers": [],
       "invalidation_triggers": [],
-      "next_review_deadline_utc": "2026-06-30T08:16:07.025442+00:00",
-      "next_review_reason": "candidate failure_trader:EUR_JPY:SHORT:BREAKOUT_FAILURE:LIMIT requires trader-defined triggers",
+      "lane_id": "trend_trader:EUR_JPY:LONG:TREND_CONTINUATION",
+      "next_review_deadline_utc": "2026-07-02T14:09:10.744865+00:00",
+      "next_review_reason": "watch-only candidate: no_current_thesis",
       "no_add_triggers": [],
       "owner": "SYSTEM",
+      "ownership_audit": {
+        "evidence": [
+          "candidate intent is system-generated"
+        ],
+        "status": "SYSTEM",
+        "unresolved": false
+      },
       "pair": "EUR_JPY",
-      "side": "SHORT",
-      "thesis": "failure_trader EUR_JPY SHORT BREAKOUT_FAILURE 1.50R: Create a current order intent with market_context, entry, TP, SL, risk <=1739 JPY, and >=1.2R.",
-      "thesis_state": "ALIVE",
+      "side": "LONG",
+      "status": "DRY_RUN_BLOCKED",
+      "thesis": "trend_trader EUR_JPY LONG TREND_CONTINUATION 5.46R: Create a current order intent with market_context, entry, TP, SL, risk <=2748 JPY, and >=1.2R.",
+      "thesis_state": "UNKNOWN",
+      "watch_only": true,
+      "watch_only_reason": "no_current_thesis",
+      "wounded_triggers": []
+    },
+    {
+      "add_triggers": [],
+      "emergency_triggers": [],
+      "harvest_triggers": [],
+      "invalidation_triggers": [],
+      "lane_id": "range_trader:USD_CAD:LONG:RANGE_ROTATION",
+      "next_review_deadline_utc": "2026-07-02T14:09:10.744865+00:00",
+      "next_review_reason": "watch-only candidate: no_current_thesis",
+      "no_add_triggers": [],
+      "owner": "SYSTEM",
+      "ownership_audit": {
+        "evidence": [
+          "candidate intent is system-generated"
+        ],
+        "status": "SYSTEM",
+        "unresolved": false
+      },
+      "pair": "USD_CAD",
+      "side": "LONG",
+      "status": "DRY_RUN_BLOCKED",
+      "thesis": "range_trader USD_CAD LONG RANGE_ROTATION 1.95R: Create a current order intent with market_context, entry, TP, SL, risk <=2748 JPY, and >=1.2R.",
+      "thesis_state": "UNKNOWN",
+      "watch_only": true,
+      "watch_only_reason": "no_current_thesis",
+      "wounded_triggers": []
+    },
+    {
+      "add_triggers": [],
+      "emergency_triggers": [],
+      "harvest_triggers": [],
+      "invalidation_triggers": [],
+      "lane_id": "range_trader:EUR_USD:LONG:RANGE_ROTATION",
+      "next_review_deadline_utc": "2026-07-02T14:09:10.744865+00:00",
+      "next_review_reason": "watch-only candidate: no_current_thesis",
+      "no_add_triggers": [],
+      "owner": "SYSTEM",
+      "ownership_audit": {
+        "evidence": [
+          "candidate intent is system-generated"
+        ],
+        "status": "SYSTEM",
+        "unresolved": false
+      },
+      "pair": "EUR_USD",
+      "side": "LONG",
+      "status": "DRY_RUN_BLOCKED",
+      "thesis": "range_trader EUR_USD LONG RANGE_ROTATION 2.16R: Create a current order intent with market_context, entry, TP, SL, risk <=2748 JPY, and >=1.2R.",
+      "thesis_state": "UNKNOWN",
+      "watch_only": true,
+      "watch_only_reason": "no_current_thesis",
       "wounded_triggers": []
     }
   ],
@@ -803,6 +1475,6 @@
     "guardian_never_trades": true,
     "live_order_gateway_required": true
   },
-  "generated_at_utc": "2026-06-30T07:16:07.025442+00:00",
+  "generated_at_utc": "2026-07-02T13:10:16.037750+00:00",
   "schema_version": 1
 }

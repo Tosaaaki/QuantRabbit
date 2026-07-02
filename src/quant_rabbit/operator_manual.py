@@ -8,13 +8,14 @@ from typing import Any
 
 from quant_rabbit.instruments import instrument_pip_factor
 from quant_rabbit.models import AccountSummary, BrokerPosition, BrokerSnapshot, OrderIntent, Owner, Quote, Side
-from quant_rabbit.paths import DEFAULT_OPERATOR_MANUAL_POSITIONS
+from quant_rabbit.paths import DEFAULT_GUARDIAN_RECEIPT_OPERATOR_REVIEW, DEFAULT_OPERATOR_MANUAL_POSITIONS
 
 
 OPERATOR_MANUAL = "OPERATOR_MANUAL"
 OPERATOR_ALPHA_CANDIDATE = "OPERATOR_ALPHA_CANDIDATE"
 OPERATOR_MANUAL_POSITION_PACKET = "OPERATOR_MANUAL_POSITION"
 JPY_FRESH_ADD_BLOCK_CODE = "OPERATOR_MANUAL_JPY_EXPOSURE_ACTIVE"
+SAME_THEME_ADD_BLOCK_CODE = "OPERATOR_MANUAL_SAME_THEME_ADD_BLOCKED"
 OPERATOR_MANUAL_AUTH_METADATA_KEY = "operator_authorized_manual_overlap"
 
 # Broker/account policy mirror of RiskEngine's OANDA Japan retail FX margin.
@@ -26,7 +27,16 @@ OANDA_JP_RETAIL_FX_MARGIN_RATE = 0.04
 
 def load_operator_manual_confirmations(
     path: Path = DEFAULT_OPERATOR_MANUAL_POSITIONS,
+    *,
+    operator_review_path: Path = DEFAULT_GUARDIAN_RECEIPT_OPERATOR_REVIEW,
 ) -> list[dict[str, Any]]:
+    rows = _load_confirmation_rows(path)
+    if path == DEFAULT_OPERATOR_MANUAL_POSITIONS or operator_review_path != DEFAULT_GUARDIAN_RECEIPT_OPERATOR_REVIEW:
+        rows.extend(_load_operator_review_confirmations(operator_review_path))
+    return rows
+
+
+def _load_confirmation_rows(path: Path) -> list[dict[str, Any]]:
     if not path.exists():
         return []
     try:
@@ -39,6 +49,33 @@ def load_operator_manual_confirmations(
     if isinstance(payload, dict):
         return [payload]
     return []
+
+
+def _load_operator_review_confirmations(path: Path) -> list[dict[str, Any]]:
+    if not path.exists():
+        return []
+    try:
+        payload = json.loads(path.read_text())
+    except (OSError, json.JSONDecodeError):
+        return []
+    rows = payload.get("operator_position_reviews") if isinstance(payload, dict) else None
+    if not isinstance(rows, list):
+        return []
+    confirmations: list[dict[str, Any]] = []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        if str(row.get("operator_decision") or "") != "OPERATOR_CONFIRMED_MANUAL_OWNED":
+            continue
+        if str(row.get("owner") or "").upper() != OPERATOR_MANUAL:
+            continue
+        normalized = dict(row)
+        normalized.setdefault("operator_confirmed", True)
+        normalized.setdefault("owner_confirmed", True)
+        normalized.setdefault("classification", OPERATOR_MANUAL)
+        normalized.setdefault("alpha_classification", OPERATOR_ALPHA_CANDIDATE)
+        confirmations.append(normalized)
+    return confirmations
 
 
 def classify_operator_manual_snapshot(
@@ -115,35 +152,48 @@ def operator_manual_position_packets(snapshot: BrokerSnapshot) -> list[dict[str,
                     "not proof that the 162.00 thesis is invalidated"
                 ),
             }
-        packets.append(
-            {
-                "packet_type": OPERATOR_MANUAL_POSITION_PACKET,
-                "classification": seed.get("classification") or OPERATOR_MANUAL,
-                "alpha_classification": seed.get("alpha_classification") or OPERATOR_ALPHA_CANDIDATE,
-                "pair": pair,
-                "side": side,
-                "units": units,
-                "avg_entry": round(avg_entry, 5),
-                "unrealized_pl_jpy": round(upl, 4),
-                "pip_value_jpy_per_pip": round(pip_value, 4) if pip_value is not None else None,
-                "estimated_margin_used_jpy": round(margin_used, 4) if margin_used is not None else None,
-                "thesis": seed.get("thesis") or "operator manual thesis",
-                "invalidation": seed.get("invalidation")
-                or "accepted trade beyond operator invalidation; red P/L alone is not invalidation",
-                "harvest_trigger": seed.get("harvest_trigger") or "operator-managed profit harvest trigger",
-                "harvest_zone": seed.get("harvest_zone") or seed.get("harvest_trigger"),
-                "major_figure": seed.get("major_figure"),
-                "thesis_state": thesis_state["state"],
-                "exact_invalidation_evidence": thesis_state["exact_invalidation_evidence"],
-                "margin_pressure": margin_pressure,
-                "management_rule": (
-                    "observe, TP-assist, and report only; no SL, loss-side close, "
-                    "or averaging unless operator explicitly asks"
-                ),
-                "blocks_fresh_jpy_adds": True,
-                "trade_ids": [position.trade_id for position in group],
-            }
-        )
+        packet = {
+            "packet_type": OPERATOR_MANUAL_POSITION_PACKET,
+            "classification": seed.get("classification") or OPERATOR_MANUAL,
+            "alpha_classification": seed.get("alpha_classification") or OPERATOR_ALPHA_CANDIDATE,
+            "pair": pair,
+            "side": side,
+            "units": units,
+            "avg_entry": round(avg_entry, 5),
+            "unrealized_pl_jpy": round(upl, 4),
+            "pip_value_jpy_per_pip": round(pip_value, 4) if pip_value is not None else None,
+            "estimated_margin_used_jpy": round(margin_used, 4) if margin_used is not None else None,
+            "thesis": seed.get("thesis") or "operator manual thesis",
+            "invalidation": seed.get("invalidation")
+            or "accepted trade beyond operator invalidation; red P/L alone is not invalidation",
+            "harvest_trigger": seed.get("harvest_trigger") or "operator-managed profit harvest trigger",
+            "harvest_zone": seed.get("harvest_zone") or seed.get("harvest_trigger"),
+            "major_figure": seed.get("major_figure"),
+            "thesis_state": thesis_state["state"],
+            "exact_invalidation_evidence": thesis_state["exact_invalidation_evidence"],
+            "margin_pressure": margin_pressure,
+            "management_rule": (
+                "observe, TP-assist, and report only; no SL, loss-side close, "
+                "or averaging unless operator explicitly asks"
+            ),
+            "blocks_fresh_jpy_adds": True,
+            "trade_ids": [position.trade_id for position in group],
+        }
+        for key in (
+            "operator_decision",
+            "management_intent",
+            "reason",
+            "operator_confirmation_source",
+            "no_live_side_effects",
+            "system_pl_counted",
+            "same_theme_auto_add_allowed",
+            "loss_side_auto_close_allowed",
+            "auto_sl_attach_allowed",
+            "auto_tp_modify_allowed",
+        ):
+            if key in seed:
+                packet[key] = seed[key]
+        packets.append(packet)
     return packets
 
 
@@ -199,6 +249,28 @@ def operator_manual_jpy_add_block_issue(intent: OrderIntent, snapshot: BrokerSna
             f"fresh {intent.pair} bot adds require intent.metadata['{OPERATOR_MANUAL_AUTH_METADATA_KEY}']=true"
         ),
     }
+
+
+def operator_manual_same_theme_add_block_issue(intent: OrderIntent, snapshot: BrokerSnapshot) -> dict[str, str] | None:
+    if bool((intent.metadata or {}).get(OPERATOR_MANUAL_AUTH_METADATA_KEY)):
+        return None
+    for position in snapshot.positions:
+        if position.pair != intent.pair or position.side != intent.side:
+            continue
+        if not is_operator_manual_position(position):
+            continue
+        packet = _position_operator_packet(position)
+        if packet.get("same_theme_auto_add_allowed") is not False:
+            continue
+        return {
+            "code": SAME_THEME_ADD_BLOCK_CODE,
+            "message": (
+                f"operator_manual {position.pair} {position.side.value} trade_id={position.trade_id} "
+                "sets same_theme_auto_add_allowed=false; same-theme bot adds require "
+                f"intent.metadata['{OPERATOR_MANUAL_AUTH_METADATA_KEY}']=true"
+            ),
+        }
+    return None
 
 
 def major_figure_fade_thesis_state(
@@ -288,11 +360,13 @@ def _positions_confirmed_by_row(
         return ()
     pair = str(row.get("pair") or "").upper()
     side = str(row.get("side") or "").upper()
+    trade_id = str(row.get("trade_id") or "").strip()
     eligible = tuple(
         candidate
         for candidate in all_positions
         if candidate.pair == pair
         and candidate.side.value == side
+        and (not trade_id or candidate.trade_id == trade_id)
         and candidate.owner in {Owner.UNKNOWN, Owner.MANUAL, Owner.OPERATOR_MANUAL}
         and not _has_system_lane_or_gateway_receipt(candidate)
     )
@@ -332,10 +406,11 @@ def _position_open_sort_key(position: BrokerPosition) -> tuple[datetime, str]:
 
 
 def _packet_from_confirmation(row: dict[str, Any], position: BrokerPosition) -> dict[str, Any]:
-    return {
+    packet = {
         "packet_type": OPERATOR_MANUAL_POSITION_PACKET,
         "classification": OPERATOR_MANUAL,
         "alpha_classification": row.get("alpha_classification") or OPERATOR_ALPHA_CANDIDATE,
+        "trade_id": position.trade_id,
         "pair": position.pair,
         "side": position.side.value,
         "units": abs(int(position.units)),
@@ -351,6 +426,21 @@ def _packet_from_confirmation(row: dict[str, Any], position: BrokerPosition) -> 
         "operator_confirmed": True,
         "system_lane_absent": True,
     }
+    for key in (
+        "operator_decision",
+        "management_intent",
+        "reason",
+        "operator_confirmation_source",
+        "no_live_side_effects",
+        "system_pl_counted",
+        "same_theme_auto_add_allowed",
+        "loss_side_auto_close_allowed",
+        "auto_sl_attach_allowed",
+        "auto_tp_modify_allowed",
+    ):
+        if key in row:
+            packet[key] = row[key]
+    return packet
 
 
 def _has_system_lane_or_gateway_receipt(position: BrokerPosition) -> bool:

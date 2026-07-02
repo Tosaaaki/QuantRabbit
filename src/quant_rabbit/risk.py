@@ -63,7 +63,11 @@ from .forecast_precision import (
 )
 from .instruments import DEFAULT_TRADER_PAIRS, NORMAL_SPREAD_PIPS, instrument_pip_factor
 from .guardian_receipt_consumption import guardian_receipt_new_entry_blockers_from_paths
-from .operator_manual import is_operator_managed_manual_owner, operator_manual_jpy_add_block_issue
+from .operator_manual import (
+    is_operator_managed_manual_owner,
+    operator_manual_jpy_add_block_issue,
+    operator_manual_same_theme_add_block_issue,
+)
 
 # OANDA Japan retail FX margin in the current account is 25:1 leverage, i.e.
 # 4% initial margin. Recent broker truth confirms the same scale: USD_JPY
@@ -2268,6 +2272,14 @@ class RiskEngine:
         operator_manual_block = operator_manual_jpy_add_block_issue(intent, snapshot)
         if operator_manual_block is not None:
             issues.append(RiskIssue(operator_manual_block["code"], operator_manual_block["message"]))
+        operator_manual_same_theme_block = operator_manual_same_theme_add_block_issue(intent, snapshot)
+        if operator_manual_same_theme_block is not None:
+            issues.append(
+                RiskIssue(
+                    operator_manual_same_theme_block["code"],
+                    operator_manual_same_theme_block["message"],
+                )
+            )
 
         entry_relevant_positions = self._entry_relevant_positions(snapshot)
         portfolio_add_mode = self.policy.allow_protected_trader_position_adds
