@@ -3192,6 +3192,28 @@ class TraderPromptRouteTest(unittest.TestCase):
 
         self.assertEqual(route.branch, BRANCH_ENTRY)
 
+    def test_operator_manual_position_with_tp_missing_sl_does_not_force_position_branch(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(
+                root,
+                positions=[
+                    {
+                        "trade_id": "472987",
+                        "pair": "EUR_USD",
+                        "side": "SHORT",
+                        "take_profit": 1.1388,
+                        "stop_loss": None,
+                        "owner": "operator_manual",
+                    }
+                ],
+            )
+
+            route = route_trader_prompts(**_route_paths(files), decision_response_path=None)
+
+        self.assertEqual(route.branch, BRANCH_ENTRY)
+        self.assertFalse(any("needs protection repair" in reason for reason in route.reasons))
+
     def test_routes_existing_decision_response_to_verify_branch(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

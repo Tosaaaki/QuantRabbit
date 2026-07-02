@@ -1165,8 +1165,8 @@ def _position_management_reasons(snapshot: dict[str, Any]) -> tuple[str, ...]:
     for position in snapshot.get("positions", []) or []:
         if not isinstance(position, dict):
             continue
-        owner = str(position.get("owner") or "")
-        if owner in {"manual", "unknown"}:
+        owner = str(position.get("owner") or "").strip().lower()
+        if owner in {"manual", "unknown", "operator_manual"}:
             # Manual/tagless exposure is observed but must not block fresh
             # trader entries. Route to TP-only management only when there is
             # profit to insure/bank, or when the operator explicitly opts into
