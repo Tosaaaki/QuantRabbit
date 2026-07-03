@@ -31,6 +31,7 @@ EXPECTED_CADENCE_MINUTES = 60
 DEFAULT_GRACE_MINUTES = 15
 DEFAULT_LIVE_ROOT = Path(EXPECTED_CWD)
 DEFAULT_AUTOMATION_DIR = Path.home() / ".codex" / "automations" / "qr-trader"
+DEFAULT_WEEKEND_STATE = Path.home() / ".codex" / "quant_rabbit_weekend_task_state.json"
 DEFAULT_CODEX_LOGS = Path.home() / ".codex" / "logs_2.sqlite"
 HIGH_URGENCY_GUARDIAN_ACTIONS = {"REDUCE", "HARVEST", "CANCEL_PENDING"}
 LOW_URGENCY_GUARDIAN_ACTIONS = {"HOLD", "NO_ACTION"}
@@ -49,6 +50,7 @@ class WatchdogPaths:
     root: Path
     automation_toml: Path
     automation_memory: Path
+    weekend_state: Path
     trader_journal: Path
     autotrade_report: Path
     gpt_decision_report: Path
@@ -68,6 +70,7 @@ class WatchdogPaths:
         root: Path,
         *,
         automation_dir: Path | None = None,
+        weekend_state: Path | None = None,
         codex_logs: Path | None = None,
         output_json: Path | None = None,
         output_report: Path | None = None,
@@ -78,6 +81,7 @@ class WatchdogPaths:
             root=root,
             automation_toml=automation / "automation.toml",
             automation_memory=automation / "memory.md",
+            weekend_state=weekend_state or DEFAULT_WEEKEND_STATE,
             trader_journal=root / "logs" / "trader_journal.jsonl",
             autotrade_report=root / "docs" / "autotrade_cycle_report.md",
             gpt_decision_report=root / "docs" / "gpt_trader_decision_report.md",
@@ -103,6 +107,14 @@ def evaluate_watchdog(
     clock = _utc(now_utc or datetime.now(timezone.utc))
     environ = env if env is not None else os.environ
     automation = _automation_config(paths.automation_toml)
+    weekend_pause = _weekend_pause_status(paths.weekend_state, automation, clock)
+    if weekend_pause.get("active"):
+        automation["issues"] = [
+            issue
+            for issue in automation.get("issues", [])
+            if issue.get("code") != "QR_TRADER_AUTOMATION_INACTIVE"
+        ]
+    automation["weekend_pause"] = weekend_pause
     evidence = _latest_run_evidence(paths=paths, now_utc=clock)
     codex_logs = _codex_log_summary(paths.codex_logs, now_utc=clock)
     receipt_consumption = load_guardian_receipt_consumption(paths.guardian_receipt_consumption)
@@ -118,6 +130,7 @@ def evaluate_watchdog(
     )
 
     config_issues = automation["issues"]
+    weekend_cadence_paused = bool(weekend_pause.get("active"))
     expected_cadence = automation.get("cadence_minutes") or EXPECTED_CADENCE_MINUTES
     threshold_minutes = expected_cadence + grace_minutes
     last_trader_run_at = _parse_utc(evidence.get("last_trader_run_at"))
@@ -130,18 +143,24 @@ def evaluate_watchdog(
     if config_issues:
         status = "BROKEN"
     elif last_trader_run_at is None:
-        status = "UNKNOWN"
-        issues.append(
-            _issue(
-                "QR_TRADER_RUN_EVIDENCE_MISSING",
-                "P1",
-                "No usable trader journal, decision artifact, or automation memory timestamp was found.",
+        if weekend_cadence_paused:
+            status = "OK"
+        else:
+            status = "UNKNOWN"
+            issues.append(
+                _issue(
+                    "QR_TRADER_RUN_EVIDENCE_MISSING",
+                    "P1",
+                    "No usable trader journal, decision artifact, or automation memory timestamp was found.",
+                )
             )
-        )
     else:
         minutes_since = round((clock - last_trader_run_at).total_seconds() / 60.0, 3)
         missed_expected_window = minutes_since > threshold_minutes
-        if missed_expected_window:
+        if missed_expected_window and weekend_cadence_paused:
+            missed_expected_window = False
+            status = "OK"
+        elif missed_expected_window:
             status = "STALE"
             issues.append(
                 _issue(
@@ -189,6 +208,7 @@ def evaluate_watchdog(
         "last_decision_artifact_at": evidence["last_decision_artifact_at"],
         "last_memory_at": evidence["last_memory_at"],
         "automation_config": automation,
+        "weekend_pause": weekend_pause,
         "latest_run_evidence": evidence,
         "guardian_receipt": guardian,
         "codex_logs": codex_logs,
@@ -219,6 +239,7 @@ def evaluate_watchdog(
         "artifact_paths": {
             "automation_toml": str(paths.automation_toml),
             "automation_memory": str(paths.automation_memory),
+            "weekend_state": str(paths.weekend_state),
             "trader_journal": str(paths.trader_journal),
             "autotrade_report": str(paths.autotrade_report),
             "gpt_decision_report": str(paths.gpt_decision_report),
@@ -351,6 +372,70 @@ def _automation_config(path: Path) -> dict[str, Any]:
         "cwds": cwds,
         "issues": issues,
     }
+
+
+def _weekend_pause_status(path: Path, automation: dict[str, Any], now_utc: datetime) -> dict[str, Any]:
+    payload = _read_json_object(path)
+    now_jst = now_utc.astimezone(timezone(timedelta(hours=9), "JST"))
+    mode = payload.get("mode") if isinstance(payload, dict) else None
+    managed_keys = payload.get("managed_task_keys") if isinstance(payload, dict) else None
+    tasks = payload.get("tasks") if isinstance(payload, dict) else None
+    changes = payload.get("last_changes") if isinstance(payload, dict) else None
+    qr_trader_managed = (
+        _contains_qr_trader(managed_keys)
+        or _contains_qr_trader(tasks.keys() if isinstance(tasks, dict) else [])
+        or _changes_include_qr_trader(changes)
+    )
+    in_pause_window = _is_weekend_pause_window(now_jst)
+    automation_paused = str(automation.get("status") or "").upper() == "PAUSED"
+    active = bool(
+        payload
+        and mode == "paused"
+        and qr_trader_managed
+        and in_pause_window
+        and automation_paused
+    )
+    return {
+        "path": str(path),
+        "exists": path.exists(),
+        "active": active,
+        "mode": mode,
+        "automation_status": automation.get("status"),
+        "qr_trader_managed": qr_trader_managed,
+        "in_weekend_pause_window": in_pause_window,
+        "now_jst": now_jst.isoformat(),
+        "pause_applied_at_utc": payload.get("pause_applied_at_utc") if isinstance(payload, dict) else None,
+        "created_at_utc": payload.get("created_at_utc") if isinstance(payload, dict) else None,
+        "reason": (
+            "qr-trader is intentionally paused by the weekend task switcher"
+            if active
+            else "no active weekend pause exemption"
+        ),
+    }
+
+
+def _contains_qr_trader(values: Any) -> bool:
+    if not isinstance(values, (list, tuple, set)):
+        return False
+    return any(str(item) == "codex:qr-trader" for item in values)
+
+
+def _changes_include_qr_trader(changes: Any) -> bool:
+    if not isinstance(changes, list):
+        return False
+    return any(isinstance(item, dict) and item.get("key") == "codex:qr-trader" for item in changes)
+
+
+def _is_weekend_pause_window(now_jst: datetime) -> bool:
+    weekday = now_jst.weekday()
+    local_minutes = now_jst.hour * 60 + now_jst.minute
+    if weekday == 5:
+        return local_minutes >= 6 * 60
+    if weekday == 6:
+        return True
+    if weekday == 0:
+        return local_minutes < 7 * 60
+    return False
 
 
 def _load_toml(text: str) -> dict[str, Any]:
@@ -1497,6 +1582,7 @@ def _issue(code: str, severity: str, message: str, **extra: Any) -> dict[str, An
 
 def _render_report(payload: dict[str, Any]) -> str:
     automation = payload["automation_config"]
+    weekend = payload.get("weekend_pause") or {}
     evidence = payload["latest_run_evidence"]
     guardian = payload["guardian_receipt"]
     codex = payload["codex_logs"]
@@ -1529,6 +1615,9 @@ def _render_report(payload: dict[str, Any]) -> str:
         f"- Reasoning effort: `{automation.get('reasoning_effort')}`",
         f"- RRULE: `{automation.get('rrule')}` cadence_minutes=`{automation.get('cadence_minutes')}`",
         f"- CWDs: `{automation.get('cwds')}`",
+        f"- Weekend pause active: `{weekend.get('active')}` mode=`{weekend.get('mode')}` "
+        f"window=`{weekend.get('in_weekend_pause_window')}`",
+        f"- Weekend state: `{weekend.get('path')}` qr_trader_managed=`{weekend.get('qr_trader_managed')}`",
         "",
         "## Latest Run Evidence",
         "",
@@ -1703,6 +1792,7 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Write a read-only qr-trader scheduled-run watchdog report.")
     parser.add_argument("--root", type=Path, default=Path(os.environ.get("QR_TRADER_WATCHDOG_ROOT", str(DEFAULT_LIVE_ROOT))))
     parser.add_argument("--automation-dir", type=Path, default=DEFAULT_AUTOMATION_DIR)
+    parser.add_argument("--weekend-state", type=Path, default=DEFAULT_WEEKEND_STATE)
     parser.add_argument("--codex-logs", type=Path, default=DEFAULT_CODEX_LOGS)
     parser.add_argument("--output", type=Path, default=None)
     parser.add_argument("--report", type=Path, default=None)
@@ -1714,6 +1804,7 @@ def main(argv: list[str] | None = None) -> int:
     paths = WatchdogPaths.from_root(
         args.root,
         automation_dir=args.automation_dir,
+        weekend_state=args.weekend_state,
         codex_logs=args.codex_logs,
         output_json=args.output,
         output_report=args.report,

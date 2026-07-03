@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import json
 import sys
 import tempfile
 import unittest
+from datetime import datetime, timezone
 from pathlib import Path
 
 
@@ -54,6 +56,92 @@ class TaskSyncContractTest(unittest.TestCase):
                 check_task_sync.QR_TRADER_AUTOMATION_PATH = original
 
             self.assertEqual(issues, [])
+
+    def test_qr_trader_automation_validator_accepts_weekend_paused_guard(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            automation = Path(tmp) / "automation.toml"
+            weekend_state = Path(tmp) / "weekend-state.json"
+            prompt = " ".join(check_task_sync.EXPECTED_QR_TRADER_GUARDIAN_STARTUP_READS)
+            automation.write_text(
+                "\n".join(
+                    [
+                        "version = 1",
+                        'id = "qr-trader"',
+                        'kind = "cron"',
+                        'name = "QR vNext Trader"',
+                        f'prompt = "{prompt}"',
+                        'status = "PAUSED"',
+                        'rrule = "RRULE:FREQ=MINUTELY;INTERVAL=60;BYDAY=MO,TU,WE,TH,FR,SA"',
+                        'model = "gpt-5.5"',
+                        'reasoning_effort = "high"',
+                        'execution_environment = "local"',
+                        'cwds = ["/Users/tossaki/App/QuantRabbit-live"]',
+                    ]
+                )
+                + "\n"
+            )
+            weekend_state.write_text(
+                json.dumps({"mode": "paused", "managed_task_keys": ["codex:qr-trader"]}) + "\n",
+                encoding="utf-8",
+            )
+            original_automation = check_task_sync.QR_TRADER_AUTOMATION_PATH
+            original_weekend = check_task_sync.QR_WEEKEND_TASK_STATE_PATH
+            check_task_sync.QR_TRADER_AUTOMATION_PATH = automation
+            check_task_sync.QR_WEEKEND_TASK_STATE_PATH = weekend_state
+            try:
+                issues: list[str] = []
+                check_task_sync._validate_qr_trader_automation(
+                    issues,
+                    now_utc=datetime(2026, 7, 3, 21, 30, tzinfo=timezone.utc),
+                )
+            finally:
+                check_task_sync.QR_TRADER_AUTOMATION_PATH = original_automation
+                check_task_sync.QR_WEEKEND_TASK_STATE_PATH = original_weekend
+
+            self.assertEqual(issues, [])
+
+    def test_qr_trader_automation_validator_rejects_midweek_paused(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            automation = Path(tmp) / "automation.toml"
+            weekend_state = Path(tmp) / "weekend-state.json"
+            prompt = " ".join(check_task_sync.EXPECTED_QR_TRADER_GUARDIAN_STARTUP_READS)
+            automation.write_text(
+                "\n".join(
+                    [
+                        "version = 1",
+                        'id = "qr-trader"',
+                        'kind = "cron"',
+                        'name = "QR vNext Trader"',
+                        f'prompt = "{prompt}"',
+                        'status = "PAUSED"',
+                        'rrule = "RRULE:FREQ=MINUTELY;INTERVAL=60;BYDAY=MO,TU,WE,TH,FR,SA"',
+                        'model = "gpt-5.5"',
+                        'reasoning_effort = "high"',
+                        'execution_environment = "local"',
+                        'cwds = ["/Users/tossaki/App/QuantRabbit-live"]',
+                    ]
+                )
+                + "\n"
+            )
+            weekend_state.write_text(
+                json.dumps({"mode": "paused", "managed_task_keys": ["codex:qr-trader"]}) + "\n",
+                encoding="utf-8",
+            )
+            original_automation = check_task_sync.QR_TRADER_AUTOMATION_PATH
+            original_weekend = check_task_sync.QR_WEEKEND_TASK_STATE_PATH
+            check_task_sync.QR_TRADER_AUTOMATION_PATH = automation
+            check_task_sync.QR_WEEKEND_TASK_STATE_PATH = weekend_state
+            try:
+                issues: list[str] = []
+                check_task_sync._validate_qr_trader_automation(
+                    issues,
+                    now_utc=datetime(2026, 7, 1, 3, 0, tzinfo=timezone.utc),
+                )
+            finally:
+                check_task_sync.QR_TRADER_AUTOMATION_PATH = original_automation
+                check_task_sync.QR_WEEKEND_TASK_STATE_PATH = original_weekend
+
+            self.assertIn("qr-trader automation status expected 'ACTIVE', got 'PAUSED'", issues)
 
     def test_source_dirt_check_requires_explanation_for_guarded_source_files(self) -> None:
         dirty = [

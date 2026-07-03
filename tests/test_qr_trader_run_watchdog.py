@@ -61,6 +61,38 @@ class QRTraderRunWatchdogTest(unittest.TestCase):
             self.assertIn("QR_TRADER_RUN_STALE", _issue_codes(payload))
             self.assertEqual(payload["severity"], "P0")
 
+    def test_weekend_paused_trader_automation_is_ok(self) -> None:
+        now = _dt("2026-07-03T21:30:00+00:00")  # Saturday 06:30 JST.
+        with tempfile.TemporaryDirectory() as tmp:
+            root, automation_dir, paths = _fixture(tmp, now=now)
+            _write_automation(automation_dir, status="PAUSED")
+            _write_weekend_state(paths.weekend_state)
+            _write_decision(root, _dt("2026-07-03T20:00:00+00:00"))
+            _write_journal(root, _dt("2026-07-03T19:59:00+00:00"))
+
+            payload = run_watchdog(paths=paths, now_utc=now)
+
+            self.assertEqual(payload["status"], "OK")
+            self.assertEqual(payload["runtime_status"], "OK")
+            self.assertFalse(payload["missed_expected_window"])
+            self.assertTrue(payload["weekend_pause"]["active"])
+            self.assertNotIn("QR_TRADER_AUTOMATION_INACTIVE", _issue_codes(payload))
+            self.assertNotIn("QR_TRADER_RUN_STALE", _issue_codes(payload))
+
+    def test_midweek_paused_trader_automation_is_broken(self) -> None:
+        now = _dt("2026-07-01T03:00:00+00:00")
+        with tempfile.TemporaryDirectory() as tmp:
+            root, automation_dir, paths = _fixture(tmp, now=now)
+            _write_automation(automation_dir, status="PAUSED")
+            _write_weekend_state(paths.weekend_state)
+            _write_decision(root, _dt("2026-07-01T02:58:00+00:00"))
+
+            payload = run_watchdog(paths=paths, now_utc=now)
+
+            self.assertEqual(payload["status"], "BROKEN")
+            self.assertFalse(payload["weekend_pause"]["active"])
+            self.assertIn("QR_TRADER_AUTOMATION_INACTIVE", _issue_codes(payload))
+
     def test_wrong_model_cadence_and_cwd_is_broken(self) -> None:
         now = _dt("2026-07-01T03:00:00+00:00")
         with tempfile.TemporaryDirectory() as tmp:
@@ -672,6 +704,7 @@ def _fixture(tmp: str, *, now: datetime) -> tuple[Path, Path, WatchdogPaths]:
     paths = WatchdogPaths.from_root(
         root,
         automation_dir=automation_dir,
+        weekend_state=Path(tmp) / "codex" / "quant_rabbit_weekend_task_state.json",
         codex_logs=Path(tmp) / "codex" / "logs_2.sqlite",
     )
     return root, automation_dir, paths
@@ -724,6 +757,32 @@ def _write_memory(automation_dir: Path, generated_at: datetime) -> None:
     memory = automation_dir / "memory.md"
     memory.write_text(f"# memory\n\n- {generated_at.isoformat()} qr-trader run completed\n", encoding="utf-8")
     os.utime(memory, (generated_at.timestamp(), generated_at.timestamp()))
+
+
+def _write_weekend_state(path: Path) -> None:
+    _write_json(
+        path,
+        {
+            "mode": "paused",
+            "pause_applied_at_utc": "2026-07-03T21:01:00+00:00",
+            "managed_task_keys": ["codex:qr-trader"],
+            "last_changes": [
+                {
+                    "key": "codex:qr-trader",
+                    "field": "status",
+                    "before": "ACTIVE",
+                    "after": "PAUSED",
+                    "changed": True,
+                }
+            ],
+            "tasks": {
+                "codex:qr-trader": {
+                    "kind": "codex",
+                    "path": "/Users/tossaki/.codex/automations/qr-trader/automation.toml",
+                }
+            },
+        },
+    )
 
 
 def _write_guardian_receipt(
