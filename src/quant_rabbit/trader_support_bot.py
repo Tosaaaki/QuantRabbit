@@ -252,7 +252,19 @@ class TraderSupportBot:
             if oanda_history_root is not None
             else OANDA_AUDIT_ONLY_REPLAY_HISTORY_ROOT
             if output_path == DEFAULT_TRADER_SUPPORT_BOT
-            else output_path.parent.parent / "logs" / "replay" / "oanda_history"
+            else _infer_oanda_history_root(
+                output_path=output_path,
+                artifact_paths=[
+                    order_intents_path,
+                    broker_snapshot_path,
+                    target_state_path,
+                    profitability_acceptance_path,
+                    self_improvement_audit_path,
+                    execution_timing_audit_path,
+                    oanda_rotation_mining_path,
+                    bidask_replay_validation_path or DEFAULT_BIDASK_REPLAY_VALIDATION,
+                ],
+            )
         )
         self.output_path = output_path
         self.report_path = report_path
@@ -3391,6 +3403,25 @@ def _profit_capture_miss_message(profit_capture: dict[str, Any]) -> str:
     if delta is None:
         return message
     return f"{message}; conservative candle counterfactual delta={delta} JPY"
+
+
+def _infer_oanda_history_root(*, output_path: Path, artifact_paths: list[Path]) -> Path:
+    for path in artifact_paths:
+        root = _project_root_from_artifact_path(path)
+        if root is not None:
+            return root / "logs" / "replay" / "oanda_history"
+    return output_path.parent.parent / "logs" / "replay" / "oanda_history"
+
+
+def _project_root_from_artifact_path(path: Path) -> Path | None:
+    candidate = Path(path).expanduser()
+    if not candidate.is_absolute():
+        candidate = (ROOT / candidate).resolve()
+    parts = candidate.parts
+    for index in range(len(parts) - 1, 0, -1):
+        if parts[index] in {"data", "logs", "src", "docs"}:
+            return Path(*parts[:index])
+    return None
 
 
 def _oanda_audit_only_history_coverage(pairs: list[str], *, history_root: Path) -> dict[str, Any]:

@@ -3639,6 +3639,57 @@ class TraderSupportBotTest(unittest.TestCase):
             self.assertIn("LOCAL_HISTORY_COMPLETE", covered_report)
             self.assertIn("Do not rerun validate/mine/package", covered_report)
 
+    def test_custom_output_uses_artifact_root_for_oanda_history_coverage(self) -> None:
+        now = datetime(2026, 6, 22, 12, 15, tzinfo=timezone.utc)
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            live_root = root / "live"
+            live_root.mkdir()
+            files = _write_fixture(live_root, now=now, blocked=True)
+            scratch = root / "scratch"
+            output = scratch / "trader_support_bot.json"
+            report = scratch / "trader_support_bot_report.md"
+            history_root = live_root / "logs" / "replay" / "oanda_history"
+            start = (now - timedelta(days=120)).strftime("%Y%m%dT%H%M%SZ")
+            end = now.strftime("%Y%m%dT%H%M%SZ")
+            for pair in ("GBP_USD", "NZD_CAD"):
+                pair_dir = history_root / "20260622T121500Z" / pair
+                pair_dir.mkdir(parents=True)
+                for granularity in ("S5", "M5"):
+                    (pair_dir / f"{pair}_{granularity}_BA_{start}_{end}.jsonl").write_text(
+                        "{}\n",
+                        encoding="utf-8",
+                    )
+
+            env = _guardian_env(live_root, active="1")
+            with mock.patch.dict(os.environ, env, clear=False):
+                TraderSupportBot(
+                    broker_snapshot_path=files["broker"],
+                    order_intents_path=files["intents"],
+                    target_state_path=files["target"],
+                    position_management_path=files["position_management"],
+                    position_guardian_management_path=files["guardian_management"],
+                    position_guardian_execution_path=files["guardian_execution"],
+                    position_guardian_heartbeat_path=files["guardian_heartbeat"],
+                    self_improvement_audit_path=files["self_improvement"],
+                    profitability_acceptance_path=files["profitability"],
+                    execution_timing_audit_path=files["timing"],
+                    profit_capture_bot_path=files["profit_capture_bot"],
+                    output_path=output,
+                    report_path=report,
+                    now_utc=now,
+                ).run()
+
+            payload = json.loads(output.read_text())
+            coverage = payload["bidask_current_intent_history_coverage"]
+            self.assertEqual(coverage["history_root"], str(history_root))
+            self.assertEqual(coverage["status"], "LOCAL_HISTORY_COMPLETE")
+            self.assertEqual(coverage["fetch_commands"], [])
+            self.assertEqual(
+                coverage["covered_pairs_by_granularity"],
+                {"S5": ["GBP_USD", "NZD_CAD"], "M5": ["GBP_USD", "NZD_CAD"]},
+            )
+
     def test_opposite_position_counterfactual_that_clears_5pct_becomes_p0_repair_request(self) -> None:
         now = datetime(2026, 6, 24, 10, 22, tzinfo=timezone.utc)
         with tempfile.TemporaryDirectory() as tmp:
