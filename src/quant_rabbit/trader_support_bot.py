@@ -2260,6 +2260,7 @@ def _acceptance_repair_plan(payload: dict[str, Any]) -> dict[str, Any]:
         if isinstance(item, dict)
         and str(item.get("code") or "") in {
             "BIDASK_REPLAY_PRICE_TRUTH_PARTIAL",
+            "BIDASK_REPLAY_ALL_CURRENCY_SAMPLE_COVERAGE_THIN",
             "BIDASK_REPLAY_SUPPORT_NOT_DAILY_STABLE",
             "BIDASK_CONTRARIAN_EDGE_NOT_DAILY_STABLE",
         }
@@ -2637,6 +2638,7 @@ def _acceptance_clearance_for_code(
         )
     if code in {
         "BIDASK_REPLAY_PRICE_TRUTH_PARTIAL",
+        "BIDASK_REPLAY_ALL_CURRENCY_SAMPLE_COVERAGE_THIN",
         "BIDASK_REPLAY_SUPPORT_NOT_DAILY_STABLE",
         "BIDASK_CONTRARIAN_EDGE_NOT_DAILY_STABLE",
     }:
@@ -2659,6 +2661,13 @@ def _acceptance_clearance_for_code(
                 "missing OANDA bid/ask price-truth windows are fetched and the refreshed replay "
                 "report either reaches PRICE_TRUTH_OK or proves that any remaining candidate is "
                 "only rank/audit evidence"
+            )
+        elif code == "BIDASK_REPLAY_ALL_CURRENCY_SAMPLE_COVERAGE_THIN":
+            condition = (
+                "OANDA bid/ask price truth is complete for loaded samples; collect more forecast_history "
+                "samples across the under-sampled pair-directions, then rerun replay validation and require "
+                "global all-currency sample coverage to graduate from UNDER_SAMPLED before claiming "
+                "all-currency high-turn readiness"
             )
         elif code == "BIDASK_REPLAY_SUPPORT_NOT_DAILY_STABLE":
             condition = (
@@ -2704,10 +2713,21 @@ def _acceptance_clearance_for_code(
                 "history_fetch_command_count": price_truth.get("history_fetch_command_count"),
                 "history_fetch_command_mode": price_truth.get("history_fetch_command_mode"),
                 "missing_price_window_group_count": price_truth.get("missing_price_window_group_count"),
+                "all_currency_sample_coverage_status": price_truth.get(
+                    "all_currency_sample_coverage_status"
+                ),
+                "global_currency_validation_blocked": price_truth.get(
+                    "global_currency_validation_blocked"
+                ),
                 "under_sampled_pair_direction_count": (
                     bidask.get("under_sampled_pair_direction_count")
                     if bidask.get("under_sampled_pair_direction_count") is not None
                     else price_truth.get("under_sampled_pair_direction_count")
+                ),
+                "under_sampled_pair_directions": (
+                    bidask.get("under_sampled_pair_directions")
+                    if bidask.get("under_sampled_pair_directions") is not None
+                    else price_truth.get("under_sampled_pair_directions")
                 ),
                 "under_sampled_missing_evaluated_samples": (
                     bidask.get("under_sampled_missing_evaluated_samples")
@@ -4678,6 +4698,8 @@ def _build_repair_requests(
 
     if evidence_items:
         first = evidence_items[0]
+        source_codes = [str(item.get("code")) for item in evidence_items if item.get("code")]
+        all_currency_sample_thin = "BIDASK_REPLAY_ALL_CURRENCY_SAMPLE_COVERAGE_THIN" in source_codes
         summary = first.get("evidence_summary") if isinstance(first.get("evidence_summary"), dict) else {}
         price_truth_fetch_required = _bidask_summary_requires_price_truth_fetch(summary)
         requests.append(
@@ -4694,6 +4716,9 @@ def _build_repair_requests(
                     "Bid/ask replay support is partially missing OANDA price truth, so it cannot be "
                     "counted as live-grade high-turn firepower."
                     if price_truth_fetch_required
+                    else "Bid/ask replay has OANDA price truth for loaded samples, but all-currency "
+                    "pair-direction sample coverage is still too thin to claim high-turn readiness."
+                    if all_currency_sample_thin
                     else "Bid/ask replay price truth is complete, but support remains rank-only because "
                     "forecast sample coverage or daily stability is not yet strong enough."
                 ),
@@ -4701,6 +4726,10 @@ def _build_repair_requests(
                     "Historical replay may expose usable short-horizon edges, but only after missing "
                     "spread-included OANDA BA candles are fetched and replayed."
                     if price_truth_fetch_required
+                    else "Fetching the same candle windows again cannot create the missing pair-direction "
+                    "forecast samples; collect more forecast_history coverage, then rerun the read-only "
+                    "bid/ask replay validator."
+                    if all_currency_sample_thin
                     else "Repeating the same candle fetch cannot create more forecast_history samples or "
                     "repair daily concentration; wait for new forecast evidence before treating these "
                     "rank-only rules as operational firepower."

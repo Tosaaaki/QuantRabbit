@@ -18,6 +18,7 @@ from quant_rabbit.execution_timing_contracts import (
 )
 from quant_rabbit.operator_manual import OPERATOR_MANUAL_POSITION_PACKET
 from quant_rabbit.trader_support_bot import (
+    BIDASK_REPLAY_WAIT_STATUS,
     DIRECTIONAL_INVERSION_COUNTERFACTUAL_REQUEST,
     DIRECTIONAL_INVERSION_REPLAY_WAIT_STATUS,
     FORECAST_FRONTIER_EVIDENCE_WAIT_STATUS,
@@ -250,6 +251,135 @@ class TraderSupportBotTest(unittest.TestCase):
                 "LOSS_CLOSE_PROFIT_CAPTURE_MISSED",
                 payload["profitability_acceptance"]["target_firepower"]["operational_blocker_codes"],
             )
+
+    def test_all_currency_bidask_coverage_thin_enters_evidence_collection_plan(self) -> None:
+        now = datetime(2026, 6, 24, 12, 15, tzinfo=timezone.utc)
+        replay_command = (
+            "python3 scripts/oanda_history_replay_validate.py "
+            "--forecast-history data/forecast_history.jsonl --granularity S5 "
+            "--auto-history-min-days 30 --stable-min-active-days 3 "
+            "--stable-max-daily-sample-share 0.7 "
+            "--stable-min-positive-day-rate 0.6666666667"
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _write_fixture(root, now=now, blocked=False)
+            _write_json(
+                files["profitability"],
+                {
+                    "generated_at_utc": now.isoformat(),
+                    "status": "PROFITABILITY_ACCEPTANCE_BLOCKED",
+                    "blockers": [],
+                    "findings": [
+                        {
+                            "priority": "P1",
+                            "code": "BIDASK_REPLAY_ALL_CURRENCY_SAMPLE_COVERAGE_THIN",
+                            "message": "S5 bid/ask replay has thin all-currency sample coverage",
+                            "next_action": "collect more forecast samples and rerun bid/ask replay",
+                            "evidence": {},
+                        }
+                    ],
+                    "metrics": {
+                        "capture_economics": {},
+                        "bidask_replay_rules": {
+                            "support_rules": 11,
+                            "daily_stable_support_rules": 11,
+                            "rank_only_support_rules": 0,
+                            "edge_rules": 0,
+                            "daily_stable_edge_rules": 0,
+                            "rank_only_edge_rules": 0,
+                            "contrarian_edge_rules": 11,
+                            "daily_stable_contrarian_edge_rules": 11,
+                            "rank_only_contrarian_edge_rules": 0,
+                            "negative_rules": 52,
+                            "price_truth_coverage": {
+                                "status": "PRICE_TRUTH_OK",
+                                "adoption_level": "PAIR_LOCAL_RANK_ONLY",
+                                "all_currency_sample_coverage_status": "UNDER_SAMPLED",
+                                "evaluated_rows": 39680,
+                                "missing_price_truth_samples": 0,
+                                "missing_price_window_group_count": 0,
+                                "history_fetch_command_count": 0,
+                                "history_fetch_command_mode": "WINDOWED",
+                                "global_currency_validation_blocked": True,
+                                "under_sampled_pair_direction_count": 2,
+                                "under_sampled_pair_directions": [
+                                    "AUD_CAD:UP",
+                                    "EUR_JPY:DOWN",
+                                ],
+                                "under_sampled_missing_evaluated_samples": 0,
+                            },
+                            "daily_stability_requirements": {
+                                "min_active_days": 3,
+                                "max_daily_sample_share": 0.7,
+                                "min_positive_day_rate": 2.0 / 3.0,
+                            },
+                            "replay_validation_command": replay_command,
+                        },
+                    },
+                },
+            )
+
+            env = _guardian_env(root, active="1")
+            with mock.patch.dict(os.environ, env, clear=False):
+                summary = TraderSupportBot(
+                    broker_snapshot_path=files["broker"],
+                    order_intents_path=files["intents"],
+                    target_state_path=files["target"],
+                    position_management_path=files["position_management"],
+                    position_guardian_management_path=files["guardian_management"],
+                    position_guardian_execution_path=files["guardian_execution"],
+                    position_guardian_heartbeat_path=files["guardian_heartbeat"],
+                    self_improvement_audit_path=files["self_improvement"],
+                    profitability_acceptance_path=files["profitability"],
+                    execution_timing_audit_path=files["timing"],
+                    profit_capture_bot_path=files["profit_capture_bot"],
+                    output_path=files["output"],
+                    report_path=files["report"],
+                    now_utc=now,
+                ).run()
+
+            payload = json.loads(files["output"].read_text())
+            self.assertEqual(summary.status, STATUS_BLOCKED)
+            self.assertEqual(payload["metrics"]["acceptance_evidence_collection_count"], 1)
+            evidence_item = payload["profitability_acceptance"]["repair_plan"][
+                "evidence_collection_items"
+            ][0]
+            self.assertEqual(
+                evidence_item["code"],
+                "BIDASK_REPLAY_ALL_CURRENCY_SAMPLE_COVERAGE_THIN",
+            )
+            evidence_summary = evidence_item["evidence_summary"]
+            self.assertFalse(evidence_summary["price_truth_fetch_required"])
+            self.assertIsNone(evidence_summary["history_fetch_command"])
+            self.assertEqual(
+                evidence_summary["replay_evidence_status"],
+                BIDASK_REPLAY_WAIT_STATUS,
+            )
+            self.assertEqual(
+                evidence_summary["all_currency_sample_coverage_status"],
+                "UNDER_SAMPLED",
+            )
+            self.assertEqual(evidence_summary["under_sampled_pair_direction_count"], 2)
+            self.assertEqual(
+                evidence_summary["under_sampled_pair_directions"],
+                ["AUD_CAD:UP", "EUR_JPY:DOWN"],
+            )
+            request = next(
+                item
+                for item in payload["repair_requests"]
+                if item["code"] == "COLLECT_BIDASK_REPLAY_EVIDENCE"
+            )
+            self.assertEqual(request["status"], BIDASK_REPLAY_WAIT_STATUS)
+            self.assertEqual(
+                request["source_findings"],
+                ["BIDASK_REPLAY_ALL_CURRENCY_SAMPLE_COVERAGE_THIN"],
+            )
+            self.assertNotIn(
+                "oanda_history_fetch.py",
+                " ".join(str(item) for item in request["verification_commands"]),
+            )
+            self.assertIn("oanda_history_replay_validate.py", request["verification_commands"][0])
 
     def test_acceptance_plan_breaks_loop_when_tp_progress_repair_is_not_deployed(self) -> None:
         condition, command, summary = _acceptance_clearance_for_code(
