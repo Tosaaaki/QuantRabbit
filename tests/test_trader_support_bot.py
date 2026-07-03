@@ -416,6 +416,11 @@ class TraderSupportBotTest(unittest.TestCase):
                 evidence_summary["under_sampled_pair_direction_examples"][0]["pair"],
                 "AUD_CAD",
             )
+            self.assertEqual(
+                evidence_summary["forecast_sample_coverage_detail_status"],
+                "DETAIL_PRESENT",
+            )
+            self.assertFalse(evidence_summary["coverage_detail_repackage_required"])
             request = next(
                 item
                 for item in payload["repair_requests"]
@@ -437,6 +442,62 @@ class TraderSupportBotTest(unittest.TestCase):
                 ],
                 22,
             )
+            self.assertEqual(
+                request["evidence_summary"]["forecast_sample_coverage_detail_status"],
+                "DETAIL_PRESENT",
+            )
+
+    def test_bidask_summary_only_coverage_requests_repackage_detail(self) -> None:
+        source_report = "logs/reports/forecast_improvement/oanda_history_replay_validate_latest.json"
+        condition, command, summary = _acceptance_clearance_for_code(
+            "BIDASK_REPLAY_ALL_CURRENCY_SAMPLE_COVERAGE_THIN",
+            {},
+            {
+                "bidask_replay_rules": {
+                    "generated_at_utc": "2026-06-24T01:40:36.327261Z",
+                    "source_report": source_report,
+                    "packaged_by": "scripts/package_bidask_replay_precision_rules.py",
+                    "history_dirs": ["logs/replay/oanda_history/20260623T082438Z"],
+                    "support_rules": 11,
+                    "daily_stable_support_rules": 11,
+                    "rank_only_support_rules": 0,
+                    "negative_rules": 52,
+                    "price_truth_coverage": {
+                        "status": "PRICE_TRUTH_OK",
+                        "global_currency_validation_blocked": True,
+                        "all_currency_sample_coverage_status": "UNDER_SAMPLED",
+                        "under_sampled_pair_direction_count": 52,
+                    },
+                    "forecast_sample_coverage_summary": {
+                        "min_directional_samples_for_precision_rule": 30,
+                        "min_active_days_for_daily_stability": 3,
+                        "pair_count": 28,
+                        "pair_direction_count": 56,
+                        "under_sampled_pair_directions": 52,
+                    },
+                    "replay_validation_command": (
+                        "python3 scripts/oanda_history_replay_validate.py "
+                        "--forecast-history data/forecast_history.jsonl --granularity S5"
+                    ),
+                }
+            },
+        )
+
+        self.assertIn("sample coverage", condition)
+        self.assertIn("oanda_history_replay_validate.py", command)
+        self.assertEqual(
+            summary["forecast_sample_coverage_detail_status"],
+            "SUMMARY_ONLY_REPACKAGE_REQUIRED",
+        )
+        self.assertTrue(summary["coverage_detail_repackage_required"])
+        self.assertIn(
+            "scripts/package_bidask_replay_precision_rules.py",
+            summary["coverage_detail_repackage_command"],
+        )
+        self.assertIn(source_report, summary["coverage_detail_repackage_command"])
+        self.assertEqual(summary["packaged_source_report"], source_report)
+        self.assertEqual(summary["packaged_by"], "scripts/package_bidask_replay_precision_rules.py")
+        self.assertEqual(summary["packaged_history_dirs"], ["logs/replay/oanda_history/20260623T082438Z"])
 
     def test_acceptance_plan_breaks_loop_when_tp_progress_repair_is_not_deployed(self) -> None:
         condition, command, summary = _acceptance_clearance_for_code(

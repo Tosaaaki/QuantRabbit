@@ -3090,6 +3090,9 @@ class CliHelpTest(unittest.TestCase):
         )
         payload = {
             "granularity": "S5",
+            "generated_at_utc": "2026-06-24T01:40:36.327261Z",
+            "source_report": "logs/reports/forecast_improvement/oanda_history_replay_validate_latest.json",
+            "packaged_by": "scripts/package_bidask_replay_precision_rules.py",
             "history_dirs": ["logs/replay/oanda_history/20260622T222509Z"],
             "adoption_summary": {
                 "live_grade_support_rules": 1,
@@ -3178,6 +3181,12 @@ class CliHelpTest(unittest.TestCase):
 
         codes = [item["code"] for item in findings]
         self.assertEqual(codes, ["BIDASK_REPLAY_ALL_CURRENCY_SAMPLE_COVERAGE_THIN"])
+        self.assertEqual(metrics["generated_at_utc"], "2026-06-24T01:40:36.327261Z")
+        self.assertEqual(
+            metrics["source_report"],
+            "logs/reports/forecast_improvement/oanda_history_replay_validate_latest.json",
+        )
+        self.assertEqual(metrics["packaged_by"], "scripts/package_bidask_replay_precision_rules.py")
         self.assertIsNone(metrics["history_fetch_command"])
         self.assertFalse(metrics["price_truth_fetch_required"])
         self.assertTrue(metrics["forecast_sample_collection_required"])

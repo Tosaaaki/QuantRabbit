@@ -2641,6 +2641,9 @@ def _bidask_rule_findings(payload: dict[str, Any], path: Path) -> tuple[dict[str
     fetch_command, validation_command = _bidask_replay_verification_commands(rank_only, payload)
     metrics = {
         "path": str(path),
+        "generated_at_utc": payload.get("generated_at_utc"),
+        "source_report": payload.get("source_report"),
+        "packaged_by": payload.get("packaged_by"),
         "edge_rules": len(edge_rules),
         "daily_stable_edge_rules": len(daily_stable_edges),
         "rank_only_edge_rules": len(rank_only_edges),

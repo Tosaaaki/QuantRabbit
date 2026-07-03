@@ -100,6 +100,10 @@ ORDER_INTENTS_ARTIFACT_REFRESH_WAIT_STATUS = "ORDER_INTENTS_ARTIFACT_REFRESH_REQ
 PROTECTIVE_FRONTIER_GUARDRAIL_STATUS = "FRONTIER_PROTECTIVE_GUARDRAIL_ACTIVE"
 FRONTIER_STRATEGY_PROFILE_EVIDENCE_WAIT_STATUS = "FRONTIER_STRATEGY_PROFILE_WAITING_FOR_NEW_EVIDENCE"
 BIDASK_REPLAY_WAIT_STATUS = "BIDASK_REPLAY_WAITING_FOR_FORECAST_SAMPLE_COVERAGE"
+BIDASK_COVERAGE_DETAIL_PRESENT = "DETAIL_PRESENT"
+BIDASK_COVERAGE_DETAIL_SUMMARY_ONLY = "SUMMARY_ONLY_REPACKAGE_REQUIRED"
+BIDASK_COVERAGE_DETAIL_MISSING = "MISSING"
+BIDASK_COVERAGE_DETAIL_NOT_REQUIRED = "NO_UNDER_SAMPLED_DETAIL_NEEDED"
 TP_PROGRESS_GUARDIAN_WAIT_STATUS = "WAITING_FOR_POSITION_GUARDIAN_LIVE_EVIDENCE"
 TP_PROGRESS_LIVE_EVIDENCE_WAIT_STATUS = "WAITING_FOR_LIVE_EVIDENCE_WINDOW"
 POSITION_GUARDIAN_LOCK_WAIT_STATUS = "WAITING_FOR_POSITION_GUARDIAN_LOCK_RELEASE"
@@ -2498,6 +2502,24 @@ def _bidask_summary_requires_price_truth_fetch(summary: dict[str, Any]) -> bool:
     return _bidask_price_truth_fetch_required(summary)
 
 
+def _bidask_sample_coverage_detail_status(sample_coverage: dict[str, Any]) -> str:
+    if not sample_coverage:
+        return BIDASK_COVERAGE_DETAIL_MISSING
+    for key in ("under_sampled_pair_direction_examples", "pair_coverage_examples"):
+        examples = sample_coverage.get(key)
+        if isinstance(examples, list) and examples:
+            return BIDASK_COVERAGE_DETAIL_PRESENT
+    gap_reasons = sample_coverage.get("under_sampled_gap_reason_counts")
+    if isinstance(gap_reasons, dict) and gap_reasons:
+        return BIDASK_COVERAGE_DETAIL_PRESENT
+    under_sampled = sample_coverage.get("under_sampled_pair_directions")
+    if isinstance(under_sampled, list) and under_sampled:
+        return BIDASK_COVERAGE_DETAIL_PRESENT
+    if _float(under_sampled) > 0 or _float(sample_coverage.get("under_sampled_pair_direction_count")) > 0:
+        return BIDASK_COVERAGE_DETAIL_SUMMARY_ONLY
+    return BIDASK_COVERAGE_DETAIL_NOT_REQUIRED
+
+
 def _acceptance_clearance_for_code(
     code: str,
     evidence: dict[str, Any],
@@ -2799,12 +2821,27 @@ def _acceptance_clearance_for_code(
             if isinstance(bidask.get("forecast_sample_coverage_summary"), dict)
             else {}
         )
+        coverage_detail_status = _bidask_sample_coverage_detail_status(sample_coverage)
+        coverage_detail_repackage_required = (
+            coverage_detail_status == BIDASK_COVERAGE_DETAIL_SUMMARY_ONLY
+        )
         price_truth_fetch_required = _bidask_price_truth_fetch_required(bidask)
         validation_command = bidask.get("replay_validation_command") or (
             "python3 scripts/oanda_history_replay_validate.py "
             "--forecast-history data/forecast_history.jsonl "
             "--granularity S5"
         )
+        source_report = str(
+            bidask.get("source_report")
+            or "logs/reports/forecast_improvement/oanda_history_replay_validate_latest.json"
+        )
+        coverage_detail_repackage_command = None
+        if coverage_detail_repackage_required:
+            coverage_detail_repackage_command = (
+                "python3 scripts/package_bidask_replay_precision_rules.py "
+                f"--source-report {source_report} "
+                "--output src/quant_rabbit/bidask_replay_precision_rules.json"
+            )
         if code == "BIDASK_REPLAY_PRICE_TRUTH_PARTIAL" or price_truth_fetch_required:
             condition = (
                 "missing OANDA bid/ask price-truth windows are fetched and the refreshed replay "
@@ -2853,8 +2890,21 @@ def _acceptance_clearance_for_code(
                 "daily_stable_contrarian_edge_rules": bidask.get("daily_stable_contrarian_edge_rules"),
                 "rank_only_contrarian_edge_rules": bidask.get("rank_only_contrarian_edge_rules"),
                 "negative_rules": bidask.get("negative_rules"),
+                "packaged_source_report": bidask.get("source_report"),
+                "packaged_by": bidask.get("packaged_by"),
+                "packaged_generated_at_utc": bidask.get("generated_at_utc"),
+                "packaged_history_dirs": bidask.get("history_dirs"),
                 "price_truth_coverage": bidask.get("price_truth_coverage"),
                 "forecast_sample_coverage_summary": sample_coverage,
+                "forecast_sample_coverage_detail_status": coverage_detail_status,
+                "coverage_detail_repackage_required": coverage_detail_repackage_required,
+                "coverage_detail_repackage_command": coverage_detail_repackage_command,
+                "coverage_detail_repair_action": (
+                    "confirm the source report and history_dirs match the broad packaged replay "
+                    "before repackaging; do not replace all-currency evidence with a narrower latest shard"
+                    if coverage_detail_repackage_required
+                    else None
+                ),
                 "minimum_directional_samples_for_precision_rule": sample_coverage.get(
                     "min_directional_samples_for_precision_rule"
                 ),
