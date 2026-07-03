@@ -976,6 +976,38 @@ class GuardianEventRouterTest(unittest.TestCase):
         self.assertIn("CONTRACT_ENTRY_WATCH_DEADLINE_EXPIRED", {issue["code"] for issue in validation["issues"]})
         self.assertNotIn("CONTRACT_STALE", {event.event_type for event in events})
 
+    def test_contract_stale_reason_uses_blocking_issues_not_watch_only_warnings(self) -> None:
+        contract = _contract(
+            entry_overrides={
+                **_open_required_trigger_fields(),
+                "trade_id": "1",
+                "units": 1000,
+                "avg_entry": 1.171,
+                "next_review_deadline_utc": (NOW - timedelta(minutes=1)).isoformat(),
+            }
+        )
+        watch_only = _contract(entry_overrides={"next_review_deadline_utc": (NOW - timedelta(minutes=1)).isoformat()})[
+            "entries"
+        ][0]
+        contract["entries"].append(watch_only)
+        snapshot = _snapshot(
+            positions=[
+                {
+                    "pair": "EUR_USD",
+                    "side": "LONG",
+                    "units": 1000,
+                    "owner": "trader",
+                    "trade_id": "1",
+                }
+            ]
+        )
+
+        events = detect_guardian_events(inputs={"snapshot": snapshot, "trigger_contract": contract}, now=NOW)
+
+        contract_stale = next(event for event in events if event.event_type == "CONTRACT_STALE")
+        self.assertIn("CONTRACT_ENTRY_DEADLINE_EXPIRED", contract_stale.price_zone)
+        self.assertNotIn("CONTRACT_ENTRY_WATCH_DEADLINE_EXPIRED", contract_stale.price_zone)
+
     def test_open_exposure_with_valid_deadline_and_triggers_is_valid(self) -> None:
         contract = _contract(
             entry_overrides={

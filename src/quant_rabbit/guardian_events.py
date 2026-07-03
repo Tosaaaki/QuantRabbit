@@ -2401,7 +2401,12 @@ def _snapshot_has_exposure(snapshot: dict[str, Any]) -> bool:
 
 def _contract_stale_reason(validation: dict[str, Any]) -> str:
     if validation.get("status") != "VALID":
-        codes = ",".join(str(issue.get("code")) for issue in validation.get("issues", []) or [])
+        block_codes = [
+            str(issue.get("code"))
+            for issue in validation.get("issues", []) or []
+            if str(issue.get("severity") or "").upper() == "BLOCK"
+        ]
+        codes = ",".join(block_codes)
         return f"contract invalid: {codes or 'UNKNOWN'}"
     return f"contract stale age_seconds={validation.get('age_seconds')} max={validation.get('max_age_seconds')}"
 
