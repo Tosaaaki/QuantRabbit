@@ -656,6 +656,7 @@ class SelfImprovementAuditor:
                 run_id=run_id,
                 loaded=coverage_loaded,
                 path=coverage_optimization_path,
+                intents=intents,
                 target_open=target_open,
             )
         )
@@ -5301,6 +5302,10 @@ def _intent_findings(
     if target_open and not live_ready:
         entry_path_occupied = bool(active_positions or pending_entry_orders)
         coverage_refresh = _coverage_market_evidence_refresh(coverage_optimization)
+        coverage_freshness = _coverage_source_freshness(
+            coverage_optimization=coverage_optimization,
+            intents=intents,
+        )
         out.append(
             _finding(
                 run_id=run_id,
@@ -5318,9 +5323,14 @@ def _intent_findings(
                     "active_trader_positions": len(active_positions),
                     "trader_pending_entry_orders": _pending_entry_evidence(pending_entry_orders),
                     "coverage_market_evidence_refresh": coverage_refresh,
-                    "opportunity_modes": _coverage_opportunity_mode_summary(coverage_optimization),
+                    "coverage_source_freshness": coverage_freshness,
+                    "opportunity_modes": _coverage_opportunity_mode_summary(
+                        coverage_optimization,
+                        stale_diagnostic_lists=bool(coverage_freshness),
+                    ),
                     "runner_candidate_diagnostics": _coverage_runner_candidate_diagnostics(
-                        coverage_optimization
+                        coverage_optimization,
+                        stale_diagnostic_lists=bool(coverage_freshness),
                     ),
                     "perspective_alignment_diagnostics": _coverage_perspective_alignment_diagnostics(
                         coverage_optimization
@@ -5436,6 +5446,10 @@ def _intent_findings(
             live_ready_count=len(live_ready),
         )
         if coverage_gap:
+            coverage_freshness = _coverage_source_freshness(
+                coverage_optimization=coverage_optimization,
+                intents=intents,
+            )
             out.append(
                 _finding(
                     run_id=run_id,
@@ -5455,9 +5469,14 @@ def _intent_findings(
                         **coverage_gap,
                         "active_trader_positions": len(active_positions),
                         "trader_pending_entry_orders": _pending_entry_evidence(pending_entry_orders),
-                        "opportunity_modes": _coverage_opportunity_mode_summary(coverage_optimization),
+                        "coverage_source_freshness": coverage_freshness,
+                        "opportunity_modes": _coverage_opportunity_mode_summary(
+                            coverage_optimization,
+                            stale_diagnostic_lists=bool(coverage_freshness),
+                        ),
                         "runner_candidate_diagnostics": _coverage_runner_candidate_diagnostics(
-                            coverage_optimization
+                            coverage_optimization,
+                            stale_diagnostic_lists=bool(coverage_freshness),
                         ),
                         "perspective_alignment_diagnostics": _coverage_perspective_alignment_diagnostics(
                             coverage_optimization
@@ -5543,7 +5562,55 @@ def _coverage_modes_live_reward(payload: dict[str, Any]) -> float:
     return reward
 
 
-def _coverage_opportunity_mode_summary(payload: dict[str, Any]) -> dict[str, Any]:
+def _coverage_source_freshness(
+    *,
+    coverage_optimization: dict[str, Any],
+    intents: dict[str, Any],
+) -> dict[str, Any] | None:
+    coverage_ts = _parse_utc(coverage_optimization.get("generated_at_utc"))
+    intents_ts = _parse_utc(intents.get("generated_at_utc"))
+    if coverage_ts is None or intents_ts is None or coverage_ts >= intents_ts:
+        return None
+    return {
+        "status": "STALE_AGAINST_ORDER_INTENTS",
+        "coverage_generated_at_utc": coverage_ts.isoformat(),
+        "order_intents_generated_at_utc": intents_ts.isoformat(),
+        "stale_seconds": round((intents_ts - coverage_ts).total_seconds(), 3),
+        "stale_diagnostic_lists_removed": True,
+    }
+
+
+def _coverage_code_counts(raw: Any, *, stale_diagnostic_lists: bool) -> list[dict[str, Any]]:
+    if stale_diagnostic_lists:
+        return []
+    return [
+        {
+            "code": str(issue.get("code") or ""),
+            "count": _maybe_int(issue.get("count")) or 0,
+        }
+        for issue in (raw or [])[:5]
+        if isinstance(issue, dict) and str(issue.get("code") or "").strip()
+    ]
+
+
+def _coverage_top_blockers(raw: Any, *, stale_diagnostic_lists: bool) -> list[dict[str, Any]]:
+    if stale_diagnostic_lists:
+        return []
+    return [
+        {
+            "label": str(blocker.get("label") or ""),
+            "count": _maybe_int(blocker.get("count")) or 0,
+        }
+        for blocker in (raw or [])[:3]
+        if isinstance(blocker, dict) and str(blocker.get("label") or "").strip()
+    ]
+
+
+def _coverage_opportunity_mode_summary(
+    payload: dict[str, Any],
+    *,
+    stale_diagnostic_lists: bool = False,
+) -> dict[str, Any]:
     modes = payload.get("opportunity_modes") if isinstance(payload.get("opportunity_modes"), dict) else {}
     summary: dict[str, Any] = {}
     for mode in ("HARVEST", "RUNNER", "BALANCED"):
@@ -5571,34 +5638,22 @@ def _coverage_opportunity_mode_summary(payload: dict[str, Any]) -> dict[str, Any
                 for reason in (item.get("top_demotion_reasons") or [])[:5]
                 if isinstance(reason, dict) and str(reason.get("reason") or "").strip()
             ],
-            "top_issue_codes": [
-                {
-                    "code": str(issue.get("code") or ""),
-                    "count": _maybe_int(issue.get("count")) or 0,
-                }
-                for issue in (item.get("top_issue_codes") or [])[:5]
-                if isinstance(issue, dict) and str(issue.get("code") or "").strip()
-            ],
-            "top_live_blocker_codes": [
-                {
-                    "code": str(issue.get("code") or ""),
-                    "count": _maybe_int(issue.get("count")) or 0,
-                }
-                for issue in (item.get("top_live_blocker_codes") or [])[:5]
-                if isinstance(issue, dict) and str(issue.get("code") or "").strip()
-            ],
-            "top_blockers": [
-                {
-                    "label": str(blocker.get("label") or ""),
-                    "count": _maybe_int(blocker.get("count")) or 0,
-                }
-                for blocker in (item.get("top_blockers") or [])[:3]
-                if isinstance(blocker, dict) and str(blocker.get("label") or "").strip()
-            ],
+            "top_issue_codes": _coverage_code_counts(
+                item.get("top_issue_codes"),
+                stale_diagnostic_lists=stale_diagnostic_lists,
+            ),
+            "top_live_blocker_codes": _coverage_code_counts(
+                item.get("top_live_blocker_codes"),
+                stale_diagnostic_lists=stale_diagnostic_lists,
+            ),
+            "top_blockers": _coverage_top_blockers(
+                item.get("top_blockers"),
+                stale_diagnostic_lists=stale_diagnostic_lists,
+            ),
         }
     runner_diag = _coverage_runner_candidate_diagnostics(payload)
     runner = summary.get("RUNNER")
-    if runner and runner_diag:
+    if runner and runner_diag and not stale_diagnostic_lists:
         for key in ("top_issue_codes", "top_live_blocker_codes", "top_blockers"):
             if runner.get(key):
                 continue
@@ -5608,7 +5663,11 @@ def _coverage_opportunity_mode_summary(payload: dict[str, Any]) -> dict[str, Any
     return summary
 
 
-def _coverage_runner_candidate_diagnostics(payload: dict[str, Any]) -> dict[str, Any]:
+def _coverage_runner_candidate_diagnostics(
+    payload: dict[str, Any],
+    *,
+    stale_diagnostic_lists: bool = False,
+) -> dict[str, Any]:
     diagnostics = (
         payload.get("runner_candidate_diagnostics")
         if isinstance(payload.get("runner_candidate_diagnostics"), dict)
@@ -5629,30 +5688,18 @@ def _coverage_runner_candidate_diagnostics(payload: dict[str, Any]) -> dict[str,
             for item in (diagnostics.get("top_demotion_reasons") or [])[:5]
             if isinstance(item, dict) and str(item.get("reason") or "").strip()
         ],
-        "top_issue_codes": [
-            {
-                "code": str(item.get("code") or ""),
-                "count": _maybe_int(item.get("count")) or 0,
-            }
-            for item in (diagnostics.get("top_issue_codes") or [])[:5]
-            if isinstance(item, dict) and str(item.get("code") or "").strip()
-        ],
-        "top_live_blocker_codes": [
-            {
-                "code": str(item.get("code") or ""),
-                "count": _maybe_int(item.get("count")) or 0,
-            }
-            for item in (diagnostics.get("top_live_blocker_codes") or [])[:5]
-            if isinstance(item, dict) and str(item.get("code") or "").strip()
-        ],
-        "top_blockers": [
-            {
-                "label": str(item.get("label") or ""),
-                "count": _maybe_int(item.get("count")) or 0,
-            }
-            for item in (diagnostics.get("top_blockers") or [])[:5]
-            if isinstance(item, dict) and str(item.get("label") or "").strip()
-        ],
+        "top_issue_codes": _coverage_code_counts(
+            diagnostics.get("top_issue_codes"),
+            stale_diagnostic_lists=stale_diagnostic_lists,
+        ),
+        "top_live_blocker_codes": _coverage_code_counts(
+            diagnostics.get("top_live_blocker_codes"),
+            stale_diagnostic_lists=stale_diagnostic_lists,
+        ),
+        "top_blockers": _coverage_top_blockers(
+            diagnostics.get("top_blockers"),
+            stale_diagnostic_lists=stale_diagnostic_lists,
+        ),
     }
 
 
@@ -6269,6 +6316,7 @@ def _coverage_findings(
     run_id: str,
     loaded: _LoadedJson,
     path: Path,
+    intents: dict[str, Any],
     target_open: bool,
 ) -> list[dict[str, Any]]:
     out: list[dict[str, Any]] = []
@@ -6312,6 +6360,10 @@ def _coverage_findings(
     )
     if not bucket_diag:
         return out
+    coverage_freshness = _coverage_source_freshness(
+        coverage_optimization=payload,
+        intents=intents,
+    )
     blocked_edges = _blocked_profitable_bucket_edges(bucket_diag)
     forecast_gated_edges = [edge for edge in blocked_edges if _edge_is_forecast_gated(edge)]
     strategy_gated_edges = [
@@ -6344,7 +6396,11 @@ def _coverage_findings(
                     "positive_pair_directions": bucket_diag.get("positive_pair_directions"),
                     "positive_managed_net_jpy": bucket_diag.get("positive_managed_net_jpy"),
                     "state_counts": bucket_diag.get("state_counts") or {},
-                    "blocked_edges": coverage_repair_edges[:8],
+                    "coverage_source_freshness": coverage_freshness,
+                    "blocked_edges": _coverage_edge_evidence_rows(
+                        coverage_repair_edges,
+                        coverage_freshness=coverage_freshness,
+                    ),
                 },
             )
         )
@@ -6366,7 +6422,11 @@ def _coverage_findings(
                 ),
                 evidence={
                     "coverage_path": str(path),
-                    "forecast_gated_edges": forecast_gated_edges[:8],
+                    "coverage_source_freshness": coverage_freshness,
+                    "forecast_gated_edges": _coverage_edge_evidence_rows(
+                        forecast_gated_edges,
+                        coverage_freshness=coverage_freshness,
+                    ),
                 },
             )
         )
@@ -6387,7 +6447,11 @@ def _coverage_findings(
                 ),
                 evidence={
                     "coverage_path": str(path),
-                    "strategy_gated_edges": strategy_gated_edges[:8],
+                    "coverage_source_freshness": coverage_freshness,
+                    "strategy_gated_edges": _coverage_edge_evidence_rows(
+                        strategy_gated_edges,
+                        coverage_freshness=coverage_freshness,
+                    ),
                 },
             )
         )
@@ -6412,11 +6476,32 @@ def _coverage_findings(
                 ),
                 evidence={
                     "coverage_path": str(path),
-                    "supported_edges": context_supported[:8],
+                    "coverage_source_freshness": coverage_freshness,
+                    "supported_edges": _coverage_edge_evidence_rows(
+                        context_supported,
+                        coverage_freshness=coverage_freshness,
+                    ),
                 },
             )
         )
     return out
+
+
+def _coverage_edge_evidence_rows(
+    edges: list[dict[str, Any]],
+    *,
+    coverage_freshness: dict[str, Any] | None,
+    limit: int = 8,
+) -> list[dict[str, Any]]:
+    rows = [dict(edge) for edge in edges[:limit]]
+    if not coverage_freshness:
+        return rows
+    for row in rows:
+        stale_top_blocker_count = len(row.get("top_blockers") or [])
+        row["top_blockers"] = []
+        row["top_blockers_status"] = "STALE_AGAINST_ORDER_INTENTS"
+        row["stale_top_blocker_count"] = stale_top_blocker_count
+    return rows
 
 
 def _blocked_profitable_bucket_edges(bucket_diag: dict[str, Any]) -> list[dict[str, Any]]:

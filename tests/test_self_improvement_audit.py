@@ -3708,6 +3708,147 @@ class SelfImprovementAuditorTest(unittest.TestCase):
         self.assertEqual(lane_diagnostic["forecast_market_support_best_hit_rate"], 0.82)
         self.assertEqual(lane_diagnostic["forecast_market_support_top_signal"]["name"], "liquidity_sweep_high")
 
+    def test_no_live_ready_strips_stale_coverage_blocker_codes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root, active_position=False, closed_pls=(100.0, 80.0, -50.0))
+            coverage_ts = _NOW - timedelta(minutes=30)
+            files["intents"].write_text(
+                json.dumps(
+                    {
+                        "generated_at_utc": _NOW.isoformat(),
+                        "results": [
+                            {
+                                "lane_id": "range_trader:EUR_USD:SHORT:RANGE_ROTATION",
+                                "status": "DRY_RUN_BLOCKED",
+                                "intent": {
+                                    "pair": "EUR_USD",
+                                    "side": "SHORT",
+                                    "order_type": "LIMIT",
+                                    "metadata": {"opportunity_mode": "HARVEST"},
+                                },
+                                "risk_metrics": {"reward_jpy": 420.0, "reward_risk": 1.18},
+                                "risk_issues": [
+                                    {
+                                        "code": "BIDASK_REPLAY_NEGATIVE_EXPECTANCY_FOR_LIVE",
+                                        "severity": "BLOCK",
+                                        "message": "BIDASK_REPLAY_NEGATIVE_EXPECTANCY_FOR_LIVE",
+                                    }
+                                ],
+                                "live_strategy_issues": [],
+                                "live_blockers": ["BIDASK_REPLAY_NEGATIVE_EXPECTANCY_FOR_LIVE"],
+                            }
+                        ],
+                    }
+                )
+            )
+            files["coverage"].write_text(
+                json.dumps(
+                    {
+                        "generated_at_utc": coverage_ts.isoformat(),
+                        "opportunity_modes": {
+                            "HARVEST": {
+                                "lanes": 1,
+                                "live_ready_lanes": 0,
+                                "reward_jpy": 420.0,
+                                "top_issue_codes": [
+                                    {"code": "POSITION_GUARDIAN_INACTIVE_FOR_PROFIT_CAPTURE", "count": 1}
+                                ],
+                                "top_live_blocker_codes": [
+                                    {"code": "POSITION_GUARDIAN_INACTIVE_FOR_PROFIT_CAPTURE", "count": 1}
+                                ],
+                                "top_blockers": [
+                                    {
+                                        "label": "position guardian inactive P0 blocks LIVE_READY intent generation",
+                                        "count": 1,
+                                    }
+                                ],
+                            }
+                        },
+                        "runner_candidate_diagnostics": {
+                            "status": "RUNNER_CANDIDATES_DEMOTED_TO_HARVEST",
+                            "trend_candidate_lanes": 1,
+                            "runner_qualified_lanes": 0,
+                            "top_issue_codes": [
+                                {"code": "POSITION_GUARDIAN_INACTIVE_FOR_PROFIT_CAPTURE", "count": 1}
+                            ],
+                            "top_live_blocker_codes": [
+                                {"code": "POSITION_GUARDIAN_INACTIVE_FOR_PROFIT_CAPTURE", "count": 1}
+                            ],
+                            "top_blockers": [
+                                {
+                                    "label": "position guardian inactive P0 blocks LIVE_READY intent generation",
+                                    "count": 1,
+                                }
+                            ],
+                        },
+                        "artifact_diagnostics": {
+                            "profitable_bucket_coverage": {
+                                "source_status": "OK",
+                                "live_permission": False,
+                                "positive_pair_directions": 1,
+                                "positive_managed_net_jpy": 120.0,
+                                "state_counts": {"BLOCKED": 1},
+                                "blocked_or_missing_top": [
+                                    {
+                                        "pair": "EUR_USD",
+                                        "direction": "SHORT",
+                                        "coverage_state": "BLOCKED",
+                                        "managed_net_jpy": 120.0,
+                                        "top_blockers": [
+                                            "POSITION_GUARDIAN_INACTIVE_FOR_PROFIT_CAPTURE",
+                                            "position guardian inactive P0 blocks LIVE_READY intent generation",
+                                        ],
+                                        "matrix_support_count": 1,
+                                        "matrix_reject_count": 0,
+                                        "matrix_support_context": ["EUR_USD short_score leads"],
+                                    }
+                                ],
+                            }
+                        },
+                    }
+                )
+            )
+
+            with mock.patch(
+                "quant_rabbit.self_improvement_audit._position_guardian_runtime_status",
+                return_value={"required": False, "active": False},
+            ):
+                summary = _run(files)
+            payload = json.loads(files["output"].read_text())
+            report_text = files["report"].read_text()
+
+        codes = {item["code"]: item for item in payload["findings"]}
+        self.assertEqual(summary.status, STATUS_BLOCKED)
+        evidence = codes["TARGET_OPEN_NO_LIVE_READY_LANES"]["evidence"]
+        self.assertEqual(
+            evidence["coverage_source_freshness"]["status"],
+            "STALE_AGAINST_ORDER_INTENTS",
+        )
+        self.assertEqual(evidence["opportunity_modes"]["HARVEST"]["top_issue_codes"], [])
+        self.assertEqual(evidence["opportunity_modes"]["HARVEST"]["top_live_blocker_codes"], [])
+        self.assertEqual(evidence["opportunity_modes"]["HARVEST"]["top_blockers"], [])
+        self.assertEqual(evidence["runner_candidate_diagnostics"]["top_issue_codes"], [])
+        self.assertEqual(evidence["runner_candidate_diagnostics"]["top_live_blocker_codes"], [])
+        self.assertEqual(
+            evidence["non_live_ready_live_readiness_blockers"][0]["message"],
+            "BIDASK_REPLAY_NEGATIVE_EXPECTANCY_FOR_LIVE",
+        )
+        coverage_gap = codes["PROFITABLE_BACKTEST_EDGE_COVERAGE_GAP"]
+        self.assertEqual(
+            coverage_gap["evidence"]["coverage_source_freshness"]["status"],
+            "STALE_AGAINST_ORDER_INTENTS",
+        )
+        self.assertEqual(coverage_gap["evidence"]["blocked_edges"][0]["top_blockers"], [])
+        self.assertEqual(
+            coverage_gap["evidence"]["blocked_edges"][0]["top_blockers_status"],
+            "STALE_AGAINST_ORDER_INTENTS",
+        )
+        payload_text = json.dumps(payload)
+        self.assertNotIn("POSITION_GUARDIAN_INACTIVE_FOR_PROFIT_CAPTURE", payload_text)
+        self.assertNotIn("position guardian inactive", payload_text)
+        self.assertNotIn("POSITION_GUARDIAN_INACTIVE_FOR_PROFIT_CAPTURE", report_text)
+
     def test_same_side_unselected_projection_arbitration_becomes_forecast_repair_finding(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
