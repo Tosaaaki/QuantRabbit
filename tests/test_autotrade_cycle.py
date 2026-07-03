@@ -29,6 +29,7 @@ from quant_rabbit.gpt_trader import StaticTraderProvider
 from quant_rabbit.models import AccountSummary, BrokerOrder, BrokerPosition, BrokerSnapshot, Owner, Quote, Side
 from quant_rabbit.strategy.entry_thesis_ledger import PendingEntryThesis, record_pending_entry_thesis
 from quant_rabbit.strategy.trader_brain import ACTION_NO_TRADE, ACTION_SEND_ENTRY, LaneScore, TraderDecision
+from tests.support_bidask_rules import write_nonmatching_bidask_rules
 
 
 def _accepted_gpt_close_receipt(
@@ -139,8 +140,16 @@ class AutoTradeCycleTest(unittest.TestCase):
             tmp_root / "missing_oanda_universal_rotation_rules.json"
         )
         forecast_precision._load_oanda_universal_rotation_rule_set.cache_clear()
+        self._bidask_rules_env_prior = os.environ.get(forecast_precision.BIDASK_REPLAY_RULES_ENV)
+        os.environ[forecast_precision.BIDASK_REPLAY_RULES_ENV] = str(write_nonmatching_bidask_rules(tmp_root))
+        forecast_precision._load_bidask_replay_rule_sets.cache_clear()
 
     def tearDown(self) -> None:
+        if self._bidask_rules_env_prior is None:
+            os.environ.pop(forecast_precision.BIDASK_REPLAY_RULES_ENV, None)
+        else:
+            os.environ[forecast_precision.BIDASK_REPLAY_RULES_ENV] = self._bidask_rules_env_prior
+        forecast_precision._load_bidask_replay_rule_sets.cache_clear()
         if self._oanda_rules_env_prior is None:
             os.environ.pop(forecast_precision.OANDA_UNIVERSAL_ROTATION_RULES_ENV, None)
         else:

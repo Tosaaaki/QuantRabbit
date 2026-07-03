@@ -1634,8 +1634,9 @@ def bidask_replay_precision_assessment(
     Positive support is intentionally stricter than the negative block: it
     requires a non-market attached-TP HARVEST shape with TP/SL geometry close to
     the replayed profitable exit grid. Negative evidence blocks the same
-    pair/direction forecast vehicle even if geometry later tries to paper over
-    the direction-level loss.
+    pair/direction forecast vehicle. For RANGE forecasts, it also blocks the
+    directional side being attempted, so an unselected range lane cannot paper
+    over a proven losing bid/ask direction.
     """
 
     if not isinstance(metadata, dict):
@@ -1648,7 +1649,12 @@ def bidask_replay_precision_assessment(
 
     negative_matches: list[dict[str, Any]] = []
     for rule in negative_rules:
-        if not _bidask_replay_rule_matches(rule, normalized_pair, normalized_side, normalized_direction):
+        if not _bidask_replay_negative_rule_matches(
+            rule,
+            normalized_pair,
+            normalized_side,
+            normalized_direction,
+        ):
             continue
         match = _bidask_replay_rule_payload(rule)
         match["blocks_live_support"] = bool(rule.get("blocks_live_support"))
@@ -2169,6 +2175,14 @@ def _side_for_direction(direction: str) -> str:
     return ""
 
 
+def _direction_for_side(side: str) -> str:
+    if side == "LONG":
+        return "UP"
+    if side == "SHORT":
+        return "DOWN"
+    return ""
+
+
 def _bidask_replay_rule_matches(
     rule: dict[str, Any],
     pair: str,
@@ -2180,6 +2194,22 @@ def _bidask_replay_rule_matches(
         and side == str(rule.get("side") or "").upper()
         and direction == str(rule.get("direction") or "").upper()
     )
+
+
+def _bidask_replay_negative_rule_matches(
+    rule: dict[str, Any],
+    pair: str,
+    side: str,
+    forecast_direction: str,
+) -> bool:
+    if _bidask_replay_rule_matches(rule, pair, side, forecast_direction):
+        return True
+    if forecast_direction in {"UP", "DOWN"}:
+        return False
+    attempted_direction = _direction_for_side(side)
+    if not attempted_direction:
+        return False
+    return _bidask_replay_rule_matches(rule, pair, side, attempted_direction)
 
 
 def _bidask_replay_contrarian_rule_matches(

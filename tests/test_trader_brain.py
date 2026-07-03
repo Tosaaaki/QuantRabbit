@@ -8,6 +8,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest import mock
 
+from quant_rabbit import forecast_precision
 from quant_rabbit.models import BrokerOrder, BrokerPosition, BrokerSnapshot, Owner, Quote, Side, TradeMethod
 from quant_rabbit.risk import RiskPolicy
 from quant_rabbit.strategy.trader_brain import (
@@ -49,20 +50,27 @@ from tests.support_bidask_rules import (
 )
 
 
-class TraderBrainTest(unittest.TestCase):
+class _NonmatchingBidaskRulesMixin:
     def setUp(self) -> None:
+        super().setUp()
         self._bidask_tmp = tempfile.TemporaryDirectory()
         self._prior_bidask_rules = os.environ.get("QR_BIDASK_REPLAY_PRECISION_RULES")
         os.environ["QR_BIDASK_REPLAY_PRECISION_RULES"] = str(
             write_nonmatching_bidask_rules(Path(self._bidask_tmp.name))
         )
+        forecast_precision._load_bidask_replay_rule_sets.cache_clear()
 
     def tearDown(self) -> None:
         if self._prior_bidask_rules is None:
             os.environ.pop("QR_BIDASK_REPLAY_PRECISION_RULES", None)
         else:
             os.environ["QR_BIDASK_REPLAY_PRECISION_RULES"] = self._prior_bidask_rules
+        forecast_precision._load_bidask_replay_rule_sets.cache_clear()
         self._bidask_tmp.cleanup()
+        super().tearDown()
+
+
+class TraderBrainTest(_NonmatchingBidaskRulesMixin, unittest.TestCase):
 
     def test_selection_reward_risk_floor_uses_range_policy_floor(self) -> None:
         policy = RiskPolicy()
@@ -3566,7 +3574,7 @@ class ShortTermMomentumClassTest(unittest.TestCase):
         self.assertEqual(SHORT_TERM_MOMENTUM_LOW_ADX, 18.0)
 
 
-class RiskIssueSeverityTest(unittest.TestCase):
+class RiskIssueSeverityTest(_NonmatchingBidaskRulesMixin, unittest.TestCase):
     """Coverage for 2026-05-11 WARN-severity fix in `_score_lane`.
 
     intent_generator downgrades CHART_DIRECTION_CONFLICT to WARN under
@@ -3660,7 +3668,7 @@ class RiskIssueSeverityTest(unittest.TestCase):
             )
 
 
-class CaptureSegmentPriorityPromotionTest(unittest.TestCase):
+class CaptureSegmentPriorityPromotionTest(_NonmatchingBidaskRulesMixin, unittest.TestCase):
     def _capture(self, root: Path, *, priority_class: str) -> Path:
         path = root / "capture_economics.json"
         path.write_text(
@@ -3880,7 +3888,7 @@ class CaptureSegmentPriorityPromotionTest(unittest.TestCase):
         self.assertEqual(rationale, [])
 
 
-class AttackAdvicePromotionTest(unittest.TestCase):
+class AttackAdvicePromotionTest(_NonmatchingBidaskRulesMixin, unittest.TestCase):
     """Coverage for AGENT_CONTRACT §8 attack-advice overlay in the
     trader_brain prefilter (2026-05-11).
 

@@ -516,6 +516,72 @@ class ForecastPrecisionConfluenceTest(unittest.TestCase):
         self.assertTrue(issue["blocks_live_support"])
         self.assertEqual(issue["samples"], 1210)
 
+    def test_bidask_replay_blocks_range_forecast_by_attempted_side_direction(self) -> None:
+        metadata = {
+            "forecast_direction": "RANGE",
+            "forecast_confidence": 0.62,
+            "chart_direction_bias": "LONG",
+        }
+        payload = {
+            "schema_version": 1,
+            "generated_at_utc": "2026-06-22T00:00:00Z",
+            "generated_from": "unit-test-range-negative",
+            "edge_rules": [],
+            "contrarian_edge_rules": [],
+            "negative_rules": [
+                {
+                    "name": "AUD_JPY_UP_S5_BIDASK_NEGATIVE_EXPECTANCY",
+                    "pair": "AUD_JPY",
+                    "side": "LONG",
+                    "direction": "UP",
+                    "granularity": "S5",
+                    "samples": 124,
+                    "directional_hit_rate": 0.2016,
+                    "avg_final_pips": -6.7589,
+                    "avg_mfe_pips": 3.7556,
+                    "avg_mae_pips": 14.371,
+                    "optimized_take_profit_pips": 2.0,
+                    "optimized_stop_loss_pips": 2.0,
+                    "optimized_avg_realized_pips": -2.0,
+                    "optimized_win_rate": 0.0,
+                    "optimized_profit_factor": 0.0,
+                    "blocks_live_support": True,
+                    "audit_report": "unit-test.json",
+                }
+            ],
+        }
+
+        with tempfile.TemporaryDirectory() as tmp:
+            rules_path = Path(tmp) / "bidask_replay_rules.json"
+            rules_path.write_text(json.dumps(payload), encoding="utf-8")
+
+            issue = bidask_replay_negative_precision_issue(
+                metadata,
+                pair="AUD_JPY",
+                side="LONG",
+                order_type="LIMIT",
+                method="BREAKOUT_FAILURE",
+                entry=114.289,
+                take_profit=114.338,
+                stop_loss=114.250,
+                rules_path=rules_path,
+            )
+            opposite_side_issue = bidask_replay_negative_precision_issue(
+                metadata,
+                pair="AUD_JPY",
+                side="SHORT",
+                order_type="LIMIT",
+                method="BREAKOUT_FAILURE",
+                entry=114.289,
+                take_profit=114.239,
+                stop_loss=114.359,
+                rules_path=rules_path,
+            )
+
+        self.assertEqual(issue["name"], "AUD_JPY_UP_S5_BIDASK_NEGATIVE_EXPECTANCY")
+        self.assertTrue(issue["blocks_live_support"])
+        self.assertIsNone(opposite_side_issue)
+
     def test_holdout_confluence_adds_rotation_support_without_live_override(self) -> None:
         metadata = {
             "forecast_direction": "UP",

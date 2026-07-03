@@ -11377,10 +11377,16 @@ def _bidask_replay_negative_precision_issue_for_intent(
     if issue is None:
         return None
     metadata["bidask_replay_precision_negative"] = issue
+    forecast_direction = str(metadata.get("forecast_direction") or "").upper()
+    direction_phrase = (
+        f"forecast {issue['direction']}"
+        if forecast_direction in {"UP", "DOWN"}
+        else f"entry direction {issue['direction']} under {forecast_direction or 'UNKNOWN'} forecast"
+    )
     return {
         "code": "BIDASK_REPLAY_NEGATIVE_EXPECTANCY_FOR_LIVE",
         "message": (
-            f"{intent.pair} {intent.side.value} forecast {issue['direction']} matches S5 bid/ask "
+            f"{intent.pair} {intent.side.value} {direction_phrase} matches S5 bid/ask "
             f"negative replay bucket {issue['name']}: hit_rate="
             f"{float(issue.get('directional_hit_rate') or 0.0):.2f}, avg_final="
             f"{float(issue.get('avg_final_pips') or 0.0):.2f}pip, avg_MAE="
