@@ -421,6 +421,26 @@ class TraderSupportBotTest(unittest.TestCase):
                 "DETAIL_PRESENT",
             )
             self.assertFalse(evidence_summary["coverage_detail_repackage_required"])
+            current_history = evidence_summary["current_intent_local_history_coverage"]
+            self.assertEqual(current_history["status"], "LOCAL_HISTORY_GAP")
+            self.assertEqual(
+                current_history["coverage_basis"],
+                "CURRENT_ORDER_INTENT_PAIRS_LOCAL_OANDA_HISTORY",
+            )
+            self.assertTrue(current_history["diagnostic_only"])
+            self.assertFalse(current_history["price_truth_fetch_required"])
+            self.assertFalse(current_history["clears_bidask_replay_gate"])
+            self.assertEqual(current_history["required_pairs"], ["EUR_USD"])
+            self.assertEqual(
+                current_history["missing_pairs_by_granularity"],
+                {"S5": ["EUR_USD"], "M5": ["EUR_USD"]},
+            )
+            self.assertIn("--pairs EUR_USD", current_history["fetch_commands"][0])
+            self.assertIn("--granularities S5,M5", current_history["fetch_commands"][0])
+            self.assertEqual(
+                payload["bidask_current_intent_history_coverage"]["status"],
+                "LOCAL_HISTORY_GAP",
+            )
             request = next(
                 item
                 for item in payload["repair_requests"]

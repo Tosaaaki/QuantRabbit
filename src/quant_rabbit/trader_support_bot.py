@@ -338,8 +338,15 @@ class TraderSupportBot:
             ],
             history_root=self.oanda_history_root,
         )
+        bidask_current_intent_history_coverage = _bidask_current_intent_history_coverage(
+            entry.get("intent_pairs") if isinstance(entry.get("intent_pairs"), list) else [],
+            history_root=self.oanda_history_root,
+        )
         position = _position_support_summary(position_management, guardian_management, now_utc=self.now_utc)
-        acceptance = _acceptance_summary(profitability)
+        acceptance = _acceptance_summary(
+            profitability,
+            bidask_current_intent_history_coverage=bidask_current_intent_history_coverage,
+        )
 
         blockers = _build_blockers(
             guardian=guardian,
@@ -596,6 +603,7 @@ class TraderSupportBot:
             "current_profit_capture": current_profit_capture,
             "entry_readiness": entry,
             "oanda_history_coverage": oanda_history_coverage,
+            "bidask_current_intent_history_coverage": bidask_current_intent_history_coverage,
             "position_support": position,
             "self_improvement": {
                 "status": self_improvement.get("status") if isinstance(self_improvement, dict) else None,
@@ -1690,6 +1698,7 @@ def _entry_readiness_summary(
     oanda_rotation: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     results = payload.get("results") if isinstance(payload.get("results"), list) else []
+    intent_pairs = _intent_pairs(results)
     live_ready = [item for item in results if item.get("status") == "LIVE_READY"]
     oanda_evidence_by_vehicle = _oanda_replay_evidence_by_vehicle(oanda_rotation or {})
     codes = Counter()
@@ -1861,6 +1870,7 @@ def _entry_readiness_summary(
     return {
         "generated_at_utc": payload.get("generated_at_utc"),
         "lanes": len(results),
+        "intent_pairs": intent_pairs,
         "live_ready_lanes": len(live_ready),
         "live_ready_lane_ids": [item.get("lane_id") for item in live_ready],
         "top_blockers": [{"code": code, "count": count} for code, count in codes.most_common(12)],
@@ -1885,6 +1895,19 @@ def _entry_readiness_summary(
         "month_scale_residual_blocked_intents": month_scale_residual_blocked_intents[:12],
         "month_scale_residual_blocked_intent_count": len(month_scale_residual_blocked_intents),
     }
+
+
+def _intent_pairs(results: list[dict[str, Any]]) -> list[str]:
+    pairs: set[str] = set()
+    for item in results:
+        if not isinstance(item, dict):
+            continue
+        intent = item.get("intent") if isinstance(item.get("intent"), dict) else {}
+        pair = intent.get("pair") or item.get("pair")
+        pair_text = str(pair or "").strip().upper()
+        if pair_text:
+            pairs.add(pair_text)
+    return sorted(pairs)
 
 
 def _near_ready_lane_summary(
@@ -2381,7 +2404,11 @@ def _compact_position_actions(rows: list[dict[str, Any]]) -> list[dict[str, Any]
     return compact
 
 
-def _acceptance_summary(payload: dict[str, Any]) -> dict[str, Any]:
+def _acceptance_summary(
+    payload: dict[str, Any],
+    *,
+    bidask_current_intent_history_coverage: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     metrics = payload.get("metrics") if isinstance(payload.get("metrics"), dict) else {}
     capture = metrics.get("capture_economics") if isinstance(metrics.get("capture_economics"), dict) else {}
     firepower = metrics.get("oanda_campaign_firepower") if isinstance(metrics.get("oanda_campaign_firepower"), dict) else {}
@@ -2391,11 +2418,18 @@ def _acceptance_summary(payload: dict[str, Any]) -> dict[str, Any]:
         "blockers": blockers[:8],
         "capture_economics": capture,
         "target_firepower": _target_firepower_summary(firepower),
-        "repair_plan": _acceptance_repair_plan(payload),
+        "repair_plan": _acceptance_repair_plan(
+            payload,
+            bidask_current_intent_history_coverage=bidask_current_intent_history_coverage,
+        ),
     }
 
 
-def _acceptance_repair_plan(payload: dict[str, Any]) -> dict[str, Any]:
+def _acceptance_repair_plan(
+    payload: dict[str, Any],
+    *,
+    bidask_current_intent_history_coverage: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     findings = payload.get("findings") if isinstance(payload.get("findings"), list) else []
     p0_findings = [
         item
@@ -2418,7 +2452,13 @@ def _acceptance_repair_plan(payload: dict[str, Any]) -> dict[str, Any]:
     items: list[dict[str, Any]] = []
     if p0_findings:
         for finding in p0_findings[:12]:
-            items.append(_acceptance_repair_item(finding, metrics))
+            items.append(
+                _acceptance_repair_item(
+                    finding,
+                    metrics,
+                    bidask_current_intent_history_coverage=bidask_current_intent_history_coverage,
+                )
+            )
     elif fallback_blockers:
         for blocker in fallback_blockers[:12]:
             code, message = _split_blocker(str(blocker))
@@ -2432,9 +2472,17 @@ def _acceptance_repair_plan(payload: dict[str, Any]) -> dict[str, Any]:
                         "evidence": {},
                     },
                     metrics,
+                    bidask_current_intent_history_coverage=bidask_current_intent_history_coverage,
                 )
             )
-    evidence_items = [_acceptance_repair_item(finding, metrics) for finding in evidence_findings[:8]]
+    evidence_items = [
+        _acceptance_repair_item(
+            finding,
+            metrics,
+            bidask_current_intent_history_coverage=bidask_current_intent_history_coverage,
+        )
+        for finding in evidence_findings[:8]
+    ]
     commands: list[str] = []
     seen = set()
     for item in [*items, *evidence_items]:
@@ -2462,10 +2510,20 @@ def _acceptance_repair_plan(payload: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _acceptance_repair_item(finding: dict[str, Any], metrics: dict[str, Any]) -> dict[str, Any]:
+def _acceptance_repair_item(
+    finding: dict[str, Any],
+    metrics: dict[str, Any],
+    *,
+    bidask_current_intent_history_coverage: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     code = str(finding.get("code") or "UNKNOWN_ACCEPTANCE_BLOCKER")
     evidence = finding.get("evidence") if isinstance(finding.get("evidence"), dict) else {}
-    condition, command, summary = _acceptance_clearance_for_code(code, evidence, metrics)
+    condition, command, summary = _acceptance_clearance_for_code(
+        code,
+        evidence,
+        metrics,
+        bidask_current_intent_history_coverage=bidask_current_intent_history_coverage,
+    )
     return {
         "code": code,
         "priority": str(finding.get("priority") or "P0"),
@@ -2524,6 +2582,8 @@ def _acceptance_clearance_for_code(
     code: str,
     evidence: dict[str, Any],
     metrics: dict[str, Any],
+    *,
+    bidask_current_intent_history_coverage: dict[str, Any] | None = None,
 ) -> tuple[str, str, dict[str, Any]]:
     if code == "SELF_IMPROVEMENT_P0_PRESENT":
         p0_findings = evidence.get("p0_findings") if isinstance(evidence.get("p0_findings"), list) else []
@@ -2948,6 +3008,13 @@ def _acceptance_clearance_for_code(
                     else price_truth.get("under_sampled_missing_evaluated_samples")
                 ),
                 "rank_only_examples": examples[:3],
+                **(
+                    {
+                        "current_intent_local_history_coverage": bidask_current_intent_history_coverage,
+                    }
+                    if isinstance(bidask_current_intent_history_coverage, dict)
+                    else {}
+                ),
             },
         )
     if code == "EXECUTION_LEDGER_GATEWAY_RECEIPT_STREAM_STALE":
@@ -3392,6 +3459,32 @@ def _oanda_audit_only_history_coverage(pairs: list[str], *, history_root: Path) 
         "fetch_commands": fetch_commands,
         "complete": complete,
     }
+
+
+def _bidask_current_intent_history_coverage(
+    pairs: list[str],
+    *,
+    history_root: Path,
+) -> dict[str, Any]:
+    coverage = _oanda_audit_only_history_coverage(pairs, history_root=history_root)
+    status = str(coverage.get("status") or "")
+    if status == "PRICE_TRUTH_FETCH_REQUIRED":
+        status = "LOCAL_HISTORY_GAP"
+    elif status == "LOCAL_HISTORY_COMPLETE":
+        status = "LOCAL_HISTORY_COMPLETE"
+    elif status == "NOT_REQUIRED":
+        status = "NOT_REQUIRED"
+    coverage["status"] = status
+    coverage["coverage_basis"] = "CURRENT_ORDER_INTENT_PAIRS_LOCAL_OANDA_HISTORY"
+    coverage["diagnostic_only"] = True
+    coverage["price_truth_fetch_required"] = False
+    coverage["clears_bidask_replay_gate"] = False
+    coverage["reason"] = (
+        "local BA candle availability for the current order_intents pair universe; "
+        "fetch commands here are read-only diagnostics and do not clear packaged "
+        "bid/ask replay price-truth or forecast-sample gates by themselves"
+    )
+    return coverage
 
 
 def _oanda_history_file_summary(path: Path, match: re.Match[str]) -> dict[str, Any] | None:
