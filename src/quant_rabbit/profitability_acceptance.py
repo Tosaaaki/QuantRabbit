@@ -667,6 +667,8 @@ def _execution_ledger_close_findings(
         "path": str(path),
         "ledger_exists": path.exists(),
         "lookback_days": LOSS_CLOSE_LEAK_LOOKBACK_DAYS,
+        "audit_now_utc": audit_now.isoformat(),
+        "recent_cutoff_utc": None,
         "execution_timing_audit": timing_metrics,
         "gateway_market_closes": 0,
         "recent_gateway_market_closes": 0,
@@ -1019,7 +1021,8 @@ def _execution_ledger_close_findings(
     if not parsed or latest_ts is None:
         return metrics, []
 
-    cutoff = latest_ts - timedelta(days=LOSS_CLOSE_LEAK_LOOKBACK_DAYS)
+    cutoff = audit_now - timedelta(days=LOSS_CLOSE_LEAK_LOOKBACK_DAYS)
+    metrics["recent_cutoff_utc"] = cutoff.isoformat()
     recent = [row for row in parsed if row["ts"] >= cutoff]
     recent_losses = [
         row for row in recent if (_optional_float(row.get("realized_pl_jpy")) or 0.0) < 0.0

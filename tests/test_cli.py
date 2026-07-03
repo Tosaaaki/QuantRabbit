@@ -586,6 +586,9 @@ class CliHelpTest(unittest.TestCase):
             oanda_rotation = root / "oanda_rotation.json"
             output = root / "acceptance.json"
             report = root / "acceptance.md"
+            recent_close_dt = datetime.now(timezone.utc) - timedelta(hours=1)
+            recent_close_ts = recent_close_dt.isoformat()
+            recent_closed_ts = (recent_close_dt + timedelta(seconds=5)).isoformat()
 
             target.write_text(json.dumps({"status": "PURSUE_TARGET", "remaining_target_jpy": 5000.0}))
             intents.write_text(
@@ -701,7 +704,7 @@ class CliHelpTest(unittest.TestCase):
                     """,
                     [
                         (
-                            "2026-06-21T00:00:00+00:00",
+                            recent_close_ts,
                             "GATEWAY_TRADE_CLOSE_RECONCILED",
                             "T-loss",
                             "O-loss",
@@ -712,7 +715,7 @@ class CliHelpTest(unittest.TestCase):
                             "BROKER_TRADE_CLOSE_TRADER_ENTRY_RECONCILED",
                         ),
                         (
-                            "2026-06-21T00:00:00+00:00",
+                            recent_closed_ts,
                             "TRADE_CLOSED",
                             "T-loss",
                             "O-loss",
@@ -1169,7 +1172,10 @@ class CliHelpTest(unittest.TestCase):
                     ],
                 )
 
-            metrics, findings = _execution_ledger_close_findings(ledger)
+            metrics, findings = _execution_ledger_close_findings(
+                ledger,
+                now_utc=datetime(2026, 6, 21, 1, 0, tzinfo=timezone.utc),
+            )
 
         codes = {item["code"] for item in findings}
         self.assertIn("RECENT_GATEWAY_LOSS_MARKET_CLOSE_LEAK", codes)
@@ -1181,6 +1187,87 @@ class CliHelpTest(unittest.TestCase):
             metrics["recent_loss_examples"][0]["close_provenance"],
             "GATEWAY_TRADE_CLOSE_SENT",
         )
+
+    def test_profitability_acceptance_recent_close_window_uses_audit_time(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            ledger = Path(tmp) / "execution_ledger.db"
+            with sqlite3.connect(ledger) as conn:
+                conn.execute(
+                    """
+                    CREATE TABLE execution_events (
+                        ts_utc TEXT,
+                        event_type TEXT,
+                        trade_id TEXT,
+                        order_id TEXT,
+                        lane_id TEXT,
+                        pair TEXT,
+                        side TEXT,
+                        realized_pl_jpy REAL,
+                        exit_reason TEXT,
+                        raw_json TEXT
+                    )
+                    """
+                )
+                conn.executemany(
+                    """
+                    INSERT INTO execution_events (
+                        ts_utc, event_type, trade_id, order_id, lane_id, pair, side,
+                        realized_pl_jpy, exit_reason, raw_json
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    [
+                        (
+                            "2026-06-19T14:20:02+00:00",
+                            "GATEWAY_GPT_CLOSE_ACCEPTED",
+                            "472743",
+                            None,
+                            "range_trader:NZD_USD:LONG:RANGE_ROTATION",
+                            "NZD_USD",
+                            "LONG",
+                            None,
+                            "GPT_CLOSE_ACCEPTED",
+                            json.dumps({"decision": {"action": "CLOSE", "close_trade_ids": ["472743"]}}),
+                        ),
+                        (
+                            "2026-06-19T14:22:08+00:00",
+                            "GATEWAY_TRADE_CLOSE_SENT",
+                            "472743",
+                            "472750",
+                            "range_trader:NZD_USD:LONG:RANGE_ROTATION",
+                            "NZD_USD",
+                            "LONG",
+                            None,
+                            "GPT_CLOSE",
+                            "{}",
+                        ),
+                        (
+                            "2026-06-19T14:22:09+00:00",
+                            "TRADE_CLOSED",
+                            "472743",
+                            "472750",
+                            "range_trader:NZD_USD:LONG:RANGE_ROTATION",
+                            "NZD_USD",
+                            "LONG",
+                            -1380.8008,
+                            "MARKET_ORDER_TRADE_CLOSE",
+                            "{}",
+                        ),
+                    ],
+                )
+
+            metrics, findings = _execution_ledger_close_findings(
+                ledger,
+                now_utc=datetime(2026, 7, 3, 8, 52, tzinfo=timezone.utc),
+            )
+
+        codes = {item["code"] for item in findings}
+        self.assertEqual(metrics["gateway_market_closes"], 1)
+        self.assertEqual(metrics["latest_gateway_market_close_ts_utc"], "2026-06-19T14:22:08+00:00")
+        self.assertEqual(metrics["recent_cutoff_utc"], "2026-06-26T08:52:00+00:00")
+        self.assertEqual(metrics["recent_loss_closes"], 0)
+        self.assertNotIn("RECENT_GATEWAY_LOSS_MARKET_CLOSE_LEAK", codes)
+        self.assertNotIn("LOSS_CLOSE_GATE_EVIDENCE_MISSING", codes)
 
     def test_profitability_acceptance_excludes_timing_contained_loss_from_recent_leak(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -1480,6 +1567,7 @@ class CliHelpTest(unittest.TestCase):
             metrics, findings = _execution_ledger_close_findings(
                 ledger,
                 execution_timing_audit_path=timing,
+                now_utc=datetime(2026, 6, 21, 1, 0, tzinfo=timezone.utc),
             )
 
         codes = {item["code"] for item in findings}
@@ -1596,6 +1684,7 @@ class CliHelpTest(unittest.TestCase):
             metrics, findings = _execution_ledger_close_findings(
                 ledger,
                 execution_timing_audit_path=timing,
+                now_utc=datetime(2026, 6, 21, 1, 0, tzinfo=timezone.utc),
             )
 
         codes = {item["code"] for item in findings}
@@ -1715,6 +1804,7 @@ class CliHelpTest(unittest.TestCase):
             metrics, findings = _execution_ledger_close_findings(
                 ledger,
                 execution_timing_audit_path=timing,
+                now_utc=datetime(2026, 6, 21, 1, 0, tzinfo=timezone.utc),
             )
 
         codes = {item["code"] for item in findings}
@@ -1844,6 +1934,7 @@ class CliHelpTest(unittest.TestCase):
             metrics, findings = _execution_ledger_close_findings(
                 ledger,
                 execution_timing_audit_path=timing,
+                now_utc=datetime(2026, 6, 21, 1, 0, tzinfo=timezone.utc),
             )
 
         codes = {item["code"] for item in findings}
@@ -1965,6 +2056,7 @@ class CliHelpTest(unittest.TestCase):
             metrics, findings = _execution_ledger_close_findings(
                 ledger,
                 execution_timing_audit_path=timing,
+                now_utc=datetime(2026, 6, 21, 1, 0, tzinfo=timezone.utc),
             )
 
         codes = {item["code"] for item in findings}
@@ -2096,6 +2188,7 @@ class CliHelpTest(unittest.TestCase):
             metrics, findings = _execution_ledger_close_findings(
                 ledger,
                 execution_timing_audit_path=timing,
+                now_utc=datetime(2026, 6, 21, 1, 0, tzinfo=timezone.utc),
             )
 
         codes = {item["code"] for item in findings}
@@ -2206,6 +2299,7 @@ class CliHelpTest(unittest.TestCase):
             metrics, findings = _execution_ledger_close_findings(
                 ledger,
                 execution_timing_audit_path=timing,
+                now_utc=datetime(2026, 6, 21, 1, 0, tzinfo=timezone.utc),
             )
 
         leak = next(
@@ -2392,7 +2486,10 @@ class CliHelpTest(unittest.TestCase):
                     ],
                 )
 
-            metrics, findings = _execution_ledger_close_findings(ledger)
+            metrics, findings = _execution_ledger_close_findings(
+                ledger,
+                now_utc=datetime(2026, 6, 21, 1, 0, tzinfo=timezone.utc),
+            )
 
         self.assertEqual(metrics["recent_loss_closes"], 1)
         self.assertEqual(
@@ -2489,7 +2586,10 @@ class CliHelpTest(unittest.TestCase):
                     ],
                 )
 
-            metrics, findings = _execution_ledger_close_findings(ledger)
+            metrics, findings = _execution_ledger_close_findings(
+                ledger,
+                now_utc=datetime(2026, 6, 21, 1, 0, tzinfo=timezone.utc),
+            )
 
         codes = {item["code"] for item in findings}
         self.assertIn("RECENT_GATEWAY_LOSS_MARKET_CLOSE_LEAK", codes)
