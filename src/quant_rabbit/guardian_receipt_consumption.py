@@ -61,23 +61,18 @@ def build_guardian_receipt_consumption(
 ) -> dict[str, Any]:
     watchdog = watchdog_payload if isinstance(watchdog_payload, dict) else {}
     now = (now_utc or datetime.now(timezone.utc)).astimezone(timezone.utc)
+    existing_rows = _classification_rows(existing)
     existing_by_key = {
         _classification_key(item): item
-        for item in _classification_rows(existing)
-        if _classification_key(item)
+        for item in existing_rows
+        if _has_receipt_key(_classification_key(item))
     }
     issues = _watchdog_guardian_issues(watchdog)
-    existing_review_required = [
-        _classification_row_as_issue(row)
-        for row in _classification_rows(existing)
-        if receipt_requires_operator_review(row)
-    ]
     seen_issue_keys = {_issue_key(issue) for issue in issues}
-    for issue in existing_review_required:
+    for issue in _preserved_existing_issues(existing_rows, seen_issue_keys):
         key = _issue_key(issue)
-        if key not in seen_issue_keys:
-            issues.append(issue)
-            seen_issue_keys.add(key)
+        issues.append(issue)
+        seen_issue_keys.add(key)
     rows: list[dict[str, Any]] = []
     for issue in issues:
         row = _classification_from_issue(
@@ -575,6 +570,25 @@ def _classification_row_as_issue(row: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _preserved_existing_issues(
+    rows: list[dict[str, Any]],
+    seen_issue_keys: set[tuple[str, str, str, str]],
+) -> list[dict[str, Any]]:
+    preserved: list[dict[str, Any]] = []
+    for row in rows:
+        key = _classification_key(row)
+        if not _has_receipt_key(key) or key in seen_issue_keys:
+            continue
+        classification = str(row.get("classification") or "").upper()
+        if receipt_requires_operator_review(row) or (
+            row.get("normal_routing_allowed") is True
+            and classification in ACKNOWLEDGED_CLASSIFICATIONS
+        ):
+            preserved.append(_classification_row_as_issue(row))
+            seen_issue_keys.add(key)
+    return preserved
+
+
 def _env_path(name: str, fallback: Path | None) -> Path:
     raw = os.environ.get(name)
     if raw:
@@ -618,6 +632,10 @@ def _classification_key(row: dict[str, Any]) -> tuple[str, str, str, str]:
 
 def _issue_key(issue: dict[str, Any]) -> tuple[str, str, str, str]:
     return _key(_issue_code(issue), _issue_event_id(issue), _issue_action(issue), _issue_lifecycle(issue))
+
+
+def _has_receipt_key(key: tuple[str, str, str, str]) -> bool:
+    return any(key[1:])
 
 
 def _key(

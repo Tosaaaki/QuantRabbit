@@ -98,6 +98,52 @@ class GuardianReceiptOperatorReviewTest(unittest.TestCase):
         self.assertFalse(consumption["normal_routing_allowed"])
         self.assertTrue(consumption["current_p0_p1_blocks_routing"])
 
+    def test_acknowledged_historical_rows_survive_watchdog_issue_rotation(self) -> None:
+        now = datetime(2026, 7, 2, tzinfo=timezone.utc)
+        old_row = _consumption_row(
+            classification="HISTORICAL_ONLY",
+            receipt_event_id="old-historical",
+            receipt_action="HOLD",
+        )
+        old_row["normal_routing_allowed"] = True
+        current_issue = {
+            "code": "GUARDIAN_RECEIPT_NOT_CONSUMED_BY_TRADER",
+            "severity": "WARN",
+            "receipt_event_id": "new-expired",
+            "receipt_action": "HOLD",
+            "receipt_lifecycle": "EXPIRED",
+            "receipt_sources": ["archive"],
+            "consumed_by_trader": False,
+        }
+        watchdog = {
+            "status": "STALE",
+            "issue_status": "P0",
+            "issues": [{"code": "QR_TRADER_RUN_STALE", "severity": "P0"}],
+            "guardian_receipt": {"issues": [current_issue]},
+        }
+
+        consumption = build_guardian_receipt_consumption(
+            watchdog,
+            existing={"classifications": [old_row]},
+            operator_review={},
+            broker_snapshot={"positions": [], "orders": []},
+            now_utc=now,
+        )
+
+        by_event = {row["receipt_event_id"]: row for row in consumption["classifications"]}
+        self.assertEqual(set(by_event), {"old-historical", "new-expired"})
+        self.assertEqual(by_event["old-historical"]["classification"], "HISTORICAL_ONLY")
+        self.assertTrue(by_event["old-historical"]["normal_routing_allowed"])
+        self.assertEqual(by_event["new-expired"]["classification"], "HISTORICAL_ONLY")
+        self.assertTrue(by_event["new-expired"]["normal_routing_allowed"])
+        blockers = guardian_receipt_new_entry_blockers(
+            watchdog,
+            consumption,
+            {"normal_routing_allowed": True},
+            {"positions": [], "orders": []},
+        )
+        self.assertEqual({item["code"] for item in blockers}, {WATCHDOG_BLOCK_NEW_ENTRY_CODE})
+
     def test_stale_operator_review_keeps_blocker_active(self) -> None:
         now = datetime(2026, 7, 2, tzinfo=timezone.utc)
         issue = _issue()
