@@ -511,6 +511,29 @@ class TraderSupportBotTest(unittest.TestCase):
             )
             self.assertEqual(payload["current_profit_capture"]["watch_positions"], 1)
             self.assertEqual(payload["entry_readiness"]["guardian_blocked_lanes"], 2)
+            self.assertEqual(payload["metrics"]["near_ready_lane_count"], 2)
+            self.assertEqual(
+                payload["metrics"]["near_ready_blocker_groups"][0],
+                {
+                    "group": "global",
+                    "count": 2,
+                    "example_lane_ids": [
+                        "range_trader:NZD_CAD:LONG:RANGE_ROTATION",
+                        "failure_trader:GBP_USD:LONG:BREAKOUT_FAILURE:LIMIT",
+                    ],
+                },
+            )
+            near_ready = payload["entry_readiness"]["near_ready_lanes"]
+            self.assertEqual(near_ready[0]["lane_id"], "range_trader:NZD_CAD:LONG:RANGE_ROTATION")
+            self.assertTrue(near_ready[0]["ordinary_fresh_entries_must_remain_blocked"])
+            self.assertTrue(near_ready[0]["remains_unsafe_after_stale_artifacts_clear"])
+            self.assertEqual(near_ready[0]["blocker_groups"], ["global"])
+            self.assertIn("clear global support/profitability P0s", near_ready[0]["evidence_needed"][0])
+            self.assertEqual(
+                near_ready[1]["remaining_blocker_codes_after_global_unlock"],
+                ["FORECAST_CONTEXT_REQUIRED_FOR_LIVE"],
+            )
+            self.assertIn("forecast_telemetry", near_ready[1]["blocker_groups"])
             self.assertEqual(payload["metrics"]["global_unlock_frontier_lanes"], 1)
             unlock = payload["entry_readiness"]["global_unlock_frontier"][0]
             self.assertEqual(unlock["lane_id"], "range_trader:NZD_CAD:LONG:RANGE_ROTATION")

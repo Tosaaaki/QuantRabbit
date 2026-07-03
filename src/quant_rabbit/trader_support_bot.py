@@ -427,6 +427,8 @@ class TraderSupportBot:
             "repair_frontier_after_support_clear_lanes": entry["repair_frontier_after_support_clear_lanes"],
             "repair_frontier_after_support_blocked_lanes": entry["repair_frontier_after_support_blocked_lanes"],
             "repair_frontier_after_support_top_blockers": entry["repair_frontier_remaining_blockers"],
+            "near_ready_lane_count": entry["near_ready_lane_count"],
+            "near_ready_blocker_groups": entry["near_ready_blocker_groups"],
             "order_intents_stale_against_broker_snapshot": artifact_freshness[
                 "order_intents_stale_against_broker_snapshot"
             ],
@@ -1695,12 +1697,15 @@ def _entry_readiness_summary(
     oanda_audit_only_local_tp_proof_required: list[dict[str, Any]] = []
     global_unlock_frontier: list[dict[str, Any]] = []
     month_scale_residual_blocked_intents: list[dict[str, Any]] = []
+    near_ready_lanes: list[dict[str, Any]] = []
     range_rotation_counterparts = _range_rotation_counterparts(results)
     for item in results:
         for code in item.get("live_blocker_codes") or []:
             codes[str(code)] += 1
         blocker_codes = [str(code) for code in item.get("live_blocker_codes") or []]
         metadata = _intent_metadata(item)
+        if str(item.get("status") or "") != "LIVE_READY" and blocker_codes:
+            near_ready_lanes.append(_near_ready_lane_summary(item, blocker_codes, metadata))
         residual_blockers = [code for code in blocker_codes if code in MONTH_SCALE_RESIDUAL_BLOCKER_CODES]
         if residual_blockers:
             intent = item.get("intent") if isinstance(item.get("intent"), dict) else {}
@@ -1847,6 +1852,7 @@ def _entry_readiness_summary(
     oanda_audit_only_local_tp_proof_required.sort(key=lambda item: _float(item.get("reward_jpy")), reverse=True)
     global_unlock_frontier.sort(key=lambda item: _float(item.get("reward_jpy")), reverse=True)
     month_scale_residual_blocked_intents.sort(key=lambda item: str(item.get("lane_id") or ""))
+    near_ready_lanes.sort(key=_near_ready_lane_sort_key)
     remaining_repair_blockers = _repair_frontier_remaining_blockers(repair_frontier)
     return {
         "generated_at_utc": payload.get("generated_at_utc"),
@@ -1868,10 +1874,148 @@ def _entry_readiness_summary(
             1 for item in repair_frontier if item["remaining_blocker_codes_after_guardian_and_repair_exemption"]
         ),
         "repair_frontier_remaining_blockers": remaining_repair_blockers,
+        "near_ready_lane_count": len(near_ready_lanes),
+        "near_ready_lanes": near_ready_lanes[:10],
+        "near_ready_blocker_groups": _near_ready_blocker_groups(near_ready_lanes),
         "global_unlock_frontier": global_unlock_frontier[:12],
         "month_scale_residual_blocked_intents": month_scale_residual_blocked_intents[:12],
         "month_scale_residual_blocked_intent_count": len(month_scale_residual_blocked_intents),
     }
+
+
+def _near_ready_lane_summary(
+    item: dict[str, Any],
+    blocker_codes: list[str],
+    metadata: dict[str, Any],
+) -> dict[str, Any]:
+    intent = item.get("intent") if isinstance(item.get("intent"), dict) else {}
+    context = intent.get("market_context") if isinstance(intent.get("market_context"), dict) else {}
+    risk_metrics = item.get("risk_metrics") if isinstance(item.get("risk_metrics"), dict) else {}
+    groups = sorted({_near_ready_blocker_group(code) for code in blocker_codes})
+    remaining_after_stale_clear = [
+        code
+        for code in blocker_codes
+        if _near_ready_blocker_group(code) != "stale_artifact"
+    ]
+    remaining_after_global = [code for code in blocker_codes if code not in GLOBAL_UNLOCK_BLOCKERS]
+    return {
+        "lane_id": item.get("lane_id"),
+        "status": item.get("status"),
+        "pair": intent.get("pair"),
+        "side": intent.get("side"),
+        "method": context.get("method"),
+        "order_type": intent.get("order_type"),
+        "reward_jpy": _intent_reward_jpy(item, metadata),
+        "risk_jpy": _intent_risk_jpy(item, metadata),
+        "reward_risk": _round_optional(risk_metrics.get("reward_risk"), 6),
+        "units": intent.get("units"),
+        "blocker_codes": blocker_codes,
+        "blocker_count": len(set(blocker_codes)),
+        "blocker_groups": groups,
+        "remaining_blocker_codes_after_stale_artifacts_clear": remaining_after_stale_clear,
+        "remaining_blocker_codes_after_global_unlock": remaining_after_global,
+        "evidence_needed": _near_ready_evidence_needed(blocker_codes),
+        "remains_unsafe_after_stale_artifacts_clear": bool(remaining_after_stale_clear),
+        "ordinary_fresh_entries_must_remain_blocked": True,
+    }
+
+
+def _near_ready_lane_sort_key(item: dict[str, Any]) -> tuple[int, int, float, str]:
+    remaining = item.get("remaining_blocker_codes_after_global_unlock")
+    remaining_count = len(remaining) if isinstance(remaining, list) else 0
+    return (
+        int(item.get("blocker_count") or 0),
+        remaining_count,
+        -_float(item.get("reward_jpy")),
+        str(item.get("lane_id") or ""),
+    )
+
+
+def _near_ready_blocker_groups(near_ready_lanes: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    counts: Counter[str] = Counter()
+    examples: dict[str, list[str]] = defaultdict(list)
+    for item in near_ready_lanes:
+        lane_id = str(item.get("lane_id") or "")
+        for group in item.get("blocker_groups") or []:
+            group_text = str(group)
+            counts[group_text] += 1
+            if lane_id and len(examples[group_text]) < 3:
+                examples[group_text].append(lane_id)
+    return [
+        {
+            "group": group,
+            "count": count,
+            "example_lane_ids": examples.get(group, []),
+        }
+        for group, count in counts.most_common()
+    ]
+
+
+def _near_ready_blocker_group(code: str) -> str:
+    text = str(code or "").upper()
+    if text in GLOBAL_UNLOCK_BLOCKERS:
+        return "global"
+    if text in QUOTE_FRESHNESS_BLOCKER_CODES or "STALE" in text:
+        return "stale_artifact"
+    if text in MONTH_SCALE_RESIDUAL_BLOCKER_CODES or text.startswith("MONTH_SCALE_"):
+        return "month_scale_replay"
+    if text in FORECAST_FRONTIER_BLOCKER_CODES or "FORECAST" in text or "TELEMETRY" in text:
+        return "forecast_telemetry"
+    if "BIDASK" in text or text == OANDA_AUDIT_ONLY_LOCAL_TP_PROOF_REQUIRED:
+        return "bidask_replay"
+    if text in FRONTIER_MARGIN_CAPACITY_BLOCKER_CODES or "MARGIN" in text or "MIN_LOT" in text:
+        return "margin_or_min_lot"
+    if "REWARD_RISK" in text or "SPREAD" in text or "TARGET_TOO_THIN" in text:
+        return "geometry_or_spread"
+    if text in FRONTIER_GUARDRAIL_BLOCKER_CODES:
+        return "protective_guardrail"
+    if "RANGE_" in text or "REWARD_RISK" in text or text.endswith("_RR_TOO_LOW"):
+        return "geometry_or_spread"
+    if text in {"CHART_DIRECTION_CONFLICT", "HARVEST_TP_STRUCTURE_MISSING"}:
+        return "geometry_or_spread"
+    if "MATRIX_REPAIR" in text:
+        return "strategy_profile"
+    if "OPERATOR_MANUAL" in text or "MANUAL" in text:
+        return "manual_overlap"
+    if "STRATEGY" in text or "PROFILE" in text or "BLOCK_UNTIL_NEW_EVIDENCE" in text:
+        return "strategy_profile"
+    if "NEGATIVE_EXPECTANCY" in text or "TP_PROVEN" in text:
+        return "profitability"
+    return "other"
+
+
+def _near_ready_evidence_needed(blocker_codes: list[str]) -> list[str]:
+    groups = {_near_ready_blocker_group(code) for code in blocker_codes}
+    needs: list[str] = []
+    if "forecast_telemetry" in groups:
+        needs.append("fresh executable forecast telemetry with projection-ledger scoring for the lane pair/side")
+    if "bidask_replay" in groups:
+        needs.append(
+            "spread-included bid/ask replay evidence that is non-negative for the exact pair/side/method"
+        )
+    if "month_scale_replay" in groups:
+        needs.append(
+            "744h execution-timing replay where the matching residual pair/side/method is non-negative or absent"
+        )
+    if "protective_guardrail" in groups or "geometry_or_spread" in groups:
+        needs.append(
+            "current rail/entry geometry proving the lane is not a chase and has acceptable reward/risk after spread"
+        )
+    if "margin_or_min_lot" in groups:
+        needs.append("raw-NAV/margin capacity sufficient for the broker 1000-unit production floor and risk budget")
+    if "strategy_profile" in groups:
+        needs.append("new strategy-profile evidence for the same pair/side/method instead of BLOCK_UNTIL_NEW_EVIDENCE")
+    if "manual_overlap" in groups:
+        needs.append("explicit operator approval or changed broker truth before overlapping manual/operator exposure")
+    if "profitability" in groups:
+        needs.append(
+            "TP-proven positive payoff evidence or non-negative system expectancy before ordinary fresh turnover"
+        )
+    if "stale_artifact" in groups:
+        needs.append("fresh broker snapshot, forecasts, projections, and order_intents from the same evidence packet")
+    if "global" in groups:
+        needs.append("clear global support/profitability P0s before ordinary fresh entries")
+    return list(dict.fromkeys(needs))
 
 
 def _tp_proof_summary(metadata: dict[str, Any]) -> dict[str, Any]:
@@ -5151,6 +5295,7 @@ def _render_report(payload: dict[str, Any]) -> str:
         f"| qr-trader scheduled-run watchdog | `{watchdog.get('status')}` severity=`{watchdog.get('severity')}` minutes_since=`{watchdog.get('minutes_since_last_run')}` |",
         f"| Guardian receipt consumption | `{consumption.get('status')}` normal_routing_allowed=`{consumption.get('normal_routing_allowed')}` unresolved=`{consumption.get('unresolved_issue_count')}` |",
         f"| LIVE_READY lanes | `{entry['live_ready_lanes']}` / `{entry['lanes']}` |",
+        f"| Near-ready diagnostic lanes | `{entry.get('near_ready_lane_count')}` |",
         f"| Order intents freshness | `{entry.get('artifact_freshness', {}).get('status')}` staleness=`{entry.get('artifact_freshness', {}).get('order_intents_staleness_seconds')}`s |",
         f"| Repair LIVE_READY lanes | `{len(entry['repair_live_ready'])}` |",
         f"| Repair lanes after guardian recovery | `{len(entry['repair_basket_guardian_recovery'])}` |",
@@ -5185,6 +5330,30 @@ def _render_report(payload: dict[str, Any]) -> str:
     if payload["blockers"]:
         for blocker in payload["blockers"]:
             lines.append(f"- `{blocker['severity']}` `{blocker['code']}`: {blocker['message']}")
+    else:
+        lines.append("- none")
+    near_ready = entry.get("near_ready_lanes") if isinstance(entry.get("near_ready_lanes"), list) else []
+    lines.extend(["", "## Near-Ready Lanes", ""])
+    if near_ready:
+        lines.extend(
+            [
+                "| Lane | Pair | Side | Method | Status | Blockers | Evidence needed |",
+                "|---|---|---|---|---|---|---|",
+            ]
+        )
+        for item in near_ready[:10]:
+            lines.append(
+                "| "
+                f"`{item.get('lane_id')}` | `{item.get('pair')}` | `{item.get('side')}` | "
+                f"`{item.get('method')}` | `{item.get('status')}` | "
+                f"`{', '.join(item.get('blocker_codes') or [])}` | "
+                f"{'; '.join(item.get('evidence_needed') or [])} |"
+            )
+        lines.append("")
+        lines.append(
+            "- Ordinary fresh entries must remain blocked for every near-ready diagnostic row until "
+            "its blockers clear in refreshed broker/forecast/replay evidence."
+        )
     else:
         lines.append("- none")
     lines.extend(
