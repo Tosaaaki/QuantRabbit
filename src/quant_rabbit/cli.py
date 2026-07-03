@@ -2408,8 +2408,10 @@ def _cycle_sidecar_steps() -> list[dict[str, Any]]:
         # Post-gateway sidecars refresh broker truth after cycle-refresh priced
         # entries. Reprice intents before acceptance/support so the loop does
         # not rank stale LIVE_READY/frontier blockers as repair work.
+        {"argv": ["execution-ledger-sync"], "required": False},
         _broker_snapshot_step(),
         _daily_target_state_step(),
+        {"argv": ["capture-economics"], "required": False},
         _reuse_market_artifact_intent_step(),
         # generate-intents may refresh broker_snapshot as part of quote/preflight
         # freshness. Rebuild read-only position evidence against that final
@@ -2441,8 +2443,10 @@ def _post_autotrade_failure_sidecar_steps() -> list[dict[str, Any]]:
         {"argv": position_execution, "required": False},
         {"argv": ["guardian-trigger-contract"], "required": True},
         {"argv": ["guardian-event-router"], "required": True},
+        {"argv": ["execution-ledger-sync"], "required": False},
         _broker_snapshot_step(),
         _daily_target_state_step(),
+        {"argv": ["capture-economics"], "required": False},
         _reuse_market_artifact_intent_step(),
         *_post_intent_evidence_steps(),
         {"argv": ["profit-capture-bot"], "required": True, "ok_rcs": [0, 2]},
@@ -2471,8 +2475,10 @@ def _direct_autotrade_audit_sidecar_steps() -> list[dict[str, Any]]:
         {"argv": ["thesis-evolution-check"], "required": False},
         {"argv": ["forecast-persistence-check"], "required": False},
         {"argv": ["position-management"], "required": True},
+        {"argv": ["execution-ledger-sync"], "required": False},
         _broker_snapshot_step(),
         _daily_target_state_step(),
+        {"argv": ["capture-economics"], "required": False},
         _reuse_market_artifact_intent_step(),
         *_post_intent_evidence_steps(),
         {"argv": ["profit-capture-bot"], "required": True, "ok_rcs": [0, 2]},

@@ -6053,12 +6053,20 @@ class ConsolidatedCycleCommandTest(unittest.TestCase):
             for index, step in enumerate(argv)
             if step == ("daily-target-state", "--snapshot", "data/broker_snapshot.json", "--daily-risk-pct", "10")
         )
+        pre_intent_capture_idx = max(
+            index for index, step in enumerate(argv) if step == ("capture-economics",)
+        )
+        pre_intent_ledger_sync_idx = max(
+            index for index, step in enumerate(argv) if step == ("execution-ledger-sync",)
+        )
         attack_idx = argv.index(("ai-attack-advice",))
         self.assertLess(
             argv.index(("position-execution", "--send", "--confirm-live")),
             intent_idx,
         )
         self.assertLess(pre_intent_daily_target_idx, intent_idx)
+        self.assertLess(pre_intent_ledger_sync_idx, pre_intent_capture_idx)
+        self.assertLess(pre_intent_capture_idx, intent_idx)
         self.assertLess(intent_idx, coverage_idx)
         self.assertLess(coverage_idx, attack_idx)
         self.assertLess(attack_idx, post_intent_position_management_idx)
@@ -6435,6 +6443,14 @@ class ConsolidatedCycleCommandTest(unittest.TestCase):
             index for index, step in enumerate(sidecars) if step == "forecast-persistence-check"
         )
         self.assertLess(last_daily_target, sidecars.index(intent_step))
+        pre_intent_capture = max(
+            index for index, step in enumerate(sidecars) if step == "capture-economics"
+        )
+        pre_intent_ledger_sync = max(
+            index for index, step in enumerate(sidecars) if step == "execution-ledger-sync"
+        )
+        self.assertLess(pre_intent_ledger_sync, pre_intent_capture)
+        self.assertLess(pre_intent_capture, sidecars.index(intent_step))
         self.assertLess(sidecars.index(intent_step), sidecars.index(coverage_step))
         self.assertLess(sidecars.index(coverage_step), sidecars.index("ai-attack-advice"))
         self.assertLess(sidecars.index(coverage_step), last_position_thesis)
@@ -6531,6 +6547,14 @@ class ConsolidatedCycleCommandTest(unittest.TestCase):
             index for index, step in enumerate(direct_sidecars) if step == "forecast-persistence-check"
         )
         self.assertLess(last_daily_target, direct_sidecars.index(intent_step))
+        pre_intent_capture = max(
+            index for index, step in enumerate(direct_sidecars) if step == "capture-economics"
+        )
+        pre_intent_ledger_sync = max(
+            index for index, step in enumerate(direct_sidecars) if step == "execution-ledger-sync"
+        )
+        self.assertLess(pre_intent_ledger_sync, pre_intent_capture)
+        self.assertLess(pre_intent_capture, direct_sidecars.index(intent_step))
         self.assertLess(direct_sidecars.index(intent_step), direct_sidecars.index(coverage_step))
         self.assertLess(direct_sidecars.index(coverage_step), direct_sidecars.index("ai-attack-advice"))
         self.assertLess(direct_sidecars.index(coverage_step), last_position_thesis)

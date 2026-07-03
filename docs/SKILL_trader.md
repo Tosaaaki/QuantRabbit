@@ -379,10 +379,10 @@ PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli cycle-refresh --daily-risk-pct 1
 # after `cycle-refresh` leaves fresh evidence unused and is treated as
 # incomplete. The digest's `route` field is the re-route result; only run
 # `trader-prompt-route` again if you changed an artifact after the digest.
-# `memory-health` must audit the same `capture_economics` packet used by
-# `generate-intents`. If capture-economics is refreshed after order_intents, or
-# memory-health does not record the current capture timestamp, route back to
-# refresh before entry/verify work.
+# `memory-health` and `profitability-acceptance` must audit the same
+# `capture_economics` packet used by `generate-intents`. If capture-economics
+# is refreshed after order_intents, or memory-health does not record the current
+# capture timestamp, route back to refresh before entry/verify work.
 #
 # Position close sidecars inside the digest are read-only prediction/thesis
 # evidence. Read `protection_sidecars.position_close_recommendations[]`
@@ -544,8 +544,9 @@ QR_LIVE_ENABLED=1 ./scripts/run-autotrade-live.sh \
 # `broker-snapshot` and `daily-target-state`, then runs the
 # projection/position/audit repair subset, including `position-management`
 # followed by `position-execution` when management succeeds, then refreshes
-# `broker-snapshot` and `daily-target-state` again before repricing
-# `order_intents` with `generate-intents --reuse-market-artifacts`. It then
+# `broker-snapshot` and `daily-target-state` again, syncs the execution ledger,
+# refreshes `capture-economics`, and only then reprices `order_intents` with
+# `generate-intents --reuse-market-artifacts`. It then
 # regenerates `optimize-coverage` and `ai-attack-advice` from that final intent
 # packet, and reruns read-only position evidence sidecars against the final
 # broker/intent packet before `guardian-trigger-contract` → `guardian-event-router` →
@@ -564,7 +565,8 @@ QR_LIVE_ENABLED=1 ./scripts/run-autotrade-live.sh \
 #   → position-thesis-check → thesis-evolution-check → forecast-persistence-check
 #   → position-management → position-execution → guardian-trigger-contract
 #   → guardian-event-router
-#   → broker-snapshot → daily-target-state
+#   → execution-ledger-sync → broker-snapshot → daily-target-state
+#   → capture-economics
 #   → generate-intents --reuse-market-artifacts
 #   → optimize-coverage → ai-attack-advice
 #   → position-thesis-check → thesis-evolution-check
