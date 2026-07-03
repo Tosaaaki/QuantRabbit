@@ -1415,6 +1415,7 @@ _LIVE_RUNTIME_COMMANDS: frozenset[str] = frozenset(
         # state. It must classify guardian/profit-capture support under the
         # same runtime defaults as the gateway and self-improvement audit.
         "trader-support-bot",
+        "qr-trader-run-watchdog",
         "profit-capture-bot",
         # Consolidated cycle commands run the same refresh/sidecar steps the
         # wrapper-era skeleton ran one-by-one; they must see identical SL-free
@@ -1473,6 +1474,7 @@ _LIVE_ARTIFACT_WRITER_COMMANDS: frozenset[str] = frozenset(
         "memory-health",
         "self-improvement-audit",
         "profitability-acceptance",
+        "qr-trader-run-watchdog",
         "trader-support-bot",
         "trader-repair-orchestrator",
     }
@@ -2270,6 +2272,10 @@ def _reuse_market_artifact_intent_step() -> dict[str, Any]:
     }
 
 
+def _qr_trader_run_watchdog_step() -> dict[str, Any]:
+    return {"argv": ["qr-trader-run-watchdog"], "required": True, "ok_rcs": [0, 2]}
+
+
 def _broker_snapshot_step() -> dict[str, Any]:
     return {"argv": ["broker-snapshot", "--output", "data/broker_snapshot.json"], "required": True}
 
@@ -2348,6 +2354,7 @@ def _cycle_refresh_steps(daily_risk_pct: str) -> list[dict[str, Any]]:
             "required": False,
             "timeout_seconds": DEFAULT_EXECUTION_TIMING_AUDIT_CYCLE_TIMEOUT_SECONDS,
         },
+        _qr_trader_run_watchdog_step(),
         _reuse_market_artifact_intent_step(),
         {"argv": ["optimize-coverage"], "required": False},
         {"argv": ["ai-attack-advice"], "required": False},
@@ -2362,6 +2369,7 @@ def _cycle_refresh_steps(daily_risk_pct: str) -> list[dict[str, Any]]:
         {"argv": ["position-management"], "required": True},
         {"argv": ["guardian-trigger-contract"], "required": True},
         {"argv": ["guardian-event-router"], "required": True},
+        _qr_trader_run_watchdog_step(),
         {"argv": ["profit-capture-bot"], "required": True, "ok_rcs": [0, 2]},
         {"argv": ["memory-health"], "required": True},
         {"argv": ["self-improvement-audit"], "required": False, "ok_rcs": [0, 2]},
@@ -2412,6 +2420,7 @@ def _cycle_sidecar_steps() -> list[dict[str, Any]]:
         _broker_snapshot_step(),
         _daily_target_state_step(),
         {"argv": ["capture-economics"], "required": False},
+        _qr_trader_run_watchdog_step(),
         _reuse_market_artifact_intent_step(),
         # generate-intents may refresh broker_snapshot as part of quote/preflight
         # freshness. Rebuild read-only position evidence against that final
@@ -2447,6 +2456,7 @@ def _post_autotrade_failure_sidecar_steps() -> list[dict[str, Any]]:
         _broker_snapshot_step(),
         _daily_target_state_step(),
         {"argv": ["capture-economics"], "required": False},
+        _qr_trader_run_watchdog_step(),
         _reuse_market_artifact_intent_step(),
         *_post_intent_evidence_steps(),
         {"argv": ["profit-capture-bot"], "required": True, "ok_rcs": [0, 2]},
@@ -2479,6 +2489,7 @@ def _direct_autotrade_audit_sidecar_steps() -> list[dict[str, Any]]:
         _broker_snapshot_step(),
         _daily_target_state_step(),
         {"argv": ["capture-economics"], "required": False},
+        _qr_trader_run_watchdog_step(),
         _reuse_market_artifact_intent_step(),
         *_post_intent_evidence_steps(),
         {"argv": ["profit-capture-bot"], "required": True, "ok_rcs": [0, 2]},
@@ -2500,6 +2511,7 @@ def _post_intent_evidence_steps() -> list[dict[str, Any]]:
         {"argv": ["position-management"], "required": True},
         {"argv": ["guardian-trigger-contract"], "required": True},
         {"argv": ["guardian-event-router"], "required": True},
+        _qr_trader_run_watchdog_step(),
     ]
 
 
@@ -3764,6 +3776,23 @@ def main(argv: list[str] | None = None) -> int:
     p_profit_accept.add_argument("--output", type=Path, default=DEFAULT_PROFITABILITY_ACCEPTANCE)
     p_profit_accept.add_argument("--report", type=Path, default=DEFAULT_PROFITABILITY_ACCEPTANCE_REPORT)
 
+    p_qr_watchdog = sub.add_parser(
+        "qr-trader-run-watchdog",
+        help="Write a read-only scheduled-run watchdog report for qr-trader and guardian receipts.",
+    )
+    p_qr_watchdog.add_argument("--root", type=Path, default=ROOT)
+    p_qr_watchdog.add_argument("--automation-dir", type=Path, default=None)
+    p_qr_watchdog.add_argument("--codex-logs", type=Path, default=None)
+    p_qr_watchdog.add_argument("--output", type=Path, default=None)
+    p_qr_watchdog.add_argument("--report", type=Path, default=None)
+    p_qr_watchdog.add_argument("--log", type=Path, default=None)
+    p_qr_watchdog.add_argument(
+        "--grace-minutes",
+        type=int,
+        default=int(os.environ.get("QR_TRADER_WATCHDOG_GRACE_MINUTES", "15")),
+    )
+    p_qr_watchdog.add_argument("--now-utc", default=None)
+
     p_capture_bot = sub.add_parser(
         "profit-capture-bot",
         help="Write a read-only TP-progress profit-capture diagnosis for open trader positions.",
@@ -4559,6 +4588,40 @@ def main(argv: list[str] | None = None) -> int:
             )
         )
         return 0
+
+    if args.command == "qr-trader-run-watchdog":
+        from quant_rabbit.qr_trader_run_watchdog import WatchdogPaths, _parse_utc, run_watchdog
+
+        now = _parse_utc(args.now_utc) if args.now_utc else None
+        paths = WatchdogPaths.from_root(
+            args.root,
+            automation_dir=args.automation_dir,
+            codex_logs=args.codex_logs,
+            output_json=args.output,
+            output_report=args.report,
+            output_log=args.log,
+        )
+        payload = run_watchdog(paths=paths, now_utc=now, grace_minutes=args.grace_minutes)
+        print(
+            json.dumps(
+                {
+                    "status": payload["status"],
+                    "severity": payload["severity"],
+                    "missed_expected_window": payload["missed_expected_window"],
+                    "last_trader_run_at": payload["last_trader_run_at"],
+                    "last_trader_run_source": payload["last_trader_run_source"],
+                    "last_trader_run_path": payload["last_trader_run_path"],
+                    "minutes_since_last_run": payload["minutes_since_last_run"],
+                    "output_json": str(paths.output_json),
+                    "output_report": str(paths.output_report),
+                    "issues": payload["issues"],
+                },
+                ensure_ascii=False,
+                indent=2,
+                sort_keys=True,
+            )
+        )
+        return 0 if payload["status"] == "OK" and payload["severity"] in {"OK", "WARN"} else 2
 
     if args.command in ("cycle-refresh", "cycle-sidecars", "post-autotrade-failure-sidecars"):
         try:

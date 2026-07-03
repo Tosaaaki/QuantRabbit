@@ -5838,6 +5838,9 @@ class LiveRuntimeBootstrapTest(unittest.TestCase):
                     # trader-support-bot reads the same live support state and
                     # must classify guardian/profit-capture under live defaults.
                     "trader-support-bot",
+                    # qr-trader-run-watchdog writes live operational evidence
+                    # for the same guardian/entry routing gates.
+                    "qr-trader-run-watchdog",
                     # profit-capture-bot mirrors PositionManager's current
                     # TP-progress gates and must use live SL-free defaults.
                     "profit-capture-bot",
@@ -6264,6 +6267,35 @@ class ConsolidatedCycleCommandTest(unittest.TestCase):
                     DEFAULT_GENERATE_INTENTS_CYCLE_TIMEOUT_SECONDS,
                 )
 
+    def test_cycle_watchdog_steps_refresh_before_intents_and_support(self) -> None:
+        from quant_rabbit.cli import _cycle_refresh_steps, _cycle_sidecar_steps
+
+        intent_step = "generate-intents --snapshot data/broker_snapshot.json --reuse-market-artifacts"
+        step_lists = [
+            _cycle_refresh_steps("10"),
+            _cycle_sidecar_steps(),
+            _post_autotrade_failure_sidecar_steps(),
+            _direct_autotrade_audit_sidecar_steps(),
+        ]
+
+        for specs in step_lists:
+            steps = [" ".join(spec["argv"]) for spec in specs]
+            watchdog_indexes = [
+                index for index, step in enumerate(steps) if step == "qr-trader-run-watchdog"
+            ]
+            with self.subTest(steps=[spec["argv"][0] for spec in specs[:3]]):
+                self.assertTrue(watchdog_indexes)
+                self.assertTrue(any(index < steps.index(intent_step) for index in watchdog_indexes))
+                last_guardian_router = max(
+                    index for index, step in enumerate(steps) if step == "guardian-event-router"
+                )
+                self.assertLess(last_guardian_router, max(watchdog_indexes))
+                self.assertLess(max(watchdog_indexes), steps.index("profit-capture-bot"))
+                self.assertLess(max(watchdog_indexes), steps.index("trader-support-bot"))
+                for index in watchdog_indexes:
+                    self.assertTrue(specs[index]["required"])
+                    self.assertEqual(specs[index]["ok_rcs"], [0, 2])
+
     def test_cycle_refresh_refuses_existing_live_runtime_lock(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             lock_dir = Path(tmp) / "lock"
@@ -6427,10 +6459,16 @@ class ConsolidatedCycleCommandTest(unittest.TestCase):
             refresh.index(month_scale_timing_step),
             refresh.index("generate-intents --snapshot data/broker_snapshot.json --reuse-market-artifacts"),
         )
+        self.assertLess(refresh.index("qr-trader-run-watchdog"), refresh.index(intent_step))
         self.assertLess(refresh.index(month_scale_timing_step), refresh.index("self-improvement-audit"))
         self.assertLess(refresh.index("manual-market-context-audit"), refresh.index("operator-precedent-audit"))
         self.assertLess(refresh.index("operator-precedent-audit"), refresh.index("verification-ledger-audit"))
         self.assertLess(refresh.index("position-management"), refresh.index("profit-capture-bot"))
+        last_refresh_watchdog = max(
+            index for index, step in enumerate(refresh) if step == "qr-trader-run-watchdog"
+        )
+        self.assertLess(refresh.index("guardian-event-router"), last_refresh_watchdog)
+        self.assertLess(last_refresh_watchdog, refresh.index("profit-capture-bot"))
         self.assertLess(refresh.index("profit-capture-bot"), refresh.index("memory-health"))
         self.assertLess(refresh.index("memory-health"), refresh.index("self-improvement-audit"))
         self.assertLess(refresh.index("self-improvement-audit"), refresh.index("profitability-acceptance"))
@@ -6440,6 +6478,8 @@ class ConsolidatedCycleCommandTest(unittest.TestCase):
         refresh_by_step = {" ".join(s["argv"]): s for s in _cycle_refresh_steps("10")}
         self.assertEqual(refresh_by_step[month_scale_timing_step]["timeout_seconds"], 180.0)
         self.assertFalse(refresh_by_step[month_scale_timing_step]["required"])
+        self.assertTrue(refresh_by_step["qr-trader-run-watchdog"]["required"])
+        self.assertEqual(refresh_by_step["qr-trader-run-watchdog"]["ok_rcs"], [0, 2])
         self.assertTrue(refresh_by_step["position-management"]["required"])
         self.assertTrue(refresh_by_step["profit-capture-bot"]["required"])
         self.assertEqual(refresh_by_step["profit-capture-bot"]["ok_rcs"], [0, 2])
@@ -6498,6 +6538,7 @@ class ConsolidatedCycleCommandTest(unittest.TestCase):
         )
         self.assertLess(pre_intent_ledger_sync, pre_intent_capture)
         self.assertLess(pre_intent_capture, sidecars.index(intent_step))
+        self.assertLess(sidecars.index("qr-trader-run-watchdog"), sidecars.index(intent_step))
         self.assertLess(sidecars.index(intent_step), sidecars.index(coverage_step))
         self.assertLess(sidecars.index(coverage_step), sidecars.index("ai-attack-advice"))
         self.assertLess(sidecars.index(coverage_step), last_position_thesis)
@@ -6506,6 +6547,11 @@ class ConsolidatedCycleCommandTest(unittest.TestCase):
         self.assertLess(last_thesis_evolution, last_forecast_persistence)
         self.assertLess(last_forecast_persistence, last_position_management)
         self.assertLess(last_position_management, sidecars.index("profit-capture-bot"))
+        last_sidecar_watchdog = max(
+            index for index, step in enumerate(sidecars) if step == "qr-trader-run-watchdog"
+        )
+        self.assertLess(last_position_management, last_sidecar_watchdog)
+        self.assertLess(last_sidecar_watchdog, sidecars.index("profit-capture-bot"))
         self.assertLess(sidecars.index("profit-capture-bot"), sidecars.index("memory-health"))
         self.assertLess(sidecars.index("memory-health"), sidecars.index("self-improvement-audit"))
         self.assertLess(sidecars.index("self-improvement-audit"), sidecars.index("profitability-acceptance"))
@@ -6516,6 +6562,8 @@ class ConsolidatedCycleCommandTest(unittest.TestCase):
         self.assertTrue(sidecars_by_step[intent_step]["required"])
         self.assertTrue(sidecars_by_step["position-management"]["required"])
         self.assertFalse(sidecars_by_step["position-execution"]["required"])
+        self.assertTrue(sidecars_by_step["qr-trader-run-watchdog"]["required"])
+        self.assertEqual(sidecars_by_step["qr-trader-run-watchdog"]["ok_rcs"], [0, 2])
         self.assertTrue(sidecars_by_step["profit-capture-bot"]["required"])
         self.assertEqual(sidecars_by_step["profit-capture-bot"]["ok_rcs"], [0, 2])
         self.assertTrue(sidecars_by_step["memory-health"]["required"])
