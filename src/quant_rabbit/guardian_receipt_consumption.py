@@ -18,6 +18,7 @@ from quant_rabbit.guardian_receipt_operator_review import (
 ISSUE_CODE = "GUARDIAN_RECEIPT_NOT_CONSUMED_BY_TRADER"
 OPERATOR_REVIEW_ISSUE_CODE = "GUARDIAN_RECEIPT_NEEDS_OPERATOR_REVIEW"
 BLOCK_NEW_ENTRY_CODE = "GUARDIAN_RECEIPT_NOT_CONSUMED_BY_TRADER_BLOCKS_NEW_ENTRY"
+WATCHDOG_BLOCK_NEW_ENTRY_CODE = "QR_TRADER_RUN_WATCHDOG_BLOCKS_NEW_ENTRY"
 
 CONSUMED = "CONSUMED"
 EXPIRED_ACKNOWLEDGED = "EXPIRED_ACKNOWLEDGED"
@@ -309,7 +310,24 @@ def guardian_receipt_new_entry_blockers(
                 "classification": classification,
             }
         )
+    watchdog_p0_p1_blocks = _watchdog_has_uncleared_p0_p1_issue(watchdog, _classification_rows(consumption))
     if consumption.get("normal_routing_allowed") is False and not blockers:
+        if consumption.get("current_p0_p1_blocks_routing") is True or watchdog_p0_p1_blocks:
+            blockers.append(
+                {
+                    "code": WATCHDOG_BLOCK_NEW_ENTRY_CODE,
+                    "severity": "BLOCK",
+                    "message": (
+                        f"guardian_receipt_consumption status={consumption.get('status')} "
+                        "has normal_routing_allowed=false because a current P0/P1 watchdog issue blocks routing"
+                    ),
+                    "receipt_event_id": "",
+                    "receipt_action": "",
+                    "receipt_lifecycle": "",
+                    "classification": "WATCHDOG_P0_P1",
+                }
+            )
+            return blockers
         blockers.append(
             {
                 "code": OPERATOR_REVIEW_REQUIRED_BLOCK_CODE,
@@ -324,10 +342,10 @@ def guardian_receipt_new_entry_blockers(
                 "classification": str(consumption.get("status") or "NORMAL_ROUTING_FALSE"),
             }
         )
-    elif _watchdog_has_uncleared_p0_p1_issue(watchdog, _classification_rows(consumption)) and not blockers:
+    elif watchdog_p0_p1_blocks and not blockers:
         blockers.append(
             {
-                "code": OPERATOR_REVIEW_REQUIRED_BLOCK_CODE,
+                "code": WATCHDOG_BLOCK_NEW_ENTRY_CODE,
                 "severity": "BLOCK",
                 "message": (
                     "qr_trader_run_watchdog issue_status/severity is P0/P1; "
@@ -487,7 +505,10 @@ def _watchdog_issue_status_blocks(payload: dict[str, Any]) -> bool:
     if issue_status in {"P0", "P1"}:
         return True
     severity = str(payload.get("severity") or "").upper()
-    if severity in {"P0", "P1"} and str(payload.get("status") or "").upper() == "BLOCKED":
+    status = str(payload.get("status") or "").upper()
+    if severity in {"P0", "P1"} and status in {"BLOCKED", "STALE", "BROKEN"}:
+        return True
+    if any(str(item.get("severity") or "").upper() in {"P0", "P1"} for item in _watchdog_issues(payload)):
         return True
     return any(str(item.get("severity") or "").upper() in {"P0", "P1"} for item in _watchdog_guardian_issues(payload))
 
@@ -495,6 +516,13 @@ def _watchdog_issue_status_blocks(payload: dict[str, Any]) -> bool:
 def _watchdog_has_uncleared_p0_p1_issue(payload: dict[str, Any], rows: list[dict[str, Any]]) -> bool:
     if not _watchdog_issue_status_blocks(payload):
         return False
+    severe_watchdog_issues = [
+        item
+        for item in _watchdog_issues(payload)
+        if str(item.get("severity") or "").upper() in {"P0", "P1"}
+    ]
+    if any(_issue_code(issue) not in {ISSUE_CODE, OPERATOR_REVIEW_ISSUE_CODE} for issue in severe_watchdog_issues):
+        return True
     severe_issues = [
         item
         for item in _watchdog_guardian_issues(payload)
@@ -524,6 +552,13 @@ def _watchdog_guardian_issues(payload: dict[str, Any]) -> list[dict[str, Any]]:
     guardian = payload.get("guardian_receipt") if isinstance(payload.get("guardian_receipt"), dict) else {}
     issues = guardian.get("issues") if isinstance(guardian.get("issues"), list) else []
     return [item for item in issues if isinstance(item, dict)]
+
+
+def _watchdog_issues(payload: dict[str, Any]) -> list[dict[str, Any]]:
+    if not isinstance(payload, dict):
+        return []
+    issues = payload.get("issues")
+    return [item for item in (issues if isinstance(issues, list) else []) if isinstance(item, dict)]
 
 
 def _classification_row_as_issue(row: dict[str, Any]) -> dict[str, Any]:

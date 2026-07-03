@@ -8,6 +8,7 @@ from pathlib import Path
 
 from quant_rabbit.cli import main
 from quant_rabbit.guardian_receipt_consumption import (
+    WATCHDOG_BLOCK_NEW_ENTRY_CODE,
     build_guardian_receipt_consumption,
     guardian_receipt_new_entry_blockers,
 )
@@ -34,6 +35,68 @@ class GuardianReceiptOperatorReviewTest(unittest.TestCase):
         )
 
         self.assertEqual({item["code"] for item in blockers}, {"GUARDIAN_RECEIPT_OPERATOR_REVIEW_REQUIRED"})
+
+    def test_watchdog_p0_block_is_not_reported_as_operator_review_required(self) -> None:
+        watchdog = {
+            "status": "STALE",
+            "severity": "P0",
+            "guardian_receipt_issues": [
+                {
+                    "code": "QR_TRADER_RUN_STALE",
+                    "severity": "P0",
+                }
+            ],
+        }
+        acknowledged_row = _consumption_row(classification="HISTORICAL_ONLY", receipt_action="HOLD")
+        acknowledged_row["normal_routing_allowed"] = True
+        consumption = {
+            "status": "GUARDIAN_RECEIPT_ISSUES_ACKNOWLEDGED_CURRENT_P0_BLOCKS_ROUTING",
+            "normal_routing_allowed": False,
+            "current_p0_p1_blocks_routing": True,
+            "classifications": [acknowledged_row],
+        }
+
+        blockers = guardian_receipt_new_entry_blockers(
+            watchdog,
+            consumption,
+            {"normal_routing_allowed": True},
+            {"positions": [], "orders": []},
+        )
+
+        self.assertEqual({item["code"] for item in blockers}, {WATCHDOG_BLOCK_NEW_ENTRY_CODE})
+
+    def test_stale_watchdog_keeps_consumption_closed_after_receipt_acknowledgement(self) -> None:
+        now = datetime(2026, 7, 2, tzinfo=timezone.utc)
+        receipt_issue = {
+            "code": "GUARDIAN_RECEIPT_NOT_CONSUMED_BY_TRADER",
+            "severity": "WARN",
+            "receipt_event_id": "receipt-reduce",
+            "receipt_action": "HOLD",
+            "receipt_lifecycle": "EXPIRED",
+            "consumed_by_trader": False,
+        }
+        watchdog = {
+            "status": "STALE",
+            "issue_status": "P0",
+            "severity": "P0",
+            "issues": [{"code": "QR_TRADER_RUN_STALE", "severity": "P0"}],
+            "guardian_receipt": {"issues": [receipt_issue]},
+        }
+        consumption = build_guardian_receipt_consumption(
+            watchdog,
+            existing={
+                "classifications": [
+                    _consumption_row(classification="EXPIRED_ACKNOWLEDGED", receipt_action="HOLD")
+                ]
+            },
+            operator_review={},
+            broker_snapshot={"positions": [], "orders": []},
+            now_utc=now,
+        )
+
+        self.assertEqual(consumption["status"], "GUARDIAN_RECEIPT_ISSUES_ACKNOWLEDGED_CURRENT_P0_BLOCKS_ROUTING")
+        self.assertFalse(consumption["normal_routing_allowed"])
+        self.assertTrue(consumption["current_p0_p1_blocks_routing"])
 
     def test_stale_operator_review_keeps_blocker_active(self) -> None:
         now = datetime(2026, 7, 2, tzinfo=timezone.utc)

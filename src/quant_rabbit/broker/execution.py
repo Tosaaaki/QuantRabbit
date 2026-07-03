@@ -40,7 +40,11 @@ from quant_rabbit.paths import (
     DEFAULT_STRATEGY_PROFILE,
 )
 from quant_rabbit.guardian_events import guardian_action_gateway_issues
-from quant_rabbit.guardian_receipt_consumption import guardian_receipt_new_entry_blockers_from_paths
+from quant_rabbit.guardian_receipt_consumption import (
+    BLOCK_NEW_ENTRY_CODE as GUARDIAN_RECEIPT_BLOCK_NEW_ENTRY_CODE,
+    WATCHDOG_BLOCK_NEW_ENTRY_CODE as GUARDIAN_WATCHDOG_BLOCK_NEW_ENTRY_CODE,
+    guardian_receipt_new_entry_blockers_from_paths,
+)
 from quant_rabbit.risk import (
     MIN_PRODUCTION_LOT_UNITS,
     RiskEngine,
@@ -924,7 +928,7 @@ class LiveOrderGateway:
 
     def _guardian_receipt_consumption_gateway_issues(self, risk_issues: list[dict[str, Any]]) -> list[dict[str, str]]:
         if any(
-            issue.get("code") == "GUARDIAN_RECEIPT_NOT_CONSUMED_BY_TRADER_BLOCKS_NEW_ENTRY"
+            issue.get("code") in {GUARDIAN_RECEIPT_BLOCK_NEW_ENTRY_CODE, GUARDIAN_WATCHDOG_BLOCK_NEW_ENTRY_CODE}
             for issue in risk_issues
             if isinstance(issue, dict)
         ):
