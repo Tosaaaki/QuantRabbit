@@ -180,6 +180,19 @@ class TraderSupportSummary:
     metrics: dict[str, Any]
 
 
+def _default_receipt_artifact_path(
+    *,
+    requested_path: Path,
+    default_path: Path,
+    output_path: Path,
+) -> Path:
+    if requested_path != default_path or output_path == DEFAULT_TRADER_SUPPORT_BOT:
+        return requested_path
+    if output_path.parent.name == default_path.parent.name:
+        return output_path.parent / default_path.name
+    return requested_path
+
+
 class TraderSupportBot:
     """Read-only operator panel for live trader support loops.
 
@@ -225,17 +238,15 @@ class TraderSupportBot:
         self.execution_timing_audit_path = execution_timing_audit_path
         self.profit_capture_bot_path = profit_capture_bot_path
         self.qr_trader_run_watchdog_path = qr_trader_run_watchdog_path
-        self.guardian_receipt_consumption_path = (
-            guardian_receipt_consumption_path
-            if guardian_receipt_consumption_path != DEFAULT_GUARDIAN_RECEIPT_CONSUMPTION
-            or output_path == DEFAULT_TRADER_SUPPORT_BOT
-            else output_path.parent / DEFAULT_GUARDIAN_RECEIPT_CONSUMPTION.name
+        self.guardian_receipt_consumption_path = _default_receipt_artifact_path(
+            requested_path=guardian_receipt_consumption_path,
+            default_path=DEFAULT_GUARDIAN_RECEIPT_CONSUMPTION,
+            output_path=output_path,
         )
-        self.guardian_receipt_operator_review_path = (
-            guardian_receipt_operator_review_path
-            if guardian_receipt_operator_review_path != DEFAULT_GUARDIAN_RECEIPT_OPERATOR_REVIEW
-            or output_path == DEFAULT_TRADER_SUPPORT_BOT
-            else output_path.parent / DEFAULT_GUARDIAN_RECEIPT_OPERATOR_REVIEW.name
+        self.guardian_receipt_operator_review_path = _default_receipt_artifact_path(
+            requested_path=guardian_receipt_operator_review_path,
+            default_path=DEFAULT_GUARDIAN_RECEIPT_OPERATOR_REVIEW,
+            output_path=output_path,
         )
         self.oanda_rotation_mining_path = oanda_rotation_mining_path
         self.oanda_rotation_packaged_path = oanda_rotation_packaged_path
