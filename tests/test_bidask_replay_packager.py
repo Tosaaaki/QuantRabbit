@@ -148,6 +148,16 @@ class BidAskReplayPackagerTest(unittest.TestCase):
             "scripts/package_bidask_replay_precision_rules.py",
         )
         self.assertEqual(packaged["source_report"], "latest.json")
+        packaged_from_live = packager.package_payload(
+            payload,
+            source_report=Path(
+                "/Users/tossaki/App/QuantRabbit-live/logs/reports/forecast_improvement/latest.json"
+            ),
+        )
+        self.assertEqual(
+            packaged_from_live["source_report"],
+            "logs/reports/forecast_improvement/latest.json",
+        )
         self.assertEqual(
             packaged["history_dirs"],
             [
@@ -215,6 +225,18 @@ class BidAskReplayPackagerTest(unittest.TestCase):
             ],
         )
         self.assertEqual(
+            packaged["forecast_sample_coverage_summary"]["under_sampled_pair_direction_details"],
+            packaged["forecast_sample_coverage_summary"]["under_sampled_pair_direction_examples"],
+        )
+        self.assertEqual(
+            packaged["forecast_sample_coverage_summary"]["under_sampled_pair_direction_detail_count"],
+            1,
+        )
+        self.assertEqual(
+            packaged["forecast_sample_coverage_summary"]["under_sampled_pair_direction_examples_omitted"],
+            0,
+        )
+        self.assertEqual(
             packaged["forecast_sample_coverage_summary"]["pair_coverage_examples"],
             [
                 {
@@ -228,6 +250,57 @@ class BidAskReplayPackagerTest(unittest.TestCase):
                 }
             ],
         )
+        self.assertEqual(
+            packaged["forecast_sample_coverage_summary"]["pair_coverage"],
+            packaged["forecast_sample_coverage_summary"]["pair_coverage_examples"],
+        )
+        self.assertEqual(packaged["forecast_sample_coverage_summary"]["pair_coverage_count"], 1)
+        self.assertEqual(
+            packaged["forecast_sample_coverage_summary"]["pair_coverage_examples_omitted"],
+            0,
+        )
+
+    def test_package_payload_preserves_full_coverage_details_beyond_examples(self) -> None:
+        coverage_rows = [
+            {
+                "pair": f"PAIR_{index:02d}",
+                "direction": "UP",
+                "forecast_samples": 30 + index,
+                "forecast_active_days": 3,
+                "evaluated_samples": 30 + index,
+                "evaluated_active_days": 3,
+                "coverage_gap_reasons": ["PENDING_FUTURE_TRUTH_WINDOW"],
+            }
+            for index in range(25)
+        ]
+        pair_rows = [
+            {
+                "pair": f"PAIR_{index:02d}",
+                "forecast_samples": 30 + index,
+                "evaluated_samples": 30 + index,
+            }
+            for index in range(28)
+        ]
+        payload = {
+            "price_truth_coverage": {"status": "PRICE_TRUTH_OK"},
+            "forecast_sample_coverage": {
+                "under_sampled_pair_directions": coverage_rows,
+                "pairs": pair_rows,
+            },
+            "precision_rules": {"edge_rules": []},
+        }
+
+        packaged = packager.package_payload(payload, source_report=Path("latest.json"))
+        summary = packaged["forecast_sample_coverage_summary"]
+
+        self.assertEqual(summary["under_sampled_pair_direction_detail_count"], 25)
+        self.assertEqual(len(summary["under_sampled_pair_direction_details"]), 25)
+        self.assertEqual(len(summary["under_sampled_pair_direction_examples"]), 24)
+        self.assertEqual(summary["under_sampled_pair_direction_examples_omitted"], 1)
+        self.assertEqual(summary["pair_coverage_count"], 28)
+        self.assertEqual(len(summary["pair_coverage"]), 28)
+        self.assertEqual(len(summary["pair_coverage_examples"]), 24)
+        self.assertEqual(summary["pair_coverage_examples_omitted"], 4)
 
     def test_package_payload_rejects_partial_price_truth_by_default(self) -> None:
         payload = {

@@ -1831,6 +1831,261 @@
     "min_active_days_for_daily_stability": 3,
     "min_directional_samples_for_precision_rule": 30,
     "pair_count": 28,
+    "pair_coverage": [
+      {
+        "evaluated_samples": 3004,
+        "forecast_samples": 3109,
+        "missing_evaluated_samples_to_min_directional": 0,
+        "missing_price_truth_samples": 0,
+        "pair": "EUR_USD",
+        "pending_future_truth_samples": 0,
+        "unscorable_no_market_samples": 105
+      },
+      {
+        "evaluated_samples": 2713,
+        "forecast_samples": 2747,
+        "missing_evaluated_samples_to_min_directional": 0,
+        "missing_price_truth_samples": 0,
+        "pair": "EUR_JPY",
+        "pending_future_truth_samples": 0,
+        "unscorable_no_market_samples": 34
+      },
+      {
+        "evaluated_samples": 2624,
+        "forecast_samples": 2727,
+        "missing_evaluated_samples_to_min_directional": 0,
+        "missing_price_truth_samples": 0,
+        "pair": "GBP_USD",
+        "pending_future_truth_samples": 3,
+        "unscorable_no_market_samples": 100
+      },
+      {
+        "evaluated_samples": 2607,
+        "forecast_samples": 2713,
+        "missing_evaluated_samples_to_min_directional": 0,
+        "missing_price_truth_samples": 0,
+        "pair": "AUD_JPY",
+        "pending_future_truth_samples": 3,
+        "unscorable_no_market_samples": 103
+      },
+      {
+        "evaluated_samples": 1600,
+        "forecast_samples": 1631,
+        "missing_evaluated_samples_to_min_directional": 0,
+        "missing_price_truth_samples": 0,
+        "pair": "CHF_JPY",
+        "pending_future_truth_samples": 2,
+        "unscorable_no_market_samples": 29
+      },
+      {
+        "evaluated_samples": 1571,
+        "forecast_samples": 1600,
+        "missing_evaluated_samples_to_min_directional": 0,
+        "missing_price_truth_samples": 0,
+        "pair": "GBP_JPY",
+        "pending_future_truth_samples": 1,
+        "unscorable_no_market_samples": 28
+      },
+      {
+        "evaluated_samples": 1540,
+        "forecast_samples": 1675,
+        "missing_evaluated_samples_to_min_directional": 0,
+        "missing_price_truth_samples": 0,
+        "pair": "USD_CAD",
+        "pending_future_truth_samples": 1,
+        "unscorable_no_market_samples": 134
+      },
+      {
+        "evaluated_samples": 1538,
+        "forecast_samples": 1568,
+        "missing_evaluated_samples_to_min_directional": 0,
+        "missing_price_truth_samples": 0,
+        "pair": "EUR_CHF",
+        "pending_future_truth_samples": 0,
+        "unscorable_no_market_samples": 30
+      },
+      {
+        "evaluated_samples": 1510,
+        "forecast_samples": 1535,
+        "missing_evaluated_samples_to_min_directional": 0,
+        "missing_price_truth_samples": 0,
+        "pair": "AUD_CAD",
+        "pending_future_truth_samples": 0,
+        "unscorable_no_market_samples": 25
+      },
+      {
+        "evaluated_samples": 1497,
+        "forecast_samples": 1506,
+        "missing_evaluated_samples_to_min_directional": 0,
+        "missing_price_truth_samples": 0,
+        "pair": "EUR_GBP",
+        "pending_future_truth_samples": 0,
+        "unscorable_no_market_samples": 9
+      },
+      {
+        "evaluated_samples": 1444,
+        "forecast_samples": 1510,
+        "missing_evaluated_samples_to_min_directional": 0,
+        "missing_price_truth_samples": 0,
+        "pair": "USD_CHF",
+        "pending_future_truth_samples": 0,
+        "unscorable_no_market_samples": 66
+      },
+      {
+        "evaluated_samples": 1406,
+        "forecast_samples": 1435,
+        "missing_evaluated_samples_to_min_directional": 0,
+        "missing_price_truth_samples": 0,
+        "pair": "GBP_CHF",
+        "pending_future_truth_samples": 1,
+        "unscorable_no_market_samples": 28
+      },
+      {
+        "evaluated_samples": 1393,
+        "forecast_samples": 1400,
+        "missing_evaluated_samples_to_min_directional": 0,
+        "missing_price_truth_samples": 0,
+        "pair": "CAD_CHF",
+        "pending_future_truth_samples": 0,
+        "unscorable_no_market_samples": 7
+      },
+      {
+        "evaluated_samples": 1382,
+        "forecast_samples": 1430,
+        "missing_evaluated_samples_to_min_directional": 0,
+        "missing_price_truth_samples": 0,
+        "pair": "EUR_AUD",
+        "pending_future_truth_samples": 0,
+        "unscorable_no_market_samples": 48
+      },
+      {
+        "evaluated_samples": 1368,
+        "forecast_samples": 1388,
+        "missing_evaluated_samples_to_min_directional": 0,
+        "missing_price_truth_samples": 0,
+        "pair": "USD_JPY",
+        "pending_future_truth_samples": 1,
+        "unscorable_no_market_samples": 19
+      },
+      {
+        "evaluated_samples": 1367,
+        "forecast_samples": 1497,
+        "missing_evaluated_samples_to_min_directional": 0,
+        "missing_price_truth_samples": 0,
+        "pair": "AUD_USD",
+        "pending_future_truth_samples": 3,
+        "unscorable_no_market_samples": 127
+      },
+      {
+        "evaluated_samples": 1359,
+        "forecast_samples": 1420,
+        "missing_evaluated_samples_to_min_directional": 0,
+        "missing_price_truth_samples": 0,
+        "pair": "NZD_USD",
+        "pending_future_truth_samples": 6,
+        "unscorable_no_market_samples": 55
+      },
+      {
+        "evaluated_samples": 1358,
+        "forecast_samples": 1429,
+        "missing_evaluated_samples_to_min_directional": 0,
+        "missing_price_truth_samples": 0,
+        "pair": "GBP_AUD",
+        "pending_future_truth_samples": 24,
+        "unscorable_no_market_samples": 47
+      },
+      {
+        "evaluated_samples": 1345,
+        "forecast_samples": 1360,
+        "missing_evaluated_samples_to_min_directional": 0,
+        "missing_price_truth_samples": 0,
+        "pair": "AUD_NZD",
+        "pending_future_truth_samples": 1,
+        "unscorable_no_market_samples": 14
+      },
+      {
+        "evaluated_samples": 1306,
+        "forecast_samples": 1341,
+        "missing_evaluated_samples_to_min_directional": 0,
+        "missing_price_truth_samples": 0,
+        "pair": "EUR_CAD",
+        "pending_future_truth_samples": 0,
+        "unscorable_no_market_samples": 35
+      },
+      {
+        "evaluated_samples": 1304,
+        "forecast_samples": 1332,
+        "missing_evaluated_samples_to_min_directional": 0,
+        "missing_price_truth_samples": 0,
+        "pair": "NZD_JPY",
+        "pending_future_truth_samples": 0,
+        "unscorable_no_market_samples": 28
+      },
+      {
+        "evaluated_samples": 1285,
+        "forecast_samples": 1296,
+        "missing_evaluated_samples_to_min_directional": 0,
+        "missing_price_truth_samples": 0,
+        "pair": "AUD_CHF",
+        "pending_future_truth_samples": 2,
+        "unscorable_no_market_samples": 9
+      },
+      {
+        "evaluated_samples": 1216,
+        "forecast_samples": 1232,
+        "missing_evaluated_samples_to_min_directional": 0,
+        "missing_price_truth_samples": 0,
+        "pair": "NZD_CHF",
+        "pending_future_truth_samples": 0,
+        "unscorable_no_market_samples": 16
+      },
+      {
+        "evaluated_samples": 1176,
+        "forecast_samples": 1224,
+        "missing_evaluated_samples_to_min_directional": 0,
+        "missing_price_truth_samples": 0,
+        "pair": "GBP_NZD",
+        "pending_future_truth_samples": 0,
+        "unscorable_no_market_samples": 48
+      },
+      {
+        "evaluated_samples": 1173,
+        "forecast_samples": 1187,
+        "missing_evaluated_samples_to_min_directional": 0,
+        "missing_price_truth_samples": 0,
+        "pair": "EUR_NZD",
+        "pending_future_truth_samples": 1,
+        "unscorable_no_market_samples": 13
+      },
+      {
+        "evaluated_samples": 1163,
+        "forecast_samples": 1287,
+        "missing_evaluated_samples_to_min_directional": 0,
+        "missing_price_truth_samples": 0,
+        "pair": "CAD_JPY",
+        "pending_future_truth_samples": 0,
+        "unscorable_no_market_samples": 124
+      },
+      {
+        "evaluated_samples": 1145,
+        "forecast_samples": 1182,
+        "missing_evaluated_samples_to_min_directional": 0,
+        "missing_price_truth_samples": 0,
+        "pair": "GBP_CAD",
+        "pending_future_truth_samples": 3,
+        "unscorable_no_market_samples": 34
+      },
+      {
+        "evaluated_samples": 1120,
+        "forecast_samples": 1155,
+        "missing_evaluated_samples_to_min_directional": 0,
+        "missing_price_truth_samples": 0,
+        "pair": "NZD_CAD",
+        "pending_future_truth_samples": 7,
+        "unscorable_no_market_samples": 28
+      }
+    ],
+    "pair_coverage_count": 28,
     "pair_coverage_examples": [
       {
         "evaluated_samples": 3004,
@@ -2049,12 +2304,881 @@
         "unscorable_no_market_samples": 48
       }
     ],
+    "pair_coverage_examples_omitted": 4,
     "pair_direction_count": 56,
     "pending_future_truth_samples": 59,
     "under_sampled_gap_reason_counts": {
       "NO_MARKET_SESSION_UNSCORABLE": 52,
       "PENDING_FUTURE_TRUTH_WINDOW": 18
     },
+    "under_sampled_pair_direction_detail_count": 53,
+    "under_sampled_pair_direction_details": [
+      {
+        "coverage_gap_reasons": [
+          "NO_MARKET_SESSION_UNSCORABLE"
+        ],
+        "direction": "DOWN",
+        "evaluated_active_days": 31,
+        "evaluated_samples": 620,
+        "forecast_active_days": 32,
+        "forecast_samples": 637,
+        "missing_active_days": 0,
+        "missing_evaluated_samples": 0,
+        "missing_price_truth_samples": 0,
+        "pair": "AUD_CAD",
+        "pending_future_truth_samples": 0,
+        "unscorable_no_market_samples": 17
+      },
+      {
+        "coverage_gap_reasons": [
+          "NO_MARKET_SESSION_UNSCORABLE"
+        ],
+        "direction": "UP",
+        "evaluated_active_days": 32,
+        "evaluated_samples": 890,
+        "forecast_active_days": 33,
+        "forecast_samples": 898,
+        "missing_active_days": 0,
+        "missing_evaluated_samples": 0,
+        "missing_price_truth_samples": 0,
+        "pair": "AUD_CAD",
+        "pending_future_truth_samples": 0,
+        "unscorable_no_market_samples": 8
+      },
+      {
+        "coverage_gap_reasons": [
+          "PENDING_FUTURE_TRUTH_WINDOW"
+        ],
+        "direction": "DOWN",
+        "evaluated_active_days": 32,
+        "evaluated_samples": 756,
+        "forecast_active_days": 32,
+        "forecast_samples": 758,
+        "missing_active_days": 0,
+        "missing_evaluated_samples": 0,
+        "missing_price_truth_samples": 0,
+        "pair": "AUD_CHF",
+        "pending_future_truth_samples": 2,
+        "unscorable_no_market_samples": 0
+      },
+      {
+        "coverage_gap_reasons": [
+          "NO_MARKET_SESSION_UNSCORABLE"
+        ],
+        "direction": "UP",
+        "evaluated_active_days": 31,
+        "evaluated_samples": 529,
+        "forecast_active_days": 33,
+        "forecast_samples": 538,
+        "missing_active_days": 0,
+        "missing_evaluated_samples": 0,
+        "missing_price_truth_samples": 0,
+        "pair": "AUD_CHF",
+        "pending_future_truth_samples": 0,
+        "unscorable_no_market_samples": 9
+      },
+      {
+        "coverage_gap_reasons": [
+          "NO_MARKET_SESSION_UNSCORABLE",
+          "PENDING_FUTURE_TRUTH_WINDOW"
+        ],
+        "direction": "DOWN",
+        "evaluated_active_days": 39,
+        "evaluated_samples": 1361,
+        "forecast_active_days": 40,
+        "forecast_samples": 1377,
+        "missing_active_days": 0,
+        "missing_evaluated_samples": 0,
+        "missing_price_truth_samples": 0,
+        "pair": "AUD_JPY",
+        "pending_future_truth_samples": 1,
+        "unscorable_no_market_samples": 15
+      },
+      {
+        "coverage_gap_reasons": [
+          "NO_MARKET_SESSION_UNSCORABLE",
+          "PENDING_FUTURE_TRUTH_WINDOW"
+        ],
+        "direction": "UP",
+        "evaluated_active_days": 34,
+        "evaluated_samples": 1246,
+        "forecast_active_days": 35,
+        "forecast_samples": 1336,
+        "missing_active_days": 0,
+        "missing_evaluated_samples": 0,
+        "missing_price_truth_samples": 0,
+        "pair": "AUD_JPY",
+        "pending_future_truth_samples": 2,
+        "unscorable_no_market_samples": 88
+      },
+      {
+        "coverage_gap_reasons": [
+          "NO_MARKET_SESSION_UNSCORABLE"
+        ],
+        "direction": "DOWN",
+        "evaluated_active_days": 25,
+        "evaluated_samples": 488,
+        "forecast_active_days": 26,
+        "forecast_samples": 499,
+        "missing_active_days": 0,
+        "missing_evaluated_samples": 0,
+        "missing_price_truth_samples": 0,
+        "pair": "AUD_NZD",
+        "pending_future_truth_samples": 0,
+        "unscorable_no_market_samples": 11
+      },
+      {
+        "coverage_gap_reasons": [
+          "NO_MARKET_SESSION_UNSCORABLE",
+          "PENDING_FUTURE_TRUTH_WINDOW"
+        ],
+        "direction": "UP",
+        "evaluated_active_days": 34,
+        "evaluated_samples": 857,
+        "forecast_active_days": 34,
+        "forecast_samples": 861,
+        "missing_active_days": 0,
+        "missing_evaluated_samples": 0,
+        "missing_price_truth_samples": 0,
+        "pair": "AUD_NZD",
+        "pending_future_truth_samples": 1,
+        "unscorable_no_market_samples": 3
+      },
+      {
+        "coverage_gap_reasons": [
+          "NO_MARKET_SESSION_UNSCORABLE",
+          "PENDING_FUTURE_TRUTH_WINDOW"
+        ],
+        "direction": "DOWN",
+        "evaluated_active_days": 33,
+        "evaluated_samples": 972,
+        "forecast_active_days": 36,
+        "forecast_samples": 1095,
+        "missing_active_days": 0,
+        "missing_evaluated_samples": 0,
+        "missing_price_truth_samples": 0,
+        "pair": "AUD_USD",
+        "pending_future_truth_samples": 3,
+        "unscorable_no_market_samples": 120
+      },
+      {
+        "coverage_gap_reasons": [
+          "NO_MARKET_SESSION_UNSCORABLE"
+        ],
+        "direction": "UP",
+        "evaluated_active_days": 22,
+        "evaluated_samples": 395,
+        "forecast_active_days": 23,
+        "forecast_samples": 402,
+        "missing_active_days": 0,
+        "missing_evaluated_samples": 0,
+        "missing_price_truth_samples": 0,
+        "pair": "AUD_USD",
+        "pending_future_truth_samples": 0,
+        "unscorable_no_market_samples": 7
+      },
+      {
+        "coverage_gap_reasons": [
+          "NO_MARKET_SESSION_UNSCORABLE"
+        ],
+        "direction": "UP",
+        "evaluated_active_days": 29,
+        "evaluated_samples": 547,
+        "forecast_active_days": 29,
+        "forecast_samples": 554,
+        "missing_active_days": 0,
+        "missing_evaluated_samples": 0,
+        "missing_price_truth_samples": 0,
+        "pair": "CAD_CHF",
+        "pending_future_truth_samples": 0,
+        "unscorable_no_market_samples": 7
+      },
+      {
+        "coverage_gap_reasons": [
+          "NO_MARKET_SESSION_UNSCORABLE"
+        ],
+        "direction": "DOWN",
+        "evaluated_active_days": 30,
+        "evaluated_samples": 790,
+        "forecast_active_days": 33,
+        "forecast_samples": 906,
+        "missing_active_days": 0,
+        "missing_evaluated_samples": 0,
+        "missing_price_truth_samples": 0,
+        "pair": "CAD_JPY",
+        "pending_future_truth_samples": 0,
+        "unscorable_no_market_samples": 116
+      },
+      {
+        "coverage_gap_reasons": [
+          "NO_MARKET_SESSION_UNSCORABLE"
+        ],
+        "direction": "UP",
+        "evaluated_active_days": 31,
+        "evaluated_samples": 373,
+        "forecast_active_days": 31,
+        "forecast_samples": 381,
+        "missing_active_days": 0,
+        "missing_evaluated_samples": 0,
+        "missing_price_truth_samples": 0,
+        "pair": "CAD_JPY",
+        "pending_future_truth_samples": 0,
+        "unscorable_no_market_samples": 8
+      },
+      {
+        "coverage_gap_reasons": [
+          "NO_MARKET_SESSION_UNSCORABLE"
+        ],
+        "direction": "DOWN",
+        "evaluated_active_days": 25,
+        "evaluated_samples": 473,
+        "forecast_active_days": 25,
+        "forecast_samples": 479,
+        "missing_active_days": 0,
+        "missing_evaluated_samples": 0,
+        "missing_price_truth_samples": 0,
+        "pair": "CHF_JPY",
+        "pending_future_truth_samples": 0,
+        "unscorable_no_market_samples": 6
+      },
+      {
+        "coverage_gap_reasons": [
+          "NO_MARKET_SESSION_UNSCORABLE",
+          "PENDING_FUTURE_TRUTH_WINDOW"
+        ],
+        "direction": "UP",
+        "evaluated_active_days": 32,
+        "evaluated_samples": 1127,
+        "forecast_active_days": 34,
+        "forecast_samples": 1152,
+        "missing_active_days": 0,
+        "missing_evaluated_samples": 0,
+        "missing_price_truth_samples": 0,
+        "pair": "CHF_JPY",
+        "pending_future_truth_samples": 2,
+        "unscorable_no_market_samples": 23
+      },
+      {
+        "coverage_gap_reasons": [
+          "NO_MARKET_SESSION_UNSCORABLE"
+        ],
+        "direction": "DOWN",
+        "evaluated_active_days": 25,
+        "evaluated_samples": 388,
+        "forecast_active_days": 27,
+        "forecast_samples": 406,
+        "missing_active_days": 0,
+        "missing_evaluated_samples": 0,
+        "missing_price_truth_samples": 0,
+        "pair": "EUR_AUD",
+        "pending_future_truth_samples": 0,
+        "unscorable_no_market_samples": 18
+      },
+      {
+        "coverage_gap_reasons": [
+          "NO_MARKET_SESSION_UNSCORABLE"
+        ],
+        "direction": "UP",
+        "evaluated_active_days": 32,
+        "evaluated_samples": 994,
+        "forecast_active_days": 33,
+        "forecast_samples": 1024,
+        "missing_active_days": 0,
+        "missing_evaluated_samples": 0,
+        "missing_price_truth_samples": 0,
+        "pair": "EUR_AUD",
+        "pending_future_truth_samples": 0,
+        "unscorable_no_market_samples": 30
+      },
+      {
+        "coverage_gap_reasons": [
+          "NO_MARKET_SESSION_UNSCORABLE"
+        ],
+        "direction": "DOWN",
+        "evaluated_active_days": 27,
+        "evaluated_samples": 563,
+        "forecast_active_days": 27,
+        "forecast_samples": 581,
+        "missing_active_days": 0,
+        "missing_evaluated_samples": 0,
+        "missing_price_truth_samples": 0,
+        "pair": "EUR_CAD",
+        "pending_future_truth_samples": 0,
+        "unscorable_no_market_samples": 18
+      },
+      {
+        "coverage_gap_reasons": [
+          "NO_MARKET_SESSION_UNSCORABLE"
+        ],
+        "direction": "UP",
+        "evaluated_active_days": 31,
+        "evaluated_samples": 743,
+        "forecast_active_days": 31,
+        "forecast_samples": 760,
+        "missing_active_days": 0,
+        "missing_evaluated_samples": 0,
+        "missing_price_truth_samples": 0,
+        "pair": "EUR_CAD",
+        "pending_future_truth_samples": 0,
+        "unscorable_no_market_samples": 17
+      },
+      {
+        "coverage_gap_reasons": [
+          "NO_MARKET_SESSION_UNSCORABLE"
+        ],
+        "direction": "DOWN",
+        "evaluated_active_days": 22,
+        "evaluated_samples": 477,
+        "forecast_active_days": 23,
+        "forecast_samples": 485,
+        "missing_active_days": 0,
+        "missing_evaluated_samples": 0,
+        "missing_price_truth_samples": 0,
+        "pair": "EUR_CHF",
+        "pending_future_truth_samples": 0,
+        "unscorable_no_market_samples": 8
+      },
+      {
+        "coverage_gap_reasons": [
+          "NO_MARKET_SESSION_UNSCORABLE"
+        ],
+        "direction": "UP",
+        "evaluated_active_days": 29,
+        "evaluated_samples": 1061,
+        "forecast_active_days": 30,
+        "forecast_samples": 1083,
+        "missing_active_days": 0,
+        "missing_evaluated_samples": 0,
+        "missing_price_truth_samples": 0,
+        "pair": "EUR_CHF",
+        "pending_future_truth_samples": 0,
+        "unscorable_no_market_samples": 22
+      },
+      {
+        "coverage_gap_reasons": [
+          "NO_MARKET_SESSION_UNSCORABLE"
+        ],
+        "direction": "DOWN",
+        "evaluated_active_days": 28,
+        "evaluated_samples": 708,
+        "forecast_active_days": 28,
+        "forecast_samples": 716,
+        "missing_active_days": 0,
+        "missing_evaluated_samples": 0,
+        "missing_price_truth_samples": 0,
+        "pair": "EUR_GBP",
+        "pending_future_truth_samples": 0,
+        "unscorable_no_market_samples": 8
+      },
+      {
+        "coverage_gap_reasons": [
+          "NO_MARKET_SESSION_UNSCORABLE"
+        ],
+        "direction": "UP",
+        "evaluated_active_days": 27,
+        "evaluated_samples": 789,
+        "forecast_active_days": 27,
+        "forecast_samples": 790,
+        "missing_active_days": 0,
+        "missing_evaluated_samples": 0,
+        "missing_price_truth_samples": 0,
+        "pair": "EUR_GBP",
+        "pending_future_truth_samples": 0,
+        "unscorable_no_market_samples": 1
+      },
+      {
+        "coverage_gap_reasons": [
+          "NO_MARKET_SESSION_UNSCORABLE"
+        ],
+        "direction": "DOWN",
+        "evaluated_active_days": 37,
+        "evaluated_samples": 1147,
+        "forecast_active_days": 38,
+        "forecast_samples": 1157,
+        "missing_active_days": 0,
+        "missing_evaluated_samples": 0,
+        "missing_price_truth_samples": 0,
+        "pair": "EUR_JPY",
+        "pending_future_truth_samples": 0,
+        "unscorable_no_market_samples": 10
+      },
+      {
+        "coverage_gap_reasons": [
+          "NO_MARKET_SESSION_UNSCORABLE"
+        ],
+        "direction": "UP",
+        "evaluated_active_days": 33,
+        "evaluated_samples": 1566,
+        "forecast_active_days": 34,
+        "forecast_samples": 1590,
+        "missing_active_days": 0,
+        "missing_evaluated_samples": 0,
+        "missing_price_truth_samples": 0,
+        "pair": "EUR_JPY",
+        "pending_future_truth_samples": 0,
+        "unscorable_no_market_samples": 24
+      },
+      {
+        "coverage_gap_reasons": [
+          "NO_MARKET_SESSION_UNSCORABLE",
+          "PENDING_FUTURE_TRUTH_WINDOW"
+        ],
+        "direction": "UP",
+        "evaluated_active_days": 34,
+        "evaluated_samples": 762,
+        "forecast_active_days": 34,
+        "forecast_samples": 776,
+        "missing_active_days": 0,
+        "missing_evaluated_samples": 0,
+        "missing_price_truth_samples": 0,
+        "pair": "EUR_NZD",
+        "pending_future_truth_samples": 1,
+        "unscorable_no_market_samples": 13
+      },
+      {
+        "coverage_gap_reasons": [
+          "NO_MARKET_SESSION_UNSCORABLE"
+        ],
+        "direction": "DOWN",
+        "evaluated_active_days": 35,
+        "evaluated_samples": 1621,
+        "forecast_active_days": 38,
+        "forecast_samples": 1722,
+        "missing_active_days": 0,
+        "missing_evaluated_samples": 0,
+        "missing_price_truth_samples": 0,
+        "pair": "EUR_USD",
+        "pending_future_truth_samples": 0,
+        "unscorable_no_market_samples": 101
+      },
+      {
+        "coverage_gap_reasons": [
+          "NO_MARKET_SESSION_UNSCORABLE"
+        ],
+        "direction": "UP",
+        "evaluated_active_days": 32,
+        "evaluated_samples": 1383,
+        "forecast_active_days": 32,
+        "forecast_samples": 1387,
+        "missing_active_days": 0,
+        "missing_evaluated_samples": 0,
+        "missing_price_truth_samples": 0,
+        "pair": "EUR_USD",
+        "pending_future_truth_samples": 0,
+        "unscorable_no_market_samples": 4
+      },
+      {
+        "coverage_gap_reasons": [
+          "NO_MARKET_SESSION_UNSCORABLE"
+        ],
+        "direction": "DOWN",
+        "evaluated_active_days": 34,
+        "evaluated_samples": 532,
+        "forecast_active_days": 34,
+        "forecast_samples": 548,
+        "missing_active_days": 0,
+        "missing_evaluated_samples": 0,
+        "missing_price_truth_samples": 0,
+        "pair": "GBP_AUD",
+        "pending_future_truth_samples": 0,
+        "unscorable_no_market_samples": 16
+      },
+      {
+        "coverage_gap_reasons": [
+          "NO_MARKET_SESSION_UNSCORABLE",
+          "PENDING_FUTURE_TRUTH_WINDOW"
+        ],
+        "direction": "UP",
+        "evaluated_active_days": 33,
+        "evaluated_samples": 826,
+        "forecast_active_days": 33,
+        "forecast_samples": 881,
+        "missing_active_days": 0,
+        "missing_evaluated_samples": 0,
+        "missing_price_truth_samples": 0,
+        "pair": "GBP_AUD",
+        "pending_future_truth_samples": 24,
+        "unscorable_no_market_samples": 31
+      },
+      {
+        "coverage_gap_reasons": [
+          "NO_MARKET_SESSION_UNSCORABLE",
+          "PENDING_FUTURE_TRUTH_WINDOW"
+        ],
+        "direction": "UP",
+        "evaluated_active_days": 32,
+        "evaluated_samples": 734,
+        "forecast_active_days": 34,
+        "forecast_samples": 771,
+        "missing_active_days": 0,
+        "missing_evaluated_samples": 0,
+        "missing_price_truth_samples": 0,
+        "pair": "GBP_CAD",
+        "pending_future_truth_samples": 3,
+        "unscorable_no_market_samples": 34
+      },
+      {
+        "coverage_gap_reasons": [
+          "NO_MARKET_SESSION_UNSCORABLE"
+        ],
+        "direction": "DOWN",
+        "evaluated_active_days": 27,
+        "evaluated_samples": 447,
+        "forecast_active_days": 27,
+        "forecast_samples": 450,
+        "missing_active_days": 0,
+        "missing_evaluated_samples": 0,
+        "missing_price_truth_samples": 0,
+        "pair": "GBP_CHF",
+        "pending_future_truth_samples": 0,
+        "unscorable_no_market_samples": 3
+      },
+      {
+        "coverage_gap_reasons": [
+          "NO_MARKET_SESSION_UNSCORABLE",
+          "PENDING_FUTURE_TRUTH_WINDOW"
+        ],
+        "direction": "UP",
+        "evaluated_active_days": 33,
+        "evaluated_samples": 959,
+        "forecast_active_days": 34,
+        "forecast_samples": 985,
+        "missing_active_days": 0,
+        "missing_evaluated_samples": 0,
+        "missing_price_truth_samples": 0,
+        "pair": "GBP_CHF",
+        "pending_future_truth_samples": 1,
+        "unscorable_no_market_samples": 25
+      },
+      {
+        "coverage_gap_reasons": [
+          "NO_MARKET_SESSION_UNSCORABLE",
+          "PENDING_FUTURE_TRUTH_WINDOW"
+        ],
+        "direction": "DOWN",
+        "evaluated_active_days": 31,
+        "evaluated_samples": 657,
+        "forecast_active_days": 31,
+        "forecast_samples": 665,
+        "missing_active_days": 0,
+        "missing_evaluated_samples": 0,
+        "missing_price_truth_samples": 0,
+        "pair": "GBP_JPY",
+        "pending_future_truth_samples": 1,
+        "unscorable_no_market_samples": 7
+      },
+      {
+        "coverage_gap_reasons": [
+          "NO_MARKET_SESSION_UNSCORABLE"
+        ],
+        "direction": "UP",
+        "evaluated_active_days": 31,
+        "evaluated_samples": 914,
+        "forecast_active_days": 33,
+        "forecast_samples": 935,
+        "missing_active_days": 0,
+        "missing_evaluated_samples": 0,
+        "missing_price_truth_samples": 0,
+        "pair": "GBP_JPY",
+        "pending_future_truth_samples": 0,
+        "unscorable_no_market_samples": 21
+      },
+      {
+        "coverage_gap_reasons": [
+          "NO_MARKET_SESSION_UNSCORABLE"
+        ],
+        "direction": "DOWN",
+        "evaluated_active_days": 26,
+        "evaluated_samples": 425,
+        "forecast_active_days": 27,
+        "forecast_samples": 432,
+        "missing_active_days": 0,
+        "missing_evaluated_samples": 0,
+        "missing_price_truth_samples": 0,
+        "pair": "GBP_NZD",
+        "pending_future_truth_samples": 0,
+        "unscorable_no_market_samples": 7
+      },
+      {
+        "coverage_gap_reasons": [
+          "NO_MARKET_SESSION_UNSCORABLE"
+        ],
+        "direction": "UP",
+        "evaluated_active_days": 36,
+        "evaluated_samples": 751,
+        "forecast_active_days": 37,
+        "forecast_samples": 792,
+        "missing_active_days": 0,
+        "missing_evaluated_samples": 0,
+        "missing_price_truth_samples": 0,
+        "pair": "GBP_NZD",
+        "pending_future_truth_samples": 0,
+        "unscorable_no_market_samples": 41
+      },
+      {
+        "coverage_gap_reasons": [
+          "NO_MARKET_SESSION_UNSCORABLE",
+          "PENDING_FUTURE_TRUTH_WINDOW"
+        ],
+        "direction": "DOWN",
+        "evaluated_active_days": 37,
+        "evaluated_samples": 1204,
+        "forecast_active_days": 39,
+        "forecast_samples": 1288,
+        "missing_active_days": 0,
+        "missing_evaluated_samples": 0,
+        "missing_price_truth_samples": 0,
+        "pair": "GBP_USD",
+        "pending_future_truth_samples": 1,
+        "unscorable_no_market_samples": 83
+      },
+      {
+        "coverage_gap_reasons": [
+          "NO_MARKET_SESSION_UNSCORABLE",
+          "PENDING_FUTURE_TRUTH_WINDOW"
+        ],
+        "direction": "UP",
+        "evaluated_active_days": 33,
+        "evaluated_samples": 1420,
+        "forecast_active_days": 33,
+        "forecast_samples": 1439,
+        "missing_active_days": 0,
+        "missing_evaluated_samples": 0,
+        "missing_price_truth_samples": 0,
+        "pair": "GBP_USD",
+        "pending_future_truth_samples": 2,
+        "unscorable_no_market_samples": 17
+      },
+      {
+        "coverage_gap_reasons": [
+          "NO_MARKET_SESSION_UNSCORABLE"
+        ],
+        "direction": "DOWN",
+        "evaluated_active_days": 30,
+        "evaluated_samples": 492,
+        "forecast_active_days": 31,
+        "forecast_samples": 513,
+        "missing_active_days": 0,
+        "missing_evaluated_samples": 0,
+        "missing_price_truth_samples": 0,
+        "pair": "NZD_CAD",
+        "pending_future_truth_samples": 0,
+        "unscorable_no_market_samples": 21
+      },
+      {
+        "coverage_gap_reasons": [
+          "NO_MARKET_SESSION_UNSCORABLE",
+          "PENDING_FUTURE_TRUTH_WINDOW"
+        ],
+        "direction": "UP",
+        "evaluated_active_days": 25,
+        "evaluated_samples": 628,
+        "forecast_active_days": 27,
+        "forecast_samples": 642,
+        "missing_active_days": 0,
+        "missing_evaluated_samples": 0,
+        "missing_price_truth_samples": 0,
+        "pair": "NZD_CAD",
+        "pending_future_truth_samples": 7,
+        "unscorable_no_market_samples": 7
+      },
+      {
+        "coverage_gap_reasons": [
+          "NO_MARKET_SESSION_UNSCORABLE"
+        ],
+        "direction": "DOWN",
+        "evaluated_active_days": 31,
+        "evaluated_samples": 433,
+        "forecast_active_days": 32,
+        "forecast_samples": 437,
+        "missing_active_days": 0,
+        "missing_evaluated_samples": 0,
+        "missing_price_truth_samples": 0,
+        "pair": "NZD_CHF",
+        "pending_future_truth_samples": 0,
+        "unscorable_no_market_samples": 4
+      },
+      {
+        "coverage_gap_reasons": [
+          "NO_MARKET_SESSION_UNSCORABLE"
+        ],
+        "direction": "UP",
+        "evaluated_active_days": 30,
+        "evaluated_samples": 783,
+        "forecast_active_days": 32,
+        "forecast_samples": 795,
+        "missing_active_days": 0,
+        "missing_evaluated_samples": 0,
+        "missing_price_truth_samples": 0,
+        "pair": "NZD_CHF",
+        "pending_future_truth_samples": 0,
+        "unscorable_no_market_samples": 12
+      },
+      {
+        "coverage_gap_reasons": [
+          "NO_MARKET_SESSION_UNSCORABLE"
+        ],
+        "direction": "DOWN",
+        "evaluated_active_days": 34,
+        "evaluated_samples": 794,
+        "forecast_active_days": 34,
+        "forecast_samples": 810,
+        "missing_active_days": 0,
+        "missing_evaluated_samples": 0,
+        "missing_price_truth_samples": 0,
+        "pair": "NZD_JPY",
+        "pending_future_truth_samples": 0,
+        "unscorable_no_market_samples": 16
+      },
+      {
+        "coverage_gap_reasons": [
+          "NO_MARKET_SESSION_UNSCORABLE"
+        ],
+        "direction": "UP",
+        "evaluated_active_days": 31,
+        "evaluated_samples": 510,
+        "forecast_active_days": 32,
+        "forecast_samples": 522,
+        "missing_active_days": 0,
+        "missing_evaluated_samples": 0,
+        "missing_price_truth_samples": 0,
+        "pair": "NZD_JPY",
+        "pending_future_truth_samples": 0,
+        "unscorable_no_market_samples": 12
+      },
+      {
+        "coverage_gap_reasons": [
+          "NO_MARKET_SESSION_UNSCORABLE",
+          "PENDING_FUTURE_TRUTH_WINDOW"
+        ],
+        "direction": "DOWN",
+        "evaluated_active_days": 31,
+        "evaluated_samples": 810,
+        "forecast_active_days": 34,
+        "forecast_samples": 862,
+        "missing_active_days": 0,
+        "missing_evaluated_samples": 0,
+        "missing_price_truth_samples": 0,
+        "pair": "NZD_USD",
+        "pending_future_truth_samples": 4,
+        "unscorable_no_market_samples": 48
+      },
+      {
+        "coverage_gap_reasons": [
+          "NO_MARKET_SESSION_UNSCORABLE",
+          "PENDING_FUTURE_TRUTH_WINDOW"
+        ],
+        "direction": "UP",
+        "evaluated_active_days": 25,
+        "evaluated_samples": 549,
+        "forecast_active_days": 26,
+        "forecast_samples": 558,
+        "missing_active_days": 0,
+        "missing_evaluated_samples": 0,
+        "missing_price_truth_samples": 0,
+        "pair": "NZD_USD",
+        "pending_future_truth_samples": 2,
+        "unscorable_no_market_samples": 7
+      },
+      {
+        "coverage_gap_reasons": [
+          "NO_MARKET_SESSION_UNSCORABLE",
+          "PENDING_FUTURE_TRUTH_WINDOW"
+        ],
+        "direction": "DOWN",
+        "evaluated_active_days": 25,
+        "evaluated_samples": 290,
+        "forecast_active_days": 25,
+        "forecast_samples": 298,
+        "missing_active_days": 0,
+        "missing_evaluated_samples": 0,
+        "missing_price_truth_samples": 0,
+        "pair": "USD_CAD",
+        "pending_future_truth_samples": 1,
+        "unscorable_no_market_samples": 7
+      },
+      {
+        "coverage_gap_reasons": [
+          "NO_MARKET_SESSION_UNSCORABLE"
+        ],
+        "direction": "UP",
+        "evaluated_active_days": 35,
+        "evaluated_samples": 1250,
+        "forecast_active_days": 38,
+        "forecast_samples": 1377,
+        "missing_active_days": 0,
+        "missing_evaluated_samples": 0,
+        "missing_price_truth_samples": 0,
+        "pair": "USD_CAD",
+        "pending_future_truth_samples": 0,
+        "unscorable_no_market_samples": 127
+      },
+      {
+        "coverage_gap_reasons": [
+          "NO_MARKET_SESSION_UNSCORABLE"
+        ],
+        "direction": "DOWN",
+        "evaluated_active_days": 27,
+        "evaluated_samples": 459,
+        "forecast_active_days": 28,
+        "forecast_samples": 466,
+        "missing_active_days": 0,
+        "missing_evaluated_samples": 0,
+        "missing_price_truth_samples": 0,
+        "pair": "USD_CHF",
+        "pending_future_truth_samples": 0,
+        "unscorable_no_market_samples": 7
+      },
+      {
+        "coverage_gap_reasons": [
+          "NO_MARKET_SESSION_UNSCORABLE"
+        ],
+        "direction": "UP",
+        "evaluated_active_days": 36,
+        "evaluated_samples": 985,
+        "forecast_active_days": 38,
+        "forecast_samples": 1044,
+        "missing_active_days": 0,
+        "missing_evaluated_samples": 0,
+        "missing_price_truth_samples": 0,
+        "pair": "USD_CHF",
+        "pending_future_truth_samples": 0,
+        "unscorable_no_market_samples": 59
+      },
+      {
+        "coverage_gap_reasons": [
+          "NO_MARKET_SESSION_UNSCORABLE"
+        ],
+        "direction": "DOWN",
+        "evaluated_active_days": 30,
+        "evaluated_samples": 525,
+        "forecast_active_days": 30,
+        "forecast_samples": 526,
+        "missing_active_days": 0,
+        "missing_evaluated_samples": 0,
+        "missing_price_truth_samples": 0,
+        "pair": "USD_JPY",
+        "pending_future_truth_samples": 0,
+        "unscorable_no_market_samples": 1
+      },
+      {
+        "coverage_gap_reasons": [
+          "NO_MARKET_SESSION_UNSCORABLE",
+          "PENDING_FUTURE_TRUTH_WINDOW"
+        ],
+        "direction": "UP",
+        "evaluated_active_days": 37,
+        "evaluated_samples": 843,
+        "forecast_active_days": 39,
+        "forecast_samples": 862,
+        "missing_active_days": 0,
+        "missing_evaluated_samples": 0,
+        "missing_price_truth_samples": 0,
+        "pair": "USD_JPY",
+        "pending_future_truth_samples": 1,
+        "unscorable_no_market_samples": 18
+      }
+    ],
     "under_sampled_pair_direction_examples": [
       {
         "coverage_gap_reasons": [
@@ -2446,6 +3570,7 @@
         "unscorable_no_market_samples": 10
       }
     ],
+    "under_sampled_pair_direction_examples_omitted": 29,
     "under_sampled_pair_directions": 53,
     "unscorable_no_market_samples": 1343
   },

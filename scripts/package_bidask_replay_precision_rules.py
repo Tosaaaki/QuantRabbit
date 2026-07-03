@@ -144,7 +144,7 @@ def package_payload(
         "generated_at_utc": payload.get("generated_at_utc"),
         "generated_from": "scripts/oanda_history_replay_validate.py",
         "packaged_by": "scripts/package_bidask_replay_precision_rules.py",
-        "source_report": str(source_report),
+        "source_report": _source_report_label(source_report),
         "history_dirs": _history_dirs(payload.get("history_dirs")),
         "granularity": payload.get("granularity"),
         "truth_source": payload.get("truth_source"),
@@ -160,6 +160,16 @@ def package_payload(
         rows = precision.get(section)
         packaged[section] = copy.deepcopy(rows if isinstance(rows, list) else [])
     return packaged
+
+
+def _source_report_label(source_report: Path) -> str:
+    if not source_report.is_absolute():
+        return source_report.as_posix()
+    parts = source_report.parts
+    for index, part in enumerate(parts[:-1]):
+        if part == "logs" and parts[index + 1] == "reports":
+            return Path(*parts[index:]).as_posix()
+    return source_report.as_posix()
 
 
 def _copy_fields(payload: dict[str, Any], fields: tuple[str, ...]) -> dict[str, Any]:
@@ -179,6 +189,16 @@ def _forecast_sample_coverage_summary(raw: Any, truth: dict[str, Any] | None = N
     under_sampled_rows = under_sampled if isinstance(under_sampled, list) else []
     pairs = raw.get("pairs")
     pair_rows = pairs if isinstance(pairs, list) else []
+    under_sampled_details = [
+        _copy_fields(item, COVERAGE_DETAIL_FIELDS)
+        for item in under_sampled_rows
+        if isinstance(item, dict)
+    ]
+    pair_coverage = [
+        _copy_fields(item, PAIR_COVERAGE_FIELDS)
+        for item in pair_rows
+        if isinstance(item, dict)
+    ]
     pending_future = raw.get("pending_future_truth_samples")
     if pending_future is None and isinstance(truth, dict):
         pending_future = truth.get("pending_future_truth_rows")
@@ -193,16 +213,17 @@ def _forecast_sample_coverage_summary(raw: Any, truth: dict[str, Any] | None = N
         "pending_future_truth_samples": pending_future,
         "under_sampled_pair_directions": len(under_sampled_rows),
         "under_sampled_gap_reason_counts": _gap_reason_counts(under_sampled_rows),
-        "under_sampled_pair_direction_examples": [
-            _copy_fields(item, COVERAGE_DETAIL_FIELDS)
-            for item in under_sampled_rows[:COVERAGE_DETAIL_LIMIT]
-            if isinstance(item, dict)
-        ],
-        "pair_coverage_examples": [
-            _copy_fields(item, PAIR_COVERAGE_FIELDS)
-            for item in pair_rows[:COVERAGE_DETAIL_LIMIT]
-            if isinstance(item, dict)
-        ],
+        "under_sampled_pair_direction_detail_count": len(under_sampled_details),
+        "under_sampled_pair_direction_examples_omitted": max(
+            len(under_sampled_details) - COVERAGE_DETAIL_LIMIT,
+            0,
+        ),
+        "under_sampled_pair_direction_details": under_sampled_details,
+        "under_sampled_pair_direction_examples": under_sampled_details[:COVERAGE_DETAIL_LIMIT],
+        "pair_coverage_count": len(pair_coverage),
+        "pair_coverage_examples_omitted": max(len(pair_coverage) - COVERAGE_DETAIL_LIMIT, 0),
+        "pair_coverage": pair_coverage,
+        "pair_coverage_examples": pair_coverage[:COVERAGE_DETAIL_LIMIT],
     }
 
 

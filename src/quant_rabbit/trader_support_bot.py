@@ -3148,6 +3148,32 @@ def _acceptance_clearance_for_code(
                 "under_sampled_pair_direction_examples": sample_coverage.get(
                     "under_sampled_pair_direction_examples"
                 ),
+                "under_sampled_pair_direction_detail_count": (
+                    sample_coverage.get("under_sampled_pair_direction_detail_count")
+                    if sample_coverage.get("under_sampled_pair_direction_detail_count") is not None
+                    else _list_len(sample_coverage.get("under_sampled_pair_direction_examples"))
+                ),
+                "under_sampled_pair_direction_examples_omitted": sample_coverage.get(
+                    "under_sampled_pair_direction_examples_omitted"
+                ),
+                "under_sampled_pair_direction_details": (
+                    sample_coverage.get("under_sampled_pair_direction_details")
+                    if isinstance(sample_coverage.get("under_sampled_pair_direction_details"), list)
+                    else sample_coverage.get("under_sampled_pair_direction_examples")
+                ),
+                "pair_coverage_count": (
+                    sample_coverage.get("pair_coverage_count")
+                    if sample_coverage.get("pair_coverage_count") is not None
+                    else _list_len(sample_coverage.get("pair_coverage_examples"))
+                ),
+                "pair_coverage_examples_omitted": sample_coverage.get(
+                    "pair_coverage_examples_omitted"
+                ),
+                "pair_coverage": (
+                    sample_coverage.get("pair_coverage")
+                    if isinstance(sample_coverage.get("pair_coverage"), list)
+                    else sample_coverage.get("pair_coverage_examples")
+                ),
                 "pair_coverage_examples": sample_coverage.get("pair_coverage_examples"),
                 "daily_stability_requirements": bidask.get("daily_stability_requirements"),
                 "history_fetch_command": history_fetch_command,
@@ -6301,6 +6327,10 @@ def _float(value: Any) -> float:
         return float(value)
     except (TypeError, ValueError):
         return 0.0
+
+
+def _list_len(value: Any) -> int:
+    return len(value) if isinstance(value, list) else 0
 
 
 def _int_like(value: Any) -> int:

@@ -429,6 +429,16 @@ class TraderSupportBotTest(unittest.TestCase):
                 evidence_summary["under_sampled_pair_direction_examples"][0]["pair"],
                 "AUD_CAD",
             )
+            self.assertEqual(evidence_summary["under_sampled_pair_direction_detail_count"], 1)
+            self.assertEqual(
+                evidence_summary["under_sampled_pair_direction_details"],
+                evidence_summary["under_sampled_pair_direction_examples"],
+            )
+            self.assertEqual(evidence_summary["pair_coverage_count"], 1)
+            self.assertEqual(
+                evidence_summary["pair_coverage"],
+                evidence_summary["pair_coverage_examples"],
+            )
             self.assertEqual(
                 evidence_summary["forecast_sample_coverage_detail_status"],
                 "DETAIL_PRESENT",
