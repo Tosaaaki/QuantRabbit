@@ -29,6 +29,7 @@ from quant_rabbit.trader_support_bot import (
     ORDER_INTENTS_ARTIFACT_REFRESH_WAIT_STATUS,
     PENDING_CANCEL_RECEIPT_WAIT_STATUS,
     PENDING_CANCEL_REVIEW_CODE,
+    GUARDIAN_BLOCKER,
     STATUS_BLOCKED,
     STATUS_READY,
     POSITION_GUARDIAN_LOCK_WAIT_STATUS,
@@ -3267,6 +3268,62 @@ class TraderSupportBotTest(unittest.TestCase):
             self.assertIn("Guardian Recovery Candidates", report)
             self.assertIn("trades=20 losses=0", report)
             self.assertIn("pess_exp_jpy=327.279", report)
+
+    def test_current_guardian_clears_old_intent_guardian_p0_as_stale_support_blocker(self) -> None:
+        now = datetime(2026, 7, 3, 15, 18, tzinfo=timezone.utc)
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _write_fixture(root, now=now, blocked=True)
+            _write_json(
+                files["self_improvement"],
+                {
+                    "generated_at_utc": (now + timedelta(seconds=30)).isoformat(),
+                    "status": "SELF_IMPROVEMENT_BLOCKED",
+                    "findings": [
+                        {
+                            "priority": "P0",
+                            "code": "TARGET_OPEN_NO_LIVE_READY_LANES",
+                            "message": "target is open but no executable lanes were visible",
+                            "evidence": {"live_ready_lanes": 0},
+                        }
+                    ],
+                },
+            )
+            env = _guardian_env(root, active="1")
+            with mock.patch.dict(os.environ, env, clear=False):
+                summary = TraderSupportBot(
+                    broker_snapshot_path=files["broker"],
+                    order_intents_path=files["intents"],
+                    target_state_path=files["target"],
+                    position_management_path=files["position_management"],
+                    position_guardian_management_path=files["guardian_management"],
+                    position_guardian_execution_path=files["guardian_execution"],
+                    position_guardian_heartbeat_path=files["guardian_heartbeat"],
+                    self_improvement_audit_path=files["self_improvement"],
+                    profitability_acceptance_path=files["profitability"],
+                    execution_timing_audit_path=files["timing"],
+                    profit_capture_bot_path=files["profit_capture_bot"],
+                    output_path=files["output"],
+                    report_path=files["report"],
+                    now_utc=now,
+                ).run()
+
+            payload = json.loads(files["output"].read_text())
+            entry = payload["entry_readiness"]
+            self.assertEqual(summary.status, STATUS_BLOCKED)
+            self.assertTrue(payload["metrics"]["guardian_active"])
+            self.assertEqual(entry["stale_support_blocker_codes"], [GUARDIAN_BLOCKER])
+            self.assertEqual(payload["metrics"]["stale_support_blocker_lanes"], 2)
+            lane = entry["near_ready_lanes"][0]
+            self.assertIn("stale_artifact", lane["blocker_groups"])
+            self.assertNotIn(
+                GUARDIAN_BLOCKER,
+                lane["remaining_blocker_codes_after_stale_artifacts_clear"],
+            )
+            action_codes = {item["code"] for item in payload["operator_actions"]}
+            self.assertIn("REGENERATE_INTENTS_FROM_CURRENT_SUPPORT_STATE", action_codes)
+            blocker_codes = {item["code"] for item in payload["blockers"]}
+            self.assertNotIn("POSITION_GUARDIAN_INACTIVE", blocker_codes)
 
     def test_range_forecast_non_rotation_repair_is_superseded_by_range_counterpart(self) -> None:
         now = datetime(2026, 6, 22, 12, 15, tzinfo=timezone.utc)

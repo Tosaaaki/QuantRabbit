@@ -337,7 +337,12 @@ class TraderSupportBot:
         p0_findings = _p0_findings(self_improvement)
         profit_capture = _profit_capture_summary(self_improvement, timing)
         current_profit_capture = _current_profit_capture_summary(profit_capture_bot)
-        entry = _entry_readiness_summary(intents, oanda_rotation=oanda_rotation)
+        entry = _entry_readiness_summary(
+            intents,
+            oanda_rotation=oanda_rotation,
+            guardian=guardian,
+            current_p0_findings=p0_findings,
+        )
         artifact_freshness = _artifact_freshness_summary(
             broker=broker_summary,
             entry=entry,
@@ -453,6 +458,8 @@ class TraderSupportBot:
             "repair_frontier_after_support_top_blockers": entry["repair_frontier_remaining_blockers"],
             "near_ready_lane_count": entry["near_ready_lane_count"],
             "near_ready_blocker_groups": entry["near_ready_blocker_groups"],
+            "stale_support_blocker_codes": entry["stale_support_blocker_codes"],
+            "stale_support_blocker_lanes": entry["stale_support_blocker_lanes"],
             "order_intents_stale_against_broker_snapshot": artifact_freshness[
                 "order_intents_stale_against_broker_snapshot"
             ],
@@ -1709,12 +1716,19 @@ def _entry_readiness_summary(
     payload: dict[str, Any],
     *,
     oanda_rotation: dict[str, Any] | None = None,
+    guardian: dict[str, Any] | None = None,
+    current_p0_findings: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     results = payload.get("results") if isinstance(payload.get("results"), list) else []
     intent_pairs = _intent_pairs(results)
     live_ready = [item for item in results if item.get("status") == "LIVE_READY"]
     oanda_evidence_by_vehicle = _oanda_replay_evidence_by_vehicle(oanda_rotation or {})
     codes = Counter()
+    stale_support_blocker_codes = _stale_support_blocker_codes(
+        results,
+        guardian=guardian or {},
+        current_p0_findings=current_p0_findings or [],
+    )
     repair_frontier: list[dict[str, Any]] = []
     repair_live_ready: list[dict[str, Any]] = []
     repair_basket_guardian_recovery: list[dict[str, Any]] = []
@@ -1731,7 +1745,14 @@ def _entry_readiness_summary(
         blocker_codes = [str(code) for code in item.get("live_blocker_codes") or []]
         metadata = _intent_metadata(item)
         if str(item.get("status") or "") != "LIVE_READY" and blocker_codes:
-            near_ready_lanes.append(_near_ready_lane_summary(item, blocker_codes, metadata))
+            near_ready_lanes.append(
+                _near_ready_lane_summary(
+                    item,
+                    blocker_codes,
+                    metadata,
+                    stale_support_blocker_codes=stale_support_blocker_codes,
+                )
+            )
         residual_blockers = [code for code in blocker_codes if code in MONTH_SCALE_RESIDUAL_BLOCKER_CODES]
         if residual_blockers:
             intent = item.get("intent") if isinstance(item.get("intent"), dict) else {}
@@ -1888,6 +1909,12 @@ def _entry_readiness_summary(
         "live_ready_lane_ids": [item.get("lane_id") for item in live_ready],
         "top_blockers": [{"code": code, "count": count} for code, count in codes.most_common(12)],
         "guardian_blocked_lanes": codes.get(GUARDIAN_BLOCKER, 0),
+        "stale_support_blocker_codes": stale_support_blocker_codes,
+        "stale_support_blocker_lanes": sum(
+            1
+            for item in near_ready_lanes
+            if any(code in stale_support_blocker_codes for code in item.get("blocker_codes") or [])
+        ),
         "repair_frontier": repair_frontier[:12],
         "repair_frontier_superseded_by_range_forecast": repair_frontier_superseded_by_range_forecast[:12],
         "repair_frontier_missing_range_rotation_counterpart": repair_frontier_missing_range_rotation_counterpart[:12],
@@ -1927,15 +1954,30 @@ def _near_ready_lane_summary(
     item: dict[str, Any],
     blocker_codes: list[str],
     metadata: dict[str, Any],
+    *,
+    stale_support_blocker_codes: list[str] | None = None,
 ) -> dict[str, Any]:
     intent = item.get("intent") if isinstance(item.get("intent"), dict) else {}
     context = intent.get("market_context") if isinstance(intent.get("market_context"), dict) else {}
     risk_metrics = item.get("risk_metrics") if isinstance(item.get("risk_metrics"), dict) else {}
-    groups = sorted({_near_ready_blocker_group(code) for code in blocker_codes})
+    stale_support_blockers = set(stale_support_blocker_codes or [])
+    groups = sorted(
+        {
+            _near_ready_blocker_group(
+                code,
+                stale_support_blocker_codes=stale_support_blockers,
+            )
+            for code in blocker_codes
+        }
+    )
     remaining_after_stale_clear = [
         code
         for code in blocker_codes
-        if _near_ready_blocker_group(code) != "stale_artifact"
+        if _near_ready_blocker_group(
+            code,
+            stale_support_blocker_codes=stale_support_blockers,
+        )
+        != "stale_artifact"
     ]
     remaining_after_global = [code for code in blocker_codes if code not in GLOBAL_UNLOCK_BLOCKERS]
     return {
@@ -1991,8 +2033,49 @@ def _near_ready_blocker_groups(near_ready_lanes: list[dict[str, Any]]) -> list[d
     ]
 
 
-def _near_ready_blocker_group(code: str) -> str:
+def _stale_support_blocker_codes(
+    results: list[dict[str, Any]],
+    *,
+    guardian: dict[str, Any],
+    current_p0_findings: list[dict[str, Any]],
+) -> list[str]:
+    """Support-only stale classifier for blockers embedded in older intents.
+
+    This does not change LIVE_READY status or gateway validation. It only keeps
+    the support panel from treating a cleared guardian P0, copied into an older
+    `order_intents` packet, as current repair work.
+    """
+
+    blocker_counts = Counter(
+        str(code)
+        for item in results
+        if isinstance(item, dict)
+        for code in item.get("live_blocker_codes") or []
+    )
+    current_p0_codes = {
+        str(item.get("code") or "")
+        for item in current_p0_findings
+        if isinstance(item, dict)
+    }
+    stale_codes: list[str] = []
+    if (
+        blocker_counts.get(GUARDIAN_BLOCKER, 0) > 0
+        and guardian.get("required")
+        and guardian.get("active")
+        and GUARDIAN_BLOCKER not in current_p0_codes
+    ):
+        stale_codes.append(GUARDIAN_BLOCKER)
+    return stale_codes
+
+
+def _near_ready_blocker_group(
+    code: str,
+    *,
+    stale_support_blocker_codes: set[str] | None = None,
+) -> str:
     text = str(code or "").upper()
+    if text in (stale_support_blocker_codes or set()):
+        return "stale_artifact"
     if text in GLOBAL_UNLOCK_BLOCKERS:
         return "global"
     if text in QUOTE_FRESHNESS_BLOCKER_CODES or "STALE" in text:
@@ -3839,6 +3922,23 @@ def _operator_actions(
                 "command": "PYTHONPATH=src python3 -m quant_rabbit.cli generate-intents --snapshot data/broker_snapshot.json --reuse-market-artifacts",
                 "requires_explicit_operator_approval": False,
                 "reason": "order_intents is older than broker_snapshot; refresh intents before ranking live blockers",
+            }
+        )
+    stale_support_blocker_codes = [
+        str(code)
+        for code in entry.get("stale_support_blocker_codes") or []
+        if str(code).strip()
+    ]
+    if stale_support_blocker_codes:
+        actions.append(
+            {
+                "code": "REGENERATE_INTENTS_FROM_CURRENT_SUPPORT_STATE",
+                "command": "PYTHONPATH=src python3 -m quant_rabbit.cli generate-intents --snapshot data/broker_snapshot.json --reuse-market-artifacts",
+                "requires_explicit_operator_approval": False,
+                "reason": (
+                    "order_intents still contains cleared support blocker(s): "
+                    f"{', '.join(stale_support_blocker_codes)}"
+                ),
             }
         )
     if entry["live_ready_lanes"] == 0:
