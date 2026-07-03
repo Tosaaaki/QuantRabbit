@@ -5948,6 +5948,17 @@ def _render_report(payload: dict[str, Any]) -> str:
         )
     else:
         lines.append("- none")
+    lines.extend(["", "## Bid/Ask Replay Coverage", ""])
+    bidask_request = _repair_request_by_code(repair_requests, "COLLECT_BIDASK_REPLAY_EVIDENCE")
+    if bidask_request:
+        evidence = (
+            bidask_request.get("evidence_summary")
+            if isinstance(bidask_request.get("evidence_summary"), dict)
+            else {}
+        )
+        lines.extend(_render_bidask_replay_coverage_report(evidence))
+    else:
+        lines.append("- none")
     lines.extend(
         [
             "",
@@ -6306,6 +6317,110 @@ def _format_oanda_replay_report_cell(item: dict[str, Any]) -> str:
         f"5%trades={evidence.get('trades_needed_for_minimum_5pct')}",
     ]
     return "`" + " ".join(str(part) for part in parts) + "`"
+
+
+def _repair_request_by_code(requests: list[Any], code: str) -> dict[str, Any]:
+    for item in requests:
+        if isinstance(item, dict) and item.get("code") == code:
+            return item
+    return {}
+
+
+def _render_bidask_replay_coverage_report(evidence: dict[str, Any]) -> list[str]:
+    lines: list[str] = []
+    price_truth = (
+        evidence.get("price_truth_coverage")
+        if isinstance(evidence.get("price_truth_coverage"), dict)
+        else {}
+    )
+    daily = (
+        evidence.get("daily_stability_requirements")
+        if isinstance(evidence.get("daily_stability_requirements"), dict)
+        else {}
+    )
+    lines.append(
+        "- Status: "
+        f"`{evidence.get('all_currency_sample_coverage_status')}` "
+        f"replay=`{evidence.get('replay_evidence_status')}` "
+        f"price_truth=`{price_truth.get('status')}` "
+        f"fetch_required=`{evidence.get('price_truth_fetch_required')}`"
+    )
+    lines.append(
+        "- Rule counts: "
+        f"edge=`{evidence.get('edge_rules')}` daily_stable_edge=`{evidence.get('daily_stable_edge_rules')}` "
+        f"support=`{evidence.get('support_rules')}` daily_stable_support=`{evidence.get('daily_stable_support_rules')}` "
+        f"rank_only_support=`{evidence.get('rank_only_support_rules')}` "
+        f"negative=`{evidence.get('negative_rules')}`"
+    )
+    if daily:
+        lines.append(
+            "- Daily stability requirement: "
+            f"active_days>=`{daily.get('min_active_days')}` "
+            f"max_daily_share<=`{daily.get('max_daily_sample_share')}` "
+            f"positive_day_rate>=`{daily.get('min_positive_day_rate')}`"
+        )
+    lines.append(
+        "- Under-sampled pair-directions: "
+        f"`{evidence.get('under_sampled_pair_direction_count')}` "
+        f"missing_evaluated_samples=`{evidence.get('under_sampled_missing_evaluated_samples')}`"
+    )
+    examples = evidence.get("under_sampled_pair_direction_examples")
+    if isinstance(examples, list) and examples:
+        lines.append("")
+        lines.extend(
+            [
+                "| Pair | Direction | Samples | Active days | Gap reasons |",
+                "|---|---|---:|---:|---|",
+            ]
+        )
+        for item in examples[:8]:
+            if not isinstance(item, dict):
+                continue
+            reasons = item.get("gap_reasons") or item.get("reasons") or []
+            if isinstance(reasons, list):
+                reason_text = ", ".join(str(reason) for reason in reasons)
+            else:
+                reason_text = str(reasons or "")
+            lines.append(
+                f"| `{item.get('pair')}` | `{item.get('direction')}` | "
+                f"`{item.get('evaluated_samples') or item.get('samples')}` | "
+                f"`{item.get('active_days')}` | {reason_text or 'none'} |"
+            )
+    directions = evidence.get("under_sampled_pair_directions")
+    if isinstance(directions, list) and directions:
+        lines.append(
+            "- First under-sampled directions: "
+            + ", ".join(f"`{item}`" for item in directions[:12])
+        )
+    history = (
+        evidence.get("current_intent_local_history_coverage")
+        if isinstance(evidence.get("current_intent_local_history_coverage"), dict)
+        else {}
+    )
+    if history:
+        missing = history.get("missing_pairs_by_granularity")
+        if isinstance(missing, dict):
+            bits = [
+                f"{granularity}:{','.join(str(pair) for pair in pairs) or 'none'}"
+                for granularity, pairs in missing.items()
+                if isinstance(pairs, list)
+            ]
+            lines.append(
+                "- Current-intent local BA history: "
+                f"`{history.get('status')}` complete=`{history.get('complete')}` "
+                f"diagnostic_only=`{history.get('diagnostic_only')}` missing={'; '.join(bits) or 'none'}"
+            )
+        fetch_commands = history.get("fetch_commands")
+        if isinstance(fetch_commands, list) and fetch_commands:
+            lines.append("- Diagnostic history fetch command: `" + str(fetch_commands[0]) + "`")
+    command = evidence.get("replay_validation_command") or evidence.get("verification_command")
+    if command:
+        lines.append("- Replay validation command: `" + str(command) + "`")
+    lines.append(
+        "- Live permission: remains blocked until forecast sample coverage graduates from "
+        "`UNDER_SAMPLED` and replay rules become daily-stable/live-grade."
+    )
+    return lines
 
 
 def _format_tp_proof_report_cell(value: Any) -> str:

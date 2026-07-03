@@ -1606,6 +1606,10 @@ class TraderRepairOrchestratorTest(unittest.TestCase):
             self.assertIn("evidence-window work", loop_prompt["current_hypothesis"])
             self.assertIn("waiting for evidence", " ".join(loop_prompt["next_loop"]))
             self.assertIn("trader-repair-orchestrator", " ".join(loop_prompt["verification_commands"]))
+            report_text = report.read_text()
+            self.assertIn("Repair status", report_text)
+            self.assertIn("BIDASK_REPLAY_WAITING_FOR_FORECAST_SAMPLE_COVERAGE", report_text)
+            self.assertIn("COLLECT_BIDASK_REPLAY_EVIDENCE", report_text)
 
     def test_tp_progress_live_evidence_waiting_status_is_non_actionable(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

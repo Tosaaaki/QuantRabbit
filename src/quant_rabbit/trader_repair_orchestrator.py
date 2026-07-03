@@ -1554,16 +1554,19 @@ def _render_report(payload: dict[str, Any]) -> str:
     if queue:
         lines.extend(
             [
-                "| Code | Priority | Automation | Match | Dependency | Verify |",
-                "|---|---|---|---:|---:|---|",
+                "| Code | Priority | Repair status | Automation | Match | Dependency | Clearance | Verify |",
+                "|---|---|---|---|---:|---:|---|---|",
             ]
         )
         for item in queue[:12]:
             verify = ", ".join(f"`{command}`" for command in item.get("verification_commands", [])[:2]) or "none"
+            clearance_conditions = _dedupe_strings(item.get("clearance_conditions"))
+            clearance = clearance_conditions[0] if clearance_conditions else "none"
             lines.append(
                 f"| `{item.get('code')}` | `{item.get('priority')}` | "
-                f"`{item.get('automation_status')}` | `{item.get('match_score')}` | "
-                f"`{item.get('dependency_rank')}` | {verify} |"
+                f"`{item.get('repair_status')}` | `{item.get('automation_status')}` | "
+                f"`{item.get('match_score')}` | `{item.get('dependency_rank')}` | "
+                f"{clearance} | {verify} |"
             )
     else:
         lines.append("- none")
