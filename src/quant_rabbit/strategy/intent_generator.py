@@ -5,6 +5,7 @@ import math
 import os
 import re
 import sqlite3
+import subprocess
 from dataclasses import asdict, dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
@@ -35,6 +36,8 @@ from quant_rabbit.paths import (
     DEFAULT_ORDER_INTENT_REPORT,
     DEFAULT_ORDER_INTENTS,
     DEFAULT_PAIR_CHARTS,
+    DEFAULT_POSITION_GUARDIAN_EXECUTION,
+    DEFAULT_POSITION_GUARDIAN_HEARTBEAT,
     DEFAULT_STRATEGY_PROFILE,
     ROOT,
     effective_oanda_universal_rotation_path,
@@ -10003,6 +10006,9 @@ def _self_improvement_guardian_profit_capture_issue(data_root: Path) -> dict[str
             continue
         if str(item.get("code") or "") != SELF_IMPROVEMENT_GUARDIAN_PROFIT_CAPTURE_CODE:
             continue
+        current_guardian = _current_position_guardian_status(data_root)
+        if current_guardian.get("active") is True:
+            return None
         evidence = item.get("evidence") if isinstance(item.get("evidence"), dict) else {}
         guardian = evidence.get("guardian") if isinstance(evidence.get("guardian"), dict) else {}
         details: list[str] = []
@@ -10012,6 +10018,12 @@ def _self_improvement_guardian_profit_capture_issue(data_root: Path) -> dict[str
         launchd_loaded = guardian.get("launchd_loaded")
         if launchd_loaded is not None:
             details.append(f"launchd_loaded={launchd_loaded}")
+        current_source = current_guardian.get("active_source")
+        if current_source:
+            details.append(f"current_source={current_source}")
+        current_heartbeat_fresh = current_guardian.get("heartbeat_fresh")
+        if current_heartbeat_fresh is not None:
+            details.append(f"current_heartbeat_fresh={current_heartbeat_fresh}")
         live_ready_lanes = evidence.get("live_ready_lanes")
         if live_ready_lanes is not None:
             details.append(f"live_ready_lanes={live_ready_lanes}")
@@ -10026,6 +10038,225 @@ def _self_improvement_guardian_profit_capture_issue(data_root: Path) -> dict[str
             "severity": "BLOCK",
         }
     return None
+
+
+def _current_position_guardian_status(data_root: Path) -> dict[str, Any]:
+    """Read current guardian health before propagating a stale self-audit P0."""
+
+    required = _truthy_env("QR_REQUIRE_POSITION_GUARDIAN_ACTIVE", default=True)
+    heartbeat_required = _truthy_env("QR_POSITION_GUARDIAN_REQUIRE_HEARTBEAT", default=True)
+    interval = _env_int("QR_POSITION_GUARDIAN_INTERVAL", 30, minimum=15)
+    max_age = _env_int(
+        "QR_POSITION_GUARDIAN_HEARTBEAT_MAX_AGE_SECONDS",
+        interval * 4,
+        minimum=interval,
+    )
+    now_utc = datetime.now(timezone.utc)
+    heartbeat = _freshest_current_guardian_heartbeat(
+        _current_guardian_heartbeat_candidates(data_root),
+        now_utc=now_utc,
+        max_age_seconds=max_age,
+    )
+    status: dict[str, Any] = {
+        "required": required,
+        "active": False,
+        "active_source": "launchd+heartbeat",
+        "heartbeat_required": heartbeat_required,
+        "heartbeat_fresh": heartbeat.get("fresh"),
+        "heartbeat_age_seconds": heartbeat.get("age_seconds"),
+        "heartbeat_generated_at_utc": heartbeat.get("generated_at_utc"),
+        "heartbeat_path": heartbeat.get("path"),
+        "heartbeat_status": heartbeat.get("status"),
+    }
+    if not required:
+        status["active"] = True
+        status["active_source"] = "not_required"
+        return status
+    env_active_raw = os.environ.get("QR_POSITION_GUARDIAN_ACTIVE")
+    if env_active_raw is not None:
+        env_active = _truthy_value(env_active_raw)
+        status["env_active"] = env_active_raw
+        status["launchd_loaded"] = bool(env_active)
+        status["active_source"] = "env+heartbeat"
+        status["active"] = bool(env_active and (heartbeat.get("fresh") or not heartbeat_required))
+        if env_active and heartbeat_required and not heartbeat.get("fresh"):
+            status["active_source"] = "stale_heartbeat"
+        return status
+    label = os.environ.get("QR_POSITION_GUARDIAN_LABEL", "com.quantrabbit.position-guardian")
+    plist = Path(
+        os.environ.get(
+            "QR_POSITION_GUARDIAN_PLIST",
+            str(Path.home() / "Library" / "LaunchAgents" / f"{label}.plist"),
+        )
+    ).expanduser()
+    status["label"] = label
+    status["plist_path"] = str(plist)
+    status["plist_exists"] = plist.exists()
+    if not plist.exists():
+        status["active_source"] = "plist_missing"
+        status["launchd_loaded"] = False
+        return status
+    loaded = _current_position_guardian_launchd_loaded(label)
+    status["launchd_loaded"] = loaded.get("loaded")
+    if loaded.get("error"):
+        status["launchctl_error"] = loaded["error"]
+        status["active_source"] = "launchctl_unavailable"
+    status["active"] = bool(loaded.get("loaded") and (heartbeat.get("fresh") or not heartbeat_required))
+    if loaded.get("loaded") and heartbeat_required and not heartbeat.get("fresh"):
+        status["active_source"] = "stale_heartbeat"
+    return status
+
+
+def _current_position_guardian_launchd_loaded(label: str) -> dict[str, Any]:
+    try:
+        list_proc = subprocess.run(
+            ["launchctl", "list", label],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=False,
+        )
+    except (FileNotFoundError, OSError) as exc:
+        return {"loaded": False, "error": str(exc)}
+    if list_proc.returncode == 0:
+        return {"loaded": True}
+    try:
+        print_proc = subprocess.run(
+            ["launchctl", "print", f"gui/{os.getuid()}/{label}"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=False,
+        )
+    except (FileNotFoundError, OSError) as exc:
+        return {"loaded": False, "error": str(exc)}
+    return {"loaded": print_proc.returncode == 0}
+
+
+def _current_guardian_heartbeat_candidates(data_root: Path) -> list[Path]:
+    execution_env = os.environ.get("QR_POSITION_GUARDIAN_EXECUTION")
+    heartbeat_env = os.environ.get("QR_POSITION_GUARDIAN_HEARTBEAT")
+    paths = [
+        _guardian_env_path(
+            "QR_POSITION_GUARDIAN_EXECUTION",
+            data_root / DEFAULT_POSITION_GUARDIAN_EXECUTION.name,
+        ),
+        _guardian_env_path(
+            "QR_POSITION_GUARDIAN_HEARTBEAT",
+            data_root / DEFAULT_POSITION_GUARDIAN_HEARTBEAT.name,
+        ),
+    ]
+    if execution_env is None and _same_filesystem_path(data_root, ROOT / "data"):
+        paths.append(ROOT.parent / "QuantRabbit-live" / "data" / DEFAULT_POSITION_GUARDIAN_EXECUTION.name)
+    if heartbeat_env is None and _same_filesystem_path(data_root, ROOT / "data"):
+        paths.append(ROOT.parent / "QuantRabbit-live" / "data" / DEFAULT_POSITION_GUARDIAN_HEARTBEAT.name)
+    return _dedupe_filesystem_paths(paths)
+
+
+def _guardian_env_path(name: str, default: Path) -> Path:
+    raw = os.environ.get(name)
+    if not raw:
+        return default
+    path = Path(raw).expanduser()
+    if path.is_absolute():
+        return path
+    return ROOT / path
+
+
+def _dedupe_filesystem_paths(paths: Iterable[Path]) -> list[Path]:
+    result: list[Path] = []
+    seen: set[str] = set()
+    for path in paths:
+        key = _filesystem_path_key(path)
+        if key in seen:
+            continue
+        seen.add(key)
+        result.append(path)
+    return result
+
+
+def _same_filesystem_path(left: Path, right: Path) -> bool:
+    return _filesystem_path_key(left) == _filesystem_path_key(right)
+
+
+def _filesystem_path_key(path: Path) -> str:
+    try:
+        return str(path.expanduser().resolve(strict=False))
+    except OSError:
+        return str(path.expanduser())
+
+
+def _freshest_current_guardian_heartbeat(
+    paths: Iterable[Path],
+    *,
+    now_utc: datetime,
+    max_age_seconds: int,
+) -> dict[str, Any]:
+    best: dict[str, Any] = {
+        "fresh": False,
+        "age_seconds": None,
+        "generated_at_utc": None,
+        "path": None,
+        "status": None,
+    }
+    for path in paths:
+        if not path.exists():
+            continue
+        generated_at: datetime | None = None
+        status: str | None = None
+        try:
+            payload = json.loads(path.read_text())
+        except (OSError, json.JSONDecodeError, ValueError):
+            payload = {}
+        if isinstance(payload, dict):
+            generated_at = _parse_guardian_time(payload.get("generated_at_utc"))
+            raw_status = payload.get("status")
+            status = str(raw_status) if raw_status is not None else None
+        if generated_at is None:
+            try:
+                generated_at = datetime.fromtimestamp(path.stat().st_mtime, tz=timezone.utc)
+            except OSError:
+                continue
+        age_seconds = (now_utc - generated_at).total_seconds()
+        if best["age_seconds"] is not None and age_seconds >= best["age_seconds"]:
+            continue
+        best = {
+            "fresh": -60.0 <= age_seconds <= max_age_seconds,
+            "age_seconds": age_seconds,
+            "generated_at_utc": generated_at.isoformat(),
+            "path": str(path),
+            "status": status,
+        }
+    return best
+
+
+def _parse_guardian_time(value: Any) -> datetime | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    if not text:
+        return None
+    candidates = [text]
+    if text.endswith("Z"):
+        candidates.append(f"{text[:-1]}+00:00")
+    for candidate in candidates:
+        try:
+            parsed = datetime.fromisoformat(candidate)
+        except ValueError:
+            continue
+        if parsed.tzinfo is None:
+            return parsed.replace(tzinfo=timezone.utc)
+        return parsed.astimezone(timezone.utc)
+    return None
+
+
+def _truthy_value(raw: Any) -> bool:
+    return str(raw).strip() in {"1", "true", "TRUE", "yes", "YES", "on", "ON"}
+
+
+def _truthy_env(name: str, *, default: bool) -> bool:
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    return _truthy_value(raw)
 
 
 def _method_context_issues(intent: OrderIntent) -> list[dict[str, str]]:

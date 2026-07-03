@@ -9636,6 +9636,99 @@ class IntentGeneratorTest(unittest.TestCase):
                 )
             )
 
+    def test_recovered_position_guardian_heartbeat_clears_stale_self_improvement_p0(self) -> None:
+        # A refreshed guardian heartbeat must clear stale self-improvement P0
+        # contamination inside intent diagnostics. Live sends still re-check
+        # guardian health in the gateway; this only keeps old support evidence
+        # from masking the real lane blockers after the guardian has recovered.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            data_root = root / "data"
+            data_root.mkdir()
+            (data_root / "self_improvement_audit.json").write_text(
+                json.dumps(
+                    {
+                        "generated_at_utc": (
+                            datetime.now(timezone.utc) - timedelta(minutes=20)
+                        ).isoformat(),
+                        "findings": [
+                            {
+                                "priority": "P0",
+                                "layer": "execution_quality",
+                                "code": "POSITION_GUARDIAN_INACTIVE_FOR_PROFIT_CAPTURE",
+                                "message": (
+                                    "position guardian is required but inactive; TP-progress profit "
+                                    "cannot be captured between full trader cycles"
+                                ),
+                                "evidence": {
+                                    "target_open": True,
+                                    "live_ready_lanes": 1,
+                                    "guardian": {
+                                        "required": True,
+                                        "active": False,
+                                        "active_source": "env+heartbeat",
+                                        "env_active": "0",
+                                        "heartbeat_fresh": False,
+                                        "launchd_loaded": None,
+                                    },
+                                },
+                            }
+                        ],
+                    }
+                )
+            )
+            heartbeat = data_root / "position_guardian.json"
+            heartbeat.write_text(
+                json.dumps(
+                    {
+                        "generated_at_utc": datetime.now(timezone.utc).isoformat(),
+                        "status": "NO_POSITION",
+                        "sent": False,
+                    }
+                )
+            )
+            execution = data_root / "position_guardian_execution.json"
+            output = root / "intents.json"
+
+            with patch.dict(
+                os.environ,
+                {
+                    "QR_REQUIRE_POSITION_GUARDIAN_ACTIVE": "1",
+                    "QR_POSITION_GUARDIAN_ACTIVE": "1",
+                    "QR_POSITION_GUARDIAN_REQUIRE_HEARTBEAT": "1",
+                    "QR_POSITION_GUARDIAN_HEARTBEAT": str(heartbeat),
+                    "QR_POSITION_GUARDIAN_EXECUTION": str(execution),
+                    "QR_POSITION_GUARDIAN_HEARTBEAT_MAX_AGE_SECONDS": "120",
+                },
+                clear=False,
+            ):
+                summary = IntentGenerator(
+                    campaign_plan=_range_campaign(root),
+                    strategy_profile=_strategy(root, status="CANDIDATE"),
+                    output_path=output,
+                    report_path=root / "intents.md",
+                    pair_charts_path=_pair_charts(root),
+                    data_root=data_root,
+                    max_loss_jpy=500.0,
+                ).run(snapshot_path=_snapshot(root))
+
+            payload = json.loads(output.read_text())
+            issue_codes = {
+                issue["code"]
+                for item in payload["results"]
+                for issue in item["risk_issues"]
+            }
+
+            self.assertGreaterEqual(summary.live_ready, 1)
+            self.assertNotIn("POSITION_GUARDIAN_INACTIVE_FOR_PROFIT_CAPTURE", issue_codes)
+            self.assertFalse(
+                any(
+                    "position guardian inactive P0 blocks LIVE_READY" in blocker
+                    for item in payload["results"]
+                    for blocker in item["live_blockers"]
+                )
+            )
+
     def test_self_improvement_profitability_p0_allows_tp_proven_harvest_repair_entry(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
