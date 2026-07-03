@@ -668,6 +668,16 @@ class TraderSupportBotTest(unittest.TestCase):
             self.assertTrue(near_ready[0]["remains_unsafe_after_stale_artifacts_clear"])
             self.assertEqual(near_ready[0]["blocker_groups"], ["global"])
             self.assertIn("clear global support/profitability P0s", near_ready[0]["evidence_needed"][0])
+            shortest_path = payload["entry_readiness"]["shortest_live_ready_path"]
+            self.assertEqual(shortest_path["status"], "BLOCKED_NEAR_READY_LANE")
+            self.assertEqual(shortest_path["lane_id"], "range_trader:NZD_CAD:LONG:RANGE_ROTATION")
+            self.assertFalse(shortest_path["live_permission"])
+            self.assertTrue(shortest_path["ordinary_fresh_entries_must_remain_blocked"])
+            self.assertEqual(
+                payload["metrics"]["shortest_live_ready_path_lane_id"],
+                "range_trader:NZD_CAD:LONG:RANGE_ROTATION",
+            )
+            self.assertIn("clear global support/profitability P0s", shortest_path["first_next_step"])
             self.assertEqual(
                 near_ready[1]["remaining_blocker_codes_after_global_unlock"],
                 ["FORECAST_CONTEXT_REQUIRED_FOR_LIVE"],

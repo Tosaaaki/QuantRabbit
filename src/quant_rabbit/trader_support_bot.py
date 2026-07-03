@@ -458,6 +458,9 @@ class TraderSupportBot:
             "repair_frontier_after_support_top_blockers": entry["repair_frontier_remaining_blockers"],
             "near_ready_lane_count": entry["near_ready_lane_count"],
             "near_ready_blocker_groups": entry["near_ready_blocker_groups"],
+            "shortest_live_ready_path_lane_id": entry["shortest_live_ready_path"].get("lane_id"),
+            "shortest_live_ready_path_status": entry["shortest_live_ready_path"].get("status"),
+            "shortest_live_ready_path_blocker_groups": entry["shortest_live_ready_path"].get("blocker_groups"),
             "stale_support_blocker_codes": entry["stale_support_blocker_codes"],
             "stale_support_blocker_lanes": entry["stale_support_blocker_lanes"],
             "order_intents_stale_against_broker_snapshot": artifact_freshness[
@@ -1901,6 +1904,7 @@ def _entry_readiness_summary(
     month_scale_residual_blocked_intents.sort(key=lambda item: str(item.get("lane_id") or ""))
     near_ready_lanes.sort(key=_near_ready_lane_sort_key)
     remaining_repair_blockers = _repair_frontier_remaining_blockers(repair_frontier)
+    shortest_live_ready_path = _shortest_live_ready_path(near_ready_lanes)
     return {
         "generated_at_utc": payload.get("generated_at_utc"),
         "lanes": len(results),
@@ -1931,6 +1935,7 @@ def _entry_readiness_summary(
         "near_ready_lane_count": len(near_ready_lanes),
         "near_ready_lanes": near_ready_lanes[:10],
         "near_ready_blocker_groups": _near_ready_blocker_groups(near_ready_lanes),
+        "shortest_live_ready_path": shortest_live_ready_path,
         "global_unlock_frontier": global_unlock_frontier[:12],
         "month_scale_residual_blocked_intents": month_scale_residual_blocked_intents[:12],
         "month_scale_residual_blocked_intent_count": len(month_scale_residual_blocked_intents),
@@ -2011,6 +2016,63 @@ def _near_ready_lane_sort_key(item: dict[str, Any]) -> tuple[int, int, float, st
         -_float(item.get("reward_jpy")),
         str(item.get("lane_id") or ""),
     )
+
+
+def _shortest_live_ready_path(near_ready_lanes: list[dict[str, Any]]) -> dict[str, Any]:
+    if not near_ready_lanes:
+        return {
+            "status": "NO_NEAR_READY_DIAGNOSTIC_LANES",
+            "lane_id": None,
+            "live_permission": False,
+            "ordinary_fresh_entries_must_remain_blocked": True,
+            "selection_basis": "no blocked intent rows were available to rank",
+            "evidence_needed": [],
+            "blocker_codes": [],
+            "blocker_groups": [],
+        }
+    lane = near_ready_lanes[0]
+    evidence_needed = [
+        str(item)
+        for item in lane.get("evidence_needed") or []
+        if str(item).strip()
+    ]
+    blocker_codes = [
+        str(item)
+        for item in lane.get("blocker_codes") or []
+        if str(item).strip()
+    ]
+    return {
+        "status": "BLOCKED_NEAR_READY_LANE",
+        "lane_id": lane.get("lane_id"),
+        "pair": lane.get("pair"),
+        "side": lane.get("side"),
+        "method": lane.get("method"),
+        "order_type": lane.get("order_type"),
+        "current_status": lane.get("status"),
+        "blocker_codes": blocker_codes,
+        "blocker_groups": lane.get("blocker_groups") or [],
+        "evidence_needed": evidence_needed,
+        "first_next_step": (
+            evidence_needed[0]
+            if evidence_needed
+            else "clear the lane's named blockers in refreshed broker, forecast, replay, and risk evidence"
+        ),
+        "remaining_blocker_codes_after_global_unlock": (
+            lane.get("remaining_blocker_codes_after_global_unlock") or []
+        ),
+        "remaining_blocker_codes_after_stale_artifacts_clear": (
+            lane.get("remaining_blocker_codes_after_stale_artifacts_clear") or []
+        ),
+        "remains_unsafe_after_stale_artifacts_clear": bool(
+            lane.get("remains_unsafe_after_stale_artifacts_clear")
+        ),
+        "ordinary_fresh_entries_must_remain_blocked": True,
+        "live_permission": False,
+        "selection_basis": (
+            "ranked by fewest blockers, then fewest blockers after global unlock, "
+            "then highest reward, using existing order_intents diagnostics"
+        ),
+    }
 
 
 def _near_ready_blocker_groups(near_ready_lanes: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -5629,6 +5691,23 @@ def _render_report(payload: dict[str, Any]) -> str:
     near_ready = entry.get("near_ready_lanes") if isinstance(entry.get("near_ready_lanes"), list) else []
     lines.extend(["", "## Near-Ready Lanes", ""])
     if near_ready:
+        shortest_path = entry.get("shortest_live_ready_path") or {}
+        lines.extend(
+            [
+                (
+                    "- Shortest path: "
+                    f"`{shortest_path.get('lane_id')}` status=`{shortest_path.get('status')}` "
+                    f"next=`{shortest_path.get('first_next_step')}`"
+                ),
+                (
+                    "- Shortest path remains non-executable: "
+                    f"live_permission=`{shortest_path.get('live_permission')}` "
+                    f"ordinary_fresh_entries_must_remain_blocked="
+                    f"`{shortest_path.get('ordinary_fresh_entries_must_remain_blocked')}`"
+                ),
+                "",
+            ]
+        )
         lines.extend(
             [
                 "| Lane | Pair | Side | Method | Status | Blockers | Evidence needed |",
