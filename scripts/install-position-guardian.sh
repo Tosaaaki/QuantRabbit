@@ -71,7 +71,12 @@ status_path() {
 
 is_report_path() {
   local path="$1"
-  [[ "$path" == docs/*_report.md || "$path" == docs/*_report.close_reentry.md || "$path" == docs/guardian_action_review.md || "$path" == data/guardian_trigger_contract.json ]]
+  [[ "$path" == docs/*_report.md \
+    || "$path" == docs/*_report.close_reentry.md \
+    || "$path" == docs/guardian_action_review.md \
+    || "$path" == data/guardian_trigger_contract.json \
+    || "$path" == data/guardian_receipt_consumption.json \
+    || "$path" == data/guardian_receipt_operator_review.json ]]
 }
 
 assert_only_report_drift() {
@@ -85,7 +90,7 @@ assert_only_report_drift() {
     fi
   done < <(git -C "$LIVE_ROOT" status --short --untracked-files=all)
   if [[ "$dirty" -ne 0 ]]; then
-    die "live worktree must be clean except report/action-review/guardian-contract runtime drift." 3
+    die "live worktree must be clean except report/action-review/guardian-contract/receipt-state runtime drift." 3
   fi
 }
 

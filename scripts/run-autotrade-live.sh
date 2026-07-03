@@ -109,7 +109,12 @@ acquire_lock() {
 
 is_report_path() {
   local path="$1"
-  [[ "$path" == docs/*_report.md || "$path" == docs/*_report.close_reentry.md || "$path" == docs/guardian_action_review.md || "$path" == data/guardian_trigger_contract.json ]]
+  [[ "$path" == docs/*_report.md \
+    || "$path" == docs/*_report.close_reentry.md \
+    || "$path" == docs/guardian_action_review.md \
+    || "$path" == data/guardian_trigger_contract.json \
+    || "$path" == data/guardian_receipt_consumption.json \
+    || "$path" == data/guardian_receipt_operator_review.json ]]
 }
 
 clear_runtime_verdict_markers() {
@@ -145,7 +150,7 @@ can_continue_after_sync_failure() {
       continue
     fi
     if ! is_report_path "$path"; then
-      echo "[run-autotrade-live] live sync failed and runtime has non-report drift: ${line}" >&2
+      echo "[run-autotrade-live] live sync failed and runtime has non-report/receipt-state drift: ${line}" >&2
       return 1
     fi
   done < <(git -C "$ROOT_DIR" status --short --untracked-files=all 2>/dev/null) || return 1
@@ -162,7 +167,7 @@ if [[ "$QR_LIVE_SYNC_ENABLED" == "1" && -x "${ROOT_DIR}/scripts/sync-live-runtim
   set -e
   if [[ "$sync_status" -ne 0 ]]; then
     if can_continue_after_sync_failure; then
-      echo "[run-autotrade-live] live sync failed with status=${sync_status}, but runtime HEAD matches main and only report/action-review/guardian-contract drift is present; continuing this trader cycle." >&2
+      echo "[run-autotrade-live] live sync failed with status=${sync_status}, but runtime HEAD matches main and only report/action-review/guardian-contract/receipt-state drift is present; continuing this trader cycle." >&2
     else
       exit "$sync_status"
     fi
