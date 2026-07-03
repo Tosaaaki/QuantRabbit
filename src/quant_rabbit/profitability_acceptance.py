@@ -573,10 +573,23 @@ def _capture_economics_findings(payload: dict[str, Any]) -> tuple[dict[str, Any]
                             "pair": item.get("pair"),
                             "side": item.get("side"),
                             "method": item.get("method"),
+                            "attribution_scope": item.get("attribution_scope"),
+                            "operator_manual_excluded": item.get(
+                                "operator_manual_excluded"
+                            ),
+                            "should_count_against_system_edge": item.get(
+                                "should_count_against_system_edge"
+                            ),
                             "take_profit_trades": item.get("take_profit_trades"),
                             "take_profit_expectancy_jpy": item.get("take_profit_expectancy_jpy"),
                             "market_close_net_jpy": item.get("market_close_net_jpy"),
                             "market_close_expectancy_jpy": item.get("market_close_expectancy_jpy"),
+                            "market_close_loss_trade_ids": item.get(
+                                "market_close_loss_trade_ids"
+                            ),
+                            "market_close_loss_examples": item.get(
+                                "market_close_loss_examples"
+                            ),
                         }
                         for item in tp_market_close_leaks[:5]
                     ]

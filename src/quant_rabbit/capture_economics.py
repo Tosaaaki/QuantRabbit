@@ -56,9 +56,11 @@ EXIT_REPAIR_ITEM_LIMIT = 4
 # live-entry permission list. The cap keeps the prompt packet focused while the
 # nested metrics above still retain the full realized bucket details.
 SEGMENT_REPAIR_PRIORITY_LIMIT = 12
+MARKET_CLOSE_LOSS_EXAMPLE_LIMIT = 5
 
 TAKE_PROFIT_EXIT_REASON = "TAKE_PROFIT_ORDER"
 MARKET_CLOSE_EXIT_REASON = "MARKET_ORDER_TRADE_CLOSE"
+SYSTEM_ATTRIBUTION_SCOPE = "SYSTEM_GATEWAY_ATTRIBUTED_ONLY"
 
 # Use the same statistical floor as the audit verdict for "scoped TP proof";
 # RiskEngine and IntentGenerator mirror the live relaxation floor independently
@@ -94,6 +96,7 @@ entries AS (
 -- ts_utc come from the FINAL close event of the trade.
 SELECT
     MAX(e.ts_utc) AS ts_utc,
+    e.trade_id AS trade_id,
     entries.pair,
     entries.side,
     entries.lane_id,
@@ -118,6 +121,7 @@ ORDER BY MAX(e.ts_utc) ASC
 @dataclass(frozen=True)
 class RealizedOutcome:
     ts_utc: str
+    trade_id: str
     pair: str
     side: str
     lane_id: str
@@ -376,6 +380,9 @@ def _segment_repair_priorities(rows: list[RealizedOutcome]) -> dict[str, Any]:
         items.append(
             {
                 "evidence_ref": f"capture:segment:{pair}:{side}:{method}",
+                "attribution_scope": SYSTEM_ATTRIBUTION_SCOPE,
+                "operator_manual_excluded": True,
+                "should_count_against_system_edge": True,
                 "pair": pair,
                 "side": side,
                 "method": method,
@@ -405,6 +412,16 @@ def _segment_repair_priorities(rows: list[RealizedOutcome]) -> dict[str, Any]:
                     "expectancy_jpy_per_trade"
                 ),
                 "market_close_net_jpy": market_close_metrics.get("net_jpy"),
+                "market_close_loss_trade_ids": [
+                    row.trade_id
+                    for row in sorted(
+                        market_close_loss_rows,
+                        key=lambda item: (item.realized_pl_jpy, item.ts_utc),
+                    )[:MARKET_CLOSE_LOSS_EXAMPLE_LIMIT]
+                ],
+                "market_close_loss_examples": _market_close_loss_examples(
+                    market_close_loss_rows
+                ),
                 "_sort_rank": rank,
             }
         )
@@ -481,6 +498,30 @@ def _optional_float(value: object) -> float | None:
         return None
 
 
+def _market_close_loss_examples(rows: list[RealizedOutcome]) -> list[dict[str, Any]]:
+    examples: list[dict[str, Any]] = []
+    for row in sorted(rows, key=lambda item: (item.realized_pl_jpy, item.ts_utc))[
+        :MARKET_CLOSE_LOSS_EXAMPLE_LIMIT
+    ]:
+        examples.append(
+            {
+                "trade_id": row.trade_id,
+                "ts_utc": row.ts_utc,
+                "lane_id": row.lane_id,
+                "pair": row.pair,
+                "side": row.side,
+                "method": row.method,
+                "exit_reason": row.exit_reason,
+                "realized_pl_jpy": round(row.realized_pl_jpy, 4),
+                "close_family": "SYSTEM_GATEWAY_MARKET_CLOSE",
+                "attribution_scope": SYSTEM_ATTRIBUTION_SCOPE,
+                "operator_manual_excluded": True,
+                "should_count_against_system_edge": True,
+            }
+        )
+    return examples
+
+
 def build_capture_economics(
     *,
     ledger_path: Path,
@@ -494,6 +535,7 @@ def build_capture_economics(
                 rows = [
                     RealizedOutcome(
                         ts_utc=str(ts or ""),
+                        trade_id=str(trade_id or ""),
                         pair=str(pair or "UNKNOWN"),
                         side=str(side or "UNKNOWN"),
                         lane_id=str(lane_id or ""),
@@ -501,7 +543,9 @@ def build_capture_economics(
                         exit_reason=str(reason or "UNKNOWN"),
                         realized_pl_jpy=float(pl),
                     )
-                    for ts, pair, side, lane_id, reason, pl in conn.execute(_ATTRIBUTED_REALIZED_SQL)
+                    for ts, trade_id, pair, side, lane_id, reason, pl in conn.execute(
+                        _ATTRIBUTED_REALIZED_SQL
+                    )
                     if pl is not None
                 ]
         except sqlite3.Error:

@@ -219,6 +219,21 @@ class CaptureEconomicsTest(unittest.TestCase):
             self.assertEqual(eur["take_profit_proof_gap_trades"], 0)
             self.assertEqual(eur["market_close_losses"], 3)
             self.assertEqual(eur["market_close_net_jpy"], -3000.0)
+            self.assertEqual(eur["attribution_scope"], "SYSTEM_GATEWAY_ATTRIBUTED_ONLY")
+            self.assertTrue(eur["operator_manual_excluded"])
+            self.assertTrue(eur["should_count_against_system_edge"])
+            self.assertEqual(eur["market_close_loss_trade_ids"], ["t20", "t21", "t22"])
+            self.assertEqual(
+                eur["market_close_loss_examples"][0]["close_family"],
+                "SYSTEM_GATEWAY_MARKET_CLOSE",
+            )
+            self.assertEqual(
+                eur["market_close_loss_examples"][0]["attribution_scope"],
+                "SYSTEM_GATEWAY_ATTRIBUTED_ONLY",
+            )
+            self.assertTrue(
+                eur["market_close_loss_examples"][0]["operator_manual_excluded"]
+            )
 
             gbp = items[("GBP_USD", "SHORT", "BREAKOUT_FAILURE")]
             self.assertEqual(gbp["priority_class"], "COLLECT_SCOPED_TP_PROOF")

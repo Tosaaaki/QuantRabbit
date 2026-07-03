@@ -10,12 +10,73 @@ from quant_rabbit.execution_timing_contracts import (
     TP_PROGRESS_REPAIR_REPLAY_FIELD,
 )
 from quant_rabbit.profitability_acceptance import (
+    _capture_economics_findings,
     _execution_timing_loss_close_labels,
     _profit_capture_replay_repair_findings,
 )
 
 
 class ProfitabilityAcceptanceReplayRepairTest(unittest.TestCase):
+    def test_market_close_leak_evidence_preserves_system_attribution(self) -> None:
+        _, findings = _capture_economics_findings(
+            {
+                "status": "NEGATIVE_EXPECTANCY",
+                "overall": {"trades": 32, "net_jpy": -4288.9},
+                "by_exit_reason": {
+                    "TAKE_PROFIT_ORDER": {
+                        "trades": 20,
+                        "expectancy_jpy_per_trade": 591.5,
+                        "net_jpy": 11830.5,
+                    },
+                    "MARKET_ORDER_TRADE_CLOSE": {
+                        "trades": 7,
+                        "expectancy_jpy_per_trade": -2156.0,
+                        "net_jpy": -15091.7,
+                    },
+                },
+                "segment_repair_priorities": {
+                    "items": [
+                        {
+                            "priority_class": "PRESERVE_TP_PROVEN_REPAIR_MARKET_CLOSE_LEAK",
+                            "pair": "EUR_USD",
+                            "side": "LONG",
+                            "method": "BREAKOUT_FAILURE",
+                            "attribution_scope": "SYSTEM_GATEWAY_ATTRIBUTED_ONLY",
+                            "operator_manual_excluded": True,
+                            "should_count_against_system_edge": True,
+                            "take_profit_trades": 20,
+                            "take_profit_expectancy_jpy": 591.5,
+                            "market_close_net_jpy": -15091.7,
+                            "market_close_expectancy_jpy": -2156.0,
+                            "market_close_loss_trade_ids": ["470427"],
+                            "market_close_loss_examples": [
+                                {
+                                    "trade_id": "470427",
+                                    "close_family": "SYSTEM_GATEWAY_MARKET_CLOSE",
+                                    "operator_manual_excluded": True,
+                                }
+                            ],
+                        }
+                    ]
+                },
+            }
+        )
+
+        leak = next(
+            item
+            for item in findings
+            if item["code"] == "MARKET_CLOSE_LEAK_DOMINATES_TP_EDGE"
+        )
+        segment = leak["evidence"]["segments"][0]
+        self.assertEqual(segment["attribution_scope"], "SYSTEM_GATEWAY_ATTRIBUTED_ONLY")
+        self.assertTrue(segment["operator_manual_excluded"])
+        self.assertTrue(segment["should_count_against_system_edge"])
+        self.assertEqual(segment["market_close_loss_trade_ids"], ["470427"])
+        self.assertEqual(
+            segment["market_close_loss_examples"][0]["close_family"],
+            "SYSTEM_GATEWAY_MARKET_CLOSE",
+        )
+
     def test_blocks_when_candle_replay_shows_tp_progress_profit_capture_miss(self) -> None:
         metrics, findings = _profit_capture_replay_repair_findings(
             {
