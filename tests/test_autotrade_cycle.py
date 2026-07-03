@@ -7057,6 +7057,7 @@ class AutoTradeCycleTest(unittest.TestCase):
 
             def generator_run(*, snapshot_path: Path, **_: object) -> SimpleNamespace:
                 calls.append("generator")
+                self.assertEqual(calls[-2], "campaign")
                 payload = json.loads(snapshot_path.read_text())
                 self.assertEqual(payload["fetched_at_utc"], now.isoformat())
                 intents_path.write_text(json.dumps({"generated_at_utc": now.isoformat(), "results": []}) + "\n")
@@ -7134,7 +7135,7 @@ class AutoTradeCycleTest(unittest.TestCase):
             report = (root / "report.md").read_text()
 
         self.assertEqual(summary.status, ACTION_NO_TRADE)
-        self.assertEqual(calls, ["snapshot", "projection", "campaign", "snapshot", "generator"])
+        self.assertEqual(calls, ["snapshot", "projection", "snapshot", "campaign", "generator"])
         self.assertEqual(len(client.snapshot_calls), 2)
         self.assertIn("Pre-intent snapshot refresh: status=`REFRESHED`", report)
 

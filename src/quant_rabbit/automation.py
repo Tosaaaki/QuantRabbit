@@ -1772,7 +1772,6 @@ class AutoTradeCycle:
         if self.reuse_market_artifacts:
             intent_summary = self._load_intent_summary_artifact()
         else:
-            self._refresh_campaign_plan(target_summary)
             refreshed_snapshot = self._refresh_snapshot_before_intent_pricing_if_required(snapshot, pairs)
             if refreshed_snapshot is not snapshot:
                 snapshot = refreshed_snapshot
@@ -1782,6 +1781,7 @@ class AutoTradeCycle:
                 orders = len(snapshot.orders)
                 pending_entries = _pending_entry_order_count(snapshot)
                 resolved_max_loss_jpy = self._resolve_max_loss_jpy(snapshot)
+            self._refresh_campaign_plan(target_summary)
             intent_summary = self._intent_generator(max_loss_jpy=resolved_max_loss_jpy).run(snapshot_path=self.snapshot_path)
         position_decision = None
         position_execution = None
