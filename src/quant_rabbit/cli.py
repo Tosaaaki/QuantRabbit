@@ -2276,6 +2276,10 @@ def _qr_trader_run_watchdog_step() -> dict[str, Any]:
     return {"argv": ["qr-trader-run-watchdog"], "required": True, "ok_rcs": [0, 2]}
 
 
+def _guardian_receipt_consumption_step() -> dict[str, Any]:
+    return {"argv": ["guardian-receipt-consumption"], "required": True}
+
+
 def _broker_snapshot_step() -> dict[str, Any]:
     return {"argv": ["broker-snapshot", "--output", "data/broker_snapshot.json"], "required": True}
 
@@ -2355,6 +2359,7 @@ def _cycle_refresh_steps(daily_risk_pct: str) -> list[dict[str, Any]]:
             "timeout_seconds": DEFAULT_EXECUTION_TIMING_AUDIT_CYCLE_TIMEOUT_SECONDS,
         },
         _qr_trader_run_watchdog_step(),
+        _guardian_receipt_consumption_step(),
         _reuse_market_artifact_intent_step(),
         {"argv": ["optimize-coverage"], "required": False},
         {"argv": ["ai-attack-advice"], "required": False},
@@ -2370,6 +2375,7 @@ def _cycle_refresh_steps(daily_risk_pct: str) -> list[dict[str, Any]]:
         {"argv": ["guardian-trigger-contract"], "required": True},
         {"argv": ["guardian-event-router"], "required": True},
         _qr_trader_run_watchdog_step(),
+        _guardian_receipt_consumption_step(),
         {"argv": ["profit-capture-bot"], "required": True, "ok_rcs": [0, 2]},
         {"argv": ["memory-health"], "required": True},
         {"argv": ["self-improvement-audit"], "required": False, "ok_rcs": [0, 2]},
@@ -2421,6 +2427,7 @@ def _cycle_sidecar_steps() -> list[dict[str, Any]]:
         _daily_target_state_step(),
         {"argv": ["capture-economics"], "required": False},
         _qr_trader_run_watchdog_step(),
+        _guardian_receipt_consumption_step(),
         _reuse_market_artifact_intent_step(),
         # generate-intents may refresh broker_snapshot as part of quote/preflight
         # freshness. Rebuild read-only position evidence against that final
@@ -2457,6 +2464,7 @@ def _post_autotrade_failure_sidecar_steps() -> list[dict[str, Any]]:
         _daily_target_state_step(),
         {"argv": ["capture-economics"], "required": False},
         _qr_trader_run_watchdog_step(),
+        _guardian_receipt_consumption_step(),
         _reuse_market_artifact_intent_step(),
         *_post_intent_evidence_steps(),
         {"argv": ["profit-capture-bot"], "required": True, "ok_rcs": [0, 2]},
@@ -2490,6 +2498,7 @@ def _direct_autotrade_audit_sidecar_steps() -> list[dict[str, Any]]:
         _daily_target_state_step(),
         {"argv": ["capture-economics"], "required": False},
         _qr_trader_run_watchdog_step(),
+        _guardian_receipt_consumption_step(),
         _reuse_market_artifact_intent_step(),
         *_post_intent_evidence_steps(),
         {"argv": ["profit-capture-bot"], "required": True, "ok_rcs": [0, 2]},
@@ -2512,6 +2521,7 @@ def _post_intent_evidence_steps() -> list[dict[str, Any]]:
         {"argv": ["guardian-trigger-contract"], "required": True},
         {"argv": ["guardian-event-router"], "required": True},
         _qr_trader_run_watchdog_step(),
+        _guardian_receipt_consumption_step(),
     ]
 
 

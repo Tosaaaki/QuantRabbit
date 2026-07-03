@@ -322,11 +322,11 @@ PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli trader-prompt-route
 # market-context-matrix → news-snapshot → mine-market-stories → news-health --strict →
 # daily-review → tp-rebalance → verify-projections → broker-snapshot →
 # daily-target-state → capture-economics → qr-trader-run-watchdog →
-# generate-intents --reuse-market-artifacts →
+# guardian-receipt-consumption → generate-intents --reuse-market-artifacts →
 # optimize-coverage → ai-attack-advice →
 # learning/execution-timing/manual-market-context/operator-precedent/verification audits →
 # generate-predictive-limits → position sidecars → guardian-trigger-contract →
-# guardian-event-router → qr-trader-run-watchdog →
+# guardian-event-router → qr-trader-run-watchdog → guardian-receipt-consumption →
 # profit-capture-bot → memory-health → self-improvement-audit → profitability-acceptance →
 # trader-support-bot → trader-repair-orchestrator) in one
 # process, in the same order and with the same arguments the per-step
@@ -546,12 +546,14 @@ QR_LIVE_ENABLED=1 ./scripts/run-autotrade-live.sh \
 # projection/position/audit repair subset, including `position-management`
 # followed by `position-execution` when management succeeds, then refreshes
 # `broker-snapshot` and `daily-target-state` again, syncs the execution ledger,
-# refreshes `capture-economics` and `qr-trader-run-watchdog`, and only then
-# reprices `order_intents` with `generate-intents --reuse-market-artifacts`. It then
+# refreshes `capture-economics`, `qr-trader-run-watchdog`, and
+# `guardian-receipt-consumption`, and only then reprices `order_intents`
+# with `generate-intents --reuse-market-artifacts`. It then
 # regenerates `optimize-coverage` and `ai-attack-advice` from that final intent
 # packet, and reruns read-only position evidence sidecars against the final
 # broker/intent packet before `guardian-trigger-contract` → `guardian-event-router` →
-# `qr-trader-run-watchdog` → `profit-capture-bot` → `memory-health` →
+# `qr-trader-run-watchdog` → `guardian-receipt-consumption` →
+# `profit-capture-bot` → `memory-health` →
 # `self-improvement-audit` →
 # `profitability-acceptance` → `trader-support-bot` →
 # `trader-repair-orchestrator`. It preserves the original
@@ -569,12 +571,14 @@ QR_LIVE_ENABLED=1 ./scripts/run-autotrade-live.sh \
 #   → execution-ledger-sync → broker-snapshot → daily-target-state
 #   → capture-economics
 #   → qr-trader-run-watchdog
+#   → guardian-receipt-consumption
 #   → generate-intents --reuse-market-artifacts
 #   → optimize-coverage → ai-attack-advice
 #   → position-thesis-check → thesis-evolution-check
 #   → forecast-persistence-check → position-management → guardian-trigger-contract
 #   → guardian-event-router
 #   → qr-trader-run-watchdog
+#   → guardian-receipt-consumption
 #   → profit-capture-bot → memory-health
 #   → self-improvement-audit → profitability-acceptance → trader-support-bot
 #   → trader-repair-orchestrator
