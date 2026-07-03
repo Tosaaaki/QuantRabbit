@@ -3721,6 +3721,7 @@ def main(argv: list[str] | None = None) -> int:
     p_self_audit.add_argument("--order-intents", type=Path, default=DEFAULT_ORDER_INTENTS)
     p_self_audit.add_argument("--market-context-matrix", type=Path, default=DEFAULT_MARKET_CONTEXT_MATRIX)
     p_self_audit.add_argument("--memory-health", type=Path, default=DEFAULT_MEMORY_HEALTH)
+    p_self_audit.add_argument("--capture-economics", type=Path, default=DEFAULT_CAPTURE_ECONOMICS)
     p_self_audit.add_argument("--learning-audit", type=Path, default=DEFAULT_LEARNING_AUDIT)
     p_self_audit.add_argument("--ai-test-bot-backtest", type=Path, default=DEFAULT_AI_TEST_BOT_BACKTEST)
     p_self_audit.add_argument("--verification-ledger", type=Path, default=DEFAULT_VERIFICATION_LEDGER)
@@ -6270,6 +6271,7 @@ def main(argv: list[str] | None = None) -> int:
                 order_intents_path=args.order_intents,
                 market_context_matrix_path=args.market_context_matrix,
                 memory_health_path=args.memory_health,
+                capture_economics_path=args.capture_economics,
                 learning_audit_path=args.learning_audit,
                 ai_test_bot_backtest_path=args.ai_test_bot_backtest,
                 verification_ledger_path=args.verification_ledger,

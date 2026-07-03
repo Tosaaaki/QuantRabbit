@@ -23,6 +23,7 @@ from quant_rabbit.paths import (
     DEFAULT_AI_ATTACK_ADVICE,
     DEFAULT_AI_TEST_BOT_BACKTEST,
     DEFAULT_BROKER_SNAPSHOT,
+    DEFAULT_CAPTURE_ECONOMICS,
     DEFAULT_COVERAGE_OPTIMIZATION,
     DEFAULT_DAILY_TARGET_STATE,
     DEFAULT_ENTRY_THESIS_LEDGER,
@@ -408,6 +409,7 @@ class SelfImprovementAuditor:
         order_intents_path: Path = DEFAULT_ORDER_INTENTS,
         market_context_matrix_path: Path = DEFAULT_MARKET_CONTEXT_MATRIX,
         memory_health_path: Path = DEFAULT_MEMORY_HEALTH,
+        capture_economics_path: Path = DEFAULT_CAPTURE_ECONOMICS,
         learning_audit_path: Path = DEFAULT_LEARNING_AUDIT,
         ai_test_bot_backtest_path: Path = DEFAULT_AI_TEST_BOT_BACKTEST,
         verification_ledger_path: Path = DEFAULT_VERIFICATION_LEDGER,
@@ -436,6 +438,7 @@ class SelfImprovementAuditor:
         intents_loaded = _read_json(order_intents_path)
         market_context_matrix_loaded = _read_json(market_context_matrix_path)
         memory_loaded = _read_json(memory_health_path)
+        capture_loaded = _read_json(capture_economics_path)
         learning_loaded = _read_json(learning_audit_path)
         ai_backtest_loaded = _read_json(ai_test_bot_backtest_path)
         verification_loaded = _read_json(verification_ledger_path)
@@ -539,6 +542,7 @@ class SelfImprovementAuditor:
                     target_open=target_open,
                     snapshot=snapshot,
                     intents=intents,
+                    capture_economics=capture_loaded.payload or {},
                 )
             )
         findings.extend(_learning_findings(run_id=run_id, loaded=learning_loaded, path=learning_audit_path))
@@ -760,6 +764,7 @@ class SelfImprovementAuditor:
                 "execution_timing_audit": str(execution_timing_audit_path),
                 "market_context_matrix": str(market_context_matrix_path),
                 "memory_health": str(memory_health_path),
+                "capture_economics": str(capture_economics_path),
                 "learning_audit": str(learning_audit_path),
                 "ai_test_bot_backtest": str(ai_test_bot_backtest_path),
                 "verification_ledger": str(verification_ledger_path),
@@ -1769,6 +1774,7 @@ def _memory_findings(
     target_open: bool,
     snapshot: dict[str, Any],
     intents: dict[str, Any],
+    capture_economics: dict[str, Any],
 ) -> list[dict[str, Any]]:
     if loaded.error is not None:
         return [
@@ -1801,6 +1807,7 @@ def _memory_findings(
             generated_at=generated_at,
             snapshot=snapshot,
             intents=intents,
+            capture_economics=capture_economics,
         )
         if stale_refs:
             return [
@@ -1816,8 +1823,9 @@ def _memory_findings(
                         )
                     ),
                     next_action=(
-                        "Run memory-health against the current broker snapshot/order intents before "
-                        "repairing old artifact blockers or trusting entry/verify routing."
+                        "Run memory-health against the current broker snapshot/order intents/"
+                        "capture-economics before repairing old artifact blockers or trusting "
+                        "entry/verify routing."
                     ),
                     evidence={
                         "memory_health_generated_at_utc": generated_at.isoformat(),
@@ -1861,6 +1869,7 @@ def _memory_health_stale_refs(
     generated_at: datetime,
     snapshot: dict[str, Any],
     intents: dict[str, Any],
+    capture_economics: dict[str, Any],
 ) -> list[dict[str, str]]:
     """Match trader routing freshness so audit fixes current holes, not old ones."""
 
@@ -1868,10 +1877,13 @@ def _memory_health_stale_refs(
     account = snapshot.get("account") if isinstance(snapshot.get("account"), dict) else {}
     snapshot_ts = _parse_utc(snapshot.get("fetched_at_utc") or account.get("fetched_at_utc"))
     intents_ts = _parse_utc(intents.get("generated_at_utc"))
+    capture_ts = _parse_utc(capture_economics.get("generated_at_utc"))
     if snapshot_ts is not None:
         refs.append(("broker_snapshot", snapshot_ts))
     if intents_ts is not None:
         refs.append(("order_intents", intents_ts))
+    if capture_ts is not None:
+        refs.append(("capture_economics", capture_ts))
 
     stale: list[dict[str, str]] = []
     for label, ref_ts in refs:
@@ -1895,6 +1907,16 @@ def _memory_health_audited_ref_ts(payload: dict[str, Any], label: str) -> dateti
         return _parse_utc(
             runtime.get("order_intents_generated_at_utc")
             or order_metrics.get("generated_at_utc")
+        )
+    if label == "capture_economics":
+        capture_metrics = (
+            metrics.get("capture_economics")
+            if isinstance(metrics.get("capture_economics"), dict)
+            else {}
+        )
+        return _parse_utc(
+            runtime.get("capture_economics_generated_at_utc")
+            or capture_metrics.get("generated_at_utc")
         )
     return None
 

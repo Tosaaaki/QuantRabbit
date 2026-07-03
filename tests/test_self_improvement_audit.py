@@ -1058,6 +1058,52 @@ class SelfImprovementAuditorTest(unittest.TestCase):
         codes = {item["code"] for item in payload["findings"]}
         self.assertNotIn("MEMORY_HEALTH_STALE", codes)
 
+    def test_memory_health_stale_when_audited_capture_economics_predates_current_cap(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root, active_position=False, live_ready_market_rr=1.4, closed_pls=(100.0, 80.0, -50.0))
+            current_capture_ts = _NOW + timedelta(minutes=1)
+            stale_capture_ts = _NOW - timedelta(minutes=10)
+
+            intents = json.loads(files["intents"].read_text())
+            intents["generated_at_utc"] = _NOW.isoformat()
+            files["intents"].write_text(json.dumps(intents))
+
+            capture = json.loads(files["capture_economics"].read_text())
+            capture["generated_at_utc"] = current_capture_ts.isoformat()
+            files["capture_economics"].write_text(json.dumps(capture))
+
+            files["memory"].write_text(
+                json.dumps(
+                    {
+                        "generated_at_utc": _NOW.isoformat(),
+                        "status": "MEMORY_HEALTH_BLOCKED",
+                        "metrics": {
+                            "runtime": {
+                                "snapshot_fetched_at_utc": _NOW.isoformat(),
+                                "order_intents_generated_at_utc": _NOW.isoformat(),
+                                "capture_economics_generated_at_utc": stale_capture_ts.isoformat(),
+                            }
+                        },
+                        "issues": [{"code": "SHORT_ORDER_INTENTS_MEMORY_BLOCKERS", "severity": "BLOCK"}],
+                        "blockers": ["old capture economics capped the current short lane"],
+                        "warnings": [],
+                    }
+                )
+            )
+
+            summary = _run(files)
+            payload = json.loads(files["output"].read_text())
+
+        codes = {item["code"]: item for item in payload["findings"]}
+        self.assertEqual(summary.status, STATUS_BLOCKED)
+        self.assertIn("MEMORY_HEALTH_STALE", codes)
+        self.assertNotIn("MEMORY_HEALTH_BLOCKED", codes)
+        evidence = codes["MEMORY_HEALTH_STALE"]["evidence"]
+        self.assertEqual(evidence["stale_against"][0]["label"], "capture_economics")
+        self.assertEqual(evidence["stale_against"][0]["timestamp_utc"], current_capture_ts.isoformat())
+        self.assertEqual(evidence["stale_against"][0]["audited_timestamp_utc"], stale_capture_ts.isoformat())
+
     def test_external_live_lock_defers_mid_refresh_memory_stale_judgment(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -6477,6 +6523,8 @@ class SelfImprovementAuditorTest(unittest.TestCase):
                         str(files["market_context_matrix"]),
                         "--memory-health",
                         str(files["memory"]),
+                        "--capture-economics",
+                        str(files["capture_economics"]),
                         "--learning-audit",
                         str(files["learning"]),
                         "--ai-test-bot-backtest",
@@ -6515,6 +6563,7 @@ class SelfImprovementAuditorTest(unittest.TestCase):
             self.assertTrue(files["report"].exists())
             payload = json.loads(files["output"].read_text())
             self.assertEqual(payload["artifact_paths"]["ai_attack_advice"], str(files["attack_advice"]))
+            self.assertEqual(payload["artifact_paths"]["capture_economics"], str(files["capture_economics"]))
 
 
 _NOW = datetime(2026, 6, 5, 0, 0, tzinfo=timezone.utc)
@@ -6532,6 +6581,7 @@ def _run(files: dict[str, Path], *, now: datetime = _NOW):
         order_intents_path=files["intents"],
         market_context_matrix_path=files["market_context_matrix"],
         memory_health_path=files["memory"],
+        capture_economics_path=files["capture_economics"],
         learning_audit_path=files["learning"],
         ai_test_bot_backtest_path=files["ai_backtest"],
         verification_ledger_path=files["verification"],
@@ -6574,6 +6624,7 @@ def _fixtures(
         "intents": root / "order_intents.json",
         "market_context_matrix": root / "market_context_matrix.json",
         "memory": root / "memory_health.json",
+        "capture_economics": root / "capture_economics.json",
         "learning": root / "learning_audit.json",
         "ai_backtest": root / "ai_test_bot_backtest.json",
         "verification": root / "verification_ledger.json",
@@ -6635,6 +6686,15 @@ def _fixtures(
         )
     )
     files["target"].write_text(json.dumps({"status": "PURSUE_TARGET", "remaining_target_jpy": 1000.0}))
+    files["capture_economics"].write_text(
+        json.dumps(
+            {
+                "generated_at_utc": _NOW.isoformat(),
+                "status": "OK",
+                "overall": {"trades": len(closed_pls)},
+            }
+        )
+    )
     results = []
     if live_ready_market_rr is not None:
         results.append(
