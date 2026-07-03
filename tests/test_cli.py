@@ -30,6 +30,7 @@ from quant_rabbit.cli import (
     main,
 )
 from quant_rabbit.models import AccountSummary, BrokerOrder, BrokerPosition, BrokerSnapshot, Owner, Quote, Side
+from quant_rabbit.operator_manual import OPERATOR_MANUAL_POSITION_PACKET
 from quant_rabbit.paths import DEFAULT_CAPTURE_ECONOMICS, DEFAULT_EXECUTION_LEDGER_DB, DEFAULT_MARKET_CONTEXT_MATRIX
 from quant_rabbit.profitability_acceptance import (
     ProfitabilityAcceptanceAuditor,
@@ -477,6 +478,52 @@ class CliHelpTest(unittest.TestCase):
         self.assertEqual(restored.orders[0].raw["clientExtensions"]["tag"], "trader")
         self.assertEqual(restored.orders[0].raw["stopLossOnFill"]["price"], "1.86646")
         self.assertEqual(restored_for_reuse.orders[0].raw["takeProfitOnFill"]["price"], "1.87852")
+
+    def test_snapshot_json_lifts_operator_manual_position_packet(self) -> None:
+        now = datetime.now(timezone.utc)
+        packet = {
+            "packet_type": OPERATOR_MANUAL_POSITION_PACKET,
+            "classification": "OPERATOR_MANUAL",
+            "management_intent": "KEEP",
+            "system_pl_counted": False,
+            "same_theme_auto_add_allowed": False,
+            "loss_side_auto_close_allowed": False,
+            "auto_sl_attach_allowed": False,
+            "auto_tp_modify_allowed": False,
+            "trade_id": "472987",
+            "pair": "EUR_USD",
+            "side": "SHORT",
+        }
+        snapshot = BrokerSnapshot(
+            fetched_at_utc=now,
+            positions=(
+                BrokerPosition(
+                    trade_id="472987",
+                    pair="EUR_USD",
+                    side=Side.SHORT,
+                    units=30_000,
+                    entry_price=1.14048,
+                    unrealized_pl_jpy=-1000.0,
+                    take_profit=1.1388,
+                    owner=Owner.OPERATOR_MANUAL,
+                    raw={"operator_manual_position": packet, "accountID": "should-not-be-persisted"},
+                ),
+            ),
+            quotes={"EUR_USD": Quote("EUR_USD", 1.1398, 1.1399, timestamp_utc=now)},
+        )
+
+        payload = json.loads(_snapshot_to_json(snapshot))
+        position = payload["positions"][0]
+        restored = _snapshot_from_json(payload)
+
+        self.assertEqual(position["operator_manual_position"]["management_intent"], "KEEP")
+        self.assertFalse(position["operator_manual_position"]["system_pl_counted"])
+        self.assertFalse(position["operator_manual_position"]["auto_tp_modify_allowed"])
+        self.assertNotIn("accountID", position["raw"])
+        self.assertEqual(
+            restored.positions[0].raw["operator_manual_position"]["packet_type"],
+            OPERATOR_MANUAL_POSITION_PACKET,
+        )
 
     def test_autotrade_missing_gpt_decision_response_returns_json_error(self) -> None:
         stdout = io.StringIO()

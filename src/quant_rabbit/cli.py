@@ -8093,24 +8093,28 @@ def _resolve_max_loss_from_args(
 
 
 def _snapshot_to_json(snapshot: BrokerSnapshot) -> str:
+    position_payloads: list[dict[str, Any]] = []
+    for pos in snapshot.positions:
+        raw = snapshot_position_raw(pos.raw)
+        payload = {
+            "trade_id": pos.trade_id,
+            "pair": pos.pair,
+            "side": pos.side.value,
+            "units": pos.units,
+            "entry_price": pos.entry_price,
+            "avg_entry": pos.entry_price,
+            "unrealized_pl_jpy": pos.unrealized_pl_jpy,
+            "take_profit": pos.take_profit,
+            "stop_loss": pos.stop_loss,
+            "owner": pos.owner.value,
+            "raw": raw,
+        }
+        if isinstance(raw.get("operator_manual_position"), dict):
+            payload["operator_manual_position"] = raw["operator_manual_position"]
+        position_payloads.append(payload)
     payload = {
         "fetched_at_utc": snapshot.fetched_at_utc.isoformat(),
-        "positions": [
-            {
-                "trade_id": pos.trade_id,
-                "pair": pos.pair,
-                "side": pos.side.value,
-                "units": pos.units,
-                "entry_price": pos.entry_price,
-                "avg_entry": pos.entry_price,
-                "unrealized_pl_jpy": pos.unrealized_pl_jpy,
-                "take_profit": pos.take_profit,
-                "stop_loss": pos.stop_loss,
-                "owner": pos.owner.value,
-                "raw": snapshot_position_raw(pos.raw),
-            }
-            for pos in snapshot.positions
-        ],
+        "positions": position_payloads,
         "orders": [
             {
                 "order_id": order.order_id,
@@ -8190,6 +8194,9 @@ def _snapshot_from_json(payload: dict) -> BrokerSnapshot:
 
     positions = []
     for item in payload.get("positions", []) or []:
+        raw = snapshot_payload_position_raw(item)
+        if "operator_manual_position" not in raw and isinstance(item.get("operator_manual_position"), dict):
+            raw = {**raw, "operator_manual_position": item["operator_manual_position"]}
         positions.append(
             BrokerPosition(
                 trade_id=str(item["trade_id"]),
@@ -8201,7 +8208,7 @@ def _snapshot_from_json(payload: dict) -> BrokerSnapshot:
                 take_profit=float(item["take_profit"]) if item.get("take_profit") is not None else None,
                 stop_loss=float(item["stop_loss"]) if item.get("stop_loss") is not None else None,
                 owner=Owner(str(item.get("owner") or Owner.UNKNOWN.value)),
-                raw=snapshot_payload_position_raw(item),
+                raw=raw,
             )
         )
     orders = []
