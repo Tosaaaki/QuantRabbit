@@ -16,6 +16,7 @@ from quant_rabbit.automation import (
     AutoTradeCycle,
     AutoTradeCycleSummary,
     GptHandoffSummary,
+    _close_gate_evidence_status,
     _gpt_lanes_pass_prefilter_or_recovery,
     _cycle_perspective_alignment_parts,
     _filtered_gpt_trade_cancel_order_ids,
@@ -1170,6 +1171,36 @@ class AutoTradeCycleTest(unittest.TestCase):
             self.assertEqual(payload["status"], "BLOCKED")
             self.assertEqual(payload["actions"][0]["issues"][0]["code"], "GPT_CLOSE_GATE_EVIDENCE_MISSING")
             self.assertIn("close_gate_evidence", (root / "pe.md").read_text())
+
+    def test_close_gate_evidence_requires_gate_b_authorization(self) -> None:
+        evidence = {
+            "trade_id": "471232",
+            "pair": "EUR_USD",
+            "side": "LONG",
+            "unrealized_pl_jpy": -250.0,
+            "loss_side_close": True,
+            "gate_a_invalidated": True,
+            "gate_a_reason": "fresh position_thesis REVIEW_CLOSE invalidation-hit",
+            "gate_b_standing_authorized": False,
+            "gate_b_explicit_operator_authorized": False,
+            "explicit_gate_b_required": False,
+            "profitability_p0_context_required": False,
+            "profitability_p0_context_cited": False,
+            "timing_audit_required": False,
+            "timing_evidence_cited": False,
+            "hard_timing_gate_required": False,
+            "same_direction_support_conflict": False,
+        }
+
+        self.assertEqual(_close_gate_evidence_status(evidence), "BLOCK")
+        self.assertEqual(
+            _close_gate_evidence_status({**evidence, "gate_b_standing_authorized": True}),
+            "PASS",
+        )
+        self.assertEqual(
+            _close_gate_evidence_status({**evidence, "gate_b_explicit_operator_authorized": True}),
+            "PASS",
+        )
 
     def test_accepted_gpt_close_ledger_receipt_survives_position_execution_overwrite(self) -> None:
         class Client:

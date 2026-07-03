@@ -201,6 +201,11 @@ def _close_gate_evidence_status(evidence: dict[str, Any]) -> str:
         and evidence.get("timing_evidence_cited") is not True
     ):
         return "BLOCK"
+    if (
+        evidence.get("gate_b_standing_authorized") is not True
+        and evidence.get("gate_b_explicit_operator_authorized") is not True
+    ):
+        return "BLOCK"
     return "PASS"
 
 
