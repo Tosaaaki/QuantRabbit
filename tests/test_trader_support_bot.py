@@ -2979,6 +2979,83 @@ class TraderSupportBotTest(unittest.TestCase):
         self.assertEqual(payload["metrics"]["guardian_receipt_consumption_classifications"], ["EXPIRED_ACKNOWLEDGED"])
         self.assertIn("EXPIRED_ACKNOWLEDGED", report)
 
+    def test_stale_guardian_receipt_consumption_does_not_clear_current_watchdog_issue(self) -> None:
+        now = datetime(2026, 6, 22, 12, 15, tzinfo=timezone.utc)
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _write_fixture(root, now=now, blocked=False)
+            _write_json(
+                files["qr_trader_run_watchdog"],
+                {
+                    "generated_at_utc": now.isoformat(),
+                    "status": "OK",
+                    "severity": "WARN",
+                    "last_trader_run_at": now.isoformat(),
+                    "last_trader_run_source": "trader_journal.ts",
+                    "last_trader_run_path": "logs/trader_journal.jsonl",
+                    "guardian_receipt": {
+                        "issues": [
+                            {
+                                "code": "GUARDIAN_RECEIPT_NOT_CONSUMED_BY_TRADER",
+                                "severity": "WARN",
+                                "message": "receipt_lifecycle=EXPIRED while consumed_by_trader=false",
+                                "receipt_event_id": "current-hold",
+                                "receipt_action": "HOLD",
+                                "receipt_lifecycle": "EXPIRED",
+                                "consumed_by_trader": False,
+                                "normal_routing_allowed": False,
+                            }
+                        ]
+                    },
+                },
+            )
+            _write_guardian_receipt_consumption(
+                files["guardian_receipt_consumption"],
+                event_id="older-hold",
+                classification="EXPIRED_ACKNOWLEDGED",
+                normal_routing_allowed=True,
+            )
+            env = _guardian_env(root, active="1")
+            with mock.patch.dict(os.environ, env, clear=False):
+                summary = TraderSupportBot(
+                    broker_snapshot_path=files["broker"],
+                    order_intents_path=files["intents"],
+                    target_state_path=files["target"],
+                    position_management_path=files["position_management"],
+                    position_guardian_management_path=files["guardian_management"],
+                    position_guardian_execution_path=files["guardian_execution"],
+                    position_guardian_heartbeat_path=files["guardian_heartbeat"],
+                    self_improvement_audit_path=files["self_improvement"],
+                    profitability_acceptance_path=files["profitability"],
+                    execution_timing_audit_path=files["timing"],
+                    profit_capture_bot_path=files["profit_capture_bot"],
+                    qr_trader_run_watchdog_path=files["qr_trader_run_watchdog"],
+                    guardian_receipt_consumption_path=files["guardian_receipt_consumption"],
+                    output_path=files["output"],
+                    report_path=files["report"],
+                    now_utc=now,
+                ).run()
+
+            payload = json.loads(files["output"].read_text())
+            blocker_codes = {item["code"] for item in payload["blockers"]}
+
+        self.assertEqual(summary.status, STATUS_BLOCKED)
+        self.assertIn("GUARDIAN_RECEIPT_NOT_CONSUMED_BY_TRADER", blocker_codes)
+        self.assertTrue(payload["metrics"]["guardian_receipt_consumption_normal_routing_allowed"])
+        self.assertEqual(payload["metrics"]["guardian_receipt_current_unclassified_issue_count"], 1)
+        self.assertEqual(
+            payload["metrics"]["guardian_receipt_current_unclassified_issue_event_ids"],
+            ["current-hold"],
+        )
+        self.assertIn(
+            "write a durable guardian_receipt_consumption classification",
+            payload["metrics"]["guardian_receipt_recommended_next_action"],
+        )
+        self.assertNotIn(
+            "continue normal verifier/gateway flow",
+            payload["metrics"]["guardian_receipt_recommended_next_action"],
+        )
+
     def test_pending_cancel_review_p0_becomes_non_actionable_repair_request(self) -> None:
         now = datetime(2026, 6, 25, 2, 12, tzinfo=timezone.utc)
         with tempfile.TemporaryDirectory() as tmp:

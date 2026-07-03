@@ -575,6 +575,19 @@ class TraderSupportBot:
                 for item in guardian_receipt_operator_review.get("classifications", [])
                 if isinstance(item, dict)
             ],
+            "guardian_receipt_current_unclassified_issue_count": len(
+                _current_guardian_receipt_unclassified_issues(
+                    qr_trader_run_watchdog,
+                    guardian_receipt_consumption,
+                )
+            ),
+            "guardian_receipt_current_unclassified_issue_event_ids": [
+                _guardian_receipt_event_id(item)
+                for item in _current_guardian_receipt_unclassified_issues(
+                    qr_trader_run_watchdog,
+                    guardian_receipt_consumption,
+                )
+            ],
             "guardian_receipt_recommended_next_action": _guardian_receipt_consumption_next_action(
                 qr_trader_run_watchdog,
                 guardian_receipt_consumption,
@@ -4286,6 +4299,21 @@ def _guardian_receipt_consumption_next_action(
         if isinstance(guardian_receipt_consumption.get("classifications"), list)
         else []
     )
+    unclassified_current_issues = _current_guardian_receipt_unclassified_issues(
+        qr_trader_run_watchdog,
+        guardian_receipt_consumption,
+    )
+    if unclassified_current_issues:
+        event_ids = [
+            _guardian_receipt_event_id(item) or "UNKNOWN"
+            for item in unclassified_current_issues[:3]
+        ]
+        suffix = f" Current unclassified event(s): {', '.join(event_ids)}."
+        return (
+            "Run the qr-trader draft/preflight path to write a durable guardian_receipt_consumption "
+            "classification for the current watchdog receipt issue before any ordinary fresh entry."
+            + suffix
+        )
     normal_allowed = guardian_receipt_consumption.get("normal_routing_allowed")
     if normal_allowed is True:
         return (
@@ -4311,6 +4339,50 @@ def _guardian_receipt_consumption_next_action(
         "Guardian receipt consumption does not allow normal routing; inspect the classification report before any "
         "ordinary fresh entry and keep protection/reporting paths separate."
     )
+
+
+def _current_guardian_receipt_unclassified_issues(
+    qr_trader_run_watchdog: dict[str, Any],
+    guardian_receipt_consumption: dict[str, Any],
+) -> list[dict[str, Any]]:
+    issues = (
+        qr_trader_run_watchdog.get("guardian_receipt_issues")
+        if isinstance(qr_trader_run_watchdog.get("guardian_receipt_issues"), list)
+        else []
+    )
+    if not issues:
+        return []
+    classifications = (
+        guardian_receipt_consumption.get("classifications")
+        if isinstance(guardian_receipt_consumption.get("classifications"), list)
+        else []
+    )
+    classified_keys = {
+        _guardian_receipt_match_key(item)
+        for item in classifications
+        if isinstance(item, dict)
+    }
+    classified_keys.discard(("", "", ""))
+    missing: list[dict[str, Any]] = []
+    for issue in issues:
+        if not isinstance(issue, dict):
+            continue
+        key = _guardian_receipt_match_key(issue)
+        if not any(key) or key not in classified_keys:
+            missing.append(issue)
+    return missing
+
+
+def _guardian_receipt_match_key(record: dict[str, Any]) -> tuple[str, str, str]:
+    return (
+        _guardian_receipt_event_id(record),
+        str(record.get("receipt_action") or record.get("action") or "").upper(),
+        str(record.get("receipt_lifecycle") or "").upper(),
+    )
+
+
+def _guardian_receipt_event_id(record: dict[str, Any]) -> str:
+    return str(record.get("receipt_event_id") or record.get("event_id") or "").strip()
 
 
 def _frontier_blocker_waits_for_live_precision_evidence(top: dict[str, Any]) -> bool:
