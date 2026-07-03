@@ -309,6 +309,41 @@ class TraderSupportBotTest(unittest.TestCase):
                                 ],
                                 "under_sampled_missing_evaluated_samples": 0,
                             },
+                            "forecast_sample_coverage_summary": {
+                                "min_directional_samples_for_precision_rule": 30,
+                                "min_active_days_for_daily_stability": 3,
+                                "pair_count": 28,
+                                "pair_direction_count": 56,
+                                "under_sampled_pair_directions": 2,
+                                "under_sampled_gap_reason_counts": {
+                                    "INSUFFICIENT_ACTIVE_DAYS": 1,
+                                    "INSUFFICIENT_EVALUATED_SAMPLES": 2,
+                                },
+                                "under_sampled_pair_direction_examples": [
+                                    {
+                                        "pair": "AUD_CAD",
+                                        "direction": "UP",
+                                        "forecast_samples": 12,
+                                        "forecast_active_days": 1,
+                                        "evaluated_samples": 8,
+                                        "evaluated_active_days": 1,
+                                        "missing_evaluated_samples": 22,
+                                        "missing_active_days": 2,
+                                        "coverage_gap_reasons": [
+                                            "INSUFFICIENT_EVALUATED_SAMPLES",
+                                            "INSUFFICIENT_ACTIVE_DAYS",
+                                        ],
+                                    }
+                                ],
+                                "pair_coverage_examples": [
+                                    {
+                                        "pair": "AUD_CAD",
+                                        "forecast_samples": 19,
+                                        "evaluated_samples": 14,
+                                        "missing_evaluated_samples_to_min_directional": 16,
+                                    }
+                                ],
+                            },
                             "daily_stability_requirements": {
                                 "min_active_days": 3,
                                 "max_daily_sample_share": 0.7,
@@ -365,6 +400,22 @@ class TraderSupportBotTest(unittest.TestCase):
                 evidence_summary["under_sampled_pair_directions"],
                 ["AUD_CAD:UP", "EUR_JPY:DOWN"],
             )
+            self.assertEqual(
+                evidence_summary["minimum_directional_samples_for_precision_rule"],
+                30,
+            )
+            self.assertEqual(evidence_summary["minimum_active_days_for_daily_stability"], 3)
+            self.assertEqual(
+                evidence_summary["under_sampled_gap_reason_counts"],
+                {
+                    "INSUFFICIENT_ACTIVE_DAYS": 1,
+                    "INSUFFICIENT_EVALUATED_SAMPLES": 2,
+                },
+            )
+            self.assertEqual(
+                evidence_summary["under_sampled_pair_direction_examples"][0]["pair"],
+                "AUD_CAD",
+            )
             request = next(
                 item
                 for item in payload["repair_requests"]
@@ -380,6 +431,12 @@ class TraderSupportBotTest(unittest.TestCase):
                 " ".join(str(item) for item in request["verification_commands"]),
             )
             self.assertIn("oanda_history_replay_validate.py", request["verification_commands"][0])
+            self.assertEqual(
+                request["evidence_summary"]["under_sampled_pair_direction_examples"][0][
+                    "missing_evaluated_samples"
+                ],
+                22,
+            )
 
     def test_acceptance_plan_breaks_loop_when_tp_progress_repair_is_not_deployed(self) -> None:
         condition, command, summary = _acceptance_clearance_for_code(

@@ -63,6 +63,33 @@ TRUTH_FIELDS = (
     "warnings",
 )
 
+COVERAGE_DETAIL_LIMIT = 24
+
+COVERAGE_DETAIL_FIELDS = (
+    "pair",
+    "direction",
+    "forecast_samples",
+    "forecast_active_days",
+    "evaluated_samples",
+    "evaluated_active_days",
+    "unscorable_no_market_samples",
+    "pending_future_truth_samples",
+    "missing_price_truth_samples",
+    "missing_evaluated_samples",
+    "missing_active_days",
+    "coverage_gap_reasons",
+)
+
+PAIR_COVERAGE_FIELDS = (
+    "pair",
+    "forecast_samples",
+    "evaluated_samples",
+    "missing_price_truth_samples",
+    "pending_future_truth_samples",
+    "unscorable_no_market_samples",
+    "missing_evaluated_samples_to_min_directional",
+)
+
 
 def main() -> int:
     args = _parse_args()
@@ -149,6 +176,9 @@ def _forecast_sample_coverage_summary(raw: Any, truth: dict[str, Any] | None = N
     if not isinstance(raw, dict):
         return {}
     under_sampled = raw.get("under_sampled_pair_directions")
+    under_sampled_rows = under_sampled if isinstance(under_sampled, list) else []
+    pairs = raw.get("pairs")
+    pair_rows = pairs if isinstance(pairs, list) else []
     pending_future = raw.get("pending_future_truth_samples")
     if pending_future is None and isinstance(truth, dict):
         pending_future = truth.get("pending_future_truth_rows")
@@ -161,8 +191,32 @@ def _forecast_sample_coverage_summary(raw: Any, truth: dict[str, Any] | None = N
         "pair_direction_count": raw.get("pair_direction_count"),
         "unscorable_no_market_samples": raw.get("unscorable_no_market_samples"),
         "pending_future_truth_samples": pending_future,
-        "under_sampled_pair_directions": len(under_sampled) if isinstance(under_sampled, list) else 0,
+        "under_sampled_pair_directions": len(under_sampled_rows),
+        "under_sampled_gap_reason_counts": _gap_reason_counts(under_sampled_rows),
+        "under_sampled_pair_direction_examples": [
+            _copy_fields(item, COVERAGE_DETAIL_FIELDS)
+            for item in under_sampled_rows[:COVERAGE_DETAIL_LIMIT]
+            if isinstance(item, dict)
+        ],
+        "pair_coverage_examples": [
+            _copy_fields(item, PAIR_COVERAGE_FIELDS)
+            for item in pair_rows[:COVERAGE_DETAIL_LIMIT]
+            if isinstance(item, dict)
+        ],
     }
+
+
+def _gap_reason_counts(rows: list[Any]) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for item in rows:
+        if not isinstance(item, dict):
+            continue
+        for reason in item.get("coverage_gap_reasons") or []:
+            text = str(reason or "").strip()
+            if not text:
+                continue
+            counts[text] = counts.get(text, 0) + 1
+    return dict(sorted(counts.items()))
 
 
 if __name__ == "__main__":

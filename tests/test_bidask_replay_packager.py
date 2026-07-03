@@ -77,7 +77,36 @@ class BidAskReplayPackagerTest(unittest.TestCase):
                 "pair_direction_count": 42,
                 "unscorable_no_market_samples": 12,
                 "pending_future_truth_samples": 4,
-                "under_sampled_pair_directions": [{"pair": "GBP_USD"}],
+                "pairs": [
+                    {
+                        "pair": "GBP_USD",
+                        "forecast_samples": 12,
+                        "evaluated_samples": 1,
+                        "missing_price_truth_samples": 0,
+                        "pending_future_truth_samples": 4,
+                        "unscorable_no_market_samples": 7,
+                        "missing_evaluated_samples_to_min_directional": 29,
+                    }
+                ],
+                "under_sampled_pair_directions": [
+                    {
+                        "pair": "GBP_USD",
+                        "direction": "DOWN",
+                        "forecast_samples": 12,
+                        "forecast_active_days": 1,
+                        "evaluated_samples": 1,
+                        "evaluated_active_days": 1,
+                        "unscorable_no_market_samples": 7,
+                        "pending_future_truth_samples": 4,
+                        "missing_price_truth_samples": 0,
+                        "missing_evaluated_samples": 29,
+                        "missing_active_days": 2,
+                        "coverage_gap_reasons": [
+                            "INSUFFICIENT_EVALUATED_SAMPLES",
+                            "INSUFFICIENT_ACTIVE_DAYS",
+                        ],
+                    }
+                ],
             },
             "precision_rules": {
                 "selection": {"edge_min_samples": 30},
@@ -158,6 +187,46 @@ class BidAskReplayPackagerTest(unittest.TestCase):
         self.assertEqual(
             packaged["forecast_sample_coverage_summary"]["pending_future_truth_samples"],
             4,
+        )
+        self.assertEqual(
+            packaged["forecast_sample_coverage_summary"]["under_sampled_gap_reason_counts"],
+            {"INSUFFICIENT_ACTIVE_DAYS": 1, "INSUFFICIENT_EVALUATED_SAMPLES": 1},
+        )
+        self.assertEqual(
+            packaged["forecast_sample_coverage_summary"]["under_sampled_pair_direction_examples"],
+            [
+                {
+                    "pair": "GBP_USD",
+                    "direction": "DOWN",
+                    "forecast_samples": 12,
+                    "forecast_active_days": 1,
+                    "evaluated_samples": 1,
+                    "evaluated_active_days": 1,
+                    "unscorable_no_market_samples": 7,
+                    "pending_future_truth_samples": 4,
+                    "missing_price_truth_samples": 0,
+                    "missing_evaluated_samples": 29,
+                    "missing_active_days": 2,
+                    "coverage_gap_reasons": [
+                        "INSUFFICIENT_EVALUATED_SAMPLES",
+                        "INSUFFICIENT_ACTIVE_DAYS",
+                    ],
+                }
+            ],
+        )
+        self.assertEqual(
+            packaged["forecast_sample_coverage_summary"]["pair_coverage_examples"],
+            [
+                {
+                    "pair": "GBP_USD",
+                    "forecast_samples": 12,
+                    "evaluated_samples": 1,
+                    "missing_price_truth_samples": 0,
+                    "pending_future_truth_samples": 4,
+                    "unscorable_no_market_samples": 7,
+                    "missing_evaluated_samples_to_min_directional": 29,
+                }
+            ],
         )
 
     def test_package_payload_rejects_partial_price_truth_by_default(self) -> None:

@@ -3113,6 +3113,41 @@ class CliHelpTest(unittest.TestCase):
                 "under_sampled_pair_directions": ["AUD_CAD:UP", "EUR_JPY:DOWN"],
                 "under_sampled_missing_evaluated_samples": 41,
             },
+            "forecast_sample_coverage_summary": {
+                "min_directional_samples_for_precision_rule": 30,
+                "min_active_days_for_daily_stability": 3,
+                "pair_count": 28,
+                "pair_direction_count": 56,
+                "under_sampled_pair_directions": 2,
+                "under_sampled_gap_reason_counts": {
+                    "INSUFFICIENT_ACTIVE_DAYS": 1,
+                    "INSUFFICIENT_EVALUATED_SAMPLES": 2,
+                },
+                "under_sampled_pair_direction_examples": [
+                    {
+                        "pair": "AUD_CAD",
+                        "direction": "UP",
+                        "forecast_samples": 12,
+                        "forecast_active_days": 1,
+                        "evaluated_samples": 8,
+                        "evaluated_active_days": 1,
+                        "missing_evaluated_samples": 22,
+                        "missing_active_days": 2,
+                        "coverage_gap_reasons": [
+                            "INSUFFICIENT_EVALUATED_SAMPLES",
+                            "INSUFFICIENT_ACTIVE_DAYS",
+                        ],
+                    }
+                ],
+                "pair_coverage_examples": [
+                    {
+                        "pair": "AUD_CAD",
+                        "forecast_samples": 19,
+                        "evaluated_samples": 14,
+                        "missing_evaluated_samples_to_min_directional": 16,
+                    }
+                ],
+            },
             "edge_rules": [
                 {
                     "name": "USD_JPY_DOWN_S5_BIDASK_DAILY_STABLE",
@@ -3151,6 +3186,17 @@ class CliHelpTest(unittest.TestCase):
         self.assertEqual(
             metrics["price_truth_coverage"]["under_sampled_pair_directions"],
             ["AUD_CAD:UP", "EUR_JPY:DOWN"],
+        )
+        self.assertEqual(
+            metrics["forecast_sample_coverage_summary"]["under_sampled_gap_reason_counts"],
+            {
+                "INSUFFICIENT_ACTIVE_DAYS": 1,
+                "INSUFFICIENT_EVALUATED_SAMPLES": 2,
+            },
+        )
+        self.assertEqual(
+            metrics["forecast_sample_coverage_summary"]["under_sampled_pair_direction_examples"][0]["pair"],
+            "AUD_CAD",
         )
         self.assertIn("oanda_history_replay_validate.py", metrics["replay_validation_command"])
         self.assertIsNone(findings[0]["evidence"]["history_fetch_command"])

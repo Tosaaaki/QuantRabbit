@@ -2794,6 +2794,11 @@ def _acceptance_clearance_for_code(
             if isinstance(bidask.get("price_truth_coverage"), dict)
             else {}
         )
+        sample_coverage = (
+            bidask.get("forecast_sample_coverage_summary")
+            if isinstance(bidask.get("forecast_sample_coverage_summary"), dict)
+            else {}
+        )
         price_truth_fetch_required = _bidask_price_truth_fetch_required(bidask)
         validation_command = bidask.get("replay_validation_command") or (
             "python3 scripts/oanda_history_replay_validate.py "
@@ -2849,6 +2854,20 @@ def _acceptance_clearance_for_code(
                 "rank_only_contrarian_edge_rules": bidask.get("rank_only_contrarian_edge_rules"),
                 "negative_rules": bidask.get("negative_rules"),
                 "price_truth_coverage": bidask.get("price_truth_coverage"),
+                "forecast_sample_coverage_summary": sample_coverage,
+                "minimum_directional_samples_for_precision_rule": sample_coverage.get(
+                    "min_directional_samples_for_precision_rule"
+                ),
+                "minimum_active_days_for_daily_stability": sample_coverage.get(
+                    "min_active_days_for_daily_stability"
+                ),
+                "under_sampled_gap_reason_counts": sample_coverage.get(
+                    "under_sampled_gap_reason_counts"
+                ),
+                "under_sampled_pair_direction_examples": sample_coverage.get(
+                    "under_sampled_pair_direction_examples"
+                ),
+                "pair_coverage_examples": sample_coverage.get("pair_coverage_examples"),
                 "daily_stability_requirements": bidask.get("daily_stability_requirements"),
                 "history_fetch_command": history_fetch_command,
                 "stale_history_fetch_command_suppressed": (

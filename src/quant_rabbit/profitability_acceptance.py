@@ -2624,6 +2624,11 @@ def _bidask_rule_findings(payload: dict[str, Any], path: Path) -> tuple[dict[str
         if isinstance(payload.get("price_truth_coverage"), dict)
         else {}
     )
+    sample_coverage = (
+        payload.get("forecast_sample_coverage_summary")
+        if isinstance(payload.get("forecast_sample_coverage_summary"), dict)
+        else {}
+    )
     truth_status = str(truth.get("status") or "").upper()
     price_truth_fetch_required = _bidask_price_truth_fetch_required(truth)
     forecast_sample_collection_required = (
@@ -2667,6 +2672,7 @@ def _bidask_rule_findings(payload: dict[str, Any], path: Path) -> tuple[dict[str
             "global_currency_validation_blocked": truth.get("global_currency_validation_blocked"),
             "warnings": truth.get("warnings"),
         },
+        "forecast_sample_coverage_summary": sample_coverage,
         "price_truth_fetch_required": price_truth_fetch_required,
         "forecast_sample_collection_required": forecast_sample_collection_required,
         "stale_history_fetch_command_suppressed": (
