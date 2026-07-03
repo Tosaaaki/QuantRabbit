@@ -2172,6 +2172,10 @@ def _near_ready_blocker_group(
 def _near_ready_evidence_needed(blocker_codes: list[str]) -> list[str]:
     groups = {_near_ready_blocker_group(code) for code in blocker_codes}
     needs: list[str] = []
+    if "stale_artifact" in groups:
+        needs.append("fresh broker snapshot, forecasts, projections, and order_intents from the same evidence packet")
+    if "global" in groups:
+        needs.append("clear global support/profitability P0s before ordinary fresh entries")
     if "forecast_telemetry" in groups:
         needs.append("fresh executable forecast telemetry with projection-ledger scoring for the lane pair/side")
     if "bidask_replay" in groups:
@@ -2196,10 +2200,6 @@ def _near_ready_evidence_needed(blocker_codes: list[str]) -> list[str]:
         needs.append(
             "TP-proven positive payoff evidence or non-negative system expectancy before ordinary fresh turnover"
         )
-    if "stale_artifact" in groups:
-        needs.append("fresh broker snapshot, forecasts, projections, and order_intents from the same evidence packet")
-    if "global" in groups:
-        needs.append("clear global support/profitability P0s before ordinary fresh entries")
     return list(dict.fromkeys(needs))
 
 

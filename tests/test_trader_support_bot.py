@@ -38,11 +38,23 @@ from quant_rabbit.trader_support_bot import (
     TraderSupportBot,
     _acceptance_clearance_for_code,
     _guardian_status,
+    _near_ready_evidence_needed,
     _profit_capture_summary,
 )
 
 
 class TraderSupportBotTest(unittest.TestCase):
+    def test_near_ready_evidence_orders_global_blocker_before_lane_local_work(self) -> None:
+        needs = _near_ready_evidence_needed(
+            [
+                "NEGATIVE_EXPECTANCY_REQUIRES_TP_PROVEN_ROTATION",
+                "RANGE_ROTATION_BROADER_LOCATION_CHASE",
+            ]
+        )
+
+        self.assertIn("clear global support/profitability P0s", needs[0])
+        self.assertIn("current rail/entry geometry", needs[1])
+
     def test_profit_capture_summary_shows_post_repair_sample_wait_split(self) -> None:
         summary = _profit_capture_summary(
             {
