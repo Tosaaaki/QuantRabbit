@@ -2618,8 +2618,6 @@ def _bidask_rule_findings(payload: dict[str, Any], path: Path) -> tuple[dict[str
         ),
         reverse=True,
     )
-    rank_only_examples = [_bidask_rank_only_example(item) for item in rank_only[:5]]
-    fetch_command, validation_command = _bidask_replay_verification_commands(rank_only, payload)
     adoption = payload.get("adoption_summary") if isinstance(payload.get("adoption_summary"), dict) else {}
     truth = (
         payload.get("price_truth_coverage")
@@ -2627,6 +2625,15 @@ def _bidask_rule_findings(payload: dict[str, Any], path: Path) -> tuple[dict[str
         else {}
     )
     truth_status = str(truth.get("status") or "").upper()
+    price_truth_fetch_required = _bidask_price_truth_fetch_required(truth)
+    forecast_sample_collection_required = (
+        bool(truth.get("global_currency_validation_blocked")) and not price_truth_fetch_required
+    )
+    truth_history_fetch_command = (
+        truth.get("history_fetch_command") if price_truth_fetch_required else None
+    )
+    rank_only_examples = [_bidask_rank_only_example(item) for item in rank_only[:5]]
+    fetch_command, validation_command = _bidask_replay_verification_commands(rank_only, payload)
     metrics = {
         "path": str(path),
         "edge_rules": len(edge_rules),
@@ -2646,7 +2653,7 @@ def _bidask_rule_findings(payload: dict[str, Any], path: Path) -> tuple[dict[str
             "evaluated_rows": truth.get("evaluated_rows"),
             "missing_price_truth_samples": truth.get("missing_price_truth_samples"),
             "missing_price_window_group_count": truth.get("missing_price_window_group_count"),
-            "history_fetch_command": truth.get("history_fetch_command"),
+            "history_fetch_command": truth_history_fetch_command,
             "history_fetch_command_count": truth.get("history_fetch_command_count"),
             "history_fetch_command_mode": truth.get("history_fetch_command_mode"),
             "missing_pairs": truth.get("missing_pairs"),
@@ -2660,6 +2667,11 @@ def _bidask_rule_findings(payload: dict[str, Any], path: Path) -> tuple[dict[str
             "global_currency_validation_blocked": truth.get("global_currency_validation_blocked"),
             "warnings": truth.get("warnings"),
         },
+        "price_truth_fetch_required": price_truth_fetch_required,
+        "forecast_sample_collection_required": forecast_sample_collection_required,
+        "stale_history_fetch_command_suppressed": (
+            not price_truth_fetch_required and bool(str(truth.get("history_fetch_command") or "").strip())
+        ),
         "daily_stability_requirements": {
             "min_active_days": BIDASK_REPLAY_STABLE_MIN_ACTIVE_DAYS,
             "max_daily_sample_share": BIDASK_REPLAY_STABLE_MAX_DAILY_SAMPLE_SHARE,
@@ -2822,7 +2834,12 @@ def _bidask_replay_verification_commands(
         if isinstance(payload.get("price_truth_coverage"), dict)
         else {}
     )
+    price_truth_fetch_required = _bidask_price_truth_fetch_required(truth)
     pairs = sorted({str(item.get("pair") or "").upper() for item in rank_only if item.get("pair")})
+    if price_truth_fetch_required and not pairs:
+        missing_pairs = truth.get("missing_pairs")
+        if isinstance(missing_pairs, list):
+            pairs = sorted({str(item or "").upper() for item in missing_pairs if str(item or "").strip()})
     granularities = sorted({str(item.get("granularity") or "S5").upper() for item in rank_only})
     if not granularities:
         granularity = str(payload.get("granularity") or "S5").upper()
@@ -2834,7 +2851,9 @@ def _bidask_replay_verification_commands(
         if str(truth.get("history_fetch_command") or "").strip()
         else None
     )
-    if pairs:
+    if not price_truth_fetch_required:
+        fetch_command = None
+    elif pairs:
         pairs_arg = ",".join(pairs)
         fetch_command = fetch_command or (
             "python3 scripts/oanda_history_fetch.py "
@@ -2852,6 +2871,21 @@ def _bidask_replay_verification_commands(
         f"--stable-min-positive-day-rate {BIDASK_REPLAY_STABLE_MIN_POSITIVE_DAY_RATE:.10f}"
     )
     return fetch_command, validation_command
+
+
+def _bidask_price_truth_fetch_required(truth: dict[str, Any]) -> bool:
+    status = str(truth.get("status") or "").upper()
+    missing_samples = _optional_float(truth.get("missing_price_truth_samples")) or 0.0
+    missing_windows = _optional_float(truth.get("missing_price_window_group_count")) or 0.0
+    fetch_count = _optional_float(truth.get("history_fetch_command_count")) or 0.0
+    history_fetch_command = bool(str(truth.get("history_fetch_command") or "").strip())
+    if status == "PRICE_TRUTH_OK" and missing_samples <= 0 and missing_windows <= 0 and fetch_count <= 0:
+        return False
+    if status in {"PARTIAL_PRICE_TRUTH", "PRICE_TRUTH_PARTIAL", "MISSING_PRICE_TRUTH"}:
+        return True
+    if missing_samples > 0 or missing_windows > 0 or fetch_count > 0:
+        return True
+    return history_fetch_command and status != "PRICE_TRUTH_OK"
 
 
 def _bidask_history_dir_args(payload: dict[str, Any]) -> str:

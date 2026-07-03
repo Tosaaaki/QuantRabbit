@@ -902,7 +902,10 @@ class CliHelpTest(unittest.TestCase):
                 "tmp/qr_acceptance_check/oanda_history_s5_windowed/20260622T163008Z",
             ],
         )
-        self.assertIn("oanda_history_fetch.py --pairs AUD_JPY,EUR_USD", bidask_metrics["history_fetch_command"])
+        self.assertIsNone(bidask_metrics["history_fetch_command"])
+        self.assertFalse(bidask_metrics["price_truth_fetch_required"])
+        self.assertFalse(bidask_metrics["forecast_sample_collection_required"])
+        self.assertIsNone(bidask_metrics["price_truth_coverage"]["history_fetch_command"])
         self.assertIn(
             "--history-dir tmp/qr_acceptance_check/oanda_history_s5/20260622T155928Z",
             bidask_metrics["replay_validation_command"],
@@ -3078,6 +3081,79 @@ class CliHelpTest(unittest.TestCase):
             findings[0]["evidence"]["price_truth_coverage"]["missing_pair_directions"],
             ["AUD_USD:UP", "USD_JPY:DOWN"],
         )
+
+    def test_bidask_all_currency_sample_coverage_thin_does_not_publish_history_fetch_command(self) -> None:
+        stale_fetch_command = (
+            "PYTHONPATH=src python3 scripts/oanda_history_fetch.py "
+            "--pairs AUD_CAD --granularities S5 --price BA --days 120 "
+            "--output-dir logs/replay/oanda_history"
+        )
+        payload = {
+            "granularity": "S5",
+            "history_dirs": ["logs/replay/oanda_history/20260622T222509Z"],
+            "adoption_summary": {
+                "live_grade_support_rules": 1,
+                "rank_only_support_rules": 1,
+                "negative_block_rules": 0,
+            },
+            "price_truth_coverage": {
+                "status": "PRICE_TRUTH_OK",
+                "adoption_level": "ALL_CURRENCY_RANK_ONLY",
+                "evaluated_rows": 39680,
+                "missing_price_truth_samples": 0,
+                "missing_price_window_group_count": 0,
+                "history_fetch_command": stale_fetch_command,
+                "history_fetch_command_count": 0,
+                "history_fetch_command_mode": "WINDOWED",
+                "missing_pairs": [],
+                "missing_pair_directions": [],
+                "global_currency_validation_blocked": True,
+                "all_currency_sample_coverage_status": "UNDER_SAMPLED",
+                "under_sampled_pair_direction_count": 2,
+                "under_sampled_pair_directions": ["AUD_CAD:UP", "EUR_JPY:DOWN"],
+                "under_sampled_missing_evaluated_samples": 41,
+            },
+            "edge_rules": [
+                {
+                    "name": "USD_JPY_DOWN_S5_BIDASK_DAILY_STABLE",
+                    "pair": "USD_JPY",
+                    "direction": "DOWN",
+                    "granularity": "S5",
+                    "samples": 84,
+                    "active_days": 3,
+                    "live_grade": True,
+                    "adoption_status": "LIVE_GRADE_DAILY_STABLE",
+                },
+                {
+                    "name": "AUD_CAD_UP_S5_BIDASK_RANK_ONLY",
+                    "pair": "AUD_CAD",
+                    "direction": "UP",
+                    "granularity": "S5",
+                    "samples": 12,
+                    "active_days": 1,
+                    "optimized_profit_factor": 1.42,
+                    "adoption_status": "PAIR_LOCAL_RANK_ONLY",
+                },
+            ],
+            "contrarian_edge_rules": [],
+            "negative_rules": [],
+        }
+
+        metrics, findings = _bidask_rule_findings(payload, Path("bidask_rules.json"))
+
+        codes = [item["code"] for item in findings]
+        self.assertEqual(codes, ["BIDASK_REPLAY_ALL_CURRENCY_SAMPLE_COVERAGE_THIN"])
+        self.assertIsNone(metrics["history_fetch_command"])
+        self.assertFalse(metrics["price_truth_fetch_required"])
+        self.assertTrue(metrics["forecast_sample_collection_required"])
+        self.assertTrue(metrics["stale_history_fetch_command_suppressed"])
+        self.assertIsNone(metrics["price_truth_coverage"]["history_fetch_command"])
+        self.assertEqual(
+            metrics["price_truth_coverage"]["under_sampled_pair_directions"],
+            ["AUD_CAD:UP", "EUR_JPY:DOWN"],
+        )
+        self.assertIn("oanda_history_replay_validate.py", metrics["replay_validation_command"])
+        self.assertIsNone(findings[0]["evidence"]["history_fetch_command"])
 
     def test_profitability_acceptance_passes_when_profit_invariants_are_clear(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
