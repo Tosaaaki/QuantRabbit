@@ -872,6 +872,68 @@ class TraderSupportBotTest(unittest.TestCase):
             self.assertIn("FORECAST_CONTEXT_REQUIRED_FOR_LIVE", report)
             self.assertIn("472792", report)
 
+    def test_profitability_acceptance_stale_against_newer_capture_economics_blocks_support(self) -> None:
+        now = datetime(2026, 7, 3, 20, 45, tzinfo=timezone.utc)
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _write_fixture(root, now=now, blocked=True)
+            _write_json(
+                files["profitability"],
+                {
+                    "generated_at_utc": (now - timedelta(minutes=30)).isoformat(),
+                    "status": "PROFITABILITY_ACCEPTANCE_BLOCKED",
+                    "blockers": ["NEGATIVE_EXPECTANCY_ACTIVE: capture economics is still negative"],
+                    "findings": [],
+                    "metrics": {"capture_economics": {}, "oanda_campaign_firepower": {}},
+                },
+            )
+            _write_json(
+                files["capture"],
+                {
+                    "generated_at_utc": now.isoformat(),
+                    "status": "NEGATIVE_EXPECTANCY",
+                    "trades": 234,
+                },
+            )
+            env = _guardian_env(root, active="1")
+            with mock.patch.dict(os.environ, env, clear=False):
+                summary = TraderSupportBot(
+                    broker_snapshot_path=files["broker"],
+                    order_intents_path=files["intents"],
+                    target_state_path=files["target"],
+                    position_management_path=files["position_management"],
+                    position_guardian_management_path=files["guardian_management"],
+                    position_guardian_execution_path=files["guardian_execution"],
+                    position_guardian_heartbeat_path=files["guardian_heartbeat"],
+                    self_improvement_audit_path=files["self_improvement"],
+                    profitability_acceptance_path=files["profitability"],
+                    execution_timing_audit_path=files["timing"],
+                    profit_capture_bot_path=files["profit_capture_bot"],
+                    output_path=files["output"],
+                    report_path=files["report"],
+                    now_utc=now,
+                ).run()
+
+            payload = json.loads(files["output"].read_text())
+            codes = {item["code"] for item in payload["blockers"]}
+            self.assertEqual(summary.status, STATUS_BLOCKED)
+            self.assertIn("PROFITABILITY_ACCEPTANCE_STALE_AGAINST_INPUTS", codes)
+            self.assertTrue(payload["metrics"]["profitability_acceptance_stale_against_inputs"])
+            self.assertEqual(
+                payload["metrics"]["profitability_acceptance_stale_input_names"],
+                ["capture_economics", "order_intents"],
+            )
+            freshness = payload["profitability_acceptance"]["artifact_freshness"]
+            self.assertEqual(
+                freshness["status"],
+                "PROFITABILITY_ACCEPTANCE_ARTIFACT_REFRESH_REQUIRED",
+            )
+            self.assertIn("capture_economics", freshness["reason"])
+            action_codes = {item["code"] for item in payload["operator_actions"]}
+            self.assertIn("REFRESH_PROFITABILITY_ACCEPTANCE_FROM_CURRENT_INPUTS", action_codes)
+            self.assertFalse(payload["metrics"]["send_fresh_entries_allowed"])
+            self.assertIn("Profitability acceptance freshness", files["report"].read_text())
+
     def test_tp_progress_unproved_waits_for_live_evidence_when_guardian_is_active(self) -> None:
         now = datetime(2026, 6, 24, 8, 30, tzinfo=timezone.utc)
         with tempfile.TemporaryDirectory() as tmp:
@@ -4841,6 +4903,7 @@ def _write_fixture(root: Path, *, now: datetime, blocked: bool) -> dict[str, Pat
         "guardian_heartbeat": data / "position_guardian.json",
         "self_improvement": data / "self_improvement_audit.json",
         "profitability": data / "profitability_acceptance.json",
+        "capture": data / "capture_economics.json",
         "timing": data / "execution_timing_audit.json",
         "profit_capture_bot": data / "profit_capture_bot.json",
         "qr_trader_run_watchdog": data / "qr_trader_run_watchdog.json",
@@ -5178,6 +5241,7 @@ def _write_fixture(root: Path, *, now: datetime, blocked: bool) -> dict[str, Pat
     _write_json(
         files["profitability"],
         {
+            "generated_at_utc": now.isoformat(),
             "status": profitability_status,
             "blockers": profitability_blockers,
             "findings": profitability_findings,
@@ -5288,6 +5352,14 @@ def _write_fixture(root: Path, *, now: datetime, blocked: bool) -> dict[str, Pat
                     ],
                 },
             },
+        },
+    )
+    _write_json(
+        files["capture"],
+        {
+            "generated_at_utc": now.isoformat(),
+            "status": "NEGATIVE_EXPECTANCY" if blocked else "OK",
+            "trades": 29 if blocked else 0,
         },
     )
     _write_json(

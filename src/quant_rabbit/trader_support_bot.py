@@ -21,6 +21,7 @@ from quant_rabbit.guardian_receipt_operator_review import operator_review_status
 from quant_rabbit.paths import (
     DEFAULT_BIDASK_REPLAY_VALIDATION,
     DEFAULT_BROKER_SNAPSHOT,
+    DEFAULT_CAPTURE_ECONOMICS,
     DEFAULT_DAILY_TARGET_STATE,
     DEFAULT_EXECUTION_TIMING_AUDIT,
     DEFAULT_GUARDIAN_RECEIPT_CONSUMPTION,
@@ -138,6 +139,9 @@ MONTH_SCALE_RESIDUAL_BLOCKER_CODES = {
     "MONTH_SCALE_RESIDUAL_LOSS_REPAIR_BLOCKED",
     "MONTH_SCALE_ENTRY_QUALITY_RESIDUAL_BLOCKED",
 }
+PROFITABILITY_ACCEPTANCE_ARTIFACT_REFRESH_WAIT_STATUS = (
+    "PROFITABILITY_ACCEPTANCE_ARTIFACT_REFRESH_REQUIRED"
+)
 REPAIR_EXEMPTION_CODES = {PERSISTENT_DISCIPLINE, "SELF_IMPROVEMENT_P0_PROFITABILITY_DISCIPLINE"}
 GLOBAL_UNLOCK_BLOCKERS = {
     GUARDIAN_BLOCKER,
@@ -213,6 +217,7 @@ class TraderSupportBot:
         position_guardian_heartbeat_path: Path = DEFAULT_POSITION_GUARDIAN_HEARTBEAT,
         self_improvement_audit_path: Path = DEFAULT_SELF_IMPROVEMENT_AUDIT,
         profitability_acceptance_path: Path = DEFAULT_PROFITABILITY_ACCEPTANCE,
+        capture_economics_path: Path = DEFAULT_CAPTURE_ECONOMICS,
         execution_timing_audit_path: Path = DEFAULT_EXECUTION_TIMING_AUDIT,
         profit_capture_bot_path: Path = DEFAULT_PROFIT_CAPTURE_BOT,
         qr_trader_run_watchdog_path: Path = DEFAULT_QR_TRADER_RUN_WATCHDOG,
@@ -235,6 +240,11 @@ class TraderSupportBot:
         self.position_guardian_heartbeat_path = position_guardian_heartbeat_path
         self.self_improvement_audit_path = self_improvement_audit_path
         self.profitability_acceptance_path = profitability_acceptance_path
+        self.capture_economics_path = _default_receipt_artifact_path(
+            requested_path=capture_economics_path,
+            default_path=DEFAULT_CAPTURE_ECONOMICS,
+            output_path=output_path,
+        )
         self.execution_timing_audit_path = execution_timing_audit_path
         self.profit_capture_bot_path = profit_capture_bot_path
         self.qr_trader_run_watchdog_path = qr_trader_run_watchdog_path
@@ -271,6 +281,7 @@ class TraderSupportBot:
                     broker_snapshot_path,
                     target_state_path,
                     profitability_acceptance_path,
+                    capture_economics_path,
                     self_improvement_audit_path,
                     execution_timing_audit_path,
                     oanda_rotation_mining_path,
@@ -305,6 +316,7 @@ class TraderSupportBot:
         guardian_management = _read_json(self.position_guardian_management_path)
         self_improvement = _read_json(self.self_improvement_audit_path)
         profitability = _read_json(self.profitability_acceptance_path)
+        capture_economics = _read_json(self.capture_economics_path)
         timing = _read_json(self.execution_timing_audit_path)
         profit_capture_bot = _read_json(self.profit_capture_bot_path)
         qr_trader_run_watchdog = _watchdog_summary(_read_json(self.qr_trader_run_watchdog_path))
@@ -376,6 +388,12 @@ class TraderSupportBot:
             profitability,
             bidask_current_intent_history_coverage=bidask_current_intent_history_coverage,
         )
+        acceptance_freshness = _profitability_acceptance_freshness_summary(
+            profitability=profitability,
+            capture_economics=capture_economics,
+            entry=entry,
+        )
+        acceptance["artifact_freshness"] = acceptance_freshness
 
         blockers = _build_blockers(
             guardian=guardian,
@@ -531,6 +549,15 @@ class TraderSupportBot:
             ),
             "target_remaining_jpy": target_summary["remaining_target_jpy"],
             "profitability_status": acceptance["status"],
+            "profitability_acceptance_artifact_status": acceptance_freshness["status"],
+            "profitability_acceptance_generated_at_utc": acceptance_freshness[
+                "profitability_acceptance_generated_at_utc"
+            ],
+            "profitability_acceptance_stale_against_inputs": acceptance_freshness[
+                "profitability_acceptance_stale_against_inputs"
+            ],
+            "profitability_acceptance_stale_input_names": acceptance_freshness["stale_input_names"],
+            "capture_economics_generated_at_utc": acceptance_freshness["capture_economics_generated_at_utc"],
             "target_firepower_status": acceptance["target_firepower"]["status"],
             "target_firepower_minimum_5pct_estimated_reachable": acceptance["target_firepower"][
                 "minimum_5pct_estimated_reachable"
@@ -623,6 +650,7 @@ class TraderSupportBot:
                 "position_guardian_heartbeat": str(self.position_guardian_heartbeat_path),
                 "self_improvement_audit": str(self.self_improvement_audit_path),
                 "profitability_acceptance": str(self.profitability_acceptance_path),
+                "capture_economics": str(self.capture_economics_path),
                 "execution_timing_audit": str(self.execution_timing_audit_path),
                 "profit_capture_bot": str(self.profit_capture_bot_path),
                 "qr_trader_run_watchdog": str(self.qr_trader_run_watchdog_path),
@@ -1135,6 +1163,90 @@ def _artifact_freshness_summary(
             if stale
             else []
         ),
+    }
+
+
+def _profitability_acceptance_freshness_summary(
+    *,
+    profitability: dict[str, Any],
+    capture_economics: dict[str, Any],
+    entry: dict[str, Any],
+) -> dict[str, Any]:
+    acceptance_generated_raw = profitability.get("generated_at_utc") or profitability.get("generated_at")
+    capture_generated_raw = capture_economics.get("generated_at_utc") or capture_economics.get("generated_at")
+    intents_generated_raw = entry.get("generated_at_utc")
+    acceptance_generated = _parse_utc(acceptance_generated_raw)
+    capture_generated = _parse_utc(capture_generated_raw)
+    intents_generated = _parse_utc(intents_generated_raw)
+
+    stale_inputs: list[str] = []
+    if (
+        acceptance_generated is not None
+        and capture_generated is not None
+        and (capture_generated - acceptance_generated).total_seconds() > 1.0
+    ):
+        stale_inputs.append("capture_economics")
+    if (
+        acceptance_generated is not None
+        and intents_generated is not None
+        and (intents_generated - acceptance_generated).total_seconds() > 1.0
+    ):
+        stale_inputs.append("order_intents")
+
+    capture_after_intents = (
+        capture_generated is not None
+        and intents_generated is not None
+        and (capture_generated - intents_generated).total_seconds() > 1.0
+    )
+    stale = bool(stale_inputs)
+    status = (
+        PROFITABILITY_ACCEPTANCE_ARTIFACT_REFRESH_WAIT_STATUS
+        if stale
+        else "PROFITABILITY_ACCEPTANCE_ALIGNED_WITH_INPUTS"
+        if acceptance_generated is not None
+        else "PROFITABILITY_ACCEPTANCE_FRESHNESS_UNKNOWN"
+    )
+    if stale:
+        if capture_after_intents:
+            reason = (
+                "profitability_acceptance is older than current input evidence, and capture_economics "
+                "is newer than order_intents; regenerate intents before recomputing acceptance"
+            )
+        else:
+            reason = (
+                "profitability_acceptance is older than current input evidence: "
+                + ", ".join(stale_inputs)
+            )
+    elif acceptance_generated is None:
+        reason = "profitability_acceptance generated timestamp is unavailable"
+    else:
+        reason = "profitability_acceptance is aligned with current capture_economics and order_intents"
+
+    refresh_commands = []
+    if stale:
+        if capture_after_intents:
+            refresh_commands.append(
+                "PYTHONPATH=src python3 -m quant_rabbit.cli generate-intents --snapshot data/broker_snapshot.json --reuse-market-artifacts"
+            )
+        refresh_commands.extend(
+            [
+                "PYTHONPATH=src python3 -m quant_rabbit.cli profitability-acceptance",
+                "PYTHONPATH=src python3 -m quant_rabbit.cli trader-support-bot",
+                "PYTHONPATH=src python3 -m quant_rabbit.cli trader-repair-orchestrator",
+            ]
+        )
+
+    return {
+        "status": status,
+        "profitability_acceptance_generated_at_utc": acceptance_generated_raw,
+        "capture_economics_generated_at_utc": capture_generated_raw,
+        "order_intents_generated_at_utc": intents_generated_raw,
+        "profitability_acceptance_stale_against_inputs": stale,
+        "stale_input_names": stale_inputs,
+        "capture_economics_generated_after_order_intents": capture_after_intents,
+        "refresh_required": stale,
+        "reason": reason,
+        "refresh_commands": refresh_commands,
     }
 
 
@@ -3566,6 +3678,20 @@ def _build_blockers(
                 "message": f"profitability acceptance status is {acceptance.get('status')}",
             }
         )
+    acceptance_freshness = (
+        acceptance.get("artifact_freshness")
+        if isinstance(acceptance.get("artifact_freshness"), dict)
+        else {}
+    )
+    if acceptance_freshness.get("profitability_acceptance_stale_against_inputs"):
+        blockers.append(
+            {
+                "code": "PROFITABILITY_ACCEPTANCE_STALE_AGAINST_INPUTS",
+                "severity": "P0",
+                "message": acceptance_freshness.get("reason")
+                or "profitability acceptance is stale against current input evidence",
+            }
+        )
     return blockers
 
 
@@ -4034,6 +4160,27 @@ def _operator_actions(
                 "command": "PYTHONPATH=src python3 -m quant_rabbit.cli generate-intents --snapshot data/broker_snapshot.json --reuse-market-artifacts",
                 "requires_explicit_operator_approval": False,
                 "reason": "order_intents is older than broker_snapshot; refresh intents before ranking live blockers",
+            }
+        )
+    acceptance_freshness = (
+        acceptance.get("artifact_freshness")
+        if isinstance(acceptance.get("artifact_freshness"), dict)
+        else {}
+    )
+    if acceptance_freshness.get("profitability_acceptance_stale_against_inputs"):
+        refresh_commands = acceptance_freshness.get("refresh_commands")
+        command = (
+            " && ".join(str(item) for item in refresh_commands if str(item).strip())
+            if isinstance(refresh_commands, list) and refresh_commands
+            else "PYTHONPATH=src python3 -m quant_rabbit.cli profitability-acceptance"
+        )
+        actions.append(
+            {
+                "code": "REFRESH_PROFITABILITY_ACCEPTANCE_FROM_CURRENT_INPUTS",
+                "command": command,
+                "requires_explicit_operator_approval": False,
+                "reason": acceptance_freshness.get("reason")
+                or "profitability_acceptance is stale against current input evidence",
             }
         )
     stale_support_blocker_codes = [
@@ -5739,8 +5886,14 @@ def _render_report(payload: dict[str, Any]) -> str:
     current_profit = payload["current_profit_capture"]
     broker = payload["broker"]
     target = payload["target"]
-    firepower = payload["profitability_acceptance"].get("target_firepower", {})
-    acceptance_repair = payload["profitability_acceptance"].get("repair_plan", {})
+    acceptance = payload["profitability_acceptance"]
+    firepower = acceptance.get("target_firepower", {})
+    acceptance_repair = acceptance.get("repair_plan", {})
+    acceptance_freshness = (
+        acceptance.get("artifact_freshness")
+        if isinstance(acceptance.get("artifact_freshness"), dict)
+        else {}
+    )
     lines = [
         "# Trader Support Bot Report",
         "",
@@ -5762,6 +5915,7 @@ def _render_report(payload: dict[str, Any]) -> str:
         f"| LIVE_READY lanes | `{entry['live_ready_lanes']}` / `{entry['lanes']}` |",
         f"| Near-ready diagnostic lanes | `{entry.get('near_ready_lane_count')}` |",
         f"| Order intents freshness | `{entry.get('artifact_freshness', {}).get('status')}` staleness=`{entry.get('artifact_freshness', {}).get('order_intents_staleness_seconds')}`s |",
+        f"| Profitability acceptance freshness | `{acceptance_freshness.get('status')}` stale_inputs=`{acceptance_freshness.get('stale_input_names')}` |",
         f"| Repair LIVE_READY lanes | `{len(entry['repair_live_ready'])}` |",
         f"| Repair lanes after guardian recovery | `{len(entry['repair_basket_guardian_recovery'])}` |",
         f"| Repair frontier lanes | `{len(entry['repair_frontier'])}` |",
