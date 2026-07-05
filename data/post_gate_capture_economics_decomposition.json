@@ -1,0 +1,788 @@
+{
+  "blocked_trade_sets": {
+    "manual_trade_ids": [
+      "472987"
+    ],
+    "market_close_leak_trade_ids": [
+      "470353",
+      "470356",
+      "470730",
+      "471089",
+      "471174",
+      "471255",
+      "472280"
+    ],
+    "residual_family_trade_ids": [
+      "471711",
+      "471817",
+      "472071",
+      "472088",
+      "472094",
+      "472125",
+      "472156",
+      "472174",
+      "472190",
+      "472208",
+      "472233",
+      "472252",
+      "472312",
+      "472380",
+      "472427",
+      "472445",
+      "472497",
+      "472530",
+      "472632",
+      "472743",
+      "472775",
+      "472834",
+      "472837",
+      "472900",
+      "472903",
+      "472952"
+    ],
+    "unknown_unverified_gateway_close_trade_ids": [
+      "470266",
+      "470279",
+      "470348",
+      "470353",
+      "470356",
+      "470359",
+      "470362",
+      "470365",
+      "470368",
+      "470395",
+      "470400",
+      "470403",
+      "470415",
+      "470427",
+      "470440",
+      "470446",
+      "470461",
+      "470464",
+      "470468",
+      "470494",
+      "470497",
+      "470500",
+      "470503",
+      "470519",
+      "470529",
+      "470644",
+      "470655",
+      "470713",
+      "470719",
+      "470730",
+      "470749",
+      "470759",
+      "470762",
+      "470837",
+      "470854",
+      "470859",
+      "470898",
+      "470904",
+      "470945",
+      "470951",
+      "470971",
+      "471008",
+      "471061",
+      "471077",
+      "471089",
+      "471174",
+      "471232",
+      "471255",
+      "471414",
+      "471711",
+      "471817",
+      "471923",
+      "471979",
+      "472037",
+      "472071",
+      "472075",
+      "472088",
+      "472094",
+      "472109",
+      "472149",
+      "472156",
+      "472161",
+      "472174",
+      "472190",
+      "472193",
+      "472208",
+      "472222",
+      "472230",
+      "472233",
+      "472252",
+      "472280",
+      "472312",
+      "472318",
+      "472322",
+      "472336",
+      "472352",
+      "472380",
+      "472427",
+      "472445",
+      "472450",
+      "472458",
+      "472497",
+      "472530",
+      "472550",
+      "472590",
+      "472632",
+      "472655",
+      "472667",
+      "472683",
+      "472692",
+      "472716",
+      "472743",
+      "472819",
+      "472840",
+      "472848",
+      "472861",
+      "472876"
+    ]
+  },
+  "capture_economics_overall": {
+    "avg_loss_jpy": 1063.9,
+    "avg_win_jpy": 418.0,
+    "breakeven_payoff_at_win_rate": 0.672,
+    "expectancy_jpy_per_trade": -177.4,
+    "losses": 92,
+    "net_jpy": -40616.9,
+    "payoff_ratio": 0.393,
+    "trades": 229,
+    "win_rate": 0.5983,
+    "wins": 137
+  },
+  "capture_economics_status": "NEGATIVE_EXPECTANCY",
+  "generated_at_utc": "2026-07-05T17:30:13Z",
+  "live_side_effects": [],
+  "mode": "read_only_post_gate_capture_economics_decomposition",
+  "negative_expectancy_active_should_remain": true,
+  "raw_broker_closed_context": {
+    "avg_loss_jpy": 1068.1966,
+    "avg_win_jpy": 648.3473,
+    "expectancy_jpy_per_trade": -12.3859,
+    "losses": 97,
+    "max_loss_jpy": -11986.9276,
+    "net_jpy": -3121.243,
+    "profit_factor": 0.9699,
+    "trades": 252,
+    "win_rate": 0.6151,
+    "wins": 155
+  },
+  "reason": "The accepted capture_economics artifact remains NEGATIVE_EXPECTANCY. Positive TP-only or post-filter scopes are proof-pack inputs only and do not create live permission.",
+  "scopes": [
+    {
+      "avg_loss_jpy": 1063.8981,
+      "avg_win_jpy": 417.9691,
+      "can_clear_negative_expectancy_active": false,
+      "can_create_live_permission": false,
+      "can_enter_proof_pack": false,
+      "expectancy_jpy_per_trade": -177.3662,
+      "losses": 92,
+      "max_loss_jpy": -11986.9276,
+      "net_jpy": -40616.8595,
+      "note": "Trader-attributed realized ledger before post-gate exclusions; manual/tagless broker closes are excluded by attribution.",
+      "permission_boundary": "Can clear only if this exact scope is the accepted regenerated economics basis.",
+      "profit_factor": 0.585,
+      "scope": "raw_realized_system_ledger",
+      "trade_ids_contributing_most_to_loss": [
+        {
+          "exit_reason": "MARKET_ORDER_TRADE_CLOSE",
+          "method": "BREAKOUT_FAILURE",
+          "pair": "GBP_USD",
+          "realized_pl_jpy": -11986.9276,
+          "side": "LONG",
+          "trade_id": "470854"
+        },
+        {
+          "exit_reason": "MARKET_ORDER_TRADE_CLOSE",
+          "method": "BREAKOUT_FAILURE",
+          "pair": "EUR_USD",
+          "realized_pl_jpy": -8378.521,
+          "side": "LONG",
+          "trade_id": "470730"
+        },
+        {
+          "exit_reason": "MARKET_ORDER_MARGIN_CLOSEOUT",
+          "method": "BREAKOUT_FAILURE",
+          "pair": "AUD_JPY",
+          "realized_pl_jpy": -3947.4,
+          "side": "SHORT",
+          "trade_id": "471020"
+        },
+        {
+          "exit_reason": "MARKET_ORDER_TRADE_CLOSE",
+          "method": "BREAKOUT_FAILURE",
+          "pair": "GBP_USD",
+          "realized_pl_jpy": -3688.6643,
+          "side": "LONG",
+          "trade_id": "471008"
+        },
+        {
+          "exit_reason": "MARKET_ORDER_TRADE_CLOSE",
+          "method": "TREND_CONTINUATION",
+          "pair": "EUR_USD",
+          "realized_pl_jpy": -3307.422,
+          "side": "LONG",
+          "trade_id": "471232"
+        },
+        {
+          "exit_reason": "MARKET_ORDER_TRADE_CLOSE",
+          "method": "RANGE_ROTATION",
+          "pair": "AUD_JPY",
+          "realized_pl_jpy": -3171.0,
+          "side": "SHORT",
+          "trade_id": "470898"
+        },
+        {
+          "exit_reason": "MARKET_ORDER_TRADE_CLOSE",
+          "method": "BREAKOUT_FAILURE",
+          "pair": "GBP_USD",
+          "realized_pl_jpy": -2981.8961,
+          "side": "LONG",
+          "trade_id": "472071"
+        },
+        {
+          "exit_reason": "MARKET_ORDER_MARGIN_CLOSEOUT",
+          "method": "TREND_CONTINUATION",
+          "pair": "GBP_USD",
+          "realized_pl_jpy": -2918.857,
+          "side": "LONG",
+          "trade_id": "471216"
+        }
+      ],
+      "trades": 229,
+      "win_rate": 0.5983,
+      "wins": 137
+    },
+    {
+      "avg_loss_jpy": 1063.8981,
+      "avg_win_jpy": 417.9691,
+      "can_clear_negative_expectancy_active": false,
+      "can_create_live_permission": false,
+      "can_enter_proof_pack": false,
+      "expectancy_jpy_per_trade": -177.3662,
+      "losses": 92,
+      "max_loss_jpy": -11986.9276,
+      "net_jpy": -40616.8595,
+      "note": "Explicit EUR_USD 472987 manual exclusion applied; no closed 472987 row exists.",
+      "permission_boundary": "Can clear only if this exact scope is the accepted regenerated economics basis.",
+      "profit_factor": 0.585,
+      "scope": "manual_excluded_ledger",
+      "trade_ids_contributing_most_to_loss": [
+        {
+          "exit_reason": "MARKET_ORDER_TRADE_CLOSE",
+          "method": "BREAKOUT_FAILURE",
+          "pair": "GBP_USD",
+          "realized_pl_jpy": -11986.9276,
+          "side": "LONG",
+          "trade_id": "470854"
+        },
+        {
+          "exit_reason": "MARKET_ORDER_TRADE_CLOSE",
+          "method": "BREAKOUT_FAILURE",
+          "pair": "EUR_USD",
+          "realized_pl_jpy": -8378.521,
+          "side": "LONG",
+          "trade_id": "470730"
+        },
+        {
+          "exit_reason": "MARKET_ORDER_MARGIN_CLOSEOUT",
+          "method": "BREAKOUT_FAILURE",
+          "pair": "AUD_JPY",
+          "realized_pl_jpy": -3947.4,
+          "side": "SHORT",
+          "trade_id": "471020"
+        },
+        {
+          "exit_reason": "MARKET_ORDER_TRADE_CLOSE",
+          "method": "BREAKOUT_FAILURE",
+          "pair": "GBP_USD",
+          "realized_pl_jpy": -3688.6643,
+          "side": "LONG",
+          "trade_id": "471008"
+        },
+        {
+          "exit_reason": "MARKET_ORDER_TRADE_CLOSE",
+          "method": "TREND_CONTINUATION",
+          "pair": "EUR_USD",
+          "realized_pl_jpy": -3307.422,
+          "side": "LONG",
+          "trade_id": "471232"
+        },
+        {
+          "exit_reason": "MARKET_ORDER_TRADE_CLOSE",
+          "method": "RANGE_ROTATION",
+          "pair": "AUD_JPY",
+          "realized_pl_jpy": -3171.0,
+          "side": "SHORT",
+          "trade_id": "470898"
+        },
+        {
+          "exit_reason": "MARKET_ORDER_TRADE_CLOSE",
+          "method": "BREAKOUT_FAILURE",
+          "pair": "GBP_USD",
+          "realized_pl_jpy": -2981.8961,
+          "side": "LONG",
+          "trade_id": "472071"
+        },
+        {
+          "exit_reason": "MARKET_ORDER_MARGIN_CLOSEOUT",
+          "method": "TREND_CONTINUATION",
+          "pair": "GBP_USD",
+          "realized_pl_jpy": -2918.857,
+          "side": "LONG",
+          "trade_id": "471216"
+        }
+      ],
+      "trades": 229,
+      "win_rate": 0.5983,
+      "wins": 137
+    },
+    {
+      "avg_loss_jpy": 973.9643,
+      "avg_win_jpy": 417.9691,
+      "can_clear_negative_expectancy_active": false,
+      "can_create_live_permission": false,
+      "can_enter_proof_pack": false,
+      "expectancy_jpy_per_trade": -114.9783,
+      "losses": 85,
+      "max_loss_jpy": -11986.9276,
+      "net_jpy": -25525.193,
+      "note": "Manual exclusion plus current MARKET_CLOSE_LEAK_FAMILY_BLOCKED trade IDs removed.",
+      "permission_boundary": "Non-negative only after excluding blocked historical families cannot create live permission.",
+      "profit_factor": 0.6917,
+      "scope": "manual_excluded_plus_market_close_leak_family_blocked_excluded",
+      "trade_ids_contributing_most_to_loss": [
+        {
+          "exit_reason": "MARKET_ORDER_TRADE_CLOSE",
+          "method": "BREAKOUT_FAILURE",
+          "pair": "GBP_USD",
+          "realized_pl_jpy": -11986.9276,
+          "side": "LONG",
+          "trade_id": "470854"
+        },
+        {
+          "exit_reason": "MARKET_ORDER_MARGIN_CLOSEOUT",
+          "method": "BREAKOUT_FAILURE",
+          "pair": "AUD_JPY",
+          "realized_pl_jpy": -3947.4,
+          "side": "SHORT",
+          "trade_id": "471020"
+        },
+        {
+          "exit_reason": "MARKET_ORDER_TRADE_CLOSE",
+          "method": "BREAKOUT_FAILURE",
+          "pair": "GBP_USD",
+          "realized_pl_jpy": -3688.6643,
+          "side": "LONG",
+          "trade_id": "471008"
+        },
+        {
+          "exit_reason": "MARKET_ORDER_TRADE_CLOSE",
+          "method": "TREND_CONTINUATION",
+          "pair": "EUR_USD",
+          "realized_pl_jpy": -3307.422,
+          "side": "LONG",
+          "trade_id": "471232"
+        },
+        {
+          "exit_reason": "MARKET_ORDER_TRADE_CLOSE",
+          "method": "RANGE_ROTATION",
+          "pair": "AUD_JPY",
+          "realized_pl_jpy": -3171.0,
+          "side": "SHORT",
+          "trade_id": "470898"
+        },
+        {
+          "exit_reason": "MARKET_ORDER_TRADE_CLOSE",
+          "method": "BREAKOUT_FAILURE",
+          "pair": "GBP_USD",
+          "realized_pl_jpy": -2981.8961,
+          "side": "LONG",
+          "trade_id": "472071"
+        },
+        {
+          "exit_reason": "MARKET_ORDER_MARGIN_CLOSEOUT",
+          "method": "TREND_CONTINUATION",
+          "pair": "GBP_USD",
+          "realized_pl_jpy": -2918.857,
+          "side": "LONG",
+          "trade_id": "471216"
+        },
+        {
+          "exit_reason": "MARKET_ORDER_TRADE_CLOSE",
+          "method": "BREAKOUT_FAILURE",
+          "pair": "EUR_USD",
+          "realized_pl_jpy": -2891.0746,
+          "side": "SHORT",
+          "trade_id": "470427"
+        }
+      ],
+      "trades": 222,
+      "win_rate": 0.6171,
+      "wins": 137
+    },
+    {
+      "avg_loss_jpy": 1114.3622,
+      "avg_win_jpy": 417.9691,
+      "can_clear_negative_expectancy_active": false,
+      "can_create_live_permission": false,
+      "can_enter_proof_pack": false,
+      "expectancy_jpy_per_trade": -80.2273,
+      "losses": 66,
+      "max_loss_jpy": -11986.9276,
+      "net_jpy": -16286.1321,
+      "note": "Manual exclusion plus month-scale residual-family blocked trade IDs removed.",
+      "permission_boundary": "Non-negative only after excluding blocked historical families cannot create live permission.",
+      "profit_factor": 0.7786,
+      "scope": "manual_excluded_plus_residual_family_blocked_excluded",
+      "trade_ids_contributing_most_to_loss": [
+        {
+          "exit_reason": "MARKET_ORDER_TRADE_CLOSE",
+          "method": "BREAKOUT_FAILURE",
+          "pair": "GBP_USD",
+          "realized_pl_jpy": -11986.9276,
+          "side": "LONG",
+          "trade_id": "470854"
+        },
+        {
+          "exit_reason": "MARKET_ORDER_TRADE_CLOSE",
+          "method": "BREAKOUT_FAILURE",
+          "pair": "EUR_USD",
+          "realized_pl_jpy": -8378.521,
+          "side": "LONG",
+          "trade_id": "470730"
+        },
+        {
+          "exit_reason": "MARKET_ORDER_MARGIN_CLOSEOUT",
+          "method": "BREAKOUT_FAILURE",
+          "pair": "AUD_JPY",
+          "realized_pl_jpy": -3947.4,
+          "side": "SHORT",
+          "trade_id": "471020"
+        },
+        {
+          "exit_reason": "MARKET_ORDER_TRADE_CLOSE",
+          "method": "BREAKOUT_FAILURE",
+          "pair": "GBP_USD",
+          "realized_pl_jpy": -3688.6643,
+          "side": "LONG",
+          "trade_id": "471008"
+        },
+        {
+          "exit_reason": "MARKET_ORDER_TRADE_CLOSE",
+          "method": "TREND_CONTINUATION",
+          "pair": "EUR_USD",
+          "realized_pl_jpy": -3307.422,
+          "side": "LONG",
+          "trade_id": "471232"
+        },
+        {
+          "exit_reason": "MARKET_ORDER_TRADE_CLOSE",
+          "method": "RANGE_ROTATION",
+          "pair": "AUD_JPY",
+          "realized_pl_jpy": -3171.0,
+          "side": "SHORT",
+          "trade_id": "470898"
+        },
+        {
+          "exit_reason": "MARKET_ORDER_MARGIN_CLOSEOUT",
+          "method": "TREND_CONTINUATION",
+          "pair": "GBP_USD",
+          "realized_pl_jpy": -2918.857,
+          "side": "LONG",
+          "trade_id": "471216"
+        },
+        {
+          "exit_reason": "MARKET_ORDER_TRADE_CLOSE",
+          "method": "BREAKOUT_FAILURE",
+          "pair": "EUR_USD",
+          "realized_pl_jpy": -2891.0746,
+          "side": "SHORT",
+          "trade_id": "470427"
+        }
+      ],
+      "trades": 203,
+      "win_rate": 0.6749,
+      "wins": 137
+    },
+    {
+      "avg_loss_jpy": 990.7837,
+      "avg_win_jpy": 417.9691,
+      "can_clear_negative_expectancy_active": false,
+      "can_create_live_permission": false,
+      "can_enter_proof_pack": false,
+      "expectancy_jpy_per_trade": -6.0942,
+      "losses": 59,
+      "max_loss_jpy": -11986.9276,
+      "net_jpy": -1194.4656,
+      "note": "Manual exclusion plus both non-permission historical filters.",
+      "permission_boundary": "Non-negative only after excluding blocked historical families cannot create live permission.",
+      "profit_factor": 0.9796,
+      "scope": "manual_excluded_plus_both_market_close_leak_and_residual_family_filters",
+      "trade_ids_contributing_most_to_loss": [
+        {
+          "exit_reason": "MARKET_ORDER_TRADE_CLOSE",
+          "method": "BREAKOUT_FAILURE",
+          "pair": "GBP_USD",
+          "realized_pl_jpy": -11986.9276,
+          "side": "LONG",
+          "trade_id": "470854"
+        },
+        {
+          "exit_reason": "MARKET_ORDER_MARGIN_CLOSEOUT",
+          "method": "BREAKOUT_FAILURE",
+          "pair": "AUD_JPY",
+          "realized_pl_jpy": -3947.4,
+          "side": "SHORT",
+          "trade_id": "471020"
+        },
+        {
+          "exit_reason": "MARKET_ORDER_TRADE_CLOSE",
+          "method": "BREAKOUT_FAILURE",
+          "pair": "GBP_USD",
+          "realized_pl_jpy": -3688.6643,
+          "side": "LONG",
+          "trade_id": "471008"
+        },
+        {
+          "exit_reason": "MARKET_ORDER_TRADE_CLOSE",
+          "method": "TREND_CONTINUATION",
+          "pair": "EUR_USD",
+          "realized_pl_jpy": -3307.422,
+          "side": "LONG",
+          "trade_id": "471232"
+        },
+        {
+          "exit_reason": "MARKET_ORDER_TRADE_CLOSE",
+          "method": "RANGE_ROTATION",
+          "pair": "AUD_JPY",
+          "realized_pl_jpy": -3171.0,
+          "side": "SHORT",
+          "trade_id": "470898"
+        },
+        {
+          "exit_reason": "MARKET_ORDER_MARGIN_CLOSEOUT",
+          "method": "TREND_CONTINUATION",
+          "pair": "GBP_USD",
+          "realized_pl_jpy": -2918.857,
+          "side": "LONG",
+          "trade_id": "471216"
+        },
+        {
+          "exit_reason": "MARKET_ORDER_TRADE_CLOSE",
+          "method": "BREAKOUT_FAILURE",
+          "pair": "EUR_USD",
+          "realized_pl_jpy": -2891.0746,
+          "side": "SHORT",
+          "trade_id": "470427"
+        },
+        {
+          "exit_reason": "MARKET_ORDER_TRADE_CLOSE",
+          "method": "BREAKOUT_FAILURE",
+          "pair": "EUR_USD",
+          "realized_pl_jpy": -2642.1057,
+          "side": "SHORT",
+          "trade_id": "471414"
+        }
+      ],
+      "trades": 196,
+      "win_rate": 0.699,
+      "wins": 137
+    },
+    {
+      "avg_loss_jpy": null,
+      "avg_win_jpy": 508.3837,
+      "can_clear_negative_expectancy_active": false,
+      "can_create_live_permission": false,
+      "can_enter_proof_pack": true,
+      "expectancy_jpy_per_trade": 508.3837,
+      "losses": 0,
+      "max_loss_jpy": null,
+      "net_jpy": 48804.8389,
+      "note": "Broker attached-TP exits only. Positive result is proof-pack evidence only, not live permission.",
+      "permission_boundary": "Non-negative only after excluding blocked historical families cannot create live permission.",
+      "profit_factor": null,
+      "scope": "attached_tp_only_harvest_segments",
+      "trade_ids_contributing_most_to_loss": [],
+      "trades": 96,
+      "win_rate": 1.0,
+      "wins": 96
+    },
+    {
+      "avg_loss_jpy": 1074.2477,
+      "avg_win_jpy": 222.6069,
+      "can_clear_negative_expectancy_active": false,
+      "can_create_live_permission": false,
+      "can_enter_proof_pack": false,
+      "expectancy_jpy_per_trade": -756.6507,
+      "losses": 74,
+      "max_loss_jpy": -11986.9276,
+      "net_jpy": -74151.7656,
+      "note": "System-attributed MARKET_ORDER_TRADE_CLOSE exits.",
+      "permission_boundary": "Can clear only if this exact scope is the accepted regenerated economics basis.",
+      "profit_factor": 0.0672,
+      "scope": "market_order_trade_close_segments",
+      "trade_ids_contributing_most_to_loss": [
+        {
+          "exit_reason": "MARKET_ORDER_TRADE_CLOSE",
+          "method": "BREAKOUT_FAILURE",
+          "pair": "GBP_USD",
+          "realized_pl_jpy": -11986.9276,
+          "side": "LONG",
+          "trade_id": "470854"
+        },
+        {
+          "exit_reason": "MARKET_ORDER_TRADE_CLOSE",
+          "method": "BREAKOUT_FAILURE",
+          "pair": "EUR_USD",
+          "realized_pl_jpy": -8378.521,
+          "side": "LONG",
+          "trade_id": "470730"
+        },
+        {
+          "exit_reason": "MARKET_ORDER_TRADE_CLOSE",
+          "method": "BREAKOUT_FAILURE",
+          "pair": "GBP_USD",
+          "realized_pl_jpy": -3688.6643,
+          "side": "LONG",
+          "trade_id": "471008"
+        },
+        {
+          "exit_reason": "MARKET_ORDER_TRADE_CLOSE",
+          "method": "TREND_CONTINUATION",
+          "pair": "EUR_USD",
+          "realized_pl_jpy": -3307.422,
+          "side": "LONG",
+          "trade_id": "471232"
+        },
+        {
+          "exit_reason": "MARKET_ORDER_TRADE_CLOSE",
+          "method": "RANGE_ROTATION",
+          "pair": "AUD_JPY",
+          "realized_pl_jpy": -3171.0,
+          "side": "SHORT",
+          "trade_id": "470898"
+        },
+        {
+          "exit_reason": "MARKET_ORDER_TRADE_CLOSE",
+          "method": "BREAKOUT_FAILURE",
+          "pair": "GBP_USD",
+          "realized_pl_jpy": -2981.8961,
+          "side": "LONG",
+          "trade_id": "472071"
+        },
+        {
+          "exit_reason": "MARKET_ORDER_TRADE_CLOSE",
+          "method": "BREAKOUT_FAILURE",
+          "pair": "EUR_USD",
+          "realized_pl_jpy": -2891.0746,
+          "side": "SHORT",
+          "trade_id": "470427"
+        },
+        {
+          "exit_reason": "MARKET_ORDER_TRADE_CLOSE",
+          "method": "BREAKOUT_FAILURE",
+          "pair": "EUR_USD",
+          "realized_pl_jpy": -2642.1057,
+          "side": "SHORT",
+          "trade_id": "471414"
+        }
+      ],
+      "trades": 98,
+      "win_rate": 0.2449,
+      "wins": 24
+    },
+    {
+      "avg_loss_jpy": 1086.6462,
+      "avg_win_jpy": 222.6069,
+      "can_clear_negative_expectancy_active": false,
+      "can_create_live_permission": false,
+      "can_enter_proof_pack": false,
+      "expectancy_jpy_per_trade": -762.7073,
+      "losses": 73,
+      "max_loss_jpy": -11986.9276,
+      "net_jpy": -73982.6065,
+      "note": "Market-close rows reconciled without durable local position-execution receipt.",
+      "permission_boundary": "Can clear only if this exact scope is the accepted regenerated economics basis.",
+      "profit_factor": 0.0674,
+      "scope": "unknown_unverified_gateway_close_segments",
+      "trade_ids_contributing_most_to_loss": [
+        {
+          "exit_reason": "MARKET_ORDER_TRADE_CLOSE",
+          "method": "BREAKOUT_FAILURE",
+          "pair": "GBP_USD",
+          "realized_pl_jpy": -11986.9276,
+          "side": "LONG",
+          "trade_id": "470854"
+        },
+        {
+          "exit_reason": "MARKET_ORDER_TRADE_CLOSE",
+          "method": "BREAKOUT_FAILURE",
+          "pair": "EUR_USD",
+          "realized_pl_jpy": -8378.521,
+          "side": "LONG",
+          "trade_id": "470730"
+        },
+        {
+          "exit_reason": "MARKET_ORDER_TRADE_CLOSE",
+          "method": "BREAKOUT_FAILURE",
+          "pair": "GBP_USD",
+          "realized_pl_jpy": -3688.6643,
+          "side": "LONG",
+          "trade_id": "471008"
+        },
+        {
+          "exit_reason": "MARKET_ORDER_TRADE_CLOSE",
+          "method": "TREND_CONTINUATION",
+          "pair": "EUR_USD",
+          "realized_pl_jpy": -3307.422,
+          "side": "LONG",
+          "trade_id": "471232"
+        },
+        {
+          "exit_reason": "MARKET_ORDER_TRADE_CLOSE",
+          "method": "RANGE_ROTATION",
+          "pair": "AUD_JPY",
+          "realized_pl_jpy": -3171.0,
+          "side": "SHORT",
+          "trade_id": "470898"
+        },
+        {
+          "exit_reason": "MARKET_ORDER_TRADE_CLOSE",
+          "method": "BREAKOUT_FAILURE",
+          "pair": "GBP_USD",
+          "realized_pl_jpy": -2981.8961,
+          "side": "LONG",
+          "trade_id": "472071"
+        },
+        {
+          "exit_reason": "MARKET_ORDER_TRADE_CLOSE",
+          "method": "BREAKOUT_FAILURE",
+          "pair": "EUR_USD",
+          "realized_pl_jpy": -2891.0746,
+          "side": "SHORT",
+          "trade_id": "470427"
+        },
+        {
+          "exit_reason": "MARKET_ORDER_TRADE_CLOSE",
+          "method": "BREAKOUT_FAILURE",
+          "pair": "EUR_USD",
+          "realized_pl_jpy": -2642.1057,
+          "side": "SHORT",
+          "trade_id": "471414"
+        }
+      ],
+      "trades": 97,
+      "win_rate": 0.2474,
+      "wins": 24
+    }
+  ],
+  "source_artifacts": [
+    "data/execution_ledger.db",
+    "data/capture_economics.json",
+    "data/month_scale_residual_family_table.json",
+    "data/market_close_leak_trade_table.json"
+  ]
+}

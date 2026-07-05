@@ -1,6 +1,6 @@
 # Month-Scale Residual Family Table
 
-- Generated: `2026-07-05T16:24:00Z`
+- Generated: `2026-07-05T17:21:46Z`
 - Execution timing generated: `2026-07-03T20:08:53.084075+00:00`
 - Harvest evidence generated: `2026-07-05T16:21:04.081371+00:00`
 - Harvest source matches timing: `True`

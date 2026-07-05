@@ -1249,7 +1249,7 @@
       "verifier_riskengine_liveordergateway_implication": "The family is historical-only until the exact repair proof is refreshed and acceptance clears."
     }
   ],
-  "generated_at_utc": "2026-07-05T16:24:00Z",
+  "generated_at_utc": "2026-07-05T17:21:46Z",
   "live_side_effects": [],
   "manual_eurusd_472987_excluded": true,
   "market_close_leak_family_gate_active": true,
